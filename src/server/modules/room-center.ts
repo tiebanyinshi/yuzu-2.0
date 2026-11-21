@@ -72,6 +72,8 @@ import {
 } from './room-center-ops';
 import { loadRoomRules, roomsBoard } from './rooms';
 import { loadUsageRules, usageBoard } from './usages';
+import type { RoomOrderSummary } from '@shared/room-orders';
+import { roomOrderSums } from './room-orders';
 
 // ───────────────────────── 房型（后台） ─────────────────────────
 
@@ -263,6 +265,25 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
   const groupOf = new Map<number, number[]>();
   for (const members of groups.values()) for (const id of members) groupOf.set(id, members);
 
+  // 房态点单（8.2.0 P07）：在店客人从房态点的单数与金额，按房里现在的客人加起来
+  const orderSums = await roomOrderSums(db, [
+    ...[...facts.values()].flatMap((f) => f.guests.map((g) => Number(g.visit.id))),
+    ...usages.spaces.flatMap((s) => (s.usage ? [s.usage.visitId] : [])),
+    ...(hotel?.rooms ?? []).flatMap((r) => (r.stay ? [r.stay.visitId] : [])),
+  ]);
+  const sumOrders = (visitIds: number[]): RoomOrderSummary | null => {
+    let count = 0;
+    let amount = 0;
+    for (const v of new Set(visitIds)) {
+      const s = orderSums.get(v);
+      if (s) {
+        count += s.count;
+        amount += s.amount;
+      }
+    }
+    return count > 0 || amount > 0 ? { count, amount } : null;
+  };
+
   const rooms: RoomCard[] = [];
   for (const [id, f] of facts) {
     const sp = f.space;
@@ -315,6 +336,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       amount: guests.length ? guests.reduce((n, g) => n + g.amount, 0) : null,
       phase,
       plannedEnd: latest(all.map((s) => s.plannedEnd)),
+      orders: sumOrders([...guests.map((g) => g.visitId), ...(usage ? [usage.visitId] : [])]),
     });
   }
   for (const r of hotel?.rooms ?? []) {
@@ -345,6 +367,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       amount: r.stay ? r.stay.chargedAmount : null,
       phase: null,
       plannedEnd: null,
+      orders: sumOrders(r.stay ? [r.stay.visitId] : []),
     });
   }
 
@@ -573,7 +596,8 @@ async function assertSpace(db: Db, spaceId: number) {
 export function registerRoomCenterRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
   // 看：看得到客房、钟房、派对房其中一样的岗位
-  const read = guardAny('room.operate', 'room.housekeep', 'technician.dispatch', 'frontdesk.checkout');
+  // 8.2.0 P07：能在水吧、果吧下单的（康美部）也看得到，好在「在用」的房间上点单
+  const read = guardAny('room.operate', 'room.housekeep', 'technician.dispatch', 'frontdesk.checkout', 'dining.orderWater', 'dining.orderFruit');
   // 登记、续钟要挂账、派钟：与钟房派钟同一组权限；换房、退房、并房是钟房的调度；改房态（待清、清洁完成、维修、恢复）是打扫与维修；
   // 派对房开单沿用「客房入住、退房」（与平面图、派对房看板上的开单一样）
   const post = guard('technician.dispatch', 'frontdesk.operate');

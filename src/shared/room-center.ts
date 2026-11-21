@@ -11,6 +11,7 @@ import type { CallType } from './technicians';
 import type { RoomBoardRoom } from './rooms';
 import { isTechnicianBusinessType, ROOM_BUSINESS_TYPE } from './spaces';
 import type { UsageDetail } from './usages';
+import type { RoomOrderSummary } from './room-orders';
 
 export const ROOM_STATUSES = ['free', 'in_use', 'dirty', 'maintenance', 'booked'] as const;
 export type RoomStatus = (typeof ROOM_STATUSES)[number];
@@ -233,6 +234,8 @@ export interface RoomCard {
   phase: 'waiting' | 'serving' | 'done' | null;
   /** 服务中的计划下钟时刻（几张钟里最晚的） */
   plannedEnd: string | null;
+  /** 房态点单（8.2.0 P07）：房里现在的客人从房态点了几单、多少钱（退掉的不算）；没点过为 null */
+  orders: RoomOrderSummary | null;
 }
 
 export interface RoomCenterBoard {

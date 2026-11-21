@@ -361,6 +361,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '199_dining_voids_v8117.sql',
   '200_ledger_imports.sql',
   '201_position_catalog.sql',
+  '202_room_orders.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */
