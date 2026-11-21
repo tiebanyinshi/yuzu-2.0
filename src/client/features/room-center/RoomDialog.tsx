@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { CalendarClock, CircleCheck, DoorOpen, History, Link2, Play, Plus, Shuffle, Sparkles, Square, Timer, Unlink, UserPlus, Wrench } from 'lucide-react';
 import { elapsedText, ROOM_SOURCE_HINTS, ROOM_SOURCE_LABELS, type RoomCard, type RoomEventKind, type RoomSessionView } from '@shared/room-center';
+import { formatYuan } from '@shared/money';
 import { spaceLabel } from '@shared/spaces';
 import { usageEstimate } from '@shared/usages';
 import { api, errorMessage } from '../../lib/api';
@@ -129,7 +130,20 @@ function HistoryList({ spaceId }: { spaceId: number }) {
   );
 }
 
-export function RoomDialog({ room, now, onClose, onAction }: { room: RoomCard; now: number; onClose: () => void; onAction: (a: RoomDialogAction) => void }) {
+export function RoomDialog({
+  room,
+  now,
+  onClose,
+  onAction,
+  onOrders,
+}: {
+  room: RoomCard;
+  now: number;
+  onClose: () => void;
+  onAction: (a: RoomDialogAction) => void;
+  /** 房态点单（8.2.0 P08）：打开这间房的点单记录 */
+  onOrders?: () => void;
+}) {
   const can = useCan();
   const toast = useToast();
   const navigate = useNavigate();
@@ -202,6 +216,28 @@ export function RoomDialog({ room, now, onClose, onAction }: { room: RoomCard; n
           </Notice>
         )}
 
+        {room.status === 'in_use' && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line px-3 py-2 text-[13px]" data-testid="rc-room-orders">
+            <span className="min-w-0 flex-1">
+              房内点单：
+              {room.orders ? (
+                <b className="num">
+                  {room.orders.count} 单 · {formatYuan(room.orders.amount)}
+                </b>
+              ) : (
+                '还没点过'
+              )}
+              {!can('dining.orderWater') && !can('dining.orderFruit') && (
+                <span className="ml-2 text-[12px] text-ink-3">（在房间里点水吧、果吧要「在水吧下单」或「在果吧下单」权限，请找店长在「岗位权限」里开通）</span>
+              )}
+            </span>
+            {onOrders && (
+              <Button size="sm" variant="secondary" onClick={onOrders} data-testid="rc-room-orders-open">
+                点单记录
+              </Button>
+            )}
+          </div>
+        )}
         {room.maintenance && (
           <Notice tone="error" icon={<Wrench className="size-4" />} title={`维修中：${room.maintenance.reason}`} data-testid="rc-maintenance-info">
             预计 {formatDateTime(room.maintenance.expectedAt)} 完成

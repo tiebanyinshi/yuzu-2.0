@@ -317,6 +317,8 @@ export type ReconcileOutcome =
  */
 export function opsPath(op: { key: string; type: FrontdeskPendingOp['type']; url: string }): string {
   if (op.type === 'bill_post' && op.url === '/api/dining/orders') return `/api/dining/ops/${op.key}`;
+  // 房态点单（8.2.0 P08）：也是挂账、康美部也没有前台权限，同样走餐饮的
+  if (op.type === 'bill_post' && /^\/api\/room-center\/rooms\/[sr]\d+\/orders$/.test(op.url)) return `/api/dining/ops/${op.key}`;
   // 房态中心的房间动作（8.1.16）走房态中心的：按原业务的权限，只管打扫的后勤（没有前台权限）也能处理改房态的那一笔
   if (isSpaceOp(op.type)) return `/api/room-center/ops/${op.key}`;
   return `/api/frontdesk/ops/${op.key}`;

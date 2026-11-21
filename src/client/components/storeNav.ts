@@ -60,7 +60,7 @@ export interface StoreNavDomain {
 }
 
 /** 房态中心里前台、钟房、收银那几样岗位的权限：有其中一样的不看客房功能开没开都有入口 */
-const ROOM_CENTER_DESK_PERMISSIONS: readonly Permission[] = ['room.operate', 'technician.dispatch', 'frontdesk.checkout'];
+const ROOM_CENTER_DESK_PERMISSIONS: readonly Permission[] = ['room.operate', 'technician.dispatch', 'frontdesk.checkout', 'dining.orderWater', 'dining.orderFruit'];
 
 const STORE_NAV: StoreNavDomain[] = [
   {
@@ -102,7 +102,8 @@ const STORE_NAV: StoreNavDomain[] = [
         to: '/room-center',
         label: '房态中心',
         icon: BedDouble,
-        perm: ['room.operate', 'room.housekeep', 'technician.dispatch', 'frontdesk.checkout'],
+        // 8.2.0 P08：能在水吧、果吧下单的（康美部）也有入口，在「在用」的房间上点单
+        perm: ['room.operate', 'room.housekeep', 'technician.dispatch', 'frontdesk.checkout', 'dining.orderWater', 'dining.orderFruit'],
         when: (s) => s.rooms || ROOM_CENTER_DESK_PERMISSIONS.some((p) => s.permissions.includes(p)),
       },
     ],

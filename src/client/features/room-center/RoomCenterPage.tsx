@@ -34,6 +34,7 @@ import { roomUrl, useRefreshRoomCenter, useRoomCenter } from './queries';
 import { CheckoutRoomDialog, ExtendRoomDialog, MaintenanceDialog, MergeRoomDialog, MoveRoomDialog, NoteActionDialog } from './RoomActions';
 import { RoomCard as RoomTile } from './RoomCard';
 import { RoomDialog, type RoomDialogAction } from './RoomDialog';
+import { RoomOrderPanel, RoomOrdersDialog, useRoomOrderOutlets } from './RoomOrders';
 import { RegisterDialog } from './RegisterDialog';
 import { CountChips, STATUS_META } from './status';
 
@@ -85,6 +86,9 @@ function RoomCenterBody() {
   const [mapUsage, setMapUsage] = useState<MapUsage | null>(null);
   const [usageById, setUsageById] = useState<{ id: number; mode: 'end' | 'cancel' } | null>(null);
   const [forBooking, setForBooking] = useState<BookingDetail | null>(null);
+  // 房态点单（8.2.0 P08）：点单面板、点单记录；记卡片的 key，看板刷新以后照样对得上
+  const [ordering, setOrdering] = useState<{ key: string; view: 'order' | 'history' } | null>(null);
+  const orderOutlets = useRoomOrderOutlets();
 
   const setParam = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
@@ -145,6 +149,7 @@ function RoomCenterBody() {
 
   const byKey = (spaceId: number | null) => board.rooms.find((r) => r.spaceId === spaceId && r.kind !== 'hotel') ?? null;
   const detailRoom = detail === null ? null : byKey(detail);
+  const orderingRoom = ordering ? (board.rooms.find((r) => r.key === ordering.key) ?? null) : null;
   const actionRoom = action ? byKey(action.spaceId) : null;
   const checkinRoom = checkinRoomId === null ? null : (hotel?.rooms.find((r) => r.id === checkinRoomId) ?? null);
   const housekeepRoom = housekeepRoomId === null ? null : (hotel?.rooms.find((r) => r.id === housekeepRoomId) ?? null);
@@ -189,7 +194,16 @@ function RoomCenterBody() {
   const grid = (list: RoomCard[]) => (
     <div className="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5" data-testid="rc-grid">
       {list.map((r) => (
-        <RoomTile key={r.key} room={r} now={now} hint={hintOf(r, canPost, canOperate)} highlight={highlighted(r)} onOpen={() => open(r)} onDetail={() => openDetail(r)} />
+        <RoomTile
+          key={r.key}
+          room={r}
+          now={now}
+          hint={hintOf(r, canPost, canOperate)}
+          highlight={highlighted(r)}
+          onOpen={() => open(r)}
+          onDetail={() => openDetail(r)}
+          onOrder={orderOutlets.length ? () => setOrdering({ key: r.key, view: 'order' }) : undefined}
+        />
       ))}
     </div>
   );
@@ -283,11 +297,25 @@ function RoomCenterBody() {
         </>
       )}
 
+      {orderingRoom && ordering?.view === 'order' && orderingRoom.status === 'in_use' && (
+        <RoomOrderPanel room={orderingRoom} onClose={() => setOrdering(null)} onHistory={() => setOrdering({ key: orderingRoom.key, view: 'history' })} />
+      )}
+      {orderingRoom && ordering?.view === 'history' && (
+        <RoomOrdersDialog
+          room={orderingRoom}
+          onClose={() => setOrdering(null)}
+          onOrder={orderOutlets.length && orderingRoom.status === 'in_use' ? () => setOrdering({ key: orderingRoom.key, view: 'order' }) : undefined}
+        />
+      )}
       {detailRoom && (
         <RoomDialog
           room={detailRoom}
           now={now}
           onClose={() => setDetail(null)}
+          onOrders={() => {
+            setDetail(null);
+            setOrdering({ key: detailRoom.key, view: 'history' });
+          }}
           onAction={(a) => {
             setDetail(null);
             setAction({ spaceId: detailRoom.spaceId!, a });
