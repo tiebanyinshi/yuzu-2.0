@@ -39,7 +39,8 @@ export function PositionPermissions({ data, editable }: { data: RolePermissionMa
   const fromSuggested = diff(value, suggested);
 
   const switchTo = (next: EditablePosition) => {
-    if (next === key) return;
+    // 保存期间不换岗位：回来的结果按发出去的那一份清草稿（与「分部门岗位职权配置」同一个做法，Codex 审查 e770cb9）
+    if (next === key || saving) return;
     if (unsaved > 0) return setAsking(next);
     setKey(next);
     setDraft(null);
@@ -72,7 +73,7 @@ export function PositionPermissions({ data, editable }: { data: RolePermissionMa
       </Notice>
       <div className="flex flex-wrap items-end gap-3">
         <Field label="岗位" htmlFor="pp-position">
-          <Select id="pp-position" value={key} onChange={(e) => switchTo(e.target.value as EditablePosition)} data-testid="position-permissions-select">
+          <Select id="pp-position" value={key} disabled={saving} onChange={(e) => switchTo(e.target.value as EditablePosition)} data-testid="position-permissions-select">
             {ORG_DEPARTMENTS.filter((d) => d.key !== 'company').map((d) => (
               <optgroup key={d.key} label={d.name}>
                 {EDITABLE.filter((p) => p.department === d.key).map((p) => (
@@ -112,7 +113,7 @@ export function PositionPermissions({ data, editable }: { data: RolePermissionMa
         )}
       </div>
       {error && <Notice tone="error" title={error} />}
-      <PermissionPicker key={key} value={value} onChange={(perms) => setDraft({ key, perms })} baseline={suggested} editable={editable} testId={`pos-perm-${key}`} />
+      <PermissionPicker key={key} value={value} onChange={(perms) => setDraft({ key, perms })} baseline={suggested} editable={editable && !saving} testId={`pos-perm-${key}`} />
       <Dialog
         open={!!asking}
         onClose={() => setAsking(null)}
