@@ -354,7 +354,9 @@ export type FrontdeskOpLookup =
    * 点单页下单（挂账）从餐饮这边查回、作废（8.1.15，`/api/dining/ops`）：只说生效了、记在哪次来访上，不给整张账单——
    * 康美部只有点单权限，看不到前台的账（Codex 审查 f6327a4）
    */
-  | { found: true; type: 'dining_order'; visitId: number };
+  | { found: true; type: 'dining_order'; visitId: number }
+  /** 房态点单（回测整改 P07，`/api/room-center/order-ops`）：生效了、记在哪次来访上 */
+  | { found: true; type: 'room_order'; visitId: number };
 
 export interface CheckinResult {
   replayed: boolean;

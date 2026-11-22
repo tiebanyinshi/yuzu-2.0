@@ -250,7 +250,7 @@ async function stationsWithCount(db: Db): Promise<KitchenStation[]> {
 }
 
 /** 进厨房的在售菜品、默认价格档的单价、今天的沽清与点单分类（8.1.7：后台没设的按默认归） */
-async function kitchenDishes(db: Db, today: string): Promise<MenuDish[]> {
+export async function kitchenDishes(db: Db, today: string): Promise<MenuDish[]> {
   const rows = await db<
     {
       id: number;
