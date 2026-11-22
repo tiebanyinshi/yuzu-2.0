@@ -476,6 +476,7 @@ export const ERP_OP_TYPES = [
   // 8.1.15 会员建档（匿名卡没有手机号去重、实体卡同时收押金）、退卡退押金（动的是钱）
   'member_create',
   'member_card_return',
+  'oa_staff_import',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -549,6 +550,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   request_stock: '需求单核库 / 答复替代',
   member_create: '新建会员',
   member_card_return: '退卡退押金',
+  oa_staff_import: '批量开通员工账号',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */

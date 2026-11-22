@@ -142,6 +142,8 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   // 8.1.15 会员建档、退卡退押金：与各自的提交接口一致
   member_create: ['member.write'],
   member_card_return: ['member.card'],
+  // OA-02 批量开通：与开通接口一致
+  oa_staff_import: ['hr.org', 'staff.manage'],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -215,6 +217,7 @@ const READ: Record<ErpOpType, Permission[]> = {
   request_stock: ['request.stock', 'request.create', 'request.review'],
   member_create: ['member.write', 'member.read'],
   member_card_return: ['member.card', 'member.read'],
+  oa_staff_import: ['hr.org', 'staff.manage'],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {

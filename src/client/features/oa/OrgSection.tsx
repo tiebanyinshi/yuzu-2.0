@@ -3,16 +3,18 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, Search } from 'lucide-react';
-import { EMPLOYMENT_STATUS_LABELS, type EmployeeProfile, type OrgDepartmentNode, type OrgOverview } from '@shared/oa';
+import { Building2, Search, UserPlus } from 'lucide-react';
+import { EMPLOYMENT_STATUS_LABELS, type EmployeeProfile, type OrgDepartmentNode, type OrgOverview, type StaffImportResult } from '@shared/oa';
 import { ORG_DEPARTMENTS, positionLabel } from '@shared/positions';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
 import { DataTable, type DataColumn } from '../../components/DataTable';
+import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Segmented, Select, Skeleton } from '../../components/ui';
 import { AdminPage } from '../admin/AdminShell';
+import { ResultDialog, StaffImportDialog } from './StaffImportDialog';
 
 const ORG_KEY = ['oa', 'org'] as const;
 const deptName = (key: string | null) => ORG_DEPARTMENTS.find((d) => d.key === key)?.name ?? '未分部门';
@@ -41,8 +43,22 @@ function treeOrder(depts: readonly OrgDepartmentNode[]): { node: OrgDepartmentNo
 
 export function OrgSection() {
   const q = useQuery({ queryKey: ORG_KEY, queryFn: () => api.get<OrgOverview>('/api/oa/org') });
+  const qc = useQueryClient();
+  // 结果待确认的批量开通按原内容重新提交、这一次才真的开通：回答里有临时密码，照样显示名单（Codex 审查 3568884）
+  const [resent, setResent] = useState<StaffImportResult | null>(null);
   return (
-    <AdminPage section="org" wide description="部门的上下级与主管、员工档案（工号、手机号、入职与离职）。部门清单随岗位体系，不在这里增删；办理离职会停用账号，考勤、审批等历史都保留。">
+    <AdminPage section="org" wide description="部门的上下级与主管、员工档案（工号、手机号、入职与离职）、批量开通账号。部门清单随岗位体系，不在这里增删；办理离职会停用账号，考勤、审批等历史都保留。">
+      {/* OA-02 批量开通没收到结果的：查回、按原内容重新提交或作废 */}
+      <ErpPendingPanel
+        types={['oa_staff_import']}
+        className="mb-4 space-y-2"
+        onFound={(_op, ref) => {
+          void qc.invalidateQueries({ queryKey: ORG_KEY });
+          const r = ref.response as StaffImportResult | undefined;
+          if (r?.accounts?.some((a) => a.temporaryPassword)) setResent(r);
+        }}
+      />
+      {resent && <ResultDialog result={resent} onClose={() => setResent(null)} />}
       {q.isPending ? (
         <Skeleton className="h-64" />
       ) : q.isError && !q.data ? (
@@ -150,6 +166,7 @@ function EmployeeTable({ org }: { org: OrgOverview }) {
   const [editing, setEditing] = useState<EmployeeProfile | null>(null);
   const [leaving, setLeaving] = useState<EmployeeProfile | null>(null);
   const [rehiring, setRehiring] = useState<EmployeeProfile | null>(null);
+  const [importing, setImporting] = useState(false);
   const kw = keyword.trim().toLowerCase();
   const rows = org.employees.filter(
     (e) =>
@@ -209,6 +226,9 @@ function EmployeeTable({ org }: { org: OrgOverview }) {
     <Card className="p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="mr-auto text-[15px] font-semibold text-ink">员工档案</h2>
+        <Button size="sm" variant="secondary" icon={<UserPlus className="size-4" />} onClick={() => setImporting(true)} data-testid="org-import">
+          批量开通
+        </Button>
         <Segmented<StatusFilter>
           value={status}
           onChange={setStatus}
@@ -237,6 +257,7 @@ function EmployeeTable({ org }: { org: OrgOverview }) {
       {editing && <ProfileDialog emp={editing} onClose={() => setEditing(null)} />}
       {leaving && <LeaveDialog emp={leaving} onClose={() => setLeaving(null)} />}
       {rehiring && <RehireDialog emp={rehiring} onClose={() => setRehiring(null)} />}
+      {importing && <StaffImportDialog onClose={() => setImporting(false)} />}
     </Card>
   );
 }

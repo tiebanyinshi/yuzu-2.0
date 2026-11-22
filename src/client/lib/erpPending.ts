@@ -22,6 +22,8 @@ export interface ErpPendingOp {
   createdAt: string;
   /** 曾经结果不明：之后的重提即使被明确拒绝，之前那次请求也可能随后登记，要先查回或作废 */
   uncertain?: boolean;
+  /** 等回答的上限（毫秒），不给是 20 秒；存在记录里，页面上方重提时用同一个（OA-02 批量开通几百个散列要更久） */
+  timeoutMs?: number;
 }
 
 const STORAGE_KEY = 'yuzu.erpPending.v1';
@@ -164,7 +166,7 @@ export async function sendErpOp<T>(op: Omit<ErpPendingOp, 'createdAt' | 'uncerta
     throw e;
   }
   try {
-    const result = await api.post<T>(record.url, record.body, { timeoutMs: 20_000 });
+    const result = await api.post<T>(record.url, record.body, { timeoutMs: record.timeoutMs ?? 20_000 });
     removeErpPending(record.key);
     return result;
   } catch (raw) {

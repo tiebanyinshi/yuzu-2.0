@@ -163,6 +163,8 @@ export const FENCED_OPS = [
   // 房态点单（回测整改 P07）：按出品口各一类，只有一个出品口下单权限的人作废时碰不到别的挂账、另一个出品口的点单
   'room_order_water',
   'room_order_fruit',
+  // OA-02 批量开通（迁移 211）：编号记在 idempotency_keys（ref_id 是那次开通 oa_staff_imports）
+  'oa_staff_import',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 
