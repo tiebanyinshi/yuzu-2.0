@@ -740,7 +740,7 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const live = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${setId}`)).body as PriceCatalogSet;
     const item = live.entries.find((e) => e.sheet === 'entertainment' && e.active)!;
     const opKey = randomUUID();
-    const body = { ...item, extraPriceCents: (item.extraPriceCents ?? 1000) + 100, opKey };
+    const body = { ...item, extraPriceCents: (item.extraPriceCents ?? 1000) + 100, extraMinutes: item.extraMinutes ?? 60, opKey };
     const first = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${item.id}`, body);
     expect(first.status, JSON.stringify(first.body)).toBe(200);
     // 原样重提（版本号已经旧了）：返回这一项现在的样子，不再写一次、不报版本冲突
@@ -1021,6 +1021,8 @@ describe('价目表录入 第四批：前台试算', () => {
     expect(serviceFeeOf(5890, 1000)).toBe(589);
     expect(serviceFeeOf(1995, 1000)).toBe(200);
     expect(serviceFeeOf(1994, 1000)).toBe(199);
+    // 超时价与每次分钟要成对（只填价、不填分钟的保存不了，不会出现写着超时价却不计超时）
+    expect(priceEntryProblems({ ...get('spa房'), extraMinutes: null })).toContain('填了加钟 / 超时价，也要填每次多少分钟');
     // 取消了「可以下单」的非菜品项目同样算不了
     const off = priceQuote([{ entry: { ...get('台球'), orderable: false }, quantity: 1 }], fee);
     expect(off).toMatchObject({ problems: ['「台球」不可下单'], subtotalCents: 0, feeCents: 0, totalCents: 0 });
