@@ -26,6 +26,7 @@ import { runVoucherReconcile, sweepVerifying } from './modules/platform-verify';
 import { runAiSummaries } from './modules/ai';
 import { sweepOvertimeReminders } from './modules/frontdesk/overtime';
 import { sweepTableRestores } from './modules/tables-v8117';
+import { purgeStaleAttachments } from './modules/oa/attachments';
 
 export interface JobLog {
   info: (msg: string) => void;
@@ -70,6 +71,13 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
     } catch (error) {
       log.error('生日礼发券失败，10 分钟后重试', error);
     }
+  }
+  // OA 附件（OA-03）：24 小时还没挂到单据上的清掉
+  try {
+    const n = await purgeStaleAttachments(sql);
+    if (n > 0) log.info(`清掉没用上的附件：${n} 个`);
+  } catch (error) {
+    log.error('清理没用上的附件失败，下一分钟重试', error);
   }
   // 超时提醒（8.1.17 BW-1）：在店到了 12 / 24 / 72 小时的客人，在「异常待办」里记一条（每一级只记一次，经办人「系统」）
   try {

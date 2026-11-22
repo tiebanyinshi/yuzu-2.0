@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { NotificationPage, OaAttachment } from '../src/shared/oa';
-import { attachmentsOf, bindAttachments, registerAttachmentRef } from '../src/server/modules/oa/attachments';
+import { attachmentsOf, bindAttachments, purgeStaleAttachments, registerAttachmentRef } from '../src/server/modules/oa/attachments';
 import { notify, registerNotifyChannel } from '../src/server/modules/oa/notifications';
 import { api, setup, type TestContext } from './helpers';
 
@@ -127,5 +127,32 @@ describe('OA-03 附件', () => {
     expect((await attachmentsOf(ctx.sql, { type: 'test_doc', id: 42 })).map((x) => x.fileName)).toEqual(['a.png', 'b.png']);
     // 单据的查看权限放行了总裁
     expect((await ctx.app.inject({ method: 'GET', url: a.url, headers: { cookie: ctx.owner } })).statusCode).toBe(200);
+  });
+
+  it('限额：没挂上的最多 30 个；24 小时内最多 300MB；没挂上的 24 小时后清掉，挂上的不动', async () => {
+    const up = () => api(ctx.app, ctx.owner, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: 'q.png', mime: 'image/png', data: b64(PNG) });
+    await ctx.sql`DELETE FROM oa_attachments WHERE uploaded_by = ${ownerId}`;
+    // 已有 30 个没挂上的
+    await ctx.sql`
+      INSERT INTO oa_attachments (client_key, uploaded_by, file_name, mime, size_bytes, sha256, data)
+      SELECT gen_random_uuid(), ${ownerId}, 'p.png', 'image/png', 10, repeat('0', 64), '\\x00'::bytea FROM generate_series(1, 30)`;
+    let r = await up();
+    expect(code(r)).toBe('ATTACHMENT_QUOTA');
+    // 过了 24 小时：没挂上的清掉
+    await ctx.sql`UPDATE oa_attachments SET created_at = now() - interval '25 hours' WHERE uploaded_by = ${ownerId}`;
+    expect(await purgeStaleAttachments(ctx.sql)).toBeGreaterThanOrEqual(30);
+    expect((await up()).status).toBe(201);
+
+    // 24 小时内已经传了 30 个 10MB（都挂到单据上了）：再传就超了；挂上的不清
+    await ctx.sql`
+      INSERT INTO oa_attachments (client_key, uploaded_by, file_name, mime, size_bytes, sha256, data, ref_type, ref_id, bound_at)
+      SELECT gen_random_uuid(), ${ownerId}, 'b.png', 'image/png', 10485760, repeat('0', 64), '\\x00'::bytea, 'test_doc', 42, now() FROM generate_series(1, 30)`;
+    r = await up();
+    expect(code(r)).toBe('ATTACHMENT_QUOTA');
+    await ctx.sql`UPDATE oa_attachments SET created_at = now() - interval '25 hours' WHERE uploaded_by = ${ownerId}`;
+    await purgeStaleAttachments(ctx.sql);
+    const [left] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_attachments WHERE uploaded_by = ${ownerId} AND ref_type = 'test_doc'`;
+    expect(left!.n).toBe(30);
+    expect((await up()).status).toBe(201);
   });
 });

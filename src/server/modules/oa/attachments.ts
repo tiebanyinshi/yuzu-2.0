@@ -2,6 +2,7 @@
 //   · 上传：base64 JSON（与门店系统其他上传一样），单个不超过 10MB；按文件头核对格式（与声明的对不上就拒绝）；
 //     图片在浏览器里生成缩略图一起传（服务端不做图像处理），缩略图也核对是 JPEG、不超过 200KB；
 //   · 上传带操作编号：没收到结果时原样重提，返回原来那一个，不再存一份；
+//   · 限额：每人没挂上的最多 30 个、100MB，24 小时内最多传 300MB；没挂上的 24 小时后清掉（每分钟任务）；
 //   · 下载：一律当附件下载（Content-Disposition: attachment），只有图片能内嵌显示；都带 nosniff，不让浏览器猜类型；
 //     不让浏览器缓存（no-store）：同一台电脑换人登录，不能从缓存里看到上一位的附件；
 //   · 谁能看：没挂到单据上的只有上传的人；各模块用 bindAttachments() 把附件挂到自己的单据上（只能挂自己传的、还没挂过的），
@@ -65,6 +66,21 @@ const UploadInput = z.object({
     .max(Math.ceil((ATTACHMENT_THUMB_MAX_BYTES * 4) / 3) + 8)
     .optional(),
 });
+
+/**
+ * 限额（Codex 安全审查 84f5525：不限的话任何员工都能把数据库传满，整个门店系统写不进去）：
+ * 每人还没挂到单据上的最多 30 个、共 100MB；每人 24 小时内最多传 300MB；没挂上的 24 小时后清掉（每分钟任务）
+ */
+const PENDING_MAX_FILES = 30;
+const PENDING_MAX_BYTES = 100 * 1024 * 1024;
+const DAY_MAX_BYTES = 300 * 1024 * 1024;
+const UNBOUND_TTL = '24 hours';
+
+/** 清掉 24 小时还没挂到单据上的附件（每分钟任务调；正在挂的行被锁着，等它挂上就不再符合条件） */
+export async function purgeStaleAttachments(db: Db): Promise<number> {
+  const rows = await db`DELETE FROM oa_attachments WHERE ref_type IS NULL AND created_at < now() - ${UNBOUND_TTL}::interval RETURNING id`;
+  return rows.length;
+}
 
 /** 挂到某类单据上以后谁能看：各模块登记（OA-11 起） */
 export type AttachmentRefCheck = (db: Db, actor: Actor, refId: number) => Promise<boolean>;
@@ -138,22 +154,38 @@ export function registerOaAttachmentRoutes(app: FastifyInstance, { sql }: Deps) 
     }
     const sha = createHash('sha256').update(buf).digest('hex');
     type Row = { id: number; fileName: string; mime: string; sizeBytes: number; hasThumb: boolean; uploadedBy: number; sha256: string };
-    const [row] = await sql<Row[]>`
-      INSERT INTO oa_attachments (client_key, uploaded_by, file_name, mime, size_bytes, sha256, data, thumb)
-      VALUES (${input.clientKey}, ${req.actor.id}, ${input.fileName}, ${input.mime}, ${buf.length}, ${sha}, ${buf}, ${thumb})
-      ON CONFLICT (client_key) DO NOTHING
-      RETURNING id, file_name, mime, size_bytes, thumb IS NOT NULL AS has_thumb, uploaded_by, sha256`;
-    if (row) {
-      reply.code(201);
-      return toView(row);
-    }
-    // 同一编号重提：同一个人、同一个文件就返回原来那一个；别的一律拒绝
-    const [prev] = await sql<Row[]>`
-      SELECT id, file_name, mime, size_bytes, thumb IS NOT NULL AS has_thumb, uploaded_by, sha256 FROM oa_attachments WHERE client_key = ${input.clientKey}`;
-    if (!prev || Number(prev.uploadedBy) !== req.actor.id || prev.sha256 !== sha || prev.fileName !== input.fileName || prev.mime !== input.mime) {
-      throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一个附件，请重新选择文件上传');
-    }
-    return toView(prev);
+    const COLS = sql`id, file_name, mime, size_bytes, thumb IS NOT NULL AS has_thumb, uploaded_by, sha256`;
+    const actor = req.actor.id;
+    const result = await sql.begin(async (tx) => {
+      // 同一个人的上传串行：限额按库里现在的样子核对，几个请求同时到也不会一起越过
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended('oa_attachment_upload', ${actor}))`;
+      // 同一编号重提：同一个人、同一个文件就返回原来那一个；别的一律拒绝（不占限额）
+      const [prev] = await tx<Row[]>`SELECT ${COLS} FROM oa_attachments WHERE client_key = ${input.clientKey}`;
+      if (prev) {
+        if (Number(prev.uploadedBy) !== actor || prev.sha256 !== sha || prev.fileName !== input.fileName || prev.mime !== input.mime) {
+          throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一个附件，请重新选择文件上传');
+        }
+        return { row: prev, created: false };
+      }
+      // 限额：先清掉自己过期没用上的，再核对还没用上的个数、大小与 24 小时内传了多少
+      await tx`DELETE FROM oa_attachments WHERE uploaded_by = ${actor} AND ref_type IS NULL AND created_at < now() - ${UNBOUND_TTL}::interval`;
+      const [used] = await tx<{ pendingFiles: number; pendingBytes: string; dayBytes: string }[]>`
+        SELECT count(*) FILTER (WHERE ref_type IS NULL)::int AS pending_files,
+               coalesce(sum(size_bytes) FILTER (WHERE ref_type IS NULL), 0)::text AS pending_bytes,
+               coalesce(sum(size_bytes), 0)::text AS day_bytes
+        FROM oa_attachments WHERE uploaded_by = ${actor} AND created_at >= now() - interval '24 hours'`;
+      if (used!.pendingFiles + 1 > PENDING_MAX_FILES || Number(used!.pendingBytes) + buf.length > PENDING_MAX_BYTES) {
+        throw unprocessable('ATTACHMENT_QUOTA', `还没用上的附件太多（最多 ${PENDING_MAX_FILES} 个、共 100MB）：先提交手头的单据，没用上的 24 小时后自动清掉`);
+      }
+      if (Number(used!.dayBytes) + buf.length > DAY_MAX_BYTES) throw unprocessable('ATTACHMENT_QUOTA', '24 小时内上传的附件已到 300MB，明天再传');
+      const [row] = await tx<Row[]>`
+        INSERT INTO oa_attachments (client_key, uploaded_by, file_name, mime, size_bytes, sha256, data, thumb)
+        VALUES (${input.clientKey}, ${actor}, ${input.fileName}, ${input.mime}, ${buf.length}, ${sha}, ${buf}, ${thumb})
+        RETURNING ${COLS}`;
+      return { row: row!, created: true };
+    });
+    if (result.created) reply.code(201);
+    return toView(result.row);
   });
 
   const serve = (part: 'data' | 'thumb') => async (req: FastifyRequest, reply: FastifyReply) => {
