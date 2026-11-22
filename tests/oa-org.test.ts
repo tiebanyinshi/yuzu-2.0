@@ -76,6 +76,9 @@ describe('OA-01 组织架构与员工档案', () => {
     let r = await api(ctx.app, ctx.owner, 'PUT', `/api/oa/employees/${a.id}/profile`, { empNo: 'E001', phone: '13800000001', hireDate: '2026-01-05', version: 0 });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(emp(r.body as OrgOverview, a.id)).toMatchObject({ empNo: 'E001', phone: '13800000001', hireDate: '2026-01-05', status: 'active', version: 1, department: 'male' });
+    // 审计里手机号只记打码的
+    const [audit] = await ctx.sql<{ detail: { phone: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'employee_profile_updated' AND target_id = ${String(a.id)} ORDER BY id DESC LIMIT 1`;
+    expect(audit!.detail.phone).toBe('138 **** 0001');
     // 还拿着版本 0 再提交：被拒
     r = await api(ctx.app, ctx.owner, 'PUT', `/api/oa/employees/${a.id}/profile`, { empNo: 'E002', phone: null, hireDate: null, version: 0 });
     expect(r.status).toBe(409);

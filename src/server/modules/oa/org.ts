@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { departmentOfPosition, EMP_NO_PATTERN, PHONE_PATTERN, wouldCycle, type EmployeeProfile, type EmploymentStatus, type OrgDepartmentNode, type OrgOverview } from '@shared/oa';
 import type { OrgDepartment, PositionKey } from '@shared/positions';
 import { isUniqueViolation, type Db, type Tx } from '../../db';
+import { maskPhone } from '@shared/labels';
 import { can } from '@shared/permissions';
 import { guardAny } from '../../auth/guard';
 import { destroyStaffSessions } from '../../auth/session';
@@ -220,7 +221,8 @@ export function registerOaOrgRoutes(app: FastifyInstance, { sql }: Deps) {
           action: 'employee_profile_updated',
           targetType: 'staff',
           targetId: id,
-          detail: { empNo: input.empNo, phone: input.phone, hireDate: input.hireDate },
+          // 审计按经办人的当前门店归档、看审计的不再核对员工范围（Codex 审查 7d52b44）：手机号只记打码的，不把别的门店员工的号码带进审计
+          detail: { empNo: input.empNo, phone: input.phone === null ? null : maskPhone(input.phone), hireDate: input.hireDate },
           ip: req.ip,
         });
       });
