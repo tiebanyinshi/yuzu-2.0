@@ -4,11 +4,15 @@
 //   · 门店按出品口配置房态点单能点哪几个分类（康美部在房间里点的就是这几类）。
 
 import type { DiningOutlet } from './dining';
+import type { Permission } from './permissions';
 
 /** 房态点单能点的出品口：水吧、果吧 */
 export const ROOM_ORDER_OUTLETS = ['water', 'fruit'] as const satisfies readonly DiningOutlet[];
 export type RoomOrderOutlet = (typeof ROOM_ORDER_OUTLETS)[number];
 export const ROOM_ORDER_OUTLET_LABELS: Record<RoomOrderOutlet, string> = { water: '水吧', fruit: '果吧' };
+/** 在哪个出品口下单要哪一项权限（与点单页相同）；处理这个出品口的待确认点单也要它 */
+export const ROOM_ORDER_PERMISSIONS: Record<RoomOrderOutlet, Permission> = { water: 'dining.orderWater', fruit: 'dining.orderFruit' };
+
 export const isRoomOrderOutlet = (v: unknown): v is RoomOrderOutlet => typeof v === 'string' && (ROOM_ORDER_OUTLETS as readonly string[]).includes(v);
 
 /** 一道菜在房态点单里归哪个分类：有点单小分类的（水吧：手作饮料、糖水、调酒）按小分类，没有的（果吧）按价目分类 */

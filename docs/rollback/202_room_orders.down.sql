@@ -5,6 +5,6 @@ BEGIN;
 DROP TABLE IF EXISTS room_order_lines;
 DROP TABLE IF EXISTS room_orders;
 DROP TABLE IF EXISTS room_order_outlets;
--- room_order 这一类操作编号与作废登记留着（只追加的记录不删）；约束里多出的 room_order 不影响旧版本
+-- room_order_water、room_order_fruit 这两类操作编号与作废登记留着（只追加的记录不删）；约束里多出的两类不影响旧版本
 DELETE FROM schema_migrations WHERE version = '202_room_orders.sql';
 COMMIT;

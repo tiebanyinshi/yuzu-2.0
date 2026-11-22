@@ -123,9 +123,11 @@ describe('房态点单（P07）', () => {
     // 同一编号换了内容：拒绝
     expect((await place('H601', 'water', [{ name: '椰子水' }], {}, km, key)).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
     // 断网后的查回走点单页那一套
-    expect((await api(ctx.app, km, 'GET', `/api/room-center/order-ops/${key}`)).body).toEqual({ found: true, type: 'room_order', visitId: g.visitId });
+    expect((await api(ctx.app, km, 'GET', `/api/room-center/order-ops/water/${key}`)).body).toEqual({ found: true, type: 'room_order', visitId: g.visitId });
     const [op] = await ctx.sql<{ opType: string }[]>`SELECT op_type FROM idempotency_keys WHERE key = ${key}`;
-    expect(op!.opType).toBe('room_order');
+    expect(op!.opType).toBe('room_order_water');
+    // 换个出品口问同一个编号：答「没查到」
+    expect((await api(ctx.app, km, 'GET', `/api/room-center/order-ops/fruit/${key}`)).body).toEqual({ found: false, abandoned: false });
     // 再点一单果吧
     expect((await place('H601', 'fruit', [{ name: '果盘' }])).status).toBe(200);
     expect((await card('H601')).orders).toEqual({ count: 2, amount: 9600 });
@@ -240,17 +242,17 @@ describe('房态点单（P07）', () => {
     expect(me.permissions).not.toContain('frontdesk.read');
     const key = randomUUID();
     expect((await place('H604', 'water', [{ name: '柠檬茶' }], {}, water, key)).status).toBe(200);
-    expect((await api(ctx.app, water, 'GET', `/api/room-center/order-ops/${key}`)).body).toMatchObject({ found: true, type: 'room_order' });
+    expect((await api(ctx.app, water, 'GET', `/api/room-center/order-ops/water/${key}`)).body).toMatchObject({ found: true, type: 'room_order' });
     // 点单页、前台的查回与作废照旧要「餐饮点单」或前台权限
     expect((await api(ctx.app, water, 'GET', `/api/dining/ops/${key}`)).status).toBe(403);
     expect((await api(ctx.app, water, 'POST', `/api/dining/ops/${randomUUID()}/abandon`, {})).status).toBe(403);
     // 确认作废只登记房态点单这一类：同一个编号的前台挂账照样生效（Codex 安全审查 e1c3203）
     const other = randomUUID();
-    const abandoned = await api(ctx.app, water, 'POST', `/api/room-center/order-ops/${other}/abandon`, {});
+    const abandoned = await api(ctx.app, water, 'POST', `/api/room-center/order-ops/water/${other}/abandon`, {});
     expect(abandoned.status, JSON.stringify(abandoned.body)).toBe(200);
     expect(abandoned.body).toEqual({ found: false, abandoned: true });
     const [fence] = await ctx.sql<{ opType: string }[]>`SELECT op_type FROM op_fences WHERE key = ${other}`;
-    expect(fence!.opType).toBe('room_order');
+    expect(fence!.opType).toBe('room_order_water');
     const g = await enter();
     const post = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${g.visitId}/charges`, {
       clientKey: other,
@@ -259,8 +261,15 @@ describe('房态点单（P07）', () => {
     });
     expect(post.status, JSON.stringify(post.body)).toBe(200);
     // 别的挂账的编号：这里只答「没查到」，也不作废
-    expect((await api(ctx.app, water, 'GET', `/api/room-center/order-ops/${other}`)).body).toEqual({ found: false, abandoned: false });
-    expect((await api(ctx.app, water, 'POST', `/api/room-center/order-ops/${other}/abandon`, {})).body).toEqual({ found: false, abandoned: false });
+    expect((await api(ctx.app, water, 'GET', `/api/room-center/order-ops/water/${other}`)).body).toEqual({ found: false, abandoned: false });
+    expect((await api(ctx.app, water, 'POST', `/api/room-center/order-ops/water/${other}/abandon`, {})).body).toEqual({ found: false, abandoned: false });
+    // 果吧的待确认点单：只有水吧权限的人碰不到——果吧的入口 403；从水吧的入口作废只登记水吧这一类，果吧那一单照样生效（Codex 安全审查 404eb2f）
+    const fruitKey = randomUUID();
+    expect((await api(ctx.app, water, 'GET', `/api/room-center/order-ops/fruit/${fruitKey}`)).status).toBe(403);
+    expect((await api(ctx.app, water, 'POST', `/api/room-center/order-ops/fruit/${fruitKey}/abandon`, {})).status).toBe(403);
+    expect((await api(ctx.app, water, 'POST', `/api/room-center/order-ops/water/${fruitKey}/abandon`, {})).body).toEqual({ found: false, abandoned: true });
+    expect((await place('H604', 'fruit', [{ name: '果盘' }], {}, km, fruitKey)).status).toBe(200);
+    expect((await api(ctx.app, km, 'GET', `/api/room-center/order-ops/fruit/${fruitKey}`)).body).toMatchObject({ found: true, type: 'room_order' });
   });
 
   it('只为点单来看房态的：看板只给精简的卡片，不给客人、手牌、技师、金额、客房房价（Codex 安全审查 e1c3203）', async () => {

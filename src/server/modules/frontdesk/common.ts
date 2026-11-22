@@ -68,8 +68,9 @@ export const FRONTDESK_OPS = [
   // 对象是房间（空间），在「房态中心」处理
   'space_state',
   'space_dispatch',
-  // 房态点单（回测整改 P07，room-orders.ts）：挂账，但编号单独一类；查回、作废在 /api/room-center/order-ops（水吧 / 果吧下单权限）
-  'room_order',
+  // 房态点单（回测整改 P07，room-orders.ts）：挂账，但编号按出品口单独成类；查回、作废在 /api/room-center/order-ops/:outlet（那个出品口的下单权限）
+  'room_order_water',
+  'room_order_fruit',
 ] as const;
 export type FrontdeskOp = (typeof FRONTDESK_OPS)[number];
 
@@ -105,8 +106,9 @@ export const FRONTDESK_OP_PERMISSIONS: Record<FrontdeskOp, readonly Permission[]
   // 与房态中心各自的接口一致：改房态要「客房打扫、维修」，换房、退房、并房要「钟房派钟」
   space_state: ['room.housekeep'],
   space_dispatch: ['technician.dispatch'],
-  // 前台这边的通用作废按前台挂账；房态点单自己的作废入口按水吧 / 果吧的下单权限（room-orders.ts）
-  room_order: ['frontdesk.operate'],
+  // 与下单一致：作废水吧的房态点单要「在水吧下单」，果吧的要「在果吧下单」
+  room_order_water: ['dining.orderWater'],
+  room_order_fruit: ['dining.orderFruit'],
 };
 
 export const abandonedError = () => conflict('OP_ABANDONED', '这笔操作已在「结果待确认」时由员工作废，不会再生效；如仍需要，请重新填写一笔');

@@ -160,8 +160,9 @@ export const FENCED_OPS = [
   // 编号记在 idempotency_keys（ref_id 是记下的第一条 space_room_events）。登记、续钟照旧是挂账（bill_post），派对房开单照旧是 usage_open
   'space_state',
   'space_dispatch',
-  // 房态点单（回测整改 P07）：单独一类，只有水吧 / 果吧下单权限的人作废时碰不到别的挂账
-  'room_order',
+  // 房态点单（回测整改 P07）：按出品口各一类，只有一个出品口下单权限的人作废时碰不到别的挂账、另一个出品口的点单
+  'room_order_water',
+  'room_order_fruit',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 
