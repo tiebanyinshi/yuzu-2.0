@@ -33,14 +33,14 @@ import type { Db, Fragment } from '../../db';
 import { guard, guardAny } from '../../auth/guard';
 import type { Deps } from '../../lib/context';
 import { clockIn, dateIn } from '../../lib/dates';
-import { conflict, notFound, unprocessable } from '../../lib/errors';
+import { conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
 import { assertNotFenced, lockOpKey } from '../../lib/fences';
 import { hashRequest } from '../../lib/idempotency';
 import { currentStoreId } from '../../lib/store-context';
 import { dateSchema, parse } from '../../lib/validate';
 import { erpOpAbandoned } from '../erp-ops';
 import { bindAttachments, registerAttachmentRef } from './attachments';
-import { liveSchedule } from './schedule-overlap';
+import { liveSchedule, lockStaffAttendance } from './schedule-overlap';
 import { deptFilter } from './schedules';
 
 const PunchInput = z
@@ -264,25 +264,30 @@ export function registerOaPunchRoutes(app: FastifyInstance, deps: Deps) {
     const store = currentStoreId();
     if (input.storeId !== store) throw conflict('STORE_SWITCHED', '这次打卡是在别的门店的页面上发的：请换回那家门店再查回或重新提交');
     const me = req.actor.id;
-    const hash = hashRequest({ ...input, clientKey: undefined });
+    // 请求散列带上是谁打的：同一编号换了人（同一台电脑换人登录后从「结果待确认」重提）不能当成原样重提
+    const hash = hashRequest({ ...input, clientKey: undefined, staffId: me });
     const at = new Date();
     const out = await sql.begin(async (tx): Promise<{ id: number; replayed: boolean }> => {
       await lockOpKey(tx, input.clientKey);
-      const [seen] = await tx<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+      const [seen] = await tx<{ opType: string; requestHash: string; refId: number; staffId: number }[]>`
+        SELECT op_type, request_hash, ref_id, staff_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
       if (seen) {
+        if (Number(seen.staffId) !== me) throw forbidden('这条打卡是别人打的：只能查回、重提自己的打卡');
         if (seen.opType !== 'oa_punch' || seen.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次操作，请刷新页面后重新打卡');
         return { id: Number(seen.refId), replayed: true };
       }
       await assertNotFenced(tx, input.clientKey, 'oa_punch', erpOpAbandoned);
-      // 同一人的打卡串行：有效卡（第一次 / 最后一次）与「这一格打过没有」不乱
-      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`oa_punch:${me}`}, 0))`;
+      // 员工的考勤锁：同一人的打卡串行（有效卡「第一次 / 最后一次」不乱），与保存这位员工的排班也串行
+      await lockStaffAttendance(tx, [me]);
 
       const group = await groupOf(tx, me);
       if (!group) throw unprocessable('PUNCH_NO_GROUP', '你还没进这家门店的考勤组，打不了卡：请找人事把你加进考勤组');
       // 位置：最近的打卡点与距离
       const here = input.lat !== undefined && input.lng !== undefined ? { lat: input.lat, lng: input.lng } : null;
-      const nearest = here ? (group.locations.map((l) => ({ ...l, distance: distanceMeters(here, l) })).sort((a, b) => a.distance - b.distance)[0] ?? null) : null;
-      const inRange = !!nearest && nearest.distance <= nearest.radiusM;
+      // 在任何一个打卡点的范围里就算在范围内（各点半径不同，最近的那个不一定覆盖到）；记下的是范围内最近的那个，都不在就记最近的
+      const measured = here ? group.locations.map((l) => ({ ...l, distance: distanceMeters(here, l) })).sort((a, b) => a.distance - b.distance) : [];
+      const inRange = measured.some((l) => l.distance <= l.radiusM);
+      const nearest = measured.find((l) => l.distance <= l.radiusM) ?? measured[0] ?? null;
       if (group.gpsRequired && !here) throw unprocessable('LOCATION_REQUIRED', '这个考勤组打卡要定位：请允许浏览器取位置后再打卡');
       if (input.outwork && !here) throw unprocessable('LOCATION_REQUIRED', '外勤打卡要带上当前位置');
       const locationOk = !group.gpsRequired || inRange;

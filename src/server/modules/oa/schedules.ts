@@ -35,7 +35,7 @@ import { currentStoreId } from '../../lib/store-context';
 import { dateSchema, parse } from '../../lib/validate';
 import { lockSetup, SHIFT_COLS, storeEmployee } from './attendance-setup';
 import { notify } from './notifications';
-import { liveSchedule, overlapProblem } from './schedule-overlap';
+import { liveSchedule, lockStaffAttendance, overlapProblem } from './schedule-overlap';
 
 const view = guardAny('hr.attendance', 'hr.attendanceDept');
 const manage = guard('hr.attendance');
@@ -172,6 +172,8 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
       const [group] = await tx<{ id: number; name: string }[]>`SELECT id, name FROM oa_attendance_groups WHERE id = ${input.groupId} AND store_id = ${store} AND active`;
       if (!group) throw notFound('考勤组不存在或已停用，请刷新');
       const staffIds = [...new Set(input.cells.map((c) => c.staffId))].sort((a, b) => a - b);
+      // 这几位员工的考勤锁：同时到的打卡等这次保存完再按新的排班匹配
+      await lockStaffAttendance(tx, staffIds);
       const members = await tx<{ id: number }[]>`
         SELECT s.id FROM oa_group_members m JOIN staff s ON s.id = m.staff_id WHERE m.group_id = ${group.id} AND s.id IN ${tx(staffIds)} AND ${storeEmployee(tx)}`;
       if (members.length !== staffIds.length) throw unprocessable('SCHEDULE_MEMBER', '有员工已经不在这个考勤组里或已离职，请刷新');

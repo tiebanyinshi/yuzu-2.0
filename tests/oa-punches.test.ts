@@ -179,6 +179,20 @@ describe('OA-06 打卡', () => {
     expect(shared.punch.sharedLocation).toBe(true);
   });
 
+  it('几个打卡点半径不同：在任何一个的范围里就算在范围内（最近的不一定覆盖到），记下的是覆盖到的那个', async () => {
+    at(D, '10:30');
+    const m = await hire('pc_multi', 'kitchen.staff');
+    // 北边约 100 米、半径 50 米（不覆盖）；南边约 200 米、半径 300 米（覆盖）
+    let s = await create('locations', { name: '北门', lat: HERE.lat + 0.0009, lng: HERE.lng, radiusM: 50 });
+    const north = s.locations.find((x) => x.name === '北门')!.id;
+    s = await create('locations', { name: '南院', lat: HERE.lat - 0.0018, lng: HERE.lng, radiusM: 300 });
+    const south = s.locations.find((x) => x.name === '南院')!.id;
+    await create('groups', { name: '两个点', gpsRequired: true, locationIds: [north, south], memberIds: [m.id] });
+    const r = await ok(m, HERE);
+    expect(r.punch).toMatchObject({ locationOk: true, outwork: false, locationName: '南院' });
+    expect(r.punch.distanceM).toBeGreaterThan(150);
+  });
+
   it('没进考勤组不能打卡；只能查回、作废自己的打卡编号', async () => {
     at(D, '10:00');
     expect(code(await punch(loner))).toBe('PUNCH_NO_GROUP');
@@ -190,7 +204,9 @@ describe('OA-06 打卡', () => {
     const late = randomUUID();
     expect((await api(ctx.app, c.cookie, 'POST', `/api/erp/ops/${late}/abandon`, { type: 'oa_punch', summary: '打卡' })).status).toBe(200);
     expect(code(await punch(c, {}, late))).toBe('OP_ABANDONED');
-    expect(code(await punch(c, { device: '换了内容' }, key))).toBe('IDEMPOTENCY_CONFLICT');
+    // 别人拿这个编号原样重提（同一台电脑换人登录以后从「结果待确认」重提）：拒绝，不把 b 的打卡给 c 看
+    expect((await punch(c, {}, key)).status).toBe(403);
+    expect(code(await punch(b, { device: '换了内容' }, key))).toBe('IDEMPOTENCY_CONFLICT');
   });
 
   it('已经打过卡的那一班不能从排班里删；没打过的照常改', async () => {

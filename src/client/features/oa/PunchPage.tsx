@@ -36,26 +36,38 @@ const TODAY_KEY = ['oa', 'punch-today'] as const;
 type Fix = { lat: number; lng: number; accuracy: number };
 type Locate = { state: 'idle' | 'locating' } | { state: 'ok'; fix: Fix } | { state: 'failed'; message: string };
 
-/** 取一次定位（高精度，15 秒）；进页面时可以用半分钟内取过的，「重新定位」一定重新取 */
+/**
+ * 取一次定位（高精度，15 秒）；进页面时可以用半分钟内取过的，「重新定位」一定重新取。
+ * 每次打卡前都再取一次（最多用 10 秒内的）：页面开着人走远了，不能拿进页面时的位置打卡（Codex 审查 10545e1）
+ */
 function useLocation() {
   const [loc, setLoc] = useState<Locate>({ state: 'idle' });
   const seq = useRef(0);
-  const locate = (fresh = false) => {
-    if (!('geolocation' in navigator)) {
-      setLoc({ state: 'failed', message: '这个浏览器取不了位置' });
-      return;
-    }
-    const mine = ++seq.current;
-    setLoc({ state: 'locating' });
-    navigator.geolocation.getCurrentPosition(
-      (p) => mine === seq.current && setLoc({ state: 'ok', fix: { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy } }),
-      (e) => mine === seq.current && setLoc({ state: 'failed', message: e.code === e.PERMISSION_DENIED ? '没有允许取位置：请在浏览器设置里允许这个网站使用位置' : '没取到位置，请到开阔处再试' }),
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: fresh ? 0 : 30_000 },
-    );
-  };
+  const locate = (maximumAge = 30_000): Promise<Fix | null> =>
+    new Promise((resolve) => {
+      if (!('geolocation' in navigator)) {
+        setLoc({ state: 'failed', message: '这个浏览器取不了位置' });
+        resolve(null);
+        return;
+      }
+      const mine = ++seq.current;
+      setLoc({ state: 'locating' });
+      navigator.geolocation.getCurrentPosition(
+        (p) => {
+          const fix = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy };
+          if (mine === seq.current) setLoc({ state: 'ok', fix });
+          resolve(fix);
+        },
+        (e) => {
+          if (mine === seq.current) setLoc({ state: 'failed', message: e.code === e.PERMISSION_DENIED ? '没有允许取位置：请在浏览器设置里允许这个网站使用位置' : '没取到位置，请到开阔处再试' });
+          resolve(null);
+        },
+        { enableHighAccuracy: true, timeout: 15_000, maximumAge },
+      );
+    });
   // 进页面就取一次
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => locate(), []);
+  useEffect(() => void locate(), []);
   return { loc, locate };
 }
 
@@ -125,8 +137,10 @@ export function PunchPage() {
 
   const group = data?.group ?? null;
   const fix = loc.state === 'ok' ? loc.fix : null;
-  const nearest = fix && group?.locations.length ? group.locations.map((l) => ({ ...l, distance: distanceMeters(fix, l) })).sort((a, b) => a.distance - b.distance)[0]! : null;
-  const inRange = !!nearest && nearest.distance <= nearest.radiusM;
+  // 在任何一个打卡点的范围里就算在范围内（与服务端一致）；显示范围内最近的那个，都不在就显示最近的
+  const measured = fix && group ? group.locations.map((l) => ({ ...l, distance: distanceMeters(fix, l) })).sort((a, b) => a.distance - b.distance) : [];
+  const inRange = measured.some((l) => l.distance <= l.radiusM);
+  const nearest = measured.find((l) => l.distance <= l.radiusM) ?? measured[0] ?? null;
   const needFix = !!group?.gpsRequired;
 
   const send = async (extra: { outwork?: { reason: string; photoId: number } }) => {
@@ -138,6 +152,12 @@ export function PunchPage() {
     setBusy(true);
     setError(null);
     try {
+      // 每次打卡前重新取一次位置（最多用 10 秒内的）；记在本机的原请求带着这次的位置，结果待确认重提时原样用
+      const here = await locate(10_000);
+      if (needFix && !here) {
+        setError('没取到当前位置：这个考勤组打卡要定位，请到开阔处、允许取位置后再打');
+        return;
+      }
       const key = uuid();
       const r = await sendErpOp<PunchResult>({
         key,
@@ -146,7 +166,7 @@ export function PunchPage() {
         body: {
           clientKey: key,
           storeId: session.store.id,
-          ...(fix ? { lat: Number(fix.lat.toFixed(6)), lng: Number(fix.lng.toFixed(6)), accuracy: Math.round(fix.accuracy) } : {}),
+          ...(here ? { lat: Number(here.lat.toFixed(6)), lng: Number(here.lng.toFixed(6)), accuracy: Math.round(here.accuracy) } : {}),
           device: `${navigator.platform || ''} ${screen.width}×${screen.height}`.trim().slice(0, 200),
           ...extra,
         },
@@ -230,7 +250,7 @@ export function PunchPage() {
                     <span className="text-ink-3">已取到位置（精度约 {Math.round(fix!.accuracy)} 米）</span>
                   )}
                   <div>
-                    <Button size="sm" variant="ghost" icon={<LocateFixed className="size-4" />} onClick={() => locate(true)} disabled={loc.state === 'locating'} data-testid="punch-relocate">
+                    <Button size="sm" variant="ghost" icon={<LocateFixed className="size-4" />} onClick={() => void locate(0)} disabled={loc.state === 'locating'} data-testid="punch-relocate">
                       重新定位
                     </Button>
                   </div>
