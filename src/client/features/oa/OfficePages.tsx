@@ -1,4 +1,4 @@
-// OA 员工端（docs/OA.md 第 1、8 节）：「办公」首页与「我的排班」。登录就能用，只看本人的。
+// OA 员工端（docs/OA.md 第 1、8 节）：「办公」首页与「我的排班」。OA-14 起首页多「消息」（ImPages.tsx，角标是未读合计）。登录就能用，只看本人的。
 // 入口在账号菜单「办公」（主导航那一列在小屏电脑上已经放不下新的一组；只用 ERP 的后勤也不因此多出门店主导航）。
 //   · 办公首页：常用的几样（打卡、我的排班、通知；审批等随后面的 PR 加进来），手机上一行两个。
 //   · 打卡：PunchPage.tsx（OA-06）。
@@ -7,10 +7,11 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, Palmtree, ScanFace, Stamp } from 'lucide-react';
+import { Bell, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, MessagesSquare, Palmtree, ScanFace, Stamp } from 'lucide-react';
 import { shiftDate } from '@shared/labels';
 import type { MySchedule, MyScheduleItem } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
+import type { ImConversationList } from '@shared/oa-im';
 import { clockText } from '@shared/technician-admin';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
@@ -18,6 +19,7 @@ import { PageHeader } from '../../components/AppShell';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Button, Card, Skeleton } from '../../components/ui';
 import { ApprovalPages } from './ApprovalPages';
+import { ImPages } from './ImPages';
 import { NotificationsPage } from './Notifications';
 import { FacePage } from './FacePage';
 import { MyAttendancePage } from './MyAttendancePage';
@@ -25,6 +27,7 @@ import { MyLeavePage } from './MyLeavePage';
 import { PunchPage } from './PunchPage';
 
 const TILES = [
+  { to: '/oa/im', label: '消息', hint: '同事单聊、群聊，发图片与文件', icon: MessagesSquare, testId: 'oa-tile-im' },
   { to: '/oa/approvals', label: '审批', hint: '请假、加班、出差、报销、补卡', icon: Stamp, testId: 'oa-tile-approvals' },
   { to: '/oa/punch', label: '打卡', hint: '按排班打上下班卡、外勤打卡', icon: Fingerprint, testId: 'oa-tile-punch' },
   { to: '/oa/schedule', label: '我的排班', hint: '这个月每天上什么班', icon: CalendarDays, testId: 'oa-tile-schedule' },
@@ -40,6 +43,8 @@ export function OfficePage() {
   const path = pathname.replace(/\/$/, '');
   return path.startsWith('/oa/approvals') ? (
     <ApprovalPages />
+  ) : path.startsWith('/oa/im') ? (
+    <ImPages />
   ) : path === '/oa/schedule' ? (
     <MySchedulePage />
   ) : path === '/oa/notifications' ? (
@@ -61,6 +66,9 @@ function OfficeHomePage() {
   // 审批的角标：待我审批的张数
   const approvals = useQuery({ queryKey: ['oa', 'approvals', 'summary'], queryFn: () => api.get<ApprovalSummary>('/api/oa/approvals/summary') });
   const todo = approvals.data?.todo ?? 0;
+  // 消息的角标：所有会话的未读合计
+  const im = useQuery({ queryKey: ['oa', 'im', 'list', ''], queryFn: () => api.get<ImConversationList>('/api/oa/im/conversations') });
+  const unread = im.data?.unread ?? 0;
   return (
     <>
       <PageHeader dateMode="calendar" title="办公" subtitle="排班、打卡、审批、工资条等员工自己的事" />
@@ -68,6 +76,11 @@ function OfficeHomePage() {
         {TILES.map((t) => (
           <Link key={t.to} to={t.to} data-testid={t.testId} className="tap relative rounded-lg border border-line bg-card p-4 shadow-card transition-colors hover:border-line-strong">
             <t.icon className="size-6 text-pine" />
+            {t.to === '/oa/im' && unread > 0 && (
+              <span className="num absolute top-3 right-3 rounded-full bg-clay px-2 text-[12px] font-bold text-white" data-testid="oa-tile-im-badge">
+                {unread > 99 ? '99+' : unread}
+              </span>
+            )}
             {t.to === '/oa/approvals' && todo > 0 && (
               <span className="num absolute top-3 right-3 rounded-full bg-clay px-2 text-[12px] font-bold text-white" data-testid="oa-tile-approvals-badge">
                 {todo}
