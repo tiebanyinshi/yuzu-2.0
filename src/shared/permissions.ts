@@ -278,6 +278,8 @@ export const PERMISSIONS = {
   'staff.dept': { roles: ['owner'] },
   // OA 办公（docs/OA.md 第 2 节）：组织架构与员工档案、办理离职；默认给总裁与人力行政部（岗位模板里）
   'hr.org': { roles: ['owner'] },
+  /** 考勤设置与考勤管理（OA-04 起）：班次、打卡点、考勤组；之后的排班、考勤统计、假种也用它。默认给总裁与人力行政部 */
+  'hr.attendance': { roles: ['owner'] },
   'catalog.manage': { roles: ['owner', 'store_manager'] },
   /** 技师名册：新建、编辑、停用技师（v0.7.0，待确认：默认店主与店总） */
   'technician.manage': { roles: ['owner', 'store_manager'] },
@@ -609,6 +611,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'staff.manage': '管理员工账号',
   'staff.dept': '管理本部门员工账号（新建、编辑、停用本部门的员工岗位）',
   'hr.org': '组织架构与员工档案：部门上级与主管、工号、手机号、入职与离职',
+  'hr.attendance': '考勤管理：班次、打卡点、考勤组、排班与考勤统计',
   'catalog.manage': '管理充值套餐与消费项目',
   'technician.manage': '维护技师名册',
   'technician.dispatch': '钟房派钟、上下钟、加钟、退钟、上牌',
@@ -777,7 +780,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
     ],
   },
   { title: '员工工作台', items: ['canteen.manage', 'patrol.read', 'patrol.manage'] },
-  { title: '人事与办公', items: ['hr.org'] },
+  { title: '人事与办公', items: ['hr.org', 'hr.attendance'] },
   { title: '当场授权', items: ['auth.overLimit', 'auth.vipOverride', 'auth.discount', 'auth.memberRefund', 'auth.memberPhone'] },
   { title: '数据看板', items: ['report.executive', 'report.members', 'report.technicians', 'report.commission', 'marketing.cost'] },
   { title: '管理后台', items: ['staff.manage', 'staff.dept', 'catalog.manage', 'emenu.manage', 'technician.manage', 'settings.manage', 'audit.read'] },
