@@ -1355,6 +1355,7 @@ const CHANGE_ACTIONS = [
   'plan_saved',
   'item_saved',
   'price_list_imported',
+  'price_catalog',
   'ticket_type_saved',
   'staff_created',
   'staff_updated',
@@ -1430,6 +1431,8 @@ function describeChange(action: string, detail: Record<string, unknown>): string
       return `保存了项目${name ? `「${name}」` : ''}`;
     case 'price_list_imported':
       return '导入了价目表';
+    case 'price_catalog':
+      return `价目表：${String((detail as { label?: unknown } | null)?.label ?? '改动')}`;
     case 'ticket_type_saved':
       return `保存了票种${name ? `「${name}」` : ''}`;
     case 'staff_created':

@@ -77,6 +77,7 @@
 - [`PATROL_V809.md`](PATROL_V809.md)：安保巡场与员工工作台（8.0.9）
 - [`PAYMENTS.md`](PAYMENTS.md)：付款流（v0.7.32）
 - [`POSITIONS_V8118.md`](POSITIONS_V8118.md)：组织架构与岗位（8.1.18）
+- [`PRICE_CATALOG.md`](PRICE_CATALOG.md)：价目表录入（汤崎宝安全品类价目表 1119）
 - [`PURCHASING_V801.md`](PURCHASING_V801.md)：采购组整改需求（8.0.1）
 - [`REQUISITIONS.md`](REQUISITIONS.md)：部门采购需求单、采购单的图片与规格（v0.7.8，飞书需求 RQ-005 第二步）
 - [`RESILIENCE_V813.md`](RESILIENCE_V813.md)：8.1.3 · 代码整洁与网络波动防护

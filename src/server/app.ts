@@ -16,6 +16,7 @@ import { DEFAULT_STORE_ID, runInStore } from './lib/store-context';
 import { registerAdminRoutes } from './modules/admin';
 import { registerPositionCatalogRoutes } from './modules/position-catalog';
 import { registerRoomOrderRoutes } from './modules/room-orders';
+import { registerPriceCatalogRoutes } from './modules/price-catalog';
 import { registerTechBoardRoutes } from './modules/tech-board';
 import type { PingReply } from '@shared/resilience';
 import { registerAuditRoutes } from './modules/audit';
@@ -328,6 +329,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   // 分部门岗位职权配置（回测整改 P05）
   registerPositionCatalogRoutes(app, deps);
   registerRoomOrderRoutes(app, deps);
+  registerPriceCatalogRoutes(app, deps);
   registerTechBoardRoutes(app, deps);
   registerMasterRoutes(app, deps);
   registerDocRoutes(app, deps);
