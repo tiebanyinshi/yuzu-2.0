@@ -70,11 +70,14 @@ async function memberOf(db: Db, conversationId: number, staffId: number): Promis
   return c ?? null;
 }
 
-// 聊天文件：只有这个会话现在的成员看得到；撤回了的不再给
+// 聊天文件：只有这个会话现在的成员、而且现在还能用即时通讯（在职员工，不是专用账号）才看得到；撤回了的不再给
 registerAttachmentRef(REF, async (db, actor, refId) => {
+  if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(actor.role)) return false;
   const [ok] = await db`
-    SELECT 1 FROM oa_im_messages msg JOIN oa_im_members m ON m.conversation_id = msg.conversation_id AND m.staff_id = ${actor.id} AND m.left_at IS NULL
-    WHERE msg.id = ${refId} AND msg.revoked_at IS NULL`;
+    SELECT 1 FROM oa_im_messages msg
+    JOIN oa_im_members m ON m.conversation_id = msg.conversation_id AND m.staff_id = ${actor.id} AND m.left_at IS NULL
+    JOIN staff s ON s.id = m.staff_id LEFT JOIN staff_profiles p ON p.staff_id = s.id
+    WHERE msg.id = ${refId} AND msg.revoked_at IS NULL AND ${onDuty(db)}`;
   return !!ok;
 });
 

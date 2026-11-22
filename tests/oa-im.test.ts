@@ -50,6 +50,7 @@ afterAll(async () => {
 describe('OA-14 即时通讯', () => {
   let dm: number;
   let group: number;
+  let picId: number;
 
   it('单聊：同两个人只有一个；不能和自己聊；离职的不行', async () => {
     dm = await direct(emp.a!, emp.b!);
@@ -128,6 +129,7 @@ describe('OA-14 即时通讯', () => {
 
   it('图片：只有会话成员看得到附件；发图片要选图片', async () => {
     const pic = await upload(emp.a!);
+    picId = pic.id;
     const r = await api<ImSent>(ctx.app, emp.a!.cookie, 'POST', `/api/oa/im/conversations/${group}/messages`, { clientKey: randomUUID(), kind: 'image', attachmentId: pic.id });
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     expect(r.body.message.attachment).toMatchObject({ id: pic.id, isImage: true });
@@ -198,8 +200,8 @@ describe('OA-14 即时通讯', () => {
     expect(code(await mk())).toBe('GROUP_QUOTA');
   });
 
-  it('专用账号（平板、他店）不能用即时通讯：接口一律 403，也不能被拉进会话', async () => {
-    for (const role of ['tablet', 'other_store'] as const) {
+  it('专用账号（平板、他店、设计师）不能用即时通讯：接口一律 403，也不能被拉进会话', async () => {
+    for (const role of ['tablet', 'other_store', 'designer'] as const) {
       const username = `im_${role}`;
       const id = await createStaff(ctx.sql, { username, displayName: username, role, password: PASSWORD, mustChangePassword: false });
       const cookie = await login(ctx.app, username);
@@ -208,5 +210,10 @@ describe('OA-14 即时通讯', () => {
       expect((await api(ctx.app, cookie, 'GET', `/api/oa/im/conversations/${dm}/messages`)).status).toBe(403);
       expect((await api(ctx.app, emp.a!.cookie, 'POST', '/api/oa/im/direct', { staffId: id })).status).toBe(404);
     }
+    // 原来是员工、后来改成专用账号的：成员记录还在，也看不到聊天文件
+    const get = () => ctx.app.inject({ method: 'GET', url: `/api/oa/attachments/${picId}`, headers: { cookie: emp.b!.cookie } });
+    expect((await get()).statusCode).toBe(200);
+    await ctx.sql`UPDATE staff SET role = 'designer' WHERE id = ${emp.b!.id}`;
+    expect((await get()).statusCode).toBe(404);
   });
 });
