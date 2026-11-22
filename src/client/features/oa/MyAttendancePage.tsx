@@ -4,13 +4,22 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { attendanceIssues, ATTENDANCE_STATUS_LABELS, type MyAttendance } from '@shared/oa';
+import { attendanceIssues, ATTENDANCE_STATUS_LABELS, type AttendanceMonthStats, type MyAttendance } from '@shared/oa';
 import { clockText } from '@shared/technician-admin';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/AppShell';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Badge, Button, Card, Skeleton } from '../../components/ui';
+
+/** 本月汇总（月报的几项，员工看得懂的叫法） */
+const SUMMARY: { key: keyof AttendanceMonthStats; label: string }[] = [
+  { key: 'scheduledDays', label: '应出勤' },
+  { key: 'attendedDays', label: '实际出勤' },
+  { key: 'lateCount', label: '迟到' },
+  { key: 'missingCount', label: '缺卡' },
+  { key: 'absentCount', label: '旷工' },
+];
 
 function addMonths(month: string, n: number): string {
   const [y, m] = month.split('-').map(Number) as [number, number];
@@ -43,6 +52,16 @@ export function MyAttendancePage() {
               </p>
               <Button size="sm" variant="ghost" icon={<ChevronRight className="size-4" />} onClick={() => current && setMonth(addMonths(current, 1))} aria-label="下个月" />
             </div>
+            <dl className="mb-3 grid grid-cols-3 gap-2 rounded-md bg-paper-2 p-3 text-center sm:grid-cols-5" data-testid="my-attendance-summary">
+              {SUMMARY.map((c) => (
+                <div key={c.key}>
+                  <dt className="text-[12px] text-ink-3">{c.label}</dt>
+                  <dd className="num text-[16px] font-bold text-ink" data-testid={`my-att-sum-${c.key}`}>
+                    {d!.summary[c.key]}
+                  </dd>
+                </div>
+              ))}
+            </dl>
             {d!.rows.length === 0 ? (
               <EmptyState title="这个月还没有结算的考勤" />
             ) : (

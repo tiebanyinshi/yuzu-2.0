@@ -157,6 +157,9 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   price_entry: ['catalog.manage'],
   price_set: ['catalog.manage'],
   price_link: ['catalog.manage'],
+  // OA-09 假种与假期余额：与新建、调整接口一致
+  oa_leave_type: ['hr.attendance'],
+  oa_leave_adjust: ['hr.attendance'],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -243,6 +246,9 @@ const READ: Record<ErpOpType, Permission[]> = {
   price_entry: ['catalog.manage'],
   price_set: ['catalog.manage'],
   price_link: ['catalog.manage'],
+  // OA-09 假种与假期余额：与新建、调整接口一致
+  oa_leave_type: ['hr.attendance'],
+  oa_leave_adjust: ['hr.attendance'],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {

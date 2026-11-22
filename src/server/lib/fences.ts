@@ -184,6 +184,8 @@ export const FENCED_OPS = [
   'price_set',
   // 价目表对接收银项目（迁移 237）：编号记在 price_catalog_link_ops
   'price_link',
+  'oa_leave_type',
+  'oa_leave_adjust',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 

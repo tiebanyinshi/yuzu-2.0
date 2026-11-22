@@ -496,6 +496,8 @@ export const ERP_OP_TYPES = [
   'price_set',
   // 价目表对接收银项目（第四批）：编号记在 price_catalog_link_ops
   'price_link',
+  'oa_leave_type',
+  'oa_leave_adjust',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -580,6 +582,8 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   price_entry: '价目改动',
   price_set: '价目切换',
   price_link: '价目对接',
+  oa_leave_type: '新建假种',
+  oa_leave_adjust: '调整假期余额',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */

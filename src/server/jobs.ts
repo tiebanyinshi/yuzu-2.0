@@ -27,6 +27,7 @@ import { runAiSummaries } from './modules/ai';
 import { sweepOvertimeReminders } from './modules/frontdesk/overtime';
 import { sweepTableRestores } from './modules/tables-v8117';
 import { runAttendanceSettlement } from './modules/oa/attendance-daily';
+import { runAnnualLeaveGrant } from './modules/oa/leave';
 import { purgeStaleAttachments } from './modules/oa/attachments';
 
 export interface JobLog {
@@ -86,6 +87,13 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
     if (n > 0) log.info(`考勤结算：${n} 条`);
   } catch (error) {
     log.error('考勤结算失败，10 分钟后重试', error);
+  }
+  // OA 年假自动发放（OA-09）：每小时看一次，在职、填了入职日期、满了一档的员工发今年的额度（每人每年一次）
+  try {
+    const n = await runAnnualLeaveGrant({ sql, config }, now);
+    if (n > 0) log.info(`年假发放：${n} 人次`);
+  } catch (error) {
+    log.error('年假发放失败，一小时后重试', error);
   }
   // 超时提醒（8.1.17 BW-1）：在店到了 12 / 24 / 72 小时的客人，在「异常待办」里记一条（每一级只记一次，经办人「系统」）
   try {

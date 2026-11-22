@@ -20,6 +20,7 @@ import type { Deps } from '../../lib/context';
 import { conflict, notFound, unprocessable } from '../../lib/errors';
 import { currentStoreId } from '../../lib/store-context';
 import { dateSchema, parse } from '../../lib/validate';
+import { staffMonthStats } from './attendance-monthly';
 import { notify } from './notifications';
 import { localMinute } from './punches';
 import { liveSchedule, lockStaffAttendance } from './schedule-overlap';
@@ -244,6 +245,6 @@ export function registerOaAttendanceDailyRoutes(app: FastifyInstance, deps: Deps
     const [y, m] = month.split('-').map(Number) as [number, number];
     const end = shiftDate(m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`, -1);
     const rows = await loadRows(sql, tz, sql`d.staff_id = ${req.actor.id} AND d.business_date BETWEEN ${`${month}-01`} AND ${end}`);
-    return { month, rows };
+    return { month, rows, summary: await staffMonthStats(sql, req.actor.id, month) };
   });
 }
