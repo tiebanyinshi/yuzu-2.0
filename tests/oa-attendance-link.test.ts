@@ -211,6 +211,11 @@ describe('OA-13 考勤与审批联动', () => {
     expect(code(await post(emp.ot!, 'overtime', form('2030-04-20T10:00', '2030-04-20T14:00', '节假日')))).toBe('FORM_INVALID');
     await approved(await submit(emp.ot!, 'overtime', form('2030-04-20T10:00', '2030-04-20T14:00', '休息日')));
     await approved(await submit(emp.ot!, 'overtime', form('2030-04-16T19:00', '2030-04-16T20:30', '工作日')));
+    // 在别的门店提交的不算进这家门店的月报（一人挂几家门店时不重复算），本人的汇总照算
+    const other = await submit(emp.ot!, 'overtime', form('2030-04-22T10:00', '2030-04-22T11:00', '休息日'));
+    await approved(other);
+    const [store2] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('AL2', '二店', 1) RETURNING id`;
+    await ctx.sql`UPDATE oa_approvals SET store_id = ${store2!.id} WHERE id = ${other.id}`;
     // 五月的不算进四月
     await approved(await submit(emp.ot!, 'overtime', form('2030-05-01T10:00', '2030-05-01T12:00', '节假日')));
     // 审批中的不算
@@ -225,6 +230,13 @@ describe('OA-13 考勤与审批联动', () => {
     expect(row(emp.leave!)).toMatchObject({ scheduledDays: 2, attendedDays: 0, absentCount: 0, leaveHalves: 4, leave: [{ name: '年假', halves: 4 }] });
     expect(row(emp.half!)).toMatchObject({ scheduledDays: 1, attendedDays: 1, leaveHalves: 1, leave: [{ name: '事假', halves: 1 }] });
     expect(row(emp.trip!)).toMatchObject({ scheduledDays: 1, attendedDays: 1, tripDays: 1, absentCount: 0 });
+    // 出差那天有一张外勤卡、人事定为不算出勤：出差照样算出勤
+    await punch(emp.trip!, D, '09:00');
+    await ctx.sql`UPDATE oa_punches SET outwork = true, outwork_reason = '在外', lat = 30, lng = 120 WHERE staff_id = ${emp.trip!.id}`;
+    await settle(D, '22:00');
+    await ctx.sql`UPDATE oa_attendance_daily SET outwork_counted = false WHERE staff_id = ${emp.trip!.id}`;
+    const again = (await api<AttendanceMonth>(ctx.app, ctx.owner, 'GET', '/api/oa/attendance/monthly?month=2030-04')).body;
+    expect(again.rows.find((r) => r.staffId === emp.trip!.id)).toMatchObject({ attendedDays: 1, tripDays: 1, outworkCount: 1 });
     expect(row(emp.makeup!)).toMatchObject({ missingCount: 0 });
     const res = await ctx.app.inject({ method: 'GET', url: '/api/oa/attendance/monthly.xlsx?month=2030-04', headers: { cookie: ctx.owner } });
     expect(res.statusCode).toBe(200);
@@ -233,6 +245,6 @@ describe('OA-13 考勤与审批联动', () => {
     expect(mine.summary).toMatchObject({ leaveHalves: 4, scheduledDays: 2, attendedDays: 0 });
     expect(mine.rows.map((r) => r.status)).toEqual(['leave', 'leave']);
     const ot = (await api<MyAttendance>(ctx.app, emp.ot!.cookie, 'GET', '/api/oa/me/attendance?month=2030-04')).body;
-    expect(ot.summary).toMatchObject({ overtimeRestMinutes: 240, overtimeWorkdayMinutes: 90 });
+    expect(ot.summary).toMatchObject({ overtimeRestMinutes: 300, overtimeWorkdayMinutes: 90 });
   });
 });

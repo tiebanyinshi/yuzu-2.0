@@ -47,16 +47,19 @@ type DailyStats = Omit<AttendanceMonthStats, 'leaveHalves' | 'overtimeWorkdayMin
 type Extras = Pick<AttendanceMonthStats, 'leaveHalves' | 'overtimeWorkdayMinutes' | 'overtimeRestMinutes' | 'overtimeHolidayMinutes'> & { leave: { name: string; halves: number }[] };
 const NO_EXTRAS: Extras = { leaveHalves: 0, overtimeWorkdayMinutes: 0, overtimeRestMinutes: 0, overtimeHolidayMinutes: 0, leave: [] };
 
-/** OA-13：几位员工这个月的请假（按考勤覆盖，按假种）与加班（通过的加班单，按开始时间所在的月份） */
-async function extrasOf(db: Db, staffIds: number[], month: string): Promise<Map<number, Extras>> {
+/**
+ * OA-13：几位员工这个月的请假（按考勤覆盖，按假种）与加班（通过的加班单，按开始时间所在的月份）。
+ * storeId：门店的月报只算在这家门店提交的单（一人挂几家门店时不重复算到别家）；本人的汇总不限门店
+ */
+async function extrasOf(db: Db, staffIds: number[], month: string, storeId: number | null): Promise<Map<number, Extras>> {
   const out = new Map<number, Extras>();
   if (!staffIds.length) return out;
   const [from, to] = monthRange(month);
   const get = (id: number) => out.get(id) ?? (out.set(id, { ...NO_EXTRAS, leave: [] }), out.get(id)!);
   const leave = await db<{ staffId: number; name: string; halves: number }[]>`
     SELECT c.staff_id, t.name, sum(c.halves)::int AS halves
-    FROM oa_attendance_covers c JOIN oa_leave_types t ON t.id = c.leave_type_id
-    WHERE c.kind = 'leave' AND c.staff_id IN ${db(staffIds)} AND c.work_date BETWEEN ${from} AND ${to}
+    FROM oa_attendance_covers c JOIN oa_leave_types t ON t.id = c.leave_type_id JOIN oa_approvals a ON a.id = c.approval_id
+    WHERE c.kind = 'leave' AND c.staff_id IN ${db(staffIds)} AND c.work_date BETWEEN ${from} AND ${to} ${storeId === null ? db`` : db`AND a.store_id = ${storeId}`}
     GROUP BY c.staff_id, t.id, t.name, t.sort
     HAVING sum(c.halves) > 0
     ORDER BY c.staff_id, t.sort, t.id`;
@@ -69,6 +72,7 @@ async function extrasOf(db: Db, staffIds: number[], month: string): Promise<Map<
     SELECT applicant_id AS staff_id, form->>'kind' AS kind, sum((form->>'minutes')::int)::int AS minutes
     FROM oa_approvals
     WHERE template_code = 'overtime' AND status = 'approved' AND applicant_id IN ${db(staffIds)} AND left(form->>'start', 7) = ${month}
+      ${storeId === null ? db`` : db`AND store_id = ${storeId}`}
     GROUP BY applicant_id, form->>'kind'`;
   for (const o of overtime) {
     const e = get(Number(o.staffId));
@@ -84,7 +88,8 @@ async function aggregate(db: Db, where: Fragment): Promise<(DailyStats & Omit<St
   const rows = await db<(DailyStats & Omit<StatRow, keyof AttendanceMonthStats>)[]>`
     SELECT d.staff_id, s.display_name AS staff_name, p.emp_no AS employee_no, s.position,
            count(DISTINCT d.business_date)::int AS scheduled_days,
-           count(DISTINCT d.business_date) FILTER (WHERE d.status NOT IN ('absent', 'leave') AND NOT (d.outwork AND NOT d.outwork_counted))::int AS attended_days,
+           -- 出差算出勤（不管那天的外勤算不算）；其余的整天请假、旷工、外勤定为不算出勤的不算
+           count(DISTINCT d.business_date) FILTER (WHERE d.status = 'trip' OR (d.status NOT IN ('absent', 'leave') AND NOT (d.outwork AND NOT d.outwork_counted)))::int AS attended_days,
            count(*) FILTER (WHERE d.late_minutes > 0)::int AS late_count,
            COALESCE(sum(d.late_minutes), 0)::int AS late_minutes,
            count(*) FILTER (WHERE d.early_minutes > 0)::int AS early_count,
@@ -106,7 +111,7 @@ async function aggregate(db: Db, where: Fragment): Promise<(DailyStats & Omit<St
 export async function staffMonthStats(db: Db, staffId: number, month: string): Promise<AttendanceMonthStats> {
   const [from, to] = monthRange(month);
   const [r] = await aggregate(db, db`d.staff_id = ${staffId} AND d.business_date BETWEEN ${from} AND ${to}`);
-  const { leave: _l, ...extras } = (await extrasOf(db, [staffId], month)).get(staffId) ?? NO_EXTRAS;
+  const { leave: _l, ...extras } = (await extrasOf(db, [staffId], month, null)).get(staffId) ?? NO_EXTRAS;
   if (!r) return { ...EMPTY_MONTH_STATS, ...extras };
   const { staffId: _s, staffName: _n, employeeNo: _e, position: _p, ...stats } = r;
   return { ...stats, ...extras };
@@ -126,14 +131,17 @@ async function loadMonth(db: Db, deps: Deps, actor: Actor, q: z.infer<typeof Mon
   const own = departmentOfPosition(actor.position);
   const departments = all ? ORG_DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })) : own ? [{ key: own, name: deptName(own) }] : [];
   const scope = db`${deptFilter(db, actor)} ${q.dept ? db`AND ${inDepartment(db, q.dept)}` : db``}`;
-  const daily = await aggregate(db, db`d.store_id = ${currentStoreId()} AND d.business_date BETWEEN ${from} AND ${to} AND ${scope}`);
+  const store = currentStoreId();
+  const daily = await aggregate(db, db`d.store_id = ${store} AND d.business_date BETWEEN ${from} AND ${to} AND ${scope}`);
   // 这个月只有加班、请假（没有结算过本店排班）的本店员工也列出来
   const others = await db<Omit<StatRow, keyof AttendanceMonthStats>[]>`
     SELECT s.id AS staff_id, s.display_name AS staff_name, p.emp_no AS employee_no, s.position
     FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
     WHERE ${storeEmployee(db)} AND ${scope} AND NOT (s.id = ANY(${daily.map((r) => r.staffId)}::bigint[]))
-      AND (EXISTS (SELECT 1 FROM oa_approvals a WHERE a.applicant_id = s.id AND a.template_code = 'overtime' AND a.status = 'approved' AND left(a.form->>'start', 7) = ${month})
-           OR EXISTS (SELECT 1 FROM oa_attendance_covers c WHERE c.staff_id = s.id AND c.kind = 'leave' AND c.halves > 0 AND c.work_date BETWEEN ${from} AND ${to}))
+      AND (EXISTS (SELECT 1 FROM oa_approvals a WHERE a.applicant_id = s.id AND a.store_id = ${store} AND a.template_code = 'overtime' AND a.status = 'approved'
+                     AND left(a.form->>'start', 7) = ${month})
+           OR EXISTS (SELECT 1 FROM oa_attendance_covers c JOIN oa_approvals a ON a.id = c.approval_id
+                      WHERE c.staff_id = s.id AND a.store_id = ${store} AND c.kind = 'leave' AND c.halves > 0 AND c.work_date BETWEEN ${from} AND ${to}))
     ORDER BY s.id`;
   const base = [
     ...daily,
@@ -146,6 +154,7 @@ async function loadMonth(db: Db, deps: Deps, actor: Actor, q: z.infer<typeof Mon
     db,
     base.map((r) => r.staffId),
     month,
+    store,
   );
   return {
     month,
