@@ -50,7 +50,7 @@ type Which = 'draft' | 'active';
 type SheetFilter = 'all' | PriceSheet;
 type Only = 'all' | 'none' | 'inactive';
 
-const PENDING_TYPES = ['price_import', 'price_rollback'] as const;
+const PENDING_TYPES = ['price_import', 'price_rollback', 'price_entry'] as const;
 
 export function PriceCatalogPane() {
   const qc = useQueryClient();
@@ -174,8 +174,13 @@ function CountTable({ counts, total }: { counts: PriceCountCheck[]; total: { exp
 
 // ───────────────────────── 列表与搜索 ─────────────────────────
 
+const UNCERTAIN_ENTRY = '这一笔结果待确认：已记在本机，请在页面上方查回、按原内容重新提交或作废，确认之前先不改别的项';
+
 function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEntry[] }) {
   const qc = useQueryClient();
+  const session = useSession();
+  // 单条改动有结果待确认的：查回、重提或作废之前不再改（AGENTS.md「结果待确认」）
+  const locked = useErpPending(['price_entry']).length > 0;
   const [sheet, setSheet] = useState<SheetFilter>('all');
   const [editing, setEditing] = useState<PriceCatalogEntry | 'new' | null>(null);
   const [history, setHistory] = useState<PriceCatalogEntry | null>(null);
@@ -184,10 +189,18 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
   const refresh = () => qc.invalidateQueries({ queryKey: overviewKey });
   const toggle = async (e: PriceCatalogEntry, reason: string) => {
     try {
-      await api.post(`/api/admin/price-catalog/entries/${e.id}/active`, { version: e.version, active: !e.active, reason });
+      const key = uuid();
+      await sendErpOp({
+        key,
+        type: 'price_entry',
+        url: `/api/admin/price-catalog/entries/${e.id}/active`,
+        body: { version: e.version, active: !e.active, reason, opKey: key },
+        summary: `${e.active ? '停用' : '启用'}「${e.name}」`,
+        staffName: session.staff.displayName,
+      });
       setNotice({ tone: 'success', text: `已${e.active ? '停用' : '启用'}「${e.name}」` });
     } catch (err) {
-      setNotice({ tone: 'error', text: errorMessage(err) });
+      setNotice({ tone: 'error', text: err instanceof UncertainError ? UNCERTAIN_ENTRY : errorMessage(err) });
     } finally {
       setToggling(null);
       await refresh();
@@ -255,10 +268,10 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
       dataLabel: '操作',
       cell: (e) => (
         <span className="flex justify-end gap-1">
-          <Button size="sm" variant="ghost" onClick={() => setEditing(e)} data-testid="price-entry-edit">
+          <Button size="sm" variant="ghost" disabled={locked} onClick={() => setEditing(e)} data-testid="price-entry-edit">
             改
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setToggling(e)} data-testid="price-entry-toggle">
+          <Button size="sm" variant="ghost" disabled={locked} onClick={() => setToggling(e)} data-testid="price-entry-toggle">
             {e.active ? '停用' : '启用'}
           </Button>
           <Button size="sm" variant="ghost" icon={<History className="size-3.5" />} onClick={() => setHistory(e)} data-testid="price-entry-history-open">
@@ -273,7 +286,7 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
     <Card className="p-5">
       <SectionTitle
         aside={
-          <Button size="sm" variant="secondary" icon={<Plus className="size-4" />} onClick={() => setEditing('new')} data-testid="price-catalog-add">
+          <Button size="sm" variant="secondary" icon={<Plus className="size-4" />} disabled={locked} onClick={() => setEditing('new')} data-testid="price-catalog-add">
             新增一项
           </Button>
         }
@@ -331,6 +344,10 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
           entry={editing === 'new' ? null : editing}
           defaultSheet={sheet === 'all' ? 'massage' : sheet}
           onClose={() => setEditing(null)}
+          onUncertain={() => {
+            setNotice({ tone: 'error', text: UNCERTAIN_ENTRY });
+            setEditing(null);
+          }}
           onSaved={(saved) => {
             setNotice({ tone: 'success', text: `${editing === 'new' ? '已新增' : '已保存'}「${saved.name}」` });
             setEditing(null);

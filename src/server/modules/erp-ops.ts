@@ -151,6 +151,7 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   oa_punch: [],
   price_import: ['catalog.manage'],
   price_rollback: ['catalog.manage'],
+  price_entry: ['catalog.manage'],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -231,6 +232,7 @@ const READ: Record<ErpOpType, Permission[]> = {
   oa_punch: [],
   price_import: ['catalog.manage'],
   price_rollback: ['catalog.manage'],
+  price_entry: ['catalog.manage'],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {
@@ -250,6 +252,11 @@ export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise
   if (type === 'price_import') {
     const [op] = await db<{ setId: number | null }[]>`SELECT set_id FROM price_catalog_import_ops WHERE op_key = ${key}`;
     if (op) return { found: true, abandoned: false, ...(op.setId !== null ? { refId: Number(op.setId) } : {}) };
+  }
+  // 单条新增、修改、停用 / 启用：refId 是那一项
+  if (type === 'price_entry') {
+    const [op] = await db<{ entryId: number }[]>`SELECT entry_id FROM price_catalog_changes WHERE op_key = ${key}`;
+    if (op) return { found: true, abandoned: false, refId: Number(op.entryId) };
   }
   if (type === 'price_rollback') {
     const [op] = await db<{ toSetId: number }[]>`SELECT to_set_id FROM price_catalog_set_ops WHERE op_key = ${key}`;

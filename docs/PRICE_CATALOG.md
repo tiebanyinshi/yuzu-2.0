@@ -70,6 +70,8 @@
 | 按摩及助浴价格 | 「板块分类」向下沿用，必须是 9 个板块之一；时长 80min / 80分钟 / 60' → 分钟；专业价、资深价都有为双价，只有专业价为单价；「资深价」一列写的是性别（女、男/女）的写进「适用性别」、不参与计价，写「—」的是没有资深价；名称带「女宾」的适用性别为女；「类型」房间 / 大堂 / 浴区 → 适用房型                                                                  |
 
 挡导入的问题：
+- 表头少了某一列或写错字（「资深价格」）：每张表读到的列都要有，写明少了哪一列（不然整列成了空的，双价悄悄变单价）；
+- 导入的每一项最后再用页面编辑的同一份校验过一遍（分档 0 小时之类），导进来的都能照常修改；
 
 - 文件本身不对：合并区域过大（一个超过 2000 格或一张表合计超过 5 万格）、一张表超过 2000 行、一个房型合并超过 20 行，整份拒绝（`IMPORT_FILE_INVALID`）；
 - 少了某张表、表头不对（零点菜品每个餐段的表头要有「菜品分类」「菜品名称」「售价」，写错字的报出是哪一行、少了哪一列）；
@@ -107,11 +109,12 @@
 - **校验**（页面边填边提示、服务端写入前再查一遍，同一份 `priceEntryProblems`）：价格形态与价格一致；金额大于 0、不超过 100 万元；待定价不填价格；只有服务费按比例；待定价的菜不能下单；按摩板块必须是 9 个之一、零点餐段必须是 4 个之一；时长、时段、台位合法；填了每次分钟就要填加钟 / 超时价。名称重复（同一张表、同一个板块 / 餐段、同一个分类里在用的，不分大小写、不管空格）在服务端锁里查（`PRICE_NAME_DUPLICATE`）。
 - **改价留痕**（`price_catalog_changes`，只追加）：新增、修改、停用、启用各一条——经办人、时间、改前与改后的整项、原因、价格有没有变（`price_changed`）。页面「改动记录」按「标签：旧 → 新」列出改了什么（价格那行在最前，如「价格：专业 ¥499.00 / 资深 ¥599.00 → 专业 ¥529.00 / 资深 ¥599.00」），可以只看改价；每行「记录」看这一项的全部改动。
 - **版本号**：修改、停用带着读到的版本号，别人先改过就拒绝（`PRICE_VERSION`），刷新后再改；什么都没改的保存不留痕、版本不变。
+- **操作编号与「结果待确认」**（迁移 `235`）：新增、修改、停用 / 启用都带操作编号，编号记在那一条改动留痕上（`price_catalog_changes.op_key`）。页面提交前把编号与原请求存在本机，结果不确定（断网、超时、服务器出错）时在页面上方查回、按原内容重新提交或确认作废（类型 `price_entry`）；原样重提返回这一项现在的样子、不再写一次；作废过的原请求晚到也不改。确认之前「新增一项」「改」「停用」都不能点。
 - **一键切换生效**：草稿上「切换生效」。条数与表格（224 项、每个板块 / 餐段）一致的直接切；对不上的列出差几项，写明原因才切（PC11，原因记进审计）。原来生效的那份转停用，成为「上一版」。
 - **整体回滚**：生效中的那份上「回滚到上一版」，写原因；上一版恢复生效，刚才那份成为上一版（PC12）。带操作编号（迁移 `233`）：结果不确定原样重提时什么都不改，不会把之后别人切换的结果再切回去；页面同样先存本机，结果不确定的在页面上方查回、重提或确认作废（类型 `price_rollback`）。
 - **放弃草稿**：草稿连同条目、改动记录一起删掉，审计留一条（PC14）。
 - 生效中的价目表也能直接改，改了马上作数（PC9，第四批起开单取它）；换下来的旧版不能改（`PRICE_SET_RETIRED`）。
-- 接口（权限都是 `catalog.manage`）：`POST /api/admin/price-catalog/sets/:id/entries` 新增，`PUT /api/admin/price-catalog/entries/:id` 修改，`POST /api/admin/price-catalog/entries/:id/active` 停用 / 启用，`GET /api/admin/price-catalog/sets/:id/changes`（`?entryId=`、`?priceOnly=1`）改动记录，`POST /api/admin/price-catalog/activate`（`draftId`、对不上时 `countReason`），`POST /api/admin/price-catalog/rollback`（`activeId`、`reason`），`POST /api/admin/price-catalog/discard`（`draftId`）。概要（`GET /api/admin/price-catalog`）多了上一版 `previous`。
+- 接口（权限都是 `catalog.manage`）：`POST /api/admin/price-catalog/sets/:id/entries` 新增，`POST /api/admin/price-catalog/entries/:id` 修改，`POST /api/admin/price-catalog/entries/:id/active` 停用 / 启用，`GET /api/admin/price-catalog/sets/:id/changes`（`?entryId=`、`?priceOnly=1`）改动记录，`POST /api/admin/price-catalog/activate`（`draftId`、对不上时 `countReason`），`POST /api/admin/price-catalog/rollback`（`activeId`、`reason`），`POST /api/admin/price-catalog/discard`（`draftId`）。概要（`GET /api/admin/price-catalog`）多了上一版 `previous`。
 - 审计（`price_catalog`）：`entry_create` / `entry_update` / `entry_deactivate` / `entry_reactivate` / `activate` / `rollback` / `discard`，审计记录里写成「草稿修改「古法中式」（改价）」「切换生效「…」」这样的一句。
 - 加锁：`docs/LOCKING.md`「价目表录入」。
 

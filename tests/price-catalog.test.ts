@@ -385,7 +385,7 @@ describe('价目表录入 第三批：编辑与校验', () => {
   };
   const overview = async () => (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as PriceCatalogOverview;
   const put = (e: PriceCatalogEntry, patch: Partial<PriceCatalogEntry> & { reason?: string }, cookie = ctx.owner) =>
-    api(ctx.app, cookie, 'PUT', `/api/admin/price-catalog/entries/${e.id}`, { ...e, ...patch });
+    api(ctx.app, cookie, 'POST', `/api/admin/price-catalog/entries/${e.id}`, { ...e, opKey: randomUUID(), ...patch });
   const changes = async (setId: number, q = '') => (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${setId}/changes${q}`)).body as PriceChange[];
 
   it('校验（页面与服务端同一份）：价格形态与价格一致、金额大于 0、待定价不填 0、待定价的菜不能下单、板块 / 餐段认得', async () => {
@@ -461,13 +461,15 @@ describe('价目表录入 第三批：编辑与校验', () => {
       venues: ['lobby'],
       orderable: true,
     };
-    const dup = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { ...base, name: '古法 中式' });
+    const dup = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { opKey: randomUUID(), ...base, name: '古法 中式' });
     expect(dup.status).toBe(409);
     expect(dup.body.error.code).toBe('PRICE_NAME_DUPLICATE');
     // 服务费不能新增；板块不存在挡下
-    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { ...base, kind: 'service_fee', name: '服务费2' })).status).toBe(422);
-    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { ...base, section: '足疗', name: '足底' })).body.error.code).toBe('PRICE_INVALID');
-    const created = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { ...base, name: '肩颈放松', reason: '新项目' });
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { opKey: randomUUID(), ...base, kind: 'service_fee', name: '服务费2' })).status).toBe(422);
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { opKey: randomUUID(), ...base, section: '足疗', name: '足底' })).body.error.code).toBe(
+      'PRICE_INVALID',
+    );
+    const created = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { opKey: randomUUID(), ...base, name: '肩颈放松', reason: '新项目' });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     const neu = created.body as PriceCatalogEntry;
     expect(neu).toMatchObject({ name: '肩颈放松', priceMode: 'single', priceCents: 19900, price2Cents: null, version: 1, active: true, sourceRow: null });
@@ -477,16 +479,19 @@ describe('价目表录入 第三批：编辑与校验', () => {
     expect(afterCreate.total.actual).toBe(draft.total.actual + 1);
 
     // 停用不删除；停用的不算条数；同名的可以另建，但旧的就不能再启用
-    const off = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${neu.id}/active`, { version: 1, active: false, reason: '暂不做' });
+    const off = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${neu.id}/active`, { opKey: randomUUID(), version: 1, active: false, reason: '暂不做' });
     expect(off.body).toMatchObject({ active: false, version: 2 });
     expect((await changes(draft.id))[0]).toMatchObject({ action: 'deactivate', reason: '暂不做', priceChanged: false });
     expect((await overview()).draft!.total.actual).toBe(draft.total.actual);
-    const again = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { ...base, name: '肩颈放松' });
+    const again = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { opKey: randomUUID(), ...base, name: '肩颈放松' });
     expect(again.status).toBe(201);
-    const on = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${neu.id}/active`, { version: 2, active: true });
+    const on = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${neu.id}/active`, { opKey: randomUUID(), version: 2, active: true });
     expect(on.body.error.code).toBe('PRICE_NAME_DUPLICATE');
-    await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${again.body.id}/active`, { version: 1, active: false });
-    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${neu.id}/active`, { version: 2, active: true })).body).toMatchObject({ active: true, version: 3 });
+    await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${again.body.id}/active`, { opKey: randomUUID(), version: 1, active: false });
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${neu.id}/active`, { opKey: randomUUID(), version: 2, active: true })).body).toMatchObject({
+      active: true,
+      version: 3,
+    });
 
     // 店员不能改
     expect((await put(neu, { priceCents: 100 }, ctx.clerk)).status).toBe(403);
@@ -661,7 +666,7 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const guest = draft.entries.find((e) => e.name === '客房')!;
     expect(guest.priceCents).toBe(59900);
     const variants = guest.variants.map((v) => (v.unit === '晚' && v.priceCents === 59900 ? { ...v, priceCents: 79900 } : v));
-    const saved = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/price-catalog/entries/${guest.id}`, { ...guest, variants });
+    const saved = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${guest.id}`, { ...guest, variants, opKey: randomUUID() });
     expect(saved.status, JSON.stringify(saved.body)).toBe(200);
     expect(saved.body.priceCents).toBe(69900);
   });
@@ -724,5 +729,51 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const shorter = p.entries.map((e) => (e.name === '台球' ? { ...e, durationMinutes: 60 } : e));
     expect(diffPriceCatalogs(shorter, p.entries).map((d) => [d.change, d.draft?.name])).toEqual([['changed', '台球']]);
     expect(ball.durationMinutes).toBe(120);
+  });
+
+  it('第五轮审查：单条改动带操作编号（重提只记一次、作废后不生效）；按摩表少了「资深价」列报错；房间分档 0 小时报错', async () => {
+    const ov = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as PriceCatalogOverview;
+    const setId = (ov.draft ?? ov.active)!.id;
+    const live = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${setId}`)).body as PriceCatalogSet;
+    const item = live.entries.find((e) => e.sheet === 'entertainment' && e.active)!;
+    const opKey = randomUUID();
+    const body = { ...item, extraPriceCents: (item.extraPriceCents ?? 1000) + 100, opKey };
+    const first = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${item.id}`, body);
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    // 原样重提（版本号已经旧了）：返回这一项现在的样子，不再写一次、不报版本冲突
+    const again = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${item.id}`, body);
+    expect(again.status).toBe(200);
+    expect(again.body.version).toBe(first.body.version);
+    const [logged] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM price_catalog_changes WHERE op_key = ${opKey}`;
+    expect(logged!.n).toBe(1);
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${opKey}?type=price_entry`)).body).toMatchObject({ found: true, refId: item.id });
+    // 作废过的编号：原请求晚到也不改
+    const fenced = randomUUID();
+    await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${fenced}/abandon`, { type: 'price_entry' });
+    const late = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${item.id}/active`, { version: first.body.version, active: false, opKey: fenced });
+    expect(late.body.error.code).toBe('OP_ABANDONED');
+    // 缺编号不改
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${item.id}`, { ...first.body })).status).toBe(400);
+
+    const massage = sheet('按摩及助浴价格', [
+      ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价格'],
+      ['康疗', 1, '古法中式', '房间', '80min', 499, 599],
+    ]);
+    const head = (await issuesOf({ 按摩及助浴价格: massage })).filter((i) => i.level === 'error');
+    expect(head[0]).toMatchObject({ sheet: '按摩及助浴价格', row: 1, field: '表头' });
+    expect(head[0]!.message).toContain('资深价');
+
+    const rooms = (price: string, rule: string | null, type: string) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        [type, '7间', price, rule, 'R01-R07'],
+      ]);
+    for (const [price, rule, type] of [
+      ['6小时：999\n0小时：999', null, '轰趴房'],
+      ['小房间 599/晚', '499/0小时', '客房'],
+    ] as const) {
+      const errs = (await issuesOf({ 房间价格: rooms(price, rule, type) })).filter((i) => i.level === 'error');
+      expect(errs[0], `${type} ${price} ${rule}`).toMatchObject({ sheet: '房间价格', row: 2 });
+    }
   });
 });

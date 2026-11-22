@@ -5,6 +5,7 @@
 
 import {
   DISH_SECTIONS,
+  priceEntryProblems,
   priceNameKey,
   MASSAGE_SECTIONS,
   PRICE_SHEET_NAMES,
@@ -168,14 +169,24 @@ interface Ctx {
   warn(sheet: PriceSheet, row: number | null, field: string, message: string): void;
 }
 
-/** 表头那一行：前 5 行里第一行有这几个名字的 */
-function headerRow(g: Grid, names: string[]): { row: number; cols: Map<string, number> } | null {
+/**
+ * 表头那一行：前 6 行里第一行有 keys 这几个名字的。required 是这张表读到的每一列：缺了或写错字（「资深价格」）
+ * 整列就成了空的（双价悄悄变单价、时段悄悄没了），所以报错写明少了哪一列，整份不导
+ */
+function headerRow(g: Grid, ctx: Ctx, S: PriceSheet, keys: string[], required: string[]): { row: number; cols: Map<string, number> } | null {
   for (const r of rowsOf(g).slice(0, 6)) {
     const line = g.get(r)!;
     const cols = new Map<string, number>();
     for (const [c, v] of line) cols.set(oneLine(v), c);
-    if (names.every((n) => cols.has(n))) return { row: r, cols };
+    if (!keys.every((n) => cols.has(n))) continue;
+    const missing = required.filter((n) => !cols.has(n));
+    if (missing.length) {
+      ctx.error(S, r, '表头', `表头少了「${missing.join('」「')}」（表头写：${required.join('、')}；写错字也算少了）`);
+      return null;
+    }
+    return { row: r, cols };
   }
+  ctx.error(S, null, '表头', `没找到表头（要有「${required.join('」「')}」）`);
   return null;
 }
 
@@ -183,11 +194,8 @@ function headerRow(g: Grid, names: string[]): { row: number; cols: Map<string, n
 
 function storeSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
   const S: PriceSheet = 'store';
-  const head = headerRow(g, ['类型', '项目', '价格']);
-  if (!head) {
-    ctx.error(S, null, '表头', '没找到表头（要有「类型」「项目」「价格」「备注」「时间」）');
-    return [];
-  }
+  const head = headerRow(g, ctx, S, ['类型', '项目', '价格'], ['类型', '项目', '价格', '备注', '时间']);
+  if (!head) return [];
   const col = (n: string) => head.cols.get(n) ?? -1;
   const out: PriceCatalogEntry[] = [];
   for (const r of rowsOf(g).filter((r) => r > head.row)) {
@@ -259,11 +267,8 @@ function perTime(text: string): { cents: number; minutes: number | null } | null
 
 function entertainmentSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
   const S: PriceSheet = 'entertainment';
-  const head = headerRow(g, ['类型', '价格']);
-  if (!head) {
-    ctx.error(S, null, '表头', '没找到表头（要有「类型」「数量」「价格」「备注」）');
-    return [];
-  }
+  const head = headerRow(g, ctx, S, ['类型', '价格'], ['类型', '数量', '价格', '备注']);
+  if (!head) return [];
   const col = (n: string) => head.cols.get(n) ?? -1;
   const out: PriceCatalogEntry[] = [];
   for (const r of rowsOf(g).filter((r) => r > head.row)) {
@@ -340,11 +345,8 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     if (list.length > ROOM_NUMBERS_MAX) ctx.error(S, row, '备注', `房号太多（超过 ${ROOM_NUMBERS_MAX} 个），请核对房号清单`);
     return list.slice(0, ROOM_NUMBERS_MAX);
   };
-  const head = headerRow(g, ['房型', '总数']);
-  if (!head) {
-    ctx.error(S, null, '表头', '没找到表头（要有「房型」「总数」「收费参考」「备注」）');
-    return [];
-  }
+  const head = headerRow(g, ctx, S, ['房型', '总数'], ['房型', '总数', '收费参考', '备注']);
+  if (!head) return [];
   const cType = head.cols.get('房型')!;
   const cCount = head.cols.get('总数')!;
   const cPrice = head.cols.get('收费参考') ?? cCount + 1;
@@ -573,11 +575,8 @@ const genderOf = (text: string): PriceGender | null => {
 
 function massageSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
   const S: PriceSheet = 'massage';
-  const head = headerRow(g, ['板块分类', '项目名称']);
-  if (!head) {
-    ctx.error(S, null, '表头', '没找到表头（要有「板块分类」「编号」「项目名称」「类型」「时长」「专业价」「资深价」）');
-    return [];
-  }
+  const head = headerRow(g, ctx, S, ['板块分类', '项目名称'], ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价']);
+  if (!head) return [];
   const col = (n: string) => head.cols.get(n) ?? -1;
   const out: PriceCatalogEntry[] = [];
   const seen = new Map<string, number>();
@@ -666,6 +665,13 @@ export function parsePriceCatalog(book: XlsxWorkbook): ParsedPriceCatalog {
     // 行数先核对，再逐行读：原表最多一百多行，几千上万行的不像价目表，整份拒绝（不先建一大堆条目）
     if (grid.size > SHEET_ROWS_MAX) throw new PriceFileError(`「${ws.name}」有 ${grid.size} 行，超过 ${SHEET_ROWS_MAX} 行，不像价目表；请检查表格后再导入`);
     entries.push(...PARSERS[sheet](grid, ctx));
+  }
+  // 最后用页面编辑的同一份校验逐项过一遍（分档时长 0 小时、价格形态与价格不一致……）：导入与编辑一个口径，
+  // 导进来的每一项以后都能照常修改。这一行前面已经报过错的不再重复
+  const reported = new Set(issues.filter((i) => i.level === 'error').map((i) => `${i.sheet}|${i.row}`));
+  for (const e of entries) {
+    if (reported.has(`${PRICE_SHEET_NAMES[e.sheet]}|${e.sourceRow}`)) continue;
+    for (const problem of priceEntryProblems(e)) ctx.error(e.sheet, e.sourceRow, e.name, problem);
   }
   const notes: Record<string, string> = {};
   const sv = byName.get(STORED_VALUE_SHEET_NAME);

@@ -27,8 +27,10 @@ import {
   type PriceVenue,
 } from '@shared/price-catalog';
 import { centsToInput, formatYuan, parseYuan } from '@shared/money';
-import { api, errorMessage } from '../../lib/api';
-import { formatDateTime } from '../../lib/utils';
+import { api, errorMessage, UncertainError } from '../../lib/api';
+import { sendErpOp } from '../../lib/erpPending';
+import { useSession } from '../../lib/session';
+import { formatDateTime, uuid } from '../../lib/utils';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { Badge, Button, Field, Input, MoneyInput, Notice, Segmented, Select, Skeleton, Textarea } from '../../components/ui';
@@ -199,6 +201,7 @@ export function PriceEntryDialog({
   defaultSheet,
   onClose,
   onSaved,
+  onUncertain,
 }: {
   open: boolean;
   setId: number;
@@ -206,7 +209,10 @@ export function PriceEntryDialog({
   defaultSheet: PriceSheet;
   onClose: () => void;
   onSaved: (e: PriceCatalogEntry) => void;
+  /** 结果不确定（断网、超时、服务器出错）：这一笔已记在本机，页面上方查回、重提或作废 */
+  onUncertain: () => void;
 }) {
+  const session = useSession();
   const [base, setBase] = useState(() => entry ?? blankEntry(defaultSheet));
   const [form, setForm] = useState(() => formOf(base));
   const [busy, setBusy] = useState(false);
@@ -219,13 +225,21 @@ export function PriceEntryDialog({
     setBusy(true);
     setError(null);
     try {
-      const body = { ...next, reason: form.reason.trim() };
-      const saved = creating
-        ? await api.post<PriceCatalogEntry>(`/api/admin/price-catalog/sets/${setId}/entries`, body)
-        : await api.put<PriceCatalogEntry>(`/api/admin/price-catalog/entries/${entry.id}`, { ...body, version: entry.version });
+      // 每次保存用新的操作编号：先把编号和原请求记在本机并读回核对，记不下就不发（AGENTS.md「结果待确认」）
+      const key = uuid();
+      const body = { ...next, reason: form.reason.trim(), opKey: key };
+      const saved = await sendErpOp<PriceCatalogEntry>({
+        key,
+        type: 'price_entry',
+        url: creating ? `/api/admin/price-catalog/sets/${setId}/entries` : `/api/admin/price-catalog/entries/${entry.id}`,
+        body: creating ? body : { ...body, version: entry.version },
+        summary: `${creating ? '新增' : '修改'}「${next.name}」`,
+        staffName: session.staff.displayName,
+      });
       onSaved(saved);
     } catch (e) {
-      setError(errorMessage(e));
+      if (e instanceof UncertainError) onUncertain();
+      else setError(errorMessage(e));
     } finally {
       setBusy(false);
     }

@@ -99,9 +99,11 @@ const EntryFields = z.object({
   orderable: z.boolean().default(true),
 });
 const Reason = z.string().trim().max(200, '原因最多 200 个字').default('');
-const CreateInput = EntryFields.extend({ sheet: z.enum(PRICE_SHEETS), kind: z.enum(KINDS), reason: Reason });
-const UpdateInput = EntryFields.extend({ version: z.number().int().positive(), reason: Reason });
-const ActiveInput = z.object({ version: z.number().int().positive(), active: z.boolean(), reason: Reason });
+/** 操作编号：结果不确定原样重提时返回这一项现在的样子、不再写一次（编号记在改动留痕上，迁移 235） */
+const OpKey = z.uuid('缺少操作编号');
+const CreateInput = EntryFields.extend({ sheet: z.enum(PRICE_SHEETS), kind: z.enum(KINDS), reason: Reason, opKey: OpKey });
+const UpdateInput = EntryFields.extend({ version: z.number().int().positive(), reason: Reason, opKey: OpKey });
+const ActiveInput = z.object({ version: z.number().int().positive(), active: z.boolean(), reason: Reason, opKey: OpKey });
 const ActivateInput = z.object({
   draftId: z.number().int().positive(),
   /** 条数与表格对不上时，写明为什么仍要切换 */
@@ -170,12 +172,28 @@ async function readEntry(tx: Tx, id: number): Promise<PriceCatalogEntry> {
   return entryOf(r!);
 }
 
-async function logChange(tx: Tx, ctx: OpContext, c: { set: LockedSet; action: PriceChangeAction; before: PriceCatalogEntry | null; after: PriceCatalogEntry; reason: string }): Promise<void> {
+/**
+ * 单条改动的操作编号：先取编号的咨询锁（与「确认作废」同一把）；这个编号已经记过（重提）就返回那一项现在的样子；
+ * 作废过的拒绝。调用方在这之后再按「价目表 → 这一项」加锁
+ */
+async function replayed(tx: Tx, opKey: string): Promise<PriceCatalogEntry | null> {
+  await lockOpKey(tx, opKey);
+  const [done] = await tx<{ entryId: number }[]>`SELECT entry_id FROM price_catalog_changes WHERE op_key = ${opKey}`;
+  if (done) return readEntry(tx, Number(done.entryId));
+  await assertNotFenced(tx, opKey, 'price_entry', erpOpAbandoned);
+  return null;
+}
+
+async function logChange(
+  tx: Tx,
+  ctx: OpContext,
+  c: { set: LockedSet; action: PriceChangeAction; before: PriceCatalogEntry | null; after: PriceCatalogEntry; reason: string; opKey: string },
+): Promise<void> {
   const priceChanged = c.before ? priceSignature(c.before) !== priceSignature(c.after) : true;
   const entryId = c.after.id!;
   await tx`
-    INSERT INTO price_catalog_changes (set_id, entry_id, action, entry_name, before, after, price_changed, reason, staff_id)
-    VALUES (${c.set.id}, ${entryId}, ${c.action}, ${c.after.name}, ${c.before ? tx.json(c.before as never) : null}, ${tx.json(c.after as never)}, ${priceChanged}, ${c.reason}, ${ctx.actor.id})`;
+    INSERT INTO price_catalog_changes (set_id, entry_id, action, entry_name, before, after, price_changed, reason, staff_id, op_key)
+    VALUES (${c.set.id}, ${entryId}, ${c.action}, ${c.after.name}, ${c.before ? tx.json(c.before as never) : null}, ${tx.json(c.after as never)}, ${priceChanged}, ${c.reason}, ${ctx.actor.id}, ${c.opKey})`;
   const where = c.set.status === 'active' ? '生效中的价目表' : '草稿';
   await writeAudit(tx, {
     staffId: ctx.actor.id,
@@ -199,6 +217,8 @@ export async function createPriceEntry(deps: Deps, setId: number, raw: unknown, 
   const f = parse(CreateInput, raw);
   if (!PRICE_SHEET_KINDS[f.sheet].includes(f.kind)) throw unprocessable('PRICE_INVALID', `${PRICE_SHEET_NAMES[f.sheet]}里不能新增「${PRICE_KIND_LABELS[f.kind]}」`);
   return deps.sql.begin(async (tx) => {
+    const again = await replayed(tx, f.opKey);
+    if (again) return again;
     const set = await lockSet(tx, setId);
     const entry: PriceCatalogEntry = withDerivedPrice({ ...fieldsOf(f), sheet: f.sheet, kind: f.kind, active: true, sourceRow: null, sortOrder: 0 });
     assertValid(entry);
@@ -208,7 +228,7 @@ export async function createPriceEntry(deps: Deps, setId: number, raw: unknown, 
     const row = { ...rowOf(set.id, { ...entry, sortOrder: Number(last!.next) }), variants: tx.json(entry.variants as never) };
     const [created] = await tx<{ id: number }[]>`INSERT INTO price_catalog_entries ${tx(row as never)} RETURNING id`;
     const after = await readEntry(tx, Number(created!.id));
-    await logChange(tx, ctx, { set, action: 'create', before: null, after, reason: f.reason });
+    await logChange(tx, ctx, { set, action: 'create', before: null, after, reason: f.reason, opKey: f.opKey });
     return after;
   });
 }
@@ -229,6 +249,8 @@ async function lockEntry(tx: Tx, entryId: number, version: number): Promise<{ se
 export async function updatePriceEntry(deps: Deps, entryId: number, raw: unknown, ctx: OpContext): Promise<PriceCatalogEntry> {
   const f = parse(UpdateInput, raw);
   return deps.sql.begin(async (tx) => {
+    const again = await replayed(tx, f.opKey);
+    if (again) return again;
     const { set, before } = await lockEntry(tx, entryId, f.version);
     // 主价格由分档推出来的（轰趴房、餐饮包房、客房）按分档重算
     const next: PriceCatalogEntry = withDerivedPrice({ ...before, ...fieldsOf(f) });
@@ -241,7 +263,7 @@ export async function updatePriceEntry(deps: Deps, entryId: number, raw: unknown
       UPDATE price_catalog_entries SET ${tx({ ...cols, variants: tx.json(next.variants as never) } as never)}, version = version + 1, updated_at = now()
       WHERE id = ${entryId}`;
     const after = await readEntry(tx, entryId);
-    await logChange(tx, ctx, { set, action: 'update', before, after, reason: f.reason });
+    await logChange(tx, ctx, { set, action: 'update', before, after, reason: f.reason, opKey: f.opKey });
     return after;
   });
 }
@@ -249,12 +271,14 @@ export async function updatePriceEntry(deps: Deps, entryId: number, raw: unknown
 export async function setPriceEntryActive(deps: Deps, entryId: number, raw: unknown, ctx: OpContext): Promise<PriceCatalogEntry> {
   const f = parse(ActiveInput, raw);
   return deps.sql.begin(async (tx) => {
+    const again = await replayed(tx, f.opKey);
+    if (again) return again;
     const { set, before } = await lockEntry(tx, entryId, f.version);
     if (before.active === f.active) return before;
     if (f.active) await assertUniqueName(tx, set.id, { ...before, active: true }, entryId);
     await tx`UPDATE price_catalog_entries SET active = ${f.active}, version = version + 1, updated_at = now() WHERE id = ${entryId}`;
     const after = await readEntry(tx, entryId);
-    await logChange(tx, ctx, { set, action: f.active ? 'reactivate' : 'deactivate', before, after, reason: f.reason });
+    await logChange(tx, ctx, { set, action: f.active ? 'reactivate' : 'deactivate', before, after, reason: f.reason, opKey: f.opKey });
     return after;
   });
 }
@@ -382,7 +406,8 @@ export function registerPriceCatalogEditRoutes(app: FastifyInstance, deps: Deps)
     reply.code(201);
     return e;
   });
-  app.put('/api/admin/price-catalog/entries/:id', { preHandler: manage }, async (req) => updatePriceEntry(deps, parse(Id, req.params).id, req.body, ctxOf(req)));
+  // 修改用 POST（页面走「结果待确认」的 sendErpOp，只发 POST）
+  app.post('/api/admin/price-catalog/entries/:id', { preHandler: manage }, async (req) => updatePriceEntry(deps, parse(Id, req.params).id, req.body, ctxOf(req)));
   app.post('/api/admin/price-catalog/entries/:id/active', { preHandler: manage }, async (req) => setPriceEntryActive(deps, parse(Id, req.params).id, req.body, ctxOf(req)));
   app.get('/api/admin/price-catalog/sets/:id/changes', { preHandler: manage }, async (req) => {
     const q = parse(z.object({ entryId: z.coerce.number().int().positive().optional(), priceOnly: z.enum(['1', '0']).optional() }), req.query);
