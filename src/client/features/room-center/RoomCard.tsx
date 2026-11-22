@@ -1,7 +1,7 @@
 // 房态中心的房间卡片：房号、状态（颜色 + 文字 + 图标）、客人、技师、已用时长、金额（《浴族系统需求汇总》房态中心第 3 条）。
 // 点卡片：空闲的技师服务房间直接登记、空闲的派对房直接开单、客房打开入住或入住单；别的打开房间详情。右上角的「详情」什么时候都能点。
 // 客房的卡片多两行客房原来的内容：手牌、几号入住（预离）或钟点房已住多久、押金（8.1.16，原来的「客房」页并进来）。
-// 8.2.0 P08：「在用」的房间右上角多一个「点单」（只有能在水吧或果吧下单的账号看得到），卡片上写房里现在的客人从房态点了几单、多少钱。
+// 回测整改 P08：「在用」的房间右上角多一个「点单」（只有能在水吧或果吧下单的账号看得到），卡片上写房里现在的客人从房态点了几单、多少钱。
 
 import { ChevronRight, CupSoda, Link2, Users } from 'lucide-react';
 import { elapsedText, type RoomCard as Room } from '@shared/room-center';
@@ -134,7 +134,7 @@ export function RoomCard({
   highlight?: boolean;
   onOpen: () => void;
   onDetail: () => void;
-  /** 房态点单（8.2.0 P08）：只有「在用」的房间、账号能在水吧或果吧下单时给 */
+  /** 房态点单（回测整改 P08）：只有「在用」的房间、账号能在水吧或果吧下单时给 */
   onOrder?: () => void;
 }) {
   const order = room.status === 'in_use' ? onOrder : undefined;

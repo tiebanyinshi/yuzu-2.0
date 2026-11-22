@@ -1,4 +1,4 @@
-// 8.2.0 P06（docs/YUZU_REQ_V820.md 第 7 节，回测 5-1）：后台「岗位权限 → 设立岗位」——选岗位带出这个岗位的建议权限；
+// 回测整改 P06（docs/YUZU_REQ_V820.md 第 7 节，回测 5-1）：后台「岗位权限 → 设立岗位」——选岗位带出这个岗位的建议权限；
 // 改了没保存换岗位先问「是否放弃当前修改」；按模块分组、本组全选、反选；与建议不同的项标出来，「恢复建议权限」一键回去；
 // 保存后再进来照样回显；两个岗位的勾选互不串台。依赖演示数据（店主 linlan，密码 yuzu2026）。最后恢复建议权限并保存，可重复执行；只在门店电脑跑。
 import { expect, test, type Page } from '@playwright/test';
@@ -11,7 +11,7 @@ async function login(page: Page) {
   await expect(page.getByRole('navigation', { name: /主导航|后台/ }).first()).toBeVisible({ timeout: 30_000 });
 }
 
-test.describe('8.2.0 设立岗位：选岗位联动建议权限', () => {
+test.describe('回测整改 设立岗位：选岗位联动建议权限', () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '只在门店电脑尺寸跑');
 
   test('换岗位带出建议权限、先问放弃修改、标出与建议不同、恢复建议权限、保存后回显、不串台', async ({ page }) => {

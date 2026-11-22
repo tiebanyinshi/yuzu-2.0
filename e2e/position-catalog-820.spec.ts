@@ -1,4 +1,4 @@
-// 8.2.0 P05（docs/YUZU_REQ_V820.md 第 6 节）：后台「岗位权限 → 分部门岗位职权配置」——按部门列岗位、搜索、改建议权限（换岗位前问是否放弃修改）、
+// 回测整改 P05（docs/YUZU_REQ_V820.md 第 6 节）：后台「岗位权限 → 分部门岗位职权配置」——按部门列岗位、搜索、改建议权限（换岗位前问是否放弃修改）、
 // 变更记录、导出 Excel、旧岗位表从这里点进去。依赖演示数据（店主 linlan，密码 yuzu2026）。改了的建议权限最后改回去，可重复执行；只在门店电脑跑。
 import { expect, test, type Page } from '@playwright/test';
 
@@ -10,7 +10,7 @@ async function login(page: Page) {
   await expect(page.getByRole('navigation', { name: /主导航|后台/ }).first()).toBeVisible({ timeout: 30_000 });
 }
 
-test.describe('8.2.0 分部门岗位职权配置', () => {
+test.describe('回测整改 分部门岗位职权配置', () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '只在门店电脑尺寸跑');
 
   test('按部门列岗位、搜索；改康美部员工的建议权限（换岗位先问）、记变更、改回去；导出；旧岗位表点得进去', async ({ page }) => {

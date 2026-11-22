@@ -86,7 +86,7 @@ function RoomCenterBody() {
   const [mapUsage, setMapUsage] = useState<MapUsage | null>(null);
   const [usageById, setUsageById] = useState<{ id: number; mode: 'end' | 'cancel' } | null>(null);
   const [forBooking, setForBooking] = useState<BookingDetail | null>(null);
-  // 房态点单（8.2.0 P08）：点单面板、点单记录；记卡片的 key，看板刷新以后照样对得上
+  // 房态点单（回测整改 P08）：点单面板、点单记录；记卡片的 key，看板刷新以后照样对得上
   const [ordering, setOrdering] = useState<{ key: string; view: 'order' | 'history' } | null>(null);
   const orderOutlets = useRoomOrderOutlets();
 

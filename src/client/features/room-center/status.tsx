@@ -1,5 +1,5 @@
 // 房态中心五种状态的样子：颜色 + 文字 + 图标，卡片、数量、总览的小方块共用这一张表。
-// 8.2.0 P01（回测 3-2）：空闲 绿、在用 蓝、待清 黄、维修 红 四色固定，走样式表里只给房态用的 --color-room-*（值见 @shared/room-colors）；
+// 回测整改 P01（回测 3-2）：空闲 绿、在用 蓝、待清 黄、维修 红 四色固定，走样式表里只给房态用的 --color-room-*（值见 @shared/room-colors）；
 // 卡片底色、左侧色条、状态点三处同源；已预订用中性灰，不占这四色。
 
 import { CalendarClock, CircleCheck, Sparkles, Timer, Wrench } from 'lucide-react';

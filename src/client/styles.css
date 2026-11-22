@@ -53,7 +53,7 @@
   --color-lake: #2c6066;
   --color-lake-soft: #dcebea;
 
-  /* 房态四色（8.2.0 P01）：空闲 绿、在用 蓝、待清 黄、维修 红；只给房态用，值与 src/shared/room-colors.ts 一致 */
+  /* 房态四色（回测整改 P01）：空闲 绿、在用 蓝、待清 黄、维修 红；只给房态用，值与 src/shared/room-colors.ts 一致 */
   --color-room-free: #2e9d58;
   --color-room-free-soft: #e2f4e8;
   --color-room-free-ink: #1a6b3a;

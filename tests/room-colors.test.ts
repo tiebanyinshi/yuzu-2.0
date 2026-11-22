@@ -1,4 +1,4 @@
-// 房态四色（8.2.0 P01，回测 3-2）：空闲 绿、在用 蓝、待清 黄、维修 红固定且差异明显；样式表里的变量与 @shared/room-colors 同一组值；
+// 房态四色（回测整改 P01，回测 3-2）：空闲 绿、在用 蓝、待清 黄、维修 红固定且差异明显；样式表里的变量与 @shared/room-colors 同一组值；
 // 别的页面不拿这四色表示别的状态。
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';

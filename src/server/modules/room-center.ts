@@ -294,7 +294,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
   const groupOf = new Map<number, number[]>();
   for (const members of groups.values()) for (const id of members) groupOf.set(id, members);
 
-  // 房态点单（8.2.0 P07）：在店客人从房态点的单数与金额，按房里现在的客人加起来
+  // 房态点单（回测整改 P07）：在店客人从房态点的单数与金额，按房里现在的客人加起来
   const orderSums = await roomOrderSums(db, [
     ...[...facts.values()].flatMap((f) => f.guests.map((g) => Number(g.visit.id))),
     ...usages.spaces.flatMap((s) => (s.usage ? [s.usage.visitId] : [])),
