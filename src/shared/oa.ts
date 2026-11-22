@@ -75,7 +75,7 @@ export function wouldCycle(parents: ReadonlyMap<string, string | null>, key: str
 export const STAFF_IMPORT_COLUMNS = ['姓名', '手机号', '工号', '部门', '岗位', '入职日期', '登录名'] as const;
 export const STAFF_IMPORT_REQUIRED = ['姓名', '手机号', '部门'] as const;
 /** 一次最多开多少个账号 */
-export const STAFF_IMPORT_MAX_ROWS = 500;
+export const STAFF_IMPORT_MAX_ROWS = 200;
 /** 登录名：与「员工账号」同一个规则 */
 export const USERNAME_PATTERN = /^[a-z0-9_.-]{2,32}$/;
 

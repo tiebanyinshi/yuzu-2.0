@@ -64,6 +64,8 @@ export function StaffImportDialog({ onClose }: { onClose: () => void }) {
         url: '/api/oa/employees/import',
         body: { ...body(file), clientKey },
         summary: `批量开通 · ${file.fileName} · ${preview.rows.length} 人`,
+        // 一批最多 200 人，服务端一个一个算散列（每个约 50 毫秒）再写库：等回答放宽到 90 秒（Codex 审查 c1bae0f）
+        timeoutMs: 90_000,
         staffName: session.staff.displayName,
       });
       setResult(r);
