@@ -19,6 +19,8 @@ export interface ErpPendingOp {
   /** 展示用，如「采购部 · 办公 · ¥60.00」 */
   summary: string;
   staffName: string;
+  /** 经办人（OA-06 打卡：同一台电脑换人登录后，只列、只拦本人的） */
+  staffId?: number;
   createdAt: string;
   /** 曾经结果不明：之后的重提即使被明确拒绝，之前那次请求也可能随后登记，要先查回或作废 */
   uncertain?: boolean;
