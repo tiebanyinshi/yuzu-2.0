@@ -397,6 +397,12 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
         const seats = /(\d+)\s*人位/.exec(desc)?.[1];
         const tiers = hourTiers(`${at(g, x, cPrice)}\n${at(g, x, cRule)}`);
         if (!tiers.length) ctx.error(S, x, '收费参考', `「${oneLine(at(g, x, cPrice))}」看不懂（写 6小时：999）`);
+        // 每一行都要认得出一档：「12小时：abc」这样的不能只留下认得的那几档、把它悄悄丢掉
+        else {
+          for (const line of `${at(g, x, cPrice)}\n${at(g, x, cRule)}`.split('\n').map(oneLine).filter(Boolean)) {
+            if (!hourTiers(line).length) ctx.error(S, x, '收费参考', `「${line}」看不懂（写 6小时：999、包天：5000）`);
+          }
+        }
         const t6 = tiers.find((t) => t.minutes === 360)?.priceCents;
         const t12 = tiers.find((t) => t.minutes === 720)?.priceCents;
         if (t6 && t12 && t12 < t6) ctx.warn(S, x, '收费参考', `${area ?? ''}平：12 小时价（${t12 / 100}）比 6 小时价（${t6 / 100}）还低，请门店核对表格`);

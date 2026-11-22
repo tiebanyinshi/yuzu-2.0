@@ -894,4 +894,19 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const dishes = sheet('零点菜品价格', [['早餐自助零点菜品'], ['序号', '菜品分类', '菜品名称', '售价', '计价单位'], [1, '生滚粥', '生滚牛肉粥', 38, '份']], ['A1:E1']);
     expect((await issuesOf({ 零点菜品价格: dishes })).find((i) => i.level === 'error')!.message).toContain('单位');
   });
+
+  it('第十一轮审查：轰趴房有一行分档认不出来，报错（不只留下认得的档）', async () => {
+    const party = (price: string, rule: string | null) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        ['轰趴房', '9间', price, rule, '70平（H203-209) 4人位'],
+      ]);
+    for (const [price, rule] of [
+      ['6小时：999\n12小时：abc', null],
+      ['6小时：999\n12小时：1599', '包天：另议'],
+    ] as const) {
+      const errs = (await issuesOf({ 房间价格: party(price, rule) })).filter((i) => i.level === 'error');
+      expect(errs[0], `${price} ${rule}`).toMatchObject({ row: 2, field: '收费参考' });
+    }
+  });
 });
