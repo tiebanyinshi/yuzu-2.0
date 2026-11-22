@@ -4,20 +4,19 @@
 // 列表每页 50 份、可按姓名或登录名找（已通过的会越来越多，不能只看最近的）。
 
 import { useState } from 'react';
-import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Undo2, X } from 'lucide-react';
-import { FACE_NOTE_MAX, FACE_PHOTO_LABELS, type FaceEnrollment, type FaceEnrollmentPage, type FaceReviewSaved } from '@shared/oa';
+import { FACE_PHOTO_LABELS, type FaceEnrollment, type FaceEnrollmentPage, type FaceReviewSaved } from '@shared/oa';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
-import { useSession } from '../../lib/session';
+import { useReasons, useSession } from '../../lib/session';
 import { formatDateTime, uuid } from '../../lib/utils';
 import { EmptyState } from '../../components/EmptyState';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { LoadFailed } from '../../components/LoadFailed';
-import { Dialog } from '../../components/Overlay';
+import { ReasonDialog } from '../../components/ReasonDialog';
 import { useToast } from '../../components/Toast';
-import { Button, Card, Field, Input, Notice, Segmented, Skeleton, Textarea } from '../../components/ui';
+import { Button, Card, Input, Notice, Segmented, Skeleton } from '../../components/ui';
 
 type Tab = 'pending' | 'approved';
 type Decision = 'approve' | 'reject' | 'revoke';
@@ -36,6 +35,8 @@ export function FaceReviewTab() {
   const rows = q.data?.pages.flatMap((p) => p.items) ?? [];
   const [asking, setAsking] = useState<{ row: FaceEnrollment; decision: Exclude<Decision, 'approve'> } | null>(null);
   const { busy, decide, blocked } = useDecide();
+  const rejectReasons = useReasons('faceRejectReasons');
+  const revokeReasons = useReasons('faceRevokeReasons');
   return (
     <Card className="p-5" data-testid="att-faces">
       <ErpPendingPanel types={['oa_face_review']} className="mb-4 space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: ['oa', 'face-enrollments'] })} />
@@ -141,11 +142,17 @@ export function FaceReviewTab() {
           </Button>
         )}
       </div>
-      <NoteDialog
-        target={asking}
+      <ReasonDialog
+        open={!!asking}
+        title={asking ? `${asking.decision === 'revoke' ? '停用' : '退回'}${asking.row.staffName}的人脸录入` : ''}
+        description={asking?.decision === 'revoke' ? '停用以后，考勤组要人脸的打不了卡，要重新录入、审核。' : '员工会收到通知，看到原因后重新录入。'}
+        confirmLabel={asking?.decision === 'revoke' ? '停用' : '退回'}
+        danger={asking?.decision === 'revoke'}
         busy={busy}
+        reasons={asking?.decision === 'revoke' ? revokeReasons : rejectReasons}
+        testId="face-note"
         onClose={() => setAsking(null)}
-        onDone={async (note) => {
+        onConfirm={async (note) => {
           if (asking && (await decide(asking.row, asking.decision, note))) setAsking(null);
         }}
       />
@@ -189,38 +196,4 @@ function useDecide() {
     }
   };
   return { busy, decide, blocked: pending.length > 0 };
-}
-
-function NoteDialog({ target, busy, onClose, onDone }: { target: { row: FaceEnrollment; decision: 'reject' | 'revoke' } | null; busy: boolean; onClose: () => void; onDone: (note: string) => void }) {
-  const [note, setNote] = useState('');
-  // 每次打开（换了员工或决定）都清空原因：不把上一位的原因带到这一位的通知与审计里
-  useResetOnOpen(!!target, () => setNote(''), [target]);
-  const verb = target?.decision === 'revoke' ? '停用' : '退回';
-  return (
-    <Dialog
-      open={!!target}
-      onClose={onClose}
-      title={target ? `${verb}${target.row.staffName}的人脸录入` : ''}
-      description={target?.decision === 'revoke' ? '停用以后，考勤组要人脸的打不了卡，要重新录入、审核。' : '员工会收到通知，看到原因后重新录入。'}
-      footer={
-        <>
-          <Button variant="secondary" size="lg" onClick={onClose}>
-            取消
-          </Button>
-          <Button variant="primary" size="lg" loading={busy} disabled={!note.trim()} onClick={() => onDone(note.trim())} data-testid="face-note-done">
-            {verb}
-          </Button>
-        </>
-      }
-    >
-      <Field label="原因" htmlFor="face-note">
-        <Textarea id="face-note" rows={2} maxLength={FACE_NOTE_MAX} value={note} onChange={(e) => setNote(e.target.value)} data-testid="face-note" />
-      </Field>
-      {target?.decision === 'revoke' && (
-        <Notice tone="warning" className="mt-3">
-          停用后这位员工要重新录入。
-        </Notice>
-      )}
-    </Dialog>
-  );
 }
