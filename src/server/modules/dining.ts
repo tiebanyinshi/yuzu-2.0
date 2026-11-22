@@ -784,19 +784,18 @@ export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
   // 查回、作废也照这个来——有「餐饮点单」，或有前台原来那一项（查回要「查看在店手牌」、作废要「接待发牌、挂账、换牌」，同一台设备上
   // 前台的同事也能处理）。只认点单用的业务类型（挂账 bill_post）；查回只说生效没生效、记在哪次来访上，不给整张账单；
   // 编号属于别的前台业务的，这里只答「没查到」、不作废（作废登记绑定业务类型，只拦同类型的原请求，见 lib/fences.ts）
-  // 回测整改 P07：房态点单只要「在水吧 / 果吧下单」（不要求「餐饮点单」），查回、作废也对这两项开放（Codex 审查 90a09c7）
   const DiningOpKey = z.object({ key: z.uuid('操作编号格式不正确') });
   const diningOpResult = (r: FrontdeskOpLookup): FrontdeskOpLookup => {
     if (!r.found) return r;
     if (r.type !== 'bill_post') return { found: false, abandoned: false };
     return { found: true, type: 'dining_order', visitId: r.visit.id };
   };
-  app.get('/api/dining/ops/:key', { preHandler: guardAny('dining.order', 'dining.orderWater', 'dining.orderFruit', 'frontdesk.read') }, async (req) => {
+  app.get('/api/dining/ops/:key', { preHandler: guardAny('dining.order', 'frontdesk.read') }, async (req) => {
     const { key } = parse(DiningOpKey, req.params);
     const { lookupFrontdeskOp } = await import('./frontdesk/visits');
     return diningOpResult((await lookupFrontdeskOp(sql, key, deps.config.timezone, 'bill_post')) as FrontdeskOpLookup);
   });
-  app.post('/api/dining/ops/:key/abandon', { preHandler: guardAny('dining.order', 'dining.orderWater', 'dining.orderFruit', 'frontdesk.operate') }, async (req) => {
+  app.post('/api/dining/ops/:key/abandon', { preHandler: guardAny('dining.order', 'frontdesk.operate') }, async (req) => {
     const { key } = parse(DiningOpKey, req.params);
     const { abandonFrontdeskOp } = await import('./frontdesk/visits');
     return diningOpResult((await abandonFrontdeskOp(deps, key, 'bill_post', ctxOf(req))) as FrontdeskOpLookup);

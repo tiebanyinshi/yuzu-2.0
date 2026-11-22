@@ -1,7 +1,8 @@
 // 8.2.0 P07（回测 3-1，docs/YUZU_REQ_V820.md 第 8 节，RT15 起）：房态中心「在用」的房间直接点水吧、果吧。
 //   · 下单 = 挂到这间房现在那位客人的手牌账单上（frontdesk/bills.ts 的 postChargesTx，与点单页同一个挂账：只能点进厨房的菜、价格以服务端为准、
 //     核对确认时的合计、口味备注与整单备注印在出品单上、扣沽清、出出品单），出品单的「送到哪」写「房 V08」；出品屏、自动打印照旧；
-//   · 操作编号记成挂账（bill_post）：断网后的「结果待确认」用点单页那一套查回、作废（/api/dining/ops/:key）；同一编号原样重提返回第一次的那一单，不会重复挂账；
+//   · 操作编号单独一类 room_order（Codex 安全审查 e1c3203：不与挂账 bill_post 共用，只有水吧 / 果吧下单权限的人确认作废时碰不到别的挂账）；
+//     断网后的「结果待确认」在 /api/room-center/order-ops/:key 查回、作废；同一编号原样重提返回第一次的那一单，不会重复挂账；
 //   · 只能点这一个出品口、这个出品口配置里允许的分类（room_order_outlets），逐行按出品口核对下单权限（与点单页同一个 assertOrderOutlets）；
 //   · 每一单另记 room_orders / room_order_lines（只追加）：哪间房、挂在哪位客人上、出品单号、经办人与时间；撤单就是作废那几行账单明细
 //     （/api/frontdesk/lines/:id/void，「退菜：水吧 / 果吧的菜」逐行核对、留审计），这里不另做一套。
@@ -30,6 +31,7 @@ import {
   type RoomOrderSummary,
   type RoomOrderView,
 } from '@shared/room-orders';
+import type { FrontdeskOpLookup } from '@shared/frontdesk';
 import { ROOM_BUSINESS_TYPE } from '@shared/spaces';
 import type { Db, Tx } from '../db';
 import { guard, guardAny } from '../auth/guard';
@@ -211,7 +213,7 @@ export async function placeRoomOrder(deps: Deps, roomKey: string, raw: unknown, 
     expectedTotal: body.expectedTotal,
     ...(body.orderNote ? { orderNote: body.orderNote } : {}),
   });
-  const r = await runIdempotent(deps, { key, opType: 'bill_post', requestHash }, async (tx) => {
+  const r = await runIdempotent(deps, { key, opType: 'room_order', requestHash }, async (tx) => {
     const at = ctx.at ?? new Date();
     // 先锁房间一行（共享键锁，room_orders 的外键要的就是它），再进挂账去锁来访：与客房退房（入住单 → 客房 → 来访）、
     // 钟房换房间（空间一行 → …）同一个先后，不会出现我拿着来访等房间、对方拿着房间等来访（Codex 审查 90a09c7）
@@ -234,7 +236,7 @@ export async function placeRoomOrder(deps: Deps, roomKey: string, raw: unknown, 
       deps,
       guest.visitId,
       input,
-      { key, requestHash, backfill: null },
+      { key, requestHash, backfill: null, opType: 'room_order' },
       { ...ctx, at },
       {
         dining: { onlyKitchen: true },
@@ -384,6 +386,24 @@ export function registerRoomOrderRoutes(app: FastifyInstance, deps: Deps) {
   const roomKey = (req: { params: unknown }) => parse(z.object({ id: z.string().max(24) }), req.params).id;
 
   app.get('/api/room-center/order-config', { preHandler: order }, async () => roomOrderConfig(sql));
+
+  // 「结果待确认」的查回与确认作废：只认房态点单这一类编号（room_order），别的业务的编号只答「没查到」、不作废；
+  // 查回只说生效没生效、记在哪次来访上
+  const OpKey = z.object({ key: z.uuid('操作编号格式不正确') });
+  const opResult = (r: FrontdeskOpLookup): FrontdeskOpLookup => (r.found && r.type !== 'room_order' ? { found: false, abandoned: false } : r);
+  app.get('/api/room-center/order-ops/:key', { preHandler: order }, async (req) => {
+    const { key } = parse(OpKey, req.params);
+    const { lookupFrontdeskOp } = await import('./frontdesk/visits');
+    return opResult((await lookupFrontdeskOp(sql, key, deps.config.timezone, 'room_order')) as FrontdeskOpLookup);
+  });
+  app.post('/api/room-center/order-ops/:key/abandon', { preHandler: order }, async (req) => {
+    const { key } = parse(OpKey, req.params);
+    const { lookupFrontdeskOp, abandonFrontdeskOp } = await import('./frontdesk/visits');
+    // 编号已经用在别的业务上：不作废，照「没查到」答（与点单页的作废一样，作废登记绑定业务类型）
+    const peek = (await lookupFrontdeskOp(sql, key, deps.config.timezone, 'room_order')) as FrontdeskOpLookup;
+    if (peek.found) return opResult(peek);
+    return opResult((await abandonFrontdeskOp(deps, key, 'room_order', ctxOf(req))) as FrontdeskOpLookup);
+  });
   app.get('/api/room-center/rooms/:id/orders', { preHandler: read }, async (req) => roomOrderHistory(sql, roomKey(req)));
   app.post('/api/room-center/rooms/:id/orders', { preHandler: order }, async (req) => placeRoomOrder(deps, roomKey(req), req.body, ctxOf(req)));
 
