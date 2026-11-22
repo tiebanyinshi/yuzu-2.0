@@ -34,7 +34,7 @@ const week = async (cookie = ctx.owner, from: string | undefined = today) => {
   return r.body as ScheduleWeek;
 };
 const EMPTY = { shiftIds: [] as number[], consecutive: false };
-const save = (cells: object[]) => api(ctx.app, ctx.owner, 'PUT', '/api/oa/attendance/schedule', { groupId, cells });
+const save = (cells: object[], clientKey: string = randomUUID()) => api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/schedule', { clientKey, storeId: DEFAULT_STORE_ID, groupId, cells });
 
 beforeAll(async () => {
   ctx = await setup();
@@ -63,12 +63,24 @@ describe('OA-05 排班', () => {
 
   it('按格子保存：别人先改过拒绝；原样重提成功；过去的不能改；记审计、发通知', async () => {
     const tomorrow = shiftDate(today, 1);
-    let r = await save([{ staffId: a.id, date: tomorrow, shiftIds: [early], expected: EMPTY }]);
+    const key = randomUUID();
+    const first = [{ staffId: a.id, date: tomorrow, shiftIds: [early], expected: EMPTY }];
+    let r = await save(first, key);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    expect(r.body).toEqual({ changed: 1 });
-    // 原样重提：已经是要的样子，跳过
-    r = await save([{ staffId: a.id, date: tomorrow, shiftIds: [early], expected: EMPTY }]);
-    expect(r.body).toEqual({ changed: 0 });
+    expect(r.body).toEqual({ changed: 1, saved: { id: groupId } });
+    // 同一编号原样重提：返回原来那次；换了内容拒绝；查回得到考勤组
+    expect((await save(first, key)).body).toEqual({ changed: 0, saved: { id: groupId } });
+    expect(code(await save([{ ...first[0], shiftIds: [night] }], key))).toBe('IDEMPOTENCY_CONFLICT');
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${key}?type=oa_schedule_save`)).body).toMatchObject({ found: true, refId: groupId });
+    // 新编号、内容一样：已经是要的样子，跳过
+    r = await save(first);
+    expect(r.body).toEqual({ changed: 0, saved: { id: groupId } });
+    // 确认作废的编号：原请求后到也不保存
+    const late = randomUUID();
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${late}/abandon`, { type: 'oa_schedule_save', summary: '保存排班' })).status).toBe(200);
+    expect(code(await save([{ staffId: b.id, date: tomorrow, shiftIds: [early], expected: EMPTY }], late))).toBe('OP_ABANDONED');
+    // 换了门店的页面
+    expect(code(await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/schedule', { clientKey: randomUUID(), storeId: DEFAULT_STORE_ID + 999, groupId, cells: first }))).toBe('STORE_SWITCHED');
     // 照着旧页面改成夜班：拒绝
     expect(code(await save([{ staffId: a.id, date: tomorrow, shiftIds: [night], expected: EMPTY }]))).toBe('SCHEDULE_CHANGED');
     // 过去的
@@ -110,7 +122,20 @@ describe('OA-05 排班', () => {
     expect((await week()).cells).toContainEqual({ staffId: a.id, date: d2, shiftIds: [early, late], consecutive: true });
     // 清空 = 休息
     r = await save([{ staffId: a.id, date: d2, shiftIds: [], expected: { shiftIds: [late, early], consecutive: true } }]);
-    expect(r.body).toEqual({ changed: 1 });
+    expect(r.body).toEqual({ changed: 1, saved: { id: groupId } });
+  });
+
+  it('隔一天的两条排班打卡时段也可能重叠（提前、延后都放到 12 小时）：分两次保存也拒绝', async () => {
+    const s = await create('shifts', { name: '长延后', startMinute: 1380, endMinute: 660, inAdvanceMinutes: 0, outDelayMinutes: 720 });
+    const wide = s.shifts.find((x) => x.name === '长延后')!.id;
+    const t = await create('shifts', { name: '长提前', startMinute: 0, endMinute: 480, inAdvanceMinutes: 720, outDelayMinutes: 0 });
+    const early0 = t.shifts.find((x) => x.name === '长提前')!.id;
+    const d10 = shiftDate(today, 10);
+    const d12 = shiftDate(today, 12);
+    expect((await save([{ staffId: b.id, date: d10, shiftIds: [wide], expected: EMPTY }])).status).toBe(200);
+    // d10 23:00 起、延后到 d12 前一天 23:00；d12 00:00 的班提前 12 小时，d11 12:00 起就能打
+    expect(code(await save([{ staffId: b.id, date: d12, shiftIds: [early0], expected: EMPTY }]))).toBe('SCHEDULE_OVERLAP');
+    expect((await save([{ staffId: b.id, date: d10, shiftIds: [], expected: { shiftIds: [wide], consecutive: false } }])).status).toBe(200);
   });
 
   it('部门负责人只看本部门、不能改；别的部门的负责人看不到这个组；员工看不了排班表', async () => {
@@ -119,7 +144,16 @@ describe('OA-05 排班', () => {
     const w = await week(lead.cookie);
     expect(w.editable).toBe(false);
     expect(w.members.map((m) => m.staffId).sort()).toEqual([a.id, b.id].sort());
-    expect((await api(ctx.app, lead.cookie, 'PUT', '/api/oa/attendance/schedule', { groupId, cells: [{ staffId: a.id, date: today, shiftIds: [], expected: EMPTY }] })).status).toBe(403);
+    expect(
+      (
+        await api(ctx.app, lead.cookie, 'POST', '/api/oa/attendance/schedule', {
+          clientKey: randomUUID(),
+          storeId: DEFAULT_STORE_ID,
+          groupId,
+          cells: [{ staffId: a.id, date: today, shiftIds: [], expected: EMPTY }],
+        })
+      ).status,
+    ).toBe(403);
     expect((await api(ctx.app, other.cookie, 'GET', `/api/oa/attendance/schedule?groupId=${groupId}`)).status).toBe(404);
     expect((await api(ctx.app, other.cookie, 'GET', '/api/oa/attendance/schedule')).body).toMatchObject({ groups: [], group: null });
     expect((await api(ctx.app, a.cookie, 'GET', '/api/oa/attendance/schedule')).status).toBe(403);
@@ -136,5 +170,10 @@ describe('OA-05 排班', () => {
     expect(mine.days.find((d) => d.date === tomorrow)!.items).toEqual([]);
     expect((await api(ctx.app, a.cookie, 'GET', '/api/oa/me/schedule?month=2026-12')).body).toMatchObject({ month: '2026-12' });
     expect(((await api(ctx.app, a.cookie, 'GET', '/api/oa/me/schedule?month=2026-12')).body as MySchedule).days).toHaveLength(31);
+    // 下个月 1 号的也带上（00:00 上班的在这个月最后一天提醒）
+    await ctx.sql`INSERT INTO oa_schedules (staff_id, work_date, shift_id) VALUES (${b.id}, '2027-01-01', ${night})`;
+    const dec = (await api(ctx.app, b.cookie, 'GET', '/api/oa/me/schedule?month=2026-12')).body as MySchedule;
+    expect(dec.following).toEqual({ date: '2027-01-01', items: [{ shiftId: night, name: '夜班', startMinute: 0, endMinute: 480, consecutive: false }] });
+    expect(dec.days.some((d) => d.date === '2027-01-01')).toBe(false);
   });
 });

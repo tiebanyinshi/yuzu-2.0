@@ -67,8 +67,10 @@ test.describe('OA-05 排班', () => {
     // 收尾：清掉这两格、停用组
     const empty = { shiftIds: [], consecutive: false };
     const sid = setup.shifts.find((s) => s.name === `早${stamp}`)!.id;
-    const clear = await page.request.put('/api/oa/attendance/schedule', {
+    const clear = await page.request.post('/api/oa/attendance/schedule', {
       data: {
+        clientKey: randomUUID(),
+        storeId: me.store.id,
         groupId: group.id,
         cells: [monday, nextMonday].map((date) => ({ staffId: zhou.staffId, date, ...empty, expected: { shiftIds: [sid], consecutive: false } })),
       },

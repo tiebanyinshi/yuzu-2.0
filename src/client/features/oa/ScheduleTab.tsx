@@ -1,7 +1,9 @@
 // OA-05 后台「考勤设置 → 排班」（docs/OA.md 第 8 节）：考勤组 × 日期，一周一屏。
 //   · 点一格选一个或几个班次（连班要勾「连班」），空着 = 休息；改的格子先记在页面上，「保存」一次提交。
 //   · 「复制上周」：把上一周同一天的排班填进这一周（今天以前的日子不动），核对后再保存。
-//   · 每一格带着页面上看到的原排班提交：别人先改过的格子整批拒绝，重新载入后再排；结果不确定的重新载入核对（原样重提照常成功）。
+//   · 每一格带着第一次改它时看到的原排班提交（之后页面重新取数也不换）：别人先改过的格子整批拒绝，重新载入后再排。
+//   · 保存带操作编号、先记在本机再发（sendErpOp）：结果不确定的在页面上方查回、原样重提或确认作废，确认前不让再保存。
+//     格子多的按员工分批（一批最多 SCHEDULE_SAVE_MAX_CELLS 格，一个人一周的格子总在同一批里，跨天重叠按人查不受分批影响）。
 //   · 部门负责人（hr.attendanceDept）只看本部门员工，不能改。
 // 窄屏上表格在卡片里左右滑，员工那一列固定在左边，页面本身不横向滚动。
 
@@ -9,12 +11,14 @@ import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Copy } from 'lucide-react';
 import { describeDate, shiftDate } from '@shared/labels';
-import { SCHEDULE_MAX_SHIFTS_PER_DAY, type OaShift, type ScheduleWeek } from '@shared/oa';
+import { SCHEDULE_MAX_SHIFTS_PER_DAY, SCHEDULE_SAVE_MAX_CELLS, type OaShift, type ScheduleSaved, type ScheduleWeek } from '@shared/oa';
 import { positionLabel } from '@shared/positions';
 import { shiftTimeText } from '@shared/technician-admin';
-import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
+import { ApiError, api, errorMessage, UncertainError } from '../../lib/api';
+import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
+import { useSession } from '../../lib/session';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
-import { cn } from '../../lib/utils';
+import { cn, uuid } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -23,6 +27,8 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, ConfirmCheck, Notice, Select, Skeleton } from '../../components/ui';
 
 type Cell = { shiftIds: number[]; consecutive: boolean };
+/** 改过的一格：要排成的样子 + 第一次改它时看到的原排班（提交时核对用，页面重新取数也不换） */
+type Edit = { cell: Cell; expected: Cell };
 type Member = ScheduleWeek['members'][number];
 const EMPTY: Cell = { shiftIds: [], consecutive: false };
 const keyOf = (staffId: number, date: string) => `${staffId}|${date}`;
@@ -42,7 +48,10 @@ export function ScheduleTab() {
   const toast = useToast();
   const [groupId, setGroupId] = useState<number | null>(null);
   const [monday, setMonday] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Map<string, Cell>>(new Map());
+  const session = useSession();
+  // 记在本机的保存（还在路上、结果待确认）：确认前不让再保存（查不到不能断定没保存上）
+  const pending = useErpRecorded(['oa_schedule_save']);
+  const [draft, setDraft] = useState<Map<string, Edit>>(new Map());
   const [editing, setEditing] = useState<{ staffId: number; date: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [copying, setCopying] = useState(false);
@@ -56,10 +65,12 @@ export function ScheduleTab() {
   if (w?.group && groupId === null) setGroupId(w.group.id);
 
   const original = useMemo(() => new Map((w?.cells ?? []).map((c) => [keyOf(c.staffId, c.date), { shiftIds: c.shiftIds, consecutive: c.consecutive }])), [w]);
-  const cellOf = (staffId: number, date: string) => draft.get(keyOf(staffId, date)) ?? original.get(keyOf(staffId, date)) ?? EMPTY;
+  const cellOf = (staffId: number, date: string) => draft.get(keyOf(staffId, date))?.cell ?? original.get(keyOf(staffId, date)) ?? EMPTY;
+  /** 改一格：第一次改时记下当时看到的原排班 */
+  const edited = (map: Map<string, Edit>, k: string, cell: Cell) => map.set(k, { cell, expected: map.get(k)?.expected ?? original.get(k) ?? EMPTY });
   const dates = from ? Array.from({ length: 7 }, (_, i) => shiftDate(from, i)) : [];
   const shiftById = new Map((w?.shifts ?? []).map((s) => [s.id, s]));
-  const dirty = [...draft.entries()].filter(([k, v]) => !same(v, original.get(k) ?? EMPTY));
+  const dirty = [...draft.entries()].filter(([, v]) => !same(v.cell, v.expected));
 
   const reset = () => {
     setDraft(new Map());
@@ -96,7 +107,7 @@ export function ScheduleTab() {
           const p = prevCells.get(keyOf(m.staffId, shiftDate(d, -7)));
           const cell: Cell = p ? { shiftIds: p.shiftIds.filter((id) => active.has(id)), consecutive: p.consecutive } : EMPTY;
           if (!same(cell, cellOf(m.staffId, d))) n += 1;
-          next.set(keyOf(m.staffId, d), cell.shiftIds.length ? cell : EMPTY);
+          edited(next, keyOf(m.staffId, d), cell.shiftIds.length ? cell : EMPTY);
         }
       }
       setDraft(next);
@@ -110,24 +121,57 @@ export function ScheduleTab() {
 
   const save = async () => {
     if (!w?.group || !dirty.length) return;
+    if (pending.length) {
+      setError('上一次保存结果待确认：请先在页面上方查回、按原内容重新提交或作废，再保存');
+      return;
+    }
     setSaving(true);
     setError(null);
-    const cells = dirty.map(([k, v]) => {
+    // 按员工分批：一个人的格子总在同一批里
+    type SaveCell = Cell & { staffId: number; date: string; expected: Cell };
+    const byStaff = new Map<number, SaveCell[]>();
+    for (const [k, v] of dirty) {
       const [staffId, date] = k.split('|') as [string, string];
-      return { staffId: Number(staffId), date, shiftIds: v.shiftIds, consecutive: v.consecutive, expected: original.get(k) ?? EMPTY };
-    });
+      const id = Number(staffId);
+      byStaff.set(id, [...(byStaff.get(id) ?? []), { staffId: id, date, shiftIds: v.cell.shiftIds, consecutive: v.cell.consecutive, expected: v.expected }]);
+    }
+    const batches: SaveCell[][] = [];
+    for (const cells of byStaff.values()) {
+      const last = batches[batches.length - 1];
+      if (last && last.length + cells.length <= SCHEDULE_SAVE_MAX_CELLS) last.push(...cells);
+      else batches.push([...cells]);
+    }
+    let changed = 0;
+    let done = 0;
     try {
-      const r = await api.put<{ changed: number }>('/api/oa/attendance/schedule', { groupId: w.group.id, cells });
-      toast({ tone: 'success', title: `排班已保存（${r.changed} 格）` });
+      for (const cells of batches) {
+        const key = uuid();
+        const r = await sendErpOp<ScheduleSaved>({
+          key,
+          type: 'oa_schedule_save',
+          url: '/api/oa/attendance/schedule',
+          body: { clientKey: key, storeId: session.store.id, groupId: w.group.id, cells },
+          summary: `${w.group.name} · ${cells.length} 格（${from} 那一周）`,
+          staffName: session.staff.displayName,
+        });
+        changed += r.changed;
+        done += 1;
+      }
+      toast({ tone: 'success', title: `排班已保存（${changed} 格）` });
       reload();
     } catch (e) {
+      const part = done ? `前 ${done} 批已保存；` : '';
       if (e instanceof UncertainError) {
-        toast({ tone: 'info', title: `${e.message}，不确定有没有保存上`, body: '已重新载入，请核对这一周的排班；没保存上的再排一次' });
+        toast({ tone: 'info', title: `${part}保存结果待确认`, body: '已记在本机：请在页面上方查回、按原内容重新提交或作废；确认前不要重新排这几格。' });
         reload();
       } else if (e instanceof ApiError && e.code === 'SCHEDULE_CHANGED') {
-        toast({ tone: 'info', title: errorMessage(e), body: '已载入最新的排班，请重新排' });
+        toast({ tone: 'info', title: `${part}${errorMessage(e)}`, body: '已载入最新的排班，请重新排' });
         reload();
-      } else setError(errorMessage(e));
+      } else if (done) {
+        setError(`${part}其余没有保存：${errorMessage(e)}`);
+        reload();
+      } else if (e instanceof ErpPendingStoreError) setError(e.message);
+      else setError(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -212,7 +256,8 @@ export function ScheduleTab() {
                 className: 'min-w-24 p-1 align-top',
                 cell: (m) => {
                   const c = cellOf(m.staffId, d);
-                  const changed = !same(c, original.get(keyOf(m.staffId, d)) ?? EMPTY);
+                  const e = draft.get(keyOf(m.staffId, d));
+                  const changed = !!e && !same(e.cell, e.expected);
                   const locked = !w.editable || d < w.today;
                   return (
                     <button
@@ -256,7 +301,7 @@ export function ScheduleTab() {
         onClose={() => setEditing(null)}
         onDone={(cell) => {
           if (!editing) return;
-          setDraft((d) => new Map(d).set(keyOf(editing.staffId, editing.date), cell));
+          setDraft((d) => edited(new Map(d), keyOf(editing.staffId, editing.date), cell));
           setEditing(null);
         }}
       />

@@ -479,6 +479,8 @@ export const ERP_OP_TYPES = [
   'oa_staff_import',
   // OA-04 考勤设置：新建班次、打卡点、考勤组（一类：请求散列带着是哪一样）
   'oa_attendance_setup',
+  // OA-05 排班保存（一批格子一个编号）
+  'oa_schedule_save',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -554,6 +556,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   member_card_return: '退卡退押金',
   oa_staff_import: '批量开通员工账号',
   oa_attendance_setup: '新建班次 / 打卡点 / 考勤组',
+  oa_schedule_save: '保存排班',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */

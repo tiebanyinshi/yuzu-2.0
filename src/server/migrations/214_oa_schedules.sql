@@ -4,6 +4,7 @@
 --     consecutive = 标了「连班」：与同一人前后相邻的班次打卡窗口可以首尾相接（服务端保存时核对）。
 --   · 按门店分；只能改今天及以后的日子，改动记审计（audit_logs，oa_schedule_saved）。
 -- 新权限项 hr.attendanceDept（本部门的排班与考勤查看）：建议权限给各部门负责人与总经办（与 src/shared/positions.ts 的 POSITION_DEFAULTS 一致）。
+-- 保存排班带操作编号：操作编号与「确认作废」多一类 oa_schedule_save（在当时的约束上追加）。
 -- 回滚：docs/rollback/214_oa_schedules.down.sql（删这张表、撤掉建议权限）。
 
 CREATE TABLE oa_schedules (
@@ -27,3 +28,14 @@ SELECT k, 'hr.attendanceDept'
 FROM unnest(ARRAY['gmo', 'hr.lead', 'front.lead', 'male.lead', 'female.lead', 'ent.lead', 'dining.lead', 'kangmei.lead', 'kitchen.lead',
                   'wellness.lead', 'eng.lead', 'finance.lead', 'outreach.lead', 'vip.lead']) AS k
 ON CONFLICT DO NOTHING;
+
+DO $$
+DECLARE t text; expression text;
+BEGIN
+ FOREACH t IN ARRAY ARRAY['idempotency_keys','op_fences'] LOOP
+  SELECT pg_get_expr(conbin,conrelid) INTO expression FROM pg_constraint WHERE conrelid=t::regclass AND conname=t||'_op_type_check';
+  IF expression IS NULL THEN RAISE EXCEPTION '原操作类型约束不存在'; END IF;
+  EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I',t,t||'_op_type_check');
+  EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((%s) OR op_type IN (''oa_schedule_save''))',t,t||'_op_type_check',expression);
+ END LOOP;
+END $$;

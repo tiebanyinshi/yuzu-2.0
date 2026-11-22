@@ -265,6 +265,8 @@ export const SCHEDULE_MAX_DAYS = 42;
 export const SCHEDULE_AHEAD_DAYS = 92;
 /** 一格最多几个班次（连班） */
 export const SCHEDULE_MAX_SHIFTS_PER_DAY = 4;
+/** 一次保存最多几格（页面按员工分批，一个人一周的格子总在同一批里） */
+export const SCHEDULE_SAVE_MAX_CELLS = 500;
 
 /** 排班的一格：员工 × 业务日期；shiftIds 空 = 休息（没排） */
 export interface ScheduleCell {
@@ -302,6 +304,13 @@ export interface MySchedule {
   month: string;
   today: string;
   days: { date: string; items: MyScheduleItem[] }[];
+  /** 下个月 1 号：00:00 上班的在这个月最后一天写「今晚 24:00 上班」 */
+  following: { date: string; items: MyScheduleItem[] };
+}
+/** 排班保存的结果（saved.id 是考勤组；结果待确认查回用） */
+export interface ScheduleSaved {
+  changed: number;
+  saved: { id: number };
 }
 
 const DAY_MS = 86_400_000;

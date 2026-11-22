@@ -3,6 +3,7 @@
 //   · 保存按格子提交，每一格带着页面上看到的原排班：别人先改过的拒绝（SCHEDULE_CHANGED）；已经是要的样子的跳过（原样重提照常成功）。
 //   · 同一人前后相邻的排班打卡时段不能重叠（OA-06 分不清一次打卡算哪一条），标了连班的除外。
 //   · 部门负责人（hr.attendanceDept）只看本部门员工的排班，不能改。
+//   · 保存带操作编号（oa_schedule_save）：结果不确定的在页面上方查回、原样重提或确认作废；一次最多 SCHEDULE_SAVE_MAX_CELLS 格，页面按员工分批。
 //   · 员工「我的排班」：本人一个月的排班。排班有变的员工收到站内通知（同一人没读的只留一条）。
 // 加锁（docs/LOCKING.md「排班」）：门店的考勤设置咨询锁（与班次、考勤组的保存串行）→ 排班行（按员工、日期改）。
 
@@ -13,6 +14,7 @@ import {
   SCHEDULE_AHEAD_DAYS,
   SCHEDULE_MAX_DAYS,
   SCHEDULE_MAX_SHIFTS_PER_DAY,
+  SCHEDULE_SAVE_MAX_CELLS,
   scheduleSpan,
   type MySchedule,
   type OaShift,
@@ -26,11 +28,13 @@ import type { Db, Tx } from '../../db';
 import { guard, guardAny } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
 import type { Actor, Deps } from '../../lib/context';
-import { daysBetween } from '../../lib/dates';
+import { daysBetween, todayIn } from '../../lib/dates';
 import { conflict, notFound, unprocessable } from '../../lib/errors';
+import { assertNotFenced, lockOpKey } from '../../lib/fences';
+import { hashRequest } from '../../lib/idempotency';
+import { erpOpAbandoned } from '../erp-ops';
 import { currentStoreId } from '../../lib/store-context';
 import { dateSchema, parse } from '../../lib/validate';
-import { businessDate } from '../frontdesk/common';
 import { lockSetup, SHIFT_COLS, storeEmployee } from './attendance-setup';
 import { notify } from './notifications';
 
@@ -54,6 +58,9 @@ const CellState = z.object({
   consecutive: z.boolean().default(false),
 });
 const SaveInput = z.object({
+  /** 操作编号（与 OA-04 新建同一个做法）：结果不确定的原样重提返回原来那次；确认作废过的拒绝 */
+  clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
+  storeId: z.number().int().positive(),
   groupId: z.number().int().positive(),
   cells: z
     .array(
@@ -65,12 +72,18 @@ const SaveInput = z.object({
       }),
     )
     .min(1, '没有要保存的格子')
-    .max(500, '一次最多保存 500 格，请分几次保存'),
+    .max(SCHEDULE_SAVE_MAX_CELLS, `一次最多保存 ${SCHEDULE_SAVE_MAX_CELLS} 格`),
 });
 
 const sameSet = (a: readonly number[], b: readonly number[]) => a.length === b.length && [...a].sort((x, y) => x - y).every((v, i) => v === [...b].sort((x, y) => x - y)[i]);
 
-const todayOf = (db: Db, deps: Deps) => businessDate(db, deps, new Date());
+// 排班的日子是班次开始那一天的日历日（docs/OA.md 第 8 节），不是营业日：凌晨换营业日以前也不能再改昨天的
+const todayOf = (deps: Deps) => todayIn(deps.config.timezone);
+/**
+ * 查重叠要往前后看几天：一条排班的打卡时段最早从当天 00:00 前 12 小时（提前上限 720 分钟）起，
+ * 最晚到第二天结束后 12 小时（班长最多 24 小时，延后上限 720 分钟），两天以上的也可能重叠
+ */
+const OVERLAP_LOOKAROUND_DAYS = Math.ceil((720 + 1440 + 1440 + 720) / 1440);
 
 /** 能看哪些员工：hr.attendance 全部；只有 hr.attendanceDept 的只看本部门（同部门的岗位） */
 function deptFilter(db: Db, actor: Actor) {
@@ -82,7 +95,7 @@ function deptFilter(db: Db, actor: Actor) {
 
 async function loadWeek(db: Db, deps: Deps, actor: Actor, q: z.infer<typeof WeekQuery>): Promise<ScheduleWeek> {
   const store = currentStoreId();
-  const today = await todayOf(db, deps);
+  const today = todayOf(deps);
   const from = q.from ?? today;
   const to = shiftDate(from, q.days - 1);
   const groups = await db<{ id: number; name: string }[]>`
@@ -136,7 +149,7 @@ async function overlapProblem(tx: Tx, staffIds: number[], from: string, to: stri
     SELECT o.staff_id, o.work_date::text AS work_date, o.shift_id, o.consecutive, sh.name, s.display_name AS staff_name,
            sh.start_minute, sh.end_minute, sh.in_advance_minutes, sh.out_delay_minutes
     FROM oa_schedules o JOIN oa_shifts sh ON sh.id = o.shift_id JOIN staff s ON s.id = o.staff_id
-    WHERE o.staff_id IN ${tx(staffIds)} AND o.work_date BETWEEN ${shiftDate(from, -1)} AND ${shiftDate(to, 1)}
+    WHERE o.staff_id IN ${tx(staffIds)} AND o.work_date BETWEEN ${shiftDate(from, -OVERLAP_LOOKAROUND_DAYS)} AND ${shiftDate(to, OVERLAP_LOOKAROUND_DAYS)}
     ORDER BY o.staff_id, o.work_date, sh.start_minute`;
   const spans = rows.map((r) => ({ ...r, ...scheduleSpan(r.workDate, r) }));
   for (let i = 0; i < spans.length; i += 1) {
@@ -156,7 +169,7 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
   app.get('/api/oa/attendance/schedule', { preHandler: view }, async (req) => loadWeek(sql, deps, req.actor, parse(WeekQuery, req.query ?? {})));
 
-  app.put('/api/oa/attendance/schedule', { preHandler: manage }, async (req) => {
+  app.post('/api/oa/attendance/schedule', { preHandler: manage }, async (req) => {
     const input = parse(SaveInput, req.body);
     const store = currentStoreId();
     const keys = new Set<string>();
@@ -166,9 +179,18 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
       keys.add(k);
       if (new Set(c.shiftIds).size !== c.shiftIds.length) throw unprocessable('SCHEDULE_DUPLICATE', '同一天选了两次同一个班次');
     }
-    const changed = await sql.begin(async (tx) => {
+    if (input.storeId !== store) throw conflict('STORE_SWITCHED', '这次保存是在别的门店做的：请换回那家门店再查回或重新提交');
+    const hash = hashRequest({ groupId: input.groupId, cells: input.cells });
+    const changed = await sql.begin(async (tx): Promise<number> => {
       await lockSetup(tx);
-      const today = await todayOf(tx, deps);
+      await lockOpKey(tx, input.clientKey);
+      const [seen] = await tx<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+      if (seen) {
+        if (seen.opType !== 'oa_schedule_save' || seen.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次操作，请刷新页面后重新排');
+        return 0;
+      }
+      await assertNotFenced(tx, input.clientKey, 'oa_schedule_save', erpOpAbandoned);
+      const today = todayOf(deps);
       const [group] = await tx<{ id: number; name: string }[]>`SELECT id, name FROM oa_attendance_groups WHERE id = ${input.groupId} AND store_id = ${store} AND active`;
       if (!group) throw notFound('考勤组不存在或已停用，请刷新');
       const staffIds = [...new Set(input.cells.map((c) => c.staffId))].sort((a, b) => a - b);
@@ -200,7 +222,9 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
         }
         changes.push({ staffId: c.staffId, date: c.date, before: current, after: want });
       }
-      if (!changes.length) return [];
+      // 记下操作编号（ref_id 是考勤组）：没有要改的格子也记，查回时算已保存
+      await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'oa_schedule_save', ${hash}, ${group.id}, ${req.actor.id})`;
+      if (!changes.length) return 0;
       const dates = changes.map((x) => x.date).sort();
       const problem = await overlapProblem(tx, [...new Set(changes.map((x) => x.staffId))], dates[0]!, dates[dates.length - 1]!);
       if (problem) throw unprocessable('SCHEDULE_OVERLAP', problem);
@@ -224,15 +248,15 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
         detail: { changes, summary: `考勤组「${group.name}」排班：改了 ${changes.length} 格（${dates[0]} 至 ${dates[dates.length - 1]}）` },
         ip: req.ip,
       });
-      return changes;
+      return changes.length;
     });
-    return { changed: changed.length };
+    return { changed, saved: { id: input.groupId } };
   });
 
   // 员工「我的排班」：本人一个月（各门店的都算）；登录就能看
   app.get('/api/oa/me/schedule', { preHandler: guard() }, async (req): Promise<MySchedule> => {
     const q = parse(MonthQuery, req.query ?? {});
-    const today = await todayOf(sql, deps);
+    const today = todayOf(deps);
     const month = q.month ?? today.slice(0, 7);
     const first = `${month}-01`;
     const [y, m] = month.split('-').map(Number) as [number, number];
@@ -240,15 +264,14 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
     const rows = await sql<{ workDate: string; shiftId: number; name: string; startMinute: number; endMinute: number; consecutive: boolean }[]>`
       SELECT o.work_date::text AS work_date, o.shift_id, sh.name, sh.start_minute, sh.end_minute, o.consecutive
       FROM oa_schedules o JOIN oa_shifts sh ON sh.id = o.shift_id
-      WHERE o.staff_id = ${req.actor.id} AND o.work_date BETWEEN ${first} AND ${end}
+      WHERE o.staff_id = ${req.actor.id} AND o.work_date BETWEEN ${first} AND ${shiftDate(end, 1)}
       ORDER BY o.work_date, sh.start_minute`;
+    const itemsOf = (d: string) =>
+      rows.filter((r) => r.workDate === d).map((r) => ({ shiftId: Number(r.shiftId), name: r.name, startMinute: r.startMinute, endMinute: r.endMinute, consecutive: r.consecutive }));
     const days: MySchedule['days'] = [];
-    for (let d = first; d <= end; d = shiftDate(d, 1)) {
-      days.push({
-        date: d,
-        items: rows.filter((r) => r.workDate === d).map((r) => ({ shiftId: Number(r.shiftId), name: r.name, startMinute: r.startMinute, endMinute: r.endMinute, consecutive: r.consecutive })),
-      });
-    }
-    return { month, today, days };
+    for (let d = first; d <= end; d = shiftDate(d, 1)) days.push({ date: d, items: itemsOf(d) });
+    // 下个月 1 号的也带上：00:00 上班的要在这个月最后一天写「今晚 24:00 上班」
+    const next = shiftDate(end, 1);
+    return { month, today, days, following: { date: next, items: itemsOf(next) } };
   });
 }

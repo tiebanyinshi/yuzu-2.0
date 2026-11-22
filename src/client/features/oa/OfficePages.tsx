@@ -97,7 +97,8 @@ function MonthGrid({ data }: { data: MySchedule }) {
   const first = data.days[0]!.date;
   const [y, m, d] = first.split('-').map(Number) as [number, number, number];
   const lead = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
-  const byDate = new Map(data.days.map((x) => [x.date, x.items]));
+  // 下个月 1 号的也算上：00:00 上班的在这个月最后一天写「今晚 24:00 上班」
+  const byDate = new Map([...data.days, data.following].map((x) => [x.date, x.items]));
   return (
     <div className="grid grid-cols-7 gap-1 text-[12px]">
       {WEEK.map((w) => (

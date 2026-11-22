@@ -59,8 +59,17 @@ export function AttendanceSetupSection() {
           : '本部门员工的排班（只看）。'
       }
     >
-      {/* 新建班次、打卡点、考勤组没收到结果的：查回、按原内容重新提交或确认作废 */}
-      {manage && <ErpPendingPanel types={['oa_attendance_setup']} className="mb-4 space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: SETUP_KEY })} />}
+      {/* 新建班次、打卡点、考勤组与保存排班没收到结果的：查回、按原内容重新提交或确认作废 */}
+      {manage && (
+        <ErpPendingPanel
+          types={['oa_attendance_setup', 'oa_schedule_save']}
+          className="mb-4 space-y-2"
+          onFound={() => {
+            void qc.invalidateQueries({ queryKey: SETUP_KEY });
+            void qc.invalidateQueries({ queryKey: ['oa', 'schedule'] });
+          }}
+        />
+      )}
       <SectionBody manage={manage} />
     </AdminPage>
   );
