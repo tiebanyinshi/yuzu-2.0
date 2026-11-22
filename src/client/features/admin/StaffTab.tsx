@@ -332,7 +332,7 @@ function StaffDialog({
     setError(null);
   }
 
-  // 换部门 / 岗位：权限跟着换成新岗位的；给这个人逐项微调过的（换岗位就不再适用），先问是否放弃（8.2.0 P06，回测 5-1）
+  // 换部门 / 岗位：权限跟着换成新岗位的；给这个人逐项微调过的（换岗位就不再适用），先问是否放弃（回测整改 P06，回测 5-1）
   const applySwitch = (d: OrgDepartment | '', p: PositionKey | null) => {
     setDept(d);
     setPosition(p);

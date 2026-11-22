@@ -1,4 +1,4 @@
-// 8.2.0 P03（docs/YUZU_REQ_V820.md 第 4 节）：
+// 回测整改 P03（docs/YUZU_REQ_V820.md 第 4 节）：
 //   4-1 「排位播报」从钟房移出，与钟房同级（技师组里两项平级）；老地址跳到新页面并提示；播报页有播报条、排位与手动叫号、播报记录；
 //   5-3 岗位权限的第一个页签叫「设立岗位」，老的 ?tab=positions 照旧打开它，页面上不再有「新岗位（按部门）」。
 // 依赖演示数据（店主 linlan，密码 yuzu2026）。手动叫号会记一条叫号（只追加，不动别的数据），只在门店电脑跑。
@@ -13,7 +13,7 @@ async function login(page: Page) {
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 
-test.describe('8.2.0 排位播报独立菜单；设立岗位', () => {
+test.describe('回测整改 排位播报独立菜单；设立岗位', () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '只在门店电脑尺寸跑一次');
 
   test('技师组里钟房与排位播报平级；老地址跳到新页面；手动叫号进播报记录', async ({ page }) => {

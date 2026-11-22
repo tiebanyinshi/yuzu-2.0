@@ -1326,7 +1326,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await expect(page.getByTestId('dish-options')).toHaveCount(0);
   },
   // 8.1.16 钟房：轮钟排队、在钟上与待上钟的钟单；展开类型、项目两排筛选；按状态排的技师卡片。
-  // 8.2.0 P03：排位播报移到了单独的页面（这台是主播报终端，播报条上按钮最多），最后看那一页
+  // 回测整改 P03：排位播报移到了单独的页面（这台是主播报终端，播报条上按钮最多），最后看那一页
   clockroom: async (page) => {
     await page.evaluate((id) => localStorage.setItem('yuzu.clock.announcer.client', id), ANNOUNCER_CLIENT);
     await page.goto('/clockroom');

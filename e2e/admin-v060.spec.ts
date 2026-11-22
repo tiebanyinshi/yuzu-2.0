@@ -85,7 +85,7 @@ test.describe('v0.6.0 管理后台', () => {
     await login(page, 'linlan');
     try {
       await page.goto('/admin/permissions');
-      // 8.1.18：旧岗位的表在第二个页签；8.2.0 P05 起第二个页签是「分部门岗位职权配置」，旧岗位表从那里点进去
+      // 8.1.18：旧岗位的表在第二个页签；回测整改 P05 起第二个页签是「分部门岗位职权配置」，旧岗位表从那里点进去
       await page.getByRole('radio', { name: '分部门岗位职权配置' }).click();
       await page.getByTestId('legacy-roles-open').click();
       const cell = page.getByTestId('perm-duty_manager-ledger.readHistory');

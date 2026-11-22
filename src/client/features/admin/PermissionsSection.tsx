@@ -1,6 +1,6 @@
 // 后台「岗位权限」：店主按岗位勾选权限（存为相对默认规则的增减，改完立即生效）。
 // 店主一栏固定拥有全部权限；管理员工账号、修改经营规则、导入期初只属于店主；库存职责的权限固定，不在这里调整。
-// 8.1.18：上面一个页签是按部门设立的岗位（部门 → 负责人 / 员工，PositionPermissions；8.2.0 P03 起叫「设立岗位」，回测 5-3），下面这张表只管旧岗位——
+// 8.1.18：上面一个页签是按部门设立的岗位（部门 → 负责人 / 员工，PositionPermissions；回测整改 P03 起叫「设立岗位」，回测 5-3），下面这张表只管旧岗位——
 // 还没重新选岗的老账号与点餐平板、他店查询、设计师这几种专用账号照旧按它。
 
 import { useEffect, useMemo, useState } from 'react';
@@ -31,8 +31,8 @@ export function PermissionsSection() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 页签记在地址里（?tab=setup / catalog）；8.2.0 以前的 ?tab=positions 照旧打开「设立岗位」。
-  // 8.2.0 P05：第二个页签换成「分部门岗位职权配置」；旧岗位那张表（专用账号照旧按它）从那一页点进去（?tab=roles）
+  // 页签记在地址里（?tab=setup / catalog）；回测整改以前的 ?tab=positions 照旧打开「设立岗位」。
+  // 回测整改 P05：第二个页签换成「分部门岗位职权配置」；旧岗位那张表（专用账号照旧按它）从那一页点进去（?tab=roles）
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab');
   const view: 'setup' | 'catalog' | 'roles' = tab === 'roles' ? 'roles' : tab === 'catalog' ? 'catalog' : 'setup';

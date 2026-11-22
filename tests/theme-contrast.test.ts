@@ -48,7 +48,7 @@ const TEXT_PAIRS: [string, string[]][] = [
   ['ember-deep', ['paper', 'card', 'ember-soft']],
   ['clay', ['paper', 'card', 'clay-soft']],
   ['lake', ['paper', 'card', 'lake-soft']],
-  // 房态四色（8.2.0 P01）：状态字写在卡片底色与白卡片上
+  // 房态四色（回测整改 P01）：状态字写在卡片底色与白卡片上
   ['room-free-ink', ['card', 'room-free-soft']],
   ['room-in-use-ink', ['card', 'room-in-use-soft']],
   ['room-dirty-ink', ['card', 'room-dirty-soft']],

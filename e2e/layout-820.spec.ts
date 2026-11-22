@@ -1,4 +1,4 @@
-// 8.2.0 P02（回测 2-1，docs/YUZU_REQ_V820.md 第 3 节）：门店页面左侧主导航固定、内容区独立滚动；收起时悬停弹出二级入口；
+// 回测整改 P02（回测 2-1，docs/YUZU_REQ_V820.md 第 3 节）：门店页面左侧主导航固定、内容区独立滚动；收起时悬停弹出二级入口；
 // 窄屏（1024 以下）展开是盖在内容上的抽屉，点遮罩收回。只读，不写数据。
 import { expect, test, type Page } from '@playwright/test';
 
@@ -10,7 +10,7 @@ async function login(page: Page) {
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 
-test.describe('8.2.0 侧边栏固定，内容区独立滚动', () => {
+test.describe('回测整改 侧边栏固定，内容区独立滚动', () => {
   test('内容区滚动时导航与页头不动，整页不滚；收起时悬停弹出二级入口', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== '门店电脑', '桌面宽度的鼠标操作');
     await page.setViewportSize({ width: 1366, height: 600 });

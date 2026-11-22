@@ -205,7 +205,7 @@ export interface RolePermissionMatrix {
 export type RolePermissionInput = Partial<Record<EditableRole, Permission[]>>;
 
 /**
- * 分部门岗位职权配置（8.2.0 P05，回测 5-2，docs/YUZU_REQ_V820.md 第 6 节）：部门 → 岗位 → 建议权限。
+ * 分部门岗位职权配置（回测整改 P05，回测 5-2，docs/YUZU_REQ_V820.md 第 6 节）：部门 → 岗位 → 建议权限。
  * 建议权限存在库里（P04 的 position_suggestions），这一页维护；「设立岗位」里按岗位的增减、个人微调都在它上面算
  */
 export interface PositionCatalogPosition {

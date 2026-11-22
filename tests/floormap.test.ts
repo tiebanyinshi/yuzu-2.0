@@ -180,7 +180,7 @@ describe('状态口径（共用的纯函数）', () => {
     expect(spaceStatus(sp({ businessType: '派对房' }), undefined, []).state).toBe('other');
     expect(spaceStatus(sp({ businessType: '自定业态' }), undefined, []).kind).toBe('other');
     expect(Object.keys(FLOOR_MAP_LEGEND).sort()).toEqual([...FLOOR_MAP_STATES].sort());
-    // 8.2.0 P01：在住、使用中、服务中都是房态中心的「在用」，同一个在用色（房态四色，@shared/room-colors）
+    // 回测整改 P01：在住、使用中、服务中都是房态中心的「在用」，同一个在用色（房态四色，@shared/room-colors）
     const inUse = ['occupied', 'in_use', 'serving'] as const;
     expect(new Set(inUse.map((k) => FLOOR_MAP_LEGEND[k].fill))).toEqual(new Set([ROOM_COLORS.in_use.map]));
     const rest = FLOOR_MAP_STATES.filter((k) => !(inUse as readonly string[]).includes(k));

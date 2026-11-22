@@ -141,7 +141,7 @@ export function RoomDialog({
   now: number;
   onClose: () => void;
   onAction: (a: RoomDialogAction) => void;
-  /** 房态点单（8.2.0 P08）：打开这间房的点单记录 */
+  /** 房态点单（回测整改 P08）：打开这间房的点单记录 */
   onOrders?: () => void;
 }) {
   const can = useCan();

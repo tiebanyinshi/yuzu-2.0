@@ -362,6 +362,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '200_ledger_imports.sql',
   '201_position_catalog.sql',
   '202_room_orders.sql',
+  '203_technician_board.sql',
   '210_oa_org.sql',
   '211_oa_staff_import.sql',
 ];

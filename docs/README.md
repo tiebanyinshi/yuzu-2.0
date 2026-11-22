@@ -19,6 +19,8 @@
 - [`CONVENTIONS.md`](CONVENTIONS.md)：开发约定（专题）
 - [`TESTING.md`](TESTING.md)：测试与 CI（飞书需求 RQ-008，v0.7.18 定稿；2026-11-20 改成按改动与风险挑选，见第 6 节）
 - [`ROADMAP.md`](ROADMAP.md)：浴族 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：浴族 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：浴族 yuzu 推进路线（ROADMAP）
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
@@ -93,7 +95,7 @@
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面
 - [`YUZU_REQ_V8115.md`](YUZU_REQ_V8115.md)：8.1.15 追加 ·《浴族系统需求汇总》：对照现状与做法
 - [`YUZU_REQ_V8117.md`](YUZU_REQ_V8117.md)：8.1.17 ·《浴族系统需求汇总》整体样式与没做完的部分
-- [`YUZU_REQ_V820.md`](YUZU_REQ_V820.md)：8.2.0 回测整改（《浴族系统 8.1.15–8.1.18 回测问题汇总与 PR 拆分》）
+- [`YUZU_REQ_V820.md`](YUZU_REQ_V820.md)：8.1.15–8.1.18 回测整改（《浴族系统 8.1.15–8.1.18 回测问题汇总与 PR 拆分》）
 
 ## 部署、发版与环境
 
