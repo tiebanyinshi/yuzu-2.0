@@ -591,7 +591,11 @@ function dishSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       continue;
     }
     const name = oneLine(at(g, r, cols.get('菜品名称') ?? -1));
-    if (!name) continue;
+    if (!name) {
+      // 名称空着、售价或单位却还写着：多半是名称被误删，报错，不当空行跳过（悄悄少导一道菜）
+      if (at(g, r, cols.get('售价') ?? -1) || at(g, r, cols.get('单位') ?? -1)) ctx.error(S, r, '菜品名称', '菜品名称为空（这一行还写着售价 / 单位）');
+      continue;
+    }
     const cat = oneLine(at(g, r, cols.get('菜品分类') ?? -1));
     if (cat) category = cat;
     const priceText = at(g, r, cols.get('售价') ?? -1);
@@ -645,7 +649,11 @@ function massageSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     const name = oneLine(at(g, r, col('项目名称')));
     const sec = oneLine(at(g, r, col('板块分类')));
     if (sec) section = sec;
-    if (!name) continue;
+    if (!name) {
+      // 名称空着、编号 / 时长 / 价格却还写着：报错，不当空行跳过
+      if (['编号', '时长', '专业价', '资深价'].some((c) => at(g, r, col(c)))) ctx.error(S, r, '项目名称', '项目名称为空（这一行还写着编号、时长或价格）');
+      continue;
+    }
     const code = oneLine(at(g, r, col('编号')));
     if (!(MASSAGE_SECTIONS as readonly string[]).includes(section)) ctx.error(S, r, '板块分类', `板块「${section || '（空）'}」不存在（${MASSAGE_SECTIONS.join('、')}）`);
     const durText = at(g, r, col('时长'));

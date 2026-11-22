@@ -1302,4 +1302,17 @@ describe('价目表录入 第四批：对接收银项目', () => {
     const errs = ((await preview(workbook({ 房间价格: twice }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
     expect(errs.some((i) => i.row === 3 && i.field === '房型')).toBe(true);
   });
+
+  it('第三十轮审查：菜品、按摩缺了名称却还写着价格等内容，报错（不当空行跳过）', async () => {
+    const dish = sheet('零点菜品价格', [['早餐自助零点菜品'], ['序号', '菜品分类', '菜品名称', '售价', '单位'], [1, '生滚粥', '生滚牛肉粥', 38, '份'], [2, '生滚粥', null, 58, '份']], ['A1:E1']);
+    const d = ((await preview(workbook({ 零点菜品价格: dish }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
+    expect(d.some((i) => i.row === 4 && i.field === '菜品名称')).toBe(true);
+    const massage = sheet('按摩及助浴价格', [
+      ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价', '核心针对人群', '服务操作内容', '项目亮点'],
+      ['康疗', 1, '古法中式', '房间', '80min', 499, 599],
+      ['康疗', 2, null, '房间', '90min', 599, 699],
+    ]);
+    const m = ((await preview(workbook({ 按摩及助浴价格: massage }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
+    expect(m.some((i) => i.row === 3 && i.field === '项目名称')).toBe(true);
+  });
 });
