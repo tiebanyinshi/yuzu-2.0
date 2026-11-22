@@ -238,7 +238,7 @@
   - `201`（`201_position_catalog.sql`，P04）：部门、岗位、建议权限三张表与配置日志（初始数据按 8.1.18 岗位职权表），旧岗位与专用账号不改。回滚脚本 `docs/rollback/201_position_catalog.down.sql`。
   - `202`（`202_room_orders.sql`，P07）：房态点单 `room_orders`（哪间房、哪位客人、哪个出品口、出品单号、经办人与时间，只追加）与 `room_order_lines`（挂到账单的哪几行）、按出品口配置房态点单能点的分类 `room_order_outlets`。不改已有的表。回滚脚本 `docs/rollback/202_room_orders.down.sql`。
   - `203`（`203_technician_board.sql`，P09）：新权限「技师上钟轮播」加进建议权限里有「排位播报」的岗位（每个岗位一条配置日志）。回滚脚本 `docs/rollback/203_technician_board.down.sql`。
-- **OA 办公（2026-11-22 登记，设计见 `docs/OA.md`）**：店主《企业 OA 审批 + 考勤打卡系统需求文档》v1.2，拆成 OA-01–OA-18 依次串行（每个合并后再做下一个），由主线开发会话在 `claude/epic-edison-qhc43r` 做，与 回测整改并行。迁移号预留 `210`–`229`：`210` = OA-01 组织架构与员工档案（`org_departments` 加上级部门与指定主管；员工档案 `staff_profiles`；权限项 `hr.org` 的建议权限）。`211` = OA-02 账号与批量开通（操作编号与确认作废的类型约束追加 `oa_staff_import`）。不改版本号（店主全部做完后统一定）。
+- **OA 办公（2026-11-22 登记，设计见 `docs/OA.md`）**：店主《企业 OA 审批 + 考勤打卡系统需求文档》v1.2，拆成 OA-01–OA-18 依次串行（每个合并后再做下一个），由主线开发会话在 `claude/epic-edison-qhc43r` 做，与 回测整改并行。迁移号预留 `210`–`229`：`210` = OA-01 组织架构与员工档案（`org_departments` 加上级部门与指定主管；员工档案 `staff_profiles`；权限项 `hr.org` 的建议权限）。`211` = OA-02 账号与批量开通（操作编号与确认作废的类型约束追加 `oa_staff_import`）。`212` = OA-03 站内通知与附件（`oa_notifications`、`oa_attachments`）。不改版本号（店主全部做完后统一定）。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

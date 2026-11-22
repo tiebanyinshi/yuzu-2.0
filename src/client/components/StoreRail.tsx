@@ -76,7 +76,11 @@ function flyoutPosition(button: HTMLElement, itemCount: number): CSSProperties {
   return { top, left: rect.right + 10 };
 }
 
-export function StoreRail({ footer }: { footer: ReactNode }) {
+/**
+ * footer：导航最下面一列（换店、实例标识、账号）；
+ * beside：和「收起 / 展开导航」放在同一行的小按钮（通知铃铛，OA-03），不另占一行：小屏电脑上导航那一列已经没有余量
+ */
+export function StoreRail({ footer, beside }: { footer: ReactNode; beside?: ReactNode }) {
   const session = useSession();
   const domains = useStoreNav();
   const { pathname } = useLocation();
@@ -196,20 +200,23 @@ export function StoreRail({ footer }: { footer: ReactNode }) {
           <Domain key={d.key} domain={d} ctx={ctx} />
         ))}
       </div>
-      <button
-        type="button"
-        onClick={() => (docked ? savePrefs({ ...prefs, mode: expanded ? 'collapsed' : 'expanded' }) : setDrawerAt(drawer ? null : pathname))}
-        aria-label={expanded ? '收起导航' : '展开导航'}
-        title={expanded ? '收起成一列图标' : '展开成带分组的侧栏'}
-        data-testid="nav-mode-toggle"
-        className={cn(
-          'flex shrink-0 items-center rounded-[12px] text-paper/60 transition-colors hover:bg-white/6 hover:text-paper',
-          expanded ? 'mx-2 h-11 gap-2.5 px-3 text-[13px] font-semibold' : 'size-11 justify-center',
-        )}
-      >
-        {expanded ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
-        {expanded && '收起导航'}
-      </button>
+      <div className={cn('flex shrink-0 items-center justify-center', expanded ? 'mx-2 gap-1' : 'gap-0.5')}>
+        <button
+          type="button"
+          onClick={() => (docked ? savePrefs({ ...prefs, mode: expanded ? 'collapsed' : 'expanded' }) : setDrawerAt(drawer ? null : pathname))}
+          aria-label={expanded ? '收起导航' : '展开导航'}
+          title={expanded ? '收起成一列图标' : '展开成带分组的侧栏'}
+          data-testid="nav-mode-toggle"
+          className={cn(
+            'flex shrink-0 items-center rounded-[12px] text-paper/60 transition-colors hover:bg-white/6 hover:text-paper',
+            expanded ? 'h-11 flex-1 gap-2.5 px-3 text-[13px] font-semibold' : cn('justify-center', beside ? 'size-9' : 'size-11'),
+          )}
+        >
+          {expanded ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
+          {expanded && '收起导航'}
+        </button>
+        {beside}
+      </div>
       <div className="flex flex-col items-center">{footer}</div>
     </nav>
   );

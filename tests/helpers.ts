@@ -365,6 +365,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '203_technician_board.sql',
   '210_oa_org.sql',
   '211_oa_staff_import.sql',
+  '212_oa_notifications_attachments.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */
