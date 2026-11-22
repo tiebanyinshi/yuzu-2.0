@@ -25,6 +25,7 @@ import {
   type ApprovalTemplate,
 } from '@shared/oa-approval';
 import { departmentOfPosition } from '@shared/oa';
+import { can } from '@shared/permissions';
 import { ORG_DEPARTMENTS, type PositionKey } from '@shared/positions';
 import type { Db, Fragment, Tx } from '../../db';
 import { guard } from '../../auth/guard';
@@ -34,7 +35,7 @@ import { assertNotFenced, lockOpKey } from '../../lib/fences';
 import { hashRequest } from '../../lib/idempotency';
 import { idParam, parse } from '../../lib/validate';
 import { erpOpAbandoned } from '../erp-ops';
-import { canViewApproval, canViewApprovalAttachment, canViewSql, hooksOf, listApprovals, loadApproval, resolveChain, revisionsUpTo, TEMPLATE_COLS, toTemplate } from './approval-engine';
+import { canViewApproval, canViewApprovalAttachment, hooksOf, listApprovals, loadApproval, resolveChain, revisionsUpTo, TEMPLATE_COLS, toTemplate } from './approval-engine';
 import { bindAttachments, registerAttachmentRef } from './attachments';
 import { notify } from './notifications';
 import { NOT_EMPLOYEE_ROLES } from './org';
@@ -205,7 +206,9 @@ async function act(tx: Tx, actor: Actor, id: number, input: z.infer<typeof ActIn
   await tx`UPDATE oa_approvals SET version = version + 1 WHERE id = ${id}`;
 
   if (input.action === 'withdraw' || input.action === 'urge') {
-    if (approval.applicantId !== actor.id) throw forbidden(input.action === 'withdraw' ? '只有发起人能撤销' : '只有发起人能催办');
+    if (approval.applicantId !== actor.id && !(input.action === 'urge' && can(actor, 'oa.all'))) {
+      throw forbidden(input.action === 'withdraw' ? '只有发起人能撤销' : '只有发起人或管全部审批单的人能催办');
+    }
     if (input.action === 'withdraw') {
       const [done] = await tx`SELECT 1 FROM oa_approval_steps WHERE approval_id = ${id} AND status = 'approved' LIMIT 1`;
       if (done) throw unprocessable('WITHDRAW_TOO_LATE', '已经有人审批通过了，不能撤销');
@@ -350,7 +353,7 @@ export function registerOaApprovalRoutes(app: FastifyInstance, { sql, config }: 
 
   app.get('/api/oa/approvals/:id', { preHandler: auth }, async (req): Promise<ApprovalDetail> => {
     const { id } = parse(idParam, req.params);
-    const [ok] = await sql`SELECT 1 FROM oa_approvals a WHERE a.id = ${id} AND ${canViewSql(sql, req.actor.id)}`;
+    const ok = await canViewApproval(sql, req.actor, id);
     if (!ok) throw notFound('审批单不存在');
     return loadApproval(sql, req.actor, id);
   });

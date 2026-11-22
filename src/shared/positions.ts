@@ -223,6 +223,9 @@ export const PERMISSION_COLUMN: Record<Permission, PermissionColumn> = {
   'patrol.manage': 'base',
   'hr.attendance': 'entry',
   'hr.attendanceDept': 'dept',
+  // OA-12：审批模板（谁审批、谁抄送）算「账号与权限配置」（与组织架构同一列，总经办那一列不开），全部审批单算「跨部门数据」
+  'oa.templates': 'account',
+  'oa.all': 'cross',
 };
 
 export interface PositionDef {
@@ -298,7 +301,7 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
   // 总经办成员：高级管理员、跨部门；除「账号与权限配置」「基础数据 / 价格配置」以外各列都开（见 gmoDefaults）
   gmo: [],
   // OA 办公（docs/OA.md 第 2 节）：人力行政部负责人管组织架构与员工档案（hr.org 算「账号与权限配置」，部门员工那一列不开）
-  'hr.lead': [...BASE_OWN, ...LEAD_COMMON, 'patrol.read', 'canteen.manage', 'audit.read', 'request.create', 'hr.org', 'hr.attendance'],
+  'hr.lead': [...BASE_OWN, ...LEAD_COMMON, 'patrol.read', 'canteen.manage', 'audit.read', 'request.create', 'hr.org', 'hr.attendance', 'oa.templates', 'oa.all'],
   // OA-04：人力行政部员工做考勤设置、排班（hr.attendance 算「业务录入」：只有总裁能有「基础数据 / 价格配置」那一列）
   'hr.staff': [...BASE_OWN, 'request.create', 'hr.attendance'],
   'front.lead': [

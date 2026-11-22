@@ -135,6 +135,15 @@ jobs:
             sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-16
           fi
           echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+      # 升级用例从旧库一次迁移到最新（migrate 把要跑的迁移放在一个事务里，迁移越多锁住的表越多），四个进程同时跑几个升级用例时，
+      # 服务器的锁表（默认 max_locks_per_transaction 64 × 连接数）不够用，报 out of shared memory（OA-12 #166 的 CI 第一次碰到）。
+      # 服务容器不能带启动参数：改配置再重启一次，等它起来
+      - name: 调大数据库的锁表（升级用例并行时够用）
+        run: |
+          docker exec ${{ job.services.postgres.id }} psql -U yuzu -d yuzu_test -c "ALTER SYSTEM SET max_locks_per_transaction = 512"
+          docker restart ${{ job.services.postgres.id }}
+          for i in $(seq 1 60); do docker exec ${{ job.services.postgres.id }} pg_isready -U yuzu -d yuzu_test && break; sleep 1; done
+          docker exec ${{ job.services.postgres.id }} psql -U yuzu -d yuzu_test -tAc "SHOW max_locks_per_transaction"
       - name: 集成测试（这一组，约 ${{ matrix.seconds }} 秒的单进程用时）
         run: npx vitest run ${{ matrix.files }} --reporter=default --reporter=json --outputFile.json=vitest-results/${{ matrix.id }}.json
       - name: 交回这一组的结果（给汇总核对）
