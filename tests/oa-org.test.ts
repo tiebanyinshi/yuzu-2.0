@@ -130,4 +130,37 @@ describe('OA-01 组织架构与员工档案', () => {
     const actions = await ctx.sql<{ action: string }[]>`SELECT action FROM audit_logs WHERE target_id = ${String(leaver.id)} AND action IN ('employee_left', 'employee_rehired') ORDER BY id`;
     expect(actions.map((a) => a.action)).toEqual(['employee_left', 'employee_rehired']);
   });
+
+  it('门店范围：人力行政部负责人只看、只改自己门店的员工，也不能给总裁办离职；总裁看全店', async () => {
+    const entity = await api(ctx.app, ctx.owner, 'POST', '/api/admin/entities', { name: 'OA 二店主体', taxNo: '91440300MA5OAORG01' });
+    expect(entity.status, JSON.stringify(entity.body)).toBe(201);
+    const store = await api(ctx.app, ctx.owner, 'POST', '/api/admin/stores', { code: 'oab', name: 'OA 二店', entityId: (entity.body as { id: number }).id });
+    expect(store.status, JSON.stringify(store.body)).toBe(201);
+    const storeB = (store.body as { id: number }).id;
+    const hrLead = await hire('oa_scope_hr', 'hr.lead');
+    const other = await hire('oa_scope_b', 'male.staff');
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/staff/${other.id}/stores`, { storeIds: [storeB] })).status).toBe(200);
+    const mine = await hire('oa_scope_a', 'male.staff');
+
+    // 只挂本店的负责人：看不到二店员工（手机号等都不给），总裁看得到
+    const seen = await org(hrLead.cookie);
+    expect(seen.employees.some((e) => e.staffId === other.id)).toBe(false);
+    expect(seen.employees.some((e) => e.staffId === mine.id)).toBe(true);
+    expect((await org()).employees.some((e) => e.staffId === other.id)).toBe(true);
+    // 二店员工：改档案、办离职都当不存在
+    let r = await api(ctx.app, hrLead.cookie, 'PUT', `/api/oa/employees/${other.id}/profile`, { empNo: 'B001', phone: null, hireDate: null, version: 0 });
+    expect(r.status).toBe(404);
+    r = await api(ctx.app, hrLead.cookie, 'POST', `/api/oa/employees/${other.id}/leave`, { leaveDate: '2026-11-22', version: 0 });
+    expect(r.status).toBe(404);
+    // 也不能把二店员工指定成部门主管
+    r = await api(ctx.app, hrLead.cookie, 'PUT', '/api/oa/org/departments/male', { parentKey: 'gmo', headStaffId: other.id, version: await deptVersion('male') });
+    expect((r.body as { error: { code: string } }).error.code).toBe('HEAD_INVALID');
+    // 总裁：负责人不能办离职
+    const [ownerRow] = await ctx.sql<{ id: number }[]>`SELECT id FROM staff WHERE username = 'owner'`;
+    r = await api(ctx.app, hrLead.cookie, 'POST', `/api/oa/employees/${ownerRow!.id}/leave`, { leaveDate: '2026-11-22', version: 0 });
+    expect(r.status).toBe(403);
+    // 本店员工照常能改
+    r = await api(ctx.app, hrLead.cookie, 'PUT', `/api/oa/employees/${mine.id}/profile`, { empNo: 'A001', phone: null, hireDate: null, version: 0 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+  });
 });
