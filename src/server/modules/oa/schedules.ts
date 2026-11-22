@@ -200,6 +200,8 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
           throw unprocessable('SCHEDULE_PUNCHED', `${c.date} 这一格要去掉的班次已经有打卡，不能删；要调整请先找人事核对考勤`);
         }
         await tx`DELETE FROM oa_schedules WHERE staff_id = ${c.staffId} AND work_date = ${c.date} AND store_id = ${store}`;
+        // 去掉的班次（没有打卡）如果已经结算过（当天已经结束的一班算成了旷工），结算结果一起撤掉（OA-08）
+        if (removed.length) await tx`DELETE FROM oa_attendance_daily WHERE staff_id = ${c.staffId} AND business_date = ${c.date} AND shift_id IN ${tx(removed)}`;
         for (const shiftId of want.shiftIds) {
           await tx`
             INSERT INTO oa_schedules (staff_id, work_date, shift_id, consecutive, created_by, updated_by)

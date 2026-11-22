@@ -26,6 +26,7 @@ import { runVoucherReconcile, sweepVerifying } from './modules/platform-verify';
 import { runAiSummaries } from './modules/ai';
 import { sweepOvertimeReminders } from './modules/frontdesk/overtime';
 import { sweepTableRestores } from './modules/tables-v8117';
+import { runAttendanceSettlement } from './modules/oa/attendance-daily';
 import { purgeStaleAttachments } from './modules/oa/attachments';
 
 export interface JobLog {
@@ -78,6 +79,13 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
     if (n > 0) log.info(`清掉没用上的附件：${n} 个`);
   } catch (error) {
     log.error('清理没用上的附件失败，下一分钟重试', error);
+  }
+  // OA 考勤结算（OA-08）：每 10 分钟看最近 3 天下班窗口结束了的排班，还没结算的、结算后又有新打卡的重新结算
+  try {
+    const n = await runAttendanceSettlement({ sql, config }, now);
+    if (n > 0) log.info(`考勤结算：${n} 条`);
+  } catch (error) {
+    log.error('考勤结算失败，10 分钟后重试', error);
   }
   // 超时提醒（8.1.17 BW-1）：在店到了 12 / 24 / 72 小时的客人，在「异常待办」里记一条（每一级只记一次，经办人「系统」）
   try {

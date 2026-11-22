@@ -26,6 +26,8 @@ export type AuditAction =
   // OA-05 排班
   | 'oa_schedule_saved'
   | 'oa_face_reviewed'
+  | 'oa_attendance_settled'
+  | 'oa_attendance_outwork'
   | 'oa_staff_imported'
   | 'position_chosen'
   | 'member_created'
