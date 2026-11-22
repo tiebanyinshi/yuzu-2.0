@@ -106,6 +106,9 @@ describe('OA-03 附件', () => {
     expect(th.headers['content-type']).toBe('image/jpeg');
     expect(th.rawPayload.equals(JPEG)).toBe(true);
 
+    // 没登录：不读正文直接拒绝
+    const anon = await ctx.app.inject({ method: 'POST', url: '/api/oa/attachments', payload: { clientKey: randomUUID(), fileName: 'a.png', mime: 'image/png', data: b64(PNG) } });
+    expect(anon.statusCode).toBe(401);
     // 别人：当不存在
     expect((await ctx.app.inject({ method: 'GET', url: img.url, headers: { cookie: ctx.owner } })).statusCode).toBe(404);
     expect((await ctx.app.inject({ method: 'GET', url: '/api/oa/attachments/999999', headers: { cookie: ctx.clerk } })).statusCode).toBe(404);

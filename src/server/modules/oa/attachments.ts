@@ -15,7 +15,7 @@ import { ATTACHMENT_MAX_BYTES, ATTACHMENT_THUMB_MAX_BYTES, type OaAttachment } f
 import type { Db, Tx } from '../../db';
 import { guard } from '../../auth/guard';
 import type { Actor, Deps } from '../../lib/context';
-import { conflict, notFound, unprocessable } from '../../lib/errors';
+import { AppError, conflict, notFound, unprocessable } from '../../lib/errors';
 import { idParam, parse } from '../../lib/validate';
 
 /** 能传的格式：声明的类型 → 文件头怎么认（文本类不认文件头，只核对是 UTF-8、没有 NUL） */
@@ -136,57 +136,83 @@ async function readable(db: Db, actor: Actor, id: number) {
   return check ? check(db, actor, Number(row.refId)) : false;
 }
 
+/**
+ * 上传占位（Codex 安全审查 23bc0ff P2）：正文（最大 15MB 的 JSON）在解析之前就核对登录与占位，
+ * 同一个人同时只能传一个、全店同时最多 4 个，超出的不读正文直接拒绝（ATTACHMENT_BUSY），免得一堆大请求同时进来把应用的内存撑满。
+ * 请求结束（成功、出错或中途断开）就放掉占位
+ */
+const UPLOAD_SLOTS = 4;
+const UPLOAD_BODY_LIMIT = 15_000_000;
+const uploading = new Map<string, number>();
+const releaseSlot = (req: FastifyRequest) => {
+  uploading.delete(req.id);
+};
+
 export function registerOaAttachmentRoutes(app: FastifyInstance, { sql }: Deps) {
+  const auth = guard();
+  const takeSlot = async (req: FastifyRequest, reply: FastifyReply) => {
+    await auth.call(app, req, reply);
+    const declared = Number(req.headers['content-length']);
+    if (!Number.isFinite(declared) || declared <= 0) throw new AppError(411, 'LENGTH_REQUIRED', '上传要带文件大小');
+    if (declared > UPLOAD_BODY_LIMIT) throw new AppError(413, 'ATTACHMENT_TOO_LARGE', '单个附件不能超过 10MB');
+    const mine = [...uploading.values()].includes(req.actor.id);
+    if (mine || uploading.size >= UPLOAD_SLOTS) throw new AppError(429, 'ATTACHMENT_BUSY', '正在上传的附件太多，等上一个传完再试');
+    uploading.set(req.id, req.actor.id);
+  };
   // 登录就能传：传上来的只有自己看得到，挂到单据上要经各模块的接口
-  app.post('/api/oa/attachments', { preHandler: guard(), bodyLimit: 15_000_000 }, async (req, reply): Promise<OaAttachment> => {
-    const input = parse(UploadInput, req.body);
-    const buf = Buffer.from(input.data, 'base64');
-    if (buf.length === 0) throw unprocessable('ATTACHMENT_EMPTY', '文件是空的');
-    if (buf.length > ATTACHMENT_MAX_BYTES) throw unprocessable('ATTACHMENT_TOO_LARGE', '单个附件不能超过 10MB');
-    const format = FORMATS[input.mime]!;
-    const ext = input.fileName.includes('.') ? input.fileName.split('.').pop()!.toLowerCase() : '';
-    if (!format.ext.includes(ext) || !format.sniff(buf)) throw unprocessable('ATTACHMENT_INVALID', '文件内容与类型对不上（扩展名或格式不对），请换一个文件');
-    let thumb: Buffer | null = null;
-    if (input.thumb !== undefined) {
-      if (!format.image) throw unprocessable('ATTACHMENT_INVALID', '只有图片才带缩略图');
-      thumb = Buffer.from(input.thumb, 'base64');
-      if (thumb.length === 0 || thumb.length > ATTACHMENT_THUMB_MAX_BYTES || !FORMATS['image/jpeg']!.sniff(thumb)) throw unprocessable('ATTACHMENT_INVALID', '缩略图不是有效的 JPEG');
-    }
-    const sha = createHash('sha256').update(buf).digest('hex');
-    type Row = { id: number; fileName: string; mime: string; sizeBytes: number; hasThumb: boolean; uploadedBy: number; sha256: string };
-    const COLS = sql`id, file_name, mime, size_bytes, thumb IS NOT NULL AS has_thumb, uploaded_by, sha256`;
-    const actor = req.actor.id;
-    const result = await sql.begin(async (tx) => {
-      // 同一个人的上传串行：限额按库里现在的样子核对，几个请求同时到也不会一起越过
-      await tx`SELECT pg_advisory_xact_lock(hashtextextended('oa_attachment_upload', ${actor}))`;
-      // 同一编号重提：同一个人、同一个文件就返回原来那一个；别的一律拒绝（不占限额）
-      const [prev] = await tx<Row[]>`SELECT ${COLS} FROM oa_attachments WHERE client_key = ${input.clientKey}`;
-      if (prev) {
-        if (Number(prev.uploadedBy) !== actor || prev.sha256 !== sha || prev.fileName !== input.fileName || prev.mime !== input.mime) {
-          throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一个附件，请重新选择文件上传');
-        }
-        return { row: prev, created: false };
+  app.post(
+    '/api/oa/attachments',
+    { onRequest: takeSlot, onResponse: async (req) => releaseSlot(req), onRequestAbort: async (req) => releaseSlot(req), bodyLimit: UPLOAD_BODY_LIMIT },
+    async (req, reply): Promise<OaAttachment> => {
+      const input = parse(UploadInput, req.body);
+      const buf = Buffer.from(input.data, 'base64');
+      if (buf.length === 0) throw unprocessable('ATTACHMENT_EMPTY', '文件是空的');
+      if (buf.length > ATTACHMENT_MAX_BYTES) throw unprocessable('ATTACHMENT_TOO_LARGE', '单个附件不能超过 10MB');
+      const format = FORMATS[input.mime]!;
+      const ext = input.fileName.includes('.') ? input.fileName.split('.').pop()!.toLowerCase() : '';
+      if (!format.ext.includes(ext) || !format.sniff(buf)) throw unprocessable('ATTACHMENT_INVALID', '文件内容与类型对不上（扩展名或格式不对），请换一个文件');
+      let thumb: Buffer | null = null;
+      if (input.thumb !== undefined) {
+        if (!format.image) throw unprocessable('ATTACHMENT_INVALID', '只有图片才带缩略图');
+        thumb = Buffer.from(input.thumb, 'base64');
+        if (thumb.length === 0 || thumb.length > ATTACHMENT_THUMB_MAX_BYTES || !FORMATS['image/jpeg']!.sniff(thumb)) throw unprocessable('ATTACHMENT_INVALID', '缩略图不是有效的 JPEG');
       }
-      // 限额：先清掉自己过期没用上的，再核对还没用上的个数、大小与 24 小时内传了多少
-      await tx`DELETE FROM oa_attachments WHERE uploaded_by = ${actor} AND ref_type IS NULL AND created_at < now() - ${UNBOUND_TTL}::interval`;
-      const [used] = await tx<{ pendingFiles: number; pendingBytes: string; dayBytes: string }[]>`
+      const sha = createHash('sha256').update(buf).digest('hex');
+      type Row = { id: number; fileName: string; mime: string; sizeBytes: number; hasThumb: boolean; uploadedBy: number; sha256: string };
+      const COLS = sql`id, file_name, mime, size_bytes, thumb IS NOT NULL AS has_thumb, uploaded_by, sha256`;
+      const actor = req.actor.id;
+      const result = await sql.begin(async (tx) => {
+        // 同一个人的上传串行：限额按库里现在的样子核对，几个请求同时到也不会一起越过
+        await tx`SELECT pg_advisory_xact_lock(hashtextextended('oa_attachment_upload', ${actor}))`;
+        // 同一编号重提：同一个人、同一个文件就返回原来那一个；别的一律拒绝（不占限额）
+        const [prev] = await tx<Row[]>`SELECT ${COLS} FROM oa_attachments WHERE client_key = ${input.clientKey}`;
+        if (prev) {
+          if (Number(prev.uploadedBy) !== actor || prev.sha256 !== sha || prev.fileName !== input.fileName || prev.mime !== input.mime) {
+            throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一个附件，请重新选择文件上传');
+          }
+          return { row: prev, created: false };
+        }
+        // 限额：先清掉自己过期没用上的，再核对还没用上的个数、大小与 24 小时内传了多少
+        await tx`DELETE FROM oa_attachments WHERE uploaded_by = ${actor} AND ref_type IS NULL AND created_at < now() - ${UNBOUND_TTL}::interval`;
+        const [used] = await tx<{ pendingFiles: number; pendingBytes: string; dayBytes: string }[]>`
         SELECT count(*) FILTER (WHERE ref_type IS NULL)::int AS pending_files,
                coalesce(sum(size_bytes) FILTER (WHERE ref_type IS NULL), 0)::text AS pending_bytes,
                coalesce(sum(size_bytes), 0)::text AS day_bytes
         FROM oa_attachments WHERE uploaded_by = ${actor} AND created_at >= now() - interval '24 hours'`;
-      if (used!.pendingFiles + 1 > PENDING_MAX_FILES || Number(used!.pendingBytes) + buf.length > PENDING_MAX_BYTES) {
-        throw unprocessable('ATTACHMENT_QUOTA', `还没用上的附件太多（最多 ${PENDING_MAX_FILES} 个、共 100MB）：先提交手头的单据，没用上的 24 小时后自动清掉`);
-      }
-      if (Number(used!.dayBytes) + buf.length > DAY_MAX_BYTES) throw unprocessable('ATTACHMENT_QUOTA', '24 小时内上传的附件已到 300MB，明天再传');
-      const [row] = await tx<Row[]>`
+        if (used!.pendingFiles + 1 > PENDING_MAX_FILES || Number(used!.pendingBytes) + buf.length > PENDING_MAX_BYTES) {
+          throw unprocessable('ATTACHMENT_QUOTA', `还没用上的附件太多（最多 ${PENDING_MAX_FILES} 个、共 100MB）：先提交手头的单据，没用上的 24 小时后自动清掉`);
+        }
+        if (Number(used!.dayBytes) + buf.length > DAY_MAX_BYTES) throw unprocessable('ATTACHMENT_QUOTA', '24 小时内上传的附件已到 300MB，明天再传');
+        const [row] = await tx<Row[]>`
         INSERT INTO oa_attachments (client_key, uploaded_by, file_name, mime, size_bytes, sha256, data, thumb)
         VALUES (${input.clientKey}, ${actor}, ${input.fileName}, ${input.mime}, ${buf.length}, ${sha}, ${buf}, ${thumb})
         RETURNING ${COLS}`;
-      return { row: row!, created: true };
-    });
-    if (result.created) reply.code(201);
-    return toView(result.row);
-  });
+        return { row: row!, created: true };
+      });
+      if (result.created) reply.code(201);
+      return toView(result.row);
+    },
+  );
 
   const serve = (part: 'data' | 'thumb') => async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = parse(idParam, req.params);
