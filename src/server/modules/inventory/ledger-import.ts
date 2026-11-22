@@ -1,9 +1,11 @@
 // 出入库台账（8.1.20，docs/ERP_V8120.md，PENDING_DECISIONS「8.1.20」LD1–LD10）：「库管入库」页右上角的
 // 「导入出入库台账」「导出台账」「下载模板」。代替 8.1.9 的「入库台账」模板（那个模板停用，direct-import.ts 只留着查回旧的导入）。
 //
-// 模板照门店的《仓库出入库记录》：标题一行，表头两行（上一行「入库」「出库」是分组，下一行是分组里的列），一种物料一行：
-//   序号、日期、供应商、物料名称、规格、库位、上期库存量、入库 ×2（日期、数量）、出库 ×3（日期、数量、领料人及部门）、库存量、单价、备注。
-// 导入：入库生成库管入库（按「日期 + 供应商」合单，单价取表里写的、没写取档案的参考价），出库生成部门领料
+// 模板照门店的《库管出入库明细及库位表》（店主 2026-11-22 定：以门店给的表格格式为主，文件名「出入库台账」）：入库登记表格、
+//   仓库库位表、物品借出备忘表三张。导入只读「仓库库位表」那种出入库记录（标题一行，表头两行：上一行「入库」「出库」是分组，
+//   下一行是分组里的列，一种物料一行）：序号、日期、供应商、物料名称、规格、库位、上期库存量、入库 ×2（日期、数量）、
+//   出库 ×3（日期、数量、领料人及部门）、库存量、备注；一个文件几张表时认表头两行、有入库出库分组的那一张。
+// 导入：入库生成库管入库（按「日期 + 供应商」合单，单价取档案的参考价；表里自己加了「单价」列的取表里写的），出库生成部门领料
 //   （按「日期 + 部门 + 领料人」合单），都马上生效；同一天先入库后出库。上期库存量、库存量只核对、不挡导入。
 //   表里写了库位的，写进物料档案。有一行有问题整份不写；同一份文件（按内容摘要）只能导入一次；系统导出的台账不能导入。
 // 加锁：操作编号的咨询锁（业务类型 ledger_import，与「确认作废」串行）→ 同一份文件的咨询锁 → 写导入记录 →
@@ -109,12 +111,27 @@ const norm = (t: string) => {
   return SYNONYM[s] ?? s;
 };
 
+type Grid = { row: number; cells: Cell[] }[];
+
+/** 表头：前 10 行里第一行同时有「序号」「物料名称」的；twoRows：下一行有「日期」「数量」（分组的第二行表头） */
+function headerOf(grid: Grid): { at: number; twoRows: boolean } | null {
+  const at = grid.slice(0, 10).findIndex((r) => {
+    const names = r.cells.map((c) => norm(c.text));
+    return names.includes('序号') && names.includes('物料名称');
+  });
+  if (at < 0) return null;
+  const sub = (grid[at + 1]?.cells ?? []).map((c) => norm(c.text));
+  return { at, twoRows: sub.includes('日期') && sub.includes('数量') };
+}
+
 function readLedger(f: { csv?: string; xlsxBase64?: string }): LedgerSheet {
-  let grid: { row: number; cells: Cell[] }[];
+  let grid: Grid;
   let sha256: string;
   if (f.csv !== undefined) {
     sha256 = createHash('sha256').update(f.csv, 'utf8').digest('hex');
-    grid = parseCsv(f.csv.replace(/^﻿/, '')).map((r) => ({ row: r.line, cells: r.cells.map((c) => ({ text: c.trim(), number: false, error: false })) }));
+    grid = parseCsv(f.csv.replace(/^\uFEFF/, ''))
+      .map((r) => ({ row: r.line, cells: r.cells.map((c) => ({ text: c.trim(), number: false, error: false })) }))
+      .filter((r) => r.cells.some((c) => c.text !== ''));
   } else {
     const buf = Buffer.from(f.xlsxBase64!, 'base64');
     sha256 = createHash('sha256').update(buf).digest('hex');
@@ -125,37 +142,36 @@ function readLedger(f: { csv?: string; xlsxBase64?: string }): LedgerSheet {
       if (error instanceof XlsxReadError) throw unprocessable('IMPORT_FILE_INVALID', error.message);
       throw error;
     }
-    const sheet = book.sheets[0];
-    if (!sheet) throw unprocessable('IMPORT_EMPTY', 'Excel 文件里没有工作表');
-    grid = [...sheet.rows.keys()]
-      .sort((a, b) => a - b)
-      .map((r) => {
-        const line = sheet.rows.get(r)!;
-        const width = Math.max(...line.keys()) + 1;
-        return {
-          row: r,
-          cells: Array.from({ length: width }, (_, c) => {
-            const cell = line.get(c);
-            return { text: (cell?.value ?? '').trim(), number: cell?.type === 'number', error: cell?.type === 'error' };
-          }),
-        };
-      });
+    if (book.sheets.length === 0) throw unprocessable('IMPORT_EMPTY', 'Excel 文件里没有工作表');
+    const grids: Grid[] = book.sheets.map((sheet) =>
+      [...sheet.rows.keys()]
+        .sort((a, b) => a - b)
+        .map((r) => {
+          const line = sheet.rows.get(r)!;
+          const width = line.size ? Math.max(...line.keys()) + 1 : 0;
+          return {
+            row: r,
+            cells: Array.from({ length: width }, (_, c) => {
+              const cell = line.get(c);
+              return { text: (cell?.value ?? '').trim(), number: cell?.type === 'number', error: cell?.type === 'error' };
+            }),
+          };
+        })
+        .filter((r) => r.cells.some((c) => c.text !== '')),
+    );
+    // 门店的《库管出入库明细及库位表》一个文件好几张表（入库登记表格、仓库库位表、物品借出备忘表……）：只读「出入库记录」那一张——
+    // 表头两行、有「入库」「出库」分组的第一张；都没有时退回第一张有表头的、再退回第一张（店主 2026-11-22：入库登记表格不导入）
+    const pick = (ok: (g: Grid) => boolean) => grids.find((g) => ok(g));
+    grid = pick((g) => headerOf(g)?.twoRows === true) ?? pick((g) => headerOf(g) !== null) ?? grids[0]!;
   }
-  grid = grid.filter((r) => r.cells.some((c) => c.text !== ''));
   if (grid.length === 0) throw unprocessable('IMPORT_EMPTY', '文件是空的');
-  // 表头：前 10 行里第一行同时有「序号」「物料名称」的
-  const at = grid.slice(0, 10).findIndex((r) => {
-    const names = r.cells.map((c) => norm(c.text));
-    return names.includes('序号') && names.includes('物料名称');
-  });
-  if (at < 0) {
-    throw unprocessable('IMPORT_COLUMNS', '没找到表头（要有「序号」「物料名称」两列）。请用「下载模板」的出入库台账：表头两行，上一行是「入库」「出库」分组');
+  const head = headerOf(grid);
+  if (!head) {
+    throw unprocessable('IMPORT_COLUMNS', '没找到出入库记录的表头（要有「序号」「物料名称」两列）。请用「下载模板」的出入库台账：表头两行，上一行是「入库」「出库」分组');
   }
+  const { at, twoRows } = head;
   const top = grid[at]!.cells.map((c) => norm(c.text));
-  const subRow = grid[at + 1];
-  const subCells = subRow ? subRow.cells.map((c) => norm(c.text)) : [];
-  // 下一行有「日期」「数量」才是分组的第二行表头
-  const twoRows = subCells.includes('日期') && subCells.includes('数量');
+  const subCells = (grid[at + 1]?.cells ?? []).map((c) => norm(c.text));
   const width = Math.max(top.length, twoRows ? subCells.length : 0);
   const cols = new Map<string, number>();
   const ins: LedgerSheet['ins'] = [];
@@ -382,7 +398,7 @@ async function plan(db: Db, f: z.infer<typeof PreviewInput>, timezone: string): 
     } else if (material && material.refPriceCents !== null) {
       priceCents = Number(material.refPriceCents);
       priceFromRef = true;
-    } else if (insEv.length && material) issues.push(`单价：没写，「${material.name}」的档案里也没有参考价（写单价，或先在物料档案里填参考价）`);
+    } else if (insEv.length && material) issues.push(`单价：「${material.name}」的物料档案里没有参考价；先在库存「档案 → 物料」里填参考价（或在表里加一列「单价」写上）`);
     if (material?.expiryTracked && insEv.length) issues.push(`「${material.name}」管效期，入库要填到期日，台账里没有这一列；请在「库管入库」里逐张登记`);
     const inMilli = insEv.reduce((t, e) => t + (e.qtyMilli ?? 0), 0);
     const outMilli = outsEv.reduce((t, e) => t + (e.qtyMilli ?? 0), 0);
@@ -712,49 +728,50 @@ interface LedgerSheetRow {
   note: string;
 }
 
-const HEAD_WIDTHS = [6, 12, 20, 22, 14, 9, 10];
-/** 表头两行（第 2、3 行）与标题行，入库、出库按组数展开 */
-function ledgerHeader(inSlots: number, outSlots: number, title: string, keeper: string, required: boolean) {
-  const style = (name: string): WbCell['style'] => (required && ['物料名称'].includes(name) ? 'required' : 'optional');
+// 列宽照门店《库管出入库明细及库位表》的「仓库库位表」（店主 2026-11-22：模板以门店给的表格格式为主）
+const HEAD_WIDTHS = [5, 11, 12, 20, 11, 9, 11];
+/**
+ * 表头两行（第 2、3 行）与标题行，入库、出库按组数展开，照门店的表：「入库」一个分组名跨全部入库组，「出库」每组一个分组名；
+ * 标题跨到倒数第 4 列，「库管：」占倒数第 3、2 列。tail：库存量、备注之后再加的列（导出加「参考价」）
+ */
+function ledgerHeader(inSlots: number, outSlots: number, title: string, keeper: string, tail: readonly string[] = []) {
+  const style = (name: string): WbCell['style'] => (name === '物料名称' ? 'required' : 'optional');
   const top: (WbCell | null)[] = [];
   const sub: (WbCell | null)[] = [];
   const merges: string[] = [];
   const widths: number[] = [];
-  for (const [i, c] of LEDGER_COLUMNS.entries()) {
+  const single = (c: string, width: number) => {
     top.push({ v: c, style: style(c) });
     sub.push(null);
     merges.push(`${colName(top.length - 1)}2:${colName(top.length - 1)}3`);
-    widths.push(HEAD_WIDTHS[i]!);
-  }
-  const group = (name: string, cols: string[], n: number) => {
-    for (let s = 0; s < n; s++) {
+    widths.push(width);
+  };
+  for (const [i, c] of LEDGER_COLUMNS.entries()) single(c, HEAD_WIDTHS[i]!);
+  const group = (name: string, cols: string[], slots: number, oneLabel: boolean) => {
+    for (let s = 0; s < slots; s++) {
       const start = top.length;
       for (const [j, c] of cols.entries()) {
-        top.push(j === 0 ? { v: name, style: 'optional' } : null);
+        top.push(j === 0 && (s === 0 || !oneLabel) ? { v: name, style: 'optional' } : null);
         sub.push({ v: c, style: 'optional' });
-        widths.push(c === '领料人及部门' ? 16 : c === '日期' ? 11 : 8);
+        widths.push(c === '领料人及部门' ? 11 : c === '日期' ? 8 : 6);
       }
-      merges.push(`${colName(start)}2:${colName(top.length - 1)}2`);
+      if (!oneLabel) merges.push(`${colName(start)}2:${colName(top.length - 1)}2`);
     }
+    if (oneLabel && slots > 0) merges.push(`${colName(top.length - cols.length * slots)}2:${colName(top.length - 1)}2`);
   };
-  group('入库', ['日期', '数量'], inSlots);
-  group('出库', ['日期', '数量', '领料人及部门'], outSlots);
-  for (const c of LEDGER_TAIL_COLUMNS) {
-    top.push({ v: c, style: 'optional' });
-    sub.push(null);
-    merges.push(`${colName(top.length - 1)}2:${colName(top.length - 1)}3`);
-    widths.push(c === '备注' ? 18 : 9);
-  }
+  group('入库', ['日期', '数量'], inSlots, true);
+  group('出库', ['日期', '数量', '领料人及部门'], outSlots, false);
+  for (const c of [...LEDGER_TAIL_COLUMNS, ...tail]) single(c, c === '备注' ? 18 : 9);
   const width = top.length;
   const titleRow: (WbCell | null)[] = Array.from({ length: width }, () => null);
   titleRow[0] = { v: title, style: 'title' };
   titleRow[width - 3] = { v: keeper, style: 'note' };
-  merges.push(`A1:${colName(width - 4)}1`, `${colName(width - 3)}1:${colName(width - 1)}1`);
+  merges.push(`A1:${colName(width - 4)}1`, `${colName(width - 3)}1:${colName(width - 2)}1`);
   return {
     rows: [
-      { height: 28, cells: titleRow },
-      { height: 22, cells: top },
-      { height: 22, cells: sub },
+      { height: 31, cells: titleRow },
+      { height: 31, cells: top },
+      { height: 21, cells: sub },
     ],
     merges,
     widths,
@@ -767,106 +784,81 @@ function ledgerBody(rows: LedgerSheetRow[], inSlots: number, outSlots: number) {
     const cells: (WbCell | string | number | null)[] = [r.seq, r.date, r.supplier, r.name, r.spec, r.location, r.open];
     for (let i = 0; i < inSlots; i++) cells.push(r.ins[i]?.date ?? null, r.ins[i]?.qty ?? null);
     for (let i = 0; i < outSlots; i++) cells.push(r.outs[i]?.date ?? null, r.outs[i]?.qty ?? null, r.outs[i]?.who ?? null);
-    cells.push(r.close, r.price, r.note);
+    cells.push(r.close, r.note, r.price);
     return { cells };
   });
 }
 
-const GUIDE: [string, string][] = [
-  ['序号', '随便填，方便自己对照；记进单据这一行的备注'],
-  ['日期', '选填，自己记的（如第一次入库、盘点接手的日期），不导入'],
-  ['供应商', '这一行有入库时必填：供应商档案里的名称或编号（见「选项」表）'],
-  ['物料名称', '必填：物料档案里的名称；同名的几个在「规格」写清是哪一个（见「选项」表）'],
-  ['规格', '选填；档案里有同名物料时用来分'],
-  ['库位', '选填，最多 20 个字（如 J-1）；写了会存进物料档案，导出台账时带出来'],
-  ['上期库存量', '选填，只用来核对：与系统里现在的结存对不上会提醒，不挡导入'],
-  ['入库：日期、数量', '每组一次入库，日期写 2026-11-18 或 11月18日（年份取标题里的），数量按库存单位；生成库管入库，同一天同一供应商的合成一张'],
-  ['出库：日期、数量、领料人及部门', '每组一次出库，「领料人及部门」写部门档案里的名称加领料人（如「客房部 张三」）；生成部门领料，同一天同一部门同一领料人的合成一张'],
-  ['库存量', '选填，只用来核对：上期 + 入库 − 出库对不上会提醒，不挡导入'],
-  ['单价', '选填，元，每采购单位（与收货页面上的单价一样）；空着取物料档案的参考价，档案里也没有的那一行不能导入'],
-  ['备注', '选填，记进库管入库这一行的备注'],
-];
+/** 模板里空白的行数（门店的表一页大约这么多） */
+const TEMPLATE_BLANK_ROWS = 30;
 
+/**
+ * 下载模板（店主 2026-11-22《ERP 需求汇总更新》：「下载模板」换成门店给的《库管出入库明细及库位表》，名字叫「出入库台账」，
+ * 以门店的表格格式为主）。照那个文件的几张表：入库登记表格、仓库库位表（每月的出入库记录，导入读的就是这一张）、物品借出备忘表；
+ * 标题、表头、合并格、列宽与「库存量」的公式照原样，门店的真实数据（物料、库存、供应商、人名）不带——代码库是公开的。
+ * 不再另加「单价」列与「填写说明」「选项」两页：入库单价取物料档案的参考价（表里自己加一列「单价」照样认）。
+ */
 export async function ledgerTemplate(db: Db, timezone: string): Promise<Buffer> {
   const today = todayIn(timezone);
   const settings = await loadInventorySettings(db);
-  const suppliers = await db<{ code: string; name: string }[]>`SELECT code, name FROM suppliers WHERE active ORDER BY name`;
-  const mats = await db<{ code: string; name: string; specification: string; inventoryUnit: string; purchaseUnit: string; refPriceCents: number | null; location: string }[]>`
-    SELECT code, name, specification, inventory_unit, purchase_unit, ref_price_cents, location FROM materials WHERE active AND tracked ORDER BY category, code`;
-  const depts = await db<{ name: string }[]>`SELECT name FROM departments WHERE active ORDER BY sort_order, id`;
+  const register: WbSheet = {
+    name: '入库登记表格',
+    widths: [6, 12, 22, 13, 9, 9, 20, 11],
+    rows: [
+      { height: 34, cells: [{ v: '入库登记表', style: 'title' }, null, null, null, null, null, null, { v: '库管：', style: 'note' }] },
+      { height: 21, cells: ['序号', '日期', '物品名称', '规格型号', '计量单位', '数量', '备注（部门）', '库位'].map((v) => ({ v, style: 'optional' as const })) },
+      ...Array.from({ length: TEMPLATE_BLANK_ROWS }, (_, i) => ({ height: 25, cells: [i + 1] })),
+    ],
+    merges: ['A1:G1'],
+  };
   const title = `${settings.scopeName ?? '仓库'}出入库记录（${today.slice(0, 4)}年${Number(today.slice(5, 7))}月）`;
-  const head = ledgerHeader(LEDGER_IN_SLOTS, LEDGER_OUT_SLOTS, title, '库管：', true);
-  const blank = Array.from({ length: 30 }, (_, i) => ({ cells: [i + 1] as (string | number | null)[] }));
+  const head = ledgerHeader(LEDGER_IN_SLOTS, LEDGER_OUT_SLOTS, title, '库管：');
+  // 「库存量」= 上期库存量 + 各次入库 − 各次出库（门店表里的公式）
+  const at = (name: string) => head.rows[1]!.cells.findIndex((c) => c?.v === name);
+  const qtyCols = (from: number, step: number, slots: number) => Array.from({ length: slots }, (_, i) => colName(from + i * step + 1));
+  const inCols = qtyCols(at('入库'), 2, LEDGER_IN_SLOTS);
+  const outCols = qtyCols(at('出库'), 3, LEDGER_OUT_SLOTS);
+  const open = colName(at('上期库存量'));
+  const close = at('库存量');
   const main: WbSheet = {
-    name: '出入库台账',
+    name: '仓库库位表',
     active: true,
     widths: head.widths,
     freezeRows: 3,
-    rows: [...head.rows, ...blank],
-    merges: head.merges,
-    validations: [
-      {
-        sqref: `D4:D${LEDGER_MAX_ROWS + 3}`,
-        list: mats.length ? { name: 'opt_material' } : undefined,
-        promptTitle: '物料名称（必填）',
-        prompt: '物料档案里的名称（见「选项」表）',
-        error: '只能选物料档案里的物品；新物品先去库存「档案 → 物料」建档',
-      },
-      { sqref: `C4:C${LEDGER_MAX_ROWS + 3}`, list: suppliers.length ? { name: 'opt_supplier' } : undefined, promptTitle: '供应商', prompt: '这一行有入库时必填', error: '请选供应商档案里的供应商' },
-    ],
-  };
-  const guide: WbSheet = {
-    name: '填写说明',
-    widths: [26, 90],
-    freezeRows: 0,
     rows: [
-      { height: 26, cells: [{ v: '出入库台账 · 填写说明', style: 'title' }] },
-      { cells: [{ v: '在「出入库台账」里一种物料一行；表头两行不要改（入库、出库的组数可以加减），多出来的列不管。', style: 'note' }] },
-      { height: 22, cells: ['列', '怎么填'].map((v) => ({ v, style: 'optional' as const })) },
-      ...GUIDE.map(([a, b]) => ({
-        cells: [
-          { v: a, style: 'body' as const },
-          { v: b, style: 'body' as const },
-        ],
-      })),
-      { cells: [] },
-      { cells: [{ v: '导入：在「库管入库」页右上角点「导入出入库台账」，选这份文件 →「预览」逐行核对 → 没有问题再「导入」。', style: 'note' }] },
-      { cells: [{ v: '入库生成库管入库、出库生成部门领料，都马上生效；同一天先入库后出库，出库不能比当时的库存多。', style: 'note' }] },
-      { cells: [{ v: '有一行有问题整份都不导入；同一份文件只能导入一次；「导出台账」导出的文件只用来对账，不能再导入。', style: 'note' }] },
-    ],
-    merges: ['A1:B1', 'A2:B2', ...[0, 1, 2].map((i) => `A${GUIDE.length + 5 + i}:B${GUIDE.length + 5 + i}`)],
-  };
-  const n = Math.max(suppliers.length, mats.length, depts.length, 1);
-  const options: WbSheet = {
-    name: '选项',
-    widths: [24, 12, 16, 10, 10, 12, 10, 20, 16, 12],
-    freezeRows: 1,
-    rows: [
-      { cells: ['物料名称', '物料编号', '规格', '库存单位', '采购单位', '参考价（元）', '库位', '供应商', '供应商编号', '部门'].map((v) => ({ v, style: 'optional' as const })) },
-      ...Array.from({ length: n }, (_, i) => {
-        const m = mats[i];
-        return {
-          cells: [
-            m?.name ?? null,
-            m?.code ?? null,
-            m?.specification ?? null,
-            m?.inventoryUnit ?? null,
-            m?.purchaseUnit ?? null,
-            m && m.refPriceCents !== null ? Number(m.refPriceCents) / 100 : null,
-            m?.location || null,
-            suppliers[i]?.name ?? null,
-            suppliers[i]?.code ?? null,
-            depts[i]?.name ?? null,
-          ],
-        };
+      ...head.rows,
+      ...Array.from({ length: TEMPLATE_BLANK_ROWS }, (_, i) => {
+        const n = i + 4;
+        const cells: (WbCell | number | null)[] = Array.from({ length: head.width }, () => null);
+        cells[0] = i + 1;
+        cells[close] = { v: null, f: [`${open}${n}`, ...inCols.map((c) => `+${c}${n}`), ...outCols.map((c) => `-${c}${n}`)].join('') };
+        return { height: 18, cells };
       }),
     ],
+    merges: head.merges,
+    validations: [
+      { sqref: `D4:D${LEDGER_MAX_ROWS + 3}`, promptTitle: '物料名称（必填）', prompt: '物料档案里的名称（可以写物料编号）；同名的在「规格」写清是哪一个' },
+      { sqref: `C4:C${LEDGER_MAX_ROWS + 3}`, promptTitle: '供应商', prompt: '这一行有入库时必填：供应商档案里的名称或编号' },
+    ],
   };
-  const names = [
-    ...(mats.length ? [{ name: 'opt_material', sheet: '选项', range: `$A$2:$A$${mats.length + 1}` }] : []),
-    ...(suppliers.length ? [{ name: 'opt_supplier', sheet: '选项', range: `$H$2:$H$${suppliers.length + 1}` }] : []),
-  ];
-  return buildWorkbook([main, guide, options], names);
+  const lend: WbSheet = {
+    name: '物品借出备忘表',
+    widths: [7, 11, 12, 10, 7, 7, 9, 9, 8, 8, 8, 10, 9, 10],
+    rows: [
+      { height: 33, cells: [{ v: '物品借出登记（借出店 ↔ 借入店）', style: 'title' }] },
+      { height: 27, cells: [{ v: `登记人：（${today.slice(0, 4)}年度）`, style: 'note' }] },
+      {
+        height: 26,
+        cells: ['序号', '借出日期', '物品名称', '规格型号', '单位', '数量', '借出店', '借入店', '借用人', '已归还', '未归还', '归还验收人', '状态', '经手人'].map((v) => ({
+          v,
+          style: 'optional' as const,
+        })),
+      },
+      ...Array.from({ length: TEMPLATE_BLANK_ROWS }, (_, i) => ({ height: 20, cells: [i + 1] })),
+    ],
+    merges: ['A1:N1', 'A2:N2'],
+  };
+  return buildWorkbook([register, main, lend]);
 }
 
 const OUT_LABEL: Record<string, string> = {
@@ -941,8 +933,8 @@ export async function ledgerExport(db: Db, month: string): Promise<{ buf: Buffer
   const inSlots = Math.max(LEDGER_IN_SLOTS, ...rows.map((r) => r.ins.length));
   const outSlots = Math.max(LEDGER_OUT_SLOTS, ...rows.map((r) => r.outs.length));
   const title = `${settings.scopeName ?? '仓库'}出入库记录（${y}年${m}月 · ${LEDGER_EXPORT_MARK}，只用来对账）`;
-  const head = ledgerHeader(inSlots, outSlots, title, '库管：', false);
-  const sheet: WbSheet = { name: '出入库台账', active: true, widths: head.widths, freezeRows: 3, rows: [...head.rows, ...ledgerBody(rows, inSlots, outSlots)], merges: head.merges };
+  const head = ledgerHeader(inSlots, outSlots, title, '库管：', ['参考价']);
+  const sheet: WbSheet = { name: '仓库库位表', active: true, widths: head.widths, freezeRows: 3, rows: [...head.rows, ...ledgerBody(rows, inSlots, outSlots)], merges: head.merges };
   return { buf: buildWorkbook([sheet]), fileName: `出入库台账-${month}.xlsx` };
 }
 
@@ -952,7 +944,7 @@ export function registerLedgerImportRoutes(app: FastifyInstance, deps: Deps) {
   const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   app.get('/api/inventory/ledger/template', { preHandler: operate }, async (_req, reply) => {
     const buf = await ledgerTemplate(deps.sql, deps.config.timezone);
-    attachment(reply, '出入库台账模板.xlsx', XLSX);
+    attachment(reply, '出入库台账.xlsx', XLSX);
     return reply.send(buf);
   });
   app.get('/api/inventory/ledger/export', { preHandler: guard('inventory.read') }, async (req, reply) => {

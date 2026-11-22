@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { ArrowRight, Download, FileUp, Hourglass, PackageOpen, Search, TriangleAlert, X } from 'lucide-react';
+import { ArrowRight, Download, Hourglass, PackageOpen, Search, TriangleAlert, X } from 'lucide-react';
 import {
   CENTRAL_WAREHOUSE_ID,
   INV_DOC_META,
@@ -160,6 +160,7 @@ export function StockTab() {
                   </Link>
                 );
               })}
+              {/* 「导入入库台账」在「库管入库」页右上角（店主 2026-11-22：从这里移过去），这里只留「库管入库」 */}
               {directOn && (
                 <>
                   <Link
@@ -169,14 +170,6 @@ export function StockTab() {
                   >
                     <PackageOpen className="size-4" />
                     库管入库
-                  </Link>
-                  <Link
-                    to="/inventory/direct/import"
-                    className="tap relative flex h-10 items-center gap-2 rounded-md border border-line-strong bg-card px-3.5 text-[13.5px] font-bold text-ink-2 hover:border-ink-3 hover:text-ink"
-                    data-testid="inv-direct-import"
-                  >
-                    <FileUp className="size-4" />
-                    出入库台账
                   </Link>
                 </>
               )}
