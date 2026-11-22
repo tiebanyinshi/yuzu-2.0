@@ -311,9 +311,12 @@ export function withDerivedPrice(e: PriceCatalogEntry): PriceCatalogEntry {
 /** 单价上限：100 万元（分） */
 export const PRICE_MAX_CENTS = 100_000_000;
 
-/** 价格有没有变：形态、两个价、比例、计价单位、基础价含的时长、加钟 / 超时、封顶、分档（档名、价、时长、单位） */
+/** 价格有没有变：形态、两个价、比例、计价单位、基础价含的时长、适用时段、是否含餐、加钟 / 超时、封顶、分档（档名、价、时长、单位） */
 export const priceSignature = (
-  e: Pick<PriceCatalogEntry, 'priceMode' | 'priceCents' | 'price2Cents' | 'rateBp' | 'unit' | 'durationMinutes' | 'extraPriceCents' | 'extraMinutes' | 'capCents' | 'variants'>,
+  e: Pick<
+    PriceCatalogEntry,
+    'priceMode' | 'priceCents' | 'price2Cents' | 'rateBp' | 'unit' | 'durationMinutes' | 'windowStart' | 'windowEnd' | 'includesMeal' | 'extraPriceCents' | 'extraMinutes' | 'capCents' | 'variants'
+  >,
 ) =>
   JSON.stringify([
     e.priceMode,
@@ -324,6 +327,10 @@ export const priceSignature = (
     e.unit,
     // 基础价含多久（娱乐 39 元 2 小时改成 1 小时，钱数不变也是改了价）
     e.durationMinutes,
+    // 适用时段、是否含餐（餐票早餐 7:30 改 8:00、门票含餐改不含餐，钱数不变也是改了价）
+    e.windowStart,
+    e.windowEnd,
+    e.includesMeal,
     e.extraPriceCents,
     e.extraMinutes,
     e.capCents,

@@ -424,7 +424,8 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       const min = /低[销消]\s*:?\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])/.exec(t);
       if (min) variants.push({ label: '低消', priceCents: yuanToCents(min[1]!), minutes: null, unit: '起', note: oneLine(t.slice(min.index).split('\n')[0] ?? '') });
       const over = /超出按照\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*元?\s*[/／]\s*小时/.exec(t);
-      if (over && yuanToCents(over[1]!) === null) ctx.error(S, r, '收费参考', `超时价「${over[1]}」不对：金额大于 0、最多两位小数`);
+      // 写了「超出按照」，却认不出合法金额（负数、文字、0 元）：报错，不当成没有超时收费
+      if (/超出按照/.test(t) && (!over || yuanToCents(over[1]!) === null)) ctx.error(S, r, '收费参考', '「超出按照 … 元/小时」的金额看不懂或不对（写 超出按照588元/小时，金额大于 0、最多两位小数）');
       if (!variants.length) ctx.error(S, r, '收费参考', '没认出位价（写 688元/位）');
       const perHead = variants.filter((v) => v.unit === '位').map((v) => v.priceCents!);
       out.push({

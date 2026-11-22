@@ -855,4 +855,25 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const dining = (await issuesOf({ 房间价格: rooms('或者套餐低消', '餐饮包房', '688元/位\n次日11：00退房，超出按照0元/小时收费。') })).filter((i) => i.level === 'error');
     expect(dining[0]).toMatchObject({ row: 2, field: '收费参考' });
   });
+
+  it('第九轮审查：餐饮包房「超出按照」金额认不出来报错；适用时段、是否含餐改了也算改价', async () => {
+    const dining = (rule: string) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        ['餐饮包房', '5间', `688元/位\n次日11：00退房，${rule}`, null, '2楼：V999'],
+      ]);
+    for (const rule of ['超出按照-588元/小时收费。', '超出按照另议收费。']) {
+      expect(
+        (await issuesOf({ 房间价格: dining(rule) })).find((i) => i.level === 'error'),
+        rule,
+      ).toMatchObject({ row: 2, field: '收费参考' });
+    }
+    const p = (await preview(workbook())).body as PriceImportPreview;
+    const breakfast = p.entries.find((e) => e.kind === 'meal_ticket')!;
+    const later = p.entries.map((e) => (e === breakfast ? { ...e, windowStart: (e.windowStart ?? 0) + 30 } : e));
+    expect(diffPriceCatalogs(later, p.entries).map((d) => [d.change, d.draft?.name])).toEqual([['changed', breakfast.name]]);
+    const ticket = p.entries.find((e) => e.kind === 'ticket')!;
+    const meal = p.entries.map((e) => (e === ticket ? { ...e, includesMeal: !e.includesMeal } : e));
+    expect(diffPriceCatalogs(meal, p.entries)).toHaveLength(1);
+  });
 });
