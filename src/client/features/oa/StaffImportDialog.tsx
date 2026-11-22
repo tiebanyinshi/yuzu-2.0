@@ -33,7 +33,8 @@ export function StaffImportDialog({ onClose }: { onClose: () => void }) {
   const input = useRef<HTMLInputElement>(null);
 
   const choose = async (f: File | undefined) => {
-    if (!f) return;
+    // 开通请求还在路上时不换文件（Codex 审查 3568884：换文件会把 busy 改掉，对话框又能关了）
+    if (!f || busy === 'apply') return;
     setPreview(null);
     setError(null);
     setBusy('read');
@@ -129,7 +130,14 @@ export function StaffImportDialog({ onClose }: { onClose: () => void }) {
               下载模板
             </Button>
           </a>
-          <Button variant="secondary" icon={<FileUp className="size-4" />} loading={busy === 'read' || busy === 'preview'} onClick={() => input.current?.click()} data-testid="staff-import-choose">
+          <Button
+            variant="secondary"
+            icon={<FileUp className="size-4" />}
+            loading={busy === 'read' || busy === 'preview'}
+            disabled={busy === 'apply'}
+            onClick={() => input.current?.click()}
+            data-testid="staff-import-choose"
+          >
             {file ? '换一个文件' : '选择文件'}
           </Button>
           <input ref={input} type="file" accept=".xlsx,.csv" className="hidden" onChange={(e) => void choose(e.target.files?.[0])} data-testid="staff-import-file" />
@@ -168,7 +176,14 @@ export function StaffImportDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function ResultDialog({ result, onClose }: { result: StaffImportResult; onClose: () => void }) {
+/** 开通名单的一格：逗号、引号、换行按 CSV 规则包起来；= + - @ 开头的前面加 '，免得表格软件当成公式（Codex 审查 3568884） */
+function csvCell(v: string): string {
+  const safe = /^[=+\-@]/.test(v) ? `'${v}` : v;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+/** 开通后的名单（临时密码只显示这一次）；组织架构页上方「按原内容重新提交」第一次开通成功时也用它显示 */
+export function ResultDialog({ result, onClose }: { result: StaffImportResult; onClose: () => void }) {
   const toast = useToast();
   const withPassword = result.accounts.filter((a) => a.temporaryPassword);
   const lines = result.accounts.map((a) => [a.name, positionLabel(a.position), a.username, a.temporaryPassword ?? '（到「员工账号」里重置）']);
@@ -213,7 +228,12 @@ function ResultDialog({ result, onClose }: { result: StaffImportResult; onClose:
           <Button
             variant="secondary"
             icon={<Download className="size-4" />}
-            onClick={() => downloadCsvRows([['姓名', '岗位', '登录名', '临时密码'], ...lines], `开通名单-${result.import.fileName.replace(/\.\w+$/, '')}.csv`)}
+            onClick={() =>
+              downloadCsvRows(
+                [['姓名', '岗位', '登录名', '临时密码'], ...lines].map((r) => r.map(csvCell)),
+                `开通名单-${result.import.fileName.replace(/\.\w+$/, '')}.csv`,
+              )
+            }
             data-testid="staff-import-download"
           >
             下载名单

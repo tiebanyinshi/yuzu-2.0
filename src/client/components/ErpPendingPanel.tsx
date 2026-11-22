@@ -17,6 +17,8 @@ import { useReconnectTick } from '../lib/connection';
 export interface ErpOpRef {
   refId: number;
   advanceId?: number;
+  /** 按原内容重新提交成功时接口的原样回答（查回、作废时没有）：有的回答只在第一次登记时带（OA-02 批量开通的临时密码），页面要拿去显示 */
+  response?: unknown;
 }
 
 /** 重新提交成功时，从各接口的返回里取出单据编号 */
@@ -274,7 +276,8 @@ function PendingRow({ op, onFound }: { op: ErpPendingOp; onFound?: (op: ErpPendi
     setMessage(null);
     try {
       const data = await sendErpOp<unknown>(op);
-      settle(null, refOfResponse(op.type, data));
+      const ref = refOfResponse(op.type, data);
+      settle(null, ref ? { ...ref, response: data } : null);
     } catch (e) {
       if (e instanceof UncertainError) {
         setMessage(e.reason === 'server' ? '服务器还是出错，结果待确认。稍后再查回或重新提交（同一编号只登记一次）。' : '仍然连不上服务器，结果待确认。稍后再查回或重新提交。');

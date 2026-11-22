@@ -106,4 +106,32 @@ test.describe('OA-01 组织架构与员工档案', () => {
     expect(res.status()).toBe(200);
     await ctx.close();
   });
+
+  test('OA-02 批量开通没收到结果：页面上方按原内容重新提交，这一次才开通的照样显示临时密码', async ({ page }) => {
+    await login(page, 'linlan');
+    const stamp = Date.now().toString(36);
+    const tail = String(Date.now()).slice(-8);
+    const user = `e2eresend${stamp}`;
+    await page.goto('/admin/org');
+    await page.getByTestId('org-import').click();
+    await page
+      .getByTestId('staff-import-file')
+      .setInputFiles({ name: 'resend.csv', mimeType: 'text/csv', buffer: Buffer.from(`姓名,手机号,工号,部门,岗位,入职日期,登录名\nE2E重提,137${tail},,前厅部,,,${user}\n`) });
+    await expect(page.getByTestId('staff-import-preview')).toContainText('可以开');
+    // 第一次请求断在路上（没到服务器）：记成结果待确认
+    let aborted = false;
+    await page.route('**/api/oa/employees/import', async (route) => {
+      if (!aborted && route.request().method() === 'POST') {
+        aborted = true;
+        await route.abort('connectionreset');
+      } else await route.continue();
+    });
+    await page.getByTestId('staff-import-apply').click();
+    await expect(page.getByTestId('erp-pending')).toBeVisible();
+    // 按原内容重新提交：这一次才真的开通，临时密码照样显示
+    await page.getByTestId('erp-pending-resend').click();
+    await expect(page.getByTestId(`staff-import-password-${user}`)).toHaveText(/^yuzu-\d{4}-[a-z]{2}$/);
+    await page.getByTestId('staff-import-done').click();
+    await expect(page.getByTestId('erp-pending-resend')).toHaveCount(0);
+  });
 });
