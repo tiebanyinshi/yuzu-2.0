@@ -23,6 +23,8 @@ export type AuditAction =
   | 'oa_shift_saved'
   | 'oa_location_saved'
   | 'oa_group_saved'
+  // OA-05 排班
+  | 'oa_schedule_saved'
   | 'oa_staff_imported'
   | 'position_chosen'
   | 'member_created'

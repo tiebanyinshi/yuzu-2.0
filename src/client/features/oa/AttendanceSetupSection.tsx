@@ -22,7 +22,7 @@ import { positionLabel } from '@shared/positions';
 import { clockText, parseClock, shiftTimeText } from '@shared/technician-admin';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
 import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
-import { useSession } from '../../lib/session';
+import { useCan, useSession } from '../../lib/session';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { cn, uuid } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
@@ -33,39 +33,55 @@ import { useActiveSubTab } from '../../components/SubNav';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, ConfirmCheck, Field, Input, Notice, Skeleton } from '../../components/ui';
 import { AdminPage } from '../admin/AdminShell';
+import { ScheduleTab } from './ScheduleTab';
 
 const SETUP_KEY = ['oa', 'attendance-setup'] as const;
 const TABS = [
   { key: 'shifts', label: <span data-testid="att-tab-shifts">班次</span> },
   { key: 'locations', label: <span data-testid="att-tab-locations">打卡点</span> },
   { key: 'groups', label: <span data-testid="att-tab-groups">考勤组</span> },
+  { key: 'schedule', label: <span data-testid="att-tab-schedule">排班</span> },
 ] as const;
+/** 只有「查看本部门的排班与考勤」的部门负责人：只有「排班」一个页签，只看 */
+const DEPT_TABS = [{ key: 'schedule', label: <span data-testid="att-tab-schedule">排班</span> }] as const;
 
 export function AttendanceSetupSection() {
-  const q = useQuery({ queryKey: SETUP_KEY, queryFn: () => api.get<AttendanceSetup>('/api/oa/attendance/setup') });
+  const manage = useCan()('hr.attendance');
   const qc = useQueryClient();
   return (
     <AdminPage
       section="attendance"
       wide
-      tabs={TABS}
-      description="班次（上下班时间、跨天班、打卡窗口）、打卡点（经纬度与有效半径）、考勤组（用哪几个打卡点、要不要 GPS / 人脸、成员）。排班与打卡都按这里的设置；不删只停用。"
+      tabs={manage ? TABS : DEPT_TABS}
+      description={
+        manage
+          ? '班次（上下班时间、跨天班、打卡窗口）、打卡点（经纬度与有效半径）、考勤组（用哪几个打卡点、要不要 GPS / 人脸、成员）、排班。排班与打卡都按这里的设置；不删只停用。'
+          : '本部门员工的排班（只看）。'
+      }
     >
-      {/* 新建班次、打卡点、考勤组没收到结果的：查回、按原内容重新提交或确认作废 */}
-      <ErpPendingPanel types={['oa_attendance_setup']} className="mb-4 space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: SETUP_KEY })} />
-      {q.isPending ? (
-        <Skeleton className="h-60" />
-      ) : q.isError && !q.data ? (
-        <LoadFailed title="考勤设置没有取回来" onRetry={() => q.refetch()} retrying={q.isFetching} />
-      ) : (
-        <SetupBody setup={q.data!} />
+      {/* 新建班次、打卡点、考勤组与保存排班没收到结果的：查回、按原内容重新提交或确认作废 */}
+      {manage && (
+        <ErpPendingPanel
+          types={['oa_attendance_setup', 'oa_schedule_save']}
+          className="mb-4 space-y-2"
+          onFound={() => {
+            void qc.invalidateQueries({ queryKey: SETUP_KEY });
+            void qc.invalidateQueries({ queryKey: ['oa', 'schedule'] });
+          }}
+        />
       )}
+      <SectionBody manage={manage} />
     </AdminPage>
   );
 }
 
-function SetupBody({ setup }: { setup: AttendanceSetup }) {
-  const tab = useActiveSubTab() ?? 'shifts';
+function SectionBody({ manage }: { manage: boolean }) {
+  const tab = useActiveSubTab() ?? (manage ? 'shifts' : 'schedule');
+  const q = useQuery({ queryKey: SETUP_KEY, queryFn: () => api.get<AttendanceSetup>('/api/oa/attendance/setup'), enabled: manage && tab !== 'schedule' });
+  if (!manage || tab === 'schedule') return <ScheduleTab />;
+  if (q.isPending) return <Skeleton className="h-60" />;
+  if (q.isError && !q.data) return <LoadFailed title="考勤设置没有取回来" onRetry={() => q.refetch()} retrying={q.isFetching} />;
+  const setup = q.data!;
   return tab === 'locations' ? <LocationsCard setup={setup} /> : tab === 'groups' ? <GroupsCard setup={setup} /> : <ShiftsCard setup={setup} />;
 }
 

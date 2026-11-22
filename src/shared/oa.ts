@@ -257,3 +257,69 @@ export interface AttendanceSetup {
 export interface AttendanceSetupSaved extends AttendanceSetup {
   created: { kind: 'shift' | 'location' | 'group'; id: number; replayed: boolean } | null;
 }
+
+// ───────────────────────── OA-05 排班（docs/OA.md 第 8 节） ─────────────────────────
+
+/** 一次最多看几天（一周一屏，月历六周）；最远排到今天之后多少天 */
+export const SCHEDULE_MAX_DAYS = 42;
+export const SCHEDULE_AHEAD_DAYS = 92;
+/** 一格最多几个班次（连班） */
+export const SCHEDULE_MAX_SHIFTS_PER_DAY = 4;
+/** 一次保存最多几格（页面按员工分批，一个人一周的格子总在同一批里） */
+export const SCHEDULE_SAVE_MAX_CELLS = 500;
+
+/** 排班的一格：员工 × 业务日期；shiftIds 空 = 休息（没排） */
+export interface ScheduleCell {
+  staffId: number;
+  date: string;
+  shiftIds: number[];
+  /** 标了「连班」：与前后相邻的班次打卡窗口可以首尾相接 */
+  consecutive: boolean;
+}
+
+export interface ScheduleWeek {
+  /** 能看的考勤组（hr.attendance 是本店全部启用的；部门负责人是有本部门员工的） */
+  groups: { id: number; name: string }[];
+  group: { id: number; name: string } | null;
+  from: string;
+  to: string;
+  /** 今天（业务日期）：之前的日子不能改 */
+  today: string;
+  /** 能不能改（部门负责人只能看） */
+  editable: boolean;
+  members: { staffId: number; name: string; position: PositionKey | null }[];
+  /** 本店的班次（启用的，加上这段时间里排着的停用班次） */
+  shifts: OaShift[];
+  cells: ScheduleCell[];
+}
+
+export interface MyScheduleItem {
+  shiftId: number;
+  name: string;
+  startMinute: number;
+  endMinute: number;
+  consecutive: boolean;
+}
+export interface MySchedule {
+  month: string;
+  today: string;
+  days: { date: string; items: MyScheduleItem[] }[];
+  /** 下个月 1 号：00:00 上班的在这个月最后一天写「今晚 24:00 上班」 */
+  following: { date: string; items: MyScheduleItem[] };
+}
+/** 排班保存的结果（saved.id 是考勤组；结果待确认查回用） */
+export interface ScheduleSaved {
+  changed: number;
+  saved: { id: number };
+}
+
+const DAY_MS = 86_400_000;
+/**
+ * 一条排班的打卡时段（从上班卡最早能打到下班卡最晚能打），按「1970-01-01 起第几分钟」算，跨天、跨月都能直接比；
+ * 同一人两条排班的时段重叠就分不清一次打卡算哪一条（OA-06），除非标了连班
+ */
+export function scheduleSpan(date: string, s: Pick<OaShiftTimes, 'startMinute' | 'endMinute' | 'inAdvanceMinutes' | 'outDelayMinutes'>): { from: number; to: number } {
+  const day = Math.round(Date.parse(`${date}T00:00:00Z`) / DAY_MS);
+  const start = day * 1440 + s.startMinute;
+  return { from: start - s.inAdvanceMinutes, to: start + shiftLength(s) + s.outDelayMinutes };
+}
