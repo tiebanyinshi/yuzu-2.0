@@ -33,6 +33,9 @@ const GROUP_ROWS_MAX = 20;
 const minOf = (values: number[]): number | null => values.reduce<number | null>((m, v) => (m === null || v < m ? v : m), null);
 /** 一张表最多多少行有内容（原表零点菜品一百四十来行；一行至多一项） */
 const SHEET_ROWS_MAX = 2_000;
+/** 整份最多生成多少项（原表 224 项）、一项最多多少档（原表最多 10 档）：超过的不像价目表，不先建一大堆条目再一项项校验（Codex 安全审查） */
+const ENTRIES_MAX = 3_000;
+const VARIANTS_MAX = 40;
 
 /** 工作表 → 行号 → 列号 → 文字（合并区域填满；合并区域过大的整份拒绝，不在请求线程里填几十亿格） */
 function gridOf(sheet: XlsxSheet): Grid {
@@ -451,13 +454,29 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     }
 
     if (/客房/.test(grp.type)) {
-      // 「小房间 599/晚  大房间 699/晚」与「399/3小时  499/3小时」：按先后配对成大小房的过夜价与钟点价
-      const night = [...half(price).matchAll(/([^\d\n]*?)\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*[/／]\s*晚/g)].map((m) => ({ label: oneLine(m[1]!) || '过夜', cents: yuanToCents(m[2]!) }));
-      const hourly = [...half(rule).matchAll(/(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*[/／]\s*(\d+(?:\.\d+)?)\s*(小时|H|h)/g)].map((m) => ({
-        cents: yuanToCents(m[1]!),
-        minutes: Math.round(Number(m[2]) * 60),
-      }));
-      if (!night.length) ctx.error(S, r, '收费参考', `「${oneLine(price)}」看不懂（写 小房间 599/晚）`);
+      // 「小房间 599/晚  大房间 699/晚」与「399/3小时  499/3小时」：按先后配对成大小房的过夜价与钟点价。
+      // 逐行认：写了却认不出的一行报错（不跳过它再按先后配对——那会把大房间的钟点价配给小房间）；两边行数不一样也报错
+      const lines = (t: string) =>
+        half(t)
+          .split('\n')
+          .map((x) => x.trim())
+          .filter(Boolean);
+      const night: { label: string; cents: number | null }[] = [];
+      for (const line of lines(price)) {
+        const m = /^([^\d\-－]*?)\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*[/／]\s*晚$/.exec(line);
+        if (m) night.push({ label: oneLine(m[1]!) || '过夜', cents: yuanToCents(m[2]!) });
+        else ctx.error(S, r, '收费参考', `客房过夜价「${oneLine(line)}」看不懂（一行写一个，例如 小房间 599/晚）`);
+      }
+      const hourly: { cents: number | null; minutes: number }[] = [];
+      for (const line of lines(rule)) {
+        const m = /^(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*[/／]\s*(\d+(?:\.\d+)?)\s*(小时|H|h)$/.exec(line);
+        if (m) hourly.push({ cents: yuanToCents(m[1]!), minutes: Math.round(Number(m[2]) * 60) });
+        else ctx.error(S, r, '收费参考', `客房钟点价「${oneLine(line)}」看不懂（一行写一个，例如 399/3小时）`);
+      }
+      if (!lines(price).length) ctx.error(S, r, '收费参考', '价格为空（写 小房间 599/晚）');
+      if (hourly.length && night.length && hourly.length !== night.length) {
+        ctx.error(S, r, '收费参考', `过夜价 ${night.length} 个、钟点价 ${hourly.length} 个，对不上是哪种房的；一种房一行，两列行数一样`);
+      }
       const variants: PriceVariant[] = [
         ...night.map((n) => ({ label: `${n.label} 过夜`, priceCents: n.cents, minutes: null, unit: '晚' })),
         ...hourly.map((h, i) => ({ label: `${night[i]?.label ?? ''} ${h.minutes / 60}小时`.trim(), priceCents: h.cents, minutes: h.minutes, unit: '' })),
@@ -680,6 +699,14 @@ export function parsePriceCatalog(book: XlsxWorkbook): ParsedPriceCatalog {
     // 行数先核对，再逐行读：原表最多一百多行，几千上万行的不像价目表，整份拒绝（不先建一大堆条目）
     if (grid.size > SHEET_ROWS_MAX) throw new PriceFileError(`「${ws.name}」有 ${grid.size} 行，超过 ${SHEET_ROWS_MAX} 行，不像价目表；请检查表格后再导入`);
     entries.push(...PARSERS[sheet](grid, ctx));
+    if (entries.length > ENTRIES_MAX) throw new PriceFileError(`整份价目表认出了 ${entries.length} 项，超过 ${ENTRIES_MAX} 项，不像价目表；请检查表格后再导入`);
+  }
+  // 一项的分档太多（一格里写了成百上千行）：报错，只留前面的档，后面的校验不再逐档展开
+  for (const e of entries) {
+    if (e.variants.length > VARIANTS_MAX) {
+      ctx.error(e.sheet, e.sourceRow, '收费参考', `「${e.name}」认出了 ${e.variants.length} 档价格，超过 ${VARIANTS_MAX} 档，请核对这一格`);
+      e.variants = e.variants.slice(0, VARIANTS_MAX);
+    }
   }
   // 最后用页面编辑的同一份校验逐项过一遍（分档时长 0 小时、价格形态与价格不一致……）：导入与编辑一个口径，
   // 导进来的每一项以后都能照常修改。这一行前面已经报过错的不再重复

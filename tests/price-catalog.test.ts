@@ -911,6 +911,50 @@ describe('价目表录入 审查修正（PR #160）', () => {
     }
   });
 
+  it('第十三轮审查：客房过夜价 / 钟点价有一行认不出、两列个数对不上、负数，报错（不跳过再按先后配对）；条目与分档过多', async () => {
+    const guest = (price: string, rule: string | null) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        ['客房', '7间', price, rule, 'R01-R07'],
+      ]);
+    for (const [price, rule] of [
+      ['小房间 599/晚\n大房间 699/晚', 'abc/3小时\n499/3小时'],
+      ['小房间 599/晚\n大房间 699/晚', '499/3小时'],
+      ['小房间 599/晚\n大房间 另议', '399/3小时\n499/3小时'],
+      ['小房间 -599/晚\n大房间 699/晚', null],
+    ] as const) {
+      const errs = (await issuesOf({ 房间价格: guest(price, rule) })).filter((i) => i.level === 'error');
+      expect(errs[0], `${price} ${rule}`).toMatchObject({ row: 2, field: '收费参考' });
+    }
+    // 正常的照旧：大小房各一档过夜价、一档钟点价，钟点价配给对的房
+    const ok = await preview(workbook({ 房间价格: guest('小房间 599/晚\n大房间 699/晚', '399/3小时\n499/3小时') }));
+    const room = find(ok.body as PriceImportPreview, '客房');
+    expect(room.variants.map((v) => [v.label, v.priceCents])).toEqual([
+      ['小房间 过夜', 59900],
+      ['大房间 过夜', 69900],
+      ['小房间 3小时', 39900],
+      ['大房间 3小时', 49900],
+    ]);
+
+    // 一项的分档太多（一格写了 41 个位价）：报错
+    const many = Array.from({ length: 41 }, (_, i) => `${600 + i}元/位`).join('\n');
+    const dining = sheet('房间价格', [
+      ['房型', '总数', '收费参考', null, '备注'],
+      ['餐饮包房', '5间', many, null, 'V999'],
+    ]);
+    expect((await issuesOf({ 房间价格: dining })).some((i) => i.level === 'error' && i.message.includes('超过 40 档'))).toBe(true);
+    // 整份认出的项过多：整份拒绝
+    const rows: Row[] = [['2楼餐厅零点菜品'], ['序号', '菜品分类', '菜品名称', '售价', '单位']];
+    for (let i = 1; i <= 1990; i += 1) rows.push([i, '中餐零点', `菜品${i}`, 38, '份']);
+    const big = sheet('零点菜品价格', rows, ['A1:E1']);
+    const massage: Row[] = [['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价', '核心针对人群', '服务操作内容', '项目亮点']];
+    for (let i = 1; i <= 1100; i += 1) massage.push(['康疗', i, `项目${i}`, '房间', '80min', 499, 599]);
+    const res = await preview(workbook({ 零点菜品价格: big, 按摩及助浴价格: sheet('按摩及助浴价格', massage) }));
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatchObject({ code: 'IMPORT_FILE_INVALID' });
+    expect(res.body.error.message).toContain('超过 3000 项');
+  });
+
   it('第十二轮审查：同名的停用项不会盖掉在用项，在用项改价照样对比得出', async () => {
     const p = (await preview(workbook())).body as PriceImportPreview;
     const congee = find(p, '生滚牛肉粥');
