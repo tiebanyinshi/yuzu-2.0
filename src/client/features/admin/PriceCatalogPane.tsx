@@ -42,7 +42,7 @@ import { Badge, Button, Card, Input, Notice, SectionTitle, Segmented, Select, Sk
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { ChangeLines, PriceEntryDialog, PriceEntryHistory } from './PriceEntryDialog';
 import { PriceLinksCard } from './PriceLinksCard';
-import { PENDING_TYPES } from './priceOps';
+import { invalidatePriceCaches, PENDING_TYPES } from './priceOps';
 
 /** 价目表的查询都在这个前缀下：改了任何一处整体刷新（概要、条目、改动记录） */
 const overviewKey = ['admin', 'price-catalog'] as const;
@@ -66,7 +66,7 @@ export function PriceCatalogPane() {
   return (
     <div className="space-y-4" data-testid="price-catalog">
       {/* 导入、整体回滚结果不确定时（断网、超时）：查回、按原内容重新提交（同一编号）或确认作废，不另起一笔 */}
-      <ErpPendingPanel types={PENDING_TYPES} className="space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: overviewKey })} />
+      <ErpPendingPanel types={PENDING_TYPES} className="space-y-2" onFound={() => void invalidatePriceCaches(qc)} />
       <ImportCard onImported={() => setWhich('draft')} />
       {overview.isPending ? (
         <Skeleton className="h-48" />
@@ -189,7 +189,7 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
   const [history, setHistory] = useState<PriceCatalogEntry | null>(null);
   const [toggling, setToggling] = useState<PriceCatalogEntry | null>(null);
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
-  const refresh = () => qc.invalidateQueries({ queryKey: overviewKey });
+  const refresh = () => invalidatePriceCaches(qc);
   const toggle = async (e: PriceCatalogEntry, reason: string) => {
     try {
       const key = uuid();
@@ -423,7 +423,7 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
       setOpen(null);
     } finally {
       setBusy(false);
-      await qc.invalidateQueries({ queryKey: overviewKey });
+      await invalidatePriceCaches(qc);
     }
   };
   return (

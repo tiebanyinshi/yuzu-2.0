@@ -225,6 +225,23 @@ test.describe('价目表录入 第四批：前台试算与对接收银项目', (
     const catalog = await (await page.request.get('/api/catalog?all=1')).json();
     expect(catalog.items.find((i: { name: string }) => i.name === name).price).toBe(3900);
 
+    // 在本页改生效中的「台球」：对接卡片不刷新页面也跟着变（收银价换成新价、仍「一致」，不显示「不一致」）；改完再改回 39，别的用例照旧
+    const entry = root.getByTestId('price-entry').filter({ hasText: '台球' }).first();
+    for (const [yuan, cents] of [
+      ['42', 4200],
+      ['39', 3900],
+    ] as const) {
+      await entry.getByTestId('price-entry-edit').click();
+      await dialog.getByTestId('price-entry-price').fill(yuan);
+      await dialog.getByTestId('price-entry-save').click();
+      await expect(root.getByTestId('price-catalog-entry-notice')).toContainText('已保存「台球」');
+      await expect(row.getByText(`¥${yuan}.00`).first()).toBeVisible();
+      await expect(row).not.toContainText('不一致');
+      await expect(row).toContainText('一致');
+      const after = await (await page.request.get('/api/catalog?all=1')).json();
+      expect(after.items.find((i: { name: string }) => i.name === name).price).toBe(cents);
+    }
+
     // 收银台试算：spa房用 150 分钟（399 + 超时 1 × 199）+ 古法中式资深价 599 + 门票 12H 不含餐 499
     await page.goto('/cashier');
     await page.getByTestId('open-price-trial').click();

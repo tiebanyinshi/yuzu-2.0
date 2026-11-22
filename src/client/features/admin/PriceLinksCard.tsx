@@ -12,11 +12,11 @@ import { PRICE_SHEET_NAMES, matchesPriceSearch, priceNameKey, priceText, type Pr
 import { formatYuan } from '@shared/money';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
-import { qk, useCatalog } from '../../lib/queries';
+import { useCatalog } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { uuid } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
-import { PENDING_TYPES } from './priceOps';
+import { invalidatePriceCaches, PENDING_TYPES } from './priceOps';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { Badge, Button, Card, Input, Notice, SectionTitle, Segmented, Skeleton } from '../../components/ui';
@@ -104,7 +104,7 @@ export function PriceLinksCard({ entries }: { entries: PriceCatalogEntry[] }) {
       setPicking(null);
     } finally {
       setBusy(false);
-      await Promise.all([qc.invalidateQueries({ queryKey: linksKey }), qc.invalidateQueries({ queryKey: qk.catalog(true) }), qc.invalidateQueries({ queryKey: qk.catalog(false) })]);
+      await invalidatePriceCaches(qc);
     }
   };
 
