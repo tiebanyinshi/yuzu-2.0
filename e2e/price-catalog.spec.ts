@@ -3,6 +3,7 @@
 //   按工作表 / 板块筛、搜名称与房号、只看待定价（写「待定价」不写 0 元）。
 //   第三批：改价（改动记录写旧价 → 新价）、表单校验（待定价的菜不能下单）、补价、单条新增、停用、
 //   切换生效（条数对不上要写原因）、再切换一份、整体回滚到上一版。
+//   第四批：对接一个收银项目（价格换成价目表的价）；收银台「价目试算」（SPA 房 + 康疗资深价 + 门票，小计与 10% 服务费）。
 // 店主 linlan（密码 yuzu2026）。导入只替换草稿，不影响正在用的价格；可重复执行。只在门店电脑尺寸跑。
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { buildWorkbook, type WbSheet } from '../src/server/lib/xlsx';
@@ -185,5 +186,59 @@ test.describe('价目表录入 第三批：编辑与校验', () => {
     await page.getByTestId('price-catalog-rollback-confirm').click();
     await expect(row('古法中式')).toContainText('专业 ¥529.00 / 资深 ¥599.00');
     await expect(root.getByTestId('price-catalog-rollback')).toBeVisible();
+  });
+});
+
+test.describe('价目表录入 第四批：前台试算与对接收银项目', () => {
+  test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '会改收银项目的价，只在门店电脑尺寸执行一次');
+
+  test('收银台价目试算（SPA 房 + 康疗 + 门票，小计与 10% 服务费）；对接收银项目后价格换成价目表的价', async ({ page }) => {
+    await login(page);
+    await page.goto('/admin/catalog/full');
+    const root = page.getByTestId('price-catalog');
+    // 前面两批没跑过（单独跑这一条）时先导一份、切换生效
+    if (
+      !(await root
+        .getByTestId('price-links')
+        .isVisible()
+        .catch(() => false))
+    ) {
+      if (await root.getByTestId('price-catalog-activate').isHidden()) await importDraft(root);
+      await root.getByTestId('price-catalog-activate').click();
+      await page.getByTestId('price-catalog-activate-reason').fill('演练用的合成表');
+      await page.getByTestId('price-catalog-activate-confirm').click();
+    }
+    const links = root.getByTestId('price-links');
+    await expect(links).toBeVisible();
+
+    // 对接：新建一个收银项目（名称每次不同），把价目表的「台球」对上它；它的价换成价目表的 ¥39.00
+    const name = `演练台球${Date.now() % 100000}`;
+    expect((await page.request.post('/api/items', { data: { name, category: '娱乐', price: 3000 } })).ok()).toBe(true);
+    const row = links.getByTestId('price-link-row').filter({ hasText: '台球' }).first();
+    await row.getByTestId('price-link-pick').click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('搜收银项目').fill(name);
+    await dialog.getByTestId('price-link-item').filter({ hasText: name }).click();
+    await expect(links.getByTestId('price-links-message')).toContainText('1 个收银项目的价格已换成价目表的价');
+    await expect(row).toContainText(name);
+    await expect(row).toContainText('一致');
+    const catalog = await (await page.request.get('/api/catalog?all=1')).json();
+    expect(catalog.items.find((i: { name: string }) => i.name === name).price).toBe(3900);
+
+    // 收银台试算：spa房用 150 分钟（399 + 超时 1 × 199）+ 古法中式资深价 599 + 门票 12H 不含餐 499
+    await page.goto('/cashier');
+    await page.getByTestId('open-price-trial').click();
+    const trial = page.getByTestId('price-trial');
+    for (const q of ['spa房', '古法中式', '门票 12H 不含餐']) {
+      await trial.getByTestId('price-trial-search').fill(q);
+      await trial.getByTestId('price-trial-option').first().click();
+    }
+    await trial.getByLabel('spa房 用时分钟').fill('150');
+    await trial.getByLabel('spa房 用时分钟').blur();
+    await trial.getByRole('radio', { name: /资深/ }).click();
+    await expect(trial.getByTestId('price-trial-result')).toContainText('超时 1 × ¥199.00');
+    await expect(trial.getByTestId('price-trial-subtotal')).toHaveText('¥1,696.00');
+    await expect(trial.getByTestId('price-trial-fee')).toHaveText('¥169.60');
+    await expect(trial.getByTestId('price-trial-total')).toHaveText('¥1,865.60');
   });
 });

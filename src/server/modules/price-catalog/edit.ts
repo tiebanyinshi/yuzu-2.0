@@ -40,6 +40,7 @@ import { assertNotFenced, lockOpKey } from '../../lib/fences';
 import { erpOpAbandoned } from '../erp-ops';
 import { currentStoreId } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
+import { lockStoreCatalog, syncLinkedPrices } from './links';
 import { ENTRY_COLUMNS, entriesOf, entryOf, priceCatalogOverview, rowOf } from './read';
 
 const KINDS = [
@@ -234,6 +235,23 @@ export async function createPriceEntry(deps: Deps, setId: number, raw: unknown, 
   });
 }
 
+/**
+ * 第四批：改的是生效中的价目表时，对接了的收银项目跟着改（PC9、PC17）。改了名称 / 板块 / 分类（查重键变了）的，对接跟着这一项走；
+ * 新键已经有对接的不动（那一项照旧对接原来的收银项目）
+ */
+async function syncEntry(tx: Tx, ctx: OpContext, set: LockedSet, before: PriceCatalogEntry, after: PriceCatalogEntry) {
+  if (set.status !== 'active') return;
+  const from = priceNameKey(before);
+  const to = priceNameKey(after);
+  if (from !== to) {
+    await tx`
+      UPDATE price_catalog_links SET entry_key = ${to}
+      WHERE store_id = ${currentStoreId()} AND entry_key = ${from}
+        AND NOT EXISTS (SELECT 1 FROM price_catalog_links WHERE store_id = ${currentStoreId()} AND entry_key = ${to})`;
+  }
+  await syncLinkedPrices(tx, ctx, { keys: [to], why: `改价「${after.name}」` });
+}
+
 /** 先找到这一项属于哪份价目表（不加锁），再按「价目表 → 这一项」的顺序锁 */
 async function lockEntry(tx: Tx, entryId: number, version: number): Promise<{ set: LockedSet; before: PriceCatalogEntry }> {
   const [where] = await tx<{ setId: number }[]>`
@@ -265,6 +283,7 @@ export async function updatePriceEntry(deps: Deps, entryId: number, raw: unknown
       WHERE id = ${entryId}`;
     const after = await readEntry(tx, entryId);
     await logChange(tx, ctx, { set, action: 'update', before, after, reason: f.reason, opKey: f.opKey });
+    await syncEntry(tx, ctx, set, before, after);
     return after;
   });
 }
@@ -280,6 +299,7 @@ export async function setPriceEntryActive(deps: Deps, entryId: number, raw: unkn
     await tx`UPDATE price_catalog_entries SET active = ${f.active}, version = version + 1, updated_at = now() WHERE id = ${entryId}`;
     const after = await readEntry(tx, entryId);
     await logChange(tx, ctx, { set, action: f.active ? 'reactivate' : 'deactivate', before, after, reason: f.reason, opKey: f.opKey });
+    await syncEntry(tx, ctx, set, before, after);
     return after;
   });
 }
@@ -297,14 +317,6 @@ export async function priceChanges(deps: Deps, setId: number, q: { entryId?: num
 }
 
 // ───────────────────────── 切换生效、回滚、放弃草稿 ─────────────────────────
-
-/**
- * 这家门店价目表的整份操作（导入草稿、切换生效、回滚、放弃草稿）先取门店级的咨询锁：不会随草稿被删掉而失效，
- * 两次导入、导入与切换都在这里排队（只锁草稿行的话，后一次在前一次删掉旧草稿以后查不到新草稿，撞唯一索引）。
- */
-export async function lockStoreCatalog(tx: Tx): Promise<void> {
-  await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`price_catalog:${currentStoreId()}`}, 0))`;
-}
 
 /**
  * 切换生效、放弃草稿的操作编号（迁移 236，与整体回滚同一张表）：先取编号的咨询锁；记过的（重提）什么都不改、返回现在的样子；
@@ -349,6 +361,8 @@ export async function activatePriceCatalog(deps: Deps, raw: unknown, ctx: OpCont
     await tx`
       INSERT INTO price_catalog_set_ops (op_key, action, from_set_id, to_set_id, staff_id)
       VALUES (${f.opKey}, 'activate', ${old?.id ?? null}, ${draft.id}, ${ctx.actor.id})`;
+    // 第四批：对接了的收银项目跟着换成这一份的价（PC17）
+    await syncLinkedPrices(tx, ctx, { why: `切换生效「${draft.title}」` });
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'price_catalog',
@@ -388,6 +402,7 @@ export async function rollbackPriceCatalog(deps: Deps, raw: unknown, ctx: OpCont
     await tx`
       INSERT INTO price_catalog_set_ops (op_key, action, from_set_id, to_set_id, staff_id)
       VALUES (${f.opKey}, 'rollback', ${current.active.id}, ${prev.id}, ${ctx.actor.id})`;
+    await syncLinkedPrices(tx, ctx, { why: `整体回滚到「${prev.title}」` });
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'price_catalog',

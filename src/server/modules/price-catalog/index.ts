@@ -21,7 +21,8 @@ import { currentStoreId } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
 import { buildWorkbook, type WbSheet } from '../../lib/xlsx';
 import { readXlsx, XlsxReadError } from '../../lib/xlsx-read';
-import { lockStoreCatalog, registerPriceCatalogEditRoutes } from './edit';
+import { registerPriceCatalogEditRoutes } from './edit';
+import { lockStoreCatalog, registerPriceLinkRoutes } from './links';
 import { parsePriceCatalog, PriceFileError } from './parse';
 import { activePriceCatalog, priceCatalogOverview, priceCatalogSet, rowOf } from './read';
 
@@ -163,4 +164,5 @@ export function registerPriceCatalogRoutes(app: FastifyInstance, deps: Deps) {
   // 第四批：生效中的价目表（在用的条目），收银台「价目试算」与开单页取价用；前台能看账单的、管价目的都能读
   app.get('/api/price-catalog/active', { preHandler: guardAny('frontdesk.read', 'catalog.manage') }, async () => activePriceCatalog(deps.sql));
   registerPriceCatalogEditRoutes(app, deps);
+  registerPriceLinkRoutes(app, deps);
 }

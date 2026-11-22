@@ -981,3 +981,125 @@ describe('价目表录入 第四批：前台试算', () => {
     expect(priceQuote([{ entry: get('台球'), quantity: 1 }], { ...fee, active: false })).toMatchObject({ feeRateBp: null, feeCents: 0, totalCents: 3900 });
   });
 });
+
+describe('价目表录入 第四批：对接收银项目', () => {
+  const activateNew = async (title: string) => {
+    const file = workbook();
+    const p = (await preview(file)).body as PriceImportPreview & { digest: string };
+    const draft = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: `${title}.xlsx`, xlsxBase64: file, previewDigest: p.digest, title, opKey: randomUUID() }))
+      .body as PriceCatalogSet;
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { opKey: randomUUID(), draftId: draft.id, countReason: '合成的演练表' })).status).toBe(200);
+    return draft;
+  };
+  const item = async (body: Record<string, unknown>) => {
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/items', body)).status).toBe(200);
+    const [row] = await ctx.sql<{ id: number }[]>`SELECT id FROM service_items WHERE name = ${body.name as string} ORDER BY id DESC LIMIT 1`;
+    return Number(row!.id);
+  };
+  const tiers = async (id: number) =>
+    Object.fromEntries((await ctx.sql<{ tier: string; price: number }[]>`SELECT tier, price FROM service_item_prices WHERE item_id = ${id} ORDER BY tier`).map((r) => [r.tier, Number(r.price)]));
+  const link = (body: Record<string, unknown>) => api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/links', { opKey: randomUUID(), ...body });
+
+  it('按名称自动对接、手工对接 / 取消；切换、改价、回滚时收银项目的价跟着变，已开的单不变；后台价目不能另改对接了的项目的价', async () => {
+    await activateNew('对接演练上一版');
+    const set = await activateNew('对接演练');
+    const yoga = await item({ name: '瑜伽泰式', category: '按摩', prices: { standard: 50000 }, technicianRequired: true });
+    const pool = await item({ name: '台 球', category: '娱乐', price: 3000 });
+    const snooker1 = await item({ name: '斯诺克', category: '娱乐', price: 9000 });
+    const snooker2 = await item({ name: '斯诺克', category: '娱乐', price: 9100 });
+
+    // 自动对接：名称（不管空格）恰好对上一个在用项目的才对；两个「斯诺克」不对，留给人工选
+    const opKey = randomUUID();
+    const auto = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/links/auto', { opKey });
+    expect(auto.status, JSON.stringify(auto.body)).toBe(200);
+    const links = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/links')).body as { entryKey: string; itemId: number; prices: { tier: string; price: number }[] }[];
+    const keyOf = (name: string) => links.find((l) => l.entryKey.endsWith(`|${name}`))?.itemId;
+    expect(keyOf('瑜伽泰式')).toBe(yoga);
+    expect(keyOf('台球')).toBe(pool);
+    expect(keyOf('斯诺克')).toBeUndefined();
+    // 双价：标准 / 专业 = 专业价，优选 = 资深价（PC7）；单价：每一档都是这个价
+    expect(await tiers(yoga)).toEqual({ premium: 69900, professional: 59900, standard: 59900 });
+    expect(await tiers(pool)).toEqual({ standard: 3900 });
+    // 原样重提：返回第一次的结果，不再对一遍
+    const again = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/links/auto', { opKey });
+    expect(again.body).toEqual(auto.body);
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${opKey}?type=price_link`)).body).toMatchObject({ found: true });
+
+    // 后台价目改对接了的项目的价被拒（别的字段照常能改）
+    const edit = await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '台 球', category: '娱乐', price: 3500 });
+    expect(edit.status).toBe(409);
+    expect(edit.body.error.code).toBe('PRICE_LINKED');
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '台 球', category: '娱乐', price: 3900, note: '按小时' })).status).toBe(200);
+    // 价目清单导入改到它的价也整份拒绝（预检就报出来）
+    const csv = await api(ctx.app, ctx.owner, 'POST', '/api/items/import', {
+      rows: [{ category: '按摩', name: '瑜伽泰式', durationMinutes: null, gender: null, prices: [{ tier: 'standard', price: 52000 }] }],
+      dryRun: true,
+    });
+    expect(csv.body.error?.code, JSON.stringify(csv.body)).toBe('PRICE_LINKED');
+
+    // 前台挂账按收银项目取价 = 价目表的价
+    await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'P', from: 1, to: 2, width: 3, zone: 'male' });
+    const visit = (await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: 'P001', zone: 'male' }] })).body.visits[0].id as number;
+    const charge = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${visit}/charges`, { clientKey: randomUUID(), lines: [{ itemId: pool, quantity: 2 }], expectedTotal: 7800 });
+    expect(charge.status, JSON.stringify(charge.body)).toBe(200);
+
+    // 改生效中的价目：收银项目跟着变；已开的单照旧
+    const active = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${set.id}`)).body as PriceCatalogSet;
+    const poolEntry = find(active, '台球');
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${poolEntry.id}`, { ...poolEntry, priceCents: 4500, opKey: randomUUID() })).status).toBe(200);
+    expect(await tiers(pool)).toEqual({ standard: 4500 });
+    const [line] = await ctx.sql<{ unitPrice: number }[]>`SELECT unit_price FROM bill_lines WHERE item_id = ${pool}`;
+    expect(Number(line!.unitPrice)).toBe(3900);
+    // 改名：对接跟着这一项走
+    const renamed = (
+      await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${poolEntry.id}`, {
+        ...poolEntry,
+        version: poolEntry.version! + 1,
+        name: '台球（2 小时）',
+        priceCents: 4500,
+        opKey: randomUUID(),
+      })
+    ).body as PriceCatalogEntry;
+    expect(renamed.name).toBe('台球（2 小时）');
+    expect(((await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/links')).body as { entryKey: string; itemId: number }[]).find((l) => l.itemId === pool)?.entryKey).toMatch(
+      /台球（2小时）$/,
+    );
+
+    // 手工对接：斯诺克对第一个；换成第二个（原来那个取消）；一个收银项目只对一项
+    const snookerKey = `entertainment|||斯诺克`;
+    const l1 = await link({ entryKey: snookerKey, itemId: snooker1 });
+    expect(l1.status, JSON.stringify(l1.body)).toBe(200);
+    expect(l1.body).toMatchObject({ linked: 1, unlinked: 0, synced: [{ itemId: snooker1, changed: true }] });
+    expect(await tiers(snooker1)).toEqual({ standard: 9900 });
+    expect((await link({ entryKey: snookerKey, itemId: snooker2 })).body).toMatchObject({ linked: 1, unlinked: 1 });
+    expect(await tiers(snooker2)).toEqual({ standard: 9900 });
+    const taken = await link({ entryKey: snookerKey, itemId: yoga });
+    expect(taken.status).toBe(409);
+    expect(taken.body.error.code).toBe('PRICE_LINK_TAKEN');
+    expect((await link({ entryKey: 'massage|康疗||不存在的项目', itemId: snooker1 })).status).toBe(404);
+    // 取消对接以后后台价目又能改价
+    expect((await link({ entryKey: snookerKey, itemId: null })).body).toMatchObject({ unlinked: 1 });
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${snooker2}`, { name: '斯诺克', category: '娱乐', price: 8800 })).status).toBe(200);
+
+    // 改双价：专业 619、资深 719
+    const yogaEntry = find(active, '瑜伽泰式');
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${yogaEntry.id}`, { ...yogaEntry, priceCents: 61900, price2Cents: 71900, opKey: randomUUID() })).status).toBe(200);
+    expect(await tiers(yoga)).toEqual({ premium: 71900, professional: 61900, standard: 61900 });
+
+    // 整体回滚：收银项目回到上一版的价（瑜伽泰式 599 / 699）；改了名的台球在上一版里没有这个名字，不动（同步结果里写明）；同步记审计
+    const overview = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as PriceCatalogOverview;
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { opKey: randomUUID(), activeId: overview.active!.id, reason: '演练回滚' })).status).toBe(200);
+    expect(await tiers(yoga)).toEqual({ premium: 69900, professional: 59900, standard: 59900 });
+    expect(await tiers(pool)).toEqual({ standard: 4500 });
+    const audits = await ctx.sql<{ detail: { action: string; label: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'price_catalog' ORDER BY id`;
+    expect(audits.map((a) => a.detail.action)).toEqual(expect.arrayContaining(['auto_link', 'link', 'unlink', 'sync']));
+    expect(audits.filter((a) => a.detail.action === 'sync').at(-1)!.detail.label).toContain('整体回滚');
+
+    // 作废过的编号：原请求晚到也不对接；店员不能对接
+    const dead = randomUUID();
+    await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${dead}/abandon`, { type: 'price_link' });
+    const late = await link({ opKey: dead, entryKey: snookerKey, itemId: snooker1 });
+    expect(late.body.error?.code).toBe('OP_ABANDONED');
+    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/admin/price-catalog/links/auto', { opKey: randomUUID() })).status).toBe(403);
+  });
+});

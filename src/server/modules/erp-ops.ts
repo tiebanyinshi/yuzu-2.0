@@ -156,6 +156,7 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   price_rollback: ['catalog.manage'],
   price_entry: ['catalog.manage'],
   price_set: ['catalog.manage'],
+  price_link: ['catalog.manage'],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -241,6 +242,7 @@ const READ: Record<ErpOpType, Permission[]> = {
   price_rollback: ['catalog.manage'],
   price_entry: ['catalog.manage'],
   price_set: ['catalog.manage'],
+  price_link: ['catalog.manage'],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {
@@ -270,6 +272,11 @@ export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise
   if (type === 'price_set') {
     const [op] = await db<{ toSetId: number | null }[]>`SELECT to_set_id FROM price_catalog_set_ops WHERE op_key = ${key} AND action IN ('activate', 'discard')`;
     if (op) return { found: true, abandoned: false, ...(op.toSetId !== null ? { refId: Number(op.toSetId) } : {}) };
+  }
+  // 对接收银项目：没有 refId（结果在编号上）
+  if (type === 'price_link') {
+    const [op] = await db<{ action: string }[]>`SELECT action FROM price_catalog_link_ops WHERE op_key = ${key}`;
+    if (op) return { found: true, abandoned: false };
   }
   if (type === 'price_rollback') {
     const [op] = await db<{ toSetId: number }[]>`SELECT to_set_id FROM price_catalog_set_ops WHERE op_key = ${key}`;

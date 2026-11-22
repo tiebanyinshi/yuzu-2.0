@@ -19,6 +19,7 @@ import { cents, idParam, parse, positiveCents } from '../lib/validate';
 import { pricesColumn } from './pricing';
 import { currentStoreId, DEFAULT_STORE_ID } from '../lib/store-context';
 import { dishIdsAmong, dishPriceState, recordPriceChanges, recordStorePriceChange } from './dish-prices';
+import { assertNotPriceLinked } from './price-catalog/linked';
 import { MAX_STORE_PRICE_REASON } from '@shared/frontdesk-v8117';
 import { formatYuan } from '@shared/money';
 
@@ -194,6 +195,11 @@ export async function importPriceList(sql: Sql, raw: PriceListImportData, audit:
     });
     const listed = new Set(input.rows.map((r) => r.name));
     const deactivate = input.deactivateMissing ? items.filter((i) => i.active && !listed.has(i.name)) : [];
+    // 价目表第四批：对接了「全品类价目表」的项目，价格以价目表为准，清单改到它们的价格整份拒绝（预检同样报出来）
+    await assertNotPriceLinked(
+      tx,
+      update.filter((u) => !samePrices(u.item.prices, u.row.prices)).map((u) => u.item.id),
+    );
 
     if (!input.dryRun) {
       // 菜品的改价进改价记录（8.1.15 菜品管理，docs/DISHES_V8115.md 第 4 节）：按清单改到菜品价格的，每一档记一条
@@ -323,6 +329,9 @@ export function registerCatalogRoutes(app: FastifyInstance, { sql }: Deps) {
     const i = parse(ItemInput, req.body);
     await sql.begin(async (tx) => {
       await tx`SELECT id FROM service_items WHERE id = ${id} FOR UPDATE`;
+      // 价目表第四批：对接了「全品类价目表」的项目改价拒绝（别的字段照常能改）
+      const [cur] = await tx<{ prices: TierPrice[] }[]>`SELECT ${pricesColumn(tx, { base: true })} AS prices FROM service_items i WHERE i.id = ${id}`;
+      if (cur && !samePrices(cur.prices, i.tiers)) await assertNotPriceLinked(tx, [id]);
       // 菜品的改价进改价记录（8.1.15 菜品管理）：这道是菜品、价格有变化的，每一档记一条
       const before = await dishPriceState(tx, id);
       await writeItem(tx, id, i);
@@ -371,6 +380,7 @@ export function registerCatalogRoutes(app: FastifyInstance, { sql }: Deps) {
         SELECT price FROM service_item_store_prices WHERE store_id = ${storeId} AND item_id = ${input.itemId} AND tier = ${input.tier} FOR UPDATE`;
       const before = cur ? Number(cur.price) : null;
       if (before === input.price) return { ok: true, changed: false };
+      await assertNotPriceLinked(tx, [input.itemId], { storeId });
       if (input.expected !== undefined && input.expected !== before) {
         throw conflict('STORE_PRICE_STALE', `「${item.name}」的本店价刚刚被改过（现在是${before === null ? '同全公司' : ` ${formatYuan(before)}`}），请刷新后再改`);
       }

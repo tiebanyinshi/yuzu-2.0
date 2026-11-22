@@ -41,6 +41,7 @@ import { ReasonDialog } from '../../components/ReasonDialog';
 import { Badge, Button, Card, Input, Notice, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { ChangeLines, PriceEntryDialog, PriceEntryHistory } from './PriceEntryDialog';
+import { PriceLinksCard } from './PriceLinksCard';
 
 /** 价目表的查询都在这个前缀下：改了任何一处整体刷新（概要、条目、改动记录） */
 const overviewKey = ['admin', 'price-catalog'] as const;
@@ -50,7 +51,7 @@ type Which = 'draft' | 'active';
 type SheetFilter = 'all' | PriceSheet;
 type Only = 'all' | 'none' | 'inactive';
 
-const PENDING_TYPES = ['price_import', 'price_rollback', 'price_entry', 'price_set'] as const;
+const PENDING_TYPES = ['price_import', 'price_rollback', 'price_entry', 'price_set', 'price_link'] as const;
 
 export function PriceCatalogPane() {
   const qc = useQueryClient();
@@ -122,6 +123,8 @@ export function PriceCatalogPane() {
           ) : set.data ? (
             <EntryList key={set.data.id} setId={set.data.id} entries={set.data.entries} />
           ) : null}
+          {/* 第四批：生效中的价目表对接收银项目（开单、房态点单取价） */}
+          {shown.status === 'active' && set.data && <PriceLinksCard entries={set.data.entries} />}
           <ChangesCard setId={shown.id} />
         </>
       )}

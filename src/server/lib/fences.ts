@@ -182,6 +182,8 @@ export const FENCED_OPS = [
   'price_entry',
   // 价目表切换生效、放弃草稿（迁移 236）：编号记在 price_catalog_set_ops
   'price_set',
+  // 价目表对接收银项目（迁移 237）：编号记在 price_catalog_link_ops
+  'price_link',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 
