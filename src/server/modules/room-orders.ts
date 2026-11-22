@@ -45,7 +45,8 @@ import { currentStoreId } from '../lib/store-context';
 import { parse } from '../lib/validate';
 import { assertOrderOutlets } from './dining-order-v8115';
 import { DishLineFields } from './dish-lines';
-import { kitchenDishes } from './dining';
+import { diningMenu, kitchenDishes } from './dining';
+import type { DiningMenu } from '@shared/dining';
 import { PostInput, postChargesTx } from './frontdesk/bills';
 import { businessDate, hashRequest, runIdempotent } from './frontdesk/common';
 import { currentGuestOfSpace } from './room-state';
@@ -139,6 +140,20 @@ export async function roomOrderConfig(db: Db): Promise<RoomOrderConfig> {
     FROM room_order_outlets o LEFT JOIN staff s ON s.id = o.updated_by WHERE o.store_id = ${currentStoreId()} ORDER BY o.updated_at DESC`;
   const outlets = Object.fromEntries(ROOM_ORDER_OUTLETS.map((o) => [o, { categories: rows.find((r) => r.outlet === o)?.categories ?? null }])) as RoomOrderConfig['outlets'];
   return { outlets, updatedAt: rows[0]?.updatedAt ?? null, updatedBy: rows[0]?.updatedBy ?? null };
+}
+
+/**
+ * 房态点单面板的菜单（Codex 审查 4eef781）：只要水吧或果吧的下单权限就能读（平板、康美部不一定有点单页的菜单权限），
+ * 只给这个账号能下单的出品口、门店配置里能点的分类；做法、加料、套餐内容与点单页同一份
+ */
+async function roomOrderMenu(db: Db, deps: Deps, actor: Actor): Promise<DiningMenu> {
+  const [menu, config] = await Promise.all([diningMenu(db, deps), roomOrderConfig(db)]);
+  const dishes = menu.dishes.filter((d) => {
+    if (!isRoomOrderOutlet(d.outlet) || !can(actor, ROOM_ORDER_PERMISSIONS[d.outlet])) return false;
+    const allowed = config.outlets[d.outlet].categories;
+    return allowed === null || allowed.includes(roomOrderCategoryOf(d));
+  });
+  return { ...menu, dishes };
 }
 
 async function roomOrderConfigAdmin(db: Db, deps: Deps): Promise<RoomOrderConfigAdmin> {
@@ -392,6 +407,7 @@ export function registerRoomOrderRoutes(app: FastifyInstance, deps: Deps) {
   const roomKey = (req: { params: unknown }) => parse(z.object({ id: z.string().max(24) }), req.params).id;
 
   app.get('/api/room-center/order-config', { preHandler: order }, async () => roomOrderConfig(sql));
+  app.get('/api/room-center/order-menu', { preHandler: order }, async (req) => roomOrderMenu(sql, deps, req.actor));
 
   // 「结果待确认」的查回与确认作废：按出品口——只认这个出品口的房态点单编号，要这个出品口的下单权限（Codex 安全审查 404eb2f）；
   // 别的业务、另一个出品口的编号只答「没查到」、不作废；查回只说生效没生效、记在哪次来访上

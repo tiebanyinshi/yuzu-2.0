@@ -5,7 +5,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RoomCenterBoard } from '../src/shared/room-center';
-import type { RoomOrderConfigAdmin, RoomOrderHistory, RoomOrderResult } from '../src/shared/room-orders';
+import type { DiningMenu } from '../src/shared/dining';
+import { roomOrderCategoryOf, type RoomOrderConfigAdmin, type RoomOrderHistory, type RoomOrderResult } from '../src/shared/room-orders';
 import { createStaff } from '../src/server/modules/staff';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
@@ -162,6 +163,11 @@ describe('房态点单（P07）', () => {
     const saved = await api(ctx.app, ctx.owner, 'PUT', '/api/admin/room-order-config', { outlets: { water: { categories: null }, fruit: { categories: ['水果'] } } });
     expect(saved.status, JSON.stringify(saved.body)).toBe(200);
     expect((await api(ctx.app, km, 'GET', '/api/room-center/order-config')).body.outlets.fruit.categories).toEqual(['水果']);
+    // 房态点单的菜单只给能点的分类：果吧只剩「水果」，水吧照旧全部
+    const menu = (await api(ctx.app, km, 'GET', '/api/room-center/order-menu')).body as DiningMenu;
+    expect([...new Set(menu.dishes.filter((d) => d.outlet === 'fruit').map(roomOrderCategoryOf))]).toEqual(['水果']);
+    expect(menu.dishes.some((d) => d.outlet === 'water')).toBe(true);
+    expect(menu.dishes.some((d) => d.outlet !== 'water' && d.outlet !== 'fruit')).toBe(false);
     await checkIn('H603');
     const blocked = await place('H603', 'fruit', [{ name: '西瓜汁' }]);
     expect(blocked.status).toBe(403);
@@ -240,6 +246,12 @@ describe('房态点单（P07）', () => {
     expect(me.permissions).toContain('dining.orderWater');
     expect(me.permissions).not.toContain('dining.order');
     expect(me.permissions).not.toContain('frontdesk.read');
+    // 菜单：点单页的读不了，房态点单自己的能读，只给水吧的菜（Codex 审查 4eef781）
+    expect((await api(ctx.app, water, 'GET', '/api/dining/menu')).status).toBe(403);
+    const menu = await api(ctx.app, water, 'GET', '/api/room-center/order-menu');
+    expect(menu.status, JSON.stringify(menu.body)).toBe(200);
+    const outlets = new Set((menu.body as DiningMenu).dishes.map((d) => d.outlet));
+    expect([...outlets]).toEqual(['water']);
     const key = randomUUID();
     expect((await place('H604', 'water', [{ name: '柠檬茶' }], {}, water, key)).status).toBe(200);
     expect((await api(ctx.app, water, 'GET', `/api/room-center/order-ops/water/${key}`)).body).toMatchObject({ found: true, type: 'room_order' });

@@ -298,9 +298,7 @@ function RoomCenterBody() {
         </>
       )}
 
-      {orderingRoom && ordering?.view === 'order' && orderingRoom.status === 'in_use' && (
-        <RoomOrderPanel room={orderingRoom} onClose={() => setOrdering(null)} onHistory={() => setOrdering({ key: orderingRoom.key, view: 'history' })} />
-      )}
+      {orderingRoom && ordering?.view === 'order' && <RoomOrderPanel room={orderingRoom} onClose={() => setOrdering(null)} onHistory={() => setOrdering({ key: orderingRoom.key, view: 'history' })} />}
       {orderingRoom && ordering?.view === 'history' && (
         <RoomOrdersDialog
           room={orderingRoom}
