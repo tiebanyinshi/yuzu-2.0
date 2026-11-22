@@ -76,7 +76,8 @@ export function TechBoardPage() {
   const [full, setFull] = useState(false);
   const [perPage, setPerPage] = useState(4);
   const boardRef = useRef<HTMLDivElement>(null);
-  const columnsRef = useRef<HTMLDivElement>(null);
+  // 列容器用回调 ref 记在状态里：空态（没有在岗技师、筛选到空）结束后容器重新挂上，测量跟着重新绑定（Codex 审查 3ce92ac）
+  const [columnsEl, setColumnsEl] = useState<HTMLDivElement | null>(null);
 
   const q = useQuery({ queryKey: boardKey, queryFn: () => api.get<TechBoardView>('/api/tech-board') });
   useLivePoll(
@@ -91,7 +92,7 @@ export function TechBoardPage() {
 
   // 一屏放几列：按右边的宽度与字号算（字号跟着屏宽走，4K 上照样是这几列，只是更大）
   useEffect(() => {
-    const el = columnsRef.current;
+    const el = columnsEl;
     if (!el) return;
     const measure = () => {
       const font = parseFloat(getComputedStyle(el).fontSize) || 16;
@@ -101,7 +102,7 @@ export function TechBoardPage() {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [d !== undefined, full]);
+  }, [columnsEl, full]);
 
   // 全屏投屏：浏览器全屏（能用时）+ 页面上只留看板；Esc 或浏览器退出全屏都回来
   useEffect(() => {
@@ -346,7 +347,7 @@ export function TechBoardPage() {
                   ))}
                 </div>
                 {/* 右边：一列一个项目（区域），一屏放不下分页轮播 */}
-                <div ref={columnsRef} className="min-w-0 flex-1" data-testid="tech-board-columns">
+                <div ref={setColumnsEl} className="min-w-0 flex-1" data-testid="tech-board-columns">
                   {view.columns.length === 0 ? (
                     <p className="p-8 text-center text-[1.1em] text-ink-3">现在没有人在钟上</p>
                   ) : (
