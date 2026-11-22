@@ -55,3 +55,11 @@ export async function overlapProblem(tx: Tx, staffIds: number[], from: string, t
   }
   return null;
 }
+
+/**
+ * 员工的考勤锁（按员工 id 升序取）：打卡与保存排班都先取它再读写这位员工的排班与打卡（docs/LOCKING.md「打卡」）。
+ * 保存排班会把改了的格子删了重写，只锁排班行的话，同时到的打卡可能读不到被重写的那一班（Codex 审查 10545e1）
+ */
+export async function lockStaffAttendance(tx: Tx, staffIds: readonly number[]): Promise<void> {
+  for (const id of [...new Set(staffIds)].sort((a, b) => a - b)) await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`oa_attendance_staff:${id}`}, 0))`;
+}

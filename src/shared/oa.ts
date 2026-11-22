@@ -323,3 +323,163 @@ export function scheduleSpan(date: string, s: Pick<OaShiftTimes, 'startMinute' |
   const start = day * 1440 + s.startMinute;
   return { from: start - s.inAdvanceMinutes, to: start + shiftLength(s) + s.outDelayMinutes };
 }
+
+// ───────────────────────── OA-06 打卡（docs/OA.md 第 9 节） ─────────────────────────
+
+/** in / out：某条排班的上班 / 下班卡；outside：上班中途（在打卡时段里、不在两个窗口里）；rest：不在任何排班的打卡时段里 */
+export const PUNCH_KINDS = ['in', 'out', 'outside', 'rest'] as const;
+export type PunchKind = (typeof PUNCH_KINDS)[number];
+export const PUNCH_KIND_LABELS: Record<PunchKind, string> = { in: '上班卡', out: '下班卡', outside: '窗口外', rest: '休息日打卡' };
+/** 同一坐标（约 1 米内）这么多秒内有别人也打了卡：标「同坐标多人」告警 */
+export const PUNCH_SHARED_SECONDS = 60;
+export const OUTWORK_REASON_MAX = 200;
+
+/** 「1970-01-01 起第几分钟」（门店所在地的钟点，与 scheduleSpan 一致）↔ 日期与钟点 */
+export const epochMinuteOf = (date: string, minute: number) => Math.round(Date.parse(`${date}T00:00:00Z`) / DAY_MS) * 1440 + minute;
+export const dateOfEpochMinute = (m: number) => new Date(Math.floor(m / 1440) * DAY_MS).toISOString().slice(0, 10);
+export const minuteOfEpochMinute = (m: number) => ((m % 1440) + 1440) % 1440;
+
+/** 一条排班的两个打卡窗口（都按「1970-01-01 起第几分钟」）：上班窗口 inFrom–inTo，lateAfter 之后打的算迟到；下班窗口 outFrom–outTo，end 之前打的算早退 */
+export interface PunchWindows {
+  start: number;
+  end: number;
+  inFrom: number;
+  inTo: number;
+  lateAfter: number;
+  outFrom: number;
+  outTo: number;
+}
+export function punchWindows(
+  date: string,
+  s: Pick<OaShiftTimes, 'startMinute' | 'endMinute' | 'inAdvanceMinutes' | 'lateGraceMinutes' | 'inAfterMinutes' | 'outBeforeMinutes' | 'outDelayMinutes'>,
+): PunchWindows {
+  const start = epochMinuteOf(date, s.startMinute);
+  const end = start + shiftLength(s);
+  return {
+    start,
+    end,
+    inFrom: start - s.inAdvanceMinutes,
+    inTo: start + s.inAfterMinutes,
+    lateAfter: start + s.lateGraceMinutes,
+    outFrom: end - s.outBeforeMinutes,
+    outTo: end + s.outDelayMinutes,
+  };
+}
+
+/** 参与匹配的一条排班：窗口与已经打过的卡 */
+export interface PunchSlot {
+  date: string;
+  shiftId: number;
+  windows: PunchWindows;
+  hasIn: boolean;
+  hasOut: boolean;
+}
+export type PunchMatch = { kind: 'in' | 'out'; slot: PunchSlot; lateMinutes: number; earlyMinutes: number } | { kind: 'outside'; slot: PunchSlot } | { kind: 'rest' };
+
+/**
+ * 一次打卡算哪一条排班的哪张卡（OA-06，严禁「当天第一次打卡 = 上班卡」）：
+ *   · 落在上班窗口 → 上班卡；落在下班窗口 → 下班卡。
+ *   · 同时落在几个窗口里（连班交接）：按窗口时间先后（同一时刻下班卡在前），先给还没打的那一个；都打过了给时间最近的那一个。
+ *   · 不在窗口里、但在某条排班的打卡时段里 → outside；都不在 → rest。
+ * 迟到分钟从上班时间算起（过了迟到弹性才算），早退分钟算到下班时间（OA10）
+ */
+export function matchPunch(t: number, slots: readonly PunchSlot[]): PunchMatch {
+  const hits: { kind: 'in' | 'out'; slot: PunchSlot; anchor: number; filled: boolean }[] = [];
+  for (const slot of slots) {
+    const w = slot.windows;
+    if (t >= w.inFrom && t <= w.inTo) hits.push({ kind: 'in', slot, anchor: w.start, filled: slot.hasIn });
+    if (t >= w.outFrom && t <= w.outTo) hits.push({ kind: 'out', slot, anchor: w.end, filled: slot.hasOut });
+  }
+  if (hits.length) {
+    hits.sort((a, b) => a.anchor - b.anchor || (a.kind === b.kind ? 0 : a.kind === 'out' ? -1 : 1));
+    const pick = hits.find((h) => !h.filled) ?? hits.reduce((best, h) => (Math.abs(t - h.anchor) < Math.abs(t - best.anchor) ? h : best));
+    const w = pick.slot.windows;
+    return {
+      kind: pick.kind,
+      slot: pick.slot,
+      lateMinutes: pick.kind === 'in' && t > w.lateAfter ? t - w.start : 0,
+      earlyMinutes: pick.kind === 'out' && t < w.end ? w.end - t : 0,
+    };
+  }
+  const within = slots.find((s) => t >= s.windows.inFrom && t <= s.windows.outTo);
+  return within ? { kind: 'outside', slot: within } : { kind: 'rest' };
+}
+
+/** 两点间的距离（米，球面近似，打卡点几百米的半径足够准） */
+export function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad;
+  const dLng = (b.lng - a.lng) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return Math.round(2 * 6_371_000 * Math.asin(Math.min(1, Math.sqrt(h))));
+}
+
+/** 一条打卡明细 */
+export interface OaPunch {
+  id: number;
+  punchedAt: string;
+  /** 门店所在地的日期与钟点（HH:MM） */
+  localDate: string;
+  localTime: string;
+  kind: PunchKind;
+  businessDate: string;
+  shiftId: number | null;
+  shiftName: string | null;
+  lateMinutes: number;
+  earlyMinutes: number;
+  locationName: string | null;
+  distanceM: number | null;
+  accuracyM: number | null;
+  locationOk: boolean;
+  outwork: boolean;
+  outworkReason: string | null;
+  photo: OaAttachment | null;
+  sharedLocation: boolean;
+}
+/** 打卡页上的一条排班：窗口与有效卡（上班卡第一次、下班卡最后一次） */
+export interface PunchSlotView {
+  date: string;
+  shiftId: number;
+  name: string;
+  startMinute: number;
+  endMinute: number;
+  windows: PunchWindows;
+  in: OaPunch | null;
+  out: OaPunch | null;
+}
+export interface PunchGroupInfo {
+  id: number;
+  name: string;
+  gpsRequired: boolean;
+  faceRequired: boolean;
+  locations: { id: number; name: string; lat: number; lng: number; radiusM: number }[];
+}
+/** 员工打卡页：现在（门店所在地，第几分钟）、考勤组与打卡点、前后几天的排班、今天的明细 */
+export interface PunchToday {
+  now: number;
+  today: string;
+  group: PunchGroupInfo | null;
+  slots: PunchSlotView[];
+  punches: OaPunch[];
+}
+export interface PunchResult {
+  punch: OaPunch;
+  /** 这一张卡所在那一格的有效卡（上班卡第一次、下班卡最后一次）；窗口外、休息日打卡为 null */
+  effective: OaPunch | null;
+  replayed: boolean;
+}
+/** 后台「打卡记录」的一行 */
+export interface PunchRecord extends OaPunch {
+  staffId: number;
+  staffName: string;
+  deviceInfo: string;
+  ip: string;
+  /** 这一张是不是所在那一格的有效卡 */
+  effective: boolean;
+}
+export interface PunchDay {
+  date: string;
+  groups: { id: number; name: string }[];
+  groupId: number | null;
+  records: PunchRecord[];
+}

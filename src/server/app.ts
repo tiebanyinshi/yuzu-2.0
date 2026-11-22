@@ -113,6 +113,7 @@ import { registerStaffRoutes } from './modules/staff';
 import { registerOaOrgRoutes } from './modules/oa/org';
 import { registerOaStaffImportRoutes } from './modules/oa/staff-import';
 import { registerOaAttendanceSetupRoutes } from './modules/oa/attendance-setup';
+import { registerOaPunchRoutes } from './modules/oa/punches';
 import { registerOaScheduleRoutes } from './modules/oa/schedules';
 import { registerOaNotificationRoutes } from './modules/oa/notifications';
 import { registerOaAttachmentRoutes } from './modules/oa/attachments';
@@ -320,6 +321,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerOaNotificationRoutes(app, deps);
   registerOaAttendanceSetupRoutes(app, deps);
   registerOaScheduleRoutes(app, deps);
+  registerOaPunchRoutes(app, deps);
   registerOaAttachmentRoutes(app, deps);
   registerCatalogRoutes(app, deps);
   registerSettingsRoutes(app, deps);

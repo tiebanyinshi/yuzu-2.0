@@ -368,6 +368,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '212_oa_notifications_attachments.sql',
   '213_oa_attendance_setup.sql',
   '214_oa_schedules.sql',
+  '215_oa_punches.sql',
   '230_price_catalog.sql',
   '231_price_catalog_edits.sql',
   '232_price_catalog_import_ops.sql',

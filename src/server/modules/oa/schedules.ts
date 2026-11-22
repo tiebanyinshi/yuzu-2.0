@@ -22,7 +22,7 @@ import {
 } from '@shared/oa';
 import { shiftDate } from '@shared/labels';
 import { can } from '@shared/permissions';
-import type { Db } from '../../db';
+import type { Db, Tx } from '../../db';
 import { guard, guardAny } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
 import type { Actor, Deps } from '../../lib/context';
@@ -35,7 +35,7 @@ import { currentStoreId } from '../../lib/store-context';
 import { dateSchema, parse } from '../../lib/validate';
 import { lockSetup, SHIFT_COLS, storeEmployee } from './attendance-setup';
 import { notify } from './notifications';
-import { liveSchedule, overlapProblem } from './schedule-overlap';
+import { liveSchedule, lockStaffAttendance, overlapProblem } from './schedule-overlap';
 
 const view = guardAny('hr.attendance', 'hr.attendanceDept');
 const manage = guard('hr.attendance');
@@ -80,7 +80,7 @@ const sameSet = (a: readonly number[], b: readonly number[]) => a.length === b.l
 const todayOf = (deps: Deps) => todayIn(deps.config.timezone);
 
 /** 能看哪些员工：hr.attendance 全部；只有 hr.attendanceDept 的只看本部门（同部门的岗位） */
-function deptFilter(db: Db, actor: Actor) {
+export function deptFilter(db: Db, actor: Actor) {
   if (can(actor, 'hr.attendance')) return db`true`;
   const dept = departmentOfPosition(actor.position);
   if (!dept || dept === 'company') return db`false`;
@@ -135,6 +135,14 @@ async function loadWeek(db: Db, deps: Deps, actor: Actor, q: z.infer<typeof Week
   };
 }
 
+/** 保存排班要删掉的那几班里已经有打卡的（OA-06：打卡按员工 + 日期 + 班次对应排班） */
+async function punchedShifts(tx: Tx, staffId: number, date: string, shiftIds: readonly number[]): Promise<number[]> {
+  if (!shiftIds.length) return [];
+  const rows = await tx<{ shiftId: number }[]>`
+    SELECT DISTINCT shift_id FROM oa_punches WHERE staff_id = ${staffId} AND store_id = ${currentStoreId()} AND business_date = ${date} AND shift_id IN ${tx(shiftIds)}`;
+  return rows.map((r) => Number(r.shiftId));
+}
+
 export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
   app.get('/api/oa/attendance/schedule', { preHandler: view }, async (req) => loadWeek(sql, deps, req.actor, parse(WeekQuery, req.query ?? {})));
@@ -164,6 +172,8 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
       const [group] = await tx<{ id: number; name: string }[]>`SELECT id, name FROM oa_attendance_groups WHERE id = ${input.groupId} AND store_id = ${store} AND active`;
       if (!group) throw notFound('考勤组不存在或已停用，请刷新');
       const staffIds = [...new Set(input.cells.map((c) => c.staffId))].sort((a, b) => a - b);
+      // 这几位员工的考勤锁：同时到的打卡等这次保存完再按新的排班匹配
+      await lockStaffAttendance(tx, staffIds);
       const members = await tx<{ id: number }[]>`
         SELECT s.id FROM oa_group_members m JOIN staff s ON s.id = m.staff_id WHERE m.group_id = ${group.id} AND s.id IN ${tx(staffIds)} AND ${storeEmployee(tx)}`;
       if (members.length !== staffIds.length) throw unprocessable('SCHEDULE_MEMBER', '有员工已经不在这个考勤组里或已离职，请刷新');
@@ -184,6 +194,11 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
         }
         if (c.date < today) throw unprocessable('SCHEDULE_PAST', `${c.date} 已经过了，不能再改排班`);
         if (daysBetween(today, c.date) > SCHEDULE_AHEAD_DAYS) throw unprocessable('SCHEDULE_TOO_FAR', `最远排到 ${SCHEDULE_AHEAD_DAYS} 天以后`);
+        // 已经打过卡的那一班不能删（OA-06：打卡按员工 + 日期 + 班次对应排班）
+        const removed = current.shiftIds.filter((id) => !want.shiftIds.includes(id));
+        if ((await punchedShifts(tx, c.staffId, c.date, removed)).length) {
+          throw unprocessable('SCHEDULE_PUNCHED', `${c.date} 这一格要去掉的班次已经有打卡，不能删；要调整请先找人事核对考勤`);
+        }
         await tx`DELETE FROM oa_schedules WHERE staff_id = ${c.staffId} AND work_date = ${c.date} AND store_id = ${store}`;
         for (const shiftId of want.shiftIds) {
           await tx`

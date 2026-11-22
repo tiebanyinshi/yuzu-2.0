@@ -1,12 +1,13 @@
 // OA 员工端（docs/OA.md 第 1、8 节）：「办公」首页与「我的排班」。登录就能用，只看本人的。
 // 入口在账号菜单「办公」（主导航那一列在小屏电脑上已经放不下新的一组；只用 ERP 的后勤也不因此多出门店主导航）。
-//   · 办公首页：常用的几样（我的排班、通知；打卡、审批等随后面的 PR 加进来），手机上一行两个。
+//   · 办公首页：常用的几样（打卡、我的排班、通知；审批等随后面的 PR 加进来），手机上一行两个。
+//   · 打卡：PunchPage.tsx（OA-06）。
 //   · 我的排班：月历，每天的班次与休息；跨天班写「至次日 06:00」，第二天 00:00 上班的在前一天写「今晚 24:00 上班」。
 
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Bell, CalendarDays, ChevronLeft, ChevronRight, Fingerprint } from 'lucide-react';
 import { shiftDate } from '@shared/labels';
 import type { MySchedule, MyScheduleItem } from '@shared/oa';
 import { clockText } from '@shared/technician-admin';
@@ -16,8 +17,10 @@ import { PageHeader } from '../../components/AppShell';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Button, Card, Skeleton } from '../../components/ui';
 import { NotificationsPage } from './Notifications';
+import { PunchPage } from './PunchPage';
 
 const TILES = [
+  { to: '/oa/punch', label: '打卡', hint: '按排班打上下班卡、外勤打卡', icon: Fingerprint, testId: 'oa-tile-punch' },
   { to: '/oa/schedule', label: '我的排班', hint: '这个月每天上什么班', icon: CalendarDays, testId: 'oa-tile-schedule' },
   { to: '/oa/notifications', label: '通知', hint: '排班变更、审批、工资条等提醒', icon: Bell, testId: 'oa-tile-notifications' },
 ];
@@ -26,7 +29,7 @@ const TILES = [
 export function OfficePage() {
   const { pathname } = useLocation();
   const path = pathname.replace(/\/$/, '');
-  return path === '/oa/schedule' ? <MySchedulePage /> : path === '/oa/notifications' ? <NotificationsPage /> : <OfficeHomePage />;
+  return path === '/oa/schedule' ? <MySchedulePage /> : path === '/oa/notifications' ? <NotificationsPage /> : path === '/oa/punch' ? <PunchPage /> : <OfficeHomePage />;
 }
 
 function OfficeHomePage() {

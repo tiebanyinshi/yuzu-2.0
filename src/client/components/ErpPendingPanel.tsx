@@ -22,167 +22,139 @@ export interface ErpOpRef {
 }
 
 /** 重新提交成功时，从各接口的返回里取出单据编号 */
-function refOfResponse(type: ErpOpType, data: unknown): ErpOpRef | null | undefined {
+/** 返回里这个字段是那张单据（对象），refId 取它的 id */
+const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
+  expense_claim: 'claim',
+  purchase_request: 'request',
+  // 核库、答复替代（8.1.10）：返回那张需求单
+  request_stock: 'request',
+  ap_offset: 'offset',
+  supplier_refund: 'refund',
+  erp_import: 'import',
+  space_import: 'import',
+  // 集采导入（8.0.1）：返回那次导入；库管入库台账导入（8.1.9）同样
+  request_import: 'import',
+  receipt_import: 'import',
+  ledger_import: 'import',
+  // OA-02 批量开通：返回那次开通
+  oa_staff_import: 'import',
+  // OA-04 考勤设置：新建的那一行
+  oa_attendance_setup: 'created',
+  // OA-05 排班保存：那个考勤组
+  oa_schedule_save: 'saved',
+  // OA-06 打卡：那一条打卡
+  oa_punch: 'punch',
+  // 赠品登记（8.0.1）：返回那条登记
+  gift_receipt: 'gift',
+  // 回款登记（8.0.7）：返回那笔回款；资产建卡：返回建的第一张卡
+  ar_collection: 'collection',
+  asset_card: 'card',
+  // 新建巡场场所（8.0.9）：返回那个场所
+  patrol_point: 'point',
+  // 布草单据（8.0.20）：返回那张单
+  linen_doc: 'doc',
+  // 开票申请（8.0.21）：返回那张申请
+  invoice_request: 'request',
+  // 网银流水导入（8.0.21）：返回那次导入
+  bank_import: 'import',
+  // 批量付款（8.0.21）：返回那一批
+  payment_batch: 'batch',
+  supplier_recon: 'reconciliation',
+  supplier_recon_void: 'reconciliation',
+  // 供应商付款、期初未付登记（v0.7.22）
+  payment: 'payment',
+  opening_payable: 'opening',
+  // 登记会员权益使用（v0.7.24）：返回那条登记；零采备用金的申用（8.1.9）：返回那笔申用
+  benefit_use: 'use',
+  pool_use: 'use',
+  // 邀请体验、赠送会籍（v0.7.25）：返回那条临时身份
+  member_trial: 'trial',
+  // 会员实体卡（v0.7.28）：发卡、补卡返回那张卡
+  member_card: 'card',
+  // 会员体系收尾（v0.7.26）：退储值返回那张退储值单，停用 / 启用返回那位会员，合并返回那张合并单
+  member_refund: 'refund',
+  member_merge: 'merge',
+  // 次卡（v0.7.28）：售卡、退卡都返回那张卡
+  count_card_sale: 'card',
+  count_card_refund: 'card',
+  // 平台核销补录（v0.7.28）
+  platform_redemption: 'redemption',
+  platform_settlement: 'settlement',
+  // 合同与法务审查（v0.7.31）：新建合同返回那份合同，变更单、用印申请返回那一条
+  contract_create: 'contract',
+  contract_change: 'change',
+  contract_seal: 'seal',
+  // 付款流（v0.7.32）：付款申请返回那张申请，合同付款返回那一笔，验收、质量问题登记返回那一条（id），发票返回那张发票
+  payment_request: 'request',
+  supplier_invoice: 'invoice',
+};
+/** 返回里这个字段就是 refId（数字） */
+const REF_NUMBER: Partial<Record<ErpOpType, string>> = {
+  customer_note: 'id',
+  customer_binding_request: 'id',
+  customer_binding_review: 'id',
+  customer_credit_claim: 'id',
+  customer_credit_review: 'id',
+  customer_target: 'id',
+  // 门店间调拨（8.0.22）：返回那张调拨单
+  stock_transfer: 'id',
+  // 工作台发布、回滚（8.1.1）：返回那一版
+  studio_publish: 'id',
+  // 开始扫码盘点（8.0.7）：返回那次盘点本身
+  asset_stocktake: 'id',
+  // 渠道订单导入（8.0.21）：返回那次导入
+  ota_import: 'importId',
+  location_report: 'eventId',
+  // 券与会员权益（v0.7.20）：模板、无记名券返回自己（id），规则返回 ruleId，发券返回 issueId
+  coupon_template: 'id',
+  coupon_batch: 'id',
+  coupon_campaign: 'id',
+  // 新建签赠券类型（8.1.9）：返回那个类型（券模板）
+  gift_type: 'id',
+  coupon_rule: 'ruleId',
+  // 硬件连接（v0.7.21）：登记设备返回那台设备，打印任务返回那个任务
+  device_create: 'id',
+  device_job: 'id',
+  doc_print: 'id',
+  coupon_issue: 'issueId',
+  // 签赠发放（8.1.9）：返回那条发券记录
+  gift_issue: 'issueId',
+  // 手动调整会员档阶（v0.7.23）：返回那位会员的等级卡
+  grade_adjust: 'memberId',
+  member_status: 'memberId',
+  // 审批中心（v0.7.30）：新建审批规则、设代理人都返回那一条（id）
+  approval_rule: 'id',
+  approval_delegation: 'id',
+  contract_payout: 'payoutId',
+  contract_acceptance: 'id',
+  contract_quality: 'id',
+  // 员工食堂第二期：柚子信箱的回信返回那一条（id）
+  canteen_reply: 'id',
+  // 会员建档（8.1.15）：返回那位会员
+  member_create: 'id',
+  // 退卡退押金（8.1.15）：返回那位会员
+  member_card_return: 'memberId',
+};
+
+function refOfResponse(type: ErpOpType, data: unknown): ErpOpRef | null {
   const d = data as Record<string, { id: number } | number | undefined>;
+  const field = REF_OBJECT[type];
+  if (field) {
+    const v = d[field];
+    return v && typeof v === 'object' ? { refId: v.id } : null;
+  }
+  const key = REF_NUMBER[type];
+  if (key) {
+    const v = d[key];
+    return typeof v === 'number' ? { refId: v } : null;
+  }
   switch (type) {
-    case 'customer_note':
-    case 'customer_binding_request':
-    case 'customer_binding_review':
-    case 'customer_credit_claim':
-    case 'customer_credit_review':
-    case 'customer_target':
-    // 门店间调拨（8.0.22）：返回那张调拨单
-    case 'stock_transfer':
-    // 工作台发布、回滚（8.1.1）：返回那一版
-    case 'studio_publish':
-      return typeof d.id === 'number' ? { refId: d.id } : null;
-    case 'expense_claim':
-      return d.claim && typeof d.claim === 'object' ? { refId: d.claim.id } : null;
     case 'petty_advance':
       return d.advance && typeof d.advance === 'object' ? { refId: d.advance.id, advanceId: d.advance.id } : null;
     case 'petty_settlement':
       return d.advance && typeof d.advance === 'object' && typeof d.settlementId === 'number' ? { refId: d.settlementId, advanceId: d.advance.id } : null;
-    case 'purchase_request':
-    // 核库、答复替代（8.1.10）：返回那张需求单
-    case 'request_stock':
-      return d.request && typeof d.request === 'object' ? { refId: d.request.id } : null;
-    case 'ap_offset':
-      return d.offset && typeof d.offset === 'object' ? { refId: d.offset.id } : null;
-    case 'supplier_refund':
-      return d.refund && typeof d.refund === 'object' ? { refId: d.refund.id } : null;
-    case 'erp_import':
-    case 'space_import':
-    // 集采导入（8.0.1）：返回那次导入；库管入库台账导入（8.1.9）同样
-    case 'request_import':
-    case 'receipt_import':
-    case 'ledger_import':
-    // OA-02 批量开通：返回那次开通
-    case 'oa_staff_import':
-      return d.import && typeof d.import === 'object' ? { refId: d.import.id } : null;
-    // OA-04 考勤设置：新建的那一行
-    case 'oa_attendance_setup':
-      return d.created && typeof d.created === 'object' ? { refId: d.created.id } : null;
-    // OA-05 排班保存：那个考勤组
-    case 'oa_schedule_save':
-      return d.saved && typeof d.saved === 'object' ? { refId: d.saved.id } : null;
-    // 赠品登记（8.0.1）：返回那条登记
-    case 'gift_receipt':
-      return d.gift && typeof d.gift === 'object' ? { refId: d.gift.id } : null;
-    // 回款登记（8.0.7）：返回那笔回款；资产建卡：返回建的第一张卡
-    case 'ar_collection':
-      return d.collection && typeof d.collection === 'object' ? { refId: d.collection.id } : null;
-    case 'asset_card':
-      return d.card && typeof d.card === 'object' ? { refId: d.card.id } : null;
-    // 开始扫码盘点（8.0.7）：返回那次盘点本身
-    case 'asset_stocktake':
-      return typeof d.id === 'number' ? { refId: d.id } : null;
-    // 新建巡场场所（8.0.9）：返回那个场所
-    case 'patrol_point':
-      return d.point && typeof d.point === 'object' ? { refId: d.point.id } : null;
-    // 布草单据（8.0.20）：返回那张单
-    case 'linen_doc':
-      return d.doc && typeof d.doc === 'object' ? { refId: d.doc.id } : null;
-    // 开票申请（8.0.21）：返回那张申请
-    case 'invoice_request':
-      return d.request && typeof d.request === 'object' ? { refId: d.request.id } : null;
-    // 网银流水导入（8.0.21）：返回那次导入
-    case 'bank_import':
-      return d.import && typeof d.import === 'object' ? { refId: d.import.id } : null;
-    // 批量付款（8.0.21）：返回那一批
-    case 'payment_batch':
-      return d.batch && typeof d.batch === 'object' ? { refId: d.batch.id } : null;
-    // 渠道订单导入（8.0.21）：返回那次导入
-    case 'ota_import':
-      return typeof d.importId === 'number' ? { refId: d.importId } : null;
-    case 'supplier_recon':
-    case 'supplier_recon_void':
-      return d.reconciliation && typeof d.reconciliation === 'object' ? { refId: d.reconciliation.id } : null;
-    case 'location_report':
-      return typeof d.eventId === 'number' ? { refId: d.eventId } : null;
-    // 券与会员权益（v0.7.20）：模板、无记名券返回自己（id），规则返回 ruleId，发券返回 issueId
-    case 'coupon_template':
-    case 'coupon_batch':
-    case 'coupon_campaign':
-    // 新建签赠券类型（8.1.9）：返回那个类型（券模板）
-    case 'gift_type':
-      return typeof d.id === 'number' ? { refId: d.id } : null;
-    case 'coupon_rule':
-      return typeof d.ruleId === 'number' ? { refId: d.ruleId } : null;
-    // 硬件连接（v0.7.21）：登记设备返回那台设备，打印任务返回那个任务
-    case 'device_create':
-    case 'device_job':
-    case 'doc_print':
-      return typeof d.id === 'number' ? { refId: d.id } : null;
-    case 'coupon_issue':
-    // 签赠发放（8.1.9）：返回那条发券记录
-    case 'gift_issue':
-      return typeof d.issueId === 'number' ? { refId: d.issueId } : null;
-    // 供应商付款、期初未付登记（v0.7.22）
-    case 'payment':
-      return d.payment && typeof d.payment === 'object' ? { refId: d.payment.id } : null;
-    case 'opening_payable':
-      return d.opening && typeof d.opening === 'object' ? { refId: d.opening.id } : null;
-    // 手动调整会员档阶（v0.7.23）：返回那位会员的等级卡
-    case 'grade_adjust':
-      return typeof d.memberId === 'number' ? { refId: d.memberId } : null;
-    // 登记会员权益使用（v0.7.24）：返回那条登记；零采备用金的申用（8.1.9）：返回那笔申用
-    case 'benefit_use':
-    case 'pool_use':
-      return d.use && typeof d.use === 'object' ? { refId: d.use.id } : null;
-    // 邀请体验、赠送会籍（v0.7.25）：返回那条临时身份
-    case 'member_trial':
-      return d.trial && typeof d.trial === 'object' ? { refId: d.trial.id } : null;
-    // 会员实体卡（v0.7.28）：发卡、补卡返回那张卡
-    case 'member_card':
-      return d.card && typeof d.card === 'object' ? { refId: d.card.id } : null;
-    // 会员体系收尾（v0.7.26）：退储值返回那张退储值单，停用 / 启用返回那位会员，合并返回那张合并单
-    case 'member_refund':
-      return d.refund && typeof d.refund === 'object' ? { refId: d.refund.id } : null;
-    case 'member_status':
-      return typeof d.memberId === 'number' ? { refId: d.memberId } : null;
-    case 'member_merge':
-      return d.merge && typeof d.merge === 'object' ? { refId: d.merge.id } : null;
-    // 次卡（v0.7.28）：售卡、退卡都返回那张卡
-    case 'count_card_sale':
-    case 'count_card_refund':
-      return d.card && typeof d.card === 'object' ? { refId: d.card.id } : null;
-    // 平台核销补录（v0.7.28）
-    case 'platform_redemption':
-      return d.redemption && typeof d.redemption === 'object' ? { refId: d.redemption.id } : null;
-    case 'platform_settlement':
-      return d.settlement && typeof d.settlement === 'object' ? { refId: d.settlement.id } : null;
-    // 审批中心（v0.7.30）：新建审批规则、设代理人都返回那一条（id）
-    case 'approval_rule':
-    case 'approval_delegation':
-      return typeof d.id === 'number' ? { refId: d.id } : null;
-    // 合同与法务审查（v0.7.31）：新建合同返回那份合同，变更单、用印申请返回那一条
-    case 'contract_create':
-      return d.contract && typeof d.contract === 'object' ? { refId: d.contract.id } : null;
-    case 'contract_change':
-      return d.change && typeof d.change === 'object' ? { refId: d.change.id } : null;
-    case 'contract_seal':
-      return d.seal && typeof d.seal === 'object' ? { refId: d.seal.id } : null;
-    // 付款流（v0.7.32）：付款申请返回那张申请，合同付款返回那一笔，验收、质量问题登记返回那一条（id），发票返回那张发票
-    case 'payment_request':
-      return d.request && typeof d.request === 'object' ? { refId: d.request.id } : null;
-    case 'contract_payout':
-      return typeof d.payoutId === 'number' ? { refId: d.payoutId } : null;
-    case 'contract_acceptance':
-    case 'contract_quality':
-      return typeof d.id === 'number' ? { refId: d.id } : null;
-    case 'supplier_invoice':
-      return d.invoice && typeof d.invoice === 'object' ? { refId: d.invoice.id } : null;
-    // 员工食堂第二期：柚子信箱的回信返回那一条（id）
-    case 'canteen_reply':
-      return typeof d.id === 'number' ? { refId: d.id } : null;
-    // 会员建档（8.1.15）：返回那位会员
-    case 'member_create':
-      return typeof d.id === 'number' ? { refId: d.id } : null;
-    // 退卡退押金（8.1.15）：返回那位会员
-    case 'member_card_return':
-      return typeof d.memberId === 'number' ? { refId: d.memberId } : null;
   }
-  // 没列在上面的（价目表导入、整体回滚）：页面只刷新，不用单据编号
+  return null;
 }
 
 const refOfLookup = (r: ErpOpLookup): ErpOpRef | null => (r.found && r.refId ? { refId: r.refId, advanceId: r.advanceId } : null);
