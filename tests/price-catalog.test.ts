@@ -1284,5 +1284,12 @@ describe('价目表录入 第四批：对接收银项目', () => {
     expect(errs.some((i) => i.message.includes('说明最多 200 个字'))).toBe(true);
     const e = find((await preview(workbook())).body as PriceImportPreview, '古法中式');
     expect(priceEntryProblems({ ...e, content: 'x'.repeat(801) })).toContain('服务操作内容最多 800 个字');
+    // 导入时不先截断：服务操作内容 801 字的那一行报错，不悄悄裁成 800 字导进来
+    const massage = sheet('按摩及助浴价格', [
+      ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价', '核心针对人群', '服务操作内容', '项目亮点'],
+      ['康疗', 1, '古法中式', '房间', '80min', 499, 599, '久坐', '甲'.repeat(801), '亮点'],
+    ]);
+    const long = ((await preview(workbook({ 按摩及助浴价格: massage }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
+    expect(long.some((i) => i.row === 2 && i.message.includes('服务操作内容最多 800 个字'))).toBe(true);
   });
 });

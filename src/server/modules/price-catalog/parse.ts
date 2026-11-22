@@ -135,7 +135,7 @@ const blank = (sheet: PriceSheet, kind: PriceCatalogEntry['kind'], name: string,
   section: '',
   category: '',
   code: '',
-  name: oneLine(name).slice(0, 48),
+  name: oneLine(name),
   priceMode: 'none',
   priceCents: null,
   price2Cents: null,
@@ -458,7 +458,7 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
         roomNumbers: roomsAt(r, note),
         variants,
         // 开瓶费、超时费等原样留作备注
-        note: oneLine([rule, /次日[^，。,\n]*退房[^。\n]*/.exec(t)?.[0] ?? '', extraNote].filter(Boolean).join('；')).slice(0, 400),
+        note: oneLine([rule, /次日[^，。,\n]*退房[^。\n]*/.exec(t)?.[0] ?? '', extraNote].filter(Boolean).join('；')),
       });
       continue;
     }
@@ -604,8 +604,8 @@ function dishSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       ...single(blank(S, 'dish', name, r, out.length + 1), cents),
       section,
       category,
-      code: oneLine(at(g, r, cols.get('序号') ?? -1)).slice(0, 12),
-      unit: unit.slice(0, 8),
+      code: oneLine(at(g, r, cols.get('序号') ?? -1)),
+      unit,
       orderable: cents !== null,
     });
   }
@@ -672,14 +672,15 @@ function massageSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       ...base,
       ...(p1 !== null && p2 !== null ? { priceMode: 'dual' as const, priceCents: p1, price2Cents: p2 } : p1 !== null ? { priceMode: 'single' as const, priceCents: p1, price2Cents: null } : {}),
       section,
-      code: code.slice(0, 12),
+      code,
       durationMinutes: minutes,
       venues: venuesOf(at(g, r, col('类型'))),
       gender,
       unit: '次',
-      audience: oneLine(at(g, r, col('核心针对人群'))).slice(0, 400),
-      content: at(g, r, col('服务操作内容')).trim().slice(0, 800),
-      highlight: oneLine(at(g, r, col('项目亮点'))).slice(0, 400),
+      // 不预先截断：超过长度上限的由最后的共享校验报出是哪一行（不悄悄丢掉后半段）
+      audience: oneLine(at(g, r, col('核心针对人群'))),
+      content: at(g, r, col('服务操作内容')).trim(),
+      highlight: oneLine(at(g, r, col('项目亮点'))),
     });
   }
   return out;
