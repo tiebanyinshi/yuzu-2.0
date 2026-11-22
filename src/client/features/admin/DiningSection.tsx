@@ -36,6 +36,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, MoneyInput, Notice, PendingBadge, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
 import { AdminPage } from './AdminShell';
 import { SubPane } from '../../components/SubNav';
+import { RoomOrderConfigCard } from './RoomOrderConfigCard';
 
 const adminKey = ['admin', 'dining'] as const;
 const useDiningAdmin = () => useQuery({ queryKey: adminKey, queryFn: () => api.get<DiningAdmin>('/api/admin/dining') });
@@ -58,6 +59,7 @@ export function DiningSection() {
       <SubPane tab="stations" className="space-y-5">
         <StationsCard />
         <ItemsCard />
+        <RoomOrderConfigCard />
       </SubPane>
       <SubPane tab="tables">
         <TablesCard />

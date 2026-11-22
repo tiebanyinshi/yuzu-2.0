@@ -1,13 +1,15 @@
 // 房态中心的房间卡片：房号、状态（颜色 + 文字 + 图标）、客人、技师、已用时长、金额（《浴族系统需求汇总》房态中心第 3 条）。
 // 点卡片：空闲的技师服务房间直接登记、空闲的派对房直接开单、客房打开入住或入住单；别的打开房间详情。右上角的「详情」什么时候都能点。
 // 客房的卡片多两行客房原来的内容：手牌、几号入住（预离）或钟点房已住多久、押金（8.1.16，原来的「客房」页并进来）。
+// 8.2.0 P08：「在用」的房间右上角多一个「点单」（只有能在水吧或果吧下单的账号看得到），卡片上写房里现在的客人从房态点了几单、多少钱。
 
-import { ChevronRight, Link2, Users } from 'lucide-react';
+import { ChevronRight, CupSoda, Link2, Users } from 'lucide-react';
 import { elapsedText, type RoomCard as Room } from '@shared/room-center';
 import type { StaySummary } from '@shared/rooms';
 import { usageEstimate } from '@shared/usages';
 import { cn, formatDateTime, formatTime } from '../../lib/utils';
 import { Money } from '../../components/Money';
+import { formatYuan } from '@shared/money';
 import { Badge } from '../../components/ui';
 import { dayText } from '../rooms/queries';
 import { STATUS_META, StatusChip } from './status';
@@ -83,6 +85,12 @@ function CardBody({ room, now, hint }: { room: Room; now: number; hint: string |
             ) : null}
           </p>
         )}
+        {room.orders && (
+          <p className="truncate text-[12.5px] text-ink-2" data-testid="rc-orders">
+            <CupSoda className="mr-1 inline size-3.5 text-lake" aria-hidden />
+            房内点单 <b className="num">{room.orders.count}</b> 单 · <b className="num">{formatYuan(room.orders.amount)}</b>
+          </p>
+        )}
         {(room.amount !== null || estimate !== null) && (
           <p className="mt-auto flex items-baseline justify-end gap-1 pt-1 text-[12px] text-ink-3" data-testid="rc-amount">
             {room.amount === null ? '按现在约' : room.hotel ? '房费' : null}
@@ -117,6 +125,7 @@ export function RoomCard({
   highlight = false,
   onOpen,
   onDetail,
+  onOrder,
 }: {
   room: Room;
   now: number;
@@ -125,7 +134,10 @@ export function RoomCard({
   highlight?: boolean;
   onOpen: () => void;
   onDetail: () => void;
+  /** 房态点单（8.2.0 P08）：只有「在用」的房间、账号能在水吧或果吧下单时给 */
+  onOrder?: () => void;
 }) {
+  const order = room.status === 'in_use' ? onOrder : undefined;
   return (
     <div
       className={cn(
@@ -144,7 +156,7 @@ export function RoomCard({
         className="flex min-w-0 flex-1 flex-col items-stretch gap-0.5 rounded-xl px-3.5 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-pine/50"
         data-testid={`rc-open-${room.code}`}
       >
-        <span className="flex items-center gap-2 pr-9">
+        <span className={cn('flex items-center gap-2', order ? 'pr-[104px]' : 'pr-9')}>
           <span className="num min-w-0 truncate text-[20px] leading-7 font-bold text-ink">{room.code}</span>
           <StatusChip status={room.status} />
         </span>
@@ -160,6 +172,18 @@ export function RoomCard({
         )}
         <CardBody room={room} now={now} hint={hint} />
       </button>
+      {order && (
+        <button
+          type="button"
+          onClick={order}
+          aria-label={`${room.code} 点单（水吧、果吧）`}
+          className="absolute top-1.5 right-12 flex h-9 items-center gap-1 rounded-lg border border-lake/40 bg-card/80 px-2.5 text-[13px] font-semibold text-lake hover:bg-card"
+          data-testid={`rc-order-${room.code}`}
+        >
+          <CupSoda className="size-4" aria-hidden />
+          点单
+        </button>
+      )}
       <button
         type="button"
         onClick={onDetail}
