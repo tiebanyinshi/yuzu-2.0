@@ -14,6 +14,11 @@ export type AuditAction =
   | 'staff_created'
   | 'staff_updated'
   | 'staff_password_reset'
+  // OA-01 组织架构与员工档案（docs/OA.md 第 4 节）
+  | 'org_department_updated'
+  | 'employee_profile_updated'
+  | 'employee_left'
+  | 'employee_rehired'
   | 'position_chosen'
   | 'member_created'
   | 'member_updated'

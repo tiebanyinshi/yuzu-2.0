@@ -108,6 +108,7 @@ import { registerWecomRoutes } from './modules/wecom';
 import { registerAiRoutes } from './modules/ai';
 import { registerSettlementRoutes } from './modules/settlement';
 import { registerStaffRoutes } from './modules/staff';
+import { registerOaOrgRoutes } from './modules/oa/org';
 import { registerTechnicianRoutes } from './modules/technicians';
 import { registerTechnicianAdminRoutes } from './modules/technician-admin';
 import { registerClockroomRoutes } from './modules/clockroom';
@@ -306,6 +307,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerOrderRoutes(app, deps);
   registerSettlementRoutes(app, deps);
   registerStaffRoutes(app, deps);
+  // OA 办公（docs/OA.md）：OA-01 组织架构与员工档案
+  registerOaOrgRoutes(app, deps);
   registerCatalogRoutes(app, deps);
   registerSettingsRoutes(app, deps);
   registerStoreRoutes(app, deps);
