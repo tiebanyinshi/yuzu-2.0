@@ -289,7 +289,17 @@ function ImChatPage({ id }: { id: number }) {
   const [messages, setMessages] = useState<ImMessage[] | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadError, setLoadError] = useState('');
-  const [pending, setPending] = useState<Pending[]>([]);
+  const [pending, setPendingState] = useState<Pending[]>([]);
+  // 待发队列的最新值（上传完成等晚到的回调也按最新的改，不用回调开始那一刻的快照，Codex 审查 15f56d2）
+  const pendingRef = useRef<Pending[]>([]);
+  /** 改待发队列并记到本机；记不下返回 false（不改） */
+  const updatePending = (fn: (xs: Pending[]) => Pending[], persist = true): boolean => {
+    const next = fn(pendingRef.current);
+    if (persist && !savePending(id, me, next)) return false;
+    pendingRef.current = next;
+    setPendingState(next);
+    return true;
+  };
   const [text, setText] = useState('');
   const [mentions, setMentions] = useState<{ id: number; name: string }[]>([]);
   const [showEmoji, setShowEmoji] = useState(false);
@@ -341,7 +351,9 @@ function ImChatPage({ id }: { id: number }) {
     acked.current = 0;
     since.current = null;
     void load();
-    if (me) setPending(loadPending(id, me));
+    const restored = me ? loadPending(id, me) : [];
+    pendingRef.current = restored;
+    setPendingState(restored);
   }, [id, me]);
 
   // 每 3 秒取新消息与最近的撤回
@@ -410,26 +422,20 @@ function ImChatPage({ id }: { id: number }) {
         mentions: p.mentions,
         mentionAll: p.mentionAll,
       });
-      setPending((xs) => {
-        const next = xs.filter((x) => x.clientKey !== p.clientKey);
-        savePending(id, me, next);
-        return next;
-      });
+      updatePending((xs) => xs.filter((x) => x.clientKey !== p.clientKey));
       setMessages((xs) => (xs && !xs.some((x) => x.id === r.message.id) ? [...xs, r.message].sort((a, b) => a.id - b.id) : xs));
     } catch (e) {
-      setPending((xs) => xs.map((x) => (x.clientKey === p.clientKey ? { ...x, failed: true } : x)));
+      updatePending((xs) => xs.map((x) => (x.clientKey === p.clientKey ? { ...x, failed: true } : x)), false);
       toast({ tone: 'error', title: '消息没发出去', body: `${errorMessage(e)}。可以点「重发」（不会发两遍）` });
     }
   };
   const queue = (p: Omit<Pending, 'clientKey' | 'failed'>) => {
     const item: Pending = { ...p, clientKey: uuid(), failed: false };
-    const next = [...pending, item];
     // 先记在本机，存不下就不发（没收到结果时才能用原编号重发）
-    if (!savePending(id, me, next)) {
+    if (!updatePending((xs) => [...xs, item])) {
       toast({ tone: 'error', title: '这台设备存不下待发的消息，先不发', body: '请检查浏览器是否开了无痕模式或存储已满' });
       return false;
     }
-    setPending(next);
     void deliver(item);
     return true;
   };
@@ -535,23 +541,13 @@ function ImChatPage({ id }: { id: number }) {
                             size="sm"
                             variant="ghost"
                             onClick={() => {
-                              setPending((xs) => xs.map((x) => (x.clientKey === p.clientKey ? { ...x, failed: false } : x)));
+                              updatePending((xs) => xs.map((x) => (x.clientKey === p.clientKey ? { ...x, failed: false } : x)), false);
                               void deliver(p);
                             }}
                           >
                             重发
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() =>
-                              setPending((xs) => {
-                                const next = xs.filter((x) => x.clientKey !== p.clientKey);
-                                savePending(id, me, next);
-                                return next;
-                              })
-                            }
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => updatePending((xs) => xs.filter((x) => x.clientKey !== p.clientKey))}>
                             不发了
                           </Button>
                         </>

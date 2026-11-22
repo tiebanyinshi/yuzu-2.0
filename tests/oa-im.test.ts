@@ -73,6 +73,8 @@ describe('OA-14 即时通讯', () => {
     const l = await list(emp.b!);
     expect(l.items.find((x) => x.id === dm)).toMatchObject({ title: 'im_a', preview: '你好 😀', unread: 1, mentioned: false });
     expect(l.unread).toBe(1);
+    // 未读合计按全部会话算，不受搜索、列表条数影响
+    expect((await list(emp.b!, '搜不到的')).unread).toBe(1);
     // 上报已读：未读清零；不会超过最新的一条
     const read = await api<{ lastReadMessageId: number }>(ctx.app, emp.b!.cookie, 'POST', `/api/oa/im/conversations/${dm}/read`, { upTo: 999999 });
     expect(read.body.lastReadMessageId).toBe(r1.body.message.id);

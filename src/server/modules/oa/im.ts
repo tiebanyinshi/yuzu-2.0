@@ -167,7 +167,12 @@ async function listConversations(db: Db, me: number, q: string | undefined): Pro
       mentioned: r.mentioned,
     }),
   );
-  return { items, unread: items.reduce((n, x) => n + x.unread, 0) };
+  // 未读合计按全部会话算（列表只给最近 200 个，不能拿它加，Codex 审查 15f56d2）
+  const [total] = await db<{ unread: number }[]>`
+    SELECT count(*)::int AS unread FROM oa_im_members m
+    JOIN oa_im_messages u ON u.conversation_id = m.conversation_id AND u.id > m.last_read_message_id AND u.sender_id <> ${me} AND u.kind <> 'system'
+    WHERE m.staff_id = ${me} AND m.left_at IS NULL`;
+  return { items, unread: total!.unread };
 }
 
 async function detailOf(db: Db, id: number, me: number): Promise<ImConversationDetail> {
