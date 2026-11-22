@@ -3,7 +3,17 @@
 // 条数对照、草稿替换、权限、导入模板。用合成的六张表（照《价目表 1119》的版式与合并格），不放门店的原表。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { PriceCatalogEntry, PriceCatalogOverview, PriceCatalogSet, PriceImportPreview } from '../src/shared/price-catalog';
+import {
+  diffPriceCatalogs,
+  entryFacts,
+  matchesPriceSearch,
+  priceText,
+  windowText,
+  type PriceCatalogEntry,
+  type PriceCatalogOverview,
+  type PriceCatalogSet,
+  type PriceImportPreview,
+} from '../src/shared/price-catalog';
 import { buildWorkbook, type WbSheet } from '../src/server/lib/xlsx';
 import { readXlsx } from '../src/server/lib/xlsx-read';
 import { minutesOf, roomNumbersOf, windowOf, yuanToCents } from '../src/server/modules/price-catalog/parse';
@@ -293,5 +303,35 @@ describe('价目表录入 第一批：数据模型与导入', () => {
     const p = (await preview(res.rawPayload.toString('base64'))).body as PriceImportPreview;
     expect(p.issues.filter((i) => i.field === '工作表')).toEqual([]);
     expect(p.total.actual).toBe(0);
+  });
+
+  it('第二批 列表与搜索：价格写法（待定价不写 0 元）、规格一行、搜索名称 / 编号 / 房号、草稿与生效对比', async () => {
+    const p = (await preview(workbook())).body as PriceImportPreview;
+    const yuan = (c: number) => `¥${c / 100}`;
+    expect(priceText(find(p, '古法中式'), yuan)).toBe('专业 ¥499 / 资深 ¥599');
+    expect(priceText(find(p, '十二经络疏通调理'), yuan)).toBe('¥700');
+    expect(priceText(p.entries.find((e) => e.name === '沙姜炒鸡')!, yuan)).toBe('待定价');
+    expect(priceText(find(p, '服务费'), yuan)).toBe('10%');
+    expect(entryFacts(find(p, 'spa房'), yuan)).toEqual(['含 2 小时', '超时 ¥199/1 小时', '封顶 ¥999', '35 间', 'S301–S335（35 个）']);
+    expect(entryFacts(find(p, '台球'), yuan)).toEqual(['含 2 小时', '加钟 ¥19.9/1 小时', '4 台']);
+    expect(entryFacts(find(p, '门票 24H 含餐'), yuan)).toEqual(['24 小时 · 含餐']);
+    expect(entryFacts(find(p, '茱莉蔻柑橘护理'), yuan)).toEqual(['45 分钟', '浴区', '适用 男 / 女']);
+    expect(windowText(1410, 120)).toBe('23:30–次日2:00');
+    expect(p.entries.filter((e) => matchesPriceSearch(e, 's303')).map((e) => e.name)).toEqual(['spa房']);
+    expect(p.entries.filter((e) => matchesPriceSearch(e, '74')).map((e) => e.name)).toEqual(['手部美甲精修']);
+    expect(p.entries.filter((e) => matchesPriceSearch(e, '生滚')).map((e) => e.name)).toEqual(['生滚牛肉粥', '皮蛋瘦肉粥']);
+    // 对比：改价、新增、少了；同名不同餐段的算两项
+    const active = p.entries;
+    const draft = p.entries
+      .filter((e) => e.name !== '台球')
+      .map((e) => (e.name === '古法中式' ? { ...e, priceCents: 52900 } : e))
+      .concat({ ...find(p, '斯诺克'), name: '新球桌' });
+    const diff = diffPriceCatalogs(draft, active).map((d) => [d.change, (d.draft ?? d.active)!.name]);
+    expect(diff).toEqual([
+      ['changed', '古法中式'],
+      ['added', '新球桌'],
+      ['removed', '台球'],
+    ]);
+    expect(diffPriceCatalogs(active, active)).toEqual([]);
   });
 });

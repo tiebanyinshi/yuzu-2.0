@@ -1,0 +1,424 @@
+// 全品类价目表（店主 2026-11-22《汤崎宝安全品类价目表录入系统需求说明》，docs/PRICE_CATALOG.md）：
+// 后台 → 价目 → 「全品类价目表」。第一批导入成草稿；第二批（这里）：导入页面、条数对照（系统条数 / 表格条数，按摩分板块、
+// 零点分餐段）、按工作表 / 板块 / 餐段分组列表、搜索（名称、编号、分类、房号）、只看待定价 / 停用、草稿与生效对比。
+// 改价、停用、切换生效、回滚在第三批。价格：无价格写「待定价」，不写 0 元；服务费写百分比。
+
+import { useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Download, FileSearch, FileUp, Search } from 'lucide-react';
+import {
+  DISH_SECTIONS,
+  MASSAGE_SECTIONS,
+  PRICE_KIND_LABELS,
+  PRICE_SHEET_NAMES,
+  PRICE_SHEETS,
+  diffPriceCatalogs,
+  entryFacts,
+  matchesPriceSearch,
+  priceText,
+  type PriceCatalogEntry,
+  type PriceCatalogOverview,
+  type PriceCatalogSet,
+  type PriceCountCheck,
+  type PriceImportPreview,
+  type PriceSheet,
+} from '@shared/price-catalog';
+import { formatYuan } from '@shared/money';
+import { api, errorMessage } from '../../lib/api';
+import { loadTableFile, type LoadedTable } from '../../lib/import-file';
+import { formatDateTime } from '../../lib/utils';
+import { DataTable, type DataColumn } from '../../components/DataTable';
+import { LoadFailed } from '../../components/LoadFailed';
+import { Badge, Button, Card, Input, Notice, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
+
+const overviewKey = ['admin', 'price-catalog'] as const;
+const setKey = (id: number) => ['admin', 'price-catalog', 'set', id] as const;
+
+type Which = 'draft' | 'active';
+type SheetFilter = 'all' | PriceSheet;
+type Only = 'all' | 'none' | 'inactive';
+
+export function PriceCatalogPane() {
+  const overview = useQuery({ queryKey: overviewKey, queryFn: () => api.get<PriceCatalogOverview>('/api/admin/price-catalog') });
+  const [which, setWhich] = useState<Which>('active');
+  const data = overview.data;
+  const shown = (which === 'draft' ? data?.draft : data?.active) ?? data?.active ?? data?.draft ?? null;
+  const set = useQuery({ queryKey: setKey(shown?.id ?? 0), queryFn: () => api.get<PriceCatalogSet>(`/api/admin/price-catalog/sets/${shown!.id}`), enabled: !!shown });
+  // 草稿与生效都有时，取另一份来对比
+  const other = shown && data?.draft && data?.active ? (shown.id === data.draft.id ? data.active : data.draft) : null;
+  const otherSet = useQuery({ queryKey: setKey(other?.id ?? 0), queryFn: () => api.get<PriceCatalogSet>(`/api/admin/price-catalog/sets/${other!.id}`), enabled: !!other });
+
+  return (
+    <div className="space-y-4" data-testid="price-catalog">
+      <ImportCard />
+      {overview.isPending ? (
+        <Skeleton className="h-48" />
+      ) : overview.isError && !data ? (
+        <LoadFailed title="价目表取不回来" onRetry={() => void overview.refetch()} />
+      ) : !shown ? (
+        <Notice tone="info" title="还没有全品类价目表">
+          用上面的「导入」把《汤崎宝安全品类价目表》六张表导进来，先存成草稿，核对条数后再切换生效。
+        </Notice>
+      ) : (
+        <>
+          <Card className="p-5">
+            <SectionTitle
+              aside={
+                data?.draft && data?.active ? (
+                  <Segmented
+                    size="sm"
+                    value={shown.id === data.draft.id ? 'draft' : 'active'}
+                    onChange={setWhich}
+                    ariaLabel="看哪一份"
+                    options={[
+                      { value: 'active', label: '生效中' },
+                      { value: 'draft', label: '草稿' },
+                    ]}
+                  />
+                ) : undefined
+              }
+            >
+              <span className="flex flex-wrap items-center gap-2">
+                {shown.title}
+                <Badge tone={shown.status === 'active' ? 'pine' : 'ember'}>{shown.status === 'active' ? '生效中' : '草稿'}</Badge>
+              </span>
+            </SectionTitle>
+            <p className="mt-1 text-[12.5px] text-ink-3" data-testid="price-catalog-meta">
+              {shown.fileName ? `导入自 ${shown.fileName} · ` : ''}
+              {shown.createdByName} {formatDateTime(shown.createdAt)}
+              {shown.activatedAt ? ` · ${shown.activatedByName} ${formatDateTime(shown.activatedAt)} 切换生效` : ''}
+              {shown.status === 'draft' ? ' · 草稿不参与开单，核对无误后再切换生效' : ''}
+            </p>
+            {Object.entries(shown.notes).map(([k, v]) => (
+              <p key={k} className="mt-1 text-[12.5px] text-ink-3">
+                {k}（本次不录入）：{v}
+              </p>
+            ))}
+            <CountTable counts={shown.counts} total={shown.total} />
+          </Card>
+          {other && otherSet.data && set.data && <DiffCard current={set.data} other={otherSet.data} />}
+          {set.isPending ? (
+            <Skeleton className="h-64" />
+          ) : set.isError && !set.data ? (
+            <LoadFailed title="条目取不回来" onRetry={() => void set.refetch()} />
+          ) : set.data ? (
+            <EntryList entries={set.data.entries} />
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────── 条数对照 ─────────────────────────
+
+type CountRow = Omit<PriceCountCheck, 'sheet'> & { sheet: PriceSheet | 'total' };
+
+function CountTable({ counts, total }: { counts: PriceCountCheck[]; total: { expected: number; actual: number } }) {
+  const ok = (c: { expected: number; actual: number }) => c.expected === c.actual;
+  const rows: CountRow[] = [...counts, { sheet: 'total', name: '合计', expected: total.expected, actual: total.actual, parts: [] }];
+  const columns: DataColumn<CountRow>[] = [
+    { key: 'name', header: '工作表', cell: (c) => <span className="font-semibold">{c.name}</span>, dataLabel: '工作表' },
+    { key: 'actual', header: '系统条数', numeric: true, cell: (c) => <span className="font-bold">{c.actual}</span>, dataLabel: '系统条数' },
+    { key: 'expected', header: '表格条数', numeric: true, cell: (c) => <span className="text-ink-3">{c.expected}</span>, dataLabel: '表格条数' },
+    {
+      key: 'parts',
+      header: '分项（系统 / 表格）',
+      dataLabel: '分项',
+      cell: (c) =>
+        c.parts.length === 0 ? (
+          <span className={`text-[12.5px] ${ok(c) ? 'text-pine' : 'font-bold text-clay'}`}>{ok(c) ? (c.sheet === 'total' ? '与表格一致' : '一致') : `差 ${c.actual - c.expected}`}</span>
+        ) : (
+          <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-[12.5px]">
+            {c.parts.map((p) => (
+              <span key={p.name} className={ok(p) ? 'text-ink-2' : 'font-bold text-clay'}>
+                {p.name} {p.actual}/{p.expected}
+              </span>
+            ))}
+          </span>
+        ),
+    },
+  ];
+  return (
+    <DataTable
+      className="mt-3"
+      variant="plain"
+      columns={columns}
+      rows={rows}
+      rowKey={(c) => c.sheet}
+      rowTestId={(c) => `price-count-${c.sheet}`}
+      rowClassName={(c) => (c.sheet === 'total' ? 'bg-paper-2/60 font-bold' : undefined)}
+      testId="price-catalog-counts"
+    />
+  );
+}
+
+// ───────────────────────── 列表与搜索 ─────────────────────────
+
+function EntryList({ entries }: { entries: PriceCatalogEntry[] }) {
+  const [sheet, setSheet] = useState<SheetFilter>('all');
+  const [section, setSection] = useState('');
+  const [q, setQ] = useState('');
+  const [only, setOnly] = useState<Only>('all');
+  const sections: readonly string[] = sheet === 'massage' ? MASSAGE_SECTIONS : sheet === 'dish' ? DISH_SECTIONS : [];
+  const rows = useMemo(
+    () =>
+      entries.filter(
+        (e) => (sheet === 'all' || e.sheet === sheet) && (!section || e.section === section) && (only === 'all' || (only === 'none' ? e.priceMode === 'none' : !e.active)) && matchesPriceSearch(e, q),
+      ),
+    [entries, sheet, section, q, only],
+  );
+  const columns: DataColumn<PriceCatalogEntry>[] = [
+    {
+      key: 'where',
+      header: '分类',
+      cell: (e) => (
+        <span className="text-[12.5px] text-ink-3">{[PRICE_KIND_LABELS[e.kind], e.section && e.section !== PRICE_KIND_LABELS[e.kind] ? e.section : '', e.category].filter(Boolean).join(' · ')}</span>
+      ),
+      dataLabel: '分类',
+    },
+    { key: 'code', header: '编号', cell: (e) => <span className="num text-ink-3">{e.code}</span>, dataLabel: '编号' },
+    {
+      key: 'name',
+      header: '名称',
+      cell: (e) => (
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="font-semibold">{e.name}</span>
+          {!e.orderable && <Badge tone="ember">不可下单</Badge>}
+          {!e.active && <Badge>已停用</Badge>}
+        </span>
+      ),
+      dataLabel: '名称',
+    },
+    {
+      key: 'price',
+      header: '价格',
+      numeric: true,
+      cell: (e) => (
+        <span className={e.priceMode === 'none' ? 'text-ember-deep' : 'font-bold'} data-testid={`price-entry-price-${e.id}`}>
+          {priceText(e, formatYuan)}
+          {e.unit && e.priceMode !== 'none' && e.priceMode !== 'rate' ? <span className="ml-0.5 text-[12px] font-normal text-ink-3">/{e.unit}</span> : null}
+        </span>
+      ),
+      dataLabel: '价格',
+    },
+    {
+      key: 'facts',
+      header: '规格',
+      cell: (e) => (
+        <span className="block max-w-[28rem] text-[12.5px] text-ink-2">
+          {entryFacts(e, formatYuan).join(' · ')}
+          {e.variants.length > 0 && <span className="block text-ink-3">{e.variants.map((v) => `${v.label}${v.priceCents !== null ? ` ${formatYuan(v.priceCents)}` : ''}`).join('；')}</span>}
+        </span>
+      ),
+      dataLabel: '规格',
+    },
+  ];
+  const noneCount = entries.filter((e) => e.priceMode === 'none').length;
+  return (
+    <Card className="p-5">
+      <SectionTitle>条目</SectionTitle>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Segmented<SheetFilter>
+          size="sm"
+          value={sheet}
+          onChange={(v) => {
+            setSheet(v);
+            setSection('');
+          }}
+          ariaLabel="工作表"
+          options={[{ value: 'all', label: '全部' }, ...PRICE_SHEETS.map((s) => ({ value: s, label: PRICE_SHEET_NAMES[s].replace('价格', '') }))]}
+        />
+        {sections.length > 0 && (
+          <Select fullWidth={false} value={section} onChange={(e) => setSection(e.target.value)} aria-label={sheet === 'massage' ? '板块' : '餐段'} className="h-9" data-testid="price-catalog-section">
+            <option value="">{sheet === 'massage' ? '全部板块' : '全部餐段'}</option>
+            {sections.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </Select>
+        )}
+        <Select fullWidth={false} value={only} onChange={(e) => setOnly(e.target.value as Only)} aria-label="只看" className="h-9" data-testid="price-catalog-only">
+          <option value="all">全部状态</option>
+          <option value="none">只看待定价（{noneCount}）</option>
+          <option value="inactive">只看已停用</option>
+        </Select>
+        <span className="relative min-w-0 flex-1 basis-56">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-4" aria-hidden />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜名称、编号、分类、房号" className="pl-9" aria-label="搜索价目" data-testid="price-catalog-search" />
+        </span>
+      </div>
+      <p className="mt-2 text-[12.5px] text-ink-3" data-testid="price-catalog-shown">
+        共 {rows.length} 项{rows.length !== entries.length ? `（全部 ${entries.length} 项）` : ''}
+      </p>
+      <DataTable
+        className="mt-2"
+        columns={columns}
+        rows={rows}
+        rowKey={(e) => e.id ?? `${e.sheet}-${e.sortOrder}`}
+        rowTestId={() => 'price-entry'}
+        empty="没有符合条件的项目"
+        testId="price-catalog-entries"
+      />
+    </Card>
+  );
+}
+
+// ───────────────────────── 草稿与生效对比 ─────────────────────────
+
+function DiffCard({ current, other }: { current: PriceCatalogSet; other: PriceCatalogSet }) {
+  const draft = current.status === 'draft' ? current : other;
+  const active = current.status === 'active' ? current : other;
+  const diffs = useMemo(() => diffPriceCatalogs(draft.entries, active.entries), [draft, active]);
+  const label = { added: '草稿新增', removed: '草稿里没有', changed: '改了价' } as const;
+  return (
+    <Card className="p-5" data-testid="price-catalog-diff">
+      <SectionTitle>草稿与生效对比</SectionTitle>
+      {diffs.length === 0 ? (
+        <p className="mt-2 text-[13px] text-pine">草稿与生效中的价目表价格完全一致。</p>
+      ) : (
+        <ul className="mt-2 divide-y divide-line/70 rounded-lg border border-line text-[13px]">
+          {diffs.map((d) => {
+            const e = (d.draft ?? d.active)!;
+            return (
+              <li key={d.key} className="flex flex-wrap items-center gap-2 px-3 py-2" data-testid="price-diff-row" data-change={d.change}>
+                <Badge tone={d.change === 'removed' ? 'clay' : d.change === 'added' ? 'pine' : 'ember'}>{label[d.change]}</Badge>
+                <span className="text-ink-3">{PRICE_SHEET_NAMES[e.sheet]}</span>
+                <span className="font-semibold">{e.name}</span>
+                <span className="ml-auto">
+                  {d.active && <span className="text-ink-3">{priceText(d.active, formatYuan)}</span>}
+                  {d.active && d.draft && <span className="mx-1 text-ink-4">→</span>}
+                  {d.draft && <span className="font-bold">{priceText(d.draft, formatYuan)}</span>}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+// ───────────────────────── 导入 ─────────────────────────
+
+function ImportCard() {
+  const qc = useQueryClient();
+  const [file, setFile] = useState<LoadedTable | null>(null);
+  const [preview, setPreview] = useState<(PriceImportPreview & { digest: string }) | null>(null);
+  const [busy, setBusy] = useState<'preview' | 'import' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const choose = async (f: File | undefined) => {
+    setPreview(null);
+    setError(null);
+    setDone(null);
+    if (!f) return;
+    try {
+      const loaded = await loadTableFile(f);
+      if (!loaded.xlsxBase64) throw new Error('价目表要用 Excel（.xlsx）导入：六张工作表在一个文件里');
+      setFile(loaded);
+    } catch (e) {
+      setFile(null);
+      setError(errorMessage(e));
+    }
+  };
+  const runPreview = async () => {
+    if (!file) return;
+    setBusy('preview');
+    setError(null);
+    try {
+      setPreview(await api.post('/api/admin/price-catalog/import/preview', { fileName: file.fileName, xlsxBase64: file.xlsxBase64 }));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const runImport = async () => {
+    if (!file || !preview) return;
+    setBusy('import');
+    setError(null);
+    try {
+      const set = await api.post<PriceCatalogSet>('/api/admin/price-catalog/import', { fileName: file.fileName, xlsxBase64: file.xlsxBase64, previewDigest: preview.digest });
+      setDone(`已存成草稿「${set.title}」：${set.total.actual} 项。核对下面的条数与价格，确认后再切换生效。`);
+      setPreview(null);
+      setFile(null);
+      await qc.invalidateQueries({ queryKey: overviewKey });
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const errors = preview?.issues.filter((i) => i.level === 'error') ?? [];
+  const warnings = preview?.issues.filter((i) => i.level === 'warning') ?? [];
+  return (
+    <Card className="p-5" data-testid="price-catalog-import">
+      <SectionTitle
+        aside={
+          <a
+            href="/api/admin/price-catalog/template"
+            download="价目表导入模板.xlsx"
+            className="tap relative flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3 text-[13px] font-bold text-ink-2 hover:border-ink-3 hover:text-ink"
+            data-testid="price-catalog-template"
+          >
+            <Download className="size-4" />
+            下载导入模板
+          </a>
+        }
+      >
+        导入全品类价目表
+      </SectionTitle>
+      <p className="mt-1 text-[12.5px] text-ink-3">
+        选《汤崎宝安全品类价目表》（六张工作表在一个 Excel 里）→ 预览逐行核对 → 没有问题再导入。导入先存成草稿（替换原来的草稿），不影响正在用的价格；核对条数后再切换生效。
+      </p>
+      <label className="mt-3 flex cursor-pointer flex-wrap items-center gap-3 rounded-md border border-dashed border-line-strong px-4 py-3 text-[13px] hover:border-ink-3">
+        <FileUp className="size-5 text-ink-3" />
+        <span className="min-w-0 font-semibold break-all">{file ? file.fileName : '选择 Excel 文件（.xlsx）'}</span>
+        <input type="file" accept=".xlsx" className="sr-only" aria-label="选择价目表" disabled={busy !== null} onChange={(e) => void choose(e.target.files?.[0])} data-testid="price-catalog-file" />
+      </label>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button
+          variant="secondary"
+          icon={<FileSearch className="size-4" />}
+          disabled={!file || busy !== null}
+          loading={busy === 'preview'}
+          onClick={() => void runPreview()}
+          data-testid="price-catalog-preview"
+        >
+          预览
+        </Button>
+        <Button variant="primary" disabled={!preview || errors.length > 0 || busy !== null} loading={busy === 'import'} onClick={() => void runImport()} data-testid="price-catalog-apply">
+          {preview && errors.length === 0 ? `导入成草稿（${preview.total.actual} 项）` : '导入成草稿'}
+        </Button>
+      </div>
+      {error && <Notice tone="error" title={error} className="mt-3" />}
+      {done && <Notice tone="success" title={done} className="mt-3" data-testid="price-catalog-done" />}
+      {preview && (
+        <div className="mt-3 space-y-3" data-testid="price-catalog-preview-result">
+          {errors.length > 0 ? (
+            <Notice tone="error" title={`有 ${errors.length} 处问题，整份不能导入；改好表格再预览`} />
+          ) : (
+            <Notice tone="success" title={`没有问题：${preview.total.actual} 项（表格应有 ${preview.total.expected} 项）${warnings.length ? `，另有 ${warnings.length} 条提醒` : ''}`} />
+          )}
+          <CountTable counts={preview.counts} total={preview.total} />
+          {preview.issues.length > 0 && (
+            <ul className="max-h-72 divide-y divide-line/70 overflow-y-auto rounded-lg border border-line text-[12.5px]" data-testid="price-catalog-issues">
+              {preview.issues.map((i, n) => (
+                <li key={n} className="flex flex-wrap gap-x-2 px-3 py-1.5" data-level={i.level}>
+                  <Badge tone={i.level === 'error' ? 'clay' : 'ember'}>{i.level === 'error' ? '问题' : '提醒'}</Badge>
+                  <span className="text-ink-3">
+                    {i.sheet}
+                    {i.row !== null ? ` 第 ${i.row} 行` : ''} · {i.field}
+                  </span>
+                  <span>{i.message}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}

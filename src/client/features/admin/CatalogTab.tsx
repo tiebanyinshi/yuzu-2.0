@@ -20,6 +20,7 @@ import { SubPane } from '../../components/SubNav';
 import { AdminPage } from './AdminShell';
 import { useSession } from '../../lib/session';
 import { StorePricesCard } from './StorePricesCard';
+import { PriceCatalogPane } from './PriceCatalogPane';
 
 type Editing = { kind: 'plan'; data: RechargePlan | null } | { kind: 'item'; data: ServiceItem | null } | null;
 
@@ -28,6 +29,8 @@ const STORE_PRICE_TAB = { key: 'store', label: '本店价' };
 /** 二级页签（8.0.17）：清单 → 导入与工具（价目没有规则类的设置） */
 const CATALOG_TABS = [
   { key: 'items', label: '消费项目' },
+  // 全品类价目表（店主 2026-11-22，docs/PRICE_CATALOG.md）：导入、条数对照、列表与搜索、草稿与生效对比
+  { key: 'full', label: '全品类价目表' },
   { key: 'tickets', label: '门票' },
   { key: 'plans', label: '充值套餐' },
   { key: 'import', label: '导入价目表' },
@@ -104,6 +107,9 @@ export function CatalogTab() {
             )}
           </div>
         </Card>
+      </SubPane>
+      <SubPane tab="full">
+        <PriceCatalogPane />
       </SubPane>
       <SubPane tab="tickets">
         <TicketTypesCard />

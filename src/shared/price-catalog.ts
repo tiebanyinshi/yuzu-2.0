@@ -175,3 +175,82 @@ export function priceCounts(entries: Pick<PriceCatalogEntry, 'sheet' | 'kind' | 
   });
   return { counts, total: { expected: PRICE_EXPECTED_TOTAL, actual: counts.reduce((n, c) => n + c.actual, 0) } };
 }
+
+// ───────────────────────── 列表与搜索（第二批） ─────────────────────────
+
+export const PRICE_KIND_LABELS: Record<PriceKind, string> = {
+  ticket: '门票',
+  night_ticket: '夜间票',
+  meal_ticket: '餐票',
+  service_fee: '服务费',
+  play_pass: '畅玩卷',
+  entertainment: '娱乐项目',
+  room_type: '房型',
+  party_room: '轰趴房',
+  dining_room: '餐饮包房',
+  dish: '菜品',
+  massage: '按摩及助浴',
+};
+export const PRICE_VENUE_LABELS: Record<PriceVenue, string> = { room: '房间', lobby: '大堂', bath: '浴区' };
+export const PRICE_GENDER_LABELS: Record<PriceGender, string> = { female: '女', male: '男', any: '男 / 女' };
+
+/** 页面上显示价格：无价格写「待定价」，不写 0 元；服务费写百分比 */
+export function priceText(e: Pick<PriceCatalogEntry, 'priceMode' | 'priceCents' | 'price2Cents' | 'rateBp'>, yuan: (cents: number) => string): string {
+  if (e.priceMode === 'rate') return `${(e.rateBp ?? 0) / 100}%`;
+  if (e.priceMode === 'none' || e.priceCents === null) return '待定价';
+  if (e.priceMode === 'dual' && e.price2Cents !== null) return `专业 ${yuan(e.priceCents)} / 资深 ${yuan(e.price2Cents)}`;
+  return yuan(e.priceCents);
+}
+
+const hm = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+/** 时段：「7:30–10:00」，跨零点写「次日」 */
+export const windowText = (start: number | null, end: number | null): string => (start === null || end === null ? '' : `${hm(start)}–${end < start ? '次日' : ''}${hm(end)}`);
+/** 时长：「80 分钟」，整小时写「2 小时」 */
+export const minutesText = (m: number | null): string => (m === null ? '' : m % 60 === 0 && m >= 60 ? `${m / 60} 小时` : `${m} 分钟`);
+
+/** 一项的「规格」一行：时长 / 时段 / 加钟 / 超时 / 封顶 / 台位 / 房号 / 适用 */
+export function entryFacts(e: PriceCatalogEntry, yuan: (cents: number) => string): string[] {
+  const facts: string[] = [];
+  if (e.kind === 'ticket' && e.durationMinutes) facts.push(`${minutesText(e.durationMinutes)}${e.includesMeal ? ' · 含餐' : ' · 不含餐'}`);
+  else if (e.durationMinutes) facts.push(e.sheet === 'massage' ? `${e.durationMinutes} 分钟` : `含 ${minutesText(e.durationMinutes)}`);
+  const w = windowText(e.windowStart, e.windowEnd);
+  if (w) facts.push(w);
+  if (e.extraPriceCents !== null) facts.push(`${e.sheet === 'entertainment' ? '加钟' : '超时'} ${yuan(e.extraPriceCents)}/${minutesText(e.extraMinutes ?? 60)}`);
+  if (e.capCents !== null) facts.push(`封顶 ${yuan(e.capCents)}`);
+  if (e.unitsCount !== null) facts.push(e.sheet === 'entertainment' ? `${e.unitsCount} 台` : `${e.unitsCount} 间`);
+  if (e.roomNumbers.length) facts.push(e.roomNumbers.length > 4 ? `${e.roomNumbers[0]}–${e.roomNumbers[e.roomNumbers.length - 1]}（${e.roomNumbers.length} 个）` : e.roomNumbers.join('、'));
+  if (e.venues.length) facts.push(e.venues.map((v) => PRICE_VENUE_LABELS[v]).join(' / '));
+  if (e.gender) facts.push(`适用 ${PRICE_GENDER_LABELS[e.gender]}`);
+  return facts;
+}
+
+/** 搜索：名称、编号、分类、板块 / 餐段、房号都能搜（不分大小写、不管空格） */
+export function matchesPriceSearch(e: PriceCatalogEntry, q: string): boolean {
+  const t = q.replace(/\s+/g, '').toLowerCase();
+  if (!t) return true;
+  return [e.name, e.code, e.category, e.section, ...e.roomNumbers].some((s) => s.replace(/\s+/g, '').toLowerCase().includes(t));
+}
+
+/** 草稿与生效对比用的键：同一张表、同一个板块 / 餐段、同一个分类里同名的算同一项 */
+export const priceEntryKey = (e: Pick<PriceCatalogEntry, 'sheet' | 'section' | 'category' | 'name'>) => `${e.sheet}|${e.section}|${e.category}|${e.name}`;
+
+export interface PriceDiff {
+  key: string;
+  change: 'added' | 'removed' | 'changed';
+  draft: PriceCatalogEntry | null;
+  active: PriceCatalogEntry | null;
+}
+/** 草稿比生效多了、少了、改了价格（价格形态、两个价、比例、加钟 / 超时、封顶）的那几项 */
+export function diffPriceCatalogs(draft: PriceCatalogEntry[], active: PriceCatalogEntry[]): PriceDiff[] {
+  const a = new Map(active.map((e) => [priceEntryKey(e), e]));
+  const d = new Map(draft.map((e) => [priceEntryKey(e), e]));
+  const sig = (e: PriceCatalogEntry) => JSON.stringify([e.priceMode, e.priceCents, e.price2Cents, e.rateBp, e.extraPriceCents, e.capCents, e.active, e.orderable]);
+  const out: PriceDiff[] = [];
+  for (const [key, e] of d) {
+    const old = a.get(key);
+    if (!old) out.push({ key, change: 'added', draft: e, active: null });
+    else if (sig(old) !== sig(e)) out.push({ key, change: 'changed', draft: e, active: old });
+  }
+  for (const [key, e] of a) if (!d.has(key)) out.push({ key, change: 'removed', draft: null, active: e });
+  return out;
+}
