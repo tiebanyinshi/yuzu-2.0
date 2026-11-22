@@ -117,3 +117,52 @@ export interface StaffImportResult {
   /** 这个操作编号之前已经开过：这次没有再开，临时密码不再给 */
   replayed: boolean;
 }
+
+// ───────────── OA-03 站内通知与附件（docs/OA.md 第 6 节） ─────────────
+
+export const NOTIFICATION_KINDS = ['attendance_exception', 'makeup_result', 'approval_todo', 'approval_urge', 'approval_result', 'schedule_change', 'payslip', 'im_message', 'system'] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
+  attendance_exception: '打卡异常',
+  makeup_result: '补卡结果',
+  approval_todo: '审批待办',
+  approval_urge: '催办',
+  approval_result: '审批结果',
+  schedule_change: '排班变更',
+  payslip: '工资条',
+  im_message: '新消息',
+  system: '系统',
+};
+
+export interface OaNotification {
+  id: number;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  /** 点开去哪一页（站内路径） */
+  link: string | null;
+  createdAt: string;
+  readAt: string | null;
+}
+
+export interface NotificationPage {
+  items: OaNotification[];
+  /** 还有更早的：下一页从这个编号往前取 */
+  nextBefore: number | null;
+  unread: number;
+}
+
+/** 附件单个上限 10MB；缩略图上限 200KB（浏览器生成，长边 320 像素的 JPEG） */
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+export const ATTACHMENT_THUMB_MAX_BYTES = 200 * 1024;
+
+export interface OaAttachment {
+  id: number;
+  fileName: string;
+  mime: string;
+  sizeBytes: number;
+  isImage: boolean;
+  hasThumb: boolean;
+  url: string;
+  thumbUrl: string | null;
+}
