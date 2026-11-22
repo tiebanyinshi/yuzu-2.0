@@ -391,6 +391,8 @@ export function priceEntryProblems(e: PriceCatalogEntry): string[] {
   if (e.extraMinutes !== null && (!Number.isInteger(e.extraMinutes) || e.extraMinutes < 1 || e.extraMinutes > 1440)) out.push('加钟 / 超时每次要在 1 到 1440 分钟之间');
   if (e.extraMinutes !== null && e.extraPriceCents === null) out.push('填了每次多少分钟，也要填加钟 / 超时价');
   if (e.extraPriceCents !== null && e.extraMinutes === null) out.push('填了加钟 / 超时价，也要填每次多少分钟');
+  // 娱乐、按时计费的房型：超时 / 加钟从基础价含的时长之后算，没有时长就算不出来（餐饮包房的超时按退房时间，不在此列）
+  if (e.extraPriceCents !== null && e.durationMinutes === null && (e.kind === 'entertainment' || e.kind === 'room_type')) out.push('填了加钟 / 超时价，也要填基础价含多少分钟');
   if ((e.windowStart === null) !== (e.windowEnd === null)) out.push('时段要填开始和结束');
   for (const w of [e.windowStart, e.windowEnd]) if (w !== null && (!Number.isInteger(w) || w < 0 || w > 1439)) out.push('时段的时刻不对');
   if (e.unitsCount !== null && (!Number.isInteger(e.unitsCount) || e.unitsCount < 0 || e.unitsCount > 999)) out.push('台位 / 间数要在 0 到 999 之间');

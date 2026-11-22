@@ -182,8 +182,9 @@ const UNCERTAIN_ENTRY = '这一笔结果待确认：已记在本机，请在页�
 function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEntry[] }) {
   const qc = useQueryClient();
   const session = useSession();
-  // 单条改动有结果待确认的：查回、重提或作废之前不再改（AGENTS.md「结果待确认」）
-  const locked = useErpPending(['price_entry']).length > 0;
+  // 单条改动、导入（会替换整份草稿）、切换 / 放弃 / 回滚有结果待确认的：查回、重提或作废之前不再改，
+  // 不然原请求晚到会把刚改的连同草稿一起换掉（AGENTS.md「结果待确认」）
+  const locked = useErpPending(['price_entry', 'price_import', 'price_set', 'price_rollback']).length > 0;
   const [sheet, setSheet] = useState<SheetFilter>('all');
   const [editing, setEditing] = useState<PriceCatalogEntry | 'new' | null>(null);
   const [history, setHistory] = useState<PriceCatalogEntry | null>(null);
