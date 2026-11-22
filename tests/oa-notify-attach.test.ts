@@ -112,7 +112,8 @@ describe('OA-03 附件', () => {
   });
 
   it('挂到单据上：只能挂自己传的、没挂过的；挂上以后按单据登记的办法看', async () => {
-    const up = async (cookie: string, name: string) => (await api(ctx.app, cookie, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: name, mime: 'image/png', data: b64(PNG) })).body as OaAttachment;
+    const up = async (cookie: string, name: string) =>
+      (await api(ctx.app, cookie, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: name, mime: 'image/png', data: b64(PNG) })).body as OaAttachment;
     const a = await up(ctx.clerk, 'a.png');
     const b = await up(ctx.clerk, 'b.png');
     const other = await up(ctx.owner, 'c.png');
