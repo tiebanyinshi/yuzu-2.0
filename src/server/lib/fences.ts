@@ -171,6 +171,10 @@ export const FENCED_OPS = [
   'oa_schedule_save',
   // OA-06 打卡（迁移 215）：编号记在 idempotency_keys（ref_id 是那条 oa_punches）
   'oa_punch',
+  // OA-07 提交人脸录入（迁移 216）：编号记在 idempotency_keys（ref_id 是那份 oa_face_enrollments）
+  'oa_face_enroll',
+  // OA-07 人脸审核（迁移 216）：编号记在 idempotency_keys（ref_id 是那份 oa_face_enrollments）
+  'oa_face_review',
   // 价目表录入（迁移 234）：导入草稿、整体回滚；编号记在 price_catalog_import_ops / price_catalog_set_ops
   'price_import',
   'price_rollback',

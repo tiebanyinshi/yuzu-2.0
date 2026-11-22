@@ -99,6 +99,9 @@ export const DICTIONARY_KEYS = [
   'blacklistReasons',
   'riskPassReasons',
   'dishPriceReasons',
+  // OA-07 人脸审核
+  'faceRejectReasons',
+  'faceRevokeReasons',
 ] as const;
 export type DictionaryKey = (typeof DICTIONARY_KEYS)[number];
 export type Dictionaries = Record<DictionaryKey, string[]>;
@@ -118,6 +121,8 @@ export const DICTIONARY_LABELS: Record<DictionaryKey, { title: string; where: st
   blacklistReasons: { title: '加入黑名单的原因', where: '会员详情、后台「手牌与前台 → 黑名单」' },
   riskPassReasons: { title: '未结离店放行的原因', where: '接待发牌时请值班经理授权' },
   dishPriceReasons: { title: '菜品改价的原因', where: '餐饮「菜品管理」里改价、导入里有改价' },
+  faceRejectReasons: { title: '退回人脸录入的原因', where: '后台「考勤设置 → 人脸审核」退回' },
+  faceRevokeReasons: { title: '停用人脸录入的原因', where: '后台「考勤设置 → 人脸审核」停用已通过的' },
 };
 
 /** 默认值：原来写死的照搬；原来是纯手填的给几条常见的（仍然可以手填） */
@@ -136,6 +141,8 @@ export const DEFAULT_DICTIONARIES: Dictionaries = {
   blacklistReasons: ['多次逃单', '醉酒闹事', '骚扰其他客人或员工', '损坏物品拒不赔偿'],
   riskPassReasons: ['客人答应当场补交', '已补交，待办还没销', '经理同意先接待'],
   dishPriceReasons: ['食材涨价', '食材降价', '促销活动', '菜单调整', '纠正录错的价'],
+  faceRejectReasons: ['照片太暗', '照片模糊', '没拍到正脸', '戴了帽子或口罩', '不是本人'],
+  faceRevokeReasons: ['换了人', '照片和本人不像', '员工离职'],
 };
 
 export const MAX_DICTIONARY_ITEMS = 30;

@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { PUNCH_KIND_LABELS, type PunchDay, type PunchRecord } from '@shared/oa';
+import { FACE_RESULT_LABELS, PUNCH_KIND_LABELS, type PunchDay, type PunchRecord } from '@shared/oa';
 import { api } from '../../lib/api';
 import { DataTable } from '../../components/DataTable';
 import { EmptyState } from '../../components/EmptyState';
@@ -116,9 +116,22 @@ export function PunchRecordsTab() {
             },
             {
               key: 'flags',
-              header: '告警',
+              header: '人脸 / 告警',
               className: 'whitespace-nowrap',
-              cell: (r) => (r.sharedLocation ? <Badge tone="clay">同坐标多人</Badge> : <span className="text-ink-4">—</span>),
+              cell: (r) =>
+                r.sharedLocation || r.faceResult ? (
+                  <span className="flex flex-wrap items-center gap-1">
+                    {r.faceResult && <Badge tone={r.faceResult === 'pass' ? 'pine' : 'yuzu'}>{FACE_RESULT_LABELS[r.faceResult]}</Badge>}
+                    {r.facePhoto && (
+                      <a href={r.facePhoto.url} target="_blank" rel="noreferrer" className="text-[12px] text-lake underline">
+                        自拍
+                      </a>
+                    )}
+                    {r.sharedLocation && <Badge tone="clay">同坐标多人</Badge>}
+                  </span>
+                ) : (
+                  <span className="text-ink-4">—</span>
+                ),
             },
             {
               key: 'device',

@@ -149,6 +149,9 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   oa_schedule_save: ['hr.attendance'],
   // OA-06 打卡：登录就能打，只能查回、作废自己的（SELF_OPS）
   oa_punch: [],
+  oa_face_enroll: [],
+  // OA-07 人脸审核：与审核接口一致
+  oa_face_review: ['hr.attendance'],
   price_import: ['catalog.manage'],
   price_rollback: ['catalog.manage'],
   price_entry: ['catalog.manage'],
@@ -231,6 +234,9 @@ const READ: Record<ErpOpType, Permission[]> = {
   oa_schedule_save: ['hr.attendance'],
   // OA-06 打卡：登录就能打，只能查回、作废自己的（SELF_OPS）
   oa_punch: [],
+  oa_face_enroll: [],
+  // OA-07 人脸审核：与审核接口一致
+  oa_face_review: ['hr.attendance'],
   price_import: ['catalog.manage'],
   price_rollback: ['catalog.manage'],
   price_entry: ['catalog.manage'],
@@ -355,13 +361,13 @@ const KeyParam = z.object({ key: z.uuid('操作编号格式不正确') });
 const TypeQuery = z.object({ type: z.enum(ERP_OP_TYPES, '缺少原操作的业务类型') });
 const AbandonInput = TypeQuery.extend({ summary: z.string().trim().max(200).default('') });
 
-/** 登录就能做、只能查回与作废自己那一笔的操作（OA-06 打卡） */
-const SELF_OPS: ReadonlySet<ErpOpType> = new Set(['oa_punch']);
+/** 登录就能做、只能查回与作废自己那一笔的操作（OA-06 打卡、OA-07 提交人脸录入） */
+const SELF_OPS: ReadonlySet<ErpOpType> = new Set(['oa_punch', 'oa_face_enroll']);
 
 async function customerOpScope(db: Db, key: string, type: ErpOpType, actor: Parameters<typeof can>[0] & { id: number }) {
   if (SELF_OPS.has(type)) {
     const owners = await db`SELECT staff_id FROM idempotency_keys WHERE key=${key}::uuid UNION SELECT staff_id FROM op_fences WHERE key=${key}::uuid AND op_type=${type}`;
-    if (owners.some((row) => Number(row.staffId) !== actor.id)) throw forbidden('只能查回或作废自己的打卡');
+    if (owners.some((row) => Number(row.staffId) !== actor.id)) throw forbidden('只能查回或作废自己的这类操作（打卡、人脸录入）');
     return;
   }
   if (!type.startsWith('customer_') || can(actor, 'customer.manage')) return;
