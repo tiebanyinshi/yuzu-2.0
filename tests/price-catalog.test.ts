@@ -1219,4 +1219,20 @@ describe('价目表录入 第四批：对接收银项目', () => {
     const over = ((await preview(workbook({ 房间价格: spa('S001-S301') }))).body as PriceImportPreview).issues;
     expect(over.some((i) => i.level === 'error' && i.message.includes('超过 300 个'))).toBe(true);
   });
+
+  it('第二十二轮审查：餐饮包房写了「低消」却认不出金额，报错（不当成没有最低消费）', async () => {
+    const dining = (price: string) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        ['餐饮包房', '5间', price, null, 'V999'],
+      ]);
+    const bad = ((await preview(workbook({ 房间价格: dining('688元/位\n低消：另议') }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
+    expect(bad[0]).toMatchObject({ row: 2, field: '收费参考' });
+    const ok = (await preview(workbook({ 房间价格: dining('688元/位\n低消：3000') }))).body as PriceImportPreview;
+    expect(ok.errorCount).toBe(0);
+    expect(find(ok, '餐饮包房').variants.map((v) => [v.label, v.priceCents])).toEqual([
+      ['位价', 68800],
+      ['低消', 300000],
+    ]);
+  });
 });
