@@ -22,7 +22,7 @@ import { allowedStores } from '../stores';
 const canManage = guardAny('hr.org', 'staff.manage');
 
 /** 专用账号（点餐平板、他店查询）不是员工，不进组织架构 */
-const NOT_EMPLOYEE_ROLES = ['tablet', 'other_store'];
+export const NOT_EMPLOYEE_ROLES = ['tablet', 'other_store'];
 
 const DeptInput = z.object({
   parentKey: z

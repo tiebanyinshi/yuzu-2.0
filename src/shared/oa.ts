@@ -166,3 +166,89 @@ export interface OaAttachment {
   url: string;
   thumbUrl: string | null;
 }
+
+// ───────────────────────── OA-04 考勤组、班次、打卡点（docs/OA.md 第 7 节） ─────────────────────────
+
+/** 班次打卡窗口的默认值（OA9）：上班卡可提前 120 分钟、迟到弹性 0、上班窗口在上班后再开 60 分钟、下班窗口在下班前 60 分钟开始、下班卡可延后 120 分钟 */
+export const SHIFT_WINDOW_DEFAULTS = { inAdvanceMinutes: 120, lateGraceMinutes: 0, inAfterMinutes: 60, outBeforeMinutes: 60, outDelayMinutes: 120 } as const;
+export const OA_SHIFT_NAME_MAX = 20;
+export const OA_LOCATION_RADIUS_DEFAULT = 300;
+
+export interface OaShiftTimes {
+  /** 当天第几分钟（0–1439）；下班不晚于上班 = 跨天班 */
+  startMinute: number;
+  endMinute: number;
+  restStartMinute: number | null;
+  restEndMinute: number | null;
+  inAdvanceMinutes: number;
+  lateGraceMinutes: number;
+  inAfterMinutes: number;
+  outBeforeMinutes: number;
+  outDelayMinutes: number;
+}
+export interface OaShift extends OaShiftTimes {
+  id: number;
+  name: string;
+  active: boolean;
+  version: number;
+}
+
+/** 班次长多少分钟（跨天班照样是正数） */
+export const shiftLength = (s: Pick<OaShiftTimes, 'startMinute' | 'endMinute'>) => (s.endMinute - s.startMinute + 1440) % 1440;
+
+/**
+ * 班次的时间与打卡窗口说得通吗（服务端、页面共用）：
+ * 休息段在班次里面；迟到弹性不超过上班窗口；同一班次的上班窗口在下班窗口之前结束（不然一次打卡分不清上下班）；
+ * 连着两天上同一个班，前一天的下班窗口不能伸进第二天的上班窗口。说不通时返回原因
+ */
+export function shiftProblem(s: OaShiftTimes): string | null {
+  const len = shiftLength(s);
+  if (len === 0) return '上班和下班不能是同一个时间';
+  if ((s.restStartMinute === null) !== (s.restEndMinute === null)) return '休息段要同时填开始和结束';
+  if (s.restStartMinute !== null && s.restEndMinute !== null) {
+    const rs = (s.restStartMinute - s.startMinute + 1440) % 1440;
+    const re = (s.restEndMinute - s.startMinute + 1440) % 1440;
+    if (!(rs > 0 && rs < re && re < len)) return '休息段要在上班与下班之间';
+  }
+  if (s.lateGraceMinutes > s.inAfterMinutes) return '迟到弹性不能比上班窗口在上班后开的时间还长';
+  if (s.inAfterMinutes >= len - s.outBeforeMinutes) return '上班窗口要在下班窗口开始之前结束：把「上班后再开」或「下班前开始」改短';
+  if (len + s.outDelayMinutes + s.inAdvanceMinutes > 1440) return '下班卡可延后与上班卡可提前加起来太长：连着两天上这个班时两个窗口会重叠';
+  return null;
+}
+
+export interface OaLocation {
+  id: number;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  radiusM: number;
+  active: boolean;
+  version: number;
+}
+
+export interface OaAttendanceGroup {
+  id: number;
+  name: string;
+  gpsRequired: boolean;
+  faceRequired: boolean;
+  active: boolean;
+  version: number;
+  locationIds: number[];
+  memberIds: number[];
+}
+
+export interface AttendanceEmployee {
+  staffId: number;
+  name: string;
+  position: PositionKey | null;
+  groupId: number | null;
+}
+
+export interface AttendanceSetup {
+  shifts: OaShift[];
+  locations: OaLocation[];
+  groups: OaAttendanceGroup[];
+  /** 本店在职员工与所在考勤组（没进组的 groupId 为 null） */
+  employees: AttendanceEmployee[];
+}

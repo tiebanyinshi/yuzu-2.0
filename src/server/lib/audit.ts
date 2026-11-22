@@ -19,6 +19,10 @@ export type AuditAction =
   | 'employee_profile_updated'
   | 'employee_left'
   | 'employee_rehired'
+  // OA-04 考勤组、班次、打卡点（docs/OA.md 第 7 节）
+  | 'oa_shift_saved'
+  | 'oa_location_saved'
+  | 'oa_group_saved'
   | 'oa_staff_imported'
   | 'position_chosen'
   | 'member_created'
