@@ -21,11 +21,12 @@ import {
   type StaffImportResult,
   type StaffImportRow,
 } from '@shared/oa';
-import { can } from '@shared/permissions';
-import { LINED_DEPARTMENTS, ORG_DEPARTMENTS, type LinedDepartment, type PositionKey } from '@shared/positions';
+import { can, permissionsOf, PERMISSION_LABELS, type Permission } from '@shared/permissions';
+import { LINED_DEPARTMENTS, ORG_DEPARTMENTS, positionLabel, positionOf, type LinedDepartment, type PositionKey } from '@shared/positions';
 import { isUniqueViolation, type Db } from '../../db';
 import { guardAny } from '../../auth/guard';
 import { generateTempPassword, hashPassword } from '../../auth/password';
+import { loadRoleOverrides } from '../../auth/role-permissions';
 import { writeAudit } from '../../lib/audit';
 import type { Actor, Deps } from '../../lib/context';
 import { attachment } from '../../lib/csv';
@@ -113,6 +114,26 @@ async function plan(db: Db, f: z.infer<typeof FileInput>, actor: Actor): Promise
     const position = department && level ? (`${department}.${level}` as PositionKey) : null;
     return { row: r.row, name, phone, empNo, department, position, hireDate, username, issues };
   });
+
+  // 只有 hr.org、没有 staff.manage 的（人力行政部负责人）只能开出权限不超过自己的岗位（Codex 安全审查 5eeb9ed）：
+  // 开通的人拿得到临时密码，开出比自己权限多的账号就等于给自己加了权限（例如开两个财务部员工，绕过财务的一人经办、另一人复核）
+  if (!canLead) {
+    const overrides = await loadRoleOverrides(db);
+    const mine = (p: Permission) => (actor.permissions ? actor.permissions.includes(p) : can(actor, p));
+    const extraOf = new Map<PositionKey, Permission[]>();
+    for (const x of rows) {
+      if (!x.position || x.position.endsWith('.lead')) continue;
+      if (!extraOf.has(x.position)) {
+        const def = positionOf(x.position);
+        extraOf.set(
+          x.position,
+          permissionsOf({ role: def.legacyRole, duties: def.duties, position: x.position }, overrides).filter((p) => !mine(p)),
+        );
+      }
+      const extra = extraOf.get(x.position)!;
+      if (extra.length) x.issues.push(`「${positionLabel(x.position)}」有 ${extra.length} 项您自己没有的权限（如「${PERMISSION_LABELS[extra[0]!].split('：')[0]}」），要总裁开`);
+    }
+  }
 
   // 表里自己重复的
   const dupIn = (key: (x: StaffImportRow) => string | null, what: string) => {

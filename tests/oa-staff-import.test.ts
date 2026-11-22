@@ -32,7 +32,7 @@ describe('OA-02 账号与批量开通', () => {
     const r = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import/preview', {
       fileName: '员工.csv',
       csv: csv(
-        '张三,13811110001,E101,前厅部,员工,2026-01-05,',
+        '张三,13811110001,E101,人力行政部,员工,2026-01-05,',
         '李四,13811110001,E102,不存在部,,,',
         '王五,1381111,E101,总经办,,,',
         '赵六,13811110004,,男宾部,负责人,2026/13/40,',
@@ -42,7 +42,7 @@ describe('OA-02 账号与批量开通', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const p = r.body as StaffImportPreview;
     expect(p.rows).toHaveLength(5);
-    expect(p.rows[0]).toMatchObject({ row: 2, name: '张三', department: 'front', position: 'front.staff', username: 'e101', issues: [] });
+    expect(p.rows[0]).toMatchObject({ row: 2, name: '张三', department: 'hr', position: 'hr.staff', username: 'e101', issues: [] });
     expect(p.rows[1]!.issues.join()).toContain('不存在部');
     expect(p.rows[1]!.issues.join()).toContain('手机号与第 2 行重复');
     expect(p.rows[2]!.issues.join()).toContain('手机号要 11 位');
@@ -53,6 +53,12 @@ describe('OA-02 账号与批量开通', () => {
     expect(p.rows[4]!.issues.join()).toContain('姓名没填');
     expect(p.rows[4]!.issues.join()).toContain('「owner」已经有人用了');
     expect(p.issueCount).toBe(4);
+    // 权限比自己多的岗位（财务部员工）：人力行政部负责人开不了，要总裁开
+    const fin = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import/preview', { fileName: 'f.csv', csv: csv('出纳甲,13811110091,,财务部,员工,,', '出纳乙,13811110092,,财务部,员工,,') });
+    const finRows = (fin.body as StaffImportPreview).rows;
+    expect(finRows.every((x) => x.issues.some((i) => i.includes('您自己没有的权限')))).toBe(true);
+    const finApply = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import', { clientKey: randomUUID(), fileName: 'f.csv', csv: csv('出纳甲,13811110091,,财务部,员工,,') });
+    expect(code(finApply)).toBe('IMPORT_INVALID');
     // 有问题的不能开
     const a = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import', { clientKey: randomUUID(), fileName: '员工.csv', csv: csv('李四,13811110001,E102,不存在部,,,') });
     expect(a.status).toBe(422);
@@ -60,14 +66,14 @@ describe('OA-02 账号与批量开通', () => {
   });
 
   it('开通：建账号（临时密码、首次登录要改）、岗位、档案、门店；原样重提不开两遍、不再给密码', async () => {
-    const body = { clientKey: randomUUID(), fileName: '十一月新人.csv', csv: csv('孙七,13811110011,E201,前厅部,,2026-11-01,', '周八,13811110012,,餐饮部,员工,,zhouba') };
+    const body = { clientKey: randomUUID(), fileName: '十一月新人.csv', csv: csv('孙七,13811110011,E201,人力行政部,,2026-11-01,', '周八,13811110012,,人力行政部,员工,,zhouba') };
     const r = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import', body);
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     const res = r.body as StaffImportResult;
     expect(res.replayed).toBe(false);
     expect(res.accounts.map((a) => [a.username, a.name, a.position])).toEqual([
-      ['e201', '孙七', 'front.staff'],
-      ['zhouba', '周八', 'dining.staff'],
+      ['e201', '孙七', 'hr.staff'],
+      ['zhouba', '周八', 'hr.staff'],
     ]);
     const pw = res.accounts[0]!.temporaryPassword!;
     expect(pw).toMatch(/^yuzu-\d{4}-[a-z]{2}$/);
@@ -90,7 +96,7 @@ describe('OA-02 账号与批量开通', () => {
     const [n] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM staff WHERE username IN ('e201', 'zhouba')`;
     expect(n!.n).toBe(2);
     // 同一编号换了内容：拒绝
-    const other = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import', { ...body, csv: csv('吴九,13811110013,,前厅部,,,') });
+    const other = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import', { ...body, csv: csv('吴九,13811110013,,人力行政部,,,') });
     expect(code(other)).toBe('IDEMPOTENCY_CONFLICT');
     // 查回
     const look = await api(ctx.app, hrLead, 'GET', `/api/erp/ops/${body.clientKey}?type=oa_staff_import`);
@@ -98,21 +104,28 @@ describe('OA-02 账号与批量开通', () => {
     const audit = await ctx.sql`SELECT 1 FROM audit_logs WHERE action = 'oa_staff_imported' AND target_id = ${String(res.import.id)}`;
     expect(audit).toHaveLength(1);
     // 再导一次同样的人：手机号、工号、登录名都被占了
-    const dup = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import/preview', { fileName: 'x.csv', csv: csv('孙七,13811110011,E201,前厅部,,,') });
+    const dup = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import/preview', { fileName: 'x.csv', csv: csv('孙七,13811110011,E201,人力行政部,,,') });
     expect((dup.body as StaffImportPreview).rows[0]!.issues).toHaveLength(3);
   });
 
-  it('确认作废以后，原请求晚到也不开；总裁能开部门负责人', async () => {
+  it('确认作废以后，原请求晚到也不开；总裁能开部门负责人与各部门员工', async () => {
     const key = randomUUID();
     const ab = await api(ctx.app, hrLead, 'POST', `/api/erp/ops/${key}/abandon`, { type: 'oa_staff_import', summary: '批量开通' });
     expect(ab.status, JSON.stringify(ab.body)).toBe(200);
-    const late = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import', { clientKey: key, fileName: 'late.csv', csv: csv('郑十,13811110021,,前厅部,,,') });
+    const late = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import', { clientKey: key, fileName: 'late.csv', csv: csv('郑十,13811110021,,人力行政部,,,') });
     expect(code(late)).toBe('OP_ABANDONED');
     const [n] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM staff_profiles WHERE phone = '13811110021'`;
     expect(n!.n).toBe(0);
 
-    const boss = await api(ctx.app, ctx.owner, 'POST', '/api/oa/employees/import', { clientKey: randomUUID(), fileName: 'lead.csv', csv: csv('钱主管,13811110031,L01,工程部,负责人,,') });
+    const boss = await api(ctx.app, ctx.owner, 'POST', '/api/oa/employees/import', {
+      clientKey: randomUUID(),
+      fileName: 'lead.csv',
+      csv: csv('钱主管,13811110031,L01,工程部,负责人,,', '出纳丙,13811110032,,财务部,员工,,'),
+    });
     expect(boss.status, JSON.stringify(boss.body)).toBe(201);
-    expect((boss.body as StaffImportResult).accounts[0]).toMatchObject({ username: 'l01', position: 'eng.lead' });
+    expect((boss.body as StaffImportResult).accounts.map((a) => [a.username, a.position])).toEqual([
+      ['l01', 'eng.lead'],
+      ['u13811110032', 'finance.staff'],
+    ]);
   });
 });
