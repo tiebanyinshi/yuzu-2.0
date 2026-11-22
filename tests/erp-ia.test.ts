@@ -51,12 +51,12 @@ describe('挪到后台的三个模块', () => {
   it('后台：员工食堂、安保巡场在「人员与行政」，跟着 ERP 模块开关走；只有这几项权限的也进得了后台', () => {
     const staff = ADMIN_GROUPS.find((g) => g.key === 'staff')!;
     expect(staff.title).toBe('人员与行政');
-    // 8.0.22 多门店：「门店与主体」排在最前（门店、公司主体、门店之间的储值结算）
-    expect(staff.items).toEqual(['stores', 'staff', 'permissions', 'canteen', 'patrol']);
+    // 8.0.22 多门店：「门店与主体」排在最前（门店、公司主体、门店之间的储值结算） OA-01：「组织架构」跟在「员工账号」后面
+    expect(staff.items).toEqual(['stores', 'staff', 'org', 'permissions', 'canteen', 'patrol']);
     expect(ADMIN_SECTION_MODULES).toEqual({ canteen: 'canteen', patrol: 'patrol' });
-    // 8.1.1：设计师只有「工作台：编辑 / 发布」，也要进得了后台的「工作台」
-    expect(ADMIN_STANDALONE_SECTIONS).toEqual(['dashboard', 'canteen', 'patrol', 'studio', 'staff']);
-    for (const p of ['canteen.manage', 'patrol.read', 'patrol.manage', 'erp.revenue'] as Permission[]) expect(ADMIN_ENTRY_PERMISSIONS, p).toContain(p);
+    // 8.1.1：设计师只有「工作台：编辑 / 发布」，也要进得了后台的「工作台」；OA-01：只有「组织架构与员工档案」的（人力行政部负责人）也进得了「组织架构」
+    expect(ADMIN_STANDALONE_SECTIONS).toEqual(['dashboard', 'canteen', 'patrol', 'studio', 'staff', 'org']);
+    for (const p of ['canteen.manage', 'patrol.read', 'patrol.manage', 'erp.revenue', 'hr.org'] as Permission[]) expect(ADMIN_ENTRY_PERMISSIONS, p).toContain(p);
     // 权限没变：还是原来那几项
     expect(ADMIN_SECTIONS.canteen.perms).toEqual(ERP_MODULES.canteen.perms);
     expect(ADMIN_SECTIONS.patrol.perms).toEqual(ERP_MODULES.patrol.perms);

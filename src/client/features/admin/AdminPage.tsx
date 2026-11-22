@@ -38,6 +38,8 @@ const StoresSection = lazyPage(() => import('./StoresSection').then((m) => m.Sto
 const TagsTab = lazyPage(() => import('./TagsTab').then((m) => m.TagsTab));
 const CanteenPage = lazyPage(() => import('../canteen/CanteenPage').then((m) => m.CanteenPage));
 const PatrolPage = lazyPage(() => import('../patrol/PatrolPage').then((m) => m.PatrolPage));
+// OA 办公（docs/OA.md）：组织架构与员工档案
+const OrgSection = lazyPage(() => import('../oa/OrgSection').then((m) => m.OrgSection));
 const TechniciansSection = lazyPage(() => import('./TechniciansSection').then((m) => m.TechniciansSection));
 
 /** 旧地址跳到新地址，查询参数（?view=list 这类）带过去 */
@@ -88,6 +90,7 @@ export const adminRoutes: RouteObject[] = [
       </AdminPage>
     ),
   },
+  { path: 'org', element: <OrgSection /> },
   { path: 'permissions', element: <PermissionsSection /> },
   { path: 'stores', element: <StoresSection /> },
   // 8.0.18（IA1）：员工食堂、安保巡场从 ERP 挪到后台「人员与行政」

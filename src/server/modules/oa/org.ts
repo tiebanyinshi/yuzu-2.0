@@ -1,0 +1,226 @@
+// OA-01 组织架构与员工档案（docs/OA.md 第 4 节，OA1–OA5）。
+// 部门沿用 8.1.18 的 15 个部门（不增删），这里只改上级部门与指定主管；员工档案（工号、手机号、入职 / 离职日期）与账号一对一。
+// 办理离职 = 档案记离职、账号停用、登录会话作废；考勤、审批、工资条等历史都不删。
+// 加锁顺序（docs/LOCKING.md「组织架构与员工档案」）：在职店主行 → 目标员工行 → 员工档案行 → 部门行（按 key）。
+
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { departmentOfPosition, EMP_NO_PATTERN, PHONE_PATTERN, wouldCycle, type EmployeeProfile, type EmploymentStatus, type OrgDepartmentNode, type OrgOverview } from '@shared/oa';
+import type { OrgDepartment, PositionKey } from '@shared/positions';
+import { isUniqueViolation, type Db, type Tx } from '../../db';
+import { guardAny } from '../../auth/guard';
+import { destroyStaffSessions } from '../../auth/session';
+import { writeAudit } from '../../lib/audit';
+import type { Deps } from '../../lib/context';
+import { conflict, notFound, unprocessable } from '../../lib/errors';
+import { dateSchema, idParam, parse } from '../../lib/validate';
+
+const canManage = guardAny('hr.org', 'staff.manage');
+
+/** 专用账号（点餐平板、他店查询）不是员工，不进组织架构 */
+const NOT_EMPLOYEE_ROLES = ['tablet', 'other_store'];
+
+const DeptInput = z.object({
+  parentKey: z
+    .string()
+    .regex(/^[a-z]+$/, '上级部门不正确')
+    .nullable(),
+  headStaffId: z.number().int().positive().nullable(),
+});
+const ProfileInput = z.object({
+  empNo: z.string().trim().regex(EMP_NO_PATTERN, '工号为 1–20 位字母、数字、- 或 _').nullable(),
+  phone: z.string().trim().regex(PHONE_PATTERN, '手机号为 11 位数字').nullable(),
+  hireDate: dateSchema('入职日期').nullable(),
+  version: z.number().int().nonnegative(),
+});
+const LeaveInput = z.object({ leaveDate: dateSchema('离职日期'), version: z.number().int().nonnegative() });
+const RehireInput = z.object({ version: z.number().int().nonnegative() });
+const keyParam = z.object({ key: z.string().regex(/^[a-z]+$/, '部门不正确') });
+
+interface EmployeeRow {
+  staffId: number;
+  username: string;
+  name: string;
+  position: PositionKey | null;
+  active: boolean;
+  createdAt: Date;
+  empNo: string | null;
+  phone: string | null;
+  hireDate: string | null;
+  leaveDate: string | null;
+  status: EmploymentStatus | null;
+  version: number | null;
+}
+
+async function employeeRows(db: Db): Promise<EmployeeRow[]> {
+  return db<EmployeeRow[]>`
+    SELECT s.id AS staff_id, s.username, s.display_name AS name, s.position, s.active, s.created_at,
+           p.emp_no, p.phone, p.hire_date::text AS hire_date, p.leave_date::text AS leave_date, p.status, p.version
+    FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
+    WHERE NOT s.system AND s.role <> ALL(${NOT_EMPLOYEE_ROLES})
+    ORDER BY s.id`;
+}
+
+const toProfile = (r: EmployeeRow): EmployeeProfile => ({
+  staffId: r.staffId,
+  username: r.username,
+  name: r.name,
+  position: r.position,
+  department: departmentOfPosition(r.position),
+  active: r.active,
+  empNo: r.empNo,
+  phone: r.phone,
+  hireDate: r.hireDate,
+  leaveDate: r.leaveDate,
+  status: r.status ?? 'active',
+  version: r.version ?? 0,
+});
+
+/** 在职：账号启用、档案不是离职 */
+const isOnDuty = (e: EmployeeProfile) => e.active && e.status === 'active';
+
+/** 部门实际的主管（OA3）：指定的在职就用指定的；否则本部门在职负责人里最早建的；总经办取总经办岗位，公司取总裁 */
+export function effectiveHead(dept: { key: OrgDepartment; headStaffId: number | null }, employees: readonly EmployeeProfile[]): OrgDepartmentNode['head'] {
+  const onDuty = employees.filter(isOnDuty);
+  if (dept.headStaffId) {
+    const e = onDuty.find((x) => x.staffId === dept.headStaffId);
+    if (e) return { id: e.staffId, name: e.name, designated: true };
+  }
+  const leadKey = dept.key === 'company' ? 'president' : dept.key === 'gmo' ? 'gmo' : `${dept.key}.lead`;
+  const lead = onDuty.filter((e) => e.position === leadKey).sort((a, b) => a.staffId - b.staffId)[0];
+  return lead ? { id: lead.staffId, name: lead.name, designated: false } : null;
+}
+
+export async function loadOrg(db: Db): Promise<OrgOverview> {
+  const employees = (await employeeRows(db)).map(toProfile);
+  const depts = await db<{ key: OrgDepartment; name: string; parentKey: OrgDepartment | null; headStaffId: number | null }[]>`
+    SELECT key, name, parent_key, head_staff_id FROM org_departments ORDER BY sort`;
+  const departments = depts.map((d) => ({
+    ...d,
+    head: effectiveHead(d, employees),
+    memberCount: employees.filter((e) => isOnDuty(e) && e.department === d.key).length,
+  }));
+  return { departments, employees };
+}
+
+/** 锁住在职店主行（与 PUT /api/staff/:id 同一个顺序），保证办理离职后至少还有一位在职总裁 */
+async function lockOwners(tx: Tx) {
+  await tx`SELECT id FROM staff WHERE role = 'owner' FOR NO KEY UPDATE`;
+}
+
+async function lockEmployee(tx: Tx, id: number) {
+  const [row] = await tx<{ id: number; system: boolean; role: string }[]>`SELECT id, system, role FROM staff WHERE id = ${id} FOR NO KEY UPDATE`;
+  if (!row || row.system || NOT_EMPLOYEE_ROLES.includes(row.role)) throw notFound('员工不存在');
+  const [profile] = await tx<{ version: number; status: EmploymentStatus; hireDate: string | null }[]>`
+    SELECT version, status, hire_date::text AS hire_date FROM staff_profiles WHERE staff_id = ${id} FOR UPDATE`;
+  return profile ?? null;
+}
+
+function assertVersion(profile: { version: number } | null, version: number) {
+  if ((profile?.version ?? 0) !== version) throw conflict('VERSION_CONFLICT', '这份档案刚被别人改过，请刷新后再改');
+}
+
+function translateUnique(error: unknown): never {
+  if (isUniqueViolation(error, 'staff_profiles_emp_no_key')) throw conflict('EMP_NO_EXISTS', '这个工号已经有人用了');
+  if (isUniqueViolation(error, 'staff_profiles_phone_key')) throw conflict('PHONE_EXISTS', '这个手机号已经是另一位在职员工的');
+  throw error;
+}
+
+export function registerOaOrgRoutes(app: FastifyInstance, { sql }: Deps) {
+  app.get('/api/oa/org', { preHandler: canManage }, async () => loadOrg(sql));
+
+  app.put('/api/oa/org/departments/:key', { preHandler: canManage }, async (req) => {
+    const { key } = parse(keyParam, req.params);
+    const input = parse(DeptInput, req.body);
+    await sql.begin(async (tx) => {
+      const rows = await tx<{ key: string; parentKey: string | null; headStaffId: number | null }[]>`
+        SELECT key, parent_key, head_staff_id FROM org_departments ORDER BY key FOR UPDATE`;
+      const before = rows.find((r) => r.key === key);
+      if (!before) throw notFound('部门不存在');
+      if (key === 'company' ? input.parentKey !== null : !input.parentKey) throw unprocessable('PARENT_INVALID', '公司在最上面，其余部门都要选上级部门');
+      if (input.parentKey && !rows.some((r) => r.key === input.parentKey)) throw unprocessable('PARENT_INVALID', '上级部门不存在');
+      const parents = new Map(rows.map((r) => [r.key, r.parentKey]));
+      if (wouldCycle(parents, key, input.parentKey)) throw unprocessable('PARENT_CYCLE', '上级部门不能选自己或自己下面的部门');
+      if (input.headStaffId) {
+        const [head] = await tx<{ id: number }[]>`
+          SELECT s.id FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
+          WHERE s.id = ${input.headStaffId} AND s.active AND NOT s.system AND coalesce(p.status, 'active') = 'active'`;
+        if (!head) throw unprocessable('HEAD_INVALID', '主管要选一位在职员工');
+      }
+      await tx`UPDATE org_departments SET parent_key = ${input.parentKey}, head_staff_id = ${input.headStaffId} WHERE key = ${key}`;
+      await writeAudit(tx, { staffId: req.actor.id, action: 'org_department_updated', targetType: 'org_department', detail: { key, before, after: input }, ip: req.ip });
+    });
+    return loadOrg(sql);
+  });
+
+  app.put('/api/oa/employees/:id/profile', { preHandler: canManage }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    const input = parse(ProfileInput, req.body);
+    try {
+      await sql.begin(async (tx) => {
+        const profile = await lockEmployee(tx, id);
+        assertVersion(profile, input.version);
+        await tx`
+          INSERT INTO staff_profiles (staff_id, emp_no, phone, hire_date, updated_by)
+          VALUES (${id}, ${input.empNo}, ${input.phone}, ${input.hireDate}, ${req.actor.id})
+          ON CONFLICT (staff_id) DO UPDATE SET emp_no = EXCLUDED.emp_no, phone = EXCLUDED.phone, hire_date = EXCLUDED.hire_date,
+            version = staff_profiles.version + 1, updated_at = now(), updated_by = EXCLUDED.updated_by`;
+        await writeAudit(tx, {
+          staffId: req.actor.id,
+          action: 'employee_profile_updated',
+          targetType: 'staff',
+          targetId: id,
+          detail: { empNo: input.empNo, phone: input.phone, hireDate: input.hireDate },
+          ip: req.ip,
+        });
+      });
+    } catch (error) {
+      translateUnique(error);
+    }
+    return loadOrg(sql);
+  });
+
+  app.post('/api/oa/employees/:id/leave', { preHandler: canManage }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    const input = parse(LeaveInput, req.body);
+    if (id === req.actor.id) throw unprocessable('SELF_LEAVE', '不能给自己办理离职');
+    await sql.begin(async (tx) => {
+      await lockOwners(tx);
+      const profile = await lockEmployee(tx, id);
+      assertVersion(profile, input.version);
+      if (profile?.status === 'left') throw conflict('ALREADY_LEFT', '这位员工已经办过离职');
+      if (profile?.hireDate && input.leaveDate < profile.hireDate) throw unprocessable('LEAVE_BEFORE_HIRE', '离职日期不能早于入职日期');
+      await tx`
+        INSERT INTO staff_profiles (staff_id, status, leave_date, updated_by) VALUES (${id}, 'left', ${input.leaveDate}, ${req.actor.id})
+        ON CONFLICT (staff_id) DO UPDATE SET status = 'left', leave_date = EXCLUDED.leave_date,
+          version = staff_profiles.version + 1, updated_at = now(), updated_by = EXCLUDED.updated_by`;
+      await tx`UPDATE staff SET active = false, updated_at = now() WHERE id = ${id}`;
+      const [owners] = await tx<{ count: number }[]>`SELECT count(*)::int AS count FROM staff WHERE role = 'owner' AND active`;
+      if (!owners || owners.count < 1) throw unprocessable('LAST_OWNER', '至少需要保留一位在职总裁');
+      // 指定的主管离职：这个部门改回按负责人岗位自动取
+      await tx`UPDATE org_departments SET head_staff_id = NULL WHERE head_staff_id = ${id}`;
+      await destroyStaffSessions(tx, id);
+      await writeAudit(tx, { staffId: req.actor.id, action: 'employee_left', targetType: 'staff', targetId: id, detail: { leaveDate: input.leaveDate }, ip: req.ip });
+    });
+    return loadOrg(sql);
+  });
+
+  app.post('/api/oa/employees/:id/rehire', { preHandler: canManage }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    const input = parse(RehireInput, req.body);
+    try {
+      await sql.begin(async (tx) => {
+        await lockOwners(tx);
+        const profile = await lockEmployee(tx, id);
+        assertVersion(profile, input.version);
+        if (!profile || profile.status !== 'left') throw conflict('NOT_LEFT', '这位员工没有办过离职');
+        await tx`UPDATE staff_profiles SET status = 'active', leave_date = NULL, version = version + 1, updated_at = now(), updated_by = ${req.actor.id} WHERE staff_id = ${id}`;
+        await tx`UPDATE staff SET active = true, updated_at = now() WHERE id = ${id}`;
+        await writeAudit(tx, { staffId: req.actor.id, action: 'employee_rehired', targetType: 'staff', targetId: id, ip: req.ip });
+      });
+    } catch (error) {
+      translateUnique(error);
+    }
+    return loadOrg(sql);
+  });
+}
