@@ -40,6 +40,7 @@ import { writeAudit } from '../lib/audit';
 import { ctxOf, type Actor, type Deps, type OpContext } from '../lib/context';
 import { can } from '@shared/permissions';
 import { AppError, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
+import { isFenced } from '../lib/fences';
 import { currentStoreId } from '../lib/store-context';
 import { parse } from '../lib/validate';
 import { assertOrderOutlets } from './dining-order-v8115';
@@ -400,29 +401,36 @@ export function registerRoomOrderRoutes(app: FastifyInstance, deps: Deps) {
     if (!can(req.actor, ROOM_ORDER_PERMISSIONS[p.outlet])) throw forbidden(`你的岗位不能在${ROOM_ORDER_OUTLET_LABELS[p.outlet]}下单，也不能处理它的待确认点单`);
     return p;
   };
-  const opResult = (r: FrontdeskOpLookup): FrontdeskOpLookup => (r.found && r.type !== 'room_order' ? { found: false, abandoned: false } : r);
   app.get('/api/room-center/order-ops/:outlet/:key', { preHandler: order }, async (req) => {
     const { outlet, key } = opParams(req);
-    const { lookupFrontdeskOp } = await import('./frontdesk/visits');
-    return opResult(await lookupOutletOp(lookupFrontdeskOp, key, outlet));
+    return lookupOutletOp(key, outlet);
   });
   app.post('/api/room-center/order-ops/:outlet/:key/abandon', { preHandler: order }, async (req) => {
     const { outlet, key } = opParams(req);
-    const { lookupFrontdeskOp, abandonFrontdeskOp } = await import('./frontdesk/visits');
-    // 编号已经有结果（不管是哪一类）：不作废；只有这个出品口的房态点单才答「生效了」，别的一律「没查到」
-    const peek = await lookupOutletOp(lookupFrontdeskOp, key, outlet);
-    if (peek.found) return opResult(peek);
-    const done = (await abandonFrontdeskOp(deps, key, opTypeOf(outlet), ctxOf(req))) as FrontdeskOpLookup;
-    // 作废时发现编号刚刚（或早已）有了结果：同样按实际的业务类型核对出品口，不是这个出品口的不说生效没生效（Codex 审查 0995112）
-    if (done.found) return lookupOutletOp(lookupFrontdeskOp, key, outlet);
-    return done;
+    const { abandonFrontdeskOp } = await import('./frontdesk/visits');
+    // 编号已经有结果（不管是哪一类）：不作废，只按查回答（只有这个出品口的房态点单才答「生效了」）
+    const [existing] = await sql`SELECT 1 FROM idempotency_keys WHERE key = ${key}`;
+    if (existing) return lookupOutletOp(key, outlet);
+    let done: FrontdeskOpLookup;
+    try {
+      done = (await abandonFrontdeskOp(deps, key, opTypeOf(outlet), ctxOf(req))) as FrontdeskOpLookup;
+    } catch (e) {
+      // 编号刚好被别的业务用上（不是前台那几类）：不说是哪一类，照「没查到」答
+      if (e instanceof AppError && e.code === 'IDEMPOTENCY_CONFLICT') return lookupOutletOp(key, outlet);
+      throw e;
+    }
+    // 作废时编号刚好有了结果（原请求先写了编号）：同样只按查回答（Codex 审查 0995112、1e30017）
+    return done.found ? lookupOutletOp(key, outlet) : done;
   });
-  /** 查回：编号属于另一个出品口的房态点单也答「没查到」 */
-  async function lookupOutletOp(lookup: typeof import('./frontdesk/visits').lookupFrontdeskOp, key: string, outlet: RoomOrderOutlet): Promise<FrontdeskOpLookup> {
-    const [row] = await sql<{ opType: string }[]>`SELECT op_type FROM idempotency_keys WHERE key = ${key}`;
-    if (row && row.opType !== opTypeOf(outlet))
-      return row.opType.startsWith('room_order_') ? { found: false, abandoned: false } : opResult((await lookup(sql, key, deps.config.timezone, opTypeOf(outlet))) as FrontdeskOpLookup);
-    return (await lookup(sql, key, deps.config.timezone, opTypeOf(outlet))) as FrontdeskOpLookup;
+  /**
+   * 查回：只读一次编号（Codex 审查 1e30017），在同一次读取里核对它是这个出品口的房态点单才答「生效了」、记在哪次来访上；
+   * 别的业务、另一个出品口的一律「没查到」。还没有结果的看有没有这个出品口这一类的作废登记
+   */
+  async function lookupOutletOp(key: string, outlet: RoomOrderOutlet): Promise<FrontdeskOpLookup> {
+    const [row] = await sql<{ opType: string; refId: number }[]>`SELECT op_type, ref_id FROM idempotency_keys WHERE key = ${key}`;
+    if (!row) return { found: false, abandoned: await isFenced(sql, key, [opTypeOf(outlet)]) };
+    if (row.opType !== opTypeOf(outlet)) return { found: false, abandoned: false };
+    return { found: true, type: 'room_order', visitId: Number(row.refId) };
   }
   app.get('/api/room-center/rooms/:id/orders', { preHandler: read }, async (req) => roomOrderHistory(sql, roomKey(req)));
   app.post('/api/room-center/rooms/:id/orders', { preHandler: order }, async (req) => placeRoomOrder(deps, roomKey(req), req.body, ctxOf(req)));
