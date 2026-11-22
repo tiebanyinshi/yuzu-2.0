@@ -532,3 +532,54 @@ export interface FaceEnrollSaved {
   enrollment: FaceEnrollment;
   replayed: boolean;
 }
+
+// ───────────────────────── OA-08 考勤结算（docs/OA.md 第 11 节） ─────────────────────────
+
+export type AttendanceStatus = 'normal' | 'abnormal' | 'absent';
+export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = { normal: '正常', abnormal: '异常', absent: '旷工' };
+
+/** 一条排班的结算结果 */
+export interface AttendanceDailyRow {
+  id: number;
+  staffId: number;
+  staffName: string;
+  businessDate: string;
+  shiftId: number;
+  shiftName: string;
+  startMinute: number;
+  endMinute: number;
+  status: AttendanceStatus;
+  lateMinutes: number;
+  earlyMinutes: number;
+  missingIn: boolean;
+  missingOut: boolean;
+  /** 有效卡的打卡时间（门店所在地，可能是前一天 / 第二天）：日期 + HH:MM */
+  inAt: { date: string; time: string } | null;
+  outAt: { date: string; time: string } | null;
+  outwork: boolean;
+  outworkCounted: boolean;
+  facePending: boolean;
+  settledAt: string;
+}
+/** 一条结果的异常写成几个短语（迟到 5 分钟、缺下班卡……）；正常为空 */
+export function attendanceIssues(r: Pick<AttendanceDailyRow, 'status' | 'lateMinutes' | 'earlyMinutes' | 'missingIn' | 'missingOut'>): string[] {
+  if (r.status === 'absent') return ['旷工'];
+  const out: string[] = [];
+  if (r.missingIn) out.push('缺上班卡');
+  if (r.lateMinutes) out.push(`迟到 ${r.lateMinutes} 分钟`);
+  if (r.missingOut) out.push('缺下班卡');
+  if (r.earlyMinutes) out.push(`早退 ${r.earlyMinutes} 分钟`);
+  return out;
+}
+/** 后台「考勤结果」 */
+export interface AttendanceDay {
+  date: string;
+  groups: { id: number; name: string }[];
+  rows: AttendanceDailyRow[];
+  editable: boolean;
+}
+/** 员工「我的考勤」：本人一个月 */
+export interface MyAttendance {
+  month: string;
+  rows: AttendanceDailyRow[];
+}

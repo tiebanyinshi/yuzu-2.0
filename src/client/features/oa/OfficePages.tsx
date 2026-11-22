@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, ScanFace } from 'lucide-react';
+import { Bell, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, ScanFace } from 'lucide-react';
 import { shiftDate } from '@shared/labels';
 import type { MySchedule, MyScheduleItem } from '@shared/oa';
 import { clockText } from '@shared/technician-admin';
@@ -18,11 +18,13 @@ import { LoadFailed } from '../../components/LoadFailed';
 import { Button, Card, Skeleton } from '../../components/ui';
 import { NotificationsPage } from './Notifications';
 import { FacePage } from './FacePage';
+import { MyAttendancePage } from './MyAttendancePage';
 import { PunchPage } from './PunchPage';
 
 const TILES = [
   { to: '/oa/punch', label: '打卡', hint: '按排班打上下班卡、外勤打卡', icon: Fingerprint, testId: 'oa-tile-punch' },
   { to: '/oa/schedule', label: '我的排班', hint: '这个月每天上什么班', icon: CalendarDays, testId: 'oa-tile-schedule' },
+  { to: '/oa/attendance', label: '我的考勤', hint: '每天的考勤结果、迟到缺卡', icon: CalendarCheck, testId: 'oa-tile-attendance' },
   { to: '/oa/face', label: '人脸录入', hint: '打卡要人脸的先录入、等审核', icon: ScanFace, testId: 'oa-tile-face' },
   { to: '/oa/notifications', label: '通知', hint: '排班变更、审批、工资条等提醒', icon: Bell, testId: 'oa-tile-notifications' },
 ];
@@ -39,6 +41,8 @@ export function OfficePage() {
     <PunchPage />
   ) : path === '/oa/face' ? (
     <FacePage />
+  ) : path === '/oa/attendance' ? (
+    <MyAttendancePage />
   ) : (
     <OfficeHomePage />
   );

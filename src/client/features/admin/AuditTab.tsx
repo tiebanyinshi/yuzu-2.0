@@ -25,6 +25,8 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   oa_group_saved: { label: '考勤组', tone: 'neutral' },
   oa_schedule_saved: { label: '排班', tone: 'neutral' },
   oa_face_reviewed: { label: '人脸审核', tone: 'neutral' },
+  oa_attendance_settled: { label: '重新结算考勤', tone: 'neutral' },
+  oa_attendance_outwork: { label: '外勤算不算出勤', tone: 'neutral' },
   oa_staff_imported: { label: '批量开通员工账号', tone: 'neutral' },
   position_chosen: { label: '自选新岗位', tone: 'pine' },
   member_created: { label: '新建会员', tone: 'lake' },
