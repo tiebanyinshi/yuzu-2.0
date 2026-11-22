@@ -4,14 +4,18 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  countMismatches,
   diffPriceCatalogs,
   entryFacts,
   matchesPriceSearch,
+  priceChangeLines,
+  priceEntryProblems,
   priceText,
   windowText,
   type PriceCatalogEntry,
   type PriceCatalogOverview,
   type PriceCatalogSet,
+  type PriceChange,
   type PriceImportPreview,
 } from '../src/shared/price-catalog';
 import { buildWorkbook, type WbSheet } from '../src/server/lib/xlsx';
@@ -333,5 +337,186 @@ describe('价目表录入 第一批：数据模型与导入', () => {
       ['removed', '台球'],
     ]);
     expect(diffPriceCatalogs(active, active)).toEqual([]);
+  });
+});
+
+describe('价目表录入 第三批：编辑与校验', () => {
+  const yuan = (c: number) => `¥${c / 100}`;
+  const importDraft = async (title: string) => {
+    const file = workbook();
+    const p = (await preview(file)).body as PriceImportPreview & { digest: string };
+    const res = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: `${title}.xlsx`, xlsxBase64: file, previewDigest: p.digest, title });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    return res.body as PriceCatalogSet;
+  };
+  const overview = async () => (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as PriceCatalogOverview;
+  const put = (e: PriceCatalogEntry, patch: Partial<PriceCatalogEntry> & { reason?: string }, cookie = ctx.owner) =>
+    api(ctx.app, cookie, 'PUT', `/api/admin/price-catalog/entries/${e.id}`, { ...e, ...patch });
+  const changes = async (setId: number, q = '') => (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${setId}/changes${q}`)).body as PriceChange[];
+
+  it('校验（页面与服务端同一份）：价格形态与价格一致、金额大于 0、待定价不填 0、待定价的菜不能下单、板块 / 餐段认得', async () => {
+    const p = (await preview(workbook())).body as PriceImportPreview;
+    const massage = find(p, '古法中式');
+    expect(priceEntryProblems(massage)).toEqual([]);
+    expect(priceEntryProblems({ ...massage, priceMode: 'single', price2Cents: 59900 })).toContain('单价只填一个价');
+    expect(priceEntryProblems({ ...massage, priceCents: 0 })).toContain('专业价要大于 0、不超过 100 万元');
+    expect(priceEntryProblems({ ...massage, priceMode: 'none' })).toContain('待定价不填价格（空着，不写 0）');
+    expect(priceEntryProblems({ ...massage, section: '足疗' })[0]).toMatch(/^板块不存在/);
+    expect(priceEntryProblems({ ...massage, priceMode: 'rate', priceCents: null, price2Cents: null, rateBp: 1000 })).toContain('只有服务费按比例填');
+    const dish = p.entries.find((e) => e.name === '沙姜炒鸡')!;
+    expect(priceEntryProblems({ ...dish, orderable: true })).toContain('待定价的菜不能下单：先填售价，再设为可下单');
+    expect(priceEntryProblems({ ...dish, section: '宵夜' })[0]).toMatch(/^餐段不认识/);
+    expect(priceEntryProblems({ ...find(p, '台球'), extraPriceCents: null })).toContain('填了每次多少分钟，也要填加钟 / 超时价');
+    expect(countMismatches([{ sheet: 'massage', name: '按摩及助浴价格', expected: 67, actual: 66, parts: [{ name: '康疗', expected: 4, actual: 3 }] }])).toEqual([
+      '按摩及助浴价格：系统 66 / 表格 67',
+      '按摩及助浴价格 · 康疗：系统 3 / 表格 4',
+    ]);
+  });
+
+  it('改价留痕、版本号、名称重复、单条新增、停用 / 启用；切换生效（条数对不上要写原因）、改旧版被拒、整体回滚、放弃草稿', async () => {
+    const draft = await importDraft('第三批草稿');
+    const gufa = draft.entries.find((e) => e.name === '古法中式')!;
+    expect(gufa.version).toBe(1);
+
+    // 改价：旧价 → 新价，记经办人、时间、原因；版本号加一
+    const r1 = await put(gufa, { priceCents: 52900, price2Cents: 62900, reason: '11 月调价' });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+    expect(r1.body).toMatchObject({ priceCents: 52900, price2Cents: 62900, version: 2 });
+    const [c1] = await changes(draft.id);
+    expect(c1).toMatchObject({ action: 'update', entryName: '古法中式', priceChanged: true, reason: '11 月调价', staffName: expect.any(String) });
+    expect(priceChangeLines(c1!.before, c1!.after, yuan)).toEqual([{ label: '价格', from: '专业 ¥499 / 资深 ¥599', to: '专业 ¥529 / 资深 ¥629' }]);
+    // 拿着旧版本号再改：别人先改过了，拒绝，不悄悄覆盖
+    const stale = await put(gufa, { priceCents: 50000 });
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe('PRICE_VERSION');
+    // 什么都没改：不留痕、版本不变
+    const same = await put(r1.body as PriceCatalogEntry, {});
+    expect(same.body.version).toBe(2);
+    expect(await changes(draft.id)).toHaveLength(1);
+    // 只改备注：留痕但不算改价
+    await put(r1.body as PriceCatalogEntry, { note: '含热石' });
+    expect((await changes(draft.id))[0]).toMatchObject({ priceChanged: false });
+    expect(await changes(draft.id, '?priceOnly=1')).toHaveLength(1);
+
+    // 校验在服务端也挡：空价存 0、待定价的菜下单
+    const zero = await put((await changes(draft.id))[0]!.after, { priceCents: 0 });
+    expect(zero.status).toBe(422);
+    expect(zero.body.error.code).toBe('PRICE_INVALID');
+    const dish = draft.entries.find((e) => e.name === '沙姜炒鸡')!;
+    expect((await put(dish, { orderable: true })).body.error.message).toContain('待定价的菜不能下单');
+    // 补价后启用：待定价 → 单价、可下单
+    const priced = await put(dish, { priceMode: 'single', priceCents: 6800, orderable: true, reason: '补价' });
+    expect(priced.body).toMatchObject({ priceMode: 'single', priceCents: 6800, orderable: true });
+    const [c2] = await changes(draft.id);
+    expect(priceChangeLines(c2!.before, c2!.after, yuan)).toEqual([
+      { label: '价格', from: '待定价', to: '¥68' },
+      { label: '能否下单', from: '不可下单', to: '可下单' },
+    ]);
+
+    // 单条新增：同一个板块里同名的（不分大小写、不管空格）拒绝；新的排在这张表最后
+    const base = {
+      sheet: 'massage',
+      kind: 'massage',
+      section: '康疗',
+      category: '',
+      code: '77',
+      unit: '',
+      priceMode: 'single',
+      priceCents: 19900,
+      durationMinutes: 30,
+      venues: ['lobby'],
+      orderable: true,
+    };
+    const dup = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { ...base, name: '古法 中式' });
+    expect(dup.status).toBe(409);
+    expect(dup.body.error.code).toBe('PRICE_NAME_DUPLICATE');
+    // 服务费不能新增；板块不存在挡下
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { ...base, kind: 'service_fee', name: '服务费2' })).status).toBe(422);
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { ...base, section: '足疗', name: '足底' })).body.error.code).toBe('PRICE_INVALID');
+    const created = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { ...base, name: '肩颈放松', reason: '新项目' });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const neu = created.body as PriceCatalogEntry;
+    expect(neu).toMatchObject({ name: '肩颈放松', priceMode: 'single', priceCents: 19900, price2Cents: null, version: 1, active: true, sourceRow: null });
+    expect((await changes(draft.id))[0]).toMatchObject({ action: 'create', before: null, priceChanged: true });
+    const afterCreate = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${draft.id}`)).body as PriceCatalogSet;
+    expect(afterCreate.entries.filter((e) => e.sheet === 'massage').at(-1)!.name).toBe('肩颈放松');
+    expect(afterCreate.total.actual).toBe(draft.total.actual + 1);
+
+    // 停用不删除；停用的不算条数；同名的可以另建，但旧的就不能再启用
+    const off = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${neu.id}/active`, { version: 1, active: false, reason: '暂不做' });
+    expect(off.body).toMatchObject({ active: false, version: 2 });
+    expect((await changes(draft.id))[0]).toMatchObject({ action: 'deactivate', reason: '暂不做', priceChanged: false });
+    expect((await overview()).draft!.total.actual).toBe(draft.total.actual);
+    const again = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${draft.id}/entries`, { ...base, name: '肩颈放松' });
+    expect(again.status).toBe(201);
+    const on = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${neu.id}/active`, { version: 2, active: true });
+    expect(on.body.error.code).toBe('PRICE_NAME_DUPLICATE');
+    await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${again.body.id}/active`, { version: 1, active: false });
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${neu.id}/active`, { version: 2, active: true })).body).toMatchObject({ active: true, version: 3 });
+
+    // 店员不能改
+    expect((await put(neu, { priceCents: 100 }, ctx.clerk)).status).toBe(403);
+
+    // 切换生效：条数与表格（224）对不上，要写原因
+    const short = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: draft.id });
+    expect(short.status).toBe(422);
+    expect(short.body.error.code).toBe('PRICE_COUNT_MISMATCH');
+    expect(short.body.error.message).toContain('按摩及助浴价格');
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: draft.id + 999, countReason: '演练' })).body.error.code).toBe('PRICE_SET_CHANGED');
+    const on1 = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: draft.id, countReason: '合成的演练表，只有一部分' });
+    expect(on1.status, JSON.stringify(on1.body)).toBe(200);
+    expect(on1.body).toMatchObject({ active: { id: draft.id, status: 'active' }, draft: null, previous: null });
+    // 生效中的也能改（马上作数），留痕照记
+    const live = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${draft.id}`)).body as PriceCatalogSet;
+    const ball = live.entries.find((e) => e.name === '台球')!;
+    expect((await put(ball, { extraPriceCents: 2990, reason: '加钟调价' })).body).toMatchObject({ extraPriceCents: 2990 });
+    const [c3] = await changes(draft.id);
+    expect(priceChangeLines(c3!.before, c3!.after, yuan)).toEqual([{ label: '加钟', from: '¥19.9/1 小时', to: '¥29.9/1 小时' }]);
+
+    // 再导一份、切换：原来生效的转停用，成为「上一版」；旧版不能再改
+    const second = await importDraft('第二份');
+    const on2 = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: second.id, countReason: '演练' })).body as PriceCatalogOverview;
+    expect(on2.active!.id).toBe(second.id);
+    expect(on2.previous).toMatchObject({ id: draft.id, status: 'retired', retiredAt: expect.any(String) });
+    const retired = await put(ball, { version: 2, priceCents: 4900 } as Partial<PriceCatalogEntry>);
+    expect(retired.status).toBe(422);
+    expect(retired.body.error.code).toBe('PRICE_SET_RETIRED');
+
+    // 整体回滚：要写原因；拿错了生效的那份不回滚；回滚后上一版生效、刚才那份成为上一版
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '' })).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: draft.id, reason: '演练回滚' })).body.error.code).toBe('PRICE_SET_CHANGED');
+    const back = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚' })).body as PriceCatalogOverview;
+    expect(back.active).toMatchObject({ id: draft.id, status: 'active', retiredAt: null });
+    expect(back.previous).toMatchObject({ id: second.id, status: 'retired' });
+    // 回滚回来的那份里，之前的改价都在
+    const restored = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${draft.id}`)).body as PriceCatalogSet;
+    expect(restored.entries.find((e) => e.name === '古法中式')).toMatchObject({ priceCents: 52900, price2Cents: 62900 });
+    const [activeRow] = await ctx.sql<{ actives: number }[]>`SELECT count(*)::int AS actives FROM price_catalog_sets WHERE status = 'active'`;
+    expect(activeRow!.actives).toBe(1);
+
+    // 放弃草稿：连同条目、留痕一起删
+    const third = await importDraft('不要了');
+    const thirdEntry = third.entries[0]!;
+    await put(thirdEntry, { note: '试改' });
+    const gone = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/discard', { draftId: third.id })).body as PriceCatalogOverview;
+    expect(gone.draft).toBeNull();
+    const [leftRow] = await ctx.sql<{ left: number }[]>`SELECT count(*)::int AS left FROM price_catalog_changes WHERE set_id = ${third.id}`;
+    expect(leftRow!.left).toBe(0);
+
+    // 留痕只追加：不许改
+    await expect(ctx.sql`UPDATE price_catalog_changes SET reason = 'x'`).rejects.toThrow();
+    // 审计：改价、新增、停用、切换、回滚、放弃都有
+    const labels = (await ctx.sql<{ label: string }[]>`SELECT detail->>'label' AS label FROM audit_logs WHERE action = 'price_catalog' ORDER BY id`).map((r) => r.label);
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        '草稿修改「古法中式」（改价）',
+        '草稿新增「肩颈放松」',
+        '草稿停用「肩颈放松」',
+        '生效中的价目表修改「台球」（改价）',
+        expect.stringMatching(/^切换生效「第三批草稿」/),
+        '整体回滚到「第三批草稿」（换下「第二份」）',
+        '放弃草稿「不要了」',
+      ]),
+    );
   });
 });

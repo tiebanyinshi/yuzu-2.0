@@ -1,17 +1,20 @@
 // 全品类价目表（店主 2026-11-22《汤崎宝安全品类价目表录入系统需求说明》，docs/PRICE_CATALOG.md）：
 // 后台 → 价目 → 「全品类价目表」。第一批导入成草稿；第二批（这里）：导入页面、条数对照（系统条数 / 表格条数，按摩分板块、
 // 零点分餐段）、按工作表 / 板块 / 餐段分组列表、搜索（名称、编号、分类、房号）、只看待定价 / 停用、草稿与生效对比。
-// 改价、停用、切换生效、回滚在第三批。价格：无价格写「待定价」，不写 0 元；服务费写百分比。
+// 第三批：单条新增、修改（改价）、停用 / 启用（表单在 PriceEntryDialog.tsx），改动记录（经办人、时间、旧价 → 新价），
+// 一键切换生效（条数与表格对不上要写原因）、整体回滚到上一版、放弃草稿。价格：无价格写「待定价」，不写 0 元；服务费写百分比。
 
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, FileSearch, FileUp, Search } from 'lucide-react';
+import { Check, Download, FileSearch, FileUp, History, Pencil, Plus, Search, Trash2, Undo2 } from 'lucide-react';
 import {
   DISH_SECTIONS,
+  PRICE_CHANGE_LABELS,
   MASSAGE_SECTIONS,
   PRICE_KIND_LABELS,
   PRICE_SHEET_NAMES,
   PRICE_SHEETS,
+  countMismatches,
   diffPriceCatalogs,
   entryFacts,
   matchesPriceSearch,
@@ -19,6 +22,8 @@ import {
   type PriceCatalogEntry,
   type PriceCatalogOverview,
   type PriceCatalogSet,
+  type PriceCatalogSetSummary,
+  type PriceChange,
   type PriceCountCheck,
   type PriceImportPreview,
   type PriceSheet,
@@ -29,8 +34,12 @@ import { loadTableFile, type LoadedTable } from '../../lib/import-file';
 import { formatDateTime } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
 import { LoadFailed } from '../../components/LoadFailed';
+import { Dialog } from '../../components/Overlay';
+import { ReasonDialog } from '../../components/ReasonDialog';
 import { Badge, Button, Card, Input, Notice, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
+import { ChangeLines, PriceEntryDialog, PriceEntryHistory } from './PriceEntryDialog';
 
+/** 价目表的查询都在这个前缀下：改了任何一处整体刷新（概要、条目、改动记录） */
 const overviewKey = ['admin', 'price-catalog'] as const;
 const setKey = (id: number) => ['admin', 'price-catalog', 'set', id] as const;
 
@@ -50,7 +59,7 @@ export function PriceCatalogPane() {
 
   return (
     <div className="space-y-4" data-testid="price-catalog">
-      <ImportCard />
+      <ImportCard onImported={() => setWhich('draft')} />
       {overview.isPending ? (
         <Skeleton className="h-48" />
       ) : overview.isError && !data ? (
@@ -94,6 +103,7 @@ export function PriceCatalogPane() {
                 {k}（本次不录入）：{v}
               </p>
             ))}
+            <SetActions shown={shown} previous={data?.previous ?? null} onDone={(which) => setWhich(which)} />
             <CountTable counts={shown.counts} total={shown.total} />
           </Card>
           {other && otherSet.data && set.data && <DiffCard current={set.data} other={otherSet.data} />}
@@ -102,8 +112,9 @@ export function PriceCatalogPane() {
           ) : set.isError && !set.data ? (
             <LoadFailed title="条目取不回来" onRetry={() => void set.refetch()} />
           ) : set.data ? (
-            <EntryList entries={set.data.entries} />
+            <EntryList key={set.data.id} setId={set.data.id} entries={set.data.entries} />
           ) : null}
+          <ChangesCard setId={shown.id} />
         </>
       )}
     </div>
@@ -155,8 +166,25 @@ function CountTable({ counts, total }: { counts: PriceCountCheck[]; total: { exp
 
 // ───────────────────────── 列表与搜索 ─────────────────────────
 
-function EntryList({ entries }: { entries: PriceCatalogEntry[] }) {
+function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEntry[] }) {
+  const qc = useQueryClient();
   const [sheet, setSheet] = useState<SheetFilter>('all');
+  const [editing, setEditing] = useState<PriceCatalogEntry | 'new' | null>(null);
+  const [history, setHistory] = useState<PriceCatalogEntry | null>(null);
+  const [toggling, setToggling] = useState<PriceCatalogEntry | null>(null);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const refresh = () => qc.invalidateQueries({ queryKey: overviewKey });
+  const toggle = async (e: PriceCatalogEntry, reason: string) => {
+    try {
+      await api.post(`/api/admin/price-catalog/entries/${e.id}/active`, { version: e.version, active: !e.active, reason });
+      setNotice({ tone: 'success', text: `已${e.active ? '停用' : '启用'}「${e.name}」` });
+    } catch (err) {
+      setNotice({ tone: 'error', text: errorMessage(err) });
+    } finally {
+      setToggling(null);
+      await refresh();
+    }
+  };
   const [section, setSection] = useState('');
   const [q, setQ] = useState('');
   const [only, setOnly] = useState<Only>('all');
@@ -213,11 +241,38 @@ function EntryList({ entries }: { entries: PriceCatalogEntry[] }) {
       ),
       dataLabel: '规格',
     },
+    {
+      key: 'actions',
+      header: '',
+      dataLabel: '操作',
+      cell: (e) => (
+        <span className="flex justify-end gap-1">
+          <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" />} onClick={() => setEditing(e)} data-testid="price-entry-edit">
+            改
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setToggling(e)} data-testid="price-entry-toggle">
+            {e.active ? '停用' : '启用'}
+          </Button>
+          <Button size="sm" variant="ghost" icon={<History className="size-3.5" />} onClick={() => setHistory(e)} data-testid="price-entry-history-open">
+            记录
+          </Button>
+        </span>
+      ),
+    },
   ];
   const noneCount = entries.filter((e) => e.priceMode === 'none').length;
   return (
     <Card className="p-5">
-      <SectionTitle>条目</SectionTitle>
+      <SectionTitle
+        aside={
+          <Button size="sm" variant="secondary" icon={<Plus className="size-4" />} onClick={() => setEditing('new')} data-testid="price-catalog-add">
+            新增一项
+          </Button>
+        }
+      >
+        条目
+      </SectionTitle>
+      {notice && <Notice tone={notice.tone} title={notice.text} className="mt-3" data-testid="price-catalog-entry-notice" />}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Segmented<SheetFilter>
           size="sm"
@@ -261,6 +316,214 @@ function EntryList({ entries }: { entries: PriceCatalogEntry[] }) {
         empty="没有符合条件的项目"
         testId="price-catalog-entries"
       />
+      <PriceEntryDialog
+        open={editing !== null}
+        setId={setId}
+        entry={editing === 'new' ? null : editing}
+        defaultSheet={sheet === 'all' ? 'massage' : sheet}
+        onClose={() => setEditing(null)}
+        onSaved={(saved) => {
+          setNotice({ tone: 'success', text: `${editing === 'new' ? '已新增' : '已保存'}「${saved.name}」` });
+          setEditing(null);
+          void refresh();
+        }}
+      />
+      <PriceEntryHistory setId={setId} entry={history} onClose={() => setHistory(null)} />
+      <ReasonDialog
+        open={!!toggling?.active}
+        title={toggling ? `停用「${toggling.name}」` : ''}
+        description="停用不删除：历史单据照旧显示名称与价格；停用的不算条数，需要时可以再启用。"
+        confirmLabel="停用"
+        danger
+        testId="price-entry-off"
+        onClose={() => setToggling(null)}
+        onConfirm={(reason) => void (toggling && toggle(toggling, reason))}
+      />
+      <Dialog
+        open={!!toggling && !toggling.active}
+        onClose={() => setToggling(null)}
+        title={toggling ? `启用「${toggling.name}」` : ''}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setToggling(null)}>
+              取消
+            </Button>
+            <Button variant="primary" onClick={() => void (toggling && toggle(toggling, ''))} data-testid="price-entry-on-confirm">
+              启用
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[13px] text-ink-2">启用后重新算进条数；同一个板块 / 餐段、同一个分类里已经有同名在用的不能启用。</p>
+      </Dialog>
+    </Card>
+  );
+}
+
+// ───────────────────────── 切换生效、回滚、放弃草稿（第三批） ─────────────────────────
+
+function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary; previous: PriceCatalogSetSummary | null; onDone: (which: Which) => void }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState<'activate' | 'rollback' | 'discard' | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const mismatches = countMismatches(shown.counts);
+  const run = async (path: string, body: unknown, which: Which) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/api/admin/price-catalog/${path}`, body);
+      setOpen(null);
+      onDone(which);
+    } catch (e) {
+      setError(errorMessage(e));
+      setOpen(null);
+    } finally {
+      setBusy(false);
+      await qc.invalidateQueries({ queryKey: overviewKey });
+    }
+  };
+  return (
+    <>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {shown.status === 'draft' && (
+          <>
+            <Button variant="primary" size="sm" icon={<Check className="size-4" />} onClick={() => setOpen('activate')} data-testid="price-catalog-activate">
+              切换生效
+            </Button>
+            <Button variant="ghost" size="sm" icon={<Trash2 className="size-4" />} onClick={() => setOpen('discard')} data-testid="price-catalog-discard">
+              放弃草稿
+            </Button>
+          </>
+        )}
+        {shown.status === 'active' && previous && (
+          <Button variant="secondary" size="sm" icon={<Undo2 className="size-4" />} onClick={() => setOpen('rollback')} data-testid="price-catalog-rollback">
+            回滚到上一版「{previous.title}」
+          </Button>
+        )}
+      </div>
+      {error && <Notice tone="error" title={error} className="mt-3" />}
+      {mismatches.length > 0 ? (
+        <ReasonDialog
+          open={open === 'activate'}
+          title={`切换生效「${shown.title}」`}
+          description="条数与表格对不上，核对后写明为什么仍要切换（会记在审计里）。"
+          label="仍要切换的原因"
+          confirmLabel="仍然切换生效"
+          busy={busy}
+          testId="price-catalog-activate"
+          extra={
+            <ul className="mt-3 space-y-0.5 text-[12.5px] text-clay" data-testid="price-catalog-mismatches">
+              {mismatches.map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          }
+          onClose={() => setOpen(null)}
+          onConfirm={(countReason) => void run('activate', { draftId: shown.id, countReason }, 'active')}
+        />
+      ) : (
+        <Dialog
+          open={open === 'activate'}
+          onClose={() => setOpen(null)}
+          title={`切换生效「${shown.title}」`}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setOpen(null)}>
+                取消
+              </Button>
+              <Button variant="primary" loading={busy} onClick={() => void run('activate', { draftId: shown.id }, 'active')} data-testid="price-catalog-activate-confirm">
+                切换生效
+              </Button>
+            </>
+          }
+        >
+          <p className="text-[13px] text-ink-2">条数与表格一致（{shown.total.actual} 项）。切换后原来生效的那份换下来，可以整体回滚到它。</p>
+        </Dialog>
+      )}
+      <ReasonDialog
+        open={open === 'rollback'}
+        title="整体回滚到上一版"
+        description={previous ? `「${shown.title}」换下来，「${previous.title}」恢复生效（之后还能再回滚回来）。` : ''}
+        label="回滚原因"
+        confirmLabel="整体回滚"
+        danger
+        busy={busy}
+        testId="price-catalog-rollback"
+        onClose={() => setOpen(null)}
+        onConfirm={(reason) => void run('rollback', { activeId: shown.id, reason }, 'active')}
+      />
+      <Dialog
+        open={open === 'discard'}
+        onClose={() => setOpen(null)}
+        title={`放弃草稿「${shown.title}」`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpen(null)}>
+              取消
+            </Button>
+            <Button variant="danger" loading={busy} onClick={() => void run('discard', { draftId: shown.id }, 'active')} data-testid="price-catalog-discard-confirm">
+              放弃草稿
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[13px] text-ink-2">草稿和它的改动记录一起删掉（审计里留一条）；生效中的价目表不受影响。</p>
+      </Dialog>
+    </>
+  );
+}
+
+// ───────────────────────── 改动记录（第三批） ─────────────────────────
+
+function ChangesCard({ setId }: { setId: number }) {
+  const [priceOnly, setPriceOnly] = useState(false);
+  const q = useQuery({
+    queryKey: ['admin', 'price-catalog', 'changes', setId, 'all', priceOnly],
+    queryFn: () => api.get<PriceChange[]>(`/api/admin/price-catalog/sets/${setId}/changes${priceOnly ? '?priceOnly=1' : ''}`),
+  });
+  const columns: DataColumn<PriceChange>[] = [
+    { key: 'at', header: '时间', cell: (c) => <span className="num text-[12.5px] text-ink-3">{formatDateTime(c.createdAt)}</span>, dataLabel: '时间' },
+    { key: 'who', header: '经办人', cell: (c) => c.staffName, dataLabel: '经办人' },
+    {
+      key: 'what',
+      header: '项目',
+      cell: (c) => (
+        <span className="flex flex-wrap items-center gap-1.5">
+          <Badge tone={c.priceChanged ? 'ember' : 'neutral'}>{PRICE_CHANGE_LABELS[c.action]}</Badge>
+          <span className="font-semibold">{c.entryName}</span>
+        </span>
+      ),
+      dataLabel: '项目',
+    },
+    { key: 'lines', header: '改了什么（旧 → 新）', cell: (c) => <ChangeLines change={c} />, dataLabel: '改了什么' },
+    { key: 'reason', header: '原因', cell: (c) => <span className="text-ink-3">{c.reason || '—'}</span>, dataLabel: '原因' },
+  ];
+  return (
+    <Card className="p-5" data-testid="price-catalog-changes">
+      <SectionTitle
+        aside={
+          <Segmented
+            size="sm"
+            value={priceOnly ? 'price' : 'all'}
+            onChange={(v) => setPriceOnly(v === 'price')}
+            ariaLabel="看哪些改动"
+            options={[
+              { value: 'all', label: '全部改动' },
+              { value: 'price', label: '只看改价' },
+            ]}
+          />
+        }
+      >
+        改动记录
+      </SectionTitle>
+      {q.isPending ? (
+        <Skeleton className="mt-3 h-24" />
+      ) : q.isError ? (
+        <LoadFailed title="改动记录取不回来" onRetry={() => void q.refetch()} />
+      ) : (
+        <DataTable className="mt-3" columns={columns} rows={q.data} rowKey={(c) => c.id} rowTestId={() => 'price-change'} empty="还没有改动：价格照导入时的表格" testId="price-catalog-change-list" />
+      )}
     </Card>
   );
 }
@@ -302,7 +565,8 @@ function DiffCard({ current, other }: { current: PriceCatalogSet; other: PriceCa
 
 // ───────────────────────── 导入 ─────────────────────────
 
-function ImportCard() {
+/** 导入成草稿以后直接看草稿（onImported） */
+function ImportCard({ onImported }: { onImported: () => void }) {
   const qc = useQueryClient();
   const [file, setFile] = useState<LoadedTable | null>(null);
   const [preview, setPreview] = useState<(PriceImportPreview & { digest: string }) | null>(null);
@@ -344,6 +608,7 @@ function ImportCard() {
       setDone(`已存成草稿「${set.title}」：${set.total.actual} 项。核对下面的条数与价格，确认后再切换生效。`);
       setPreview(null);
       setFile(null);
+      onImported();
       await qc.invalidateQueries({ queryKey: overviewKey });
     } catch (e) {
       setError(errorMessage(e));

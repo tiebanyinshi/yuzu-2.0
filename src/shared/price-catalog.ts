@@ -65,6 +65,8 @@ export interface PriceVariant {
 
 export interface PriceCatalogEntry {
   id?: number;
+  /** 版本号（第三批）：改价、停用带着读到的版本，别人先改了就拒绝；导入预览里的条目没有 */
+  version?: number;
   sheet: PriceSheet;
   kind: PriceKind;
   section: string;
@@ -146,6 +148,7 @@ export interface PriceCatalogSetSummary {
   createdByName: string;
   activatedAt: string | null;
   activatedByName: string | null;
+  retiredAt: string | null;
   counts: PriceCountCheck[];
   total: { expected: number; actual: number };
   notes: Record<string, string>;
@@ -158,6 +161,8 @@ export interface PriceCatalogSet extends PriceCatalogSetSummary {
 export interface PriceCatalogOverview {
   active: PriceCatalogSetSummary | null;
   draft: PriceCatalogSetSummary | null;
+  /** 上一版：最近一次被换下来的那份（整体回滚回到它） */
+  previous: PriceCatalogSetSummary | null;
 }
 
 /** 条数对照（导入预览、数据集都用）：停用的不算 */
@@ -244,7 +249,7 @@ export interface PriceDiff {
 export function diffPriceCatalogs(draft: PriceCatalogEntry[], active: PriceCatalogEntry[]): PriceDiff[] {
   const a = new Map(active.map((e) => [priceEntryKey(e), e]));
   const d = new Map(draft.map((e) => [priceEntryKey(e), e]));
-  const sig = (e: PriceCatalogEntry) => JSON.stringify([e.priceMode, e.priceCents, e.price2Cents, e.rateBp, e.extraPriceCents, e.capCents, e.active, e.orderable]);
+  const sig = (e: PriceCatalogEntry) => JSON.stringify([priceSignature(e), e.active, e.orderable]);
   const out: PriceDiff[] = [];
   for (const [key, e] of d) {
     const old = a.get(key);
@@ -253,4 +258,147 @@ export function diffPriceCatalogs(draft: PriceCatalogEntry[], active: PriceCatal
   }
   for (const [key, e] of a) if (!d.has(key)) out.push({ key, change: 'removed', draft: null, active: e });
   return out;
+}
+
+// ───────────────────────── 编辑与校验（第三批） ─────────────────────────
+
+/** 每张表能新增哪几种（服务费只有一条规则，不新增） */
+export const PRICE_SHEET_KINDS: Record<PriceSheet, PriceKind[]> = {
+  store: ['ticket', 'night_ticket', 'meal_ticket'],
+  entertainment: ['entertainment', 'play_pass'],
+  room: ['room_type', 'party_room', 'dining_room'],
+  dish: ['dish'],
+  massage: ['massage'],
+};
+const KIND_SHEET: Record<PriceKind, PriceSheet> = {
+  ticket: 'store',
+  night_ticket: 'store',
+  meal_ticket: 'store',
+  service_fee: 'store',
+  play_pass: 'entertainment',
+  entertainment: 'entertainment',
+  room_type: 'room',
+  party_room: 'room',
+  dining_room: 'room',
+  dish: 'dish',
+  massage: 'massage',
+};
+
+/** 单价上限：100 万元（分） */
+export const PRICE_MAX_CENTS = 100_000_000;
+
+/** 价格有没有变：形态、两个价、比例、加钟 / 超时、封顶、分档价 */
+export const priceSignature = (e: Pick<PriceCatalogEntry, 'priceMode' | 'priceCents' | 'price2Cents' | 'rateBp' | 'extraPriceCents' | 'extraMinutes' | 'capCents' | 'variants'>) =>
+  JSON.stringify([e.priceMode, e.priceCents, e.price2Cents, e.rateBp, e.extraPriceCents, e.extraMinutes, e.capCents, e.variants.map((v) => [v.label, v.priceCents])]);
+
+/** 逐项校验（页面提交前、服务端写入前用同一份）：返回问题，空数组为通过。名称重复要查库，在服务端另查 */
+export function priceEntryProblems(e: PriceCatalogEntry): string[] {
+  const out: string[] = [];
+  const amount = (v: number | null, label: string) => {
+    if (v !== null && (!Number.isInteger(v) || v <= 0 || v > PRICE_MAX_CENTS)) out.push(`${label}要大于 0、不超过 100 万元`);
+  };
+  const len = (v: string, max: number, label: string) => {
+    if (v.length > max) out.push(`${label}最多 ${max} 个字`);
+  };
+  if (!e.name.trim()) out.push('请填名称');
+  len(e.name, 48, '名称');
+  len(e.code, 12, '编号');
+  len(e.section, 20, e.sheet === 'dish' ? '餐段' : '板块');
+  len(e.category, 20, '分类');
+  len(e.unit, 8, '单位');
+  len(e.note, 400, '备注');
+  len(e.audience, 400, '核心人群');
+  len(e.content, 800, '操作内容');
+  len(e.highlight, 400, '项目亮点');
+  if (KIND_SHEET[e.kind] !== e.sheet) out.push(`「${PRICE_KIND_LABELS[e.kind]}」不属于${PRICE_SHEET_NAMES[e.sheet]}`);
+  if (e.sheet === 'massage' && !(MASSAGE_SECTIONS as readonly string[]).includes(e.section)) out.push(`板块不存在：要是 ${MASSAGE_SECTIONS.join('、')} 之一`);
+  if (e.sheet === 'dish' && !(DISH_SECTIONS as readonly string[]).includes(e.section)) out.push(`餐段不认识：要是 ${DISH_SECTIONS.join('、')} 之一`);
+  if ((e.kind === 'service_fee') !== (e.priceMode === 'rate')) out.push(e.kind === 'service_fee' ? '服务费按比例填' : '只有服务费按比例填');
+  if (e.priceMode === 'rate' && (e.rateBp === null || !Number.isInteger(e.rateBp) || e.rateBp < 1 || e.rateBp > 10000)) out.push('比例要在 0.01% 到 100% 之间');
+  if (e.priceMode === 'dual' && (e.priceCents === null || e.price2Cents === null)) out.push('双价要填专业价和资深价');
+  if (e.priceMode === 'single' && e.priceCents === null) out.push('请填价格；没有价格的选「待定价」');
+  if ((e.priceMode === 'none' || e.priceMode === 'rate') && (e.priceCents !== null || e.price2Cents !== null)) out.push('待定价不填价格（空着，不写 0）');
+  if (e.priceMode === 'single' && e.price2Cents !== null) out.push('单价只填一个价');
+  if (e.priceMode !== 'rate' && e.rateBp !== null) out.push('只有服务费按比例填');
+  amount(e.priceCents, e.priceMode === 'dual' ? '专业价' : '价格');
+  amount(e.price2Cents, '资深价');
+  amount(e.extraPriceCents, e.sheet === 'entertainment' ? '加钟价' : '超时价');
+  amount(e.capCents, '封顶价');
+  if (e.kind === 'dish' && e.priceMode === 'none' && e.orderable) out.push('待定价的菜不能下单：先填售价，再设为可下单');
+  if (e.durationMinutes !== null && (!Number.isInteger(e.durationMinutes) || e.durationMinutes < 1 || e.durationMinutes > 2880)) out.push('时长要在 1 到 2880 分钟之间');
+  if (e.extraMinutes !== null && (!Number.isInteger(e.extraMinutes) || e.extraMinutes < 1 || e.extraMinutes > 1440)) out.push('加钟 / 超时每次要在 1 到 1440 分钟之间');
+  if (e.extraMinutes !== null && e.extraPriceCents === null) out.push('填了每次多少分钟，也要填加钟 / 超时价');
+  if ((e.windowStart === null) !== (e.windowEnd === null)) out.push('时段要填开始和结束');
+  for (const w of [e.windowStart, e.windowEnd]) if (w !== null && (!Number.isInteger(w) || w < 0 || w > 1439)) out.push('时段的时刻不对');
+  if (e.unitsCount !== null && (!Number.isInteger(e.unitsCount) || e.unitsCount < 0 || e.unitsCount > 999)) out.push('台位 / 间数要在 0 到 999 之间');
+  for (const v of e.variants) {
+    if (!v.label.trim() || v.label.length > 20) out.push('分档要有名称（最多 20 个字）');
+    amount(v.priceCents, `分档「${v.label}」的价格`);
+    if (v.minutes !== null && (!Number.isInteger(v.minutes) || v.minutes < 1 || v.minutes > 2880)) out.push(`分档「${v.label}」的时长不对`);
+  }
+  return [...new Set(out)];
+}
+
+/** 名称重复的键：同一张表、同一个板块 / 餐段、同一个分类里，不分大小写、不管空格 */
+export const priceNameKey = (e: Pick<PriceCatalogEntry, 'sheet' | 'section' | 'category' | 'name'>) => `${e.sheet}|${e.section}|${e.category}|${e.name.replace(/\s+/g, '').toLowerCase()}`;
+
+/** 切换生效前的条数核对：与表格对不上的写成一句一句 */
+export function countMismatches(counts: PriceCountCheck[]): string[] {
+  const out: string[] = [];
+  for (const c of counts) {
+    if (c.actual !== c.expected) out.push(`${c.name}：系统 ${c.actual} / 表格 ${c.expected}`);
+    for (const p of c.parts) if (p.actual !== p.expected) out.push(`${c.name} · ${p.name}：系统 ${p.actual} / 表格 ${p.expected}`);
+  }
+  return out;
+}
+
+export type PriceChangeAction = 'create' | 'update' | 'deactivate' | 'reactivate';
+export const PRICE_CHANGE_LABELS: Record<PriceChangeAction, string> = { create: '新增', update: '修改', deactivate: '停用', reactivate: '启用' };
+
+/** 改价留痕的一条：经办人、时间、改前与改后（「旧价 → 新价」由 priceChangeLines 算） */
+export interface PriceChange {
+  id: number;
+  setId: number;
+  entryId: number;
+  action: PriceChangeAction;
+  entryName: string;
+  before: PriceCatalogEntry | null;
+  after: PriceCatalogEntry;
+  priceChanged: boolean;
+  reason: string;
+  staffName: string;
+  createdAt: string;
+}
+
+/** 改了什么：一行一个字段「标签：旧 → 新」；价格那一行在最前 */
+export function priceChangeLines(before: PriceCatalogEntry | null, after: PriceCatalogEntry, yuan: (cents: number) => string): { label: string; from: string; to: string }[] {
+  const money = (v: number | null) => (v === null ? '—' : yuan(v));
+  const text = (e: PriceCatalogEntry) => ({
+    价格: priceText(e, yuan),
+    分档: e.variants.map((v) => `${v.label} ${v.priceCents === null ? '—' : yuan(v.priceCents)}`).join('；'),
+    [e.sheet === 'entertainment' ? '加钟' : '超时']: e.extraPriceCents === null ? '—' : `${yuan(e.extraPriceCents)}/${minutesText(e.extraMinutes ?? 60)}`,
+    封顶: money(e.capCents),
+    名称: e.name,
+    编号: e.code,
+    [e.sheet === 'dish' ? '餐段' : '板块']: e.section,
+    分类: e.category,
+    单位: e.unit,
+    时长: minutesText(e.durationMinutes),
+    时段: windowText(e.windowStart, e.windowEnd),
+    [e.sheet === 'entertainment' ? '台位' : '间数']: e.unitsCount === null ? '' : String(e.unitsCount),
+    房号: e.roomNumbers.join(' '),
+    适用房型: e.venues.map((v) => PRICE_VENUE_LABELS[v]).join(' / '),
+    适用性别: e.gender ? PRICE_GENDER_LABELS[e.gender] : '',
+    能否下单: e.orderable ? '可下单' : '不可下单',
+    状态: e.active ? '在用' : '已停用',
+    备注: e.note,
+    核心人群: e.audience,
+    操作内容: e.content,
+    项目亮点: e.highlight,
+  });
+  const to = text(after);
+  const from = before ? text(before) : null;
+  return Object.entries(to)
+    .filter(([k, v]) => (from ? from[k] !== v : v !== '' && v !== '—' && k !== '状态' && k !== '能否下单'))
+    .map(([label, v]) => ({ label, from: from ? from[label] || '（空）' : '', to: v || '（空）' }));
 }
