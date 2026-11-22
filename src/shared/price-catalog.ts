@@ -311,13 +311,17 @@ export function withDerivedPrice(e: PriceCatalogEntry): PriceCatalogEntry {
 /** 单价上限：100 万元（分） */
 export const PRICE_MAX_CENTS = 100_000_000;
 
-/** 价格有没有变：形态、两个价、比例、基础价含的时长、加钟 / 超时、封顶、分档（档名、价、时长、单位） */
-export const priceSignature = (e: Pick<PriceCatalogEntry, 'priceMode' | 'priceCents' | 'price2Cents' | 'rateBp' | 'durationMinutes' | 'extraPriceCents' | 'extraMinutes' | 'capCents' | 'variants'>) =>
+/** 价格有没有变：形态、两个价、比例、计价单位、基础价含的时长、加钟 / 超时、封顶、分档（档名、价、时长、单位） */
+export const priceSignature = (
+  e: Pick<PriceCatalogEntry, 'priceMode' | 'priceCents' | 'price2Cents' | 'rateBp' | 'unit' | 'durationMinutes' | 'extraPriceCents' | 'extraMinutes' | 'capCents' | 'variants'>,
+) =>
   JSON.stringify([
     e.priceMode,
     e.priceCents,
     e.price2Cents,
     e.rateBp,
+    // 计价单位（份 → 位，钱数不变也是改了价）
+    e.unit,
     // 基础价含多久（娱乐 39 元 2 小时改成 1 小时，钱数不变也是改了价）
     e.durationMinutes,
     e.extraPriceCents,

@@ -682,6 +682,10 @@ export function parsePriceCatalog(book: XlsxWorkbook): ParsedPriceCatalog {
     }
     if (e.active) firstRow.set(key, e.sourceRow);
     if (reported.has(where)) continue;
+    // 房间的分档都是从表里认出来的金额生成的：价格空着，就是写了但不合法（0 元、多于两位小数……），不当成「没填」
+    for (const v of e.sheet === 'room' ? e.variants : []) {
+      if (v.priceCents === null) ctx.error(e.sheet, e.sourceRow, '收费参考', `「${e.name}」的「${v.label}」金额不对：要大于 0、按元写、最多两位小数`);
+    }
     for (const problem of priceEntryProblems(e)) ctx.error(e.sheet, e.sourceRow, e.name, problem);
   }
   const notes: Record<string, string> = {};

@@ -823,4 +823,22 @@ describe('价目表录入 审查修正（PR #160）', () => {
     ]);
     expect((await issuesOf({ 按摩及助浴价格: massage })).find((i) => i.level === 'error')!.message).toContain('核心针对人群');
   });
+
+  it('第七轮审查：房间分档写了不合法的金额报错；只改计价单位也算改价', async () => {
+    const rooms = (price: string, rule: string | null, type: string) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        [type, '9间', price, rule, 'H201-H209'],
+      ]);
+    for (const [price, rule] of [
+      ['6小时：0\n12小时：1599', null],
+      ['6小时：999\n12小时：1599', '包天：0'],
+    ] as const) {
+      const errs = (await issuesOf({ 房间价格: rooms(price, rule, '轰趴房') })).filter((i) => i.level === 'error');
+      expect(errs[0], `${price} ${rule}`).toMatchObject({ sheet: '房间价格', row: 2, field: '收费参考' });
+    }
+    const p = (await preview(workbook())).body as PriceImportPreview;
+    const changed = p.entries.map((e) => (e.name === '生滚牛肉粥' ? { ...e, unit: '位' } : e));
+    expect(diffPriceCatalogs(changed, p.entries).map((d) => [d.change, d.draft?.name])).toEqual([['changed', '生滚牛肉粥']]);
+  });
 });
