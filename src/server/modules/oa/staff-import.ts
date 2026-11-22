@@ -10,6 +10,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
+  departmentOfPosition,
   EMP_NO_PATTERN,
   PHONE_PATTERN,
   STAFF_IMPORT_COLUMNS,
@@ -117,12 +118,18 @@ async function plan(db: Db, f: z.infer<typeof FileInput>, actor: Actor): Promise
 
   // 只有 hr.org、没有 staff.manage 的（人力行政部负责人）只能开出权限不超过自己的岗位（Codex 安全审查 5eeb9ed）：
   // 开通的人拿得到临时密码，开出比自己权限多的账号就等于给自己加了权限（例如开两个财务部员工，绕过财务的一人经办、另一人复核）
+  // 而且只能开本部门的（Codex 安全审查 2d44890）：人事被加了财务的权限时，权限不超过自己也能开出两个财务部员工，
+  // 一个改供应商账户、另一个复核，绕过「不是同一个人」的双人复核；别的部门的账号一律总裁开
   if (!canLead) {
+    const ownDept = departmentOfPosition(actor.position);
+    for (const x of rows) {
+      if (x.department && x.department !== ownDept) x.issues.push(`您只能开本部门（${ownDept ? deptLabel(ownDept) : '无部门'}）的员工，「${deptLabel(x.department)}」的账号要总裁开`);
+    }
     const overrides = await loadRoleOverrides(db);
     const mine = (p: Permission) => (actor.permissions ? actor.permissions.includes(p) : can(actor, p));
     const extraOf = new Map<PositionKey, Permission[]>();
     for (const x of rows) {
-      if (!x.position || x.position.endsWith('.lead')) continue;
+      if (!x.position || x.position.endsWith('.lead') || x.issues.length) continue;
       if (!extraOf.has(x.position)) {
         const def = positionOf(x.position);
         extraOf.set(
@@ -190,14 +197,28 @@ async function applyImport(deps: Deps, raw: unknown, actor: Actor, ip?: string):
     if (already.opType !== 'oa_staff_import' || already.requestHash !== requestHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次操作，请刷新页面后重新选择文件');
     return importResult(sql, Number(already.refId), true);
   }
+  // 同一时间只开一批（Codex 安全审查 2d44890）：几百个 scrypt 散列很费 CPU，几批同时来会把整个服务拖住；
+  // 先占住这一个名额再核对、算散列（一个一个算，不一次全排进线程池），别的批次直接回「正在开通」，等这一批开完再提交
+  if (importBusy) throw conflict('IMPORT_BUSY', '另一批员工正在开通，请等它完成后再开（结果待确认的请稍后查回或重新提交）');
+  importBusy = true;
+  try {
+    return await applyLocked(deps, f, requestHash, actor, ip);
+  } finally {
+    importBusy = false;
+  }
+}
+
+let importBusy = false;
+
+async function applyLocked(deps: Deps, f: z.infer<typeof ApplyInput>, requestHash: string, actor: Actor, ip?: string): Promise<StaffImportResult> {
+  const { sql } = deps;
   const draft = await plan(sql, f, actor);
   if (draft.issueCount) throw invalid(draft);
-  const secrets = await Promise.all(
-    draft.rows.map(async () => {
-      const password = generateTempPassword();
-      return { password, hash: await hashPassword(password) };
-    }),
-  );
+  const secrets: { password: string; hash: string }[] = [];
+  for (let i = 0; i < draft.rows.length; i += 1) {
+    const password = generateTempPassword();
+    secrets.push({ password, hash: await hashPassword(password) });
+  }
 
   const passwords = new Map<number, string>();
   const outcome = await sql.begin(async (tx) => {

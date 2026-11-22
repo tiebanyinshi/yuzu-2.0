@@ -56,7 +56,7 @@ describe('OA-02 账号与批量开通', () => {
     // 权限比自己多的岗位（财务部员工）：人力行政部负责人开不了，要总裁开
     const fin = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import/preview', { fileName: 'f.csv', csv: csv('出纳甲,13811110091,,财务部,员工,,', '出纳乙,13811110092,,财务部,员工,,') });
     const finRows = (fin.body as StaffImportPreview).rows;
-    expect(finRows.every((x) => x.issues.some((i) => i.includes('您自己没有的权限')))).toBe(true);
+    expect(finRows.every((x) => x.issues.some((i) => i.includes('本部门') && i.includes('要总裁开')))).toBe(true);
     const finApply = await api(ctx.app, hrLead, 'POST', '/api/oa/employees/import', { clientKey: randomUUID(), fileName: 'f.csv', csv: csv('出纳甲,13811110091,,财务部,员工,,') });
     expect(code(finApply)).toBe('IMPORT_INVALID');
     // 有问题的不能开
