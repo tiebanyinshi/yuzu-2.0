@@ -51,14 +51,14 @@ export async function loadLeaveTypes(db: Db): Promise<LeaveType[]> {
   return (await db<TypeRow[]>`SELECT ${TYPE_COLS(db)} FROM oa_leave_types ORDER BY active DESC, sort, id`).map(toType);
 }
 
-type LockedType = { name: string; hasBalance: boolean; active: boolean; annualTiers: LeaveTier[] | null };
+type LockedType = { name: string; hasBalance: boolean; active: boolean; proofRequired: boolean; annualTiers: LeaveTier[] | null };
 /**
  * 动余额之前先对假种加共享锁，事务提交前别人改不了这个假种的设置（修改假种对那一行 FOR UPDATE）：
  * 不然调整读到「管余额」以后、人事同时关掉「管余额」（那时余额还是 0 所以放行），调整照样加上，留下看不见的余额（Codex 审查 3c1cf1b）。
  * 顺序：假种行（FOR SHARE）→ 余额行（lockBalance）。OA-13 请假扣减照这个顺序
  */
 export async function lockLeaveType(tx: Tx, leaveTypeId: number): Promise<LockedType | null> {
-  const [t] = await tx<LockedType[]>`SELECT name, has_balance, active, annual_tiers FROM oa_leave_types WHERE id = ${leaveTypeId} FOR SHARE`;
+  const [t] = await tx<LockedType[]>`SELECT name, has_balance, active, proof_required, annual_tiers FROM oa_leave_types WHERE id = ${leaveTypeId} FOR SHARE`;
   return t ?? null;
 }
 

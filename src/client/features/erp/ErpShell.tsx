@@ -165,7 +165,7 @@ export function ErpShell() {
     icon: ICONS[k],
     badge:
       k === 'approvals' && todo.data
-        ? todo.data.mine + todo.data.backfill + todo.data.accept
+        ? todo.data.mine + todo.data.backfill + todo.data.accept + todo.data.office
         : k === 'contracts'
           ? contractsDue.length
           : k === 'payments'

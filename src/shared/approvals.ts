@@ -296,6 +296,8 @@ export interface ApprovalCounts {
   backfill: number;
   /** 急采待验收（部门登记、等仓库到部门验收；负责人看，自己登记的不算，店主除外） */
   accept: number;
+  /** 办公审批（OA-11）待我审批的张数：角标合起来算，审批中心页上方提示、点过去到「办公 → 审批」 */
+  office: number;
 }
 
 export interface ApprovalRuleView {

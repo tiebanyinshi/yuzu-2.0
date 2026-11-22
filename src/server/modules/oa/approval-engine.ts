@@ -20,9 +20,10 @@ import {
   type ApprovalTemplate,
 } from '@shared/oa-approval';
 import type { OrgDepartment, PositionKey } from '@shared/positions';
-import type { Db, Fragment, Tx } from '../../db';
+import type { Db, Fragment } from '../../db';
 import type { Actor } from '../../lib/context';
 import { unprocessable } from '../../lib/errors';
+import { TEMPLATE_HOOKS, type ApprovalHooks } from './approval-templates';
 import { attachmentsOf } from './attachments';
 import { loadOrg } from './org';
 
@@ -36,16 +37,7 @@ const CONDITIONS: Record<ApprovalCondition, { applies: (code: string, form: Appr
   expense_over_5000: { applies: (code, form) => code === 'expense' && Number(form.amount ?? 0) > 500_000, level: { kind: 'gmo' }, label: '超过 5000 元加签' },
 };
 
-/** 模板的挂接点：提交前整理表单、通过 / 驳回 / 撤销以后的联动（在同一个事务里、排在最后） */
-interface ApprovalHooks {
-  /** 提交前：核对与补算（如请假时长），可以改写表单与标题；不通过就抛错 */
-  prepare?: (tx: Tx, ctx: { applicant: Actor; form: ApprovalForm }) => Promise<{ form?: ApprovalForm; title?: string } | void>;
-  onApproved?: (tx: Tx, approval: { id: number; applicantId: number; form: ApprovalForm }) => Promise<void>;
-  onClosed?: (tx: Tx, approval: { id: number; applicantId: number; form: ApprovalForm; status: 'rejected' | 'withdrawn' }) => Promise<void>;
-}
-/** 各模板的挂接点：OA-11（请假时长、补卡核对等）与 OA-13（考勤、假期余额联动）在这里按模板编码加 */
-const hooks: Record<string, ApprovalHooks> = {};
-export const hooksOf = (code: string): ApprovalHooks => hooks[code] ?? {};
+export const hooksOf = (code: string): ApprovalHooks => TEMPLATE_HOOKS[code] ?? {};
 
 export const TEMPLATE_COLS = (db: Db) => db`id, code, name, description, fields, levels, conditions, cc, active, sort, version`;
 export const toTemplate = (r: ApprovalTemplate): ApprovalTemplate => ({ ...r, id: Number(r.id) });
