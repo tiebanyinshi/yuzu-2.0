@@ -508,6 +508,18 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     if (/超时/.test(rule) && !over) ctx.error(S, r, '收费参考', `超时价「${oneLine(rule)}」看不懂或金额不对（写 超时199/H，金额大于 0、最多两位小数）`);
     else if (rule && !over) ctx.warn(S, r, '备注', `超时价「${oneLine(rule)}」没认出来`);
     if (/封顶/.test(rule) && cap === null) ctx.error(S, r, '收费参考', `封顶价「${oneLine(rule)}」看不懂或金额不对（写 999封顶，金额大于 0、最多两位小数）`);
+    // 另外的价格档（棋牌房「699/8H」）逐行核对：一行像是在写一档（有「/xH」「x小时:」「包天」）却认不全的报错，不跳过它
+    for (const line of half(rule)
+      .split('\n')
+      .map((x) => x.trim())
+      .filter((x) => x && !/超时|封顶/.test(x))) {
+      const looksTier = /[/／]\s*\d+(?:\.\d+)?\s*(?:H|h|小时)|(?:小时|H|h)\s*:|包天/.test(line);
+      const tier =
+        /^(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*[/／]\s*\d+(?:\.\d+)?\s*(?:H|h|小时)$/.exec(line) ??
+        /^\d+(?:\.\d+)?\s*(?:小时|H|h)\s*:\s*(\d+(?:\.\d+)?)$/.exec(line) ??
+        /^包天\s*:\s*(\d+(?:\.\d+)?)$/.exec(line);
+      if (looksTier && (!tier || yuanToCents(tier[1]!) === null)) ctx.error(S, r, '收费参考', `价格档「${oneLine(line)}」看不懂或金额不对（一行写一档，例如 699/8H）`);
+    }
     const rooms = roomsAt(r, note.split('\n')[0] ?? note);
     out.push({
       ...single(base, start?.cents ?? null),

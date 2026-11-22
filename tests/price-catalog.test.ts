@@ -1261,4 +1261,17 @@ describe('价目表录入 第四批：对接收银项目', () => {
     expect(ok.errorCount).toBe(0);
     expect(find(ok, '台球').extraPriceCents).toBe(1990);
   });
+
+  it('第二十六轮审查：按时计费的房型另写的价格档逐行核对（「abc/12H」报错，不只留下 8H 档）', async () => {
+    const chess = (rule: string) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        ['棋牌房', '5间', '399/2H起开', rule, 'Q301 Q302'],
+      ]);
+    const bad = ((await preview(workbook({ 房间价格: chess('超时199/H\n699/8H\nabc/12H') }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
+    expect(bad[0]).toMatchObject({ row: 2, field: '收费参考' });
+    const ok = (await preview(workbook({ 房间价格: chess('超时199/H\n699/8H\n999封顶') }))).body as PriceImportPreview;
+    expect(ok.errorCount).toBe(0);
+    expect(find(ok, '棋牌房').variants.map((v) => [v.label, v.priceCents])).toEqual([['8小时', 69900]]);
+  });
 });
