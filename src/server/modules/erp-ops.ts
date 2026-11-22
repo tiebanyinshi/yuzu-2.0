@@ -150,6 +150,8 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   // OA-06 打卡：登录就能打，只能查回、作废自己的（SELF_OPS）
   oa_punch: [],
   oa_face_enroll: [],
+  // OA-07 人脸审核：与审核接口一致
+  oa_face_review: ['hr.attendance'],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -229,6 +231,8 @@ const READ: Record<ErpOpType, Permission[]> = {
   // OA-06 打卡：登录就能打，只能查回、作废自己的（SELF_OPS）
   oa_punch: [],
   oa_face_enroll: [],
+  // OA-07 人脸审核：与审核接口一致
+  oa_face_review: ['hr.attendance'],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {

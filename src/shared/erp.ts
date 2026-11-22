@@ -485,6 +485,8 @@ export const ERP_OP_TYPES = [
   'oa_punch',
   // OA-07 提交人脸录入
   'oa_face_enroll',
+  // OA-07 人脸审核（通过、退回、停用）
+  'oa_face_review',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -563,6 +565,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   oa_schedule_save: '保存排班',
   oa_punch: '打卡',
   oa_face_enroll: '提交人脸录入',
+  oa_face_review: '人脸审核',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */

@@ -4,11 +4,21 @@
 //   · 后台「考勤设置 → 人脸审核」（hr.attendance）：通过（旧的那份记 replaced）、退回（写原因）、停用已通过的；结果发站内通知、记审计。
 //     只列这家门店的员工（人脸跟人走，审核谁都一样，但后台按门店看人）。
 //   · 打卡时用 approvedPhotos() 取已通过的照片交给比对服务（punches.ts）。
-// 加锁：提交 = 操作编号 → 员工的人脸咨询锁（同一人的提交串行）；审核 = 录入行 FOR UPDATE（→ 同一人已通过的那一行）。
+// 加锁（docs/LOCKING.md「人脸录入与审核」）：提交 = 操作编号 → 员工的人脸咨询锁 → 照片附件行；审核 = 操作编号 → 录入行 FOR UPDATE → 同一人已通过的那一行。
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { FACE_NOTE_MAX, FACE_PHOTO_COUNT, type FaceEnrollment, type FaceEnrollmentStatus, type FaceEnrollSaved, type FaceStatus, type MyFace } from '@shared/oa';
+import {
+  FACE_NOTE_MAX,
+  FACE_PHOTO_COUNT,
+  type FaceEnrollment,
+  type FaceEnrollmentPage,
+  type FaceEnrollmentStatus,
+  type FaceEnrollSaved,
+  type FaceReviewSaved,
+  type FaceStatus,
+  type MyFace,
+} from '@shared/oa';
 import { can } from '@shared/permissions';
 import type { Db, Fragment } from '../../db';
 import { guard } from '../../auth/guard';
@@ -17,6 +27,7 @@ import type { Deps } from '../../lib/context';
 import { conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
 import { assertNotFenced, lockOpKey } from '../../lib/fences';
 import { hashRequest } from '../../lib/idempotency';
+import { currentStoreId } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
 import { erpOpAbandoned } from '../erp-ops';
 import { attachmentsOf, bindAttachments, registerAttachmentRef } from './attachments';
@@ -28,12 +39,23 @@ const EnrollInput = z.object({
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   photoIds: z.array(z.number().int().positive()).length(FACE_PHOTO_COUNT, `要 ${FACE_PHOTO_COUNT} 张照片`),
 });
+const reviewKey = {
+  /** 操作编号（oa_face_review）：结果不确定的在页面上方查回、原样重提或确认作废 */
+  clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
+  storeId: z.number().int().positive(),
+};
 const ReviewInput = z.discriminatedUnion('decision', [
-  z.object({ decision: z.literal('approve'), note: z.string().trim().max(FACE_NOTE_MAX).optional() }),
-  z.object({ decision: z.literal('reject'), note: z.string().trim().min(1, '退回要写原因').max(FACE_NOTE_MAX) }),
-  z.object({ decision: z.literal('revoke'), note: z.string().trim().min(1, '停用要写原因').max(FACE_NOTE_MAX) }),
+  z.object({ ...reviewKey, decision: z.literal('approve'), note: z.string().trim().max(FACE_NOTE_MAX).optional() }),
+  z.object({ ...reviewKey, decision: z.literal('reject'), note: z.string().trim().min(1, '退回要写原因').max(FACE_NOTE_MAX) }),
+  z.object({ ...reviewKey, decision: z.literal('revoke'), note: z.string().trim().min(1, '停用要写原因').max(FACE_NOTE_MAX) }),
 ]);
-const ListQuery = z.object({ status: z.enum(['pending', 'approved']).default('pending') });
+/** 列表：每页 FACE_PAGE 份，按提交时间倒序；before 是上一页最后一份的 id；q 按姓名、登录名找 */
+const FACE_PAGE = 50;
+const ListQuery = z.object({
+  status: z.enum(['pending', 'approved']).default('pending'),
+  q: z.string().trim().max(30).optional(),
+  before: z.coerce.number().int().positive().optional(),
+});
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 
 type Row = {
@@ -47,11 +69,11 @@ type Row = {
   reviewNote: string | null;
 };
 
-async function load(db: Db, where: Fragment): Promise<FaceEnrollment[]> {
+async function load(db: Db, where: Fragment, limit = 200): Promise<FaceEnrollment[]> {
   const rows = await db<Row[]>`
     SELECT e.id, e.staff_id, s.display_name AS staff_name, e.status, e.submitted_at, e.reviewed_at, r.display_name AS reviewer_name, e.review_note
     FROM oa_face_enrollments e JOIN staff s ON s.id = e.staff_id LEFT JOIN staff r ON r.id = e.reviewed_by
-    WHERE ${where} ORDER BY e.submitted_at DESC, e.id DESC LIMIT 200`;
+    WHERE ${where} ORDER BY e.id DESC LIMIT ${limit}`;
   return Promise.all(
     rows.map(async (r) => ({
       id: Number(r.id),
@@ -124,20 +146,40 @@ export function registerOaFaceRoutes(app: FastifyInstance, { sql }: Deps) {
   });
 
   // 后台「人脸审核」：待审核 / 已通过（这家门店的员工）
-  app.get('/api/oa/face/enrollments', { preHandler: manage }, async (req): Promise<FaceEnrollment[]> => {
+  app.get('/api/oa/face/enrollments', { preHandler: manage }, async (req): Promise<FaceEnrollmentPage> => {
     const q = parse(ListQuery, req.query ?? {});
-    return load(sql, sql`e.status = ${q.status} AND ${storeEmployee(sql)}`);
+    const like = q.q ? `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
+    const items = await load(
+      sql,
+      sql`e.status = ${q.status} AND ${storeEmployee(sql)}
+          ${like ? sql`AND (s.display_name ILIKE ${like} OR s.username ILIKE ${like})` : sql``}
+          ${q.before ? sql`AND e.id < ${q.before}` : sql``}`,
+      FACE_PAGE + 1,
+    );
+    const more = items.length > FACE_PAGE;
+    const page = items.slice(0, FACE_PAGE);
+    return { items: page, nextBefore: more ? page[page.length - 1]!.id : null };
   });
 
-  app.post('/api/oa/face/enrollments/:id/review', { preHandler: manage }, async (req): Promise<FaceEnrollment> => {
+  app.post('/api/oa/face/enrollments/:id/review', { preHandler: manage }, async (req): Promise<FaceReviewSaved> => {
     const { id } = parse(idParam, req.params);
     const input = parse(ReviewInput, req.body);
-    await sql.begin(async (tx) => {
+    if (input.storeId !== currentStoreId()) throw conflict('STORE_SWITCHED', '这次审核是在别的门店的页面上做的：请换回那家门店再查回或重新提交');
+    const hash = hashRequest({ id, decision: input.decision, note: input.note ?? null });
+    const replayed = await sql.begin(async (tx): Promise<boolean> => {
+      await lockOpKey(tx, input.clientKey);
+      const [seen] = await tx<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+      if (seen) {
+        if (seen.opType !== 'oa_face_review' || seen.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次操作，请刷新页面后重新审核');
+        return true;
+      }
+      await assertNotFenced(tx, input.clientKey, 'oa_face_review', erpOpAbandoned);
+      await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'oa_face_review', ${hash}, ${id}, ${req.actor.id})`;
       const [e] = await tx<{ staffId: number; status: FaceEnrollmentStatus }[]>`
         SELECT e.staff_id, e.status FROM oa_face_enrollments e JOIN staff s ON s.id = e.staff_id WHERE e.id = ${id} AND ${storeEmployee(tx)} FOR UPDATE OF e`;
       if (!e) throw notFound('人脸录入不存在');
       const want: FaceEnrollmentStatus = input.decision === 'approve' ? 'approved' : input.decision === 'reject' ? 'rejected' : 'revoked';
-      if (e.status === want) return; // 原样重提（结果不确定时再点一次）
+      if (e.status === want) return false; // 已经是这个结果（别人刚做了同样的决定）
       const from: FaceEnrollmentStatus = input.decision === 'revoke' ? 'approved' : 'pending';
       if (e.status !== from) throw conflict('FACE_REVIEWED', '这份人脸录入已经被处理过了，请刷新');
       const staffId = Number(e.staffId);
@@ -166,8 +208,9 @@ export function registerOaFaceRoutes(app: FastifyInstance, { sql }: Deps) {
         detail: { enrollmentId: id, decision: input.decision, note: input.note ?? null, summary: `${title}${input.note ? `（${input.note}）` : ''}` },
         ip: req.ip,
       });
+      return false;
     });
     const [row] = await load(sql, sql`e.id = ${id}`);
-    return row!;
+    return { enrollment: row!, replayed };
   });
 }

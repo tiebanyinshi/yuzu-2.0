@@ -3,7 +3,7 @@
 // 打卡（考勤组要人脸）：没自拍、没通过录入、比对不通过都拒绝，通过记「人脸通过」并挂上自拍；比对服务不可用记「待人工核对」。
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { AttendanceSetup, FaceEnrollment, FaceEnrollSaved, MyFace, NotificationPage, PunchResult, PunchToday } from '../src/shared/oa';
+import type { AttendanceSetup, FaceEnrollmentPage, FaceEnrollSaved, MyFace, NotificationPage, PunchResult, PunchToday } from '../src/shared/oa';
 import { faceVerifier, verifyFace } from '../src/server/integrations/face';
 import { DEFAULT_STORE_ID } from '../src/server/lib/store-context';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
@@ -30,7 +30,8 @@ const enroll = async (who: Emp, clientKey = randomUUID()) => {
   const photoIds = [await upload(who), await upload(who, '左.jpg'), await upload(who, '右.jpg')];
   return { photoIds, clientKey, r: await api(ctx.app, who.cookie, 'POST', '/api/oa/face/enroll', { clientKey, photoIds }) };
 };
-const review = (id: number, body: object) => api(ctx.app, ctx.owner, 'POST', `/api/oa/face/enrollments/${id}/review`, body);
+const review = (id: number, body: object, clientKey: string = randomUUID()) =>
+  api(ctx.app, ctx.owner, 'POST', `/api/oa/face/enrollments/${id}/review`, { clientKey, storeId: DEFAULT_STORE_ID, ...body });
 const punch = (who: Emp, body: object = {}) => api(ctx.app, who.cookie, 'POST', '/api/oa/attendance/punch', { clientKey: randomUUID(), storeId: DEFAULT_STORE_ID, ...body });
 const me = async (who: Emp) => (await api(ctx.app, who.cookie, 'GET', '/api/oa/face/me')).body as MyFace;
 
@@ -85,11 +86,20 @@ describe('OA-07 人脸录入与审核', () => {
   });
 
   it('退回要原因、发通知；重新提交后通过；再交一份新的，通过时旧的记 replaced；停用以后没有已通过的', async () => {
-    const pending = (await api(ctx.app, ctx.owner, 'GET', '/api/oa/face/enrollments?status=pending')).body as FaceEnrollment[];
+    const pending = ((await api(ctx.app, ctx.owner, 'GET', '/api/oa/face/enrollments?status=pending')).body as FaceEnrollmentPage).items;
     const mine = pending.find((x) => x.staffId === a.id)!;
     expect((await review(mine.id, { decision: 'reject' })).status).toBe(400);
-    let r = await review(mine.id, { decision: 'reject', note: '照片太暗' });
-    expect(r.body).toMatchObject({ status: 'rejected', reviewNote: '照片太暗' });
+    const key = randomUUID();
+    let r = await review(mine.id, { decision: 'reject', note: '照片太暗' }, key);
+    expect(r.body).toMatchObject({ replayed: false, enrollment: { status: 'rejected', reviewNote: '照片太暗' } });
+    // 同一编号原样重提：返回原来那次；换了内容拒绝；查回得到那份录入
+    expect((await review(mine.id, { decision: 'reject', note: '照片太暗' }, key)).body).toMatchObject({ replayed: true });
+    expect(code(await review(mine.id, { decision: 'reject', note: '换了原因' }, key))).toBe('IDEMPOTENCY_CONFLICT');
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${key}?type=oa_face_review`)).body).toMatchObject({ found: true, refId: mine.id });
+    // 确认作废的编号：原请求后到也不处理
+    const late = randomUUID();
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${late}/abandon`, { type: 'oa_face_review', summary: '人脸审核' })).status).toBe(200);
+    expect(code(await review(mine.id, { decision: 'approve' }, late))).toBe('OP_ABANDONED');
     // 再点一次：原样（已经是退回）
     expect((await review(mine.id, { decision: 'reject', note: '照片太暗' })).status).toBe(200);
     expect(code(await review(mine.id, { decision: 'approve' }))).toBe('FACE_REVIEWED');
@@ -99,7 +109,7 @@ describe('OA-07 人脸录入与审核', () => {
 
     const second = (await enroll(a)).r.body as FaceEnrollSaved;
     r = await review(second.enrollment.id, { decision: 'approve' });
-    expect(r.body).toMatchObject({ status: 'approved' });
+    expect(r.body).toMatchObject({ enrollment: { status: 'approved' } });
     expect((await me(a)).status).toBe('approved');
     const third = (await enroll(a)).r.body as FaceEnrollSaved;
     // 新的还没审：照旧用旧的
@@ -131,7 +141,7 @@ describe('OA-07 人脸录入与审核', () => {
     // 停用
     const id = (await me(a)).approved!.id;
     expect((await review(id, { decision: 'revoke' })).status).toBe(400);
-    expect((await review(id, { decision: 'revoke', note: '换人了' })).body).toMatchObject({ status: 'revoked' });
+    expect((await review(id, { decision: 'revoke', note: '换人了' })).body).toMatchObject({ enrollment: { status: 'revoked' } });
     expect((await me(a)).status).toBe('none');
     expect(code(await punch(a, { faceImageId: await upload(a, '自拍2.jpg') }))).toBe('FACE_NOT_ENROLLED');
   });
@@ -141,5 +151,26 @@ describe('OA-07 人脸录入与审核', () => {
     expect(mine.r.status).toBe(200);
     expect((await api(ctx.app, b.cookie, 'GET', `/api/erp/ops/${mine.clientKey}?type=oa_face_enroll`)).body).toMatchObject({ found: true });
     expect((await api(ctx.app, a.cookie, 'GET', `/api/erp/ops/${mine.clientKey}?type=oa_face_enroll`)).status).toBe(403);
+  });
+  it('审核列表：按姓名或登录名找；每页 50 份，带 before 翻到更早的', async () => {
+    // 造 55 份已通过的（直接写库，只为翻页）
+    const ids: number[] = [];
+    for (let i = 0; i < 55; i += 1) {
+      const e = await hire(`face_many_${i}`, 'front.staff');
+      const [row] = await ctx.sql<{ id: number }[]>`
+        INSERT INTO oa_face_enrollments (staff_id, status, reviewed_by, reviewed_at) VALUES (${e.id}, 'approved', ${e.id}, now()) RETURNING id`;
+      ids.push(Number(row!.id));
+    }
+    const first = (await api(ctx.app, ctx.owner, 'GET', '/api/oa/face/enrollments?status=approved')).body as FaceEnrollmentPage;
+    expect(first.items).toHaveLength(50);
+    expect(first.nextBefore).not.toBeNull();
+    const second = (await api(ctx.app, ctx.owner, 'GET', `/api/oa/face/enrollments?status=approved&before=${first.nextBefore}`)).body as FaceEnrollmentPage;
+    const all = new Set([...first.items, ...second.items].map((x) => x.id));
+    for (const id of ids) expect(all.has(id)).toBe(true);
+    expect(second.nextBefore).toBeNull();
+    const found = (await api(ctx.app, ctx.owner, 'GET', '/api/oa/face/enrollments?status=approved&q=face_many_7')).body as FaceEnrollmentPage;
+    expect(found.items.map((x) => x.staffName).sort()).toEqual(['face_many_7']);
+    // 通配符当普通字符
+    expect(((await api(ctx.app, ctx.owner, 'GET', '/api/oa/face/enrollments?status=approved&q=%25')).body as FaceEnrollmentPage).items).toEqual([]);
   });
 });

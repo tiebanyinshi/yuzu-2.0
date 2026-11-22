@@ -519,6 +519,15 @@ export interface MyFace {
   approved: FaceEnrollment | null;
   latest: FaceEnrollment | null;
 }
+export interface FaceEnrollmentPage {
+  items: FaceEnrollment[];
+  /** 还有更早的：下一页带 before = 这个 id */
+  nextBefore: number | null;
+}
+export interface FaceReviewSaved {
+  enrollment: FaceEnrollment;
+  replayed: boolean;
+}
 export interface FaceEnrollSaved {
   enrollment: FaceEnrollment;
   replayed: boolean;

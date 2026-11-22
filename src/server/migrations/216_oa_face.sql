@@ -5,7 +5,7 @@
 --     同一人同时只有一份待审核、一份已通过（部分唯一索引）。人脸跟人走，不按门店分。
 --   · oa_punches.face_result：打卡时的人脸比对结果（pass 通过 / pending 比对服务没配置或不可用、待人工核对）；
 --     不要人脸的组为空。比对不通过、没录人脸的不让打卡，不会留下记录。
--- 提交人脸录入带操作编号：操作编号与「确认作废」多一类 oa_face_enroll（在当时的约束上追加）。
+-- 提交人脸录入、审核带操作编号：操作编号与「确认作废」多两类 oa_face_enroll、oa_face_review（在当时的约束上追加）。
 -- 回滚：docs/rollback/216_oa_face.down.sql。
 
 CREATE TABLE oa_face_enrollments (
@@ -31,6 +31,6 @@ BEGIN
   SELECT pg_get_expr(conbin,conrelid) INTO expression FROM pg_constraint WHERE conrelid=t::regclass AND conname=t||'_op_type_check';
   IF expression IS NULL THEN RAISE EXCEPTION '原操作类型约束不存在'; END IF;
   EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I',t,t||'_op_type_check');
-  EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((%s) OR op_type IN (''oa_face_enroll''))',t,t||'_op_type_check',expression);
+  EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((%s) OR op_type IN (''oa_face_enroll'', ''oa_face_review''))',t,t||'_op_type_check',expression);
  END LOOP;
 END $$;
