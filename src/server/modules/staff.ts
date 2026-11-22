@@ -168,6 +168,8 @@ export async function createStaff(
     duties?: Duty[];
     departmentId?: number | null;
     password: string;
+    /** 事先算好的散列（OA-02 批量开通：几百个账号的散列在事务外先算，事务里不做长时间的计算）；给了就不再用 password 算 */
+    passwordHash?: string;
     mustChangePassword: boolean;
     /** 新岗位（8.1.18）；给了就按岗位定 role 与 duties */
     position?: PositionKey | null;
@@ -179,7 +181,7 @@ export async function createStaff(
     const [row] = await db<{ id: number }[]>`
       INSERT INTO staff (username, display_name, role, duties, department_id, password_hash, must_change_password, position, permission_adjust)
       VALUES (${input.username}, ${input.displayName}, ${r.role}, ${uniqueDuties(r.duties)}, ${input.departmentId ?? null},
-              ${await hashPassword(input.password)}, ${input.mustChangePassword}, ${r.position}, ${db.json((input.permissionAdjust ?? {}) as never)})
+              ${input.passwordHash ?? (await hashPassword(input.password))}, ${input.mustChangePassword}, ${r.position}, ${db.json((input.permissionAdjust ?? {}) as never)})
       RETURNING id`;
     return row!.id;
   } catch (error) {

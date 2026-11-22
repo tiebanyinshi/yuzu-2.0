@@ -19,6 +19,7 @@ export type AuditAction =
   | 'employee_profile_updated'
   | 'employee_left'
   | 'employee_rehired'
+  | 'oa_staff_imported'
   | 'position_chosen'
   | 'member_created'
   | 'member_updated'

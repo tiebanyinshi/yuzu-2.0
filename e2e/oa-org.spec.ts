@@ -72,4 +72,34 @@ test.describe('OA-01 组织架构与员工档案', () => {
     const off = await page.request.post(`/api/oa/employees/${id}/leave`, { data: { leaveDate: '2026-11-21', version: 3 } });
     expect(off.status(), await off.text()).toBe(200);
   });
+
+  test('OA-02 批量开通：选表格 → 预览标出问题 → 改好再开通 → 临时密码只显示这一次、能登录', async ({ page }) => {
+    await login(page, 'linlan');
+    const stamp = Date.now().toString(36);
+    const tail = String(Date.now()).slice(-8);
+    const head = '姓名,手机号,工号,部门,岗位,入职日期,登录名';
+    await page.goto('/admin/org');
+    await page.getByTestId('org-import').click();
+    await expect(page.getByTestId('staff-import-template')).toHaveAttribute('href', '/api/oa/employees/import/template');
+    // 第一份：一行部门写错
+    await page.getByTestId('staff-import-file').setInputFiles({ name: 'bad.csv', mimeType: 'text/csv', buffer: Buffer.from(`${head}\nE2E甲,139${tail},,不存在部,,,\n`) });
+    await expect(page.getByTestId('staff-import-issue-2')).toContainText('不存在部');
+    await expect(page.getByTestId('staff-import-apply')).toBeDisabled();
+    // 第二份：改好了
+    const user = `e2eimp${stamp}`;
+    await page.getByTestId('staff-import-file').setInputFiles({ name: 'good.csv', mimeType: 'text/csv', buffer: Buffer.from(`${head}\nE2E甲,139${tail},,前厅部,员工,2026-11-01,${user}\n`) });
+    await expect(page.getByTestId('staff-import-preview')).toContainText('可以开');
+    await page.getByTestId('staff-import-apply').click();
+    const pw = page.getByTestId(`staff-import-password-${user}`);
+    await expect(pw).toHaveText(/^yuzu-\d{4}-[a-z]{2}$/);
+    const password = (await pw.textContent())!;
+    await page.getByTestId('staff-import-done').click();
+    await page.getByTestId('org-emp-search').fill(user);
+    await expect(page.getByTestId('org-employees')).toContainText('2026-11-01');
+    // 临时密码能登录
+    const ctx = await page.context().browser()!.newContext({ baseURL: test.info().project.use.baseURL });
+    const res = await ctx.request.post('/api/auth/login', { data: { username: user, password } });
+    expect(res.status()).toBe(200);
+    await ctx.close();
+  });
 });

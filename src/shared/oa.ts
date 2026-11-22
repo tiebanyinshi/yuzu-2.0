@@ -68,3 +68,52 @@ export function wouldCycle(parents: ReadonlyMap<string, string | null>, key: str
   }
   return false;
 }
+
+// ───────────── OA-02 账号与批量开通（docs/OA.md 第 5 节） ─────────────
+
+/** 批量开通表格的列（第 2 行是表头；第 1 行是标题） */
+export const STAFF_IMPORT_COLUMNS = ['姓名', '手机号', '工号', '部门', '岗位', '入职日期', '登录名'] as const;
+export const STAFF_IMPORT_REQUIRED = ['姓名', '手机号', '部门'] as const;
+/** 一次最多开多少个账号 */
+export const STAFF_IMPORT_MAX_ROWS = 500;
+/** 登录名：与「员工账号」同一个规则 */
+export const USERNAME_PATTERN = /^[a-z0-9_.-]{2,32}$/;
+
+/** 预览里的一行 */
+export interface StaffImportRow {
+  /** 文件里的行号（表头是第 2 行） */
+  row: number;
+  name: string;
+  phone: string;
+  empNo: string | null;
+  department: OrgDepartment | null;
+  position: PositionKey | null;
+  hireDate: string | null;
+  /** 登录名：表里填了用表里的，没填按工号或手机号生成 */
+  username: string;
+  /** 这一行要先改的地方；空的就能开 */
+  issues: string[];
+}
+
+export interface StaffImportPreview {
+  fileName: string;
+  rows: StaffImportRow[];
+  /** 有问题的行数：不为 0 时整批不能开 */
+  issueCount: number;
+}
+
+/** 开好的账号；临时密码只在第一次开通的回答里有（原样重提、查回时是 null，到「员工账号」里重置） */
+export interface StaffImportAccount {
+  staffId: number;
+  username: string;
+  name: string;
+  position: PositionKey;
+  temporaryPassword: string | null;
+}
+
+export interface StaffImportResult {
+  import: { id: number; fileName: string; createdAt: string; count: number };
+  accounts: StaffImportAccount[];
+  /** 这个操作编号之前已经开过：这次没有再开，临时密码不再给 */
+  replayed: boolean;
+}
