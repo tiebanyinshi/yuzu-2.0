@@ -11,9 +11,10 @@ import { Bell, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerpri
 import { shiftDate } from '@shared/labels';
 import type { MySchedule, MyScheduleItem } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
-import type { ImConversationList } from '@shared/oa-im';
+import { IM_LIST_POLL_MS, type ImConversationList } from '@shared/oa-im';
 import { clockText } from '@shared/technician-admin';
 import { api } from '../../lib/api';
+import { useLivePoll } from '../../lib/livePoll';
 import { cn } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -68,6 +69,8 @@ function OfficeHomePage() {
   const todo = approvals.data?.todo ?? 0;
   // 消息的角标：所有会话的未读合计
   const im = useQuery({ queryKey: ['oa', 'im', 'list', ''], queryFn: () => api.get<ImConversationList>('/api/oa/im/conversations') });
+  // 停在首页时也按会话列表的节奏刷新（Codex 审查 ce07d7e）
+  useLivePoll(async () => void (await im.refetch()), [], { intervalMs: IM_LIST_POLL_MS });
   const unread = im.data?.unread ?? 0;
   return (
     <>

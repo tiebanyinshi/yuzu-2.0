@@ -45,7 +45,8 @@ const LIST_KEY = ['oa', 'im', 'list'] as const;
 export function ImPages() {
   const { pathname } = useLocation();
   const m = pathname.match(/^\/oa\/im\/(\d+)/);
-  return m ? <ImChatPage id={Number(m[1])} /> : <ImListPage />;
+  // 按会话编号给 key：换会话就是新的一页，游标、已读位置、在途的上报都不带到别的会话（Codex 审查 ce07d7e）
+  return m ? <ImChatPage key={m[1]} id={Number(m[1])} /> : <ImListPage />;
 }
 
 const timeText = (iso: string) => {
@@ -365,8 +366,9 @@ function ImChatPage({ id }: { id: number }) {
       since.current = r.syncedAt;
       if (r.messages.length || r.revoked.length) {
         setMessages((xs) => {
-          const seen = new Set((xs ?? []).map((x) => x.id));
-          const merged = [...(xs ?? []), ...r.messages.filter((x) => !seen.has(x.id))].sort((a, b) => a.id - b.id);
+          // 同一编号以服务端这次给的为准（自己发的那条已经显示、后来在别处撤回了，这里要跟着变，Codex 审查 ce07d7e）
+          const fresh = new Map(r.messages.map((x) => [x.id, x]));
+          const merged = [...(xs ?? []).filter((x) => !fresh.has(x.id)), ...r.messages].sort((a, b) => a.id - b.id);
           return merged.map((x) => (r.revoked.includes(x.id) && !x.revoked ? { ...x, revoked: true, body: '', attachment: null } : x));
         });
       }
