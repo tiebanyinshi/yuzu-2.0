@@ -93,7 +93,7 @@ const DayQuery = z.object({
 });
 
 /** 门店所在地「1970-01-01 起第几分钟」 */
-function localMinute(at: Date, timeZone: string): { date: string; minute: number } {
+export function localMinute(at: Date, timeZone: string): { date: string; minute: number } {
   const date = dateIn(at, timeZone);
   const [h, m] = clockIn(timeZone, at).split(':').map(Number) as [number, number];
   return { date, minute: epochMinuteOf(date, h * 60 + m) };
