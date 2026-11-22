@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { Building2, KeyRound, LogOut, MonitorSmartphone, Wifi } from 'lucide-react';
+import { Building2, CalendarClock, KeyRound, LogOut, MonitorSmartphone, Wifi } from 'lucide-react';
 import { useTerminalState } from '../features/devices/terminal';
 import { describeBusinessHours, isOpenAt, minuteOfDay } from '@shared/business-date';
 import { describeDate, DUTY_LABELS, ROLE_LABELS } from '@shared/labels';
@@ -147,6 +147,17 @@ function UserMenu() {
               进入 ERP
             </MenuItem>
           )}
+          {/* 办公（OA，docs/OA.md 第 8 节）：员工自己的排班、通知等；人人都有，不占主导航 */}
+          <MenuItem
+            icon={<CalendarClock className="size-4" />}
+            onClick={() => {
+              setOpen(false);
+              navigate('/oa');
+            }}
+            testId="user-menu-oa"
+          >
+            办公
+          </MenuItem>
           {can('device.view') && (
             // 本机终端（8.0.19，IA 第 3.4 节）：这台电脑是哪台终端在门店「设备」页右边设；从哪一页都点得到
             <MenuItem

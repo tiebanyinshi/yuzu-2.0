@@ -222,6 +222,7 @@ export const PERMISSION_COLUMN: Record<Permission, PermissionColumn> = {
   'studio.publish': 'base',
   'patrol.manage': 'base',
   'hr.attendance': 'entry',
+  'hr.attendanceDept': 'dept',
 };
 
 export interface PositionDef {
@@ -288,7 +289,8 @@ const AREA_OP: Permission[] = [
   'room.housekeep',
 ];
 /** 各部门负责人共有：本部门台账（当日流水）、审批中心、作废本部门员工登记错的明细、本部门员工账号 */
-const LEAD_COMMON: Permission[] = ['ledger.readToday', 'approval.act', 'staff.dept'];
+// OA-05：各部门负责人看本部门员工的排班与考勤（hr.attendanceDept，算「本部门台账 / 报表」）
+const LEAD_COMMON: Permission[] = ['ledger.readToday', 'approval.act', 'staff.dept', 'hr.attendanceDept'];
 const DEPT_STOCK: Permission[] = ['deptStock.operate', 'request.create'];
 
 /** 每个岗位的默认权限（总裁不在这里：总裁是店主，全部权限） */
@@ -410,6 +412,8 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
     // 财务部负责人：账号与权限配置 ✘（表 3），所以不带 staff.dept
     'ledger.readToday',
     'approval.act',
+    // OA-05：本部门员工的排班与考勤（与各部门负责人一样）
+    'hr.attendanceDept',
     'ledger.readHistory',
     'ledger.export',
     'expense.read',

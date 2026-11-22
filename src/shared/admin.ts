@@ -76,8 +76,8 @@ export const ADMIN_SECTIONS = {
   permissions: { path: '/admin/permissions', label: '岗位权限', perms: ['settings.manage', 'audit.read'] },
   // OA 办公（docs/OA.md 第 4 节）：部门上级与主管、员工档案（工号、手机号、入职 / 离职）、办理离职；人力行政部负责人不进后台首页也看得到
   org: { path: '/admin/org', label: '组织架构', perms: ['hr.org', 'staff.manage'] },
-  // OA-04（docs/OA.md 第 7 节）：班次、打卡点、考勤组；人力行政部不进后台首页也看得到
-  attendance: { path: '/admin/attendance', label: '考勤设置', perms: ['hr.attendance'] },
+  // OA-04（docs/OA.md 第 7 节）：班次、打卡点、考勤组、排班；人力行政部不进后台首页也看得到。OA-05：部门负责人只看本部门的排班
+  attendance: { path: '/admin/attendance', label: '考勤设置', perms: ['hr.attendance', 'hr.attendanceDept'] },
   // 8.0.18（IA1，店主 2026-11-13）：员工食堂、安保巡场从 ERP 挪到后台「人员与行政」。页面、权限、接口都没变；
   // 开没开仍然按 ERP 的模块开关（ADMIN_SECTION_MODULES），员工手机端的入口不变
   canteen: { path: '/admin/canteen', label: '员工食堂', perms: ['canteen.manage'] },

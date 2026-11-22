@@ -167,6 +167,8 @@ export const FENCED_OPS = [
   'oa_staff_import',
   // OA-04 考勤设置（迁移 213）：新建班次、打卡点、考勤组；编号记在 idempotency_keys（ref_id 是新建的那一行）
   'oa_attendance_setup',
+  // OA-05 排班保存（迁移 214）：编号记在 idempotency_keys（ref_id 是考勤组）
+  'oa_schedule_save',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 

@@ -17,7 +17,7 @@ test.describe('OA-03 站内通知', () => {
     const bell = page.getByTestId('notification-bell');
     await expect(bell).toBeVisible();
     await bell.click();
-    await expect(page).toHaveURL(/\/notifications$/);
+    await expect(page).toHaveURL(/\/oa\/notifications$/);
     await expect(page.getByRole('heading', { level: 1, name: '通知' })).toBeVisible();
 
     // 等列表取回来；有未读就全部标为已读；之后未读列表是空的、铃铛不显示数字
