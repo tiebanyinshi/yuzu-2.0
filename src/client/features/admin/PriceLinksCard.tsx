@@ -37,7 +37,10 @@ interface LinkResult {
   unlinked: number;
   synced: SyncResult[];
 }
-type Row = { key: string; entry: PriceCatalogEntry; link: PriceLink | undefined };
+/** entry 为 null：已有的对接没对上生效价目表里在用的项（那一项停用了、或新版里没有这个名字），只能取消 */
+type Row = { key: string; entry: PriceCatalogEntry | null; link: PriceLink | undefined };
+type LiveRow = Row & { entry: PriceCatalogEntry };
+const nameOf = (r: Row) => r.entry?.name ?? r.key.split('|').at(-1) ?? r.key;
 type Show = 'all' | 'linked' | 'unlinked';
 
 const linksKey = ['price-catalog', 'links'] as const;
@@ -57,16 +60,23 @@ export function PriceLinksCard({ entries }: { entries: PriceCatalogEntry[] }) {
   const pending = useErpPending(['price_link']).length > 0;
   const [show, setShow] = useState<Show>('all');
   const [q, setQ] = useState('');
-  const [picking, setPicking] = useState<Row | null>(null);
+  const [picking, setPicking] = useState<LiveRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: 'success' | 'error' | 'warning'; text: string } | null>(null);
 
   const rows = useMemo<Row[]>(() => {
     const byKey = new Map((links.data ?? []).map((l) => [l.entryKey, l]));
-    return entries.filter((e) => e.active && e.priceMode !== 'rate').map((e) => ({ key: priceNameKey(e), entry: e, link: byKey.get(priceNameKey(e)) }));
+    const live = entries.filter((e) => e.active && e.priceMode !== 'rate').map((e) => ({ key: priceNameKey(e), entry: e, link: byKey.get(priceNameKey(e)) }));
+    const liveKeys = new Set(live.map((r) => r.key));
+    // 对接还在、价目表里却没有在用的这一项：照样列出来（排在最前），能取消，不然收银项目一直被锁着改不了价
+    const orphans = (links.data ?? []).filter((l) => !liveKeys.has(l.entryKey)).map((l) => ({ key: l.entryKey, entry: null, link: l }));
+    return [...orphans, ...live];
   }, [entries, links.data]);
-  const linkedCount = rows.filter((r) => r.link).length;
-  const shown = rows.filter((r) => (show === 'linked' ? r.link : show === 'unlinked' ? !r.link : true) && matchesPriceSearch(r.entry, q));
+  const linkedCount = rows.filter((r) => r.entry && r.link).length;
+  const liveCount = rows.filter((r) => r.entry).length;
+  const orphanCount = rows.length - liveCount;
+  const matches = (r: Row) => (r.entry ? matchesPriceSearch(r.entry, q) : nameOf(r).replace(/\s+/g, '').toLowerCase().includes(q.replace(/\s+/g, '').toLowerCase()));
+  const shown = rows.filter((r) => (show === 'linked' ? r.link : show === 'unlinked' ? !r.link : true) && matches(r));
 
   const send = async (path: 'links' | 'links/auto', body: Record<string, unknown>, summary: string) => {
     setBusy(true);
@@ -104,12 +114,16 @@ export function PriceLinksCard({ entries }: { entries: PriceCatalogEntry[] }) {
       dataLabel: '价目项目',
       cell: (r) => (
         <span>
-          <span className="font-semibold">{r.entry.name}</span>
-          <span className="ml-2 text-[12px] text-ink-3">{[PRICE_SHEET_NAMES[r.entry.sheet], r.entry.section, r.entry.category].filter(Boolean).join(' · ')}</span>
+          <span className="font-semibold">{nameOf(r)}</span>
+          {r.entry ? (
+            <span className="ml-2 text-[12px] text-ink-3">{[PRICE_SHEET_NAMES[r.entry.sheet], r.entry.section, r.entry.category].filter(Boolean).join(' · ')}</span>
+          ) : (
+            <span className="ml-2 text-[12px] text-clay">生效的价目表里没有在用的这一项</span>
+          )}
         </span>
       ),
     },
-    { key: 'price', header: '价目价', dataLabel: '价目价', cell: (r) => priceText(r.entry, formatYuan) },
+    { key: 'price', header: '价目价', dataLabel: '价目价', cell: (r) => (r.entry ? priceText(r.entry, formatYuan) : '—') },
     {
       key: 'item',
       header: '收银项目',
@@ -130,11 +144,19 @@ export function PriceLinksCard({ entries }: { entries: PriceCatalogEntry[] }) {
       dataLabel: '收银价',
       cell: (r) => {
         if (!r.link) return null;
-        const ok = agrees(r.entry, r.link.prices);
+        const ok = r.entry ? agrees(r.entry, r.link.prices) : undefined;
         return (
           <span className="flex flex-wrap items-center gap-2">
             {tiersText(r.link.prices)}
-            {ok === null ? <Badge tone="ember">待定价，不同步</Badge> : ok ? <Badge tone="pine">一致</Badge> : <Badge tone="clay">不一致</Badge>}
+            {ok === undefined ? (
+              <Badge tone="clay">不同步，请取消或改名对上</Badge>
+            ) : ok === null ? (
+              <Badge tone="ember">待定价，不同步</Badge>
+            ) : ok ? (
+              <Badge tone="pine">一致</Badge>
+            ) : (
+              <Badge tone="clay">不一致</Badge>
+            )}
           </span>
         );
       },
@@ -146,11 +168,13 @@ export function PriceLinksCard({ entries }: { entries: PriceCatalogEntry[] }) {
       cell: (r) =>
         pending ? null : (
           <span className="flex gap-1">
-            <Button size="sm" variant="ghost" onClick={() => setPicking(r)} data-testid="price-link-pick">
-              {r.link ? '改' : '对接'}
-            </Button>
+            {r.entry && (
+              <Button size="sm" variant="ghost" onClick={() => r.entry && setPicking({ ...r, entry: r.entry })} data-testid="price-link-pick">
+                {r.link ? '改' : '对接'}
+              </Button>
+            )}
             {r.link && (
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void send('links', { entryKey: r.key, itemId: null }, `取消对接「${r.entry.name}」`)} data-testid="price-link-remove">
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void send('links', { entryKey: r.key, itemId: null }, `取消对接「${nameOf(r)}」`)} data-testid="price-link-remove">
                 取消
               </Button>
             )}
@@ -181,7 +205,7 @@ export function PriceLinksCard({ entries }: { entries: PriceCatalogEntry[] }) {
           <Link2 className="size-4" />
           对接收银项目
           <span className="text-[12.5px] font-normal text-ink-3" data-testid="price-links-count">
-            已对接 {linkedCount} / {rows.length} 项
+            已对接 {linkedCount} / {liveCount} 项{orphanCount > 0 ? `，另有 ${orphanCount} 个对接没对上在用项` : ''}
           </span>
         </span>
       </SectionTitle>
@@ -229,7 +253,7 @@ export function PriceLinksCard({ entries }: { entries: PriceCatalogEntry[] }) {
   );
 }
 
-function PickItemDialog({ row, busy, onClose, onPick }: { row: Row; busy: boolean; onClose: () => void; onPick: (itemId: number, name: string) => void }) {
+function PickItemDialog({ row, busy, onClose, onPick }: { row: LiveRow; busy: boolean; onClose: () => void; onPick: (itemId: number, name: string) => void }) {
   const catalog = useCatalog(true);
   // 收银项目可能刚在别的页签建好：打开时取一次最新的（列表平时缓存一分钟）
   const { refetch } = catalog;

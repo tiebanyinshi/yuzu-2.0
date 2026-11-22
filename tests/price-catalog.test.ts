@@ -1168,4 +1168,24 @@ describe('价目表录入 第四批：对接收银项目', () => {
     expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${fresh.id}`, { ...fresh, priceCents: 5900, opKey: randomUUID() })).status).toBe(200);
     expect(await tiers(ball)).toEqual({ standard: 5900 });
   });
+
+  it('第十五轮审查：房号上限导入、校验、编辑一致（201 个房号能导也能改；超过 300 个导入报错）', async () => {
+    const spa = (rooms: string) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        ['spa房', '201间', '399/2H起开', '超时199/H\n999封顶过夜', rooms],
+      ]);
+    const file = workbook({ 房间价格: spa('S001-S201') });
+    const p = (await preview(file)).body as PriceImportPreview & { digest: string };
+    expect(p.errorCount).toBe(0);
+    expect(find(p, 'spa房').roomNumbers).toHaveLength(201);
+    const draft = (
+      await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: '房号.xlsx', xlsxBase64: file, previewDigest: p.digest, title: '房号演练', opKey: randomUUID() })
+    ).body as PriceCatalogSet;
+    const e = find(draft, 'spa房');
+    const saved = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${e.id}`, { ...e, note: '只改备注', opKey: randomUUID() });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const over = ((await preview(workbook({ 房间价格: spa('S001-S200 S201-S301') }))).body as PriceImportPreview).issues;
+    expect(over.some((i) => i.level === 'error' && i.message.includes('超过 300 个'))).toBe(true);
+  });
 });

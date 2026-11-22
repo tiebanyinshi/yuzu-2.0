@@ -14,6 +14,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
+  PRICE_ROOM_NUMBERS_MAX,
   PRICE_VARIANTS_MAX,
   PRICE_CHANGE_LABELS,
   PRICE_KIND_LABELS,
@@ -64,7 +65,7 @@ const Variant = z.object({
   priceCents: int,
   minutes: int,
   unit: text(8),
-  roomNumbers: z.array(z.string().trim().min(1).max(12)).max(200).optional(),
+  roomNumbers: z.array(z.string().trim().min(1).max(12)).max(PRICE_ROOM_NUMBERS_MAX, `房号最多 ${PRICE_ROOM_NUMBERS_MAX} 个`).optional(),
   seats: z.number().int().min(1).max(999).optional(),
   note: z.string().trim().max(200).optional(),
 });
@@ -83,7 +84,7 @@ const EntryFields = z.object({
   extraMinutes: int,
   capCents: int,
   unitsCount: int,
-  roomNumbers: z.array(z.string().trim().min(1).max(12)).max(200).default([]),
+  roomNumbers: z.array(z.string().trim().min(1).max(12)).max(PRICE_ROOM_NUMBERS_MAX, `房号最多 ${PRICE_ROOM_NUMBERS_MAX} 个`).default([]),
   windowStart: int,
   windowEnd: int,
   includesMeal: z.boolean().nullable().default(null),

@@ -318,6 +318,9 @@ export function withDerivedPrice(e: PriceCatalogEntry): PriceCatalogEntry {
   return { ...e, priceMode: 'single', priceCents: d, price2Cents: null };
 }
 
+/** 一项（或一档）最多几个房号（导入、页面编辑、服务端校验同一个上限；原表最多 39 个） */
+export const PRICE_ROOM_NUMBERS_MAX = 300;
+
 /** 一项最多几档（导入、页面编辑、服务端校验同一个上限；原表最多 10 档） */
 export const PRICE_VARIANTS_MAX = 20;
 
@@ -391,6 +394,8 @@ export function priceEntryProblems(e: PriceCatalogEntry): string[] {
   for (const w of [e.windowStart, e.windowEnd]) if (w !== null && (!Number.isInteger(w) || w < 0 || w > 1439)) out.push('时段的时刻不对');
   if (e.unitsCount !== null && (!Number.isInteger(e.unitsCount) || e.unitsCount < 0 || e.unitsCount > 999)) out.push('台位 / 间数要在 0 到 999 之间');
   if (e.variants.length > PRICE_VARIANTS_MAX) out.push(`分档最多 ${PRICE_VARIANTS_MAX} 档`);
+  if (e.roomNumbers.length > PRICE_ROOM_NUMBERS_MAX || e.variants.some((v) => (v.roomNumbers?.length ?? 0) > PRICE_ROOM_NUMBERS_MAX)) out.push(`房号最多 ${PRICE_ROOM_NUMBERS_MAX} 个`);
+  if ([...e.roomNumbers, ...e.variants.flatMap((v) => v.roomNumbers ?? [])].some((n) => n.length > 12)) out.push('房号每个最多 12 个字');
   for (const v of e.variants) {
     if (!v.label.trim() || v.label.length > 20) out.push('分档要有名称（最多 20 个字）');
     amount(v.priceCents, `分档「${v.label}」的价格`);

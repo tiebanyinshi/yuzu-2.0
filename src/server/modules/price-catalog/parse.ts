@@ -8,6 +8,7 @@ import {
   priceEntryProblems,
   priceNameKey,
   MASSAGE_SECTIONS,
+  PRICE_ROOM_NUMBERS_MAX,
   PRICE_SHEET_NAMES,
   PRICE_VARIANTS_MAX,
   STORED_VALUE_SHEET_NAME,
@@ -99,10 +100,7 @@ export function windowOf(text: string): [number, number] | null {
   return [ha * 60 + ma, hb * 60 + mb];
 }
 
-/** 一个房型最多认多少个房号（原表最多 39 个）；多出来的在房间价格表里报错 */
-export const ROOM_NUMBERS_MAX = 300;
-
-/** 房号清单：「S301-S339」「F301-307」「H203-209」「R01-R08」「Q301 Q302」「S328—S336」，去重、保持先后；认到 ROOM_NUMBERS_MAX + 1 个就停 */
+/** 房号清单：「S301-S339」「F301-307」「H203-209」「R01-R08」「Q301 Q302」「S328—S336」，去重、保持先后；认到 PRICE_ROOM_NUMBERS_MAX + 1 个就停 */
 export function roomNumbersOf(text: string): string[] {
   const out = new Set<string>();
   const add = (n: string) => {
@@ -111,7 +109,7 @@ export function roomNumbersOf(text: string): string[] {
   const t = half(text);
   const re = /([A-Za-z]{1,2})(\d{2,4})(?:\s*[-—–~～]\s*([A-Za-z]{1,2})?(\d{2,4}))?/g;
   for (const m of t.matchAll(re)) {
-    if (out.size > ROOM_NUMBERS_MAX) break;
+    if (out.size > PRICE_ROOM_NUMBERS_MAX) break;
     const prefix = m[1]!.toUpperCase();
     const from = m[2]!;
     if (!m[4]) {
@@ -127,7 +125,7 @@ export function roomNumbersOf(text: string): string[] {
     }
     for (let n = a; n <= b; n++) add(prefix + String(n).padStart(from.length, '0'));
   }
-  return [...out].slice(0, ROOM_NUMBERS_MAX + 1);
+  return [...out].slice(0, PRICE_ROOM_NUMBERS_MAX + 1);
 }
 
 const blank = (sheet: PriceSheet, kind: PriceCatalogEntry['kind'], name: string, row: number, sort: number): PriceCatalogEntry => ({
@@ -348,8 +346,8 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
   const S: PriceSheet = 'room';
   const roomsAt = (row: number, text: string) => {
     const list = roomNumbersOf(text);
-    if (list.length > ROOM_NUMBERS_MAX) ctx.error(S, row, '备注', `房号太多（超过 ${ROOM_NUMBERS_MAX} 个），请核对房号清单`);
-    return list.slice(0, ROOM_NUMBERS_MAX);
+    if (list.length > PRICE_ROOM_NUMBERS_MAX) ctx.error(S, row, '备注', `房号太多（超过 ${PRICE_ROOM_NUMBERS_MAX} 个），请核对房号清单`);
+    return list.slice(0, PRICE_ROOM_NUMBERS_MAX);
   };
   const head = headerRow(g, ctx, S, ['房型', '总数'], ['房型', '总数', '收费参考', '备注']);
   if (!head) return [];
