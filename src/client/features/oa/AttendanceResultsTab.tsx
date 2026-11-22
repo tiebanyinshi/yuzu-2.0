@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import { attendanceIssues, ATTENDANCE_STATUS_LABELS, type AttendanceDailyRow, type AttendanceDay } from '@shared/oa';
+import type { AttendanceDailyRow, AttendanceDay } from '@shared/oa';
 import { clockText } from '@shared/technician-admin';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { useSession } from '../../lib/session';
@@ -14,6 +14,7 @@ import { DataTable } from '../../components/DataTable';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
 import { useToast } from '../../components/Toast';
+import { AttendanceStatus } from './AttendanceStatus';
 import { Badge, Button, Card, ConfirmCheck, Input, Select, Skeleton } from '../../components/ui';
 
 const KEY = ['oa', 'attendance-daily'] as const;
@@ -128,14 +129,7 @@ export function AttendanceResultsTab() {
               cellTestId: (r) => `att-result-${r.staffId}`,
               cell: (r) => (
                 <span className="flex flex-wrap items-center gap-1">
-                  <Badge tone={r.status === 'normal' ? 'pine' : r.status === 'absent' ? 'clay' : 'ember'}>{ATTENDANCE_STATUS_LABELS[r.status]}</Badge>
-                  {attendanceIssues(r)
-                    .filter((t) => t !== '旷工')
-                    .map((t) => (
-                      <span key={t} className="text-[13px] text-ember">
-                        {t}
-                      </span>
-                    ))}
+                  <AttendanceStatus row={r} />
                   {r.facePending && <Badge tone="yuzu">人脸待人工核对</Badge>}
                 </span>
               ),

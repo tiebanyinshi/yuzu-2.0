@@ -438,6 +438,8 @@ export interface OaPunch {
   /** 人脸（OA-07）：pass 通过、pending 比对服务没配置或不可用（待人工核对）；不要人脸的组为 null */
   faceResult: FaceResult | null;
   facePhoto: OaAttachment | null;
+  /** OA-13：补卡审批通过时写的卡（时间记班次的上 / 下班时间） */
+  makeup: boolean;
 }
 /** 打卡页上的一条排班：窗口与有效卡（上班卡第一次、下班卡最后一次） */
 export interface PunchSlotView {
@@ -535,8 +537,15 @@ export interface FaceEnrollSaved {
 
 // ───────────────────────── OA-08 考勤结算（docs/OA.md 第 11 节） ─────────────────────────
 
-export type AttendanceStatus = 'normal' | 'abnormal' | 'absent';
-export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = { normal: '正常', abnormal: '异常', absent: '旷工' };
+export type AttendanceStatus = 'normal' | 'abnormal' | 'absent' | 'leave' | 'trip';
+export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = { normal: '正常', abnormal: '异常', absent: '旷工', leave: '请假', trip: '出差' };
+/** 算不算异常（请假、出差不算） */
+export const isAttendanceAbnormal = (s: AttendanceStatus) => s === 'abnormal' || s === 'absent';
+/** 结果的徽标颜色 */
+export const attendanceTone = (s: AttendanceStatus) => (s === 'normal' ? 'pine' : s === 'absent' ? 'clay' : s === 'abnormal' ? 'ember' : 'lake');
+/** OA-13：审批对这一班的覆盖（请假整天 / 上午 / 下午、出差） */
+export type AttendanceCover = 'leave' | 'leave_am' | 'leave_pm' | 'trip';
+export const ATTENDANCE_COVER_LABELS: Record<AttendanceCover, string> = { leave: '请假', leave_am: '请假（上午）', leave_pm: '请假（下午）', trip: '出差' };
 
 /** 一条排班的结算结果 */
 export interface AttendanceDailyRow {
@@ -559,11 +568,15 @@ export interface AttendanceDailyRow {
   outwork: boolean;
   outworkCounted: boolean;
   facePending: boolean;
+  /** OA-13：审批覆盖（请假、出差）与那张单 */
+  cover: AttendanceCover | null;
+  coverApprovalId: number | null;
   settledAt: string;
 }
 /** 一条结果的异常写成几个短语（迟到 5 分钟、缺下班卡……）；正常为空 */
 export function attendanceIssues(r: Pick<AttendanceDailyRow, 'status' | 'lateMinutes' | 'earlyMinutes' | 'missingIn' | 'missingOut'>): string[] {
   if (r.status === 'absent') return ['旷工'];
+  if (r.status === 'leave' || r.status === 'trip') return [];
   const out: string[] = [];
   if (r.missingIn) out.push('缺上班卡');
   if (r.lateMinutes) out.push(`迟到 ${r.lateMinutes} 分钟`);
@@ -602,6 +615,14 @@ export interface AttendanceMonthStats {
   missingCount: number;
   absentCount: number;
   outworkCount: number;
+  /** OA-13：出差天数（结果为出差的日子） */
+  tripDays: number;
+  /** OA-13：请假（半天，按考勤覆盖这个月的合计） */
+  leaveHalves: number;
+  /** OA-13：通过的加班单（按开始时间所在的月份），分钟 */
+  overtimeWorkdayMinutes: number;
+  overtimeRestMinutes: number;
+  overtimeHolidayMinutes: number;
 }
 export const EMPTY_MONTH_STATS: AttendanceMonthStats = {
   scheduledDays: 0,
@@ -613,9 +634,15 @@ export const EMPTY_MONTH_STATS: AttendanceMonthStats = {
   missingCount: 0,
   absentCount: 0,
   outworkCount: 0,
+  tripDays: 0,
+  leaveHalves: 0,
+  overtimeWorkdayMinutes: 0,
+  overtimeRestMinutes: 0,
+  overtimeHolidayMinutes: 0,
 };
+const hoursText = (minutes: number) => Math.round((minutes / 60) * 10) / 10;
 /** 月报的列（表格与导出共用） */
-export const MONTH_STAT_COLUMNS: { key: keyof AttendanceMonthStats; label: string }[] = [
+export const MONTH_STAT_COLUMNS: { key: keyof AttendanceMonthStats; label: string; value?: (v: number) => number }[] = [
   { key: 'scheduledDays', label: '应出勤天数' },
   { key: 'attendedDays', label: '实际出勤天数' },
   { key: 'lateCount', label: '迟到次数' },
@@ -625,12 +652,23 @@ export const MONTH_STAT_COLUMNS: { key: keyof AttendanceMonthStats; label: strin
   { key: 'missingCount', label: '缺卡次数' },
   { key: 'absentCount', label: '旷工次数' },
   { key: 'outworkCount', label: '外勤次数' },
+  { key: 'tripDays', label: '出差天数' },
+  { key: 'leaveHalves', label: '请假天数', value: (v) => v / 2 },
+  { key: 'overtimeWorkdayMinutes', label: '工作日加班（小时）', value: hoursText },
+  { key: 'overtimeRestMinutes', label: '休息日加班（小时）', value: hoursText },
+  { key: 'overtimeHolidayMinutes', label: '节假日加班（小时）', value: hoursText },
 ];
+/** 一格的显示值 */
+export const monthStatValue = (c: (typeof MONTH_STAT_COLUMNS)[number], s: AttendanceMonthStats) => (c.value ? c.value(s[c.key]) : s[c.key]);
+/** 请假明细（按假种）：「年假 1.5 天、病假 1 天」 */
+export const leaveDetailText = (leave: readonly { name: string; halves: number }[]) => leave.map((l) => `${l.name} ${l.halves / 2} 天`).join('、');
 export interface AttendanceMonthRow extends AttendanceMonthStats {
   staffId: number;
   staffName: string;
   employeeNo: string | null;
   department: string;
+  /** OA-13：请假明细（按假种，半天） */
+  leave: { name: string; halves: number }[];
 }
 /** 后台「考勤月报」 */
 export interface AttendanceMonth {
@@ -639,6 +677,28 @@ export interface AttendanceMonth {
   departments: { key: string; name: string }[];
   rows: AttendanceMonthRow[];
 }
+
+// ───────────────────────── OA-13 考勤与审批联动（docs/OA.md 第 16 节） ─────────────────────────
+
+/** 节假日表：holiday 节假日 / workday 调休上班 */
+export type HolidayKind = 'holiday' | 'workday';
+export const HOLIDAY_KIND_LABELS: Record<HolidayKind, string> = { holiday: '节假日', workday: '调休上班' };
+export const HOLIDAY_NAME_MAX = 20;
+export interface HolidayDay {
+  day: string;
+  kind: HolidayKind;
+  name: string;
+}
+/** 一年的节假日表（version 0 = 还没保存过） */
+export interface HolidayYear {
+  year: number;
+  version: number;
+  days: HolidayDay[];
+  updatedByName: string | null;
+  updatedAt: string | null;
+}
+/** 加班单的加班类型（OA-11 模板里的选项） */
+export const OVERTIME_KINDS = { workday: '工作日', rest: '休息日', holiday: '节假日' } as const;
 
 /** 年假按工龄分档：满 years 年给 days 天 */
 export interface LeaveTier {

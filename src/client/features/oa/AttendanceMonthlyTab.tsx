@@ -1,10 +1,10 @@
 // OA-09 后台「考勤设置 → 考勤月报」（docs/OA.md 第 12 节）：按员工汇总一个月的结算结果。
-// 人事看本店全员、可按部门筛；部门负责人只看本部门。导出 Excel（服务端生成，记审计）。加班与请假明细随 OA-13。
+// 人事看本店全员、可按部门筛；部门负责人只看本部门。导出 Excel（服务端生成，记审计）。OA-13 起有出差、请假、加班与请假明细（按假种）。
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
-import { MONTH_STAT_COLUMNS, type AttendanceMonth, type AttendanceMonthRow } from '@shared/oa';
+import { leaveDetailText, MONTH_STAT_COLUMNS, monthStatValue, type AttendanceMonth, type AttendanceMonthRow } from '@shared/oa';
 import { api } from '../../lib/api';
 import { downloadUrl } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
@@ -28,9 +28,16 @@ export function AttendanceMonthlyTab() {
         align: 'right',
         className: 'num whitespace-nowrap',
         cellTestId: (r) => `att-month-${r.staffId}-${c.key}`,
-        cell: (r) => (r[c.key] ? r[c.key] : <span className="text-ink-4">0</span>),
+        cell: (r) => (r[c.key] ? monthStatValue(c, r) : <span className="text-ink-4">0</span>),
       }),
     ),
+    {
+      key: 'leave',
+      header: '请假明细',
+      className: 'whitespace-nowrap',
+      cellTestId: (r) => `att-month-${r.staffId}-leave`,
+      cell: (r) => (r.leave.length ? leaveDetailText(r.leave) : <span className="text-ink-4">—</span>),
+    },
   ];
   return (
     <Card className="p-5" data-testid="att-monthly">
@@ -66,7 +73,9 @@ export function AttendanceMonthlyTab() {
           </Button>
         )}
       </div>
-      <p className="mb-3 text-[12px] text-ink-3">按每天的考勤结果汇总（下班以后才结算，本月的到今天为止）；外勤定为「不算出勤」的那一班不算实际出勤。加班时长与请假明细随审批上线后加。</p>
+      <p className="mb-3 text-[12px] text-ink-3">
+        按每天的考勤结果汇总（下班以后才结算，本月的到今天为止）；外勤定为「不算出勤」的那一班、整天请假的不算实际出勤，出差的算。请假按通过的请假单逐天算，加班按通过的加班单（开始时间在这个月的）算；导出时请假明细每个假种一列。
+      </p>
       {q.isPending ? (
         <Skeleton className="h-48" />
       ) : q.isError && !d ? (

@@ -31,6 +31,7 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   oa_leave_adjusted: { label: '调整假期余额', tone: 'neutral' },
   oa_leave_granted: { label: '发放年假', tone: 'neutral' },
   oa_approval_template_saved: { label: '审批模板设置', tone: 'neutral' },
+  oa_holidays_saved: { label: '节假日表', tone: 'neutral' },
   oa_staff_imported: { label: '批量开通员工账号', tone: 'neutral' },
   position_chosen: { label: '自选新岗位', tone: 'pine' },
   member_created: { label: '新建会员', tone: 'lake' },

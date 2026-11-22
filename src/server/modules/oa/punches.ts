@@ -178,6 +178,7 @@ type PunchRow = {
   faceMime: string | null;
   faceSize: number | null;
   faceThumb: boolean | null;
+  makeup: boolean;
 };
 
 /** 打卡明细（带有效卡标记：上班卡第一次、下班卡最后一次）；where 是对 p 的过滤 */
@@ -188,7 +189,7 @@ async function loadPunches(db: Db, timeZone: string, where: Fragment): Promise<P
            to_char(p.punched_at AT TIME ZONE ${timeZone}, 'HH24:MI') AS local_time,
            p.kind, p.business_date::text AS business_date, p.shift_id, sh.name AS shift_name, p.late_minutes, p.early_minutes,
            l.name AS location_name, p.distance_m, p.accuracy_m, p.location_ok, p.outwork, p.outwork_reason, p.shared_location,
-           p.device_info, p.ip,
+           p.device_info, p.ip, p.makeup_approval_id IS NOT NULL AS makeup,
            CASE p.kind
              WHEN 'in' THEN NOT EXISTS (SELECT 1 FROM oa_punches q WHERE q.staff_id = p.staff_id AND q.store_id = p.store_id AND q.business_date = p.business_date
                                           AND q.shift_id = p.shift_id AND q.kind = 'in' AND (q.punched_at, q.id) < (p.punched_at, p.id))
@@ -242,6 +243,7 @@ const toPunch = (r: PunchRow): OaPunch => ({
   sharedLocation: r.sharedLocation,
   faceResult: r.faceResult,
   facePhoto: attachmentView(r.faceId, r.faceName, r.faceMime, r.faceSize, r.faceThumb),
+  makeup: r.makeup,
 });
 
 /** 一条打卡与它所在那一格的有效卡 */
