@@ -68,6 +68,12 @@ export async function onLeaveApproved(tx: Tx, a: Approved, env: LinkEnv): Promis
   const halves = a.form.durationHalves as number;
   const t = await lockLeaveType(tx, leaveTypeId);
   if (!t) throw unprocessable('LEAVE_TYPE_GONE', '这张单的假种不存在了，请驳回');
+  // 提交以后排班被改过、按现在的排班算出来的时长与提交时不一样：不通过（扣的余额、记的覆盖、月报的请假天数要是同一个数）
+  const days = await leaveDays(tx, a.applicantId, start, end);
+  const now = days.reduce((n, d) => n + d.halves, 0);
+  if (now !== halves) {
+    throw unprocessable('LEAVE_SCHEDULE_CHANGED', `提交以后排班改过了：按现在的排班这张假是 ${now / 2} 天，提交时是 ${halves / 2} 天，请驳回让发起人重新提交`);
+  }
   if (t.hasBalance && halves > 0) {
     const year = Number(start.date.slice(0, 4));
     const b = await lockBalance(tx, a.applicantId, leaveTypeId, year);
@@ -77,7 +83,7 @@ export async function onLeaveApproved(tx: Tx, a: Approved, env: LinkEnv): Promis
     }
     await changeBalance(tx, { staffId: a.applicantId, leaveTypeId, year, kind: 'use', halves: -halves, reason: a.title.slice(0, 200), refType: 'oa_approval', refId: a.id, actorId: null });
   }
-  await cover(tx, env, a, 'leave', await leaveDays(tx, a.applicantId, start, end), leaveTypeId);
+  await cover(tx, env, a, 'leave', days, leaveTypeId);
 }
 
 /** 出差通过：那几天整天覆盖 */

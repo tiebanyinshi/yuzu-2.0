@@ -149,6 +149,19 @@ describe('OA-13 考勤与审批联动', () => {
     expect((await ctx.sql`SELECT 1 FROM oa_attendance_covers WHERE approval_id = ${a.id}`).length).toBe(0);
   });
 
+  it('提交以后排班改了、时长与提交时不一样：通过被拒绝（扣的余额与覆盖要一致）', async () => {
+    at(D, '08:00');
+    // 后天、大后天只有大后天排了班：提交时 1 天
+    const d3 = shiftDate(D, 2);
+    const d4 = shiftDate(D, 3);
+    await schedule(emp.short!, d4);
+    const a = await submit(emp.short!, 'leave', { leaveTypeId: personal.id, start: halfDay(d3, 'am'), end: halfDay(d4, 'pm'), reason: '搬家' });
+    expect(a.form.durationHalves).toBe(2);
+    await schedule(emp.short!, d3);
+    expect(code(await approve(a))).toBe('LEAVE_SCHEDULE_CHANGED');
+    expect((await ctx.sql`SELECT 1 FROM oa_attendance_covers WHERE approval_id = ${a.id}`).length).toBe(0);
+  });
+
   it('出差：那天记出差、不用打卡、算出勤（已经结算过的由后台任务按新的覆盖重算）', async () => {
     at(D, '08:00');
     const a = await submit(emp.trip!, 'trip', { destination: '杭州', startDate: D, endDate: D, transport: '火车', reason: '考察' });
