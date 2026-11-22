@@ -523,4 +523,3 @@ export interface FaceEnrollSaved {
   enrollment: FaceEnrollment;
   replayed: boolean;
 }
-
