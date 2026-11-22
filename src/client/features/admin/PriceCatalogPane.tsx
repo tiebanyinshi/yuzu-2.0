@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Download, FileSearch, FileUp, History, Pencil, Plus, Search, Trash2, Undo2 } from 'lucide-react';
+import { Check, Download, FileUp, History, Plus, Undo2 } from 'lucide-react';
 import {
   DISH_SECTIONS,
   PRICE_CHANGE_LABELS,
@@ -29,7 +29,9 @@ import {
   type PriceSheet,
 } from '@shared/price-catalog';
 import { formatYuan } from '@shared/money';
-import { api, errorMessage } from '../../lib/api';
+import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
+import { ErpPendingStoreError, sendErpOp, useErpPending } from '../../lib/erpPending';
+import { useSession } from '../../lib/session';
 import { loadTableFile, type LoadedTable } from '../../lib/import-file';
 import { formatDateTime, uuid } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
@@ -37,6 +39,7 @@ import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { ReasonDialog } from '../../components/ReasonDialog';
 import { Badge, Button, Card, Input, Notice, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
+import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { ChangeLines, PriceEntryDialog, PriceEntryHistory } from './PriceEntryDialog';
 
 /** 价目表的查询都在这个前缀下：改了任何一处整体刷新（概要、条目、改动记录） */
@@ -47,7 +50,10 @@ type Which = 'draft' | 'active';
 type SheetFilter = 'all' | PriceSheet;
 type Only = 'all' | 'none' | 'inactive';
 
+const PENDING_TYPES = ['price_import', 'price_rollback'] as const;
+
 export function PriceCatalogPane() {
+  const qc = useQueryClient();
   const overview = useQuery({ queryKey: overviewKey, queryFn: () => api.get<PriceCatalogOverview>('/api/admin/price-catalog') });
   const [which, setWhich] = useState<Which>('active');
   const data = overview.data;
@@ -59,6 +65,8 @@ export function PriceCatalogPane() {
 
   return (
     <div className="space-y-4" data-testid="price-catalog">
+      {/* 导入、整体回滚结果不确定时（断网、超时）：查回、按原内容重新提交（同一编号）或确认作废，不另起一笔 */}
+      <ErpPendingPanel types={PENDING_TYPES} className="space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: overviewKey })} />
       <ImportCard onImported={() => setWhich('draft')} />
       {overview.isPending ? (
         <Skeleton className="h-48" />
@@ -247,7 +255,7 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
       dataLabel: '操作',
       cell: (e) => (
         <span className="flex justify-end gap-1">
-          <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" />} onClick={() => setEditing(e)} data-testid="price-entry-edit">
+          <Button size="sm" variant="ghost" onClick={() => setEditing(e)} data-testid="price-entry-edit">
             改
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setToggling(e)} data-testid="price-entry-toggle">
@@ -300,8 +308,7 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
           <option value="inactive">只看已停用</option>
         </Select>
         <span className="relative min-w-0 flex-1 basis-56">
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-4" aria-hidden />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜名称、编号、分类、房号" className="pl-9" aria-label="搜索价目" data-testid="price-catalog-search" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜名称、编号、分类、房号" aria-label="搜索价目" data-testid="price-catalog-search" />
         </span>
       </div>
       <p className="mt-2 text-[12.5px] text-ink-3" data-testid="price-catalog-shown">
@@ -316,18 +323,21 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
         empty="没有符合条件的项目"
         testId="price-catalog-entries"
       />
-      <PriceEntryDialog
-        open={editing !== null}
-        setId={setId}
-        entry={editing === 'new' ? null : editing}
-        defaultSheet={sheet === 'all' ? 'massage' : sheet}
-        onClose={() => setEditing(null)}
-        onSaved={(saved) => {
-          setNotice({ tone: 'success', text: `${editing === 'new' ? '已新增' : '已保存'}「${saved.name}」` });
-          setEditing(null);
-          void refresh();
-        }}
-      />
+      {editing !== null && (
+        <PriceEntryDialog
+          key={editing === 'new' ? 'new' : editing.id}
+          open={editing !== null}
+          setId={setId}
+          entry={editing === 'new' ? null : editing}
+          defaultSheet={sheet === 'all' ? 'massage' : sheet}
+          onClose={() => setEditing(null)}
+          onSaved={(saved) => {
+            setNotice({ tone: 'success', text: `${editing === 'new' ? '已新增' : '已保存'}「${saved.name}」` });
+            setEditing(null);
+            void refresh();
+          }}
+        />
+      )}
       <PriceEntryHistory setId={setId} entry={history} onClose={() => setHistory(null)} />
       <ReasonDialog
         open={!!toggling?.active}
@@ -365,7 +375,8 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
 function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary; previous: PriceCatalogSetSummary | null; onDone: (which: Which) => void }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState<'activate' | 'rollback' | 'discard' | null>(null);
-  const [rollbackKey, setRollbackKey] = useState(() => uuid());
+  const session = useSession();
+  const rollbackPending = useErpPending(['price_rollback']);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mismatches = countMismatches(shown.counts);
@@ -373,11 +384,22 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/api/admin/price-catalog/${path}`, body);
+      if (path === 'rollback') {
+        // 整体回滚带新的操作编号：先把编号和原请求记在本机并读回核对，记不下就不发；结果不确定的在页面上方查回、重提或作废
+        const key = uuid();
+        await sendErpOp({
+          key,
+          type: 'price_rollback',
+          url: '/api/admin/price-catalog/rollback',
+          body: { ...(body as object), opKey: key },
+          summary: `整体回滚：换下「${shown.title}」，恢复「${previous?.title ?? ''}」`,
+          staffName: session.staff.displayName,
+        });
+      } else await api.post(`/api/admin/price-catalog/${path}`, body);
       setOpen(null);
       onDone(which);
     } catch (e) {
-      setError(errorMessage(e));
+      setError(e instanceof UncertainError ? '回滚结果待确认：请在页面上方查回、按原内容重新提交或作废，不要再点一次回滚' : errorMessage(e));
       setOpen(null);
     } finally {
       setBusy(false);
@@ -392,19 +414,18 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
             <Button variant="primary" size="sm" icon={<Check className="size-4" />} onClick={() => setOpen('activate')} data-testid="price-catalog-activate">
               切换生效
             </Button>
-            <Button variant="ghost" size="sm" icon={<Trash2 className="size-4" />} onClick={() => setOpen('discard')} data-testid="price-catalog-discard">
+            <Button variant="ghost" size="sm" onClick={() => setOpen('discard')} data-testid="price-catalog-discard">
               放弃草稿
             </Button>
           </>
         )}
-        {shown.status === 'active' && previous && (
+        {shown.status === 'active' && previous && rollbackPending.length === 0 && (
           <Button
             variant="secondary"
             size="sm"
             icon={<Undo2 className="size-4" />}
             onClick={() => {
               // 每次打开配一个新的操作编号；结果不确定再点一次用同一个
-              setRollbackKey(uuid());
               setOpen('rollback');
             }}
             data-testid="price-catalog-rollback"
@@ -462,7 +483,7 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
         busy={busy}
         testId="price-catalog-rollback"
         onClose={() => setOpen(null)}
-        onConfirm={(reason) => void run('rollback', { activeId: shown.id, reason, opKey: rollbackKey }, 'active')}
+        onConfirm={(reason) => void run('rollback', { activeId: shown.id, reason }, 'active')}
       />
       <Dialog
         open={open === 'discard'}
@@ -580,7 +601,9 @@ function DiffCard({ current, other }: { current: PriceCatalogSet; other: PriceCa
 function ImportCard({ onImported }: { onImported: () => void }) {
   const qc = useQueryClient();
   const [file, setFile] = useState<LoadedTable | null>(null);
-  const [preview, setPreview] = useState<(PriceImportPreview & { digest: string; opKey: string }) | null>(null);
+  const session = useSession();
+  const pending = useErpPending(['price_import']);
+  const [preview, setPreview] = useState<(PriceImportPreview & { digest: string }) | null>(null);
   const [busy, setBusy] = useState<'preview' | 'import' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -603,28 +626,41 @@ function ImportCard({ onImported }: { onImported: () => void }) {
     setBusy('preview');
     setError(null);
     try {
-      // 每次预览配一个操作编号：导入结果不确定（断网、超时）再点一次导入用同一个编号，服务端返回第一次的结果、不再替换草稿
-      const p = await api.post<PriceImportPreview & { digest: string }>('/api/admin/price-catalog/import/preview', { fileName: file.fileName, xlsxBase64: file.xlsxBase64 });
-      setPreview({ ...p, opKey: uuid() });
+      setPreview(await api.post<PriceImportPreview & { digest: string }>('/api/admin/price-catalog/import/preview', { fileName: file.fileName, xlsxBase64: file.xlsxBase64 }));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setBusy(null);
     }
   };
+  // 每次导入用新的操作编号：先把编号和原请求（含文件内容）记在本机并读回核对，记不下就不发请求（AGENTS.md「结果待确认」）
   const runImport = async () => {
     if (!file || !preview) return;
+    if (pending.length > 0) return setError('上一次导入结果待确认：请先在页面上方查回、按原内容重新提交或作废，不要换了文件再导入');
     setBusy('import');
     setError(null);
     try {
-      const set = await api.post<PriceCatalogSet>('/api/admin/price-catalog/import', { fileName: file.fileName, xlsxBase64: file.xlsxBase64, previewDigest: preview.digest, opKey: preview.opKey });
+      const key = uuid();
+      const set = await sendErpOp<PriceCatalogSet>({
+        key,
+        type: 'price_import',
+        url: '/api/admin/price-catalog/import',
+        body: { fileName: file.fileName, xlsxBase64: file.xlsxBase64, previewDigest: preview.digest, opKey: key },
+        summary: `价目表导入 · ${file.fileName} · ${preview.total.actual} 项`,
+        staffName: session.staff.displayName,
+      });
       setDone(`已存成草稿「${set.title}」：${set.total.actual} 项。核对下面的条数与价格，确认后再切换生效。`);
       setPreview(null);
       setFile(null);
       onImported();
       await qc.invalidateQueries({ queryKey: overviewKey });
     } catch (e) {
-      setError(errorMessage(e));
+      if (e instanceof UncertainError) {
+        setError('导入结果待确认：已记在本机，请在页面上方查回、按原内容重新提交或作废，不要换了文件再导入');
+        setPreview(null);
+        setFile(null);
+      } else if (e instanceof ErpPendingStoreError) setError(e.message);
+      else setError(e instanceof ApiError ? e.message : errorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -657,17 +693,16 @@ function ImportCard({ onImported }: { onImported: () => void }) {
         <input type="file" accept=".xlsx" className="sr-only" aria-label="选择价目表" disabled={busy !== null} onChange={(e) => void choose(e.target.files?.[0])} data-testid="price-catalog-file" />
       </label>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button
-          variant="secondary"
-          icon={<FileSearch className="size-4" />}
-          disabled={!file || busy !== null}
-          loading={busy === 'preview'}
-          onClick={() => void runPreview()}
-          data-testid="price-catalog-preview"
-        >
+        <Button variant="secondary" disabled={!file || busy !== null || pending.length > 0} loading={busy === 'preview'} onClick={() => void runPreview()} data-testid="price-catalog-preview">
           预览
         </Button>
-        <Button variant="primary" disabled={!preview || errors.length > 0 || busy !== null} loading={busy === 'import'} onClick={() => void runImport()} data-testid="price-catalog-apply">
+        <Button
+          variant="primary"
+          disabled={!preview || errors.length > 0 || busy !== null || pending.length > 0}
+          loading={busy === 'import'}
+          onClick={() => void runImport()}
+          data-testid="price-catalog-apply"
+        >
           {preview && errors.length === 0 ? `导入成草稿（${preview.total.actual} 项）` : '导入成草稿'}
         </Button>
       </div>

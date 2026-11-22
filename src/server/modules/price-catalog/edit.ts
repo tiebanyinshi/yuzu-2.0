@@ -36,7 +36,8 @@ import { guard } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../../lib/context';
 import { conflict, notFound, unprocessable } from '../../lib/errors';
-import { lockOpKey } from '../../lib/fences';
+import { assertNotFenced, lockOpKey } from '../../lib/fences';
+import { erpOpAbandoned } from '../erp-ops';
 import { currentStoreId } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
 import { ENTRY_COLUMNS, entriesOf, entryOf, priceCatalogOverview, rowOf } from './read';
@@ -110,7 +111,7 @@ const RollbackInput = z.object({
   activeId: z.number().int().positive(),
   reason: z.string().trim().min(2, '请写明回滚原因').max(200, '原因最多 200 个字'),
   /** 操作编号：结果不确定原样重提时什么都不改（不把后来别人切换的结果切回去） */
-  opKey: z.string().trim().min(8, '缺少操作编号').max(64, '操作编号太长'),
+  opKey: z.uuid('缺少操作编号'),
 });
 const DiscardInput = z.object({ draftId: z.number().int().positive() });
 
@@ -325,12 +326,13 @@ export async function rollbackPriceCatalog(deps: Deps, raw: unknown, ctx: OpCont
   const f = parse(RollbackInput, raw);
   return deps.sql.begin(async (tx) => {
     // 同一个操作编号排队；已经回滚过的返回现在的样子、什么都不改
-    await lockOpKey(tx, `price_catalog_rollback:${f.opKey}`);
+    await lockOpKey(tx, f.opKey);
     const [done] = await tx<{ storeId: number }[]>`SELECT store_id FROM price_catalog_set_ops WHERE op_key = ${f.opKey}`;
     if (done) {
       if (Number(done.storeId) !== currentStoreId()) throw conflict('PRICE_OP_REUSED', '这个操作编号已经用过了，请刷新页面后再操作');
       return priceCatalogOverview(tx);
     }
+    await assertNotFenced(tx, f.opKey, 'price_rollback', erpOpAbandoned);
     await lockSets(tx);
     const current = await priceCatalogOverview(tx);
     if (!current.active || current.active.id !== f.activeId) throw conflict('PRICE_SET_CHANGED', '生效中的价目表已经变了，刷新后再看');

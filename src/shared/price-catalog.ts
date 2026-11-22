@@ -293,7 +293,7 @@ export function derivedMainPrice(e: Pick<PriceCatalogEntry, 'kind' | 'variants'>
   const pick = (unit?: string) => {
     const prices = e.variants.filter((v) => unit === undefined || v.unit === unit).map((v) => v.priceCents);
     const ok = prices.filter((v): v is number => v !== null);
-    return ok.length ? Math.min(...ok) : null;
+    return ok.reduce<number | null>((m, v) => (m === null || v < m ? v : m), null);
   };
   if (e.kind === 'party_room' && e.variants.length) return pick();
   if (e.kind === 'dining_room' && e.variants.some((v) => v.unit === '位')) return pick('位');

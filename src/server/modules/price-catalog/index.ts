@@ -15,7 +15,8 @@ import { writeAudit } from '../../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../../lib/context';
 import { attachment } from '../../lib/csv';
 import { conflict, unprocessable } from '../../lib/errors';
-import { lockOpKey } from '../../lib/fences';
+import { assertNotFenced, lockOpKey } from '../../lib/fences';
+import { erpOpAbandoned } from '../erp-ops';
 import { currentStoreId } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
 import { buildWorkbook, type WbSheet } from '../../lib/xlsx';
@@ -33,7 +34,7 @@ const ImportInput = FileFields.extend({
   previewDigest: z.string().regex(/^[0-9a-f]{64}$/, '请先预览，核对后再导入'),
   title: z.string().trim().max(60, '名称最多 60 个字').optional(),
   /** 操作编号：结果不确定（断网、超时）原样重提时返回第一次的结果，不再替换草稿 */
-  opKey: z.string().trim().min(8, '缺少操作编号').max(64, '操作编号太长'),
+  opKey: z.uuid('缺少操作编号'),
 });
 
 // ───────────────────────── 读文件 ─────────────────────────
@@ -79,7 +80,7 @@ export async function importPriceCatalog(deps: Deps, raw: unknown, ctx: OpContex
   if (p.errorCount > 0) throw unprocessable('IMPORT_INVALID', `有 ${p.errorCount} 处问题，整份没有导入；请按预览里写的工作表、行号改好再导`);
   const id = await deps.sql.begin(async (tx) => {
     // 同一个操作编号排队；已经做过的返回第一次的那份草稿（草稿后来被替换或放弃的拒绝，不再替换别人新导的）
-    await lockOpKey(tx, `price_catalog_import:${f.opKey}`);
+    await lockOpKey(tx, f.opKey);
     const [done] = await tx<{ setId: number | null; fileSha256: string; storeId: number }[]>`
       SELECT set_id, file_sha256, store_id FROM price_catalog_import_ops WHERE op_key = ${f.opKey}`;
     if (done) {
@@ -87,6 +88,8 @@ export async function importPriceCatalog(deps: Deps, raw: unknown, ctx: OpContex
       if (done.setId === null) throw conflict('IMPORT_DONE', '这次导入之前已经成功了，但那份草稿后来被替换或放弃；刷新页面看现在的草稿');
       return Number(done.setId);
     }
+    // 页面上「确认作废」过的编号：原请求晚到也不导
+    await assertNotFenced(tx, f.opKey, 'price_import', erpOpAbandoned);
     // 一家门店一份草稿：门店级咨询锁（与切换、回滚、放弃同一把）→ 原来的草稿行，删掉它与它的条目，再写新的
     await lockStoreCatalog(tx);
     const [old] = await tx<{ id: number }[]>`SELECT id FROM price_catalog_sets WHERE store_id = ${currentStoreId()} AND status = 'draft' FOR UPDATE`;

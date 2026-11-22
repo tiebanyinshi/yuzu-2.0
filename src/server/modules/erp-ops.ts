@@ -147,6 +147,8 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   // OA-04 考勤设置：与新建接口一致
   oa_attendance_setup: ['hr.attendance'],
   oa_schedule_save: ['hr.attendance'],
+  price_import: ['catalog.manage'],
+  price_rollback: ['catalog.manage'],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -223,6 +225,8 @@ const READ: Record<ErpOpType, Permission[]> = {
   oa_staff_import: ['hr.org', 'staff.manage'],
   oa_attendance_setup: ['hr.attendance'],
   oa_schedule_save: ['hr.attendance'],
+  price_import: ['catalog.manage'],
+  price_rollback: ['catalog.manage'],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {
@@ -237,6 +241,16 @@ export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise
     return { found: true, abandoned: false, refId };
   }
   // UI 工作台（8.1.1）的发布、回滚：编号记在版本上，refId 是那一版
+  // 价目表录入：导入草稿的编号记在 price_catalog_import_ops（refId 是那份草稿；已被替换、放弃的没有 refId），
+  // 整体回滚的记在 price_catalog_set_ops（refId 是恢复生效的那份）
+  if (type === 'price_import') {
+    const [op] = await db<{ setId: number | null }[]>`SELECT set_id FROM price_catalog_import_ops WHERE op_key = ${key}`;
+    if (op) return { found: true, abandoned: false, ...(op.setId !== null ? { refId: Number(op.setId) } : {}) };
+  }
+  if (type === 'price_rollback') {
+    const [op] = await db<{ toSetId: number }[]>`SELECT to_set_id FROM price_catalog_set_ops WHERE op_key = ${key}`;
+    if (op) return { found: true, abandoned: false, refId: Number(op.toSetId) };
+  }
   if (type === 'studio_publish') {
     const [v] = await db<{ id: number }[]>`SELECT id FROM studio_versions WHERE client_key = ${key}`;
     if (v) return { found: true, abandoned: false, refId: Number(v.id) };

@@ -2,6 +2,7 @@
 // 价格 / 时长 / 加钟 / 封顶，双价 / 单价 / 无价格三种形态、空值不存 0、服务费按比例）、逐行校验带工作表 / 行号 / 字段 / 原因、
 // 条数对照、草稿替换、权限、导入模板。用合成的六张表（照《价目表 1119》的版式与合并格），不放门店的原表。
 
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   countMismatches,
@@ -24,6 +25,8 @@ import { minutesOf, roomNumbersOf, windowOf, yuanToCents } from '../src/server/m
 import { api, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
+/** 用例里按名字取固定的操作编号（服务端要 UUID） */
+const OP: Record<string, string> = new Proxy({} as Record<string, string>, { get: (t, k: string) => (t[k] ??= randomUUID()) });
 beforeAll(async () => {
   ctx = await setup();
 });
@@ -257,7 +260,7 @@ describe('价目表录入 第一批：数据模型与导入', () => {
       fileName: 'x.xlsx',
       xlsxBase64: bad,
       previewDigest: 'a'.repeat(64),
-      opKey: `import-op-${Math.random().toString(36).slice(2)}`,
+      opKey: randomUUID(),
     });
     expect(refused.status).toBe(422);
   });
@@ -272,7 +275,7 @@ describe('价目表录入 第一批：数据模型与导入', () => {
           fileName: 'a.xlsx',
           xlsxBase64: file,
           previewDigest: 'b'.repeat(64),
-          opKey: `import-op-${Math.random().toString(36).slice(2)}`,
+          opKey: randomUUID(),
         })
       ).body.error.code,
     ).toBe('IMPORT_STALE');
@@ -280,7 +283,7 @@ describe('价目表录入 第一批：数据模型与导入', () => {
       fileName: '汤崎宝安全品类价目表1119.xlsx',
       xlsxBase64: file,
       previewDigest: p.digest,
-      opKey: `import-op-${Math.random().toString(36).slice(2)}`,
+      opKey: randomUUID(),
     });
     expect(done.status, JSON.stringify(done.body)).toBe(201);
     const set = done.body as PriceCatalogSet;
@@ -305,7 +308,7 @@ describe('价目表录入 第一批：数据模型与导入', () => {
       xlsxBase64: file,
       previewDigest: p.digest,
       title: '第二版',
-      opKey: `import-op-${Math.random().toString(36).slice(2)}`,
+      opKey: randomUUID(),
     });
     expect(again.status).toBe(201);
     const [draftRow] = await ctx.sql<{ drafts: number }[]>`SELECT count(*)::int AS drafts FROM price_catalog_sets WHERE status = 'draft'`;
@@ -375,7 +378,7 @@ describe('价目表录入 第三批：编辑与校验', () => {
       xlsxBase64: file,
       previewDigest: p.digest,
       title,
-      opKey: `import-op-${Math.random().toString(36).slice(2)}`,
+      opKey: randomUUID(),
     });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     return res.body as PriceCatalogSet;
@@ -514,17 +517,18 @@ describe('价目表录入 第三批：编辑与校验', () => {
     expect(retired.body.error.code).toBe('PRICE_SET_RETIRED');
 
     // 整体回滚：要写原因；拿错了生效的那份不回滚；回滚后上一版生效、刚才那份成为上一版
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '', opKey: 'rollback-op-0000' })).status).toBe(400);
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: draft.id, reason: '演练回滚', opKey: 'rollback-op-0001' })).body.error.code).toBe(
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '', opKey: OP['rollback-op-0000'] })).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: draft.id, reason: '演练回滚', opKey: OP['rollback-op-0001'] })).body.error.code).toBe(
       'PRICE_SET_CHANGED',
     );
-    const back = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚', opKey: 'rollback-op-0002' })).body as PriceCatalogOverview;
+    const back = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚', opKey: OP['rollback-op-0002'] })).body as PriceCatalogOverview;
     // 回滚的响应丢了、之后别人又回滚回去：原样重提第一次的请求什么都不改，不把生效的再切回去
-    const undo = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: draft.id, reason: '再回去', opKey: 'rollback-op-0003' })).body as PriceCatalogOverview;
+    const undo = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: draft.id, reason: '再回去', opKey: OP['rollback-op-0003'] })).body as PriceCatalogOverview;
     expect(undo.active!.id).toBe(second.id);
-    const replay = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚', opKey: 'rollback-op-0002' })).body as PriceCatalogOverview;
+    const replay = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚', opKey: OP['rollback-op-0002'] }))
+      .body as PriceCatalogOverview;
     expect(replay.active!.id).toBe(second.id);
-    const redo = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚', opKey: 'rollback-op-0004' })).body as PriceCatalogOverview;
+    const redo = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚', opKey: OP['rollback-op-0004'] })).body as PriceCatalogOverview;
     expect(redo.active!.id).toBe(draft.id);
     expect(back.active).toMatchObject({ id: draft.id, status: 'active', retiredAt: null });
     expect(back.previous).toMatchObject({ id: second.id, status: 'retired' });
@@ -568,7 +572,7 @@ describe('价目表录入 审查修正（PR #160）', () => {
   it('导入带操作编号：原样重提返回第一次的草稿；草稿被替换后再重提拒绝；同一编号换文件拒绝；两次导入同时来只留一份草稿', async () => {
     const file = workbook();
     const p = (await preview(file)).body as PriceImportPreview & { digest: string };
-    const body = { fileName: '重提.xlsx', xlsxBase64: file, previewDigest: p.digest, opKey: 'retry-op-0001' };
+    const body = { fileName: '重提.xlsx', xlsxBase64: file, previewDigest: p.digest, opKey: OP['retry-op-0001'] };
     const first = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', body);
     expect(first.status, JSON.stringify(first.body)).toBe(201);
     const again = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', body);
@@ -581,14 +585,14 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const p2 = (await preview(other)).body as PriceImportPreview & { digest: string };
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { ...body, xlsxBase64: other, previewDigest: p2.digest })).body.error.code).toBe('IMPORT_OP_REUSED');
     // 别人导了新草稿以后，旧请求的重提不覆盖它
-    const newer = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { ...body, opKey: 'retry-op-0002' });
+    const newer = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { ...body, opKey: OP['retry-op-0002'] });
     expect(newer.status).toBe(201);
     const late = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', body);
     expect(late.status).toBe(409);
     expect(late.body.error.code).toBe('IMPORT_DONE');
     expect(((await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as PriceCatalogOverview).draft!.id).toBe(newer.body.id);
     // 两次导入同时来：门店级的锁排队，都成功、最后只有一份草稿（不撞唯一索引报 500）
-    const both = await Promise.all(['race-op-0001', 'race-op-0002'].map((opKey) => api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { ...body, opKey })));
+    const both = await Promise.all([OP['race-op-0001'], OP['race-op-0002']].map((opKey) => api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { ...body, opKey })));
     expect(both.map((r) => r.status)).toEqual([201, 201]);
     const [draftRow] = await ctx.sql<{ drafts: number }[]>`SELECT count(*)::int AS drafts FROM price_catalog_sets WHERE status = 'draft'`;
     expect(draftRow!.drafts).toBe(1);
@@ -660,5 +664,46 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const saved = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/price-catalog/entries/${guest.id}`, { ...guest, variants });
     expect(saved.status, JSON.stringify(saved.body)).toBe(200);
     expect(saved.body.priceCents).toBe(69900);
+  });
+
+  it('第三轮审查：导入、回滚接上「结果待确认」（查回、确认作废后原请求不再生效）；娱乐价格时长不合法报错；轰趴房合并行过多整份拒绝', async () => {
+    const file = workbook();
+    const p = (await preview(file)).body as PriceImportPreview & { digest: string };
+    const body = { fileName: '作废.xlsx', xlsxBase64: file, previewDigest: p.digest, opKey: randomUUID() };
+    // 查回：没导过的查不到；确认作废以后，原请求晚到也不导
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${body.opKey}?type=price_import`)).body).toMatchObject({ found: false, abandoned: false });
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${body.opKey}/abandon`, { type: 'price_import', summary: '演练' })).body).toMatchObject({ found: false, abandoned: true });
+    const late = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', body);
+    expect(late.status).toBe(409);
+    expect(late.body.error.code).toBe('OP_ABANDONED');
+    // 导过的查回能找到那份草稿
+    const ok = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { ...body, opKey: randomUUID() });
+    expect(ok.status).toBe(201);
+    const [okOp] = await ctx.sql<{ opKey: string }[]>`SELECT op_key FROM price_catalog_import_ops WHERE set_id = ${ok.body.id}`;
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${okOp!.opKey}?type=price_import`)).body).toMatchObject({ found: true, refId: ok.body.id });
+    // 回滚作废后原请求不生效；店员不能查回
+    const rb = randomUUID();
+    await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${rb}/abandon`, { type: 'price_rollback' });
+    const ov = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as PriceCatalogOverview;
+    const r = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: ov.active!.id, reason: '演练', opKey: rb });
+    expect(r.body.error.code).toBe('OP_ABANDONED');
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/erp/ops/${rb}?type=price_rollback`)).status).toBe(403);
+
+    for (const bad of ['39/0min', '39/3000min']) {
+      const issues = (await issuesOf({ 娱乐价格: ent([['台球', 4, bad, '加钟/19.9']]) })).filter((i) => i.level === 'error');
+      expect(issues[0]).toMatchObject({ row: 3, field: '价格' });
+    }
+
+    const party = sheet(
+      '房间价格',
+      [
+        ['房型', '总数', '收费参考', null, '备注'],
+        ...Array.from({ length: 30 }, (_, i): Row => [i === 0 ? '轰趴房' : null, i === 0 ? '9间' : null, '6小时：999', null, `${i + 40}平（H2${String(i).padStart(2, '0')})`]),
+      ],
+      ['A2:A31', 'B2:B31'],
+    );
+    const tooMany = await preview(workbook({ 房间价格: party }));
+    expect(tooMany.status).toBe(422);
+    expect(tooMany.body.error.code).toBe('IMPORT_FILE_INVALID');
   });
 });

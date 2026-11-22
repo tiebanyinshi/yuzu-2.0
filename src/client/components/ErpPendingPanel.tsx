@@ -22,7 +22,7 @@ export interface ErpOpRef {
 }
 
 /** 重新提交成功时，从各接口的返回里取出单据编号 */
-function refOfResponse(type: ErpOpType, data: unknown): ErpOpRef | null {
+function refOfResponse(type: ErpOpType, data: unknown): ErpOpRef | null | undefined {
   const d = data as Record<string, { id: number } | number | undefined>;
   switch (type) {
     case 'customer_note':
@@ -182,6 +182,7 @@ function refOfResponse(type: ErpOpType, data: unknown): ErpOpRef | null {
     case 'member_card_return':
       return typeof d.memberId === 'number' ? { refId: d.memberId } : null;
   }
+  // 没列在上面的（价目表导入、整体回滚）：页面只刷新，不用单据编号
 }
 
 const refOfLookup = (r: ErpOpLookup): ErpOpRef | null => (r.found && r.refId ? { refId: r.refId, advanceId: r.advanceId } : null);

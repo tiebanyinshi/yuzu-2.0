@@ -26,6 +26,10 @@ export class PriceFileError extends Error {}
 /** 一个合并区域、一张表展开合并区域最多填多少格（原表最大的合并区域几十格） */
 const MERGE_AREA_MAX = 2_000;
 const MERGE_CELLS_MAX = 50_000;
+/** 一个房型最多合并多少行（轰趴房按面积一行一档，原表 4 行） */
+const GROUP_ROWS_MAX = 20;
+/** 最小值（不把整个数组展开给 Math.min）；空的为 null */
+const minOf = (values: number[]): number | null => values.reduce<number | null>((m, v) => (m === null || v < m ? v : m), null);
 /** 一张表最多多少行有内容（原表零点菜品一百四十来行；一行至多一项） */
 const SHEET_ROWS_MAX = 2_000;
 
@@ -247,7 +251,10 @@ function perTime(text: string): { cents: number; minutes: number | null } | null
   if (!m) return null;
   const cents = yuanToCents(m[1]!);
   if (cents === null) return null;
-  return { cents, minutes: m[2] ? minutesOf(m[2]) : null };
+  // 写了时长却不合法（39/0min、39/3000min）：看不懂，不能当成没写时长（那会变成按次的畅玩卷）
+  const minutes = m[2] ? minutesOf(m[2]) : null;
+  if (m[2] && minutes === null) return null;
+  return { cents, minutes };
 }
 
 function entertainmentSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
@@ -350,6 +357,8 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     else groups.push({ type, rows: [r] });
   }
   for (const grp of groups) {
+    // 一个房型合并的行（轰趴房按面积一行一档）：原表 4 行；几百上千行的不像价目表，整份拒绝（不先生成一大堆档）
+    if (grp.rows.length > GROUP_ROWS_MAX) throw new PriceFileError(`「${grp.type}」连着 ${grp.rows.length} 行，超过 ${GROUP_ROWS_MAX} 行，不像价目表；请检查表格后再导入`);
     const r = grp.rows[0]!;
     const sort = out.length + 1;
     if (!grp.type) {
@@ -383,7 +392,7 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       }
       const prices = variants.map((v) => v.priceCents).filter((v): v is number => v !== null);
       out.push({
-        ...single({ ...base, kind: 'party_room' }, prices.length ? Math.min(...prices) : null),
+        ...single({ ...base, kind: 'party_room' }, minOf(prices)),
         durationMinutes: 360,
         roomNumbers: [...new Set(variants.flatMap((v) => v.roomNumbers ?? []))],
         variants,
@@ -402,7 +411,7 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       if (!variants.length) ctx.error(S, r, '收费参考', '没认出位价（写 688元/位）');
       const perHead = variants.filter((v) => v.unit === '位').map((v) => v.priceCents!);
       out.push({
-        ...single({ ...base, kind: 'dining_room' }, perHead.length ? Math.min(...perHead) : null),
+        ...single({ ...base, kind: 'dining_room' }, minOf(perHead)),
         unit: '位',
         extraPriceCents: over ? yuanToCents(over[1]!) : null,
         extraMinutes: over ? 60 : null,
@@ -425,7 +434,7 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       ];
       const nights = night.map((n) => n.cents).filter((v): v is number => v !== null);
       const rooms = roomsAt(r, note);
-      out.push({ ...single(base, nights.length ? Math.min(...nights) : null), unit: '晚', roomNumbers: rooms, variants });
+      out.push({ ...single(base, minOf(nights)), unit: '晚', roomNumbers: rooms, variants });
       checkRooms(ctx, S, r, grp.type, base.unitsCount, rooms);
       continue;
     }

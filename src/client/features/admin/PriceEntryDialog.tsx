@@ -28,7 +28,6 @@ import {
 } from '@shared/price-catalog';
 import { centsToInput, formatYuan, parseYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
-import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { formatDateTime } from '../../lib/utils';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
@@ -192,7 +191,7 @@ function entryOf(base: PriceCatalogEntry, f: Form): { entry: PriceCatalogEntry; 
   return { entry: derived, problems: [...problems, ...priceEntryProblems(derived)] };
 }
 
-/** 新增（entry 为空，在 setId 这份里加）或修改一项 */
+/** 新增（entry 为空，在 setId 这份里加）或修改一项。打开时才挂上、按这一项给 key：每次打开都从这一项现在的值重新填 */
 export function PriceEntryDialog({
   open,
   setId,
@@ -212,12 +211,6 @@ export function PriceEntryDialog({
   const [form, setForm] = useState(() => formOf(base));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useResetOnOpen(open, () => {
-    const b = entry ?? blankEntry(defaultSheet);
-    setBase(b);
-    setForm(formOf(b));
-    setError(null);
-  }, [entry, defaultSheet]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
   const { entry: next, problems } = entryOf(base, form);
   const creating = !entry;

@@ -481,6 +481,9 @@ export const ERP_OP_TYPES = [
   'oa_attendance_setup',
   // OA-05 排班保存（一批格子一个编号）
   'oa_schedule_save',
+  // 价目表录入（PR #160 审查）：导入草稿、整体回滚；编号记在 price_catalog_import_ops / price_catalog_set_ops
+  'price_import',
+  'price_rollback',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -557,6 +560,8 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   oa_staff_import: '批量开通员工账号',
   oa_attendance_setup: '新建班次 / 打卡点 / 考勤组',
   oa_schedule_save: '保存排班',
+  price_import: '价目导入',
+  price_rollback: '价目回滚',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */
