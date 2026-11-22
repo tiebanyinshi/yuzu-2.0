@@ -282,6 +282,10 @@ export const PERMISSIONS = {
   'hr.attendance': { roles: ['owner'] },
   /** 本部门的排班与考勤查看（OA-05 起）：只看、不能改；各部门负责人与总经办 */
   'hr.attendanceDept': { roles: ['owner'] },
+  /** 办公审批的模板设置（OA-12）：审批人层级、条件开关、抄送、启用。默认给总裁与人力行政部负责人 */
+  'oa.templates': { roles: ['owner'] },
+  /** 全部办公审批单（OA-12）：查询、看详情、催办、导出、看板。默认给总裁、总经办、人力行政部负责人 */
+  'oa.all': { roles: ['owner'] },
   'catalog.manage': { roles: ['owner', 'store_manager'] },
   /** 技师名册：新建、编辑、停用技师（v0.7.0，待确认：默认店主与店总） */
   'technician.manage': { roles: ['owner', 'store_manager'] },
@@ -615,6 +619,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'hr.org': '组织架构与员工档案：部门上级与主管、工号、手机号、入职与离职',
   'hr.attendance': '考勤管理：班次、打卡点、考勤组、排班与考勤统计',
   'hr.attendanceDept': '查看本部门员工的排班与考勤',
+  'oa.templates': '办公审批的模板设置：审批人、条件加签、抄送',
+  'oa.all': '全部办公审批单：查询、催办、导出与看板',
   'catalog.manage': '管理充值套餐与消费项目',
   'technician.manage': '维护技师名册',
   'technician.dispatch': '钟房派钟、上下钟、加钟、退钟、上牌',
@@ -783,7 +789,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
     ],
   },
   { title: '员工工作台', items: ['canteen.manage', 'patrol.read', 'patrol.manage'] },
-  { title: '人事与办公', items: ['hr.org', 'hr.attendance', 'hr.attendanceDept'] },
+  { title: '人事与办公', items: ['hr.org', 'hr.attendance', 'hr.attendanceDept', 'oa.templates', 'oa.all'] },
   { title: '当场授权', items: ['auth.overLimit', 'auth.vipOverride', 'auth.discount', 'auth.memberRefund', 'auth.memberPhone'] },
   { title: '数据看板', items: ['report.executive', 'report.members', 'report.technicians', 'report.commission', 'marketing.cost'] },
   { title: '管理后台', items: ['staff.manage', 'staff.dept', 'catalog.manage', 'emenu.manage', 'technician.manage', 'settings.manage', 'audit.read'] },

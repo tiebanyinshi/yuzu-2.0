@@ -117,6 +117,7 @@ import { registerOaAttendanceDailyRoutes } from './modules/oa/attendance-daily';
 import { registerOaAttendanceMonthlyRoutes } from './modules/oa/attendance-monthly';
 import { registerOaLeaveRoutes } from './modules/oa/leave';
 import { registerOaApprovalRoutes } from './modules/oa/approvals';
+import { registerOaApprovalAdminRoutes } from './modules/oa/approval-admin';
 import { registerOaFaceRoutes } from './modules/oa/faces';
 import { registerOaPunchRoutes } from './modules/oa/punches';
 import { registerOaScheduleRoutes } from './modules/oa/schedules';
@@ -332,6 +333,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerOaAttendanceMonthlyRoutes(app, deps);
   registerOaLeaveRoutes(app, deps);
   registerOaApprovalRoutes(app, deps);
+  registerOaApprovalAdminRoutes(app, deps);
   registerOaAttachmentRoutes(app, deps);
   registerCatalogRoutes(app, deps);
   registerSettingsRoutes(app, deps);
