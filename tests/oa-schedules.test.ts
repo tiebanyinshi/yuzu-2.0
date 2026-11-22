@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { scheduleSpan, type AttendanceSetup, type MySchedule, type NotificationPage, type ScheduleWeek } from '../src/shared/oa';
 import { shiftDate } from '../src/shared/labels';
 import { DEFAULT_STORE_ID } from '../src/server/lib/store-context';
+import { overlapProblem } from '../src/server/modules/oa/schedule-overlap';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -194,5 +195,28 @@ describe('OA-05 排班', () => {
     const dec = (await api(ctx.app, b.cookie, 'GET', '/api/oa/me/schedule?month=2026-12')).body as MySchedule;
     expect(dec.following).toEqual({ date: '2027-01-01', items: [{ shiftId: night, name: '夜班', startMinute: 0, endMinute: 480, consecutive: false }] });
     expect(dec.days.some((d) => d.date === '2027-01-01')).toBe(false);
+  });
+  it('调走的员工：原门店今后的排班不再算数（不进「我的排班」、不挡新门店的排班），历史照留', async () => {
+    const mv = await hire('sch_mv', 'front.staff');
+    const g = ((await api(ctx.app, ctx.owner, 'GET', '/api/oa/attendance/setup')).body as AttendanceSetup).groups.find((x) => x.id === groupId)!;
+    const put = await api(ctx.app, ctx.owner, 'PUT', `/api/oa/attendance/groups/${groupId}`, { name: g.name, gpsRequired: false, active: true, version: g.version, memberIds: [a.id, b.id, mv.id] });
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    const d = shiftDate(today, 30);
+    expect((await save([{ staffId: mv.id, date: d, shiftIds: [early], expected: EMPTY }])).status).toBe(200);
+    const month = async () => ((await api(ctx.app, mv.cookie, 'GET', `/api/oa/me/schedule?month=${d.slice(0, 7)}`)).body as MySchedule).days.find((x) => x.date === d)!.items;
+    expect(await month()).toHaveLength(1);
+    // 调到二店
+    const entity = await api(ctx.app, ctx.owner, 'POST', '/api/admin/entities', { name: '排班二店公司', taxNo: '91440300MA5XXXXK05' });
+    expect(entity.status, JSON.stringify(entity.body)).toBe(201);
+    const store = await api(ctx.app, ctx.owner, 'POST', '/api/admin/stores', { code: 'pb', name: '排班二店', entityId: (entity.body as { id: number }).id });
+    expect(store.status, JSON.stringify(store.body)).toBe(201);
+    const pb = (store.body as { id: number }).id;
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/staff/${mv.id}/stores`, { storeIds: [pb] })).status).toBe(200);
+    expect(await month()).toEqual([]);
+    // 二店同一天排晚班（与原门店那条早班的打卡时段重叠）：原门店那条不算，不重叠
+    await ctx.sql`INSERT INTO oa_schedules (store_id, staff_id, work_date, shift_id) VALUES (${pb}, ${mv.id}, ${d}, ${late})`;
+    expect(await ctx.sql.begin((tx) => overlapProblem(tx, [mv.id], d, d))).toBeNull();
+    // 原门店的那条还在（历史不删）
+    expect((await ctx.sql`SELECT 1 FROM oa_schedules WHERE staff_id = ${mv.id} AND store_id = ${DEFAULT_STORE_ID}`).length).toBe(1);
   });
 });

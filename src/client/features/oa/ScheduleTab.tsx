@@ -52,7 +52,8 @@ export function ScheduleTab() {
   // 记在本机的保存（还在路上、结果待确认）：确认前不让再保存（查不到不能断定没保存上）
   const pending = useErpRecorded(['oa_schedule_save']);
   const [draft, setDraft] = useState<Map<string, Edit>>(new Map());
-  const [editing, setEditing] = useState<{ staffId: number; date: string } | null>(null);
+  // 打开对话框时连同当时的样子与原排班一起记下：确认前页面重新取数，提交时核对的还是打开时看到的那一份
+  const [editing, setEditing] = useState<{ staffId: number; date: string; cell: Cell; expected: Cell } | null>(null);
   const [saving, setSaving] = useState(false);
   const [copying, setCopying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -185,7 +186,7 @@ export function ScheduleTab() {
   if (q.isPending) return <Skeleton className="h-72" />;
   if (q.isError && !w) return <LoadFailed title="排班没有取回来" onRetry={() => q.refetch()} retrying={q.isFetching} />;
   if (!w || !from) return null;
-  const editingCell = editing ? cellOf(editing.staffId, editing.date) : EMPTY;
+  const editingCell = editing?.cell ?? EMPTY;
 
   return (
     <Card className="p-5" data-testid="att-schedule">
@@ -269,7 +270,10 @@ export function ScheduleTab() {
                     <button
                       type="button"
                       disabled={locked}
-                      onClick={() => setEditing({ staffId: m.staffId, date: d })}
+                      onClick={() => {
+                        const k = keyOf(m.staffId, d);
+                        setEditing({ staffId: m.staffId, date: d, cell: c, expected: draft.get(k)?.expected ?? original.get(k) ?? EMPTY });
+                      }}
                       data-testid={`att-cell-${m.staffId}-${d}`}
                       className={cn(
                         'relative flex min-h-12 w-full flex-col items-start gap-1 rounded-md border px-2 py-1.5 text-left transition-colors',
@@ -307,7 +311,8 @@ export function ScheduleTab() {
         onClose={() => setEditing(null)}
         onDone={(cell) => {
           if (!editing) return;
-          setDraft((d) => edited(new Map(d), keyOf(editing.staffId, editing.date), cell));
+          const k = keyOf(editing.staffId, editing.date);
+          setDraft((d) => new Map(d).set(k, { cell, expected: d.get(k)?.expected ?? editing.expected }));
           setEditing(null);
         }}
       />

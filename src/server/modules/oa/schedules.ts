@@ -35,7 +35,7 @@ import { currentStoreId } from '../../lib/store-context';
 import { dateSchema, parse } from '../../lib/validate';
 import { lockSetup, SHIFT_COLS, storeEmployee } from './attendance-setup';
 import { notify } from './notifications';
-import { overlapProblem } from './schedule-overlap';
+import { liveSchedule, overlapProblem } from './schedule-overlap';
 
 const view = guardAny('hr.attendance', 'hr.attendanceDept');
 const manage = guard('hr.attendance');
@@ -234,7 +234,7 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
     const rows = await sql<{ workDate: string; shiftId: number; name: string; startMinute: number; endMinute: number; consecutive: boolean }[]>`
       SELECT o.work_date::text AS work_date, o.shift_id, sh.name, sh.start_minute, sh.end_minute, o.consecutive
       FROM oa_schedules o JOIN oa_shifts sh ON sh.id = o.shift_id
-      WHERE o.staff_id = ${req.actor.id} AND o.work_date BETWEEN ${first} AND ${shiftDate(end, 1)}
+      WHERE o.staff_id = ${req.actor.id} AND ${liveSchedule(sql)} AND o.work_date BETWEEN ${first} AND ${shiftDate(end, 1)}
       ORDER BY o.work_date, sh.start_minute`;
     const itemsOf = (d: string) =>
       rows.filter((r) => r.workDate === d).map((r) => ({ shiftId: Number(r.shiftId), name: r.name, startMinute: r.startMinute, endMinute: r.endMinute, consecutive: r.consecutive }));
