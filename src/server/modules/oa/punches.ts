@@ -323,6 +323,8 @@ export function registerOaPunchRoutes(app: FastifyInstance, deps: Deps) {
   });
 
   app.post('/api/oa/attendance/punch', { preHandler: guard() }, async (req): Promise<PunchResult> => {
+    // 打卡时间按请求到达服务端的时间：后面的人脸比对（可能要等外部服务）不算进员工的打卡时间
+    const at = new Date();
     const input = parse(PunchInput, req.body);
     const store = currentStoreId();
     if (input.storeId !== store) throw conflict('STORE_SWITCHED', '这次打卡是在别的门店的页面上发的：请换回那家门店再查回或重新提交');
@@ -338,7 +340,6 @@ export function registerOaPunchRoutes(app: FastifyInstance, deps: Deps) {
       checkLocation(group, input);
       if (group.faceRequired) face = await checkFace(sql, me, input.faceImageId, faceVerifier(deps.config.integrations));
     }
-    const at = new Date();
     const out = await sql.begin(async (tx): Promise<{ id: number; replayed: boolean }> => {
       await lockOpKey(tx, input.clientKey);
       const [seen] = await tx<{ opType: string; requestHash: string; refId: number; staffId: number }[]>`
