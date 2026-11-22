@@ -38,7 +38,7 @@ export function FrontdeskPendingBanner() {
           void qc.invalidateQueries({ queryKey: ['frontdesk'] });
           if (isTableOp(op.type)) void qc.invalidateQueries({ queryKey: ['dining'] });
           if (isRoomOp(op.type) || isUsageOp(op.type)) void qc.invalidateQueries({ queryKey: ['rooms'] });
-          if (isRoomOp(op.type) || isUsageOp(op.type) || isSpaceOp(op.type)) void qc.invalidateQueries({ queryKey: ['room-center'] });
+          if (isRoomOp(op.type) || isUsageOp(op.type) || isSpaceOp(op.type) || op.type === 'room_order') void qc.invalidateQueries({ queryKey: ['room-center'] });
           if (isTechOp(op.type)) void qc.invalidateQueries({ queryKey: ['clockroom'] });
           if (out.kind === 'found') {
             toast({ tone: 'success', title: `已查回：${op.tagCodes.join('、')} 的${FRONTDESK_OP_LABELS[op.type]}已生效`, body: '只生效了一次，无需重新操作。' });
@@ -94,6 +94,13 @@ export function FrontdeskPendingBanner() {
       navigate(`/room-center?${params}`);
       return;
     }
+    // 房态点单（回测整改 P08）到房态中心处理：打开那间房的点单面板
+    if (op.type === 'room_order') {
+      const m = /\/rooms\/([sr]\d+)\/orders$/.exec(op.url);
+      if (m) params.set('rk', m[1]!);
+      navigate(`/room-center?${params}`);
+      return;
+    }
     // 预约（v0.7.28）到「预约」页处理：改动回到那张预约单
     if (isBookingOp(op.type)) {
       if (op.bookingIds?.[0]) params.set('b', String(op.bookingIds[0]));
@@ -113,7 +120,7 @@ export function FrontdeskPendingBanner() {
     navigate(`${op.type === 'checkout' || op.type === 'checkout_refund' ? '/cashier' : '/frontdesk'}?${params}`);
   };
   const anyTable = ops.some((op) => isTableOp(op.type));
-  const anyRoom = ops.some((op) => isRoomOp(op.type) || isUsageOp(op.type) || isSpaceOp(op.type));
+  const anyRoom = ops.some((op) => isRoomOp(op.type) || isUsageOp(op.type) || isSpaceOp(op.type) || op.type === 'room_order');
   const anyTech = ops.some((op) => isTechOp(op.type));
   const objects = ['手牌', ...(anyTable ? ['桌台'] : []), ...(anyRoom ? ['房间'] : []), ...(anyTech ? ['技师'] : [])];
 

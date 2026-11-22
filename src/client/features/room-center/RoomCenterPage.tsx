@@ -110,8 +110,9 @@ function RoomCenterBody() {
     else if (resume === 'usage_open' && sp) setAction({ spaceId: sp, a: { kind: 'usage_open' } });
     else if ((resume === 'usage_end' || resume === 'usage_cancel') && u) setUsageById({ id: u, mode: resume === 'usage_end' ? 'end' : 'cancel' });
     else if ((resume === 'space_state' || resume === 'space_dispatch') && sp) setDetail(sp);
+    else if (resume === 'room_order' && params.get('rk')) setOrdering({ key: params.get('rk')!, view: 'order' });
     const next = new URLSearchParams(params);
-    for (const k of ['resume', 'r', 's', 'sp', 'u', 'v']) next.delete(k);
+    for (const k of ['resume', 'r', 's', 'sp', 'u', 'v', 'rk']) next.delete(k);
     setParams(next, { replace: true });
   }, [resume, params, setParams]);
 

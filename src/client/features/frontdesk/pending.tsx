@@ -48,7 +48,9 @@ export type FrontdeskOpType =
   /** 房态中心（8.1.16）：维修、恢复、标待清、清洁完成（对象是房间） */
   | 'space_state'
   /** 房态中心（8.1.16）：换房、退房、并房、拆并（对象是房间；换房、并房连着另一间） */
-  | 'space_dispatch';
+  | 'space_dispatch'
+  /** 房态点单（回测整改 P07 / P08）：挂到房里客人的账上，编号单独一类；查回、作废在 /api/room-center/order-ops */
+  | 'room_order';
 
 export interface FrontdeskPendingOp {
   key: string;
@@ -115,6 +117,7 @@ export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   table_merge: '并台 / 拆台',
   space_state: '改房态',
   space_dispatch: '换房 / 退房 / 并房',
+  room_order: '房态点单',
 };
 
 /** 餐饮桌台的操作：对象是桌台或开台，不是手牌 */
@@ -128,6 +131,9 @@ export const isBookingOp = (type: FrontdeskOpType) => type.startsWith('booking_'
 /** 技师停牌、复牌、休假（8.0.8）：对象是技师，在钟房处理 */
 export const isTechOp = (type: FrontdeskOpType) => type === 'technician_state';
 /** 房态中心的房间动作（8.1.16）：对象是房间（空间），在「房态中心」处理 */
+/** 房态点单的提交地址（回测整改 P08）：待确认记录按它认是哪间房 */
+export const roomOrderUrl = (roomKey: string) => `/api/room-center/rooms/${roomKey}/orders`;
+
 export const isSpaceOp = (type: FrontdeskOpType) => type === 'space_state' || type === 'space_dispatch';
 
 const STORAGE_KEY = 'yuzu.frontdeskPending.v1';
@@ -277,10 +283,14 @@ export function pendingFor(
     checkoutId?: number | null;
     bookingId?: number | null;
     technicianId?: number | null;
+    /** 房态点单：那间房（卡片的 key，s12 / r3） */
+    roomKey?: string | null;
   } = {},
 ) {
   return list.find((p) => {
     if (p.type !== type) return false;
+    // 房态点单（回测整改 P08）：按房间认，同一间房上不能另起一笔（只为点单来看房态的账号拿不到来访）
+    if (type === 'room_order') return !!table.roomKey && p.url === roomOrderUrl(table.roomKey);
     if (type === 'technician_state') return table.technicianId != null && !!p.technicianIds?.includes(table.technicianId);
     if (type === 'checkin' || type === 'booking_create') return true;
     if (type === 'booking_change') return table.bookingId != null && !!p.bookingIds?.includes(table.bookingId);
@@ -315,10 +325,13 @@ export type ReconcileOutcome =
  * 查回、作废走哪个地址（8.1.15，Codex 审查 f6327a4）：点单页的下单（挂账，发到 `/api/dining/orders`）走餐饮的
  * `/api/dining/ops`——只要「餐饮点单」（康美部没有前台权限），有前台权限的同事在同一台设备上也能处理；其余照旧走前台的
  */
-export function opsPath(op: { key: string; type: FrontdeskPendingOp['type']; url: string }): string {
+export function opsPath(op: { key: string; type: FrontdeskPendingOp['type']; url: string; body?: unknown }): string {
   if (op.type === 'bill_post' && op.url === '/api/dining/orders') return `/api/dining/ops/${op.key}`;
-  // 房态点单（8.2.0 P08）：也是挂账、康美部也没有前台权限，同样走餐饮的
-  if (op.type === 'bill_post' && /^\/api\/room-center\/rooms\/[sr]\d+\/orders$/.test(op.url)) return `/api/dining/ops/${op.key}`;
+  // 房态点单（回测整改 P08）：按这一单的出品口走房态点单自己的查回、作废（要那个出品口的下单权限，碰不到别的挂账、另一个出品口的点单）
+  if (op.type === 'room_order') {
+    const outlet = (op.body as { outlet?: unknown } | null)?.outlet === 'fruit' ? 'fruit' : 'water';
+    return `/api/room-center/order-ops/${outlet}/${op.key}`;
+  }
   // 房态中心的房间动作（8.1.16）走房态中心的：按原业务的权限，只管打扫的后勤（没有前台权限）也能处理改房态的那一笔
   if (isSpaceOp(op.type)) return `/api/room-center/ops/${op.key}`;
   return `/api/frontdesk/ops/${op.key}`;
@@ -399,6 +412,8 @@ export function useFrontdeskOp<T>(opts: {
   bookingId?: number | null;
   /** 技师停牌、复牌、休假：那位技师 */
   technicianId?: number | null;
+  /** 房态点单：那间房（卡片的 key） */
+  roomKey?: string | null;
   staffName: string;
   pick: Pick<T>;
 }) {
@@ -414,6 +429,7 @@ export function useFrontdeskOp<T>(opts: {
       checkoutId: opts.checkoutId,
       bookingId: opts.bookingId,
       technicianId: opts.technicianId,
+      roomKey: opts.roomKey,
     }) ?? null;
   const [state, setState] = useState<OpState>({ phase: 'idle' });
   const { pick } = opts;

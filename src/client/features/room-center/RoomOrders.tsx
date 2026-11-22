@@ -34,7 +34,7 @@ import { Money } from '../../components/Money';
 import { QtyInput } from '../../components/QtyInput';
 import { swappableOf } from '../dining/DishOptionsDialog';
 import { useDiningMenu } from '../dining/queries';
-import { PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
+import { PendingPanel, roomOrderUrl, useFrontdeskOp } from '../frontdesk/pending';
 import { roomCenterKey } from './queries';
 
 const ORDER_PERMS = { water: 'dining.orderWater', fruit: 'dining.orderFruit' } as const satisfies Record<RoomOrderOutlet, string>;
@@ -77,7 +77,7 @@ export function RoomOrderPanel({ room, onClose, onHistory }: { room: RoomCard; o
   const menu = useDiningMenu();
   const config = useQuery({ queryKey: configKey, queryFn: () => api.get<RoomOrderConfig>('/api/room-center/order-config') });
   const target = roomOrderTarget(room);
-  const op = useFrontdeskOp<RoomOrderResult | true>({ type: 'bill_post', visitId: target.visitId, staffName: session.staff.displayName, pick: () => true });
+  const op = useFrontdeskOp<RoomOrderResult | true>({ type: 'room_order', visitId: target.visitId, roomKey: room.key, staffName: session.staff.displayName, pick: () => true });
 
   const allowed = config.data?.outlets[outlet].categories ?? null;
   const dishes = useMemo(() => (menu.data?.dishes ?? []).filter((d) => d.outlet === outlet && (allowed === null || allowed.includes(roomOrderCategoryOf(d)))), [menu.data, outlet, allowed]);
@@ -110,7 +110,7 @@ export function RoomOrderPanel({ room, onClose, onHistory }: { room: RoomCard; o
   const submit = async () => {
     const lines = picked.map((l) => ({ itemId: l.dish.id, quantity: l.quantity, ...(l.note.trim() ? { note: l.note.trim() } : {}) }));
     const r = await op.submit((key) => ({
-      url: `/api/room-center/rooms/${room.key}/orders`,
+      url: roomOrderUrl(room.key),
       body: { clientKey: key, outlet, lines, expectedTotal: total, ...(orderNote.trim() ? { orderNote: orderNote.trim() } : {}) },
       tagCodes: [`${target.tagCode} · 房 ${room.code}`],
       summary: `${ROOM_ORDER_OUTLET_LABELS[outlet]} ${picked.map((l) => `${l.dish.name}×${l.quantity}`).join('、')}`,
