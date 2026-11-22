@@ -244,7 +244,7 @@ describe('价目表录入 第一批：数据模型与导入', () => {
     const errors = p.issues.filter((i) => i.level === 'error').map((i) => `${i.sheet}|${i.row ?? ''}|${i.field}|${i.message}`);
     expect(errors).toEqual(
       expect.arrayContaining([
-        "按摩及助浴价格|2|时长|时长格式不支持：「一个半小时」（写 60min、60分钟、60'）",
+        "按摩及助浴价格|2|时长|时长格式不支持：「一个半小时」（写 60min、60分钟、60'，在 1 到 2880 分钟之间）",
         expect.stringMatching(/^按摩及助浴价格\|3\|项目名称\|名称重复：「古法中式」在「康疗」第 2 行已经有了/),
         expect.stringMatching(/^按摩及助浴价格\|4\|板块分类\|板块「足疗」不存在/),
         '按摩及助浴价格|5|专业价|价格为空',
@@ -253,7 +253,12 @@ describe('价目表录入 第一批：数据模型与导入', () => {
     );
     expect(p.errorCount).toBe(errors.length);
     // 有问题整份不导
-    const refused = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: 'x.xlsx', xlsxBase64: bad, previewDigest: 'a'.repeat(64) });
+    const refused = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', {
+      fileName: 'x.xlsx',
+      xlsxBase64: bad,
+      previewDigest: 'a'.repeat(64),
+      opKey: `import-op-${Math.random().toString(36).slice(2)}`,
+    });
     expect(refused.status).toBe(422);
   });
 
@@ -261,8 +266,22 @@ describe('价目表录入 第一批：数据模型与导入', () => {
     const file = workbook();
     const p = (await preview(file)).body as PriceImportPreview & { digest: string };
     // 换了文件（摘要对不上）不导
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: 'a.xlsx', xlsxBase64: file, previewDigest: 'b'.repeat(64) })).body.error.code).toBe('IMPORT_STALE');
-    const done = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: '汤崎宝安全品类价目表1119.xlsx', xlsxBase64: file, previewDigest: p.digest });
+    expect(
+      (
+        await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', {
+          fileName: 'a.xlsx',
+          xlsxBase64: file,
+          previewDigest: 'b'.repeat(64),
+          opKey: `import-op-${Math.random().toString(36).slice(2)}`,
+        })
+      ).body.error.code,
+    ).toBe('IMPORT_STALE');
+    const done = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', {
+      fileName: '汤崎宝安全品类价目表1119.xlsx',
+      xlsxBase64: file,
+      previewDigest: p.digest,
+      opKey: `import-op-${Math.random().toString(36).slice(2)}`,
+    });
     expect(done.status, JSON.stringify(done.body)).toBe(201);
     const set = done.body as PriceCatalogSet;
     expect(set.status).toBe('draft');
@@ -281,7 +300,13 @@ describe('价目表录入 第一批：数据模型与导入', () => {
     expect(overview.active).toBeNull();
     expect(overview.draft).toMatchObject({ id: set.id, status: 'draft', total: { expected: 224, actual: 42 } });
     // 再导一份：替换原来的草稿（一家门店只有一份草稿）
-    const again = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: '第二版.xlsx', xlsxBase64: file, previewDigest: p.digest, title: '第二版' });
+    const again = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', {
+      fileName: '第二版.xlsx',
+      xlsxBase64: file,
+      previewDigest: p.digest,
+      title: '第二版',
+      opKey: `import-op-${Math.random().toString(36).slice(2)}`,
+    });
     expect(again.status).toBe(201);
     const [draftRow] = await ctx.sql<{ drafts: number }[]>`SELECT count(*)::int AS drafts FROM price_catalog_sets WHERE status = 'draft'`;
     expect(draftRow!.drafts).toBe(1);
@@ -345,7 +370,13 @@ describe('价目表录入 第三批：编辑与校验', () => {
   const importDraft = async (title: string) => {
     const file = workbook();
     const p = (await preview(file)).body as PriceImportPreview & { digest: string };
-    const res = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: `${title}.xlsx`, xlsxBase64: file, previewDigest: p.digest, title });
+    const res = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', {
+      fileName: `${title}.xlsx`,
+      xlsxBase64: file,
+      previewDigest: p.digest,
+      title,
+      opKey: `import-op-${Math.random().toString(36).slice(2)}`,
+    });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     return res.body as PriceCatalogSet;
   };
@@ -518,5 +549,79 @@ describe('价目表录入 第三批：编辑与校验', () => {
         '放弃草稿「不要了」',
       ]),
     );
+  });
+});
+
+describe('价目表录入 审查修正（PR #160）', () => {
+  const issuesOf = async (over: Partial<Record<string, WbSheet>>) => ((await preview(workbook(over))).body as PriceImportPreview).issues;
+  const ent = (rows: Row[]) => sheet('娱乐价格', [['汤崎'], ['类型', '数量', '价格', '备注'], ...rows]);
+
+  it('导入带操作编号：原样重提返回第一次的草稿；草稿被替换后再重提拒绝；同一编号换文件拒绝；两次导入同时来只留一份草稿', async () => {
+    const file = workbook();
+    const p = (await preview(file)).body as PriceImportPreview & { digest: string };
+    const body = { fileName: '重提.xlsx', xlsxBase64: file, previewDigest: p.digest, opKey: 'retry-op-0001' };
+    const first = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', body);
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    const again = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', body);
+    expect(again.status).toBe(201);
+    expect(again.body.id).toBe(first.body.id);
+    // 缺编号不导
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { ...body, opKey: undefined })).status).toBe(400);
+    // 同一个编号换了文件
+    const other = workbook({ 娱乐价格: ent([['台球', 4, '49/2h', '加钟/19.9']]) });
+    const p2 = (await preview(other)).body as PriceImportPreview & { digest: string };
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { ...body, xlsxBase64: other, previewDigest: p2.digest })).body.error.code).toBe('IMPORT_OP_REUSED');
+    // 别人导了新草稿以后，旧请求的重提不覆盖它
+    const newer = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { ...body, opKey: 'retry-op-0002' });
+    expect(newer.status).toBe(201);
+    const late = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', body);
+    expect(late.status).toBe(409);
+    expect(late.body.error.code).toBe('IMPORT_DONE');
+    expect(((await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as PriceCatalogOverview).draft!.id).toBe(newer.body.id);
+    // 两次导入同时来：门店级的锁排队，都成功、最后只有一份草稿（不撞唯一索引报 500）
+    const both = await Promise.all(['race-op-0001', 'race-op-0002'].map((opKey) => api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { ...body, opKey })));
+    expect(both.map((r) => r.status)).toEqual([201, 201]);
+    const [draftRow] = await ctx.sql<{ drafts: number }[]>`SELECT count(*)::int AS drafts FROM price_catalog_sets WHERE status = 'draft'`;
+    expect(draftRow!.drafts).toBe(1);
+  });
+
+  it('文件与写法：合并区域过大整份拒绝；加钟价多出来的位数、时长超范围、菜品表头写错、房号过多都报错', async () => {
+    const huge = sheet('储值政策', [['储值政策']], ['A1:Z5000']);
+    const res = await preview(workbook({ 储值政策: huge }));
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('IMPORT_FILE_INVALID');
+
+    expect((await issuesOf({ 娱乐价格: ent([['台球', 4, '39/2h', '加钟/19.999']]) })).find((i) => i.level === 'error')).toMatchObject({ sheet: '娱乐价格', row: 3, field: '备注' });
+
+    const massage = (dur: string) =>
+      sheet('按摩及助浴价格', [
+        ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价'],
+        ['康疗', 1, '古法中式', '房间', dur, 499, 599],
+      ]);
+    for (const dur of ['0min', '3000min']) {
+      expect((await issuesOf({ 按摩及助浴价格: massage(dur) })).find((i) => i.level === 'error')).toMatchObject({ row: 2, field: '时长' });
+    }
+
+    const dishes = (head: Row) => sheet('零点菜品价格', [['早餐自助零点菜品'], head, [1, '生滚粥', '生滚牛肉粥', 38, '份']], ['A1:E1']);
+    const misspelled = (await issuesOf({ 零点菜品价格: dishes(['序号', '菜品分类', '菜品名', '售价', '单位']) })).filter((i) => i.level === 'error');
+    expect(misspelled[0]).toMatchObject({ sheet: '零点菜品价格', row: 2, field: '表头' });
+    expect(misspelled[0]!.message).toContain('菜品名称');
+    const noPrice = (await issuesOf({ 零点菜品价格: dishes(['序号', '菜品分类', '菜品名称', '单位']) })).filter((i) => i.level === 'error');
+    expect(noPrice[0]!.message).toContain('售价');
+
+    const rooms = sheet('房间价格', [
+      ['房型', '总数', '收费参考', null, '备注'],
+      ['spa房', '35间', '399/2H起开', '超时199/H\n999封顶过夜', 'S100-S299 T100-T299'],
+    ]);
+    expect((await issuesOf({ 房间价格: rooms })).find((i) => i.level === 'error')!.message).toContain('房号太多');
+    expect(roomNumbersOf('S301-S303 S302 s301')).toEqual(['S301', 'S302', 'S303']);
+  });
+
+  it('草稿与生效对比：只改了分档价格（客房大房间、轰趴房非最低档）也算改价', async () => {
+    const p = (await preview(workbook())).body as PriceImportPreview;
+    const guest = find(p, '客房');
+    const changed = p.entries.map((e) => (e.name === '客房' ? { ...e, variants: e.variants.map((v, i) => (i === 1 ? { ...v, priceCents: 79900 } : v)) } : e));
+    expect(guest.variants.length).toBeGreaterThan(1);
+    expect(diffPriceCatalogs(changed, p.entries).map((d) => [d.change, d.draft?.name])).toEqual([['changed', '客房']]);
   });
 });

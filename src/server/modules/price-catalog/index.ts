@@ -14,13 +14,14 @@ import { guard } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../../lib/context';
 import { attachment } from '../../lib/csv';
-import { unprocessable } from '../../lib/errors';
+import { conflict, unprocessable } from '../../lib/errors';
+import { lockOpKey } from '../../lib/fences';
 import { currentStoreId } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
 import { buildWorkbook, type WbSheet } from '../../lib/xlsx';
 import { readXlsx, XlsxReadError } from '../../lib/xlsx-read';
-import { registerPriceCatalogEditRoutes } from './edit';
-import { parsePriceCatalog } from './parse';
+import { lockStoreCatalog, registerPriceCatalogEditRoutes } from './edit';
+import { parsePriceCatalog, PriceFileError } from './parse';
 import { priceCatalogOverview, priceCatalogSet, rowOf } from './read';
 
 const FileFields = z.object({
@@ -31,6 +32,8 @@ const ImportInput = FileFields.extend({
   /** 用户看过的那次预览的摘要：与这次读出来的不一样（换了文件）就不导 */
   previewDigest: z.string().regex(/^[0-9a-f]{64}$/, '请先预览，核对后再导入'),
   title: z.string().trim().max(60, '名称最多 60 个字').optional(),
+  /** 操作编号：结果不确定（断网、超时）原样重提时返回第一次的结果，不再替换草稿 */
+  opKey: z.string().trim().min(8, '缺少操作编号').max(64, '操作编号太长'),
 });
 
 // ───────────────────────── 读文件 ─────────────────────────
@@ -39,13 +42,14 @@ function previewOf(f: z.infer<typeof FileFields>): PriceImportPreview & { digest
   const buf = Buffer.from(f.xlsxBase64, 'base64');
   if (!/\.xlsx$/i.test(f.fileName)) throw unprocessable('IMPORT_FILE_INVALID', '只能导入 Excel（.xlsx）；老版本的 .xls 请另存为 .xlsx');
   let book;
+  let parsed;
   try {
     book = readXlsx(buf);
+    parsed = parsePriceCatalog(book);
   } catch (error) {
-    if (error instanceof XlsxReadError) throw unprocessable('IMPORT_FILE_INVALID', error.message);
+    if (error instanceof XlsxReadError || error instanceof PriceFileError) throw unprocessable('IMPORT_FILE_INVALID', error.message);
     throw error;
   }
-  const parsed = parsePriceCatalog(book);
   const { counts, total } = priceCounts(parsed.entries);
   const sha256 = createHash('sha256').update(buf).digest('hex');
   const errorCount = parsed.issues.filter((i) => i.level === 'error').length;
@@ -74,7 +78,17 @@ export async function importPriceCatalog(deps: Deps, raw: unknown, ctx: OpContex
   if (p.digest !== f.previewDigest) throw unprocessable('IMPORT_STALE', '这份文件与预览时的不一样，请重新预览、核对后再导入');
   if (p.errorCount > 0) throw unprocessable('IMPORT_INVALID', `有 ${p.errorCount} 处问题，整份没有导入；请按预览里写的工作表、行号改好再导`);
   const id = await deps.sql.begin(async (tx) => {
-    // 一家门店一份草稿：先锁住原来的草稿行（并发的两次导入在这里排队），删掉它与它的条目，再写新的
+    // 同一个操作编号排队；已经做过的返回第一次的那份草稿（草稿后来被替换或放弃的拒绝，不再替换别人新导的）
+    await lockOpKey(tx, `price_catalog_import:${f.opKey}`);
+    const [done] = await tx<{ setId: number | null; fileSha256: string; storeId: number }[]>`
+      SELECT set_id, file_sha256, store_id FROM price_catalog_import_ops WHERE op_key = ${f.opKey}`;
+    if (done) {
+      if (Number(done.storeId) !== currentStoreId() || done.fileSha256 !== p.sha256) throw conflict('IMPORT_OP_REUSED', '这个操作编号已经用过了，请刷新页面后重新导入');
+      if (done.setId === null) throw conflict('IMPORT_DONE', '这次导入之前已经成功了，但那份草稿后来被替换或放弃；刷新页面看现在的草稿');
+      return Number(done.setId);
+    }
+    // 一家门店一份草稿：门店级咨询锁（与切换、回滚、放弃同一把）→ 原来的草稿行，删掉它与它的条目，再写新的
+    await lockStoreCatalog(tx);
     const [old] = await tx<{ id: number }[]>`SELECT id FROM price_catalog_sets WHERE store_id = ${currentStoreId()} AND status = 'draft' FOR UPDATE`;
     if (old) await tx`DELETE FROM price_catalog_sets WHERE id = ${old.id}`;
     const title = f.title || `价目表 ${f.fileName.replace(/\.xlsx$/i, '')}`.slice(0, 60);
@@ -82,6 +96,7 @@ export async function importPriceCatalog(deps: Deps, raw: unknown, ctx: OpContex
       INSERT INTO price_catalog_sets (status, title, file_name, file_sha256, notes, created_by)
       VALUES ('draft', ${title}, ${f.fileName}, ${p.sha256}, ${tx.json(p.notes)}, ${ctx.actor.id}) RETURNING id`;
     const setId = Number(set!.id);
+    await tx`INSERT INTO price_catalog_import_ops (op_key, set_id, file_sha256, staff_id) VALUES (${f.opKey}, ${setId}, ${p.sha256}, ${ctx.actor.id})`;
     for (let i = 0; i < p.entries.length; i += 100) {
       await tx`INSERT INTO price_catalog_entries ${tx(p.entries.slice(i, i + 100).map((e) => rowOf(setId, e)) as never[])}`;
     }

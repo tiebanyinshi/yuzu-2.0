@@ -19,7 +19,14 @@ import type { XlsxSheet, XlsxWorkbook } from '../../lib/xlsx-read';
 
 type Grid = Map<number, Map<number, string>>;
 
-/** 工作表 → 行号 → 列号 → 文字（合并区域填满） */
+/** 文件本身就不对（合并区域大得离谱之类）：整份不读，预览、导入都返回「文件不对」 */
+export class PriceFileError extends Error {}
+
+/** 一个合并区域、一张表展开合并区域最多填多少格（原表最大的合并区域几十格） */
+const MERGE_AREA_MAX = 2_000;
+const MERGE_CELLS_MAX = 50_000;
+
+/** 工作表 → 行号 → 列号 → 文字（合并区域填满；合并区域过大的整份拒绝，不在请求线程里填几十亿格） */
 function gridOf(sheet: XlsxSheet): Grid {
   const g: Grid = new Map();
   const put = (r: number, c: number, v: string) => {
@@ -27,7 +34,11 @@ function gridOf(sheet: XlsxSheet): Grid {
     g.get(r)!.set(c, v);
   };
   for (const [r, line] of sheet.rows) for (const [c, cell] of line) if (cell.value !== null && cell.value.trim() !== '') put(r, c, cell.value);
+  let filled = 0;
   for (const m of sheet.merges) {
+    const area = (m.r2 - m.r1 + 1) * (m.c2 - m.c1 + 1);
+    filled += area;
+    if (area > MERGE_AREA_MAX || filled > MERGE_CELLS_MAX) throw new PriceFileError(`「${sheet.name}」里的合并单元格太大（${area} 格），不像价目表；请检查表格后再导入`);
     const v = g.get(m.r1)?.get(m.c1);
     if (v === undefined) continue;
     for (let r = m.r1; r <= m.r2; r++) for (let c = m.c1; c <= m.c2; c++) if (!g.get(r)?.get(c)) put(r, c, v);
@@ -52,13 +63,14 @@ export function yuanToCents(text: string): number | null {
   return v > 0 ? v : null;
 }
 
-/** 时长：「80min」「80分钟」「60'」「90’」「2H」「2h」「6小时」「12H」→ 分钟；看不懂的为 null */
+/** 时长：「80min」「80分钟」「60'」「90’」「2H」「2h」「6小时」「12H」→ 分钟；看不懂的、不在 1–2880 分钟（两天）里的为 null */
 export function minutesOf(text: string): number | null {
   const t = half(text).replace(/\s+/g, '').toLowerCase();
+  const inRange = (v: number) => (v >= 1 && v <= 2880 ? v : null);
   let m = /^(\d+(?:\.\d+)?)(min|mins|分钟|分|'|’|′)?$/.exec(t);
-  if (m) return Math.round(Number(m[1]));
+  if (m) return inRange(Math.round(Number(m[1])));
   m = /^(\d+(?:\.\d+)?)(h|小时|个小时)$/.exec(t);
-  if (m) return Math.round(Number(m[1]) * 60);
+  if (m) return inRange(Math.round(Number(m[1]) * 60));
   return null;
 }
 
@@ -73,15 +85,19 @@ export function windowOf(text: string): [number, number] | null {
   return [a, b];
 }
 
-/** 房号清单：「S301-S339」「F301-307」「H203-209」「R01-R08」「Q301 Q302」「S328—S336」，去重、保持先后 */
+/** 一个房型最多认多少个房号（原表最多 39 个）；多出来的在房间价格表里报错 */
+export const ROOM_NUMBERS_MAX = 300;
+
+/** 房号清单：「S301-S339」「F301-307」「H203-209」「R01-R08」「Q301 Q302」「S328—S336」，去重、保持先后；认到 ROOM_NUMBERS_MAX + 1 个就停 */
 export function roomNumbersOf(text: string): string[] {
-  const out: string[] = [];
+  const out = new Set<string>();
   const add = (n: string) => {
-    if (!out.includes(n)) out.push(n);
+    out.add(n);
   };
   const t = half(text);
   const re = /([A-Za-z]{1,2})(\d{2,4})(?:\s*[-—–~～]\s*([A-Za-z]{1,2})?(\d{2,4}))?/g;
   for (const m of t.matchAll(re)) {
+    if (out.size > ROOM_NUMBERS_MAX) break;
     const prefix = m[1]!.toUpperCase();
     const from = m[2]!;
     if (!m[4]) {
@@ -97,7 +113,7 @@ export function roomNumbersOf(text: string): string[] {
     }
     for (let n = a; n <= b; n++) add(prefix + String(n).padStart(from.length, '0'));
   }
-  return out;
+  return [...out].slice(0, ROOM_NUMBERS_MAX + 1);
 }
 
 const blank = (sheet: PriceSheet, kind: PriceCatalogEntry['kind'], name: string, row: number, sort: number): PriceCatalogEntry => ({
@@ -249,8 +265,10 @@ function entertainmentSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     else if (!p) ctx.error(S, r, '价格', `价格「${oneLine(priceText)}」看不懂（写 39/2h 或 99）`);
     const units = count ? Number(half(count).replace(/[台张间个\s]/g, '')) : null;
     if (count && (!Number.isInteger(units) || units! < 0)) ctx.error(S, r, '数量', `数量「${count}」不对（写台位数，整数）`);
-    const extra = /加钟\s*[/／:：]?\s*(\d+(?:\.\d{1,2})?)/.exec(half(note));
+    // 加钟价整段认：「加钟/19.9」；19.999 这种多出来的位数报错，不截成 19.99
+    const extra = /加钟\s*[/／:：]?\s*(\d+(?:\.\d+)?)(?![\d.])/.exec(half(note));
     const extraCents = extra ? yuanToCents(extra[1]!) : null;
+    if (/加钟/.test(note) && extraCents === null) ctx.error(S, r, '备注', `加钟价「${note}」看不懂（写 加钟/19.9，最多 2 位小数）`);
     if (!p) continue;
     const isPass = p.minutes === null && !extra;
     const e = single(blank(S, isPass ? 'play_pass' : 'entertainment', name, r, sort), p.cents);
@@ -298,6 +316,11 @@ function hourTiers(text: string): PriceVariant[] {
 
 function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
   const S: PriceSheet = 'room';
+  const roomsAt = (row: number, text: string) => {
+    const list = roomNumbersOf(text);
+    if (list.length > ROOM_NUMBERS_MAX) ctx.error(S, row, '备注', `房号太多（超过 ${ROOM_NUMBERS_MAX} 个），请核对房号清单`);
+    return list.slice(0, ROOM_NUMBERS_MAX);
+  };
   const head = headerRow(g, ['房型', '总数']);
   if (!head) {
     ctx.error(S, null, '表头', '没找到表头（要有「房型」「总数」「收费参考」「备注」）');
@@ -349,7 +372,7 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
         const t12 = tiers.find((t) => t.minutes === 720)?.priceCents;
         if (t6 && t12 && t12 < t6) ctx.warn(S, x, '收费参考', `${area ?? ''}平：12 小时价（${t12 / 100}）比 6 小时价（${t6 / 100}）还低，请门店核对表格`);
         for (const t of tiers) {
-          variants.push({ ...t, label: `${area ? `${area}平 ` : ''}${t.label}`, roomNumbers: roomNumbersOf(desc), ...(seats ? { seats: Number(seats) } : {}) });
+          variants.push({ ...t, label: `${area ? `${area}平 ` : ''}${t.label}`, roomNumbers: roomsAt(x, desc), ...(seats ? { seats: Number(seats) } : {}) });
         }
       }
       const prices = variants.map((v) => v.priceCents).filter((v): v is number => v !== null);
@@ -377,7 +400,7 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
         unit: '位',
         extraPriceCents: over ? yuanToCents(over[1]!) : null,
         extraMinutes: over ? 60 : null,
-        roomNumbers: roomNumbersOf(note),
+        roomNumbers: roomsAt(r, note),
         variants,
         // 开瓶费、超时费等原样留作备注
         note: oneLine([rule, /次日[^，。,\n]*退房[^。\n]*/.exec(t)?.[0] ?? '', extraNote].filter(Boolean).join('；')).slice(0, 400),
@@ -395,8 +418,9 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
         ...hourly.map((h, i) => ({ label: `${night[i]?.label ?? ''} ${h.minutes / 60}小时`.trim(), priceCents: h.cents, minutes: h.minutes, unit: '' })),
       ];
       const nights = night.map((n) => n.cents).filter((v): v is number => v !== null);
-      out.push({ ...single(base, nights.length ? Math.min(...nights) : null), unit: '晚', roomNumbers: roomNumbersOf(note), variants });
-      checkRooms(ctx, S, r, grp.type, base.unitsCount, roomNumbersOf(note));
+      const rooms = roomsAt(r, note);
+      out.push({ ...single(base, nights.length ? Math.min(...nights) : null), unit: '晚', roomNumbers: rooms, variants });
+      checkRooms(ctx, S, r, grp.type, base.unitsCount, rooms);
       continue;
     }
 
@@ -406,7 +430,7 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     else if (!start || start.minutes === null) ctx.error(S, r, '收费参考', `「${oneLine(price)}」看不懂（写 399/2H起开）`);
     const over = overtimeOf(rule);
     if (rule && !over) ctx.warn(S, r, '备注', `超时价「${oneLine(rule)}」没认出来`);
-    const rooms = roomNumbersOf(note.split('\n')[0] ?? note);
+    const rooms = roomsAt(r, note.split('\n')[0] ?? note);
     out.push({
       ...single(base, start?.cents ?? null),
       durationMinutes: start?.minutes ?? null,
@@ -430,11 +454,16 @@ function checkRooms(ctx: Ctx, S: PriceSheet, r: number, type: string, units: num
 
 // ───────────────────────── 零点菜品价格 ─────────────────────────
 
+const DISH_HEADS = ['序号', '菜品分类', '菜品名称', '售价', '单位'];
+const DISH_REQUIRED = ['菜品分类', '菜品名称', '售价'];
+
 function dishSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
   const S: PriceSheet = 'dish';
   const out: PriceCatalogEntry[] = [];
   let section = '';
   let cols: Map<string, number> | null = null;
+  // 这一段已经报过「表头不对」
+  let headless = false;
   let category = '';
   const seen = new Map<string, number>();
   for (const r of rowsOf(g)) {
@@ -446,14 +475,27 @@ function dishSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       section = /早餐/.test(titleText) ? '早餐' : /午餐/.test(titleText) ? '午餐' : /晚餐/.test(titleText) ? '晚餐' : /2\s*楼|二楼/.test(titleText) ? '2楼零点' : titleText.slice(0, 20);
       if (!(DISH_SECTIONS as readonly string[]).includes(section)) ctx.error(S, r, '餐段', `餐段「${titleText}」不认识（2楼零点、早餐、午餐、晚餐）`);
       cols = null;
+      headless = false;
       category = '';
       continue;
     }
-    if (texts.includes('菜品名称')) {
-      cols = new Map([...line].map(([c, v]) => [oneLine(v), c]));
+    // 表头行：含「序号 / 菜品分类 / 菜品名称 / 售价 / 单位」里的两个以上；必要的列缺了（写错字）整份报错，不悄悄跳过
+    if (texts.filter((t) => DISH_HEADS.includes(t)).length >= 2) {
+      const found = new Map([...line].map(([c, v]) => [oneLine(v), c]));
+      const missing = DISH_REQUIRED.filter((h) => !found.has(h));
+      if (missing.length) ctx.error(S, r, '表头', `${section || '这一段'}的表头少了「${missing.join('」「')}」（表头写：${DISH_HEADS.join('、')}）`);
+      cols = missing.length ? null : found;
+      headless = !!missing.length;
       continue;
     }
-    if (!cols) continue;
+    if (!cols) {
+      // 有餐段、有内容却没有认得的表头：报一次错
+      if (section && !headless && texts.some(Boolean)) {
+        ctx.error(S, r, '表头', `${section}下面没有认出表头（表头写：${DISH_HEADS.join('、')}）`);
+        headless = true;
+      }
+      continue;
+    }
     const name = oneLine(at(g, r, cols.get('菜品名称') ?? -1));
     if (!name) continue;
     const cat = oneLine(at(g, r, cols.get('菜品分类') ?? -1));
@@ -516,7 +558,7 @@ function massageSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     if (!(MASSAGE_SECTIONS as readonly string[]).includes(section)) ctx.error(S, r, '板块分类', `板块「${section || '（空）'}」不存在（${MASSAGE_SECTIONS.join('、')}）`);
     const durText = at(g, r, col('时长'));
     const minutes = durText ? minutesOf(durText) : null;
-    if (durText && minutes === null) ctx.error(S, r, '时长', `时长格式不支持：「${oneLine(durText)}」（写 60min、60分钟、60'）`);
+    if (durText && minutes === null) ctx.error(S, r, '时长', `时长格式不支持：「${oneLine(durText)}」（写 60min、60分钟、60'，在 1 到 2880 分钟之间）`);
     const p1Text = at(g, r, col('专业价'));
     const p2Text = at(g, r, col('资深价'));
     const p1 = p1Text ? yuanToCents(p1Text) : null;
@@ -592,8 +634,9 @@ export function parsePriceCatalog(book: XlsxWorkbook): ParsedPriceCatalog {
   const notes: Record<string, string> = {};
   const sv = byName.get(STORED_VALUE_SHEET_NAME);
   if (sv) {
-    const text = rowsOf(gridOf(sv))
-      .flatMap((r) => [...(gridOf(sv).get(r)?.values() ?? [])])
+    const grid = gridOf(sv);
+    const text = rowsOf(grid)
+      .flatMap((r) => [...(grid.get(r)?.values() ?? [])])
       .map(oneLine)
       .filter((t) => t && t !== STORED_VALUE_SHEET_NAME)
       .join('；');

@@ -31,7 +31,7 @@ import {
 import { formatYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
 import { loadTableFile, type LoadedTable } from '../../lib/import-file';
-import { formatDateTime } from '../../lib/utils';
+import { formatDateTime, uuid } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
@@ -569,7 +569,7 @@ function DiffCard({ current, other }: { current: PriceCatalogSet; other: PriceCa
 function ImportCard({ onImported }: { onImported: () => void }) {
   const qc = useQueryClient();
   const [file, setFile] = useState<LoadedTable | null>(null);
-  const [preview, setPreview] = useState<(PriceImportPreview & { digest: string }) | null>(null);
+  const [preview, setPreview] = useState<(PriceImportPreview & { digest: string; opKey: string }) | null>(null);
   const [busy, setBusy] = useState<'preview' | 'import' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -592,7 +592,9 @@ function ImportCard({ onImported }: { onImported: () => void }) {
     setBusy('preview');
     setError(null);
     try {
-      setPreview(await api.post('/api/admin/price-catalog/import/preview', { fileName: file.fileName, xlsxBase64: file.xlsxBase64 }));
+      // 每次预览配一个操作编号：导入结果不确定（断网、超时）再点一次导入用同一个编号，服务端返回第一次的结果、不再替换草稿
+      const p = await api.post<PriceImportPreview & { digest: string }>('/api/admin/price-catalog/import/preview', { fileName: file.fileName, xlsxBase64: file.xlsxBase64 });
+      setPreview({ ...p, opKey: uuid() });
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -604,7 +606,7 @@ function ImportCard({ onImported }: { onImported: () => void }) {
     setBusy('import');
     setError(null);
     try {
-      const set = await api.post<PriceCatalogSet>('/api/admin/price-catalog/import', { fileName: file.fileName, xlsxBase64: file.xlsxBase64, previewDigest: preview.digest });
+      const set = await api.post<PriceCatalogSet>('/api/admin/price-catalog/import', { fileName: file.fileName, xlsxBase64: file.xlsxBase64, previewDigest: preview.digest, opKey: preview.opKey });
       setDone(`已存成草稿「${set.title}」：${set.total.actual} 项。核对下面的条数与价格，确认后再切换生效。`);
       setPreview(null);
       setFile(null);

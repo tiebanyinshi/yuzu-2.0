@@ -263,8 +263,17 @@ export async function priceChanges(deps: Deps, setId: number, q: { entryId?: num
 
 // ───────────────────────── 切换生效、回滚、放弃草稿 ─────────────────────────
 
-/** 锁这家门店全部价目表行（id 升序）：切换、回滚、放弃互相排队 */
+/**
+ * 这家门店价目表的整份操作（导入草稿、切换生效、回滚、放弃草稿）先取门店级的咨询锁：不会随草稿被删掉而失效，
+ * 两次导入、导入与切换都在这里排队（只锁草稿行的话，后一次在前一次删掉旧草稿以后查不到新草稿，撞唯一索引）。
+ */
+export async function lockStoreCatalog(tx: Tx): Promise<void> {
+  await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`price_catalog:${currentStoreId()}`}, 0))`;
+}
+
+/** 门店级咨询锁 → 这家门店全部价目表行（id 升序）：切换、回滚、放弃互相排队 */
 async function lockSets(tx: Tx) {
+  await lockStoreCatalog(tx);
   return (await tx<LockedSet[]>`SELECT id, status, title FROM price_catalog_sets WHERE store_id = ${currentStoreId()} ORDER BY id FOR UPDATE`).map((s) => ({ ...s, id: Number(s.id) }));
 }
 
