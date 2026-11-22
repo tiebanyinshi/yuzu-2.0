@@ -300,27 +300,33 @@ function entertainmentSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
 
 // ───────────────────────── 房间价格 ─────────────────────────
 
+/** 金额最多两位小数：「599.999」这种整段报错，不截出其中一段当价格（金额匹配都带了前后边界，截不出子串，这里写明是哪一行） */
+function checkDecimals(ctx: Ctx, S: PriceSheet, row: number, field: string, text: string) {
+  const bad = /\d+\.\d{3,}/.exec(half(text));
+  if (bad) ctx.error(S, row, field, `金额「${bad[0]}」不对：按元写，最多两位小数`);
+}
+
 /** 「超时199/H」→ 每 60 分钟 19900 分 */
 function overtimeOf(text: string): { cents: number; minutes: number } | null {
-  const m = /超时\s*(\d+(?:\.\d{1,2})?)\s*(?:元)?\s*[/／]\s*(\d*)\s*(h|H|小时)/.exec(half(text));
+  const m = /超时\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*(?:元)?\s*[/／]\s*(\d*)\s*(h|H|小时)/.exec(half(text));
   if (!m) return null;
   const cents = yuanToCents(m[1]!);
   return cents === null ? null : { cents, minutes: (m[2] ? Number(m[2]) : 1) * 60 };
 }
 const capOf = (text: string) => {
-  const m = /(\d+(?:\.\d{1,2})?)\s*(?:元)?\s*封顶/.exec(half(text));
+  const m = /(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*(?:元)?\s*封顶/.exec(half(text));
   return m ? yuanToCents(m[1]!) : null;
 };
 /** 「6小时：999」「12小时 ：1599」「包天：5000」「699/8H」「399/3小时」 → 档 */
 function hourTiers(text: string): PriceVariant[] {
   const out: PriceVariant[] = [];
   const t = half(text);
-  for (const m of t.matchAll(/(\d+(?:\.\d+)?)\s*(小时|H|h)\s*:\s*(\d+(?:\.\d{1,2})?)/g)) {
+  for (const m of t.matchAll(/(\d+(?:\.\d+)?)\s*(小时|H|h)\s*:\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])/g)) {
     const minutes = Math.round(Number(m[1]) * 60);
     out.push({ label: `${m[1]}小时`, minutes, priceCents: yuanToCents(m[3]!), unit: '' });
   }
-  for (const m of t.matchAll(/包天\s*:\s*(\d+(?:\.\d{1,2})?)/g)) out.push({ label: '包天', minutes: null, priceCents: yuanToCents(m[1]!), unit: '天' });
-  for (const m of t.matchAll(/(?<![超\d.])(\d+(?:\.\d{1,2})?)\s*[/／]\s*(\d+(?:\.\d+)?)\s*(H|h|小时)(?!起开)/g)) {
+  for (const m of t.matchAll(/包天\s*:\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])/g)) out.push({ label: '包天', minutes: null, priceCents: yuanToCents(m[1]!), unit: '天' });
+  for (const m of t.matchAll(/(?<![超\d.])(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*[/／]\s*(\d+(?:\.\d+)?)\s*(H|h|小时)(?!起开)/g)) {
     const minutes = Math.round(Number(m[2]) * 60);
     out.push({ label: `${m[2]}小时`, minutes, priceCents: yuanToCents(m[1]!), unit: '' });
   }
@@ -370,6 +376,9 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     if (countText && !Number.isInteger(units)) ctx.error(S, r, '总数', `总数「${countText}」不对（写 35间 这样）`);
     const price = at(g, r, cPrice);
     const rule = at(g, r, cRule);
+    for (const x of grp.rows) {
+      checkDecimals(ctx, S, x, '收费参考', `${at(g, x, cPrice)}\n${at(g, x, cRule)}`);
+    }
     const note = at(g, r, cNote);
     const extraNote = oneLine(grp.rows.map((x) => at(g, x, cExtra)).find(Boolean) ?? '');
     const base = { ...blank(S, 'room_type', grp.type, r, sort), unitsCount: units !== null && Number.isInteger(units) ? units : null };
@@ -404,10 +413,15 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
 
     if (/餐饮包房/.test(grp.type)) {
       const t = half(price);
-      const variants: PriceVariant[] = [...t.matchAll(/(\d+(?:\.\d{1,2})?)\s*元\s*[/／]\s*位/g)].map((m) => ({ label: '位价', priceCents: yuanToCents(m[1]!), minutes: null, unit: '位' }));
-      const min = /低[销消]\s*:?\s*(\d+(?:\.\d{1,2})?)/.exec(t);
+      const variants: PriceVariant[] = [...t.matchAll(/(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*元\s*[/／]\s*位/g)].map((m) => ({
+        label: '位价',
+        priceCents: yuanToCents(m[1]!),
+        minutes: null,
+        unit: '位',
+      }));
+      const min = /低[销消]\s*:?\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])/.exec(t);
       if (min) variants.push({ label: '低消', priceCents: yuanToCents(min[1]!), minutes: null, unit: '起', note: oneLine(t.slice(min.index).split('\n')[0] ?? '') });
-      const over = /超出按照\s*(\d+(?:\.\d{1,2})?)\s*元?\s*[/／]\s*小时/.exec(t);
+      const over = /超出按照\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*元?\s*[/／]\s*小时/.exec(t);
       if (!variants.length) ctx.error(S, r, '收费参考', '没认出位价（写 688元/位）');
       const perHead = variants.filter((v) => v.unit === '位').map((v) => v.priceCents!);
       out.push({
@@ -425,8 +439,11 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
 
     if (/客房/.test(grp.type)) {
       // 「小房间 599/晚  大房间 699/晚」与「399/3小时  499/3小时」：按先后配对成大小房的过夜价与钟点价
-      const night = [...half(price).matchAll(/([^\d\n]*?)\s*(\d+(?:\.\d{1,2})?)\s*[/／]\s*晚/g)].map((m) => ({ label: oneLine(m[1]!) || '过夜', cents: yuanToCents(m[2]!) }));
-      const hourly = [...half(rule).matchAll(/(\d+(?:\.\d{1,2})?)\s*[/／]\s*(\d+(?:\.\d+)?)\s*(小时|H|h)/g)].map((m) => ({ cents: yuanToCents(m[1]!), minutes: Math.round(Number(m[2]) * 60) }));
+      const night = [...half(price).matchAll(/([^\d\n]*?)\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*[/／]\s*晚/g)].map((m) => ({ label: oneLine(m[1]!) || '过夜', cents: yuanToCents(m[2]!) }));
+      const hourly = [...half(rule).matchAll(/(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*[/／]\s*(\d+(?:\.\d+)?)\s*(小时|H|h)/g)].map((m) => ({
+        cents: yuanToCents(m[1]!),
+        minutes: Math.round(Number(m[2]) * 60),
+      }));
       if (!night.length) ctx.error(S, r, '收费参考', `「${oneLine(price)}」看不懂（写 小房间 599/晚）`);
       const variants: PriceVariant[] = [
         ...night.map((n) => ({ label: `${n.label} 过夜`, priceCents: n.cents, minutes: null, unit: '晚' })),

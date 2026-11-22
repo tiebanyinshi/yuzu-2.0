@@ -706,4 +706,23 @@ describe('价目表录入 审查修正（PR #160）', () => {
     expect(tooMany.status).toBe(422);
     expect(tooMany.body.error.code).toBe('IMPORT_FILE_INVALID');
   });
+
+  it('第四轮审查：房间价格多写了小数位整段报错（不截出其中一段）；基础价含的时长改了也算改价', async () => {
+    const rooms = (price: string, rule: string | null, type = '客房') =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        [type, '7间', price, rule, 'R01-R07'],
+      ]);
+    const guest = (await issuesOf({ 房间价格: rooms('小房间 599.999/晚\n大房间 699/晚', '399/3小时') })).filter((i) => i.level === 'error');
+    expect(guest[0]).toMatchObject({ sheet: '房间价格', row: 2, field: '收费参考' });
+    expect(guest[0]!.message).toContain('599.999');
+    const party = (await issuesOf({ 房间价格: rooms('6小时：999.999\n12小时 ：1599', null, '轰趴房') })).filter((i) => i.level === 'error');
+    expect(party[0]!.message).toContain('999.999');
+
+    const p = (await preview(workbook())).body as PriceImportPreview;
+    const ball = find(p, '台球');
+    const shorter = p.entries.map((e) => (e.name === '台球' ? { ...e, durationMinutes: 60 } : e));
+    expect(diffPriceCatalogs(shorter, p.entries).map((d) => [d.change, d.draft?.name])).toEqual([['changed', '台球']]);
+    expect(ball.durationMinutes).toBe(120);
+  });
 });

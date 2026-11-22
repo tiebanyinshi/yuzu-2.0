@@ -311,9 +311,20 @@ export function withDerivedPrice(e: PriceCatalogEntry): PriceCatalogEntry {
 /** 单价上限：100 万元（分） */
 export const PRICE_MAX_CENTS = 100_000_000;
 
-/** 价格有没有变：形态、两个价、比例、加钟 / 超时、封顶、分档（档名、价、时长、单位） */
-export const priceSignature = (e: Pick<PriceCatalogEntry, 'priceMode' | 'priceCents' | 'price2Cents' | 'rateBp' | 'extraPriceCents' | 'extraMinutes' | 'capCents' | 'variants'>) =>
-  JSON.stringify([e.priceMode, e.priceCents, e.price2Cents, e.rateBp, e.extraPriceCents, e.extraMinutes, e.capCents, e.variants.map((v) => [v.label, v.priceCents, v.minutes, v.unit])]);
+/** 价格有没有变：形态、两个价、比例、基础价含的时长、加钟 / 超时、封顶、分档（档名、价、时长、单位） */
+export const priceSignature = (e: Pick<PriceCatalogEntry, 'priceMode' | 'priceCents' | 'price2Cents' | 'rateBp' | 'durationMinutes' | 'extraPriceCents' | 'extraMinutes' | 'capCents' | 'variants'>) =>
+  JSON.stringify([
+    e.priceMode,
+    e.priceCents,
+    e.price2Cents,
+    e.rateBp,
+    // 基础价含多久（娱乐 39 元 2 小时改成 1 小时，钱数不变也是改了价）
+    e.durationMinutes,
+    e.extraPriceCents,
+    e.extraMinutes,
+    e.capCents,
+    e.variants.map((v) => [v.label, v.priceCents, v.minutes, v.unit]),
+  ]);
 
 /** 逐项校验（页面提交前、服务端写入前用同一份）：返回问题，空数组为通过。名称重复要查库，在服务端另查 */
 export function priceEntryProblems(e: PriceCatalogEntry): string[] {
