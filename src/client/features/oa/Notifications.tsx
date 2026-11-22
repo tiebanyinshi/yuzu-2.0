@@ -28,7 +28,11 @@ export function NotificationBell() {
     async (isLive) => {
       try {
         const n = await fetchUnread();
-        if (isLive()) qc.setQueryData(UNREAD_KEY, n);
+        if (!isLive()) return;
+        // 未读数变了（来了新通知，或在别处读过）：「通知」页开着的话列表跟着刷新
+        const before = qc.getQueryData<number>(UNREAD_KEY);
+        qc.setQueryData(UNREAD_KEY, n);
+        if (before !== undefined && before !== n) void qc.invalidateQueries({ queryKey: ['oa', 'notifications'] });
       } catch {
         // 取不到就等下一次
       }
@@ -42,11 +46,11 @@ export function NotificationBell() {
       aria-label={shown ? `通知，${shown} 条未读` : '通知'}
       title="通知"
       data-testid="notification-bell"
-      className="tap relative mb-2 flex size-11 items-center justify-center rounded-full text-paper/70 transition-colors hover:bg-white/6 hover:text-paper short:size-9"
+      className="tap relative flex size-9 shrink-0 items-center justify-center rounded-[12px] text-paper/60 transition-colors hover:bg-white/6 hover:text-paper"
     >
-      <Bell className="size-[19px]" />
+      <Bell className="size-[18px]" />
       {shown > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 flex min-w-5 items-center justify-center rounded-full bg-clay px-1 text-[12px] leading-5 font-bold text-paper" data-testid="notification-unread">
+        <span className="absolute -top-1 -right-1 flex min-w-5 items-center justify-center rounded-full bg-clay px-1 text-[12px] leading-5 font-bold text-paper" data-testid="notification-unread">
           {shown > 99 ? '99+' : shown}
         </span>
       )}

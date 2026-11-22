@@ -60,12 +60,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* 设备（v0.7.21）：选了「这台终端」的设备常连本机的设备服务、替它上报（不在设备页也照常） */}
       <TerminalBridgeRunner />
       <StoreRail
+        beside={<NotificationBellSlot />}
         footer={
           <>
             {/* 能进不止一家店的人：当前门店、点一下换店（8.0.22）；只有一家店时不显示 */}
             <StoreSwitcher />
             <InstanceTag instance={session.instance} version={session.version} commit={session.commit} />
-            <NotificationBellSlot />
             <UserMenu />
           </>
         }
