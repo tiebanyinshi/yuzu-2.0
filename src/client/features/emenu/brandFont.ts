@@ -1,4 +1,4 @@
-// 授权的品牌英文字体（8.1.5，docs/EMENU.md 第 14.2 节，PENDING_DECISIONS.md PP4）：门店服务器上放了 brand-fonts/en.woff2 时，
+// 授权的品牌英文字体（8.1.5，docs/EMENU.md 第 14.2 节，PENDING_DECISIONS.md PP4）：门店服务器上放了 brand-fonts/en.woff2（或 en.ttf 等，PD6）时，
 // 平板菜单、工作台、后台的版面预览用它显示英文（字体名 Tangqi Brand En，排在英文字体列表里 Average Sans 的前面）；
 // 没放、取不到时什么都不做，照旧用 Average Sans。取到以后根节点带 data-brand-en，样式表去掉给顶替字体补的字距。
 // 一个页面取到一次就记住；没取到的 10 分钟内不再取（页面开着时门店放上文件，刷新一下页面就用上）。
@@ -13,7 +13,8 @@ export const BRAND_EN_FAMILY = 'Tangqi Brand En';
  */
 export const BRAND_LATIN_FAMILY = 'Tangqi Brand Latin';
 const LATIN_RANGE = 'U+0020-007E, U+00A0-00FF, U+0100-024F';
-const SOURCE = "url(/api/emenu/fonts/en.woff2) format('woff2')";
+// 2026-11-22（PD6）：服务器上的授权文件可以是 WOFF2、WOFF、OTF、TTF，地址不带格式、不写 format()，浏览器按文件内容认
+const SOURCE = 'url(/api/emenu/fonts/brand-en)';
 const RETRY_MS = 10 * 60_000;
 
 let loaded = false;
