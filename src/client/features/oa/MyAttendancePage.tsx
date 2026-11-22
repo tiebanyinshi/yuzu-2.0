@@ -1,24 +1,33 @@
 // OA-08 员工「办公 → 我的考勤」（docs/OA.md 第 11 节）：本人一个月每条排班的结算结果（正常、迟到、早退、缺卡、旷工、外勤）。
-// 下班窗口结束以后才结算，今天的班要等下班以后才有。有请假、出差或漏打卡的，走审批或补卡（OA-11、OA-13）。
+// 下班窗口结束以后才结算，今天的班要等下班以后才有。有请假、出差或漏打卡的，走审批或补卡；通过以后记「请假」「出差」、补卡消缺卡（OA-13）。
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { attendanceIssues, ATTENDANCE_STATUS_LABELS, type AttendanceMonthStats, type MyAttendance } from '@shared/oa';
+import { isAttendanceAbnormal, type AttendanceMonthStats, type MyAttendance } from '@shared/oa';
 import { clockText } from '@shared/technician-admin';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/AppShell';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
+import { AttendanceStatus } from './AttendanceStatus';
 import { Badge, Button, Card, Skeleton } from '../../components/ui';
 
 /** 本月汇总（月报的几项，员工看得懂的叫法） */
-const SUMMARY: { key: keyof AttendanceMonthStats; label: string }[] = [
-  { key: 'scheduledDays', label: '应出勤' },
-  { key: 'attendedDays', label: '实际出勤' },
-  { key: 'lateCount', label: '迟到' },
-  { key: 'missingCount', label: '缺卡' },
-  { key: 'absentCount', label: '旷工' },
+const SUMMARY: { key: string; label: string; get: (s: AttendanceMonthStats) => number }[] = [
+  { key: 'scheduledDays', label: '应出勤', get: (s) => s.scheduledDays },
+  { key: 'attendedDays', label: '实际出勤', get: (s) => s.attendedDays },
+  { key: 'lateCount', label: '迟到', get: (s) => s.lateCount },
+  { key: 'missingCount', label: '缺卡', get: (s) => s.missingCount },
+  { key: 'absentCount', label: '旷工', get: (s) => s.absentCount },
+  // OA-13：请假（天）、出差（天）、加班（小时，三类合计）
+  { key: 'leaveDays', label: '请假（天）', get: (s) => s.leaveHalves / 2 },
+  { key: 'tripDays', label: '出差（天）', get: (s) => s.tripDays },
+  {
+    key: 'overtimeHours',
+    label: '加班（小时）',
+    get: (s) => Math.round(((s.overtimeWorkdayMinutes + s.overtimeRestMinutes + s.overtimeHolidayMinutes) / 60) * 10) / 10,
+  },
 ];
 
 function addMonths(month: string, n: number): string {
@@ -31,7 +40,7 @@ export function MyAttendancePage() {
   const q = useQuery({ queryKey: ['oa', 'my-attendance', month], queryFn: () => api.get<MyAttendance>(`/api/oa/me/attendance${month ? `?month=${month}` : ''}`) });
   const d = q.data;
   const current = month ?? d?.month ?? null;
-  const abnormal = d?.rows.filter((r) => r.status !== 'normal').length ?? 0;
+  const abnormal = d?.rows.filter((r) => isAttendanceAbnormal(r.status)).length ?? 0;
   return (
     <>
       <PageHeader dateMode="calendar" title="我的考勤" subtitle="每条排班下班以后结算；有请假、出差或漏打卡的，走审批或补卡" />
@@ -52,12 +61,12 @@ export function MyAttendancePage() {
               </p>
               <Button size="sm" variant="ghost" icon={<ChevronRight className="size-4" />} onClick={() => current && setMonth(addMonths(current, 1))} aria-label="下个月" />
             </div>
-            <dl className="mb-3 grid grid-cols-3 gap-2 rounded-md bg-paper-2 p-3 text-center sm:grid-cols-5" data-testid="my-attendance-summary">
+            <dl className="mb-3 grid grid-cols-4 gap-2 rounded-md bg-paper-2 p-3 text-center sm:grid-cols-8" data-testid="my-attendance-summary">
               {SUMMARY.map((c) => (
                 <div key={c.key}>
                   <dt className="text-[12px] text-ink-3">{c.label}</dt>
                   <dd className="num text-[16px] font-bold text-ink" data-testid={`my-att-sum-${c.key}`}>
-                    {d!.summary[c.key]}
+                    {c.get(d!.summary)}
                   </dd>
                 </div>
               ))}
@@ -79,14 +88,7 @@ export function MyAttendancePage() {
                       {r.inAt?.time ?? '—'} / {r.outAt?.time ?? '—'}
                     </span>
                     <span className="ml-auto flex flex-wrap items-center gap-1">
-                      <Badge tone={r.status === 'normal' ? 'pine' : r.status === 'absent' ? 'clay' : 'ember'}>{ATTENDANCE_STATUS_LABELS[r.status]}</Badge>
-                      {attendanceIssues(r)
-                        .filter((t) => t !== '旷工')
-                        .map((t) => (
-                          <span key={t} className="text-[13px] text-ember">
-                            {t}
-                          </span>
-                        ))}
+                      <AttendanceStatus row={r} />
                       {r.outwork && <Badge tone="lake">外勤</Badge>}
                     </span>
                   </li>

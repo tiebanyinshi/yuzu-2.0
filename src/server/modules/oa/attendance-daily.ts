@@ -6,14 +6,16 @@
 //   · 第一次算成异常给员工发「打卡异常」站内通知（attendance_exception）。
 //   · 后台「考勤设置 → 考勤结果」：按日期看、只看异常、按考勤组筛；外勤「算出勤 / 不算出勤」；部门负责人只看本部门。
 //   · 员工「办公 → 我的考勤」：本人一个月。
+//   · OA-13：审批通过的考勤覆盖（oa_attendance_covers）。出差那天记「出差」；请假整天（或上午、下午都有）记「请假」，
+//     只有上午的不判上班这一头（迟到、缺上班卡），只有下午的不判下班这一头（早退、缺下班卡）。审批通过时当场对覆盖的日子重新结算（resettleStaffDays）。
 // 加锁（docs/LOCKING.md「考勤结算」）：员工的考勤锁（lockStaffAttendance，与打卡、保存排班串行）→ 这位员工的结果行。
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { attendanceIssues, punchWindows, type AttendanceDailyRow, type AttendanceDay, type AttendanceStatus, type MyAttendance, type OaShiftTimes } from '@shared/oa';
+import { attendanceIssues, punchWindows, type AttendanceCover, type AttendanceDailyRow, type AttendanceDay, type AttendanceStatus, type MyAttendance, type OaShiftTimes } from '@shared/oa';
 import { shiftDate } from '@shared/labels';
 import { can } from '@shared/permissions';
-import type { Db, Fragment, Sql } from '../../db';
+import type { Db, Fragment, Sql, Tx } from '../../db';
 import { guard, guardAny } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
 import type { Deps } from '../../lib/context';
@@ -44,7 +46,9 @@ async function candidates(db: Db, timeZone: string, at: Date, where: Fragment, f
            sh.start_minute, sh.end_minute, sh.rest_start_minute, sh.rest_end_minute, sh.in_advance_minutes, sh.late_grace_minutes,
            sh.in_after_minutes, sh.out_before_minutes, sh.out_delay_minutes,
            (d.id IS NULL OR EXISTS (SELECT 1 FROM oa_punches p WHERE p.staff_id = o.staff_id AND p.store_id = o.store_id
-                                    AND p.business_date = o.work_date AND p.shift_id = o.shift_id AND p.created_at > d.settled_at)) AS needs
+                                    AND p.business_date = o.work_date AND p.shift_id = o.shift_id AND p.created_at > d.settled_at)
+            -- OA-13：结算以后又有审批覆盖（请假、出差）的也重算（审批通过时一般已经当场重算过）
+            OR EXISTS (SELECT 1 FROM oa_attendance_covers c WHERE c.staff_id = o.staff_id AND c.work_date = o.work_date AND c.created_at > d.settled_at)) AS needs
     FROM oa_schedules o
     JOIN oa_shifts sh ON sh.id = o.shift_id
     LEFT JOIN oa_attendance_daily d ON d.staff_id = o.staff_id AND d.business_date = o.work_date AND d.shift_id = o.shift_id
@@ -61,66 +65,108 @@ async function candidates(db: Db, timeZone: string, at: Date, where: Fragment, f
 }
 
 type Effective = { id: number; lateMinutes: number; earlyMinutes: number; outwork: boolean; facePending: boolean };
+type CoverRow = { workDate: string; kind: 'leave' | 'trip'; part: 'full' | 'am' | 'pm'; approvalId: number };
+
+/** 一天的覆盖合起来：出差；请假免上班这一头、免下班这一头 */
+function coverOf(covers: CoverRow[]): { cover: AttendanceCover | null; approvalId: number | null; trip: boolean; skipIn: boolean; skipOut: boolean } {
+  const trip = covers.find((c) => c.kind === 'trip');
+  if (trip) return { cover: 'trip', approvalId: Number(trip.approvalId), trip: true, skipIn: true, skipOut: true };
+  const leave = covers.filter((c) => c.kind === 'leave');
+  const skipIn = leave.some((c) => c.part !== 'pm');
+  const skipOut = leave.some((c) => c.part !== 'am');
+  const cover: AttendanceCover | null = skipIn && skipOut ? 'leave' : skipIn ? 'leave_am' : skipOut ? 'leave_pm' : null;
+  return { cover, approvalId: leave.length ? Number(leave[0]!.approvalId) : null, trip: false, skipIn, skipOut };
+}
 
 /** 结算一位员工的几条排班（一个事务）；返回结算了几条 */
 async function settleStaff(db: Sql, staffId: number, slots: Slot[], actorId: number | null): Promise<number> {
-  return db.begin(async (tx) => {
-    await lockStaffAttendance(tx, [staffId]);
-    // 锁内再核对排班还在：读候选到取锁之间人事可能刚把这一班去掉（连同结果一起删了），不能再插回去（Codex 审查 199b9dd）
-    const still = await tx<{ workDate: string; shiftId: number }[]>`
+  return db.begin((tx) => settleSlots(tx, staffId, slots, actorId));
+}
+
+/** 在调用方的事务里结算（先取员工的考勤锁） */
+async function settleSlots(tx: Tx, staffId: number, slots: Slot[], actorId: number | null): Promise<number> {
+  await lockStaffAttendance(tx, [staffId]);
+  // 锁内再核对排班还在：读候选到取锁之间人事可能刚把这一班去掉（连同结果一起删了），不能再插回去（Codex 审查 199b9dd）
+  const still = await tx<{ workDate: string; shiftId: number }[]>`
       SELECT work_date::text AS work_date, shift_id FROM oa_schedules
       WHERE staff_id = ${staffId} AND work_date IN ${tx([...new Set(slots.map((s) => s.workDate))])}`;
-    const live = new Set(still.map((r) => `${r.workDate}|${Number(r.shiftId)}`));
-    const kept = slots.filter((s) => live.has(`${s.workDate}|${s.shiftId}`));
-    for (const s of kept) {
-      const eff = async (kind: 'in' | 'out') => {
-        const [p] = await tx<Effective[]>`
+  const live = new Set(still.map((r) => `${r.workDate}|${Number(r.shiftId)}`));
+  const kept = slots.filter((s) => live.has(`${s.workDate}|${s.shiftId}`));
+  const covers = kept.length
+    ? await tx<CoverRow[]>`
+          SELECT work_date::text AS work_date, kind, part, approval_id FROM oa_attendance_covers
+          WHERE staff_id = ${staffId} AND work_date IN ${tx([...new Set(kept.map((s) => s.workDate))])} ORDER BY id`
+    : [];
+  for (const s of kept) {
+    const eff = async (kind: 'in' | 'out') => {
+      const [p] = await tx<Effective[]>`
           SELECT id, late_minutes, early_minutes, outwork, face_result = 'pending' AS face_pending FROM oa_punches
           WHERE staff_id = ${staffId} AND store_id = ${s.storeId} AND business_date = ${s.workDate} AND shift_id = ${s.shiftId} AND kind = ${kind}
           ORDER BY punched_at ${kind === 'in' ? tx`ASC` : tx`DESC`}, id ${kind === 'in' ? tx`ASC` : tx`DESC`} LIMIT 1`;
-        return p ?? null;
-      };
-      const pin = await eff('in');
-      const pout = await eff('out');
-      const late = pin?.lateMinutes ?? 0;
-      const early = pout?.earlyMinutes ?? 0;
-      const status: AttendanceStatus = !pin && !pout ? 'absent' : !pin || !pout || late > 0 || early > 0 ? 'abnormal' : 'normal';
-      const outwork = !!pin?.outwork || !!pout?.outwork;
-      const facePending = !!pin?.facePending || !!pout?.facePending;
-      const [row] = await tx<{ id: number; notified: boolean }[]>`
+      return p ?? null;
+    };
+    const pin = await eff('in');
+    const pout = await eff('out');
+    // 审批覆盖：请假免掉的那一头不判迟到早退缺卡；出差、整天请假直接记出差 / 请假
+    const c = coverOf(covers.filter((x) => x.workDate === s.workDate));
+    const late = c.skipIn ? 0 : (pin?.lateMinutes ?? 0);
+    const early = c.skipOut ? 0 : (pout?.earlyMinutes ?? 0);
+    const missingIn = !pin && !c.skipIn;
+    const missingOut = !pout && !c.skipOut;
+    const status: AttendanceStatus = c.trip
+      ? 'trip'
+      : c.skipIn && c.skipOut
+        ? 'leave'
+        : !pin && !pout && !c.skipIn && !c.skipOut
+          ? 'absent'
+          : missingIn || missingOut || late > 0 || early > 0
+            ? 'abnormal'
+            : 'normal';
+    const outwork = !!pin?.outwork || !!pout?.outwork;
+    const facePending = !!pin?.facePending || !!pout?.facePending;
+    const [row] = await tx<{ id: number; notified: boolean }[]>`
         INSERT INTO oa_attendance_daily (store_id, staff_id, business_date, shift_id, status, late_minutes, early_minutes, missing_in, missing_out,
-                                         in_punch_id, out_punch_id, outwork, face_pending, settled_at)
-        VALUES (${s.storeId}, ${staffId}, ${s.workDate}, ${s.shiftId}, ${status}, ${late}, ${early}, ${!pin}, ${!pout},
-                ${pin?.id ?? null}, ${pout?.id ?? null}, ${outwork}, ${facePending}, now())
+                                         in_punch_id, out_punch_id, outwork, face_pending, cover, cover_approval_id, settled_at)
+        VALUES (${s.storeId}, ${staffId}, ${s.workDate}, ${s.shiftId}, ${status}, ${late}, ${early}, ${missingIn}, ${missingOut},
+                ${pin?.id ?? null}, ${pout?.id ?? null}, ${outwork}, ${facePending}, ${c.cover}, ${c.approvalId}, now())
         ON CONFLICT (staff_id, business_date, shift_id) DO UPDATE SET
           store_id = EXCLUDED.store_id, status = EXCLUDED.status, late_minutes = EXCLUDED.late_minutes, early_minutes = EXCLUDED.early_minutes,
           missing_in = EXCLUDED.missing_in, missing_out = EXCLUDED.missing_out, in_punch_id = EXCLUDED.in_punch_id, out_punch_id = EXCLUDED.out_punch_id,
-          outwork = EXCLUDED.outwork, face_pending = EXCLUDED.face_pending, settled_at = now()
+          outwork = EXCLUDED.outwork, face_pending = EXCLUDED.face_pending, cover = EXCLUDED.cover, cover_approval_id = EXCLUDED.cover_approval_id,
+          settled_at = now()
         RETURNING id, notified`;
-      // 第一次算成异常：给员工发「打卡异常」
-      if (status !== 'normal' && !row!.notified) {
-        const issues = attendanceIssues({ status, lateMinutes: late, earlyMinutes: early, missingIn: !pin, missingOut: !pout });
-        await notify(tx, [staffId], {
-          kind: 'attendance_exception',
-          title: `考勤异常：${s.workDate} ${s.shiftName}`,
-          body: `${issues.join('、')}。有请假、出差或漏打卡的，请走审批或补卡`,
-          link: '/oa/attendance',
-          ref: { type: 'oa_attendance_daily', id: Number(row!.id) },
-        });
-        await tx`UPDATE oa_attendance_daily SET notified = true WHERE id = ${row!.id}`;
-      }
-    }
-    if (actorId !== null && kept.length) {
-      await writeAudit(tx, {
-        staffId: actorId,
-        action: 'oa_attendance_settled',
-        targetType: 'staff',
-        targetId: staffId,
-        detail: { dates: [...new Set(kept.map((s) => s.workDate))], summary: `重新结算考勤 ${kept.length} 条` },
+    // 第一次算成异常：给员工发「打卡异常」
+    if ((status === 'abnormal' || status === 'absent') && !row!.notified) {
+      const issues = attendanceIssues({ status, lateMinutes: late, earlyMinutes: early, missingIn, missingOut });
+      await notify(tx, [staffId], {
+        kind: 'attendance_exception',
+        title: `考勤异常：${s.workDate} ${s.shiftName}`,
+        body: `${issues.join('、')}。有请假、出差或漏打卡的，请走审批或补卡`,
+        link: '/oa/attendance',
+        ref: { type: 'oa_attendance_daily', id: Number(row!.id) },
       });
+      await tx`UPDATE oa_attendance_daily SET notified = true WHERE id = ${row!.id}`;
     }
-    return kept.length;
-  });
+  }
+  if (actorId !== null && kept.length) {
+    await writeAudit(tx, {
+      staffId: actorId,
+      action: 'oa_attendance_settled',
+      targetType: 'staff',
+      targetId: staffId,
+      detail: { dates: [...new Set(kept.map((s) => s.workDate))], summary: `重新结算考勤 ${kept.length} 条` },
+    });
+  }
+  return kept.length;
+}
+
+/**
+ * OA-13 审批通过（请假、出差、补卡）以后，在同一个事务里把这位员工 from ～ to 已经下班的排班重新结算（覆盖、补卡当场生效）。
+ * 还没下班的照旧等后台任务结算（到时也会读覆盖）
+ */
+export async function resettleStaffDays(tx: Tx, timeZone: string, at: Date, staffId: number, from: string, to: string): Promise<number> {
+  const slots = await candidates(tx, timeZone, at, tx`o.staff_id = ${staffId} AND o.work_date BETWEEN ${from} AND ${to}`, true);
+  return slots.length ? settleSlots(tx, staffId, slots, null) : 0;
 }
 
 async function settle(db: Sql, slots: Slot[], actorId: number | null): Promise<number> {
@@ -149,7 +195,7 @@ async function loadRows(db: Db, timeZone: string, where: Fragment): Promise<Atte
            sh.start_minute, sh.end_minute, d.status, d.late_minutes, d.early_minutes, d.missing_in, d.missing_out,
            to_char(pi.punched_at AT TIME ZONE ${timeZone}, 'YYYY-MM-DD') AS in_date, to_char(pi.punched_at AT TIME ZONE ${timeZone}, 'HH24:MI') AS in_time,
            to_char(po.punched_at AT TIME ZONE ${timeZone}, 'YYYY-MM-DD') AS out_date, to_char(po.punched_at AT TIME ZONE ${timeZone}, 'HH24:MI') AS out_time,
-           d.outwork, d.outwork_counted, d.face_pending, d.settled_at
+           d.outwork, d.outwork_counted, d.face_pending, d.cover, d.cover_approval_id, d.settled_at
     FROM oa_attendance_daily d
     JOIN staff s ON s.id = d.staff_id
     JOIN oa_shifts sh ON sh.id = d.shift_id
@@ -162,6 +208,7 @@ async function loadRows(db: Db, timeZone: string, where: Fragment): Promise<Atte
     id: Number(r.id),
     staffId: Number(r.staffId),
     shiftId: Number(r.shiftId),
+    coverApprovalId: r.coverApprovalId === null ? null : Number(r.coverApprovalId),
     inAt: inDate && inTime ? { date: inDate, time: inTime } : null,
     outAt: outDate && outTime ? { date: outDate, time: outTime } : null,
     settledAt: new Date(settledAt).toISOString(),
@@ -197,7 +244,7 @@ export function registerOaAttendanceDailyRoutes(app: FastifyInstance, deps: Deps
       tz,
       sql`d.store_id = ${store} AND d.business_date = ${date} AND ${deptFilter(sql, req.actor)}
           ${q.groupId ? sql`AND EXISTS (SELECT 1 FROM oa_group_members m WHERE m.staff_id = d.staff_id AND m.group_id = ${q.groupId})` : sql``}
-          ${q.abnormal === '1' ? sql`AND d.status <> 'normal'` : sql``}`,
+          ${q.abnormal === '1' ? sql`AND d.status IN ('abnormal', 'absent')` : sql``}`,
     );
     return { date, groups: groups.map((g) => ({ id: Number(g.id), name: g.name })), rows, editable: can(req.actor, 'hr.attendance') };
   });

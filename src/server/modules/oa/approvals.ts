@@ -35,6 +35,7 @@ import { assertNotFenced, lockOpKey } from '../../lib/fences';
 import { hashRequest } from '../../lib/idempotency';
 import { idParam, parse } from '../../lib/validate';
 import { erpOpAbandoned } from '../erp-ops';
+import type { LinkEnv } from './attendance-link';
 import { canViewApproval, canViewApprovalAttachment, hooksOf, listApprovals, loadApproval, resolveChain, revisionsUpTo, TEMPLATE_COLS, toTemplate } from './approval-engine';
 import { bindAttachments, registerAttachmentRef } from './attachments';
 import { notify } from './notifications';
@@ -82,7 +83,7 @@ async function activate(tx: Tx, approval: { id: number; title: string; applicant
 }
 
 /** 整单结束：记状态、通知发起人、调模板登记的联动 */
-async function finish(tx: Tx, a: { id: number; title: string; applicantId: number; templateCode: string; form: ApprovalForm }, status: 'approved' | 'rejected' | 'withdrawn', why = '') {
+async function finish(tx: Tx, env: LinkEnv, a: { id: number; title: string; applicantId: number; templateCode: string; form: ApprovalForm }, status: 'approved' | 'rejected' | 'withdrawn', why = '') {
   await tx`UPDATE oa_approval_steps SET status = 'cancelled' WHERE approval_id = ${a.id} AND status IN ('waiting', 'pending')`;
   await tx`UPDATE oa_approvals SET status = ${status}, finished_at = now() WHERE id = ${a.id}`;
   if (status !== 'withdrawn') {
@@ -94,10 +95,8 @@ async function finish(tx: Tx, a: { id: number; title: string; applicantId: numbe
       ref: { type: 'oa_approval', id: a.id },
     });
   }
-  const h = hooksOf(a.templateCode);
-  const payload = { id: a.id, applicantId: a.applicantId, form: a.form };
-  if (status === 'approved') await h.onApproved?.(tx, payload);
-  else await h.onClosed?.(tx, { ...payload, status });
+  // 通过以后：模板登记的联动（OA-13 考勤与假期余额），排在最后
+  if (status === 'approved') await hooksOf(a.templateCode).onApproved?.(tx, { id: a.id, applicantId: a.applicantId, title: a.title, form: a.form }, env);
 }
 
 /** 在职员工（转交的对象） */
@@ -108,7 +107,8 @@ async function onDuty(db: Db, id: number): Promise<{ name: string } | null> {
   return s ?? null;
 }
 
-async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, hash: string, today: string): Promise<number> {
+async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, hash: string, env: LinkEnv): Promise<number> {
+  const today = localMinute(env.at, env.timeZone).date;
   const [t] = await tx<ApprovalTemplate[]>`SELECT ${TEMPLATE_COLS(tx)} FROM oa_approval_templates WHERE id = ${input.templateId} FOR SHARE`;
   if (!t || !t.active) throw notFound('审批模板不存在或已停用，请刷新');
   const template = toTemplate(t);
@@ -129,7 +129,7 @@ async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, 
       if (!ok) throw unprocessable('FORM_INVALID', `${f.label}只能选自己已通过的单`);
     }
   }
-  const prepared = await hooksOf(template.code).prepare?.(tx, { applicant: actor, form, fields: template.fields, today });
+  const prepared = await hooksOf(template.code).prepare?.(tx, { applicant: actor, form, fields: template.fields, today, env });
   if (prepared?.form) form = prepared.form;
   if (prepared?.title) title = prepared.title;
   let revision = 1;
@@ -180,13 +180,13 @@ async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, 
     { type: 'oa_approval', id },
   );
   // 发起人就是最上级、一级都不剩的：直接通过（OA12）
-  if (!chain.steps.length) await finish(tx, { id, title, applicantId: actor.id, templateCode: template.code, form }, 'approved');
+  if (!chain.steps.length) await finish(tx, env, { id, title, applicantId: actor.id, templateCode: template.code, form }, 'approved');
   return id;
 }
 
 type Locked = { id: number; title: string; applicantId: number; applicantName: string; status: string; templateCode: string; form: ApprovalForm; lastUrgedAt: Date | null };
 
-async function act(tx: Tx, actor: Actor, id: number, input: z.infer<typeof ActInput>): Promise<void> {
+async function act(tx: Tx, actor: Actor, id: number, input: z.infer<typeof ActInput>, env: LinkEnv): Promise<void> {
   const [a] = await tx<Locked[]>`
     SELECT a.id, a.title, a.applicant_id, s.display_name AS applicant_name, a.status, a.template_code, a.form, a.last_urged_at
     FROM oa_approvals a JOIN staff s ON s.id = a.applicant_id WHERE a.id = ${id} FOR UPDATE OF a`;
@@ -213,7 +213,7 @@ async function act(tx: Tx, actor: Actor, id: number, input: z.infer<typeof ActIn
       const [done] = await tx`SELECT 1 FROM oa_approval_steps WHERE approval_id = ${id} AND status = 'approved' LIMIT 1`;
       if (done) throw unprocessable('WITHDRAW_TOO_LATE', '已经有人审批通过了，不能撤销');
       await event('withdraw', { comment: input.comment });
-      await finish(tx, approval, 'withdrawn');
+      await finish(tx, env, approval, 'withdrawn');
       return;
     }
     const gap = approval.lastUrgedAt ? Date.now() - new Date(approval.lastUrgedAt).getTime() : Infinity;
@@ -233,13 +233,13 @@ async function act(tx: Tx, actor: Actor, id: number, input: z.infer<typeof ActIn
     const [next] = await tx<{ id: number; approverId: number }[]>`
       SELECT id, approver_id FROM oa_approval_steps WHERE approval_id = ${id} AND status = 'waiting' AND seq > ${step.seq} ORDER BY seq, id LIMIT 1`;
     if (next) await activate(tx, approval, Number(next.id), Number(next.approverId));
-    else await finish(tx, approval, 'approved');
+    else await finish(tx, env, approval, 'approved');
     return;
   }
   if (input.action === 'reject') {
     await tx`UPDATE oa_approval_steps SET status = 'rejected', comment = ${input.comment}, acted_at = now() WHERE id = ${step.id}`;
     await event('reject', { stepId: step.id, comment: input.comment });
-    await finish(tx, approval, 'rejected', input.comment);
+    await finish(tx, env, approval, 'rejected', input.comment);
     return;
   }
   // 转交：给另一位在职员工（不能是自己、发起人），同一级再加一步
@@ -278,7 +278,7 @@ export function registerOaApprovalRoutes(app: FastifyInstance, { sql, config }: 
         return { id: Number(seen.refId), replayed: true };
       }
       await assertNotFenced(tx, input.clientKey, 'oa_approval_submit', erpOpAbandoned);
-      return { id: await submit(tx, req.actor, input, hash, localMinute(new Date(), config.timezone).date), replayed: false };
+      return { id: await submit(tx, req.actor, input, hash, { timeZone: config.timezone, at: new Date() }), replayed: false };
     });
     reply.code(replayed ? 200 : 201);
     return { approval: await loadApproval(sql, req.actor, id), replayed };
@@ -300,7 +300,7 @@ export function registerOaApprovalRoutes(app: FastifyInstance, { sql, config }: 
         return true;
       }
       await assertNotFenced(tx, clientKey, 'oa_approval_act', erpOpAbandoned);
-      await act(tx, req.actor, id, input);
+      await act(tx, req.actor, id, input, { timeZone: config.timezone, at: new Date() });
       await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${clientKey}, 'oa_approval_act', ${hash}, ${id}, ${req.actor.id})`;
       return false;
     });
