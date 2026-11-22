@@ -309,6 +309,9 @@ function entertainmentSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
 function checkDecimals(ctx: Ctx, S: PriceSheet, row: number, field: string, text: string) {
   const bad = /\d+\.\d{3,}/.exec(half(text));
   if (bad) ctx.error(S, row, field, `金额「${bad[0]}」不对：按元写，最多两位小数`);
+  // 金额前的负号（「-599/晚」「-999封顶」）：报错，不丢掉负号当正价收（房号区间这些写在备注，不在收费参考里）
+  const negative = /(^|[^\dA-Za-z])[-－−]\s*\d+(?:\.\d+)?/.exec(half(text));
+  if (negative) ctx.error(S, row, field, `金额「${negative[0].replace(/^[^-－−]/, '').trim()}」不对：价格不能是负数`);
 }
 
 /** 「超时199/H」→ 每 60 分钟 19900 分 */
@@ -495,7 +498,7 @@ function checkRooms(ctx: Ctx, S: PriceSheet, r: number, type: string, units: num
 // ───────────────────────── 零点菜品价格 ─────────────────────────
 
 const DISH_HEADS = ['序号', '菜品分类', '菜品名称', '售价', '单位'];
-const DISH_REQUIRED = ['菜品分类', '菜品名称', '售价'];
+const DISH_REQUIRED = ['菜品分类', '菜品名称', '售价', '单位'];
 
 function dishSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
   const S: PriceSheet = 'dish';

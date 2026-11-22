@@ -876,4 +876,22 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const meal = p.entries.map((e) => (e === ticket ? { ...e, includesMeal: !e.includesMeal } : e));
     expect(diffPriceCatalogs(meal, p.entries)).toHaveLength(1);
   });
+
+  it('第十轮审查：房间金额写成负数报错（不丢掉负号当正价）；菜品表少了「单位」列报错', async () => {
+    const rooms = (type: string, price: string, rule: string | null) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        [type, '3间', price, rule, 'S301-S303'],
+      ]);
+    for (const [type, price, rule] of [
+      ['客房', '小房间 -599/晚\n大房间 699/晚', '399/3小时'],
+      ['spa房', '399/2H起开', '超时199/H\n-999封顶过夜'],
+    ] as const) {
+      const errs = (await issuesOf({ 房间价格: rooms(type, price, rule) })).filter((i) => i.level === 'error');
+      expect(errs[0], price).toMatchObject({ row: 2, field: '收费参考' });
+      expect(errs[0]!.message).toContain('负数');
+    }
+    const dishes = sheet('零点菜品价格', [['早餐自助零点菜品'], ['序号', '菜品分类', '菜品名称', '售价', '计价单位'], [1, '生滚粥', '生滚牛肉粥', 38, '份']], ['A1:E1']);
+    expect((await issuesOf({ 零点菜品价格: dishes })).find((i) => i.level === 'error')!.message).toContain('单位');
+  });
 });
