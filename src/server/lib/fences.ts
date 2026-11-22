@@ -177,6 +177,8 @@ export const FENCED_OPS = [
   'oa_face_review',
   'oa_leave_type',
   'oa_leave_adjust',
+  'oa_approval_submit',
+  'oa_approval_act',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 

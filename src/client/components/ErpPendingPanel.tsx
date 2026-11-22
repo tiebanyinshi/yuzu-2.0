@@ -48,6 +48,9 @@ const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
   oa_face_enroll: 'enrollment',
   // OA-07 人脸审核：那一份录入
   oa_face_review: 'enrollment',
+  // OA-10 办公审批的提交与处理：那一张审批单
+  oa_approval_submit: 'approval',
+  oa_approval_act: 'approval',
   // 赠品登记（8.0.1）：返回那条登记
   gift_receipt: 'gift',
   // 回款登记（8.0.7）：返回那笔回款；资产建卡：返回建的第一张卡
