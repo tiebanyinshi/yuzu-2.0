@@ -182,6 +182,12 @@ function csvCell(v: string): string {
   return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
+/** 复制名单的一格（粘到表格里是一列一格）：制表符、换行换成空格；= + - @ 开头的前面加 '（Codex 审查 3dff3b4） */
+function tsvCell(v: string): string {
+  const flat = v.replace(/[\t\r\n]+/g, ' ');
+  return /^[=+\-@]/.test(flat) ? `'${flat}` : flat;
+}
+
 /** 开通后的名单（临时密码只显示这一次）；组织架构页上方「按原内容重新提交」第一次开通成功时也用它显示 */
 export function ResultDialog({ result, onClose }: { result: StaffImportResult; onClose: () => void }) {
   const toast = useToast();
@@ -189,7 +195,7 @@ export function ResultDialog({ result, onClose }: { result: StaffImportResult; o
   const lines = result.accounts.map((a) => [a.name, positionLabel(a.position), a.username, a.temporaryPassword ?? '（到「员工账号」里重置）']);
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(lines.map((l) => l.join('\t')).join('\n'));
+      await navigator.clipboard.writeText(lines.map((l) => l.map(tsvCell).join('\t')).join('\n'));
       toast({ tone: 'success', title: '已复制名单' });
     } catch {
       toast({ tone: 'error', title: '这台电脑不让复制，请用「下载名单」' });
