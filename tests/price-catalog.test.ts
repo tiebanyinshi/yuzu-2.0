@@ -19,6 +19,7 @@ import {
   type PriceChange,
   type PriceImportPreview,
 } from '../src/shared/price-catalog';
+import { priceQuote, quoteUnit, serviceFeeOf } from '../src/shared/price-quote';
 import { buildWorkbook, type WbSheet } from '../src/server/lib/xlsx';
 import { readXlsx } from '../src/server/lib/xlsx-read';
 import { minutesOf, roomNumbersOf, windowOf, yuanToCents } from '../src/server/modules/price-catalog/parse';
@@ -917,5 +918,66 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const activeSide = [...p.entries, retiredTwin];
     const draftSide = [...p.entries.map((e) => (e === congee ? { ...e, priceCents: 5800 } : e)), retiredTwin];
     expect(diffPriceCatalogs(draftSide, activeSide).map((d) => [d.change, d.draft?.name, d.draft?.priceCents])).toEqual([['changed', '生滚牛肉粥', 5800]]);
+  });
+});
+
+describe('价目表录入 第四批：前台试算', () => {
+  it('收银台按生效中的价目表试算：1 间 SPA 房 + 1 个康疗项目 + 1 张门票，小计与 10% 服务费；超时、封顶、加钟、资深价、分档、待定价', async () => {
+    const file = workbook();
+    const p = (await preview(file)).body as PriceImportPreview & { digest: string };
+    const draft = (
+      await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: '试算.xlsx', xlsxBase64: file, previewDigest: p.digest, title: '第四批试算', opKey: randomUUID() })
+    ).body as PriceCatalogSet;
+    const on = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { opKey: randomUUID(), draftId: draft.id, countReason: '合成的演练表' });
+    expect(on.status, JSON.stringify(on.body)).toBe(200);
+
+    // 前台店员能读生效中的价目表（只含在用的）；没登录的不行
+    const res = await api(ctx.app, ctx.clerk, 'GET', '/api/price-catalog/active');
+    expect(res.status).toBe(200);
+    const active = res.body as { set: { id: number; title: string }; entries: PriceCatalogEntry[] };
+    expect(active.set).toMatchObject({ id: draft.id, title: '第四批试算' });
+    expect(active.entries.every((e) => e.active)).toBe(true);
+    expect((await api(ctx.app, '', 'GET', '/api/price-catalog/active')).status).toBe(401);
+    const get = (name: string) => active.entries.find((e) => e.name === name)!;
+    const fee = get('服务费');
+
+    // 需求说明的试算：spa房用了 2.5 小时（起开 399 含 2 小时，超时 1 × 199）+ 古法中式专业价 499 + 门票 12H 不含餐 499
+    const q = priceQuote(
+      [
+        { entry: get('spa房'), minutes: 150, quantity: 1 },
+        { entry: get('古法中式'), quantity: 1 },
+        { entry: get('门票 12H 不含餐'), quantity: 1 },
+      ],
+      fee,
+    );
+    expect(q.problems).toEqual([]);
+    expect(q.lines.map((l) => [l.name, l.amountCents])).toEqual([
+      ['spa房', 59800],
+      ['古法中式', 49900],
+      ['门票 12H 不含餐', 49900],
+    ]);
+    expect(q).toMatchObject({ subtotalCents: 159600, feeRateBp: 1000, feeCents: 15960, totalCents: 175560 });
+
+    // 超时到封顶为止；娱乐加钟；资深价；轰趴房选档；待定价的菜算不了
+    expect(quoteUnit({ entry: get('spa房'), minutes: 600 })).toMatchObject({ unitCents: 99900 });
+    expect(quoteUnit({ entry: get('台球'), minutes: 150 })).toMatchObject({ unitCents: 5890 });
+    expect(quoteUnit({ entry: get('古法中式'), tier: 'senior' })).toMatchObject({ unitCents: 59900 });
+    const party = get('轰趴房');
+    expect(quoteUnit({ entry: party, variant: party.variants.findIndex((v) => v.label.includes('150平') && v.label.includes('包天')) })).toMatchObject({ unitCents: 600000 });
+    const q2 = priceQuote(
+      [
+        { entry: get('沙姜炒鸡'), quantity: 1 },
+        { entry: get('台球'), quantity: 2 },
+      ],
+      fee,
+    );
+    expect(q2.problems).toEqual(['「沙姜炒鸡」不可下单']);
+    expect(q2).toMatchObject({ subtotalCents: 7800, feeCents: 780, totalCents: 8580 });
+    // 服务费四舍五入到分
+    expect(serviceFeeOf(5890, 1000)).toBe(589);
+    expect(serviceFeeOf(1995, 1000)).toBe(200);
+    expect(serviceFeeOf(1994, 1000)).toBe(199);
+    // 停用了服务费的：不加
+    expect(priceQuote([{ entry: get('台球'), quantity: 1 }], { ...fee, active: false })).toMatchObject({ feeRateBp: null, feeCents: 0, totalCents: 3900 });
   });
 });

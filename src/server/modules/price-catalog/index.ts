@@ -10,7 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { PRICE_SHEET_NAMES, priceCounts, type PriceCatalogSet, type PriceImportPreview } from '@shared/price-catalog';
-import { guard } from '../../auth/guard';
+import { guard, guardAny } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../../lib/context';
 import { attachment } from '../../lib/csv';
@@ -23,7 +23,7 @@ import { buildWorkbook, type WbSheet } from '../../lib/xlsx';
 import { readXlsx, XlsxReadError } from '../../lib/xlsx-read';
 import { lockStoreCatalog, registerPriceCatalogEditRoutes } from './edit';
 import { parsePriceCatalog, PriceFileError } from './parse';
-import { priceCatalogOverview, priceCatalogSet, rowOf } from './read';
+import { activePriceCatalog, priceCatalogOverview, priceCatalogSet, rowOf } from './read';
 
 const FileFields = z.object({
   fileName: z.string().trim().min(1, '缺少文件名').max(120, '文件名太长'),
@@ -160,5 +160,7 @@ export function registerPriceCatalogRoutes(app: FastifyInstance, deps: Deps) {
     reply.code(201);
     return set;
   });
+  // 第四批：生效中的价目表（在用的条目），收银台「价目试算」与开单页取价用；前台能看账单的、管价目的都能读
+  app.get('/api/price-catalog/active', { preHandler: guardAny('frontdesk.read', 'catalog.manage') }, async () => activePriceCatalog(deps.sql));
   registerPriceCatalogEditRoutes(app, deps);
 }

@@ -151,3 +151,11 @@ export const rowOf = (setId: number, e: PriceCatalogEntry) => ({
   source_row: e.sourceRow,
   sort_order: e.sortOrder,
 });
+
+/** 生效中的价目表，只含在用的条目（第四批：前台试算、开单取价）；还没有生效的一份时 set 为 null */
+export async function activePriceCatalog(db: Db | Tx): Promise<{ set: { id: number; title: string; activatedAt: string | null } | null; entries: PriceCatalogEntry[] }> {
+  const [s] = await setRows(db, { status: 'active' });
+  if (!s) return { set: null, entries: [] };
+  const entries = (await entriesOf(db, Number(s.id))).filter((e) => e.active);
+  return { set: { id: Number(s.id), title: s.title, activatedAt: s.activatedAt }, entries };
+}
