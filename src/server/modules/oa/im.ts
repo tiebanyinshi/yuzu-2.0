@@ -40,8 +40,12 @@ import { NOT_EMPLOYEE_ROLES } from './org';
 
 const auth = guard();
 const REF = 'oa_im_message';
-/** 取新消息时一并给出最近几分钟里撤回的（撤回只能在发出后 2 分钟内） */
+/** 不带 since 取新消息时一并给出最近几分钟里撤回的（撤回只能在发出后 2 分钟内） */
 const REVOKED_WINDOW_MINUTES = IM_REVOKE_MINUTES + 3;
+/** 按 since 取撤回时往前多看一点：撤回的事务早于 since 开始、晚于它提交的也不漏（重复给出不要紧） */
+const REVOKED_OVERLAP_SECONDS = 60;
+/** 建群限额（Codex 安全审查 accf8fb）：每人 10 分钟内最多建几个、一天最多建几个 */
+const GROUP_QUOTA = { burst: 10, burstMinutes: 10, daily: 30 };
 
 /** 在职员工（与审批转交选人同一个名单）；s = staff，p = staff_profiles */
 const onDuty = (db: Db) => db`s.active AND NOT s.system AND s.role <> ALL(${NOT_EMPLOYEE_ROLES}) AND COALESCE(p.status, 'active') = 'active'`;
@@ -206,7 +210,7 @@ const SendInput = z.object({
   mentionAll: z.boolean().default(false),
 });
 const BeforeQuery = z.object({ before: z.coerce.number().int().positive().optional() });
-const AfterQuery = z.object({ after: z.coerce.number().int().min(0) });
+const AfterQuery = z.object({ after: z.coerce.number().int().min(0), since: z.string().datetime({ offset: true }).optional() });
 const ReadInput = z.object({ upTo: z.number().int().min(0) });
 
 /** 发一条消息（调用方的事务里，已锁会话行、核对过是成员）；返回编号 */
@@ -276,7 +280,8 @@ async function send(tx: Tx, actor: Actor, conversationId: number, input: z.infer
       title: `${actor.displayName}在「${c.name ?? ''}」里@了${mentionAll ? '所有人' : '你'}`,
       body: input.kind === 'text' ? body.slice(0, 60) : '',
       link: `/oa/im/${conversationId}`,
-      ref: { type: 'oa_im_conversation', id: conversationId },
+      // 关联到这一条消息：上报已读时只清读到的位置之前的 @ 通知（Codex 审查 accf8fb）
+      ref: { type: 'oa_im_message', id },
     });
   }
   return { id, replayed: false };
@@ -324,6 +329,15 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
         return { id: Number(seen.refId), replayed: true };
       }
       await assertNotFenced(tx, clientKey, 'oa_im_group', erpOpAbandoned);
+      // 限额：一个人不能在短时间里拉一大堆群把别人的会话列表刷掉（Codex 安全审查 accf8fb）；按人串行核对
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`oa_im_group_quota:${me}`}, 0))`;
+      const [made] = await tx<{ burst: number; daily: number }[]>`
+        SELECT count(*) FILTER (WHERE created_at > now() - make_interval(mins => ${GROUP_QUOTA.burstMinutes}))::int AS burst,
+               count(*) FILTER (WHERE created_at > now() - interval '1 day')::int AS daily
+        FROM oa_im_conversations WHERE created_by = ${me} AND kind = 'group' AND created_at > now() - interval '1 day'`;
+      if (made!.burst >= GROUP_QUOTA.burst || made!.daily >= GROUP_QUOTA.daily) {
+        throw unprocessable('GROUP_QUOTA', `建群太频繁：每人 ${GROUP_QUOTA.burstMinutes} 分钟内最多建 ${GROUP_QUOTA.burst} 个、一天最多 ${GROUP_QUOTA.daily} 个，请稍后再建`);
+      }
       const wanted = [...new Set(input.memberIds.filter((x) => x !== me))];
       const others = await onDutyIds(tx, wanted);
       if (others.length !== wanted.length) throw unprocessable('MEMBER_INVALID', '有成员不存在或已经离职，请刷新后重选');
@@ -350,18 +364,22 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
     const q = parse(BeforeQuery, req.query ?? {});
     if (!(await memberOf(sql, id, req.actor.id))) throw notFound('会话不存在');
     const rows = await loadMessages(sql, sql`msg.conversation_id = ${id} ${q.before ? sql`AND msg.id < ${q.before}` : sql``}`, sql`msg.id DESC`, IM_PAGE + 1);
-    return { messages: rows.slice(0, IM_PAGE).reverse(), hasMore: rows.length > IM_PAGE };
+    const now = (await sql<{ now: Date }[]>`SELECT now()`)[0]!.now;
+    return { messages: rows.slice(0, IM_PAGE).reverse(), hasMore: rows.length > IM_PAGE, syncedAt: new Date(now).toISOString() };
   });
 
   // 取新消息（页面每 3 秒一次）：after 之后的，与最近几分钟撤回的
   app.get('/api/oa/im/conversations/:id/poll', { preHandler: auth }, async (req): Promise<ImPollResult> => {
     const { id } = parse(idParam, req.params);
-    const { after } = parse(AfterQuery, req.query ?? {});
+    const { after, since } = parse(AfterQuery, req.query ?? {});
     if (!(await memberOf(sql, id, req.actor.id))) throw notFound('会话不存在');
+    const now = (await sql<{ now: Date }[]>`SELECT now()`)[0]!.now;
     const messages = await loadMessages(sql, sql`msg.conversation_id = ${id} AND msg.id > ${after}`, sql`msg.id`, 200);
+    // 撤回按「上次同步到什么时候」续传：页面在后台、断网好几分钟回来也补得上（Codex 审查 accf8fb）
     const revoked = await sql<{ id: number }[]>`
-      SELECT id FROM oa_im_messages WHERE conversation_id = ${id} AND revoked_at > now() - make_interval(mins => ${REVOKED_WINDOW_MINUTES})`;
-    return { messages, revoked: revoked.map((r) => Number(r.id)) };
+      SELECT id FROM oa_im_messages WHERE conversation_id = ${id} AND revoked_at IS NOT NULL AND id <= ${after}
+        AND revoked_at > ${since ? sql`${since}::timestamptz - make_interval(secs => ${REVOKED_OVERLAP_SECONDS})` : sql`now() - make_interval(mins => ${REVOKED_WINDOW_MINUTES})`}`;
+    return { messages, revoked: revoked.map((r) => Number(r.id)), syncedAt: new Date(now).toISOString() };
   });
 
   app.post('/api/oa/im/conversations/:id/messages', { preHandler: auth }, async (req, reply): Promise<ImSent> => {
@@ -395,6 +413,22 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
     return one(id);
   });
 
+  // 退出群聊（群主除外：群主要先转让，OA-16）；退出以后看不到这个群，别人看到「某某退出了群聊」。已经退出的照常成功
+  app.post('/api/oa/im/conversations/:id/leave', { preHandler: auth }, async (req): Promise<{ ok: true }> => {
+    const { id } = parse(idParam, req.params);
+    await sql.begin(async (tx) => {
+      const [c] = await tx<{ kind: 'direct' | 'group' }[]>`SELECT kind FROM oa_im_conversations WHERE id = ${id} FOR UPDATE`;
+      const [m] = await tx<{ role: ImRole; leftAt: Date | null }[]>`SELECT role, left_at FROM oa_im_members WHERE conversation_id = ${id} AND staff_id = ${req.actor.id}`;
+      if (!c || !m) throw notFound('会话不存在');
+      if (m.leftAt) return;
+      if (c.kind !== 'group') throw unprocessable('IM_LEAVE_DIRECT', '单聊不能退出');
+      if (m.role === 'owner') throw unprocessable('IM_OWNER_LEAVE', '群主不能直接退出：请先把群主转给别人');
+      await tx`UPDATE oa_im_members SET left_at = now() WHERE conversation_id = ${id} AND staff_id = ${req.actor.id}`;
+      await insertMessage(tx, id, req.actor.id, { kind: 'system', body: `${req.actor.displayName}退出了群聊` });
+    });
+    return { ok: true };
+  });
+
   // 上报读到哪一条（只往前走，不超过这个会话最新的一条）；看过的 @ 通知一并记已读
   app.post('/api/oa/im/conversations/:id/read', { preHandler: auth }, async (req): Promise<{ lastReadMessageId: number }> => {
     const { id } = parse(idParam, req.params);
@@ -405,9 +439,12 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
       WHERE conversation_id = ${id} AND staff_id = ${req.actor.id} AND left_at IS NULL
       RETURNING last_read_message_id AS last_read`;
     if (!m) throw notFound('会话不存在');
+    // 只清读到的位置之前的 @ 通知：那之后刚到、还没看到的照旧提醒（Codex 审查 accf8fb）
     await sql`
-      UPDATE oa_notifications SET read_at = now()
-      WHERE staff_id = ${req.actor.id} AND kind = 'im_message' AND ref_type = 'oa_im_conversation' AND ref_id = ${id} AND read_at IS NULL`;
+      UPDATE oa_notifications n SET read_at = now()
+      FROM oa_im_messages msg
+      WHERE n.staff_id = ${req.actor.id} AND n.kind = 'im_message' AND n.ref_type = 'oa_im_message' AND n.read_at IS NULL
+        AND msg.id = n.ref_id AND msg.conversation_id = ${id} AND msg.id <= ${Number(m.lastRead)}`;
     return { lastReadMessageId: Number(m.lastRead) };
   });
 }

@@ -112,8 +112,12 @@ describe('OA-14 即时通讯', () => {
     expect(n).toMatchObject({ title: 'im_a在「前厅群」里@了你', link: `/oa/im/${group}` });
     await say(emp.c!, group, { body: '大家注意', mentionAll: true });
     expect((await ctx.sql`SELECT 1 FROM oa_notifications WHERE kind = 'im_message' AND staff_id IN (${emp.a!.id}, ${emp.b!.id})`).length).toBe(2);
-    // 看过以后 @ 通知记已读
+    // 看过以后 @ 通知记已读；只清读到的位置之前的：之后刚到的 @ 照旧提醒
+    const m2 = await say(emp.b!, group, { body: '@im_c 还有这个', mentions: [emp.c!.id] });
     await api(ctx.app, emp.c!.cookie, 'POST', `/api/oa/im/conversations/${group}/read`, { upTo: m.body.message.id });
+    const unread = await ctx.sql<{ refId: number }[]>`SELECT ref_id FROM oa_notifications WHERE staff_id = ${emp.c!.id} AND kind = 'im_message' AND read_at IS NULL`;
+    expect(unread.map((x) => Number(x.refId))).toEqual([m2.body.message.id]);
+    await api(ctx.app, emp.c!.cookie, 'POST', `/api/oa/im/conversations/${group}/read`, { upTo: m2.body.message.id });
     expect((await ctx.sql`SELECT 1 FROM oa_notifications WHERE staff_id = ${emp.c!.id} AND kind = 'im_message' AND read_at IS NULL`).length).toBe(0);
     // 单聊里的 @ 不算
     expect((await say(emp.a!, dm, { body: 'x', mentionAll: true })).body.message.mentionAll).toBe(false);
@@ -141,6 +145,11 @@ describe('OA-14 即时通讯', () => {
     expect((await api(ctx.app, emp.b!.cookie, 'POST', `/api/oa/im/messages/${id}/revoke`)).status).toBe(200);
     const after = (await api<ImPollResult>(ctx.app, emp.a!.cookie, 'GET', `/api/oa/im/conversations/${group}/poll?after=${id}`)).body;
     expect(after).toMatchObject({ messages: [], revoked: [id] });
+    // 按 since 续传：上次同步在撤回以前（哪怕是很久以前）就给出；在撤回以后好一阵的不再给
+    const longAgo = new Date(Date.now() - 3_600_000).toISOString();
+    expect((await api<ImPollResult>(ctx.app, emp.a!.cookie, 'GET', `/api/oa/im/conversations/${group}/poll?after=${id}&since=${encodeURIComponent(longAgo)}`)).body.revoked).toEqual([id]);
+    const later = new Date(Date.now() + 120_000).toISOString();
+    expect((await api<ImPollResult>(ctx.app, emp.a!.cookie, 'GET', `/api/oa/im/conversations/${group}/poll?after=${id}&since=${encodeURIComponent(later)}`)).body.revoked).toEqual([]);
     expect((await list(emp.a!)).items.find((x) => x.id === group)!.preview).toBe('im_b撤回了一条消息');
     const old = await say(emp.b!, group, { body: '太久了' });
     await ctx.sql`UPDATE oa_im_messages SET created_at = now() - interval '3 minutes' WHERE id = ${old.body.message.id}`;
@@ -163,5 +172,21 @@ describe('OA-14 即时通讯', () => {
     // 撤回的消息搜不到
     expect((await list(emp.a!, '说错了')).items).toEqual([]);
     expect((await list(emp.d!)).items).toEqual([]);
+  });
+
+  it('退出群聊：成员能退（群主、单聊不能），退出以后看不到；建群有限额', async () => {
+    expect(code(await api(ctx.app, emp.a!.cookie, 'POST', `/api/oa/im/conversations/${group}/leave`))).toBe('IM_OWNER_LEAVE');
+    expect(code(await api(ctx.app, emp.a!.cookie, 'POST', `/api/oa/im/conversations/${dm}/leave`))).toBe('IM_LEAVE_DIRECT');
+    expect((await api(ctx.app, emp.c!.cookie, 'POST', `/api/oa/im/conversations/${group}/leave`)).status).toBe(200);
+    expect((await api(ctx.app, emp.c!.cookie, 'POST', `/api/oa/im/conversations/${group}/leave`)).status).toBe(200);
+    expect((await api(ctx.app, emp.c!.cookie, 'GET', `/api/oa/im/conversations/${group}`)).status).toBe(404);
+    expect((await list(emp.c!)).items.some((x) => x.id === group)).toBe(false);
+    expect((await say(emp.c!, group, { body: 'x' })).status).toBe(404);
+    const p = (await api<ImMessagePage>(ctx.app, emp.a!.cookie, 'GET', `/api/oa/im/conversations/${group}/messages`)).body;
+    expect(p.messages.at(-1)).toMatchObject({ kind: 'system', body: 'im_c退出了群聊' });
+    // 限额：10 分钟内最多建 10 个
+    const mk = () => api(ctx.app, emp.d!.cookie, 'POST', '/api/oa/im/groups', { clientKey: randomUUID(), name: '刷屏', memberIds: [emp.b!.id, emp.c!.id] });
+    for (let i = 0; i < 10; i += 1) expect((await mk()).status).toBe(201);
+    expect(code(await mk())).toBe('GROUP_QUOTA');
   });
 });

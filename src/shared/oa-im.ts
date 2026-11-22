@@ -76,11 +76,15 @@ export interface ImConversationDetail {
 export interface ImMessagePage {
   messages: ImMessage[];
   hasMore: boolean;
+  /** 服务端这一刻的时间：下一次取新消息时带上（since），撤回从这里续传 */
+  syncedAt: string;
 }
-/** 取新消息：after 之后的新消息，与最近撤回的（撤回只可能在发出后 2 分钟内，取近几分钟的就够） */
+/** 取新消息：after 之后的新消息，与 since（上次同步的时间）以后撤回的 */
 export interface ImPollResult {
   messages: ImMessage[];
+  /** 已经取到的（after 及以前）里 since 以后撤回的 */
   revoked: number[];
+  syncedAt: string;
 }
 
 export interface ImSent {

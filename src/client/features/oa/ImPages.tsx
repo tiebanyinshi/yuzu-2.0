@@ -294,6 +294,22 @@ function ImChatPage({ id }: { id: number }) {
   const [mentions, setMentions] = useState<{ id: number; name: string }[]>([]);
   const [showEmoji, setShowEmoji] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
+  const navigate = useNavigate();
+  const leave = async () => {
+    setLeaveBusy(true);
+    try {
+      await api.post(`/api/oa/im/conversations/${id}/leave`, {});
+      void qc.invalidateQueries({ queryKey: LIST_KEY });
+      void navigate('/oa/im', { replace: true });
+    } catch (e) {
+      toast({ tone: 'error', title: '没有退出', body: errorMessage(e) });
+    } finally {
+      setLeaveBusy(false);
+      setLeaving(false);
+    }
+  };
   const bottom = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
@@ -301,7 +317,11 @@ function ImChatPage({ id }: { id: number }) {
   // 不然别人刚好排在前面的那条就跳过了，Codex 审查 accf8fb）；上报已读也只报到这里
   const [cursor, setCursor] = useState(0);
   const lastShown = messages?.at(-1)?.id ?? 0;
-  const readUpTo = useRef(0);
+  // 服务端上次同步的时间：撤回从这里续传（页面在后台、断网好几分钟回来也补得上）
+  const since = useRef<string | null>(null);
+  // 已经成功上报的已读位置（只在成功以后记，失败的下次取新消息时再报）
+  const acked = useRef(0);
+  const reporting = useRef(false);
 
   const load = async () => {
     setLoadError('');
@@ -310,6 +330,7 @@ function ImChatPage({ id }: { id: number }) {
       setMessages(page.messages);
       setHasMore(page.hasMore);
       setCursor(page.messages.at(-1)?.id ?? 0);
+      since.current = page.syncedAt;
     } catch (e) {
       setLoadError(errorMessage(e));
     }
@@ -317,7 +338,8 @@ function ImChatPage({ id }: { id: number }) {
   useEffect(() => {
     setMessages(null);
     setCursor(0);
-    readUpTo.current = 0;
+    acked.current = 0;
+    since.current = null;
     void load();
     if (me) setPending(loadPending(id, me));
   }, [id, me]);
@@ -326,8 +348,9 @@ function ImChatPage({ id }: { id: number }) {
   useLivePoll(
     async (isLive) => {
       if (messages === null) return;
-      const r = await api.get<ImPollResult>(`/api/oa/im/conversations/${id}/poll?after=${cursor}`);
+      const r = await api.get<ImPollResult>(`/api/oa/im/conversations/${id}/poll?after=${cursor}${since.current ? `&since=${encodeURIComponent(since.current)}` : ''}`);
       if (!isLive()) return;
+      since.current = r.syncedAt;
       if (r.messages.length || r.revoked.length) {
         setMessages((xs) => {
           const seen = new Set((xs ?? []).map((x) => x.id));
@@ -336,20 +359,31 @@ function ImChatPage({ id }: { id: number }) {
         });
       }
       if (r.messages.length) setCursor((c) => Math.max(c, r.messages.at(-1)!.id));
+      else void reportRead(cursor);
     },
     [id, cursor, messages === null],
     { intervalMs: IM_POLL_MS },
   );
 
   // 看到了：上报读到哪一条；新消息来了滚到底
+  const reportRead = async (upTo: number) => {
+    if (!upTo || upTo <= acked.current || reporting.current || document.hidden) return;
+    reporting.current = true;
+    try {
+      await api.post(`/api/oa/im/conversations/${id}/read`, { upTo });
+      acked.current = Math.max(acked.current, upTo);
+      void qc.invalidateQueries({ queryKey: LIST_KEY });
+    } catch {
+      // 没报上：下一次取新消息时再报（Codex 审查 accf8fb）
+    } finally {
+      reporting.current = false;
+    }
+  };
   useEffect(() => {
-    if (!cursor || cursor <= readUpTo.current || document.hidden) return;
-    readUpTo.current = cursor;
-    void api.post(`/api/oa/im/conversations/${id}/read`, { upTo: cursor }).then(
-      () => qc.invalidateQueries({ queryKey: LIST_KEY }),
-      () => undefined,
-    );
-  }, [id, cursor, qc]);
+    void reportRead(cursor);
+    // reportRead 每次渲染都是新的，只按位置变化触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, cursor]);
   useEffect(() => {
     if (lastShown) bottom.current?.scrollIntoView({ block: 'end' });
   }, [lastShown, pending.length]);
@@ -402,7 +436,8 @@ function ImChatPage({ id }: { id: number }) {
   const sendText = () => {
     const body = text.trim();
     if (!body) return;
-    const used = mentions.filter((m) => m.id === 0 || body.includes(`@${m.name}`));
+    // 只认正文里还在的 @（删掉了「@所有人」就不再全员提醒，Codex 审查 accf8fb）
+    const used = mentions.filter((m) => body.includes(`@${m.name}`));
     const ok = queue({
       kind: 'text',
       body,
@@ -458,7 +493,12 @@ function ImChatPage({ id }: { id: number }) {
               <ArrowLeft className="size-4" />
               会话列表
             </Link>
-            {d?.kind === 'group' && <span className="ml-auto truncate text-[12px] text-ink-3">{d.members.map((m) => m.name).join('、')}</span>}
+            {d?.kind === 'group' && <span className="ml-auto min-w-0 truncate text-[12px] text-ink-3">{d.members.map((m) => m.name).join('、')}</span>}
+            {d?.kind === 'group' && d.members.find((m) => m.staffId === me)?.role !== 'owner' && (
+              <Button size="sm" variant="ghost" onClick={() => setLeaving(true)} data-testid="im-leave">
+                退出群聊
+              </Button>
+            )}
           </div>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3" data-testid="im-messages">
             {detail.isError && !d ? (
@@ -598,6 +638,24 @@ function ImChatPage({ id }: { id: number }) {
           </div>
         </Card>
       </div>
+      <Dialog
+        open={leaving}
+        onClose={() => setLeaving(false)}
+        title="退出群聊"
+        description="退出以后看不到这个群的消息，群里会显示你退出了；要回来请群主再拉你（OA-16）"
+        footer={
+          <>
+            <Button variant="secondary" size="lg" onClick={() => setLeaving(false)}>
+              取消
+            </Button>
+            <Button variant="danger" size="lg" loading={leaveBusy} onClick={() => void leave()} data-testid="im-leave-confirm">
+              退出群聊
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[14px] text-ink-2">确定退出「{d?.title}」吗？</p>
+      </Dialog>
     </>
   );
 }
