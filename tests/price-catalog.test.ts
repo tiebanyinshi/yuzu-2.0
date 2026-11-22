@@ -1188,4 +1188,28 @@ describe('价目表录入 第四批：对接收银项目', () => {
     const over = ((await preview(workbook({ 房间价格: spa('S001-S200 S201-S301') }))).body as PriceImportPreview).issues;
     expect(over.some((i) => i.level === 'error' && i.message.includes('超过 300 个'))).toBe(true);
   });
+
+  it('第十六轮审查：停用已对接的项、新增同名的一项，收银项目马上换成新的价；长的房号区间照实展开', async () => {
+    const set = await activateNew('新增同步演练');
+    const ball = await item({ name: `手动足球演练${Date.now() % 100000}`, category: '娱乐', price: 3000 });
+    const key = 'entertainment|||手动足球';
+    expect((await link({ entryKey: key, itemId: ball })).status).toBe(200);
+    expect(await tiers(ball)).toEqual({ standard: 3900 });
+    const old = find((await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${set.id}`)).body as PriceCatalogSet, '手动足球');
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${old.id}/active`, { version: old.version, active: false, reason: '换新', opKey: randomUUID() })).status).toBe(200);
+    const created = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${set.id}/entries`, { ...old, active: undefined, priceCents: 4900, opKey: randomUUID() });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(await tiers(ball)).toEqual({ standard: 4900 });
+
+    // 房号区间：S001-S300 照实 300 个；S001-S301 报「超过 300 个」（不再悄悄当成一个房号）
+    const spa = (rooms: string) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        ['spa房', '300间', '399/2H起开', '超时199/H\n999封顶过夜', rooms],
+      ]);
+    const ok = (await preview(workbook({ 房间价格: spa('S001-S300') }))).body as PriceImportPreview;
+    expect(find(ok, 'spa房').roomNumbers).toHaveLength(300);
+    const over = ((await preview(workbook({ 房间价格: spa('S001-S301') }))).body as PriceImportPreview).issues;
+    expect(over.some((i) => i.level === 'error' && i.message.includes('超过 300 个'))).toBe(true);
+  });
 });

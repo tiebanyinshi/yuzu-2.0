@@ -119,11 +119,12 @@ export function roomNumbersOf(text: string): string[] {
     const to = m[4];
     const a = Number(from);
     const b = Number(to.length < from.length ? from.slice(0, from.length - to.length) + to : to);
-    if (b < a || b - a > 200) {
+    if (b < a) {
       add(prefix + from);
       continue;
     }
-    for (let n = a; n <= b; n++) add(prefix + String(n).padStart(from.length, '0'));
+    // 区间照实展开，最多展开到超过上限一个（够调用方报「房号太多」），不把长区间悄悄当成一个房号
+    for (let n = a; n <= b && out.size <= PRICE_ROOM_NUMBERS_MAX; n++) add(prefix + String(n).padStart(from.length, '0'));
   }
   return [...out].slice(0, PRICE_ROOM_NUMBERS_MAX + 1);
 }

@@ -233,6 +233,8 @@ export async function createPriceEntry(deps: Deps, setId: number, raw: unknown, 
     const [created] = await tx<{ id: number }[]>`INSERT INTO price_catalog_entries ${tx(row as never)} RETURNING id`;
     const after = await readEntry(tx, Number(created!.id));
     await logChange(tx, ctx, { set, action: 'create', before: null, after, reason: f.reason, opKey: f.opKey });
+    // 生效中的价目表新增一项：同名的已有对接（原来那项停用了）对上它，收银项目换成这一项的价
+    if (set.status === 'active') await syncLinkedPrices(tx, ctx, { keys: [priceNameKey(after)], why: `新增「${after.name}」` });
     return after;
   });
 }
