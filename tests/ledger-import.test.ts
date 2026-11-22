@@ -77,27 +77,106 @@ beforeAll(async () => {
 afterAll(async () => ctx.close());
 
 describe('出入库台账', () => {
-  it('模板：照门店《库管出入库明细及库位表》——入库登记表格、仓库库位表、物品借出备忘表三张，文件名「出入库台账」；不带单价列与说明页；没有库存操作的下载不了', async () => {
+  it('模板：直接是门店的《库管出入库明细及库位表》——入库登记表格、仓库库位表两张合在一个文件里，文件名「出入库台账」；不带单价列与说明页；没有库存操作的下载不了', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/inventory/ledger/template', headers: { cookie: keeper } });
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('spreadsheetml');
     expect(decodeURIComponent(String(res.headers['content-disposition']))).toContain('出入库台账.xlsx');
     const book = readXlsx(res.rawPayload);
-    expect(book.sheets.map((s) => s.name)).toEqual(['入库登记表格', '仓库库位表', '物品借出备忘表']);
+    expect(book.sheets.map((s) => s.name)).toEqual(['入库登记表格', '仓库库位表']);
     const lineOf = (i: number) => (r: number) => [...(book.sheets[i]!.rows.get(r)?.values() ?? [])].map((c) => c.value).filter((v) => v !== '');
     expect(lineOf(0)(1)).toEqual(['入库登记表', '库管：']);
     expect(lineOf(0)(2)).toEqual(['序号', '日期', '物品名称', '规格型号', '计量单位', '数量', '备注（部门）', '库位']);
     const line = lineOf(1);
+    expect(line(1)).toHaveLength(1);
     expect(line(1)[0]).toContain('出入库记录');
-    expect(line(1)[1]).toBe('库管：');
-    // 门店的表：「入库」一个分组名跨两组，「出库」三组各一个
-    expect(line(2)).toEqual(['序号', '日期', '供应商', '物料名称', '规格', '库位', '上期库存量', '入库', '出库', '出库', '出库', '库存量', '备注']);
-    expect(line(3)).toEqual(['日期', '数量', '日期', '数量', '日期', '数量', '领料人及部门', '日期', '数量', '领料人及部门', '日期', '数量', '领料人及部门']);
-    // 空白行只写序号；「库存量」一列（第 21 列）带门店表里的公式（上期库存量 + 两次入库 − 三次出库，打开时 Excel 自己算）
-    expect([...book.sheets[1]!.rows.get(4)!.keys()]).toEqual([0, 20]);
-    expect(line(4)[0]).toBe('1');
-    expect(lineOf(2)(3)).toEqual(['序号', '借出日期', '物品名称', '规格型号', '单位', '数量', '借出店', '借入店', '借用人', '已归还', '未归还', '归还验收人', '状态', '经手人']);
+    // 门店「仓库库位表」的一行表头
+    expect(line(2)).toEqual([
+      '序号',
+      '日期',
+      '供应商',
+      '物料名称',
+      '规格',
+      '库位',
+      '接手存量',
+      '出库数量',
+      '日期',
+      '部门及领料人',
+      '出库数量',
+      '日期',
+      '领料人及部门',
+      '入库',
+      '出库数量',
+      '日期',
+      '领料人及部门',
+      '库存量',
+      '交接盘点',
+    ]);
+    expect(line(3)).toEqual(['1']);
     expect((await api(ctx.app, buyer, 'GET', '/api/inventory/ledger/template')).status).toBe(403);
+  });
+
+  it('门店「仓库库位表」的一行表头：入库日期取第 2 列「日期」，三组出库（出库数量、日期、领料人）；日期列写着别的、没有入库数量的行不算入库', async () => {
+    const before = await stock(mat.id);
+    const HEAD = [
+      '序号',
+      '日期',
+      '供应商',
+      '物料名称',
+      '规格',
+      '库位',
+      '接手存量',
+      '出库数量',
+      '日期',
+      '部门及领料人',
+      '出库数量',
+      '日期',
+      '领料人及部门',
+      '入库',
+      '出库数量',
+      '日期',
+      '领料人及部门',
+      '库存量',
+      '10月14日交接盘点',
+    ];
+    const line = (o: { date?: string; sup?: string; name: string; out1?: [string, string, string]; inQty?: string }) => [
+      '1',
+      o.date ?? '',
+      o.sup ?? '',
+      o.name,
+      '',
+      '',
+      '',
+      ...(o.out1 ?? ['', '', '']),
+      '',
+      '',
+      '',
+      o.inQty ?? '',
+      '',
+      '',
+      '',
+      '',
+      '',
+    ];
+    const csv = csvOf([
+      ['4楼仓库出入库记录'],
+      HEAD,
+      line({ date: today, sup: sup.name, name: mat.name, inQty: '3', out1: ['1', today, `${dept.name} 王五`] }),
+      // 日期列写的是盘点接手的说明、没有入库数量：只核对，不算入库
+      line({ date: '盘点接手存量', name: bare.name }),
+      // 写了入库数量、没写日期
+      line({ sup: sup.name, name: mat.name, inQty: '1' }),
+    ]);
+    const p = await api(ctx.app, keeper, 'POST', '/api/inventory/ledger/import/preview', { fileName: '仓库库位表.csv', csv });
+    expect(p.status, JSON.stringify(p.body)).toBe(200);
+    expect(p.body.rows[0].issues).toEqual([]);
+    expect(p.body.rows[0].inMilli).toBe(q(3));
+    expect(p.body.rows[0].outMilli).toBe(q(1));
+    expect(p.body.rows[0].outs[0].department.id).toBe(dept.id);
+    expect(p.body.rows[1].issues).toEqual([]);
+    expect(p.body.rows[1].inMilli).toBe(0);
+    expect(p.body.rows[2].issues.join('|')).toContain('入库的日期写在第 2 列「日期」');
+    expect(await stock(mat.id)).toBe(before);
   });
 
   it('门店的整份文件（几张表）：只读表头两行、有入库出库分组的「仓库库位表」，入库登记表格不导入；没有单价列取参考价', async () => {
