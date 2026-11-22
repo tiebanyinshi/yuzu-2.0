@@ -1228,6 +1228,9 @@ describe('价目表录入 第四批：对接收银项目', () => {
       ]);
     const bad = ((await preview(workbook({ 房间价格: dining('688元/位\n低消：另议') }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
     expect(bad[0]).toMatchObject({ row: 2, field: '收费参考' });
+    // 位价逐行核对：有一行认不出（「abc元/位」）报错，不只留下认得的那档
+    const badSeat = ((await preview(workbook({ 房间价格: dining('688元/位（只限餐饮）\nabc元/位（只限餐饮）') }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
+    expect(badSeat[0]).toMatchObject({ row: 2, field: '收费参考' });
     const ok = (await preview(workbook({ 房间价格: dining('688元/位\n低消：3000') }))).body as PriceImportPreview;
     expect(ok.errorCount).toBe(0);
     expect(find(ok, '餐饮包房').variants.map((v) => [v.label, v.priceCents])).toEqual([

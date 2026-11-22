@@ -443,6 +443,11 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       const over = /超出按照\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*元?\s*[/／]\s*小时/.exec(t);
       // 写了「超出按照」，却认不出合法金额（负数、文字、0 元）：报错，不当成没有超时收费
       if (/超出按照/.test(t) && (!over || yuanToCents(over[1]!) === null)) ctx.error(S, r, '收费参考', '「超出按照 … 元/小时」的金额看不懂或不对（写 超出按照588元/小时，金额大于 0、最多两位小数）');
+      // 位价逐行核对：写了「…/位」却认不出合法金额的一行报错（不跳过它只留下认得的档）
+      for (const line of t.split('\n').filter((x) => /[/／]\s*位/.test(x))) {
+        const m = /(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*元\s*[/／]\s*位/.exec(line);
+        if (!m || yuanToCents(m[1]!) === null) ctx.error(S, r, '收费参考', `位价「${oneLine(line)}」看不懂或金额不对（写 688元/位，金额大于 0、最多两位小数）`);
+      }
       if (!variants.length) ctx.error(S, r, '收费参考', '没认出位价（写 688元/位）');
       const perHead = variants.filter((v) => v.unit === '位').map((v) => v.priceCents!);
       out.push({
