@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AttendanceDay, AttendanceSetup, MyAttendance, NotificationPage } from '../src/shared/oa';
 import { shiftDate } from '../src/shared/labels';
 import { runAttendanceSettlement } from '../src/server/modules/oa/attendance-daily';
+import { lockStaffAttendance } from '../src/server/modules/oa/schedule-overlap';
 import { DEFAULT_STORE_ID } from '../src/server/lib/store-context';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
@@ -172,6 +173,22 @@ describe('OA-08 考勤结算与异常', () => {
     expect(await rowOf(emp.absent!, D2)).toBeUndefined();
     await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/daily/settle', { date: D2, storeId: DEFAULT_STORE_ID });
     expect(await rowOf(emp.absent!, D2)).toBeUndefined();
+  });
+
+  it('结算读到排班以后、取到员工考勤锁以前排班被去掉：锁内再核对，不把结果插回去（Codex 审查 199b9dd）', async () => {
+    const D4 = shiftDate(D, 7);
+    at(D4, '08:00');
+    await schedule(emp.absent!, D4, '白班');
+    let pending: Promise<number> | undefined;
+    await ctx.sql.begin(async (tx) => {
+      // 模拟保存排班：先取这位员工的考勤锁，结算读完候选以后等在锁上；这边删掉排班再提交
+      await lockStaffAttendance(tx, [emp.absent!.id]);
+      pending = run(D4, '20:30');
+      await new Promise((r) => setTimeout(r, 300));
+      await tx`DELETE FROM oa_schedules WHERE staff_id = ${emp.absent!.id} AND work_date = ${D4}`;
+    });
+    expect(await pending).toBe(0);
+    expect(await rowOf(emp.absent!, D4)).toBeUndefined();
   });
 
   it('调到别的门店以后，原门店有打卡的那一班照常结算；没打卡也没结算过的不算旷工（Codex 审查 f2d9311）', async () => {

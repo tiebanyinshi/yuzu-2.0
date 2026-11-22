@@ -65,7 +65,13 @@ type Effective = { id: number; lateMinutes: number; earlyMinutes: number; outwor
 async function settleStaff(db: Sql, staffId: number, slots: Slot[], actorId: number | null): Promise<number> {
   return db.begin(async (tx) => {
     await lockStaffAttendance(tx, [staffId]);
-    for (const s of slots) {
+    // 锁内再核对排班还在：读候选到取锁之间人事可能刚把这一班去掉（连同结果一起删了），不能再插回去（Codex 审查 199b9dd）
+    const still = await tx<{ workDate: string; shiftId: number }[]>`
+      SELECT work_date::text AS work_date, shift_id FROM oa_schedules
+      WHERE staff_id = ${staffId} AND work_date IN ${tx([...new Set(slots.map((s) => s.workDate))])}`;
+    const live = new Set(still.map((r) => `${r.workDate}|${Number(r.shiftId)}`));
+    const kept = slots.filter((s) => live.has(`${s.workDate}|${s.shiftId}`));
+    for (const s of kept) {
       const eff = async (kind: 'in' | 'out') => {
         const [p] = await tx<Effective[]>`
           SELECT id, late_minutes, early_minutes, outwork, face_result = 'pending' AS face_pending FROM oa_punches
@@ -103,16 +109,16 @@ async function settleStaff(db: Sql, staffId: number, slots: Slot[], actorId: num
         await tx`UPDATE oa_attendance_daily SET notified = true WHERE id = ${row!.id}`;
       }
     }
-    if (actorId !== null && slots.length) {
+    if (actorId !== null && kept.length) {
       await writeAudit(tx, {
         staffId: actorId,
         action: 'oa_attendance_settled',
         targetType: 'staff',
         targetId: staffId,
-        detail: { dates: [...new Set(slots.map((s) => s.workDate))], summary: `重新结算考勤 ${slots.length} 条` },
+        detail: { dates: [...new Set(kept.map((s) => s.workDate))], summary: `重新结算考勤 ${kept.length} 条` },
       });
     }
-    return slots.length;
+    return kept.length;
   });
 }
 
