@@ -378,6 +378,10 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     if (grp.rows.length > GROUP_ROWS_MAX) throw new PriceFileError(`「${grp.type}」连着 ${grp.rows.length} 行，超过 ${GROUP_ROWS_MAX} 行，不像价目表；请检查表格后再导入`);
     const r = grp.rows[0]!;
     const sort = out.length + 1;
+    // 只有轰趴房按面积一行一档、可以连着写多行；别的房型同名连着写了几行（不论合没合并），后面那几行不会被读到：报错，不悄悄丢掉
+    if (grp.type && !/轰趴/.test(grp.type) && grp.rows.length > 1) {
+      for (const x of grp.rows.slice(1)) ctx.error(S, x, '房型', `「${grp.type}」在第 ${r} 行已经有了：同一房型只写一行（轰趴房按面积可以连着写几行）`);
+    }
     if (!grp.type) {
       ctx.error(S, r, '房型', '房型为空');
       continue;

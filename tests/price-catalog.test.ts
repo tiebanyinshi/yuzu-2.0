@@ -1292,4 +1292,14 @@ describe('价目表录入 第四批：对接收银项目', () => {
     const long = ((await preview(workbook({ 按摩及助浴价格: massage }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
     expect(long.some((i) => i.row === 2 && i.message.includes('服务操作内容最多 800 个字'))).toBe(true);
   });
+
+  it('第二十九轮审查：相邻两行写了同一个房型（不是轰趴房），后一行报错，不悄悄丢掉', async () => {
+    const twice = sheet('房间价格', [
+      ['房型', '总数', '收费参考', null, '备注'],
+      ['spa房', '1间', '399/2H起开', '超时199/H', 'S301'],
+      ['spa房', '1间', '599/2H起开', '超时199/H', 'S302'],
+    ]);
+    const errs = ((await preview(workbook({ 房间价格: twice }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
+    expect(errs.some((i) => i.row === 3 && i.field === '房型')).toBe(true);
+  });
 });
