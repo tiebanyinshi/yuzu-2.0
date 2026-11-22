@@ -16,6 +16,7 @@ let tagNo = 0;
 const item: Record<string, number> = {};
 const price: Record<string, number> = { 宫保鸡丁: 4800, 柠檬茶: 1800, 椰子水: 2200, 果盘: 3800, 西瓜汁: 2600 };
 const room: Record<string, number> = {};
+const station: Record<string, number> = {};
 
 const enter = async () => {
   tagNo += 1;
@@ -54,7 +55,6 @@ beforeAll(async () => {
   km = await login(ctx.app, 'rkm');
   butler = await login(ctx.app, 'rbutler');
   expect((await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'R', from: 1, to: 40, width: 3, zone: 'male' })).status).toBe(200);
-  const station: Record<string, number> = {};
   for (const name of ['热菜', '水吧', '果吧']) {
     const r = await api(ctx.app, ctx.owner, 'POST', '/api/admin/dining/stations', { name });
     station[name] = r.body.stations.find((s: { name: string }) => s.name === name).id;
@@ -74,7 +74,7 @@ beforeAll(async () => {
   expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/rooms/rules', { enabled: true, checkoutMinute: 720, lateFullMinute: 1080, hourlyGraceMinutes: 15, defaultDeposit: 0 })).status).toBe(200);
   const rt = await api(ctx.app, ctx.owner, 'POST', '/api/admin/rooms/types', { name: '大床房', kind: 'daily', price: 30000 });
   const typeId = rt.body.types.find((x: { name: string }) => x.name === '大床房').id;
-  for (const roomNo of ['H601', 'H602', 'H603']) {
+  for (const roomNo of ['H601', 'H602', 'H603', 'H604']) {
     const rm = await api(ctx.app, ctx.owner, 'POST', '/api/admin/rooms/rooms', { roomNo, floor: '6', roomTypeId: typeId });
     room[roomNo] = rm.body.rooms.find((x: { roomNo: string }) => x.roomNo === roomNo).id;
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/rooms/${room[roomNo]}/housekeeping`, { status: 'clean' })).status).toBe(200);
@@ -188,5 +188,60 @@ describe('房态点单（P07）', () => {
     // 记录只追加：改不了
     const id = fruit.id;
     await expect(Promise.resolve().then(async () => ctx.sql`UPDATE room_orders SET note = 'x' WHERE id = ${id}`)).rejects.toThrow();
+  });
+
+  it('必选做法照点单页的规矩：不选拒绝，选了能下、写进出品单（Codex 审查 90a09c7）', async () => {
+    const made = await api(ctx.app, ctx.owner, 'POST', '/api/dining/dishes', {
+      clientKey: randomUUID(),
+      name: '冰柠水',
+      category: '饮品',
+      slot: 'water:手作饮料',
+      stationId: station['水吧'],
+      prices: { standard: 1600 },
+      methods: [
+        { name: '少冰', group: '冰量', price: 0 },
+        { name: '去冰', group: '冰量', price: 0 },
+      ],
+      methodGroups: [{ name: '冰量', required: true }],
+    });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    item['冰柠水'] = made.body.dish.id;
+    price['冰柠水'] = 1600;
+    const g = await checkIn('H604');
+    const bare = await place('H604', 'water', [{ name: '冰柠水' }]);
+    expect(bare.status, JSON.stringify(bare.body)).toBeGreaterThanOrEqual(400);
+    const ok = await api<RoomOrderResult>(ctx.app, km, 'POST', `/api/room-center/rooms/r${room['H604']}/orders`, {
+      clientKey: randomUUID(),
+      outlet: 'water',
+      lines: [{ itemId: item['冰柠水'], quantity: 1, methods: ['去冰'] }],
+      expectedTotal: 1600,
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.order.lines[0]!.note).toContain('去冰');
+    expect(ok.body.order.tagCode).toBe(g.tagCode);
+  });
+
+  it('只有「在水吧下单」的账号：能下单，断网后也能查回、确认作废（Codex 审查 90a09c7）', async () => {
+    const made = await api(ctx.app, ctx.owner, 'POST', '/api/staff', {
+      username: 'rwater',
+      displayName: '只点水吧',
+      position: 'finance.staff',
+      permissionAdjust: { add: ['dining.orderWater'], remove: [] },
+      password: PASSWORD,
+    });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    await ctx.sql`UPDATE staff SET must_change_password = false WHERE username = 'rwater'`;
+    const water = await login(ctx.app, 'rwater');
+    const me = (await api(ctx.app, water, 'GET', '/api/auth/me')).body as { permissions: string[] };
+    expect(me.permissions).toContain('dining.orderWater');
+    expect(me.permissions).not.toContain('dining.order');
+    expect(me.permissions).not.toContain('frontdesk.read');
+    const key = randomUUID();
+    expect((await place('H604', 'water', [{ name: '柠檬茶' }], {}, water, key)).status).toBe(200);
+    expect((await api(ctx.app, water, 'GET', `/api/dining/ops/${key}`)).body).toMatchObject({ found: true });
+    const other = randomUUID();
+    const abandoned = await api(ctx.app, water, 'POST', `/api/dining/ops/${other}/abandon`, {});
+    expect(abandoned.status, JSON.stringify(abandoned.body)).toBe(200);
+    expect(abandoned.body).toEqual({ found: false, abandoned: true });
   });
 });

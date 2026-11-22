@@ -5,7 +5,7 @@
 //   · 只能点这一个出品口、这个出品口配置里允许的分类（room_order_outlets），逐行按出品口核对下单权限（与点单页同一个 assertOrderOutlets）；
 //   · 每一单另记 room_orders / room_order_lines（只追加）：哪间房、挂在哪位客人上、出品单号、经办人与时间；撤单就是作废那几行账单明细
 //     （/api/frontdesk/lines/:id/void，「退菜：水吧 / 果吧的菜」逐行核对、留审计），这里不另做一套。
-// 锁（docs/LOCKING.md「房态点单」）：操作编号 → 来访 → 账单 → 沽清 → 出品单（postChargesTx 原来的顺序）→ 最后写 room_orders；
+// 锁（docs/LOCKING.md「房态点单」）：操作编号 → 房间一行（客房或空间，共享键锁）→ 来访 → 账单 → 沽清 → 出品单（postChargesTx 原来的顺序）→ 最后写 room_orders；
 // 房间与客人只读：来访锁住以后再核对一次这间房还是这位客人（PostOptions.toRoom），换了客人整单拒绝。
 
 import type { FastifyInstance } from 'fastify';
@@ -39,6 +39,7 @@ import { AppError, conflict, notFound, unprocessable } from '../lib/errors';
 import { currentStoreId } from '../lib/store-context';
 import { parse } from '../lib/validate';
 import { assertOrderOutlets } from './dining-order-v8115';
+import { DishLineFields } from './dish-lines';
 import { kitchenDishes } from './dining';
 import { PostInput, postChargesTx } from './frontdesk/bills';
 import { businessDate, hashRequest, runIdempotent } from './frontdesk/common';
@@ -55,6 +56,8 @@ const OrderBody = z.object({
         itemId: z.number().int().positive(),
         quantity: z.number('份数不对').int('份数要是整数').min(1, '份数至少 1').max(MAX_ROOM_ORDER_QUANTITY, `一样最多点 ${MAX_ROOM_ORDER_QUANTITY} 份`),
         note: z.string().trim().max(MAX_DISH_NOTE, `备注最多 ${MAX_DISH_NOTE} 字`).optional(),
+        /** 选的做法（冰量、甜度……；必选组要选上），与点单页同一个校验与计价（Codex 审查 90a09c7） */
+        methods: DishLineFields.methods,
       }),
     )
     .min(1, '请至少点一样')
@@ -203,13 +206,17 @@ export async function placeRoomOrder(deps: Deps, roomKey: string, raw: unknown, 
   const requestHash = hashRequest({ roomOrder: roomKey, ...payload });
   const input = parse(PostInput, {
     clientKey: key,
-    lines: body.lines.map((l) => ({ itemId: l.itemId, quantity: l.quantity, ...(l.note ? { note: l.note } : {}) })),
+    lines: body.lines.map((l) => ({ itemId: l.itemId, quantity: l.quantity, ...(l.note ? { note: l.note } : {}), ...(l.methods ? { methods: l.methods } : {}) })),
     customLines: [],
     expectedTotal: body.expectedTotal,
     ...(body.orderNote ? { orderNote: body.orderNote } : {}),
   });
   const r = await runIdempotent(deps, { key, opType: 'bill_post', requestHash }, async (tx) => {
     const at = ctx.at ?? new Date();
+    // 先锁房间一行（共享键锁，room_orders 的外键要的就是它），再进挂账去锁来访：与客房退房（入住单 → 客房 → 来访）、
+    // 钟房换房间（空间一行 → …）同一个先后，不会出现我拿着来访等房间、对方拿着房间等来访（Codex 审查 90a09c7）
+    if ('roomId' in ref) await tx`SELECT id FROM rooms WHERE id = ${ref.roomId} FOR KEY SHARE`;
+    else await tx`SELECT id FROM spaces WHERE id = ${ref.spaceId} FOR KEY SHARE`;
     const guest = await guestOf(tx, ref);
     if (!guest) throw conflict('ROOM_NOT_IN_USE', `${code} 现在不是在用（没有客人、已退房或在维修），不能点单，请刷新`);
     await assertRoomOrderItems(
