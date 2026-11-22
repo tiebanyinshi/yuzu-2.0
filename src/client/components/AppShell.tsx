@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Building2, KeyRound, LogOut, MonitorSmartphone, Wifi } from 'lucide-react';
@@ -22,8 +22,24 @@ import { useErpAccess } from '../features/erp/access';
 import { TerminalBridgeRunner } from '../features/devices/terminal';
 import { Badge } from './ui';
 
-// 通知铃铛（OA-03）按需加载：首屏主包有体积上限（check:bundle），铃铛晚一点出现不碍事
-const NotificationBell = lazy(() => import('../features/oa/NotificationBell').then((m) => ({ default: m.NotificationBell })));
+/**
+ * 通知铃铛（OA-03）按需加载：首屏主包有体积上限（check:bundle），铃铛晚一点出现不碍事。
+ * 不用 React.lazy：代码没下载下来时 lazy 会当渲染出错往上抛，连导航和前台一起卸掉；
+ * 这里下载失败只是先不显示铃铛，30 秒后再试，不影响别的。
+ */
+function NotificationBellSlot() {
+  const [Bell, setBell] = useState<ComponentType | null>(null);
+  // AppShell 登录期间一直在，不必管卸载
+  useEffect(() => {
+    const load = () =>
+      void import('../features/oa/Notifications').then(
+        (m) => setBell(() => m.NotificationBell),
+        () => setTimeout(load, 30_000),
+      );
+    load();
+  }, []);
+  return Bell ? <Bell /> : null;
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const can = useCan();
@@ -49,9 +65,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             {/* 能进不止一家店的人：当前门店、点一下换店（8.0.22）；只有一家店时不显示 */}
             <StoreSwitcher />
             <InstanceTag instance={session.instance} version={session.version} commit={session.commit} />
-            <Suspense fallback={null}>
-              <NotificationBell />
-            </Suspense>
+            <NotificationBellSlot />
             <UserMenu />
           </>
         }

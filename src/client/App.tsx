@@ -41,7 +41,7 @@ const CouponIssuePage = lazyPage(() => import('./features/coupons/CouponIssuePag
 const ConciergePage = lazyPage(() => import('./features/concierge/ConciergePage').then((m) => m.ConciergePage));
 const CustomerPage = lazyPage(() => import('./features/customer/CustomerPage').then((m) => m.CustomerPage));
 const PlatformPage = lazyPage(() => import('./features/platform/PlatformPage').then((m) => m.PlatformPage));
-const NotificationsPage = lazyPage(() => import('./features/oa/NotificationsPage').then((m) => m.NotificationsPage));
+const NotificationsPage = lazyPage(() => import('./features/oa/Notifications').then((m) => m.NotificationsPage));
 const GuidePage = lazyPage(() => import('./features/guide/GuidePage').then((m) => m.GuidePage));
 const GuideScreenPage = lazyPage(() => import('./features/guide/GuidePage').then((m) => m.GuideScreenPage));
 const DevicesPage = lazyPage(() => import('./features/devices/DevicesPage').then((m) => m.DevicesPage));
