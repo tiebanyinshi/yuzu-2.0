@@ -42,6 +42,7 @@ import { Badge, Button, Card, Input, Notice, SectionTitle, Segmented, Select, Sk
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { ChangeLines, PriceEntryDialog, PriceEntryHistory } from './PriceEntryDialog';
 import { PriceLinksCard } from './PriceLinksCard';
+import { PENDING_TYPES } from './priceOps';
 
 /** 价目表的查询都在这个前缀下：改了任何一处整体刷新（概要、条目、改动记录） */
 const overviewKey = ['admin', 'price-catalog'] as const;
@@ -50,8 +51,6 @@ const setKey = (id: number) => ['admin', 'price-catalog', 'set', id] as const;
 type Which = 'draft' | 'active';
 type SheetFilter = 'all' | PriceSheet;
 type Only = 'all' | 'none' | 'inactive';
-
-const PENDING_TYPES = ['price_import', 'price_rollback', 'price_entry', 'price_set', 'price_link'] as const;
 
 export function PriceCatalogPane() {
   const qc = useQueryClient();
@@ -184,7 +183,7 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
   const session = useSession();
   // 单条改动、导入（会替换整份草稿）、切换 / 放弃 / 回滚有结果待确认的：查回、重提或作废之前不再改，
   // 不然原请求晚到会把刚改的连同草稿一起换掉（AGENTS.md「结果待确认」）
-  const locked = useErpPending(['price_entry', 'price_import', 'price_set', 'price_rollback']).length > 0;
+  const locked = useErpPending(PENDING_TYPES).length > 0;
   const [sheet, setSheet] = useState<SheetFilter>('all');
   const [editing, setEditing] = useState<PriceCatalogEntry | 'new' | null>(null);
   const [history, setHistory] = useState<PriceCatalogEntry | null>(null);
@@ -398,7 +397,7 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
   const [open, setOpen] = useState<'activate' | 'rollback' | 'discard' | null>(null);
   const session = useSession();
   // 切换生效、放弃草稿、整体回滚有结果待确认的：查回、重提或作废之前，这几个按钮都不显示（AGENTS.md「结果待确认」）
-  const setPending = useErpPending(['price_rollback', 'price_set']);
+  const setPending = useErpPending(PENDING_TYPES);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mismatches = countMismatches(shown.counts);
@@ -623,7 +622,7 @@ function ImportCard({ onImported }: { onImported: () => void }) {
   const qc = useQueryClient();
   const [file, setFile] = useState<LoadedTable | null>(null);
   const session = useSession();
-  const pending = useErpPending(['price_import']);
+  const pending = useErpPending(PENDING_TYPES);
   const [preview, setPreview] = useState<(PriceImportPreview & { digest: string }) | null>(null);
   const [busy, setBusy] = useState<'preview' | 'import' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -657,7 +656,7 @@ function ImportCard({ onImported }: { onImported: () => void }) {
   // 每次导入用新的操作编号：先把编号和原请求（含文件内容）记在本机并读回核对，记不下就不发请求（AGENTS.md「结果待确认」）
   const runImport = async () => {
     if (!file || !preview) return;
-    if (pending.length > 0) return setError('上一次导入结果待确认：请先在页面上方查回、按原内容重新提交或作废，不要换了文件再导入');
+    if (pending.length > 0) return setError('有一笔价目表操作结果待确认：请先在页面上方查回、按原内容重新提交或作废，再导入');
     setBusy('import');
     setError(null);
     try {

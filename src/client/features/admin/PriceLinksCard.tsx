@@ -16,6 +16,7 @@ import { qk, useCatalog } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { uuid } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
+import { PENDING_TYPES } from './priceOps';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { Badge, Button, Card, Input, Notice, SectionTitle, Segmented, Skeleton } from '../../components/ui';
@@ -57,7 +58,7 @@ export function PriceLinksCard({ entries }: { entries: PriceCatalogEntry[] }) {
   const qc = useQueryClient();
   const session = useSession();
   const links = useQuery({ queryKey: linksKey, queryFn: () => api.get<PriceLink[]>('/api/admin/price-catalog/links') });
-  const pending = useErpPending(['price_link']).length > 0;
+  const pending = useErpPending(PENDING_TYPES).length > 0;
   const [show, setShow] = useState<Show>('all');
   const [q, setQ] = useState('');
   const [picking, setPicking] = useState<LiveRow | null>(null);
