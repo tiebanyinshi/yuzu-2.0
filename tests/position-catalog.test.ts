@@ -34,8 +34,11 @@ describe('岗位职权数据（P04）', () => {
       expect(mine, p.key).toEqual([...positionDefaults(p.key, ALL_PERMISSIONS)].sort());
     }
     expect(rows.some((r) => r.positionKey === 'president')).toBe(false);
-    const log = await ctx.sql<{ action: string }[]>`SELECT action FROM position_config_log ORDER BY id`;
-    expect(log.map((l) => l.action)).toEqual(['init', 'legacy_migrate']);
+    // 201 记初始化与旧岗位两条；203（技师上钟轮播）给有「排位播报」的岗位各记一条
+    const log = await ctx.sql<{ action: string; positionKey: string | null }[]>`SELECT action, position_key FROM position_config_log ORDER BY id`;
+    expect(log.slice(0, 2).map((l) => l.action)).toEqual(['init', 'legacy_migrate']);
+    const announce = rows.filter((r) => r.permission === 'technician.announce').map((r) => r.positionKey);
+    expect(log.slice(2).map((l) => [l.action, l.positionKey])).toEqual([...announce].sort().map((k) => ['suggestions', k]));
     await expect(ctx.sql`DELETE FROM position_config_log`).rejects.toThrow();
   });
 
@@ -86,7 +89,7 @@ describe('分部门岗位职权配置（P05）', () => {
     expect(pos(v, 'male.staff').title).toBe('男宾部员工');
     expect(pos(v, 'female.staff').title).toBe('女宾部员工');
     expect(pos(v, 'front.staff').suggested.sort()).toEqual([...positionDefaults('front.staff', ALL_PERMISSIONS)].sort());
-    expect(v.log.map((l) => l.action)).toEqual(['legacy_migrate', 'init']);
+    expect(v.log.map((l) => l.action).slice(-2)).toEqual(['legacy_migrate', 'init']);
   });
 
   it('改一个岗位的建议权限：整批换、记日志与审计；版本对不上拒绝；总裁专属的不能建议；只有总裁能改', async () => {

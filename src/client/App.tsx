@@ -33,6 +33,7 @@ const ClockroomPage = lazyPage(() => import('./features/clockroom/ClockroomPage'
 const AnnouncerPage = lazyPage(() => import('./features/clockroom/AnnouncerPage').then((m) => m.AnnouncerPage));
 const TechnicianAdminPage = lazyPage(() => import('./features/technicians/TechnicianAdminPage').then((m) => m.TechnicianAdminPage));
 const DiningPage = lazyPage(() => import('./features/dining/DiningPage').then((m) => m.DiningPage));
+const TechBoardPage = lazyPage(() => import('./features/clockroom/TechBoardPage').then((m) => m.TechBoardPage));
 const RoomCenterPage = lazyPage(() => import('./features/room-center/RoomCenterPage').then((m) => m.RoomCenterPage));
 const BookingsPage = lazyPage(() => import('./features/bookings/BookingsPage').then((m) => m.BookingsPage));
 const ParkingLogPage = lazyPage(() => import('./features/membership/ParkingLogCard').then((m) => m.ParkingLogPage));
@@ -405,6 +406,7 @@ const router = createBrowserRouter([
       { path: 'clockroom', element: <ClockroomPage /> },
       // 排位播报（8.2.0 P03）：独立页面；老地址跳过来并提示位置换了
       { path: 'announcer', element: <AnnouncerPage /> },
+      { path: 'tech-board', element: <TechBoardPage /> },
       { path: 'clockroom/announcer', element: <Navigate to="/announcer?moved=1" replace /> },
       { path: 'dining/:tab?', element: <DiningPage /> },
       { path: 'room-center', element: <RoomCenterPage /> },

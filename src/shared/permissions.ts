@@ -286,6 +286,8 @@ export const PERMISSIONS = {
    * 与钟房分开授：排位员可以只有这一项；默认有钟房的岗位都有
    */
   'technician.announce': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
+  // 8.2.0 P09（回测 4-2）：技师上钟轮播（只读大屏），可单独授给值班经理、排位员
+  'technician.board': { roles: ['owner', 'store_manager', 'duty_manager'] },
   /** 餐饮点单：按手牌给在店客人点菜（挂账）、催单、上菜（S5 第一步，待确认：前台岗位都能做；下单还要能挂账） */
   'dining.order': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'], duties: ['kangmei'] },
   /** 厨房出品屏：开始做、出餐、沽清（S5 第一步，待确认：前台岗位与后勤人员；厨房可以用后勤账号） */
@@ -608,6 +610,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'technician.manage': '维护技师名册',
   'technician.dispatch': '钟房派钟、上下钟、加钟、退钟、上牌',
   'technician.announce': '排位播报：看排位、手动叫号、由本机播报',
+  'technician.board': '技师上钟轮播：只读大屏，看谁在上钟、上什么、排在哪',
   'dining.order': '餐饮点单、催单、上菜',
   'dining.kitchen': '厨房出品屏：开始做、出餐、沽清',
   'emenu.view': '打开平板点餐（电子菜单；下单要服务员输点单密码）',
@@ -687,6 +690,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'frontdesk.backfill',
       'technician.dispatch',
       'technician.announce',
+      'technician.board',
       'dining.order',
       'dining.kitchen',
       'emenu.view',

@@ -237,6 +237,7 @@
 - **8.2.0（2026-11-21 登记）**：《浴族系统 8.1.15–8.1.18 回测问题汇总与 PR 拆分》的 8 条需求，P01–P09 依次串行（`docs/YUZU_REQ_V820.md`，RT1 起）。迁移号预留 `201`–`209`（P04 岗位职权、P07 房态点单用；用到哪个登记哪个）。
   - `201`（`201_position_catalog.sql`，P04）：部门、岗位、建议权限三张表与配置日志（初始数据按 8.1.18 岗位职权表），旧岗位与专用账号不改。回滚脚本 `docs/rollback/201_position_catalog.down.sql`。
   - `202`（`202_room_orders.sql`，P07）：房态点单 `room_orders`（哪间房、哪位客人、哪个出品口、出品单号、经办人与时间，只追加）与 `room_order_lines`（挂到账单的哪几行）、按出品口配置房态点单能点的分类 `room_order_outlets`。不改已有的表。回滚脚本 `docs/rollback/202_room_orders.down.sql`。
+  - `203`（`203_technician_board.sql`，P09）：新权限「技师上钟轮播」加进建议权限里有「排位播报」的岗位（每个岗位一条配置日志）。回滚脚本 `docs/rollback/203_technician_board.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
