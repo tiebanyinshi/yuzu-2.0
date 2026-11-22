@@ -1,4 +1,4 @@
-// 8.2.0 P09（回测 4-2，docs/YUZU_REQ_V820.md 第 10 节）：技师上钟轮播（门店电视、大屏投用，只读）。
+// 回测整改 P09（回测 4-2，docs/YUZU_REQ_V820.md 第 10 节）：技师上钟轮播（门店电视、大屏投用，只读）。
 //   · 顶部「按项目 / 按区域」一键切换；技师类型、项目、区域、状态四个筛选可以组合，生效的条件写成小标签、可以逐个去掉、可以一键重置；
 //   · 最左一列固定写排钟顺序（序号、技师号与花名、状态），不跟着轮播；右边一列一个项目（或区域），格子里是这位技师在这一项上的钟：
 //     房间、开始时间、已上钟多久、预计几点下钟；列头写这一列几个人在钟；顶上写下一位排钟；
@@ -41,7 +41,7 @@ const LEFT_EM = 12;
 
 /** 状态小章：跟着看板的字号一起放大（公共的 Badge 是固定像素，4K 上太小） */
 const STATUS_CHIP: Record<TechBoardStatus, string> = {
-  serving: 'bg-room-in-use-soft text-room-in-use-ink',
+  serving: 'bg-lake-soft text-lake',
   waiting: 'bg-ember-soft text-ember-deep',
   idle: 'bg-pine-tint text-pine',
   rest: 'bg-paper-2 text-ink-3',
@@ -385,7 +385,7 @@ function SessionCard({ s, mode, now }: { s: TechBoardSession; mode: TechBoardMod
     <div
       className={cn(
         'flex h-full min-w-0 flex-col justify-center rounded-lg border px-[0.6em] leading-tight',
-        s.status === 'serving' ? 'border-room-in-use/40 bg-room-in-use-soft' : 'border-ember/30 bg-ember-soft',
+        s.status === 'serving' ? 'border-lake/40 bg-lake-soft' : 'border-ember/30 bg-ember-soft',
       )}
       data-testid="tech-board-card"
       data-status={s.status}

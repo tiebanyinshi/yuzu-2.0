@@ -1557,7 +1557,7 @@ export async function permissionMatrix(db: Db): Promise<RolePermissionMatrix> {
   return {
     positions: {
       overrides: overrides.positions,
-      // 建议权限（8.2.0 P04 起在库里，「分部门岗位职权配置」维护）
+      // 建议权限（回测整改 P04 起在库里，「分部门岗位职权配置」维护）
       defaults: Object.fromEntries(positionKeys.map((k) => [k, suggestedOf(k, overrides)])) as Record<EditablePosition, Permission[]>,
       effective: Object.fromEntries(positionKeys.map((k) => [k, positionPermissions(k, overrides)])) as Record<EditablePosition, Permission[]>,
       staffCount: Object.fromEntries(posStaff.map((x) => [x.position, x.n])),

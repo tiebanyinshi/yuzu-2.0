@@ -51,7 +51,7 @@ export function overridesOf(roleValue: unknown, positionValue: unknown, suggeste
 export const knownPermissions = known;
 
 /**
- * 「分部门岗位职权配置」里各岗位的建议权限（8.2.0 P04）：岗位在库里有（position_catalog）就按库里的，一项都没有也是空的；
+ * 「分部门岗位职权配置」里各岗位的建议权限（回测整改 P04）：岗位在库里有（position_catalog）就按库里的，一项都没有也是空的；
  * 库里没有这个岗位的（不该有）不给，按代码里的模板
  */
 export async function loadSuggestions(db: Db): Promise<NonNullable<PermissionOverrides['suggested']>> {

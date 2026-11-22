@@ -1,6 +1,6 @@
 // 钟房（v0.7.1）：左边轮钟队列（在岗技师按排位，第一位空闲的是「下一位」）、休息与未上牌；
 // 右边上钟中的钟（倒计时、快到钟、超时）与待上钟（已派、技师还没到）。派钟、加钟都是挂账，走前台同一套「结果待确认」。
-// 8.1.15（docs/TECHNICIANS_V8115.md）：顶上是搜索、筛选（ClockFilters.tsx；排位播报 8.2.0 起是单独的页面 AnnouncerPage.tsx）；有条件生效或按状态排时
+// 8.1.15（docs/TECHNICIANS_V8115.md）：顶上是搜索、筛选（ClockFilters.tsx；排位播报 回测整改起是单独的页面 AnnouncerPage.tsx）；有条件生效或按状态排时
 // 下面列技师卡片，没有时是原来的看板。技师的花名、类型、组别、今天的班与休假单来自技师管理。
 
 import { useEffect, useMemo, useState } from 'react';
@@ -1113,7 +1113,7 @@ function ClockLog({ open, onClose }: { open: boolean; onClose: () => void }) {
 const MOVED_KEY = 'yuzu.clock.announcerMoved';
 
 /**
- * 排位播报从钟房移走了（8.2.0 P03）：钟房顶上一条提示，点「去排位播报」过去；点「知道了」以后这台设备不再提示。
+ * 排位播报从钟房移走了（回测整改 P03）：钟房顶上一条提示，点「去排位播报」过去；点「知道了」以后这台设备不再提示。
  * 叫号照旧能在钟房点（记一条叫号），念要在开着「排位播报」页的那台终端上
  */
 function AnnouncerMoved() {

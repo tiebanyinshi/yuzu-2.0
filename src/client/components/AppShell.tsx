@@ -35,7 +35,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const page = storePageOf(pathname);
   if (page && !(Array.isArray(page.perm) ? page.perm : [page.perm]).some((p) => can(p))) return <Navigate to="/" replace />;
   return (
-    // 8.2.0 P02（回测 2-1）：整屏不滚，左侧主导航固定、撑满一屏（菜单长了在导航里面滚）；右边内容区自己滚，
+    // 回测整改 P02（回测 2-1）：整屏不滚，左侧主导航固定、撑满一屏（菜单长了在导航里面滚）；右边内容区自己滚，
     // 页头（PageHeader）贴在内容区顶上。页面自己有滚动区的照旧在里面滚，不会出现两条滚动条
     <div className="flex h-dvh min-h-0 overflow-hidden bg-paper">
       {/* 设备（v0.7.21）：选了「这台终端」的设备常连本机的设备服务、替它上报（不在设备页也照常） */}

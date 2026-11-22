@@ -282,11 +282,11 @@ export const PERMISSIONS = {
   /** 钟房：上牌、派钟、上钟、下钟、加钟、退钟（v0.7.1，待确认：前台岗位都能做；派钟、加钟、退钟还要能挂账） */
   'technician.dispatch': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
   /**
-   * 排位播报（8.2.0 P03，回测 4-1）：「技师 → 排位播报」页——看排位、手动叫号、由本机播报（音量、静音、重播、播报记录）。
+   * 排位播报（回测整改 P03，回测 4-1）：「技师 → 排位播报」页——看排位、手动叫号、由本机播报（音量、静音、重播、播报记录）。
    * 与钟房分开授：排位员可以只有这一项；默认有钟房的岗位都有
    */
   'technician.announce': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
-  // 8.2.0 P09（回测 4-2）：技师上钟轮播（只读大屏），可单独授给值班经理、排位员
+  // 回测整改 P09（回测 4-2）：技师上钟轮播（只读大屏），可单独授给值班经理、排位员
   'technician.board': { roles: ['owner', 'store_manager', 'duty_manager'] },
   /** 餐饮点单：按手牌给在店客人点菜（挂账）、催单、上菜（S5 第一步，待确认：前台岗位都能做；下单还要能挂账） */
   'dining.order': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'], duties: ['kangmei'] },
@@ -436,7 +436,7 @@ export interface PermissionOverrides {
   roles: RoleOverrides;
   positions: PositionOverrides;
   /**
-   * 岗位的建议权限（8.2.0 P04：存在库里的「分部门岗位职权配置」，position_suggestions）。给了这个岗位的就按它，
+   * 岗位的建议权限（回测整改 P04：存在库里的「分部门岗位职权配置」，position_suggestions）。给了这个岗位的就按它，
    * 没给（库里还没有这张表、或没有这个岗位）按代码里的岗位模板 positionDefaults（与库里的初始数据一致）
    */
   suggested?: Partial<Record<PositionKey, readonly Permission[]>>;

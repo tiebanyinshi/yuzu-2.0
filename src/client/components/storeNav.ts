@@ -103,7 +103,7 @@ const STORE_NAV: StoreNavDomain[] = [
         to: '/room-center',
         label: '房态中心',
         icon: BedDouble,
-        // 8.2.0 P08：能在水吧、果吧下单的（康美部）也有入口，在「在用」的房间上点单
+        // 回测整改 P08：能在水吧、果吧下单的（康美部）也有入口，在「在用」的房间上点单
         perm: ['room.operate', 'room.housekeep', 'technician.dispatch', 'frontdesk.checkout', 'dining.orderWater', 'dining.orderFruit'],
         when: (s) => s.rooms || ROOM_CENTER_DESK_PERMISSIONS.some((p) => s.permissions.includes(p)),
       },
@@ -115,9 +115,9 @@ const STORE_NAV: StoreNavDomain[] = [
     icon: Hourglass,
     items: [
       { to: '/clockroom', label: '钟房', icon: Hourglass, perm: 'technician.dispatch', when: (s) => s.technicians },
-      // 排位播报（8.2.0 P03，回测 4-1）：从钟房里移出来，与钟房同级；权限单独授，排位员可以只有这一项
+      // 排位播报（回测整改 P03，回测 4-1）：从钟房里移出来，与钟房同级；权限单独授，排位员可以只有这一项
       { to: '/announcer', label: '排位播报', icon: Megaphone, perm: ['technician.announce', 'technician.dispatch'], when: (s) => s.technicians },
-      // 8.2.0 P09（回测 4-2）：技师上钟轮播，只读大屏；可单独授给值班经理、排位员
+      // 回测整改 P09（回测 4-2）：技师上钟轮播，只读大屏；可单独授给值班经理、排位员
       { to: '/tech-board', label: '上钟轮播', icon: MonitorPlay, perm: ['technician.board', 'technician.dispatch', 'technician.announce'], when: (s) => s.technicians },
       // 技师管理（8.1.16 块 E，docs/TECHNICIANS_V8115.md）：技师名册、组别、班次与排班、休假；钟房的岗位能看、能替技师申请休假
       { to: '/technicians', label: '技师管理', icon: IdCard, perm: ['technician.manage', 'technician.dispatch'], when: (s) => s.technicians },

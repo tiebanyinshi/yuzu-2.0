@@ -453,7 +453,7 @@ describe('排位播报：叫号记录与主播报终端', () => {
     expect((await api(ctx.app, backoffice, 'POST', '/api/clockroom/calls', { technicianId: idle.id })).status).toBe(403);
   });
 
-  it('排位播报单独授权（8.2.0 P03）：只有「排位播报」的账号看得到排位、能叫号、能登记播报终端，钟房的操作做不了', async () => {
+  it('排位播报单独授权（回测整改 P03）：只有「排位播报」的账号看得到排位、能叫号、能登记播报终端，钟房的操作做不了', async () => {
     const made = await api(ctx.app, ctx.owner, 'POST', '/api/staff', {
       username: 'paiwei',
       displayName: '排位员',

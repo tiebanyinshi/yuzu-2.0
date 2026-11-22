@@ -234,7 +234,7 @@ export interface RoomCard {
   phase: 'waiting' | 'serving' | 'done' | null;
   /** 服务中的计划下钟时刻（几张钟里最晚的） */
   plannedEnd: string | null;
-  /** 房态点单（8.2.0 P07）：房里现在的客人从房态点了几单、多少钱（退掉的不算）；没点过为 null */
+  /** 房态点单（回测整改 P07）：房里现在的客人从房态点了几单、多少钱（退掉的不算）；没点过为 null */
   orders: RoomOrderSummary | null;
 }
 

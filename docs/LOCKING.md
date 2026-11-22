@@ -89,7 +89,7 @@
   - 房间动作「结果待确认」的查回只读；确认作废只在编号的咨询锁里登记 `op_fences`（与原请求写编号串行），不碰房态行与业务行；
   - 房型（`room_categories`）的新建、修改先取「房型」的咨询锁（按门店一把，全部串行），修改再锁那一行、带版本号；
   - 看板、房间历史、退房前的预览、`currentGuestOfSpace` 都只读、不加锁。
-- 房态点单（8.2.0 P07，`docs/YUZU_REQ_V820.md` 第 8 节，`room-orders.ts`）：不锁房态行。按挂账的 `runIdempotent`（`bill_post`）先查编号 → 房间一行（客房 `rooms` 或空间 `spaces`，`FOR KEY SHARE`：`room_orders` 的外键要这把锁，放在锁来访之前，与客房退房「入住单 → 客房 → 来访」同一个先后）；房间里现在的客人、出品口与分类配置、下单权限都只读地核对 → 来访 → 账单 →（核对这间房还是这位客人，`PostOptions.toRoom`）→ 沽清 → 出品单（就是 `postChargesTx` 的顺序）→ 最后插入 `room_orders` / `room_order_lines`（只追加）→ 写编号。撤单是作废账单明细（照前台作废明细的锁），不碰这两张表。按出品口的分类配置（`room_order_outlets`）按水吧、果吧的固定顺序逐行写，不锁别的；看板上的单数与金额、点单记录只读。
+- 房态点单（回测整改 P07，`docs/YUZU_REQ_V820.md` 第 8 节，`room-orders.ts`）：不锁房态行。按挂账的 `runIdempotent`（`bill_post`）先查编号 → 房间一行（客房 `rooms` 或空间 `spaces`，`FOR KEY SHARE`：`room_orders` 的外键要这把锁，放在锁来访之前，与客房退房「入住单 → 客房 → 来访」同一个先后）；房间里现在的客人、出品口与分类配置、下单权限都只读地核对 → 来访 → 账单 →（核对这间房还是这位客人，`PostOptions.toRoom`）→ 沽清 → 出品单（就是 `postChargesTx` 的顺序）→ 最后插入 `room_orders` / `room_order_lines`（只追加）→ 写编号。撤单是作废账单明细（照前台作废明细的锁），不碰这两张表。按出品口的分类配置（`room_order_outlets`）按水吧、果吧的固定顺序逐行写，不锁别的；看板上的单数与金额、点单记录只读。
 
 ## 2. 会员、券与权益
 
@@ -348,7 +348,7 @@
   - 部门负责人改、停用、重置本部门员工的密码（8.1.18，GW6）：先对那位员工一行加 `FOR NO KEY UPDATE`（与调店 `PUT /api/staff/:id/stores` 串行），再用新的语句核对岗位与门店范围后写入。
   - 老账号自己选新岗位（8.1.18，`POST /api/auth/position`，docs/POSITIONS_V8118.md GW7）只锁自己一行（`FOR NO KEY UPDATE`），核对还要选（`needs_position`）再改：两个页面同时提交时第二次不再改。不碰店主行——自己选不出总裁，也改不掉店主。
 
-- 分部门岗位职权配置（8.2.0 P05，`docs/YUZU_REQ_V820.md` 第 6 节）：改一个岗位的建议权限先取规则设置的咨询锁（`lockSettings`，与「设立岗位」「旧岗位表」的保存串行）→ 这个岗位一行（`position_catalog`，`FOR UPDATE`，核对版本、对不上拒绝）→ 整批换 `position_suggestions` → 配置日志（只追加）→ 审计；列表、导出只读、不加锁。
+- 分部门岗位职权配置（回测整改 P05，`docs/YUZU_REQ_V820.md` 第 6 节）：改一个岗位的建议权限先取规则设置的咨询锁（`lockSettings`，与「设立岗位」「旧岗位表」的保存串行）→ 这个岗位一行（`position_catalog`，`FOR UPDATE`，核对版本、对不上拒绝）→ 整批换 `position_suggestions` → 配置日志（只追加）→ 审计；列表、导出只读、不加锁。
 
 ## 8. 多门店与 AI 辅助
 

@@ -314,7 +314,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerAiRoutes(app, deps);
   registerAuditRoutes(app, deps);
   registerAdminRoutes(app, deps);
-  // 分部门岗位职权配置（8.2.0 P05）
+  // 分部门岗位职权配置（回测整改 P05）
   registerPositionCatalogRoutes(app, deps);
   registerRoomOrderRoutes(app, deps);
   registerTechBoardRoutes(app, deps);

@@ -404,7 +404,7 @@ const router = createBrowserRouter([
         ],
       },
       { path: 'clockroom', element: <ClockroomPage /> },
-      // 排位播报（8.2.0 P03）：独立页面；老地址跳过来并提示位置换了
+      // 排位播报（回测整改 P03）：独立页面；老地址跳过来并提示位置换了
       { path: 'announcer', element: <AnnouncerPage /> },
       { path: 'tech-board', element: <TechBoardPage /> },
       { path: 'clockroom/announcer', element: <Navigate to="/announcer?moved=1" replace /> },
