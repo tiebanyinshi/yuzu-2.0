@@ -51,7 +51,18 @@ export async function loadLeaveTypes(db: Db): Promise<LeaveType[]> {
   return (await db<TypeRow[]>`SELECT ${TYPE_COLS(db)} FROM oa_leave_types ORDER BY active DESC, sort, id`).map(toType);
 }
 
-/** 余额行：没有就建一行再锁住（OA-13 请假扣减也从这里进） */
+type LockedType = { name: string; hasBalance: boolean; active: boolean; annualTiers: LeaveTier[] | null };
+/**
+ * 动余额之前先对假种加共享锁，事务提交前别人改不了这个假种的设置（修改假种对那一行 FOR UPDATE）：
+ * 不然调整读到「管余额」以后、人事同时关掉「管余额」（那时余额还是 0 所以放行），调整照样加上，留下看不见的余额（Codex 审查 3c1cf1b）。
+ * 顺序：假种行（FOR SHARE）→ 余额行（lockBalance）。OA-13 请假扣减照这个顺序
+ */
+export async function lockLeaveType(tx: Tx, leaveTypeId: number): Promise<LockedType | null> {
+  const [t] = await tx<LockedType[]>`SELECT name, has_balance, active, annual_tiers FROM oa_leave_types WHERE id = ${leaveTypeId} FOR SHARE`;
+  return t ?? null;
+}
+
+/** 余额行：没有就建一行再锁住（调用方先 lockLeaveType；OA-13 请假扣减也从这里进） */
 export async function lockBalance(tx: Tx, staffId: number, leaveTypeId: number, year: number): Promise<{ grantedHalves: number; usedHalves: number }> {
   await tx`INSERT INTO oa_leave_balances (staff_id, leave_type_id, year) VALUES (${staffId}, ${leaveTypeId}, ${year}) ON CONFLICT DO NOTHING`;
   const [b] = await tx<{ grantedHalves: number; usedHalves: number }[]>`
@@ -132,14 +143,19 @@ export async function grantAnnualLeave(db: Sql, today: string, actorId: number |
     const leaveTypeId = Number(c.leaveTypeId);
     try {
       const done = await db.begin(async (tx) => {
+        // 锁住假种再核对一次：读候选以后人事可能刚停用、关了管余额或改了分档
+        const t = await lockLeaveType(tx, leaveTypeId);
+        if (!t || !t.active || !t.hasBalance || !t.annualTiers) return false;
+        const now = annualDays(t.annualTiers, yearsOfService(c.hireDate, today));
+        if (now <= 0) return false;
         await lockBalance(tx, staffId, leaveTypeId, year);
         const [seen] = await tx`SELECT 1 FROM oa_leave_entries WHERE staff_id = ${staffId} AND leave_type_id = ${leaveTypeId} AND year = ${year} AND kind = 'grant'`;
         if (seen) return false; // 别的进程刚发过
         const reason = `入职 ${c.hireDate}，满 ${yearsOfService(c.hireDate, today)} 年`;
-        const entryId = await changeBalance(tx, { staffId, leaveTypeId, year, kind: 'grant', halves: days * 2, reason, actorId });
+        const entryId = await changeBalance(tx, { staffId, leaveTypeId, year, kind: 'grant', halves: now * 2, reason, actorId });
         await notify(tx, [staffId], {
           kind: 'system',
-          title: `${year} 年${c.name}已发放：${days} 天`,
+          title: `${year} 年${t.name}已发放：${now} 天`,
           body: reason,
           link: '/oa/leave',
           ref: { type: 'oa_leave_entry', id: entryId },
@@ -308,7 +324,7 @@ export function registerOaLeaveRoutes(app: FastifyInstance, deps: Deps) {
       await assertNotFenced(tx, input.clientKey, 'oa_leave_adjust', erpOpAbandoned);
       const [s] = await tx<{ name: string }[]>`SELECT s.display_name AS name FROM staff s WHERE s.id = ${input.staffId} AND ${storeEmployee(tx)}`;
       if (!s) throw notFound('员工不存在、已离职或不在本店');
-      const [t] = await tx<{ name: string; hasBalance: boolean }[]>`SELECT name, has_balance FROM oa_leave_types WHERE id = ${input.leaveTypeId}`;
+      const t = await lockLeaveType(tx, input.leaveTypeId);
       if (!t) throw notFound('假种不存在');
       if (!t.hasBalance) throw unprocessable('LEAVE_NO_BALANCE', `「${t.name}」不管余额，不用调整`);
       const b = await lockBalance(tx, input.staffId, input.leaveTypeId, input.year);

@@ -135,4 +135,18 @@ describe('OA-09 假种与假期余额', () => {
     expect(me.entries[0]).toMatchObject({ kind: 'grant', halves: 12, leaveTypeName: '年假' });
     expect((await api(ctx.app, e.cookie, 'GET', `/api/oa/leave/balances?year=${thisYear}`)).status).toBe(403);
   });
+  it('调整与关掉「管余额」同时进行：调整等假种的锁，关掉以后不再加上（Codex 审查 3c1cf1b）', async () => {
+    const [t] = await ctx.sql<{ id: number }[]>`INSERT INTO oa_leave_types (name, paid, has_balance, sort) VALUES ('补休', true, true, 9) RETURNING id`;
+    const typeId = Number(t!.id);
+    let pending: ReturnType<typeof adjust> | undefined;
+    await ctx.sql.begin(async (tx) => {
+      // 模拟修改假种：锁住那一行、核对没人有余额，再关掉「管余额」
+      await tx`SELECT 1 FROM oa_leave_types WHERE id = ${typeId} FOR UPDATE`;
+      pending = adjust({ staffId: emp.senior!.id, leaveTypeId: typeId, halves: 2, reason: '同时调整' });
+      await new Promise((r) => setTimeout(r, 300));
+      await tx`UPDATE oa_leave_types SET has_balance = false WHERE id = ${typeId}`;
+    });
+    expect(code(await pending!)).toBe('LEAVE_NO_BALANCE');
+    expect(await ctx.sql`SELECT 1 FROM oa_leave_balances WHERE leave_type_id = ${typeId} AND granted_halves <> 0`).toHaveLength(0);
+  });
 });
