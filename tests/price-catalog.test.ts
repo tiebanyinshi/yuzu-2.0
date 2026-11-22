@@ -1250,5 +1250,12 @@ describe('价目表录入 第四批：对接收银项目', () => {
       const errs = ((await preview(workbook({ 房间价格: s }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
       expect(errs.some((i) => i.row === 2 && i.message.includes('千位分隔符'))).toBe(true);
     }
+    // 娱乐的加钟价同样不截：「加钟/1,999」报错；「加钟/19.9，周末另算」照常认 19.9
+    const ent = (note: string) => sheet('娱乐价格', [['汤崎'], ['类型', '数量', '价格', '备注'], ['台球', 4, '39/2h', note]]);
+    const bad = ((await preview(workbook({ 娱乐价格: ent('加钟/1,999') }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
+    expect(bad[0]).toMatchObject({ row: 3, field: '备注' });
+    const ok = (await preview(workbook({ 娱乐价格: ent('加钟/19.9，周末另算') }))).body as PriceImportPreview;
+    expect(ok.errorCount).toBe(0);
+    expect(find(ok, '台球').extraPriceCents).toBe(1990);
   });
 });

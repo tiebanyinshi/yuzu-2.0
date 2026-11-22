@@ -286,7 +286,8 @@ function entertainmentSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     const units = count ? Number(half(count).replace(/[台张间个\s]/g, '')) : null;
     if (count && (!Number.isInteger(units) || units! < 0)) ctx.error(S, r, '数量', `数量「${count}」不对（写台位数，整数）`);
     // 加钟价整段认：「加钟/19.9」；19.999 这种多出来的位数报错，不截成 19.99
-    const extra = /加钟\s*[/／:：]?\s*(\d+(?:\.\d+)?)(?![\d.])/.exec(half(note));
+    // 「加钟/1,999」这种带千位分隔符的：认不出，报错（不截成 1 元）
+    const extra = /加钟\s*[/／:：]?\s*(\d+(?:\.\d+)?)(?![\d.])(?!\s*[,，]\s*\d)/.exec(half(note));
     const extraCents = extra ? yuanToCents(extra[1]!) : null;
     if (/加钟/.test(note) && extraCents === null) ctx.error(S, r, '备注', `加钟价「${note}」看不懂（写 加钟/19.9，最多 2 位小数）`);
     if (!p) continue;
