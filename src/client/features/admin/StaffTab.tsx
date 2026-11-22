@@ -312,6 +312,7 @@ function StaffDialog({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [lastTarget, setLastTarget] = useState<typeof target>(null);
+  const [askSwitch, setAskSwitch] = useState<{ dept: OrgDepartment | ''; position: PositionKey | null } | null>(null);
 
   if (target !== lastTarget) {
     setLastTarget(target);
@@ -324,17 +325,26 @@ function StaffDialog({
     setDept(p ? positionOf(p).department : '');
     setAdjust(existing?.permissionAdjust ?? { add: [], remove: [] });
     setShowAdjust(false);
+    setAskSwitch(null);
     setDepartmentId(existing?.departmentId ?? null);
     setActive(existing?.active ?? true);
     setStoreIds(null);
     setError(null);
   }
 
-  const pickDept = (d: OrgDepartment | '') => {
+  // 换部门 / 岗位：权限跟着换成新岗位的；给这个人逐项微调过的（换岗位就不再适用），先问是否放弃（8.2.0 P06，回测 5-1）
+  const applySwitch = (d: OrgDepartment | '', p: PositionKey | null) => {
     setDept(d);
-    setPosition(d === 'company' ? 'president' : d === 'gmo' ? 'gmo' : d ? (`${d}.staff` as PositionKey) : null);
+    setPosition(p);
     setAdjust({ add: [], remove: [] });
+    setAskSwitch(null);
   };
+  const requestSwitch = (d: OrgDepartment | '', p: PositionKey | null) => {
+    if (p === position && d === dept) return;
+    if (adjust.add.length + adjust.remove.length > 0) setAskSwitch({ dept: d, position: p });
+    else applySwitch(d, p);
+  };
+  const pickDept = (d: OrgDepartment | '') => requestSwitch(d, d === 'company' ? 'president' : d === 'gmo' ? 'gmo' : d ? (`${d}.staff` as PositionKey) : null);
   // 岗位权限（模板 + 后台按岗位的调整）；拿不到后台调整时按模板
   const positionPerms: Permission[] = position ? (position === 'president' ? [...ALL_PERMISSIONS] : (matrix.data?.positions.effective[position] ?? positionDefaults(position, ALL_PERMISSIONS))) : [];
   const effective = new Set(positionPerms);
@@ -469,14 +479,24 @@ function StaffDialog({
               <Field label="岗位">
                 <Segmented
                   value={position ?? ''}
-                  onChange={(v) => {
-                    setPosition(v as PositionKey);
-                    setAdjust({ add: [], remove: [] });
-                  }}
+                  onChange={(v) => requestSwitch(dept, v as PositionKey)}
                   className="w-full"
                   options={(manageAll ? (['lead', 'staff'] as const) : (['staff'] as const)).map((l) => ({ value: `${dept}.${l}`, label: l === 'lead' ? '负责人（高级管理员）' : '员工（管理员）' }))}
                 />
               </Field>
+            )}
+            {askSwitch && (
+              <Notice tone="warning" title="是否放弃当前修改？">
+                <p>给这个人逐项微调了 {adjust.add.length + adjust.remove.length} 项；换岗位后权限改按新岗位的建议权限，这些微调会丢掉。</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => setAskSwitch(null)}>
+                    继续改
+                  </Button>
+                  <Button size="sm" variant="danger" onClick={() => applySwitch(askSwitch.dept, askSwitch.position)} data-testid="staff-switch-discard">
+                    放弃修改，换岗位
+                  </Button>
+                </div>
+              </Notice>
             )}
             {def && (
               <div className="rounded-md border border-line bg-paper-2/60 px-3 py-2.5" data-testid="staff-position-template">
