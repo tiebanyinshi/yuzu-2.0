@@ -281,6 +281,11 @@ export const PERMISSIONS = {
   'technician.manage': { roles: ['owner', 'store_manager'] },
   /** 钟房：上牌、派钟、上钟、下钟、加钟、退钟（v0.7.1，待确认：前台岗位都能做；派钟、加钟、退钟还要能挂账） */
   'technician.dispatch': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
+  /**
+   * 排位播报（8.2.0 P03，回测 4-1）：「技师 → 排位播报」页——看排位、手动叫号、由本机播报（音量、静音、重播、播报记录）。
+   * 与钟房分开授：排位员可以只有这一项；默认有钟房的岗位都有
+   */
+  'technician.announce': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
   /** 餐饮点单：按手牌给在店客人点菜（挂账）、催单、上菜（S5 第一步，待确认：前台岗位都能做；下单还要能挂账） */
   'dining.order': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'], duties: ['kangmei'] },
   /** 厨房出品屏：开始做、出餐、沽清（S5 第一步，待确认：前台岗位与后勤人员；厨房可以用后勤账号） */
@@ -428,6 +433,11 @@ export function roleHas(role: Role, permission: Permission, overrides?: RoleOver
 export interface PermissionOverrides {
   roles: RoleOverrides;
   positions: PositionOverrides;
+  /**
+   * 岗位的建议权限（8.2.0 P04：存在库里的「分部门岗位职权配置」，position_suggestions）。给了这个岗位的就按它，
+   * 没给（库里还没有这张表、或没有这个岗位）按代码里的岗位模板 positionDefaults（与库里的初始数据一致）
+   */
+  suggested?: Partial<Record<PositionKey, readonly Permission[]>>;
 }
 
 /** 算权限要的员工资料：岗位（position）必须给出（没有就是 null），免得漏了新岗位按旧岗位算 */
@@ -445,13 +455,20 @@ function normalizeOverrides(overrides: PermissionOverrides | RoleOverrides | nul
   return 'positions' in overrides && 'roles' in overrides ? (overrides as PermissionOverrides) : { roles: overrides as RoleOverrides, positions: {} };
 }
 
+/** 岗位的建议权限：库里的（P04）优先，没有按代码里的模板 */
+export function suggestedOf(position: PositionKey, overrides?: Pick<PermissionOverrides, 'suggested'> | null): Permission[] {
+  if (position === 'president') return [...ALL_PERMISSIONS];
+  const fromDb = overrides?.suggested?.[position];
+  return fromDb ? ALL_PERMISSIONS.filter((p) => fromDb.includes(p)) : positionDefaults(position, ALL_PERMISSIONS);
+}
+
 export function permissionsOf(subject: PermissionsOfSubject, rawOverrides?: PermissionOverrides | RoleOverrides | null, opts: { financeExclusion?: boolean } = {}): Permission[] {
   const finance = opts.financeExclusion ?? true;
   const overrides = normalizeOverrides(rawOverrides);
   if (subject.position === 'president' || (!subject.position && subject.role === 'owner')) return [...ALL_PERMISSIONS];
   if (subject.position) {
     // 新岗位：岗位模板 → 后台按岗位的增减 → 个人微调；店主专属的权限（LOCKED_PERMISSIONS）只有总裁有
-    const base = applyAdjust(positionDefaults(subject.position, ALL_PERMISSIONS), overrides?.positions[subject.position], LOCKED_PERMISSIONS);
+    const base = applyAdjust(suggestedOf(subject.position, overrides), overrides?.positions[subject.position], LOCKED_PERMISSIONS);
     const mine = applyAdjust(base, subject.adjust, LOCKED_PERMISSIONS);
     return ALL_PERMISSIONS.filter((p) => mine.has(p) && !LOCKED_PERMISSIONS.includes(p) && !excludedByDuty(subject, p, finance));
   }
@@ -590,6 +607,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'catalog.manage': '管理充值套餐与消费项目',
   'technician.manage': '维护技师名册',
   'technician.dispatch': '钟房派钟、上下钟、加钟、退钟、上牌',
+  'technician.announce': '排位播报：看排位、手动叫号、由本机播报',
   'dining.order': '餐饮点单、催单、上菜',
   'dining.kitchen': '厨房出品屏：开始做、出餐、沽清',
   'emenu.view': '打开平板点餐（电子菜单；下单要服务员输点单密码）',
@@ -668,6 +686,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'frontdesk.onAccount',
       'frontdesk.backfill',
       'technician.dispatch',
+      'technician.announce',
       'dining.order',
       'dining.kitchen',
       'emenu.view',
