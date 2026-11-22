@@ -6,7 +6,10 @@ import { Download, FileDown, FileUp } from 'lucide-react';
 import { useCan, useSession } from '../../lib/session';
 
 export const LEDGER_TEMPLATE_URL = '/api/inventory/ledger/template';
-/** 下载的文件名（店主 2026-11-22：模板叫「出入库台账」）；链接上写明，浏览器不会存成「download」 */
+/**
+ * 「下载模板」直接下载门店的《库管出入库明细及库位表》（入库登记表格、仓库库位表两张合在一个文件里，店主 2026-11-22），
+ * 文件名「出入库台账」；写在链接上，浏览器不会存成「download」
+ */
 export const LEDGER_TEMPLATE_FILE = '出入库台账.xlsx';
 export const ledgerExportUrl = (month: string) => `/api/inventory/ledger/export?month=${month}`;
 export const ledgerExportFile = (month: string) => `出入库台账-${month}.xlsx`;
