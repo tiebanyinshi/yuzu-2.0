@@ -31,6 +31,7 @@ export type AuditAction =
   | 'oa_leave_type_saved'
   | 'oa_leave_adjusted'
   | 'oa_leave_granted'
+  | 'oa_approval_template_saved'
   | 'oa_staff_imported'
   | 'position_chosen'
   | 'member_created'

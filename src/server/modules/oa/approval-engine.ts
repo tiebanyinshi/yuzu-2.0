@@ -5,6 +5,7 @@
 //   · 条件开关硬编码在这里（CONDITIONS），模板里开或关。
 
 import { departmentOfPosition } from '@shared/oa';
+import { can } from '@shared/permissions';
 import {
   formAttachmentIds,
   LEVEL_KIND_LABELS,
@@ -117,7 +118,8 @@ export function canViewSql(db: Db, actorId: number): Fragment {
     OR EXISTS (SELECT 1 FROM oa_approval_cc c WHERE c.approval_id = a.id AND c.staff_id = ${actorId}))`;
 }
 export async function canViewApproval(db: Db, actor: Actor, id: number): Promise<boolean> {
-  const [row] = await db`SELECT 1 FROM oa_approvals a WHERE a.id = ${id} AND ${canViewSql(db, actor.id)}`;
+  // 有「全部审批单」权限的能看任何一张（OA-12）
+  const [row] = can(actor, 'oa.all') ? await db`SELECT 1 FROM oa_approvals WHERE id = ${id}` : await db`SELECT 1 FROM oa_approvals a WHERE a.id = ${id} AND ${canViewSql(db, actor.id)}`;
   return !!row;
 }
 
@@ -135,6 +137,7 @@ export async function revisionsUpTo(db: Db, id: number): Promise<number[]> {
  * 新一版的审批人也要看得到，Codex 审查 62e6f5e）
  */
 export async function canViewApprovalAttachment(db: Db, actor: Actor, id: number): Promise<boolean> {
+  if (can(actor, 'oa.all')) return true;
   const [row] = await db`
     WITH RECURSIVE down AS (SELECT id FROM oa_approvals WHERE id = ${id}
       UNION ALL SELECT a.id FROM oa_approvals a JOIN down ON a.previous_id = down.id)
@@ -197,7 +200,8 @@ export async function loadApproval(db: Db, actor: Actor, id: number): Promise<Ap
       reject: !!pending && pending.approverId === actor.id,
       transfer: !!pending && pending.approverId === actor.id,
       withdraw: mine && pendingStatus && !steps.some((s) => s.status === 'approved'),
-      urge: mine && pendingStatus && urgeReady,
+      // 发起人催办；有「全部审批单」权限的也能催（OA-12），同一个一小时一次的限制
+      urge: (mine || can(actor, 'oa.all')) && pendingStatus && urgeReady,
       comment: true,
       resubmit: mine && item!.status === 'rejected' && extra!.nextId === null,
     },

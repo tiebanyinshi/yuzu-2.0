@@ -266,3 +266,23 @@ export function derivedText(code: string, form: ApprovalForm): string | null {
 }
 /** 请假开始 / 结束的时间点比较用：日期 + 上午 0 / 下午 1 */
 export const halfDayKey = (h: HalfDay) => `${h.date}${h.half === 'am' ? 0 : 1}`;
+
+// ───────────────────────── OA-12 审批管理端（docs/OA.md 第 15 节） ─────────────────────────
+
+/** 看板里「超时未处理」：当前这一级等了超过几小时（OA14） */
+export const APPROVAL_OVERDUE_HOURS = 24;
+export interface AdminApprovalItem extends ApprovalListItem {
+  /** 发起人的部门 */
+  department: string;
+}
+export interface AdminApprovalPage {
+  items: AdminApprovalItem[];
+  next: number | null;
+}
+export interface ApprovalBoard {
+  month: string;
+  templates: { code: string; name: string; submitted: number; approved: number; rejected: number; withdrawn: number; pending: number; avgHours: number | null }[];
+  overdue: { id: number; title: string; applicantName: string; approverName: string; waitedHours: number }[];
+}
+/** 条件开关适用于哪个模板（后台只给适用的显示） */
+export const CONDITION_TEMPLATE: Record<ApprovalCondition, string> = { leave_over_3_days: 'leave', expense_over_5000: 'expense' };
