@@ -435,6 +435,9 @@ export interface OaPunch {
   outworkReason: string | null;
   photo: OaAttachment | null;
   sharedLocation: boolean;
+  /** 人脸（OA-07）：pass 通过、pending 比对服务没配置或不可用（待人工核对）；不要人脸的组为 null */
+  faceResult: FaceResult | null;
+  facePhoto: OaAttachment | null;
 }
 /** 打卡页上的一条排班：窗口与有效卡（上班卡第一次、下班卡最后一次） */
 export interface PunchSlotView {
@@ -459,6 +462,8 @@ export interface PunchToday {
   now: number;
   today: string;
   group: PunchGroupInfo | null;
+  /** 本人的人脸录入状态（考勤组要人脸时，已通过才能打卡） */
+  face: FaceStatus;
   slots: PunchSlotView[];
   punches: OaPunch[];
 }
@@ -483,3 +488,39 @@ export interface PunchDay {
   groupId: number | null;
   records: PunchRecord[];
 }
+
+// ───────────────────────── OA-07 人脸录入与审核（docs/OA.md 第 10 节） ─────────────────────────
+
+/** 一份录入要几张照片（正面、稍向左、稍向右） */
+export const FACE_PHOTO_COUNT = 3;
+export const FACE_PHOTO_LABELS = ['正面', '稍向左', '稍向右'] as const;
+export const FACE_NOTE_MAX = 200;
+export type FaceEnrollmentStatus = 'pending' | 'approved' | 'rejected' | 'revoked' | 'replaced';
+export const FACE_STATUS_LABELS: Record<FaceEnrollmentStatus, string> = { pending: '待审核', approved: '已通过', rejected: '被退回', revoked: '已停用', replaced: '已换新' };
+export type FaceResult = 'pass' | 'pending';
+export const FACE_RESULT_LABELS: Record<FaceResult, string> = { pass: '人脸通过', pending: '人脸待人工核对' };
+/** 本人人脸：none 没录（或都停用了）；有已通过的就能打卡 */
+export type FaceStatus = 'none' | 'pending' | 'approved' | 'rejected';
+
+export interface FaceEnrollment {
+  id: number;
+  staffId: number;
+  staffName: string;
+  status: FaceEnrollmentStatus;
+  submittedAt: string;
+  reviewedAt: string | null;
+  reviewerName: string | null;
+  reviewNote: string | null;
+  photos: OaAttachment[];
+}
+/** 员工「人脸录入」页：已通过的那份、最近提交的那份（可能就是同一份） */
+export interface MyFace {
+  status: FaceStatus;
+  approved: FaceEnrollment | null;
+  latest: FaceEnrollment | null;
+}
+export interface FaceEnrollSaved {
+  enrollment: FaceEnrollment;
+  replayed: boolean;
+}
+

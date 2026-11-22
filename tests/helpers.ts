@@ -369,6 +369,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '213_oa_attendance_setup.sql',
   '214_oa_schedules.sql',
   '215_oa_punches.sql',
+  '216_oa_face.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

@@ -17,6 +17,7 @@ import {
   PUNCH_SHARED_SECONDS,
   punchWindows,
   type OaPunch,
+  type FaceResult,
   type OaShiftTimes,
   type PunchDay,
   type PunchGroupInfo,
@@ -31,15 +32,17 @@ import { shiftDate } from '@shared/labels';
 import { can } from '@shared/permissions';
 import type { Db, Fragment } from '../../db';
 import { guard, guardAny } from '../../auth/guard';
-import type { Deps } from '../../lib/context';
+import type { Actor, Deps } from '../../lib/context';
 import { clockIn, dateIn } from '../../lib/dates';
 import { conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
 import { assertNotFenced, lockOpKey } from '../../lib/fences';
 import { hashRequest } from '../../lib/idempotency';
 import { currentStoreId } from '../../lib/store-context';
 import { dateSchema, parse } from '../../lib/validate';
+import { faceVerifier, verifyFace, type FaceVerifyService } from '../../integrations/face';
 import { erpOpAbandoned } from '../erp-ops';
 import { bindAttachments, registerAttachmentRef } from './attachments';
+import { approvedPhotos, myFace } from './faces';
 import { liveSchedule, lockStaffAttendance } from './schedule-overlap';
 import { deptFilter } from './schedules';
 
@@ -57,8 +60,33 @@ const PunchInput = z
         photoId: z.number().int().positive('请拍一张外勤照片'),
       })
       .optional(),
+    /** 考勤组要人脸时的自拍（OA-07，先传成附件） */
+    faceImageId: z.number().int().positive().optional(),
   })
   .refine((v) => (v.lat === undefined) === (v.lng === undefined), { message: '经纬度要一起带' });
+type PunchBody = z.infer<typeof PunchInput>;
+
+/**
+ * 位置核对（打卡事务前、事务里各做一次，结果一样）：在任何一个打卡点的范围里就算在范围内（各点半径不同，最近的那个不一定覆盖到），
+ * 记下的是范围内最近的那个，都不在就记最近的；要 GPS 的组范围外拒绝（可改外勤）
+ */
+function checkLocation(group: PunchGroupInfo, input: PunchBody) {
+  const here = input.lat !== undefined && input.lng !== undefined ? { lat: input.lat, lng: input.lng } : null;
+  const measured = here ? group.locations.map((l) => ({ ...l, distance: distanceMeters(here, l) })).sort((a, b) => a.distance - b.distance) : [];
+  const inRange = measured.some((l) => l.distance <= l.radiusM);
+  const nearest = measured.find((l) => l.distance <= l.radiusM) ?? measured[0] ?? null;
+  if (group.gpsRequired && !here) throw unprocessable('LOCATION_REQUIRED', '这个考勤组打卡要定位：请允许浏览器取位置后再打卡');
+  if (input.outwork && !here) throw unprocessable('LOCATION_REQUIRED', '外勤打卡要带上当前位置');
+  const locationOk = !group.gpsRequired || inRange;
+  if (group.gpsRequired && !locationOk && !input.outwork) {
+    throw unprocessable(
+      'LOCATION_OUT',
+      nearest ? `不在打卡范围内：离最近的「${nearest.name}」${nearest.distance} 米（范围 ${nearest.radiusM} 米）；在外面办事的可以改成外勤打卡` : '考勤组还没设打卡点，只能外勤打卡；请找人事设打卡点',
+    );
+  }
+  if (input.outwork && locationOk) throw unprocessable('OUTWORK_NOT_NEEDED', '你在打卡范围内，直接打卡就行，不用外勤');
+  return { here, nearest, locationOk };
+}
 const DayQuery = z.object({
   date: dateSchema('日期').optional(),
   groupId: z.coerce.number().int().positive().optional(),
@@ -144,6 +172,12 @@ type PunchRow = {
   photoMime: string | null;
   photoSize: number | null;
   photoThumb: boolean | null;
+  faceResult: FaceResult | null;
+  faceId: number | null;
+  faceName: string | null;
+  faceMime: string | null;
+  faceSize: number | null;
+  faceThumb: boolean | null;
 };
 
 /** 打卡明细（带有效卡标记：上班卡第一次、下班卡最后一次）；where 是对 p 的过滤 */
@@ -161,15 +195,31 @@ async function loadPunches(db: Db, timeZone: string, where: Fragment): Promise<P
              WHEN 'out' THEN NOT EXISTS (SELECT 1 FROM oa_punches q WHERE q.staff_id = p.staff_id AND q.store_id = p.store_id AND q.business_date = p.business_date
                                            AND q.shift_id = p.shift_id AND q.kind = 'out' AND (q.punched_at, q.id) > (p.punched_at, p.id))
              ELSE false END AS effective,
-           a.id AS photo_id, a.file_name AS photo_name, a.mime AS photo_mime, a.size_bytes AS photo_size, a.thumb IS NOT NULL AS photo_thumb
+           a.id AS photo_id, a.file_name AS photo_name, a.mime AS photo_mime, a.size_bytes AS photo_size, a.thumb IS NOT NULL AS photo_thumb,
+           p.face_result, f.id AS face_id, f.file_name AS face_name, f.mime AS face_mime, f.size_bytes AS face_size, f.thumb IS NOT NULL AS face_thumb
     FROM oa_punches p
     JOIN staff s ON s.id = p.staff_id
     LEFT JOIN oa_shifts sh ON sh.id = p.shift_id
     LEFT JOIN oa_locations l ON l.id = p.location_id
     LEFT JOIN LATERAL (SELECT id, file_name, mime, size_bytes, thumb FROM oa_attachments WHERE ref_type = 'oa_punch' AND ref_id = p.id ORDER BY id LIMIT 1) a ON true
+    LEFT JOIN LATERAL (SELECT id, file_name, mime, size_bytes, thumb FROM oa_attachments WHERE ref_type = 'oa_punch_face' AND ref_id = p.id ORDER BY id LIMIT 1) f ON true
     WHERE ${where}
     ORDER BY p.punched_at, p.id`;
 }
+
+const attachmentView = (id: number | null, name: string | null, mime: string | null, size: number | null, thumb: boolean | null) =>
+  id === null
+    ? null
+    : {
+        id: Number(id),
+        fileName: name ?? '',
+        mime: mime ?? '',
+        sizeBytes: Number(size ?? 0),
+        isImage: (mime ?? '').startsWith('image/'),
+        hasThumb: !!thumb,
+        url: `/api/oa/attachments/${Number(id)}`,
+        thumbUrl: thumb ? `/api/oa/attachments/${Number(id)}/thumb` : null,
+      };
 
 const toPunch = (r: PunchRow): OaPunch => ({
   id: Number(r.id),
@@ -188,20 +238,10 @@ const toPunch = (r: PunchRow): OaPunch => ({
   locationOk: r.locationOk,
   outwork: r.outwork,
   outworkReason: r.outworkReason,
-  photo:
-    r.photoId === null
-      ? null
-      : {
-          id: Number(r.photoId),
-          fileName: r.photoName ?? '',
-          mime: r.photoMime ?? '',
-          sizeBytes: Number(r.photoSize ?? 0),
-          isImage: (r.photoMime ?? '').startsWith('image/'),
-          hasThumb: !!r.photoThumb,
-          url: `/api/oa/attachments/${Number(r.photoId)}`,
-          thumbUrl: r.photoThumb ? `/api/oa/attachments/${Number(r.photoId)}/thumb` : null,
-        },
+  photo: attachmentView(r.photoId, r.photoName, r.photoMime, r.photoSize, r.photoThumb),
   sharedLocation: r.sharedLocation,
+  faceResult: r.faceResult,
+  facePhoto: attachmentView(r.faceId, r.faceName, r.faceMime, r.faceSize, r.faceThumb),
 });
 
 /** 一条打卡与它所在那一格的有效卡 */
@@ -222,14 +262,36 @@ async function resultOf(db: Db, timeZone: string, id: number, replayed: boolean)
 }
 
 /** 外勤照片挂到打卡上以后谁能看：本人（上传的人）、管考勤的；部门负责人看本部门的 */
-registerAttachmentRef('oa_punch', async (db, actor, refId) => {
+async function punchReadable(db: Db, actor: Actor, refId: number): Promise<boolean> {
   const [p] = await db<{ staffId: number; storeId: number }[]>`SELECT staff_id, store_id FROM oa_punches WHERE id = ${refId}`;
   if (!p || Number(p.storeId) !== currentStoreId()) return false;
   if (Number(p.staffId) === actor.id || can(actor, 'hr.attendance')) return true;
   if (!can(actor, 'hr.attendanceDept')) return false;
   const [ok] = await db`SELECT 1 FROM staff s WHERE s.id = ${p.staffId} AND ${deptFilter(db, actor)}`;
   return !!ok;
-});
+}
+registerAttachmentRef('oa_punch', punchReadable);
+
+/**
+ * 人脸比对（考勤组要人脸时，事务外）：要有已通过的录入、要带一张本人刚传的自拍；不通过拒绝（FACE_MISMATCH），
+ * 比对服务没配置或不可用记 pending（待人工核对，照常打卡）
+ */
+async function checkFace(db: Db, me: number, imageId: number | undefined, service: FaceVerifyService): Promise<FaceResult> {
+  if (!imageId) throw unprocessable('FACE_REQUIRED', '这个考勤组打卡要先自拍一张');
+  const enrolled = await approvedPhotos(db, me);
+  if (!enrolled) throw unprocessable('FACE_NOT_ENROLLED', '你的人脸录入还没通过审核（或已停用），打不了要人脸的卡：请先到「办公 → 人脸录入」');
+  const [probe] = await db<{ fileName: string; mime: string; data: Buffer; uploadedBy: number; refType: string | null }[]>`
+    SELECT file_name, mime, data, uploaded_by, ref_type FROM oa_attachments WHERE id = ${imageId}`;
+  if (!probe || Number(probe.uploadedBy) !== me || probe.refType !== null || !probe.mime.startsWith('image/')) {
+    throw unprocessable('ATTACHMENT_INVALID', '自拍没有传上，或已经用过了：请重拍一张');
+  }
+  const verdict = await verifyFace(service, { enrolled, probe: { fileName: probe.fileName, mime: probe.mime, data: probe.data } });
+  if (verdict.result === 'fail') throw unprocessable('FACE_MISMATCH', '人脸比对没通过：请正对镜头、光线充足时重拍一张');
+  return verdict.result === 'pass' ? 'pass' : 'pending';
+}
+
+/** 打卡自拍挂上以后谁能看：与打卡明细一样（本人、管考勤的、部门负责人看本部门） */
+registerAttachmentRef('oa_punch_face', (db, actor, refId) => punchReadable(db, actor, refId));
 
 export function registerOaPunchRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
@@ -256,7 +318,8 @@ export function registerOaPunchRoutes(app: FastifyInstance, deps: Deps) {
     const views: PunchSlotView[] = slots
       .filter((s) => s.windows.outTo >= now - 1440)
       .map((s) => ({ date: s.date, shiftId: s.shiftId, name: s.name, startMinute: s.startMinute, endMinute: s.endMinute, windows: s.windows, in: eff(s, 'in'), out: eff(s, 'out') }));
-    return { now, today, group, slots: views, punches: rows.filter((r) => r.localDate === today).map(toPunch) };
+    const face = (await myFace(sql, me)).status;
+    return { now, today, group, face, slots: views, punches: rows.filter((r) => r.localDate === today).map(toPunch) };
   });
 
   app.post('/api/oa/attendance/punch', { preHandler: guard() }, async (req): Promise<PunchResult> => {
@@ -266,6 +329,15 @@ export function registerOaPunchRoutes(app: FastifyInstance, deps: Deps) {
     const me = req.actor.id;
     // 请求散列带上是谁打的：同一编号换了人（同一台电脑换人登录后从「结果待确认」重提）不能当成原样重提
     const hash = hashRequest({ ...input, clientKey: undefined, staffId: me });
+    // 事务外（不在事务里等外部服务）：先核对位置、再比对人脸（文档第十三节第 1 条：先 GPS 围栏、再人脸开关）。原样重提跳过，事务里返回原来那一次
+    let face: FaceResult | null = null;
+    const [prior] = await sql`SELECT 1 FROM idempotency_keys WHERE key = ${input.clientKey}`;
+    if (!prior) {
+      const group = await groupOf(sql, me);
+      if (!group) throw unprocessable('PUNCH_NO_GROUP', '你还没进这家门店的考勤组，打不了卡：请找人事把你加进考勤组');
+      checkLocation(group, input);
+      if (group.faceRequired) face = await checkFace(sql, me, input.faceImageId, faceVerifier(deps.config.integrations));
+    }
     const at = new Date();
     const out = await sql.begin(async (tx): Promise<{ id: number; replayed: boolean }> => {
       await lockOpKey(tx, input.clientKey);
@@ -282,24 +354,13 @@ export function registerOaPunchRoutes(app: FastifyInstance, deps: Deps) {
 
       const group = await groupOf(tx, me);
       if (!group) throw unprocessable('PUNCH_NO_GROUP', '你还没进这家门店的考勤组，打不了卡：请找人事把你加进考勤组');
-      // 位置：最近的打卡点与距离
-      const here = input.lat !== undefined && input.lng !== undefined ? { lat: input.lat, lng: input.lng } : null;
-      // 在任何一个打卡点的范围里就算在范围内（各点半径不同，最近的那个不一定覆盖到）；记下的是范围内最近的那个，都不在就记最近的
-      const measured = here ? group.locations.map((l) => ({ ...l, distance: distanceMeters(here, l) })).sort((a, b) => a.distance - b.distance) : [];
-      const inRange = measured.some((l) => l.distance <= l.radiusM);
-      const nearest = measured.find((l) => l.distance <= l.radiusM) ?? measured[0] ?? null;
-      if (group.gpsRequired && !here) throw unprocessable('LOCATION_REQUIRED', '这个考勤组打卡要定位：请允许浏览器取位置后再打卡');
-      if (input.outwork && !here) throw unprocessable('LOCATION_REQUIRED', '外勤打卡要带上当前位置');
-      const locationOk = !group.gpsRequired || inRange;
-      if (group.gpsRequired && !locationOk && !input.outwork) {
-        throw unprocessable(
-          'LOCATION_OUT',
-          nearest
-            ? `不在打卡范围内：离最近的「${nearest.name}」${nearest.distance} 米（范围 ${nearest.radiusM} 米）；在外面办事的可以改成外勤打卡`
-            : '考勤组还没设打卡点，只能外勤打卡；请找人事设打卡点',
-        );
+      const { here, nearest, locationOk } = checkLocation(group, input);
+      // 人脸：事务外已经比对过；这期间考勤组改成要人脸的，请员工重打一次（这次会先比对）
+      if (group.faceRequired && face === null) throw unprocessable('FACE_REQUIRED', '这个考勤组打卡要先自拍一张，请重新打卡');
+      if (face !== null) {
+        const [ok] = await tx`SELECT 1 FROM oa_face_enrollments WHERE staff_id = ${me} AND status = 'approved'`;
+        if (!ok) throw unprocessable('FACE_NOT_ENROLLED', '你的人脸录入还没通过审核（或已停用），打不了要人脸的卡：请先到「办公 → 人脸录入」');
       }
-      if (input.outwork && locationOk) throw unprocessable('OUTWORK_NOT_NEEDED', '你在打卡范围内，直接打卡就行，不用外勤');
 
       // 按时间匹配排班（前后相邻日，跨天班）
       const { date: localDate, minute: t } = localMinute(at, tz);
@@ -320,14 +381,15 @@ export function registerOaPunchRoutes(app: FastifyInstance, deps: Deps) {
       const device = [input.device, String(req.headers['user-agent'] ?? '')].filter(Boolean).join(' | ').slice(0, 400);
       const [row] = await tx<{ id: number }[]>`
         INSERT INTO oa_punches (staff_id, punched_at, kind, business_date, shift_id, late_minutes, early_minutes, group_id,
-                                lat, lng, accuracy_m, location_id, distance_m, location_ok, outwork, outwork_reason, shared_location, device_info, ip)
+                                lat, lng, accuracy_m, location_id, distance_m, location_ok, outwork, outwork_reason, shared_location, device_info, ip, face_result)
         VALUES (${me}, ${at.toISOString()}, ${m.kind}, ${businessDate}, ${shiftId},
                 ${m.kind === 'in' || m.kind === 'out' ? m.lateMinutes : 0}, ${m.kind === 'in' || m.kind === 'out' ? m.earlyMinutes : 0}, ${group.id},
                 ${here?.lat ?? null}, ${here?.lng ?? null}, ${input.accuracy === undefined ? null : Math.round(input.accuracy)},
                 ${nearest?.id ?? null}, ${nearest?.distance ?? null}, ${locationOk}, ${!!input.outwork}, ${input.outwork?.reason ?? null}, ${shared},
-                ${device}, ${req.ip})
+                ${device}, ${req.ip}, ${face})
         RETURNING id`;
       const id = Number(row!.id);
+      if (face !== null && input.faceImageId) await bindAttachments(tx, [input.faceImageId], req.actor, { type: 'oa_punch_face', id });
       if (input.outwork) {
         const [photo] = await tx<{ mime: string }[]>`SELECT mime FROM oa_attachments WHERE id = ${input.outwork.photoId}`;
         if (!photo?.mime.startsWith('image/')) throw unprocessable('ATTACHMENT_INVALID', '外勤要拍一张照片（图片）');
