@@ -93,6 +93,10 @@ test.describe('OA-01 组织架构与员工档案', () => {
     const pw = page.getByTestId(`staff-import-password-${user}`);
     await expect(pw).toHaveText(/^yuzu-\d{4}-[a-z]{2}$/);
     const password = (await pw.textContent())!;
+    // 临时密码只显示这一次：结果框没有关闭按钮，按 Esc 也不关，只能点「完成」
+    await expect(page.getByRole('dialog').getByRole('button', { name: '关闭' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(pw).toBeVisible();
     await page.getByTestId('staff-import-done').click();
     await page.getByTestId('org-emp-search').fill(user);
     await expect(page.getByTestId('org-employees')).toContainText('2026-11-01');

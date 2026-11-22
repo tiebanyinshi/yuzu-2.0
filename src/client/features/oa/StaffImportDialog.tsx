@@ -105,10 +105,12 @@ export function StaffImportDialog({ onClose }: { onClose: () => void }) {
       open
       onClose={onClose}
       width="max-w-3xl"
+      // 开通请求还在路上时不能关（Codex 审查 5eeb9ed）：关掉后请求成功，名单就没地方显示，临时密码一次也看不到
+      dismissible={busy !== 'apply'}
       title="批量开通员工账号"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose} disabled={busy === 'apply'}>
             取消
           </Button>
           <Button variant="primary" loading={busy === 'apply'} disabled={!preview || preview.issueCount > 0 || busy !== null} onClick={apply} data-testid="staff-import-apply">
@@ -200,6 +202,8 @@ function ResultDialog({ result, onClose }: { result: StaffImportResult; onClose:
       open
       onClose={onClose}
       width="max-w-3xl"
+      // 临时密码只显示这一次：点遮罩、按 Esc 不关，只能点「完成」
+      dismissible={false}
       title={`已开通 ${result.accounts.length} 个账号`}
       footer={
         <>
