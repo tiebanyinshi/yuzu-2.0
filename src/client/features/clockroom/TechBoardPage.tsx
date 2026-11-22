@@ -383,10 +383,7 @@ function SessionCard({ s, mode, now }: { s: TechBoardSession; mode: TechBoardMod
   const left = s.plannedEnd ? Math.ceil((new Date(s.plannedEnd).getTime() - now) / 60_000) : null;
   return (
     <div
-      className={cn(
-        'flex h-full min-w-0 flex-col justify-center rounded-lg border px-[0.6em] leading-tight',
-        s.status === 'serving' ? 'border-lake/40 bg-lake-soft' : 'border-ember/30 bg-ember-soft',
-      )}
+      className={cn('flex h-full min-w-0 flex-col justify-center rounded-lg border px-[0.6em] leading-tight', s.status === 'serving' ? 'border-lake/40 bg-lake-soft' : 'border-ember/30 bg-ember-soft')}
       data-testid="tech-board-card"
       data-status={s.status}
     >
