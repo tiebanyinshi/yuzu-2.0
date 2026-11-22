@@ -191,7 +191,6 @@ export const PERMISSION_COLUMN: Record<Permission, PermissionColumn> = {
   // 账号与权限配置
   'staff.manage': 'account',
   'staff.dept': 'account',
-  'hr.org': 'account',
   'approval.rules': 'account',
   // 基础数据 / 价格配置
   'settings.manage': 'base',
@@ -294,8 +293,7 @@ const DEPT_STOCK: Permission[] = ['deptStock.operate', 'request.create'];
 export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readonly Permission[]> = {
   // 总经办成员：高级管理员、跨部门；除「账号与权限配置」「基础数据 / 价格配置」以外各列都开（见 gmoDefaults）
   gmo: [],
-  // OA 办公（docs/OA.md 第 2 节）：人力行政部负责人管组织架构与员工档案（hr.org 算「账号与权限配置」，部门员工那一列不开）
-  'hr.lead': [...BASE_OWN, ...LEAD_COMMON, 'patrol.read', 'canteen.manage', 'audit.read', 'request.create', 'hr.org'],
+  'hr.lead': [...BASE_OWN, ...LEAD_COMMON, 'patrol.read', 'canteen.manage', 'audit.read', 'request.create'],
   'hr.staff': [...BASE_OWN, 'request.create'],
   'front.lead': [
     ...FRONT_OP,

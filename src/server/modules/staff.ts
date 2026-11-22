@@ -236,11 +236,6 @@ export function registerStaffRoutes(app: FastifyInstance, { sql }: Deps) {
       const [before] = await tx<{ role: Role; duties: Duty[]; active: boolean; displayName: string; system: boolean; position: string | null; permissionAdjust: unknown }[]>`
         SELECT role, duties, active, display_name, system, position, permission_adjust FROM staff WHERE id = ${id} FOR NO KEY UPDATE`;
       if (!before || before.system) throw notFound('员工不存在');
-      // OA-01：办过离职的只能在「组织架构」办理复职（核对手机号、清离职日期），这里不能直接启用（Codex 审查 f5465fe）。锁顺序：员工 → 员工档案
-      if (input.active && !before.active) {
-        const [profile] = await tx<{ status: string }[]>`SELECT status FROM staff_profiles WHERE staff_id = ${id} FOR SHARE`;
-        if (profile?.status === 'left') throw unprocessable('EMPLOYEE_LEFT', '这位员工已办理离职，请在「组织架构」里办理复职');
-      }
       const beforePosition = positionFrom(before.position);
       // 不传岗位与旧岗位：岗位不变（负责人改本部门员工的姓名、停用时）
       const resolved =
