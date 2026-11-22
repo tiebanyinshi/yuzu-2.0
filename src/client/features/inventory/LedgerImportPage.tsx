@@ -192,7 +192,8 @@ export function LedgerImportPage() {
           )}
           <section className="space-y-3 rounded-lg border border-line bg-card p-5 shadow-card">
             <p className="text-[12.5px] text-ink-3">
-              用右上角「下载模板」的出入库台账（门店的《库管出入库明细及库位表》格式），导入读其中的「仓库库位表」：一种物料一行，表头两行，入库每组写日期、数量，出库每组写日期、数量、领料人及部门；入库登记表格、物品借出备忘表不导入。有入库的行要写供应商；入库单价取物料档案的参考价。
+              用右上角「下载模板」（门店的《库管出入库明细及库位表》，入库登记表格与仓库库位表两张）里的「仓库库位表」：一种物料一行；「入库」写入库数量，入库的日期写在第 2
+              列「日期」；出库每组写出库数量、日期、领料人及部门。入库登记表不导入。门店整份《库管出入库明细及库位表》也能直接选，读其中填了物料的出入库记录。有入库的行要写供应商；入库单价取物料档案的参考价。
               一份最多 {LEDGER_MAX_ROWS} 行，同一天同一供应商的入库合成一张库管入库、同一天同一部门同一领料人的出库合成一张部门领料，一张最多 {LEDGER_LINES_PER_DOC} 行。同一份文件只能导入一次。
             </p>
             <label className="flex cursor-pointer flex-wrap items-center gap-3 rounded-md border border-dashed border-line-strong px-4 py-3 text-[13px] hover:border-ink-3">

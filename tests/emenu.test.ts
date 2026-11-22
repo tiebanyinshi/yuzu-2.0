@@ -524,6 +524,48 @@ describe('授权的品牌英文字体（8.1.5，PP4）', () => {
   });
 });
 
+describe('授权的品牌英文字体：TTF / OTF 也认，试用版不发，后台看得到生没生效（店主 2026-11-22，PD6）', () => {
+  it('brand-fonts 里放 en.ttf：新地址 brand-en 发 TTF；放的是 Unlicensed Trial 不发、后台写明是试用版；WOFF2 优先', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'yuzu-brand-fonts-'));
+    const before = ctx.config.brandFontPath;
+    ctx.config.brandFontPath = dir;
+    try {
+      const get = (url = '/api/emenu/fonts/brand-en') => ctx.app.inject({ method: 'GET', url, headers: { cookie: pad } });
+      const status = async () => (await api(ctx.app, ctx.owner, 'GET', '/api/admin/emenu/brand-font')).body;
+      expect((await get()).statusCode).toBe(404);
+      expect(await status()).toEqual({ state: 'missing', file: null, files: [] });
+      // 只看文件头的 TrueType（0x00010000）
+      const ttf = Buffer.concat([Buffer.from([0, 1, 0, 0]), Buffer.from('ABC Arizona Flare Regular licensed web font'.padEnd(64, ' '), 'latin1')]);
+      // 试用版：名称表里（UTF-16BE）写着 Unlicensed Trial
+      const trial = Buffer.concat([Buffer.from([0, 1, 0, 0]), Buffer.from('ABC Arizona Flare Variable Unlicensed Trial', 'utf16le').swap16()]);
+      writeFileSync(join(dir, 'en.ttf'), trial);
+      expect((await get()).statusCode).toBe(404);
+      expect((await get('/api/emenu/fonts/en.woff2')).statusCode).toBe(404);
+      const t = await status();
+      expect(t.state).toBe('trial');
+      expect(t.files.map((f: { name: string; problem: string }) => [f.name, f.problem])).toEqual([['en.ttf', 'trial']]);
+      writeFileSync(join(dir, 'en.ttf'), ttf);
+      const ok = await get();
+      expect(ok.statusCode).toBe(200);
+      expect(ok.headers['content-type']).toBe('font/ttf');
+      expect(ok.rawPayload.equals(ttf)).toBe(true);
+      // 旧地址（还开着的旧页面）同样发
+      expect((await get('/api/emenu/fonts/en.woff2')).statusCode).toBe(200);
+      expect(await status()).toMatchObject({ state: 'active', file: 'en.ttf' });
+      // 同时放了 WOFF2：先用 WOFF2
+      const woff2 = readFileSync(fileURLToPath(new URL('../node_modules/@fontsource/average-sans/files/average-sans-latin-400-normal.woff2', import.meta.url)));
+      writeFileSync(join(dir, 'en.woff2'), woff2);
+      expect((await get()).headers['content-type']).toBe('font/woff2');
+      expect(await status()).toMatchObject({ state: 'active', file: 'en.woff2' });
+      // 后台状态只给维护菜单的人
+      expect((await api(ctx.app, pad, 'GET', '/api/admin/emenu/brand-font')).status).toBe(403);
+    } finally {
+      ctx.config.brandFontPath = before;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('手牌与桌号', () => {
   it('只输数字找得到；数字对得上两张在店的牌让选；不在店的提示；只给餐饮明细', async () => {
     const byDigits = await api(ctx.app, pad, 'GET', '/api/emenu/guest?tag=8001');

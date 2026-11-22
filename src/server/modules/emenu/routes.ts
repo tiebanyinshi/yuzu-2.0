@@ -3,7 +3,7 @@
 //   · 后台（「维护电子菜单」）：设置、分类、各页、菜品图文、图片上传、从价目表生成初稿；
 //   · 点单密码：店主给人生成、收回（「管理员工账号」）；本人自己重新生成（要「餐饮点单」）。
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { guard, guardAny } from '../../auth/guard';
 import { readSnapshot } from '../../db';
 import { ctxOf, type Deps } from '../../lib/context';
@@ -24,7 +24,7 @@ import {
 } from './admin';
 import { abandonEmenuOrder, checkEmenuTable, emenuGuest, emenuImage, emenuMenu, emenuOpLookup, placeEmenuOrder, saveEmenuImage } from './core';
 import { clearOrderPin, orderPinStatus, resolveWaiter, setOrderPin } from './pins';
-import { readBrandFont } from './fonts';
+import { brandFontStatus, readBrandFont } from './fonts';
 
 export function registerEmenuRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
@@ -54,15 +54,21 @@ export function registerEmenuRoutes(app: FastifyInstance, deps: Deps) {
     reply.header('content-type', img.mime).header('cache-control', 'private, max-age=31536000, immutable');
     return reply.send(img.data);
   });
-  // 授权的品牌英文字体（8.1.5，PP4）：门店服务器的 brand-fonts/en.woff2，只发给能打开菜单的账号；没放文件 404（页面照旧用顶替的字体）。
-  // 字体文件可能被换成新的：按文件的修改时间与大小给 ETag，浏览器每次问一下、没变就 304
-  app.get('/api/emenu/fonts/en.woff2', { preHandler: guardAny('emenu.view', 'emenu.manage', 'studio.edit') }, async (req, reply) => {
-    const font = await readBrandFont(deps.config.brandFontPath, 'en.woff2');
-    if (!font) throw notFound('门店服务器上还没有放授权的英文字体（brand-fonts/en.woff2），页面用顶替的字体');
+  // 授权的品牌英文字体（8.1.5，PP4）：门店服务器的 brand-fonts 目录，只发给能打开菜单的账号；没放（或放的不能用）404，页面照旧用顶替的字体。
+  // 2026-11-22（PD6）起 en.woff2、en.woff、en.otf、en.ttf 都认，地址改成不带格式的 /api/emenu/fonts/brand-en；旧地址 en.woff2 留着（还开着的旧页面照常取）。
+  // 字体文件可能被换成新的：按文件名、修改时间与大小给 ETag，浏览器每次问一下、没变就 304
+  const brandFont = async (req: FastifyRequest, reply: FastifyReply) => {
+    const font = await readBrandFont(deps.config.brandFontPath);
+    if (!font) throw notFound('门店服务器上还没有放能用的授权英文字体（brand-fonts/en.woff2 或 en.ttf 等），页面用顶替的字体');
     reply.header('cache-control', 'private, no-cache').header('etag', font.etag);
     if (req.headers['if-none-match'] === font.etag) return reply.code(304).send();
-    return reply.header('content-type', 'font/woff2').send(font.data);
-  });
+    return reply.header('content-type', font.mime).send(font.data);
+  };
+  const fontGuard = guardAny('emenu.view', 'emenu.manage', 'studio.edit');
+  app.get('/api/emenu/fonts/brand-en', { preHandler: fontGuard }, brandFont);
+  app.get('/api/emenu/fonts/en.woff2', { preHandler: fontGuard }, brandFont);
+  // 后台：品牌字体生效了没有（店主 2026-11-22：放没放对一眼看得到）
+  app.get('/api/admin/emenu/brand-font', { preHandler: guardAny('emenu.manage', 'studio.edit') }, async () => brandFontStatus(deps.config.brandFontPath));
 
   // ── 后台「电子菜单」 ──
   app.get('/api/admin/emenu', { preHandler: manage }, async () => readSnapshot(sql, emenuAdmin));
