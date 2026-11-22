@@ -15,7 +15,6 @@ import {
   SCHEDULE_MAX_DAYS,
   SCHEDULE_MAX_SHIFTS_PER_DAY,
   SCHEDULE_SAVE_MAX_CELLS,
-  scheduleSpan,
   type MySchedule,
   type OaShift,
   type ScheduleCell,
@@ -23,8 +22,7 @@ import {
 } from '@shared/oa';
 import { shiftDate } from '@shared/labels';
 import { can } from '@shared/permissions';
-import { shiftTimeText } from '@shared/technician-admin';
-import type { Db, Tx } from '../../db';
+import type { Db } from '../../db';
 import { guard, guardAny } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
 import type { Actor, Deps } from '../../lib/context';
@@ -37,6 +35,7 @@ import { currentStoreId } from '../../lib/store-context';
 import { dateSchema, parse } from '../../lib/validate';
 import { lockSetup, SHIFT_COLS, storeEmployee } from './attendance-setup';
 import { notify } from './notifications';
+import { overlapProblem } from './schedule-overlap';
 
 const view = guardAny('hr.attendance', 'hr.attendanceDept');
 const manage = guard('hr.attendance');
@@ -79,11 +78,6 @@ const sameSet = (a: readonly number[], b: readonly number[]) => a.length === b.l
 
 // 排班的日子是班次开始那一天的日历日（docs/OA.md 第 8 节），不是营业日：凌晨换营业日以前也不能再改昨天的
 const todayOf = (deps: Deps) => todayIn(deps.config.timezone);
-/**
- * 查重叠要往前后看几天：一条排班的打卡时段最早从当天 00:00 前 12 小时（提前上限 720 分钟）起，
- * 最晚到第二天结束后 12 小时（班长最多 24 小时，延后上限 720 分钟），两天以上的也可能重叠
- */
-const OVERLAP_LOOKAROUND_DAYS = Math.ceil((720 + 1440 + 1440 + 720) / 1440);
 
 /** 能看哪些员工：hr.attendance 全部；只有 hr.attendanceDept 的只看本部门（同部门的岗位） */
 function deptFilter(db: Db, actor: Actor) {
@@ -139,30 +133,6 @@ async function loadWeek(db: Db, deps: Deps, actor: Actor, q: z.infer<typeof Week
     shifts: shifts.map((s) => ({ ...s, id: Number(s.id) })),
     cells: [...cells.values()],
   };
-}
-
-type Placed = { staffId: number; date: string; shiftId: number; consecutive: boolean };
-
-/** 同一人前后相邻的排班打卡时段重叠：返回说明（标了连班的那一对不算） */
-async function overlapProblem(tx: Tx, staffIds: number[], from: string, to: string): Promise<string | null> {
-  const rows = await tx<(Placed & { workDate: string; name: string; staffName: string; startMinute: number; endMinute: number; inAdvanceMinutes: number; outDelayMinutes: number })[]>`
-    SELECT o.staff_id, o.work_date::text AS work_date, o.shift_id, o.consecutive, sh.name, s.display_name AS staff_name,
-           sh.start_minute, sh.end_minute, sh.in_advance_minutes, sh.out_delay_minutes
-    FROM oa_schedules o JOIN oa_shifts sh ON sh.id = o.shift_id JOIN staff s ON s.id = o.staff_id
-    WHERE o.staff_id IN ${tx(staffIds)} AND o.work_date BETWEEN ${shiftDate(from, -OVERLAP_LOOKAROUND_DAYS)} AND ${shiftDate(to, OVERLAP_LOOKAROUND_DAYS)}
-    ORDER BY o.staff_id, o.work_date, sh.start_minute`;
-  const spans = rows.map((r) => ({ ...r, ...scheduleSpan(r.workDate, r) }));
-  for (let i = 0; i < spans.length; i += 1) {
-    for (let j = i + 1; j < spans.length; j += 1) {
-      const a = spans[i]!;
-      const b = spans[j]!;
-      if (Number(a.staffId) !== Number(b.staffId) || a.consecutive || b.consecutive) continue;
-      if (a.from < b.to && b.from < a.to) {
-        return `${a.staffName}：${a.workDate}「${a.name}」与 ${b.workDate}「${b.name}」的打卡时间段重叠（${shiftTimeText(a)} / ${shiftTimeText(b)}），分不清打卡算哪一班；确实是连班的请勾「连班」`;
-      }
-    }
-  }
-  return null;
 }
 
 export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {

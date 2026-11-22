@@ -211,15 +211,15 @@ export function ScheduleTab() {
         </div>
         {w.editable && w.group && (
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <Button variant="secondary" icon={<Copy className="size-4" />} loading={copying} onClick={copyLastWeek} data-testid="att-schedule-copy">
+            <Button variant="secondary" icon={<Copy className="size-4" />} loading={copying} disabled={saving} onClick={copyLastWeek} data-testid="att-schedule-copy">
               复制上周
             </Button>
             {dirty.length > 0 && (
-              <Button variant="ghost" onClick={reset}>
+              <Button variant="ghost" disabled={busy} onClick={reset}>
                 放弃改动
               </Button>
             )}
-            <Button variant="primary" loading={saving} disabled={!dirty.length} onClick={save} data-testid="att-schedule-save">
+            <Button variant="primary" loading={saving} disabled={!dirty.length || copying} onClick={save} data-testid="att-schedule-save">
               保存{dirty.length ? `（${dirty.length} 格）` : ''}
             </Button>
           </div>
@@ -263,7 +263,8 @@ export function ScheduleTab() {
                   const c = cellOf(m.staffId, d);
                   const e = draft.get(keyOf(m.staffId, d));
                   const changed = !!e && !same(e.cell, e.expected);
-                  const locked = !w.editable || d < w.today;
+                  // 保存、复制进行中不让改格子：保存完会清掉草稿，这时改的会悄悄丢掉
+                  const locked = !w.editable || d < w.today || busy;
                   return (
                     <button
                       type="button"

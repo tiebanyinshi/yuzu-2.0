@@ -25,12 +25,14 @@ import { isUniqueViolation, type Db, type Tx } from '../../db';
 import { guard } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
 import type { Deps } from '../../lib/context';
+import { todayIn } from '../../lib/dates';
 import { conflict, notFound, unprocessable } from '../../lib/errors';
 import { assertNotFenced, lockOpKey } from '../../lib/fences';
 import { hashRequest } from '../../lib/idempotency';
 import { currentStoreId, DEFAULT_STORE_ID } from '../../lib/store-context';
 import { idParam, parse } from '../../lib/validate';
 import { erpOpAbandoned } from '../erp-ops';
+import { overlapProblem } from './schedule-overlap';
 import { NOT_EMPLOYEE_ROLES } from './org';
 
 const manage = guard('hr.attendance');
@@ -157,7 +159,7 @@ async function replayCreate(tx: Tx, key: string | undefined, kind: Kind, input: 
 const recordCreate = (tx: Tx, key: string, hash: string, refId: number, actorId: number) =>
   tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${key}, 'oa_attendance_setup', ${hash}, ${refId}, ${actorId})`;
 
-export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: Deps) {
+export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql, config }: Deps) {
   app.get('/api/oa/attendance/setup', { preHandler: manage }, async () => loadSetup(sql));
 
   // ── 班次 ──
@@ -189,6 +191,25 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
                    out_before_minutes = ${s.outBeforeMinutes}, out_delay_minutes = ${s.outDelayMinutes}, active = ${s.active},
                    version = version + 1, updated_by = ${actorId}, updated_at = now()
             WHERE id = ${shiftId}`;
+          // 改了时间或打卡窗口：今天起用这个班次的排班重新核对（排班照着班次的当前设置算，OA-05）
+          const timesChanged = (['startMinute', 'endMinute', 'inAdvanceMinutes', 'outDelayMinutes'] as const).some((k) => before![k] !== s[k]);
+          if (timesChanged) {
+            const today = todayIn(config.timezone);
+            const used = await tx<{ staffId: number; last: string }[]>`
+              SELECT staff_id, max(work_date)::text AS last FROM oa_schedules WHERE shift_id = ${shiftId} AND work_date >= ${today} GROUP BY staff_id`;
+            const problem = used.length
+              ? await overlapProblem(
+                  tx,
+                  used.map((u) => Number(u.staffId)),
+                  today,
+                  used
+                    .map((u) => u.last)
+                    .sort()
+                    .at(-1)!,
+                )
+              : null;
+            if (problem) throw unprocessable('SCHEDULE_OVERLAP', `改了以后已排的班会重叠：${problem}。先到「排班」里调开或勾「连班」再改`);
+          }
         }
         const { version: _v, clientKey: _k, storeId: _st, ...after } = s;
         await writeAudit(tx, {

@@ -138,6 +138,25 @@ describe('OA-05 排班', () => {
     expect((await save([{ staffId: b.id, date: d10, shiftIds: [], expected: { shiftIds: [wide], consecutive: false } }])).status).toBe(200);
   });
 
+  it('改班次时间：今天起已排的班会因此重叠的拒绝；不影响的照常改', async () => {
+    const z = { inAdvanceMinutes: 0, outDelayMinutes: 0 };
+    let st = await create('shifts', { name: '白8', startMinute: 480, endMinute: 960, ...z });
+    const day = st.shifts.find((x) => x.name === '白8')!.id;
+    st = await create('shifts', { name: '晚18', startMinute: 1080, endMinute: 1320, ...z });
+    const eve = st.shifts.find((x) => x.name === '晚18')!.id;
+    const d = shiftDate(today, 20);
+    expect((await save([{ staffId: a.id, date: d, shiftIds: [day, eve], expected: EMPTY }])).status).toBe(200);
+    const version = st.shifts.find((x) => x.id === day)!.version;
+    const put = (endMinute: number) => api(ctx.app, ctx.owner, 'PUT', `/api/oa/attendance/shifts/${day}`, { name: '白8', startMinute: 480, endMinute, ...z, version });
+    // 白8 改到 20:00 下班：与同一天的晚18（18:00 起）重叠
+    const r = await put(1200);
+    expect(code(r)).toBe('SCHEDULE_OVERLAP');
+    expect((await ctx.sql`SELECT end_minute FROM oa_shifts WHERE id = ${day}`)[0]!.endMinute).toBe(960);
+    // 改到 17:00 不重叠
+    expect((await put(1020)).status).toBe(200);
+    expect((await save([{ staffId: a.id, date: d, shiftIds: [], expected: { shiftIds: [day, eve], consecutive: false } }])).status).toBe(200);
+  });
+
   it('部门负责人只看本部门、不能改；别的部门的负责人看不到这个组；员工看不了排班表', async () => {
     const lead = await hire('sch_front_lead', 'front.lead');
     const other = await hire('sch_eng_lead', 'eng.lead');
