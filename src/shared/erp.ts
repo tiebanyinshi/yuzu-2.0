@@ -489,6 +489,8 @@ export const ERP_OP_TYPES = [
   'oa_face_review',
   'oa_leave_type',
   'oa_leave_adjust',
+  'oa_approval_submit',
+  'oa_approval_act',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -570,6 +572,8 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   oa_face_review: '人脸审核',
   oa_leave_type: '新建假种',
   oa_leave_adjust: '调整假期余额',
+  oa_approval_submit: '提交审批',
+  oa_approval_act: '处理审批',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */
