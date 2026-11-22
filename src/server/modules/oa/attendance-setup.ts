@@ -4,7 +4,7 @@
 //   · 考勤组：用哪几个打卡点、GPS / 人脸两个开关、成员（一人一组）。
 // 都按门店分，不删只停用；改的时候带版本，别人先改过就拒绝。
 // 新建带操作编号（结果待确认时原样重提只建一个，或确认作废后再重新填写）；修改带版本。
-// 加锁（docs/LOCKING.md「考勤设置」）：操作编号（新建）→ 门店的考勤设置咨询锁（三样的保存之间串行）→ 成员（员工行 FOR NO KEY UPDATE，按编号）
+// 加锁（docs/LOCKING.md「考勤设置」）：操作编号（新建）→ 门店的考勤设置咨询锁（三样的保存之间串行）→ 全部总裁行 → 成员（员工行 FOR NO KEY UPDATE，按编号）
 // → 要改的那一行（FOR UPDATE）→ 成员原来所在的组（按编号 FOR UPDATE，版本加一）。
 
 import type { FastifyInstance } from 'fastify';
@@ -287,6 +287,9 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
         // 员工行按编号 FOR NO KEY UPDATE（Codex 审查 8e60b6b）：两家店同时把同一个人加进各自的组时，门店咨询锁互不挡，
         // 这里让后一个等前一个提交、再核对他是不是已经在别的店的组里（共享锁两边都拿得到，挡不住）；也与办理离职、调店互斥
         if (memberIds.length) {
+          // 与改员工账号、办理离职同一个顺序（Codex 审查 7db1559）：先锁全部总裁行，再按编号锁成员；
+          // 不然组里有编号大的总裁时，这里先锁普通员工、那边先锁总裁，两边互相等
+          await tx`SELECT id FROM staff WHERE role = 'owner' FOR NO KEY UPDATE`;
           const rows = await tx<{ id: number }[]>`SELECT s.id FROM staff s WHERE s.id IN ${tx(memberIds)} ORDER BY s.id FOR NO KEY UPDATE`;
           if (rows.length !== memberIds.length) throw unprocessable('MEMBER_INVALID', '有员工不存在，请刷新');
           const ok = await tx<{ id: number }[]>`SELECT s.id FROM staff s WHERE s.id IN ${tx(memberIds)} AND ${storeEmployee(tx)}`;
