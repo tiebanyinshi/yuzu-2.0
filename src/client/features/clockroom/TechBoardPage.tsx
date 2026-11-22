@@ -149,12 +149,14 @@ export function TechBoardPage() {
 
   const pages = view ? Math.max(1, Math.ceil(view.columns.length / perPage)) : 1;
   const current = Math.min(page, pages - 1);
+  // 鼠标停在看板上暂停；全屏投屏时看板占满整屏、按钮也都收起来了，悬停不算（不然鼠标一放上去就永远停在这一页，Codex 审查 9193d8b）
+  const hoverPause = hover && !full;
   // 自动翻页：暂停、鼠标停在上面、只有一页时不翻；每翻一页重新计时
   useEffect(() => {
-    if (paused || hover || pages <= 1) return;
+    if (paused || hoverPause || pages <= 1) return;
     const t = window.setTimeout(() => setPage((p) => (Math.min(p, pages - 1) + 1) % pages), interval * 1000);
     return () => window.clearTimeout(t);
-  }, [current, paused, hover, pages, interval]);
+  }, [current, paused, hoverPause, pages, interval]);
 
   if (!session.technicians) return <Navigate to="/" replace />;
   if (!can('technician.board') && !can('technician.dispatch') && !can('technician.announce')) return <Navigate to="/" replace />;
@@ -267,7 +269,7 @@ export function TechBoardPage() {
             data-mode={mode}
             data-page={current}
             data-pages={pages}
-            data-paused={paused || hover ? 'true' : undefined}
+            data-paused={paused || hoverPause ? 'true' : undefined}
             data-full={full ? 'true' : undefined}
           >
             <div className="flex flex-wrap items-center gap-x-[1em] gap-y-1 border-b border-line bg-card px-[1em] py-[0.5em]">
@@ -307,7 +309,7 @@ export function TechBoardPage() {
                     )}
                   </>
                 )}
-                {(paused || hover) && pages > 1 && <span className="text-[length:max(12px,0.85em)] text-ember-deep">已暂停</span>}
+                {(paused || hoverPause) && pages > 1 && <span className="text-[length:max(12px,0.85em)] text-ember-deep">已暂停</span>}
                 {full && (
                   <IconButton label="退出全屏" onClick={exitFull} testId="tech-board-exit">
                     <Minimize2 className="size-[1.1em]" />
@@ -362,7 +364,7 @@ export function TechBoardPage() {
                       {view.techs.map((t) =>
                         slots.map((c, i) => (
                           <div key={`${t.id}:${c?.name ?? `blank:${i}`}`} className="h-[4.6em] min-w-0 border-b border-l border-line/70 p-[0.35em] first:border-l-0">
-                            {c && view.cellOf(t.id, c.name).map((s) => <SessionCard key={s.id} s={s} mode={mode} now={now} />)}
+                            {c && <Cell sessions={view.cellOf(t.id, c.name)} mode={mode} now={now} />}
                           </div>
                         )),
                       )}
@@ -378,7 +380,28 @@ export function TechBoardPage() {
   );
 }
 
-function SessionCard({ s, mode, now }: { s: TechBoardSession; mode: TechBoardMode; now: number }) {
+/**
+ * 一格里的钟单：同一位技师在同一个项目（区域）上可以同时有上钟中和已派待上的（在钟上又被点钟）。格子高度固定、与左边那位技师对齐，
+ * 所以一格里并排放，上钟中的在前；超过两张的只放前两张、写「另 N 单」，不溢出到下一位技师的行里（Codex 审查 9193d8b）
+ */
+function Cell({ sessions, mode, now }: { sessions: TechBoardSession[]; mode: TechBoardMode; now: number }) {
+  if (sessions.length === 0) return null;
+  const sorted = [...sessions].sort((a, b) => (a.status === b.status ? a.id - b.id : a.status === 'serving' ? -1 : 1));
+  const shown = sorted.slice(0, 2);
+  const more = sorted.length - shown.length;
+  return (
+    <div className="flex h-full min-w-0 gap-[0.3em]" data-testid="tech-board-cell" data-count={sessions.length}>
+      {shown.map((s) => (
+        <div key={s.id} className="h-full min-w-0 flex-1">
+          <SessionCard s={s} mode={mode} now={now} compact={shown.length > 1} />
+        </div>
+      ))}
+      {more > 0 && <span className="num flex shrink-0 items-center text-[length:max(12px,0.85em)] font-semibold text-ink-3">另 {more} 单</span>}
+    </div>
+  );
+}
+
+function SessionCard({ s, mode, now, compact = false }: { s: TechBoardSession; mode: TechBoardMode; now: number; compact?: boolean }) {
   const elapsed = s.startedAt ? minutesBetween(s.startedAt, now) : null;
   const left = s.plannedEnd ? Math.ceil((new Date(s.plannedEnd).getTime() - now) / 60_000) : null;
   return (
@@ -393,7 +416,7 @@ function SessionCard({ s, mode, now }: { s: TechBoardSession; mode: TechBoardMod
       </p>
       {s.status === 'serving' && s.startedAt ? (
         <p className="num truncate text-[length:max(12px,0.9em)] text-ink-2">
-          {formatTime(s.startedAt)} 起 · 已上 {durationText(elapsed ?? 0)}
+          {!compact && `${formatTime(s.startedAt)} 起 · `}已上 {durationText(elapsed ?? 0)}
           {s.plannedEnd && (
             <span className={cn('ml-[0.4em]', left !== null && left < 0 ? 'font-bold text-clay' : 'text-ink-3')}>
               {left !== null && left < 0 ? `超 ${-left} 分` : `预计 ${formatTime(s.plannedEnd)} 下钟`}
@@ -401,7 +424,7 @@ function SessionCard({ s, mode, now }: { s: TechBoardSession; mode: TechBoardMod
           )}
         </p>
       ) : (
-        <p className="text-[length:max(12px,0.9em)] font-semibold text-ember-deep">已派待上 · {s.minutes * s.clocks} 分钟</p>
+        <p className="text-[length:max(12px,0.9em)] font-semibold text-ember-deep">已派待上 · {s.minutes} 分钟</p>
       )}
     </div>
   );

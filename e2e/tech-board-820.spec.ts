@@ -41,7 +41,7 @@ const techOf = async (page: Page) => {
 };
 
 /** 店主：技师功能、专用项目与技师；技师上牌，接待一位客人点钟上钟。返回技师功能原来开没开、来访 */
-async function prepare(page: Page): Promise<{ wasEnabled: boolean; visitId: number }> {
+async function prepare(page: Page): Promise<{ wasEnabled: boolean; visitIds: number[] }> {
   const items = (await getJson<{ items: { id: number; name: string; active: boolean }[] }>(page, '/api/catalog?all=1')).items;
   const item = items.find((i) => i.name === ITEM.name);
   if (!item) await send(page, 'post', '/api/items', ITEM);
@@ -58,42 +58,50 @@ async function prepare(page: Page): Promise<{ wasEnabled: boolean; visitId: numb
   const { tech } = await techOf(page);
   if (tech.state !== 'on') await send(page, 'post', `/api/clockroom/technicians/${tech.id}/state`, { action: tech.state === 'rest' ? 'back' : 'sign_in' });
 
-  const board = await getJson<{ tags: (BoardTag & { id: number })[] }>(page, '/api/frontdesk/board');
-  const tag = board.tags.filter((t) => t.zone === 'male' && t.kind === 'normal' && t.active && !t.locked && !t.visit).reverse()[0]!;
-  await send(page, 'post', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: tag.code, zone: 'male', guestLabel: 'E2E 上钟轮播' }] });
-  const visitId = (await getJson<{ tags: BoardTag[] }>(page, '/api/frontdesk/board')).tags.find((t) => t.code === tag.code)!.visit!.id;
-  await send(page, 'post', '/api/clockroom/dispatch', {
-    clientKey: randomUUID(),
-    visitId,
-    itemId,
-    quantity: 1,
-    technicianId: tech.id,
-    callType: 'designated',
-    startNow: true,
-    expectedTotal: ITEM.price,
-  });
-  expect((await techOf(page)).sessions.map((s) => s.status)).toEqual(['serving']);
-  return { wasEnabled: admin.rules.enabled, visitId };
+  // 两位客人都点这位技师：第一位现在上钟，第二位点两个钟、等钟（同一格里一张上钟中、一张已派待上）
+  const visitIds: number[] = [];
+  for (const [i, quantity] of [1, 2].entries()) {
+    const board = await getJson<{ tags: (BoardTag & { id: number })[] }>(page, '/api/frontdesk/board');
+    const tag = board.tags.filter((t) => t.zone === 'male' && t.kind === 'normal' && t.active && !t.locked && !t.visit).reverse()[0]!;
+    await send(page, 'post', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: tag.code, zone: 'male', guestLabel: `E2E 上钟轮播 ${i + 1}` }] });
+    const visitId = (await getJson<{ tags: BoardTag[] }>(page, '/api/frontdesk/board')).tags.find((t) => t.code === tag.code)!.visit!.id;
+    visitIds.push(visitId);
+    await send(page, 'post', '/api/clockroom/dispatch', {
+      clientKey: randomUUID(),
+      visitId,
+      itemId,
+      quantity,
+      technicianId: tech.id,
+      callType: 'designated',
+      startNow: true,
+      expectedTotal: ITEM.price * quantity,
+    });
+  }
+  expect((await techOf(page)).sessions.map((s) => s.status).sort()).toEqual(['serving', 'waiting']);
+  return { wasEnabled: admin.rules.enabled, visitIds };
 }
 
 /** 收尾：下钟、下牌；客人结账离店（没开班的临时开一个，结完交掉）；技师功能原来关着的关回去 */
-async function release(page: Page, { wasEnabled, visitId }: { wasEnabled: boolean; visitId: number }) {
+async function release(page: Page, { wasEnabled, visitIds }: { wasEnabled: boolean; visitIds: number[] }) {
   for (const s of (await techOf(page)).sessions) {
     if (s.status === 'serving') await send(page, 'post', `/api/clockroom/sessions/${s.id}/finish`);
     else await send(page, 'post', `/api/clockroom/sessions/${s.id}/void`, { reason: 'E2E：收尾' });
   }
   const { tech } = await techOf(page);
   if (tech.state === 'on' || tech.state === 'rest') await send(page, 'post', `/api/clockroom/technicians/${tech.id}/state`, { action: 'sign_out' });
-  const v = await getJson<{ status: string }>(page, `/api/frontdesk/visits/${visitId}`);
-  if (v.status === 'open') {
+  const open: number[] = [];
+  for (const id of visitIds) if ((await getJson<{ status: string }>(page, `/api/frontdesk/visits/${id}`)).status === 'open') open.push(id);
+  if (open.length) {
     const opened = (await page.request.post('/api/shifts', { data: { openingCash: 0 } })).status() === 200;
-    const preview = await getJson<{ totalAmount: number }>(page, `/api/frontdesk/checkout-preview?ids=${visitId}`);
-    await send(page, 'post', '/api/frontdesk/checkouts', {
-      clientKey: randomUUID(),
-      visitIds: [visitId],
-      expectedTotal: preview.totalAmount,
-      payments: [{ method: 'cash', amount: preview.totalAmount }],
-    });
+    for (const id of open) {
+      const preview = await getJson<{ totalAmount: number }>(page, `/api/frontdesk/checkout-preview?ids=${id}`);
+      await send(page, 'post', '/api/frontdesk/checkouts', {
+        clientKey: randomUUID(),
+        visitIds: [id],
+        expectedTotal: preview.totalAmount,
+        payments: [{ method: 'cash', amount: preview.totalAmount }],
+      });
+    }
     if (opened) {
       const { shift } = await getJson<{ shift: { id: number; summary: { cash: { expected: number } } } }>(page, '/api/shifts/current');
       const expected = shift.summary.cash.expected;
@@ -117,6 +125,11 @@ test.describe('技师上钟轮播', () => {
       await expect(page.getByTestId('tech-board-col').first()).toBeVisible();
       await expect(page.getByTestId('tech-board-card').first()).toBeVisible();
       await expect(page.getByTestId('tech-board-next')).toContainText('下一位排钟');
+      // 同一位技师同一个项目上一张上钟中、一张已派待上：放在同一格里并排，待上的两个钟写合计的 120 分钟（不再乘钟数）
+      const cell = page.locator(`[data-testid="tech-board-cell"][data-count="2"]`).filter({ hasText: '已派待上' });
+      await expect(cell).toHaveCount(1);
+      await expect(cell.locator('[data-testid="tech-board-card"][data-status="serving"]')).toHaveCount(1);
+      await expect(cell.locator('[data-testid="tech-board-card"][data-status="waiting"]')).toContainText('已派待上 · 120 分钟');
       // 只读：看板上没有改钟的按钮
       await expect(board.getByRole('button', { name: /上钟|下钟|派钟|叫号/ })).toHaveCount(0);
 
@@ -156,6 +169,9 @@ test.describe('技师上钟轮播', () => {
       await page.getByTestId('tech-board-full').click();
       await expect(board).toHaveAttribute('data-full', 'true');
       await expect(page.getByTestId('tech-board-controls')).toHaveCount(0);
+      // 全屏时鼠标停在看板上不算暂停（看板占满整屏）
+      await page.mouse.move(400, 400);
+      await expect(board).not.toHaveAttribute('data-paused', 'true');
       const box = await board.boundingBox();
       expect(box?.width).toBeGreaterThanOrEqual((page.viewportSize()?.width ?? 0) - 1);
       await page.keyboard.press('Escape');
