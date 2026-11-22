@@ -6,6 +6,7 @@
 
 import { departmentOfPosition } from '@shared/oa';
 import {
+  formAttachmentIds,
   LEVEL_KIND_LABELS,
   type ApprovalCcSpec,
   type ApprovalCondition,
@@ -57,7 +58,7 @@ async function resolver(db: Db, applicant: { id: number; position?: PositionKey 
   const [top] = await db<{ id: number }[]>`
     SELECT s.id FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
     WHERE s.active AND NOT s.system AND COALESCE(p.status, 'active') = 'active' AND (s.position = 'president' OR (s.position IS NULL AND s.role = 'owner'))
-    ORDER BY (s.position = 'president') DESC, s.id LIMIT 1`;
+    ORDER BY COALESCE(s.position = 'president', false) DESC, s.id LIMIT 1`;
   const president = top ? { id: Number(top.id) } : null;
   const own = departmentOfPosition(applicant.position ?? null) ?? 'company';
   /** 从 start 部门往上找第一位不是发起人的主管；一路都没有就是总裁（总裁就是发起人自己时为空） */
@@ -128,6 +129,27 @@ export async function canViewApproval(db: Db, actor: Actor, id: number): Promise
   return !!row;
 }
 
+/** 这一张与之前的各版（重新提交一路往前），自己在第一个 */
+export async function revisionsUpTo(db: Db, id: number): Promise<number[]> {
+  const rows = await db<{ id: number }[]>`
+    WITH RECURSIVE up AS (SELECT id, previous_id, 0 AS depth FROM oa_approvals WHERE id = ${id}
+      UNION ALL SELECT a.id, a.previous_id, up.depth + 1 FROM oa_approvals a JOIN up ON a.id = up.previous_id)
+    SELECT id FROM up ORDER BY depth`;
+  return rows.map((r) => Number(r.id));
+}
+
+/**
+ * 附件挂在哪一版上，能看那一版或之后重新提交的任一版的人都能看（重新提交沿用的附件还挂在最早那一版上，
+ * 新一版的审批人也要看得到，Codex 审查 62e6f5e）
+ */
+export async function canViewApprovalAttachment(db: Db, actor: Actor, id: number): Promise<boolean> {
+  const [row] = await db`
+    WITH RECURSIVE down AS (SELECT id FROM oa_approvals WHERE id = ${id}
+      UNION ALL SELECT a.id FROM oa_approvals a JOIN down ON a.previous_id = down.id)
+    SELECT 1 FROM oa_approvals a WHERE a.id IN (SELECT id FROM down) AND ${canViewSql(db, actor.id)} LIMIT 1`;
+  return !!row;
+}
+
 type ListRow = Omit<ApprovalListItem, 'submittedAt' | 'finishedAt' | 'ccReadAt'> & { submittedAt: Date; finishedAt: Date | null; ccReadAt?: Date | null };
 const iso = (d: Date | null | undefined) => (d ? new Date(d).toISOString() : null);
 
@@ -176,7 +198,7 @@ export async function loadApproval(db: Db, actor: Actor, id: number): Promise<Ap
     steps,
     events: eventRows.map((e) => ({ ...e, id: Number(e.id), actorId: Number(e.actorId), createdAt: iso(e.createdAt)! })),
     cc: cc.map((c) => ({ staffId: Number(c.staffId), name: c.name, readAt: iso(c.readAt) })),
-    attachments: await attachmentsOf(db, { type: 'oa_approval', id }),
+    attachments: await attachmentsOf(db, { type: 'oa_approval', id: await revisionsUpTo(db, id) }, formAttachmentIds(extra!.fields, extra!.form)),
     pendingStepId: pending?.id ?? null,
     can: {
       approve: !!pending && pending.approverId === actor.id,

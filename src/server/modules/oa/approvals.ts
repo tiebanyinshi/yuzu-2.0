@@ -31,7 +31,7 @@ import { assertNotFenced, lockOpKey } from '../../lib/fences';
 import { hashRequest } from '../../lib/idempotency';
 import { idParam, parse } from '../../lib/validate';
 import { erpOpAbandoned } from '../erp-ops';
-import { canViewApproval, canViewSql, hooksOf, listApprovals, loadApproval, resolveChain, TEMPLATE_COLS, toTemplate } from './approval-engine';
+import { canViewApproval, canViewApprovalAttachment, canViewSql, hooksOf, listApprovals, loadApproval, resolveChain, revisionsUpTo, TEMPLATE_COLS, toTemplate } from './approval-engine';
 import { bindAttachments, registerAttachmentRef } from './attachments';
 import { notify } from './notifications';
 import { NOT_EMPLOYEE_ROLES } from './org';
@@ -140,7 +140,22 @@ async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, 
   if (chain.cc.length) {
     await notify(tx, chain.cc, { kind: 'system', title: `抄送：${actor.displayName}的${title}`, link: link(id), ref: { type: 'oa_approval', id } });
   }
-  await bindAttachments(tx, formAttachmentIds(template.fields, form), actor, { type: 'oa_approval', id });
+  // 附件：新传的挂到这一张；重新提交沿用上一版（及更早各版）的，留在原来那一版上（自己传的才行），详情按表单里的编号取
+  const wanted = formAttachmentIds(template.fields, form);
+  const carried =
+    input.previousId !== null && wanted.length
+      ? (
+          await tx<{ id: number }[]>`
+            SELECT id FROM oa_attachments WHERE id IN ${tx(wanted)} AND uploaded_by = ${actor.id}
+              AND ref_type = 'oa_approval' AND ref_id IN ${tx(await revisionsUpTo(tx, input.previousId))}`
+        ).map((r) => Number(r.id))
+      : [];
+  await bindAttachments(
+    tx,
+    wanted.filter((x) => !carried.includes(x)),
+    actor,
+    { type: 'oa_approval', id },
+  );
   // 发起人就是最上级、一级都不剩的：直接通过（OA12）
   if (!chain.steps.length) await finish(tx, { id, title, applicantId: actor.id, templateCode: template.code, form }, 'approved');
   return id;
@@ -215,7 +230,7 @@ async function act(tx: Tx, actor: Actor, id: number, input: z.infer<typeof ActIn
 
 export function registerOaApprovalRoutes(app: FastifyInstance, { sql }: Deps) {
   const auth = guard();
-  registerAttachmentRef('oa_approval', canViewApproval);
+  registerAttachmentRef('oa_approval', canViewApprovalAttachment);
 
   app.get(
     '/api/oa/approval/templates',

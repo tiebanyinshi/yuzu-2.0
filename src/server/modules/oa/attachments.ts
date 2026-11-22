@@ -118,11 +118,16 @@ const toView = (r: { id: number; fileName: string; mime: string; sizeBytes: numb
   };
 };
 
-/** 一张单据上挂的附件（给各模块的详情接口用；调用方已经核对过能看这张单据） */
-export async function attachmentsOf(db: Db, ref: { type: string; id: number }): Promise<OaAttachment[]> {
+/**
+ * 一张单据上挂的附件（给各模块的详情接口用；调用方已经核对过能看这张单据）。
+ * only：只要这几个编号（办公审批重新提交时沿用上一版的附件，附件还挂在最早那一版上，按表单里的编号取）
+ */
+export async function attachmentsOf(db: Db, ref: { type: string; id: number | readonly number[] }, only?: readonly number[]): Promise<OaAttachment[]> {
+  const ids = typeof ref.id === 'number' ? [ref.id] : [...ref.id];
+  if (only && !only.length) return [];
   const rows = await db<{ id: number; fileName: string; mime: string; sizeBytes: number; hasThumb: boolean }[]>`
     SELECT id, file_name, mime, size_bytes, thumb IS NOT NULL AS has_thumb FROM oa_attachments
-    WHERE ref_type = ${ref.type} AND ref_id = ${ref.id} ORDER BY id`;
+    WHERE ref_type = ${ref.type} AND ref_id IN ${db(ids)} ${only ? db`AND id IN ${db([...only])}` : db``} ORDER BY id`;
   return rows.map(toView);
 }
 

@@ -237,4 +237,43 @@ describe('OA-10 审批引擎', () => {
     expect((await ctx.app.inject({ method: 'GET', url: `/api/oa/attachments/${up.body.id}`, headers: { cookie: emp.lead!.cookie } })).statusCode).toBe(200);
     expect((await ctx.app.inject({ method: 'GET', url: `/api/oa/attachments/${up.body.id}`, headers: { cookie: emp.other!.cookie } })).statusCode).not.toBe(200);
   });
+  it('重新提交沿用上一版的附件：原单留着附件，新一版的审批人看得到；不能拿别人单上的附件（Codex 审查 62e6f5e）', async () => {
+    await setLevels([{ kind: 'dept_head' }]);
+    const upload = async (who: Emp, fileName: string) =>
+      (await api<{ id: number }>(ctx.app, who.cookie, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName, mime: 'image/jpeg', data: JPEG.toString('base64') })).body.id;
+    const first = await upload(emp.staff!, '原件.jpg');
+    const a = await submit(emp.staff!, { title: '用章', content: '见附件', attachments: [first] });
+    await act(emp.lead!, a.id, { action: 'reject', stepId: a.pendingStepId, comment: '再补一张' });
+    const second = await upload(emp.staff!, '补充.jpg');
+    const b = await submit(emp.staff!, { title: '用章', content: '补上了', attachments: [first, second] }, { previousId: a.id });
+    expect(b.attachments.map((x) => x.id)).toEqual([first, second]);
+    expect((await detail(emp.staff!, a.id)).attachments.map((x) => x.id)).toEqual([first]);
+    // 第三版只留第二张
+    await act(emp.lead!, b.id, { action: 'reject', stepId: b.pendingStepId, comment: '第一张不要了' });
+    const c = await submit(emp.staff!, { title: '用章', content: '只要补充那张', attachments: [second] }, { previousId: b.id });
+    expect(c.attachments.map((x) => x.id)).toEqual([second]);
+    // 新一版换了审批人（转交给人事），人事看得到沿用的附件
+    const t = await act(emp.lead!, c.id, { action: 'transfer', stepId: c.pendingStepId, toStaffId: emp.hr!.id });
+    expect(t.status).toBe(200);
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/oa/attachments/${second}`, headers: { cookie: emp.hr!.cookie } })).statusCode).toBe(200);
+    // 别人单上的附件不能拿来
+    const theirs = await submit(emp.eng!, { title: '别人', content: 'x', attachments: [await upload(emp.eng!, '别人的.jpg')] });
+    await act(emp.gmo!, theirs.id, { action: 'approve', stepId: theirs.pendingStepId });
+    const stolen = await api(ctx.app, emp.staff!.cookie, 'POST', '/api/oa/approvals', {
+      clientKey: randomUUID(),
+      templateId: general.id,
+      form: { title: 'x', content: 'y', attachments: [theirs.attachments[0]!.id] },
+    });
+    expect(code(stolen)).toBe('ATTACHMENT_INVALID');
+  });
+
+  it('总裁：岗位是总裁的优先，没选岗位的老店主账号只在没有总裁时兜底；总裁自己发起直接通过（Codex 审查 62e6f5e）', async () => {
+    await setLevels([{ kind: 'dept_head' }]);
+    const boss = await hire('ap_boss', 'president');
+    const a = await submit(boss);
+    expect(a).toMatchObject({ status: 'approved', steps: [] });
+    // 总经办发起：本部门主管是自己 → 往上到公司 → 总裁（岗位是总裁的那位，不是老店主账号）
+    const b = await submit(emp.gmo!);
+    expect(b.steps.map((x) => x.approverId)).toEqual([boss.id]);
+  });
 });
