@@ -247,8 +247,18 @@ export interface PriceDiff {
 }
 /** 草稿比生效多了、少了、改了价格（价格形态、两个价、比例、加钟 / 超时、封顶）的那几项 */
 export function diffPriceCatalogs(draft: PriceCatalogEntry[], active: PriceCatalogEntry[]): PriceDiff[] {
-  const a = new Map(active.map((e) => [priceEntryKey(e), e]));
-  const d = new Map(draft.map((e) => [priceEntryKey(e), e]));
+  // 同名的可以有一项在用、几项已停用（停用的不算重名）：对比时在用的那项优先，停用的历史项不能把它盖掉
+  const byKey = (list: PriceCatalogEntry[]) => {
+    const m = new Map<string, PriceCatalogEntry>();
+    for (const e of list) {
+      const key = priceEntryKey(e);
+      const had = m.get(key);
+      if (!had || (!had.active && e.active)) m.set(key, e);
+    }
+    return m;
+  };
+  const a = byKey(active);
+  const d = byKey(draft);
   const sig = (e: PriceCatalogEntry) => JSON.stringify([priceSignature(e), e.active, e.orderable]);
   const out: PriceDiff[] = [];
   for (const [key, e] of d) {

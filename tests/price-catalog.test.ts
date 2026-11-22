@@ -909,4 +909,13 @@ describe('价目表录入 审查修正（PR #160）', () => {
       expect(errs[0], `${price} ${rule}`).toMatchObject({ row: 2, field: '收费参考' });
     }
   });
+
+  it('第十二轮审查：同名的停用项不会盖掉在用项，在用项改价照样对比得出', async () => {
+    const p = (await preview(workbook())).body as PriceImportPreview;
+    const congee = find(p, '生滚牛肉粥');
+    const retiredTwin = { ...congee, active: false, priceCents: 9900, sortOrder: congee.sortOrder + 100 };
+    const activeSide = [...p.entries, retiredTwin];
+    const draftSide = [...p.entries.map((e) => (e === congee ? { ...e, priceCents: 5800 } : e)), retiredTwin];
+    expect(diffPriceCatalogs(draftSide, activeSide).map((d) => [d.change, d.draft?.name, d.draft?.priceCents])).toEqual([['changed', '生滚牛肉粥', 5800]]);
+  });
 });
