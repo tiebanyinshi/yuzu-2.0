@@ -36,6 +36,7 @@ import { AdminPage } from '../admin/AdminShell';
 import { AttendanceMonthlyTab } from './AttendanceMonthlyTab';
 import { AttendanceResultsTab } from './AttendanceResultsTab';
 import { FaceReviewTab } from './FaceReviewTab';
+import { HolidayTab } from './HolidayTab';
 import { LeaveTab } from './LeaveTab';
 import { PunchRecordsTab } from './PunchRecordsTab';
 import { ScheduleTab } from './ScheduleTab';
@@ -50,6 +51,7 @@ const TABS = [
   { key: 'results', label: <span data-testid="att-tab-results">考勤结果</span> },
   { key: 'monthly', label: <span data-testid="att-tab-monthly">考勤月报</span> },
   { key: 'leave', label: <span data-testid="att-tab-leave">假种与余额</span> },
+  { key: 'holidays', label: <span data-testid="att-tab-holidays">节假日</span> },
   { key: 'faces', label: <span data-testid="att-tab-faces">人脸审核</span> },
 ] as const;
 /** 只有「查看本部门的排班与考勤」的部门负责人：只有「排班」「打卡记录」两个页签，只看 */
@@ -101,6 +103,7 @@ function SectionBody({ manage }: { manage: boolean }) {
   if (tab === 'results') return <AttendanceResultsTab />;
   if (tab === 'monthly') return <AttendanceMonthlyTab />;
   if (manage && tab === 'leave') return <LeaveTab />;
+  if (manage && tab === 'holidays') return <HolidayTab />;
   if (manage && tab === 'faces') return <FaceReviewTab />;
   if (!manage || tab === 'schedule') return <ScheduleTab />;
   if (q.isPending) return <Skeleton className="h-60" />;

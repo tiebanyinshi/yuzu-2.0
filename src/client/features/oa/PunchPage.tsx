@@ -85,7 +85,7 @@ const at = (m: number, date: string) => {
 };
 
 function punchNote(p: OaPunch) {
-  const bits = [p.lateMinutes ? `迟到 ${p.lateMinutes} 分钟` : '', p.earlyMinutes ? `早退 ${p.earlyMinutes} 分钟` : '', p.outwork ? '外勤' : ''].filter(Boolean);
+  const bits = [p.lateMinutes ? `迟到 ${p.lateMinutes} 分钟` : '', p.earlyMinutes ? `早退 ${p.earlyMinutes} 分钟` : '', p.outwork ? '外勤' : '', p.makeup ? '补卡' : ''].filter(Boolean);
   return bits.join('、');
 }
 

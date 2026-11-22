@@ -97,7 +97,11 @@ export function PunchRecordsTab() {
               key: 'where',
               header: '位置',
               cell: (r) =>
-                r.outwork ? (
+                r.makeup ? (
+                  <span>
+                    <Badge tone="lake">补卡</Badge> <span className="text-ink-3">补卡审批通过</span>
+                  </span>
+                ) : r.outwork ? (
                   <span>
                     <Badge tone="yuzu">外勤</Badge> <span className="text-ink-2">{r.outworkReason}</span>
                     {r.photo && (

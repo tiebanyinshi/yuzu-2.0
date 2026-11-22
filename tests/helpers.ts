@@ -375,6 +375,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '219_oa_approvals.sql',
   '220_oa_approval_templates.sql',
   '221_oa_approval_admin.sql',
+  '222_oa_attendance_link.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */
