@@ -1274,4 +1274,15 @@ describe('价目表录入 第四批：对接收银项目', () => {
     expect(ok.errorCount).toBe(0);
     expect(find(ok, '棋牌房').variants.map((v) => [v.label, v.priceCents])).toEqual([['8小时', 69900]]);
   });
+
+  it('第二十七轮审查：分档说明等字段的长度上限导入与编辑一致（低消说明超过 200 字报错）', async () => {
+    const dining = sheet('房间价格', [
+      ['房型', '总数', '收费参考', null, '备注'],
+      ['餐饮包房', '5间', `688元/位\n低消：3000元起${'含酒水'.repeat(70)}`, null, 'V999'],
+    ]);
+    const errs = ((await preview(workbook({ 房间价格: dining }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
+    expect(errs.some((i) => i.message.includes('说明最多 200 个字'))).toBe(true);
+    const e = find((await preview(workbook())).body as PriceImportPreview, '古法中式');
+    expect(priceEntryProblems({ ...e, content: 'x'.repeat(801) })).toContain('服务操作内容最多 800 个字');
+  });
 });

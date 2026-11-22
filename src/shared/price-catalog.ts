@@ -370,6 +370,8 @@ export function priceEntryProblems(e: PriceCatalogEntry): string[] {
   len(e.unit, 8, '单位');
   len(e.note, 400, '备注');
   len(e.audience, 400, '核心人群');
+  len(e.content, 800, '服务操作内容');
+  len(e.highlight, 400, '项目亮点');
   len(e.content, 800, '操作内容');
   len(e.highlight, 400, '项目亮点');
   if (KIND_SHEET[e.kind] !== e.sheet) out.push(`「${PRICE_KIND_LABELS[e.kind]}」不属于${PRICE_SHEET_NAMES[e.sheet]}`);
@@ -401,6 +403,10 @@ export function priceEntryProblems(e: PriceCatalogEntry): string[] {
   if ([...e.roomNumbers, ...e.variants.flatMap((v) => v.roomNumbers ?? [])].some((n) => n.length > 12)) out.push('房号每个最多 12 个字');
   for (const v of e.variants) {
     if (!v.label.trim() || v.label.length > 20) out.push('分档要有名称（最多 20 个字）');
+    // 与编辑接口的分档上限一致：导得进来的都能照常保存
+    len(v.unit, 8, `分档「${v.label}」的单位`);
+    len(v.note ?? '', 200, `分档「${v.label}」的说明`);
+    if (v.seats !== undefined && (!Number.isInteger(v.seats) || v.seats < 1 || v.seats > 999)) out.push(`分档「${v.label}」的人数要在 1 到 999 之间`);
     amount(v.priceCents, `分档「${v.label}」的价格`);
     if (v.minutes !== null && (!Number.isInteger(v.minutes) || v.minutes < 1 || v.minutes > 2880)) out.push(`分档「${v.label}」的时长不对`);
   }
