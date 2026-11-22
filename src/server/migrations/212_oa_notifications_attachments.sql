@@ -26,6 +26,8 @@ CREATE UNIQUE INDEX oa_notifications_unread_ref_uq ON oa_notifications (staff_id
 
 CREATE TABLE oa_attachments (
   id          bigserial PRIMARY KEY,
+  -- 操作编号：上传没收到结果时原样重提，返回原来那一个，不再存一份
+  client_key  uuid NOT NULL UNIQUE,
   uploaded_by bigint NOT NULL REFERENCES staff (id),
   file_name   text NOT NULL CHECK (char_length(file_name) BETWEEN 1 AND 200),
   mime        text NOT NULL CHECK (char_length(mime) BETWEEN 3 AND 100),

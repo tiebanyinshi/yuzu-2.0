@@ -1,5 +1,6 @@
 // OA-03 站内通知与附件（docs/OA.md 第 6 节）：notify() 发通知（同一件事没读的只留一条）、列表分页、未读数、标已读、只看自己的；
 // 外发通道；附件上传（格式核对、缩略图）、下载头、谁能看、挂到单据上。
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { NotificationPage, OaAttachment } from '../src/shared/oa';
 import { attachmentsOf, bindAttachments, registerAttachmentRef } from '../src/server/modules/oa/attachments';
@@ -63,31 +64,42 @@ describe('OA-03 站内通知', () => {
 
 describe('OA-03 附件', () => {
   it('上传：核对格式与扩展名、缩略图；下载头；没挂到单据上只有上传的人看得到', async () => {
-    let r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { fileName: '证明.png', mime: 'image/png', data: b64(PNG), thumb: b64(JPEG) });
+    const first = { clientKey: randomUUID(), fileName: '证明.png', mime: 'image/png', data: b64(PNG), thumb: b64(JPEG) };
+    let r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', first);
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     const img = r.body as OaAttachment;
     expect(img).toMatchObject({ fileName: '证明.png', isImage: true, hasThumb: true, sizeBytes: PNG.length });
+    // 原样重提：返回原来那一个，不再存一份；同一编号换了文件、换了人：拒绝
+    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', first);
+    expect(r.status).toBe(200);
+    expect((r.body as OaAttachment).id).toBe(img.id);
+    const [cnt] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_attachments WHERE client_key = ${first.clientKey}`;
+    expect(cnt!.n).toBe(1);
+    expect(code(await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { ...first, fileName: '别的.png' }))).toBe('IDEMPOTENCY_CONFLICT');
+    expect(code(await api(ctx.app, ctx.owner, 'POST', '/api/oa/attachments', first))).toBe('IDEMPOTENCY_CONFLICT');
+    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { ...first, clientKey: 'x' })).status).toBe(400);
 
     // 扩展名或文件头对不上
-    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { fileName: '证明.pdf', mime: 'application/pdf', data: b64(PNG) });
+    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: '证明.pdf', mime: 'application/pdf', data: b64(PNG) });
     expect(code(r)).toBe('ATTACHMENT_INVALID');
-    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { fileName: '证明.jpg', mime: 'image/png', data: b64(PNG) });
+    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: '证明.jpg', mime: 'image/png', data: b64(PNG) });
     expect(code(r)).toBe('ATTACHMENT_INVALID');
-    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { fileName: 'a.exe', mime: 'application/x-msdownload', data: b64(PNG) });
+    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: 'a.exe', mime: 'application/x-msdownload', data: b64(PNG) });
     expect(r.status).toBe(400);
     // 非图片不能带缩略图；缩略图不是 JPEG
-    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { fileName: 'a.txt', mime: 'text/plain', data: b64(Buffer.from('你好')), thumb: b64(JPEG) });
+    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: 'a.txt', mime: 'text/plain', data: b64(Buffer.from('你好')), thumb: b64(JPEG) });
     expect(code(r)).toBe('ATTACHMENT_INVALID');
-    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { fileName: 'b.png', mime: 'image/png', data: b64(PNG), thumb: b64(PNG) });
+    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: 'b.png', mime: 'image/png', data: b64(PNG), thumb: b64(PNG) });
     expect(code(r)).toBe('ATTACHMENT_INVALID');
 
     // 文本：当附件下载、nosniff
-    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { fileName: '说明.txt', mime: 'text/plain', data: b64(Buffer.from('<script>x</script>')) });
+    r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: '说明.txt', mime: 'text/plain', data: b64(Buffer.from('<script>x</script>')) });
     const txt = r.body as OaAttachment;
     const dl = await ctx.app.inject({ method: 'GET', url: txt.url, headers: { cookie: ctx.clerk } });
     expect(dl.statusCode).toBe(200);
     expect(dl.headers['content-disposition']).toMatch(/^attachment; filename\*=UTF-8''/);
     expect(dl.headers['x-content-type-options']).toBe('nosniff');
+    expect(dl.headers['cache-control']).toContain('no-store');
     const pic = await ctx.app.inject({ method: 'GET', url: img.url, headers: { cookie: ctx.clerk } });
     expect(pic.headers['content-disposition']).toMatch(/^inline/);
     const th = await ctx.app.inject({ method: 'GET', url: img.thumbUrl!, headers: { cookie: ctx.clerk } });
@@ -100,7 +112,7 @@ describe('OA-03 附件', () => {
   });
 
   it('挂到单据上：只能挂自己传的、没挂过的；挂上以后按单据登记的办法看', async () => {
-    const up = async (cookie: string, name: string) => (await api(ctx.app, cookie, 'POST', '/api/oa/attachments', { fileName: name, mime: 'image/png', data: b64(PNG) })).body as OaAttachment;
+    const up = async (cookie: string, name: string) => (await api(ctx.app, cookie, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: name, mime: 'image/png', data: b64(PNG) })).body as OaAttachment;
     const a = await up(ctx.clerk, 'a.png');
     const b = await up(ctx.clerk, 'b.png');
     const other = await up(ctx.owner, 'c.png');
