@@ -3,7 +3,7 @@
 // 新建带操作编号（与批量开通一样走「结果待确认」：结果不确定的记在本机，在页面上方查回、按原内容重新提交或确认作废，确认前不能再建）；
 // 修改带版本：别人先改过就提示并载入最新的；结果不确定的关掉对话框重新载入（旧请求晚到也会因为版本对不上被拒绝）。
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LocateFixed, Plus, Search } from 'lucide-react';
 import {
@@ -21,7 +21,7 @@ import {
 import { positionLabel } from '@shared/positions';
 import { clockText, parseClock, shiftTimeText } from '@shared/technician-admin';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
-import { ErpPendingStoreError, sendErpOp, useErpPending } from '../../lib/erpPending';
+import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { useSession } from '../../lib/session';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { cn, uuid } from '../../lib/utils';
@@ -79,7 +79,8 @@ function useSave(onClose: () => void) {
   const qc = useQueryClient();
   const toast = useToast();
   const session = useSession();
-  const pending = useErpPending(['oa_attendance_setup']);
+  // 记在本机的都算，包括还在路上的（Codex 审查 56b128b：只看待确认的话，切个页签回来就能再建一份）
+  const pending = useErpRecorded(['oa_attendance_setup']);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const run = async (target: { create: string; summary: string } | { update: string }, body: object, ok: string) => {
@@ -97,7 +98,7 @@ function useSave(onClose: () => void) {
           key,
           type: 'oa_attendance_setup',
           url: target.create,
-          body: { ...body, clientKey: key },
+          body: { ...body, clientKey: key, storeId: session.store.id },
           summary: target.summary,
           staffName: session.staff.displayName,
         });
@@ -365,10 +366,14 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
   const [radius, setRadius] = useState('');
   const [active, setActive] = useState(true);
   const [locating, setLocating] = useState(false);
+  // 每次打开、关闭都换一个号：定位晚到时对话框已经关了或换成了别的打卡点，就不填（Codex 审查 56b128b）
+  const locateToken = useRef(0);
   const save = useSave(onClose);
   useResetOnOpen(
     !!target,
     () => {
+      locateToken.current += 1;
+      setLocating(false);
       setName(existing?.name ?? '');
       setAddress(existing?.address ?? '');
       setLat(existing ? existing.lat.toFixed(6) : '');
@@ -397,13 +402,16 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
       return;
     }
     setLocating(true);
+    const token = locateToken.current;
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        if (token !== locateToken.current) return;
         setLat(pos.coords.latitude.toFixed(6));
         setLng(pos.coords.longitude.toFixed(6));
         setLocating(false);
       },
       () => {
+        if (token !== locateToken.current) return;
         save.setError('没取到位置（没有授权或信号不好），请手动填写经纬度');
         setLocating(false);
       },

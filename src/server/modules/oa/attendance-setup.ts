@@ -42,6 +42,8 @@ const span = (label: string, max: number) => z.number(`请填写${label}`).int()
 const version = z.number().int().positive().optional();
 /** 新建带操作编号（修改不带，靠版本） */
 const clientKey = z.uuid('缺少有效的操作编号，请刷新页面后重试').optional();
+/** 新建时页面所在的门店：结果待确认的请求换了门店再重提时拒绝，不把 A 店的设置建到 B 店（Codex 审查 56b128b） */
+const storeId = z.number().int().positive().optional();
 
 const ShiftInput = z
   .object({
@@ -58,6 +60,7 @@ const ShiftInput = z
     active: z.boolean().default(true),
     version,
     clientKey,
+    storeId,
   })
   .superRefine((s, ctx) => {
     const problem = shiftProblem(s);
@@ -73,6 +76,7 @@ const LocationInput = z.object({
   active: z.boolean().default(true),
   version,
   clientKey,
+  storeId,
 });
 
 const GroupInput = z.object({
@@ -84,6 +88,7 @@ const GroupInput = z.object({
   memberIds: z.array(z.number().int().positive()).max(2000).default([]),
   version,
   clientKey,
+  storeId,
 });
 
 /** 本店在职员工（专用账号、系统账号不算）；s 是 staff 表 */
@@ -136,8 +141,9 @@ type Kind = 'shift' | 'location' | 'group';
  * 新建的操作编号（与 OA-02 批量开通同一个做法）：同一编号原样重提返回原来建的那一行；换了内容拒绝；确认作废过的拒绝。
  * 返回 null 表示这个编号还没用过、可以建；建完调 recordCreate 记下
  */
-async function replayCreate(tx: Tx, key: string | undefined, kind: Kind, input: object): Promise<{ hash: string; refId: number | null }> {
+async function replayCreate(tx: Tx, key: string | undefined, kind: Kind, input: { storeId?: number } & Record<string, unknown>): Promise<{ hash: string; refId: number | null }> {
   if (!key) throw unprocessable('CLIENT_KEY_REQUIRED', '缺少操作编号，请刷新页面后重试');
+  if (input.storeId !== currentStoreId()) throw conflict('STORE_SWITCHED', '这一条是在别的门店新建的：请换回那家门店再查回或重新提交');
   const hash = hashRequest({ kind, ...input, clientKey: undefined, version: undefined });
   await lockOpKey(tx, key);
   const [seen] = await tx<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${key}`;
@@ -184,7 +190,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
                    version = version + 1, updated_by = ${actorId}, updated_at = now()
             WHERE id = ${shiftId}`;
         }
-        const { version: _v, clientKey: _k, ...after } = s;
+        const { version: _v, clientKey: _k, storeId: _st, ...after } = s;
         await writeAudit(tx, {
           staffId: actorId,
           action: 'oa_shift_saved',
@@ -235,7 +241,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
                    version = version + 1, updated_by = ${actorId}, updated_at = now()
             WHERE id = ${locationId}`;
         }
-        const { version: _v, clientKey: _k, ...after } = l;
+        const { version: _v, clientKey: _k, storeId: _st, ...after } = l;
         await writeAudit(tx, {
           staffId: actorId,
           action: 'oa_location_saved',
@@ -337,7 +343,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
             )}
             ON CONFLICT (staff_id) DO UPDATE SET group_id = EXCLUDED.group_id, joined_at = now() WHERE oa_group_members.group_id <> EXCLUDED.group_id`;
         }
-        const { version: _v, clientKey: _k, ...after } = g;
+        const { version: _v, clientKey: _k, storeId: _st, ...after } = g;
         await writeAudit(tx, {
           staffId: actorId,
           action: 'oa_group_saved',
