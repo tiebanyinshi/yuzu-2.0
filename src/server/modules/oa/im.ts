@@ -414,6 +414,10 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
       if (m.revoked) return;
       if (m.late) throw unprocessable('REVOKE_TOO_LATE', `发出超过 ${IM_REVOKE_MINUTES} 分钟的消息不能撤回`);
       await tx`UPDATE oa_im_messages SET revoked_at = now() WHERE id = ${id}`;
+      // @ 通知里抄了正文的前几十个字：一并换成撤回提示（已读、未读的都改，Codex 审查 71a6762）
+      await tx`
+        UPDATE oa_notifications SET body = ${`${req.actor.displayName}撤回了这条消息`}
+        WHERE kind = 'im_message' AND ref_type = 'oa_im_message' AND ref_id = ${id}`;
     });
     return one(id);
   });

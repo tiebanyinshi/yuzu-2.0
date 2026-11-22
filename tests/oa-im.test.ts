@@ -153,6 +153,11 @@ describe('OA-14 即时通讯', () => {
     const later = new Date(Date.now() + 120_000).toISOString();
     expect((await api<ImPollResult>(ctx.app, emp.a!.cookie, 'GET', `/api/oa/im/conversations/${group}/poll?after=${id}&since=${encodeURIComponent(later)}`)).body.revoked).toEqual([]);
     expect((await list(emp.a!)).items.find((x) => x.id === group)!.preview).toBe('im_b撤回了一条消息');
+    // 带 @ 的消息撤回以后，通知里抄的正文也换掉
+    const at = await say(emp.b!, group, { body: '@im_a 机密内容', mentions: [emp.a!.id] });
+    await api(ctx.app, emp.b!.cookie, 'POST', `/api/oa/im/messages/${at.body.message.id}/revoke`);
+    const [nb] = await ctx.sql<{ body: string }[]>`SELECT body FROM oa_notifications WHERE ref_type = 'oa_im_message' AND ref_id = ${at.body.message.id}`;
+    expect(nb!.body).toBe('im_b撤回了这条消息');
     const old = await say(emp.b!, group, { body: '太久了' });
     await ctx.sql`UPDATE oa_im_messages SET created_at = now() - interval '3 minutes' WHERE id = ${old.body.message.id}`;
     expect(code(await api(ctx.app, emp.b!.cookie, 'POST', `/api/oa/im/messages/${old.body.message.id}/revoke`))).toBe('REVOKE_TOO_LATE');
