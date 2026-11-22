@@ -1022,7 +1022,7 @@ test.describe('8.0.10 点餐系统 · 平板电子菜单', () => {
     expect(await spacing()).toBeCloseTo(2.7, 1);
     // 放了：用随应用打包的一个开源 WOFF2 当作授权文件
     const woff2 = readFileSync(fileURLToPath(new URL('../node_modules/@fontsource/average-sans/files/average-sans-latin-400-normal.woff2', import.meta.url)));
-    await page.route('**/api/emenu/fonts/en.woff2', (route) => route.fulfill({ status: 200, contentType: 'font/woff2', body: woff2 }));
+    await page.route('**/api/emenu/fonts/brand-en', (route) => route.fulfill({ status: 200, contentType: 'font/woff2', body: woff2 }));
     await page.reload();
     await expect(page.getByTestId('emenu')).toHaveAttribute('data-brand-en', '');
     expect(await page.evaluate(() => document.fonts.check('16px "Tangqi Brand En"'))).toBe(true);
