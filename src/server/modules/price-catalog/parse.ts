@@ -314,6 +314,9 @@ function checkDecimals(ctx: Ctx, S: PriceSheet, row: number, field: string, text
   // 金额前的负号（「-599/晚」「-999封顶」）：报错，不丢掉负号当正价收（房号区间这些写在备注，不在收费参考里）
   const negative = /(^|[^\dA-Za-z])[-－−]\s*\d+(?:\.\d+)?/.exec(half(text));
   if (negative) ctx.error(S, row, field, `金额「${negative[0].replace(/^[^-－−]/, '').trim()}」不对：价格不能是负数`);
+  // 千位分隔符（「3,000」「1,999封顶」）：报错，不截成逗号前后的一段当价格（逗号也可能是两个价之间的分隔，不猜）
+  const grouped = /\d\s*[,，]\s*\d/.exec(half(text));
+  if (grouped) ctx.error(S, row, field, `金额「${grouped[0]}」看不懂：数字里不要写逗号（千位分隔符），一个价写成 3000 这样`);
 }
 
 /** 「超时199/H」→ 每 60 分钟 19900 分 */

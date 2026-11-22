@@ -1235,4 +1235,20 @@ describe('价目表录入 第四批：对接收银项目', () => {
       ['低消', 300000],
     ]);
   });
+
+  it('第二十三轮审查：房间金额带千位分隔符（「3,000」「1,999」）报错，不截成一段当价格', async () => {
+    const room = (type: string, price: string, rule: string | null, note: string) =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        [type, '5间', price, rule, note],
+      ]);
+    for (const s of [
+      room('餐饮包房', '688元/位\n低消：3,000', null, 'V999'),
+      room('轰趴房', '6小时：1,999\n12小时：2599', null, '70平（H203-209) 4人位'),
+      room('spa房', '399/2H起开', '超时199/H\n1,999封顶过夜', 'S301-S305'),
+    ]) {
+      const errs = ((await preview(workbook({ 房间价格: s }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
+      expect(errs.some((i) => i.row === 2 && i.message.includes('千位分隔符'))).toBe(true);
+    }
+  });
 });
