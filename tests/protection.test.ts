@@ -132,6 +132,15 @@ describe('频率限制（WL9）', () => {
     for (let i = 0; i < 25; i++) small.take(`k${i}`, 0);
     expect(small.size).toBeLessThanOrEqual(10);
   });
+
+  it('令牌桶：系统时间往回调（校时）不倒扣，照常能用', () => {
+    const b = new TokenBuckets(2, 1);
+    expect(b.take('a', 100_000).ok).toBe(true);
+    // 往回调了一天：经过的时间按 0 算，桶里还剩 1 个
+    expect(b.take('a', 100_000 - 86_400_000).ok).toBe(true);
+    expect(b.take('a', 100_000 - 86_400_000).ok).toBe(false);
+    expect(b.take('a', 100_000 - 86_400_000 + 1000).ok).toBe(true);
+  });
 });
 
 describe('访问网段（WL10）', () => {

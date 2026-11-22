@@ -103,7 +103,8 @@ export class TokenBuckets {
       b = { tokens: this.capacity, at: now };
       this.buckets.set(key, b);
     } else {
-      b.tokens = Math.min(this.capacity, b.tokens + ((now - b.at) / 1000) * this.refillPerSec);
+      // 系统时间往回调（校时）时不倒扣：经过的时间按 0 算，否则这段时间里的会话都会被当成请求太频繁
+      b.tokens = Math.min(this.capacity, b.tokens + (Math.max(0, now - b.at) / 1000) * this.refillPerSec);
       b.at = now;
     }
     if (b.tokens >= 1) {

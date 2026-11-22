@@ -147,6 +147,8 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   // OA-04 考勤设置：与新建接口一致
   oa_attendance_setup: ['hr.attendance'],
   oa_schedule_save: ['hr.attendance'],
+  // OA-06 打卡：登录就能打，只能查回、作废自己的（SELF_OPS）
+  oa_punch: [],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -223,6 +225,8 @@ const READ: Record<ErpOpType, Permission[]> = {
   oa_staff_import: ['hr.org', 'staff.manage'],
   oa_attendance_setup: ['hr.attendance'],
   oa_schedule_save: ['hr.attendance'],
+  // OA-06 打卡：登录就能打，只能查回、作废自己的（SELF_OPS）
+  oa_punch: [],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {
@@ -323,7 +327,15 @@ const KeyParam = z.object({ key: z.uuid('操作编号格式不正确') });
 const TypeQuery = z.object({ type: z.enum(ERP_OP_TYPES, '缺少原操作的业务类型') });
 const AbandonInput = TypeQuery.extend({ summary: z.string().trim().max(200).default('') });
 
+/** 登录就能做、只能查回与作废自己那一笔的操作（OA-06 打卡） */
+const SELF_OPS: ReadonlySet<ErpOpType> = new Set(['oa_punch']);
+
 async function customerOpScope(db: Db, key: string, type: ErpOpType, actor: Parameters<typeof can>[0] & { id: number }) {
+  if (SELF_OPS.has(type)) {
+    const owners = await db`SELECT staff_id FROM idempotency_keys WHERE key=${key}::uuid UNION SELECT staff_id FROM op_fences WHERE key=${key}::uuid AND op_type=${type}`;
+    if (owners.some((row) => Number(row.staffId) !== actor.id)) throw forbidden('只能查回或作废自己的打卡');
+    return;
+  }
   if (!type.startsWith('customer_') || can(actor, 'customer.manage')) return;
   const owners = await db`SELECT staff_id FROM idempotency_keys WHERE key=${key}::uuid UNION SELECT staff_id FROM op_fences WHERE key=${key}::uuid AND op_type=${type}`;
   if (owners.some((row) => Number(row.staffId) !== actor.id)) throw forbidden('不能查回或作废其他员工的客户部操作');
@@ -336,7 +348,7 @@ export function registerErpOpsRoutes(app: FastifyInstance, deps: Deps) {
   app.get('/api/erp/ops/:key', { preHandler: guard() }, async (req) => {
     const { key } = parse(KeyParam, req.params);
     const { type } = parse(TypeQuery, req.query ?? {});
-    if (!allowed(req.actor, READ[type])) throw forbidden();
+    if (!SELF_OPS.has(type) && !allowed(req.actor, READ[type])) throw forbidden();
     await customerOpScope(sql, key, type, req.actor);
     const result = await lookupErpOp(sql, key, type);
     // A foreign submission may have committed between the first check and lookup.
@@ -347,7 +359,7 @@ export function registerErpOpsRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/erp/ops/:key/abandon', { preHandler: guard() }, async (req) => {
     const { key } = parse(KeyParam, req.params);
     const input = parse(AbandonInput, req.body ?? {});
-    if (!allowed(req.actor, WRITE[input.type])) throw forbidden();
+    if (!SELF_OPS.has(input.type) && !allowed(req.actor, WRITE[input.type])) throw forbidden();
     const outcome = await sql.begin(async (tx) => {
       await setTxTimeouts(tx);
       const result = await fenceKey(tx, key, input.type, req.actor.id);
