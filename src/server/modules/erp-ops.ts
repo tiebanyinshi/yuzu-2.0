@@ -152,6 +152,9 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   oa_face_enroll: [],
   // OA-07 人脸审核：与审核接口一致
   oa_face_review: ['hr.attendance'],
+  // OA-09 假种与假期余额：与新建、调整接口一致
+  oa_leave_type: ['hr.attendance'],
+  oa_leave_adjust: ['hr.attendance'],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -233,6 +236,9 @@ const READ: Record<ErpOpType, Permission[]> = {
   oa_face_enroll: [],
   // OA-07 人脸审核：与审核接口一致
   oa_face_review: ['hr.attendance'],
+  // OA-09 假种与假期余额：与新建、调整接口一致
+  oa_leave_type: ['hr.attendance'],
+  oa_leave_adjust: ['hr.attendance'],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {

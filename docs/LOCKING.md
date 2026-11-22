@@ -376,4 +376,5 @@
   - 不取考勤设置锁、员工考勤锁；与打卡之间只有打卡事务里那一下只读核对，不成环。
 - **考勤结算**（OA-08，`src/server/modules/oa/attendance-daily.ts`）：按员工 id 升序，一位员工一个事务：员工的考勤锁（`lockStaffAttendance`，与打卡、保存排班串行：结算时这位员工的打卡与排班不会同时在变）→ 这位员工的结果行（`oa_attendance_daily`，`INSERT … ON CONFLICT DO UPDATE`）→ 站内通知。后台任务与人事「重新结算」走同一段，几个进程同时跑也只是重算同样的结果。保存排班去掉当天已经结算过的一班（没有打卡）时，在保存的事务里、员工考勤锁与排班行之后删掉那几条结果行，顺序与结算一致（员工考勤锁 → 结果行）；结算取到员工考勤锁以后再核对候选排班还在，读候选与取锁之间被去掉的班次跳过，不把结果插回去。
   - 人事改外勤算不算出勤：只锁那一条结果行（`FOR UPDATE`），带页面上看到的原值核对；不取员工考勤锁（结算重写的列里不含这一列）。
+- **假期余额**（OA-09，`src/server/modules/oa/leave.ts`）：操作编号（人事调整 `oa_leave_adjust`、新建假种 `oa_leave_type` 才有：`lockOpKey`，查 `idempotency_keys`、核对没有确认作废）→ 员工这一年这一假种的余额行（`lockBalance`：`INSERT … ON CONFLICT DO NOTHING` 再 `FOR UPDATE`）→ 插明细（只追加）、改合计。年假自动发放一位员工一个假种一个事务，取到余额行锁以后再核对今年还没发过（唯一索引兜底，几个进程同时跑也只发一次）。OA-13 请假扣减与撤销退回照这个顺序调 `changeBalance`。修改假种只锁那一行（`FOR UPDATE` 核对版本）。
 - **附件上传**（OA-03，`src/server/modules/oa/attachments.ts`）：上传人的锁（`pg_advisory_xact_lock('oa_attachment_upload', 员工编号)`，同一个人的上传串行）→ 同一操作编号查回 → 清掉自己过期没用上的 → 核对限额 → 插入（新行）。挂到单据上（`bindAttachments`）在调用方的事务里按编号锁附件行（`FOR UPDATE`）；每分钟任务清过期没挂上的，条件里带 `ref_type IS NULL`，正在挂的行等它挂上就不再删。

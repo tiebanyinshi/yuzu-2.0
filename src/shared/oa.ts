@@ -582,4 +582,143 @@ export interface AttendanceDay {
 export interface MyAttendance {
   month: string;
   rows: AttendanceDailyRow[];
+  /** OA-09：本人这个月的汇总 */
+  summary: AttendanceMonthStats;
+}
+
+// ───────────────────────── OA-09 考勤月报与假期余额（docs/OA.md 第 12 节） ─────────────────────────
+
+/** 一个人一个月的考勤汇总（按已结算的每日结果） */
+export interface AttendanceMonthStats {
+  /** 应出勤：有排班（已结算）的天数 */
+  scheduledDays: number;
+  /** 实际出勤：至少一班打了卡的天数（外勤被定为不算出勤的那一班不算） */
+  attendedDays: number;
+  lateCount: number;
+  lateMinutes: number;
+  earlyCount: number;
+  earlyMinutes: number;
+  /** 缺卡：缺上班卡、缺下班卡各算一次（旷工的不重复算） */
+  missingCount: number;
+  absentCount: number;
+  outworkCount: number;
+}
+export const EMPTY_MONTH_STATS: AttendanceMonthStats = {
+  scheduledDays: 0,
+  attendedDays: 0,
+  lateCount: 0,
+  lateMinutes: 0,
+  earlyCount: 0,
+  earlyMinutes: 0,
+  missingCount: 0,
+  absentCount: 0,
+  outworkCount: 0,
+};
+/** 月报的列（表格与导出共用） */
+export const MONTH_STAT_COLUMNS: { key: keyof AttendanceMonthStats; label: string }[] = [
+  { key: 'scheduledDays', label: '应出勤天数' },
+  { key: 'attendedDays', label: '实际出勤天数' },
+  { key: 'lateCount', label: '迟到次数' },
+  { key: 'lateMinutes', label: '迟到分钟' },
+  { key: 'earlyCount', label: '早退次数' },
+  { key: 'earlyMinutes', label: '早退分钟' },
+  { key: 'missingCount', label: '缺卡次数' },
+  { key: 'absentCount', label: '旷工次数' },
+  { key: 'outworkCount', label: '外勤次数' },
+];
+export interface AttendanceMonthRow extends AttendanceMonthStats {
+  staffId: number;
+  staffName: string;
+  employeeNo: string | null;
+  department: string;
+}
+/** 后台「考勤月报」 */
+export interface AttendanceMonth {
+  month: string;
+  /** 能筛的部门（人事全部，部门负责人只有本部门） */
+  departments: { key: string; name: string }[];
+  rows: AttendanceMonthRow[];
+}
+
+/** 年假按工龄分档：满 years 年给 days 天 */
+export interface LeaveTier {
+  years: number;
+  days: number;
+}
+export interface LeaveType {
+  id: number;
+  name: string;
+  paid: boolean;
+  proofRequired: boolean;
+  hasBalance: boolean;
+  /** 有的才按工龄自动发放（年假） */
+  annualTiers: LeaveTier[] | null;
+  active: boolean;
+  sort: number;
+  version: number;
+}
+export const LEAVE_NAME_MAX = 20;
+export const LEAVE_REASON_MAX = 200;
+/** 一次调整最多加减多少天 */
+export const LEAVE_ADJUST_MAX_DAYS = 365;
+export type LeaveEntryKind = 'grant' | 'adjust' | 'use' | 'restore';
+export const LEAVE_ENTRY_LABELS: Record<LeaveEntryKind, string> = { grant: '按规则发放', adjust: '人事调整', use: '请假扣减', restore: '撤销退回' };
+
+/** 余额单位半天：显示成「2.5 天」 */
+export function halvesText(halves: number): string {
+  return `${halves / 2} 天`;
+}
+/** 到 onDate 满几年（入职那天起算，没到周年的不算） */
+export function yearsOfService(hireDate: string, onDate: string): number {
+  if (onDate < hireDate) return 0;
+  const y = Number(onDate.slice(0, 4)) - Number(hireDate.slice(0, 4));
+  return onDate.slice(5) >= hireDate.slice(5) ? y : y - 1;
+}
+/** 按工龄分档给几天（满的最高一档；一档都不满给 0） */
+export function annualDays(tiers: readonly LeaveTier[], years: number): number {
+  let days = 0;
+  for (const t of [...tiers].sort((a, b) => a.years - b.years)) if (years >= t.years) days = t.days;
+  return days;
+}
+
+export interface LeaveBalance {
+  leaveTypeId: number;
+  name: string;
+  /** 发放（含调整）合计，半天 */
+  grantedHalves: number;
+  usedHalves: number;
+}
+export interface LeaveEntry {
+  id: number;
+  leaveTypeId: number;
+  leaveTypeName: string;
+  kind: LeaveEntryKind;
+  halves: number;
+  reason: string;
+  createdByName: string | null;
+  createdAt: string;
+}
+/** 后台「假种与余额」：某一年本店员工的余额 */
+export interface LeaveYear {
+  year: number;
+  types: LeaveType[];
+  staff: { staffId: number; staffName: string; employeeNo: string | null; hireDate: string | null; balances: LeaveBalance[] }[];
+}
+/** 员工「假期余额」 */
+export interface MyLeave {
+  year: number;
+  types: LeaveType[];
+  balances: LeaveBalance[];
+  entries: LeaveEntry[];
+}
+export interface LeaveAdjustSaved {
+  balance: LeaveBalance;
+  /** 那一条调整明细（操作编号查回用） */
+  entryId: number;
+  replayed: boolean;
+}
+export interface LeaveTypeSaved {
+  types: LeaveType[];
+  id: number;
+  replayed: boolean;
 }
