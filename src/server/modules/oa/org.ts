@@ -60,6 +60,16 @@ function storeCond(db: Db, scope: OrgScope) {
     AND (EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id) OR ${DEFAULT_STORE_ID}::bigint = ANY(${scope.stores}::bigint[])))`;
 }
 
+/**
+ * 锁住员工行之后另起一句核对门店范围（Codex 审查 f036fc2）：调店（PUT /api/staff/:id/stores）先锁员工行再改 staff_stores，
+ * 写在加锁那一句里的子查询用的是等锁之前的快照，等到锁以后照旧按调店前的门店放行；分开写，读到的是调店提交后的
+ */
+async function inStoreScope(tx: Tx, staffId: number, scope: OrgScope): Promise<boolean> {
+  if (scope.all) return true;
+  const [row] = await tx<{ ok: boolean }[]>`SELECT ${storeCond(tx, scope)} AS ok FROM staff s WHERE s.id = ${staffId}`;
+  return row?.ok === true;
+}
+
 interface EmployeeRow {
   staffId: number;
   username: string;
@@ -137,9 +147,8 @@ async function lockOwners(tx: Tx) {
 }
 
 async function lockEmployee(tx: Tx, id: number, scope: OrgScope) {
-  const [row] = await tx<{ id: number; system: boolean; role: string; inScope: boolean }[]>`
-    SELECT s.id, s.system, s.role, ${storeCond(tx, scope)} AS in_scope FROM staff s WHERE s.id = ${id} FOR NO KEY UPDATE`;
-  if (!row || row.system || NOT_EMPLOYEE_ROLES.includes(row.role) || !row.inScope) throw notFound('员工不存在');
+  const [row] = await tx<{ id: number; system: boolean; role: string }[]>`SELECT id, system, role FROM staff WHERE id = ${id} FOR NO KEY UPDATE`;
+  if (!row || row.system || NOT_EMPLOYEE_ROLES.includes(row.role) || !(await inStoreScope(tx, id, scope))) throw notFound('员工不存在');
   if (!scope.all && row.role === 'owner') throw forbidden('总裁的档案、离职与复职只有总裁能办');
   const [profile] = await tx<{ version: number; status: EmploymentStatus; hireDate: string | null }[]>`
     SELECT version, status, hire_date::text AS hire_date FROM staff_profiles WHERE staff_id = ${id} FOR UPDATE`;
@@ -167,7 +176,8 @@ export function registerOaOrgRoutes(app: FastifyInstance, { sql }: Deps) {
       // 锁顺序（LOCKING 第 9 节）：员工 → 员工档案 → 部门。先锁住要指定的主管（与办理离职互斥：离职先锁员工再清部门主管），
       // 免得这边刚核对完在职、那边办完离职，部门上留下一位离职的指定主管
       if (input.headStaffId) {
-        const [head] = await tx<{ id: number }[]>`SELECT s.id FROM staff s WHERE s.id = ${input.headStaffId} AND s.active AND NOT s.system AND ${storeCond(tx, scope)} FOR SHARE`;
+        const [head] = await tx<{ id: number }[]>`SELECT id FROM staff WHERE id = ${input.headStaffId} AND active AND NOT system FOR SHARE`;
+        if (head && !(await inStoreScope(tx, head.id, scope))) throw unprocessable('HEAD_INVALID', '主管要选一位在职员工');
         const [profile] = head ? await tx<{ status: EmploymentStatus }[]>`SELECT status FROM staff_profiles WHERE staff_id = ${head.id} FOR SHARE` : [];
         if (!head || profile?.status === 'left') throw unprocessable('HEAD_INVALID', '主管要选一位在职员工');
       }
