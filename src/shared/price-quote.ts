@@ -49,7 +49,8 @@ export function quoteUnit(p: Omit<QuotePick, 'quantity'>): { unitCents: number; 
   const e = p.entry;
   if (!e.active) return `「${e.name}」已停用`;
   if (e.priceMode === 'rate') return `「${e.name}」是比例，不单独计价`;
-  if (e.kind === 'dish' && !e.orderable) return `「${e.name}」不可下单`;
+  // 不可下单的（待定价的菜、页面上取消了「可以下单」的任何项目）不计价
+  if (!e.orderable) return `「${e.name}」不可下单`;
   const detail: string[] = [];
   let base: number | null;
   let baseMinutes: number | null;

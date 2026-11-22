@@ -1021,6 +1021,9 @@ describe('价目表录入 第四批：前台试算', () => {
     expect(serviceFeeOf(5890, 1000)).toBe(589);
     expect(serviceFeeOf(1995, 1000)).toBe(200);
     expect(serviceFeeOf(1994, 1000)).toBe(199);
+    // 取消了「可以下单」的非菜品项目同样算不了
+    const off = priceQuote([{ entry: { ...get('台球'), orderable: false }, quantity: 1 }], fee);
+    expect(off).toMatchObject({ problems: ['「台球」不可下单'], subtotalCents: 0, feeCents: 0, totalCents: 0 });
     // 停用了服务费的：不加
     expect(priceQuote([{ entry: get('台球'), quantity: 1 }], { ...fee, active: false })).toMatchObject({ feeRateBp: null, feeCents: 0, totalCents: 3900 });
   });
