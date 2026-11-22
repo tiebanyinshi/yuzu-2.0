@@ -31,7 +31,7 @@ test.describe('OA-11 办公审批', () => {
     await emp.getByTestId('oa-field-content').fill('盖合同专用章一份');
     await emp.getByTestId('oa-approval-submit').click();
     await expect(emp.getByTestId('oa-approval-status')).toHaveText('审批中');
-    await expect(emp.getByTestId('oa-approval-steps')).toContainText('待处理');
+    await expect(emp.getByTestId('oa-approval-steps')).toContainText('审批中');
     const id = Number(new URL(emp.url()).pathname.split('/').pop());
     expect(id).toBeGreaterThan(0);
 

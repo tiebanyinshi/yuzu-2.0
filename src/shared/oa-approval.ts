@@ -170,14 +170,6 @@ export interface ApprovalTemplate {
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn';
 export const APPROVAL_STATUS_LABELS: Record<ApprovalStatus, string> = { pending: '审批中', approved: '已通过', rejected: '已驳回', withdrawn: '已撤销' };
 export type ApprovalStepStatus = 'waiting' | 'pending' | 'approved' | 'rejected' | 'transferred' | 'cancelled';
-export const APPROVAL_STEP_LABELS: Record<ApprovalStepStatus, string> = {
-  waiting: '未到',
-  pending: '待处理',
-  approved: '已通过',
-  rejected: '已驳回',
-  transferred: '已转交',
-  cancelled: '不用处理',
-};
 export type ApprovalEventKind = 'submit' | 'approve' | 'reject' | 'transfer' | 'withdraw' | 'comment' | 'urge';
 export const APPROVAL_EVENT_LABELS: Record<ApprovalEventKind, string> = {
   submit: '提交',

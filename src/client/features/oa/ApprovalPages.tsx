@@ -10,7 +10,6 @@ import { Paperclip, Plus } from 'lucide-react';
 import {
   APPROVAL_EVENT_LABELS,
   APPROVAL_STATUS_LABELS,
-  APPROVAL_STEP_LABELS,
   derivedText,
   type ApprovalAction,
   type ApprovalBox,
@@ -28,7 +27,7 @@ import { formatYuan } from '@shared/money';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { useSession } from '../../lib/session';
-import { cn, formatDateTime, uuid } from '../../lib/utils';
+import { formatDateTime, uuid } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { EmptyState } from '../../components/EmptyState';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
@@ -37,6 +36,8 @@ import { Dialog } from '../../components/Overlay';
 import { ReasonDialog } from '../../components/ReasonDialog';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Segmented, Select, Skeleton } from '../../components/ui';
+import { waited } from '../approvals/ApprovalProgress';
+import { ApprovalTimeline, type TimelineLevel } from '../approvals/ApprovalTimeline';
 import { NewApprovalPage, OptionsFailed } from './ApprovalForm';
 
 const KEY = ['oa', 'approvals'] as const;
@@ -166,6 +167,46 @@ function valueText(f: ApprovalField, v: unknown, leaveTypes: LeaveType[] | undef
   }
 }
 
+/**
+ * 办公审批的节点 → 公共审批链时间线（features/approvals/ApprovalTimeline）的一级一块：同一级转交过的合成一块，
+ * 写「谁 → 谁」；通过记「同意」、驳回记「退回」（docs/CONVENTIONS.md 第 3 节，Codex 审查 128b492）
+ */
+function timelineLevels(d: ApprovalDetail): TimelineLevel[] {
+  const bySeq = new Map<number, ApprovalDetail['steps']>();
+  for (const s of d.steps) bySeq.set(s.seq, [...(bySeq.get(s.seq) ?? []), s]);
+  return [...bySeq.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([seq, rows]) => {
+      const last = rows.at(-1)!;
+      const state: TimelineLevel['state'] = rows.some((r) => r.status === 'rejected')
+        ? 'returned'
+        : rows.some((r) => r.status === 'approved')
+          ? 'done'
+          : rows.some((r) => r.status === 'pending')
+            ? 'current'
+            : 'pending';
+      const acted = rows.filter((r) => r.status === 'approved' || r.status === 'rejected');
+      return {
+        level: seq,
+        label: rows.map((r) => r.approverName).join(' → '),
+        mode: `${last.label}${rows.length > 1 ? ' · 转交过' : ''}${last.status === 'cancelled' ? ' · 不用处理' : ''}`,
+        state,
+        actions: acted.map((r) => ({
+          id: r.id,
+          level: seq,
+          action: r.status === 'approved' ? ('approve' as const) : ('return' as const),
+          actorId: r.approverId,
+          actorName: r.approverName,
+          onBehalfOf: null,
+          onBehalfOfName: null,
+          comment: r.comment,
+          batch: false,
+          createdAt: r.actedAt ?? d.submittedAt,
+        })),
+      };
+    });
+}
+
 function ApprovalDetailPage({ id }: { id: number }) {
   const session = useSession();
   const qc = useQueryClient();
@@ -290,19 +331,13 @@ function ApprovalDetailPage({ id }: { id: number }) {
 
             <Card className="p-4 md:p-5">
               <p className="mb-2 text-[13px] font-bold text-ink-2">审批链</p>
-              <ol className="space-y-2" data-testid="oa-approval-steps">
-                {d!.steps.length === 0 && <li className="text-[13px] text-ink-3">没有要审批的人（发起人就是最上级），直接通过</li>}
-                {d!.steps.map((s) => (
-                  <li key={s.id} className="flex flex-wrap items-center gap-2 text-[14px]">
-                    <span className={cn('size-2.5 rounded-full', s.status === 'approved' ? 'bg-pine' : s.status === 'pending' ? 'bg-yuzu' : s.status === 'rejected' ? 'bg-clay' : 'bg-line-strong')} />
-                    <span className="font-semibold text-ink">{s.approverName}</span>
-                    <span className="text-[12.5px] text-ink-3">{s.label}</span>
-                    <Badge tone={s.status === 'approved' ? 'pine' : s.status === 'pending' ? 'yuzu' : s.status === 'rejected' ? 'clay' : 'neutral'}>{APPROVAL_STEP_LABELS[s.status]}</Badge>
-                    {s.transferredToName && <span className="text-[12.5px] text-ink-3">转给 {s.transferredToName}</span>}
-                    {s.comment && <span className="w-full pl-4.5 text-[13px] text-ink-2">「{s.comment}」</span>}
-                  </li>
-                ))}
-              </ol>
+              <div data-testid="oa-approval-steps">
+                {d!.steps.length === 0 ? (
+                  <p className="text-[13px] text-ink-3">没有要审批的人（发起人就是最上级），直接通过</p>
+                ) : (
+                  <ApprovalTimeline levels={timelineLevels(d!)} waitedText={waited(d!.events.at(-1)?.createdAt ?? d!.submittedAt)} testIdPrefix="oa-approval-level" />
+                )}
+              </div>
               {d!.cc.length > 0 && <p className="mt-3 text-[12.5px] text-ink-3">抄送：{d!.cc.map((c) => `${c.name}${c.readAt ? '（已读）' : ''}`).join('、')}</p>}
             </Card>
 

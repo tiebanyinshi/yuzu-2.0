@@ -114,6 +114,8 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
+  // 还在上传的附件个数：传完才能提交（新附件传完才进表单，Codex 审查 128b492）
+  const [uploading, setUploading] = useState(0);
   if (fromId && !values) return from.isError ? <LoadFailed title="原来的单没有取回来" onRetry={() => from.refetch()} retrying={from.isFetching} /> : <Skeleton className="h-60" />;
   const v = values ?? {};
   // 按最新的状态合并（附件上传完成时调用的是上传开始那一刻的回调，不能拿那时的表单整个盖回去，Codex 审查 03e17aa）
@@ -130,7 +132,7 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
 
   const submit = async () => {
     setTouched(true);
-    if (problem) return;
+    if (problem || uploading > 0) return;
     if (pending.length > 0) {
       setError('上一次提交结果待确认：请先到「审批」页上方查回、按原内容重新提交或作废');
       return;
@@ -166,7 +168,7 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
     <Card className="space-y-4 p-4 md:p-5" data-testid="oa-approval-form">
       {fromId && <Notice tone="info" title="修改后重新提交：会生成新的一张，原来那张留着" />}
       {template.fields.map((f) => (
-        <FieldInput key={f.key} field={f} value={v[f.key]} values={v} onChange={(x) => set(f.key, x)} />
+        <FieldInput key={f.key} field={f} value={v[f.key]} values={v} onChange={(x) => set(f.key, x)} onBusy={(d) => setUploading((n) => n + d)} />
       ))}
       {(error || (touched && problem)) && (
         <p className="text-[13px] text-clay" data-testid="oa-approval-problem">
@@ -185,8 +187,8 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
             清空
           </Button>
         )}
-        <Button variant="primary" size="lg" loading={saving} onClick={() => void submit()} data-testid="oa-approval-submit">
-          提交
+        <Button variant="primary" size="lg" loading={saving} disabled={uploading > 0} onClick={() => void submit()} data-testid="oa-approval-submit">
+          {uploading > 0 ? '附件上传中…' : '提交'}
         </Button>
       </div>
     </Card>
@@ -195,7 +197,20 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
 
 const testId = (f: ApprovalField) => `oa-field-${f.key}`;
 
-function FieldInput({ field: f, value, values, onChange }: { field: ApprovalField; value: unknown; values: Values; onChange: (v: unknown) => void }) {
+function FieldInput({
+  field: f,
+  value,
+  values,
+  onChange,
+  onBusy,
+}: {
+  field: ApprovalField;
+  value: unknown;
+  values: Values;
+  onChange: (v: unknown) => void;
+  /** 附件开始上传 +1、传完 −1 */
+  onBusy: (delta: number) => void;
+}) {
   const label = `${f.label}${f.required ? '' : '（可不填）'}`;
   const str = typeof value === 'string' || typeof value === 'number' ? String(value) : '';
   switch (f.type) {
@@ -269,7 +284,7 @@ function FieldInput({ field: f, value, values, onChange }: { field: ApprovalFiel
     case 'ref':
       return <RefInput field={f} label={label} value={str} onChange={onChange} />;
     case 'attachments':
-      return <AttachmentsInput field={f} label={label} value={Array.isArray(value) ? (value as OaAttachment[]) : []} onChange={onChange} />;
+      return <AttachmentsInput field={f} label={label} value={Array.isArray(value) ? (value as OaAttachment[]) : []} onChange={onChange} onBusy={onBusy} />;
   }
 }
 
@@ -344,13 +359,26 @@ function RefInput({ field: f, label, value, onChange }: { field: ApprovalField; 
   );
 }
 
-function AttachmentsInput({ field: f, label, value, onChange }: { field: ApprovalField; label: string; value: OaAttachment[]; onChange: (v: unknown) => void }) {
+function AttachmentsInput({
+  field: f,
+  label,
+  value,
+  onChange,
+  onBusy,
+}: {
+  field: ApprovalField;
+  label: string;
+  value: OaAttachment[];
+  onChange: (v: unknown) => void;
+  onBusy: (delta: number) => void;
+}) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const max = f.max ?? 9;
   const add = async (files: FileList | null) => {
     if (!files?.length) return;
     setBusy(true);
+    onBusy(1);
     const next = [...value];
     try {
       for (const file of [...files].slice(0, max - value.length)) next.push(await uploadFile(file));
@@ -359,6 +387,7 @@ function AttachmentsInput({ field: f, label, value, onChange }: { field: Approva
     } finally {
       setBusy(false);
       onChange(next);
+      onBusy(-1);
     }
   };
   return (
