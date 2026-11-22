@@ -315,6 +315,8 @@ export interface WbCell {
   style?: WbStyle;
   /** 超链接地址（外部网址） */
   link?: string;
+  /** 公式（不带等号，如「G4+I4-M4」）：照门店表格原样带上的计算列，打开文件时 Excel / WPS 自己算；有公式时不写 v */
+  f?: string;
 }
 
 export interface WbValidation {
@@ -354,6 +356,7 @@ const quoteSheet = (name: string) => `'${sheetNameOf(name).replace(/'/g, "''")}'
 
 function wbCellXml(ref: string, raw: WbCell | string | number | null): string {
   const cell: WbCell = raw !== null && typeof raw === 'object' ? raw : { v: raw };
+  if (cell.f) return `<c r="${ref}" s="${WB_STYLE_ID[cell.style ?? 'default']}"><f>${esc(cell.f)}</f></c>`;
   return cellXml(ref, cell.v, WB_STYLE_ID[cell.style ?? 'default']);
 }
 
