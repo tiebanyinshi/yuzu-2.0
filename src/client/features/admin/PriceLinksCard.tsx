@@ -11,7 +11,7 @@ import { PRICE_TIER_LABELS, type TierPrice } from '@shared/catalog';
 import { PRICE_SHEET_NAMES, matchesPriceSearch, priceNameKey, priceText, type PriceCatalogEntry } from '@shared/price-catalog';
 import { formatYuan } from '@shared/money';
 import { api, errorMessage, UncertainError } from '../../lib/api';
-import { sendErpOp, useErpPending } from '../../lib/erpPending';
+import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { qk, useCatalog } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { uuid } from '../../lib/utils';
@@ -58,7 +58,7 @@ export function PriceLinksCard({ entries }: { entries: PriceCatalogEntry[] }) {
   const qc = useQueryClient();
   const session = useSession();
   const links = useQuery({ queryKey: linksKey, queryFn: () => api.get<PriceLink[]>('/api/admin/price-catalog/links') });
-  const pending = useErpPending(PENDING_TYPES).length > 0;
+  const pending = useErpRecorded(PENDING_TYPES).length > 0;
   const [show, setShow] = useState<Show>('all');
   const [q, setQ] = useState('');
   const [picking, setPicking] = useState<LiveRow | null>(null);

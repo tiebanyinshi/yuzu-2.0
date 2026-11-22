@@ -30,7 +30,7 @@ import {
 } from '@shared/price-catalog';
 import { formatYuan } from '@shared/money';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
-import { ErpPendingStoreError, sendErpOp, useErpPending } from '../../lib/erpPending';
+import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { useSession } from '../../lib/session';
 import { loadTableFile, type LoadedTable } from '../../lib/import-file';
 import { formatDateTime, uuid } from '../../lib/utils';
@@ -183,7 +183,7 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
   const session = useSession();
   // 单条改动、导入（会替换整份草稿）、切换 / 放弃 / 回滚有结果待确认的：查回、重提或作废之前不再改，
   // 不然原请求晚到会把刚改的连同草稿一起换掉（AGENTS.md「结果待确认」）
-  const locked = useErpPending(PENDING_TYPES).length > 0;
+  const locked = useErpRecorded(PENDING_TYPES).length > 0;
   const [sheet, setSheet] = useState<SheetFilter>('all');
   const [editing, setEditing] = useState<PriceCatalogEntry | 'new' | null>(null);
   const [history, setHistory] = useState<PriceCatalogEntry | null>(null);
@@ -397,7 +397,7 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
   const [open, setOpen] = useState<'activate' | 'rollback' | 'discard' | null>(null);
   const session = useSession();
   // 切换生效、放弃草稿、整体回滚有结果待确认的：查回、重提或作废之前，这几个按钮都不显示（AGENTS.md「结果待确认」）
-  const setPending = useErpPending(PENDING_TYPES);
+  const setPending = useErpRecorded(PENDING_TYPES);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mismatches = countMismatches(shown.counts);
@@ -622,7 +622,7 @@ function ImportCard({ onImported }: { onImported: () => void }) {
   const qc = useQueryClient();
   const [file, setFile] = useState<LoadedTable | null>(null);
   const session = useSession();
-  const pending = useErpPending(PENDING_TYPES);
+  const pending = useErpRecorded(PENDING_TYPES);
   const [preview, setPreview] = useState<(PriceImportPreview & { digest: string }) | null>(null);
   const [busy, setBusy] = useState<'preview' | 'import' | null>(null);
   const [error, setError] = useState<string | null>(null);
