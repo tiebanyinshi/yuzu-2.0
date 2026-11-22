@@ -37,6 +37,8 @@ import { localMinute } from './punches';
 
 const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const PAGE = 50;
+/** 一次最多导出几张 */
+const EXPORT_LIMIT = 5000;
 const deptName = (key: string | null) => ORG_DEPARTMENTS.find((d) => d.key === key)?.name ?? '';
 
 const staffSpec = z.object({ kind: z.literal('staff'), staffId: z.number().int().positive() });
@@ -153,7 +155,9 @@ export function registerOaApprovalAdminRoutes(app: FastifyInstance, { sql, confi
 
   app.get('/api/oa/approvals/all.xlsx', { preHandler: allPerm }, async (req, reply) => {
     const q = parse(AllQuery, { ...(req.query as object), before: undefined });
-    const items = await listAll(sql, req.actor.id, tz, q, 5000);
+    // 多取一张看有没有超过上限：超过就拒绝、请缩小范围，不悄悄截掉较早的（Codex 审查 8f4ba02）
+    const items = await listAll(sql, req.actor.id, tz, q, EXPORT_LIMIT + 1);
+    if (items.length > EXPORT_LIMIT) throw unprocessable('EXPORT_TOO_LARGE', `符合条件的超过 ${EXPORT_LIMIT} 张，一次最多导出 ${EXPORT_LIMIT} 张，请按日期、模板或部门缩小范围分几次导出`);
     const buffer = buildXlsx({
       name: '办公审批',
       columns: [

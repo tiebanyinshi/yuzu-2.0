@@ -118,6 +118,14 @@ describe('OA-12 办公审批管理端', () => {
     expect(res.rawPayload.subarray(0, 2).toString()).toBe('PK');
     const [log] = await ctx.sql<{ detail: { count: number } }[]>`SELECT detail FROM audit_logs WHERE action = 'export' AND target_type = 'oa_approvals'`;
     expect(log!.detail.count).toBe(1);
+    // 超过上限明确拒绝，不悄悄截断（造 5001 张最小的单）
+    const [t] = await ctx.sql<{ id: number }[]>`SELECT id FROM oa_approval_templates WHERE code = 'general'`;
+    await ctx.sql`
+      INSERT INTO oa_approvals (template_id, template_code, template_name, fields, applicant_id, title, form, status, finished_at)
+      SELECT ${t!.id}, 'general', '通用', '[]', ${emp.staff!.id}, '批量' || g, '{}', 'withdrawn', now() FROM generate_series(1, 5001) g`;
+    const big = await ctx.app.inject({ method: 'GET', url: '/api/oa/approvals/all.xlsx', headers: { cookie: emp.hr!.cookie } });
+    expect(big.statusCode).toBe(422);
+    expect(big.json().error.code).toBe('EXPORT_TOO_LARGE');
   });
 
   it('看板：本月各模板的数量与平均时长；当前这一级等了超过 24 小时的列为超时', async () => {
