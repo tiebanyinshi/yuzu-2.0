@@ -125,7 +125,9 @@ export function PunchPage() {
   const data = q.data;
   const now = useClock(data?.now);
   const { loc, locate } = useLocation();
-  const pending = useErpRecorded(['oa_punch']);
+  // 只看本人的：同一台电脑换人登录后，上一位没确认的打卡不挡这一位（上一位登录回来照样能处理）
+  const mine = (op: { staffId?: number }) => op.staffId === session.staff.id;
+  const pending = useErpRecorded(['oa_punch']).filter(mine);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<PunchResult | null>(null);
@@ -172,6 +174,7 @@ export function PunchPage() {
         },
         summary: `${extra.outwork ? '外勤打卡' : '打卡'} · ${data.today}`,
         staffName: session.staff.displayName,
+        staffId: session.staff.id,
       });
       setLast(r);
       setOutwork(false);
@@ -217,7 +220,7 @@ export function PunchPage() {
     <>
       <PageHeader dateMode="calendar" title="打卡" subtitle="按排班的上下班窗口算是哪一班的卡；上班卡取第一次、下班卡取最后一次" />
       <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-7">
-        <ErpPendingPanel types={['oa_punch']} className="space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: TODAY_KEY })} />
+        <ErpPendingPanel types={['oa_punch']} filter={mine} className="space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: TODAY_KEY })} />
         {q.isPending ? (
           <Skeleton className="h-72" />
         ) : q.isError && !data ? (
