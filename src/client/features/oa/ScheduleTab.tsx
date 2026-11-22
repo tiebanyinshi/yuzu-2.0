@@ -80,12 +80,16 @@ export function ScheduleTab() {
     reset();
     void qc.invalidateQueries({ queryKey: ['oa', 'schedule'] });
   };
+  // 复制上周、保存进行中不让翻周、换组（复制的结果要填回发起时的那一周）
+  const busy = saving || copying;
   const go = (next: string) => {
+    if (busy) return;
     if (dirty.length && !window.confirm('这一周改了还没保存的格子会丢掉，确定翻周吗？')) return;
     reset();
     setMonday(next);
   };
   const pickGroup = (id: number) => {
+    if (busy) return;
     if (dirty.length && !window.confirm('改了还没保存的格子会丢掉，确定换考勤组吗？')) return;
     reset();
     setGroupId(id);
@@ -168,8 +172,9 @@ export function ScheduleTab() {
         toast({ tone: 'info', title: `${part}${errorMessage(e)}`, body: '已载入最新的排班，请重新排' });
         reload();
       } else if (done) {
-        setError(`${part}其余没有保存：${errorMessage(e)}`);
+        // 先重新载入（会清掉提示），再写提示：部分保存了、其余为什么没保存
         reload();
+        setError(`${part}其余没有保存：${errorMessage(e)}`);
       } else if (e instanceof ErpPendingStoreError) setError(e.message);
       else setError(errorMessage(e));
     } finally {
@@ -186,7 +191,7 @@ export function ScheduleTab() {
     <Card className="p-5" data-testid="att-schedule">
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {w.groups.length > 0 && (
-          <Select value={w.group?.id ?? ''} onChange={(e) => pickGroup(Number(e.target.value))} fullWidth={false} className="w-44" aria-label="考勤组" data-testid="att-schedule-group">
+          <Select value={w.group?.id ?? ''} onChange={(e) => pickGroup(Number(e.target.value))} disabled={busy} fullWidth={false} className="w-44" aria-label="考勤组" data-testid="att-schedule-group">
             {w.groups.map((g) => (
               <option key={g.id} value={g.id}>
                 {g.name}
@@ -195,12 +200,12 @@ export function ScheduleTab() {
           </Select>
         )}
         <div className="flex items-center gap-1">
-          <Button size="sm" variant="ghost" icon={<ChevronLeft className="size-4" />} onClick={() => go(shiftDate(from, -7))} aria-label="上一周" />
+          <Button size="sm" variant="ghost" icon={<ChevronLeft className="size-4" />} disabled={busy} onClick={() => go(shiftDate(from, -7))} aria-label="上一周" />
           <span className="num min-w-36 text-center text-[13px] font-semibold text-ink-2" data-testid="att-schedule-range">
             {from} – {shiftDate(from, 6)}
           </span>
-          <Button size="sm" variant="ghost" icon={<ChevronRight className="size-4" />} onClick={() => go(shiftDate(from, 7))} aria-label="下一周" data-testid="att-schedule-next" />
-          <Button size="sm" variant="ghost" onClick={() => go(mondayOf(w.today))}>
+          <Button size="sm" variant="ghost" icon={<ChevronRight className="size-4" />} disabled={busy} onClick={() => go(shiftDate(from, 7))} aria-label="下一周" data-testid="att-schedule-next" />
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => go(mondayOf(w.today))}>
             本周
           </Button>
         </div>
