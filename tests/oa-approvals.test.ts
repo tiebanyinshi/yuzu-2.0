@@ -198,9 +198,10 @@ describe('OA-10 审批引擎', () => {
 
   it('条件加签：报销模板开了「超过 5000 元加签总经办」，金额超过才加一级', async () => {
     const fields = [{ key: 'amount', label: '金额', type: 'money', required: true, min: 1 }];
+    // 用迁移带的「报销」模板，只留金额一项（条件开关按模板编码 expense 判断）
     const [t] = await ctx.sql<{ id: number }[]>`
-      INSERT INTO oa_approval_templates (code, name, fields, levels, conditions)
-      VALUES ('expense', '报销', ${ctx.sql.json(fields as never)}, '[{"kind":"dept_head"}]', '{"expense_over_5000":true}') RETURNING id`;
+      UPDATE oa_approval_templates SET fields = ${ctx.sql.json(fields as never)}, levels = '[{"kind":"dept_head"}]', conditions = '{"expense_over_5000":true}'
+      WHERE code = 'expense' RETURNING id`;
     const post = (amount: number) => api<ApprovalSaved>(ctx.app, emp.staff!.cookie, 'POST', '/api/oa/approvals', { clientKey: randomUUID(), templateId: Number(t!.id), form: { amount } });
     expect((await post(100_000)).body.approval.steps.map((s) => s.approverId)).toEqual([emp.lead!.id]);
     const big = (await post(600_000)).body.approval;
@@ -208,7 +209,7 @@ describe('OA-10 审批引擎', () => {
       [emp.lead!.id, '本部门主管'],
       [emp.gmo!.id, '超过 5000 元加签'],
     ]);
-    expect(big.title).toBe('报销');
+    expect(big.title).toBe('报销 · ¥6,000.00');
   });
 
   it('附件：只能挂自己传的；挂上以后审批人看得到、不相干的人看不到', async () => {

@@ -7,15 +7,17 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, Palmtree, ScanFace } from 'lucide-react';
+import { Bell, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, Palmtree, ScanFace, Stamp } from 'lucide-react';
 import { shiftDate } from '@shared/labels';
 import type { MySchedule, MyScheduleItem } from '@shared/oa';
+import type { ApprovalSummary } from '@shared/oa-approval';
 import { clockText } from '@shared/technician-admin';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Button, Card, Skeleton } from '../../components/ui';
+import { ApprovalPages } from './ApprovalPages';
 import { NotificationsPage } from './Notifications';
 import { FacePage } from './FacePage';
 import { MyAttendancePage } from './MyAttendancePage';
@@ -23,6 +25,7 @@ import { MyLeavePage } from './MyLeavePage';
 import { PunchPage } from './PunchPage';
 
 const TILES = [
+  { to: '/oa/approvals', label: '审批', hint: '请假、加班、出差、报销、补卡', icon: Stamp, testId: 'oa-tile-approvals' },
   { to: '/oa/punch', label: '打卡', hint: '按排班打上下班卡、外勤打卡', icon: Fingerprint, testId: 'oa-tile-punch' },
   { to: '/oa/schedule', label: '我的排班', hint: '这个月每天上什么班', icon: CalendarDays, testId: 'oa-tile-schedule' },
   { to: '/oa/attendance', label: '我的考勤', hint: '每天的考勤结果、迟到缺卡', icon: CalendarCheck, testId: 'oa-tile-attendance' },
@@ -35,7 +38,9 @@ const TILES = [
 export function OfficePage() {
   const { pathname } = useLocation();
   const path = pathname.replace(/\/$/, '');
-  return path === '/oa/schedule' ? (
+  return path.startsWith('/oa/approvals') ? (
+    <ApprovalPages />
+  ) : path === '/oa/schedule' ? (
     <MySchedulePage />
   ) : path === '/oa/notifications' ? (
     <NotificationsPage />
@@ -53,6 +58,9 @@ export function OfficePage() {
 }
 
 function OfficeHomePage() {
+  // 审批的角标：待我审批的张数
+  const approvals = useQuery({ queryKey: ['oa', 'approvals', 'summary'], queryFn: () => api.get<ApprovalSummary>('/api/oa/approvals/summary') });
+  const todo = approvals.data?.todo ?? 0;
   return (
     <>
       <PageHeader dateMode="calendar" title="办公" subtitle="排班、打卡、审批、工资条等员工自己的事" />
@@ -60,6 +68,11 @@ function OfficeHomePage() {
         {TILES.map((t) => (
           <Link key={t.to} to={t.to} data-testid={t.testId} className="tap relative rounded-lg border border-line bg-card p-4 shadow-card transition-colors hover:border-line-strong">
             <t.icon className="size-6 text-pine" />
+            {t.to === '/oa/approvals' && todo > 0 && (
+              <span className="num absolute top-3 right-3 rounded-full bg-clay px-2 text-[12px] font-bold text-white" data-testid="oa-tile-approvals-badge">
+                {todo}
+              </span>
+            )}
             <p className="mt-3 text-[15px] font-bold text-ink">{t.label}</p>
             <p className="mt-0.5 text-[12.5px] text-ink-3">{t.hint}</p>
           </Link>
