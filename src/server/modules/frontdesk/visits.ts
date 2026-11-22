@@ -1071,6 +1071,8 @@ export async function lookupFrontdeskOp(db: Db, key: string, timezone: string, e
     const { getBooking } = await import('../bookings');
     return { found: true as const, type: row.opType as 'booking_create' | 'booking_change', booking: await getBooking(db, row.refId) };
   }
+  // 房态点单（回测整改 P07）：编号记在那次来访上；只说生效了、记在哪次来访（与点单页的查回一样不给整张账单）
+  if (row.opType === 'room_order_water' || row.opType === 'room_order_fruit') return { found: true as const, type: 'room_order' as const, visitId: Number(row.refId) };
   // 技师停牌、复牌、休假（8.0.8）：编号记在那位技师上
   if (row.opType === 'technician_state') return { found: true as const, type: 'technician_state' as const, technicianId: Number(row.refId) };
   // 桌台动作（8.1.15）：清台、维修、恢复、并台、拆台——查回编号记下的那一条桌台记录

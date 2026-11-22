@@ -981,6 +981,7 @@ const rcRoom = (spaceId: number, code: string, categoryKey: string, kind: RoomCa
   amount: null,
   phase: null,
   plannedEnd: null,
+  orders: null,
   ...extra,
 });
 const RC_GUESTS = [rcGuest(990_801, 'A023', '欧阳慕容雪晴（长名字的会员）', '18', '技师小林'), rcGuest(990_802, 'B105', '王先生', '23', '技师阿秀')];

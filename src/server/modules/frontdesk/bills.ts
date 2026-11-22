@@ -114,7 +114,7 @@ export interface PostTxMeta {
    * 这个编号记成哪种业务（8.1.15）：平时是挂账 bill_post；发牌后的「超时加收」也走这里挂一条手动金额的明细，
    * 编号记成 visit_incident（查回、作废都按那一类），不带时与以前完全一样
    */
-  opType?: 'bill_post' | 'visit_incident';
+  opType?: 'bill_post' | 'visit_incident' | 'room_order_water' | 'room_order_fruit';
 }
 
 export interface PostedLine {

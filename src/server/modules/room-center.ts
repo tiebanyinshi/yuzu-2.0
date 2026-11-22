@@ -72,6 +72,8 @@ import {
 } from './room-center-ops';
 import { loadRoomRules, roomsBoard } from './rooms';
 import { loadUsageRules, usageBoard } from './usages';
+import type { RoomOrderSummary } from '@shared/room-orders';
+import { roomOrderSums } from './room-orders';
 
 // ───────────────────────── 房型（后台） ─────────────────────────
 
@@ -213,6 +215,35 @@ const earliest = (list: (string | null)[]) => list.filter((x): x is string => x 
 const latest = (list: (string | null)[]) => list.filter((x): x is string => x !== null).sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null;
 
 /** 能不能看客人是谁（姓名、档阶、备注）：前台、钟房、客房的操作岗位；只管打扫的只看得到手牌号 */
+/** 看房态中心全部内容要其中一样（客房、打扫、钟房、收银）；只有水吧 / 果吧下单权限的只看精简的卡片 */
+const ROOM_CENTER_READ = ['room.operate', 'room.housekeep', 'technician.dispatch', 'frontdesk.checkout'] as const;
+
+/**
+ * 只为点单来看房态的（回测整改 P07，Codex 安全审查 e1c3203）：只留挑房间要的——是哪间、什么状态、这次在用点了几单；
+ * 不给客人、手牌与来访、技师与钟、金额、客房的房价与押金、预约、维修与打扫的说明
+ */
+function orderOnlyCard(r: RoomCard): RoomCard {
+  return {
+    ...r,
+    version: 0,
+    guests: [],
+    usage: null,
+    usagePriced: false,
+    hotel: null,
+    maintenance: null,
+    dirtySince: null,
+    dirtyNote: '',
+    booking: null,
+    merged: [],
+    guestText: null,
+    techText: null,
+    since: null,
+    amount: null,
+    phase: null,
+    plannedEnd: null,
+  };
+}
+
 const seesGuests = (actor: Actor) => can(actor, 'technician.dispatch') || can(actor, 'frontdesk.read') || can(actor, 'room.operate');
 
 export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCenterBoard> {
@@ -262,6 +293,25 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
   }
   const groupOf = new Map<number, number[]>();
   for (const members of groups.values()) for (const id of members) groupOf.set(id, members);
+
+  // 房态点单（8.2.0 P07）：在店客人从房态点的单数与金额，按房里现在的客人加起来
+  const orderSums = await roomOrderSums(db, [
+    ...[...facts.values()].flatMap((f) => f.guests.map((g) => Number(g.visit.id))),
+    ...usages.spaces.flatMap((s) => (s.usage ? [s.usage.visitId] : [])),
+    ...(hotel?.rooms ?? []).flatMap((r) => (r.stay ? [r.stay.visitId] : [])),
+  ]);
+  const sumOrders = (visitIds: number[]): RoomOrderSummary | null => {
+    let count = 0;
+    let amount = 0;
+    for (const v of new Set(visitIds)) {
+      const s = orderSums.get(v);
+      if (s) {
+        count += s.count;
+        amount += s.amount;
+      }
+    }
+    return count > 0 || amount > 0 ? { count, amount } : null;
+  };
 
   const rooms: RoomCard[] = [];
   for (const [id, f] of facts) {
@@ -315,6 +365,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       amount: guests.length ? guests.reduce((n, g) => n + g.amount, 0) : null,
       phase,
       plannedEnd: latest(all.map((s) => s.plannedEnd)),
+      orders: sumOrders([...guests.map((g) => g.visitId), ...(usage ? [usage.visitId] : [])]),
     });
   }
   for (const r of hotel?.rooms ?? []) {
@@ -345,6 +396,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       amount: r.stay ? r.stay.chargedAmount : null,
       phase: null,
       plannedEnd: null,
+      orders: sumOrders(r.stay ? [r.stay.visitId] : []),
     });
   }
 
@@ -381,7 +433,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       hint: '还没归到房型的房间：店主在「后台 → 空间台账 → 房态中心房型」里把它们的业态加进一个房型',
     });
   }
-  return { serverTime: at.toISOString(), businessDate: today, categories: views, total: count(rooms), rooms };
+  return { serverTime: at.toISOString(), businessDate: today, categories: views, total: count(rooms), rooms: ROOM_CENTER_READ.some((p) => can(actor, p)) ? rooms : rooms.map(orderOnlyCard) };
 }
 
 // ───────────────────────── 房间历史 ─────────────────────────
@@ -573,7 +625,9 @@ async function assertSpace(db: Db, spaceId: number) {
 export function registerRoomCenterRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
   // 看：看得到客房、钟房、派对房其中一样的岗位
-  const read = guardAny('room.operate', 'room.housekeep', 'technician.dispatch', 'frontdesk.checkout');
+  const read = guardAny(...ROOM_CENTER_READ);
+  // 看板（回测整改 P07）：能在水吧、果吧下单的（康美部）也能取，好在「在用」的房间上点单——但只给精简的卡片（orderOnlyCard），房间历史等照旧要上面那几样
+  const boardRead = guardAny(...ROOM_CENTER_READ, 'dining.orderWater', 'dining.orderFruit');
   // 登记、续钟要挂账、派钟：与钟房派钟同一组权限；换房、退房、并房是钟房的调度；改房态（待清、清洁完成、维修、恢复）是打扫与维修；
   // 派对房开单沿用「客房入住、退房」（与平面图、派对房看板上的开单一样）
   const post = guard('technician.dispatch', 'frontdesk.operate');
@@ -586,7 +640,7 @@ export function registerRoomCenterRoutes(app: FastifyInstance, deps: Deps) {
     return id;
   };
 
-  app.get('/api/room-center', { preHandler: read }, async (req) => board(req));
+  app.get('/api/room-center', { preHandler: boardRead }, async (req) => board(req));
   app.get('/api/room-center/rooms/:id/history', { preHandler: read }, async (req) => roomHistory(deps, await space(req)));
   app.get('/api/room-center/rooms/:id/checkout-preview', { preHandler: dispatch }, async (req) => roomCheckoutPreview(deps, await space(req)));
   app.get('/api/room-center/guest', { preHandler: dispatch }, async (req) => lookupGuest(deps, req.query));
