@@ -42,7 +42,7 @@ export function NotificationBell() {
   );
   return (
     <Link
-      to="/notifications"
+      to="/oa/notifications"
       aria-label={shown ? `通知，${shown} 条未读` : '通知'}
       title="通知"
       data-testid="notification-bell"

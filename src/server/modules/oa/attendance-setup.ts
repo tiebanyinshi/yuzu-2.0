@@ -35,7 +35,7 @@ import { NOT_EMPLOYEE_ROLES } from './org';
 
 const manage = guard('hr.attendance');
 
-const lockSetup = (tx: Tx) => tx`SELECT pg_advisory_xact_lock(hashtext(${currentStoreId() === DEFAULT_STORE_ID ? 'oa_attendance_setup' : `oa_attendance_setup:${currentStoreId()}`}))`;
+export const lockSetup = (tx: Tx) => tx`SELECT pg_advisory_xact_lock(hashtext(${currentStoreId() === DEFAULT_STORE_ID ? 'oa_attendance_setup' : `oa_attendance_setup:${currentStoreId()}`}))`;
 
 const minute = (label: string) => z.number(`请填写${label}`).int().min(0, `${label}不正确`).max(1439, `${label}不正确`);
 const span = (label: string, max: number) => z.number(`请填写${label}`).int().min(0, `${label}不能是负数`).max(max, `${label}最多 ${max} 分钟`);
@@ -92,12 +92,12 @@ const GroupInput = z.object({
 });
 
 /** 本店在职员工（专用账号、系统账号不算）；s 是 staff 表 */
-const storeEmployee = (db: Db) => db`
+export const storeEmployee = (db: Db) => db`
   s.active AND NOT s.system AND s.role <> ALL(${NOT_EMPLOYEE_ROLES})
   AND (EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id AND x.store_id = ${currentStoreId()})
        OR (NOT EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id) AND ${currentStoreId()}::bigint = ${DEFAULT_STORE_ID}::bigint))`;
 
-const SHIFT_COLS = (db: Db) => db`id, name, start_minute, end_minute, rest_start_minute, rest_end_minute, in_advance_minutes, late_grace_minutes,
+export const SHIFT_COLS = (db: Db) => db`id, name, start_minute, end_minute, rest_start_minute, rest_end_minute, in_advance_minutes, late_grace_minutes,
   in_after_minutes, out_before_minutes, out_delay_minutes, active, version`;
 
 async function loadSetup(db: Db): Promise<AttendanceSetup> {
