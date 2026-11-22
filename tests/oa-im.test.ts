@@ -88,6 +88,13 @@ describe('OA-14 即时通讯', () => {
     expect(g.status).toBe(201);
     group = g.body.id;
     expect((await api<{ id: number; replayed: boolean }>(ctx.app, emp.a!.cookie, 'POST', '/api/oa/im/groups', body)).body).toEqual({ id: group, replayed: true });
+    // 同一个编号换了内容：拒绝；查回（只能查自己的）；确认作废以后原样重提不再建群
+    expect(code(await api(ctx.app, emp.a!.cookie, 'POST', '/api/oa/im/groups', { ...body, name: '改了名' }))).toBe('IDEMPOTENCY_CONFLICT');
+    expect((await api(ctx.app, emp.a!.cookie, 'GET', `/api/erp/ops/${key}?type=oa_im_group`)).body).toMatchObject({ found: true, refId: group });
+    expect((await api(ctx.app, emp.b!.cookie, 'GET', `/api/erp/ops/${key}?type=oa_im_group`)).status).toBe(403);
+    const late = randomUUID();
+    expect((await api(ctx.app, emp.a!.cookie, 'POST', `/api/erp/ops/${late}/abandon`, { type: 'oa_im_group', summary: '建群' })).status).toBe(200);
+    expect((await api(ctx.app, emp.a!.cookie, 'POST', '/api/oa/im/groups', { ...body, clientKey: late })).status).toBe(409);
     const d = (await api<ImConversationDetail>(ctx.app, emp.c!.cookie, 'GET', `/api/oa/im/conversations/${group}`)).body;
     expect(d.members.map((m) => [m.name, m.role])).toEqual([
       ['im_a', 'owner'],

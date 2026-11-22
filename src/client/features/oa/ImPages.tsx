@@ -25,12 +25,14 @@ import {
   type ImSent,
 } from '@shared/oa-im';
 import type { ApprovalPerson } from '@shared/oa-approval';
-import { api, errorMessage } from '../../lib/api';
+import { api, errorMessage, UncertainError } from '../../lib/api';
+import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { useLivePoll } from '../../lib/livePoll';
 import { useSession } from '../../lib/session';
 import { cn, uuid } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { EmptyState } from '../../components/EmptyState';
+import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
@@ -55,6 +57,7 @@ const timeText = (iso: string) => {
 
 function ImListPage() {
   const qc = useQueryClient();
+  const session = useSession();
   const navigate = useNavigate();
   const [q, setQ] = useState('');
   const [dialog, setDialog] = useState<'direct' | 'group' | null>(null);
@@ -65,6 +68,7 @@ function ImListPage() {
     <>
       <PageHeader dateMode="calendar" title="消息" subtitle="同事之间单聊、群聊；图片与文件只有会话里的人看得到" />
       <div className="mx-auto w-full max-w-3xl p-4 md:p-7">
+        <ErpPendingPanel types={['oa_im_group']} filter={(op) => op.staffId === session.staff.id} className="mb-3 space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: LIST_KEY })} />
         <Card className="p-4 md:p-5" data-testid="im-list">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <div className="relative min-w-0 basis-full sm:flex-1 sm:basis-auto">
@@ -131,6 +135,7 @@ function ImListPage() {
 /** 发起单聊（选一位）/ 建群（群名 + 勾选成员） */
 function NewChatDialog({ mode, onClose, onCreated }: { mode: 'direct' | 'group' | null; onClose: () => void; onCreated: (id: number) => void }) {
   const session = useSession();
+  const toast = useToast();
   const me = session.staff.id;
   const people = useQuery({ queryKey: ['oa', 'approval-people'], queryFn: () => api.get<ApprovalPerson[]>('/api/oa/approval/people'), enabled: mode !== null });
   const [q, setQ] = useState('');
@@ -138,14 +143,14 @@ function NewChatDialog({ mode, onClose, onCreated }: { mode: 'direct' | 'group' 
   const [picked, setPicked] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [key, setKey] = useState(uuid);
+  // 上一次建群结果待确认：先在会话列表上方查回、原样重提或作废，确认前不再建
+  const pendingGroup = useErpRecorded(['oa_im_group']).filter((op) => op.staffId === me);
   useEffect(() => {
     if (mode) {
       setQ('');
       setName('');
       setPicked([]);
       setError('');
-      setKey(uuid());
     }
   }, [mode]);
   const shown = (people.data ?? []).filter((p) => p.id !== me && (!q || p.name.includes(q) || p.department.includes(q)));
@@ -160,13 +165,30 @@ function NewChatDialog({ mode, onClose, onCreated }: { mode: 'direct' | 'group' 
     }
   };
   const create = async () => {
+    if (pendingGroup.length) {
+      setError('上一次建群结果待确认：请先在会话列表上方查回、按原内容重新提交或作废');
+      return;
+    }
     setBusy(true);
     setError('');
+    // 建群带操作编号，先记在本机（存不下就不发）；没收到结果的在会话列表上方查回、原样重提或确认作废
+    const clientKey = uuid();
     try {
-      // 建群带操作编号：没收到结果再点一次用同一个编号，不会建出两个群
-      onCreated((await api.post<{ id: number }>('/api/oa/im/groups', { clientKey: key, name: name.trim(), memberIds: picked })).id);
+      const r = await sendErpOp<{ id: number }>({
+        key: clientKey,
+        type: 'oa_im_group',
+        url: '/api/oa/im/groups',
+        body: { clientKey, name: name.trim(), memberIds: picked },
+        summary: `建群「${name.trim()}」（${picked.length + 1} 人）`,
+        staffName: session.staff.displayName,
+        staffId: me,
+      });
+      onCreated(r.id);
     } catch (e) {
-      setError(errorMessage(e));
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '建群结果待确认', body: '已记在本机：请在会话列表上方查回、按原内容重新提交或作废，确认前不要再建一个。' });
+        onClose();
+      } else setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -275,7 +297,10 @@ function ImChatPage({ id }: { id: number }) {
   const bottom = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
-  const lastId = messages?.at(-1)?.id ?? 0;
+  // 同步游标：只由首次取历史与连续的「取新消息」推进（自己发出去的那条不推进它，
+  // 不然别人刚好排在前面的那条就跳过了，Codex 审查 accf8fb）；上报已读也只报到这里
+  const [cursor, setCursor] = useState(0);
+  const lastShown = messages?.at(-1)?.id ?? 0;
   const readUpTo = useRef(0);
 
   const load = async () => {
@@ -284,12 +309,15 @@ function ImChatPage({ id }: { id: number }) {
       const page = await api.get<ImMessagePage>(`/api/oa/im/conversations/${id}/messages`);
       setMessages(page.messages);
       setHasMore(page.hasMore);
+      setCursor(page.messages.at(-1)?.id ?? 0);
     } catch (e) {
       setLoadError(errorMessage(e));
     }
   };
   useEffect(() => {
     setMessages(null);
+    setCursor(0);
+    readUpTo.current = 0;
     void load();
     if (me) setPending(loadPending(id, me));
   }, [id, me]);
@@ -298,30 +326,33 @@ function ImChatPage({ id }: { id: number }) {
   useLivePoll(
     async (isLive) => {
       if (messages === null) return;
-      const r = await api.get<ImPollResult>(`/api/oa/im/conversations/${id}/poll?after=${lastId}`);
+      const r = await api.get<ImPollResult>(`/api/oa/im/conversations/${id}/poll?after=${cursor}`);
       if (!isLive()) return;
       if (r.messages.length || r.revoked.length) {
         setMessages((xs) => {
           const seen = new Set((xs ?? []).map((x) => x.id));
-          const merged = [...(xs ?? []), ...r.messages.filter((x) => !seen.has(x.id))];
+          const merged = [...(xs ?? []), ...r.messages.filter((x) => !seen.has(x.id))].sort((a, b) => a.id - b.id);
           return merged.map((x) => (r.revoked.includes(x.id) && !x.revoked ? { ...x, revoked: true, body: '', attachment: null } : x));
         });
       }
+      if (r.messages.length) setCursor((c) => Math.max(c, r.messages.at(-1)!.id));
     },
-    [id, lastId, messages === null],
+    [id, cursor, messages === null],
     { intervalMs: IM_POLL_MS },
   );
 
   // 看到了：上报读到哪一条；新消息来了滚到底
   useEffect(() => {
-    if (!lastId || lastId <= readUpTo.current || document.hidden) return;
-    readUpTo.current = lastId;
-    void api.post(`/api/oa/im/conversations/${id}/read`, { upTo: lastId }).then(
+    if (!cursor || cursor <= readUpTo.current || document.hidden) return;
+    readUpTo.current = cursor;
+    void api.post(`/api/oa/im/conversations/${id}/read`, { upTo: cursor }).then(
       () => qc.invalidateQueries({ queryKey: LIST_KEY }),
       () => undefined,
     );
-    bottom.current?.scrollIntoView({ block: 'end' });
-  }, [id, lastId, qc]);
+  }, [id, cursor, qc]);
+  useEffect(() => {
+    if (lastShown) bottom.current?.scrollIntoView({ block: 'end' });
+  }, [lastShown, pending.length]);
 
   const earlier = async () => {
     const first = messages?.[0];

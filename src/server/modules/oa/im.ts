@@ -1,5 +1,5 @@
 // OA-14 即时通讯：会话与消息（docs/OA.md 第 17 节；需求文档六（一）、九（二）第 6 条）。员工端「办公 → 消息」。
-//   · 单聊：同两个人只有一个（direct_key）；群聊：群名 + 成员（连自己 3–500 人），建群的人是群主，带操作编号。
+//   · 单聊：同两个人只有一个（direct_key）；群聊：群名 + 成员（连自己 3–500 人），建群的人是群主，带操作编号（oa_im_group：查回、确认作废走 /api/erp/ops）。
 //   · 消息：文本（含表情）、图片、文件（OA-03 附件，只有会话成员看得到）；发送带操作编号（同一个人同一个编号只有一条，原样重提返回原来那一条）。
 //   · 撤回：发的人、2 分钟内（服务端时间）；撤回以后原内容不再给出。@：群聊里 @成员 / @所有人，被 @ 的人收到站内通知。
 //   · 历史分页（before）、取新消息与最近的撤回（after，页面每 3 秒取一次）、上报读到哪一条（只往前走）。
@@ -30,9 +30,11 @@ import { isUniqueViolation, type Db, type Fragment, type Tx } from '../../db';
 import { guard } from '../../auth/guard';
 import type { Actor, Deps } from '../../lib/context';
 import { conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
+import { assertNotFenced, lockOpKey } from '../../lib/fences';
 import { hashRequest } from '../../lib/idempotency';
 import { idParam, parse } from '../../lib/validate';
 import { attachmentsOf, bindAttachments, registerAttachmentRef } from './attachments';
+import { erpOpAbandoned } from '../erp-ops';
 import { notify } from './notifications';
 import { NOT_EMPLOYEE_ROLES } from './org';
 
@@ -305,38 +307,39 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
     return { id };
   });
 
-  // 建群：带操作编号（同一个人同一个编号只建一个群）；建群的人是群主
+  // 建群：带操作编号（oa_im_group，结果不确定时查回、原样重提或确认作废）；建群的人是群主
   app.post('/api/oa/im/groups', { preHandler: auth }, async (req, reply): Promise<{ id: number; replayed: boolean }> => {
     const input = parse(GroupInput, req.body);
     const me = req.actor.id;
-    const [seen] = await sql<{ id: number }[]>`SELECT id FROM oa_im_conversations WHERE created_by = ${me} AND client_key = ${input.clientKey}`;
-    if (seen) return { id: Number(seen.id), replayed: true };
-    const wanted = [...new Set(input.memberIds.filter((x) => x !== me))];
-    const others = await onDutyIds(sql, wanted);
-    if (others.length !== wanted.length) throw unprocessable('MEMBER_INVALID', '有成员不存在或已经离职，请刷新后重选');
-    if (others.length + 1 < IM_GROUP_MIN) throw unprocessable('GROUP_TOO_SMALL', `群聊连自己至少 ${IM_GROUP_MIN} 人；两个人请直接单聊`);
-    if (others.length + 1 > IM_GROUP_MAX) throw unprocessable('GROUP_TOO_LARGE', `一个群最多 ${IM_GROUP_MAX} 人`);
-    try {
-      const id = await sql.begin(async (tx) => {
-        const [c] = await tx<{ id: number }[]>`
-          INSERT INTO oa_im_conversations (kind, name, created_by, client_key) VALUES ('group', ${input.name}, ${me}, ${input.clientKey}) RETURNING id`;
-        const convId = Number(c!.id);
-        await tx`
-          INSERT INTO oa_im_members (conversation_id, staff_id, role)
-          SELECT ${convId}, x, CASE WHEN x = ${me} THEN 'owner' ELSE 'member' END FROM unnest(${[me, ...others]}::bigint[]) AS t(x)`;
-        await insertMessage(tx, convId, me, { kind: 'system', body: `${req.actor.displayName}创建了群聊「${input.name}」` });
-        return convId;
-      });
-      reply.code(201);
-      return { id, replayed: false };
-    } catch (error) {
-      // 同一个编号同时到了两次：返回先建好的那个
-      if (isUniqueViolation(error, 'oa_im_conversations_created_by_client_key_key')) {
-        const [again] = await sql<{ id: number }[]>`SELECT id FROM oa_im_conversations WHERE created_by = ${me} AND client_key = ${input.clientKey}`;
-        return { id: Number(again!.id), replayed: true };
+    const { clientKey, ...rest } = input;
+    const hash = hashRequest({ ...rest, memberIds: [...new Set(rest.memberIds)].sort((a, b) => a - b), staffId: me });
+    const out = await sql.begin(async (tx): Promise<{ id: number; replayed: boolean }> => {
+      await lockOpKey(tx, clientKey);
+      const [seen] = await tx<{ opType: string; requestHash: string; refId: number; staffId: number }[]>`
+        SELECT op_type, request_hash, ref_id, staff_id FROM idempotency_keys WHERE key = ${clientKey}`;
+      if (seen) {
+        if (seen.opType !== 'oa_im_group' || seen.requestHash !== hash || Number(seen.staffId) !== me) {
+          throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次操作，请刷新页面后重新建群');
+        }
+        return { id: Number(seen.refId), replayed: true };
       }
-      throw error;
-    }
+      await assertNotFenced(tx, clientKey, 'oa_im_group', erpOpAbandoned);
+      const wanted = [...new Set(input.memberIds.filter((x) => x !== me))];
+      const others = await onDutyIds(tx, wanted);
+      if (others.length !== wanted.length) throw unprocessable('MEMBER_INVALID', '有成员不存在或已经离职，请刷新后重选');
+      if (others.length + 1 < IM_GROUP_MIN) throw unprocessable('GROUP_TOO_SMALL', `群聊连自己至少 ${IM_GROUP_MIN} 人；两个人请直接单聊`);
+      if (others.length + 1 > IM_GROUP_MAX) throw unprocessable('GROUP_TOO_LARGE', `一个群最多 ${IM_GROUP_MAX} 人`);
+      const [c] = await tx<{ id: number }[]>`INSERT INTO oa_im_conversations (kind, name, created_by) VALUES ('group', ${input.name}, ${me}) RETURNING id`;
+      const convId = Number(c!.id);
+      await tx`
+        INSERT INTO oa_im_members (conversation_id, staff_id, role)
+        SELECT ${convId}, x, CASE WHEN x = ${me} THEN 'owner' ELSE 'member' END FROM unnest(${[me, ...others]}::bigint[]) AS t(x)`;
+      await insertMessage(tx, convId, me, { kind: 'system', body: `${req.actor.displayName}创建了群聊「${input.name}」` });
+      await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${clientKey}, 'oa_im_group', ${hash}, ${convId}, ${me})`;
+      return { id: convId, replayed: false };
+    });
+    reply.code(out.replayed ? 200 : 201);
+    return out;
   });
 
   app.get('/api/oa/im/conversations/:id', { preHandler: auth }, async (req): Promise<ImConversationDetail> => detailOf(sql, parse(idParam, req.params).id, req.actor.id));

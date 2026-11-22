@@ -1,7 +1,7 @@
 -- OA-14 即时通讯：会话与消息（docs/OA.md 第 17 节；需求文档六（一）、九（二）第 6 条）。
 --   · oa_im_conversations：kind = direct 单聊 / group 群聊。单聊的 direct_key = 两人编号小的在前（「3:8」），同两个人只有一个单聊；
 --     群聊有群名与群主。last_message_id / last_message_at 给会话列表排序（发消息时在会话行锁里更新）。
---     client_key：建群的操作编号（同一个人同一个编号只建一个群）。
+--     建群带操作编号（oa_im_group，记在 idempotency_keys，ref_id 是会话）：结果不确定时查回、原样重提或确认作废。
 --   · oa_im_members：会话成员。role = owner 群主 / admin 管理员（OA-16）/ member；last_read_message_id = 读到哪一条（只往前走，OA-15 的已读回执用它）；
 --     left_at 不为空 = 已经退出（OA-16 踢人、离职退群），历史照留。
 --   · oa_im_messages：只追加。kind = text 文本（含表情）/ image 图片 / file 文件（附件 ref_type = 'oa_im_message'）/ system 系统提示；
@@ -14,13 +14,11 @@ CREATE TABLE oa_im_conversations (
   name             text CHECK (name IS NULL OR char_length(name) BETWEEN 1 AND 30),
   direct_key       text UNIQUE,
   created_by       bigint NOT NULL REFERENCES staff (id),
-  client_key       uuid,
   last_message_id  bigint,
   last_message_at  timestamptz NOT NULL DEFAULT now(),
   created_at       timestamptz NOT NULL DEFAULT now(),
   CHECK ((kind = 'direct') = (direct_key IS NOT NULL)),
-  CHECK ((kind = 'group') = (name IS NOT NULL)),
-  UNIQUE (created_by, client_key)
+  CHECK ((kind = 'group') = (name IS NOT NULL))
 );
 
 CREATE TABLE oa_im_members (
@@ -54,3 +52,15 @@ CREATE TABLE oa_im_messages (
 CREATE INDEX oa_im_messages_conv_idx ON oa_im_messages (conversation_id, id);
 CREATE INDEX oa_im_messages_revoked_idx ON oa_im_messages (conversation_id, revoked_at) WHERE revoked_at IS NOT NULL;
 ALTER TABLE oa_im_conversations ADD CONSTRAINT oa_im_conversations_last_fk FOREIGN KEY (last_message_id) REFERENCES oa_im_messages (id);
+
+-- 建群的操作编号：操作编号与「确认作废」的类型约束追加 oa_im_group（在当时的约束上追加）
+DO $$
+DECLARE t text; expression text;
+BEGIN
+ FOREACH t IN ARRAY ARRAY['idempotency_keys','op_fences'] LOOP
+  SELECT pg_get_expr(conbin,conrelid) INTO expression FROM pg_constraint WHERE conrelid=t::regclass AND conname=t||'_op_type_check';
+  IF expression IS NULL THEN RAISE EXCEPTION '原操作类型约束不存在'; END IF;
+  EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I',t,t||'_op_type_check');
+  EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((%s) OR op_type IN (''oa_im_group''))',t,t||'_op_type_check',expression);
+ END LOOP;
+END $$;

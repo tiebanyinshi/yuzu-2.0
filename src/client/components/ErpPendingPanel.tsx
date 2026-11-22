@@ -97,6 +97,8 @@ const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
 };
 /** 返回里这个字段就是 refId（数字） */
 const REF_NUMBER: Partial<Record<ErpOpType, string>> = {
+  // OA-14 建群：返回那个会话的编号
+  oa_im_group: 'id',
   customer_note: 'id',
   customer_binding_request: 'id',
   customer_binding_review: 'id',
