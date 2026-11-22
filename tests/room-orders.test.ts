@@ -269,6 +269,9 @@ describe('房态点单（P07）', () => {
     expect((await api(ctx.app, water, 'POST', `/api/room-center/order-ops/fruit/${fruitKey}/abandon`, {})).status).toBe(403);
     expect((await api(ctx.app, water, 'POST', `/api/room-center/order-ops/water/${fruitKey}/abandon`, {})).body).toEqual({ found: false, abandoned: true });
     expect((await place('H604', 'fruit', [{ name: '果盘' }], {}, km, fruitKey)).status).toBe(200);
+    // 果吧那一单已经生效：从水吧的入口查回、作废都只答「没查到」，不说生效没生效、记在谁上（Codex 审查 0995112）
+    expect((await api(ctx.app, water, 'GET', `/api/room-center/order-ops/water/${fruitKey}`)).body).toEqual({ found: false, abandoned: false });
+    expect((await api(ctx.app, water, 'POST', `/api/room-center/order-ops/water/${fruitKey}/abandon`, {})).body).toEqual({ found: false, abandoned: false });
     expect((await api(ctx.app, km, 'GET', `/api/room-center/order-ops/fruit/${fruitKey}`)).body).toMatchObject({ found: true, type: 'room_order' });
   });
 

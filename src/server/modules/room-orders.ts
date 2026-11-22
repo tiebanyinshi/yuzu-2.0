@@ -409,10 +409,13 @@ export function registerRoomOrderRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/room-center/order-ops/:outlet/:key/abandon', { preHandler: order }, async (req) => {
     const { outlet, key } = opParams(req);
     const { lookupFrontdeskOp, abandonFrontdeskOp } = await import('./frontdesk/visits');
-    // 编号已经有结果（不管是哪一类）：不作废，只有这个出品口的房态点单才答「生效了」
+    // 编号已经有结果（不管是哪一类）：不作废；只有这个出品口的房态点单才答「生效了」，别的一律「没查到」
     const peek = await lookupOutletOp(lookupFrontdeskOp, key, outlet);
     if (peek.found) return opResult(peek);
-    return opResult((await abandonFrontdeskOp(deps, key, opTypeOf(outlet), ctxOf(req))) as FrontdeskOpLookup);
+    const done = (await abandonFrontdeskOp(deps, key, opTypeOf(outlet), ctxOf(req))) as FrontdeskOpLookup;
+    // 作废时发现编号刚刚（或早已）有了结果：同样按实际的业务类型核对出品口，不是这个出品口的不说生效没生效（Codex 审查 0995112）
+    if (done.found) return lookupOutletOp(lookupFrontdeskOp, key, outlet);
+    return done;
   });
   /** 查回：编号属于另一个出品口的房态点单也答「没查到」 */
   async function lookupOutletOp(lookup: typeof import('./frontdesk/visits').lookupFrontdeskOp, key: string, outlet: RoomOrderOutlet): Promise<FrontdeskOpLookup> {
