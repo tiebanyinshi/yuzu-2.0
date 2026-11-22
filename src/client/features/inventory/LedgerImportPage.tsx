@@ -24,7 +24,7 @@ import { useToast } from '../../components/Toast';
 import { Button, Notice } from '../../components/ui';
 import { useInvalidateInventory, useInvSettings } from './queries';
 
-import { LEDGER_TEMPLATE_URL as TEMPLATE_URL, ledgerExportUrl as exportUrl } from './LedgerActions';
+import { LEDGER_TEMPLATE_FILE, LEDGER_TEMPLATE_URL as TEMPLATE_URL, ledgerExportFile, ledgerExportUrl as exportUrl } from './LedgerActions';
 
 const qty = (milli: number, unit: string) => `${formatQty(milli)}${unit}`;
 
@@ -146,7 +146,7 @@ export function LedgerImportPage() {
             <Link to="/inventory/direct/new" className="tap relative -ml-1 flex size-8 items-center justify-center rounded-md text-ink-3 hover:bg-paper-2 hover:text-ink" aria-label="返回库管入库">
               <ArrowLeft className="size-[18px]" />
             </Link>
-            导入出入库台账
+            导入入库台账
           </span>
         }
         subtitle="按门店的出入库记录版式一次登记：入库生成库管入库、出库生成部门领料，导入即生效"
@@ -163,7 +163,7 @@ export function LedgerImportPage() {
             />
             <a
               href={/^\d{4}-\d{2}$/.test(month) ? exportUrl(month) : undefined}
-              download
+              download={ledgerExportFile(month)}
               className="tap relative flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3 text-[13px] font-bold text-ink-2 hover:border-ink-3 hover:text-ink"
               data-testid="ledger-export"
             >
@@ -172,7 +172,7 @@ export function LedgerImportPage() {
             </a>
             <a
               href={TEMPLATE_URL}
-              download
+              download={LEDGER_TEMPLATE_FILE}
               className="tap relative flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3 text-[13px] font-bold text-ink-2 hover:border-ink-3 hover:text-ink"
               data-testid="ledger-template"
             >
@@ -192,7 +192,7 @@ export function LedgerImportPage() {
           )}
           <section className="space-y-3 rounded-lg border border-line bg-card p-5 shadow-card">
             <p className="text-[12.5px] text-ink-3">
-              用右上角「下载模板」的出入库台账（一种物料一行；表头两行，入库每组写日期、数量，出库每组写日期、数量、领料人及部门）。有入库的行要写供应商；单价按每采购单位，空着取物料档案的参考价。
+              用右上角「下载模板」的出入库台账（门店的《库管出入库明细及库位表》格式），导入读其中的「仓库库位表」：一种物料一行，表头两行，入库每组写日期、数量，出库每组写日期、数量、领料人及部门；入库登记表格、物品借出备忘表不导入。有入库的行要写供应商；入库单价取物料档案的参考价。
               一份最多 {LEDGER_MAX_ROWS} 行，同一天同一供应商的入库合成一张库管入库、同一天同一部门同一领料人的出库合成一张部门领料，一张最多 {LEDGER_LINES_PER_DOC} 行。同一份文件只能导入一次。
             </p>
             <label className="flex cursor-pointer flex-wrap items-center gap-3 rounded-md border border-dashed border-line-strong px-4 py-3 text-[13px] hover:border-ink-3">

@@ -4,7 +4,8 @@
 
 /** 不属于分组的列（表头第一行的名字；顺序就是模板里的顺序，导入时按名字认列） */
 export const LEDGER_COLUMNS = ['序号', '日期', '供应商', '物料名称', '规格', '库位', '上期库存量'] as const;
-export const LEDGER_TAIL_COLUMNS = ['库存量', '单价', '备注'] as const;
+/** 分组之后的列（照门店《库管出入库明细及库位表》；8.1.20 另加的「单价」列 2026-11-22 起不放进模板，表里自己加了照样认） */
+export const LEDGER_TAIL_COLUMNS = ['库存量', '备注'] as const;
 /** 模板里入库、出库各留几组（导入时有几组认几组，导出时不够就往后加） */
 export const LEDGER_IN_SLOTS = 2;
 export const LEDGER_OUT_SLOTS = 3;

@@ -1,4 +1,4 @@
-// 8.1.20 出入库台账（docs/ERP_V8120.md，PENDING_DECISIONS「8.1.20」LD1–LD10；迁移 200）：模板（门店的两行表头版式）、
+// 8.1.20 出入库台账（docs/ERP_V8120.md，PENDING_DECISIONS「8.1.20」LD1–LD11；迁移 200）：模板（门店《库管出入库明细及库位表》的版式）、
 // 预览逐行核对（物料、供应商、部门、单价、日期、库存够不够；上期库存量与库存量只提醒）、一键导入（入库生成库管入库、出库生成部门领料，
 // 都马上生效；库位写进物料档案）、同一份文件只能导入一次、结果待确认的查回、导出台账（系统导出的不能再导入）。
 
@@ -77,18 +77,59 @@ beforeAll(async () => {
 afterAll(async () => ctx.close());
 
 describe('出入库台账', () => {
-  it('模板：门店的版式（标题、两行表头、入库两组、出库三组、库存量、单价、备注），填写说明与选项；没有库存操作的下载不了', async () => {
+  it('模板：照门店《库管出入库明细及库位表》——入库登记表格、仓库库位表、物品借出备忘表三张，文件名「出入库台账」；不带单价列与说明页；没有库存操作的下载不了', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/inventory/ledger/template', headers: { cookie: keeper } });
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('spreadsheetml');
+    expect(decodeURIComponent(String(res.headers['content-disposition']))).toContain('出入库台账.xlsx');
     const book = readXlsx(res.rawPayload);
-    expect(book.sheets.map((s) => s.name)).toEqual(['出入库台账', '填写说明', '选项']);
-    const s = book.sheets[0]!;
-    const line = (r: number) => [...(s.rows.get(r)?.values() ?? [])].map((c) => c.value);
+    expect(book.sheets.map((s) => s.name)).toEqual(['入库登记表格', '仓库库位表', '物品借出备忘表']);
+    const lineOf = (i: number) => (r: number) => [...(book.sheets[i]!.rows.get(r)?.values() ?? [])].map((c) => c.value).filter((v) => v !== '');
+    expect(lineOf(0)(1)).toEqual(['入库登记表', '库管：']);
+    expect(lineOf(0)(2)).toEqual(['序号', '日期', '物品名称', '规格型号', '计量单位', '数量', '备注（部门）', '库位']);
+    const line = lineOf(1);
     expect(line(1)[0]).toContain('出入库记录');
-    expect(line(2)).toEqual(['序号', '日期', '供应商', '物料名称', '规格', '库位', '上期库存量', '入库', '入库', '出库', '出库', '出库', '库存量', '单价', '备注']);
+    expect(line(1)[1]).toBe('库管：');
+    // 门店的表：「入库」一个分组名跨两组，「出库」三组各一个
+    expect(line(2)).toEqual(['序号', '日期', '供应商', '物料名称', '规格', '库位', '上期库存量', '入库', '出库', '出库', '出库', '库存量', '备注']);
     expect(line(3)).toEqual(['日期', '数量', '日期', '数量', '日期', '数量', '领料人及部门', '日期', '数量', '领料人及部门', '日期', '数量', '领料人及部门']);
+    // 空白行只写序号；「库存量」一列（第 21 列）带门店表里的公式（上期库存量 + 两次入库 − 三次出库，打开时 Excel 自己算）
+    expect([...book.sheets[1]!.rows.get(4)!.keys()]).toEqual([0, 20]);
+    expect(line(4)[0]).toBe('1');
+    expect(lineOf(2)(3)).toEqual(['序号', '借出日期', '物品名称', '规格型号', '单位', '数量', '借出店', '借入店', '借用人', '已归还', '未归还', '归还验收人', '状态', '经手人']);
     expect((await api(ctx.app, buyer, 'GET', '/api/inventory/ledger/template')).status).toBe(403);
+  });
+
+  it('门店的整份文件（几张表）：只读表头两行、有入库出库分组的「仓库库位表」，入库登记表格不导入；没有单价列取参考价', async () => {
+    const { buildWorkbook } = await import('../src/server/lib/xlsx');
+    const before = await stock(mat.id);
+    const register = {
+      name: '入库登记表格',
+      widths: [6, 12, 20],
+      rows: [{ cells: ['入库登记表'] }, { cells: ['序号', '日期', '物品名称', '规格型号', '计量单位', '数量', '备注（部门）', '库位'] }, { cells: [1, today, mat.name, '', '个', 99, '', ''] }],
+    };
+    const top = TOP.filter((c) => c !== '单价').map((c, i) => (c === '入库' && i === 9 ? '' : c));
+    const sub = SUB.slice(0, top.length);
+    const ledgerSheet = {
+      name: '仓库库位表',
+      widths: [6, 12, 20],
+      rows: [
+        { cells: [`宝安店4楼仓库出入库记录（${today.slice(0, 4)}年${Number(today.slice(5, 7))}月）`] },
+        { cells: top },
+        { cells: sub },
+        { cells: ['1', '', sup.name, mat.name, '', '', '', today, '2', '', '', '', '', '', '', '', '', '', ''] },
+      ],
+    };
+    const buf = buildWorkbook([register, ledgerSheet]);
+    const p = await api(ctx.app, keeper, 'POST', '/api/inventory/ledger/import/preview', { fileName: '库管出入库明细及库位表.xlsx', xlsxBase64: buf.toString('base64') });
+    expect(p.status, JSON.stringify(p.body)).toBe(200);
+    expect(p.body.rows).toHaveLength(1);
+    expect(p.body.rows[0].issues).toEqual([]);
+    expect(p.body.rows[0].inMilli).toBe(q(2));
+    expect(p.body.rows[0].priceFromRef).toBe(true);
+    expect(p.body.rows[0].priceCents).toBe(mat.refPriceCents);
+    expect(p.body.docs.map((d: { kind: string }) => d.kind)).toEqual(['receipt']);
+    expect(await stock(mat.id)).toBe(before);
   });
 
   it('预览逐行核对：有问题的标出来、整份不能导入；上期库存量、库存量对不上只提醒', async () => {
@@ -111,7 +152,7 @@ describe('出入库台账', () => {
     expect(issues[1]).toContain('不在物料档案里');
     expect(issues[1]).toContain('写了数量没写日期');
     expect(issues[2]).toContain('供应商：有入库，要写供应商');
-    expect(issues[2]).toContain('档案里也没有参考价');
+    expect(issues[2]).toContain('物料档案里没有参考价');
     expect(issues[3]).toContain('没认出部门');
     expect(p.body.issueCount).toBe(3);
     expect(p.body.docs).toEqual([]);
