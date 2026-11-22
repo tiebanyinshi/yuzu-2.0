@@ -61,4 +61,34 @@ test.describe('OA-04 考勤设置', () => {
     await page.getByTestId('att-group-save').click();
     await expect(list.getByText('已停用').first()).toBeVisible();
   });
+
+  test('新建没收到结果：页面上方按原内容重新提交，只建一个；确认前不能再建', async ({ page }) => {
+    await login(page, 'linlan');
+    const stamp = Date.now().toString(36).slice(-5);
+    await page.goto('/admin/attendance');
+    let aborted = false;
+    await page.route('**/api/oa/attendance/shifts', async (route) => {
+      if (!aborted && route.request().method() === 'POST') {
+        aborted = true;
+        await route.abort('connectionreset');
+      } else await route.continue();
+    });
+    await page.getByTestId('att-shift-new').click();
+    await page.getByTestId('att-shift-name').fill(`重提${stamp}`);
+    await page.getByTestId('att-shift-start').fill('16:00');
+    await page.getByTestId('att-shift-end').fill('00:00');
+    await page.getByTestId('att-shift-save').click();
+    await expect(page.getByTestId('erp-pending')).toBeVisible();
+    // 确认前不能再建一个
+    await page.getByTestId('att-shift-new').click();
+    await page.getByTestId('att-shift-name').fill(`另一个${stamp}`);
+    await page.getByTestId('att-shift-save').click();
+    await expect(page.getByTestId('att-shift-problem')).toContainText('上一次新建结果待确认');
+    await page.keyboard.press('Escape');
+    // 按原内容重新提交：建好一个
+    await page.getByTestId('erp-pending-resend').click();
+    await expect(page.getByTestId('erp-pending-resend')).toHaveCount(0);
+    await expect(page.getByTestId('att-shift-list')).toContainText(`重提${stamp}`);
+    await expect(page.getByTestId('att-shift-list').getByText(`重提${stamp}`)).toHaveCount(1);
+  });
 });

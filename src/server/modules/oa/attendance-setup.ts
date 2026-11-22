@@ -3,19 +3,34 @@
 //   · 打卡点：经纬度、有效半径；员工打卡时按距离判断（OA-06）。
 //   · 考勤组：用哪几个打卡点、GPS / 人脸两个开关、成员（一人一组）。
 // 都按门店分，不删只停用；改的时候带版本，别人先改过就拒绝。
-// 加锁（docs/LOCKING.md「考勤设置」）：门店的考勤设置咨询锁（三样的保存之间串行）→ 要改的那一行（FOR UPDATE）→ 成员（员工行 FOR SHARE，按编号）。
+// 新建带操作编号（结果待确认时原样重提只建一个，或确认作废后再重新填写）；修改带版本。
+// 加锁（docs/LOCKING.md「考勤设置」）：操作编号（新建）→ 门店的考勤设置咨询锁（三样的保存之间串行）→ 成员（员工行 FOR NO KEY UPDATE，按编号）
+// → 要改的那一行（FOR UPDATE）→ 成员原来所在的组（按编号 FOR UPDATE，版本加一）。
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { OA_LOCATION_RADIUS_DEFAULT, OA_SHIFT_NAME_MAX, SHIFT_WINDOW_DEFAULTS, shiftProblem, type AttendanceSetup, type OaAttendanceGroup, type OaLocation, type OaShift } from '@shared/oa';
+import {
+  OA_LOCATION_RADIUS_DEFAULT,
+  OA_SHIFT_NAME_MAX,
+  SHIFT_WINDOW_DEFAULTS,
+  shiftProblem,
+  type AttendanceSetup,
+  type AttendanceSetupSaved,
+  type OaAttendanceGroup,
+  type OaLocation,
+  type OaShift,
+} from '@shared/oa';
 import { shiftTimeText } from '@shared/technician-admin';
 import { isUniqueViolation, type Db, type Tx } from '../../db';
 import { guard } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
 import type { Deps } from '../../lib/context';
 import { conflict, notFound, unprocessable } from '../../lib/errors';
+import { assertNotFenced, lockOpKey } from '../../lib/fences';
+import { hashRequest } from '../../lib/idempotency';
 import { currentStoreId, DEFAULT_STORE_ID } from '../../lib/store-context';
 import { idParam, parse } from '../../lib/validate';
+import { erpOpAbandoned } from '../erp-ops';
 import { NOT_EMPLOYEE_ROLES } from './org';
 
 const manage = guard('hr.attendance');
@@ -25,6 +40,8 @@ const lockSetup = (tx: Tx) => tx`SELECT pg_advisory_xact_lock(hashtext(${current
 const minute = (label: string) => z.number(`请填写${label}`).int().min(0, `${label}不正确`).max(1439, `${label}不正确`);
 const span = (label: string, max: number) => z.number(`请填写${label}`).int().min(0, `${label}不能是负数`).max(max, `${label}最多 ${max} 分钟`);
 const version = z.number().int().positive().optional();
+/** 新建带操作编号（修改不带，靠版本） */
+const clientKey = z.uuid('缺少有效的操作编号，请刷新页面后重试').optional();
 
 const ShiftInput = z
   .object({
@@ -40,6 +57,7 @@ const ShiftInput = z
     outDelayMinutes: span('下班卡可延后', 720).default(SHIFT_WINDOW_DEFAULTS.outDelayMinutes),
     active: z.boolean().default(true),
     version,
+    clientKey,
   })
   .superRefine((s, ctx) => {
     const problem = shiftProblem(s);
@@ -54,6 +72,7 @@ const LocationInput = z.object({
   radiusM: z.number().int().min(10, '有效半径至少 10 米').max(3000, '有效半径最多 3000 米').default(OA_LOCATION_RADIUS_DEFAULT),
   active: z.boolean().default(true),
   version,
+  clientKey,
 });
 
 const GroupInput = z.object({
@@ -64,6 +83,7 @@ const GroupInput = z.object({
   locationIds: z.array(z.number().int().positive()).max(50, '一个考勤组最多 50 个打卡点').default([]),
   memberIds: z.array(z.number().int().positive()).max(2000).default([]),
   version,
+  clientKey,
 });
 
 /** 本店在职员工（专用账号、系统账号不算）；s 是 staff 表 */
@@ -110,14 +130,37 @@ function checkVersion(row: { version: number } | undefined, expected: number | u
   if (row.version !== expected) throw conflict('VERSION_CONFLICT', `这个${what}刚被别人改过，请刷新后再改`);
 }
 
+type Kind = 'shift' | 'location' | 'group';
+
+/**
+ * 新建的操作编号（与 OA-02 批量开通同一个做法）：同一编号原样重提返回原来建的那一行；换了内容拒绝；确认作废过的拒绝。
+ * 返回 null 表示这个编号还没用过、可以建；建完调 recordCreate 记下
+ */
+async function replayCreate(tx: Tx, key: string | undefined, kind: Kind, input: object): Promise<{ hash: string; refId: number | null }> {
+  if (!key) throw unprocessable('CLIENT_KEY_REQUIRED', '缺少操作编号，请刷新页面后重试');
+  const hash = hashRequest({ kind, ...input, clientKey: undefined, version: undefined });
+  await lockOpKey(tx, key);
+  const [seen] = await tx<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${key}`;
+  if (seen) {
+    if (seen.opType !== 'oa_attendance_setup' || seen.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次操作，请刷新页面后重新填写');
+    return { hash, refId: Number(seen.refId) };
+  }
+  await assertNotFenced(tx, key, 'oa_attendance_setup', erpOpAbandoned);
+  return { hash, refId: null };
+}
+const recordCreate = (tx: Tx, key: string, hash: string, refId: number, actorId: number) =>
+  tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${key}, 'oa_attendance_setup', ${hash}, ${refId}, ${actorId})`;
+
 export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: Deps) {
   app.get('/api/oa/attendance/setup', { preHandler: manage }, async () => loadSetup(sql));
 
   // ── 班次 ──
-  const saveShift = async (id: number | null, raw: unknown, actorId: number, ip: string): Promise<AttendanceSetup> => {
+  const saveShift = async (id: number | null, raw: unknown, actorId: number, ip: string): Promise<AttendanceSetupSaved> => {
     const s = parse(ShiftInput, raw);
     try {
       return await sql.begin(async (tx) => {
+        const op = id === null ? await replayCreate(tx, s.clientKey, 'shift', s) : null;
+        if (op?.refId) return { ...(await loadSetup(tx)), created: { kind: 'shift', id: op.refId, replayed: true } };
         await lockSetup(tx);
         let shiftId = id;
         let before: OaShift | undefined;
@@ -129,6 +172,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
                     ${s.inAfterMinutes}, ${s.outBeforeMinutes}, ${s.outDelayMinutes}, ${s.active}, ${actorId}, ${actorId})
             RETURNING id`;
           shiftId = Number(row!.id);
+          await recordCreate(tx, s.clientKey!, op!.hash, shiftId, actorId);
         } else {
           [before] = await tx<OaShift[]>`SELECT ${SHIFT_COLS(tx)} FROM oa_shifts WHERE id = ${shiftId} AND store_id = ${currentStoreId()} FOR UPDATE`;
           checkVersion(before, s.version, '班次');
@@ -140,7 +184,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
                    version = version + 1, updated_by = ${actorId}, updated_at = now()
             WHERE id = ${shiftId}`;
         }
-        const { version: _v, ...after } = s;
+        const { version: _v, clientKey: _k, ...after } = s;
         await writeAudit(tx, {
           staffId: actorId,
           action: 'oa_shift_saved',
@@ -149,7 +193,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
           detail: { before: before ?? null, after, summary: `${id === null ? '新建' : '修改'}考勤班次「${s.name}」${shiftTimeText(s)}${s.active ? '' : '（已停用）'}` },
           ip,
         });
-        return loadSetup(tx);
+        return { ...(await loadSetup(tx)), created: id === null ? { kind: 'shift', id: shiftId, replayed: false } : null };
       });
     } catch (error) {
       if (isUniqueViolation(error, 'oa_shifts_name_uq')) throw conflict('NAME_TAKEN', `已经有叫「${s.name}」的班次（停用的也算），请换一个名字`);
@@ -164,12 +208,14 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
   app.put('/api/oa/attendance/shifts/:id', { preHandler: manage }, async (req) => saveShift(parse(idParam, req.params).id, req.body, req.actor.id, req.ip));
 
   // ── 打卡点 ──
-  const saveLocation = async (id: number | null, raw: unknown, actorId: number, ip: string): Promise<AttendanceSetup> => {
+  const saveLocation = async (id: number | null, raw: unknown, actorId: number, ip: string): Promise<AttendanceSetupSaved> => {
     const l = parse(LocationInput, raw);
     const lat = l.lat.toFixed(6);
     const lng = l.lng.toFixed(6);
     try {
       return await sql.begin(async (tx) => {
+        const op = id === null ? await replayCreate(tx, l.clientKey, 'location', l) : null;
+        if (op?.refId) return { ...(await loadSetup(tx)), created: { kind: 'location', id: op.refId, replayed: true } };
         await lockSetup(tx);
         let locationId = id;
         let before: Record<string, unknown> | undefined;
@@ -178,6 +224,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
             INSERT INTO oa_locations (name, address, lat, lng, radius_m, active, created_by, updated_by)
             VALUES (${l.name}, ${l.address}, ${lat}, ${lng}, ${l.radiusM}, ${l.active}, ${actorId}, ${actorId}) RETURNING id`;
           locationId = Number(row!.id);
+          await recordCreate(tx, l.clientKey!, op!.hash, locationId, actorId);
         } else {
           const [row] = await tx<{ name: string; address: string; lat: string; lng: string; radiusM: number; active: boolean; version: number }[]>`
             SELECT name, address, lat, lng, radius_m, active, version FROM oa_locations WHERE id = ${locationId} AND store_id = ${currentStoreId()} FOR UPDATE`;
@@ -188,7 +235,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
                    version = version + 1, updated_by = ${actorId}, updated_at = now()
             WHERE id = ${locationId}`;
         }
-        const { version: _v, ...after } = l;
+        const { version: _v, clientKey: _k, ...after } = l;
         await writeAudit(tx, {
           staffId: actorId,
           action: 'oa_location_saved',
@@ -197,7 +244,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
           detail: { before: before ?? null, after, summary: `${id === null ? '新建' : '修改'}打卡点「${l.name}」半径 ${l.radiusM} 米${l.active ? '' : '（已停用）'}` },
           ip,
         });
-        return loadSetup(tx);
+        return { ...(await loadSetup(tx)), created: id === null ? { kind: 'location', id: locationId, replayed: false } : null };
       });
     } catch (error) {
       if (isUniqueViolation(error, 'oa_locations_name_uq')) throw conflict('NAME_TAKEN', `已经有叫「${l.name}」的打卡点（停用的也算），请换一个名字`);
@@ -212,12 +259,14 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
   app.put('/api/oa/attendance/locations/:id', { preHandler: manage }, async (req) => saveLocation(parse(idParam, req.params).id, req.body, req.actor.id, req.ip));
 
   // ── 考勤组 ──
-  const saveGroup = async (id: number | null, raw: unknown, actorId: number, ip: string): Promise<AttendanceSetup> => {
+  const saveGroup = async (id: number | null, raw: unknown, actorId: number, ip: string): Promise<AttendanceSetupSaved> => {
     const g = parse(GroupInput, raw);
     const locationIds = [...new Set(g.locationIds)].sort((a, b) => a - b);
     const memberIds = [...new Set(g.memberIds)].sort((a, b) => a - b);
     try {
       return await sql.begin(async (tx) => {
+        const op = id === null ? await replayCreate(tx, g.clientKey, 'group', { ...g, locationIds, memberIds }) : null;
+        if (op?.refId) return { ...(await loadSetup(tx)), created: { kind: 'group', id: op.refId, replayed: true } };
         await lockSetup(tx);
         const store = currentStoreId();
         // 打卡点要是本店的；要 GPS 的考勤组至少一个启用的打卡点
@@ -228,9 +277,11 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
         } else if (g.active && g.gpsRequired) {
           throw unprocessable('LOCATION_REQUIRED', '要 GPS 打卡的考勤组至少选一个启用中的打卡点');
         }
-        // 成员要是本店在职员工（员工行 FOR SHARE，按编号：与办理离职、调店互斥）；在别的门店的考勤组里的不能直接挪过来
+        // 成员要是本店在职员工；在别的门店的考勤组里的不能直接挪过来。
+        // 员工行按编号 FOR NO KEY UPDATE（Codex 审查 8e60b6b）：两家店同时把同一个人加进各自的组时，门店咨询锁互不挡，
+        // 这里让后一个等前一个提交、再核对他是不是已经在别的店的组里（共享锁两边都拿得到，挡不住）；也与办理离职、调店互斥
         if (memberIds.length) {
-          const rows = await tx<{ id: number }[]>`SELECT s.id FROM staff s WHERE s.id IN ${tx(memberIds)} ORDER BY s.id FOR SHARE`;
+          const rows = await tx<{ id: number }[]>`SELECT s.id FROM staff s WHERE s.id IN ${tx(memberIds)} ORDER BY s.id FOR NO KEY UPDATE`;
           if (rows.length !== memberIds.length) throw unprocessable('MEMBER_INVALID', '有员工不存在，请刷新');
           const ok = await tx<{ id: number }[]>`SELECT s.id FROM staff s WHERE s.id IN ${tx(memberIds)} AND ${storeEmployee(tx)}`;
           if (ok.length !== memberIds.length) throw unprocessable('MEMBER_INVALID', '有员工已经离职或不在本店，请刷新');
@@ -246,6 +297,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
             INSERT INTO oa_attendance_groups (name, gps_required, face_required, active, created_by, updated_by)
             VALUES (${g.name}, ${g.gpsRequired}, ${g.faceRequired}, ${g.active}, ${actorId}, ${actorId}) RETURNING id`;
           groupId = Number(row!.id);
+          await recordCreate(tx, g.clientKey!, op!.hash, groupId, actorId);
         } else {
           const [row] = await tx<{ name: string; gpsRequired: boolean; faceRequired: boolean; active: boolean; version: number }[]>`
             SELECT name, gps_required, face_required, active, version FROM oa_attendance_groups WHERE id = ${groupId} AND store_id = ${store} FOR UPDATE`;
@@ -267,6 +319,14 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
           )}`;
         // 停用的考勤组不留成员（成员回到「没进考勤组」）；其余：不在名单里的移出，名单里的挪进来（原来在本店别的组的照样挪）
         const keep = g.active ? memberIds : [];
+        // 成员从本店别的组挪过来：那些组的版本也加一（Codex 审查 8e60b6b），免得别人照着旧页面保存那个组时把人又挪回去
+        if (keep.length) {
+          const sources = await tx<{ id: number }[]>`
+            SELECT g.id FROM oa_attendance_groups g
+            WHERE g.id <> ${groupId} AND g.id IN (SELECT m.group_id FROM oa_group_members m WHERE m.staff_id IN ${tx(keep)})
+            ORDER BY g.id FOR UPDATE`;
+          if (sources.length) await tx`UPDATE oa_attendance_groups SET version = version + 1, updated_by = ${actorId}, updated_at = now() WHERE id IN ${tx(sources.map((x) => Number(x.id)))}`;
+        }
         await tx`DELETE FROM oa_group_members WHERE group_id = ${groupId} ${keep.length ? tx`AND staff_id NOT IN ${tx(keep)}` : tx``}`;
         if (keep.length) {
           await tx`
@@ -277,7 +337,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
             )}
             ON CONFLICT (staff_id) DO UPDATE SET group_id = EXCLUDED.group_id, joined_at = now() WHERE oa_group_members.group_id <> EXCLUDED.group_id`;
         }
-        const { version: _v, ...after } = g;
+        const { version: _v, clientKey: _k, ...after } = g;
         await writeAudit(tx, {
           staffId: actorId,
           action: 'oa_group_saved',
@@ -290,7 +350,7 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
           },
           ip,
         });
-        return loadSetup(tx);
+        return { ...(await loadSetup(tx)), created: id === null ? { kind: 'group', id: groupId, replayed: false } : null };
       });
     } catch (error) {
       if (isUniqueViolation(error, 'oa_attendance_groups_name_uq')) throw conflict('NAME_TAKEN', `已经有叫「${g.name}」的考勤组（停用的也算），请换一个名字`);

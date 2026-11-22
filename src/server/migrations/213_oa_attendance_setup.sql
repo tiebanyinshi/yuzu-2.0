@@ -4,6 +4,7 @@
 --   · oa_attendance_groups：考勤组（GPS / 人脸两个开关）；oa_group_locations：组用哪几个打卡点；oa_group_members：成员（一人一组）。
 -- 都按门店分，不删只停用（排班、打卡记录会引用）；后台改的时候带版本。
 -- 新权限项 hr.attendance（算「业务录入」那一列）：建议权限给总经办、人力行政部负责人与员工（与 src/shared/positions.ts 的 POSITION_DEFAULTS 一致）。
+-- 新建班次、打卡点、考勤组带操作编号：操作编号与「确认作废」多一类 oa_attendance_setup（在当时的约束上追加）。
 -- 回滚：docs/rollback/213_oa_attendance_setup.down.sql（删这几张表、撤掉建议权限）。
 
 CREATE TABLE oa_shifts (
@@ -81,3 +82,14 @@ CREATE TABLE oa_group_members (
 CREATE INDEX oa_group_members_group_idx ON oa_group_members (group_id);
 
 INSERT INTO position_suggestions (position_key, permission) VALUES ('gmo', 'hr.attendance'), ('hr.lead', 'hr.attendance'), ('hr.staff', 'hr.attendance') ON CONFLICT DO NOTHING;
+
+DO $$
+DECLARE t text; expression text;
+BEGIN
+ FOREACH t IN ARRAY ARRAY['idempotency_keys','op_fences'] LOOP
+  SELECT pg_get_expr(conbin,conrelid) INTO expression FROM pg_constraint WHERE conrelid=t::regclass AND conname=t||'_op_type_check';
+  IF expression IS NULL THEN RAISE EXCEPTION '原操作类型约束不存在'; END IF;
+  EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I',t,t||'_op_type_check');
+  EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((%s) OR op_type IN (''oa_attendance_setup''))',t,t||'_op_type_check',expression);
+ END LOOP;
+END $$;

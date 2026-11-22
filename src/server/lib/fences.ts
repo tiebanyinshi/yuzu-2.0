@@ -165,6 +165,8 @@ export const FENCED_OPS = [
   'room_order_fruit',
   // OA-02 批量开通（迁移 211）：编号记在 idempotency_keys（ref_id 是那次开通 oa_staff_imports）
   'oa_staff_import',
+  // OA-04 考勤设置（迁移 213）：新建班次、打卡点、考勤组；编号记在 idempotency_keys（ref_id 是新建的那一行）
+  'oa_attendance_setup',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 

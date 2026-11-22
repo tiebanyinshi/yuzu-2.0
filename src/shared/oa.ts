@@ -252,3 +252,8 @@ export interface AttendanceSetup {
   /** 本店在职员工与所在考勤组（没进组的 groupId 为 null） */
   employees: AttendanceEmployee[];
 }
+
+/** 保存以后的回答：最新的设置；新建的另给建的是哪一行（结果待确认查回用；replayed = 同一编号原样重提，之前已经建好） */
+export interface AttendanceSetupSaved extends AttendanceSetup {
+  created: { kind: 'shift' | 'location' | 'group'; id: number; replayed: boolean } | null;
+}

@@ -59,6 +59,9 @@ function refOfResponse(type: ErpOpType, data: unknown): ErpOpRef | null {
     // OA-02 批量开通：返回那次开通
     case 'oa_staff_import':
       return d.import && typeof d.import === 'object' ? { refId: d.import.id } : null;
+    // OA-04 考勤设置：新建的那一行
+    case 'oa_attendance_setup':
+      return d.created && typeof d.created === 'object' ? { refId: d.created.id } : null;
     // 赠品登记（8.0.1）：返回那条登记
     case 'gift_receipt':
       return d.gift && typeof d.gift === 'object' ? { refId: d.gift.id } : null;

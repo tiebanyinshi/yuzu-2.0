@@ -1,6 +1,7 @@
 // OA-04 后台「考勤设置」（docs/OA.md 第 7 节）：班次、打卡点、考勤组三个页签。
 // 班次的时间与打卡窗口说不通的（窗口重叠、休息段不在班次里）不让存，与服务端同一个核对（shiftProblem）。
-// 改的时候带版本：别人先改过就提示并载入最新的；结果不确定的（超时、断网）关掉对话框、重新载入，请人核对。
+// 新建带操作编号（与批量开通一样走「结果待确认」：结果不确定的记在本机，在页面上方查回、按原内容重新提交或确认作废，确认前不能再建）；
+// 修改带版本：别人先改过就提示并载入最新的；结果不确定的关掉对话框重新载入（旧请求晚到也会因为版本对不上被拒绝）。
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -11,6 +12,7 @@ import {
   SHIFT_WINDOW_DEFAULTS,
   shiftProblem,
   type AttendanceSetup,
+  type AttendanceSetupSaved,
   type OaAttendanceGroup,
   type OaLocation,
   type OaShift,
@@ -19,9 +21,12 @@ import {
 import { positionLabel } from '@shared/positions';
 import { clockText, parseClock, shiftTimeText } from '@shared/technician-admin';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
+import { ErpPendingStoreError, sendErpOp, useErpPending } from '../../lib/erpPending';
+import { useSession } from '../../lib/session';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
-import { cn } from '../../lib/utils';
+import { cn, uuid } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
+import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { useActiveSubTab } from '../../components/SubNav';
@@ -38,6 +43,7 @@ const TABS = [
 
 export function AttendanceSetupSection() {
   const q = useQuery({ queryKey: SETUP_KEY, queryFn: () => api.get<AttendanceSetup>('/api/oa/attendance/setup') });
+  const qc = useQueryClient();
   return (
     <AdminPage
       section="attendance"
@@ -45,6 +51,8 @@ export function AttendanceSetupSection() {
       tabs={TABS}
       description="班次（上下班时间、跨天班、打卡窗口）、打卡点（经纬度与有效半径）、考勤组（用哪几个打卡点、要不要 GPS / 人脸、成员）。排班与打卡都按这里的设置；不删只停用。"
     >
+      {/* 新建班次、打卡点、考勤组没收到结果的：查回、按原内容重新提交或确认作废 */}
+      <ErpPendingPanel types={['oa_attendance_setup']} className="mb-4 space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: SETUP_KEY })} />
       {q.isPending ? (
         <Skeleton className="h-60" />
       ) : q.isError && !q.data ? (
@@ -61,30 +69,58 @@ function SetupBody({ setup }: { setup: AttendanceSetup }) {
   return tab === 'locations' ? <LocationsCard setup={setup} /> : tab === 'groups' ? <GroupsCard setup={setup} /> : <ShiftsCard setup={setup} />;
 }
 
-/** 保存：成功换上最新的设置；别人先改过、结果不确定的关掉对话框重新载入 */
+/**
+ * 保存：成功换上最新的设置。
+ * 新建：带操作编号、先记在本机再发（sendErpOp）；结果不确定的关掉对话框，到页面上方查回、按原内容重新提交或确认作废，
+ * 上一次新建还待确认时不让再建（Codex 审查 8e60b6b：查不到不能断定没建上，重新填一份可能两份都建出来）。
+ * 修改：带版本；别人先改过、结果不确定的关掉对话框重新载入。
+ */
 function useSave(onClose: () => void) {
   const qc = useQueryClient();
   const toast = useToast();
+  const session = useSession();
+  const pending = useErpPending(['oa_attendance_setup']);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const run = async (method: 'post' | 'put', path: string, body: unknown, ok: string) => {
+  const run = async (target: { create: string; summary: string } | { update: string }, body: object, ok: string) => {
+    if ('create' in target && pending.length > 0) {
+      setError('上一次新建结果待确认：请先关掉这个窗口，在页面上方查回、按原内容重新提交或作废');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const next = method === 'post' ? await api.post<AttendanceSetup>(path, body) : await api.put<AttendanceSetup>(path, body);
+      let next: AttendanceSetupSaved;
+      if ('create' in target) {
+        const key = uuid();
+        next = await sendErpOp<AttendanceSetupSaved>({
+          key,
+          type: 'oa_attendance_setup',
+          url: target.create,
+          body: { ...body, clientKey: key },
+          summary: target.summary,
+          staffName: session.staff.displayName,
+        });
+      } else next = await api.put<AttendanceSetupSaved>(target.update, body);
       qc.setQueryData(SETUP_KEY, next);
-      toast({ tone: 'success', title: ok });
+      toast({ tone: 'success', title: next.created?.replayed ? `${ok}（之前已经建好）` : ok });
       onClose();
     } catch (err) {
       if (err instanceof UncertainError) {
-        toast({ tone: 'info', title: `${err.message}，不确定有没有保存上`, body: '已重新载入，请核对列表里是不是已经改好，没改上再重新保存' });
+        const creating = 'create' in target;
+        toast({
+          tone: 'info',
+          title: creating ? '新建结果待确认' : `${err.message}，不确定有没有保存上`,
+          body: creating ? '已记在本机：请在页面上方查回、按原内容重新提交或作废，确认前不要重新填一份。' : '已重新载入，请核对列表里是不是已经改好，没改上再重新保存',
+        });
         onClose();
         void qc.invalidateQueries({ queryKey: SETUP_KEY });
       } else if (err instanceof ApiError && err.code === 'VERSION_CONFLICT') {
         toast({ tone: 'info', title: errorMessage(err), body: '已载入最新内容，请核对后再改' });
         onClose();
         void qc.invalidateQueries({ queryKey: SETUP_KEY });
-      } else setError(errorMessage(err));
+      } else if (err instanceof ErpPendingStoreError) setError(err.message);
+      else setError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -202,7 +238,7 @@ function ShiftDialog({ target, onClose }: { target: OaShift | 'new' | null; onCl
   const submit = () => {
     if (!times || problem) return;
     const body = { name: name.trim(), ...times, active, version: existing?.version };
-    void save.run(existing ? 'put' : 'post', existing ? `/api/oa/attendance/shifts/${existing.id}` : '/api/oa/attendance/shifts', body, `班次「${body.name}」已保存`);
+    void save.run(existing ? { update: `/api/oa/attendance/shifts/${existing.id}` } : { create: '/api/oa/attendance/shifts', summary: `新建班次「${body.name}」` }, body, `班次「${body.name}」已保存`);
   };
   const setW = (k: keyof typeof SHIFT_WINDOW_DEFAULTS) => (e: React.ChangeEvent<HTMLInputElement>) => setWin((w) => ({ ...w, [k]: e.target.value.replace(/\D/g, '') }));
   return (
@@ -377,7 +413,11 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
   const submit = () => {
     if (problem) return;
     const body = { name: name.trim(), address: address.trim(), lat: latN, lng: lngN, radiusM: radiusN, active, version: existing?.version };
-    void save.run(existing ? 'put' : 'post', existing ? `/api/oa/attendance/locations/${existing.id}` : '/api/oa/attendance/locations', body, `打卡点「${body.name}」已保存`);
+    void save.run(
+      existing ? { update: `/api/oa/attendance/locations/${existing.id}` } : { create: '/api/oa/attendance/locations', summary: `新建打卡点「${body.name}」` },
+      body,
+      `打卡点「${body.name}」已保存`,
+    );
   };
   return (
     <Dialog
@@ -523,7 +563,11 @@ function GroupDialog({ setup, target, onClose }: { setup: AttendanceSetup; targe
   const submit = () => {
     if (problem) return;
     const body = { name: name.trim(), gpsRequired: gps, faceRequired: face, active, locationIds: locations, memberIds: members, version: existing?.version };
-    void save.run(existing ? 'put' : 'post', existing ? `/api/oa/attendance/groups/${existing.id}` : '/api/oa/attendance/groups', body, `考勤组「${body.name}」已保存`);
+    void save.run(
+      existing ? { update: `/api/oa/attendance/groups/${existing.id}` } : { create: '/api/oa/attendance/groups', summary: `新建考勤组「${body.name}」` },
+      body,
+      `考勤组「${body.name}」已保存`,
+    );
   };
   return (
     <Dialog
