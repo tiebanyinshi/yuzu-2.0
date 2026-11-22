@@ -623,7 +623,7 @@ function Chip({ on, onClick, children, testId }: { on: boolean; onClick: () => v
       onClick={onClick}
       data-testid={testId}
       className={cn(
-        'tap rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition-colors',
+        'tap relative h-10 rounded-full border px-4 text-[13px] font-semibold transition-colors',
         on ? 'border-pine bg-pine-tint text-pine' : 'border-line-strong bg-card text-ink-2 hover:border-ink-4',
       )}
     >
