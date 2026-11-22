@@ -6,7 +6,7 @@
 //   · 已读回执、统一实时通道、新消息进站内通知在 OA-15；通讯录、群管理在 OA-16。
 // 加锁（docs/LOCKING.md「即时通讯」）：发消息 = 会话行（FOR UPDATE）→ 消息 → 附件行 → 通知；撤回 = 消息行（FOR UPDATE）；已读 = 自己的成员行。
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import {
   IM_GROUP_MAX,
@@ -38,7 +38,19 @@ import { erpOpAbandoned } from '../erp-ops';
 import { notify } from './notifications';
 import { NOT_EMPLOYEE_ROLES } from './org';
 
-const auth = guard();
+/**
+ * 只有在职员工能用即时通讯：平板（电子菜单）、他店等专用账号、系统账号、已离职的一律拒绝（Codex 安全审查 3a3892f）。
+ * 登录检查之后再按库里的账号与员工档案核对一次（专用账号的会话不能靠直接调接口进来）
+ */
+const loggedIn = guard();
+function employeeOnly(db: Db): preHandlerAsyncHookHandler {
+  return async function (req, reply) {
+    await loggedIn.call(this, req, reply);
+    if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(req.actor.role) || !(await onDutyIds(db, [req.actor.id])).length) {
+      throw forbidden('这个账号不能用即时通讯');
+    }
+  };
+}
 const REF = 'oa_im_message';
 /** 不带 since 取新消息时一并给出最近几分钟里撤回的（撤回只能在发出后 2 分钟内） */
 const REVOKED_WINDOW_MINUTES = IM_REVOKE_MINUTES + 3;
@@ -293,6 +305,7 @@ async function send(tx: Tx, actor: Actor, conversationId: number, input: z.infer
 }
 
 export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
+  const auth = employeeOnly(sql);
   const one = async (id: number) => (await loadMessages(sql, sql`msg.id = ${id}`, sql`msg.id`, 1))[0]!;
 
   app.get('/api/oa/im/conversations', { preHandler: auth }, async (req): Promise<ImConversationList> => {

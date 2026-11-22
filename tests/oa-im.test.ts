@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { OaAttachment } from '../src/shared/oa';
 import type { ImConversationDetail, ImConversationList, ImMessagePage, ImPollResult, ImSent } from '../src/shared/oa-im';
+import { createStaff } from '../src/server/modules/staff';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -195,5 +196,17 @@ describe('OA-14 即时通讯', () => {
     const mk = () => api(ctx.app, emp.d!.cookie, 'POST', '/api/oa/im/groups', { clientKey: randomUUID(), name: '刷屏', memberIds: [emp.b!.id, emp.c!.id] });
     for (let i = 0; i < 10; i += 1) expect((await mk()).status).toBe(201);
     expect(code(await mk())).toBe('GROUP_QUOTA');
+  });
+
+  it('专用账号（平板、他店）不能用即时通讯：接口一律 403，也不能被拉进会话', async () => {
+    for (const role of ['tablet', 'other_store'] as const) {
+      const username = `im_${role}`;
+      const id = await createStaff(ctx.sql, { username, displayName: username, role, password: PASSWORD, mustChangePassword: false });
+      const cookie = await login(ctx.app, username);
+      expect((await api(ctx.app, cookie, 'GET', '/api/oa/im/conversations')).status).toBe(403);
+      expect((await api(ctx.app, cookie, 'POST', '/api/oa/im/direct', { staffId: emp.a!.id })).status).toBe(403);
+      expect((await api(ctx.app, cookie, 'GET', `/api/oa/im/conversations/${dm}/messages`)).status).toBe(403);
+      expect((await api(ctx.app, emp.a!.cookie, 'POST', '/api/oa/im/direct', { staffId: id })).status).toBe(404);
+    }
   });
 });
