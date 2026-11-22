@@ -8,6 +8,7 @@
 ALTER TABLE org_departments
   ADD COLUMN parent_key    text REFERENCES org_departments (key),
   ADD COLUMN head_staff_id bigint REFERENCES staff (id),
+  ADD COLUMN version       integer NOT NULL DEFAULT 1,
   ADD CONSTRAINT org_departments_parent_not_self CHECK (parent_key IS NULL OR parent_key <> key);
 
 -- 公司在最上；总经办挂公司下；其余部门默认挂总经办下（后台可改）

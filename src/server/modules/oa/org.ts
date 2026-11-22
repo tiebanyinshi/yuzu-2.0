@@ -26,6 +26,7 @@ const DeptInput = z.object({
     .regex(/^[a-z]+$/, '上级部门不正确')
     .nullable(),
   headStaffId: z.number().int().positive().nullable(),
+  version: z.number().int().positive(),
 });
 const ProfileInput = z.object({
   empNo: z.string().trim().regex(EMP_NO_PATTERN, '工号为 1–20 位字母、数字、- 或 _').nullable(),
@@ -93,8 +94,8 @@ export function effectiveHead(dept: { key: OrgDepartment; headStaffId: number | 
 
 export async function loadOrg(db: Db): Promise<OrgOverview> {
   const employees = (await employeeRows(db)).map(toProfile);
-  const depts = await db<{ key: OrgDepartment; name: string; parentKey: OrgDepartment | null; headStaffId: number | null }[]>`
-    SELECT key, name, parent_key, head_staff_id FROM org_departments ORDER BY sort`;
+  const depts = await db<{ key: OrgDepartment; name: string; parentKey: OrgDepartment | null; headStaffId: number | null; version: number }[]>`
+    SELECT key, name, parent_key, head_staff_id, version FROM org_departments ORDER BY sort`;
   const departments = depts.map((d) => ({
     ...d,
     head: effectiveHead(d, employees),
@@ -133,22 +134,30 @@ export function registerOaOrgRoutes(app: FastifyInstance, { sql }: Deps) {
     const { key } = parse(keyParam, req.params);
     const input = parse(DeptInput, req.body);
     await sql.begin(async (tx) => {
-      const rows = await tx<{ key: string; parentKey: string | null; headStaffId: number | null }[]>`
-        SELECT key, parent_key, head_staff_id FROM org_departments ORDER BY key FOR UPDATE`;
+      // 锁顺序（LOCKING 第 9 节）：员工 → 员工档案 → 部门。先锁住要指定的主管（与办理离职互斥：离职先锁员工再清部门主管），
+      // 免得这边刚核对完在职、那边办完离职，部门上留下一位离职的指定主管
+      if (input.headStaffId) {
+        const [head] = await tx<{ id: number }[]>`SELECT id FROM staff WHERE id = ${input.headStaffId} AND active AND NOT system FOR SHARE`;
+        const [profile] = head ? await tx<{ status: EmploymentStatus }[]>`SELECT status FROM staff_profiles WHERE staff_id = ${head.id} FOR SHARE` : [];
+        if (!head || profile?.status === 'left') throw unprocessable('HEAD_INVALID', '主管要选一位在职员工');
+      }
+      const rows = await tx<{ key: string; parentKey: string | null; headStaffId: number | null; version: number }[]>`
+        SELECT key, parent_key, head_staff_id, version FROM org_departments ORDER BY key FOR UPDATE`;
       const before = rows.find((r) => r.key === key);
       if (!before) throw notFound('部门不存在');
+      if (before.version !== input.version) throw conflict('VERSION_CONFLICT', '这个部门刚被别人改过，请刷新后再改');
       if (key === 'company' ? input.parentKey !== null : !input.parentKey) throw unprocessable('PARENT_INVALID', '公司在最上面，其余部门都要选上级部门');
       if (input.parentKey && !rows.some((r) => r.key === input.parentKey)) throw unprocessable('PARENT_INVALID', '上级部门不存在');
       const parents = new Map(rows.map((r) => [r.key, r.parentKey]));
       if (wouldCycle(parents, key, input.parentKey)) throw unprocessable('PARENT_CYCLE', '上级部门不能选自己或自己下面的部门');
-      if (input.headStaffId) {
-        const [head] = await tx<{ id: number }[]>`
-          SELECT s.id FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
-          WHERE s.id = ${input.headStaffId} AND s.active AND NOT s.system AND coalesce(p.status, 'active') = 'active'`;
-        if (!head) throw unprocessable('HEAD_INVALID', '主管要选一位在职员工');
-      }
-      await tx`UPDATE org_departments SET parent_key = ${input.parentKey}, head_staff_id = ${input.headStaffId} WHERE key = ${key}`;
-      await writeAudit(tx, { staffId: req.actor.id, action: 'org_department_updated', targetType: 'org_department', detail: { key, before, after: input }, ip: req.ip });
+      await tx`UPDATE org_departments SET parent_key = ${input.parentKey}, head_staff_id = ${input.headStaffId}, version = version + 1 WHERE key = ${key}`;
+      await writeAudit(tx, {
+        staffId: req.actor.id,
+        action: 'org_department_updated',
+        targetType: 'org_department',
+        detail: { key, before, after: { parentKey: input.parentKey, headStaffId: input.headStaffId } },
+        ip: req.ip,
+      });
     });
     return loadOrg(sql);
   });
@@ -197,8 +206,10 @@ export function registerOaOrgRoutes(app: FastifyInstance, { sql }: Deps) {
       await tx`UPDATE staff SET active = false, updated_at = now() WHERE id = ${id}`;
       const [owners] = await tx<{ count: number }[]>`SELECT count(*)::int AS count FROM staff WHERE role = 'owner' AND active`;
       if (!owners || owners.count < 1) throw unprocessable('LAST_OWNER', '至少需要保留一位在职总裁');
-      // 指定的主管离职：这个部门改回按负责人岗位自动取
-      await tx`UPDATE org_departments SET head_staff_id = NULL WHERE head_staff_id = ${id}`;
+      // 指定的主管离职：这个部门改回按负责人岗位自动取。先按 key 锁住全部部门（与改部门同一个顺序），
+      // 一位员工是好几个部门的指定主管时，批量 UPDATE 自己挑的加锁顺序可能与改部门相反而死锁（Codex 审查 f5465fe）
+      await tx`SELECT key FROM org_departments ORDER BY key FOR UPDATE`;
+      await tx`UPDATE org_departments SET head_staff_id = NULL, version = version + 1 WHERE head_staff_id = ${id}`;
       await destroyStaffSessions(tx, id);
       await writeAudit(tx, { staffId: req.actor.id, action: 'employee_left', targetType: 'staff', targetId: id, detail: { leaveDate: input.leaveDate }, ip: req.ip });
     });

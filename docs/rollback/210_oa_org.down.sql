@@ -8,6 +8,7 @@ BEGIN;
 DELETE FROM position_suggestions WHERE permission = 'hr.org';
 DROP TABLE IF EXISTS staff_profiles;
 ALTER TABLE org_departments DROP CONSTRAINT IF EXISTS org_departments_parent_not_self;
+ALTER TABLE org_departments DROP COLUMN IF EXISTS version;
 ALTER TABLE org_departments DROP COLUMN IF EXISTS head_staff_id;
 ALTER TABLE org_departments DROP COLUMN IF EXISTS parent_key;
 DELETE FROM schema_migrations WHERE version = '210_oa_org.sql';

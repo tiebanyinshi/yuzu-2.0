@@ -364,4 +364,4 @@
 
 ## 9. OA 办公（`docs/OA.md`）
 
-- **组织架构与员工档案**（OA-01，`src/server/modules/oa/org.ts`）：在职店主行（`staff WHERE role = 'owner'`，与 `PUT /api/staff/:id` 同一个顺序，办理离职、复职才锁）→ 目标员工行（`staff` `FOR NO KEY UPDATE`）→ 员工档案行（`staff_profiles` `FOR UPDATE`）→ 部门行（`org_departments` 按 `key` 全部 `FOR UPDATE`，改上级与主管、离职清指定主管时）。档案带版本（`version`），别人先改过就拒绝。
+- **组织架构与员工档案**（OA-01，`src/server/modules/oa/org.ts`）：在职店主行（`staff WHERE role = 'owner'`，与 `PUT /api/staff/:id` 同一个顺序，办理离职、复职才锁）→ 目标员工行（`staff` `FOR NO KEY UPDATE`）→ 员工档案行（`staff_profiles` `FOR UPDATE`）→ 部门行（`org_departments` 按 `key` 全部 `FOR UPDATE`，改上级与主管、离职清指定主管时；离职清主管也先按 `key` 锁全部部门再 `UPDATE`，不让批量更新自己挑顺序）。改部门要指定主管时，先锁那位员工（`staff` `FOR SHARE`）与他的档案（`FOR SHARE`），再锁部门，与办理离职互斥。`PUT /api/staff/:id` 启用账号时读员工档案（`FOR SHARE`，在员工行之后）：办过离职的不能在这里启用，要走复职。部门与档案都带版本（`version`），别人先改过就拒绝。

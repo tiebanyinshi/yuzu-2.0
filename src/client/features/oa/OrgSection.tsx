@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Building2, Search } from 'lucide-react';
 import { EMPLOYMENT_STATUS_LABELS, type EmployeeProfile, type OrgDepartmentNode, type OrgOverview } from '@shared/oa';
 import { ORG_DEPARTMENTS, positionLabel } from '@shared/positions';
-import { api, errorMessage } from '../../lib/api';
+import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
 import { DataTable, type DataColumn } from '../../components/DataTable';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
@@ -88,25 +88,15 @@ function DepartmentTree({ org }: { org: OrgOverview }) {
 }
 
 function DepartmentDialog({ dept, org, onClose }: { dept: OrgDepartmentNode; org: OrgOverview; onClose: () => void }) {
-  const qc = useQueryClient();
-  const toast = useToast();
   const [parentKey, setParentKey] = useState<string>(dept.parentKey ?? '');
   const [headId, setHeadId] = useState<string>(dept.headStaffId ? String(dept.headStaffId) : '');
-  const [saving, setSaving] = useState(false);
+  const { saving, run } = useOrgWrite(onClose);
   const candidates = org.employees.filter((e) => e.active && e.status === 'active');
-  const save = async () => {
-    setSaving(true);
-    try {
-      const next = await api.put<OrgOverview>(`/api/oa/org/departments/${dept.key}`, { parentKey: parentKey || null, headStaffId: headId ? Number(headId) : null });
-      qc.setQueryData(ORG_KEY, next);
-      toast({ tone: 'success', title: `已保存「${dept.name}」` });
-      onClose();
-    } catch (err) {
-      toast({ tone: 'error', title: errorMessage(err) });
-    } finally {
-      setSaving(false);
-    }
-  };
+  const save = () =>
+    run(
+      () => api.put<OrgOverview>(`/api/oa/org/departments/${dept.key}`, { parentKey: parentKey || null, headStaffId: headId ? Number(headId) : null, version: dept.version }),
+      `已保存「${dept.name}」`,
+    );
   return (
     <Dialog
       open
@@ -251,7 +241,14 @@ function EmployeeTable({ org }: { org: OrgOverview }) {
   );
 }
 
-/** 改档案、办离职、办复职共用：带着档案版本提交，成功后用返回的整份组织架构刷新 */
+/**
+ * 改部门、改档案、办离职、办复职共用：带着版本提交，成功后用返回的整份组织架构刷新。
+ * 这几样都是改已有的记录、带版本（与巡场场所、券、设备的编辑同一个做法）：
+ *   · 结果不明（超时、断网、服务器出错，可能已经改上了）：不当失败处理——关掉对话框、重新载入，提示核对后再改；
+ *     原样再提交也不会改两遍（版本已经变了会被拒），所以不需要另记操作编号；
+ *   · 别人先改过（版本对不上）：同样关掉、载入最新的；
+ *   · 其余被明确拒绝的（工号重复等）：对话框留着，改了再提交。
+ */
 function useOrgWrite(onDone: () => void) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -263,8 +260,13 @@ function useOrgWrite(onDone: () => void) {
       toast({ tone: 'success', title: ok });
       onDone();
     } catch (err) {
-      toast({ tone: 'error', title: errorMessage(err) });
-      // 别人先改过（版本对不上）：刷新一下，按最新的再改
+      if (err instanceof UncertainError) {
+        toast({ tone: 'info', title: `${err.message}，不确定有没有保存上`, body: '已重新载入，请核对这一行是不是已经改好，没改上再重新办理' });
+        onDone();
+      } else if (err instanceof ApiError && err.code === 'VERSION_CONFLICT') {
+        toast({ tone: 'info', title: errorMessage(err), body: '已载入最新内容，请核对后再改' });
+        onDone();
+      } else toast({ tone: 'error', title: errorMessage(err) });
       void qc.invalidateQueries({ queryKey: ORG_KEY });
     } finally {
       setSaving(false);

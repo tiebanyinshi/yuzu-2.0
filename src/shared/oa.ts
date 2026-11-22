@@ -21,6 +21,8 @@ export interface OrgDepartmentNode {
   head: { id: number; name: string; designated: boolean } | null;
   /** 在职人数（按岗位所在的部门） */
   memberCount: number;
+  /** 版本：改上级、主管时带上，别人先改过就不能覆盖 */
+  version: number;
 }
 
 /** 员工档案（与账号一对一；没建过档案的员工各项为空、算在职） */
