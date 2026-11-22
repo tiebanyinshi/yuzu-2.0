@@ -294,9 +294,13 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql }: D
           if (rows.length !== memberIds.length) throw unprocessable('MEMBER_INVALID', '有员工不存在，请刷新');
           const ok = await tx<{ id: number }[]>`SELECT s.id FROM staff s WHERE s.id IN ${tx(memberIds)} AND ${storeEmployee(tx)}`;
           if (ok.length !== memberIds.length) throw unprocessable('MEMBER_INVALID', '有员工已经离职或不在本店，请刷新');
+          // 只算他现在还属于的那家店的组（Codex 审查 7dc7404）：调店以后原门店的组关联留在那里，原门店的页面上已经看不到他、移不出来，
+          // 这种旧关联不挡新门店，照样挪过来（下面把原组的版本加一）
           const elsewhere = await tx<{ name: string }[]>`
             SELECT s.display_name AS name FROM oa_group_members m JOIN oa_attendance_groups og ON og.id = m.group_id JOIN staff s ON s.id = m.staff_id
-            WHERE m.staff_id IN ${tx(memberIds)} AND og.store_id <> ${store}`;
+            WHERE m.staff_id IN ${tx(memberIds)} AND og.store_id <> ${store}
+              AND (EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id AND x.store_id = og.store_id)
+                   OR (NOT EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id) AND og.store_id = ${DEFAULT_STORE_ID}))`;
           if (elsewhere.length) throw conflict('MEMBER_IN_OTHER_STORE', `${elsewhere.map((x) => x.name).join('、')} 在别的门店的考勤组里，先在那边移出来`);
         }
         let groupId = id;

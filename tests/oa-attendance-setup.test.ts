@@ -164,4 +164,37 @@ describe('OA-04 考勤设置', () => {
     expect(code(await api(ctx.app, ctx.owner, 'PUT', `/api/oa/attendance/groups/${a.id}`, { name: '甲组改名', gpsRequired: false, memberIds: [c.id], version: a.version }))).toBe('VERSION_CONFLICT');
     expect(setup.employees.find((e) => e.staffId === c.id)!.groupId).toBe(setup.groups.find((g) => g.name === '乙组')!.id);
   });
+
+  it('别的门店：还挂在那家店的员工不能挪过来；调店以后原门店留下的旧关联不挡新门店', async () => {
+    const entity = await api(ctx.app, ctx.owner, 'POST', '/api/admin/entities', { name: '考勤二店公司', taxNo: '91440300MA5XXXXK04' });
+    expect(entity.status, JSON.stringify(entity.body)).toBe(201);
+    const store = await api(ctx.app, ctx.owner, 'POST', '/api/admin/stores', { code: 'kq', name: '考勤二店', entityId: entity.body.id });
+    expect(store.status, JSON.stringify(store.body)).toBe(201);
+    const kq = (store.body as { id: number }).id;
+    const both = await hire('att_both', 'front.staff');
+    const moved = await hire('att_moved', 'front.staff');
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/staff/${both.id}/stores`, { storeIds: [STORE, kq] })).status).toBe(200);
+    // 本店的组里放这两个人
+    let r = await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/groups', { clientKey: randomUUID(), storeId: STORE, name: '本店组', gpsRequired: false, memberIds: [both.id, moved.id] });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const home = (r.body as AttendanceSetup).groups.find((g) => g.name === '本店组')!;
+    // 调店：moved 只挂二店
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/staff/${moved.id}/stores`, { storeIds: [kq] })).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: kq })).status).toBe(200);
+    try {
+      // both 还挂在本店、在本店的组里：拒绝
+      expect(code(await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/groups', { clientKey: randomUUID(), storeId: kq, name: '二店组', gpsRequired: false, memberIds: [both.id] }))).toBe(
+        'MEMBER_IN_OTHER_STORE',
+      );
+      // moved 已经调走：本店留下的旧关联不挡，挪过来
+      r = await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/groups', { clientKey: randomUUID(), storeId: kq, name: '二店组', gpsRequired: false, memberIds: [moved.id] });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      expect((r.body as AttendanceSetup).groups.find((g) => g.name === '二店组')!.memberIds).toEqual([moved.id]);
+    } finally {
+      expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: STORE })).status).toBe(200);
+    }
+    // 本店组的版本加一，成员只剩 both
+    const setup = (await api(ctx.app, ctx.owner, 'GET', '/api/oa/attendance/setup')).body as AttendanceSetup;
+    expect(setup.groups.find((g) => g.id === home.id)).toMatchObject({ version: home.version + 1, memberIds: [both.id] });
+  });
 });
