@@ -234,7 +234,7 @@ describe('价目表录入 第一批：数据模型与导入', () => {
   it('逐行校验：报错写明工作表、行号、字段与原因（价格为空、时长格式不支持、名称重复、板块不存在、少了工作表）', async () => {
     const bad = workbook({
       按摩及助浴价格: sheet('按摩及助浴价格', [
-        ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价'],
+        ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价', '核心针对人群', '服务操作内容', '项目亮点'],
         ['康疗', 1, '古法中式', '房间', '一个半小时', 499, 599],
         [null, 2, '古法中式', '房间', '80min', 499, 599],
         ['足疗', 3, '足部', '房间', '60min', 300, null],
@@ -497,12 +497,14 @@ describe('价目表录入 第三批：编辑与校验', () => {
     expect((await put(neu, { priceCents: 100 }, ctx.clerk)).status).toBe(403);
 
     // 切换生效：条数与表格（224）对不上，要写原因
-    const short = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: draft.id });
+    const short = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { opKey: randomUUID(), draftId: draft.id });
     expect(short.status).toBe(422);
     expect(short.body.error.code).toBe('PRICE_COUNT_MISMATCH');
     expect(short.body.error.message).toContain('按摩及助浴价格');
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: draft.id + 999, countReason: '演练' })).body.error.code).toBe('PRICE_SET_CHANGED');
-    const on1 = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: draft.id, countReason: '合成的演练表，只有一部分' });
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { opKey: randomUUID(), draftId: draft.id + 999, countReason: '演练' })).body.error.code).toBe(
+      'PRICE_SET_CHANGED',
+    );
+    const on1 = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { opKey: randomUUID(), draftId: draft.id, countReason: '合成的演练表，只有一部分' });
     expect(on1.status, JSON.stringify(on1.body)).toBe(200);
     expect(on1.body).toMatchObject({ active: { id: draft.id, status: 'active' }, draft: null, previous: null });
     // 生效中的也能改（马上作数），留痕照记
@@ -514,7 +516,7 @@ describe('价目表录入 第三批：编辑与校验', () => {
 
     // 再导一份、切换：原来生效的转停用，成为「上一版」；旧版不能再改
     const second = await importDraft('第二份');
-    const on2 = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: second.id, countReason: '演练' })).body as PriceCatalogOverview;
+    const on2 = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { opKey: randomUUID(), draftId: second.id, countReason: '演练' })).body as PriceCatalogOverview;
     expect(on2.active!.id).toBe(second.id);
     expect(on2.previous).toMatchObject({ id: draft.id, status: 'retired', retiredAt: expect.any(String) });
     const retired = await put(ball, { version: 2, priceCents: 4900 } as Partial<PriceCatalogEntry>);
@@ -547,7 +549,7 @@ describe('价目表录入 第三批：编辑与校验', () => {
     const third = await importDraft('不要了');
     const thirdEntry = third.entries[0]!;
     await put(thirdEntry, { note: '试改' });
-    const gone = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/discard', { draftId: third.id })).body as PriceCatalogOverview;
+    const gone = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/discard', { opKey: randomUUID(), draftId: third.id })).body as PriceCatalogOverview;
     expect(gone.draft).toBeNull();
     const [leftRow] = await ctx.sql<{ left: number }[]>`SELECT count(*)::int AS left FROM price_catalog_changes WHERE set_id = ${third.id}`;
     expect(leftRow!.left).toBe(0);
@@ -613,7 +615,7 @@ describe('价目表录入 审查修正（PR #160）', () => {
 
     const massage = (dur: string) =>
       sheet('按摩及助浴价格', [
-        ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价'],
+        ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价', '核心针对人群', '服务操作内容', '项目亮点'],
         ['康疗', 1, '古法中式', '房间', dur, 499, 599],
       ]);
     for (const dur of ['0min', '3000min']) {
@@ -775,5 +777,50 @@ describe('价目表录入 审查修正（PR #160）', () => {
       const errs = (await issuesOf({ 房间价格: rooms(price, rule, type) })).filter((i) => i.level === 'error');
       expect(errs[0], `${type} ${price} ${rule}`).toMatchObject({ sheet: '房间价格', row: 2 });
     }
+  });
+
+  it('第六轮审查：切换生效、放弃草稿带操作编号（重提什么都不改、作废后不生效）；娱乐表名称重复报错；按摩表说明列少了报错', async () => {
+    const file = workbook();
+    const p = (await preview(file)).body as PriceImportPreview & { digest: string };
+    const draft = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: '第六轮.xlsx', xlsxBase64: file, previewDigest: p.digest, opKey: randomUUID() }))
+      .body as PriceCatalogSet;
+    const opKey = randomUUID();
+    const on = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: draft.id, countReason: '演练', opKey });
+    expect(on.status, JSON.stringify(on.body)).toBe(200);
+    // 原样重提：什么都不改，返回现在的样子（不报「草稿已经变了」）
+    const again = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: draft.id, countReason: '演练', opKey });
+    expect(again.status).toBe(200);
+    expect(again.body.active.id).toBe(draft.id);
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${opKey}?type=price_set`)).body).toMatchObject({ found: true, refId: draft.id });
+    // 放弃草稿：作废过的编号原请求晚到也不删
+    const next = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: '第六轮二.xlsx', xlsxBase64: file, previewDigest: p.digest, opKey: randomUUID() }))
+      .body as PriceCatalogSet;
+    const fenced = randomUUID();
+    await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${fenced}/abandon`, { type: 'price_set' });
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/discard', { draftId: next.id, opKey: fenced })).body.error.code).toBe('OP_ABANDONED');
+    expect(((await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as PriceCatalogOverview).draft!.id).toBe(next.id);
+    const drop = randomUUID();
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/discard', { draftId: next.id, opKey: drop })).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/discard', { draftId: next.id, opKey: drop })).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${drop}?type=price_set`)).body).toMatchObject({ found: true });
+    // 缺编号不切换
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { draftId: next.id })).status).toBe(400);
+
+    const dupe = (
+      await issuesOf({
+        娱乐价格: ent([
+          ['台球', 4, '39/2h', '加钟/19.9'],
+          ['台 球', 4, '49/2h', '加钟/19.9'],
+        ]),
+      })
+    ).filter((i) => i.level === 'error');
+    expect(dupe[0]).toMatchObject({ sheet: '娱乐价格', row: 4, field: '名称' });
+    expect(dupe[0]!.message).toContain('第 3 行');
+
+    const massage = sheet('按摩及助浴价格', [
+      ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价', '核心针对人', '服务操作内容', '项目亮点'],
+      ['康疗', 1, '古法中式', '房间', '80min', 499, 599, '久坐办公'],
+    ]);
+    expect((await issuesOf({ 按摩及助浴价格: massage })).find((i) => i.level === 'error')!.message).toContain('核心针对人群');
   });
 });

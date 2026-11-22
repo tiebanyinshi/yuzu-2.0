@@ -152,6 +152,7 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   price_import: ['catalog.manage'],
   price_rollback: ['catalog.manage'],
   price_entry: ['catalog.manage'],
+  price_set: ['catalog.manage'],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -233,6 +234,7 @@ const READ: Record<ErpOpType, Permission[]> = {
   price_import: ['catalog.manage'],
   price_rollback: ['catalog.manage'],
   price_entry: ['catalog.manage'],
+  price_set: ['catalog.manage'],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {
@@ -257,6 +259,11 @@ export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise
   if (type === 'price_entry') {
     const [op] = await db<{ entryId: number }[]>`SELECT entry_id FROM price_catalog_changes WHERE op_key = ${key}`;
     if (op) return { found: true, abandoned: false, refId: Number(op.entryId) };
+  }
+  // 切换生效：refId 是生效的那份；放弃草稿没有 refId（草稿已删）
+  if (type === 'price_set') {
+    const [op] = await db<{ toSetId: number | null }[]>`SELECT to_set_id FROM price_catalog_set_ops WHERE op_key = ${key} AND action IN ('activate', 'discard')`;
+    if (op) return { found: true, abandoned: false, ...(op.toSetId !== null ? { refId: Number(op.toSetId) } : {}) };
   }
   if (type === 'price_rollback') {
     const [op] = await db<{ toSetId: number }[]>`SELECT to_set_id FROM price_catalog_set_ops WHERE op_key = ${key}`;

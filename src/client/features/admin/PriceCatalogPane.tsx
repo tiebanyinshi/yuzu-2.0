@@ -50,7 +50,7 @@ type Which = 'draft' | 'active';
 type SheetFilter = 'all' | PriceSheet;
 type Only = 'all' | 'none' | 'inactive';
 
-const PENDING_TYPES = ['price_import', 'price_rollback', 'price_entry'] as const;
+const PENDING_TYPES = ['price_import', 'price_rollback', 'price_entry', 'price_set'] as const;
 
 export function PriceCatalogPane() {
   const qc = useQueryClient();
@@ -393,7 +393,8 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
   const qc = useQueryClient();
   const [open, setOpen] = useState<'activate' | 'rollback' | 'discard' | null>(null);
   const session = useSession();
-  const rollbackPending = useErpPending(['price_rollback']);
+  // 切换生效、放弃草稿、整体回滚有结果待确认的：查回、重提或作废之前，这几个按钮都不显示（AGENTS.md「结果待确认」）
+  const setPending = useErpPending(['price_rollback', 'price_set']);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mismatches = countMismatches(shown.counts);
@@ -401,22 +402,21 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
     setBusy(true);
     setError(null);
     try {
-      if (path === 'rollback') {
-        // 整体回滚带新的操作编号：先把编号和原请求记在本机并读回核对，记不下就不发；结果不确定的在页面上方查回、重提或作废
-        const key = uuid();
-        await sendErpOp({
-          key,
-          type: 'price_rollback',
-          url: '/api/admin/price-catalog/rollback',
-          body: { ...(body as object), opKey: key },
-          summary: `整体回滚：换下「${shown.title}」，恢复「${previous?.title ?? ''}」`,
-          staffName: session.staff.displayName,
-        });
-      } else await api.post(`/api/admin/price-catalog/${path}`, body);
+      // 每次带新的操作编号：先把编号和原请求记在本机并读回核对，记不下就不发；结果不确定的在页面上方查回、重提或作废
+      const key = uuid();
+      const summary = path === 'rollback' ? `整体回滚：换下「${shown.title}」，恢复「${previous?.title ?? ''}」` : path === 'activate' ? `切换生效「${shown.title}」` : `放弃草稿「${shown.title}」`;
+      await sendErpOp({
+        key,
+        type: path === 'rollback' ? 'price_rollback' : 'price_set',
+        url: `/api/admin/price-catalog/${path}`,
+        body: { ...(body as object), opKey: key },
+        summary,
+        staffName: session.staff.displayName,
+      });
       setOpen(null);
       onDone(which);
     } catch (e) {
-      setError(e instanceof UncertainError ? '回滚结果待确认：请在页面上方查回、按原内容重新提交或作废，不要再点一次回滚' : errorMessage(e));
+      setError(e instanceof UncertainError ? '结果待确认：已记在本机，请在页面上方查回、按原内容重新提交或作废，不要再点一次' : errorMessage(e));
       setOpen(null);
     } finally {
       setBusy(false);
@@ -426,7 +426,7 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
   return (
     <>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {shown.status === 'draft' && (
+        {shown.status === 'draft' && setPending.length === 0 && (
           <>
             <Button variant="primary" size="sm" icon={<Check className="size-4" />} onClick={() => setOpen('activate')} data-testid="price-catalog-activate">
               切换生效
@@ -436,7 +436,7 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
             </Button>
           </>
         )}
-        {shown.status === 'active' && previous && rollbackPending.length === 0 && (
+        {shown.status === 'active' && previous && setPending.length === 0 && (
           <Button
             variant="secondary"
             size="sm"

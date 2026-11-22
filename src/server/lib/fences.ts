@@ -176,6 +176,8 @@ export const FENCED_OPS = [
   'price_rollback',
   // 价目表单条新增、修改、停用 / 启用（迁移 235）：编号记在 price_catalog_changes.op_key
   'price_entry',
+  // 价目表切换生效、放弃草稿（迁移 236）：编号记在 price_catalog_set_ops
+  'price_set',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 

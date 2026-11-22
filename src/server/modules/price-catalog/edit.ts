@@ -8,8 +8,8 @@
 // 加锁（docs/LOCKING.md「价目表录入」）：改条目先锁这份价目表一行（FOR UPDATE，同一份价目表的修改串行，名称查重才不会两边都过）
 //   → 这一项（FOR UPDATE，核对版本号，对不上拒绝）→ 写留痕 → 审计。切换、回滚、放弃锁这家门店全部价目表行（id 升序）。
 //   导入只锁原来的草稿一行。不碰别的模块的锁；价目表的读都不加锁。
-// 操作编号：修改带版本号（重提会因版本不对被拒，页面刷新后看到已经改好），新增靠名称查重兜底；切换、放弃带着当时那份草稿的编号
-// （草稿切换或放弃以后不会再是草稿，重提被拒）；整体回滚另带操作编号（price_catalog_set_ops，迁移 233：数据集会反复成为生效的那份，编号不够）。
+// 操作编号：单条新增、修改、停用 / 启用记在改动留痕上（迁移 235）；切换生效、放弃草稿、整体回滚记在 price_catalog_set_ops
+// （迁移 233、236）。页面提交前存本机，结果不确定时查回、按原内容重新提交或确认作废（/api/erp/ops）。
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -108,6 +108,7 @@ const ActivateInput = z.object({
   draftId: z.number().int().positive(),
   /** 条数与表格对不上时，写明为什么仍要切换 */
   countReason: z.string().trim().max(200, '原因最多 200 个字').optional(),
+  opKey: OpKey,
 });
 const RollbackInput = z.object({
   activeId: z.number().int().positive(),
@@ -115,7 +116,7 @@ const RollbackInput = z.object({
   /** 操作编号：结果不确定原样重提时什么都不改（不把后来别人切换的结果切回去） */
   opKey: z.uuid('缺少操作编号'),
 });
-const DiscardInput = z.object({ draftId: z.number().int().positive() });
+const DiscardInput = z.object({ draftId: z.number().int().positive(), opKey: OpKey });
 
 type Fields = z.infer<typeof EntryFields>;
 /** 只取条目的字段（输入里另带的原因、版本号、表、种类不混进来，比较「改没改」才准） */
@@ -305,6 +306,21 @@ export async function lockStoreCatalog(tx: Tx): Promise<void> {
   await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`price_catalog:${currentStoreId()}`}, 0))`;
 }
 
+/**
+ * 切换生效、放弃草稿的操作编号（迁移 236，与整体回滚同一张表）：先取编号的咨询锁；记过的（重提）什么都不改、返回现在的样子；
+ * 作废过的拒绝。之后再取门店级的锁
+ */
+async function setOpDone(tx: Tx, opKey: string): Promise<PriceCatalogOverview | null> {
+  await lockOpKey(tx, opKey);
+  const [done] = await tx<{ storeId: number }[]>`SELECT store_id FROM price_catalog_set_ops WHERE op_key = ${opKey}`;
+  if (done) {
+    if (Number(done.storeId) !== currentStoreId()) throw conflict('PRICE_OP_REUSED', '这个操作编号已经用过了，请刷新页面后再操作');
+    return priceCatalogOverview(tx);
+  }
+  await assertNotFenced(tx, opKey, 'price_set', erpOpAbandoned);
+  return null;
+}
+
 /** 门店级咨询锁 → 这家门店全部价目表行（id 升序）：切换、回滚、放弃互相排队 */
 async function lockSets(tx: Tx) {
   await lockStoreCatalog(tx);
@@ -314,6 +330,8 @@ async function lockSets(tx: Tx) {
 export async function activatePriceCatalog(deps: Deps, raw: unknown, ctx: OpContext): Promise<PriceCatalogOverview> {
   const f = parse(ActivateInput, raw);
   return deps.sql.begin(async (tx) => {
+    const replay = await setOpDone(tx, f.opKey);
+    if (replay) return replay;
     const sets = await lockSets(tx);
     const draft = sets.find((s) => s.status === 'draft');
     if (!draft || draft.id !== f.draftId) throw conflict('PRICE_SET_CHANGED', '草稿已经变了（被重新导入、放弃或已切换），刷新后再看');
@@ -328,6 +346,9 @@ export async function activatePriceCatalog(deps: Deps, raw: unknown, ctx: OpCont
     // 先把原来生效的换下来（一家门店只能有一份生效，唯一索引逐条检查），再让草稿生效
     if (old) await tx`UPDATE price_catalog_sets SET status = 'retired', retired_at = now() WHERE id = ${old.id}`;
     await tx`UPDATE price_catalog_sets SET status = 'active', activated_at = now(), activated_by = ${ctx.actor.id}, retired_at = NULL WHERE id = ${draft.id}`;
+    await tx`
+      INSERT INTO price_catalog_set_ops (op_key, action, from_set_id, to_set_id, staff_id)
+      VALUES (${f.opKey}, 'activate', ${old?.id ?? null}, ${draft.id}, ${ctx.actor.id})`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'price_catalog',
@@ -382,10 +403,14 @@ export async function rollbackPriceCatalog(deps: Deps, raw: unknown, ctx: OpCont
 export async function discardPriceDraft(deps: Deps, raw: unknown, ctx: OpContext): Promise<PriceCatalogOverview> {
   const f = parse(DiscardInput, raw);
   return deps.sql.begin(async (tx) => {
+    const replay = await setOpDone(tx, f.opKey);
+    if (replay) return replay;
     const sets = await lockSets(tx);
     const draft = sets.find((s) => s.status === 'draft');
     if (!draft || draft.id !== f.draftId) throw conflict('PRICE_SET_CHANGED', '草稿已经变了，刷新后再看');
     await tx`DELETE FROM price_catalog_sets WHERE id = ${draft.id}`;
+    // 放弃的草稿已经删了：编号照样记下（数据集编号只留作对审计，不引用）
+    await tx`INSERT INTO price_catalog_set_ops (op_key, action, from_set_id, to_set_id, staff_id) VALUES (${f.opKey}, 'discard', ${draft.id}, NULL, ${ctx.actor.id})`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'price_catalog',

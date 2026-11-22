@@ -488,6 +488,8 @@ export const ERP_OP_TYPES = [
   'price_rollback',
   // 价目表单条新增、修改、停用 / 启用：编号记在改动留痕上
   'price_entry',
+  // 价目表切换生效、放弃草稿：编号记在 price_catalog_set_ops
+  'price_set',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -568,6 +570,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   price_import: '价目导入',
   price_rollback: '价目回滚',
   price_entry: '价目改动',
+  price_set: '价目切换',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */

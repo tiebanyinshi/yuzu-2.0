@@ -575,7 +575,7 @@ const genderOf = (text: string): PriceGender | null => {
 
 function massageSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
   const S: PriceSheet = 'massage';
-  const head = headerRow(g, ctx, S, ['板块分类', '项目名称'], ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价']);
+  const head = headerRow(g, ctx, S, ['板块分类', '项目名称'], ['板块分类', '编号', '项目名称', '类型', '时长', '专业价', '资深价', '核心针对人群', '服务操作内容', '项目亮点']);
   if (!head) return [];
   const col = (n: string) => head.cols.get(n) ?? -1;
   const out: PriceCatalogEntry[] = [];
@@ -669,8 +669,19 @@ export function parsePriceCatalog(book: XlsxWorkbook): ParsedPriceCatalog {
   // 最后用页面编辑的同一份校验逐项过一遍（分档时长 0 小时、价格形态与价格不一致……）：导入与编辑一个口径，
   // 导进来的每一项以后都能照常修改。这一行前面已经报过错的不再重复
   const reported = new Set(issues.filter((i) => i.level === 'error').map((i) => `${i.sheet}|${i.row}`));
+  // 名称重复：每张表都用页面编辑的同一个查重键（同一张表、同一个板块 / 餐段、同一个分类里，不分大小写、不管空格），
+  // 不然导得进、以后改任何一项都被「名称重复」挡住
+  const firstRow = new Map<string, number | null>();
   for (const e of entries) {
-    if (reported.has(`${PRICE_SHEET_NAMES[e.sheet]}|${e.sourceRow}`)) continue;
+    const where = `${PRICE_SHEET_NAMES[e.sheet]}|${e.sourceRow}`;
+    const key = priceNameKey(e);
+    if (e.active && firstRow.has(key)) {
+      if (!reported.has(where)) ctx.error(e.sheet, e.sourceRow, '名称', `名称重复：「${e.name}」第 ${firstRow.get(key) ?? '?'} 行已经有了`);
+      reported.add(where);
+      continue;
+    }
+    if (e.active) firstRow.set(key, e.sourceRow);
+    if (reported.has(where)) continue;
     for (const problem of priceEntryProblems(e)) ctx.error(e.sheet, e.sourceRow, e.name, problem);
   }
   const notes: Record<string, string> = {};
