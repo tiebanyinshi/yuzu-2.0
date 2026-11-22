@@ -33,6 +33,7 @@ import { useActiveSubTab } from '../../components/SubNav';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, ConfirmCheck, Field, Input, Notice, Skeleton } from '../../components/ui';
 import { AdminPage } from '../admin/AdminShell';
+import { FaceReviewTab } from './FaceReviewTab';
 import { PunchRecordsTab } from './PunchRecordsTab';
 import { ScheduleTab } from './ScheduleTab';
 
@@ -43,6 +44,7 @@ const TABS = [
   { key: 'groups', label: <span data-testid="att-tab-groups">考勤组</span> },
   { key: 'schedule', label: <span data-testid="att-tab-schedule">排班</span> },
   { key: 'punches', label: <span data-testid="att-tab-punches">打卡记录</span> },
+  { key: 'faces', label: <span data-testid="att-tab-faces">人脸审核</span> },
 ] as const;
 /** 只有「查看本部门的排班与考勤」的部门负责人：只有「排班」「打卡记录」两个页签，只看 */
 const DEPT_TABS = [
@@ -60,7 +62,7 @@ export function AttendanceSetupSection() {
       tabs={manage ? TABS : DEPT_TABS}
       description={
         manage
-          ? '班次（上下班时间、跨天班、打卡窗口）、打卡点（经纬度与有效半径）、考勤组（用哪几个打卡点、要不要 GPS / 人脸、成员）、排班、打卡记录。排班与打卡都按这里的设置；不删只停用。'
+          ? '班次（上下班时间、跨天班、打卡窗口）、打卡点（经纬度与有效半径）、考勤组（用哪几个打卡点、要不要 GPS / 人脸、成员）、排班、打卡记录、人脸审核。排班与打卡都按这里的设置；不删只停用。'
           : '本部门员工的排班与打卡记录（只看）。'
       }
     >
@@ -82,8 +84,9 @@ export function AttendanceSetupSection() {
 
 function SectionBody({ manage }: { manage: boolean }) {
   const tab = useActiveSubTab() ?? (manage ? 'shifts' : 'schedule');
-  const q = useQuery({ queryKey: SETUP_KEY, queryFn: () => api.get<AttendanceSetup>('/api/oa/attendance/setup'), enabled: manage && tab !== 'schedule' && tab !== 'punches' });
+  const q = useQuery({ queryKey: SETUP_KEY, queryFn: () => api.get<AttendanceSetup>('/api/oa/attendance/setup'), enabled: manage && tab !== 'schedule' && tab !== 'punches' && tab !== 'faces' });
   if (tab === 'punches') return <PunchRecordsTab />;
+  if (manage && tab === 'faces') return <FaceReviewTab />;
   if (!manage || tab === 'schedule') return <ScheduleTab />;
   if (q.isPending) return <Skeleton className="h-60" />;
   if (q.isError && !q.data) return <LoadFailed title="考勤设置没有取回来" onRetry={() => q.refetch()} retrying={q.isFetching} />;

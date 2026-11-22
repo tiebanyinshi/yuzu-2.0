@@ -5,21 +5,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Camera, Fingerprint, LocateFixed, MapPin, RefreshCw } from 'lucide-react';
+import { Camera, Fingerprint, LocateFixed, MapPin, RefreshCw, ScanFace } from 'lucide-react';
+import { Link } from 'react-router';
 import { clockText } from '@shared/technician-admin';
-import {
-  ATTACHMENT_MAX_BYTES,
-  dateOfEpochMinute,
-  distanceMeters,
-  minuteOfEpochMinute,
-  OUTWORK_REASON_MAX,
-  PUNCH_KIND_LABELS,
-  type OaAttachment,
-  type OaPunch,
-  type PunchResult,
-  type PunchSlotView,
-  type PunchToday,
-} from '@shared/oa';
+import { dateOfEpochMinute, distanceMeters, minuteOfEpochMinute, OUTWORK_REASON_MAX, PUNCH_KIND_LABELS, type OaPunch, type PunchResult, type PunchSlotView, type PunchToday } from '@shared/oa';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
 import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { useSession } from '../../lib/session';
@@ -29,6 +18,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { LoadFailed } from '../../components/LoadFailed';
 import { useToast } from '../../components/Toast';
+import { uploadPhoto } from './oaImage';
 import { Badge, Button, Card, Field, Notice, Skeleton, Textarea } from '../../components/ui';
 
 const TODAY_KEY = ['oa', 'punch-today'] as const;
@@ -99,24 +89,6 @@ function punchNote(p: OaPunch) {
   return bits.join('、');
 }
 
-/** 图片压到长边 1600 像素以内的 JPEG，另出一张 320 像素的缩略图（附件服务不做图像处理） */
-async function compress(file: File): Promise<{ data: string; thumb: string; size: number }> {
-  const bitmap = await createImageBitmap(file);
-  const draw = (max: number, quality: number) => {
-    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const url = canvas.toDataURL('image/jpeg', quality);
-    return url.slice(url.indexOf(',') + 1);
-  };
-  const data = draw(1600, 0.82);
-  const thumb = draw(320, 0.7);
-  bitmap.close();
-  return { data, thumb, size: Math.floor((data.length * 3) / 4) };
-}
-
 export function PunchPage() {
   const qc = useQueryClient();
   const toast = useToast();
@@ -135,6 +107,10 @@ export function PunchPage() {
   const [reason, setReason] = useState('');
   const [photo, setPhoto] = useState<{ file: File; preview: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  // 考勤组要人脸的（OA-07）：打卡前先自拍一张（前置摄像头），随打卡一起交给服务端比对
+  const [selfie, setSelfie] = useState<{ file: File; preview: string } | null>(null);
+  const selfieInput = useRef<HTMLInputElement>(null);
+  useEffect(() => () => (selfie ? URL.revokeObjectURL(selfie.preview) : undefined), [selfie]);
   useEffect(() => () => (photo ? URL.revokeObjectURL(photo.preview) : undefined), [photo]);
 
   const group = data?.group ?? null;
@@ -144,6 +120,8 @@ export function PunchPage() {
   const inRange = measured.some((l) => l.distance <= l.radiusM);
   const nearest = measured.find((l) => l.distance <= l.radiusM) ?? measured[0] ?? null;
   const needFix = !!group?.gpsRequired;
+  const needFace = !!group?.faceRequired;
+  const faceOk = data?.face === 'approved';
 
   const send = async (extra: { outwork?: { reason: string; photoId: number } }) => {
     if (pending.length) {
@@ -160,6 +138,19 @@ export function PunchPage() {
         setError('没取到当前位置：这个考勤组打卡要定位，请到开阔处、允许取位置后再打');
         return;
       }
+      let faceImageId: number | undefined;
+      if (needFace) {
+        if (!selfie) {
+          setError('这个考勤组打卡要先自拍一张');
+          return;
+        }
+        try {
+          faceImageId = (await uploadPhoto(selfie.file, `打卡自拍-${data.today}.jpg`)).id;
+        } catch (e) {
+          setError(`自拍没传上：${errorMessage(e)}`);
+          return;
+        }
+      }
       const key = uuid();
       const r = await sendErpOp<PunchResult>({
         key,
@@ -170,6 +161,7 @@ export function PunchPage() {
           storeId: session.store.id,
           ...(here ? { lat: Number(here.lat.toFixed(6)), lng: Number(here.lng.toFixed(6)), accuracy: Math.round(here.accuracy) } : {}),
           device: `${navigator.platform || ''} ${screen.width}×${screen.height}`.trim().slice(0, 200),
+          ...(faceImageId ? { faceImageId } : {}),
           ...extra,
         },
         summary: `${extra.outwork ? '外勤打卡' : '打卡'} · ${data.today}`,
@@ -180,6 +172,7 @@ export function PunchPage() {
       setOutwork(false);
       setReason('');
       setPhoto(null);
+      setSelfie(null);
       const p = r.punch;
       const note = punchNote(p);
       toast({ tone: p.lateMinutes || p.earlyMinutes ? 'info' : 'success', title: `${PUNCH_KIND_LABELS[p.kind]} ${p.localTime}${p.shiftName ? ` · ${p.shiftName}` : ''}`, body: note || undefined });
@@ -190,6 +183,10 @@ export function PunchPage() {
       } else if (e instanceof ApiError && e.code === 'LOCATION_OUT') {
         setError(e.message);
         setOutwork(true);
+      } else if (e instanceof ApiError && (e.code === 'FACE_MISMATCH' || e.code === 'ATTACHMENT_INVALID')) {
+        // 自拍不能再用（比对没过，或已经挂到别的打卡上）：清掉，重拍
+        setError(e.message);
+        setSelfie(null);
       } else if (e instanceof ErpPendingStoreError) setError(e.message);
       else setError(errorMessage(e));
     } finally {
@@ -203,9 +200,7 @@ export function PunchPage() {
     setError(null);
     let photoId: number;
     try {
-      const img = await compress(photo.file);
-      if (img.size > ATTACHMENT_MAX_BYTES) throw new Error('照片太大，请重拍');
-      const up = await api.post<OaAttachment>('/api/oa/attachments', { clientKey: uuid(), fileName: `外勤-${data?.today ?? ''}.jpg`, mime: 'image/jpeg', data: img.data, thumb: img.thumb });
+      const up = await uploadPhoto(photo.file, `外勤-${data?.today ?? ''}.jpg`);
       photoId = up.id;
     } catch (e) {
       setError(`照片没传上：${errorMessage(e)}`);
@@ -265,13 +260,46 @@ export function PunchPage() {
                   {error}
                 </Notice>
               )}
+              {needFace &&
+                (faceOk ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-3" data-testid="punch-face">
+                    <input
+                      ref={selfieInput}
+                      type="file"
+                      accept="image/*"
+                      capture="user"
+                      className="hidden"
+                      data-testid="punch-selfie-input"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = '';
+                        if (f) setSelfie({ file: f, preview: URL.createObjectURL(f) });
+                      }}
+                    />
+                    <Button variant="secondary" icon={<ScanFace className="size-4" />} onClick={() => selfieInput.current?.click()} data-testid="punch-selfie">
+                      {selfie ? '重拍' : '自拍一张'}
+                    </Button>
+                    {selfie ? (
+                      <img src={selfie.preview} alt="打卡自拍" className="size-14 rounded-md object-cover" />
+                    ) : (
+                      <span className="text-[13px] text-ink-3">这个考勤组要人脸：先自拍一张再打卡</span>
+                    )}
+                  </div>
+                ) : (
+                  <Notice tone="warning" className="mt-3" data-testid="punch-face-missing">
+                    这个考勤组打卡要人脸，你的人脸录入{data!.face === 'pending' ? '还在等审核' : '还没通过'}。
+                    <Link to="/oa/face" className="ml-1 font-semibold text-lake underline">
+                      去人脸录入
+                    </Link>
+                  </Notice>
+                ))}
               <Button
                 variant="primary"
                 size="lg"
                 className="mt-4 h-16 w-full text-[18px]"
                 icon={<Fingerprint className="size-6" />}
                 loading={busy && !outwork}
-                disabled={busy || (needFix && !fix)}
+                disabled={busy || (needFix && !fix) || (needFace && (!faceOk || !selfie))}
                 onClick={() => void send({})}
                 data-testid="punch-button"
               >
