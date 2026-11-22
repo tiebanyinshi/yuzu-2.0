@@ -10,7 +10,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  departmentOfPosition,
   EMP_NO_PATTERN,
   PHONE_PATTERN,
   STAFF_IMPORT_COLUMNS,
@@ -118,12 +117,11 @@ async function plan(db: Db, f: z.infer<typeof FileInput>, actor: Actor): Promise
 
   // 只有 hr.org、没有 staff.manage 的（人力行政部负责人）只能开出权限不超过自己的岗位（Codex 安全审查 5eeb9ed）：
   // 开通的人拿得到临时密码，开出比自己权限多的账号就等于给自己加了权限（例如开两个财务部员工，绕过财务的一人经办、另一人复核）
-  // 而且只能开本部门的（Codex 安全审查 2d44890）：人事被加了财务的权限时，权限不超过自己也能开出两个财务部员工，
-  // 一个改供应商账户、另一个复核，绕过「不是同一个人」的双人复核；别的部门的账号一律总裁开
+  // 而且只能开人力行政部员工（Codex 安全审查 2d44890、4b31b15）：人事被加了财务的权限、或财务的岗位被加了 hr.org 时，
+  // 权限不超过自己也能开出两个财务部员工，一个改供应商账户、另一个复核，绕过「不是同一个人」的双人复核；别的岗位一律总裁开
   if (!canLead) {
-    const ownDept = departmentOfPosition(actor.position);
     for (const x of rows) {
-      if (x.department && x.department !== ownDept) x.issues.push(`您只能开本部门（${ownDept ? deptLabel(ownDept) : '无部门'}）的员工，「${deptLabel(x.department)}」的账号要总裁开`);
+      if (x.position && x.position !== 'hr.staff') x.issues.push(`您只能开「人力行政部员工」，「${positionLabel(x.position)}」的账号要总裁开`);
     }
     const overrides = await loadRoleOverrides(db);
     const mine = (p: Permission) => (actor.permissions ? actor.permissions.includes(p) : can(actor, p));
