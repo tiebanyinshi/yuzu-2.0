@@ -424,6 +424,7 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       const min = /低[销消]\s*:?\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])/.exec(t);
       if (min) variants.push({ label: '低消', priceCents: yuanToCents(min[1]!), minutes: null, unit: '起', note: oneLine(t.slice(min.index).split('\n')[0] ?? '') });
       const over = /超出按照\s*(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])\s*元?\s*[/／]\s*小时/.exec(t);
+      if (over && yuanToCents(over[1]!) === null) ctx.error(S, r, '收费参考', `超时价「${over[1]}」不对：金额大于 0、最多两位小数`);
       if (!variants.length) ctx.error(S, r, '收费参考', '没认出位价（写 688元/位）');
       const perHead = variants.filter((v) => v.unit === '位').map((v) => v.priceCents!);
       out.push({
@@ -463,14 +464,18 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     if (!price) ctx.error(S, r, '收费参考', '价格为空');
     else if (!start || start.minutes === null) ctx.error(S, r, '收费参考', `「${oneLine(price)}」看不懂（写 399/2H起开）`);
     const over = overtimeOf(rule);
-    if (rule && !over) ctx.warn(S, r, '备注', `超时价「${oneLine(rule)}」没认出来`);
+    const cap = capOf(rule);
+    // 写了超时 / 封顶，金额却不合法（「0封顶」「超时0/H」）：报错，不当成没有超时价、没有封顶
+    if (/超时/.test(rule) && !over) ctx.error(S, r, '收费参考', `超时价「${oneLine(rule)}」看不懂或金额不对（写 超时199/H，金额大于 0、最多两位小数）`);
+    else if (rule && !over) ctx.warn(S, r, '备注', `超时价「${oneLine(rule)}」没认出来`);
+    if (/封顶/.test(rule) && cap === null) ctx.error(S, r, '收费参考', `封顶价「${oneLine(rule)}」看不懂或金额不对（写 999封顶，金额大于 0、最多两位小数）`);
     const rooms = roomsAt(r, note.split('\n')[0] ?? note);
     out.push({
       ...single(base, start?.cents ?? null),
       durationMinutes: start?.minutes ?? null,
       extraPriceCents: over?.cents ?? null,
       extraMinutes: over?.minutes ?? null,
-      capCents: capOf(rule),
+      capCents: cap,
       roomNumbers: rooms,
       variants: hourTiers(rule.replace(/超时[^\n]*/g, '')),
       note: oneLine(note.split('\n').slice(1).join('；')),

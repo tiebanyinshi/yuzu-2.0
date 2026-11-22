@@ -841,4 +841,18 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const changed = p.entries.map((e) => (e.name === '生滚牛肉粥' ? { ...e, unit: '位' } : e));
     expect(diffPriceCatalogs(changed, p.entries).map((d) => [d.change, d.draft?.name])).toEqual([['changed', '生滚牛肉粥']]);
   });
+
+  it('第八轮审查：房间写了封顶 / 超时却金额不对，报错（不当成没有封顶、没有超时价）', async () => {
+    const rooms = (rule: string, type = 'spa房', price = '399/2H起开') =>
+      sheet('房间价格', [
+        ['房型', '总数', '收费参考', null, '备注'],
+        [type, '3间', price, rule, 'S301-S303'],
+      ]);
+    for (const rule of ['超时199/H\n0封顶过夜', '超时0/H\n999封顶过夜']) {
+      const errs = (await issuesOf({ 房间价格: rooms(rule) })).filter((i) => i.level === 'error');
+      expect(errs[0], rule).toMatchObject({ sheet: '房间价格', row: 2, field: '收费参考' });
+    }
+    const dining = (await issuesOf({ 房间价格: rooms('或者套餐低消', '餐饮包房', '688元/位\n次日11：00退房，超出按照0元/小时收费。') })).filter((i) => i.level === 'error');
+    expect(dining[0]).toMatchObject({ row: 2, field: '收费参考' });
+  });
 });
