@@ -176,7 +176,7 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
         </p>
       )}
       <div className="flex justify-end gap-2">
-        {!fromId && Object.keys(v).length > 0 && (
+        {!fromId && Object.keys(v).length > 0 && uploading === 0 && (
           <Button
             variant="ghost"
             onClick={() => {
@@ -397,7 +397,8 @@ function AttachmentsInput({
           <div key={a.id} className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-[13px]">
             <Paperclip className="size-4 text-ink-3" />
             <span className="min-w-0 flex-1 truncate">{a.fileName}</span>
-            <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`去掉 ${a.fileName}`} onClick={() => onChange(value.filter((x) => x.id !== a.id))} />
+            {/* 上传期间不能去掉已有的：传完时按上传开始那一刻的列表加上新的，去掉的会被加回来（Codex 审查 1715764） */}
+            <Button size="sm" variant="ghost" icon={<X className="size-4" />} aria-label={`去掉 ${a.fileName}`} disabled={busy} onClick={() => onChange(value.filter((x) => x.id !== a.id))} />
           </div>
         ))}
         {value.length < max && (

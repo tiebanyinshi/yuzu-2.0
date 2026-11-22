@@ -207,6 +207,9 @@ function timelineLevels(d: ApprovalDetail): TimelineLevel[] {
     });
 }
 
+/** 当前这一级从什么时候开始等：最近一次推进审批的事件（提交、通过、转交），评论与催办不算（Codex 审查 1715764） */
+const stepStartedAt = (d: ApprovalDetail) => d.events.filter((e) => e.kind === 'submit' || e.kind === 'approve' || e.kind === 'transfer').at(-1)?.createdAt ?? d.submittedAt;
+
 function ApprovalDetailPage({ id }: { id: number }) {
   const session = useSession();
   const qc = useQueryClient();
@@ -335,7 +338,7 @@ function ApprovalDetailPage({ id }: { id: number }) {
                 {d!.steps.length === 0 ? (
                   <p className="text-[13px] text-ink-3">没有要审批的人（发起人就是最上级），直接通过</p>
                 ) : (
-                  <ApprovalTimeline levels={timelineLevels(d!)} waitedText={waited(d!.events.at(-1)?.createdAt ?? d!.submittedAt)} testIdPrefix="oa-approval-level" />
+                  <ApprovalTimeline levels={timelineLevels(d!)} waitedText={waited(stepStartedAt(d!))} testIdPrefix="oa-approval-level" />
                 )}
               </div>
               {d!.cc.length > 0 && <p className="mt-3 text-[12.5px] text-ink-3">抄送：{d!.cc.map((c) => `${c.name}${c.readAt ? '（已读）' : ''}`).join('、')}</p>}
