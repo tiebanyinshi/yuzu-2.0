@@ -4,10 +4,25 @@
 import type { OaAttachment } from './oa';
 
 /** 表单字段的类型 */
-export type ApprovalFieldType = 'text' | 'textarea' | 'number' | 'money' | 'date' | 'halfday' | 'select' | 'attachments';
+export type ApprovalFieldType =
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'money'
+  | 'date'
+  | 'datetime'
+  | 'halfday'
+  | 'select'
+  | 'attachments'
+  /** 假种（OA-09 的编号） */
+  | 'leave_type'
+  /** 班次（补卡那天自己排的班，OA-04 的编号） */
+  | 'shift'
+  /** 关联单：自己已通过的某个模板的单（refTemplate） */
+  | 'ref';
 
 export interface ApprovalField {
-  /** 表单里的键（小写字母、数字、下划线） */
+  /** 表单里的键（字母、数字） */
   key: string;
   label: string;
   type: ApprovalFieldType;
@@ -18,6 +33,8 @@ export interface ApprovalField {
   min?: number;
   /** 选项（select） */
   options?: string[];
+  /** 关联单（ref）：哪个模板的单 */
+  refTemplate?: string;
   hint?: string;
 }
 
@@ -31,6 +48,8 @@ export type ApprovalForm = Record<string, ApprovalFormValue>;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const isDate = (v: unknown): v is string => typeof v === 'string' && DATE_RE.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/;
+const isDateTime = (v: unknown): v is string => typeof v === 'string' && DATETIME_RE.test(v) && isDate(v.slice(0, 10));
 
 /** 默认上限 */
 export const APPROVAL_TEXT_MAX = 60;
@@ -76,6 +95,18 @@ export function checkApprovalForm(fields: readonly ApprovalField[], raw: unknown
         if (!isDate(v)) return { error: `${f.label}按 YYYY-MM-DD 填` };
         form[f.key] = v;
         break;
+      case 'datetime':
+        if (!isDateTime(v)) return { error: `${f.label}要选日期与时间` };
+        form[f.key] = v;
+        break;
+      case 'leave_type':
+      case 'shift':
+      case 'ref': {
+        const n = typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v;
+        if (typeof n !== 'number' || !Number.isInteger(n) || n <= 0) return { error: `${f.label}要从列表里选` };
+        form[f.key] = n;
+        break;
+      }
       case 'halfday': {
         const h = v as Partial<HalfDay>;
         if (!h || typeof h !== 'object' || !isDate(h.date) || (h.half !== 'am' && h.half !== 'pm')) return { error: `${f.label}要选日期与上午 / 下午` };
@@ -140,6 +171,15 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn';
 export const APPROVAL_STATUS_LABELS: Record<ApprovalStatus, string> = { pending: '审批中', approved: '已通过', rejected: '已驳回', withdrawn: '已撤销' };
 export type ApprovalStepStatus = 'waiting' | 'pending' | 'approved' | 'rejected' | 'transferred' | 'cancelled';
 export type ApprovalEventKind = 'submit' | 'approve' | 'reject' | 'transfer' | 'withdraw' | 'comment' | 'urge';
+export const APPROVAL_EVENT_LABELS: Record<ApprovalEventKind, string> = {
+  submit: '提交',
+  approve: '通过',
+  reject: '驳回',
+  transfer: '转交',
+  withdraw: '撤销',
+  comment: '评论',
+  urge: '催办',
+};
 export type ApprovalAction = 'approve' | 'reject' | 'transfer' | 'withdraw' | 'comment' | 'urge';
 /** 催办：同一张单多久一次 */
 export const APPROVAL_URGE_GAP_MINUTES = 60;
@@ -209,3 +249,20 @@ export interface ApprovalSaved {
   approval: ApprovalDetail;
   replayed: boolean;
 }
+
+/** 转交时选的人：在职员工 */
+export interface ApprovalPerson {
+  id: number;
+  name: string;
+  department: string;
+}
+
+/** 请假时长（半天）、加班分钟等由服务端算好放进表单的几项（不是模板字段，页面单独显示） */
+export function derivedText(code: string, form: ApprovalForm): string | null {
+  if (code === 'leave' && typeof form.durationHalves === 'number') return `${form.durationHalves / 2} 天`;
+  if (code === 'overtime' && typeof form.minutes === 'number') return `${Math.round((form.minutes / 60) * 10) / 10} 小时`;
+  if (code === 'trip' && typeof form.days === 'number') return `${form.days} 天`;
+  return null;
+}
+/** 请假开始 / 结束的时间点比较用：日期 + 上午 0 / 下午 1 */
+export const halfDayKey = (h: HalfDay) => `${h.date}${h.half === 'am' ? 0 : 1}`;

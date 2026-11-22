@@ -331,7 +331,8 @@ export async function approvalCounts(db: Db, actor: Actor, timeZone: string): Pr
   const approver = can(actor, 'inventory.approve');
   const backfill = approver ? (await urgentBackfills(db, timeZone)).length : 0;
   const accept = approver ? (await urgentAwaitingAcceptance(db, actor)).length : 0;
-  return { mine: mine.length, overdue: mine.filter((c) => c.overdue).length, backfill, accept };
+  const [office] = await db<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_approval_steps WHERE approver_id = ${actor.id} AND status = 'pending'`;
+  return { mine: mine.length, overdue: mine.filter((c) => c.overdue).length, backfill, accept, office: office!.n };
 }
 
 // ───────────────────────── 详情 ─────────────────────────

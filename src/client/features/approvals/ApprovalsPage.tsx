@@ -5,9 +5,10 @@
 import { useMemo, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router';
 import { CheckCheck, ChevronDown, ChevronUp, PackageCheck, PackageX, RotateCcw, TriangleAlert } from 'lucide-react';
-import { APPROVAL_DOC_TYPE_LABELS, NO_BATCH_DOC_TYPES, type ApprovalCard, type BatchApproveResult, type UrgentAcceptItem } from '@shared/approvals';
+import { useQuery } from '@tanstack/react-query';
+import { APPROVAL_DOC_TYPE_LABELS, NO_BATCH_DOC_TYPES, type ApprovalCard, type ApprovalCounts, type BatchApproveResult, type UrgentAcceptItem } from '@shared/approvals';
 import { formatAmount } from '@shared/money';
-import { errorMessage, UncertainError } from '../../lib/api';
+import { api, errorMessage, UncertainError } from '../../lib/api';
 import { useCan, useSession } from '../../lib/session';
 import { cn, formatDateTime } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
@@ -48,6 +49,7 @@ export function ApprovalsPage() {
   const backfills = useUrgentBackfills(can('inventory.approve'));
   const accepts = useUrgentAccepts(can('inventory.approve'));
   const [retryOpen, setRetryOpen] = useState(false);
+  const counts = useQuery({ queryKey: ['approvals', 'count'], queryFn: () => api.get<ApprovalCounts>('/api/approvals/count'), enabled: canAct });
   if (!canAct) return <Navigate to="/erp" replace />;
   // 8.0.18：审批规则收进「ERP 设置 → 审批规则与代理人」；旧地址 /approvals?tab=rules 跳过去（代理人是日常要用的，这里照旧留着）
   if (tab === 'rules') return <Navigate to="/erp/settings/approvals" replace />;
@@ -77,6 +79,18 @@ export function ApprovalsPage() {
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[920px] space-y-4 px-4 py-4 md:px-7 md:py-5" data-testid="approvals-page">
           <UncertainPanel onOpen={(id) => setParam({ open: String(id) })} onBatch={() => setRetryOpen(true)} />
+          {/* 办公审批（OA-11）另在「办公 → 审批」里批：角标合起来算，这里提示一句 */}
+          {(counts.data?.office ?? 0) > 0 && (
+            <Notice
+              tone="info"
+              title={`办公审批还有 ${counts.data!.office} 张待你审批`}
+              action={
+                <Link to="/oa/approvals" className="text-[13px] font-semibold text-pine" data-testid="approvals-office-link">
+                  去办公审批
+                </Link>
+              }
+            />
+          )}
           {(accepts.data?.length ?? 0) > 0 && <AcceptStrip items={accepts.data!} />}
           {(backfills.data?.length ?? 0) > 0 && <BackfillStrip items={backfills.data!} />}
           <div className="-mx-1 flex items-center gap-3 overflow-x-auto px-1">

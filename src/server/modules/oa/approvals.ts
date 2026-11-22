@@ -18,11 +18,14 @@ import {
   type ApprovalDetail,
   type ApprovalForm,
   type ApprovalPage,
+  type ApprovalPerson,
   type ApprovalSaved,
   type ApprovalStatus,
   type ApprovalSummary,
   type ApprovalTemplate,
 } from '@shared/oa-approval';
+import { departmentOfPosition } from '@shared/oa';
+import { ORG_DEPARTMENTS, type PositionKey } from '@shared/positions';
 import type { Db, Fragment, Tx } from '../../db';
 import { guard } from '../../auth/guard';
 import type { Actor, Deps } from '../../lib/context';
@@ -35,6 +38,7 @@ import { canViewApproval, canViewApprovalAttachment, canViewSql, hooksOf, listAp
 import { bindAttachments, registerAttachmentRef } from './attachments';
 import { notify } from './notifications';
 import { NOT_EMPLOYEE_ROLES } from './org';
+import { localMinute } from './punches';
 
 const PAGE = 30;
 const link = (id: number) => `/oa/approvals/${id}`;
@@ -58,6 +62,11 @@ const ListQuery = z.object({
   box: z.enum(['todo', 'done', 'mine', 'cc']).default('todo'),
   status: z.enum(['pending', 'approved', 'rejected', 'withdrawn']).optional(),
   before: z.coerce.number().int().positive().optional(),
+  /** 只要某个模板的（报销关联出差单时选候选用） */
+  template: z
+    .string()
+    .regex(/^[a-z_]{1,30}$/)
+    .optional(),
 });
 
 /** 轮到这一步：标成待处理、通知审批人 */
@@ -98,7 +107,7 @@ async function onDuty(db: Db, id: number): Promise<{ name: string } | null> {
   return s ?? null;
 }
 
-async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, hash: string): Promise<number> {
+async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, hash: string, today: string): Promise<number> {
   const [t] = await tx<ApprovalTemplate[]>`SELECT ${TEMPLATE_COLS(tx)} FROM oa_approval_templates WHERE id = ${input.templateId} FOR SHARE`;
   if (!t || !t.active) throw notFound('审批模板不存在或已停用，请刷新');
   const template = toTemplate(t);
@@ -106,7 +115,20 @@ async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, 
   if ('error' in checked) throw unprocessable('FORM_INVALID', checked.error);
   let form = checked.form;
   let title = typeof form.title === 'string' && form.title ? form.title : template.name;
-  const prepared = await hooksOf(template.code).prepare?.(tx, { applicant: actor, form });
+  // 假种、关联单这两类字段：假种要在用的；关联单只能是自己已通过的那个模板的单
+  for (const f of template.fields) {
+    const v = form[f.key];
+    if (typeof v !== 'number') continue;
+    if (f.type === 'leave_type') {
+      const [ok] = await tx`SELECT 1 FROM oa_leave_types WHERE id = ${v} AND active`;
+      if (!ok) throw unprocessable('FORM_INVALID', `${f.label}不存在或已停用，请刷新`);
+    }
+    if (f.type === 'ref') {
+      const [ok] = await tx`SELECT 1 FROM oa_approvals WHERE id = ${v} AND applicant_id = ${actor.id} AND template_code = ${f.refTemplate ?? ''} AND status = 'approved'`;
+      if (!ok) throw unprocessable('FORM_INVALID', `${f.label}只能选自己已通过的单`);
+    }
+  }
+  const prepared = await hooksOf(template.code).prepare?.(tx, { applicant: actor, form, fields: template.fields, today });
   if (prepared?.form) form = prepared.form;
   if (prepared?.title) title = prepared.title;
   let revision = 1;
@@ -228,7 +250,7 @@ async function act(tx: Tx, actor: Actor, id: number, input: z.infer<typeof ActIn
   await activate(tx, approval, newId, input.toStaffId);
 }
 
-export function registerOaApprovalRoutes(app: FastifyInstance, { sql }: Deps) {
+export function registerOaApprovalRoutes(app: FastifyInstance, { sql, config }: Deps) {
   const auth = guard();
   registerAttachmentRef('oa_approval', canViewApprovalAttachment);
 
@@ -253,7 +275,7 @@ export function registerOaApprovalRoutes(app: FastifyInstance, { sql }: Deps) {
         return { id: Number(seen.refId), replayed: true };
       }
       await assertNotFenced(tx, input.clientKey, 'oa_approval_submit', erpOpAbandoned);
-      return { id: await submit(tx, req.actor, input, hash), replayed: false };
+      return { id: await submit(tx, req.actor, input, hash, localMinute(new Date(), config.timezone).date), replayed: false };
     });
     reply.code(replayed ? 200 : 201);
     return { approval: await loadApproval(sql, req.actor, id), replayed };
@@ -282,6 +304,18 @@ export function registerOaApprovalRoutes(app: FastifyInstance, { sql }: Deps) {
     return { approval: await loadApproval(sql, req.actor, id), replayed };
   });
 
+  // 转交时选的人：在职员工（登录就能看名字与部门）
+  app.get('/api/oa/approval/people', { preHandler: auth }, async (): Promise<ApprovalPerson[]> => {
+    const rows = await sql<{ id: number; name: string; position: PositionKey | null }[]>`
+      SELECT s.id, s.display_name AS name, s.position FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
+      WHERE s.active AND NOT s.system AND s.role <> ALL(${NOT_EMPLOYEE_ROLES}) AND COALESCE(p.status, 'active') = 'active'
+      ORDER BY s.display_name, s.id`;
+    return rows.map((r) => {
+      const dept = departmentOfPosition(r.position);
+      return { id: Number(r.id), name: r.name, department: ORG_DEPARTMENTS.find((d) => d.key === dept)?.name ?? '' };
+    });
+  });
+
   // 抄送我的：看过记已读（重复点不要紧）
   app.post('/api/oa/approvals/:id/read', { preHandler: auth }, async (req): Promise<{ ok: true }> => {
     const { id } = parse(idParam, req.params);
@@ -305,7 +339,12 @@ export function registerOaApprovalRoutes(app: FastifyInstance, { sql }: Deps) {
       mine: sql`a.applicant_id = ${me}`,
       cc: sql`EXISTS (SELECT 1 FROM oa_approval_cc c WHERE c.approval_id = a.id AND c.staff_id = ${me})`,
     };
-    const items = await listApprovals(sql, me, sql`${box[q.box]} ${q.status ? sql`AND a.status = ${q.status}` : sql``} ${q.before ? sql`AND a.id < ${q.before}` : sql``}`, PAGE + 1);
+    const items = await listApprovals(
+      sql,
+      me,
+      sql`${box[q.box]} ${q.status ? sql`AND a.status = ${q.status}` : sql``} ${q.template ? sql`AND a.template_code = ${q.template}` : sql``} ${q.before ? sql`AND a.id < ${q.before}` : sql``}`,
+      PAGE + 1,
+    );
     return { items: items.slice(0, PAGE), next: items.length > PAGE ? items[PAGE - 1]!.id : null };
   });
 
