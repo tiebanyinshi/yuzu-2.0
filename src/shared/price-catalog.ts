@@ -318,6 +318,9 @@ export function withDerivedPrice(e: PriceCatalogEntry): PriceCatalogEntry {
   return { ...e, priceMode: 'single', priceCents: d, price2Cents: null };
 }
 
+/** 一项最多几档（导入、页面编辑、服务端校验同一个上限；原表最多 10 档） */
+export const PRICE_VARIANTS_MAX = 20;
+
 /** 单价上限：100 万元（分） */
 export const PRICE_MAX_CENTS = 100_000_000;
 
@@ -387,6 +390,7 @@ export function priceEntryProblems(e: PriceCatalogEntry): string[] {
   if ((e.windowStart === null) !== (e.windowEnd === null)) out.push('时段要填开始和结束');
   for (const w of [e.windowStart, e.windowEnd]) if (w !== null && (!Number.isInteger(w) || w < 0 || w > 1439)) out.push('时段的时刻不对');
   if (e.unitsCount !== null && (!Number.isInteger(e.unitsCount) || e.unitsCount < 0 || e.unitsCount > 999)) out.push('台位 / 间数要在 0 到 999 之间');
+  if (e.variants.length > PRICE_VARIANTS_MAX) out.push(`分档最多 ${PRICE_VARIANTS_MAX} 档`);
   for (const v of e.variants) {
     if (!v.label.trim() || v.label.length > 20) out.push('分档要有名称（最多 20 个字）');
     amount(v.priceCents, `分档「${v.label}」的价格`);

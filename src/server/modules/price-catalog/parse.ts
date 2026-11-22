@@ -9,6 +9,7 @@ import {
   priceNameKey,
   MASSAGE_SECTIONS,
   PRICE_SHEET_NAMES,
+  PRICE_VARIANTS_MAX,
   STORED_VALUE_SHEET_NAME,
   type PriceCatalogEntry,
   type PriceGender,
@@ -33,9 +34,8 @@ const GROUP_ROWS_MAX = 20;
 const minOf = (values: number[]): number | null => values.reduce<number | null>((m, v) => (m === null || v < m ? v : m), null);
 /** 一张表最多多少行有内容（原表零点菜品一百四十来行；一行至多一项） */
 const SHEET_ROWS_MAX = 2_000;
-/** 整份最多生成多少项（原表 224 项）、一项最多多少档（原表最多 10 档）：超过的不像价目表，不先建一大堆条目再一项项校验（Codex 安全审查） */
+/** 整份最多生成多少项（原表 224 项）、一项最多多少档（PRICE_VARIANTS_MAX，与页面编辑同一个上限）：超过的不像价目表，不先建一大堆条目再一项项校验（Codex 安全审查） */
 const ENTRIES_MAX = 3_000;
-const VARIANTS_MAX = 40;
 
 /** 工作表 → 行号 → 列号 → 文字（合并区域填满；合并区域过大的整份拒绝，不在请求线程里填几十亿格） */
 function gridOf(sheet: XlsxSheet): Grid {
@@ -703,9 +703,9 @@ export function parsePriceCatalog(book: XlsxWorkbook): ParsedPriceCatalog {
   }
   // 一项的分档太多（一格里写了成百上千行）：报错，只留前面的档，后面的校验不再逐档展开
   for (const e of entries) {
-    if (e.variants.length > VARIANTS_MAX) {
-      ctx.error(e.sheet, e.sourceRow, '收费参考', `「${e.name}」认出了 ${e.variants.length} 档价格，超过 ${VARIANTS_MAX} 档，请核对这一格`);
-      e.variants = e.variants.slice(0, VARIANTS_MAX);
+    if (e.variants.length > PRICE_VARIANTS_MAX) {
+      ctx.error(e.sheet, e.sourceRow, '收费参考', `「${e.name}」认出了 ${e.variants.length} 档价格，超过 ${PRICE_VARIANTS_MAX} 档，请核对这一格`);
+      e.variants = e.variants.slice(0, PRICE_VARIANTS_MAX);
     }
   }
   // 最后用页面编辑的同一份校验逐项过一遍（分档时长 0 小时、价格形态与价格不一致……）：导入与编辑一个口径，

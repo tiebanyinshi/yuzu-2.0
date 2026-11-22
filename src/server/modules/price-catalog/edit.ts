@@ -14,6 +14,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
+  PRICE_VARIANTS_MAX,
   PRICE_CHANGE_LABELS,
   PRICE_KIND_LABELS,
   PRICE_SHEET_KINDS,
@@ -96,7 +97,7 @@ const EntryFields = z.object({
   content: text(800),
   highlight: text(400),
   note: text(400),
-  variants: z.array(Variant).max(20).default([]),
+  variants: z.array(Variant).max(PRICE_VARIANTS_MAX, `分档最多 ${PRICE_VARIANTS_MAX} 档`).default([]),
   orderable: z.boolean().default(true),
 });
 const Reason = z.string().trim().max(200, '原因最多 200 个字').default('');
@@ -243,7 +244,8 @@ async function syncEntry(tx: Tx, ctx: OpContext, set: LockedSet, before: PriceCa
   if (set.status !== 'active') return;
   const from = priceNameKey(before);
   const to = priceNameKey(after);
-  if (from !== to) {
+  // 只有在用的那一项改名才带走对接：同名的停用历史项改名，不能把在用项的对接迁走
+  if (from !== to && before.active) {
     await tx`
       UPDATE price_catalog_links SET entry_key = ${to}
       WHERE store_id = ${currentStoreId()} AND entry_key = ${from}

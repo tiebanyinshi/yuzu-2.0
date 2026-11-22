@@ -936,13 +936,13 @@ describe('价目表录入 审查修正（PR #160）', () => {
       ['大房间 3小时', 49900],
     ]);
 
-    // 一项的分档太多（一格写了 41 个位价）：报错
-    const many = Array.from({ length: 41 }, (_, i) => `${600 + i}元/位`).join('\n');
+    // 一项的分档太多（一格写了 21 个位价，超过页面编辑的上限 20 档）：报错
+    const many = Array.from({ length: 21 }, (_, i) => `${600 + i}元/位`).join('\n');
     const dining = sheet('房间价格', [
       ['房型', '总数', '收费参考', null, '备注'],
       ['餐饮包房', '5间', many, null, 'V999'],
     ]);
-    expect((await issuesOf({ 房间价格: dining })).some((i) => i.level === 'error' && i.message.includes('超过 40 档'))).toBe(true);
+    expect((await issuesOf({ 房间价格: dining })).some((i) => i.level === 'error' && i.message.includes('超过 20 档'))).toBe(true);
     // 整份认出的项过多：整份拒绝
     const rows: Row[] = [['2楼餐厅零点菜品'], ['序号', '菜品分类', '菜品名称', '售价', '单位']];
     for (let i = 1; i <= 1990; i += 1) rows.push([i, '中餐零点', `菜品${i}`, 38, '份']);
@@ -1145,5 +1145,27 @@ describe('价目表录入 第四批：对接收银项目', () => {
     const late = await link({ opKey: dead, entryKey: snookerKey, itemId: snooker1 });
     expect(late.body.error?.code).toBe('OP_ABANDONED');
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/admin/price-catalog/links/auto', { opKey: randomUUID() })).status).toBe(403);
+  });
+
+  it('第十四轮审查：同名的停用历史项改名，不把在用项的对接迁走；在用项改价照样同步', async () => {
+    const set = await activateNew('对接改名演练');
+    const ball = await item({ name: `乒乓球演练${Date.now() % 100000}`, category: '娱乐', price: 3000 });
+    const entries = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${set.id}`)).body as PriceCatalogSet;
+    const old = find(entries, '乒乓球');
+    // 停用原来那项，再新增一项同名的（在用），对接收银项目
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${old.id}/active`, { version: old.version, active: false, reason: '换新', opKey: randomUUID() })).status).toBe(200);
+    const created = await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/sets/${set.id}/entries`, { ...old, active: undefined, priceCents: 4900, opKey: randomUUID() });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const fresh = created.body as PriceCatalogEntry;
+    const key = 'entertainment|||乒乓球';
+    expect((await link({ entryKey: key, itemId: ball })).status).toBe(200);
+    expect(await tiers(ball)).toEqual({ standard: 4900 });
+    // 改停用的那项的名字：对接留在原来的键上
+    const stale = ((await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${set.id}`)).body as PriceCatalogSet).entries.find((e) => e.id === old.id)!;
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${old.id}`, { ...stale, name: '乒乓球（旧）', opKey: randomUUID() })).status).toBe(200);
+    expect(((await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/links')).body as { entryKey: string; itemId: number }[]).find((l) => l.itemId === ball)?.entryKey).toBe(key);
+    // 在用的那项改价，收银项目跟着变
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${fresh.id}`, { ...fresh, priceCents: 5900, opKey: randomUUID() })).status).toBe(200);
+    expect(await tiers(ball)).toEqual({ standard: 5900 });
   });
 });
