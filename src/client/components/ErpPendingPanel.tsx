@@ -100,6 +100,9 @@ const REF_NUMBER: Partial<Record<ErpOpType, string>> = {
   customer_credit_claim: 'id',
   customer_credit_review: 'id',
   customer_target: 'id',
+  // OA-09 新建假种：返回那个假种；调整假期余额：返回那条明细
+  oa_leave_type: 'id',
+  oa_leave_adjust: 'entryId',
   // 门店间调拨（8.0.22）：返回那张调拨单
   stock_transfer: 'id',
   // 工作台发布、回滚（8.1.1）：返回那一版
