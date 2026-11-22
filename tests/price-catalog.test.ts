@@ -514,9 +514,18 @@ describe('价目表录入 第三批：编辑与校验', () => {
     expect(retired.body.error.code).toBe('PRICE_SET_RETIRED');
 
     // 整体回滚：要写原因；拿错了生效的那份不回滚；回滚后上一版生效、刚才那份成为上一版
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '' })).status).toBe(400);
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: draft.id, reason: '演练回滚' })).body.error.code).toBe('PRICE_SET_CHANGED');
-    const back = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚' })).body as PriceCatalogOverview;
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '', opKey: 'rollback-op-0000' })).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: draft.id, reason: '演练回滚', opKey: 'rollback-op-0001' })).body.error.code).toBe(
+      'PRICE_SET_CHANGED',
+    );
+    const back = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚', opKey: 'rollback-op-0002' })).body as PriceCatalogOverview;
+    // 回滚的响应丢了、之后别人又回滚回去：原样重提第一次的请求什么都不改，不把生效的再切回去
+    const undo = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: draft.id, reason: '再回去', opKey: 'rollback-op-0003' })).body as PriceCatalogOverview;
+    expect(undo.active!.id).toBe(second.id);
+    const replay = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚', opKey: 'rollback-op-0002' })).body as PriceCatalogOverview;
+    expect(replay.active!.id).toBe(second.id);
+    const redo = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { activeId: second.id, reason: '演练回滚', opKey: 'rollback-op-0004' })).body as PriceCatalogOverview;
+    expect(redo.active!.id).toBe(draft.id);
     expect(back.active).toMatchObject({ id: draft.id, status: 'active', retiredAt: null });
     expect(back.previous).toMatchObject({ id: second.id, status: 'retired' });
     // 回滚回来的那份里，之前的改价都在
@@ -623,5 +632,33 @@ describe('价目表录入 审查修正（PR #160）', () => {
     const changed = p.entries.map((e) => (e.name === '客房' ? { ...e, variants: e.variants.map((v, i) => (i === 1 ? { ...v, priceCents: 79900 } : v)) } : e));
     expect(guest.variants.length).toBeGreaterThan(1);
     expect(diffPriceCatalogs(changed, p.entries).map((d) => [d.change, d.draft?.name])).toEqual([['changed', '客房']]);
+  });
+
+  it('第二轮审查：导入查重与编辑同一个键、时段的分钟要合法、表格行数上限、改分档价主价格跟着变', async () => {
+    const dishes = sheet(
+      '零点菜品价格',
+      [['早餐自助零点菜品'], ['序号', '菜品分类', '菜品名称', '售价', '单位'], [1, '生滚粥', '牛肉粥', 38, '份'], [2, null, '牛 肉粥', 48, '份']],
+      ['A1:E1', 'B3:B4'],
+    );
+    expect((await issuesOf({ 零点菜品价格: dishes })).find((i) => i.level === 'error')).toMatchObject({ row: 4, field: '菜品名称' });
+
+    expect(windowOf('7:99--10:00')).toBeNull();
+    expect(windowOf('24:00--2:00')).toBeNull();
+    expect(windowOf('23：30--2：00')).toEqual([1410, 120]);
+
+    const many = sheet('娱乐价格', [['类型', '数量', '价格', '备注'], ...Array.from({ length: 2100 }, (_, i): Row => [`台${i}`, 1, 39, null])]);
+    const tooMany = await preview(workbook({ 娱乐价格: many }));
+    expect(tooMany.status).toBe(422);
+    expect(tooMany.body.error.code).toBe('IMPORT_FILE_INVALID');
+
+    // 改客房小房间的过夜价：主价格（过夜价里最低的）跟着变
+    const draft = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${((await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as PriceCatalogOverview).draft!.id}`))
+      .body as PriceCatalogSet;
+    const guest = draft.entries.find((e) => e.name === '客房')!;
+    expect(guest.priceCents).toBe(59900);
+    const variants = guest.variants.map((v) => (v.unit === '晚' && v.priceCents === 59900 ? { ...v, priceCents: 79900 } : v));
+    const saved = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/price-catalog/entries/${guest.id}`, { ...guest, variants });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(saved.body.priceCents).toBe(69900);
   });
 });

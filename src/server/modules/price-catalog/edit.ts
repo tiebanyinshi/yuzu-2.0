@@ -8,7 +8,8 @@
 // 加锁（docs/LOCKING.md「价目表录入」）：改条目先锁这份价目表一行（FOR UPDATE，同一份价目表的修改串行，名称查重才不会两边都过）
 //   → 这一项（FOR UPDATE，核对版本号，对不上拒绝）→ 写留痕 → 审计。切换、回滚、放弃锁这家门店全部价目表行（id 升序）。
 //   导入只锁原来的草稿一行。不碰别的模块的锁；价目表的读都不加锁。
-// 不带操作编号：修改带版本号（重提会因版本不对被拒，页面刷新后看到已经改好），新增靠名称查重兜底，切换 / 回滚带着当时看到的那份的编号。
+// 操作编号：修改带版本号（重提会因版本不对被拒，页面刷新后看到已经改好），新增靠名称查重兜底；切换、放弃带着当时那份草稿的编号
+// （草稿切换或放弃以后不会再是草稿，重提被拒）；整体回滚另带操作编号（price_catalog_set_ops，迁移 233：数据集会反复成为生效的那份，编号不够）。
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -23,6 +24,7 @@ import {
   priceEntryProblems,
   priceNameKey,
   priceSignature,
+  withDerivedPrice,
   type PriceCatalogEntry,
   type PriceCatalogOverview,
   type PriceChange,
@@ -34,6 +36,7 @@ import { guard } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../../lib/context';
 import { conflict, notFound, unprocessable } from '../../lib/errors';
+import { lockOpKey } from '../../lib/fences';
 import { currentStoreId } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
 import { ENTRY_COLUMNS, entriesOf, entryOf, priceCatalogOverview, rowOf } from './read';
@@ -103,7 +106,12 @@ const ActivateInput = z.object({
   /** 条数与表格对不上时，写明为什么仍要切换 */
   countReason: z.string().trim().max(200, '原因最多 200 个字').optional(),
 });
-const RollbackInput = z.object({ activeId: z.number().int().positive(), reason: z.string().trim().min(2, '请写明回滚原因').max(200, '原因最多 200 个字') });
+const RollbackInput = z.object({
+  activeId: z.number().int().positive(),
+  reason: z.string().trim().min(2, '请写明回滚原因').max(200, '原因最多 200 个字'),
+  /** 操作编号：结果不确定原样重提时什么都不改（不把后来别人切换的结果切回去） */
+  opKey: z.string().trim().min(8, '缺少操作编号').max(64, '操作编号太长'),
+});
 const DiscardInput = z.object({ draftId: z.number().int().positive() });
 
 type Fields = z.infer<typeof EntryFields>;
@@ -191,7 +199,7 @@ export async function createPriceEntry(deps: Deps, setId: number, raw: unknown, 
   if (!PRICE_SHEET_KINDS[f.sheet].includes(f.kind)) throw unprocessable('PRICE_INVALID', `${PRICE_SHEET_NAMES[f.sheet]}里不能新增「${PRICE_KIND_LABELS[f.kind]}」`);
   return deps.sql.begin(async (tx) => {
     const set = await lockSet(tx, setId);
-    const entry: PriceCatalogEntry = { ...fieldsOf(f), sheet: f.sheet, kind: f.kind, active: true, sourceRow: null, sortOrder: 0 };
+    const entry: PriceCatalogEntry = withDerivedPrice({ ...fieldsOf(f), sheet: f.sheet, kind: f.kind, active: true, sourceRow: null, sortOrder: 0 });
     assertValid(entry);
     await assertUniqueName(tx, set.id, entry, null);
     const [last] = await tx<{ next: number }[]>`
@@ -221,7 +229,8 @@ export async function updatePriceEntry(deps: Deps, entryId: number, raw: unknown
   const f = parse(UpdateInput, raw);
   return deps.sql.begin(async (tx) => {
     const { set, before } = await lockEntry(tx, entryId, f.version);
-    const next: PriceCatalogEntry = { ...before, ...fieldsOf(f) };
+    // 主价格由分档推出来的（轰趴房、餐饮包房、客房）按分档重算
+    const next: PriceCatalogEntry = withDerivedPrice({ ...before, ...fieldsOf(f) });
     assertValid(next);
     const same = stable({ ...next, version: 0 }) === stable({ ...before, version: 0 });
     if (same) return before;
@@ -315,6 +324,13 @@ export async function activatePriceCatalog(deps: Deps, raw: unknown, ctx: OpCont
 export async function rollbackPriceCatalog(deps: Deps, raw: unknown, ctx: OpContext): Promise<PriceCatalogOverview> {
   const f = parse(RollbackInput, raw);
   return deps.sql.begin(async (tx) => {
+    // 同一个操作编号排队；已经回滚过的返回现在的样子、什么都不改
+    await lockOpKey(tx, `price_catalog_rollback:${f.opKey}`);
+    const [done] = await tx<{ storeId: number }[]>`SELECT store_id FROM price_catalog_set_ops WHERE op_key = ${f.opKey}`;
+    if (done) {
+      if (Number(done.storeId) !== currentStoreId()) throw conflict('PRICE_OP_REUSED', '这个操作编号已经用过了，请刷新页面后再操作');
+      return priceCatalogOverview(tx);
+    }
     await lockSets(tx);
     const current = await priceCatalogOverview(tx);
     if (!current.active || current.active.id !== f.activeId) throw conflict('PRICE_SET_CHANGED', '生效中的价目表已经变了，刷新后再看');
@@ -322,6 +338,9 @@ export async function rollbackPriceCatalog(deps: Deps, raw: unknown, ctx: OpCont
     if (!prev) throw unprocessable('PRICE_NO_PREVIOUS', '没有上一版可以回滚');
     await tx`UPDATE price_catalog_sets SET status = 'retired', retired_at = now() WHERE id = ${current.active.id}`;
     await tx`UPDATE price_catalog_sets SET status = 'active', activated_at = now(), activated_by = ${ctx.actor.id}, retired_at = NULL WHERE id = ${prev.id}`;
+    await tx`
+      INSERT INTO price_catalog_set_ops (op_key, action, from_set_id, to_set_id, staff_id)
+      VALUES (${f.opKey}, 'rollback', ${current.active.id}, ${prev.id}, ${ctx.actor.id})`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'price_catalog',

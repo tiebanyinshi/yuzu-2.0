@@ -284,6 +284,30 @@ const KIND_SHEET: Record<PriceKind, PriceSheet> = {
   massage: 'massage',
 };
 
+/**
+ * 主价格由分档推出来的几种（与导入时同一个口径）：轰趴房 = 各档最低价；餐饮包房 = 位价里最低的；
+ * 客房（有「晚」档）= 过夜价里最低的。其余的（棋牌房的 8H 档等）主价格自己填，返回 undefined。
+ * 改了分档价时主价格跟着变，不会出现列表写 ¥599、分档里却已经没有 599 的情况。
+ */
+export function derivedMainPrice(e: Pick<PriceCatalogEntry, 'kind' | 'variants'>): number | null | undefined {
+  const pick = (unit?: string) => {
+    const prices = e.variants.filter((v) => unit === undefined || v.unit === unit).map((v) => v.priceCents);
+    const ok = prices.filter((v): v is number => v !== null);
+    return ok.length ? Math.min(...ok) : null;
+  };
+  if (e.kind === 'party_room' && e.variants.length) return pick();
+  if (e.kind === 'dining_room' && e.variants.some((v) => v.unit === '位')) return pick('位');
+  if (e.kind === 'room_type' && e.variants.some((v) => v.unit === '晚')) return pick('晚');
+  return undefined;
+}
+
+/** 写入前把推出来的主价格填上（单价形态） */
+export function withDerivedPrice(e: PriceCatalogEntry): PriceCatalogEntry {
+  const d = derivedMainPrice(e);
+  if (d === undefined || e.priceMode === 'none') return e;
+  return { ...e, priceMode: 'single', priceCents: d, price2Cents: null };
+}
+
 /** 单价上限：100 万元（分） */
 export const PRICE_MAX_CENTS = 100_000_000;
 

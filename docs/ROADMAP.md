@@ -243,6 +243,7 @@
   - `230`（`230_price_catalog.sql`，第一批）：价目表数据集（草稿 / 生效 / 停用）与条目（三种价格形态、时长、台位、房号、服务费比例）。回滚脚本 `docs/rollback/230_price_catalog.down.sql`。
   - `231`（`231_price_catalog_edits.sql`，第三批）：条目加版本号；改价留痕 `price_catalog_changes`（只追加：经办人、时间、改前与改后、原因）。回滚脚本 `docs/rollback/231_price_catalog_edits.down.sql`。
   - `232`（`232_price_catalog_import_ops.sql`，审查修正）：导入草稿的操作编号（重提返回第一次的结果，不再替换草稿）。回滚脚本 `docs/rollback/232_price_catalog_import_ops.down.sql`。
+  - `233`（`233_price_catalog_set_ops.sql`，审查修正）：整体回滚的操作编号（重提不再把后来别人切换的结果切回去）。回滚脚本 `docs/rollback/233_price_catalog_set_ops.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

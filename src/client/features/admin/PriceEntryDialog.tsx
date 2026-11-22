@@ -14,8 +14,10 @@ import {
   PRICE_SHEET_NAMES,
   PRICE_SHEETS,
   PRICE_VENUE_LABELS,
+  derivedMainPrice,
   priceChangeLines,
   priceEntryProblems,
+  withDerivedPrice,
   type PriceCatalogEntry,
   type PriceChange,
   type PriceGender,
@@ -185,7 +187,9 @@ function entryOf(base: PriceCatalogEntry, f: Form): { entry: PriceCatalogEntry; 
     orderable: f.orderable,
     note: f.note.trim(),
   };
-  return { entry, problems: [...problems, ...priceEntryProblems(entry)] };
+  // 主价格由分档推出来的（轰趴房、餐饮包房、客房）按分档重算，与服务端同一个口径
+  const derived = withDerivedPrice(entry);
+  return { entry: derived, problems: [...problems, ...priceEntryProblems(derived)] };
 }
 
 /** 新增（entry 为空，在 setId 这份里加）或修改一项 */
@@ -327,7 +331,11 @@ export function PriceEntryDialog({
                 { value: 'none', label: '待定价' },
               ]}
             />
-            {form.priceMode === 'none' ? (
+            {derivedMainPrice(base) !== undefined && form.priceMode !== 'none' ? (
+              <p className="text-[12.5px] text-ink-3" data-testid="price-entry-derived">
+                主价格按下面分档的最低价：{next.priceCents === null ? '—' : formatYuan(next.priceCents)}（改分档价，主价格跟着变）
+              </p>
+            ) : form.priceMode === 'none' ? (
               <p className="text-[12.5px] text-ink-3">没有价格：页面写「待定价」，不存 0 元。{form.sheet === 'dish' ? '待定价的菜不能下单。' : ''}</p>
             ) : (
               <div className="grid gap-3 sm:grid-cols-3">

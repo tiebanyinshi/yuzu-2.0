@@ -371,6 +371,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '230_price_catalog.sql',
   '231_price_catalog_edits.sql',
   '232_price_catalog_import_ops.sql',
+  '233_price_catalog_set_ops.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

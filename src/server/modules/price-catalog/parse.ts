@@ -5,6 +5,7 @@
 
 import {
   DISH_SECTIONS,
+  priceNameKey,
   MASSAGE_SECTIONS,
   PRICE_SHEET_NAMES,
   STORED_VALUE_SHEET_NAME,
@@ -25,6 +26,8 @@ export class PriceFileError extends Error {}
 /** 一个合并区域、一张表展开合并区域最多填多少格（原表最大的合并区域几十格） */
 const MERGE_AREA_MAX = 2_000;
 const MERGE_CELLS_MAX = 50_000;
+/** 一张表最多多少行有内容（原表零点菜品一百四十来行；一行至多一项） */
+const SHEET_ROWS_MAX = 2_000;
 
 /** 工作表 → 行号 → 列号 → 文字（合并区域填满；合并区域过大的整份拒绝，不在请求线程里填几十亿格） */
 function gridOf(sheet: XlsxSheet): Grid {
@@ -79,10 +82,13 @@ export function windowOf(text: string): [number, number] | null {
   const t = half(text).replace(/\s+/g, '').replace(/次日/g, '');
   const m = /^(\d{1,2})(?::(\d{2})|点(\d{2})?分?)?[-—–~～至到]+(\d{1,2})(?::(\d{2})|点(\d{2})?分?)?$/.exec(t);
   if (!m) return null;
-  const a = Number(m[1]) * 60 + Number(m[2] ?? m[3] ?? 0);
-  const b = Number(m[4]) * 60 + Number(m[5] ?? m[6] ?? 0);
-  if (a > 1439 || b > 1439) return null;
-  return [a, b];
+  // 时、分各自要合法：「7:99」不换算成 8:39
+  const ha = Number(m[1]);
+  const ma = Number(m[2] ?? m[3] ?? 0);
+  const hb = Number(m[4]);
+  const mb = Number(m[5] ?? m[6] ?? 0);
+  if (ha > 23 || hb > 23 || ma > 59 || mb > 59) return null;
+  return [ha * 60 + ma, hb * 60 + mb];
 }
 
 /** 一个房型最多认多少个房号（原表最多 39 个）；多出来的在房间价格表里报错 */
@@ -505,7 +511,8 @@ function dishSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     const cents = priceText ? yuanToCents(priceText) : null;
     if (priceText && cents === null) ctx.error(S, r, '售价', `售价「${priceText}」不对（写元，最多 2 位小数）`);
     if (!section) ctx.error(S, r, '餐段', '这一行上面没有餐段标题（2楼餐厅零点菜品、早餐自助零点菜品……）');
-    const key = `${section}|${category}|${name}`;
+    // 与页面编辑同一个查重键（不分大小写、不管空格）
+    const key = priceNameKey({ sheet: S, section, category, name });
     if (seen.has(key)) ctx.error(S, r, '菜品名称', `名称重复：「${name}」在${section}「${category}」里第 ${seen.get(key)} 行已经有了`);
     seen.set(key, r);
     if (!priceText) ctx.warn(S, r, '售价', `「${name}」暂无售价：录为「待定价」，不能下单，补价后启用`);
@@ -576,7 +583,7 @@ function massageSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       }
     }
     if (!gender) gender = /女宾/.test(name) ? 'female' : /男宾/.test(name) ? 'male' : null;
-    const key = `${section}|${name}`;
+    const key = priceNameKey({ sheet: S, section, category: '', name });
     if (seen.has(key)) ctx.error(S, r, '项目名称', `名称重复：「${name}」在「${section}」第 ${seen.get(key)} 行已经有了`);
     seen.set(key, r);
     const base = blank(S, 'massage', name, r, out.length + 1);
@@ -629,7 +636,10 @@ export function parsePriceCatalog(book: XlsxWorkbook): ParsedPriceCatalog {
       ctx.error(sheet, null, '工作表', `少了「${PRICE_SHEET_NAMES[sheet]}」这张表`);
       continue;
     }
-    entries.push(...PARSERS[sheet](gridOf(ws), ctx));
+    const grid = gridOf(ws);
+    // 行数先核对，再逐行读：原表最多一百多行，几千上万行的不像价目表，整份拒绝（不先建一大堆条目）
+    if (grid.size > SHEET_ROWS_MAX) throw new PriceFileError(`「${ws.name}」有 ${grid.size} 行，超过 ${SHEET_ROWS_MAX} 行，不像价目表；请检查表格后再导入`);
+    entries.push(...PARSERS[sheet](grid, ctx));
   }
   const notes: Record<string, string> = {};
   const sv = byName.get(STORED_VALUE_SHEET_NAME);

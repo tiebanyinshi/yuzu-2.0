@@ -365,6 +365,7 @@ function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEnt
 function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary; previous: PriceCatalogSetSummary | null; onDone: (which: Which) => void }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState<'activate' | 'rollback' | 'discard' | null>(null);
+  const [rollbackKey, setRollbackKey] = useState(() => uuid());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mismatches = countMismatches(shown.counts);
@@ -397,7 +398,17 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
           </>
         )}
         {shown.status === 'active' && previous && (
-          <Button variant="secondary" size="sm" icon={<Undo2 className="size-4" />} onClick={() => setOpen('rollback')} data-testid="price-catalog-rollback">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Undo2 className="size-4" />}
+            onClick={() => {
+              // 每次打开配一个新的操作编号；结果不确定再点一次用同一个
+              setRollbackKey(uuid());
+              setOpen('rollback');
+            }}
+            data-testid="price-catalog-rollback"
+          >
             回滚到上一版「{previous.title}」
           </Button>
         )}
@@ -451,7 +462,7 @@ function SetActions({ shown, previous, onDone }: { shown: PriceCatalogSetSummary
         busy={busy}
         testId="price-catalog-rollback"
         onClose={() => setOpen(null)}
-        onConfirm={(reason) => void run('rollback', { activeId: shown.id, reason }, 'active')}
+        onConfirm={(reason) => void run('rollback', { activeId: shown.id, reason, opKey: rollbackKey }, 'active')}
       />
       <Dialog
         open={open === 'discard'}
