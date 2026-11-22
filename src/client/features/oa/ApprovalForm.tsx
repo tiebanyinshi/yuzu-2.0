@@ -3,7 +3,7 @@
 //   · 驳回以后「修改后重新提交」：带出原单的内容与附件（附件沿用原来那一份）。
 //   · 提交带操作编号、先记在本机再发（sendErpOp）；没收到结果的在「审批」页上方查回、原样重提或作废，确认前不让再提交。
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { FileText, Paperclip, X } from 'lucide-react';
@@ -116,11 +116,13 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
   const [touched, setTouched] = useState(false);
   if (fromId && !values) return from.isError ? <LoadFailed title="原来的单没有取回来" onRetry={() => from.refetch()} retrying={from.isFetching} /> : <Skeleton className="h-60" />;
   const v = values ?? {};
-  const set = (k: string, x: unknown) => {
-    const next = { ...v, [k]: x };
-    setValues(next);
-    if (!fromId) writeDraft(key, next);
-  };
+  // 按最新的状态合并（附件上传完成时调用的是上传开始那一刻的回调，不能拿那时的表单整个盖回去，Codex 审查 03e17aa）
+  const set = (k: string, x: unknown) =>
+    setValues((prev) => {
+      const next = { ...prev, [k]: x };
+      if (!fromId) writeDraft(key, next);
+      return next;
+    });
   const form = toForm(template.fields, v);
   const checked = checkApprovalForm(template.fields, form);
   const badMoney = template.fields.find((f) => f.type === 'money' && typeof v[f.key] === 'string' && (v[f.key] as string).trim() !== '' && typeof form[f.key] !== 'number');
@@ -274,6 +276,7 @@ function FieldInput({ field: f, value, values, onChange }: { field: ApprovalFiel
 function LeaveTypeInput({ field: f, label, value, onChange }: { field: ApprovalField; label: string; value: string; onChange: (v: unknown) => void }) {
   const types = useQuery({ queryKey: ['oa', 'leave-types'], queryFn: () => api.get<LeaveType[]>('/api/oa/leave/types') });
   const t = types.data?.find((x) => String(x.id) === value);
+  if (types.isError && !types.data) return <OptionsFailed label={f.label} onRetry={() => types.refetch()} retrying={types.isFetching} />;
   return (
     <Field label={label} hint={t ? `${t.paid ? '带薪' : '不带薪'}${t.proofRequired ? '，要上传证明附件' : ''}${t.hasBalance ? '，按余额（在「假期余额」看还剩几天）' : ''}` : f.hint}>
       <Select value={value} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : '')} data-testid={testId(f)}>
@@ -294,8 +297,9 @@ function ShiftInput({ field: f, label, value, date, onChange }: { field: Approva
   const month = date.slice(0, 7);
   const q = useQuery({ queryKey: ['oa', 'my-schedule', month], queryFn: () => api.get<MySchedule>(`/api/oa/me/schedule?month=${month}`), enabled: !!month });
   const items = q.data?.days.find((d) => d.date === date)?.items ?? [];
+  if (q.isError && !q.data) return <OptionsFailed label={f.label} onRetry={() => q.refetch()} retrying={q.isFetching} />;
   return (
-    <Field label={label} hint={!date ? '先选日期' : q.data && !items.length ? '那天没有排班' : f.hint}>
+    <Field label={label} hint={!date ? '先选日期' : q.isPending ? '正在取那天的排班…' : !items.length ? '那天没有排班' : f.hint}>
       <Select value={value} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : '')} disabled={!items.length} data-testid={testId(f)}>
         <option value="">请选择</option>
         {items.map((s) => (
@@ -309,10 +313,25 @@ function ShiftInput({ field: f, label, value, date, onChange }: { field: Approva
 }
 
 function RefInput({ field: f, label, value, onChange }: { field: ApprovalField; label: string; value: string; onChange: (v: unknown) => void }) {
-  const q = useQuery({ queryKey: ['oa', 'approvals', 'mine', 'approved'], queryFn: () => api.get<ApprovalPage>('/api/oa/approvals?box=mine&status=approved') });
-  const items = useMemo(() => (q.data?.items ?? []).filter((x) => x.templateCode === f.refTemplate), [q.data, f.refTemplate]);
+  // 自己已通过的那个模板的单：按模板在服务端筛，一页一页取完（一般就几张）
+  const q = useQuery({
+    queryKey: ['oa', 'approvals', 'ref', f.refTemplate],
+    queryFn: async () => {
+      const all: ApprovalPage['items'] = [];
+      let before: number | null = null;
+      for (let i = 0; i < 20; i += 1) {
+        const page: ApprovalPage = await api.get<ApprovalPage>(`/api/oa/approvals?box=mine&status=approved&template=${f.refTemplate ?? ''}${before ? `&before=${before}` : ''}`);
+        all.push(...page.items);
+        if (!page.next) break;
+        before = page.next;
+      }
+      return all;
+    },
+  });
+  const items = q.data ?? [];
+  if (q.isError && !q.data) return <OptionsFailed label={f.label} onRetry={() => q.refetch()} retrying={q.isFetching} />;
   return (
-    <Field label={label} hint={f.hint}>
+    <Field label={label} hint={q.isPending ? '正在取可以关联的单…' : f.hint}>
       <Select value={value} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : '')} data-testid={testId(f)}>
         <option value="">不关联</option>
         {items.map((x) => (
@@ -373,4 +392,9 @@ function AttachmentsInput({ field: f, label, value, onChange }: { field: Approva
       </div>
     </Field>
   );
+}
+
+/** 选项没有取回来：明说加载失败、给重试，不当成「没有可选的」（docs/CONVENTIONS.md 第 4 节，Codex 审查 03e17aa） */
+export function OptionsFailed({ label, onRetry, retrying }: { label: string; onRetry: () => void; retrying: boolean }) {
+  return <LoadFailed title={`${label}的选项没有取回来`} onRetry={onRetry} retrying={retrying} />;
 }

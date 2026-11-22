@@ -26,7 +26,7 @@ import {
 import type { LeaveType } from '@shared/oa';
 import { formatYuan } from '@shared/money';
 import { api, errorMessage, UncertainError } from '../../lib/api';
-import { ErpPendingStoreError, sendErpOp } from '../../lib/erpPending';
+import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { useSession } from '../../lib/session';
 import { cn, formatDateTime, uuid } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
@@ -37,7 +37,7 @@ import { Dialog } from '../../components/Overlay';
 import { ReasonDialog } from '../../components/ReasonDialog';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Segmented, Select, Skeleton } from '../../components/ui';
-import { NewApprovalPage } from './ApprovalForm';
+import { NewApprovalPage, OptionsFailed } from './ApprovalForm';
 
 const KEY = ['oa', 'approvals'] as const;
 const STATUS_TONE: Record<ApprovalStatus, 'yuzu' | 'pine' | 'clay' | 'neutral'> = { pending: 'yuzu', approved: 'pine', rejected: 'clay', withdrawn: 'neutral' };
@@ -184,8 +184,14 @@ function ApprovalDetailPage({ id }: { id: number }) {
     if (ccUnread) void api.post(`/api/oa/approvals/${id}/read`, {}).then(() => qc.invalidateQueries({ queryKey: KEY }));
   }, [ccUnread, id, qc]);
 
+  // 这张单上本人还有结果待确认的处理：先查回、原样重提或作废，确认前不发新的（Codex 审查 03e17aa）
+  const unsettled = useErpRecorded(['oa_approval_act']).filter((op) => op.staffId === session.staff.id && op.url === `/api/oa/approvals/${id}/act`);
   const act = async (action: ApprovalAction, extra: { comment?: string; toStaffId?: number } = {}, ok = '已处理') => {
     if (!d) return false;
+    if (unsettled.length > 0) {
+      toast({ tone: 'error', title: '这张单上一次的操作结果待确认', body: '请先在上方查回、按原内容重新提交或作废，确认前不要再操作。' });
+      return false;
+    }
     const clientKey = uuid();
     const needsStep = action === 'approve' || action === 'reject' || action === 'transfer';
     setBusy(true);
@@ -217,6 +223,12 @@ function ApprovalDetailPage({ id }: { id: number }) {
     <>
       <PageHeader dateMode="calendar" title={d?.title ?? '审批单'} subtitle={d ? `${d.templateName} · ${d.applicantName} · ${formatDateTime(d.submittedAt)}` : undefined} />
       <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-7">
+        <ErpPendingPanel
+          types={['oa_approval_act']}
+          filter={(op) => op.staffId === session.staff.id && op.url === `/api/oa/approvals/${id}/act`}
+          className="space-y-2"
+          onFound={() => void qc.invalidateQueries({ queryKey: KEY })}
+        />
         {q.isPending ? (
           <Skeleton className="h-72" />
         ) : q.isError && !d ? (
@@ -439,19 +451,23 @@ function TransferDialog({ open, busy, exclude, onClose, onConfirm }: { open: boo
       }
     >
       <div className="space-y-4">
-        <Field label="交给谁">
-          <Select value={to} onChange={(e) => setTo(e.target.value)} data-testid="oa-transfer-to">
-            <option value="">请选择</option>
-            {(people.data ?? [])
-              .filter((p) => !exclude.includes(p.id))
-              .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.department ? `（${p.department}）` : ''}
-                </option>
-              ))}
-          </Select>
-        </Field>
+        {people.isError && !people.data ? (
+          <OptionsFailed label="在职员工" onRetry={() => people.refetch()} retrying={people.isFetching} />
+        ) : (
+          <Field label="交给谁" hint={people.isPending ? '正在取在职员工…' : undefined}>
+            <Select value={to} onChange={(e) => setTo(e.target.value)} data-testid="oa-transfer-to">
+              <option value="">请选择</option>
+              {(people.data ?? [])
+                .filter((p) => !exclude.includes(p.id))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.department ? `（${p.department}）` : ''}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+        )}
         <Field label="说明（可不填）">
           <Input value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
         </Field>

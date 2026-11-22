@@ -62,6 +62,11 @@ const ListQuery = z.object({
   box: z.enum(['todo', 'done', 'mine', 'cc']).default('todo'),
   status: z.enum(['pending', 'approved', 'rejected', 'withdrawn']).optional(),
   before: z.coerce.number().int().positive().optional(),
+  /** 只要某个模板的（报销关联出差单时选候选用） */
+  template: z
+    .string()
+    .regex(/^[a-z_]{1,30}$/)
+    .optional(),
 });
 
 /** 轮到这一步：标成待处理、通知审批人 */
@@ -334,7 +339,12 @@ export function registerOaApprovalRoutes(app: FastifyInstance, { sql, config }: 
       mine: sql`a.applicant_id = ${me}`,
       cc: sql`EXISTS (SELECT 1 FROM oa_approval_cc c WHERE c.approval_id = a.id AND c.staff_id = ${me})`,
     };
-    const items = await listApprovals(sql, me, sql`${box[q.box]} ${q.status ? sql`AND a.status = ${q.status}` : sql``} ${q.before ? sql`AND a.id < ${q.before}` : sql``}`, PAGE + 1);
+    const items = await listApprovals(
+      sql,
+      me,
+      sql`${box[q.box]} ${q.status ? sql`AND a.status = ${q.status}` : sql``} ${q.template ? sql`AND a.template_code = ${q.template}` : sql``} ${q.before ? sql`AND a.id < ${q.before}` : sql``}`,
+      PAGE + 1,
+    );
     return { items: items.slice(0, PAGE), next: items.length > PAGE ? items[PAGE - 1]!.id : null };
   });
 

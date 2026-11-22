@@ -136,6 +136,10 @@ describe('OA-11 六类审批模板', () => {
     expect(e.steps.map((s) => s.approverId)).toEqual([emp.lead!.id]);
     const big = await ok(emp.staff!, 'expense', { category: '招待', amount: 600_000, occurredOn: '2031-05-02', invoices: [await upload(emp.staff!)] });
     expect(big.steps.map((s) => s.approverId)).toEqual([emp.lead!.id, emp.gmo!.id]);
+    // 关联单的候选按模板在服务端筛（Codex 审查 03e17aa：只取第一页再在页面上筛会漏掉较早的出差单）
+    const refs = (await api(ctx.app, emp.staff!.cookie, 'GET', '/api/oa/approvals?box=mine&status=approved&template=trip')).body as { items: { id: number; templateCode: string }[] };
+    expect(refs.items.map((x) => x.id)).toEqual([trip.id]);
+    expect((await api(ctx.app, emp.staff!.cookie, 'GET', '/api/oa/approvals?box=mine&template=Trip!')).status).toBe(400);
     // 别人的出差单不能关联
     expect(code(await post(emp.free!, 'expense', { category: '交通', amount: 100, occurredOn: '2031-05-02', invoices: [await upload(emp.free!)], tripId: trip.id }))).toBe('FORM_INVALID');
   });
