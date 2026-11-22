@@ -374,6 +374,6 @@
   - 提交：操作编号（`lockOpKey`，查 `idempotency_keys`、核对没有确认作废）→ 员工的人脸咨询锁（`oa_face:<员工>`，同一人的提交串行，「同时只有一份待审核」不乱）→ 照片附件行（`bindAttachments`，`FOR UPDATE`，按 id 升序）。
   - 审核（通过、退回、停用）：操作编号 → 那一份录入 `FOR UPDATE` → 通过时再改同一人已通过的那一份（记 `replaced`；同一人同时只有一份已通过由部分唯一索引兜底，两份同时通过的后一个会撞索引而整笔回滚）。
   - 不取考勤设置锁、员工考勤锁；与打卡之间只有打卡事务里那一下只读核对，不成环。
-- **考勤结算**（OA-08，`src/server/modules/oa/attendance-daily.ts`）：按员工 id 升序，一位员工一个事务：员工的考勤锁（`lockStaffAttendance`，与打卡、保存排班串行：结算时这位员工的打卡与排班不会同时在变）→ 这位员工的结果行（`oa_attendance_daily`，`INSERT … ON CONFLICT DO UPDATE`）→ 站内通知。后台任务与人事「重新结算」走同一段，几个进程同时跑也只是重算同样的结果。
+- **考勤结算**（OA-08，`src/server/modules/oa/attendance-daily.ts`）：按员工 id 升序，一位员工一个事务：员工的考勤锁（`lockStaffAttendance`，与打卡、保存排班串行：结算时这位员工的打卡与排班不会同时在变）→ 这位员工的结果行（`oa_attendance_daily`，`INSERT … ON CONFLICT DO UPDATE`）→ 站内通知。后台任务与人事「重新结算」走同一段，几个进程同时跑也只是重算同样的结果。保存排班去掉当天已经结算过的一班（没有打卡）时，在保存的事务里、员工考勤锁与排班行之后删掉那几条结果行，顺序与结算一致（员工考勤锁 → 结果行）。
   - 人事改外勤算不算出勤：只锁那一条结果行（`FOR UPDATE`），带页面上看到的原值核对；不取员工考勤锁（结算重写的列里不含这一列）。
 - **附件上传**（OA-03，`src/server/modules/oa/attachments.ts`）：上传人的锁（`pg_advisory_xact_lock('oa_attachment_upload', 员工编号)`，同一个人的上传串行）→ 同一操作编号查回 → 清掉自己过期没用上的 → 核对限额 → 插入（新行）。挂到单据上（`bindAttachments`）在调用方的事务里按编号锁附件行（`FOR UPDATE`）；每分钟任务清过期没挂上的，条件里带 `ref_type IS NULL`，正在挂的行等它挂上就不再删。

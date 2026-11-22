@@ -154,4 +154,39 @@ describe('OA-08 考勤结算与异常', () => {
     expect(me.rows).toHaveLength(1);
     expect(me.rows[0]).toMatchObject({ businessDate: D, status: 'abnormal', lateMinutes: 10 });
   });
+
+  it('当天已经算成旷工的一班从排班里去掉：结果一起撤掉，重新结算也不再出来（Codex 审查 f2d9311）', async () => {
+    const D2 = shiftDate(D, 5);
+    at(D2, '08:00');
+    await schedule(emp.absent!, D2, '白班');
+    expect(await run(D2, '20:30')).toBe(1);
+    expect(await rowOf(emp.absent!, D2)).toMatchObject({ status: 'absent' });
+    at(D2, '20:30');
+    const r = await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/schedule', {
+      clientKey: randomUUID(),
+      storeId: DEFAULT_STORE_ID,
+      groupId,
+      cells: [{ staffId: emp.absent!.id, date: D2, shiftIds: [], consecutive: false, expected: { shiftIds: [shifts['白班']!], consecutive: false } }],
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await rowOf(emp.absent!, D2)).toBeUndefined();
+    await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/daily/settle', { date: D2, storeId: DEFAULT_STORE_ID });
+    expect(await rowOf(emp.absent!, D2)).toBeUndefined();
+  });
+
+  it('调到别的门店以后，原门店有打卡的那一班照常结算；没打卡也没结算过的不算旷工（Codex 审查 f2d9311）', async () => {
+    const D3 = shiftDate(D, 6);
+    at(D3, '08:00');
+    await schedule(emp.half!, D3, '白班');
+    await schedule(emp.ok!, D3, '白班');
+    await punch(emp.half!, D3, '08:55');
+    // 下班前调到别的门店（人事改了员工挂的门店）
+    const [other] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('AD2', '调店', 1) RETURNING id`;
+    await ctx.sql`UPDATE staff_stores SET store_id = ${other!.id} WHERE staff_id IN ${ctx.sql([emp.half!.id, emp.ok!.id])}`;
+    expect(await run(D3, '20:30')).toBe(1);
+    expect(await rowOf(emp.half!, D3)).toMatchObject({ status: 'abnormal', missingOut: true, inAt: { time: '08:55' } });
+    expect(await rowOf(emp.ok!, D3)).toBeUndefined();
+    const me = (await api(ctx.app, emp.half!.cookie, 'GET', `/api/oa/me/attendance?month=${D3.slice(0, 7)}`)).body as MyAttendance;
+    expect(me.rows.find((x) => x.businessDate === D3)).toMatchObject({ status: 'abnormal' });
+  });
 });

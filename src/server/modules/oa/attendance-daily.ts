@@ -32,7 +32,11 @@ const SETTLE_EVERY_MS = 10 * 60_000;
 
 type Slot = OaShiftTimes & { storeId: number; staffId: number; workDate: string; shiftId: number; shiftName: string };
 
-/** 要结算的排班：下班窗口已经结束的；force 以外只要还没结算或结算以后有新打卡的 */
+/**
+ * 要结算的排班：下班窗口已经结束的；force 以外只要还没结算或结算以后有新打卡的。
+ * 员工现在还在排班门店的照常算；调到别的门店以后，原门店那一班有打卡或已经结算过的也照常（重）算，
+ * 没打卡也没结算过的当作调店以后不再生效的排班（后台任务每 10 分钟结算一次，调店前结束的那一班一般已经结算过）。
+ */
 async function candidates(db: Db, timeZone: string, at: Date, where: Fragment, force: boolean): Promise<Slot[]> {
   const rows = await db<(Slot & { needs: boolean })[]>`
     SELECT o.store_id, o.staff_id, o.work_date::text AS work_date, o.shift_id, sh.name AS shift_name,
@@ -43,7 +47,11 @@ async function candidates(db: Db, timeZone: string, at: Date, where: Fragment, f
     FROM oa_schedules o
     JOIN oa_shifts sh ON sh.id = o.shift_id
     LEFT JOIN oa_attendance_daily d ON d.staff_id = o.staff_id AND d.business_date = o.work_date AND d.shift_id = o.shift_id
-    WHERE ${liveSchedule(db)} AND ${where}
+    WHERE ${where}
+      AND (${liveSchedule(db)}
+           -- 调店以后原门店已经发生的那一班照常结算：有打卡或已经结算过的不因为现在不在那家店就丢掉
+           OR d.id IS NOT NULL
+           OR EXISTS (SELECT 1 FROM oa_punches p WHERE p.staff_id = o.staff_id AND p.store_id = o.store_id AND p.business_date = o.work_date AND p.shift_id = o.shift_id))
     ORDER BY o.staff_id, o.work_date, o.shift_id`;
   const now = localMinute(at, timeZone).minute;
   return rows
