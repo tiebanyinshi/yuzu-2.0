@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PayrollBatchDetail, PayrollBatchSummary, PayrollImportPreview, PayrollImportResult, PayslipTemplate } from '../src/shared/oa-payroll';
 import { loadPayrollFileKey } from '../src/server/config';
 import { buildWorkbook, zip } from '../src/server/lib/xlsx';
-import { readXlsx, unzip } from '../src/server/lib/xlsx-read';
+import { parseXml, readXlsx, unzip } from '../src/server/lib/xlsx-read';
 import { payrollKeyOf } from '../src/server/modules/oa/payroll';
 import { createStaff } from '../src/server/modules/staff';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
@@ -448,6 +448,14 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
       );
       expect(() => readXlsx(zip([...evil].map(([name, data]) => ({ name, data }))), { maxCols: 60 })).toThrow(/引用不对/);
     }
+  });
+
+  it('标签里很长、没有等号的属性片段线性读完，不会卡住（Codex 审查 8e1514e）', () => {
+    const t = Date.now();
+    const node = parseXml(`<worksheet ${'a'.repeat(200_000)} x="1" y='2' z>`);
+    expect(Date.now() - t).toBeLessThan(1000);
+    expect(node.children[0]!.attrs).toEqual({ x: '1', y: '2' });
+    expect(() => parseXml('<a b="1>')).toThrow();
   });
 
   it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {

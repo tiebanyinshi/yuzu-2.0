@@ -78,6 +78,33 @@ function decode(s: string): string {
 
 const local = (name: string) => name.slice(name.indexOf(':') + 1);
 
+const isSpace = (c: string | undefined) => c === ' ' || c === '\t' || c === '\n' || c === '\r';
+
+/**
+ * 读一个标签里的属性：从左往右一次扫完（线性），名字后面不是「=」的跳过、引号没配对的拒绝。
+ * 原来用不锚定的正则逐个找「名字 = 值」，没有等号的长片段会每个字符重试一遍（二次方耗时），几百字节的文件就能卡住服务（Codex 审查 8e1514e）
+ */
+function readAttrs(tag: string, start: number, out: Record<string, string>) {
+  let j = start;
+  const n = tag.length;
+  while (j < n) {
+    while (j < n && isSpace(tag[j])) j++;
+    const nameStart = j;
+    while (j < n && !isSpace(tag[j]) && tag[j] !== '=') j++;
+    const name = tag.slice(nameStart, j);
+    while (j < n && isSpace(tag[j])) j++;
+    if (tag[j] !== '=') continue;
+    j++;
+    while (j < n && isSpace(tag[j])) j++;
+    const q = tag[j];
+    if (q !== '"' && q !== "'") continue;
+    const end = tag.indexOf(q, j + 1);
+    if (end < 0) throw new XlsxReadError('Excel 文件里的 XML 不完整');
+    if (name) out[name] = decode(tag.slice(j + 1, end));
+    j = end + 1;
+  }
+}
+
 export function parseXml(xml: string): XmlNode {
   const root: XmlNode = { name: '#root', attrs: {}, children: [], text: '' };
   const stack: XmlNode[] = [root];
@@ -123,10 +150,7 @@ export function parseXml(xml: string): XmlNode {
     const m = /^([^\s/>]+)/.exec(inner);
     if (!m) throw new XlsxReadError('Excel 文件里的 XML 不完整');
     const node: XmlNode = { name: local(m[1]!), attrs: {}, children: [], text: '' };
-    const attrRe = /([^\s=]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
-    let a: RegExpExecArray | null;
-    const rest = inner.slice(m[1]!.length);
-    while ((a = attrRe.exec(rest))) node.attrs[a[1]!] = decode(a[3] ?? a[4] ?? '');
+    readAttrs(inner, m[1]!.length, node.attrs);
     stack[stack.length - 1]!.children.push(node);
     if (!selfClosing) stack.push(node);
     i = gt + 1;
