@@ -271,10 +271,15 @@ describe('OA-15 已读回执与实时通道', () => {
     const dm = await direct(e.q!, e.r!);
     const m = (await say(e.q!, dm, { body: '换班' })).body.message;
     const after = await sync(e.r!);
-    expect(after).toEqual({ unread: before.unread + 1, lastMessageId: m.id });
+    expect(after).toEqual({ unread: before.unread + 1, lastMessageId: m.id, revokedAt: before.revokedAt });
     await api(ctx.app, e.r!.cookie, 'POST', `/api/oa/im/conversations/${dm}/read`, { upTo: m.id });
-    expect(await sync(e.r!)).toEqual({ unread: before.unread, lastMessageId: m.id });
+    expect(await sync(e.r!)).toEqual({ unread: before.unread, lastMessageId: m.id, revokedAt: before.revokedAt });
     expect((await list(e.r!)).unread).toBe(before.unread);
+    // 撤回不产生新消息，同步接口靠撤回时间发现（会话列表的摘要要跟着变）
+    expect((await api(ctx.app, e.q!.cookie, 'POST', `/api/oa/im/messages/${m.id}/revoke`)).status).toBe(200);
+    const revoked = await sync(e.r!);
+    expect(revoked.lastMessageId).toBe(m.id);
+    expect(revoked.revokedAt).not.toBe(before.revokedAt);
   });
 
   it('新消息通知：其余成员每个会话一条（不抄正文），再来消息不加条；读完才清，之后再来照旧提醒；系统提示不发', async () => {
@@ -306,5 +311,21 @@ describe('OA-15 已读回执与实时通道', () => {
     await api(ctx.app, e.r!.cookie, 'POST', `/api/oa/im/conversations/${g}/leave`);
     expect((await notes()).some((x) => x.link === `/oa/im/${g}`)).toBe(false);
     expect((await notes()).some((x) => x.link === `/oa/im/${dm}`)).toBe(true);
+  });
+
+  it('上报已读与在途的发消息串行：读到旧的那条时，正在发的新消息的通知不被清掉', async () => {
+    const dm = await direct(e.r!, e.p!);
+    const m1 = (await say(e.r!, dm, { body: '第一句' })).body.message;
+    let reading: Promise<unknown> | undefined;
+    await ctx.sql.begin(async (tx) => {
+      // 模拟发送事务：锁会话行、插新消息、刷新通知，还没提交时对方上报读到第一句
+      await tx`SELECT 1 FROM oa_im_conversations WHERE id = ${dm} FOR UPDATE`;
+      await tx`INSERT INTO oa_im_messages (conversation_id, sender_id, kind, body) VALUES (${dm}, ${e.r!.id}, 'text', '第二句')`;
+      await tx`UPDATE oa_notifications SET refreshed_at = now() WHERE staff_id = ${e.p!.id} AND ref_type = 'oa_im_conversation' AND ref_id = ${dm}`;
+      reading = api(ctx.app, e.p!.cookie, 'POST', `/api/oa/im/conversations/${dm}/read`, { upTo: m1.id });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    expect(((await reading) as { status: number }).status).toBe(200);
+    expect((await convNotes(e.p!, dm)).filter((x) => !x.readAt)).toHaveLength(1);
   });
 });

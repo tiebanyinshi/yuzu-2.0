@@ -94,10 +94,12 @@ export interface ImRead {
   staffId: number;
   lastRead: number;
 }
-/** OA-15 统一的同步接口：未读合计、我所在的会话里最新一条消息的编号（变了再取会话列表） */
+/** OA-15 统一的同步接口：未读合计、我所在的会话里最新一条消息的编号与最近一次撤回的时间（任一变了再取会话列表） */
 export interface ImSync {
   unread: number;
   lastMessageId: number;
+  /** 撤回不产生新消息，单看编号发现不了（Codex 审查 38e6250） */
+  revokedAt: string | null;
 }
 /** 自己发的一条消息的已读情况：已读的成员与未读的成员（按读到的位置算） */
 export function readersOf<M extends { staffId: number }>(messageId: number, members: readonly M[], reads: readonly ImRead[]): { read: M[]; unread: M[] } {

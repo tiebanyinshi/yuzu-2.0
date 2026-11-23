@@ -1,6 +1,6 @@
 // OA-14 员工端「办公 → 消息」（docs/OA.md 第 17 节）：会话列表与聊天。
 //   · 会话列表：按最后一条消息倒序、未读数、「有人@我」；搜索会话名、成员、消息文字；发起单聊、建群。
-//     每 3 秒问一次统一的同步接口（OA-15），未读或最新一条变了才重取列表。
+//     每 3 秒问一次统一的同步接口（OA-15），未读、最新一条或撤回变了才重取列表。
 //   · 已读回执（OA-15，第 18 节）：自己发的消息下面写单聊「已读 / 未读」、群聊「N 人已读 / 全部已读」，点开看谁读了谁没读。
 //   · 聊天：先取最近 30 条，「查看更早的消息」往上翻；每 3 秒取新消息与最近的撤回，看到了上报读到哪一条。
 //     发文本（含表情）、图片、文件；群聊里输入 @ 在输入框上方列出成员（与「所有人」）；自己 2 分钟内的消息能撤回。
@@ -74,7 +74,7 @@ function ImListPage() {
     async (isLive) => {
       const r = await api.get<ImSync>('/api/oa/im/sync');
       if (!isLive()) return;
-      const sig = `${r.unread}:${r.lastMessageId}`;
+      const sig = `${r.unread}:${r.lastMessageId}:${r.revokedAt ?? ''}`;
       if (synced.current !== null && synced.current !== sig) await qc.invalidateQueries({ queryKey: LIST_KEY });
       synced.current = sig;
     },
