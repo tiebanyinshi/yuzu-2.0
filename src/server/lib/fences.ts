@@ -163,6 +163,15 @@ export const FENCED_OPS = [
   // 房态点单（回测整改 P07）：按出品口各一类，只有一个出品口下单权限的人作废时碰不到别的挂账、另一个出品口的点单
   'room_order_water',
   'room_order_fruit',
+  // 价目表录入（迁移 234）：导入草稿、整体回滚；编号记在 price_catalog_import_ops / price_catalog_set_ops
+  'price_import',
+  'price_rollback',
+  // 价目表单条新增、修改、停用 / 启用（迁移 235）：编号记在 price_catalog_changes.op_key
+  'price_entry',
+  // 价目表切换生效、放弃草稿（迁移 236）：编号记在 price_catalog_set_ops
+  'price_set',
+  // 价目表对接收银项目（迁移 237）：编号记在 price_catalog_link_ops
+  'price_link',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 

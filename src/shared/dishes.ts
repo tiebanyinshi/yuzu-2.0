@@ -340,9 +340,16 @@ export const pricesText = (prices: readonly TierPrice[]): string =>
 // ───────────────────────── 改价记录 ─────────────────────────
 
 /** store_price：第二家店改本店价（8.1.17 BW-11，后台价目的「本店价」） */
-export const DISH_PRICE_SOURCES = ['dishes', 'import', 'catalog', 'price_list', 'store_price'] as const;
+export const DISH_PRICE_SOURCES = ['dishes', 'import', 'catalog', 'price_list', 'store_price', 'price_catalog'] as const;
 export type DishPriceSource = (typeof DISH_PRICE_SOURCES)[number];
-export const DISH_PRICE_SOURCE_LABELS: Record<DishPriceSource, string> = { dishes: '菜品管理', import: '菜品导入', catalog: '后台价目', price_list: '价目表导入', store_price: '本店价' };
+export const DISH_PRICE_SOURCE_LABELS: Record<DishPriceSource, string> = {
+  dishes: '菜品管理',
+  import: '菜品导入',
+  catalog: '后台价目',
+  price_list: '价目表导入',
+  store_price: '本店价',
+  price_catalog: '全品类价目表',
+};
 
 export interface DishPriceChange {
   id: number;

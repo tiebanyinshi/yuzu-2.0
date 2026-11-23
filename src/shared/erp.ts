@@ -476,6 +476,15 @@ export const ERP_OP_TYPES = [
   // 8.1.15 会员建档（匿名卡没有手机号去重、实体卡同时收押金）、退卡退押金（动的是钱）
   'member_create',
   'member_card_return',
+  // 价目表录入（PR #160 审查）：导入草稿、整体回滚；编号记在 price_catalog_import_ops / price_catalog_set_ops
+  'price_import',
+  'price_rollback',
+  // 价目表单条新增、修改、停用 / 启用：编号记在改动留痕上
+  'price_entry',
+  // 价目表切换生效、放弃草稿：编号记在 price_catalog_set_ops
+  'price_set',
+  // 价目表对接收银项目（第四批）：编号记在 price_catalog_link_ops
+  'price_link',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -549,6 +558,11 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   request_stock: '需求单核库 / 答复替代',
   member_create: '新建会员',
   member_card_return: '退卡退押金',
+  price_import: '价目导入',
+  price_rollback: '价目回滚',
+  price_entry: '价目改动',
+  price_set: '价目切换',
+  price_link: '价目对接',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */
