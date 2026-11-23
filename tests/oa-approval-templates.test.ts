@@ -64,8 +64,8 @@ afterAll(async () => {
 });
 
 describe('OA-11 六类审批模板', () => {
-  it('六个模板都在：通用、请假、加班、出差、报销、补卡', () => {
-    expect(Object.keys(tpl).sort()).toEqual(['expense', 'general', 'leave', 'makeup', 'overtime', 'trip']);
+  it('六个模板都在：通用、请假、加班、出差、报销、补卡（OA-18 另加「工资条异议」）', () => {
+    expect(Object.keys(tpl).sort()).toEqual(['expense', 'general', 'leave', 'makeup', 'overtime', 'payslip_objection', 'trip']);
     expect(tpl.leave!.conditions).toEqual({ leave_over_3_days: true });
     expect(tpl.expense!.conditions).toEqual({ expense_over_5000: true });
   });

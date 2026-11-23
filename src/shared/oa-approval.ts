@@ -135,14 +135,15 @@ export function formAttachmentIds(fields: readonly ApprovalField[], form: Approv
   return fields.filter((f) => f.type === 'attachments').flatMap((f) => (Array.isArray(form[f.key]) ? (form[f.key] as number[]) : []));
 }
 
-/** 一级审批人怎么取：指定人 / 本部门主管 / 上级部门主管 */
-export type ApprovalLevelSpec = { kind: 'staff'; staffId: number } | { kind: 'dept_head' } | { kind: 'parent_head' };
+/** 一级审批人怎么取：指定人 / 本部门主管 / 上级部门主管 / 人力行政部负责人（OA-18 工资条异议） */
+export type ApprovalLevelSpec = { kind: 'staff'; staffId: number } | { kind: 'dept_head' } | { kind: 'parent_head' } | { kind: 'hr_head' };
 /** 抄送：指定人 / 本部门主管 */
 export type ApprovalCcSpec = { kind: 'staff'; staffId: number } | { kind: 'dept_head' };
 export const LEVEL_KIND_LABELS: Record<ApprovalLevelSpec['kind'] | 'gmo', string> = {
   staff: '指定人',
   dept_head: '本部门主管',
   parent_head: '上级部门主管',
+  hr_head: '人力行政部负责人',
   gmo: '总经办',
 };
 

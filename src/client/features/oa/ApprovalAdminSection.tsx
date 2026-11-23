@@ -200,7 +200,7 @@ function TemplateDialog({ template, people, onClose }: { template: ApprovalTempl
                 <Select
                   value={levelKind(l)}
                   onChange={(e) =>
-                    setLevels(levels.map((x, j) => (j === i ? (e.target.value === 'staff' ? { kind: 'staff', staffId: 0 } : { kind: e.target.value as 'dept_head' | 'parent_head' }) : x)))
+                    setLevels(levels.map((x, j) => (j === i ? (e.target.value === 'staff' ? { kind: 'staff', staffId: 0 } : { kind: e.target.value as 'dept_head' | 'parent_head' | 'hr_head' }) : x)))
                   }
                   fullWidth={false}
                   className="w-36"
@@ -208,6 +208,7 @@ function TemplateDialog({ template, people, onClose }: { template: ApprovalTempl
                 >
                   <option value="dept_head">本部门主管</option>
                   <option value="parent_head">上级部门主管</option>
+                  <option value="hr_head">人力行政部负责人</option>
                   <option value="staff">指定人</option>
                 </Select>
                 {l.kind === 'staff' && (

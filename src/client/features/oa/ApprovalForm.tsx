@@ -4,7 +4,7 @@
 //   · 提交带操作编号、先记在本机再发（sendErpOp）；没收到结果的在「审批」页上方查回、原样重提或作废，确认前不让再提交。
 
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { FileText, Paperclip, X } from 'lucide-react';
 import { checkApprovalForm, type ApprovalDetail, type ApprovalField, type ApprovalForm as Form, type ApprovalPage, type ApprovalSaved, type ApprovalTemplate, type HalfDay } from '@shared/oa-approval';
@@ -105,7 +105,19 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
   const navigate = useNavigate();
   const key = draftKey(session.staff.id, template.code);
   const from = useQuery({ queryKey: ['oa', 'approval', fromId], queryFn: () => api.get<ApprovalDetail>(`/api/oa/approvals/${fromId}`), enabled: !!fromId });
-  const [values, setValues] = useState<Values | null>(() => (fromId ? null : (readDraft(key) ?? {})));
+  // 从别的页带过来的预填（只认「工资条异议」的文字、多行文字字段）：工资条页「有异议」带上「工资条」那一栏（OA-18）
+  const [params] = useSearchParams();
+  const [values, setValues] = useState<Values | null>(() => {
+    if (fromId) return null;
+    if (template.code !== 'payslip_objection') return readDraft(key);
+    const prefill = Object.fromEntries(
+      template.fields
+        .filter((f) => f.type === 'text' || f.type === 'textarea')
+        .map((f) => [f.key, params.get(`f.${f.key}`)?.slice(0, f.max ?? 200) ?? ''] as const)
+        .filter(([, v]) => v),
+    );
+    return { ...readDraft(key), ...prefill };
+  });
   useEffect(() => {
     if (fromId && from.data && values === null) setValues(fromForm(template.fields, from.data.form, from.data.attachments));
   }, [fromId, from.data, values, template.fields]);

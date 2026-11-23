@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, BookUser, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, MessagesSquare, Palmtree, ScanFace, Stamp } from 'lucide-react';
+import { Bell, BookUser, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, MessagesSquare, Palmtree, ReceiptText, ScanFace, Stamp } from 'lucide-react';
 import { shiftDate } from '@shared/labels';
 import type { MySchedule, MyScheduleItem } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
@@ -26,6 +26,7 @@ import { NotificationsPage } from './Notifications';
 import { FacePage } from './FacePage';
 import { MyAttendancePage } from './MyAttendancePage';
 import { MyLeavePage } from './MyLeavePage';
+import { MyPayslipPages } from './MyPayslipPages';
 import { PunchPage } from './PunchPage';
 
 const TILES = [
@@ -36,6 +37,7 @@ const TILES = [
   { to: '/oa/schedule', label: '我的排班', hint: '这个月每天上什么班', icon: CalendarDays, testId: 'oa-tile-schedule' },
   { to: '/oa/attendance', label: '我的考勤', hint: '每天的考勤结果、迟到缺卡', icon: CalendarCheck, testId: 'oa-tile-attendance' },
   { to: '/oa/leave', label: '假期余额', hint: '年假等还剩几天、发放与扣减明细', icon: Palmtree, testId: 'oa-tile-leave' },
+  { to: '/oa/payslips', label: '工资条', hint: '按月看本人的工资条、确认签收', icon: ReceiptText, testId: 'oa-tile-payslips' },
   { to: '/oa/face', label: '人脸录入', hint: '打卡要人脸的先录入、等审核', icon: ScanFace, testId: 'oa-tile-face' },
   { to: '/oa/notifications', label: '通知', hint: '排班变更、审批、工资条等提醒', icon: Bell, testId: 'oa-tile-notifications' },
 ];
@@ -62,6 +64,8 @@ export function OfficePage() {
     <MyAttendancePage />
   ) : path === '/oa/leave' ? (
     <MyLeavePage />
+  ) : path.startsWith('/oa/payslips') ? (
+    <MyPayslipPages />
   ) : (
     <OfficeHomePage />
   );

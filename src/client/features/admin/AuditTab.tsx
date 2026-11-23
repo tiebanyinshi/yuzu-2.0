@@ -41,6 +41,8 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   oa_payroll_imported: { label: '导入工资表', tone: 'neutral' },
   oa_payroll_edited: { label: '修改工资表', tone: 'neutral' },
   oa_payroll_batch_voided: { label: '作废工资表', tone: 'ember' },
+  oa_payroll_published: { label: '发放工资条', tone: 'pine' },
+  oa_payroll_reminded: { label: '提醒签收工资条', tone: 'neutral' },
   position_chosen: { label: '自选新岗位', tone: 'pine' },
   member_created: { label: '新建会员', tone: 'lake' },
   member_updated: { label: '修改会员', tone: 'lake' },
