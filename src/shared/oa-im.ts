@@ -14,7 +14,7 @@ export const IM_REVOKE_MINUTES = 2;
 export const IM_PAGE = 30;
 /** 会话打开时多久取一次新消息、会话列表多久刷新一次（文档：短轮询间隔不超过 5 秒） */
 export const IM_POLL_MS = 3000;
-export const IM_LIST_POLL_MS = 5000;
+export const IM_LIST_POLL_MS = 3000;
 
 export type ImConversationKind = 'direct' | 'group';
 export type ImMessageKind = 'text' | 'image' | 'file' | 'system';
@@ -78,6 +78,8 @@ export interface ImMessagePage {
   hasMore: boolean;
   /** 服务端这一刻的时间：下一次取新消息时带上（since），撤回从这里续传 */
   syncedAt: string;
+  /** OA-15：其他成员各读到哪一条（算已读回执） */
+  reads: ImRead[];
 }
 /** 取新消息：after 之后的新消息，与 since（上次同步的时间）以后撤回的 */
 export interface ImPollResult {
@@ -85,6 +87,23 @@ export interface ImPollResult {
   /** 已经取到的（after 及以前）里 since 以后撤回的 */
   revoked: number[];
   syncedAt: string;
+  reads: ImRead[];
+}
+/** 一位成员读到哪一条 */
+export interface ImRead {
+  staffId: number;
+  lastRead: number;
+}
+/** OA-15 统一的同步接口：未读合计、我所在的会话里最新一条消息的编号（变了再取会话列表） */
+export interface ImSync {
+  unread: number;
+  lastMessageId: number;
+}
+/** 自己发的一条消息的已读情况：已读的成员与未读的成员（按读到的位置算） */
+export function readersOf<M extends { staffId: number }>(messageId: number, members: readonly M[], reads: readonly ImRead[]): { read: M[]; unread: M[] } {
+  const pos = new Map(reads.map((r) => [r.staffId, r.lastRead]));
+  const others = members.filter((m) => pos.has(m.staffId));
+  return { read: others.filter((m) => pos.get(m.staffId)! >= messageId), unread: others.filter((m) => pos.get(m.staffId)! < messageId) };
 }
 
 export interface ImSent {

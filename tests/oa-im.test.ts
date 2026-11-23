@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { OaAttachment } from '../src/shared/oa';
-import type { ImConversationDetail, ImConversationList, ImMessagePage, ImPollResult, ImSent } from '../src/shared/oa-im';
+import { readersOf, type ImConversationDetail, type ImConversationList, type ImMessagePage, type ImPollResult, type ImSent, type ImSync } from '../src/shared/oa-im';
 import { createStaff } from '../src/server/modules/staff';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
@@ -112,14 +112,14 @@ describe('OA-14 即时通讯', () => {
     expect(m.body.message.mentions).toEqual([emp.c!.id]);
     expect((await list(emp.c!)).items.find((x) => x.id === group)).toMatchObject({ unread: 1, mentioned: true });
     expect((await list(emp.b!)).items.find((x) => x.id === group)).toMatchObject({ unread: 1, mentioned: false });
-    const [n] = await ctx.sql<{ title: string; link: string }[]>`SELECT title, link FROM oa_notifications WHERE staff_id = ${emp.c!.id} AND kind = 'im_message'`;
+    const [n] = await ctx.sql<{ title: string; link: string }[]>`SELECT title, link FROM oa_notifications WHERE staff_id = ${emp.c!.id} AND kind = 'im_message' AND ref_type = 'oa_im_message'`;
     expect(n).toMatchObject({ title: 'im_a在「前厅群」里@了你', link: `/oa/im/${group}` });
     await say(emp.c!, group, { body: '大家注意', mentionAll: true });
-    expect((await ctx.sql`SELECT 1 FROM oa_notifications WHERE kind = 'im_message' AND staff_id IN (${emp.a!.id}, ${emp.b!.id})`).length).toBe(2);
-    // 看过以后 @ 通知记已读；只清读到的位置之前的：之后刚到的 @ 照旧提醒
+    expect((await ctx.sql`SELECT 1 FROM oa_notifications WHERE kind = 'im_message' AND ref_type = 'oa_im_message' AND staff_id IN (${emp.a!.id}, ${emp.b!.id})`).length).toBe(2);
+    // 看过以后 @ 通知记已读；只清读到的位置之前的：之后刚到的 @ 照旧提醒（OA-15 的新消息通知也一样：还有没读的就不清）
     const m2 = await say(emp.b!, group, { body: '@im_c 还有这个', mentions: [emp.c!.id] });
     await api(ctx.app, emp.c!.cookie, 'POST', `/api/oa/im/conversations/${group}/read`, { upTo: m.body.message.id });
-    const unread = await ctx.sql<{ refId: number }[]>`SELECT ref_id FROM oa_notifications WHERE staff_id = ${emp.c!.id} AND kind = 'im_message' AND read_at IS NULL`;
+    const unread = await ctx.sql<{ refId: number }[]>`SELECT ref_id FROM oa_notifications WHERE staff_id = ${emp.c!.id} AND kind = 'im_message' AND ref_type = 'oa_im_message' AND read_at IS NULL`;
     expect(unread.map((x) => Number(x.refId))).toEqual([m2.body.message.id]);
     await api(ctx.app, emp.c!.cookie, 'POST', `/api/oa/im/conversations/${group}/read`, { upTo: m2.body.message.id });
     expect((await ctx.sql`SELECT 1 FROM oa_notifications WHERE staff_id = ${emp.c!.id} AND kind = 'im_message' AND read_at IS NULL`).length).toBe(0);
@@ -225,5 +225,86 @@ describe('OA-14 即时通讯', () => {
     expect((await ctx.sql`SELECT 1 FROM oa_notifications WHERE staff_id = ${emp.a!.id} AND kind = 'im_message'`).length).toBeGreaterThan(0);
     const page = (await api<{ items: { kind: string }[] }>(ctx.app, emp.a!.cookie, 'GET', '/api/oa/notifications')).body;
     expect(page.items.some((n) => n.kind === 'im_message')).toBe(false);
+  });
+});
+
+// OA-15 已读回执与实时通道（docs/OA.md 第 18 节）：回执按各成员读到的位置算；统一的同步接口；新消息进站内通知（每个会话没读的只留一条，读完才清，退出或改成专用账号的看不到）
+describe('OA-15 已读回执与实时通道', () => {
+  const e: Record<string, Emp> = {};
+  beforeAll(async () => {
+    for (const n of ['p', 'q', 'r']) e[n] = await hire(`im15_${n}`);
+  });
+  const sync = async (who: Emp) => (await api<ImSync>(ctx.app, who.cookie, 'GET', '/api/oa/im/sync')).body;
+  const convNotes = (who: Emp, conv: number) =>
+    ctx.sql<{ title: string; body: string; link: string; readAt: Date | null }[]>`
+      SELECT title, body, link, read_at FROM oa_notifications WHERE staff_id = ${who.id} AND kind = 'im_message' AND ref_type = 'oa_im_conversation' AND ref_id = ${conv} ORDER BY id`;
+
+  it('单聊回执：对方没读是未读、读到了是已读；取历史与取新消息都带回各成员读到哪一条', async () => {
+    const dm = await direct(e.p!, e.q!);
+    const m1 = (await say(e.p!, dm, { body: '在吗' })).body.message;
+    const page = (await api<ImMessagePage>(ctx.app, e.p!.cookie, 'GET', `/api/oa/im/conversations/${dm}/messages`)).body;
+    expect(page.reads).toEqual([{ staffId: e.q!.id, lastRead: 0 }]);
+    const d = (await api<ImConversationDetail>(ctx.app, e.p!.cookie, 'GET', `/api/oa/im/conversations/${dm}`)).body;
+    expect(readersOf(m1.id, d.members, page.reads).unread.map((x) => x.staffId)).toEqual([e.q!.id]);
+    await api(ctx.app, e.q!.cookie, 'POST', `/api/oa/im/conversations/${dm}/read`, { upTo: m1.id });
+    const poll = (await api<ImPollResult>(ctx.app, e.p!.cookie, 'GET', `/api/oa/im/conversations/${dm}/poll?after=${m1.id}`)).body;
+    expect(poll.reads).toEqual([{ staffId: e.q!.id, lastRead: m1.id }]);
+    expect(readersOf(m1.id, d.members, poll.reads)).toMatchObject({ read: [{ staffId: e.q!.id }], unread: [] });
+  });
+
+  it('群回执：几人已读、谁读了谁没读；退出群的不再算', async () => {
+    const g = (await api<{ id: number }>(ctx.app, e.p!.cookie, 'POST', '/api/oa/im/groups', { clientKey: randomUUID(), name: '回执群', memberIds: [e.q!.id, e.r!.id] })).body.id;
+    const m = (await say(e.p!, g, { body: '明早开会' })).body.message;
+    await api(ctx.app, e.q!.cookie, 'POST', `/api/oa/im/conversations/${g}/read`, { upTo: m.id });
+    const d = (await api<ImConversationDetail>(ctx.app, e.p!.cookie, 'GET', `/api/oa/im/conversations/${g}`)).body;
+    let reads = (await api<ImMessagePage>(ctx.app, e.p!.cookie, 'GET', `/api/oa/im/conversations/${g}/messages`)).body.reads;
+    const rs = readersOf(m.id, d.members, reads);
+    expect(rs.read.map((x) => x.name)).toEqual(['im15_q']);
+    expect(rs.unread.map((x) => x.name)).toEqual(['im15_r']);
+    await api(ctx.app, e.r!.cookie, 'POST', `/api/oa/im/conversations/${g}/leave`);
+    reads = (await api<ImMessagePage>(ctx.app, e.p!.cookie, 'GET', `/api/oa/im/conversations/${g}/messages`)).body.reads;
+    expect(reads.map((x) => x.staffId)).toEqual([e.q!.id]);
+  });
+
+  it('统一的同步接口：未读合计与最新一条消息编号，发新消息、读完都跟着变', async () => {
+    const before = await sync(e.r!);
+    const dm = await direct(e.q!, e.r!);
+    const m = (await say(e.q!, dm, { body: '换班' })).body.message;
+    const after = await sync(e.r!);
+    expect(after).toEqual({ unread: before.unread + 1, lastMessageId: m.id });
+    await api(ctx.app, e.r!.cookie, 'POST', `/api/oa/im/conversations/${dm}/read`, { upTo: m.id });
+    expect(await sync(e.r!)).toEqual({ unread: before.unread, lastMessageId: m.id });
+    expect((await list(e.r!)).unread).toBe(before.unread);
+  });
+
+  it('新消息通知：其余成员每个会话一条（不抄正文），再来消息不加条；读完才清，之后再来照旧提醒；系统提示不发', async () => {
+    const g = (await api<{ id: number }>(ctx.app, e.p!.cookie, 'POST', '/api/oa/im/groups', { clientKey: randomUUID(), name: '通知群', memberIds: [e.q!.id, e.r!.id] })).body.id;
+    expect(await convNotes(e.q!, g)).toEqual([]);
+    const m1 = (await say(e.p!, g, { body: '机密内容' })).body.message;
+    const m2 = (await say(e.p!, g, { body: '第二句' })).body.message;
+    const n = await convNotes(e.q!, g);
+    expect(n).toHaveLength(1);
+    expect(n[0]).toMatchObject({ title: '「通知群」有新消息', body: '', link: `/oa/im/${g}`, readAt: null });
+    expect(await convNotes(e.p!, g)).toEqual([]);
+    // 读到一半不清
+    await api(ctx.app, e.q!.cookie, 'POST', `/api/oa/im/conversations/${g}/read`, { upTo: m1.id });
+    expect((await convNotes(e.q!, g))[0]!.readAt).toBeNull();
+    await api(ctx.app, e.q!.cookie, 'POST', `/api/oa/im/conversations/${g}/read`, { upTo: m2.id });
+    expect((await convNotes(e.q!, g))[0]!.readAt).not.toBeNull();
+    // 自己发的不算没读：q 回一句以后自己仍然读完了
+    await say(e.q!, g, { body: '收到' });
+    expect((await convNotes(e.q!, g)).filter((x) => !x.readAt)).toHaveLength(0);
+    await say(e.p!, g, { body: '第三句' });
+    expect((await convNotes(e.q!, g)).filter((x) => !x.readAt)).toHaveLength(1);
+    // 单聊的标题写谁发来的
+    const dm = await direct(e.p!, e.r!);
+    await say(e.p!, dm, { body: 'hi' });
+    expect((await convNotes(e.r!, dm))[0]).toMatchObject({ title: 'im15_p发来新消息' });
+    // 通知列表能看到；退出群以后这个群的通知不再给出
+    const notes = async () => (await api<{ items: { kind: string; link: string }[] }>(ctx.app, e.r!.cookie, 'GET', '/api/oa/notifications')).body.items.filter((x) => x.kind === 'im_message');
+    expect((await notes()).map((x) => x.link)).toEqual(expect.arrayContaining([`/oa/im/${g}`, `/oa/im/${dm}`]));
+    await api(ctx.app, e.r!.cookie, 'POST', `/api/oa/im/conversations/${g}/leave`);
+    expect((await notes()).some((x) => x.link === `/oa/im/${g}`)).toBe(false);
+    expect((await notes()).some((x) => x.link === `/oa/im/${dm}`)).toBe(true);
   });
 });
