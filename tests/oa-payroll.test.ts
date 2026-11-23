@@ -313,3 +313,59 @@ describe('OA-17 工资条：工资表与制表', () => {
       expect((await api(ctx.app, emp.a!.cookie, m, url, m === 'GET' ? undefined : {})).status, url).toBe(403);
   });
 });
+
+describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () => {
+  it('工号只差大小写的两个人：按原样对，不会互相顶替；原样对不上时只认唯一的一位', async () => {
+    const k1 = await hire('py_k1', 'front.staff', { empNo: 'K001' });
+    const k2 = await hire('py_k2', 'front.staff', { empNo: 'k001' });
+    const b = (await api<PayrollBatchSummary>(ctx.app, hr(), 'POST', '/api/oa/payroll/batches', { month: '2026-12', title: '大小写', templateId: std.id })).body;
+    const blank = std.fields.map(() => null);
+    const rows = [['标题'], header(), ['K001', '', '', ...blank], ['k001', '', '', ...blank], ['e001', '', '', ...blank]];
+    const r = await api<PayrollImportPreview>(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import/preview`, { fileName: 'k.xlsx', xlsxBase64: xlsx(rows) });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.rows.map((x) => [x.staffId, x.issues.length])).toEqual([
+      [k1.id, 0],
+      [k2.id, 0],
+      [emp.a!.id, 0],
+    ]);
+  });
+
+  it('工号原样对不上、只差大小写的有两位：要求照档案写', async () => {
+    await hire('py_m1', 'front.staff', { empNo: 'Mx01' });
+    await hire('py_m2', 'front.staff', { empNo: 'mX01' });
+    const b = (await api<PayrollBatchSummary[]>(ctx.app, hr(), 'GET', '/api/oa/payroll/batches')).body.find((x) => x.title === '大小写')!;
+    const r = await api<PayrollImportPreview>(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import/preview`, {
+      fileName: 'm.xlsx',
+      xlsxBase64: xlsx([['标题'], header(), ['MX01', '', '', ...std.fields.map(() => null)]]),
+    });
+    expect(r.body.rows[0]!.staffId).toBeNull();
+    expect(r.body.rows[0]!.issues.join()).toContain('大小写对不上');
+  });
+
+  it('只收 Excel：CSV 拒绝（原件要按上传的字节存档）', async () => {
+    const b = (await api<PayrollBatchSummary[]>(ctx.app, hr(), 'GET', '/api/oa/payroll/batches')).body.find((x) => x.title === '大小写')!;
+    expect((await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import/preview`, { fileName: 'a.csv', csv: '工号,姓名\n' })).status).toBe(400);
+    expect((await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import`, { fileName: 'a.csv', xlsxBase64: xlsx([['x']]) })).status).toBe(400);
+  });
+
+  it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {
+    const body = { month: '2026-12', title: '同时建', templateId: std.id };
+    const [x, y] = await Promise.all([
+      api<PayrollBatchSummary>(ctx.app, hr(), 'POST', '/api/oa/payroll/batches', body),
+      api<PayrollBatchSummary>(ctx.app, ctx.owner, 'POST', '/api/oa/payroll/batches', body),
+    ]);
+    expect([x.status, y.status].sort()).toEqual([200, 201]);
+    expect(x.body.id).toBe(y.body.id);
+  });
+
+  it('改模板加了新字段：没收到结果时原样重提（新字段不带编号）算成功，不报版本冲突', async () => {
+    const t = (await api<PayslipTemplate>(ctx.app, hr(), 'POST', '/api/oa/payroll/templates', { name: '重提模板', fields: [{ label: '工资', kind: 'money' }] })).body;
+    const req = { name: t.name, fields: [...t.fields, { label: '餐补', kind: 'money' }], active: true, version: t.version };
+    const first = await api<PayslipTemplate>(ctx.app, hr(), 'PUT', `/api/oa/payroll/templates/${t.id}`, req);
+    expect(first.status).toBe(200);
+    const again = await api<PayslipTemplate>(ctx.app, hr(), 'PUT', `/api/oa/payroll/templates/${t.id}`, req);
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(again.body.version).toBe(first.body.version);
+    expect(again.body.fields.map((f) => f.key)).toEqual(['f1', 'f2']);
+  });
+});

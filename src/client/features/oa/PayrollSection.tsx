@@ -477,13 +477,14 @@ function ImportDialog({ batch, onClose, onDone }: { batch: PayrollBatchDetail; o
   const [busy, setBusy] = useState<'read' | 'apply' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const body = (f: LoadedTable) => ({ fileName: f.fileName, csv: f.csv, xlsxBase64: f.xlsxBase64 });
+  const body = (f: LoadedTable) => ({ fileName: f.fileName, xlsxBase64: f.xlsxBase64 });
   const choose = async (f: File | undefined) => {
     if (!f || busy === 'apply') return;
     setPreview(null);
     setError(null);
     setBusy('read');
     try {
+      if (!/\.xlsx$/i.test(f.name)) throw new Error('工资表只收 Excel（.xlsx）文件：CSV、老版本的 .xls 请用 Excel 另存为 .xlsx');
       const loaded = await loadTableFile(f);
       setFile(loaded);
       setPreview(await api.post<PayrollImportPreview>(`/api/oa/payroll/batches/${batch.id}/import/preview`, body(loaded)));
@@ -531,13 +532,13 @@ function ImportDialog({ batch, onClose, onDone }: { batch: PayrollBatchDetail; o
         </div>
       }
     >
-      <input ref={input} type="file" accept=".xlsx,.csv" className="hidden" onChange={(e) => void choose(e.target.files?.[0])} data-testid="payroll-import-file" />
+      <input ref={input} type="file" accept=".xlsx" className="hidden" onChange={(e) => void choose(e.target.files?.[0])} data-testid="payroll-import-file" />
       {error && (
         <Notice tone="error" className="mb-3">
           {error}
         </Notice>
       )}
-      {!preview && !error && <EmptyState title="还没选文件" description="Excel（.xlsx）或 CSV；按工号对人，没有工号按姓名" />}
+      {!preview && !error && <EmptyState title="还没选文件" description="Excel（.xlsx）；按工号对人，没有工号按姓名" />}
       {preview && (
         <div className="space-y-3" data-testid="payroll-import-preview">
           <p className="text-ink-2">

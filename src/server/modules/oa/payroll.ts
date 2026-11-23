@@ -221,6 +221,13 @@ const canonical = (v: unknown): string =>
           .join(',')}}`
       : JSON.stringify(v);
 const sameFields = (a: PayslipField[], b: PayslipField[]) => canonical(a) === canonical(b);
+/** 请求里的字段（新加的没有编号）与现有的一一对得上：顺序、名称、类型、实发一样，带了编号的编号也一样 */
+const sameShape = (input: z.infer<typeof FieldInput>[], cur: PayslipField[]) =>
+  input.length === cur.length &&
+  input.every((f, i) => {
+    const c = cur[i]!;
+    return c.label === f.label && c.kind === f.kind && !!c.net === !!f.net && (!f.key || f.key === c.key);
+  });
 
 async function listTemplates(db: Db): Promise<PayslipTemplate[]> {
   const rows = await db<{ id: number; name: string; fields: PayslipField[]; active: boolean; version: number; updatedAt: Date; batchCount: number }[]>`
@@ -247,13 +254,16 @@ const BatchParam = z.object({ id: z.coerce.number().int().positive('编号不正
 const SlipParam = BatchParam.extend({ staffId: z.coerce.number().int().positive('编号不正确') });
 const FileParam = BatchParam.extend({ fileId: z.coerce.number().int().positive('编号不正确') });
 const SlipInput = z.object({ values: z.record(z.string(), z.union([z.number(), z.string(), z.null()])) });
-const FileInput = z
-  .object({
-    fileName: z.string().trim().min(1, '缺少文件名').max(200),
-    csv: z.string().max(3_000_000).optional(),
-    xlsxBase64: z.string().max(4_000_000).optional(),
-  })
-  .refine((f) => (f.csv === undefined) !== (f.xlsxBase64 === undefined), '请选择一个表格文件（.xlsx 或 .csv）');
+// 只收 Excel（需求文档：上传 Excel）：原件按上传的字节原样加密存档（CSV 在页面上已经按 GBK / UTF-8 解成文字，存不回原件，Codex 审查 3b5a8bf）
+const FileInput = z.object({
+  fileName: z
+    .string()
+    .trim()
+    .min(1, '缺少文件名')
+    .max(200)
+    .regex(/\.xlsx$/i, '工资表只收 Excel（.xlsx）文件'),
+  xlsxBase64: z.string('工资表只收 Excel（.xlsx）文件').min(1).max(4_000_000),
+});
 
 interface BatchRow {
   id: number;
@@ -408,7 +418,9 @@ function planImport(sheet: Sheet, fileName: string, fields: PayslipField[], staf
   if (data.length > PAYROLL_MAX_ROWS) throw unprocessable('IMPORT_TOO_LARGE', `一张工资表最多 ${PAYROLL_MAX_ROWS} 行，这份有 ${data.length} 行`);
   const cell = (cells: string[], name: string) => (col(name) < 0 ? '' : (cells[col(name)] ?? '').trim());
   const everyone = [...staff.values()].filter((e) => e.offRoster !== '不是员工账号');
-  const byEmpNo = new Map(everyone.filter((e) => e.empNo).map((e) => [e.empNo!.toLowerCase(), e]));
+  // 工号按原样对；对不上再不分大小写对，但只认唯一的一位（工号区分大小写，E001 与 e001 可以是两个人，Codex 审查 3b5a8bf）
+  const byEmpNo = new Map(everyone.filter((e) => e.empNo).map((e) => [e.empNo!, e]));
+  const byEmpNoFolded = (no: string) => everyone.filter((e) => e.empNo?.toLowerCase() === no.toLowerCase());
   const seen = new Map<number, number>();
   const good: ImportPlan['good'] = [];
   const rows: PayrollImportRow[] = data.map((r) => {
@@ -417,9 +429,13 @@ function planImport(sheet: Sheet, fileName: string, fields: PayslipField[], staf
     const empNo = cell(r.cells, '工号') || null;
     let who: RosterEntry | null = null;
     if (empNo) {
-      who = byEmpNo.get(empNo.toLowerCase()) ?? null;
-      if (!who) issues.push(`工号「${empNo}」对不上员工`);
-      else if (name && name !== who.name) issues.push(`工号「${empNo}」是「${who.name}」，姓名写的是「${name}」`);
+      who = byEmpNo.get(empNo) ?? null;
+      if (!who) {
+        const folded = byEmpNoFolded(empNo);
+        if (folded.length === 1) who = folded[0]!;
+        else if (folded.length > 1) issues.push(`工号「${empNo}」大小写对不上，有 ${folded.length} 位员工的工号只差大小写，请照档案写`);
+        else issues.push(`工号「${empNo}」对不上员工`);
+      } else if (name && name !== who.name) issues.push(`工号「${empNo}」是「${who.name}」，姓名写的是「${name}」`);
     } else if (!name) issues.push('工号、姓名都没填');
     else {
       const same = everyone.filter((e) => e.name === name);
@@ -489,9 +505,9 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
         const [cur] = await tx<{ name: string; fields: PayslipField[]; active: boolean; version: number }[]>`
           SELECT name, fields, active, version FROM oa_payslip_templates WHERE id = ${id} FOR UPDATE`;
         if (!cur) throw notFound('模板不存在');
+        // 原样重提（之前那次已经改好）：现状就是要改成的样子，算成功。新加的字段请求里没有编号，按名称、类型、实发对（Codex 审查 3b5a8bf）
+        if (cur.name === input.name && cur.active === input.active && sameShape(input.fields, cur.fields)) return;
         const fields = assignKeys(input.fields, cur.fields);
-        // 原样重提（之前那次已经改好）：现状就是要改成的样子，算成功
-        if (cur.name === input.name && cur.active === input.active && sameFields(cur.fields, fields)) return;
         if (cur.version !== input.version) throw conflict('VERSION_CONFLICT', '这个模板刚被别人改过，请刷新后再改');
         await tx`
           UPDATE oa_payslip_templates SET name = ${input.name}, fields = ${tx.json(fields as never)}, active = ${input.active},
@@ -518,6 +534,8 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
     const id = await sql.begin(async (tx) => {
       const [t] = await tx<{ fields: PayslipField[]; active: boolean }[]>`SELECT fields, active FROM oa_payslip_templates WHERE id = ${input.templateId} FOR SHARE`;
       if (!t) throw notFound('模板不存在');
+      // 同月同标题的新建串行（两个人同时建时后到的读得到先建好的那张，不撞唯一索引，Codex 审查 3b5a8bf）
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`oa_payroll_batch:${input.month}:${input.title}`}))`;
       // 同月同标题已经有（没作废的）：用的是同一个模板就直接打开那张（原样重提、两个人同时建），否则说明
       const [existing] = await tx<{ id: number; templateId: number }[]>`
         SELECT id, template_id FROM oa_payroll_batches WHERE month = ${input.month} AND title = ${input.title} AND status <> 'void'`;
@@ -626,7 +644,7 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
     const f = parse(FileInput, req.body);
     if (!key) throw unprocessable('PAYROLL_KEY_MISSING', '服务器还没配工资表原件的加密密钥（PAYROLL_FILE_KEY），不能上传 Excel；请先在线编辑，或请管理员配好再传');
     const sheet = readSheet(f, { findHeader: isHeader });
-    const original = f.xlsxBase64 !== undefined ? Buffer.from(f.xlsxBase64, 'base64') : Buffer.from(f.csv!, 'utf8');
+    const original = Buffer.from(f.xlsxBase64, 'base64');
     const sealed = encryptFile(key, original);
     return sql.begin(async (tx) => {
       const b = await lockDraft(tx, id);
@@ -677,8 +695,7 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
       throw conflict('PAYROLL_FILE_BROKEN', '原件解不开（可能被改动过）');
     }
     await payrollAudit(sql, { staffId: req.actor.id, action: 'download_file', batchId: id, fileId, ip: req.ip });
-    const type = /\.csv$/i.test(f.fileName) ? 'text/csv; charset=utf-8' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-    attachment(reply, f.fileName, type);
+    attachment(reply, f.fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     return reply.send(data);
   });
 }
