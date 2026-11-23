@@ -410,6 +410,9 @@ const PAYROLL_XLSX_LIMITS = {
   // 坐标也限住：读表按行号、列号铺成数组，稀疏的大坐标会把内存撑爆（Codex 审查 6190bd4）
   maxRow: PAYROLL_MAX_ROWS + 20,
   maxCols: PAYSLIP_MAX_FIELDS + 20,
+  // 解析前先数元素：空行这类不占单元格的元素也算（Codex 安全审查 503f199）；只读第一张表
+  maxNodes: 600_000,
+  maxSheets: 1,
 };
 
 /**

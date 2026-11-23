@@ -245,11 +245,33 @@ export interface XlsxLimits {
   /** 有内容的单元格最大行号（从 1 起）、最多多少列：读表的人会按行号、列号铺成数组，稀疏的大坐标也会把内存撑爆（Codex 审查 6190bd4） */
   maxRow?: number;
   maxCols?: number;
+  /**
+   * 整份文件里 XML 元素最多多少个：解析前先数（只数「<」，不建树），空的 <row/> 这类不占单元格的元素也算在内，
+   * 免得几十 KB 的文件解析出上百万个节点把内存撑爆（Codex 安全审查 503f199）
+   */
+  maxNodes?: number;
+  /** 只读前几张工作表（工资表只要第一张） */
+  maxSheets?: number;
+}
+
+/** 数 XML 里的元素开头（「<」后面不是「/」「?」「!」的） */
+function countElements(xml: Buffer): number {
+  let n = 0;
+  for (let i = xml.indexOf(0x3c); i >= 0 && i < xml.length - 1; i = xml.indexOf(0x3c, i + 1)) {
+    const next = xml[i + 1];
+    if (next !== 0x2f && next !== 0x3f && next !== 0x21) n++;
+  }
+  return n;
 }
 
 export function readXlsx(buf: Buffer, limits: XlsxLimits = {}): XlsxWorkbook {
   const files = unzip(buf, limits.maxTotal ?? MAX_TOTAL);
   const maxCells = limits.maxCells ?? MAX_CELLS;
+  if (limits.maxNodes !== undefined) {
+    let nodes = 0;
+    for (const [name, data] of files)
+      if (/\.(xml|rels)$/i.test(name) && (nodes += countElements(data)) > limits.maxNodes) throw new XlsxReadError('Excel 文件的结构太大（空行、空格子太多），请删掉多余的行列后另存再传');
+  }
   const wbPath = 'xl/workbook.xml';
   const wbRaw = files.get(wbPath);
   if (!wbRaw) throw new XlsxReadError('不是 Excel 工作簿（缺 xl/workbook.xml）');
@@ -332,6 +354,7 @@ export function readXlsx(buf: Buffer, limits: XlsxLimits = {}): XlsxWorkbook {
       if (ref && target?.external) sheet.hyperlinks.set(ref.split(':')[0]!.toUpperCase(), target.target);
     }
     sheets.push(sheet);
+    if (limits.maxSheets !== undefined && sheets.length >= limits.maxSheets) break;
   }
 
   const cellImages = new Map<string, { data: Buffer; ext: string }>();

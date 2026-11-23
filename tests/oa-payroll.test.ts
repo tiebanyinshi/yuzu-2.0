@@ -415,6 +415,14 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
     const wide = files.get('xl/worksheets/sheet1.xml')!.toString('utf8').replace('A900000', 'XFA1').replace('r="900000"', 'r="1"');
     files.set('xl/worksheets/sheet1.xml', Buffer.from(wide, 'utf8'));
     expect(() => readXlsx(zip([...files].map(([name, data]) => ({ name, data }))), { maxCols: 60 })).toThrow(/列太多/);
+    // 几十万个空行：不占单元格，但解析前就按元素个数拒绝
+    const emptyRows = files
+      .get('xl/worksheets/sheet1.xml')!
+      .toString('utf8')
+      .replace('<sheetData>', `<sheetData>${'<row/>'.repeat(700_000)}`);
+    files.set('xl/worksheets/sheet1.xml', Buffer.from(emptyRows, 'utf8'));
+    const bloated = zip([...files].map(([name, data]) => ({ name, data })));
+    expect(() => readXlsx(bloated, { maxNodes: 600_000 })).toThrow(/结构太大/);
   });
 
   it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {
