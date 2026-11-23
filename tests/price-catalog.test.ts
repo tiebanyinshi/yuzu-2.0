@@ -12,6 +12,7 @@ import {
   priceCategoriesOf,
   priceCategoryOf,
   priceChangeLines,
+  ROOM_SERVICE_EXCLUDED_CATEGORIES,
   priceEntryProblems,
   priceText,
   windowText,
@@ -1388,6 +1389,17 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     expect(tabs.find((t) => t.label === '门票')!.count).toBe(4);
     expect(tabs.find((t) => t.label === '康疗')!.count).toBe(2);
     expect(itemCategoryKey(ticket)).toBe('store.ticket');
+    // 第二批：房态中心登记（康美部）只列要技师的、房间 / 大堂做的板块，按表格顺序；助浴、护理在浴区，不在这里列（PC22）
+    const service = catalog.items.filter((i) => i.technicianRequired && !ROOM_SERVICE_EXCLUDED_CATEGORIES.includes(i.catalogCategory?.code ?? ''));
+    expect(itemCategoryTabs(service).map((t) => `${t.label}:${t.count}`)).toEqual(['康疗:2', '中医:1', '面护:2', '大堂按摩:1']);
+    expect(catalog.items.find((i) => i.name === '伊索抗衰面部护理')).toMatchObject({
+      durationMinutes: 80,
+      prices: [
+        { tier: 'professional', price: 80000 },
+        { tier: 'premium', price: 90000 },
+      ],
+    });
+    expect(catalog.items.find((i) => i.name === '泰式私汤药浴(女宾)')).toMatchObject({ gender: 'female', catalogCategory: { code: 'massage.08', name: '助浴' } });
 
     // 前台挂一张门票：按价目表的价
     await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'K', from: 1, to: 2, width: 3, zone: 'male' });

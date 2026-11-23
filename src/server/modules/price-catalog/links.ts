@@ -198,6 +198,13 @@ export async function priceLinks(db: Db | Tx): Promise<PriceLink[]> {
   });
 }
 
+/** 取消对接：门店原有的收银项目不再归到价目表的分类（价目表新建的照旧留着，以后重新对上它） */
+async function clearCatalogCategory(tx: Tx, itemId: number) {
+  await tx`
+    UPDATE service_items SET catalog_key = NULL, catalog_category_code = NULL, catalog_category_name = NULL, catalog_group = NULL, catalog_sort = NULL, updated_at = clock_timestamp()
+    WHERE id = ${itemId} AND NOT catalog_managed`;
+}
+
 // ───────────────────────── 对接、取消对接、按名称自动对接 ─────────────────────────
 
 const OpKey = z.uuid('缺少操作编号');
@@ -243,6 +250,7 @@ export async function setPriceLink(deps: Deps, raw: unknown, ctx: OpContext): Pr
     if (f.itemId === null) {
       if (!had) return { linked: 0, unlinked: 0, synced: [] };
       await tx`DELETE FROM price_catalog_links WHERE store_id = ${storeId} AND entry_key = ${f.entryKey}`;
+      await clearCatalogCategory(tx, Number(had.itemId));
       await writeAudit(tx, {
         staffId: ctx.actor.id,
         action: 'price_catalog',
@@ -261,6 +269,7 @@ export async function setPriceLink(deps: Deps, raw: unknown, ctx: OpContext): Pr
     if (taken) throw conflict('PRICE_LINK_TAKEN', `「${item.name}」已经对接了价目表里的另一项，先取消那一项的对接`);
     if (had && Number(had.itemId) === f.itemId) return { linked: 0, unlinked: 0, synced: await syncLinkedPrices(tx, ctx, { keys: [f.entryKey], why: '对接收银项目' }) };
     if (had) await tx`DELETE FROM price_catalog_links WHERE store_id = ${storeId} AND entry_key = ${f.entryKey}`;
+    if (had) await clearCatalogCategory(tx, Number(had.itemId));
     await tx`INSERT INTO price_catalog_links (entry_key, item_id, created_by) VALUES (${f.entryKey}, ${f.itemId}, ${ctx.actor.id})`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,
