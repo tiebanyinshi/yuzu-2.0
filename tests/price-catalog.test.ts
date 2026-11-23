@@ -19,6 +19,7 @@ import {
   type PriceCatalogEntry,
   type PriceCatalogOverview,
   type PriceCatalogSet,
+  type PriceCategoryCheck,
   type PriceChange,
   type PriceImportPreview,
 } from '../src/shared/price-catalog';
@@ -1435,6 +1436,22 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
       (await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${abalone.id}`, { ...abalone, priceMode: 'single', priceCents: 6800, orderable: true, opKey: randomUUID() })).status,
     ).toBe(200);
     expect((await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM service_items WHERE catalog_managed AND active AND name = '沙姜炒鸡'`)[0]!.n).toBe(1);
+
+    // 第四批：分类核对——能卖的与点单页上的逐个分类对得上；服务费、房间不落库；待定价的不算能卖
+    const checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
+    const check = (name: string, group?: string) => checks.find((c) => c.name === name && (!group || c.group === group))!;
+    expect(check('门票')).toMatchObject({ code: 'store.ticket', entries: 4, sellable: 4, items: 4 });
+    expect(check('服务费')).toMatchObject({ entries: 1, sellable: 0, items: null });
+    expect(check('spa房')).toMatchObject({ items: null });
+    expect(check('中餐零点', '2楼零点')).toMatchObject({ entries: 2, sellable: 1, items: 1 });
+    expect(checks.filter((c) => c.items !== null && c.items !== c.sellable)).toEqual([]);
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/admin/price-catalog/category-checks')).status).toBe(403);
+    // 导出：六张表各一张工作表，一行一项（第一行表头）
+    const exported = await ctx.app.inject({ method: 'GET', url: `/api/admin/price-catalog/sets/${draft.id}/export`, headers: { cookie: ctx.owner } });
+    expect(exported.statusCode).toBe(200);
+    const book = readXlsx(exported.rawPayload);
+    expect(book.sheets.map((sh) => sh.name)).toEqual(['门店价格', '娱乐价格', '房间价格', '零点菜品价格', '按摩及助浴价格']);
+    expect(book.sheets.find((sh) => sh.name === '按摩及助浴价格')!.rows.size).toBe(1 + 10);
 
     // 已开的单照旧显示原名称、原价
     const [line] = await ctx.sql<{ name: string; unitPrice: number }[]>`SELECT name, unit_price FROM bill_lines WHERE item_id = ${ticket.id}`;

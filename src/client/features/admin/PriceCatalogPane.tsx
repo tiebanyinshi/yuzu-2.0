@@ -41,6 +41,7 @@ import { ReasonDialog } from '../../components/ReasonDialog';
 import { Badge, Button, Card, Input, Notice, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { ChangeLines, PriceEntryDialog, PriceEntryHistory } from './PriceEntryDialog';
+import { PriceCategoryChecks } from './PriceCategoryChecks';
 import { PriceLinksCard } from './PriceLinksCard';
 import { invalidatePriceCaches, PENDING_TYPES } from './priceOps';
 
@@ -112,6 +113,15 @@ export function PriceCatalogPane() {
               </p>
             ))}
             <SetActions shown={shown} previous={data?.previous ?? null} onDone={(which) => setWhich(which)} />
+            <a
+              href={`/api/admin/price-catalog/sets/${shown.id}/export`}
+              download={`${shown.title}.xlsx`}
+              className="tap relative mt-3 inline-flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3 text-[13px] font-bold text-ink-2 hover:border-ink-3 hover:text-ink"
+              data-testid="price-catalog-export"
+            >
+              <Download className="size-4" />
+              导出这一份（逐项核对用）
+            </a>
             <CountTable counts={shown.counts} total={shown.total} />
           </Card>
           {other && otherSet.data && set.data && <DiffCard current={set.data} other={otherSet.data} />}
@@ -123,6 +133,7 @@ export function PriceCatalogPane() {
             <EntryList key={set.data.id} setId={set.data.id} entries={set.data.entries} />
           ) : null}
           {/* 第四批：生效中的价目表对接收银项目（开单、房态点单取价） */}
+          {shown.status === 'active' && <PriceCategoryChecks />}
           {shown.status === 'active' && set.data && <PriceLinksCard entries={set.data.entries} />}
           <ChangesCard setId={shown.id} />
         </>
