@@ -5,7 +5,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { NotificationKind, NotificationPage, OaNotification } from '@shared/oa';
-import type { Db } from '../../db';
+import type { Db, Fragment } from '../../db';
 import { guard } from '../../auth/guard';
 import type { Deps } from '../../lib/context';
 import { parse } from '../../lib/validate';
@@ -63,8 +63,24 @@ const ListQuery = z.object({
 });
 const ReadInput = z.union([z.object({ ids: z.array(z.number().int().positive()).min(1).max(200) }), z.object({ all: z.literal(true) })]);
 
+/**
+ * 某一类通知现在还给不给这个人看（各模块登记）：例如即时通讯的 @ 通知，人已经不能用即时通讯（改成专用账号、离职）或退了群就不再给出
+ * （OA-14 安全审查 93437a4）。条件里用 oa_notifications 的列（ref_type、ref_id）
+ */
+type VisibleFilter = (db: Db, staffId: number) => Fragment;
+const visibleFilters = new Map<NotificationKind, VisibleFilter>();
+export function registerNotificationVisibility(kind: NotificationKind, filter: VisibleFilter): void {
+  visibleFilters.set(kind, filter);
+}
+function visible(db: Db, staffId: number): Fragment {
+  let out = db`true`;
+  for (const [kind, f] of visibleFilters) out = db`${out} AND (oa_notifications.kind <> ${kind} OR ${f(db, staffId)})`;
+  return out;
+}
+
 async function unreadCount(db: Db, staffId: number): Promise<number> {
-  const [row] = await db<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_notifications WHERE staff_id = ${staffId} AND read_at IS NULL`;
+  const [row] = await db<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM oa_notifications WHERE staff_id = ${staffId} AND read_at IS NULL AND ${visible(db, staffId)}`;
   return row?.n ?? 0;
 }
 
@@ -77,7 +93,7 @@ export function registerOaNotificationRoutes(app: FastifyInstance, { sql }: Deps
     const rows = await sql<(Omit<OaNotification, 'createdAt' | 'readAt'> & { createdAt: string | Date; readAt: string | Date | null })[]>`
       SELECT id, kind, title, body, link, refreshed_at AS created_at, read_at
       FROM oa_notifications
-      WHERE staff_id = ${req.actor.id}
+      WHERE staff_id = ${req.actor.id} AND ${visible(sql, req.actor.id)}
         ${q.status === 'unread' ? sql`AND read_at IS NULL` : sql``}
         ${q.before ? sql`AND id < ${q.before}` : sql``}
       ORDER BY id DESC LIMIT ${PAGE + 1}`;

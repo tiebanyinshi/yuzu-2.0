@@ -84,9 +84,13 @@ export async function purgeStaleAttachments(db: Db): Promise<number> {
 
 /** 挂到某类单据上以后谁能看：各模块登记（OA-11 起） */
 export type AttachmentRefCheck = (db: Db, actor: Actor, refId: number) => Promise<boolean>;
-const refChecks = new Map<string, AttachmentRefCheck>();
-export function registerAttachmentRef(refType: string, check: AttachmentRefCheck): void {
-  refChecks.set(refType, check);
+const refChecks = new Map<string, { check: AttachmentRefCheck; strict: boolean }>();
+/**
+ * strict：挂上以后上传的人也要过这个核对（即时通讯：员工改成专用账号以后，自己传过的聊天文件也不能再下载，OA-14 审查 4d90af2）；
+ * 不带的照旧上传的人总能看
+ */
+export function registerAttachmentRef(refType: string, check: AttachmentRefCheck, opts: { strict?: boolean } = {}): void {
+  refChecks.set(refType, { check, strict: !!opts.strict });
 }
 
 /**
@@ -136,9 +140,9 @@ async function readable(db: Db, actor: Actor, id: number) {
   const [row] = await db<{ uploadedBy: number; refType: string | null; refId: number | null }[]>`
     SELECT uploaded_by, ref_type, ref_id FROM oa_attachments WHERE id = ${id}`;
   if (!row) return false;
-  if (Number(row.uploadedBy) === actor.id) return true;
-  const check = row.refType ? refChecks.get(row.refType) : undefined;
-  return check ? check(db, actor, Number(row.refId)) : false;
+  const ref = row.refType ? refChecks.get(row.refType) : undefined;
+  if (Number(row.uploadedBy) === actor.id && !ref?.strict) return true;
+  return ref ? ref.check(db, actor, Number(row.refId)) : false;
 }
 
 /**
