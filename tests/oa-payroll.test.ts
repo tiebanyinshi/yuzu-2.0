@@ -405,6 +405,16 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
     expect(() => readXlsx(buf, { maxCells: 5 })).toThrow(/单元格太多/);
     expect(() => readXlsx(buf, { maxTotal: 100 })).toThrow(/解压后太大/);
     expect(readXlsx(buf).sheets[0]!.rows.size).toBe(3);
+    // 稀疏的大坐标：只有一个单元格，但在很远的行、列上
+    const files = unzip(buf);
+    const far = files.get('xl/worksheets/sheet1.xml')!.toString('utf8').replace('<sheetData>', '<sheetData><row r="900000"><c r="A900000" t="inlineStr"><is><t>x</t></is></c></row>');
+    expect(far).toContain('A900000');
+    files.set('xl/worksheets/sheet1.xml', Buffer.from(far, 'utf8'));
+    const farRow = zip([...files].map(([name, data]) => ({ name, data })));
+    expect(() => readXlsx(farRow, { maxRow: 2020 })).toThrow(/行太多/);
+    const wide = files.get('xl/worksheets/sheet1.xml')!.toString('utf8').replace('A900000', 'XFA1').replace('r="900000"', 'r="1"');
+    files.set('xl/worksheets/sheet1.xml', Buffer.from(wide, 'utf8'));
+    expect(() => readXlsx(zip([...files].map(([name, data]) => ({ name, data }))), { maxCols: 60 })).toThrow(/列太多/);
   });
 
   it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {

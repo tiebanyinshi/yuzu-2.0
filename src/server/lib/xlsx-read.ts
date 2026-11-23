@@ -5,6 +5,7 @@
 // WPS 的单元格图（`DISPIMG("ID_…",1)` 指向 xl/cellimages.xml）。只读需要的部分，认不出的结构直接报错。
 
 import { inflateRawSync } from 'node:zlib';
+import { colName } from './xlsx';
 
 // ───────────────────────── ZIP ─────────────────────────
 
@@ -241,6 +242,9 @@ const MAX_CELLS = 500_000;
 export interface XlsxLimits {
   maxTotal?: number;
   maxCells?: number;
+  /** 有内容的单元格最大行号（从 1 起）、最多多少列：读表的人会按行号、列号铺成数组，稀疏的大坐标也会把内存撑爆（Codex 审查 6190bd4） */
+  maxRow?: number;
+  maxCols?: number;
 }
 
 export function readXlsx(buf: Buffer, limits: XlsxLimits = {}): XlsxWorkbook {
@@ -305,6 +309,8 @@ export function readXlsx(buf: Buffer, limits: XlsxLimits = {}): XlsxWorkbook {
         if (value === null && formula === null) continue;
         if (value !== null && type === 'string' && value === '' && formula === null) continue;
         if (++cells > maxCells) throw new XlsxReadError('Excel 文件的单元格太多');
+        if (limits.maxRow !== undefined && pos.row > limits.maxRow) throw new XlsxReadError(`Excel 文件的行太多（第 ${pos.row} 行有内容，最多 ${limits.maxRow} 行）`);
+        if (limits.maxCols !== undefined && pos.col >= limits.maxCols) throw new XlsxReadError(`Excel 文件的列太多（${colName(pos.col)} 列有内容，最多 ${limits.maxCols} 列）`);
         let line = sheet.rows.get(pos.row);
         if (!line) sheet.rows.set(pos.row, (line = new Map()));
         line.set(pos.col, { row: pos.row, col: pos.col, type, value, formula });

@@ -404,7 +404,13 @@ function sheetOf(d: PayrollBatchDetail): Buffer {
 }
 
 const isHeader = (cells: string[]) => cells.includes('姓名') && cells.includes('工号');
-const PAYROLL_XLSX_LIMITS = { maxTotal: 32 * 1024 * 1024, maxCells: (PAYROLL_MAX_ROWS + 20) * (PAYSLIP_MAX_FIELDS + 20) };
+const PAYROLL_XLSX_LIMITS = {
+  maxTotal: 32 * 1024 * 1024,
+  maxCells: (PAYROLL_MAX_ROWS + 20) * (PAYSLIP_MAX_FIELDS + 20),
+  // 坐标也限住：读表按行号、列号铺成数组，稀疏的大坐标会把内存撑爆（Codex 审查 6190bd4）
+  maxRow: PAYROLL_MAX_ROWS + 20,
+  maxCols: PAYSLIP_MAX_FIELDS + 20,
+};
 
 /**
  * 读上传的工资表。有公式却没存计算结果的单元格整份拒绝（Codex 审查 940087b）：读出来会是空的，整张替换时就把原来的金额清掉了；
