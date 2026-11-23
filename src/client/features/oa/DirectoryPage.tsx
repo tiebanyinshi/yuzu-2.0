@@ -87,7 +87,7 @@ export function DirectoryPage() {
   const toggle = (key: string) => setOpen((s) => (s.has(key) ? new Set([...s].filter((x) => x !== key)) : new Set([...s, key])));
   const personRow = (p: DirectoryPerson) => (
     <li key={p.staffId}>
-      <button type="button" className="tap flex w-full items-center gap-3 py-2 text-left" onClick={() => setPerson(p)} data-testid={`dir-person-${p.staffId}`}>
+      <button type="button" className="tap relative flex w-full items-center gap-3 py-2 text-left" onClick={() => setPerson(p)} data-testid={`dir-person-${p.staffId}`}>
         <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-pine-tint font-bold text-pine">{p.name.slice(0, 1)}</span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
@@ -111,7 +111,7 @@ export function DirectoryPage() {
     return (
       <div key={dept.key} className={depth ? 'border-l border-line pl-2' : ''} data-testid={`dir-dept-${dept.key}`}>
         <div className="flex items-center gap-2 py-2">
-          <button type="button" className="tap flex min-w-0 flex-1 items-center gap-1 text-left" onClick={() => toggle(dept.key)} aria-expanded={expanded}>
+          <button type="button" className="tap relative flex min-w-0 flex-1 items-center gap-1 text-left" onClick={() => toggle(dept.key)} aria-expanded={expanded}>
             {expanded ? <ChevronDown className="size-4 shrink-0 text-ink-3" /> : <ChevronRight className="size-4 shrink-0 text-ink-3" />}
             <span className="truncate font-semibold text-ink">{dept.name}</span>
             <span className="num shrink-0 text-[12px] text-ink-3">{people.length} 人</span>
@@ -166,7 +166,7 @@ export function DirectoryPage() {
               {/* 还没分部门的在职同事（老账号没选新岗位）：另成一组，不靠搜索才找得到（Codex 审查 4bd532c） */}
               {(byDept.get('') ?? []).length > 0 && (
                 <div data-testid="dir-dept-none">
-                  <button type="button" className="tap flex w-full items-center gap-1 py-2 text-left" onClick={() => toggle('')} aria-expanded={open.has('')}>
+                  <button type="button" className="tap relative flex w-full items-center gap-1 py-2 text-left" onClick={() => toggle('')} aria-expanded={open.has('')}>
                     {open.has('') ? <ChevronDown className="size-4 shrink-0 text-ink-3" /> : <ChevronRight className="size-4 shrink-0 text-ink-3" />}
                     <span className="font-semibold text-ink">未分部门</span>
                     <span className="num shrink-0 text-[12px] text-ink-3">{byDept.get('')!.length} 人</span>

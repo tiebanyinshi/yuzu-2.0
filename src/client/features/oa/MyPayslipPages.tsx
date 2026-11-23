@@ -42,7 +42,7 @@ function MyPayslipListPage() {
             <ul className="divide-y divide-line">
               {q.data!.map((p) => (
                 <li key={p.id}>
-                  <Link to={`/oa/payslips/${p.id}`} className="tap flex items-center gap-3 px-2 py-3" data-testid={`my-payslip-${p.id}`}>
+                  <Link to={`/oa/payslips/${p.id}`} className="tap relative flex items-center gap-3 px-2 py-3" data-testid={`my-payslip-${p.id}`}>
                     <span className="min-w-0 flex-1">
                       <span className="block font-semibold text-ink">{monthLabel(p.month)}</span>
                       <span className="block truncate text-[13px] text-ink-3">{p.title}</span>
@@ -89,7 +89,7 @@ function MyPayslipDetailPage({ id }: { id: number }) {
         dateMode="calendar"
         title="工资条"
         actions={
-          <Link to="/oa/payslips" className="tap inline-flex h-9 items-center gap-1 text-[14px] font-semibold text-pine" data-testid="my-payslip-back">
+          <Link to="/oa/payslips" className="tap relative inline-flex h-9 items-center gap-1 text-[14px] font-semibold text-pine" data-testid="my-payslip-back">
             <ChevronLeft className="size-4" />
             全部
           </Link>
@@ -113,7 +113,7 @@ function MyPayslipDetailPage({ id }: { id: number }) {
                   确认签收
                 </Button>
               )}
-              <Link to={objection} className="tap ml-auto inline-flex items-center gap-1 text-[14px] font-semibold text-clay" data-testid="my-payslip-objection">
+              <Link to={objection} className="tap relative ml-auto inline-flex items-center gap-1 text-[14px] font-semibold text-clay" data-testid="my-payslip-objection">
                 <MessageSquareWarning className="size-4" />
                 有异议
               </Link>

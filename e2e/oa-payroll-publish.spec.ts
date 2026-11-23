@@ -32,7 +32,7 @@ test.describe('OA-18 发放与签收', () => {
 
     // 员工端：列表 → 明细 → 签收
     await page.goto('/oa/payslips');
-    const item = page.locator('[data-testid^="my-payslip-"]').filter({ hasText: `发放验收${stamp}` });
+    const item = page.locator('a[data-testid^="my-payslip-"]').filter({ hasText: `发放验收${stamp}` });
     await expect(item).toContainText('待签收');
     await item.click();
     await expect(page.getByTestId('payslip-net')).toHaveText('¥7,654.32');
