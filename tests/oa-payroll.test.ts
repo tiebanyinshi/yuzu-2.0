@@ -456,6 +456,9 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
     expect(Date.now() - t).toBeLessThan(1000);
     expect(node.children[0]!.attrs).toEqual({ x: '1', y: '2' });
     expect(() => parseXml('<a b="1>')).toThrow();
+    // 嵌套几千层：解析时就拒绝
+    expect(() => parseXml(`${'<si><t>x</t>'.repeat(2000)}${'</si>'.repeat(2000)}`)).toThrow(/嵌套太深/);
+    expect(parseXml(`${'<a>'.repeat(30)}${'</a>'.repeat(30)}`).children).toHaveLength(1);
   });
 
   it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {

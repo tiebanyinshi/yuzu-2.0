@@ -105,6 +105,9 @@ function readAttrs(tag: string, start: number, out: Record<string, string>) {
   }
 }
 
+/** XML 元素最多套多少层 */
+const XML_MAX_DEPTH = 64;
+
 export function parseXml(xml: string): XmlNode {
   const root: XmlNode = { name: '#root', attrs: {}, children: [], text: '' };
   const stack: XmlNode[] = [root];
@@ -152,7 +155,11 @@ export function parseXml(xml: string): XmlNode {
     const node: XmlNode = { name: local(m[1]!), attrs: {}, children: [], text: '' };
     readAttrs(inner, m[1]!.length, node.attrs);
     stack[stack.length - 1]!.children.push(node);
-    if (!selfClosing) stack.push(node);
+    if (!selfClosing) {
+      // 正常的 Excel 嵌套不过十几层；限住深度，免得几层套几千层的小文件让后面的递归取文字、找后代反复遍历（Codex 审查 f6c14e7）
+      if (stack.length >= XML_MAX_DEPTH) throw new XlsxReadError('Excel 文件里的 XML 嵌套太深');
+      stack.push(node);
+    }
     i = gt + 1;
   }
   return root;
