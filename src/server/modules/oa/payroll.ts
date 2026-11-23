@@ -415,8 +415,8 @@ function readPayrollSheet(f: { xlsxBase64: string }): Sheet {
   const first = readXlsx(Buffer.from(f.xlsxBase64, 'base64')).sheets[0];
   for (const line of first?.rows.values() ?? [])
     for (const c of line.values())
-      if (c.formula !== null && (c.value === null || c.value === ''))
-        throw unprocessable('IMPORT_FILE_INVALID', `${colName(c.col)}${c.row} 是公式、文件里没有算好的结果：请在 Excel 里重新计算（或打开后直接保存）再上传`);
+      // 没有存结果时读出来是 null；算出空字符串（t="str" 配 <v></v>）是存了结果的，照常读（Codex 审查 2601251）
+      if (c.formula !== null && c.value === null) throw unprocessable('IMPORT_FILE_INVALID', `${colName(c.col)}${c.row} 是公式、文件里没有算好的结果：请在 Excel 里重新计算（或打开后直接保存）再上传`);
   return sheet;
 }
 

@@ -5,8 +5,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PayrollBatchDetail, PayrollBatchSummary, PayrollImportPreview, PayrollImportResult, PayslipTemplate } from '../src/shared/oa-payroll';
 import { loadPayrollFileKey } from '../src/server/config';
-import { buildWorkbook } from '../src/server/lib/xlsx';
-import { readXlsx } from '../src/server/lib/xlsx-read';
+import { buildWorkbook, zip } from '../src/server/lib/xlsx';
+import { readXlsx, unzip } from '../src/server/lib/xlsx-read';
 import { payrollKeyOf } from '../src/server/modules/oa/payroll';
 import { createStaff } from '../src/server/modules/staff';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
@@ -377,6 +377,18 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
     const bad = await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import/preview`, { fileName: 'f.xlsx', xlsxBase64: withFormula });
     expect(code(bad)).toBe('IMPORT_FILE_INVALID');
     expect(JSON.stringify(bad.body)).toContain('M3');
+    // 公式算出空字符串（t="str" 配 <v></v>，存了结果）照常读，不拦
+    const files = unzip(Buffer.from(withFormula, 'base64'));
+    const sheetXml = files
+      .get('xl/worksheets/sheet1.xml')!
+      .toString('utf8')
+      .replace(/<c r="M3"([^>]*)><f>5000\+100<\/f><\/c>/, '<c r="M3"$1 t="str"><f>IF(1,"","")</f><v></v></c>');
+    expect(sheetXml).toContain('t="str"');
+    files.set('xl/worksheets/sheet1.xml', Buffer.from(sheetXml, 'utf8'));
+    const cachedEmpty = zip([...files].map(([name, data]) => ({ name, data }))).toString('base64');
+    const ok = await api<PayrollImportPreview>(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import/preview`, { fileName: 'f.xlsx', xlsxBase64: cachedEmpty });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.errorCount).toBe(0);
 
     const file = xlsx([['标题'], header(), ['E001', emp.a!.name, '', '100', ...std.fields.slice(1).map(() => null)]]);
     const first = (await api<PayrollImportResult>(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import`, { fileName: 'k.xlsx', xlsxBase64: file })).body;
