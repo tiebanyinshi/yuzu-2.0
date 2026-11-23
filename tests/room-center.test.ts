@@ -916,6 +916,19 @@ describe('权限、看得到什么、给别的模块的入口', () => {
     expect(h.rows[0]!.text).toContain('加钟：肩颈');
     // 价格对不上（项目刚改价）照旧拒绝
     expect((await api(ctx.app, ctx.clerk, 'POST', on(code, 'extend'), { ...body, clientKey: randomUUID(), expectedTotal: 1 })).body.error.code).toBe('PRICE_CHANGED');
+    // 转钟：新钟单照两个项目的时长合计（不是原项目 × 2；Codex 审查 9101d88）
+    const tr = await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${s.id}/transfer`, { clientKey: randomUUID(), reason: '客人要换技师', technicianId: tech['03'], callType: 'designated' });
+    expect(tr.status, JSON.stringify(tr.body)).toBe(200);
+    const [moved] = await ctx.sql<{ id: number; minutes: number; clocks: number }[]>`SELECT id, minutes, clocks FROM technician_sessions WHERE transferred_from = ${s.id}`;
+    expect(moved).toMatchObject({ minutes: s.minutes + 60, clocks: 2 });
+    // 作废另选的那一行：剩下的按原项目的时长算（不是按平均每钟）
+    const [neckLine] = await ctx.sql<{ id: number }[]>`SELECT id FROM bill_lines WHERE session_id = ${moved!.id} AND item_id = ${neckId} AND status = 'active'`;
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/lines/${neckLine!.id}/void`, { reason: '客人不加了' })).status).toBe(200);
+    const [left] = await ctx.sql<{ minutes: number; clocks: number }[]>`SELECT minutes, clocks FROM technician_sessions WHERE id = ${moved!.id}`;
+    expect(left).toMatchObject({ minutes: s.minutes, clocks: 1 });
+    // 收尾：新技师可能还在别的钟上（等钟），把剩下那一行也作废，钟单取消，房间腾出来
+    const [rest] = await ctx.sql<{ id: number }[]>`SELECT id FROM bill_lines WHERE session_id = ${moved!.id} AND status = 'active'`;
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/lines/${rest!.id}/void`, { reason: '演练收尾' })).status).toBe(200);
     await release(code);
   });
 });
