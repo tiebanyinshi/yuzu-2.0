@@ -219,13 +219,13 @@ function resolve(base: string, target: string): string {
   return parts.join('/');
 }
 
-function rels(files: Map<string, Buffer>, partPath: string): Map<string, { target: string; external: boolean }> {
+function rels(files: Map<string, Buffer>, partPath: string, xml: (raw: Buffer) => XmlNode = (raw) => parseXml(raw.toString('utf8'))): Map<string, { target: string; external: boolean }> {
   const dir = partPath.split('/').slice(0, -1).join('/');
   const relsPath = `${dir ? `${dir}/` : ''}_rels/${partPath.split('/').pop()}.rels`;
   const out = new Map<string, { target: string; external: boolean }>();
   const raw = files.get(relsPath);
   if (!raw) return out;
-  for (const r of descendants(parseXml(raw.toString('utf8')), 'Relationship')) {
+  for (const r of descendants(xml(raw), 'Relationship')) {
     const id = attr(r, 'Id');
     const target = attr(r, 'Target');
     if (!id || target === undefined) continue;
@@ -267,30 +267,31 @@ function countElements(xml: Buffer): number {
 export function readXlsx(buf: Buffer, limits: XlsxLimits = {}): XlsxWorkbook {
   const files = unzip(buf, limits.maxTotal ?? MAX_TOTAL);
   const maxCells = limits.maxCells ?? MAX_CELLS;
-  if (limits.maxNodes !== undefined) {
-    let nodes = 0;
-    for (const [name, data] of files)
-      if (/\.(xml|rels)$/i.test(name) && (nodes += countElements(data)) > limits.maxNodes) throw new XlsxReadError('Excel 文件的结构太大（空行、空格子太多），请删掉多余的行列后另存再传');
-  }
+  // 每个部件真正交给 parseXml 以前数元素、累计（不看文件名：工作表的路径由关系文件指定，可以叫任何名字，Codex 审查 ba6fbf3）
+  let nodes = 0;
+  const xml = (raw: Buffer): XmlNode => {
+    if (limits.maxNodes !== undefined && (nodes += countElements(raw)) > limits.maxNodes) throw new XlsxReadError('Excel 文件的结构太大（空行、空格子太多），请删掉多余的行列后另存再传');
+    return parseXml(raw.toString('utf8'));
+  };
   const wbPath = 'xl/workbook.xml';
   const wbRaw = files.get(wbPath);
   if (!wbRaw) throw new XlsxReadError('不是 Excel 工作簿（缺 xl/workbook.xml）');
-  const wbRels = rels(files, wbPath);
+  const wbRels = rels(files, wbPath, xml);
 
   const shared: string[] = [];
   const ssRaw = files.get('xl/sharedStrings.xml');
-  if (ssRaw) for (const si of descendants(parseXml(ssRaw.toString('utf8')), 'si')) shared.push(textOf(si));
+  if (ssRaw) for (const si of descendants(xml(ssRaw), 'si')) shared.push(textOf(si));
 
   const sheets: XlsxSheet[] = [];
   let cells = 0;
-  for (const s of descendants(parseXml(wbRaw.toString('utf8')), 'sheet')) {
+  for (const s of descendants(xml(wbRaw), 'sheet')) {
     const name = attr(s, 'name') ?? '';
     const rid = attr(s, 'id');
     const rel = rid ? wbRels.get(rid) : undefined;
     if (!rel || rel.external) continue;
     const raw = files.get(rel.target);
     if (!raw) throw new XlsxReadError(`工作表「${name}」缺内容`);
-    const root = parseXml(raw.toString('utf8'));
+    const root = xml(raw);
     const sheet: XlsxSheet = { name, rows: new Map(), rowElements: 0, merges: [], hyperlinks: new Map() };
     let nextRow = 1;
     for (const row of descendants(root, 'row')) {
@@ -346,7 +347,7 @@ export function readXlsx(buf: Buffer, limits: XlsxLimits = {}): XlsxWorkbook {
       const p2 = parseRef(b ?? a!);
       sheet.merges.push({ r1: p1.row, c1: p1.col, r2: p2.row, c2: p2.col });
     }
-    const sheetRels = rels(files, rel.target);
+    const sheetRels = rels(files, rel.target, xml);
     for (const h of descendants(root, 'hyperlink')) {
       const ref = attr(h, 'ref');
       const id = attr(h, 'id');
@@ -361,8 +362,8 @@ export function readXlsx(buf: Buffer, limits: XlsxLimits = {}): XlsxWorkbook {
   const ciPath = 'xl/cellimages.xml';
   const ciRaw = files.get(ciPath);
   if (ciRaw) {
-    const ciRels = rels(files, ciPath);
-    for (const pic of descendants(parseXml(ciRaw.toString('utf8')), 'pic')) {
+    const ciRels = rels(files, ciPath, xml);
+    for (const pic of descendants(xml(ciRaw), 'pic')) {
       const nv = [...descendants(pic, 'cNvPr')][0];
       const blip = [...descendants(pic, 'blip')][0];
       const name = nv ? attr(nv, 'name') : undefined;

@@ -423,6 +423,12 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
     files.set('xl/worksheets/sheet1.xml', Buffer.from(emptyRows, 'utf8'));
     const bloated = zip([...files].map(([name, data]) => ({ name, data })));
     expect(() => readXlsx(bloated, { maxNodes: 600_000 })).toThrow(/结构太大/);
+    // 工作表改名成 .bin、关系里跟着改：照样数（不按文件名决定查不查）
+    const renamed = new Map(files);
+    renamed.set('xl/worksheets/sheet1.bin', renamed.get('xl/worksheets/sheet1.xml')!);
+    renamed.delete('xl/worksheets/sheet1.xml');
+    renamed.set('xl/_rels/workbook.xml.rels', Buffer.from(renamed.get('xl/_rels/workbook.xml.rels')!.toString('utf8').replace('worksheets/sheet1.xml', 'worksheets/sheet1.bin'), 'utf8'));
+    expect(() => readXlsx(zip([...renamed].map(([name, data]) => ({ name, data }))), { maxNodes: 600_000 })).toThrow(/结构太大/);
   });
 
   it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {
