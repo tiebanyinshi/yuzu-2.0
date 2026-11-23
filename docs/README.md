@@ -19,6 +19,10 @@
 - [`CONVENTIONS.md`](CONVENTIONS.md)：开发约定（专题）
 - [`TESTING.md`](TESTING.md)：测试与 CI（飞书需求 RQ-008，v0.7.18 定稿；2026-11-20 改成按改动与风险挑选，见第 6 节）
 - [`ROADMAP.md`](ROADMAP.md)：浴族 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：浴族 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：浴族 yuzu 推进路线（ROADMAP）
+- [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
+- [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
@@ -77,6 +81,7 @@
 - [`PATROL_V809.md`](PATROL_V809.md)：安保巡场与员工工作台（8.0.9）
 - [`PAYMENTS.md`](PAYMENTS.md)：付款流（v0.7.32）
 - [`POSITIONS_V8118.md`](POSITIONS_V8118.md)：组织架构与岗位（8.1.18）
+- [`PRICE_CATALOG.md`](PRICE_CATALOG.md)：价目表录入（汤崎宝安全品类价目表 1119）
 - [`PURCHASING_V801.md`](PURCHASING_V801.md)：采购组整改需求（8.0.1）
 - [`REQUISITIONS.md`](REQUISITIONS.md)：部门采购需求单、采购单的图片与规格（v0.7.8，飞书需求 RQ-005 第二步）
 - [`RESILIENCE_V813.md`](RESILIENCE_V813.md)：8.1.3 · 代码整洁与网络波动防护

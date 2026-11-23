@@ -80,6 +80,7 @@ import { recordPriceChanges } from './dish-prices';
 import { emenuImage, saveEmenuImage } from './emenu/core';
 import { abandonedError, businessDate } from './frontdesk/common';
 import { pricesColumn } from './pricing';
+import { assertNotPriceLinked } from './price-catalog/linked';
 
 /** 菜品的图片地址（图存在电子菜单的图片表里；这个地址给有菜品权限的人看） */
 const dishImageUrl = (id: number | null | undefined) => (id ? `/api/dining/dishes/images/${id}` : null);
@@ -721,6 +722,8 @@ export async function changeDishPriceTx(
   if (opts.rev !== undefined && opts.rev !== cur.rev) throw changedSince(cur, '改价');
   const diff = priceDiff(cur.prices, prices);
   if (diff.length === 0) return { name: cur.name, diff };
+  // 价目表第四批：对接了「全品类价目表」的菜，价格以价目表为准
+  await assertNotPriceLinked(tx, [id]);
   for (const d of diff) {
     if (d.newPrice === null) {
       await tx`DELETE FROM service_item_prices WHERE item_id = ${id} AND tier = ${d.tier}`;

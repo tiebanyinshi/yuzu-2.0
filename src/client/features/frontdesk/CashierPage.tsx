@@ -3,7 +3,7 @@
 // 接待发牌、换牌、挂账在发卡台（FrontdeskPage）。两个台共用一个「补录纸质单」状态（desk.tsx 的 DeskLayout）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { ArrowDownWideNarrow, FilePenLine, Gift, Hash, Keyboard, ReceiptText, Search, ShieldCheck, Store, Ticket, UserRound, X } from 'lucide-react';
+import { ArrowDownWideNarrow, Calculator, FilePenLine, Gift, Hash, Keyboard, ReceiptText, Search, ShieldCheck, Store, Ticket, UserRound, X } from 'lucide-react';
 import { matchTags, normalizeTagCode, uniqueTagMatch, ZONE_LABELS, type BoardTag } from '@shared/frontdesk';
 import { useCan, useSession } from '../../lib/session';
 import { cn, isTypingTarget } from '../../lib/utils';
@@ -28,6 +28,7 @@ import { GroupMark, Stat, VipChip, VisitStatusChips, ZoneChip } from './parts';
 import { stayMinutes, stayText, useBoard, useCheckoutPreview, useRefreshFrontdesk, useServerNow, useVisit } from './queries';
 import { FindGuestDialog } from './ToolDialogs';
 import { PreviewDialog } from './VisitDialogs';
+import { PriceTrialDialog } from './PriceTrialDialog';
 
 type QueueFilter = 'all' | 'spent' | 'group' | 'long';
 type QueueSort = 'code' | 'amount' | 'stay';
@@ -55,6 +56,7 @@ export function CashierPage() {
   const [dialog, setDialog] = useState<null | { kind: 'preview' } | { kind: 'checkout'; ids?: number[] } | { kind: 'records'; checkoutId?: number }>(null);
   const [checksOpen, setChecksOpen] = useState(false);
   const [finding, setFinding] = useState(false);
+  const [trial, setTrial] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const tags = board.data?.tags ?? [];
@@ -217,6 +219,10 @@ export function CashierPage() {
                 平台核销
               </Button>
             )}
+            {/* 价目表第四批：按生效中的价目表试算一笔（不开单） */}
+            <Button size="sm" variant="ghost" icon={<Calculator className="size-4" />} onClick={() => setTrial(true)} data-testid="open-price-trial">
+              价目试算
+            </Button>
             <Button size="sm" variant="ghost" icon={<ShieldCheck className="size-4" />} onClick={() => setChecksOpen(true)}>
               自检
             </Button>
@@ -387,6 +393,7 @@ export function CashierPage() {
       <CheckoutRecordsDialog open={dialog?.kind === 'records'} focusId={dialog?.kind === 'records' ? (dialog.checkoutId ?? visit.data?.checkout?.id ?? null) : null} onClose={() => setDialog(null)} />
       <ChecksDialog open={checksOpen} onClose={() => setChecksOpen(false)} />
       <FindGuestDialog open={finding} tags={tags} onClose={() => setFinding(false)} onPick={select} />
+      {trial && <PriceTrialDialog open onClose={() => setTrial(false)} />}
     </>
   );
 }
