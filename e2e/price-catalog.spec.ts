@@ -246,7 +246,7 @@ test.describe('价目表录入 第四批：前台试算与对接收银项目', (
     await page.goto('/cashier');
     await page.getByTestId('open-price-trial').click();
     const trial = page.getByTestId('price-trial');
-    for (const q of ['spa房', '古法中式', '门票 12H 不含餐']) {
+    for (const q of ['spa房', '古法中式', '12H 不含餐']) {
       await trial.getByTestId('price-trial-search').fill(q);
       await trial.getByTestId('price-trial-option').first().click();
     }
