@@ -277,6 +277,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       sellerNo: showGuests ? (g.registration?.sellerNo ?? '') : '',
       sellerName: showGuests ? (g.registration?.sellerName ?? '') : '',
       note: showGuests ? (g.registration?.note ?? '') : '',
+      overnight: g.registration?.overnight ?? false,
       since: g.registration?.openedAt ?? g.sessions[0]?.createdAt ?? at.toISOString(),
       sessions,
       amount: sessions.reduce((n, s) => n + s.amount, 0),

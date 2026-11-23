@@ -12,7 +12,7 @@ import { Link, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { History, LayoutGrid, Map as MapIcon, MoonStar, Settings2 } from 'lucide-react';
 import type { BookingDetail } from '@shared/bookings';
-import { ROOM_STATUSES, ROOM_STATUS_LABELS, type RoomCard, type RoomCategoryView, type RoomCenterBoard, type RoomStatus } from '@shared/room-center';
+import { matchesRoomSearch, ROOM_STATUSES, ROOM_STATUS_LABELS, type RoomCard, type RoomCategoryView, type RoomCenterBoard, type RoomStatus } from '@shared/room-center';
 import { ROOM_BOARD_LABELS, type RoomBoard } from '@shared/rooms';
 import { api } from '../../lib/api';
 import { useServerNow } from '../../lib/serverClock';
@@ -22,7 +22,7 @@ import { PageHeader } from '../../components/AppShell';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
 import { useToast } from '../../components/Toast';
-import { Button, Notice, Segmented, Skeleton } from '../../components/ui';
+import { Button, Input, Notice, Segmented, Skeleton } from '../../components/ui';
 import { FLOOR_MAP_REFRESH_MS } from '../rooms/floormap-api';
 import { FloorMapView, type MapAction } from '../rooms/FloorMap';
 import { AuditDialog, AuditStrip, CheckinDialog } from '../rooms/HotelDialogs';
@@ -76,6 +76,8 @@ function RoomCenterBody() {
   const now = useServerNow(q.data?.serverTime, 30_000);
 
   const [detail, setDetail] = useState<number | null>(null);
+  // 搜索（重做第五批）：房号、手牌号、客人姓名，命中的跨房型列出来
+  const [search, setSearch] = useState('');
   const [action, setAction] = useState<Action | null>(null);
   const [checkinRoomId, setCheckinRoomId] = useState<number | null>(null);
   const [stay, setStay] = useState<{ id: number; action?: StayAction | 'move' } | null>(null);
@@ -260,7 +262,21 @@ function RoomCenterBody() {
               {hotelTab && '客房照旧走入住单：点卡片入住、看入住单、改房态。'}
             </Notice>
           )}
-          <CountChips counts={cat ? cat.counts : board.total} filter={filter} onFilter={(s) => setParam({ status: s })} testId="rc-counts" />
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <CountChips counts={cat ? cat.counts : board.total} filter={filter} onFilter={(s) => setParam({ status: s })} testId="rc-counts" />
+            </div>
+            <Input
+              fullWidth={false}
+              className="h-10 w-full sm:w-64"
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜房号、手牌号、客人姓名"
+              aria-label="搜房态"
+              data-testid="rc-search"
+            />
+          </div>
           {hotelTab && hotel && (
             <div className="space-y-2" data-testid="rc-hotel-tools">
               <div className="flex flex-wrap items-center justify-end gap-2">
@@ -290,7 +306,9 @@ function RoomCenterBody() {
               )}
             </div>
           )}
-          {cat ? (
+          {search.trim() ? (
+            <SearchRooms board={board} q={search} filter={filter} grid={grid} onClear={() => setSearch('')} />
+          ) : cat ? (
             <CategoryRooms board={board} cat={cat} filter={filter} grid={grid} onAll={() => setParam({ status: null })} />
           ) : (
             <Overview board={board} filter={filter} grid={grid} onPick={(key) => setParam({ tab: key, status: null })} onAll={() => setParam({ status: null })} />
@@ -436,6 +454,31 @@ function Tabs({ cats, total, active, onPick }: { cats: RoomCategoryView[]; total
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/** 搜索结果：全部房型里房号、手牌号、客人姓名对得上的（再按状态筛） */
+function SearchRooms({ board, q, filter, grid, onClear }: { board: RoomCenterBoard; q: string; filter: RoomStatus | null; grid: (list: RoomCard[]) => ReactNode; onClear: () => void }) {
+  const list = board.rooms.filter((r) => matchesRoomSearch(r, q) && (!filter || r.status === filter));
+  if (list.length === 0) {
+    return (
+      <EmptyState
+        art="calm"
+        title={`没有搜到「${q.trim()}」`}
+        description="按房号、客人手牌号或客人姓名搜；客人姓名要有查看客人的权限才搜得到。"
+        action={
+          <Button variant="secondary" className="h-11" onClick={onClear}>
+            清空搜索
+          </Button>
+        }
+      />
+    );
+  }
+  return (
+    <div data-testid="rc-search-results">
+      <p className="mb-2 text-[13px] text-ink-3">搜到 {list.length} 间</p>
+      {grid(list)}
     </div>
   );
 }

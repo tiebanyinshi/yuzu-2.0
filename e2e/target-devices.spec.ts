@@ -929,6 +929,7 @@ const rcGuest = (visitId: number, tagCode: string, guest: string, techNo: string
   sellerNo: 'xiaozhou',
   sellerName: '小周',
   note: '客人要靠窗、水温高一点',
+  overnight: false,
   since: ago(35),
   sessions: [
     {

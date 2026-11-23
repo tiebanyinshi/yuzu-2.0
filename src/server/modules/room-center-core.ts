@@ -81,6 +81,8 @@ export interface RegistrationFact {
   sellerName: string;
   note: string;
   openedAt: string;
+  /** 客人是否过夜（重做第五批） */
+  overnight: boolean;
 }
 
 /** 房间里的一位客人：登记单（钟房直接派进来的没有）与他在这间房的钟单 */
@@ -135,7 +137,7 @@ export async function loadRoomFacts(db: Db, today: string, spaceIds?: number[]):
     WHERE st.store_id = ${store} ${only('st.space_id')}`;
   // 开着的登记单（客人还在店；结账、撤销来访时登记单一起结束，这里再按来访核对一次）
   const regs = await db<RegistrationFact[]>`
-    SELECT r.id, r.space_id, r.visit_id, r.session_id, r.seller_no, r.seller_name, r.note, r.opened_at
+    SELECT r.id, r.space_id, r.visit_id, r.session_id, r.seller_no, r.seller_name, r.note, r.opened_at, r.overnight
     FROM room_registrations r JOIN visits v ON v.id = r.visit_id
     WHERE r.status = 'open' AND v.status = 'open' AND r.store_id = ${store} ${only('r.space_id')}
     ORDER BY r.id`;

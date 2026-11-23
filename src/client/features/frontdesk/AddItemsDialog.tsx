@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { HandHeart, Minus, Plus, Trash2 } from 'lucide-react';
-import { itemCategoryKey, itemCategoryTabs, type PriceTier } from '@shared/catalog';
+import { itemCategoryKey, itemCategoryTabs, matchesItemSearch, type PriceTier } from '@shared/catalog';
 import { ZONE_LABELS, type VisitDetail } from '@shared/frontdesk';
 import { parseYuan } from '@shared/money';
 import { technicianText, type CallType } from '@shared/technicians';
@@ -71,6 +71,7 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
     setCart(new Map());
     setCustom([]);
     setCategory(ALL_CATEGORIES);
+    setSearch('');
     setPicking(null);
     op.clearError();
   });
@@ -82,7 +83,9 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
 
   const items = useMemo(() => (catalog.data?.items ?? []).filter((i) => i.active), [catalog.data]);
   const tabs = useMemo(() => itemCategoryTabs(items), [items]);
-  const shown = category === ALL_CATEGORIES ? items : items.filter((i) => itemCategoryKey(i) === category);
+  // 搜项目（重做第五批）：按名称或价目表编号，搜的时候不管分类
+  const [search, setSearch] = useState('');
+  const shown = search.trim() ? items.filter((i) => matchesItemSearch(i, search)) : category === ALL_CATEGORIES ? items : items.filter((i) => itemCategoryKey(i) === category);
 
   const locked = op.locked;
   const touch = op.clearError;
@@ -234,7 +237,8 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
             />
           ) : (
             <>
-              <CategoryTabs tabs={tabs} value={category} onChange={setCategory} total={items.length} testId="add-items-categories" />
+              <Input className="mb-2" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜项目名称或编号" aria-label="搜项目" data-testid="add-items-search" />
+              {!search.trim() && <CategoryTabs tabs={tabs} value={category} onChange={setCategory} total={items.length} testId="add-items-categories" />}
               {catalog.isPending ? (
                 <Skeleton className="h-40" />
               ) : catalog.isError && !catalog.data ? (
