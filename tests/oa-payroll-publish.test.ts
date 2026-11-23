@@ -117,7 +117,8 @@ describe('OA-18 员工端与签收', () => {
   it('员工只看得到本人、已发放的工资条；别人的、草稿里的编号都当没有', async () => {
     const mine = (await api<MyPayslipItem[]>(ctx.app, emp.a!.cookie, 'GET', '/api/oa/my/payslips')).body;
     expect(mine).toHaveLength(1);
-    expect(mine[0]!).toMatchObject({ month: '2026-11', title: '11 月工资', net: 400000, signedAt: null });
+    expect(mine[0]!).toMatchObject({ month: '2026-11', title: '11 月工资', signedAt: null });
+    expect(mine[0]!).not.toHaveProperty('net'); // 列表不带金额
     slipA = mine[0]!.id;
     slipB = (await api<MyPayslipItem[]>(ctx.app, emp.b!.cookie, 'GET', '/api/oa/my/payslips')).body[0]!.id;
     expect((await api(ctx.app, emp.a!.cookie, 'GET', `/api/oa/my/payslips/${slipB}`)).status).toBe(404);
@@ -148,7 +149,7 @@ describe('OA-18 员工端与签收', () => {
     expect((await ctx.sql`SELECT 1 FROM oa_payroll_audit WHERE action = 'employee_sign' AND target_id = ${emp.a!.id}`).length).toBe(1);
   });
 
-  it('一键提醒只提醒没签的；10 分钟内再点拦下；草稿不用提醒', async () => {
+  it('一键提醒只提醒没签的；10 分钟内再点算成功、不重复发；草稿不用提醒', async () => {
     const [row] = await ctx.sql<{ batchId: number }[]>`SELECT batch_id FROM oa_payslips WHERE id = ${slipA}`;
     const batchId = Number(row!.batchId);
     // 先把之前的通知都读掉，好数新的
@@ -157,7 +158,11 @@ describe('OA-18 员工端与签收', () => {
     expect(r.body.reminded).toBe(1);
     expect((await notifications(emp.b!.id)).filter((n) => !n.readAt).map((n) => n.title)).toEqual(['您的工资条还没签收']);
     expect((await notifications(emp.a!.id)).filter((n) => !n.readAt)).toHaveLength(0);
-    expect(code(await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${batchId}/remind`))).toBe('REMIND_TOO_SOON');
+    // 10 分钟内再点（含回复没收到、原样重试）：算成功、不重复发
+    const again = await api<{ reminded: number; recent: boolean }>(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${batchId}/remind`);
+    expect(again.status).toBe(200);
+    expect(again.body).toEqual({ reminded: 0, recent: true });
+    expect((await notifications(emp.b!.id)).filter((n) => !n.readAt)).toHaveLength(1);
     const draft = await newBatch('草稿提醒');
     expect(code(await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${draft.id}/remind`))).toBe('PAYROLL_NOT_PUBLISHED');
   });

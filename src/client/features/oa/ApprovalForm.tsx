@@ -105,10 +105,11 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
   const navigate = useNavigate();
   const key = draftKey(session.staff.id, template.code);
   const from = useQuery({ queryKey: ['oa', 'approval', fromId], queryFn: () => api.get<ApprovalDetail>(`/api/oa/approvals/${fromId}`), enabled: !!fromId });
-  // 从别的页带过来的预填（只认文字、多行文字字段）：如工资条页「有异议」带上「工资条」那一栏（OA-18）
+  // 从别的页带过来的预填（只认「工资条异议」的文字、多行文字字段）：工资条页「有异议」带上「工资条」那一栏（OA-18）
   const [params] = useSearchParams();
   const [values, setValues] = useState<Values | null>(() => {
     if (fromId) return null;
+    if (template.code !== 'payslip_objection') return readDraft(key);
     const prefill = Object.fromEntries(
       template.fields
         .filter((f) => f.type === 'text' || f.type === 'textarea')

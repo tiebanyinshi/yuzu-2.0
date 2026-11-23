@@ -880,7 +880,8 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
         FROM oa_payroll_batches WHERE id = ${id} FOR UPDATE`;
       if (!b || !covers(mine, b.storeIds)) throw notFound('工资表不存在');
       if (b.status !== 'published') throw conflict('PAYROLL_NOT_PUBLISHED', '还没发放的工资表不用提醒');
-      if (b.recent) throw conflict('REMIND_TOO_SOON', `刚提醒过，${PAYROLL_REMIND_MINUTES} 分钟内只能提醒一次`);
+      // 刚提醒过（含上一次回复没收到、原样重试）：按结果算成功，不再发一遍（OA22 按结果写）
+      if (b.recent) return null;
       const unsigned = await tx<{ id: number; staffId: number }[]>`SELECT id, staff_id FROM oa_payslips WHERE batch_id = ${id} AND signed_at IS NULL`;
       for (const x of unsigned)
         await notify(tx, [Number(x.staffId)], {
@@ -895,7 +896,7 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
       await writeAudit(tx, { staffId: req.actor.id, action: 'oa_payroll_reminded', targetType: 'oa_payroll_batch', targetId: id, detail: { count: unsigned.length }, ip: req.ip });
       return unsigned.length;
     });
-    return { reminded: count };
+    return count === null ? { reminded: 0, recent: true } : { reminded: count, recent: false };
   });
 
   // 薪资审计：按时间倒序，可按工资表、动作筛；只列谁、做了什么、哪张表、哪个人、IP、时间（不带金额）。门店范围外的工资表的记录不给
@@ -958,12 +959,13 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
   };
 
   app.get('/api/oa/my/payslips', { preHandler: mineOnly }, async (req): Promise<MyPayslipItem[]> => {
-    const rows = await sql<{ id: number; month: string; title: string; fields: PayslipField[]; values: PayslipValues; publishedAt: Date; signedAt: Date | null }[]>`
-      SELECT p.id, b.month, b.title, b.fields, p.values, b.published_at, p.signed_at
+    // 列表不带金额（金额只在明细里给，明细每次都记审计）
+    const rows = await sql<{ id: number; month: string; title: string; publishedAt: Date; signedAt: Date | null }[]>`
+      SELECT p.id, b.month, b.title, b.published_at, p.signed_at
       FROM oa_payslips p JOIN oa_payroll_batches b ON b.id = p.batch_id
       WHERE p.staff_id = ${req.actor.id} AND b.status = 'published'
       ORDER BY b.month DESC, b.published_at DESC, p.id DESC`;
-    return rows.map((r) => ({ id: Number(r.id), month: r.month, title: r.title, net: netOf(r.fields, r.values), publishedAt: iso(r.publishedAt), signedAt: r.signedAt ? iso(r.signedAt) : null }));
+    return rows.map((r) => ({ id: Number(r.id), month: r.month, title: r.title, publishedAt: iso(r.publishedAt), signedAt: r.signedAt ? iso(r.signedAt) : null }));
   });
 
   async function mySlip(db: Db, id: number, staffId: number, lock = false) {
