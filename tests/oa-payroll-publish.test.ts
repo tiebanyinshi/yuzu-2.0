@@ -133,15 +133,19 @@ describe('OA-18 员工端与签收', () => {
     expect((await api(ctx.app, await login(ctx.app, 'pp_tablet'), 'GET', '/api/oa/my/payslips')).status).toBe(403);
   });
 
-  it('打开看明细：记第一次查看时间与员工查看的审计；确认签收记时间，签过再点不变', async () => {
+  it('打开看明细：记第一次查看时间与员工查看的审计；确认签收记时间，签过再点不变、记查看', async () => {
     const d = await api<MyPayslipDetail>(ctx.app, emp.a!.cookie, 'GET', `/api/oa/my/payslips/${slipA}`);
     expect(d.status).toBe(200);
     expect(d.body.values).toEqual({ f1: 500000, f10: 400000 });
     expect(d.body.fields).toEqual(std.fields);
+    const views = async () => (await ctx.sql`SELECT 1 FROM oa_payroll_audit WHERE action = 'employee_view' AND target_id = ${emp.a!.id}`).length;
     const s1 = await api<MyPayslipDetail>(ctx.app, emp.a!.cookie, 'POST', `/api/oa/my/payslips/${slipA}/sign`);
+    const viewsAfterSign = await views();
     expect(s1.body.signedAt).not.toBeNull();
     const s2 = await api<MyPayslipDetail>(ctx.app, emp.a!.cookie, 'POST', `/api/oa/my/payslips/${slipA}/sign`);
     expect(s2.body.signedAt).toBe(s1.body.signedAt);
+    // 签过再点回给明细：照样记一次查看（不能绕过查看审计取金额）
+    expect(await views()).toBe(viewsAfterSign + 1);
     const row = (await detail((await ctx.sql<{ batchId: number }[]>`SELECT batch_id FROM oa_payslips WHERE id = ${slipA}`)[0]!.batchId)).slips;
     expect(row.find((x) => x.staffId === emp.a!.id)!.signedAt).toBe(s1.body.signedAt);
     expect(row.find((x) => x.staffId === emp.a!.id)!.viewedAt).not.toBeNull();

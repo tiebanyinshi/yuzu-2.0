@@ -1007,7 +1007,11 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
     const { id } = parse(SlipIdParam, req.params);
     const r = await sql.begin(async (tx) => {
       const slip = await mySlip(tx, id, req.actor.id, true);
-      if (slip.signedAt) return slip;
+      // 签过的再点：签收时间不变、不再记签收；回给的明细照样记一次查看（不能绕过查看审计取金额）
+      if (slip.signedAt) {
+        await payrollAudit(tx, { staffId: req.actor.id, action: 'employee_view', batchId: Number(slip.batchId), targetId: req.actor.id, ip: req.ip });
+        return slip;
+      }
       const [row] = await tx<{ signedAt: Date }[]>`UPDATE oa_payslips SET signed_at = now(), viewed_at = COALESCE(viewed_at, now()) WHERE id = ${id} RETURNING signed_at`;
       await payrollAudit(tx, { staffId: req.actor.id, action: 'employee_sign', batchId: Number(slip.batchId), targetId: req.actor.id, ip: req.ip });
       return { ...slip, signedAt: row!.signedAt };
