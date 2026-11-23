@@ -7,7 +7,10 @@
 ALTER TABLE oa_payroll_batches
   ADD COLUMN published_at  timestamptz,
   ADD COLUMN published_by  bigint REFERENCES staff (id),
-  ADD COLUMN reminded_at   timestamptz,
+  ADD COLUMN reminded_at   timestamptz;
+-- 回滚以后再升级（回滚保留已发放的状态、去掉了发放时间）：先按最后修改的时间、经办人补上，再加约束（Codex 审查 0e24154）
+UPDATE oa_payroll_batches SET published_at = updated_at, published_by = updated_by WHERE status = 'published' AND published_at IS NULL;
+ALTER TABLE oa_payroll_batches
   ADD CONSTRAINT oa_payroll_batches_published CHECK ((status = 'published') = (published_at IS NOT NULL));
 
 ALTER TABLE oa_payslips

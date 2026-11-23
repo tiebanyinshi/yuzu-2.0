@@ -201,3 +201,19 @@ describe('OA-18 薪资审计与异议', () => {
     expect(Number(step!.approverId)).toBe(emp.hr!.id);
   });
 });
+
+describe('OA-18 迁移回滚再升级', () => {
+  it('已经发放过的工资表：执行回滚脚本再重跑 226，补上发放时间、约束加得上（Codex 审查 0e24154）', async () => {
+    const { readFileSync } = await import('node:fs');
+    const published = await ctx.sql<{ id: number }[]>`SELECT id FROM oa_payroll_batches WHERE status = 'published'`;
+    expect(published.length).toBeGreaterThan(0);
+    // 回滚脚本自己带 BEGIN / COMMIT（给 psql 用）；这里去掉，放进一个事务里执行
+    const down = readFileSync('docs/rollback/226_oa_payroll_publish.down.sql', 'utf8').replace(/^\s*(BEGIN|COMMIT);\s*$/gm, '');
+    await ctx.sql.begin((tx) => tx.unsafe(down));
+    expect((await ctx.sql`SELECT 1 FROM oa_payroll_batches WHERE status = 'published'`).length).toBe(published.length);
+    await ctx.sql.begin((tx) => tx.unsafe(readFileSync('src/server/migrations/226_oa_payroll_publish.sql', 'utf8')));
+    await ctx.sql`INSERT INTO schema_migrations (version) VALUES ('226_oa_payroll_publish.sql') ON CONFLICT DO NOTHING`;
+    const after = await ctx.sql<{ publishedAt: Date | null }[]>`SELECT published_at FROM oa_payroll_batches WHERE status = 'published'`;
+    expect(after.every((r) => r.publishedAt !== null)).toBe(true);
+  });
+});
