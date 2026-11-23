@@ -9,19 +9,20 @@ export const ALL_CATEGORIES = '*';
 export function CategoryTabs({ tabs, value, onChange, total, testId = 'category-tabs' }: { tabs: ItemCategoryTab[]; value: string; onChange: (key: string) => void; total?: number; testId?: string }) {
   const all = [{ key: ALL_CATEGORIES, label: '全部', group: '', count: total ?? tabs.reduce((n, t) => n + t.count, 0) }, ...tabs];
   return (
-    <div className="scroll-thin -mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 pb-1" role="tablist" aria-label="分类" data-testid={testId}>
+    <div className="scroll-thin -mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 pb-1" role="group" aria-label="分类" data-testid={testId}>
       {all.map((c) => (
         <button
           key={c.key}
           type="button"
-          role="tab"
-          aria-selected={value === c.key}
+          aria-pressed={value === c.key}
           onClick={() => onChange(c.key)}
           data-testid="category-tab"
           className={cn('tap relative h-8 shrink-0 rounded-full px-3.5 text-[13px] font-semibold transition-colors', value === c.key ? 'bg-pine text-paper' : 'bg-paper-2 text-ink-2 hover:bg-paper-3')}
         >
           {c.label}
-          <span className={cn('ml-1 text-[12px] font-normal', value === c.key ? 'text-paper/80' : 'text-ink-3')}>{c.count}</span>
+          <span aria-hidden className={cn('ml-1 text-[12px] font-normal', value === c.key ? 'text-paper/80' : 'text-ink-3')}>
+            {c.count}
+          </span>
         </button>
       ))}
     </div>
