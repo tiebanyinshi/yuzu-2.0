@@ -43,3 +43,37 @@ export function lineName(name: string, prices: readonly TierPrice[], tier: Price
 export function itemTags(item: { strength: Strength | null; essentialOil: boolean; heatTherapy: boolean; popular: boolean }): string[] {
   return [...(item.strength ? [`力道${STRENGTH_LABELS[item.strength]}`] : []), ...(item.essentialOil ? ['精油'] : []), ...(item.heatTherapy ? ['热疗'] : []), ...(item.popular ? ['超人气'] : [])];
 }
+
+// ───────────── 点单页的分类切换（价目表重做第一批，PC19）─────────────
+// 价目表来的项目按价目表的分类（名称与顺序和表格一致）；不是价目表来的按收银项目的类别，排在后面。
+
+export interface ItemCategoryTab {
+  key: string;
+  label: string;
+  /** 上一级（零点菜品的餐段、工作表名）；不是价目表来的为空 */
+  group: string;
+  count: number;
+}
+
+type TabItem = { category: string; catalogCategory?: { code: string; name: string; group: string; sort: number } | null };
+
+/** 一个项目在分类切换里属于哪一格 */
+export const itemCategoryKey = (i: TabItem): string => (i.catalogCategory ? i.catalogCategory.code : `item:${i.category || '其他'}`);
+
+/** 分类切换的各格（不含「全部」）：价目表的按表格顺序，其余按出现先后；同名的分类（早餐、午餐都有「面食」）标上上一级 */
+export function itemCategoryTabs(items: readonly TabItem[]): ItemCategoryTab[] {
+  const tabs = new Map<string, ItemCategoryTab & { sort: number; order: number }>();
+  items.forEach((i, order) => {
+    const key = itemCategoryKey(i);
+    const had = tabs.get(key);
+    if (had) {
+      had.count += 1;
+      return;
+    }
+    const c = i.catalogCategory;
+    tabs.set(key, { key, label: c ? c.name : i.category || '其他', group: c?.group ?? '', count: 1, sort: c ? c.sort : Number.MAX_SAFE_INTEGER, order });
+  });
+  const list = [...tabs.values()].sort((a, b) => a.sort - b.sort || a.order - b.order);
+  const dup = new Set(list.map((t) => t.label).filter((l, i, all) => all.indexOf(l) !== i));
+  return list.map(({ key, label, group, count }) => ({ key, label: dup.has(label) && group ? `${group} · ${label}` : label, group, count }));
+}

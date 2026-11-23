@@ -246,15 +246,7 @@ export function ErpPendingPanel({
   );
 }
 
-function PendingRow({
-  op,
-  onFound,
-  onRegistered,
-}: {
-  op: ErpPendingOp;
-  onFound?: (op: ErpPendingOp, ref: ErpOpRef) => void;
-  onRegistered?: () => void;
-}) {
+function PendingRow({ op, onFound, onRegistered }: { op: ErpPendingOp; onFound?: (op: ErpPendingOp, ref: ErpOpRef) => void; onRegistered?: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [busy, setBusy] = useState<null | 'check' | 'resend' | 'abandon'>(null);

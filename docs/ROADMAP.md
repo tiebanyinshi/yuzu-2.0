@@ -247,6 +247,8 @@
   - `235`（`235_price_catalog_entry_ops.sql`，审查修正）：单条新增、修改、停用 / 启用的操作编号（记在改动留痕 `price_catalog_changes.op_key` 上），`op_fences` 的类型约束追加 `price_entry`。回滚脚本 `docs/rollback/235_price_catalog_entry_ops.down.sql`。
   - `236`（`236_price_catalog_set_ops_more.sql`，审查修正）：切换生效、放弃草稿也记操作编号（`price_catalog_set_ops` 的动作加 activate / discard，两个数据集编号可为空、不再引用数据集），`op_fences` 的类型约束追加 `price_set`。回滚脚本 `docs/rollback/236_price_catalog_set_ops_more.down.sql`。
   - `237`（`237_price_catalog_links.sql`，第四批）：价目表的一项对接一个收银项目（`price_catalog_links`），切换生效、回滚、改生效中的价目时把价格同步到收银项目；对接的操作编号 `price_catalog_link_ops`；菜品改价记录来源追加 `price_catalog`，`op_fences` 的类型约束追加 `price_link`。回滚脚本 `docs/rollback/237_price_catalog_links.down.sql`。
+- **价目表重做（店主 2026-11-23，第二版需求说明；分支 `feat/price-catalog`，基于 v8.1.24、不含 OA；五批做完一起发版，设计见 `docs/PRICE_CATALOG.md` 第 7 节）**：迁移号 240 起（210–223 是 OA、230–237 是上次的价目表）。
+  - `240`（`240_price_catalog_items.sql`，第一批）：收银项目上加价目表的分类（编码、名称、上一级、排序）与 `catalog_key` / `catalog_managed`（价目表新建的收银项目）。回滚脚本 `docs/rollback/240_price_catalog_items.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

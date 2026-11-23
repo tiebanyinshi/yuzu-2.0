@@ -67,7 +67,9 @@ type ItemData = z.output<typeof ItemInput>;
 
 const ITEM_COLUMNS = (db: Db, base = false) => db`
   i.id, i.name, i.category, i.price, i.duration_minutes, i.gender, i.strength, i.essential_oil, i.heat_therapy, i.popular,
-  i.technician_required, i.note, i.active, i.sort_order, ${pricesColumn(db, { base })} AS prices`;
+  i.technician_required, i.note, i.active, i.sort_order, ${pricesColumn(db, { base })} AS prices,
+  CASE WHEN i.catalog_category_code IS NULL THEN NULL
+       ELSE json_build_object('code', i.catalog_category_code, 'name', i.catalog_category_name, 'group', coalesce(i.catalog_group, ''), 'sort', coalesce(i.catalog_sort, 0)) END AS catalog_category`;
 
 /** base：全公司的价目（后台维护价目表用）；不给时第二家店按本店价（前台挂账、点单用，8.0.22） */
 export async function loadItems(db: Db, includeInactive = false, base = false): Promise<ServiceItem[]> {

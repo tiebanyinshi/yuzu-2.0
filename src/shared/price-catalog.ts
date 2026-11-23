@@ -476,3 +476,83 @@ export function priceChangeLines(before: PriceCatalogEntry | null, after: PriceC
     .filter(([k, v]) => (from ? from[k] !== v : v !== '' && v !== '—' && k !== '状态' && k !== '能否下单'))
     .map(([label, v]) => ({ label, from: from ? from[label] || '（空）' : '', to: v || '（空）' }));
 }
+
+// ───────────────────────── 分类（重做第一批，PC19）─────────────────────────
+// 分类以表格原文为准，存成独立字段（分类编码 + 分类名称），不拼进项目名称：
+//   门店价格按「类型」列（门票 / 夜间票 / 餐票 / 服务费）；娱乐价格按「类型」（畅玩卷 / 娱乐设施）；房间价格按「房型」；
+//   零点菜品「餐段 → 菜品分类」两级；按摩及助浴按 9 个板块。编码由分类本身算出来，同一个分类在哪儿都是同一个编码。
+
+export interface PriceCategory {
+  /** 分类编码：store.ticket、massage.01、dish.2.9f3a1c…（同一个分类全系统同一个） */
+  code: string;
+  /** 分类名称（表格原文） */
+  name: string;
+  /** 上一级：零点菜品是餐段，其余是工作表名 */
+  group: string;
+  /** 排序：与表格里的先后一致（工作表 × 1000 + 上一级 × 100 + 本级） */
+  sort: number;
+}
+
+const STORE_CATEGORY: Partial<Record<PriceKind, [string, string, number]>> = {
+  ticket: ['store.ticket', '门票', 1],
+  night_ticket: ['store.night', '夜间票', 2],
+  meal_ticket: ['store.meal', '餐票', 3],
+  service_fee: ['store.fee', '服务费', 4],
+};
+
+/** 文字 → 6 位十六进制（FNV-1a）：房型、菜品分类没有固定清单，用名称算出稳定的编码 */
+export function shortHash(s: string): string {
+  let h = 0x811c9dc5;
+  for (const ch of s) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0').slice(0, 6);
+}
+
+/**
+ * 一项属于哪个分类。sortHint：同一张表里这个分类第一次出现的先后（零点菜品的分类、房型没有固定清单，按表格里出现的先后排）
+ */
+export function priceCategoryOf(e: Pick<PriceCatalogEntry, 'sheet' | 'kind' | 'section' | 'category' | 'name'>, sortHint = 0): PriceCategory {
+  const sheetSort = (PRICE_SHEETS.indexOf(e.sheet) + 1) * 1000;
+  switch (e.sheet) {
+    case 'store': {
+      const [code, name, i] = STORE_CATEGORY[e.kind] ?? ['store.other', e.section || '其他', 9];
+      return { code, name, group: PRICE_SHEET_NAMES.store, sort: sheetSort + i };
+    }
+    case 'entertainment':
+      return e.kind === 'play_pass'
+        ? { code: 'ent.pass', name: '畅玩卷', group: PRICE_SHEET_NAMES.entertainment, sort: sheetSort + 1 }
+        : { code: 'ent.play', name: '娱乐设施', group: PRICE_SHEET_NAMES.entertainment, sort: sheetSort + 2 };
+    case 'room':
+      return { code: `room.${shortHash(e.name)}`, name: e.name, group: PRICE_SHEET_NAMES.room, sort: sheetSort + 1 + sortHint };
+    case 'dish': {
+      const si = DISH_SECTIONS.indexOf(e.section as (typeof DISH_SECTIONS)[number]);
+      const section = si < 0 ? 9 : si + 1;
+      return { code: `dish.${section}.${shortHash(e.category || '其他')}`, name: e.category || '其他', group: e.section || '其他', sort: sheetSort + section * 100 + 1 + sortHint };
+    }
+    case 'massage': {
+      const i = MASSAGE_SECTIONS.indexOf(e.section as (typeof MASSAGE_SECTIONS)[number]);
+      const n = i < 0 ? 99 : i + 1;
+      return { code: `massage.${String(n).padStart(2, '0')}`, name: e.section || '其他', group: PRICE_SHEET_NAMES.massage, sort: sheetSort + n };
+    }
+  }
+}
+
+/** 整份价目表的分类（按表格先后，去重）：点单页的分类切换、对照页都用这一份 */
+export function priceCategoriesOf(entries: Pick<PriceCatalogEntry, 'sheet' | 'kind' | 'section' | 'category' | 'name' | 'sortOrder'>[]): { categories: PriceCategory[]; byEntry: PriceCategory[] } {
+  const ordered = entries.map((e, i) => ({ e, i })).sort((a, b) => PRICE_SHEETS.indexOf(a.e.sheet) - PRICE_SHEETS.indexOf(b.e.sheet) || a.e.sortOrder - b.e.sortOrder || a.i - b.i);
+  const hints = new Map<string, number>();
+  const seen = new Map<string, PriceCategory>();
+  const byEntry: PriceCategory[] = Array.from({ length: entries.length });
+  for (const { e, i } of ordered) {
+    const raw = priceCategoryOf(e);
+    // 没有固定清单的（房型、菜品分类）按同一张表 / 同一个餐段里第一次出现的先后排
+    const scope = e.sheet === 'dish' ? `dish|${e.section}` : e.sheet;
+    if (!hints.has(raw.code)) hints.set(raw.code, [...hints.keys()].filter((k) => k.startsWith(scope === 'room' ? 'room.' : `dish.${raw.code.split('.')[1]}.`)).length);
+    const c = e.sheet === 'room' || e.sheet === 'dish' ? priceCategoryOf(e, hints.get(raw.code)!) : raw;
+    if (!seen.has(c.code)) seen.set(c.code, c);
+    byEntry[i] = seen.get(c.code)!;
+  }
+  return { categories: [...seen.values()].sort((a, b) => a.sort - b.sort), byEntry };
+}

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { HandHeart, Minus, Plus, Trash2 } from 'lucide-react';
-import type { PriceTier } from '@shared/catalog';
+import { itemCategoryKey, itemCategoryTabs, type PriceTier } from '@shared/catalog';
 import { ZONE_LABELS, type VisitDetail } from '@shared/frontdesk';
 import { parseYuan } from '@shared/money';
 import { technicianText, type CallType } from '@shared/technicians';
@@ -11,6 +11,7 @@ import { useCan, useSession } from '../../lib/session';
 import { cn } from '../../lib/utils';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { LoadFailed } from '../../components/LoadFailed';
+import { ALL_CATEGORIES, CategoryTabs } from '../../components/CategoryTabs';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { QtyInput } from '../../components/QtyInput';
@@ -41,7 +42,7 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
   const catalog = useCatalog();
   /** 键见 lineKey（项目:价格档，选了技师时再加技师与上钟方式），值为数量 */
   const [cart, setCart] = useState<Map<string, number>>(new Map());
-  const [category, setCategory] = useState('全部');
+  const [category, setCategory] = useState<string>(ALL_CATEGORIES);
   /** 数量输得不对时的一句提示（输空了、超过上限） */
   const [qtyHint, setQtyHint] = useState<string | null>(null);
   const [custom, setCustom] = useState<{ name: string; amount: string }[]>([]);
@@ -69,7 +70,7 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
   useResetOnOpen(open, () => {
     setCart(new Map());
     setCustom([]);
-    setCategory('全部');
+    setCategory(ALL_CATEGORIES);
     setPicking(null);
     op.clearError();
   });
@@ -80,8 +81,8 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
   }, [defaultCallType]);
 
   const items = useMemo(() => (catalog.data?.items ?? []).filter((i) => i.active), [catalog.data]);
-  const categories = useMemo(() => ['全部', ...new Set(items.map((i) => i.category || '其他'))], [items]);
-  const shown = category === '全部' ? items : items.filter((i) => (i.category || '其他') === category);
+  const tabs = useMemo(() => itemCategoryTabs(items), [items]);
+  const shown = category === ALL_CATEGORIES ? items : items.filter((i) => itemCategoryKey(i) === category);
 
   const locked = op.locked;
   const touch = op.clearError;
@@ -233,21 +234,7 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
             />
           ) : (
             <>
-              <div className="scroll-thin -mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 pb-1">
-                {categories.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setCategory(c)}
-                    className={cn(
-                      'tap relative h-8 shrink-0 rounded-full px-3.5 text-[13px] font-semibold transition-colors',
-                      category === c ? 'bg-pine text-paper' : 'bg-paper-2 text-ink-2 hover:bg-paper-3',
-                    )}
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
+              <CategoryTabs tabs={tabs} value={category} onChange={setCategory} total={items.length} testId="add-items-categories" />
               {catalog.isPending ? (
                 <Skeleton className="h-40" />
               ) : catalog.isError && !catalog.data ? (
