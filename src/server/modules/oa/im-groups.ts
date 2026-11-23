@@ -15,7 +15,8 @@ import { forbidden, notFound, unprocessable } from '../../lib/errors';
 import { idParam, parse } from '../../lib/validate';
 import { writeAudit } from '../../lib/audit';
 import { assertActorOnDuty, assertGroupQuota, detailOf, employeeOnly, insertMessage, lockMembershipSync, onDuty, onDutyIds } from './im';
-import { managesOrg, verifiedHeads } from './directory';
+import { verifiedHeads } from './directory';
+import { managesOrg } from './org';
 
 const MembersInput = z.object({ staffIds: z.array(z.number().int().positive()).min(1, '请选要拉进群的人').max(IM_GROUP_MAX) });
 const MemberParams = z.object({ id: z.coerce.number().int().positive(), staffId: z.coerce.number().int().positive() });

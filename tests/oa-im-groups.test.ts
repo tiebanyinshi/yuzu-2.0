@@ -401,4 +401,18 @@ describe('OA-16 部门群的边界', () => {
     expect(memberIds(d)).not.toContain(s0.id);
     expect(d.members.find((m) => m.role === 'owner')).toBeTruthy();
   });
+
+  it('自己选成人力负责人的不能用组织架构接口：不能把自己指定成部门主管，也就进不了那个部门群', async () => {
+    const h3 = await hire('g_h3', 'hr.lead');
+    await ctx.sql`UPDATE staff SET position_chosen_at = now() WHERE id = ${h3.id}`;
+    expect((await api(ctx.app, h3.cookie, 'GET', '/api/oa/org')).status).toBe(403);
+    const [dep] = await ctx.sql<{ version: number }[]>`SELECT version FROM org_departments WHERE key = 'kitchen'`;
+    const r = await api(ctx.app, h3.cookie, 'PUT', '/api/oa/org/departments/kitchen', { parentKey: 'gmo', headStaffId: h3.id, version: dep!.version });
+    expect(r.status).toBe(403);
+    const [after] = await ctx.sql<{ head: number | null }[]>`SELECT head_staff_id AS head FROM org_departments WHERE key = 'kitchen'`;
+    expect(after!.head).not.toBe(h3.id);
+    // 后台核实以后照常能管
+    await ctx.sql`UPDATE staff SET position_chosen_at = NULL WHERE id = ${h3.id}`;
+    expect((await api(ctx.app, h3.cookie, 'GET', '/api/oa/org')).status).toBe(200);
+  });
 });
