@@ -282,4 +282,16 @@ describe('OA-16 部门群的边界', () => {
     expect(code(r)).toBe('MEMBER_INVALID');
     expect(memberIds((await detail(o, g)).body)).not.toContain(q.id);
   });
+
+  it('自己选成负责人（没核实）的不算主管：不能看手机号、不能建部门群；后台核实以后可以', async () => {
+    const el = await hire('g_el', 'ent.lead');
+    await ctx.sql`UPDATE staff SET position_chosen_at = now() WHERE id = ${el.id}`;
+    const d = (await api<Directory>(ctx.app, el.cookie, 'GET', '/api/oa/directory')).body;
+    expect(d.canSeePhones).toBe(false);
+    expect(d.departments.find((x) => x.key === 'ent')?.canCreateGroup).toBe(false);
+    expect((await api(ctx.app, el.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'ent' })).status).toBe(403);
+    await ctx.sql`UPDATE staff SET position_chosen_at = NULL WHERE id = ${el.id}`;
+    expect((await api<Directory>(ctx.app, el.cookie, 'GET', '/api/oa/directory')).body.canSeePhones).toBe(true);
+    expect((await api(ctx.app, el.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'ent' })).status).toBe(201);
+  });
 });

@@ -27,12 +27,26 @@ async function phoneScopeOf(db: Db): Promise<DirectoryPhoneScope> {
   return v === 'managers' || v === 'all' || v === 'hr' ? v : DEFAULT_DIRECTORY_PHONE_SCOPE;
 }
 
+/**
+ * 核实过的部门主管（Codex 安全审查 ae2d4b6）：后台指定的主管，或者岗位是后台给的（不是自己选的、还没核实的）负责人。
+ * OA-16 里由主管身份得来的权限（看手机号、建部门群）只认这些人；自己选成负责人的不算，等后台核实。
+ */
+export async function verifiedHeads(db: Db, org?: Awaited<ReturnType<typeof loadOrg>>): Promise<Map<OrgDepartment, number>> {
+  const o = org ?? (await loadOrg(db));
+  const selfChosen = new Set((await db<{ id: number }[]>`SELECT id FROM staff WHERE position_chosen_at IS NOT NULL`).map((r) => Number(r.id)));
+  const out = new Map<OrgDepartment, number>();
+  for (const d of o.departments) if (d.head && (d.head.designated || !selfChosen.has(d.head.id))) out.set(d.key, d.head.id);
+  return out;
+}
+
 export async function loadDirectory(db: Db, actor: Actor): Promise<Directory> {
   const org = await loadOrg(db);
   const phoneScope = await phoneScopeOf(db);
+  const verified = await verifiedHeads(db, org);
   const heads = new Map<number, OrgDepartment[]>();
   for (const d of org.departments) if (d.head) heads.set(d.head.id, [...(heads.get(d.head.id) ?? []), d.key]);
-  const isHead = heads.has(actor.id);
+  // 看手机号、建部门群只认核实过的主管（资料卡上「主管」照组织架构显示）
+  const isHead = [...verified.values()].includes(actor.id);
   const canSeePhones = phoneScope === 'all' || managesOrg(actor) || (phoneScope === 'managers' && isHead);
   const onDuty = org.employees.filter((e) => e.active && e.status === 'active');
   const people = onDuty.map((e): DirectoryPerson => {
@@ -62,7 +76,7 @@ export async function loadDirectory(db: Db, actor: Actor): Promise<Directory> {
       parentKey: d.parentKey,
       headId: d.head?.id ?? null,
       group: g ? { id: g.mine ? Number(g.id) : null } : null,
-      canCreateGroup: managesOrg(actor) || d.head?.id === actor.id,
+      canCreateGroup: managesOrg(actor) || verified.get(d.key) === actor.id,
     };
   });
   return { departments, people, phoneScope, canSeePhones, canConfigure: managesOrg(actor) };
