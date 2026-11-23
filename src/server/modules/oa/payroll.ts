@@ -254,6 +254,8 @@ const BatchParam = z.object({ id: z.coerce.number().int().positive('编号不正
 const SlipParam = BatchParam.extend({ staffId: z.coerce.number().int().positive('编号不正确') });
 const FileParam = BatchParam.extend({ fileId: z.coerce.number().int().positive('编号不正确') });
 const SlipInput = z.object({ values: z.record(z.string(), z.union([z.number(), z.string(), z.null()])) });
+/** 补人：只新增；已经在表里（别人刚补进来、填过）的原样不动（Codex 审查 a1bf658） */
+const AddInput = z.object({}).strict();
 // 只收 Excel（需求文档：上传 Excel）：原件按上传的字节原样加密存档（CSV 在页面上已经按 GBK / UTF-8 解成文字，存不回原件，Codex 审查 3b5a8bf）
 const FileInput = z.object({
   fileName: z
@@ -435,7 +437,9 @@ function planImport(sheet: Sheet, fileName: string, fields: PayslipField[], staf
         if (folded.length === 1) who = folded[0]!;
         else if (folded.length > 1) issues.push(`工号「${empNo}」大小写对不上，有 ${folded.length} 位员工的工号只差大小写，请照档案写`);
         else issues.push(`工号「${empNo}」对不上员工`);
-      } else if (name && name !== who.name) issues.push(`工号「${empNo}」是「${who.name}」，姓名写的是「${name}」`);
+      }
+      // 原样对上、不分大小写对上的都核对姓名（Codex 审查 a1bf658）
+      if (who && name && name !== who.name) issues.push(`工号「${empNo}」是「${who.name}」，姓名写的是「${name}」`);
     } else if (!name) issues.push('工号、姓名都没填');
     else {
       const same = everyone.filter((e) => e.name === name);
@@ -590,6 +594,23 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
       } else return;
       await touch(tx, id, req.actor.id);
       await writeAudit(tx, { staffId: req.actor.id, action: 'oa_payroll_edited', targetType: 'oa_payroll_batch', targetId: id, detail: { staffId, added: !cur }, ip: req.ip });
+    });
+    return { ok: true };
+  });
+
+  app.post('/api/oa/payroll/batches/:id/slips/:staffId/add', { preHandler: canManage }, async (req) => {
+    const { id, staffId } = parse(SlipParam, req.params);
+    parse(AddInput, req.body ?? {});
+    await sql.begin(async (tx) => {
+      const b = await lockDraft(tx, id);
+      const [cur] = await tx`SELECT 1 FROM oa_payslips WHERE batch_id = ${id} AND staff_id = ${staffId}`;
+      if (cur) return;
+      const e = (await staffFor(tx, b.month)).get(staffId);
+      if (!e) throw notFound('员工不存在');
+      if (e.offRoster) throw unprocessable('NOT_ON_ROSTER', `${e.name}不在这个月的在职名单里（${e.offRoster}）`);
+      await tx`INSERT INTO oa_payslips (batch_id, staff_id, updated_by) VALUES (${id}, ${staffId}, ${req.actor.id})`;
+      await touch(tx, id, req.actor.id);
+      await writeAudit(tx, { staffId: req.actor.id, action: 'oa_payroll_edited', targetType: 'oa_payroll_batch', targetId: id, detail: { staffId, added: true }, ip: req.ip });
     });
     return { ok: true };
   });

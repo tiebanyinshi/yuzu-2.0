@@ -206,7 +206,7 @@ function BatchView({ id, onBack }: { id: number; onBack: () => void }) {
   const add = async (staffId: number) => {
     setBusy(`add-${staffId}`);
     try {
-      await api.put(`/api/oa/payroll/batches/${id}/slips/${staffId}`, { values: {} });
+      await api.post(`/api/oa/payroll/batches/${id}/slips/${staffId}/add`, {});
       refresh();
     } catch (e) {
       toast({ tone: 'error', title: '没有办成', body: errorMessage(e) });

@@ -348,6 +348,27 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
     expect((await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import`, { fileName: 'a.csv', xlsxBase64: xlsx([['x']]) })).status).toBe(400);
   });
 
+  it('工号不分大小写对上的同样核对姓名', async () => {
+    const b = (await api<PayrollBatchSummary[]>(ctx.app, hr(), 'GET', '/api/oa/payroll/batches')).body.find((x) => x.title === '大小写')!;
+    const r = await api<PayrollImportPreview>(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import/preview`, {
+      fileName: 'n.xlsx',
+      xlsxBase64: xlsx([['标题'], header(), ['e001', '李四', '', ...std.fields.map(() => '9000')]]),
+    });
+    expect(r.body.errorCount).toBe(1);
+    expect(r.body.rows[0]!.issues.join()).toContain(`是「${emp.a!.name}」，姓名写的是「李四」`);
+  });
+
+  it('补人只新增：别人已经补进来、填过的，再点「补进来」原样不动', async () => {
+    const b = (await api<PayrollBatchSummary[]>(ctx.app, hr(), 'GET', '/api/oa/payroll/batches')).body.find((x) => x.title === '大小写')!;
+    await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/slips/${emp.b!.id}/remove`);
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/oa/payroll/batches/${b.id}/slips/${emp.b!.id}/add`, {})).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/oa/payroll/batches/${b.id}/slips/${emp.b!.id}`, { values: { f1: 123400 } })).status).toBe(200);
+    expect((await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/slips/${emp.b!.id}/add`, {})).status).toBe(200);
+    const d = (await api<PayrollBatchDetail>(ctx.app, hr(), 'GET', `/api/oa/payroll/batches/${b.id}`)).body;
+    expect(d.slips.find((s) => s.staffId === emp.b!.id)!.values).toEqual({ f1: 123400 });
+    expect(code(await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/slips/${emp.leftBefore!.id}/add`, {}))).toBe('NOT_ON_ROSTER');
+  });
+
   it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {
     const body = { month: '2026-12', title: '同时建', templateId: std.id };
     const [x, y] = await Promise.all([
