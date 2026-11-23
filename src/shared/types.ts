@@ -196,6 +196,18 @@ export interface ServiceItem {
   note: string;
   active: boolean;
   sortOrder: number;
+  /** 价目表的分类（重做第一批，PC19）：落库自生效中的价目表；不是价目表来的为 null */
+  catalogCategory: ItemCatalogCategory | null;
+  /** 价目表的原始编号（重做第五批，点单时按名称或编号搜）；没有的为 null */
+  catalogCode: string | null;
+}
+
+/** 收银项目上的价目表分类：编码 + 名称（表格原文）+ 上一级（零点菜品是餐段，其余是工作表名）+ 排序 */
+export interface ItemCatalogCategory {
+  code: string;
+  name: string;
+  group: string;
+  sort: number;
 }
 
 export interface Catalog {

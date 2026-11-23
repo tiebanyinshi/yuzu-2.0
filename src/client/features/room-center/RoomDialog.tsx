@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { CalendarClock, CircleCheck, DoorOpen, History, Link2, Play, Plus, Shuffle, Sparkles, Square, Timer, Unlink, UserPlus, Wrench } from 'lucide-react';
-import { elapsedText, ROOM_SOURCE_HINTS, ROOM_SOURCE_LABELS, type RoomCard, type RoomEventKind, type RoomSessionView } from '@shared/room-center';
+import { elapsedText, isLobbyBusinessType, ROOM_SOURCE_HINTS, ROOM_SOURCE_LABELS, type RoomCard, type RoomEventKind, type RoomSessionView } from '@shared/room-center';
 import { formatYuan } from '@shared/money';
 import { spaceLabel } from '@shared/spaces';
 import { usageEstimate } from '@shared/usages';
@@ -158,6 +158,7 @@ export function RoomDialog({
   const canUsage = can('room.operate');
   const label = spaceLabel(room.code, room.name);
   const registered = room.guests.some((g) => g.registrationId !== null);
+  const lobby = isLobbyBusinessType(room.businessType);
 
   // 上钟、下钟走钟房原来的接口（钟房日志、技师排位都照旧）
   const clock = async (s: RoomSessionView, action: 'start' | 'finish') => {
@@ -276,6 +277,7 @@ export function RoomDialog({
             <p className="mt-0.5 text-[12.5px] text-ink-3">
               {formatTime(g.since)} {g.registrationId === null ? '派钟' : '登记'}
               {g.sellerNo && ` · 出单员 ${g.sellerNo} ${g.sellerName}`}
+              {g.overnight && ' · 过夜'}
               {g.note && ` · 备注：${g.note}`}
             </p>
             <ul className="mt-1 divide-y divide-line/70">
@@ -372,19 +374,22 @@ export function RoomDialog({
               <Button variant="secondary" icon={<Shuffle className="size-4" />} className="h-11" disabled={dispatchOff} onClick={() => onAction({ kind: 'move' })} data-testid="rc-act-move">
                 换房
               </Button>
-              <Button
-                variant="secondary"
-                icon={<UserPlus className="size-4" />}
-                className="h-11"
-                disabled={!canPost}
-                onClick={() => onAction({ kind: 'register', join: true })}
-                data-testid="rc-act-join"
-              >
-                同房加人
-              </Button>
+              {/* 休息大厅不同房加人、不并房（重做第五批，PC24） */}
+              {!lobby && (
+                <Button
+                  variant="secondary"
+                  icon={<UserPlus className="size-4" />}
+                  className="h-11"
+                  disabled={!canPost}
+                  onClick={() => onAction({ kind: 'register', join: true })}
+                  data-testid="rc-act-join"
+                >
+                  同房加人
+                </Button>
+              )}
             </>
           )}
-          {(room.kind === 'service' || room.kind === 'party') && room.status === 'in_use' && room.merged.length <= 1 && (
+          {(room.kind === 'service' || room.kind === 'party') && !lobby && room.status === 'in_use' && room.merged.length <= 1 && (
             <Button variant="secondary" icon={<Link2 className="size-4" />} className="h-11" disabled={dispatchOff} onClick={() => onAction({ kind: 'merge' })} data-testid="rc-act-merge">
               并房
             </Button>
