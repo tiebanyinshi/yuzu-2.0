@@ -77,3 +77,11 @@ export function itemCategoryTabs(items: readonly TabItem[]): ItemCategoryTab[] {
   const dup = new Set(list.map((t) => t.label).filter((l, i, all) => all.indexOf(l) !== i));
   return list.map(({ key, label, group, count }) => ({ key, label: dup.has(label) && group ? `${group} · ${label}` : label, group, count }));
 }
+
+/** 点单时搜项目（重做第五批）：名称或价目表编号，不分大小写、不管空格，包含就算 */
+export function matchesItemSearch(i: { name: string; catalogCode?: string | null; catalogCategory?: { name: string } | null }, q: string): boolean {
+  const k = q.replace(/\s+/g, '').toLowerCase();
+  if (!k) return true;
+  const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
+  return norm(i.name).includes(k) || (!!i.catalogCode && norm(i.catalogCode).includes(k)) || (!!i.catalogCategory && norm(i.catalogCategory.name).includes(k));
+}

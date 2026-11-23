@@ -27,7 +27,7 @@ import { priceQuote, quoteUnit, serviceFeeOf } from '../src/shared/price-quote';
 import { buildWorkbook, type WbSheet } from '../src/server/lib/xlsx';
 import { readXlsx } from '../src/server/lib/xlsx-read';
 import { minutesOf, parsePriceCatalog, roomNumbersOf, windowOf, yuanToCents } from '../src/server/modules/price-catalog/parse';
-import { itemCategoryKey, itemCategoryTabs } from '../src/shared/catalog';
+import { itemCategoryKey, itemCategoryTabs, matchesItemSearch } from '../src/shared/catalog';
 import type { Catalog } from '../src/shared/types';
 import type { DiningMenu } from '../src/shared/dining';
 import { api, setup, type TestContext } from './helpers';
@@ -1391,6 +1391,12 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     expect(tabs.find((t) => t.label === '门票')!.count).toBe(4);
     expect(tabs.find((t) => t.label === '康疗')!.count).toBe(2);
     expect(itemCategoryKey(ticket)).toBe('store.ticket');
+    // 第五批：点单搜项目——名称或价目表编号（不分大小写、不管空格）
+    const gufa = catalog.items.find((i) => i.name === '古法中式')!;
+    expect(gufa.catalogCode).toBe('1');
+    expect(matchesItemSearch(ticket, '12h不含')).toBe(true);
+    expect(matchesItemSearch(gufa, '1')).toBe(true);
+    expect(matchesItemSearch(gufa, '泰式')).toBe(false);
     // 第二批：房态中心登记（康美部）只列要技师的、房间 / 大堂做的板块，按表格顺序；助浴、护理在浴区，不在这里列（PC22）
     const service = catalog.items.filter((i) => i.technicianRequired && !ROOM_SERVICE_EXCLUDED_CATEGORIES.includes(i.catalogCategory?.code ?? ''));
     expect(itemCategoryTabs(service).map((t) => `${t.label}:${t.count}`)).toEqual(['康疗:2', '中医:1', '面护:2', '大堂按摩:1']);

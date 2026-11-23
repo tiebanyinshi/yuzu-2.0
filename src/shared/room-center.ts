@@ -166,6 +166,8 @@ export interface RoomGuestView {
   sellerNo: string;
   sellerName: string;
   note: string;
+  /** 客人过夜（重做第五批，PC25：按摩房、足浴房、SPA 房开单 / 续钟时选的） */
+  overnight: boolean;
   /** 登记的时刻（没有登记单的是钟单建的时刻） */
   since: string;
   sessions: RoomSessionView[];
@@ -351,4 +353,18 @@ export function elapsedText(sinceIso: string, nowMs: number): string {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return h > 0 ? `${h} 小时${m ? ` ${m} 分` : ''}` : `${m} 分`;
+}
+
+/** 休息大厅一类（重做第五批，PC24）：不能同房加人、不能并房。按业态认：带「大厅」「大堂」「休息区」「休息厅」的 */
+export const isLobbyBusinessType = (businessType: string): boolean => /大厅|大堂|休息区|休息厅/.test(businessType);
+
+/** 登记时问「客人是否过夜」的房间（重做第五批，PC25）：技师服务的房间里按摩、足浴、SPA 这几类（休息大厅不问） */
+export const asksOvernight = (kind: RoomSource, businessType: string): boolean => kind === 'service' && !isLobbyBusinessType(businessType);
+
+/** 房态中心搜索（重做第五批，PC26）：房号、房间名、客人手牌号、客人姓名，不分大小写、包含就算 */
+export function matchesRoomSearch(r: Pick<RoomCard, 'code' | 'name' | 'guests' | 'guestText' | 'hotel'>, q: string): boolean {
+  const k = q.replace(/\s+/g, '').toLowerCase();
+  if (!k) return true;
+  const hit = (s: string | null | undefined) => !!s && s.replace(/\s+/g, '').toLowerCase().includes(k);
+  return hit(r.code) || hit(r.name) || hit(r.guestText) || r.guests.some((g) => hit(g.tagCode) || hit(g.guest)) || hit(r.hotel?.stay?.tagCode) || hit(r.hotel?.stay?.guestLabel);
 }

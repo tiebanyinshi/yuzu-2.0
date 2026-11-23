@@ -249,6 +249,7 @@
   - `237`（`237_price_catalog_links.sql`，第四批）：价目表的一项对接一个收银项目（`price_catalog_links`），切换生效、回滚、改生效中的价目时把价格同步到收银项目；对接的操作编号 `price_catalog_link_ops`；菜品改价记录来源追加 `price_catalog`，`op_fences` 的类型约束追加 `price_link`。回滚脚本 `docs/rollback/237_price_catalog_links.down.sql`。
 - **价目表重做（店主 2026-11-23，第二版需求说明；分支 `feat/price-catalog`，基于 v8.1.24、不含 OA；五批做完一起发版，设计见 `docs/PRICE_CATALOG.md` 第 7 节）**：迁移号 240 起（210–223 是 OA、230–237 是上次的价目表）。
   - `240`（`240_price_catalog_items.sql`，第一批）：收银项目上加价目表的分类（编码、名称、上一级、排序）与 `catalog_key` / `catalog_managed`（价目表新建的收银项目）。回滚脚本 `docs/rollback/240_price_catalog_items.down.sql`。
+  - `241`（`241_room_overnight.sql`，第五批）：房态中心登记单记「客人是否过夜」（`room_registrations.overnight`）；收银项目上记价目表的原始编号（`catalog_code`，点单时按编号搜）。回滚脚本 `docs/rollback/241_room_overnight.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

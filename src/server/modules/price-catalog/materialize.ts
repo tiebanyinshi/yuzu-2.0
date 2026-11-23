@@ -76,7 +76,7 @@ export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], o
       // 已对接：补分类；价目表新建的还跟着改名称、时长、停用
       await tx`
         UPDATE service_items SET catalog_key = ${key}, catalog_category_code = ${c.code}, catalog_category_name = ${c.name}, catalog_group = ${c.group}, catalog_sort = ${c.sort},
-          updated_at = clock_timestamp()
+          catalog_code = ${e.code || null}, updated_at = clock_timestamp()
         WHERE id = ${itemId}`;
       await tx`
         UPDATE service_items SET name = ${e.name}, duration_minutes = ${minutesOf(e)}, gender = ${genderOf(e)}, technician_required = ${e.sheet === 'massage'},
@@ -94,7 +94,7 @@ export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], o
       id = same[0]!;
       await tx`
         UPDATE service_items SET catalog_key = ${key}, catalog_category_code = ${c.code}, catalog_category_name = ${c.name}, catalog_group = ${c.group}, catalog_sort = ${c.sort},
-          updated_at = clock_timestamp()
+          catalog_code = ${e.code || null}, updated_at = clock_timestamp()
         WHERE id = ${id}`;
     }
     if (id === null) {
@@ -132,6 +132,7 @@ export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], o
           catalog_category_name: c.name,
           catalog_group: c.group,
           catalog_sort: c.sort,
+          catalog_code: e.code || null,
         } as never)}
         RETURNING id`;
       id = Number(row!.id);

@@ -7,7 +7,19 @@
 
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { categoryProblem, roomKindOf, roomStatusOf, type RoomCard, type RoomCategoriesAdmin, type RoomCenterBoard, type RoomCheckoutPreview, type RoomHistory } from '../src/shared/room-center';
+import {
+  asksOvernight,
+  categoryProblem,
+  isLobbyBusinessType,
+  matchesRoomSearch,
+  roomKindOf,
+  roomStatusOf,
+  type RoomCard,
+  type RoomCategoriesAdmin,
+  type RoomCenterBoard,
+  type RoomCheckoutPreview,
+  type RoomHistory,
+} from '../src/shared/room-center';
 import type { SpaceLedger } from '../src/shared/spaces';
 import type { FrontdeskOpLookup } from '../src/shared/frontdesk';
 import { findGuestByRoom } from '../src/server/modules/dining-order-v8115';
@@ -825,5 +837,43 @@ describe('权限、看得到什么、给别的模块的入口', () => {
     for (const k of ['total', 'free', 'inUse', 'dirty', 'maintenance', 'booked'] as const) expect(sum(k), k).toBe(b.total[k]);
     expect(b.total.total).toBe(b.rooms.length);
     for (const c of b.categories) expect(c.counts.free + c.counts.inUse + c.counts.dirty + c.counts.maintenance + c.counts.booked).toBe(c.counts.total);
+  });
+  it('价目表重做第五批：过夜随登记与续钟保存、卡片看得到；价目表的项目不自选钟数；休息大厅不并房；房号 / 手牌搜得到', async () => {
+    const g = await enter();
+    const code = (await board()).rooms.find((x) => x.kind === 'service' && x.status === 'free' && x.businessType === 'SPA')!.code;
+    // 价目表的项目：时长由项目带出，钟数只能是 1
+    await ctx.sql`UPDATE service_items SET catalog_key = 'massage|康疗||足疗演练', duration_minutes = 60 WHERE id = ${foot}`;
+    const two = await register(code, { tagCode: g.tagCode, technicianId: tech['01'], quantity: 2, expectedTotal: 39600 });
+    expect(two.body.error?.code, JSON.stringify(two.body)).toBe('CATALOG_FIXED_DURATION');
+    const r = await register(code, { tagCode: g.tagCode, technicianId: tech['01'], overnight: true });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    await ctx.sql`UPDATE service_items SET catalog_key = NULL WHERE id = ${foot}`;
+    let card = await room(code);
+    expect(card.guests[0]!.overnight).toBe(true);
+    const [reg] = await ctx.sql<{ overnight: boolean }[]>`SELECT overnight FROM room_registrations WHERE space_id = ${spaceId[code]!} AND status = 'open'`;
+    expect(reg!.overnight).toBe(true);
+    // 续钟时改成不过夜
+    const s = card.guests[0]!.sessions[0]!;
+    const ext = await api(ctx.app, ctx.clerk, 'POST', on(code, 'extend'), { clientKey: randomUUID(), sessionId: s.id, quantity: 1, expectedTotal: 19800, overnight: false });
+    expect(ext.status, JSON.stringify(ext.body)).toBe(200);
+    card = await room(code);
+    expect(card.guests[0]!.overnight).toBe(false);
+    // 搜索：房号、手牌号（不分大小写）
+    expect(matchesRoomSearch(card, code.toLowerCase())).toBe(true);
+    expect(matchesRoomSearch(card, g.tagCode.toLowerCase())).toBe(true);
+    expect(matchesRoomSearch(card, '不存在的客人')).toBe(false);
+    // 休息大厅：不问过夜、不并房、不同房加人
+    expect(isLobbyBusinessType('休息大厅')).toBe(true);
+    expect(isLobbyBusinessType('SPA')).toBe(false);
+    expect(asksOvernight('service', 'SPA')).toBe(true);
+    expect(asksOvernight('service', '大堂休息区')).toBe(false);
+    expect(asksOvernight('party', '派对房')).toBe(false);
+    const merge = await act(code, 'merge', { withSpaceId: spaceId.H201 });
+    expect(merge.body.error?.code).toBe('MERGE_KIND');
+    // 不问过夜的房间带了过夜被拒
+    const g2 = await enter();
+    const hall = await register('H201', { tagCode: g2.tagCode, technicianId: tech['01'], overnight: true });
+    expect(hall.status).toBe(422);
+    await release(code);
   });
 });
