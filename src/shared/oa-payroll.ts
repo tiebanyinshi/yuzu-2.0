@@ -207,14 +207,14 @@ export interface MyPayslipItem {
   id: number;
   month: string;
   title: string;
-  /** 「实发」那一项（分）；模板没标或没填为空 */
-  net: number | null;
   publishedAt: string;
   signedAt: string | null;
 }
 
 /** 员工端：本人的一张工资条（明细） */
 export interface MyPayslipDetail extends MyPayslipItem {
+  /** 「实发」那一项（分）；模板没标或没填为空。只在明细里给（列表不带金额） */
+  net: number | null;
   name: string;
   fields: PayslipField[];
   values: PayslipValues;

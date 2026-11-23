@@ -11,6 +11,7 @@ import {
   formatPayslipValue,
   monthLabel,
   netField,
+  PAYROLL_REMIND_MINUTES,
   PAYROLL_STATUS_LABEL,
   PAYSLIP_FIELD_KINDS,
   PAYSLIP_MAX_FIELDS,
@@ -258,8 +259,8 @@ function BatchView({ id, onBack }: { id: number; onBack: () => void }) {
   const remind = async () => {
     setBusy('remind');
     try {
-      const r = await api.post<{ reminded: number }>(`/api/oa/payroll/batches/${id}/remind`);
-      toast({ tone: 'success', title: r.reminded ? `已提醒 ${r.reminded} 人` : '都签收了，没有要提醒的' });
+      const r = await api.post<{ reminded: number; recent: boolean }>(`/api/oa/payroll/batches/${id}/remind`);
+      toast({ tone: 'success', title: r.recent ? `刚提醒过，${PAYROLL_REMIND_MINUTES} 分钟内不再重复提醒` : r.reminded ? `已提醒 ${r.reminded} 人` : '都签收了，没有要提醒的' });
       refresh();
     } catch (e) {
       toast({ tone: 'error', title: '没有办成', body: errorMessage(e) });

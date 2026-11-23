@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, MessageSquareWarning } from 'lucide-react';
-import { formatPayslipValue, monthLabel, type MyPayslipDetail, type MyPayslipItem } from '@shared/oa-payroll';
+import { monthLabel, type MyPayslipDetail, type MyPayslipItem } from '@shared/oa-payroll';
 import { api, errorMessage } from '../../lib/api';
 import { formatDateTime } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
@@ -47,7 +47,6 @@ function MyPayslipListPage() {
                       <span className="block font-semibold text-ink">{monthLabel(p.month)}</span>
                       <span className="block truncate text-[13px] text-ink-3">{p.title}</span>
                     </span>
-                    {p.net !== null && <span className="num font-bold text-pine">¥{formatPayslipValue({ key: 'net', label: '', kind: 'money' }, p.net)}</span>}
                     {p.signedAt ? <Badge tone="neutral">已签收</Badge> : <Badge tone="yuzu">待签收</Badge>}
                     <ChevronRight className="size-4 shrink-0 text-ink-3" />
                   </Link>
@@ -64,7 +63,7 @@ function MyPayslipListPage() {
 function MyPayslipDetailPage({ id }: { id: number }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const q = useQuery({ queryKey: [...KEY, id], queryFn: () => api.get<MyPayslipDetail>(`/api/oa/my/payslips/${id}`) });
+  const q = useQuery({ queryKey: [...KEY, id], queryFn: () => api.get<MyPayslipDetail>(`/api/oa/my/payslips/${id}`), refetchOnWindowFocus: false });
   const [busy, setBusy] = useState(false);
   const d = q.data;
   const sign = async () => {
