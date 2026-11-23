@@ -5,7 +5,7 @@
 --   · 部门群同步与离职退群：员工（岗位、启用、角色）与员工档案（在职状态）一变，触发器在同一个事务里给这个人进出群，
 --     不管是哪条路径改的。不在职（停用、离职、专用账号）的退出全部没解散的群（群主转给最早的管理员，没有就转给最早进群的成员）；
 --     在职的：部门同步进来的、部门变了的退出原部门群；本部门有部门群而不在里面的进群（读到的位置记在最新一条，没有积压的未读）。
---     锁顺序：员工 / 员工档案（改的那一句已经锁着）→ 部门群同步锁（advisory，共享；建部门群拿独占）→ 会话行（FOR UPDATE，按会话编号）→ 成员行 → 系统提示消息。
+--     锁顺序：员工 / 员工档案（改的那一句已经锁着）→ 成员同步锁（advisory 独占；建群、拉人也先拿它）→ 会话行（FOR UPDATE，按会话编号）→ 成员行 → 系统提示消息。
 --     部门群里的人走光过（没有群主）的，第一个回来的接任群主。自己选的岗位（position_chosen_at 不为空，后台没核实）不自动进部门群。
 -- 回滚：docs/rollback/224_oa_im_groups.down.sql。
 
@@ -46,8 +46,9 @@ BEGIN
     INTO v_on_duty, v_dept, v_name, v_self
     FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id WHERE s.id = p_staff;
   IF NOT FOUND THEN RETURN; END IF;
-  -- 与建部门群串行（Codex 审查 1adec4f）：建群拿这把锁的独占模式，读名单前等在途的调岗、离职提交；这里拿共享模式（员工之间不互等）
-  PERFORM pg_advisory_xact_lock_shared(hashtextextended('oa_im_dept_sync', 0));
+  -- 成员同步锁（独占，Codex 审查 1adec4f、ae2d4b6）：建群、拉人、员工变动都先拿它再锁会话行。整个事务（一次导入很多员工也一样）
+  -- 拿了它以后才锁会话，离职、导入、拉人之间不会等成环；建群、拉人读在职名单时在途的离职、调岗已经提交
+  PERFORM pg_advisory_xact_lock(hashtextextended('oa_im_dept_sync', 0));
 
   FOR r IN
     SELECT c.id FROM oa_im_members m JOIN oa_im_conversations c ON c.id = m.conversation_id

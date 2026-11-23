@@ -63,6 +63,15 @@ const REVOKED_OVERLAP_SECONDS = 60;
 const GROUP_QUOTA = { burst: 10, burstMinutes: 10, daily: 30 };
 
 /**
+ * 群成员与员工在职、部门的同步锁（OA-16，Codex 审查 1adec4f、ae2d4b6）：迁移 224 的触发器（员工的岗位、启用、角色、在职一变）
+ * 进出群之前拿它；建群、拉人在读在职名单、写成员之前也拿它。拿了它再锁会话行，所以整个事务（包括一次导入很多员工）
+ * 不会和离职、拉人互相等成环；读到的在职名单是在途的离职、调岗都提交以后的。员工变动不常有，串行的代价可以接受。
+ */
+export async function lockMembershipSync(tx: Tx): Promise<void> {
+  await tx`SELECT pg_advisory_xact_lock(hashtextextended('oa_im_dept_sync', 0))`;
+}
+
+/**
  * 建群限额（Codex 安全审查 accf8fb）：一个人不能在短时间里拉一大堆群把别人的会话列表刷掉；按人串行核对。
  * 普通建群与建部门群共用（部门群也算，Codex 审查 1adec4f；打开已有的部门群不算）
  */
@@ -437,6 +446,8 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
         return { id: Number(seen.refId), replayed: true };
       }
       await assertNotFenced(tx, clientKey, 'oa_im_group', erpOpAbandoned);
+      // 先拿成员同步锁：读在职名单与写成员之间，别人办不了这几个人的离职（Codex 审查 ae2d4b6）
+      await lockMembershipSync(tx);
       await assertGroupQuota(tx, me);
       const wanted = [...new Set(input.memberIds.filter((x) => x !== me))];
       const others = await onDutyIds(tx, wanted);

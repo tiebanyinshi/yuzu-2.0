@@ -264,4 +264,22 @@ describe('OA-16 部门群的边界', () => {
     await move(v3, 'vip.lead');
     expect(memberIds((await detail(vl, Number(g!.id))).body)).toContain(v3.id);
   });
+
+  it('拉人与在途的离职串行：离职先开始、后提交，拉人被拒、他不在群里', async () => {
+    const o = await hire('g_o', 'kitchen.staff');
+    const p1 = await hire('g_p1', 'kitchen.staff');
+    const p2 = await hire('g_p2', 'kitchen.staff');
+    const q = await hire('g_q', 'kitchen.staff');
+    const g = await group(o, [p1, p2]);
+    let adding: Promise<{ status: number; body: unknown }> | undefined;
+    await ctx.sql.begin(async (tx) => {
+      // 模拟办理离职的事务：账号停用（触发器拿成员同步锁），还没提交时有人把他拉进群
+      await tx`UPDATE staff SET active = false WHERE id = ${q.id}`;
+      adding = api(ctx.app, o.cookie, 'POST', `/api/oa/im/conversations/${g}/members`, { staffIds: [q.id] });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    const r = (await adding!) as { status: number; body: unknown };
+    expect(code(r)).toBe('MEMBER_INVALID');
+    expect(memberIds((await detail(o, g)).body)).not.toContain(q.id);
+  });
 });

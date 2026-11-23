@@ -3,7 +3,7 @@
 //   · 部门群：管组织架构的人或部门主管一键建（本部门在职员工按部门进群，建的人是群主）；之后跟着岗位、离职自动进出（迁移 224 的触发器）。
 //     按部门进来的人不能被踢、不能自己退。
 //   · 不带操作编号：都按「结果是什么」写，重复做直接算成功、不重复留提示（OA20）；解散了的群不能再管。
-// 加锁（docs/LOCKING.md「即时通讯」）：会话行（FOR UPDATE，与发消息同一把锁）→ 成员行 → 系统提示消息。
+// 加锁（docs/LOCKING.md「即时通讯」）：会话行（FOR UPDATE，与发消息同一把锁）→ 成员行 → 系统提示消息；拉人、建部门群在会话行之前先拿成员同步锁（lockMembershipSync）。
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -15,7 +15,7 @@ import type { Actor, Deps } from '../../lib/context';
 import { forbidden, notFound, unprocessable } from '../../lib/errors';
 import { idParam, parse } from '../../lib/validate';
 import { writeAudit } from '../../lib/audit';
-import { assertGroupQuota, detailOf, employeeOnly, insertMessage, onDuty, onDutyIds } from './im';
+import { assertGroupQuota, detailOf, employeeOnly, insertMessage, lockMembershipSync, onDuty, onDutyIds } from './im';
 import { loadOrg } from './org';
 
 const MembersInput = z.object({ staffIds: z.array(z.number().int().positive()).min(1, '请选要拉进群的人').max(IM_GROUP_MAX) });
@@ -103,6 +103,8 @@ export function registerOaImGroupRoutes(app: FastifyInstance, { sql }: Deps) {
     const input = parse(MembersInput, req.body);
     const me = req.actor;
     await sql.begin(async (tx) => {
+      // 成员同步锁在会话行锁之前（与触发器同一个顺序）：核对在职与写成员之间，别人办不了这几个人的离职（Codex 审查 ae2d4b6）
+      await lockMembershipSync(tx);
       const g = await lockGroup(tx, id, me.id);
       needManager(g);
       const wanted = [...new Set(input.staffIds.filter((x) => x !== me.id))];
@@ -240,9 +242,8 @@ export function registerOaImGroupRoutes(app: FastifyInstance, { sql }: Deps) {
     if (had) return openExisting(had);
     try {
       const id = await sql.begin(async (tx) => {
-        // 与部门群同步串行（Codex 审查 1adec4f）：员工的岗位、在职一变，触发器先拿这把锁的共享模式；这里拿独占，
-        // 等在途的调岗、离职提交以后再读名单，之后开始的要等这个群建好，触发器就看得到它
-        await tx`SELECT pg_advisory_xact_lock(hashtextextended('oa_im_dept_sync', 0))`;
+        // 与部门群同步串行（Codex 审查 1adec4f）：等在途的调岗、离职提交以后再读名单，之后开始的要等这个群建好，触发器就看得到它
+        await lockMembershipSync(tx);
         await assertGroupQuota(tx, me.id);
         // 部门成员按岗位来（与组织架构、触发器同一个算法）；自己选的岗位、后台没核实的不自动进（Codex 安全审查 1adec4f）
         const rows = await tx<{ id: number }[]>`
@@ -279,6 +280,7 @@ export function registerOaImGroupRoutes(app: FastifyInstance, { sql }: Deps) {
     // 已经有了：我在群里就打开；不在（比如管组织架构的人不是本部门的）拉我进去，再打开
     async function openExisting(id: number): Promise<{ id: number; created: boolean }> {
       await sql.begin(async (tx) => {
+        await lockMembershipSync(tx);
         await tx`SELECT 1 FROM oa_im_conversations WHERE id = ${id} FOR UPDATE`;
         const added = await addMembers(tx, id, [me.id], 'manual');
         // 部门群里的人都走光了、没有群主（Codex 审查 1adec4f）：能建部门群的人点进来就接任群主
