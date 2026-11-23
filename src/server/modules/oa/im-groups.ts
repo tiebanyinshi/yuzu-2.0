@@ -236,8 +236,9 @@ export function registerOaImGroupRoutes(app: FastifyInstance, { sql }: Deps) {
     // 一个事务：成员同步锁（建群、拉人、员工变动串行，同时建的两个人也排队）→ 核对我还在职 → 找没解散的部门群（锁住）→ 有就打开，没有就建
     const out = await sql.begin(async (tx): Promise<{ id: number; created: boolean }> => {
       await lockMembershipSync(tx);
-      // 拿到锁以后再核对一次我还在职（在途的停用、离职已经提交，Codex 审查 fd91220）
+      // 拿到锁以后再核对一次我还在职、还能建这个部门的部门群（在途的停用、离职、调岗已经提交，Codex 审查 fd91220、beecb4e）
       await assertActorOnDuty(tx, me.id);
+      if (!(await canCreateDeptGroup(tx, me, dept.key))) throw forbidden('只有管组织架构的人或这个部门的主管能建部门群');
       // FOR UPDATE 会等在途的解散提交、再按解散后的样子重新判断：刚解散的群这里取不到，接着建新的（Codex 审查 fd91220）
       const [had] = await tx<{ id: number }[]>`SELECT id FROM oa_im_conversations WHERE dept_key = ${deptKey} AND dissolved_at IS NULL FOR UPDATE`;
       if (had) {

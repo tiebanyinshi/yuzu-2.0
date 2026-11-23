@@ -341,4 +341,30 @@ describe('OA-16 部门群的边界', () => {
     expect((await api<Directory>(ctx.app, hl.cookie, 'GET', '/api/oa/directory')).body).toMatchObject({ canSeePhones: true, canConfigure: true });
     expect((await api(ctx.app, hl.cookie, 'PUT', '/api/oa/directory/settings', { phoneScope: 'managers' })).status).toBe(200);
   });
+
+  it('解散了的群：离职也退出，复职后看不到', async () => {
+    const m0 = await hire('g_m0', 'kitchen.staff');
+    const m1 = await hire('g_m1', 'kitchen.staff');
+    const m2 = await hire('g_m2', 'kitchen.staff');
+    const g = await group(m0, [m1, m2]);
+    expect((await api(ctx.app, m0.cookie, 'POST', `/api/oa/im/conversations/${g}/dissolve`)).status).toBe(200);
+    expect((await detail(m1, g)).status).toBe(200);
+    expect((await leave(m1.id)).status).toBe(200);
+    expect((await rehire(m1.id)).status).toBe(200);
+    m1.cookie = await login(ctx.app, 'g_m1');
+    expect((await detail(m1, g)).status).toBe(404);
+  });
+
+  it('建部门群时主管正被调走：等调岗提交，再核对一次权限，不建', async () => {
+    const ol = await hire('g_ol', 'outreach.lead');
+    let making: Promise<{ status: number; body: unknown }> | undefined;
+    await ctx.sql.begin(async (tx) => {
+      await tx`UPDATE staff SET position = 'kitchen.staff' WHERE id = ${ol.id}`;
+      making = api(ctx.app, ol.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'outreach' });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    expect(((await making!) as { status: number }).status).toBe(403);
+    const [n] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_im_conversations WHERE dept_key = 'outreach'`;
+    expect(n!.n).toBe(0);
+  });
 });
