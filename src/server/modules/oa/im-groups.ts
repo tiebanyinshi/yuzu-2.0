@@ -244,10 +244,10 @@ export function registerOaImGroupRoutes(app: FastifyInstance, { sql }: Deps) {
         // 等在途的调岗、离职提交以后再读名单，之后开始的要等这个群建好，触发器就看得到它
         await tx`SELECT pg_advisory_xact_lock(hashtextextended('oa_im_dept_sync', 0))`;
         await assertGroupQuota(tx, me.id);
-        // 部门成员按岗位来（与组织架构、触发器同一个算法）
+        // 部门成员按岗位来（与组织架构、触发器同一个算法）；自己选的岗位、后台没核实的不自动进（Codex 安全审查 1adec4f）
         const rows = await tx<{ id: number }[]>`
           SELECT s.id FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
-          WHERE ${onDuty(tx)} AND s.position IS NOT NULL
+          WHERE ${onDuty(tx)} AND s.position IS NOT NULL AND s.position_chosen_at IS NULL
             AND CASE WHEN s.position = 'president' THEN 'company' WHEN s.position = 'gmo' THEN 'gmo' ELSE split_part(s.position, '.', 1) END = ${deptKey}
           ORDER BY s.id`;
         const deptIds = rows.map((r) => Number(r.id));

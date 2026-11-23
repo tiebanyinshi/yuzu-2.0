@@ -253,4 +253,15 @@ describe('OA-16 部门群的边界', () => {
     expect(r.status).toBe(201);
     expect(memberIds((await detail(vl, r.body.id)).body)).toContain(v2.id);
   });
+
+  it('自己选的岗位（后台没核实）不自动进部门群；后台定了岗位再进', async () => {
+    const [g] = await ctx.sql<{ id: number }[]>`SELECT id FROM oa_im_conversations WHERE dept_key = 'vip' AND dissolved_at IS NULL`;
+    const vl = { ...e.lead!, cookie: await login(ctx.app, 'g_vl') };
+    const v3 = await hire('g_v3', 'kitchen.staff');
+    // 自选岗位那条路径：岗位与自选时间一起写
+    await ctx.sql`UPDATE staff SET position = 'vip.staff', position_chosen_at = now() WHERE id = ${v3.id}`;
+    expect(memberIds((await detail(vl, Number(g!.id))).body)).not.toContain(v3.id);
+    await move(v3, 'vip.lead');
+    expect(memberIds((await detail(vl, Number(g!.id))).body)).toContain(v3.id);
+  });
 });

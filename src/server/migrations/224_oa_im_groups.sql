@@ -6,7 +6,7 @@
 --     不管是哪条路径改的。不在职（停用、离职、专用账号）的退出全部没解散的群（群主转给最早的管理员，没有就转给最早进群的成员）；
 --     在职的：部门同步进来的、部门变了的退出原部门群；本部门有部门群而不在里面的进群（读到的位置记在最新一条，没有积压的未读）。
 --     锁顺序：员工 / 员工档案（改的那一句已经锁着）→ 部门群同步锁（advisory，共享；建部门群拿独占）→ 会话行（FOR UPDATE，按会话编号）→ 成员行 → 系统提示消息。
---     部门群里的人走光过（没有群主）的，第一个回来的接任群主。
+--     部门群里的人走光过（没有群主）的，第一个回来的接任群主。自己选的岗位（position_chosen_at 不为空，后台没核实）不自动进部门群。
 -- 回滚：docs/rollback/224_oa_im_groups.down.sql。
 
 ALTER TABLE oa_im_conversations
@@ -36,13 +36,14 @@ DECLARE
   v_on_duty boolean;
   v_dept    text;
   v_name    text;
+  v_self    boolean;
   r         record;
 BEGIN
   SELECT s.active AND NOT s.system AND s.role <> ALL (ARRAY['tablet', 'other_store', 'designer']) AND COALESCE(p.status, 'active') = 'active',
          CASE WHEN s.position IS NULL THEN NULL WHEN s.position = 'president' THEN 'company' WHEN s.position = 'gmo' THEN 'gmo'
               ELSE split_part(s.position, '.', 1) END,
-         s.display_name
-    INTO v_on_duty, v_dept, v_name
+         s.display_name, s.position_chosen_at IS NOT NULL
+    INTO v_on_duty, v_dept, v_name, v_self
     FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id WHERE s.id = p_staff;
   IF NOT FOUND THEN RETURN; END IF;
   -- 与建部门群串行（Codex 审查 1adec4f）：建群拿这把锁的独占模式，读名单前等在途的调岗、离职提交；这里拿共享模式（员工之间不互等）
@@ -70,7 +71,9 @@ BEGIN
     PERFORM oa_im_system_message(r.id, p_staff, v_name || CASE WHEN v_on_duty THEN '调离了部门，退出了群聊' ELSE '已离职，退出了群聊' END);
   END LOOP;
 
-  IF v_on_duty AND v_dept IS NOT NULL THEN
+  -- 自己选的岗位（后台还没改过、没核实）不自动进部门群（Codex 安全审查 1adec4f：进群就看得到群里以前的消息）；
+  -- 后台给他定岗位时 position_chosen_at 清空、岗位一变就照常进群，群主、管理员也可以手动拉
+  IF v_on_duty AND v_dept IS NOT NULL AND NOT v_self THEN
     FOR r IN
       SELECT c.id FROM oa_im_conversations c
        WHERE c.dept_key = v_dept AND c.dissolved_at IS NULL
@@ -110,7 +113,8 @@ BEGIN
 END $$;
 
 CREATE TRIGGER oa_im_staff_sync_ins AFTER INSERT ON staff FOR EACH ROW EXECUTE FUNCTION oa_im_staff_sync_trg();
-CREATE TRIGGER oa_im_staff_sync_upd AFTER UPDATE OF position, active, role ON staff FOR EACH ROW
-  WHEN (OLD.position IS DISTINCT FROM NEW.position OR OLD.active IS DISTINCT FROM NEW.active OR OLD.role IS DISTINCT FROM NEW.role)
+CREATE TRIGGER oa_im_staff_sync_upd AFTER UPDATE OF position, active, role, position_chosen_at ON staff FOR EACH ROW
+  WHEN (OLD.position IS DISTINCT FROM NEW.position OR OLD.active IS DISTINCT FROM NEW.active OR OLD.role IS DISTINCT FROM NEW.role
+        OR OLD.position_chosen_at IS DISTINCT FROM NEW.position_chosen_at)
   EXECUTE FUNCTION oa_im_staff_sync_trg();
 CREATE TRIGGER oa_im_profile_sync AFTER INSERT OR UPDATE OF status ON staff_profiles FOR EACH ROW EXECUTE FUNCTION oa_im_profile_sync_trg();
