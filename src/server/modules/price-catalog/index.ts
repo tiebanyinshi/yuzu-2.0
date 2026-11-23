@@ -21,6 +21,7 @@ import { currentStoreId } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
 import { buildWorkbook, type WbSheet } from '../../lib/xlsx';
 import { readXlsx, XlsxReadError } from '../../lib/xlsx-read';
+import { exportPriceCatalog, priceCategoryChecks } from './checks';
 import { registerPriceCatalogEditRoutes } from './edit';
 import { lockStoreCatalog, registerPriceLinkRoutes } from './links';
 import { parsePriceCatalog, PriceFileError } from './parse';
@@ -160,6 +161,14 @@ export function registerPriceCatalogRoutes(app: FastifyInstance, deps: Deps) {
     const set = await importPriceCatalog(deps, req.body, ctxOf(req));
     reply.code(201);
     return set;
+  });
+  // 重做第四批：分类核对、导出一份价目表
+  app.get('/api/admin/price-catalog/category-checks', { preHandler: manage }, async () => priceCategoryChecks(deps.sql));
+  app.get('/api/admin/price-catalog/sets/:id/export', { preHandler: manage }, async (req, reply) => {
+    const id = parse(z.object({ id: z.coerce.number().int().positive() }), req.params).id;
+    const set = await priceCatalogSet(deps.sql, id);
+    attachment(reply, `${set.title}.xlsx`, XLSX);
+    return reply.send(await exportPriceCatalog(deps.sql, id));
   });
   // 第四批：生效中的价目表（在用的条目），收银台「价目试算」与开单页取价用；前台能看账单的、管价目的都能读
   app.get('/api/price-catalog/active', { preHandler: guardAny('frontdesk.read', 'catalog.manage') }, async () => activePriceCatalog(deps.sql));

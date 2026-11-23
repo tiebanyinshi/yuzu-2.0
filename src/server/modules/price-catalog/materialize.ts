@@ -12,7 +12,7 @@ import type { Tx } from '../../db';
 import { currentStoreId, DEFAULT_STORE_ID } from '../../lib/store-context';
 
 /** 不落库的类型 */
-const NOT_ITEMS = new Set<PriceCatalogEntry['kind']>(['service_fee', 'room_type', 'party_room', 'dining_room']);
+export const NOT_ITEMS = new Set<PriceCatalogEntry['kind']>(['service_fee', 'room_type', 'party_room', 'dining_room']);
 
 /** 收银项目上的类别（部门营业额、券、会员折扣按它算；PC21） */
 export function itemCategoryOf(e: Pick<PriceCatalogEntry, 'sheet' | 'kind' | 'section'>): string {
@@ -31,7 +31,7 @@ export function itemCategoryOf(e: Pick<PriceCatalogEntry, 'sheet' | 'kind' | 'se
 }
 
 /** 能不能卖：在用、可以下单、有价（待定价的不行） */
-const sellable = (e: PriceCatalogEntry) => e.active && e.orderable && e.priceMode !== 'none' && e.priceCents !== null;
+export const sellable = (e: PriceCatalogEntry) => e.active && e.orderable && e.priceMode !== 'none' && e.priceCents !== null;
 
 export interface MaterializeResult {
   created: number;

@@ -562,3 +562,17 @@ export function priceCategoriesOf(entries: Pick<PriceCatalogEntry, 'sheet' | 'ki
  * 即按摩及助浴的前 7 个板块；助浴、护理在浴区做，不在房态中心登记里列（前台开单照样能挂）。
  */
 export const ROOM_SERVICE_EXCLUDED_CATEGORIES: readonly string[] = ['massage.08', 'massage.09'];
+
+/** 分类核对（重做第四批）：每个分类表格里几项、能卖的几项、点单页上实际在用的收银项目几个；三个数对得上才算录完 */
+export interface PriceCategoryCheck {
+  code: string;
+  name: string;
+  group: string;
+  sheet: PriceSheet;
+  /** 价目表里在用的项数 */
+  entries: number;
+  /** 能卖的（在用、可以下单、有价；服务费、房间不算） */
+  sellable: number;
+  /** 点单页上在用的、对上这个分类的收银项目；服务费、房间这类不落库的为 null */
+  items: number | null;
+}
