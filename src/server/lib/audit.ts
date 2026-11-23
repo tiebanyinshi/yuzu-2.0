@@ -305,6 +305,8 @@ export type AuditAction =
   | 'receipt_import'
   // 8.1.20 出入库台账导入
   | 'ledger_import'
+  // 价目表录入（docs/PRICE_CATALOG.md）：导入草稿、切换生效、回滚、改价、停用（detail.action 写是哪一样）
+  | 'price_catalog'
   // 8.1.9 签赠：新建、修改签赠券类型（知识库），签赠发放；作废签赠券记 coupon_voided（与券一样）
   | 'gift_type'
   | 'gift_issue'
