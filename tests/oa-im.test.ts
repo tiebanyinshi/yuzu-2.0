@@ -215,5 +215,11 @@ describe('OA-14 即时通讯', () => {
     expect((await get()).statusCode).toBe(200);
     await ctx.sql`UPDATE staff SET role = 'designer' WHERE id = ${emp.b!.id}`;
     expect((await get()).statusCode).toBe(404);
+    // 上传的人自己也一样（a 传的图片，a 改成设计师以后也下载不了）
+    const own = () => ctx.app.inject({ method: 'GET', url: `/api/oa/attachments/${picId}`, headers: { cookie: emp.a!.cookie } });
+    expect((await own()).statusCode).toBe(200);
+    await ctx.sql`UPDATE staff SET role = 'designer' WHERE id = ${emp.a!.id}`;
+    expect((await own()).statusCode).toBe(404);
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/oa/attachments/${picId}/thumb`, headers: { cookie: emp.a!.cookie } })).statusCode).toBe(404);
   });
 });
