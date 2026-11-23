@@ -203,10 +203,23 @@ export function colIndex(letters: string): number {
   return n - 1;
 }
 
+/** Excel 的上限：XFD 列（16384 列）、1048576 行 */
+const EXCEL_MAX_COL = 16383;
+const EXCEL_MAX_ROW = 1_048_576;
+
+/** 行号要在 1–1048576 之间（超长、非数字的拒绝，免得算出 Infinity / NaN 再拿去铺数组、拼列名，Codex 安全审查 ba6fbf3） */
+function checkRow(row: number, text: string): number {
+  if (!Number.isSafeInteger(row) || row < 1 || row > EXCEL_MAX_ROW) throw new XlsxReadError(`单元格引用不对：${text.slice(0, 20)}`);
+  return row;
+}
+
 export function parseRef(ref: string): { row: number; col: number } {
-  const m = /^\$?([A-Z]+)\$?(\d+)$/.exec(ref.toUpperCase());
-  if (!m) throw new XlsxReadError(`单元格引用不对：${ref}`);
-  return { row: Number(m[2]), col: colIndex(m[1]!) };
+  // 列最多 3 个字母、行最多 7 位数字（Excel 本身的上限），超了直接拒绝
+  const m = /^\$?([A-Z]{1,3})\$?(\d{1,7})$/.exec(ref.toUpperCase());
+  if (!m) throw new XlsxReadError(`单元格引用不对：${ref.slice(0, 20)}`);
+  const col = colIndex(m[1]!);
+  if (col > EXCEL_MAX_COL) throw new XlsxReadError(`单元格引用不对：${ref.slice(0, 20)}`);
+  return { row: checkRow(Number(m[2]), ref), col };
 }
 
 function resolve(base: string, target: string): string {
@@ -296,7 +309,8 @@ export function readXlsx(buf: Buffer, limits: XlsxLimits = {}): XlsxWorkbook {
     let nextRow = 1;
     for (const row of descendants(root, 'row')) {
       sheet.rowElements += 1;
-      const r = Number(attr(row, 'r') ?? nextRow);
+      const rAttr = attr(row, 'r');
+      const r = rAttr === undefined ? checkRow(nextRow, String(nextRow)) : checkRow(Number(rAttr), rAttr);
       nextRow = r + 1;
       let nextCol = 0;
       for (const c of row.children) {

@@ -429,6 +429,25 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
     renamed.delete('xl/worksheets/sheet1.xml');
     renamed.set('xl/_rels/workbook.xml.rels', Buffer.from(renamed.get('xl/_rels/workbook.xml.rels')!.toString('utf8').replace('worksheets/sheet1.xml', 'worksheets/sheet1.bin'), 'utf8'));
     expect(() => readXlsx(zip([...renamed].map(([name, data]) => ({ name, data }))), { maxNodes: 600_000 })).toThrow(/结构太大/);
+    // 超长的列字母、超大的行号：直接按「引用不对」拒绝，不会算出 Infinity 再拿去拼列名卡死
+    for (const bad of [
+      `<row r="1"><c r="${'A'.repeat(400)}1" t="inlineStr"><is><t>x</t></is></c></row>`,
+      '<row r="1e309"><c t="inlineStr"><is><t>x</t></is></c></row>',
+      '<row r="1"><c r="XFE1" t="inlineStr"><is><t>x</t></is></c></row>',
+    ]) {
+      const evil = new Map(files);
+      evil.set(
+        'xl/worksheets/sheet1.xml',
+        Buffer.from(
+          files
+            .get('xl/worksheets/sheet1.xml')!
+            .toString('utf8')
+            .replace(/<sheetData>[\s\S]*<\/sheetData>/, `<sheetData>${bad}</sheetData>`),
+          'utf8',
+        ),
+      );
+      expect(() => readXlsx(zip([...evil].map(([name, data]) => ({ name, data }))), { maxCols: 60 })).toThrow(/引用不对/);
+    }
   });
 
   it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {
