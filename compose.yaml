@@ -77,6 +77,8 @@ services:
       YUZU_AI_API_KEY: ${YUZU_AI_API_KEY:-}
       YUZU_AI_BASE_URL: ${YUZU_AI_BASE_URL:-}
       YUZU_AI_MODEL: ${YUZU_AI_MODEL:-}
+      # 工资表原件的加密密钥（OA-17，docs/OA.md 第 20 节）：至少 32 个字符（openssl rand -hex 32），只放 .env；没配时不能上传工资表 Excel
+      PAYROLL_FILE_KEY: ${PAYROLL_FILE_KEY:-}
       TZ: ${APP_TIMEZONE:-Asia/Shanghai}
     # APP_PORT 只写端口（8080）时开在所有网卡上，门店局域网这样用；写成「地址:端口」只开在这个地址上：云服务器上写
     # 127.0.0.1:8080（只给本机的 Caddy）或 <Tailscale 地址>:8080——Docker 发布的端口会绕过主机防火墙，不能只靠 ufw 挡。

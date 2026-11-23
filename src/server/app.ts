@@ -122,6 +122,7 @@ import { registerOaDirectoryRoutes } from './modules/oa/directory';
 import { registerOaLeaveRoutes } from './modules/oa/leave';
 import { registerOaApprovalRoutes } from './modules/oa/approvals';
 import { registerOaApprovalAdminRoutes } from './modules/oa/approval-admin';
+import { registerOaPayrollRoutes } from './modules/oa/payroll';
 import { registerOaFaceRoutes } from './modules/oa/faces';
 import { registerOaPunchRoutes } from './modules/oa/punches';
 import { registerOaScheduleRoutes } from './modules/oa/schedules';
@@ -342,6 +343,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerOaLeaveRoutes(app, deps);
   registerOaApprovalRoutes(app, deps);
   registerOaApprovalAdminRoutes(app, deps);
+  registerOaPayrollRoutes(app, deps);
   registerOaAttachmentRoutes(app, deps);
   registerCatalogRoutes(app, deps);
   registerSettingsRoutes(app, deps);

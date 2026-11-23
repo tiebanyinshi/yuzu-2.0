@@ -5,6 +5,7 @@
 // WPS 的单元格图（`DISPIMG("ID_…",1)` 指向 xl/cellimages.xml）。只读需要的部分，认不出的结构直接报错。
 
 import { inflateRawSync } from 'node:zlib';
+import { colName } from './xlsx';
 
 // ───────────────────────── ZIP ─────────────────────────
 
@@ -14,7 +15,7 @@ const MAX_TOTAL = 256 * 1024 * 1024;
 
 export class XlsxReadError extends Error {}
 
-export function unzip(buf: Buffer): Map<string, Buffer> {
+export function unzip(buf: Buffer, maxTotal = MAX_TOTAL): Map<string, Buffer> {
   const sig = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
   const end = buf.lastIndexOf(sig);
   if (end < 0 || end + 22 > buf.length) throw new XlsxReadError('不是有效的 Excel 文件（.xlsx）');
@@ -46,7 +47,7 @@ export function unzip(buf: Buffer): Map<string, Buffer> {
     else if (method === 8) data = inflateRawSync(body, { maxOutputLength: MAX_ENTRY });
     else throw new XlsxReadError(`不支持的压缩方式（${method}）`);
     total += data.length;
-    if (total > MAX_TOTAL) throw new XlsxReadError('Excel 文件解压后太大');
+    if (total > maxTotal) throw new XlsxReadError('Excel 文件解压后太大');
     out.set(name, data);
   }
   return out;
@@ -76,6 +77,43 @@ function decode(s: string): string {
 }
 
 const local = (name: string) => name.slice(name.indexOf(':') + 1);
+
+const isSpace = (c: string | undefined) => c === ' ' || c === '\t' || c === '\n' || c === '\r';
+
+/**
+ * 读一个标签里的属性：从左往右一次扫完（线性），名字后面不是「=」的跳过、引号没配对的拒绝。
+ * 原来用不锚定的正则逐个找「名字 = 值」，没有等号的长片段会每个字符重试一遍（二次方耗时），几百字节的文件就能卡住服务（Codex 审查 8e1514e）
+ */
+/** 一个元素最多几个属性（正常的 Excel 不过十来个）：超了拒绝，不建几十万个键（复核 139c8f5 的 P2） */
+const XML_MAX_ATTRS = 64;
+
+function readAttrs(tag: string, start: number, out: Record<string, string>) {
+  let j = start;
+  const n = tag.length;
+  let count = 0;
+  while (j < n) {
+    while (j < n && isSpace(tag[j])) j++;
+    const nameStart = j;
+    while (j < n && !isSpace(tag[j]) && tag[j] !== '=') j++;
+    const name = tag.slice(nameStart, j);
+    while (j < n && isSpace(tag[j])) j++;
+    if (tag[j] !== '=') continue;
+    j++;
+    while (j < n && isSpace(tag[j])) j++;
+    const q = tag[j];
+    if (q !== '"' && q !== "'") continue;
+    const end = tag.indexOf(q, j + 1);
+    if (end < 0) throw new XlsxReadError('Excel 文件里的 XML 不完整');
+    if (name) {
+      if (++count > XML_MAX_ATTRS) throw new XlsxReadError('Excel 文件里的 XML 一个元素的属性太多，请另存后再传');
+      out[name] = decode(tag.slice(j + 1, end));
+    }
+    j = end + 1;
+  }
+}
+
+/** XML 元素最多套多少层 */
+const XML_MAX_DEPTH = 64;
 
 export function parseXml(xml: string): XmlNode {
   const root: XmlNode = { name: '#root', attrs: {}, children: [], text: '' };
@@ -122,12 +160,13 @@ export function parseXml(xml: string): XmlNode {
     const m = /^([^\s/>]+)/.exec(inner);
     if (!m) throw new XlsxReadError('Excel 文件里的 XML 不完整');
     const node: XmlNode = { name: local(m[1]!), attrs: {}, children: [], text: '' };
-    const attrRe = /([^\s=]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
-    let a: RegExpExecArray | null;
-    const rest = inner.slice(m[1]!.length);
-    while ((a = attrRe.exec(rest))) node.attrs[a[1]!] = decode(a[3] ?? a[4] ?? '');
+    readAttrs(inner, m[1]!.length, node.attrs);
     stack[stack.length - 1]!.children.push(node);
-    if (!selfClosing) stack.push(node);
+    if (!selfClosing) {
+      // 正常的 Excel 嵌套不过十几层；限住深度，免得几层套几千层的小文件让后面的递归取文字、找后代反复遍历（Codex 审查 f6c14e7）
+      if (stack.length >= XML_MAX_DEPTH) throw new XlsxReadError('Excel 文件里的 XML 嵌套太深');
+      stack.push(node);
+    }
     i = gt + 1;
   }
   return root;
@@ -202,10 +241,23 @@ export function colIndex(letters: string): number {
   return n - 1;
 }
 
+/** Excel 的上限：XFD 列（16384 列）、1048576 行 */
+const EXCEL_MAX_COL = 16383;
+const EXCEL_MAX_ROW = 1_048_576;
+
+/** 行号要在 1–1048576 之间（超长、非数字的拒绝，免得算出 Infinity / NaN 再拿去铺数组、拼列名，Codex 安全审查 ba6fbf3） */
+function checkRow(row: number, text: string): number {
+  if (!Number.isSafeInteger(row) || row < 1 || row > EXCEL_MAX_ROW) throw new XlsxReadError(`单元格引用不对：${text.slice(0, 20)}`);
+  return row;
+}
+
 export function parseRef(ref: string): { row: number; col: number } {
-  const m = /^\$?([A-Z]+)\$?(\d+)$/.exec(ref.toUpperCase());
-  if (!m) throw new XlsxReadError(`单元格引用不对：${ref}`);
-  return { row: Number(m[2]), col: colIndex(m[1]!) };
+  // 列最多 3 个字母、行最多 7 位数字（Excel 本身的上限），超了直接拒绝
+  const m = /^\$?([A-Z]{1,3})\$?(\d{1,7})$/.exec(ref.toUpperCase());
+  if (!m) throw new XlsxReadError(`单元格引用不对：${ref.slice(0, 20)}`);
+  const col = colIndex(m[1]!);
+  if (col > EXCEL_MAX_COL) throw new XlsxReadError(`单元格引用不对：${ref.slice(0, 20)}`);
+  return { row: checkRow(Number(m[2]), ref), col };
 }
 
 function resolve(base: string, target: string): string {
@@ -218,13 +270,13 @@ function resolve(base: string, target: string): string {
   return parts.join('/');
 }
 
-function rels(files: Map<string, Buffer>, partPath: string): Map<string, { target: string; external: boolean }> {
+function rels(files: Map<string, Buffer>, partPath: string, xml: (raw: Buffer) => XmlNode = (raw) => parseXml(raw.toString('utf8'))): Map<string, { target: string; external: boolean }> {
   const dir = partPath.split('/').slice(0, -1).join('/');
   const relsPath = `${dir ? `${dir}/` : ''}_rels/${partPath.split('/').pop()}.rels`;
   const out = new Map<string, { target: string; external: boolean }>();
   const raw = files.get(relsPath);
   if (!raw) return out;
-  for (const r of descendants(parseXml(raw.toString('utf8')), 'Relationship')) {
+  for (const r of descendants(xml(raw), 'Relationship')) {
     const id = attr(r, 'Id');
     const target = attr(r, 'Target');
     if (!id || target === undefined) continue;
@@ -237,32 +289,73 @@ function rels(files: Map<string, Buffer>, partPath: string): Map<string, { targe
 /** 单元格最多多少个（防止异常文件把内存撑爆） */
 const MAX_CELLS = 500_000;
 
-export function readXlsx(buf: Buffer): XlsxWorkbook {
-  const files = unzip(buf);
+/** 读表的上限：默认整份解压后 256 MiB、50 万个单元格；用途单一的导入（如工资表）可以收得更紧 */
+export interface XlsxLimits {
+  maxTotal?: number;
+  maxCells?: number;
+  /** 有内容的单元格最大行号（从 1 起）、最多多少列：读表的人会按行号、列号铺成数组，稀疏的大坐标也会把内存撑爆（Codex 审查 6190bd4） */
+  maxRow?: number;
+  maxCols?: number;
+  /**
+   * 整份文件里 XML 的结构规模（元素 + 属性）最多多少：解析前先数（只数「<」，不建树），空的 <row/> 这类不占单元格的元素也算在内，
+   * 免得几十 KB 的文件解析出上百万个节点把内存撑爆（Codex 安全审查 503f199）
+   */
+  maxNodes?: number;
+  /** 只读前几张工作表（工资表只要第一张） */
+  maxSheets?: number;
+}
+
+/**
+ * 数 XML 的结构规模：元素开头（「<」后面不是「/」「?」「!」的）加上「=」的个数（属性大约一个「=」一个）。
+ * 只按元素数算时，每个空行带一串无关属性也能塞进上限、建树时照样吃几百 MB（Codex 安全审查 f6c14e7）
+ */
+function countElements(xml: Buffer): number {
+  let n = 0;
+  for (let i = 0; i < xml.length; i++) {
+    const c = xml[i];
+    if (c === 0x3d) n++;
+    else if (c === 0x3c) {
+      const next = xml[i + 1];
+      if (next !== 0x2f && next !== 0x3f && next !== 0x21) n++;
+    }
+  }
+  return n;
+}
+
+export function readXlsx(buf: Buffer, limits: XlsxLimits = {}): XlsxWorkbook {
+  const files = unzip(buf, limits.maxTotal ?? MAX_TOTAL);
+  const maxCells = limits.maxCells ?? MAX_CELLS;
+  // 每个部件真正交给 parseXml 以前数元素、累计（不看文件名：工作表的路径由关系文件指定，可以叫任何名字，Codex 审查 ba6fbf3）
+  let nodes = 0;
+  const xml = (raw: Buffer): XmlNode => {
+    if (limits.maxNodes !== undefined && (nodes += countElements(raw)) > limits.maxNodes) throw new XlsxReadError('Excel 文件的结构太大（空行、空格子太多），请删掉多余的行列后另存再传');
+    return parseXml(raw.toString('utf8'));
+  };
   const wbPath = 'xl/workbook.xml';
   const wbRaw = files.get(wbPath);
   if (!wbRaw) throw new XlsxReadError('不是 Excel 工作簿（缺 xl/workbook.xml）');
-  const wbRels = rels(files, wbPath);
+  const wbRels = rels(files, wbPath, xml);
 
   const shared: string[] = [];
   const ssRaw = files.get('xl/sharedStrings.xml');
-  if (ssRaw) for (const si of descendants(parseXml(ssRaw.toString('utf8')), 'si')) shared.push(textOf(si));
+  if (ssRaw) for (const si of descendants(xml(ssRaw), 'si')) shared.push(textOf(si));
 
   const sheets: XlsxSheet[] = [];
   let cells = 0;
-  for (const s of descendants(parseXml(wbRaw.toString('utf8')), 'sheet')) {
+  for (const s of descendants(xml(wbRaw), 'sheet')) {
     const name = attr(s, 'name') ?? '';
     const rid = attr(s, 'id');
     const rel = rid ? wbRels.get(rid) : undefined;
     if (!rel || rel.external) continue;
     const raw = files.get(rel.target);
     if (!raw) throw new XlsxReadError(`工作表「${name}」缺内容`);
-    const root = parseXml(raw.toString('utf8'));
+    const root = xml(raw);
     const sheet: XlsxSheet = { name, rows: new Map(), rowElements: 0, merges: [], hyperlinks: new Map() };
     let nextRow = 1;
     for (const row of descendants(root, 'row')) {
       sheet.rowElements += 1;
-      const r = Number(attr(row, 'r') ?? nextRow);
+      const rAttr = attr(row, 'r');
+      const r = rAttr === undefined ? checkRow(nextRow, String(nextRow)) : checkRow(Number(rAttr), rAttr);
       nextRow = r + 1;
       let nextCol = 0;
       for (const c of row.children) {
@@ -297,7 +390,9 @@ export function readXlsx(buf: Buffer): XlsxWorkbook {
         const formula = f && f.text.trim() !== '' ? f.text.trim() : null;
         if (value === null && formula === null) continue;
         if (value !== null && type === 'string' && value === '' && formula === null) continue;
-        if (++cells > MAX_CELLS) throw new XlsxReadError('Excel 文件的单元格太多');
+        if (++cells > maxCells) throw new XlsxReadError('Excel 文件的单元格太多');
+        if (limits.maxRow !== undefined && pos.row > limits.maxRow) throw new XlsxReadError(`Excel 文件的行太多（第 ${pos.row} 行有内容，最多 ${limits.maxRow} 行）`);
+        if (limits.maxCols !== undefined && pos.col >= limits.maxCols) throw new XlsxReadError(`Excel 文件的列太多（${colName(pos.col)} 列有内容，最多 ${limits.maxCols} 列）`);
         let line = sheet.rows.get(pos.row);
         if (!line) sheet.rows.set(pos.row, (line = new Map()));
         line.set(pos.col, { row: pos.row, col: pos.col, type, value, formula });
@@ -311,7 +406,7 @@ export function readXlsx(buf: Buffer): XlsxWorkbook {
       const p2 = parseRef(b ?? a!);
       sheet.merges.push({ r1: p1.row, c1: p1.col, r2: p2.row, c2: p2.col });
     }
-    const sheetRels = rels(files, rel.target);
+    const sheetRels = rels(files, rel.target, xml);
     for (const h of descendants(root, 'hyperlink')) {
       const ref = attr(h, 'ref');
       const id = attr(h, 'id');
@@ -319,14 +414,15 @@ export function readXlsx(buf: Buffer): XlsxWorkbook {
       if (ref && target?.external) sheet.hyperlinks.set(ref.split(':')[0]!.toUpperCase(), target.target);
     }
     sheets.push(sheet);
+    if (limits.maxSheets !== undefined && sheets.length >= limits.maxSheets) break;
   }
 
   const cellImages = new Map<string, { data: Buffer; ext: string }>();
   const ciPath = 'xl/cellimages.xml';
   const ciRaw = files.get(ciPath);
   if (ciRaw) {
-    const ciRels = rels(files, ciPath);
-    for (const pic of descendants(parseXml(ciRaw.toString('utf8')), 'pic')) {
+    const ciRels = rels(files, ciPath, xml);
+    for (const pic of descendants(xml(ciRaw), 'pic')) {
       const nv = [...descendants(pic, 'cNvPr')][0];
       const blip = [...descendants(pic, 'blip')][0];
       const name = nv ? attr(nv, 'name') : undefined;
