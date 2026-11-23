@@ -163,6 +163,8 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   // OA-10 办公审批：登录就能提交、处理，只能查回、作废自己的（SELF_OPS）
   oa_approval_submit: [],
   oa_approval_act: [],
+  // OA-14 建群：登录就能建，只能查回、作废自己的（SELF_OPS）
+  oa_im_group: [],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -255,6 +257,8 @@ const READ: Record<ErpOpType, Permission[]> = {
   // OA-10 办公审批：登录就能提交、处理，只能查回、作废自己的（SELF_OPS）
   oa_approval_submit: [],
   oa_approval_act: [],
+  // OA-14 建群：登录就能建，只能查回、作废自己的（SELF_OPS）
+  oa_im_group: [],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {
@@ -381,7 +385,7 @@ const TypeQuery = z.object({ type: z.enum(ERP_OP_TYPES, '缺少原操作的业�
 const AbandonInput = TypeQuery.extend({ summary: z.string().trim().max(200).default('') });
 
 /** 登录就能做、只能查回与作废自己那一笔的操作（OA-06 打卡、OA-07 提交人脸录入、OA-10 办公审批的提交与处理） */
-const SELF_OPS: ReadonlySet<ErpOpType> = new Set(['oa_punch', 'oa_face_enroll', 'oa_approval_submit', 'oa_approval_act']);
+const SELF_OPS: ReadonlySet<ErpOpType> = new Set(['oa_punch', 'oa_face_enroll', 'oa_approval_submit', 'oa_approval_act', 'oa_im_group']);
 
 async function customerOpScope(db: Db, key: string, type: ErpOpType, actor: Parameters<typeof can>[0] & { id: number }) {
   if (SELF_OPS.has(type)) {

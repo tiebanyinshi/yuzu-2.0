@@ -21,8 +21,11 @@ import { allowedStores } from '../stores';
 
 const canManage = guardAny('hr.org', 'staff.manage');
 
-/** 专用账号（点餐平板、他店查询）不是员工，不进组织架构 */
-export const NOT_EMPLOYEE_ROLES = ['tablet', 'other_store'];
+/**
+ * 专用账号（点餐平板、他店查询、设计师）不是员工：不进组织架构，也不用办公（考勤、审批、即时通讯）。
+ * 与 staff.ts 的 isSpecialRole 同一份名单（设计师 OA-14 安全审查 8a64f95 补上）
+ */
+export const NOT_EMPLOYEE_ROLES = ['tablet', 'other_store', 'designer'];
 
 const DeptInput = z.object({
   parentKey: z
