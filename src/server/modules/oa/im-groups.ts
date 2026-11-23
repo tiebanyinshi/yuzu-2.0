@@ -15,7 +15,7 @@ import type { Actor, Deps } from '../../lib/context';
 import { forbidden, notFound, unprocessable } from '../../lib/errors';
 import { idParam, parse } from '../../lib/validate';
 import { writeAudit } from '../../lib/audit';
-import { detailOf, employeeOnly, insertMessage, onDuty, onDutyIds } from './im';
+import { assertGroupQuota, detailOf, employeeOnly, insertMessage, onDuty, onDutyIds } from './im';
 import { loadOrg } from './org';
 
 const MembersInput = z.object({ staffIds: z.array(z.number().int().positive()).min(1, '请选要拉进群的人').max(IM_GROUP_MAX) });
@@ -68,6 +68,15 @@ async function addMembers(tx: Tx, id: number, ids: readonly number[], source: Im
       RETURNING staff_id)
     SELECT s.display_name AS name FROM upserted u JOIN staff s ON s.id = u.staff_id ORDER BY u.staff_id`;
   return rows.map((r) => r.name);
+}
+
+/** 群里没有群主时让这个人接任（会话行已经锁着）；返回接没接 */
+async function ensureOwner(tx: Tx, id: number, staffId: number): Promise<boolean> {
+  const rows = await tx`
+    UPDATE oa_im_members SET role = 'owner' WHERE conversation_id = ${id} AND staff_id = ${staffId} AND left_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM oa_im_members WHERE conversation_id = ${id} AND left_at IS NULL AND role = 'owner')
+    RETURNING staff_id`;
+  return rows.length > 0;
 }
 
 async function memberCount(tx: Tx, id: number): Promise<number> {
@@ -231,6 +240,10 @@ export function registerOaImGroupRoutes(app: FastifyInstance, { sql }: Deps) {
     if (had) return openExisting(had);
     try {
       const id = await sql.begin(async (tx) => {
+        // 与部门群同步串行（Codex 审查 1adec4f）：员工的岗位、在职一变，触发器先拿这把锁的共享模式；这里拿独占，
+        // 等在途的调岗、离职提交以后再读名单，之后开始的要等这个群建好，触发器就看得到它
+        await tx`SELECT pg_advisory_xact_lock(hashtextextended('oa_im_dept_sync', 0))`;
+        await assertGroupQuota(tx, me.id);
         // 部门成员按岗位来（与组织架构、触发器同一个算法）
         const rows = await tx<{ id: number }[]>`
           SELECT s.id FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
@@ -268,9 +281,12 @@ export function registerOaImGroupRoutes(app: FastifyInstance, { sql }: Deps) {
       await sql.begin(async (tx) => {
         await tx`SELECT 1 FROM oa_im_conversations WHERE id = ${id} FOR UPDATE`;
         const added = await addMembers(tx, id, [me.id], 'manual');
-        if (!added.length) return;
+        // 部门群里的人都走光了、没有群主（Codex 审查 1adec4f）：能建部门群的人点进来就接任群主
+        const owner = await ensureOwner(tx, id, me.id);
+        if (!added.length && !owner) return;
         if ((await memberCount(tx, id)) > IM_GROUP_MAX) throw unprocessable('GROUP_TOO_LARGE', `一个群最多 ${IM_GROUP_MAX} 人`);
-        await insertMessage(tx, id, me.id, { kind: 'system', body: `${me.displayName}加入了群聊` });
+        if (added.length) await insertMessage(tx, id, me.id, { kind: 'system', body: `${me.displayName}加入了群聊` });
+        if (owner) await insertMessage(tx, id, me.id, { kind: 'system', body: `${me.displayName}成为群主` });
       });
       return { id, created: false };
     }

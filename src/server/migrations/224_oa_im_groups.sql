@@ -5,7 +5,8 @@
 --   · 部门群同步与离职退群：员工（岗位、启用、角色）与员工档案（在职状态）一变，触发器在同一个事务里给这个人进出群，
 --     不管是哪条路径改的。不在职（停用、离职、专用账号）的退出全部没解散的群（群主转给最早的管理员，没有就转给最早进群的成员）；
 --     在职的：部门同步进来的、部门变了的退出原部门群；本部门有部门群而不在里面的进群（读到的位置记在最新一条，没有积压的未读）。
---     锁顺序：员工 / 员工档案（改的那一句已经锁着）→ 会话行（FOR UPDATE，按会话编号）→ 成员行 → 系统提示消息。
+--     锁顺序：员工 / 员工档案（改的那一句已经锁着）→ 部门群同步锁（advisory，共享；建部门群拿独占）→ 会话行（FOR UPDATE，按会话编号）→ 成员行 → 系统提示消息。
+--     部门群里的人走光过（没有群主）的，第一个回来的接任群主。
 -- 回滚：docs/rollback/224_oa_im_groups.down.sql。
 
 ALTER TABLE oa_im_conversations
@@ -44,6 +45,8 @@ BEGIN
     INTO v_on_duty, v_dept, v_name
     FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id WHERE s.id = p_staff;
   IF NOT FOUND THEN RETURN; END IF;
+  -- 与建部门群串行（Codex 审查 1adec4f）：建群拿这把锁的独占模式，读名单前等在途的调岗、离职提交；这里拿共享模式（员工之间不互等）
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('oa_im_dept_sync', 0));
 
   FOR r IN
     SELECT c.id FROM oa_im_members m JOIN oa_im_conversations c ON c.id = m.conversation_id
@@ -84,6 +87,11 @@ BEGIN
         SET left_at = NULL, role = 'member', source = 'dept', joined_at = now(),
             last_read_message_id = GREATEST(oa_im_members.last_read_message_id, EXCLUDED.last_read_message_id);
       PERFORM oa_im_system_message(r.id, p_staff, v_name || '加入了群聊');
+      -- 部门群里的人走光过、没有群主（Codex 审查 1adec4f）：第一个回来的接任群主
+      IF NOT EXISTS (SELECT 1 FROM oa_im_members WHERE conversation_id = r.id AND left_at IS NULL AND role = 'owner') THEN
+        UPDATE oa_im_members SET role = 'owner' WHERE conversation_id = r.id AND staff_id = p_staff;
+        PERFORM oa_im_system_message(r.id, p_staff, v_name || '成为群主');
+      END IF;
     END LOOP;
   END IF;
 END $$;

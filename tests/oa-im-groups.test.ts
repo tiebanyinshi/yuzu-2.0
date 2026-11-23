@@ -211,3 +211,46 @@ describe('OA-16 群管理', () => {
     expect(r.body.id).not.toBe(Number(old!.id));
   });
 });
+
+// Codex 审查 1adec4f：部门群也算建群限额；与调岗、离职串行；走光了的部门群第一个回来的接任群主
+describe('OA-16 部门群的边界', () => {
+  it('建部门群算建群限额，打开已有的不算', async () => {
+    await ctx.sql`
+      INSERT INTO oa_im_conversations (kind, name, created_by) SELECT 'group', '刷屏' || g, ${e.lead!.id} FROM generate_series(1, 8) g`;
+    const open = await api<{ id: number; created: boolean }>(ctx.app, e.lead!.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'eng' });
+    expect(open.status).toBe(200);
+    expect(open.body.created).toBe(false);
+    expect((await api(ctx.app, e.lead!.cookie, 'POST', `/api/oa/im/conversations/${open.body.id}/dissolve`)).status).toBe(200);
+    expect(code(await api(ctx.app, e.lead!.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'eng' }))).toBe('GROUP_QUOTA');
+  });
+
+  it('部门群里的人走光了：第一个回来的接任群主', async () => {
+    const fl = await hire('g_fl', 'finance.lead');
+    const f1 = await hire('g_f1', 'finance.staff');
+    const id = (await api<{ id: number }>(ctx.app, fl.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'finance' })).body.id;
+    await move(fl, 'kitchen.staff');
+    expect((await detail(f1, id)).body.members.find((m) => m.role === 'owner')?.staffId).toBe(f1.id);
+    expect((await leave(f1.id)).status).toBe(200);
+    const [left] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_im_members WHERE conversation_id = ${id} AND left_at IS NULL`;
+    expect(left!.n).toBe(0);
+    expect((await rehire(f1.id)).status).toBe(200);
+    f1.cookie = await login(ctx.app, 'g_f1');
+    const d = (await detail(f1, id)).body;
+    expect(d.myRole).toBe('owner');
+    expect(await lastSystem(f1, id)).toBe('g_f1成为群主');
+  });
+
+  it('建部门群与在途的调岗串行：调岗先开始、后提交，调进来的人也在群里', async () => {
+    const vl = await hire('g_vl', 'vip.lead');
+    const v2 = await hire('g_v2', 'kitchen.staff');
+    let creating: Promise<{ status: number; body: unknown }> | undefined;
+    await ctx.sql.begin(async (tx) => {
+      await tx`UPDATE staff SET position = 'vip.staff' WHERE id = ${v2.id}`;
+      creating = api(ctx.app, vl.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'vip' });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    const r = (await creating!) as { status: number; body: { id: number } };
+    expect(r.status).toBe(201);
+    expect(memberIds((await detail(vl, r.body.id)).body)).toContain(v2.id);
+  });
+});

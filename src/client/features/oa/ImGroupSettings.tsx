@@ -8,6 +8,7 @@ import { Crown, LogOut, ShieldCheck, Trash2, UserMinus, UserPlus } from 'lucide-
 import { IM_GROUP_MAX, IM_GROUP_NAME_MAX, IM_NOTICE_MAX, canKick, canManageGroup, type ImConversationDetail, type ImMember } from '@shared/oa-im';
 import type { ApprovalPerson } from '@shared/oa-approval';
 import { api, errorMessage } from '../../lib/api';
+import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Field, Input, Skeleton, Textarea } from '../../components/ui';
@@ -249,6 +250,8 @@ function AddMembers({ exclude, room, busy, onCancel, onAdd }: { exclude: number[
       <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="按姓名、部门找" aria-label="找同事" data-testid="im-gs-add-search" />
       {people.isPending ? (
         <Skeleton className="h-24" />
+      ) : people.isError && !people.data ? (
+        <LoadFailed title="同事名单没有取回来" onRetry={() => people.refetch()} retrying={people.isFetching} />
       ) : (
         <ul className="max-h-48 divide-y divide-line overflow-y-auto">
           {shown.map((p) => (

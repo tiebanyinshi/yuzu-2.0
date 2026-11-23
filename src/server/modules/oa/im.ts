@@ -62,6 +62,21 @@ const REVOKED_OVERLAP_SECONDS = 60;
 /** 建群限额（Codex 安全审查 accf8fb）：每人 10 分钟内最多建几个、一天最多建几个 */
 const GROUP_QUOTA = { burst: 10, burstMinutes: 10, daily: 30 };
 
+/**
+ * 建群限额（Codex 安全审查 accf8fb）：一个人不能在短时间里拉一大堆群把别人的会话列表刷掉；按人串行核对。
+ * 普通建群与建部门群共用（部门群也算，Codex 审查 1adec4f；打开已有的部门群不算）
+ */
+export async function assertGroupQuota(tx: Tx, me: number): Promise<void> {
+  await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`oa_im_group_quota:${me}`}, 0))`;
+  const [made] = await tx<{ burst: number; daily: number }[]>`
+    SELECT count(*) FILTER (WHERE created_at > now() - make_interval(mins => ${GROUP_QUOTA.burstMinutes}))::int AS burst,
+           count(*) FILTER (WHERE created_at > now() - interval '1 day')::int AS daily
+    FROM oa_im_conversations WHERE created_by = ${me} AND kind = 'group' AND created_at > now() - interval '1 day'`;
+  if (made!.burst >= GROUP_QUOTA.burst || made!.daily >= GROUP_QUOTA.daily) {
+    throw unprocessable('GROUP_QUOTA', `建群太频繁：每人 ${GROUP_QUOTA.burstMinutes} 分钟内最多建 ${GROUP_QUOTA.burst} 个、一天最多 ${GROUP_QUOTA.daily} 个，请稍后再建`);
+  }
+}
+
 /** 在职员工（与审批转交选人同一个名单）；s = staff，p = staff_profiles */
 export const onDuty = (db: Db) => db`s.active AND NOT s.system AND s.role <> ALL(${NOT_EMPLOYEE_ROLES}) AND COALESCE(p.status, 'active') = 'active'`;
 
@@ -422,15 +437,7 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
         return { id: Number(seen.refId), replayed: true };
       }
       await assertNotFenced(tx, clientKey, 'oa_im_group', erpOpAbandoned);
-      // 限额：一个人不能在短时间里拉一大堆群把别人的会话列表刷掉（Codex 安全审查 accf8fb）；按人串行核对
-      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`oa_im_group_quota:${me}`}, 0))`;
-      const [made] = await tx<{ burst: number; daily: number }[]>`
-        SELECT count(*) FILTER (WHERE created_at > now() - make_interval(mins => ${GROUP_QUOTA.burstMinutes}))::int AS burst,
-               count(*) FILTER (WHERE created_at > now() - interval '1 day')::int AS daily
-        FROM oa_im_conversations WHERE created_by = ${me} AND kind = 'group' AND created_at > now() - interval '1 day'`;
-      if (made!.burst >= GROUP_QUOTA.burst || made!.daily >= GROUP_QUOTA.daily) {
-        throw unprocessable('GROUP_QUOTA', `建群太频繁：每人 ${GROUP_QUOTA.burstMinutes} 分钟内最多建 ${GROUP_QUOTA.burst} 个、一天最多 ${GROUP_QUOTA.daily} 个，请稍后再建`);
-      }
+      await assertGroupQuota(tx, me);
       const wanted = [...new Set(input.memberIds.filter((x) => x !== me))];
       const others = await onDutyIds(tx, wanted);
       if (others.length !== wanted.length) throw unprocessable('MEMBER_INVALID', '有成员不存在或已经离职，请刷新后重选');
