@@ -128,6 +128,8 @@ function queueOrder(statuses: Map<number, Status>) {
 export interface SessionPostOptions {
   /** 加钟：明细挂到这张上钟中的钟单 */
   extendId?: number;
+  /** 加钟时另选一个项目（房态中心加钟＝再选一个项目，店主 2026-11-23，PC27）：项目可以与钟单的不同，计划时长按新项目的时长累加 */
+  extendAnyItem?: boolean;
   /**
    * 钟房派钟：立即上钟；轮钟不派给第一位时的原因；服务的房间（v0.7.16，可不选）；
    * 预约到店派钟（8.0.8，A04）记预约编号；assign 为给前台已点、交给钟房派钟的明细补派（8.0.8，A01：不另挂一笔）；
@@ -235,7 +237,7 @@ export async function attachSessions(
     if (!s) throw notFound('钟单不存在');
     for (const l of args.lines) {
       if (s.status !== 'serving') throw conflict('SESSION_NOT_SERVING', `钟单 ${s.sessionNo} 不在上钟中，不能加钟`);
-      if (s.visitId !== args.visitId || s.technicianId !== l.technicianId || s.itemId !== l.itemId) {
+      if (s.visitId !== args.visitId || s.technicianId !== l.technicianId || (!options.extendAnyItem && s.itemId !== l.itemId)) {
         throw conflict('SESSION_MISMATCH', '加钟的技师、项目或客人与钟单不一致，请刷新后重试');
       }
       // 加的这段时间不能和这位技师的预约重叠（测试会话 ded1958 的 P2）

@@ -463,7 +463,7 @@ function eventText(kind: RoomEventKind, d: Record<string, unknown>, tz: string):
         s('note') ? `备注：${s('note')}` : '',
       ]);
     case 'extend':
-      return parts([`手牌 ${s('tag')}`, `${s('item')} 加 ${n('clocks') || 1} 钟`, s('technician'), formatYuan(n('amount'))]);
+      return parts([`手牌 ${s('tag')}`, d.picked ? `加钟：${s('item')}` : `${s('item')} 加 ${n('clocks') || 1} 钟`, s('technician'), formatYuan(n('amount'))]);
     case 'move_out':
       return parts([`换到 ${s('to')}`, `手牌 ${list('tags').join('、')}`, '单与计时不变', s('note')]);
     case 'move_in':

@@ -47,7 +47,7 @@ const STAY_RESUME: Record<string, StayAction> = { room_extend: 'extend', room_de
 export function RoomCenterPage() {
   return (
     <>
-      <PageHeader title="房态中心" subtitle="按房型看每间房的状态：点卡片登记、开单、入住；卡片右上角看详情、做续钟、换房、退房、并房、维修与清洁完成" />
+      <PageHeader title="房态中心" subtitle="按房型看每间房的状态：点卡片登记、开单、入住；卡片右上角看详情、做加钟、换房、退房、并房、维修与清洁完成" />
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
         <RoomCenterBody />
       </div>
