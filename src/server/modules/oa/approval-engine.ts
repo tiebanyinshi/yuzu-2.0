@@ -77,6 +77,9 @@ async function resolver(db: Db, applicant: { id: number; position?: PositionKey 
           return upFrom(byKey.get(own)?.parentKey ?? null);
         case 'gmo':
           return upFrom('gmo');
+        // OA-18：人力行政部的主管（没有就往上找，都没有给总裁）；申请人自己就是的，往上一级
+        case 'hr_head':
+          return upFrom('hr');
       }
     },
     cc(spec: ApprovalCcSpec): number | null {

@@ -45,7 +45,7 @@ const staffSpec = z.object({ kind: z.literal('staff'), staffId: z.number().int()
 const TemplatePatch = z.object({
   description: z.string().trim().max(200, '说明最多 200 个字').default(''),
   levels: z
-    .array(z.union([staffSpec, z.object({ kind: z.literal('dept_head') }), z.object({ kind: z.literal('parent_head') })]))
+    .array(z.union([staffSpec, z.object({ kind: z.literal('dept_head') }), z.object({ kind: z.literal('parent_head') }), z.object({ kind: z.literal('hr_head') })]))
     .min(1, '至少一级审批人')
     .max(3, '最多三级审批人'),
   conditions: z.record(z.string(), z.boolean()).default({}),

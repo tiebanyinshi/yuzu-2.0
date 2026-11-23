@@ -286,10 +286,10 @@ describe('OA-17 工资条：工资表与制表', () => {
   });
 
   it('发放以后（OA-18）不能再改；作废草稿以后不能再改、列表里不显示，同标题可以重建', async () => {
-    await ctx.sql`UPDATE oa_payroll_batches SET status = 'published' WHERE id = ${batch.id}`;
+    await ctx.sql`UPDATE oa_payroll_batches SET status = 'published', published_at = now() WHERE id = ${batch.id}`;
     expect(code(await api(ctx.app, hr(), 'PUT', `/api/oa/payroll/batches/${batch.id}/slips/${emp.a!.id}`, { values: {} }))).toBe('PAYROLL_PUBLISHED');
     expect(code(await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${batch.id}/void`))).toBe('PAYROLL_PUBLISHED');
-    await ctx.sql`UPDATE oa_payroll_batches SET status = 'draft' WHERE id = ${batch.id}`;
+    await ctx.sql`UPDATE oa_payroll_batches SET status = 'draft', published_at = NULL WHERE id = ${batch.id}`;
 
     expect((await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${batch.id}/void`)).status).toBe(200);
     expect((await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${batch.id}/void`)).status).toBe(200);

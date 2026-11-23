@@ -43,6 +43,8 @@ export type AuditAction =
   | 'oa_payroll_imported'
   | 'oa_payroll_edited'
   | 'oa_payroll_batch_voided'
+  | 'oa_payroll_published'
+  | 'oa_payroll_reminded'
   | 'position_chosen'
   | 'member_created'
   | 'member_updated'

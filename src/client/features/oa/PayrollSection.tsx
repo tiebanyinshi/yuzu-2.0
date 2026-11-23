@@ -5,12 +5,13 @@
 // 系统不算工资：应发、实发按填的。原件加密存在服务器上，只有管工资条的人能下载；看明细、下载都记薪资审计。
 
 import { useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, ArrowUp, Download, FileUp, Plus, Trash2, UserPlus } from 'lucide-react';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowDown, ArrowLeft, ArrowUp, BellRing, Download, FileUp, Plus, Send, Trash2, UserPlus } from 'lucide-react';
 import {
   formatPayslipValue,
   monthLabel,
   netField,
+  PAYROLL_REMIND_MINUTES,
   PAYROLL_STATUS_LABEL,
   PAYSLIP_FIELD_KINDS,
   PAYSLIP_MAX_FIELDS,
@@ -24,6 +25,10 @@ import {
   type PayslipRow,
   type PayslipTemplate,
   type PayslipValues,
+  PAYROLL_AUDIT_LABELS,
+  type PayrollAuditAction,
+  type PayrollAuditItem,
+  type PayrollAuditPage,
 } from '@shared/oa-payroll';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { loadTableFile, type LoadedTable } from '../../lib/import-file';
@@ -46,6 +51,7 @@ export function PayrollSection() {
   const tabs = [
     { key: 'batches', label: <span data-testid="payroll-tab-batches">工资表</span> },
     { key: 'templates', label: <span data-testid="payroll-tab-templates">模板</span> },
+    { key: 'audit', label: <span data-testid="payroll-tab-audit">审计</span> },
   ];
   return (
     <AdminPage section="payroll" wide tabs={tabs} description="按月做工资表：下载表格填好上传，或在线逐行填；系统不算工资，应发、实发按填的。上传的原件加密保存，看明细、下载都留审计。">
@@ -56,7 +62,7 @@ export function PayrollSection() {
 
 function Body() {
   const tab = useActiveSubTab() ?? 'batches';
-  return tab === 'templates' ? <TemplatesTab /> : <BatchesTab />;
+  return tab === 'templates' ? <TemplatesTab /> : tab === 'audit' ? <AuditTab /> : <BatchesTab />;
 }
 
 // ───────────────────────── 工资表 ─────────────────────────
@@ -75,7 +81,12 @@ function BatchesTab() {
     { key: 'month', header: '月份', cell: (b) => monthLabel(b.month), className: 'whitespace-nowrap' },
     { key: 'title', header: '标题', cell: (b) => <span className="font-bold">{b.title}</span> },
     { key: 'template', header: '模板', cell: (b) => b.templateName, className: 'max-md:hidden' },
-    { key: 'count', header: '已填 / 人数', numeric: true, cell: (b) => `${b.filledCount} / ${b.slipCount}` },
+    {
+      key: 'count',
+      header: '已填（签收）/ 人数',
+      numeric: true,
+      cell: (b) => (b.status === 'published' ? `签收 ${b.signedCount} / ${b.slipCount}` : `${b.filledCount} / ${b.slipCount}`),
+    },
     { key: 'status', header: '状态', cell: (b) => <Badge tone={b.status === 'published' ? 'pine' : 'neutral'}>{PAYROLL_STATUS_LABEL[b.status]}</Badge> },
     { key: 'updated', header: '更新', cell: (b) => formatDateTime(b.updatedAt), className: 'max-md:hidden whitespace-nowrap' },
   ];
@@ -181,6 +192,7 @@ function BatchView({ id, onBack }: { id: number; onBack: () => void }) {
   const [editing, setEditing] = useState<PayslipRow | null>(null);
   const [importing, setImporting] = useState(false);
   const [voiding, setVoiding] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [busy, setBusy] = useState('');
   const d = q.data;
   const refresh = () => {
@@ -229,6 +241,35 @@ function BatchView({ id, onBack }: { id: number; onBack: () => void }) {
       setBusy('');
     }
   };
+  const publish = async () => {
+    setBusy('publish');
+    try {
+      await api.post(`/api/oa/payroll/batches/${id}/publish`);
+      toast({ tone: 'success', title: '已发放', body: '表里每个人都收到了「您有新的工资条，请查收」' });
+      setPublishing(false);
+      refresh();
+    } catch (e) {
+      // 发放按结果写：没收到结果的刷新看现状，再点一次已经发放的直接算成功、不重复通知
+      toast({ tone: 'error', title: '没有发出去', body: errorMessage(e) });
+      refresh();
+    } finally {
+      setBusy('');
+    }
+  };
+  const remind = async () => {
+    setBusy('remind');
+    try {
+      const r = await api.post<{ reminded: number; recent: boolean }>(`/api/oa/payroll/batches/${id}/remind`);
+      toast({ tone: 'success', title: r.recent ? `刚提醒过，${PAYROLL_REMIND_MINUTES} 分钟内不再重复提醒` : r.reminded ? `已提醒 ${r.reminded} 人` : '都签收了，没有要提醒的' });
+      refresh();
+    } catch (e) {
+      toast({ tone: 'error', title: '没有办成', body: errorMessage(e) });
+    } finally {
+      setBusy('');
+    }
+  };
+  const published = b.status === 'published';
+  const unsigned = published ? b.slips.filter((s) => !s.signedAt) : [];
   const offRoster = b.slips.filter((s) => s.offRoster);
   const columns: DataColumn<PayslipRow>[] = [
     {
@@ -245,6 +286,21 @@ function BatchView({ id, onBack }: { id: number; onBack: () => void }) {
         </span>
       ),
     },
+    ...(published
+      ? [
+          {
+            key: 'signed',
+            header: '签收',
+            cell: (s: PayslipRow) =>
+              s.signedAt ? (
+                <span className="text-[13px] whitespace-nowrap text-ink-2">{formatDateTime(s.signedAt)}</span>
+              ) : (
+                <Badge tone={s.viewedAt ? 'yuzu' : 'clay'}>{s.viewedAt ? '看过未签' : '未查看'}</Badge>
+              ),
+            className: 'whitespace-nowrap',
+          } satisfies DataColumn<PayslipRow>,
+        ]
+      : []),
     { key: 'empNo', header: '工号', cell: (s) => s.empNo ?? '—', className: 'whitespace-nowrap' },
     { key: 'dept', header: '部门', cell: (s) => s.departmentName, className: 'whitespace-nowrap max-md:hidden' },
     ...b.fields.map(
@@ -266,7 +322,8 @@ function BatchView({ id, onBack }: { id: number; onBack: () => void }) {
         </h2>
         <Badge tone={b.status === 'published' ? 'pine' : 'neutral'}>{PAYROLL_STATUS_LABEL[b.status]}</Badge>
         <span className="text-[13px] text-ink-3">
-          模板「{b.templateName}」 · {b.filledCount} / {b.slipCount} 人已填
+          模板「{b.templateName}」 · {published ? `已签收 ${b.signedCount} / ${b.slipCount} 人` : `${b.filledCount} / ${b.slipCount} 人已填`}
+          {b.publishedAt ? ` · ${formatDateTime(b.publishedAt)} 发放` : ''}
         </span>
         <div className="ml-auto flex flex-wrap gap-2">
           <Button icon={<Download className="size-4" />} onClick={() => downloadUrl(`/api/oa/payroll/batches/${id}/sheet.xlsx`)} data-testid="payroll-sheet">
@@ -275,6 +332,16 @@ function BatchView({ id, onBack }: { id: number; onBack: () => void }) {
           {draft && (
             <Button variant="primary" icon={<FileUp className="size-4" />} disabled={!b.canUpload} onClick={() => setImporting(true)} data-testid="payroll-import">
               上传 Excel
+            </Button>
+          )}
+          {draft && (
+            <Button variant="primary" icon={<Send className="size-4" />} onClick={() => setPublishing(true)} data-testid="payroll-publish">
+              发放
+            </Button>
+          )}
+          {published && unsigned.length > 0 && (
+            <Button icon={<BellRing className="size-4" />} loading={busy === 'remind'} onClick={() => void remind()} data-testid="payroll-remind">
+              提醒未签收的 {unsigned.length} 人
             </Button>
           )}
           {draft && (
@@ -359,7 +426,28 @@ function BatchView({ id, onBack }: { id: number; onBack: () => void }) {
       {editing && <SlipDialog batch={b} slip={editing} onClose={() => setEditing(null)} onSaved={refresh} />}
       {importing && <ImportDialog batch={b} onClose={() => setImporting(false)} onDone={refresh} />}
       <VoidDialog open={voiding} busy={busy === 'void'} onClose={() => setVoiding(false)} onConfirm={() => void voidBatch()} />
+      <PublishDialog open={publishing} busy={busy === 'publish'} count={b.slipCount} onClose={() => setPublishing(false)} onConfirm={() => void publish()} />
     </div>
+  );
+}
+
+function PublishDialog({ open, busy, count, onClose, onConfirm }: { open: boolean; busy: boolean; count: number; onClose: () => void; onConfirm: () => void }) {
+  const [sure, setSure] = useState(false);
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="发放这张工资表？"
+      footer={
+        <Button variant="primary" size="lg" disabled={!sure} loading={busy} onClick={onConfirm} data-testid="payroll-publish-confirm">
+          发放给 {count} 人
+        </Button>
+      }
+    >
+      <ConfirmCheck checked={sure} onChange={setSure}>
+        核对过金额了。发放以后表里每个人都会收到通知、看到自己的工资条；之后不能再改、不能作废（发错了另建一张「更正」）
+      </ConfirmCheck>
+    </Dialog>
   );
 }
 
@@ -704,5 +792,60 @@ function TemplateDialog({ template, onClose }: { template: PayslipTemplate | nul
         )}
       </div>
     </Dialog>
+  );
+}
+
+// ───────────────────────── 薪资审计 ─────────────────────────
+
+function AuditTab() {
+  const [action, setAction] = useState<PayrollAuditAction | ''>('');
+  const q = useInfiniteQuery({
+    queryKey: ['oa', 'payroll', 'audit', action],
+    queryFn: ({ pageParam }) => api.get<PayrollAuditPage>(`/api/oa/payroll/audit?${action ? `action=${action}&` : ''}${pageParam ? `before=${pageParam}` : ''}`),
+    initialPageParam: 0,
+    getNextPageParam: (last) => last.next ?? undefined,
+  });
+  const items = q.data?.pages.flatMap((p) => p.items) ?? [];
+  const columns: DataColumn<PayrollAuditItem>[] = [
+    { key: 'at', header: '时间', cell: (r) => formatDateTime(r.at), className: 'whitespace-nowrap' },
+    { key: 'action', header: '动作', cell: (r) => <Badge tone={r.action.startsWith('employee') ? 'neutral' : 'pine'}>{PAYROLL_AUDIT_LABELS[r.action]}</Badge> },
+    { key: 'actor', header: '谁', cell: (r) => r.actorName ?? '—' },
+    { key: 'batch', header: '工资表', cell: (r) => r.batchLabel ?? '—' },
+    { key: 'target', header: '谁的工资条', cell: (r) => r.targetName ?? '—', className: 'max-md:hidden' },
+    { key: 'ip', header: 'IP', cell: (r) => <span className="num text-ink-3">{r.ip ?? '—'}</span>, className: 'max-md:hidden' },
+  ];
+  return (
+    <div className="space-y-4" data-testid="payroll-audit">
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="动作">
+          <Select value={action} onChange={(e) => setAction(e.target.value as PayrollAuditAction | '')} fullWidth={false} className="w-40" data-testid="payroll-audit-action">
+            <option value="">全部</option>
+            {(Object.keys(PAYROLL_AUDIT_LABELS) as PayrollAuditAction[]).map((a) => (
+              <option key={a} value={a}>
+                {PAYROLL_AUDIT_LABELS[a]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <p className="pb-2 text-[13px] text-ink-3">只记谁、做了什么、哪张表、哪个人，不记金额</p>
+      </div>
+      <DataTable
+        columns={columns}
+        rows={items}
+        rowKey={(r) => r.id}
+        loading={q.isPending}
+        failed={q.isError && !q.data}
+        onRetry={() => void q.refetch()}
+        empty="还没有记录"
+        rowTestId={(r) => `payroll-audit-${r.id}`}
+      />
+      {q.hasNextPage && (
+        <div className="flex justify-center">
+          <Button loading={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()} data-testid="payroll-audit-more">
+            更早的
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

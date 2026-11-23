@@ -541,7 +541,7 @@ function ImChatPage({ id }: { id: number }) {
           {d?.notice && (
             <button
               type="button"
-              className="tap flex items-start gap-2 border-b border-line bg-yuzu-tint px-3 py-2 text-left text-[13px] text-ink-2"
+              className="tap relative flex items-start gap-2 border-b border-line bg-yuzu-tint px-3 py-2 text-left text-[13px] text-ink-2"
               onClick={() => setSettings(true)}
               data-testid="im-notice"
             >
@@ -817,7 +817,7 @@ function Bubble({
             (receipt.clickable ? (
               <button
                 type="button"
-                className={cn('tap px-1 text-[12px] underline-offset-2 hover:underline', receipt.done ? 'text-ink-3' : 'text-pine')}
+                className={cn('tap relative px-1 text-[12px] underline-offset-2 hover:underline', receipt.done ? 'text-ink-3' : 'text-pine')}
                 onClick={onReceipt}
                 data-testid={`im-receipt-${m.id}`}
               >

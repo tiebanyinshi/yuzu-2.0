@@ -256,7 +256,7 @@ function AddMembers({ exclude, room, busy, onCancel, onAdd }: { exclude: number[
         <ul className="max-h-48 divide-y divide-line overflow-y-auto">
           {shown.map((p) => (
             <li key={p.id}>
-              <label className="tap flex items-center gap-2 py-2 text-[14px]">
+              <label className="tap relative flex items-center gap-2 py-2 text-[14px]">
                 <input
                   type="checkbox"
                   checked={picked.includes(p.id)}

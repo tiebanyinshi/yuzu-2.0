@@ -13,12 +13,19 @@ import { z } from 'zod';
 import { departmentOfPosition } from '@shared/oa';
 import {
   monthLabel,
+  netField,
   normalizeValues,
   PAYROLL_ID_COLUMNS,
   PAYROLL_MAX_ROWS,
   PAYSLIP_MAX_FIELDS,
+  PAYROLL_REMIND_MINUTES,
   type PayrollBatchDetail,
+  type PayrollAuditAction,
+  type PayrollAuditItem,
+  type PayrollAuditPage,
   type PayrollBatchStatus,
+  type MyPayslipDetail,
+  type MyPayslipItem,
   type PayrollBatchSummary,
   type PayrollFileInfo,
   type PayrollImportPreview,
@@ -45,6 +52,8 @@ import { parse } from '../../lib/validate';
 import { buildWorkbook, colName, type WbSheet } from '../../lib/xlsx';
 import { DEFAULT_STORE_ID } from '../../lib/store-context';
 import { allowedStores } from '../stores';
+import { employeeOnly } from './im';
+import { notify } from './notifications';
 import { NOT_EMPLOYEE_ROLES } from './org';
 
 /** 时间：库里读出来的可能是文字，统一成 ISO */
@@ -104,8 +113,6 @@ export function decryptFile(k: PayrollKey, f: { iv: Buffer; tag: Buffer; ciphert
 
 // ───────────────────────── 审计 ─────────────────────────
 
-type PayrollAuditAction = 'view_batch' | 'export_sheet' | 'download_file';
-
 async function payrollAudit(db: Db, e: { staffId: number; action: PayrollAuditAction; batchId: number; targetId?: number | null; fileId?: number | null; ip?: string }) {
   await db`
     INSERT INTO oa_payroll_audit (staff_id, action, batch_id, target_id, file_id, ip)
@@ -130,7 +137,8 @@ const covers = (mine: Scope, storeIds: number[] | null) => mine.all || (storeIds
 /** 员工在不在范围里（s 是 staff 表）：挂的门店都在范围里；没挂门店的算本店 */
 function storeCond(db: Db, scope: Scope) {
   if (scope.all) return db`true`;
-  return db`(NOT EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id AND NOT (x.store_id = ANY(${scope.stores}::bigint[])))
+  // 挂门店的 HR 建的表不含总裁（总裁只在总裁自己建的全店表里，OA-18）
+  return db`s.role <> 'owner' AND (NOT EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id AND NOT (x.store_id = ANY(${scope.stores}::bigint[])))
     AND (EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id) OR ${DEFAULT_STORE_ID}::bigint = ANY(${scope.stores}::bigint[])))`;
 }
 
@@ -309,12 +317,16 @@ interface BatchRow {
   updatedAt: Date;
   slipCount: number;
   filledCount: number;
+  signedCount: number;
   storeIds: number[] | null;
+  publishedAt: Date | null;
+  remindedAt: Date | null;
 }
 
 async function batchRows(db: Db, where: { id?: number; includeVoid?: boolean }): Promise<BatchRow[]> {
   const rows = await db<BatchRow[]>`
-    SELECT b.id, b.month, b.title, b.template_id, t.name AS template_name, b.fields, b.status, s.display_name AS created_by_name, b.created_at, b.updated_at, b.store_ids,
+    SELECT b.id, b.month, b.title, b.template_id, t.name AS template_name, b.fields, b.status, s.display_name AS created_by_name, b.created_at, b.updated_at, b.store_ids, b.published_at, b.reminded_at,
+           (SELECT count(*)::int FROM oa_payslips p WHERE p.batch_id = b.id AND p.signed_at IS NOT NULL) AS signed_count,
            (SELECT count(*)::int FROM oa_payslips p WHERE p.batch_id = b.id) AS slip_count,
            (SELECT count(*)::int FROM oa_payslips p WHERE p.batch_id = b.id AND p.values <> '{}'::jsonb) AS filled_count
     FROM oa_payroll_batches b JOIN oa_payslip_templates t ON t.id = b.template_id JOIN staff s ON s.id = b.created_by
@@ -332,6 +344,9 @@ const summaryOf = (r: BatchRow): PayrollBatchSummary => ({
   status: r.status,
   slipCount: r.slipCount,
   filledCount: r.filledCount,
+  signedCount: r.signedCount,
+  publishedAt: r.publishedAt ? iso(r.publishedAt) : null,
+  remindedAt: r.remindedAt ? iso(r.remindedAt) : null,
   createdByName: r.createdByName,
   createdAt: iso(r.createdAt),
   updatedAt: iso(r.updatedAt),
@@ -347,13 +362,20 @@ async function loadBatch(db: Db, id: number, mine: Scope): Promise<BatchRow> {
 async function loadDetail(db: Db, id: number, key: PayrollKey | null, mine: Scope): Promise<PayrollBatchDetail> {
   const b = await loadBatch(db, id, mine);
   const staff = await staffFor(db, b.month, batchScope(b.storeIds));
-  const slips = await db<{ staffId: number; values: PayslipValues; updatedAt: Date }[]>`
-    SELECT staff_id, values, updated_at FROM oa_payslips WHERE batch_id = ${id}`;
+  const slips = await db<{ staffId: number; values: PayslipValues; updatedAt: Date; signedAt: Date | null; viewedAt: Date | null }[]>`
+    SELECT staff_id, values, updated_at, signed_at, viewed_at FROM oa_payslips WHERE batch_id = ${id}`;
   const inBatch = new Set(slips.map((s) => Number(s.staffId)));
   const rows: PayslipRow[] = slips
     .map((s) => {
       const e = staff.get(Number(s.staffId))!;
-      return { ...person(e), values: s.values, updatedAt: iso(s.updatedAt), offRoster: e.offRoster };
+      return {
+        ...person(e),
+        values: s.values,
+        updatedAt: iso(s.updatedAt),
+        offRoster: e.offRoster,
+        signedAt: s.signedAt ? iso(s.signedAt) : null,
+        viewedAt: s.viewedAt ? iso(s.viewedAt) : null,
+      };
     })
     .sort(byDept);
   const missing = [...staff.values()]
@@ -662,6 +684,9 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
         if (e.offRoster) throw unprocessable('NOT_ON_ROSTER', `${e.name}不在这个月的在职名单里（${e.offRoster}）`);
         await tx`INSERT INTO oa_payslips (batch_id, staff_id, values, updated_by) VALUES (${id}, ${staffId}, ${tx.json(values as never)}, ${req.actor.id})`;
       } else if (canonical(cur.values) !== canonical(values)) {
+        // 调出这张表门店范围的人那一行不能再改，只能移出（OA-17 复核留下的一处）
+        const e = (await staffFor(tx, b.month, b.scope)).get(staffId);
+        if (e?.offRoster === OUT_OF_SCOPE) throw unprocessable('NOT_ON_ROSTER', `${e.name}已经不在这张表的门店范围里，只能移出`);
         await tx`UPDATE oa_payslips SET values = ${tx.json(values as never)}, updated_by = ${req.actor.id}, updated_at = now() WHERE batch_id = ${id} AND staff_id = ${staffId}`;
       } else return;
       await touch(tx, id, req.actor.id);
@@ -793,5 +818,204 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
     await payrollAudit(sql, { staffId: req.actor.id, action: 'download_file', batchId: id, fileId, ip: req.ip });
     attachment(reply, f.fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     return reply.send(data);
+  });
+
+  // ───────────── OA-18 发放、提醒、薪资审计 ─────────────
+
+  // 发放：草稿 → 已发放（之后不能改、不能作废）。按结果写：已经发放的再点一次直接算成功、不重复通知
+  app.post('/api/oa/payroll/batches/:id/publish', { preHandler: canManage }, async (req) => {
+    const { id } = parse(BatchParam, req.params);
+    const mine = await scopeOf(sql, req.actor);
+    await sql.begin(async (tx) => {
+      const [b] = await tx<{ month: string; title: string; status: PayrollBatchStatus; storeIds: number[] | null }[]>`
+        SELECT month, title, status, store_ids FROM oa_payroll_batches WHERE id = ${id} FOR UPDATE`;
+      if (!b || !covers(mine, b.storeIds)) throw notFound('工资表不存在');
+      if (b.status === 'published') return;
+      if (b.status === 'void') throw conflict('PAYROLL_VOID', '这张工资表已经作废了');
+      // 同月同标题的发放串行：门店范围重叠的两张同名表不会同时发出去
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`oa_payroll_publish:${b.month}:${b.title}`}))`;
+      const slips = await tx<{ id: number; staffId: number; values: PayslipValues }[]>`SELECT id, staff_id, values FROM oa_payslips WHERE batch_id = ${id}`;
+      if (slips.length === 0) throw unprocessable('PAYROLL_EMPTY', '表里还没有人，不能发放');
+      const staff = await staffFor(tx, b.month, batchScope(b.storeIds));
+      const off = slips.map((x) => staff.get(Number(x.staffId))).filter((e) => !e || e.offRoster);
+      if (off.length) throw unprocessable('PAYROLL_OFF_ROSTER', `${off.map((e) => (e ? `${e.name}（${e.offRoster}）` : '已删除的账号')).join('、')}不在这张表的名单里，请先移出`);
+      const blank = slips.filter((x) => Object.keys(x.values).length === 0).map((x) => staff.get(Number(x.staffId))?.name ?? '');
+      if (blank.length) throw unprocessable('PAYROLL_BLANK', `${blank.slice(0, 10).join('、')}${blank.length > 10 ? ` 等 ${blank.length} 人` : ''}一项都没填，请填好或移出`);
+      // 同一个人同一个月、同一个标题只能有一张已发放的
+      const dup = await tx<{ name: string }[]>`
+        SELECT DISTINCT s.display_name AS name FROM oa_payslips p
+        JOIN oa_payroll_batches o ON o.id = p.batch_id AND o.id <> ${id} AND o.status = 'published' AND o.month = ${b.month} AND o.title = ${b.title}
+        JOIN staff s ON s.id = p.staff_id
+        WHERE p.staff_id IN (SELECT staff_id FROM oa_payslips WHERE batch_id = ${id})`;
+      if (dup.length) throw conflict('PAYROLL_DUPLICATE', `${dup.map((d) => d.name).join('、')}${monthLabel(b.month)}已经发过一张「${b.title}」，同一个人不能重复发`);
+      await tx`UPDATE oa_payroll_batches SET status = 'published', published_at = now(), published_by = ${req.actor.id}, updated_at = now(), updated_by = ${req.actor.id} WHERE id = ${id}`;
+      for (const x of slips)
+        await notify(tx, [Number(x.staffId)], {
+          kind: 'payslip',
+          title: '您有新的工资条，请查收',
+          body: `${monthLabel(b.month)} · ${b.title}`,
+          link: `/oa/payslips/${Number(x.id)}`,
+          ref: { type: 'oa_payslip', id: Number(x.id) },
+        });
+      await payrollAudit(tx, { staffId: req.actor.id, action: 'publish', batchId: id, ip: req.ip });
+      await writeAudit(tx, {
+        staffId: req.actor.id,
+        action: 'oa_payroll_published',
+        targetType: 'oa_payroll_batch',
+        targetId: id,
+        detail: { month: b.month, title: b.title, slipCount: slips.length },
+        ip: req.ip,
+      });
+    });
+    return summaryOf(await loadBatch(sql, id, mine));
+  });
+
+  // 一键提醒：给已发放、还没签收的人再发一次通知（同一张表 10 分钟一次）
+  app.post('/api/oa/payroll/batches/:id/remind', { preHandler: canManage }, async (req) => {
+    const { id } = parse(BatchParam, req.params);
+    const mine = await scopeOf(sql, req.actor);
+    const count = await sql.begin(async (tx) => {
+      const [b] = await tx<{ month: string; title: string; status: PayrollBatchStatus; storeIds: number[] | null; recent: boolean }[]>`
+        SELECT month, title, status, store_ids, reminded_at > now() - make_interval(mins => ${PAYROLL_REMIND_MINUTES}) AS recent
+        FROM oa_payroll_batches WHERE id = ${id} FOR UPDATE`;
+      if (!b || !covers(mine, b.storeIds)) throw notFound('工资表不存在');
+      if (b.status !== 'published') throw conflict('PAYROLL_NOT_PUBLISHED', '还没发放的工资表不用提醒');
+      // 刚提醒过（含上一次回复没收到、原样重试）：按结果算成功，不再发一遍（OA22 按结果写）
+      if (b.recent) return null;
+      const unsigned = await tx<{ id: number; staffId: number }[]>`SELECT id, staff_id FROM oa_payslips WHERE batch_id = ${id} AND signed_at IS NULL`;
+      for (const x of unsigned)
+        await notify(tx, [Number(x.staffId)], {
+          kind: 'payslip',
+          title: '您的工资条还没签收',
+          body: `${monthLabel(b.month)} · ${b.title}：请打开看一下，确认无误后签收`,
+          link: `/oa/payslips/${Number(x.id)}`,
+          ref: { type: 'oa_payslip', id: Number(x.id) },
+        });
+      await tx`UPDATE oa_payroll_batches SET reminded_at = now() WHERE id = ${id}`;
+      await payrollAudit(tx, { staffId: req.actor.id, action: 'remind', batchId: id, ip: req.ip });
+      await writeAudit(tx, { staffId: req.actor.id, action: 'oa_payroll_reminded', targetType: 'oa_payroll_batch', targetId: id, detail: { count: unsigned.length }, ip: req.ip });
+      return unsigned.length;
+    });
+    return count === null ? { reminded: 0, recent: true } : { reminded: count, recent: false };
+  });
+
+  // 薪资审计：按时间倒序，可按工资表、动作筛；只列谁、做了什么、哪张表、哪个人、IP、时间（不带金额）。门店范围外的工资表的记录不给
+  const AuditQuery = z.object({
+    batchId: z.coerce.number().int().positive().optional(),
+    action: z.enum(['view_batch', 'export_sheet', 'download_file', 'publish', 'remind', 'employee_view', 'employee_sign']).optional(),
+    before: z.coerce.number().int().positive().optional(),
+  });
+  app.get('/api/oa/payroll/audit', { preHandler: canManage }, async (req): Promise<PayrollAuditPage> => {
+    const q = parse(AuditQuery, req.query);
+    const mine = await scopeOf(sql, req.actor);
+    const PAGE = 50;
+    const scopeCond = mine.all ? sql`true` : sql`b.store_ids IS NOT NULL AND b.store_ids <@ ${mine.stores}::bigint[]`;
+    const rows = await sql<
+      {
+        id: number;
+        createdAt: Date;
+        action: PayrollAuditAction;
+        actorName: string | null;
+        batchId: number | null;
+        month: string | null;
+        title: string | null;
+        targetName: string | null;
+        ip: string | null;
+      }[]
+    >`
+      SELECT a.id, a.created_at, a.action, s.display_name AS actor_name, a.batch_id, b.month, b.title, t.display_name AS target_name, a.ip
+      FROM oa_payroll_audit a
+      JOIN oa_payroll_batches b ON b.id = a.batch_id
+      LEFT JOIN staff s ON s.id = a.staff_id
+      LEFT JOIN staff t ON t.id = a.target_id
+      WHERE ${scopeCond}
+        ${q.batchId ? sql`AND a.batch_id = ${q.batchId}` : sql``}
+        ${q.action ? sql`AND a.action = ${q.action}` : sql``}
+        ${q.before ? sql`AND a.id < ${q.before}` : sql``}
+      ORDER BY a.id DESC LIMIT ${PAGE + 1}`;
+    const items = rows.slice(0, PAGE).map(
+      (r): PayrollAuditItem => ({
+        id: Number(r.id),
+        at: iso(r.createdAt),
+        action: r.action,
+        actorName: r.actorName,
+        batchId: r.batchId === null ? null : Number(r.batchId),
+        batchLabel: r.month && r.title ? `${monthLabel(r.month)} · ${r.title}` : null,
+        targetName: r.targetName,
+        ip: r.ip,
+      }),
+    );
+    return { items, next: rows.length > PAGE ? items[items.length - 1]!.id : null };
+  });
+
+  // ───────────── OA-18 员工端：本人的工资条 ─────────────
+  // 一律按「登录的人 = 工资条的人」、已发放的取；别人的、没发放的编号一律当没有（防越权）
+  const mineOnly = employeeOnly(sql);
+  const SlipIdParam = z.object({ id: z.coerce.number().int().positive('编号不正确') });
+  const netOf = (fields: PayslipField[], values: PayslipValues) => {
+    const f = netField(fields);
+    const v = f ? values[f.key] : null;
+    return typeof v === 'number' ? v : null;
+  };
+
+  app.get('/api/oa/my/payslips', { preHandler: mineOnly }, async (req): Promise<MyPayslipItem[]> => {
+    // 列表不带金额（金额只在明细里给，明细每次都记审计）
+    const rows = await sql<{ id: number; month: string; title: string; publishedAt: Date; signedAt: Date | null }[]>`
+      SELECT p.id, b.month, b.title, b.published_at, p.signed_at
+      FROM oa_payslips p JOIN oa_payroll_batches b ON b.id = p.batch_id
+      WHERE p.staff_id = ${req.actor.id} AND b.status = 'published'
+      ORDER BY b.month DESC, b.published_at DESC, p.id DESC`;
+    return rows.map((r) => ({ id: Number(r.id), month: r.month, title: r.title, publishedAt: iso(r.publishedAt), signedAt: r.signedAt ? iso(r.signedAt) : null }));
+  });
+
+  async function mySlip(db: Db, id: number, staffId: number, lock = false) {
+    const [r] = await db<
+      { id: number; batchId: number; month: string; title: string; fields: PayslipField[]; values: PayslipValues; publishedAt: Date; signedAt: Date | null; viewedAt: Date | null; name: string }[]
+    >`
+      SELECT p.id, p.batch_id, b.month, b.title, b.fields, p.values, b.published_at, p.signed_at, p.viewed_at, s.display_name AS name
+      FROM oa_payslips p JOIN oa_payroll_batches b ON b.id = p.batch_id JOIN staff s ON s.id = p.staff_id
+      WHERE p.id = ${id} AND p.staff_id = ${staffId} AND b.status = 'published'
+      ${lock ? db`FOR UPDATE OF p` : db``}`;
+    if (!r) throw notFound('工资条不存在');
+    return r;
+  }
+  const detailOf = (r: Awaited<ReturnType<typeof mySlip>>): MyPayslipDetail => ({
+    id: Number(r.id),
+    month: r.month,
+    title: r.title,
+    net: netOf(r.fields, r.values),
+    publishedAt: iso(r.publishedAt),
+    signedAt: r.signedAt ? iso(r.signedAt) : null,
+    name: r.name,
+    fields: r.fields,
+    values: r.values,
+  });
+
+  app.get('/api/oa/my/payslips/:id', { preHandler: mineOnly }, async (req): Promise<MyPayslipDetail> => {
+    const { id } = parse(SlipIdParam, req.params);
+    const r = await sql.begin(async (tx) => {
+      const slip = await mySlip(tx, id, req.actor.id);
+      if (!slip.viewedAt) await tx`UPDATE oa_payslips SET viewed_at = now() WHERE id = ${id} AND viewed_at IS NULL`;
+      await payrollAudit(tx, { staffId: req.actor.id, action: 'employee_view', batchId: Number(slip.batchId), targetId: req.actor.id, ip: req.ip });
+      return slip;
+    });
+    return detailOf(r);
+  });
+
+  // 确认签收：记签收时间（签过的再点不变）
+  app.post('/api/oa/my/payslips/:id/sign', { preHandler: mineOnly }, async (req): Promise<MyPayslipDetail> => {
+    const { id } = parse(SlipIdParam, req.params);
+    const r = await sql.begin(async (tx) => {
+      const slip = await mySlip(tx, id, req.actor.id, true);
+      // 签过的再点：签收时间不变、不再记签收；回给的明细照样记一次查看（不能绕过查看审计取金额）
+      if (slip.signedAt) {
+        await payrollAudit(tx, { staffId: req.actor.id, action: 'employee_view', batchId: Number(slip.batchId), targetId: req.actor.id, ip: req.ip });
+        return slip;
+      }
+      const [row] = await tx<{ signedAt: Date }[]>`UPDATE oa_payslips SET signed_at = now(), viewed_at = COALESCE(viewed_at, now()) WHERE id = ${id} RETURNING signed_at`;
+      await payrollAudit(tx, { staffId: req.actor.id, action: 'employee_sign', batchId: Number(slip.batchId), targetId: req.actor.id, ip: req.ip });
+      return { ...slip, signedAt: row!.signedAt };
+    });
+    return detailOf(r);
   });
 }
