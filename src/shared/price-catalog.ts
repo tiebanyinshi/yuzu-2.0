@@ -556,3 +556,9 @@ export function priceCategoriesOf(entries: Pick<PriceCatalogEntry, 'sheet' | 'ki
   }
   return { categories: [...seen.values()].sort((a, b) => a.sort - b.sort), byEntry };
 }
+
+/**
+ * 康美部在房间、大堂登记的项目分类（重做第二批，PC22）：需求说明「康美部项目页沿用现有 8 项筛选（全部 / 康疗 / SPA / 中医 / 面护 / 头疗 / 大堂按摩 / 加项）」，
+ * 即按摩及助浴的前 7 个板块；助浴、护理在浴区做，不在房态中心登记里列（前台开单照样能挂）。
+ */
+export const ROOM_SERVICE_EXCLUDED_CATEGORIES: readonly string[] = ['massage.08', 'massage.09'];

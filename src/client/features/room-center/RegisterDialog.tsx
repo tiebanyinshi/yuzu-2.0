@@ -5,7 +5,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Minus, Plus } from 'lucide-react';
-import { PRICE_TIER_LABELS, tierPrice, type PriceTier } from '@shared/catalog';
+import { itemCategoryKey, itemCategoryTabs, PRICE_TIER_LABELS, tierPrice, type PriceTier } from '@shared/catalog';
+import { ROOM_SERVICE_EXCLUDED_CATEGORIES } from '@shared/price-catalog';
 import type { BoardTechnician, ClockroomBoard } from '@shared/clockroom';
 import { formatYuan } from '@shared/money';
 import {
@@ -26,6 +27,7 @@ import { useCatalog } from '../../lib/queries';
 import { serverNowMs } from '../../lib/serverClock';
 import { useSession } from '../../lib/session';
 import { cn, formatTime } from '../../lib/utils';
+import { ALL_CATEGORIES, CategoryTabs } from '../../components/CategoryTabs';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
@@ -85,6 +87,7 @@ export function RegisterDialog({
   const [tag, setTag] = useState('');
   const [guest, setGuest] = useState<RoomGuestLookup | null>(null);
   const [itemId, setItemId] = useState<number | null>(null);
+  const [category, setCategory] = useState<string>(ALL_CATEGORIES);
   const [tier, setTier] = useState<PriceTier | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [callType, setCallType] = useState<CallType | null>(null);
@@ -115,8 +118,17 @@ export function RegisterDialog({
   const board = clock.data;
   const rules = board?.techRules;
   const mode: CallType = callType ?? rules?.defaultCallType ?? 'rotation';
-  const items = useMemo(() => (catalog.data?.items ?? []).filter((i) => i.active && i.technicianRequired && (!i.gender || !guest || i.gender === guest.zone)), [catalog.data, guest]);
-  const item = items.find((i) => i.id === itemId) ?? null;
+  // 康美部项目（重做第二批）：要技师的、这位客人的性别能做的；浴区的助浴、护理不在房间里登记（PC22）
+  const allItems = useMemo(
+    () =>
+      (catalog.data?.items ?? []).filter(
+        (i) => i.active && i.technicianRequired && (!i.gender || !guest || i.gender === guest.zone) && !ROOM_SERVICE_EXCLUDED_CATEGORIES.includes(i.catalogCategory?.code ?? ''),
+      ),
+    [catalog.data, guest],
+  );
+  const tabs = useMemo(() => itemCategoryTabs(allItems), [allItems]);
+  const items = category === ALL_CATEGORIES ? allItems : allItems.filter((i) => itemCategoryKey(i) === category);
+  const item = allItems.find((i) => i.id === itemId) ?? null;
   const byGrade = !!rules?.tierByGrade && !!item && item.prices.length > 1;
   const cant = (t: BoardTechnician) => (item && rules ? canServe(t, item, rules.tierByGrade) : null);
   // 轮钟：在岗、空闲、能做这个项目的技师按排位，第一位就是该派的；点钟：上了牌的都能点（在钟上的要等钟）
@@ -280,7 +292,8 @@ export function RegisterDialog({
           </div>
           <div className="min-w-0 space-y-4">
             <Field label="项目">
-              {items.length === 0 ? (
+              {allItems.length > 0 && <CategoryTabs tabs={tabs} value={category} onChange={setCategory} total={allItems.length} testId="rc-register-categories" />}
+              {allItems.length === 0 ? (
                 <p className="text-[13px] text-ink-3">没有需要技师的项目（在「后台 → 技师」里勾选）</p>
               ) : (
                 <div className="flex flex-wrap gap-1.5" data-testid="rc-register-items">
