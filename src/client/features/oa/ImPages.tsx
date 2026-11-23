@@ -72,10 +72,13 @@ function ImListPage() {
   const synced = useRef<string | null>(null);
   useLivePoll(
     async (isLive) => {
+      const started = Date.now();
       const r = await api.get<ImSync>('/api/oa/im/sync');
       if (!isLive()) return;
       const sig = `${r.unread}:${r.lastMessageId}:${r.revokedAt ?? ''}`;
-      if (synced.current !== null && synced.current !== sig) await qc.invalidateQueries({ queryKey: LIST_KEY });
+      // 第一次：列表可能是 5 秒内的旧缓存（staleTime），不是这次同步之后取的就重取一遍（Codex 审查 5c0dc60）
+      const fresh = (qc.getQueryState([...LIST_KEY, q])?.dataUpdatedAt ?? 0) >= started;
+      if (synced.current === null ? !fresh : synced.current !== sig) await qc.invalidateQueries({ queryKey: LIST_KEY });
       synced.current = sig;
     },
     [qc],
