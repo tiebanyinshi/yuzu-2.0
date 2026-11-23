@@ -43,6 +43,8 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
   /** 键见 lineKey（项目:价格档，选了技师时再加技师与上钟方式），值为数量 */
   const [cart, setCart] = useState<Map<string, number>>(new Map());
   const [category, setCategory] = useState<string>(ALL_CATEGORIES);
+  // 搜项目（重做第五批）：按名称或价目表编号，搜的时候不管分类；要在下面打开时清空的 useResetOnOpen 之前声明（它在渲染时就调用）
+  const [search, setSearch] = useState('');
   /** 数量输得不对时的一句提示（输空了、超过上限） */
   const [qtyHint, setQtyHint] = useState<string | null>(null);
   const [custom, setCustom] = useState<{ name: string; amount: string }[]>([]);
@@ -83,8 +85,6 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
 
   const items = useMemo(() => (catalog.data?.items ?? []).filter((i) => i.active), [catalog.data]);
   const tabs = useMemo(() => itemCategoryTabs(items), [items]);
-  // 搜项目（重做第五批）：按名称或价目表编号，搜的时候不管分类
-  const [search, setSearch] = useState('');
   const shown = search.trim() ? items.filter((i) => matchesItemSearch(i, search)) : category === ALL_CATEGORIES ? items : items.filter((i) => itemCategoryKey(i) === category);
 
   const locked = op.locked;
