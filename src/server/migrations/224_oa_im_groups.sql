@@ -7,6 +7,7 @@
 --     在职的：部门同步进来的、部门变了的退出原部门群；本部门有部门群而不在里面的进群（读到的位置记在最新一条，没有积压的未读）。
 --     锁顺序：员工 / 员工档案（改的那一句已经锁着）→ 成员同步锁（advisory 独占；建群、拉人也先拿它）→ 会话行（FOR UPDATE，按会话编号）→ 成员行 → 系统提示消息。
 --     部门群里的人走光过（没有群主）的，第一个回来的接任群主。自己选的岗位（position_chosen_at 不为空，后台没核实）不自动进部门群。
+--   · 迁移末尾按现在的状态把已经不在职的人从群里同步出去一次（升级以前只改员工状态、没退群的）。
 -- 回滚：docs/rollback/224_oa_im_groups.down.sql。
 
 ALTER TABLE oa_im_conversations
@@ -121,3 +122,9 @@ CREATE TRIGGER oa_im_staff_sync_upd AFTER UPDATE OF position, active, role, posi
         OR OLD.position_chosen_at IS DISTINCT FROM NEW.position_chosen_at)
   EXECUTE FUNCTION oa_im_staff_sync_trg();
 CREATE TRIGGER oa_im_profile_sync AFTER INSERT OR UPDATE OF status ON staff_profiles FOR EACH ROW EXECUTE FUNCTION oa_im_profile_sync_trg();
+
+-- 升级以前就已经停用、离职、改成专用账号的人（OA-14、15 时期只改员工状态、不退群）：按现在的状态同步一次，
+-- 退出他们还在的群（群主交给最早的管理员或成员）；以后的变动由上面的触发器管（Codex 审查 4bd532c）
+SELECT oa_im_sync_staff(s.id) FROM staff s
+ WHERE EXISTS (SELECT 1 FROM oa_im_members m WHERE m.staff_id = s.id AND m.left_at IS NULL)
+ ORDER BY s.id;

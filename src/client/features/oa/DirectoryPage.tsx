@@ -155,7 +155,24 @@ export function DirectoryPage() {
               <EmptyState title="没有搜到" description={d!.canSeePhones ? undefined : '手机号看不到的同事不能按手机号搜'} />
             )
           ) : (
-            <div>{d!.departments.filter((x) => !x.parentKey).map((x) => deptNode(x, 0))}</div>
+            <div>
+              {d!.departments.filter((x) => !x.parentKey).map((x) => deptNode(x, 0))}
+              {/* 还没分部门的在职同事（老账号没选新岗位）：另成一组，不靠搜索才找得到（Codex 审查 4bd532c） */}
+              {(byDept.get('') ?? []).length > 0 && (
+                <div data-testid="dir-dept-none">
+                  <button type="button" className="tap flex w-full items-center gap-1 py-2 text-left" onClick={() => toggle('')} aria-expanded={open.has('')}>
+                    {open.has('') ? <ChevronDown className="size-4 shrink-0 text-ink-3" /> : <ChevronRight className="size-4 shrink-0 text-ink-3" />}
+                    <span className="font-semibold text-ink">未分部门</span>
+                    <span className="num shrink-0 text-[12px] text-ink-3">{byDept.get('')!.length} 人</span>
+                  </button>
+                  {open.has('') && (
+                    <div className="pb-1 pl-4">
+                      <ul className="divide-y divide-line">{byDept.get('')!.map(personRow)}</ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
           {d?.canConfigure && (
             <div className="mt-4 border-t border-line pt-4">

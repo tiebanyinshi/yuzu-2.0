@@ -377,4 +377,28 @@ describe('OA-16 部门群的边界', () => {
     await move(w1, 'kitchen.staff');
     expect((await detail(w1, id)).status).toBe(404);
   });
+
+  it('人力负责人调成普通员工以后，会话里留着的旧权限不算：建不了部门群、看不到全员手机号', async () => {
+    const h2 = await hire('g_h2', 'hr.lead');
+    expect((await api<Directory>(ctx.app, h2.cookie, 'GET', '/api/oa/directory')).body.canConfigure).toBe(true);
+    await move(h2, 'kitchen.staff');
+    expect((await api<Directory>(ctx.app, h2.cookie, 'GET', '/api/oa/directory')).body).toMatchObject({ canConfigure: false, canSeePhones: false });
+    expect((await api(ctx.app, h2.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'eng' })).status).toBe(403);
+  });
+
+  it('升级前就停用了、还挂在群里的人：同步一次就退出（迁移末尾对存量成员做的同一件事）', async () => {
+    const s0 = await hire('g_s0', 'kitchen.staff');
+    const s1 = await hire('g_s1', 'kitchen.staff');
+    const s2 = await hire('g_s2', 'kitchen.staff');
+    const g = await group(s0, [s1, s2]);
+    // 模拟 OA-14、15 时期：只改了员工状态，成员行没动（绕过触发器）
+    await ctx.sql`UPDATE staff SET active = false WHERE id = ${s0.id}`;
+    await ctx.sql`UPDATE oa_im_members SET role = 'member' WHERE conversation_id = ${g} AND role = 'owner'`;
+    await ctx.sql`UPDATE oa_im_members SET left_at = NULL, role = 'owner' WHERE conversation_id = ${g} AND staff_id = ${s0.id}`;
+    expect((await ctx.sql`SELECT 1 FROM oa_im_members WHERE conversation_id = ${g} AND staff_id = ${s0.id} AND left_at IS NULL`).length).toBe(1);
+    await ctx.sql`SELECT oa_im_sync_staff(${s0.id})`;
+    const d = (await detail(s1, g)).body;
+    expect(memberIds(d)).not.toContain(s0.id);
+    expect(d.members.find((m) => m.role === 'owner')).toBeTruthy();
+  });
 });

@@ -6,10 +6,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { DEFAULT_DIRECTORY_PHONE_SCOPE, maskPhone, type Directory, type DirectoryDepartment, type DirectoryPerson, type DirectoryPhoneScope } from '@shared/oa-directory';
-import { can } from '@shared/permissions';
+import { can, type Duty, type Role } from '@shared/permissions';
 import { positionLabel, type OrgDepartment } from '@shared/positions';
 import type { Db } from '../../db';
 import { guardAny } from '../../auth/guard';
+import { subjectOf } from '../../auth/role-permissions';
 import type { Actor, Deps } from '../../lib/context';
 import { writeAudit } from '../../lib/audit';
 import { forbidden } from '../../lib/errors';
@@ -25,10 +26,14 @@ const SettingsInput = z.object({ phoneScope: z.enum(['managers', 'all', 'hr']) }
  * 自己选成人力负责人（hr.org 随岗位来）、后台还没核实的不算（Codex 安全审查 fd91220）
  */
 export async function managesOrg(db: Db, actor: Actor): Promise<boolean> {
-  if (can(actor, 'staff.manage')) return true;
-  if (!can(actor, 'hr.org')) return false;
-  const [me] = await db<{ selfChosen: boolean }[]>`SELECT position_chosen_at IS NOT NULL AS self_chosen FROM staff WHERE id = ${actor.id}`;
-  return !!me && !me.selfChosen;
+  // 按库里现在的岗位、角色、个人微调重算权限（不用请求开始时会话里存的那份：在成员同步锁里调用时，等锁期间刚调岗的要按调岗后算，
+  // Codex 审查 4bd532c）
+  const [me] = await db<{ role: Role; duties: Duty[] | null; position: unknown; permissionAdjust: unknown; active: boolean; selfChosen: boolean }[]>`
+    SELECT role, duties, position, permission_adjust, active, position_chosen_at IS NOT NULL AS self_chosen FROM staff WHERE id = ${actor.id}`;
+  if (!me?.active) return false;
+  const now = await subjectOf(db, me);
+  if (can(now, 'staff.manage')) return true;
+  return can(now, 'hr.org') && !me.selfChosen;
 }
 
 async function phoneScopeOf(db: Db): Promise<DirectoryPhoneScope> {
