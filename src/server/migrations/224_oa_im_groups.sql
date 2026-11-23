@@ -50,12 +50,12 @@ BEGIN
   -- 拿了它以后才锁会话，离职、导入、拉人之间不会等成环；建群、拉人读在职名单时在途的离职、调岗已经提交
   PERFORM pg_advisory_xact_lock(hashtextextended('oa_im_dept_sync', 0));
 
-  -- 不在职的：退出全部群，包括已经解散的（Codex 安全审查 beecb4e：解散群的历史只认没退出的成员，留着的话复职后又看得到）；
-  -- 解散了的群只记退出，不转群主、不留提示。在职的：只退出因部门进来、部门变了的部门群（没解散的）
+  -- 不在职的：退出全部群；在职的：退出因部门进来、部门变了的部门群。都包括已经解散的（Codex 安全审查 beecb4e、7c4eb7b：
+  -- 解散群的历史只认没退出的成员，留着的话复职、调走后照样看得到）；解散了的群只记退出，不转群主、不留提示
   FOR r IN
     SELECT c.id FROM oa_im_members m JOIN oa_im_conversations c ON c.id = m.conversation_id
      WHERE m.staff_id = p_staff AND m.left_at IS NULL AND c.kind = 'group'
-       AND (NOT v_on_duty OR (c.dissolved_at IS NULL AND m.source = 'dept' AND c.dept_key IS DISTINCT FROM v_dept))
+       AND (NOT v_on_duty OR (m.source = 'dept' AND c.dept_key IS DISTINCT FROM v_dept))
      ORDER BY c.id
   LOOP
     PERFORM 1 FROM oa_im_conversations WHERE id = r.id FOR UPDATE;

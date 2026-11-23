@@ -367,4 +367,14 @@ describe('OA-16 部门群的边界', () => {
     const [n] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_im_conversations WHERE dept_key = 'outreach'`;
     expect(n!.n).toBe(0);
   });
+
+  it('解散了的部门群：调到别的部门也退出，看不到原部门的归档', async () => {
+    const wl = await hire('g_wl', 'wellness.lead');
+    const w1 = await hire('g_w1', 'wellness.staff');
+    const id = (await api<{ id: number }>(ctx.app, wl.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'wellness' })).body.id;
+    expect((await api(ctx.app, wl.cookie, 'POST', `/api/oa/im/conversations/${id}/dissolve`)).status).toBe(200);
+    expect((await detail(w1, id)).status).toBe(200);
+    await move(w1, 'kitchen.staff');
+    expect((await detail(w1, id)).status).toBe(404);
+  });
 });
