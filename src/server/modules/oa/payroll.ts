@@ -43,6 +43,8 @@ import { conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
 import { readSheet, type Sheet } from '../../lib/sheet-read';
 import { parse } from '../../lib/validate';
 import { buildWorkbook, colName, type WbSheet } from '../../lib/xlsx';
+import { DEFAULT_STORE_ID } from '../../lib/store-context';
+import { allowedStores } from '../stores';
 import { NOT_EMPLOYEE_ROLES } from './org';
 
 /** 时间：库里读出来的可能是文字，统一成 ISO */
@@ -110,6 +112,28 @@ async function payrollAudit(db: Db, e: { staffId: number; action: PayrollAuditAc
     VALUES (${e.staffId}, ${e.action}, ${e.batchId}, ${e.targetId ?? null}, ${e.fileId ?? null}, ${e.ip ?? null})`;
 }
 
+// ───────────────────────── 门店范围 ─────────────────────────
+// 与组织架构同一个口径（Codex 安全审查 f6c14e7）：总裁（staff.manage）看全部门店；其他管工资条的人只管自己挂着的门店。
+// 每张工资表记下建表人的门店范围（store_ids，空 = 全部门店）：名单按它取，看、改、导出、下载都先核对自己的范围包得住它。
+
+type Scope = { all: true } | { all: false; stores: number[] };
+
+async function scopeOf(db: Db, actor: Actor): Promise<Scope> {
+  if (can(actor, 'staff.manage')) return { all: true };
+  return { all: false, stores: [...new Set((await allowedStores(db, actor)).map((x) => Number(x.id)))].sort((a, b) => a - b) };
+}
+
+const batchScope = (storeIds: number[] | null): Scope => (storeIds === null ? { all: true } : { all: false, stores: storeIds.map(Number) });
+/** 我的范围包不包得住这张表的范围 */
+const covers = (mine: Scope, storeIds: number[] | null) => mine.all || (storeIds !== null && storeIds.every((id) => mine.stores.includes(Number(id))));
+
+/** 员工在不在范围里（s 是 staff 表）：挂的门店都在范围里；没挂门店的算本店 */
+function storeCond(db: Db, scope: Scope) {
+  if (scope.all) return db`true`;
+  return db`(NOT EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id AND NOT (x.store_id = ANY(${scope.stores}::bigint[])))
+    AND (EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id) OR ${DEFAULT_STORE_ID}::bigint = ANY(${scope.stores}::bigint[])))`;
+}
+
 // ───────────────────────── 名单 ─────────────────────────
 
 const deptName = (key: OrgDepartment | null) => (key ? (ORG_DEPARTMENTS.find((d) => d.key === key)?.name ?? key) : '未分部门');
@@ -130,7 +154,7 @@ function monthEnd(month: string): string {
  * 全部员工（专用账号不算）与这个月在不在名单里：这个月里在职过 = 入职日期不晚于月底，而且账号启用、没离职，或离职日期不早于月初。
  * 停用了但没办离职的不算（停用就是不在岗）
  */
-async function staffFor(db: Db, month: string): Promise<Map<number, RosterEntry>> {
+async function staffFor(db: Db, month: string, scope: Scope): Promise<Map<number, RosterEntry>> {
   const rows = await db<
     {
       staffId: number;
@@ -143,10 +167,11 @@ async function staffFor(db: Db, month: string): Promise<Map<number, RosterEntry>
       hireDate: string | null;
       leaveDate: string | null;
       status: string | null;
+      inScope: boolean;
     }[]
   >`
     SELECT s.id AS staff_id, s.display_name AS name, s.position, s.active, s.role, s.system,
-           p.emp_no, p.hire_date::text AS hire_date, p.leave_date::text AS leave_date, p.status
+           p.emp_no, p.hire_date::text AS hire_date, p.leave_date::text AS leave_date, p.status, ${storeCond(db, scope)} AS in_scope
     FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
     ORDER BY s.id`;
   const start = monthStart(month);
@@ -155,7 +180,8 @@ async function staffFor(db: Db, month: string): Promise<Map<number, RosterEntry>
   for (const r of rows) {
     const department = departmentOfPosition(r.position);
     let off: string | null = null;
-    if (r.system || NOT_EMPLOYEE_ROLES.includes(r.role)) off = '不是员工账号';
+    if (r.system || NOT_EMPLOYEE_ROLES.includes(r.role)) off = NOT_EMPLOYEE;
+    else if (!r.inScope) off = OUT_OF_SCOPE;
     else if (r.hireDate && r.hireDate > end) off = `${r.hireDate} 才入职`;
     else if (r.status === 'left') off = r.leaveDate && r.leaveDate >= start ? null : `已于 ${r.leaveDate ?? '之前'} 离职`;
     else if (!r.active) off = '账号已停用';
@@ -163,6 +189,9 @@ async function staffFor(db: Db, month: string): Promise<Map<number, RosterEntry>
   }
   return out;
 }
+
+const NOT_EMPLOYEE = '不是员工账号';
+const OUT_OF_SCOPE = '不在这张表的门店范围';
 
 const person = (e: RosterEntry): PayrollPerson => ({ staffId: e.staffId, name: e.name, empNo: e.empNo, department: e.department, departmentName: e.departmentName });
 
@@ -280,17 +309,18 @@ interface BatchRow {
   updatedAt: Date;
   slipCount: number;
   filledCount: number;
+  storeIds: number[] | null;
 }
 
 async function batchRows(db: Db, where: { id?: number; includeVoid?: boolean }): Promise<BatchRow[]> {
   const rows = await db<BatchRow[]>`
-    SELECT b.id, b.month, b.title, b.template_id, t.name AS template_name, b.fields, b.status, s.display_name AS created_by_name, b.created_at, b.updated_at,
+    SELECT b.id, b.month, b.title, b.template_id, t.name AS template_name, b.fields, b.status, s.display_name AS created_by_name, b.created_at, b.updated_at, b.store_ids,
            (SELECT count(*)::int FROM oa_payslips p WHERE p.batch_id = b.id) AS slip_count,
            (SELECT count(*)::int FROM oa_payslips p WHERE p.batch_id = b.id AND p.values <> '{}'::jsonb) AS filled_count
     FROM oa_payroll_batches b JOIN oa_payslip_templates t ON t.id = b.template_id JOIN staff s ON s.id = b.created_by
     WHERE ${where.id ? db`b.id = ${where.id}` : where.includeVoid ? db`true` : db`b.status <> 'void'`}
     ORDER BY b.month DESC, b.id DESC`;
-  return rows.map((r) => ({ ...r, id: Number(r.id), templateId: Number(r.templateId) }));
+  return rows.map((r) => ({ ...r, id: Number(r.id), templateId: Number(r.templateId), storeIds: r.storeIds === null ? null : r.storeIds.map(Number) }));
 }
 
 const summaryOf = (r: BatchRow): PayrollBatchSummary => ({
@@ -307,15 +337,16 @@ const summaryOf = (r: BatchRow): PayrollBatchSummary => ({
   updatedAt: iso(r.updatedAt),
 });
 
-async function loadBatch(db: Db, id: number): Promise<BatchRow> {
+/** 取一张工资表；我的门店范围包不住它的就当没有（不透露别的门店有哪些工资表） */
+async function loadBatch(db: Db, id: number, mine: Scope): Promise<BatchRow> {
   const [b] = await batchRows(db, { id });
-  if (!b) throw notFound('工资表不存在');
+  if (!b || !covers(mine, b.storeIds)) throw notFound('工资表不存在');
   return b;
 }
 
-async function loadDetail(db: Db, id: number, key: PayrollKey | null): Promise<PayrollBatchDetail> {
-  const b = await loadBatch(db, id);
-  const staff = await staffFor(db, b.month);
+async function loadDetail(db: Db, id: number, key: PayrollKey | null, mine: Scope): Promise<PayrollBatchDetail> {
+  const b = await loadBatch(db, id, mine);
+  const staff = await staffFor(db, b.month, batchScope(b.storeIds));
   const slips = await db<{ staffId: number; values: PayslipValues; updatedAt: Date }[]>`
     SELECT staff_id, values, updated_at FROM oa_payslips WHERE batch_id = ${id}`;
   const inBatch = new Set(slips.map((s) => Number(s.staffId)));
@@ -353,13 +384,13 @@ async function loadDetail(db: Db, id: number, key: PayrollKey | null): Promise<P
 }
 
 /** 锁住工资表（草稿才能改）：工资表行 FOR UPDATE */
-async function lockDraft(tx: Tx, id: number): Promise<{ month: string; fields: PayslipField[] }> {
-  const [b] = await tx<{ month: string; fields: PayslipField[]; status: PayrollBatchStatus }[]>`
-    SELECT month, fields, status FROM oa_payroll_batches WHERE id = ${id} FOR UPDATE`;
-  if (!b) throw notFound('工资表不存在');
+async function lockDraft(tx: Tx, id: number, mine: Scope): Promise<{ month: string; fields: PayslipField[]; scope: Scope }> {
+  const [b] = await tx<{ month: string; fields: PayslipField[]; status: PayrollBatchStatus; storeIds: number[] | null }[]>`
+    SELECT month, fields, status, store_ids FROM oa_payroll_batches WHERE id = ${id} FOR UPDATE`;
+  if (!b || !covers(mine, b.storeIds)) throw notFound('工资表不存在');
   if (b.status === 'void') throw conflict('PAYROLL_VOID', '这张工资表已经作废了');
   if (b.status !== 'draft') throw conflict('PAYROLL_PUBLISHED', '这张工资表已经发放，不能再改');
-  return b;
+  return { month: b.month, fields: b.fields, scope: batchScope(b.storeIds) };
 }
 
 async function touch(tx: Tx, id: number, actorId: number) {
@@ -405,13 +436,14 @@ function sheetOf(d: PayrollBatchDetail): Buffer {
 
 const isHeader = (cells: string[]) => cells.includes('姓名') && cells.includes('工号');
 const PAYROLL_XLSX_LIMITS = {
-  maxTotal: 32 * 1024 * 1024,
+  // 解压后 12 MiB：2000 行 × 40 多列的正常工资表也就几 MB
+  maxTotal: 12 * 1024 * 1024,
   maxCells: (PAYROLL_MAX_ROWS + 20) * (PAYSLIP_MAX_FIELDS + 20),
   // 坐标也限住：读表按行号、列号铺成数组，稀疏的大坐标会把内存撑爆（Codex 审查 6190bd4）
   maxRow: PAYROLL_MAX_ROWS + 20,
   maxCols: PAYSLIP_MAX_FIELDS + 20,
-  // 解析前先数元素：空行这类不占单元格的元素也算（Codex 安全审查 503f199）；只读第一张表
-  maxNodes: 600_000,
+  // 解析前先数结构（元素 + 属性），空行、无关属性都算（Codex 安全审查 503f199、f6c14e7）；只读第一张表
+  maxNodes: 800_000,
   maxSheets: 1,
 };
 
@@ -449,7 +481,8 @@ function planImport(sheet: Sheet, fileName: string, fields: PayslipField[], staf
   if (data.length === 0) throw unprocessable('IMPORT_EMPTY', '表里没有工资条');
   if (data.length > PAYROLL_MAX_ROWS) throw unprocessable('IMPORT_TOO_LARGE', `一张工资表最多 ${PAYROLL_MAX_ROWS} 行，这份有 ${data.length} 行`);
   const cell = (cells: string[], name: string) => (col(name) < 0 ? '' : (cells[col(name)] ?? '').trim());
-  const everyone = [...staff.values()].filter((e) => e.offRoster !== '不是员工账号');
+  // 专用账号、范围外的员工不参与对人（不按工号、姓名透露别的门店有谁）
+  const everyone = [...staff.values()].filter((e) => e.offRoster !== NOT_EMPLOYEE && e.offRoster !== OUT_OF_SCOPE);
   // 工号按原样对；对不上再不分大小写对，但只认唯一的一位（工号区分大小写，E001 与 e001 可以是两个人，Codex 审查 3b5a8bf）
   const byEmpNo = new Map(everyone.filter((e) => e.empNo).map((e) => [e.empNo!, e]));
   const byEmpNoFolded = (no: string) => everyone.filter((e) => e.empNo?.toLowerCase() === no.toLowerCase());
@@ -561,28 +594,36 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
   });
 
   // 工资表
-  app.get('/api/oa/payroll/batches', { preHandler: canManage }, async () => (await batchRows(sql, {})).map(summaryOf));
+  app.get('/api/oa/payroll/batches', { preHandler: canManage }, async (req) => {
+    const mine = await scopeOf(sql, req.actor);
+    return (await batchRows(sql, {})).filter((b) => covers(mine, b.storeIds)).map(summaryOf);
+  });
 
   app.post('/api/oa/payroll/batches', { preHandler: canManage }, async (req, reply) => {
     const input = parse(BatchInput, req.body);
+    const mine = await scopeOf(sql, req.actor);
+    const storeIds = mine.all ? null : mine.stores;
+    if (storeIds && storeIds.length === 0) throw forbidden('你没有挂任何门店，不能建工资表');
     const id = await sql.begin(async (tx) => {
       const [t] = await tx<{ fields: PayslipField[]; active: boolean }[]>`SELECT fields, active FROM oa_payslip_templates WHERE id = ${input.templateId} FOR SHARE`;
       if (!t) throw notFound('模板不存在');
       // 同月同标题的新建串行（两个人同时建时后到的读得到先建好的那张，不撞唯一索引，Codex 审查 3b5a8bf）
-      await tx`SELECT pg_advisory_xact_lock(hashtext(${`oa_payroll_batch:${input.month}:${input.title}`}))`;
+      // 同月同标题、同一个门店范围的才算同一张（不同门店的 HR 各建各的）
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`oa_payroll_batch:${input.month}:${input.title}:${storeIds?.join(',') ?? '*'}`}))`;
       // 同月同标题已经有（没作废的）：用的是同一个模板就直接打开那张（原样重提、两个人同时建），否则说明
       const [existing] = await tx<{ id: number; templateId: number }[]>`
-        SELECT id, template_id FROM oa_payroll_batches WHERE month = ${input.month} AND title = ${input.title} AND status <> 'void'`;
+        SELECT id, template_id FROM oa_payroll_batches
+        WHERE month = ${input.month} AND title = ${input.title} AND status <> 'void' AND store_ids IS NOT DISTINCT FROM ${storeIds}::bigint[]`;
       if (existing) {
         if (Number(existing.templateId) !== input.templateId) throw conflict('PAYROLL_TITLE_EXISTS', `${monthLabel(input.month)}已经有一张「${input.title}」（用的是别的模板），换个标题`);
         return Number(existing.id);
       }
       if (!t.active) throw conflict('TEMPLATE_INACTIVE', '这个模板已经停用');
       const [row] = await tx<{ id: number }[]>`
-        INSERT INTO oa_payroll_batches (month, title, template_id, fields, created_by, updated_by)
-        VALUES (${input.month}, ${input.title}, ${input.templateId}, ${tx.json(t.fields as never)}, ${req.actor.id}, ${req.actor.id}) RETURNING id`;
+        INSERT INTO oa_payroll_batches (month, title, template_id, fields, store_ids, created_by, updated_by)
+        VALUES (${input.month}, ${input.title}, ${input.templateId}, ${tx.json(t.fields as never)}, ${storeIds}::bigint[], ${req.actor.id}, ${req.actor.id}) RETURNING id`;
       const batchId = Number(row!.id);
-      const roster = [...(await staffFor(tx, input.month)).values()].filter((e) => !e.offRoster).map((e) => e.staffId);
+      const roster = [...(await staffFor(tx, input.month, mine)).values()].filter((e) => !e.offRoster).map((e) => e.staffId);
       if (roster.length) await tx`INSERT INTO oa_payslips (batch_id, staff_id, updated_by) SELECT ${batchId}, unnest(${roster}::bigint[]), ${req.actor.id}`;
       await writeAudit(tx, {
         staffId: req.actor.id,
@@ -595,12 +636,12 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
       reply.code(201);
       return batchId;
     });
-    return summaryOf(await loadBatch(sql, id));
+    return summaryOf(await loadBatch(sql, id, mine));
   });
 
   app.get('/api/oa/payroll/batches/:id', { preHandler: canManage }, async (req) => {
     const { id } = parse(BatchParam, req.params);
-    const detail = await loadDetail(sql, id, key);
+    const detail = await loadDetail(sql, id, key, await scopeOf(sql, req.actor));
     await payrollAudit(sql, { staffId: req.actor.id, action: 'view_batch', batchId: id, ip: req.ip });
     return detail;
   });
@@ -610,12 +651,12 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
     const { id, staffId } = parse(SlipParam, req.params);
     const body = parse(SlipInput, req.body);
     await sql.begin(async (tx) => {
-      const b = await lockDraft(tx, id);
+      const b = await lockDraft(tx, id, await scopeOf(tx, req.actor));
       const { values, issues } = normalizeValues(b.fields, body.values);
       if (issues.length) throw unprocessable('PAYSLIP_INVALID', issues.join('；'));
       const [cur] = await tx<{ values: PayslipValues }[]>`SELECT values FROM oa_payslips WHERE batch_id = ${id} AND staff_id = ${staffId} FOR UPDATE`;
       if (!cur) {
-        const e = (await staffFor(tx, b.month)).get(staffId);
+        const e = (await staffFor(tx, b.month, b.scope)).get(staffId);
         if (!e) throw notFound('员工不存在');
         if (e.offRoster) throw unprocessable('NOT_ON_ROSTER', `${e.name}不在这个月的在职名单里（${e.offRoster}）`);
         await tx`INSERT INTO oa_payslips (batch_id, staff_id, values, updated_by) VALUES (${id}, ${staffId}, ${tx.json(values as never)}, ${req.actor.id})`;
@@ -632,10 +673,10 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
     const { id, staffId } = parse(SlipParam, req.params);
     parse(AddInput, req.body ?? {});
     await sql.begin(async (tx) => {
-      const b = await lockDraft(tx, id);
+      const b = await lockDraft(tx, id, await scopeOf(tx, req.actor));
       const [cur] = await tx`SELECT 1 FROM oa_payslips WHERE batch_id = ${id} AND staff_id = ${staffId}`;
       if (cur) return;
-      const e = (await staffFor(tx, b.month)).get(staffId);
+      const e = (await staffFor(tx, b.month, b.scope)).get(staffId);
       if (!e) throw notFound('员工不存在');
       if (e.offRoster) throw unprocessable('NOT_ON_ROSTER', `${e.name}不在这个月的在职名单里（${e.offRoster}）`);
       await tx`INSERT INTO oa_payslips (batch_id, staff_id, updated_by) VALUES (${id}, ${staffId}, ${req.actor.id})`;
@@ -648,7 +689,7 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
   app.post('/api/oa/payroll/batches/:id/slips/:staffId/remove', { preHandler: canManage }, async (req) => {
     const { id, staffId } = parse(SlipParam, req.params);
     await sql.begin(async (tx) => {
-      await lockDraft(tx, id);
+      await lockDraft(tx, id, await scopeOf(tx, req.actor));
       const gone = await tx`DELETE FROM oa_payslips WHERE batch_id = ${id} AND staff_id = ${staffId} RETURNING id`;
       if (gone.length === 0) return;
       await touch(tx, id, req.actor.id);
@@ -660,8 +701,8 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
   app.post('/api/oa/payroll/batches/:id/void', { preHandler: canManage }, async (req) => {
     const { id } = parse(BatchParam, req.params);
     await sql.begin(async (tx) => {
-      const [b] = await tx<{ status: PayrollBatchStatus }[]>`SELECT status FROM oa_payroll_batches WHERE id = ${id} FOR UPDATE`;
-      if (!b) throw notFound('工资表不存在');
+      const [b] = await tx<{ status: PayrollBatchStatus; storeIds: number[] | null }[]>`SELECT status, store_ids FROM oa_payroll_batches WHERE id = ${id} FOR UPDATE`;
+      if (!b || !covers(await scopeOf(tx, req.actor), b.storeIds)) throw notFound('工资表不存在');
       if (b.status === 'void') return;
       if (b.status !== 'draft') throw conflict('PAYROLL_PUBLISHED', '已经发放的工资表不能作废');
       await tx`UPDATE oa_payroll_batches SET status = 'void', voided_by = ${req.actor.id}, voided_at = now(), updated_at = now(), updated_by = ${req.actor.id} WHERE id = ${id}`;
@@ -673,7 +714,7 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
   // 下载表格（带上已经填的金额：等于导出，记审计）
   app.get('/api/oa/payroll/batches/:id/sheet.xlsx', { preHandler: canManage }, async (req, reply) => {
     const { id } = parse(BatchParam, req.params);
-    const d = await loadDetail(sql, id, key);
+    const d = await loadDetail(sql, id, key, await scopeOf(sql, req.actor));
     await payrollAudit(sql, { staffId: req.actor.id, action: 'export_sheet', batchId: id, ip: req.ip });
     attachment(reply, `工资表-${d.month}-${d.title}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     return reply.send(sheetOf(d));
@@ -684,9 +725,9 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
   app.post('/api/oa/payroll/batches/:id/import/preview', { preHandler: canManage, bodyLimit }, async (req): Promise<PayrollImportPreview> => {
     const { id } = parse(BatchParam, req.params);
     const f = parse(FileInput, req.body);
-    const b = await loadBatch(sql, id);
+    const b = await loadBatch(sql, id, await scopeOf(sql, req.actor));
     const sheet = readPayrollSheet(f);
-    const { sha256: _s, good: _g, ...preview } = planImport(sheet, f.fileName, b.fields, await staffFor(sql, b.month));
+    const { sha256: _s, good: _g, ...preview } = planImport(sheet, f.fileName, b.fields, await staffFor(sql, b.month, batchScope(b.storeIds)));
     return preview;
   });
 
@@ -697,9 +738,10 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
     const sheet = readPayrollSheet(f);
     const original = Buffer.from(f.xlsxBase64, 'base64');
     const sealed = encryptFile(key, original);
+    const mine = await scopeOf(sql, req.actor);
     return sql.begin(async (tx) => {
-      const b = await lockDraft(tx, id);
-      const p = planImport(sheet, f.fileName, b.fields, await staffFor(tx, b.month));
+      const b = await lockDraft(tx, id, mine);
+      const p = planImport(sheet, f.fileName, b.fields, await staffFor(tx, b.month, b.scope));
       if (p.errorCount) throw unprocessable('IMPORT_HAS_ERRORS', `有 ${p.errorCount} 行不对，整份没有导入：请先预览、改好再传`);
       // 同一份文件原样重提：工资条照样整张替换（结果一样），原件不重复存
       // 摘要、密钥都一样才复用（换过密钥以后重传同一份，要用新密钥另存一份，原件才下载得了，Codex 审查 940087b）
@@ -736,6 +778,7 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
   // 下载原件：解密后原样给（只有 payroll.manage）；换过密钥的解不开时明说
   app.get('/api/oa/payroll/batches/:id/files/:fileId', { preHandler: canManage }, async (req, reply) => {
     const { id, fileId } = parse(FileParam, req.params);
+    await loadBatch(sql, id, await scopeOf(sql, req.actor));
     const [f] = await sql<{ fileName: string; iv: Buffer; tag: Buffer; ciphertext: Buffer; keyId: string }[]>`
       SELECT file_name, iv, tag, ciphertext, key_id FROM oa_payroll_files WHERE id = ${fileId} AND batch_id = ${id}`;
     if (!f) throw notFound('原件不存在');

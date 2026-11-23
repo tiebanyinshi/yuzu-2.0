@@ -290,7 +290,7 @@ export interface XlsxLimits {
   maxRow?: number;
   maxCols?: number;
   /**
-   * 整份文件里 XML 元素最多多少个：解析前先数（只数「<」，不建树），空的 <row/> 这类不占单元格的元素也算在内，
+   * 整份文件里 XML 的结构规模（元素 + 属性）最多多少：解析前先数（只数「<」，不建树），空的 <row/> 这类不占单元格的元素也算在内，
    * 免得几十 KB 的文件解析出上百万个节点把内存撑爆（Codex 安全审查 503f199）
    */
   maxNodes?: number;
@@ -298,12 +298,19 @@ export interface XlsxLimits {
   maxSheets?: number;
 }
 
-/** 数 XML 里的元素开头（「<」后面不是「/」「?」「!」的） */
+/**
+ * 数 XML 的结构规模：元素开头（「<」后面不是「/」「?」「!」的）加上「=」的个数（属性大约一个「=」一个）。
+ * 只按元素数算时，每个空行带一串无关属性也能塞进上限、建树时照样吃几百 MB（Codex 安全审查 f6c14e7）
+ */
 function countElements(xml: Buffer): number {
   let n = 0;
-  for (let i = xml.indexOf(0x3c); i >= 0 && i < xml.length - 1; i = xml.indexOf(0x3c, i + 1)) {
-    const next = xml[i + 1];
-    if (next !== 0x2f && next !== 0x3f && next !== 0x21) n++;
+  for (let i = 0; i < xml.length; i++) {
+    const c = xml[i];
+    if (c === 0x3d) n++;
+    else if (c === 0x3c) {
+      const next = xml[i + 1];
+      if (next !== 0x2f && next !== 0x3f && next !== 0x21) n++;
+    }
   }
   return n;
 }

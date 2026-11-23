@@ -1,7 +1,7 @@
 -- OA-17 工资条模板与制表（docs/OA.md 第 20 节；需求文档七（一）、七（三））。
 --   · oa_payslip_templates：工资条模板（字段：名称、类型 money 金额 / number 数字 / text 文字、哪一项是「实发」），HR 在后台维护；停用不删。
 --     带一份「标准工资条」（需求文档列的十个字段）。
---   · oa_payroll_batches：工资表（月份 + 标题；建表时把模板的字段抄一份，之后改模板不影响）。状态 draft 草稿 / published 已发放（OA-18）/ void 作废。
+--   · oa_payroll_batches：工资表（月份 + 标题 + 门店范围；建表时把模板的字段抄一份，之后改模板不影响）。状态 draft 草稿 / published 已发放（OA-18）/ void 作废。
 --   · oa_payslips：一张工资表一人一行，values = 各字段的值（金额按分存的整数，数字、文字照原样）。
 --   · oa_payroll_files：上传的 Excel 原件，AES-256-GCM 加密（密钥在服务器 .env 的 PAYROLL_FILE_KEY，库里只记指纹）。
 --   · oa_payroll_audit：薪资的敏感操作（看明细、预览某人的工资条、下载表格、下载原件；OA-18 起还有发放、员工查看、签收），不记金额。
@@ -28,6 +28,8 @@ CREATE TABLE oa_payroll_batches (
   template_id  bigint NOT NULL REFERENCES oa_payslip_templates (id),
   fields       jsonb NOT NULL CHECK (jsonb_typeof(fields) = 'array' AND jsonb_array_length(fields) BETWEEN 1 AND 40),
   status       text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'void')),
+  -- 门店范围：建表人能管的门店（排好序）；空 = 全部门店（总裁建的）。名单按它取，别的门店的 HR 看不到（Codex 安全审查 f6c14e7）
+  store_ids    bigint[] CHECK (store_ids IS NULL OR cardinality(store_ids) > 0),
   created_by   bigint NOT NULL REFERENCES staff (id),
   created_at   timestamptz NOT NULL DEFAULT now(),
   updated_by   bigint REFERENCES staff (id),
@@ -36,7 +38,7 @@ CREATE TABLE oa_payroll_batches (
   voided_at    timestamptz,
   CHECK ((status = 'void') = (voided_at IS NOT NULL))
 );
-CREATE UNIQUE INDEX oa_payroll_batches_title_uq ON oa_payroll_batches (month, title) WHERE status <> 'void';
+CREATE UNIQUE INDEX oa_payroll_batches_title_uq ON oa_payroll_batches (month, title, COALESCE(store_ids, '{}'::bigint[])) WHERE status <> 'void';
 CREATE INDEX oa_payroll_batches_month_idx ON oa_payroll_batches (month DESC, id DESC);
 
 CREATE TABLE oa_payslips (

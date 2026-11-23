@@ -464,11 +464,50 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
   it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {
     const body = { month: '2026-12', title: '同时建', templateId: std.id };
     const [x, y] = await Promise.all([
+      // 同一个门店范围的两个请求同时到（门店范围不同的是两张表，见多门店那一条）
       api<PayrollBatchSummary>(ctx.app, hr(), 'POST', '/api/oa/payroll/batches', body),
-      api<PayrollBatchSummary>(ctx.app, ctx.owner, 'POST', '/api/oa/payroll/batches', body),
+      api<PayrollBatchSummary>(ctx.app, hr(), 'POST', '/api/oa/payroll/batches', body),
     ]);
     expect([x.status, y.status].sort()).toEqual([200, 201]);
     expect(x.body.id).toBe(y.body.id);
+  });
+
+  it('多门店：非总裁的 HR 只看得到、只管得了自己门店范围的工资表；名单只取范围里的员工（Codex 安全审查 f6c14e7）', async () => {
+    const [storeB] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('PYB', '乙店', 1) RETURNING id`;
+    const hrB = await hire('py_hrb', 'hr.lead');
+    const empB = await hire('py_empb', 'front.staff', { empNo: 'B001' });
+    await ctx.sql`UPDATE staff_stores SET store_id = ${storeB!.id} WHERE staff_id IN ${ctx.sql([hrB.id, empB.id])}`;
+    const hrBatch = (await api<PayrollBatchSummary>(ctx.app, hr(), 'POST', '/api/oa/payroll/batches', { month: '2026-12', title: '分店', templateId: std.id })).body;
+    const ownerBatch = (await api<PayrollBatchSummary>(ctx.app, ctx.owner, 'POST', '/api/oa/payroll/batches', { month: '2026-12', title: '分店', templateId: std.id })).body;
+    expect(ownerBatch.id).not.toBe(hrBatch.id);
+    // 甲店 HR 的表里没有乙店的人；总裁的表里有
+    const dA = (await api<PayrollBatchDetail>(ctx.app, hr(), 'GET', `/api/oa/payroll/batches/${hrBatch.id}`)).body;
+    expect(dA.slips.map((x) => x.staffId)).not.toContain(empB.id);
+    expect(dA.slips.map((x) => x.staffId)).toContain(emp.a!.id);
+    const dAll = (await api<PayrollBatchDetail>(ctx.app, ctx.owner, 'GET', `/api/oa/payroll/batches/${ownerBatch.id}`)).body;
+    expect(dAll.slips.map((x) => x.staffId)).toEqual(expect.arrayContaining([empB.id, emp.a!.id]));
+    // 乙店 HR：列表里看不到甲店、总裁的表；打开、导出、改、作废都当没有
+    const list = (await api<PayrollBatchSummary[]>(ctx.app, hrB.cookie, 'GET', '/api/oa/payroll/batches')).body;
+    expect(list.map((b) => b.id)).not.toContain(hrBatch.id);
+    expect(list.map((b) => b.id)).not.toContain(ownerBatch.id);
+    for (const b of [hrBatch.id, ownerBatch.id]) {
+      expect((await api(ctx.app, hrB.cookie, 'GET', `/api/oa/payroll/batches/${b}`)).status).toBe(404);
+      expect((await ctx.app.inject({ method: 'GET', url: `/api/oa/payroll/batches/${b}/sheet.xlsx`, headers: { cookie: hrB.cookie } })).statusCode).toBe(404);
+      expect((await api(ctx.app, hrB.cookie, 'PUT', `/api/oa/payroll/batches/${b}/slips/${emp.a!.id}`, { values: {} })).status).toBe(404);
+      expect((await api(ctx.app, hrB.cookie, 'POST', `/api/oa/payroll/batches/${b}/void`)).status).toBe(404);
+    }
+    // 乙店 HR 建同月同标题的是自己的一张，只有乙店的人；甲店的人补不进去、按工号也对不上
+    const bBatch = await api<PayrollBatchSummary>(ctx.app, hrB.cookie, 'POST', '/api/oa/payroll/batches', { month: '2026-12', title: '分店', templateId: std.id });
+    expect(bBatch.status).toBe(201);
+    const dB = (await api<PayrollBatchDetail>(ctx.app, hrB.cookie, 'GET', `/api/oa/payroll/batches/${bBatch.body.id}`)).body;
+    expect(dB.slips.map((x) => x.staffId).sort()).toEqual([hrB.id, empB.id].sort());
+    expect(code(await api(ctx.app, hrB.cookie, 'POST', `/api/oa/payroll/batches/${bBatch.body.id}/slips/${emp.a!.id}/add`, {}))).toBe('NOT_ON_ROSTER');
+    const pv = await api<PayrollImportPreview>(ctx.app, hrB.cookie, 'POST', `/api/oa/payroll/batches/${bBatch.body.id}/import/preview`, {
+      fileName: 'b.xlsx',
+      xlsxBase64: xlsx([['标题'], header(), ['E001', '', '', ...std.fields.map(() => null)]]),
+    });
+    expect(pv.body.rows[0]!.staffId).toBeNull();
+    expect(pv.body.rows[0]!.issues.join()).toContain('对不上员工');
   });
 
   it('改模板加了新字段：没收到结果时原样重提（新字段不带编号）算成功，不报版本冲突', async () => {
