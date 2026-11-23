@@ -57,9 +57,15 @@ export interface PayrollBatchSummary {
   slipCount: number;
   /** 填了至少一项的 */
   filledCount: number;
+  /** 已签收的（OA-18，发放以后才有意义） */
+  signedCount: number;
   createdByName: string;
   createdAt: string;
   updatedAt: string;
+  /** 发放时间（OA-18）；草稿为空 */
+  publishedAt: string | null;
+  /** 最近一次「一键提醒」 */
+  remindedAt: string | null;
 }
 
 export interface PayrollPerson {
@@ -75,6 +81,9 @@ export interface PayslipRow extends PayrollPerson {
   updatedAt: string;
   /** 这一行的人已经不在这个月的在职名单里（建表后改了入职、离职日期，或改成了专用账号） */
   offRoster: string | null;
+  /** 员工确认签收、第一次打开的时间（OA-18，发放以后） */
+  signedAt: string | null;
+  viewedAt: string | null;
 }
 
 export interface PayrollFileInfo {
@@ -187,3 +196,55 @@ export const netField = (fields: PayslipField[]) => fields.find((f) => f.net && 
 
 /** 2026-11 → 2026 年 11 月 */
 export const monthLabel = (month: string) => `${month.slice(0, 4)} 年 ${Number(month.slice(5, 7))} 月`;
+
+// ───────────── OA-18 发放、签收与薪资审计（docs/OA.md 第 21 节） ─────────────
+
+/** 同一张表「一键提醒」的间隔（分钟） */
+export const PAYROLL_REMIND_MINUTES = 10;
+
+/** 员工端：本人的一张工资条（列表） */
+export interface MyPayslipItem {
+  id: number;
+  month: string;
+  title: string;
+  /** 「实发」那一项（分）；模板没标或没填为空 */
+  net: number | null;
+  publishedAt: string;
+  signedAt: string | null;
+}
+
+/** 员工端：本人的一张工资条（明细） */
+export interface MyPayslipDetail extends MyPayslipItem {
+  name: string;
+  fields: PayslipField[];
+  values: PayslipValues;
+}
+
+export type PayrollAuditAction = 'view_batch' | 'export_sheet' | 'download_file' | 'publish' | 'remind' | 'employee_view' | 'employee_sign';
+export const PAYROLL_AUDIT_LABELS: Record<PayrollAuditAction, string> = {
+  view_batch: '查看工资表',
+  export_sheet: '下载表格',
+  download_file: '下载原件',
+  publish: '发放',
+  remind: '提醒签收',
+  employee_view: '员工查看',
+  employee_sign: '员工签收',
+};
+
+export interface PayrollAuditItem {
+  id: number;
+  at: string;
+  action: PayrollAuditAction;
+  actorName: string | null;
+  batchId: number | null;
+  /** 2026 年 11 月 · 11 月工资 */
+  batchLabel: string | null;
+  targetName: string | null;
+  ip: string | null;
+}
+
+export interface PayrollAuditPage {
+  items: PayrollAuditItem[];
+  /** 还有更早的：下一页从这个编号以前取 */
+  next: number | null;
+}
