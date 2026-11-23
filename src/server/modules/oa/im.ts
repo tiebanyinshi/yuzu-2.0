@@ -71,6 +71,11 @@ export async function lockMembershipSync(tx: Tx): Promise<void> {
   await tx`SELECT pg_advisory_xact_lock(hashtextextended('oa_im_dept_sync', 0))`;
 }
 
+/** 拿到成员同步锁以后再核对一次请求的人还在职（预检查在锁外，等锁期间可能被停用、办了离职，Codex 审查 fd91220） */
+export async function assertActorOnDuty(tx: Tx, me: number): Promise<void> {
+  if (!(await onDutyIds(tx, [me])).length) throw forbidden('这个账号不能用即时通讯');
+}
+
 /**
  * 建群限额（Codex 安全审查 accf8fb）：一个人不能在短时间里拉一大堆群把别人的会话列表刷掉；按人串行核对。
  * 普通建群与建部门群共用（部门群也算，Codex 审查 1adec4f；打开已有的部门群不算）
@@ -448,6 +453,7 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
       await assertNotFenced(tx, clientKey, 'oa_im_group', erpOpAbandoned);
       // 先拿成员同步锁：读在职名单与写成员之间，别人办不了这几个人的离职（Codex 审查 ae2d4b6）
       await lockMembershipSync(tx);
+      await assertActorOnDuty(tx, me);
       await assertGroupQuota(tx, me);
       const wanted = [...new Set(input.memberIds.filter((x) => x !== me))];
       const others = await onDutyIds(tx, wanted);

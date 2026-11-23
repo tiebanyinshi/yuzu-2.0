@@ -10,12 +10,12 @@ import { z } from 'zod';
 import { IM_GROUP_MAX, IM_GROUP_NAME_MAX, IM_NOTICE_MAX, canKick, canManageGroup, type ImConversationDetail, type ImMemberSource, type ImRole } from '@shared/oa-im';
 import { can } from '@shared/permissions';
 import type { OrgDepartment } from '@shared/positions';
-import { isUniqueViolation, type Db, type Tx } from '../../db';
+import type { Db, Tx } from '../../db';
 import type { Actor, Deps } from '../../lib/context';
 import { forbidden, notFound, unprocessable } from '../../lib/errors';
 import { idParam, parse } from '../../lib/validate';
 import { writeAudit } from '../../lib/audit';
-import { assertGroupQuota, detailOf, employeeOnly, insertMessage, lockMembershipSync, onDuty, onDutyIds } from './im';
+import { assertActorOnDuty, assertGroupQuota, detailOf, employeeOnly, insertMessage, lockMembershipSync, onDuty, onDutyIds } from './im';
 import { verifiedHeads } from './directory';
 
 const MembersInput = z.object({ staffIds: z.array(z.number().int().positive()).min(1, '请选要拉进群的人').max(IM_GROUP_MAX) });
@@ -234,63 +234,47 @@ export function registerOaImGroupRoutes(app: FastifyInstance, { sql }: Deps) {
     const [dept] = await sql<{ key: OrgDepartment; name: string }[]>`SELECT key, name FROM org_departments WHERE key = ${deptKey}`;
     if (!dept) throw notFound('部门不存在');
     if (!(await canCreateDeptGroup(sql, me, dept.key))) throw forbidden('只有管组织架构的人或这个部门的主管能建部门群');
-    const existing = async () => {
-      const [c] = await sql<{ id: number }[]>`SELECT id FROM oa_im_conversations WHERE dept_key = ${deptKey} AND dissolved_at IS NULL`;
-      return c ? Number(c.id) : null;
-    };
-    const had = await existing();
-    if (had) return openExisting(had);
-    try {
-      const id = await sql.begin(async (tx) => {
-        // 与部门群同步串行（Codex 审查 1adec4f）：等在途的调岗、离职提交以后再读名单，之后开始的要等这个群建好，触发器就看得到它
-        await lockMembershipSync(tx);
-        await assertGroupQuota(tx, me.id);
-        // 部门成员按岗位来（与组织架构、触发器同一个算法）；自己选的岗位、后台没核实的不自动进（Codex 安全审查 1adec4f）
-        const rows = await tx<{ id: number }[]>`
-          SELECT s.id FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
-          WHERE ${onDuty(tx)} AND s.position IS NOT NULL AND s.position_chosen_at IS NULL
-            AND CASE WHEN s.position = 'president' THEN 'company' WHEN s.position = 'gmo' THEN 'gmo' ELSE split_part(s.position, '.', 1) END = ${deptKey}
-          ORDER BY s.id`;
-        const deptIds = rows.map((r) => Number(r.id));
-        if (deptIds.length + (deptIds.includes(me.id) ? 0 : 1) > IM_GROUP_MAX) throw unprocessable('GROUP_TOO_LARGE', `一个群最多 ${IM_GROUP_MAX} 人`);
-        const name = `${dept.name}群`.slice(0, IM_GROUP_NAME_MAX);
-        const [c] = await tx<{ id: number }[]>`
-          INSERT INTO oa_im_conversations (kind, name, created_by, dept_key) VALUES ('group', ${name}, ${me.id}, ${deptKey}) RETURNING id`;
-        const convId = Number(c!.id);
-        await tx`
-          INSERT INTO oa_im_members (conversation_id, staff_id, role, source)
-          SELECT ${convId}, x, CASE WHEN x = ${me.id} THEN 'owner' ELSE 'member' END,
-                 CASE WHEN x = ANY(${deptIds}::bigint[]) THEN 'dept' ELSE 'manual' END
-          FROM unnest(${[...new Set([me.id, ...deptIds])]}::bigint[]) AS t(x)`;
-        await insertMessage(tx, convId, me.id, { kind: 'system', body: `${me.displayName}创建了部门群「${name}」，本部门的同事已自动加入` });
-        await writeAudit(tx, { staffId: me.id, action: 'oa_im_dept_group_created', targetType: 'oa_im_conversation', targetId: convId, detail: { deptKey }, ip: req.ip });
-        return convId;
-      });
-      reply.code(201);
-      return { id, created: true };
-    } catch (error) {
-      // 两个人同时建：后到的打开先建好的那个
-      if (isUniqueViolation(error, 'oa_im_conversations_dept_uq')) {
-        const now = await existing();
-        if (now) return openExisting(now);
-      }
-      throw error;
-    }
-
-    // 已经有了：我在群里就打开；不在（比如管组织架构的人不是本部门的）拉我进去，再打开
-    async function openExisting(id: number): Promise<{ id: number; created: boolean }> {
-      await sql.begin(async (tx) => {
-        await lockMembershipSync(tx);
-        await tx`SELECT 1 FROM oa_im_conversations WHERE id = ${id} FOR UPDATE`;
+    // 一个事务：成员同步锁（建群、拉人、员工变动串行，同时建的两个人也排队）→ 核对我还在职 → 找没解散的部门群（锁住）→ 有就打开，没有就建
+    const out = await sql.begin(async (tx): Promise<{ id: number; created: boolean }> => {
+      await lockMembershipSync(tx);
+      // 拿到锁以后再核对一次我还在职（在途的停用、离职已经提交，Codex 审查 fd91220）
+      await assertActorOnDuty(tx, me.id);
+      // FOR UPDATE 会等在途的解散提交、再按解散后的样子重新判断：刚解散的群这里取不到，接着建新的（Codex 审查 fd91220）
+      const [had] = await tx<{ id: number }[]>`SELECT id FROM oa_im_conversations WHERE dept_key = ${deptKey} AND dissolved_at IS NULL FOR UPDATE`;
+      if (had) {
+        // 已经有了：我在群里就打开；不在（比如管组织架构的人不是本部门的）拉我进去，再打开
+        const id = Number(had.id);
         const added = await addMembers(tx, id, [me.id], 'manual');
         // 部门群里的人都走光了、没有群主（Codex 审查 1adec4f）：能建部门群的人点进来就接任群主
         const owner = await ensureOwner(tx, id, me.id);
-        if (!added.length && !owner) return;
-        if ((await memberCount(tx, id)) > IM_GROUP_MAX) throw unprocessable('GROUP_TOO_LARGE', `一个群最多 ${IM_GROUP_MAX} 人`);
+        if (added.length && (await memberCount(tx, id)) > IM_GROUP_MAX) throw unprocessable('GROUP_TOO_LARGE', `一个群最多 ${IM_GROUP_MAX} 人`);
         if (added.length) await insertMessage(tx, id, me.id, { kind: 'system', body: `${me.displayName}加入了群聊` });
         if (owner) await insertMessage(tx, id, me.id, { kind: 'system', body: `${me.displayName}成为群主` });
-      });
-      return { id, created: false };
-    }
+        return { id, created: false };
+      }
+      await assertGroupQuota(tx, me.id);
+      // 部门成员按岗位来（与组织架构、触发器同一个算法）；自己选的岗位、后台没核实的不自动进（Codex 安全审查 1adec4f）
+      const rows = await tx<{ id: number }[]>`
+        SELECT s.id FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
+        WHERE ${onDuty(tx)} AND s.position IS NOT NULL AND s.position_chosen_at IS NULL
+          AND CASE WHEN s.position = 'president' THEN 'company' WHEN s.position = 'gmo' THEN 'gmo' ELSE split_part(s.position, '.', 1) END = ${deptKey}
+        ORDER BY s.id`;
+      const deptIds = rows.map((r) => Number(r.id));
+      if (deptIds.length + (deptIds.includes(me.id) ? 0 : 1) > IM_GROUP_MAX) throw unprocessable('GROUP_TOO_LARGE', `一个群最多 ${IM_GROUP_MAX} 人`);
+      const name = `${dept.name}群`.slice(0, IM_GROUP_NAME_MAX);
+      const [c] = await tx<{ id: number }[]>`
+        INSERT INTO oa_im_conversations (kind, name, created_by, dept_key) VALUES ('group', ${name}, ${me.id}, ${deptKey}) RETURNING id`;
+      const convId = Number(c!.id);
+      await tx`
+        INSERT INTO oa_im_members (conversation_id, staff_id, role, source)
+        SELECT ${convId}, x, CASE WHEN x = ${me.id} THEN 'owner' ELSE 'member' END,
+               CASE WHEN x = ANY(${deptIds}::bigint[]) THEN 'dept' ELSE 'manual' END
+        FROM unnest(${[...new Set([me.id, ...deptIds])]}::bigint[]) AS t(x)`;
+      await insertMessage(tx, convId, me.id, { kind: 'system', body: `${me.displayName}创建了部门群「${name}」，本部门的同事已自动加入` });
+      await writeAudit(tx, { staffId: me.id, action: 'oa_im_dept_group_created', targetType: 'oa_im_conversation', targetId: convId, detail: { deptKey }, ip: req.ip });
+      return { id: convId, created: true };
+    });
+    if (out.created) reply.code(201);
+    return out;
   });
 }

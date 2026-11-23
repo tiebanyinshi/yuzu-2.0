@@ -294,4 +294,38 @@ describe('OA-16 部门群的边界', () => {
     expect((await api<Directory>(ctx.app, el.cookie, 'GET', '/api/oa/directory')).body.canSeePhones).toBe(true);
     expect((await api(ctx.app, el.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'ent' })).status).toBe(201);
   });
+
+  it('打开部门群时它正被解散：等解散提交，建一个新的，不往旧群里加人', async () => {
+    const [old] = await ctx.sql<{ id: number }[]>`SELECT id FROM oa_im_conversations WHERE dept_key = 'ent' AND dissolved_at IS NULL`;
+    let opening: Promise<{ status: number; body: unknown }> | undefined;
+    await ctx.sql.begin(async (tx) => {
+      await tx`SELECT 1 FROM oa_im_conversations WHERE id = ${old!.id} FOR UPDATE`;
+      opening = api(ctx.app, ctx.owner, 'POST', '/api/oa/im/dept-groups', { deptKey: 'ent' });
+      await new Promise((r) => setTimeout(r, 300));
+      await tx`UPDATE oa_im_conversations SET dissolved_at = now() WHERE id = ${old!.id}`;
+    });
+    const r = (await opening!) as { status: number; body: { id: number; created: boolean } };
+    expect(r.status).toBe(201);
+    expect(r.body.id).not.toBe(Number(old!.id));
+    const [n] = await ctx.sql<
+      { n: number }[]
+    >`SELECT count(*)::int AS n FROM oa_im_members WHERE conversation_id = ${old!.id} AND staff_id = (SELECT id FROM staff WHERE username = 'owner' OR role = 'owner' ORDER BY id LIMIT 1)`;
+    expect(n!.n).toBe(0);
+  });
+
+  it('建群时建群人正被停用：等停用提交，再核对一次，不建', async () => {
+    const k = await hire('g_k', 'kitchen.staff');
+    const k1 = await hire('g_k1', 'kitchen.staff');
+    const k2 = await hire('g_k2', 'kitchen.staff');
+    let making: Promise<{ status: number; body: unknown }> | undefined;
+    await ctx.sql.begin(async (tx) => {
+      await tx`UPDATE staff SET active = false WHERE id = ${k.id}`;
+      making = api(ctx.app, k.cookie, 'POST', '/api/oa/im/groups', { clientKey: randomUUID(), name: '停用前', memberIds: [k1.id, k2.id] });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    const r = (await making!) as { status: number };
+    expect([401, 403]).toContain(r.status);
+    const [n] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_im_conversations WHERE created_by = ${k.id}`;
+    expect(n!.n).toBe(0);
+  });
 });
