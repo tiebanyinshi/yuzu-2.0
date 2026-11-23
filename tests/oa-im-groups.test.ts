@@ -328,4 +328,17 @@ describe('OA-16 部门群的边界', () => {
     const [n] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_im_conversations WHERE created_by = ${k.id}`;
     expect(n!.n).toBe(0);
   });
+
+  it('自己选成人力负责人（hr.org 随岗位来、没核实）的不算管组织架构的人；核实以后算', async () => {
+    const hl = await hire('g_hl', 'hr.lead');
+    await ctx.sql`UPDATE staff SET position_chosen_at = now() WHERE id = ${hl.id}`;
+    const d = (await api<Directory>(ctx.app, hl.cookie, 'GET', '/api/oa/directory')).body;
+    expect(d).toMatchObject({ canSeePhones: false, canConfigure: false });
+    expect(d.departments.find((x) => x.key === 'kitchen')?.canCreateGroup).toBe(false);
+    expect((await api(ctx.app, hl.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'kitchen' })).status).toBe(403);
+    expect((await api(ctx.app, hl.cookie, 'PUT', '/api/oa/directory/settings', { phoneScope: 'all' })).status).toBe(403);
+    await ctx.sql`UPDATE staff SET position_chosen_at = NULL WHERE id = ${hl.id}`;
+    expect((await api<Directory>(ctx.app, hl.cookie, 'GET', '/api/oa/directory')).body).toMatchObject({ canSeePhones: true, canConfigure: true });
+    expect((await api(ctx.app, hl.cookie, 'PUT', '/api/oa/directory/settings', { phoneScope: 'managers' })).status).toBe(200);
+  });
 });

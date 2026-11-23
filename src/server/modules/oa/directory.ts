@@ -12,6 +12,7 @@ import type { Db } from '../../db';
 import { guardAny } from '../../auth/guard';
 import type { Actor, Deps } from '../../lib/context';
 import { writeAudit } from '../../lib/audit';
+import { forbidden } from '../../lib/errors';
 import { parse } from '../../lib/validate';
 import { employeeOnly } from './im';
 import { loadOrg } from './org';
@@ -19,7 +20,16 @@ import { loadOrg } from './org';
 const SETTING_KEY = 'oa_directory_phone';
 const SettingsInput = z.object({ phoneScope: z.enum(['managers', 'all', 'hr']) });
 
-const managesOrg = (actor: Actor) => can(actor, 'hr.org') || can(actor, 'staff.manage');
+/**
+ * 管组织架构的人（OA-16 用来看全员手机号、改可见范围、建 / 打开任意部门群）：总裁（staff.manage），或有 hr.org、岗位由后台给的人。
+ * 自己选成人力负责人（hr.org 随岗位来）、后台还没核实的不算（Codex 安全审查 fd91220）
+ */
+export async function managesOrg(db: Db, actor: Actor): Promise<boolean> {
+  if (can(actor, 'staff.manage')) return true;
+  if (!can(actor, 'hr.org')) return false;
+  const [me] = await db<{ selfChosen: boolean }[]>`SELECT position_chosen_at IS NOT NULL AS self_chosen FROM staff WHERE id = ${actor.id}`;
+  return !!me && !me.selfChosen;
+}
 
 async function phoneScopeOf(db: Db): Promise<DirectoryPhoneScope> {
   const [row] = await db<{ value: unknown }[]>`SELECT value FROM settings WHERE key = ${SETTING_KEY}`;
@@ -47,7 +57,8 @@ export async function loadDirectory(db: Db, actor: Actor): Promise<Directory> {
   for (const d of org.departments) if (d.head) heads.set(d.head.id, [...(heads.get(d.head.id) ?? []), d.key]);
   // 看手机号、建部门群只认核实过的主管（资料卡上「主管」照组织架构显示）
   const isHead = [...verified.values()].includes(actor.id);
-  const canSeePhones = phoneScope === 'all' || managesOrg(actor) || (phoneScope === 'managers' && isHead);
+  const manager = await managesOrg(db, actor);
+  const canSeePhones = phoneScope === 'all' || manager || (phoneScope === 'managers' && isHead);
   const onDuty = org.employees.filter((e) => e.active && e.status === 'active');
   const people = onDuty.map((e): DirectoryPerson => {
     const visible = canSeePhones || e.staffId === actor.id;
@@ -76,10 +87,10 @@ export async function loadDirectory(db: Db, actor: Actor): Promise<Directory> {
       parentKey: d.parentKey,
       headId: d.head?.id ?? null,
       group: g ? { id: g.mine ? Number(g.id) : null } : null,
-      canCreateGroup: managesOrg(actor) || verified.get(d.key) === actor.id,
+      canCreateGroup: manager || verified.get(d.key) === actor.id,
     };
   });
-  return { departments, people, phoneScope, canSeePhones, canConfigure: managesOrg(actor) };
+  return { departments, people, phoneScope, canSeePhones, canConfigure: manager };
 }
 
 export function registerOaDirectoryRoutes(app: FastifyInstance, { sql }: Deps) {
@@ -88,6 +99,7 @@ export function registerOaDirectoryRoutes(app: FastifyInstance, { sql }: Deps) {
   // 手机号可见范围：管组织架构的人改
   app.put('/api/oa/directory/settings', { preHandler: guardAny('hr.org', 'staff.manage') }, async (req) => {
     const { phoneScope } = parse(SettingsInput, req.body);
+    if (!(await managesOrg(sql, req.actor))) throw forbidden('你的岗位还没由后台核实，不能改手机号可见范围');
     await sql.begin(async (tx) => {
       await tx`
         INSERT INTO settings (key, value, updated_at, updated_by) VALUES (${SETTING_KEY}, ${tx.json(phoneScope)}, now(), ${req.actor.id})

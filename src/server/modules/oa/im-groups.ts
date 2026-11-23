@@ -8,7 +8,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { IM_GROUP_MAX, IM_GROUP_NAME_MAX, IM_NOTICE_MAX, canKick, canManageGroup, type ImConversationDetail, type ImMemberSource, type ImRole } from '@shared/oa-im';
-import { can } from '@shared/permissions';
 import type { OrgDepartment } from '@shared/positions';
 import type { Db, Tx } from '../../db';
 import type { Actor, Deps } from '../../lib/context';
@@ -16,7 +15,7 @@ import { forbidden, notFound, unprocessable } from '../../lib/errors';
 import { idParam, parse } from '../../lib/validate';
 import { writeAudit } from '../../lib/audit';
 import { assertActorOnDuty, assertGroupQuota, detailOf, employeeOnly, insertMessage, lockMembershipSync, onDuty, onDutyIds } from './im';
-import { verifiedHeads } from './directory';
+import { managesOrg, verifiedHeads } from './directory';
 
 const MembersInput = z.object({ staffIds: z.array(z.number().int().positive()).min(1, '请选要拉进群的人').max(IM_GROUP_MAX) });
 const MemberParams = z.object({ id: z.coerce.number().int().positive(), staffId: z.coerce.number().int().positive() });
@@ -88,7 +87,7 @@ const names = (xs: readonly string[]) => (xs.length > 3 ? `${xs.slice(0, 3).join
 
 /** 部门群能不能建：管组织架构的人，或这个部门实际的主管 */
 export async function canCreateDeptGroup(db: Db, actor: Actor, dept: OrgDepartment): Promise<boolean> {
-  if (can(actor, 'hr.org') || can(actor, 'staff.manage')) return true;
+  if (await managesOrg(db, actor)) return true;
   // 只认核实过的主管：自己选成负责人、后台还没核实的不能建 / 打开部门群（Codex 安全审查 ae2d4b6）
   return (await verifiedHeads(db)).get(dept) === actor.id;
 }
