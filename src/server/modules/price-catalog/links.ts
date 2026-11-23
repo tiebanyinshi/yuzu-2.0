@@ -29,6 +29,7 @@ import { currentStoreId, DEFAULT_STORE_ID } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
 import { dishIdsAmong, recordPriceChanges, recordStorePriceChange } from '../dish-prices';
 import { erpOpAbandoned } from '../erp-ops';
+import { materializeCatalog } from './materialize';
 import { entriesOf } from './read';
 
 /**
@@ -103,15 +104,18 @@ async function itemPrices(db: Db | Tx, ids: number[]): Promise<Map<number, { nam
  */
 export async function syncLinkedPrices(tx: Tx, ctx: OpContext, opts: { keys?: string[]; why: string }): Promise<PriceSyncResult[]> {
   const storeId = currentStoreId();
+  const [active] = await tx<{ id: number }[]>`SELECT id FROM price_catalog_sets WHERE store_id = ${storeId} AND status = 'active'`;
+  if (!active) return [];
+  const entries = await entriesOf(tx, Number(active.id));
+  // 重做第一批：先落库（没对接的新建收银项目并对上、补分类），再按对接写价
+  await materializeCatalog(tx, entries, { keys: opts.keys, staffId: ctx.actor.id });
   const links = await tx<{ entryKey: string; itemId: number }[]>`
     SELECT entry_key, item_id FROM price_catalog_links WHERE store_id = ${storeId} ${opts.keys ? tx`AND entry_key IN ${tx(opts.keys.length ? opts.keys : [''])}` : tx``}
     ORDER BY item_id`;
   if (links.length === 0) return [];
-  const [active] = await tx<{ id: number }[]>`SELECT id FROM price_catalog_sets WHERE store_id = ${storeId} AND status = 'active'`;
-  if (!active) return [];
   // 同名的在用项优先（与对比、查重同一个键）
   const byKey = new Map<string, PriceCatalogEntry>();
-  for (const e of await entriesOf(tx, Number(active.id))) {
+  for (const e of entries) {
     const k = priceNameKey(e);
     const had = byKey.get(k);
     if (!had || (!had.active && e.active)) byKey.set(k, e);
@@ -194,6 +198,13 @@ export async function priceLinks(db: Db | Tx): Promise<PriceLink[]> {
   });
 }
 
+/** 取消对接：门店原有的收银项目不再归到价目表的分类（价目表新建的照旧留着，以后重新对上它） */
+async function clearCatalogCategory(tx: Tx, itemId: number) {
+  await tx`
+    UPDATE service_items SET catalog_key = NULL, catalog_category_code = NULL, catalog_category_name = NULL, catalog_group = NULL, catalog_sort = NULL, catalog_code = NULL, updated_at = clock_timestamp()
+    WHERE id = ${itemId} AND NOT catalog_managed`;
+}
+
 // ───────────────────────── 对接、取消对接、按名称自动对接 ─────────────────────────
 
 const OpKey = z.uuid('缺少操作编号');
@@ -239,6 +250,7 @@ export async function setPriceLink(deps: Deps, raw: unknown, ctx: OpContext): Pr
     if (f.itemId === null) {
       if (!had) return { linked: 0, unlinked: 0, synced: [] };
       await tx`DELETE FROM price_catalog_links WHERE store_id = ${storeId} AND entry_key = ${f.entryKey}`;
+      await clearCatalogCategory(tx, Number(had.itemId));
       await writeAudit(tx, {
         staffId: ctx.actor.id,
         action: 'price_catalog',
@@ -257,6 +269,7 @@ export async function setPriceLink(deps: Deps, raw: unknown, ctx: OpContext): Pr
     if (taken) throw conflict('PRICE_LINK_TAKEN', `「${item.name}」已经对接了价目表里的另一项，先取消那一项的对接`);
     if (had && Number(had.itemId) === f.itemId) return { linked: 0, unlinked: 0, synced: await syncLinkedPrices(tx, ctx, { keys: [f.entryKey], why: '对接收银项目' }) };
     if (had) await tx`DELETE FROM price_catalog_links WHERE store_id = ${storeId} AND entry_key = ${f.entryKey}`;
+    if (had) await clearCatalogCategory(tx, Number(had.itemId));
     await tx`INSERT INTO price_catalog_links (entry_key, item_id, created_by) VALUES (${f.entryKey}, ${f.itemId}, ${ctx.actor.id})`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,

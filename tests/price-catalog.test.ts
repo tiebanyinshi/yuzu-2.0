@@ -9,20 +9,27 @@ import {
   diffPriceCatalogs,
   entryFacts,
   matchesPriceSearch,
+  priceCategoriesOf,
+  priceCategoryOf,
   priceChangeLines,
+  ROOM_SERVICE_EXCLUDED_CATEGORIES,
   priceEntryProblems,
   priceText,
   windowText,
   type PriceCatalogEntry,
   type PriceCatalogOverview,
   type PriceCatalogSet,
+  type PriceCategoryCheck,
   type PriceChange,
   type PriceImportPreview,
 } from '../src/shared/price-catalog';
 import { priceQuote, quoteUnit, serviceFeeOf } from '../src/shared/price-quote';
 import { buildWorkbook, type WbSheet } from '../src/server/lib/xlsx';
 import { readXlsx } from '../src/server/lib/xlsx-read';
-import { minutesOf, roomNumbersOf, windowOf, yuanToCents } from '../src/server/modules/price-catalog/parse';
+import { minutesOf, parsePriceCatalog, roomNumbersOf, windowOf, yuanToCents } from '../src/server/modules/price-catalog/parse';
+import { itemCategoryKey, itemCategoryTabs, matchesItemSearch } from '../src/shared/catalog';
+import type { Catalog } from '../src/shared/types';
+import type { DiningMenu } from '../src/shared/dining';
 import { api, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -162,11 +169,11 @@ describe('价目表录入 第一批：数据模型与导入', () => {
     const p = res.body as PriceImportPreview;
     expect(p.errorCount, JSON.stringify(p.issues)).toBe(0);
     // 门店：门票按「时长 × 是否含餐」4 项，夜间票带时段，餐票带供应时段；服务费按比例、不算条数
-    expect(find(p, '门票 12H 不含餐')).toMatchObject({ kind: 'ticket', priceMode: 'single', priceCents: 49900, durationMinutes: 720, includesMeal: false });
-    expect(find(p, '门票 24H 含餐')).toMatchObject({ priceCents: 89900, durationMinutes: 1440, includesMeal: true });
+    expect(find(p, '12H 不含餐')).toMatchObject({ kind: 'ticket', priceMode: 'single', priceCents: 49900, durationMinutes: 720, includesMeal: false });
+    expect(find(p, '24H 含餐')).toMatchObject({ priceCents: 89900, durationMinutes: 1440, includesMeal: true });
     expect(find(p, '夜间票')).toMatchObject({ kind: 'night_ticket', priceCents: 59900, windowStart: 1260, windowEnd: 660 });
-    expect(find(p, '早餐餐票')).toMatchObject({ kind: 'meal_ticket', priceCents: 9900, windowStart: 450, windowEnd: 600 });
-    expect(find(p, '夜宵餐票')).toMatchObject({ windowStart: 1410, windowEnd: 120 });
+    expect(find(p, '早餐')).toMatchObject({ kind: 'meal_ticket', priceCents: 9900, windowStart: 450, windowEnd: 600 });
+    expect(find(p, '夜宵')).toMatchObject({ windowStart: 1410, windowEnd: 120 });
     expect(find(p, '服务费')).toMatchObject({ kind: 'service_fee', priceMode: 'rate', rateBp: 1000, priceCents: null });
     // 娱乐：基础价（含 2 小时）与加钟价分开；台位数；畅玩卷单次、不设时长
     expect(find(p, '台球')).toMatchObject({ priceCents: 3900, durationMinutes: 120, extraPriceCents: 1990, extraMinutes: 60, unitsCount: 4 });
@@ -347,7 +354,7 @@ describe('价目表录入 第一批：数据模型与导入', () => {
     expect(priceText(find(p, '服务费'), yuan)).toBe('10%');
     expect(entryFacts(find(p, 'spa房'), yuan)).toEqual(['含 2 小时', '超时 ¥199/1 小时', '封顶 ¥999', '35 间', 'S301–S335（35 个）']);
     expect(entryFacts(find(p, '台球'), yuan)).toEqual(['含 2 小时', '加钟 ¥19.9/1 小时', '4 台']);
-    expect(entryFacts(find(p, '门票 24H 含餐'), yuan)).toEqual(['24 小时 · 含餐']);
+    expect(entryFacts(find(p, '24H 含餐'), yuan)).toEqual(['24 小时 · 含餐']);
     expect(entryFacts(find(p, '茱莉蔻柑橘护理'), yuan)).toEqual(['45 分钟', '浴区', '适用 男 / 女']);
     expect(windowText(1410, 120)).toBe('23:30–次日2:00');
     expect(p.entries.filter((e) => matchesPriceSearch(e, 's303')).map((e) => e.name)).toEqual(['spa房']);
@@ -990,7 +997,7 @@ describe('价目表录入 第四批：前台试算', () => {
       [
         { entry: get('spa房'), minutes: 150, quantity: 1 },
         { entry: get('古法中式'), quantity: 1 },
-        { entry: get('门票 12H 不含餐'), quantity: 1 },
+        { entry: get('12H 不含餐'), quantity: 1 },
       ],
       fee,
     );
@@ -998,7 +1005,7 @@ describe('价目表录入 第四批：前台试算', () => {
     expect(q.lines.map((l) => [l.name, l.amountCents])).toEqual([
       ['spa房', 59800],
       ['古法中式', 49900],
-      ['门票 12H 不含餐', 49900],
+      ['12H 不含餐', 49900],
     ]);
     expect(q).toMatchObject({ subtotalCents: 159600, feeRateBp: 1000, feeCents: 15960, totalCents: 175560 });
 
@@ -1052,22 +1059,27 @@ describe('价目表录入 第四批：对接收银项目', () => {
   const link = (body: Record<string, unknown>) => api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/links', { opKey: randomUUID(), ...body });
 
   it('按名称自动对接、手工对接 / 取消；切换、改价、回滚时收银项目的价跟着变，已开的单不变；后台价目不能另改对接了的项目的价', async () => {
-    await activateNew('对接演练上一版');
-    const set = await activateNew('对接演练');
+    // 前面几条用例切换生效时已经落过库：清掉，从「门店原有的收银项目」开始
+    await ctx.sql`DELETE FROM price_catalog_links`;
+    await ctx.sql`UPDATE service_items SET active = false, catalog_managed = false, catalog_key = NULL WHERE catalog_managed`;
     const yoga = await item({ name: '瑜伽泰式', category: '按摩', prices: { standard: 50000 }, technicianRequired: true });
     const pool = await item({ name: '台 球', category: '娱乐', price: 3000 });
     const snooker1 = await item({ name: '斯诺克', category: '娱乐', price: 9000 });
     const snooker2 = await item({ name: '斯诺克', category: '娱乐', price: 9100 });
+    await activateNew('对接演练上一版');
+    const set = await activateNew('对接演练');
 
-    // 自动对接：名称（不管空格）恰好对上一个在用项目的才对；两个「斯诺克」不对，留给人工选
+    // 切换生效时落库（重做第一批）：名称（不管空格）恰好对上一个在用项目的对上它；两个「斯诺克」对不准，另建一个价目表的收银项目
     const opKey = randomUUID();
     const auto = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/links/auto', { opKey });
     expect(auto.status, JSON.stringify(auto.body)).toBe(200);
+    expect(auto.body).toMatchObject({ linked: 0 });
     const links = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/links')).body as { entryKey: string; itemId: number; prices: { tier: string; price: number }[] }[];
     const keyOf = (name: string) => links.find((l) => l.entryKey.endsWith(`|${name}`))?.itemId;
     expect(keyOf('瑜伽泰式')).toBe(yoga);
     expect(keyOf('台球')).toBe(pool);
-    expect(keyOf('斯诺克')).toBeUndefined();
+    expect([snooker1, snooker2]).not.toContain(keyOf('斯诺克'));
+    expect(keyOf('斯诺克')).toBeDefined();
     // 双价：标准 / 专业 = 专业价，优选 = 资深价（PC7）；单价：每一档都是这个价
     expect(await tiers(yoga)).toEqual({ premium: 69900, professional: 59900, standard: 59900 });
     expect(await tiers(pool)).toEqual({ standard: 3900 });
@@ -1120,7 +1132,7 @@ describe('价目表录入 第四批：对接收银项目', () => {
     const snookerKey = `entertainment|||斯诺克`;
     const l1 = await link({ entryKey: snookerKey, itemId: snooker1 });
     expect(l1.status, JSON.stringify(l1.body)).toBe(200);
-    expect(l1.body).toMatchObject({ linked: 1, unlinked: 0, synced: [{ itemId: snooker1, changed: true }] });
+    expect(l1.body).toMatchObject({ linked: 1, unlinked: 1, synced: [{ itemId: snooker1, changed: true }] });
     expect(await tiers(snooker1)).toEqual({ standard: 9900 });
     expect((await link({ entryKey: snookerKey, itemId: snooker2 })).body).toMatchObject({ linked: 1, unlinked: 1 });
     expect(await tiers(snooker2)).toEqual({ standard: 9900 });
@@ -1143,7 +1155,7 @@ describe('价目表录入 第四批：对接收银项目', () => {
     expect(await tiers(yoga)).toEqual({ premium: 69900, professional: 59900, standard: 59900 });
     expect(await tiers(pool)).toEqual({ standard: 4500 });
     const audits = await ctx.sql<{ detail: { action: string; label: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'price_catalog' ORDER BY id`;
-    expect(audits.map((a) => a.detail.action)).toEqual(expect.arrayContaining(['auto_link', 'link', 'unlink', 'sync']));
+    expect(audits.map((a) => a.detail.action)).toEqual(expect.arrayContaining(['link', 'unlink', 'sync']));
     expect(audits.filter((a) => a.detail.action === 'sync').at(-1)!.detail.label).toContain('整体回滚');
 
     // 作废过的编号：原请求晚到也不对接；店员不能对接
@@ -1314,5 +1326,141 @@ describe('价目表录入 第四批：对接收银项目', () => {
     ]);
     const m = ((await preview(workbook({ 按摩及助浴价格: massage }))).body as PriceImportPreview).issues.filter((i) => i.level === 'error');
     expect(m.some((i) => i.row === 3 && i.field === '项目名称')).toBe(true);
+  });
+});
+
+describe('价目表重做 第一批：分类与落库到收银项目', () => {
+  it('分类编码 + 分类名称独立存，不拼进名称；顺序与表格一致；同一个分类在哪儿编码都一样', () => {
+    const p = parsePriceCatalog(readXlsx(Buffer.from(workbook(), 'base64')));
+    expect(p.entries.filter((e) => e.sheet === 'store').map((e) => e.name)).toEqual(['12H 不含餐', '12H 含餐', '24H 不含餐', '24H 含餐', '夜间票', '早餐', '午餐', '晚餐', '夜宵', '服务费']);
+    const { categories, byEntry } = priceCategoriesOf(p.entries);
+    const cat = (name: string) => byEntry[p.entries.findIndex((e) => e.name === name)]!;
+    expect(cat('12H 不含餐')).toMatchObject({ code: 'store.ticket', name: '门票', group: '门店价格' });
+    expect(cat('早餐')).toMatchObject({ code: 'store.meal', name: '餐票' });
+    expect(cat('畅玩卷')).toMatchObject({ code: 'ent.pass', name: '畅玩卷' });
+    expect(cat('台球')).toMatchObject({ code: 'ent.play', name: '娱乐设施' });
+    expect(cat('spa房')).toMatchObject({ name: 'spa房', group: '房间价格' });
+    expect(cat('古法中式')).toMatchObject({ code: 'massage.01', name: '康疗' });
+    expect(cat('精致修脚')).toMatchObject({ code: 'massage.06', name: '大堂按摩' });
+    // 菜品「餐段 → 分类」两级：早餐、午餐都有的分类名编码不同
+    expect(cat('生滚牛肉粥')).toMatchObject({ name: '生滚粥', group: '早餐' });
+    expect(cat('玻璃脆皮妙龄乳鸽').code).not.toBe(cat('蚝皇扣鲍鱼').code);
+    expect(categories.map((c) => c.name).slice(0, 6)).toEqual(['门票', '夜间票', '餐票', '服务费', '畅玩卷', '娱乐设施']);
+    expect(categories.filter((c) => c.code.startsWith('massage.')).map((c) => c.name)).toEqual(['康疗', '中医', '面护', '大堂按摩', '助浴', '护理']);
+    // 稳定：同一个分类再算一次是同一个编码
+    expect(priceCategoryOf(p.entries.find((e) => e.name === 'spa房')!).code).toBe(cat('spa房').code);
+  });
+
+  it('切换生效后每一项都有收银项目（服务费、房型除外，待定价的不建）；前台按价目表的分类切换；停用跟着走；补价后建出来', async () => {
+    // 从一家还没有收银项目的门店开始（前面的用例建过同名的）
+    await ctx.sql`DELETE FROM price_catalog_links`;
+    await ctx.sql`UPDATE service_items SET active = false, catalog_managed = false, catalog_key = NULL`;
+    await ctx.sql`INSERT INTO kitchen_stations (name) SELECT '演练热菜' WHERE NOT EXISTS (SELECT 1 FROM kitchen_stations WHERE active)`;
+    const file = workbook();
+    const p = (await preview(file)).body as PriceImportPreview & { digest: string };
+    const draft = (
+      await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: '落库.xlsx', xlsxBase64: file, previewDigest: p.digest, title: '落库演练', opKey: randomUUID() })
+    ).body as PriceCatalogSet;
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { opKey: randomUUID(), draftId: draft.id, countReason: '合成的演练表' })).status).toBe(200);
+
+    const managed = await ctx.sql<
+      { id: number; name: string; category: string; active: boolean; code: string; catName: string; technicianRequired: boolean; durationMinutes: number | null; stationId: number | null }[]
+    >`
+      SELECT id, name, category, active, catalog_category_code AS code, catalog_category_name AS cat_name, technician_required, duration_minutes, station_id
+      FROM service_items WHERE catalog_managed ORDER BY catalog_sort, id`;
+    const byName = (n: string) => managed.find((m) => m.name === n);
+    // 门票 4 + 夜间票 1 + 餐票 4 + 娱乐 8 + 菜品 4（2 楼零点两道待定价不建）+ 按摩 10；服务费、房间不建
+    expect(managed.filter((m) => m.active)).toHaveLength(4 + 1 + 4 + 8 + 4 + 10);
+    expect(byName('服务费')).toBeUndefined();
+    expect(byName('spa房')).toBeUndefined();
+    expect(byName('沙姜炒鸡')).toBeUndefined();
+    expect(byName('12H 不含餐')).toMatchObject({ code: 'store.ticket', catName: '门票', category: '入场', durationMinutes: 720 });
+    expect(byName('古法中式')).toMatchObject({ code: 'massage.01', catName: '康疗', category: '康疗', technicianRequired: true, durationMinutes: 80 });
+    expect(byName('生滚牛肉粥')!.stationId).not.toBeNull();
+    const tiers = async (id: number) =>
+      Object.fromEntries((await ctx.sql<{ tier: string; price: number }[]>`SELECT tier, price FROM service_item_prices WHERE item_id = ${id} ORDER BY tier`).map((r) => [r.tier, Number(r.price)]));
+    expect(await tiers(byName('古法中式')!.id)).toEqual({ premium: 59900, professional: 49900 });
+    expect(await tiers(byName('台球')!.id)).toEqual({ standard: 3900 });
+
+    // 前台取的收银项目带分类；分类切换按价目表的名称与顺序
+    const catalog = (await api(ctx.app, ctx.clerk, 'GET', '/api/catalog')).body as Catalog;
+    const ticket = catalog.items.find((i) => i.name === '12H 不含餐')!;
+    expect(ticket.catalogCategory).toMatchObject({ code: 'store.ticket', name: '门票', group: '门店价格' });
+    const tabs = itemCategoryTabs(catalog.items.filter((i) => i.catalogCategory));
+    expect(tabs.map((t) => t.label).slice(0, 4)).toEqual(['门票', '夜间票', '餐票', '畅玩卷']);
+    expect(tabs.find((t) => t.label === '门票')!.count).toBe(4);
+    expect(tabs.find((t) => t.label === '康疗')!.count).toBe(2);
+    expect(itemCategoryKey(ticket)).toBe('store.ticket');
+    // 第五批：点单搜项目——名称或价目表编号（不分大小写、不管空格）
+    const gufa = catalog.items.find((i) => i.name === '古法中式')!;
+    expect(gufa.catalogCode).toBe('1');
+    expect(matchesItemSearch(ticket, '12h不含')).toBe(true);
+    expect(matchesItemSearch(gufa, '1')).toBe(true);
+    expect(matchesItemSearch(gufa, '泰式')).toBe(false);
+    // 第二批：房态中心登记（康美部）只列要技师的、房间 / 大堂做的板块，按表格顺序；助浴、护理在浴区，不在这里列（PC22）
+    const service = catalog.items.filter((i) => i.technicianRequired && !ROOM_SERVICE_EXCLUDED_CATEGORIES.includes(i.catalogCategory?.code ?? ''));
+    expect(itemCategoryTabs(service).map((t) => `${t.label}:${t.count}`)).toEqual(['康疗:2', '中医:1', '面护:2', '大堂按摩:1']);
+    expect(catalog.items.find((i) => i.name === '伊索抗衰面部护理')).toMatchObject({
+      durationMinutes: 80,
+      prices: [
+        { tier: 'professional', price: 80000 },
+        { tier: 'premium', price: 90000 },
+      ],
+    });
+    expect(catalog.items.find((i) => i.name === '泰式私汤药浴(女宾)')).toMatchObject({ gender: 'female', catalogCategory: { code: 'massage.08', name: '助浴' } });
+
+    // 第三批：点单页的菜单带「餐段 → 菜品分类」；2 楼零点两道待定价的不在菜单里（不能下单）
+    const menu = (await api(ctx.app, ctx.owner, 'GET', '/api/dining/menu')).body as DiningMenu;
+    const fromCatalog = menu.dishes.filter((d) => d.catalogCategory);
+    expect(fromCatalog.map((d) => `${d.catalogCategory!.group}/${d.catalogCategory!.name}/${d.name}`).sort()).toEqual(
+      ['早餐/生滚粥/生滚牛肉粥', '早餐/生滚粥/皮蛋瘦肉粥', '午餐/中式零点/玻璃脆皮妙龄乳鸽', '晚餐/中式零点/蚝皇扣鲍鱼'].sort(),
+    );
+    expect(fromCatalog.every((d) => d.outlet === 'restaurant')).toBe(true);
+    // 午餐、晚餐都有「中式零点」：编码不同，分开切换
+    const lunch = fromCatalog.find((d) => d.name === '玻璃脆皮妙龄乳鸽')!;
+    const dinner = fromCatalog.find((d) => d.name === '蚝皇扣鲍鱼')!;
+    expect(itemCategoryKey(lunch)).not.toBe(itemCategoryKey(dinner));
+    expect(itemCategoryTabs(fromCatalog).map((t) => t.label)).toEqual(['生滚粥', '午餐 · 中式零点', '晚餐 · 中式零点']);
+
+    // 前台挂一张门票：按价目表的价
+    await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'K', from: 1, to: 2, width: 3, zone: 'male' });
+    const visit = (await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: 'K001', zone: 'male' }] })).body.visits[0].id as number;
+    const charge = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${visit}/charges`, { clientKey: randomUUID(), lines: [{ itemId: ticket.id, quantity: 1 }], expectedTotal: 49900 });
+    expect(charge.status, JSON.stringify(charge.body)).toBe(200);
+
+    // 停用价目表的一项：收银项目跟着停用；启用回来
+    const set = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${draft.id}`)).body as PriceCatalogSet;
+    const pool = find(set, '台球');
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${pool.id}/active`, { version: pool.version, active: false, opKey: randomUUID() })).status).toBe(200);
+    expect((await ctx.sql<{ active: boolean }[]>`SELECT active FROM service_items WHERE id = ${byName('台球')!.id}`)[0]!.active).toBe(false);
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${pool.id}/active`, { version: pool.version! + 1, active: true, opKey: randomUUID() })).status).toBe(200);
+    expect((await ctx.sql<{ active: boolean }[]>`SELECT active FROM service_items WHERE id = ${byName('台球')!.id}`)[0]!.active).toBe(true);
+
+    // 补价：待定价的菜补上售价并改成可以下单，建出收银项目
+    const abalone = set.entries.find((e) => e.name === '沙姜炒鸡')!;
+    expect(
+      (await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${abalone.id}`, { ...abalone, priceMode: 'single', priceCents: 6800, orderable: true, opKey: randomUUID() })).status,
+    ).toBe(200);
+    expect((await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM service_items WHERE catalog_managed AND active AND name = '沙姜炒鸡'`)[0]!.n).toBe(1);
+
+    // 第四批：分类核对——能卖的与点单页上的逐个分类对得上；服务费、房间不落库；待定价的不算能卖
+    const checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
+    const check = (name: string, group?: string) => checks.find((c) => c.name === name && (!group || c.group === group))!;
+    expect(check('门票')).toMatchObject({ code: 'store.ticket', entries: 4, sellable: 4, items: 4 });
+    expect(check('服务费')).toMatchObject({ entries: 1, sellable: 0, items: null });
+    expect(check('spa房')).toMatchObject({ items: null });
+    expect(check('中餐零点', '2楼零点')).toMatchObject({ entries: 2, sellable: 1, items: 1 });
+    expect(checks.filter((c) => c.items !== null && c.items !== c.sellable)).toEqual([]);
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/admin/price-catalog/category-checks')).status).toBe(403);
+    // 导出：六张表各一张工作表，一行一项（第一行表头）
+    const exported = await ctx.app.inject({ method: 'GET', url: `/api/admin/price-catalog/sets/${draft.id}/export`, headers: { cookie: ctx.owner } });
+    expect(exported.statusCode).toBe(200);
+    const book = readXlsx(exported.rawPayload);
+    expect(book.sheets.map((sh) => sh.name)).toEqual(['门店价格', '娱乐价格', '房间价格', '零点菜品价格', '按摩及助浴价格']);
+    expect(book.sheets.find((sh) => sh.name === '按摩及助浴价格')!.rows.size).toBe(1 + 10);
+
+    // 已开的单照旧显示原名称、原价
+    const [line] = await ctx.sql<{ name: string; unitPrice: number }[]>`SELECT name, unit_price FROM bill_lines WHERE item_id = ${ticket.id}`;
+    expect(line).toMatchObject({ name: '12H 不含餐', unitPrice: 49900 });
   });
 });

@@ -61,8 +61,13 @@ function CardBody({ room, now, hint }: { room: Room; now: number; hint: string |
     const estimate = room.usage?.pricing && room.since ? usageEstimate(Math.max(0, Math.floor((now - new Date(room.since).getTime()) / 60_000)), room.usage.pricing) : null;
     return (
       <>
-        <p className="truncate text-[13.5px] font-bold text-ink" data-testid="rc-guest">
-          {room.guestText ?? '有客人'}
+        <p className="flex items-center gap-1.5 truncate text-[13.5px] font-bold text-ink" data-testid="rc-guest">
+          <span className="truncate">{room.guestText ?? '有客人'}</span>
+          {room.guests.some((g) => g.overnight) && (
+            <span className="shrink-0 rounded bg-lake-soft px-1.5 text-[12px] font-semibold text-lake" data-testid="rc-overnight">
+              过夜
+            </span>
+          )}
         </p>
         {room.techText && (
           <p className="truncate text-[13px] text-ink-2" data-testid="rc-tech">

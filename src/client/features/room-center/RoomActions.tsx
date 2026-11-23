@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Banknote, CircleStop } from 'lucide-react';
 import { formatYuan } from '@shared/money';
-import { MAX_MAINTENANCE_REASON, MAX_ROOM_NOTE, ROOM_STATUS_LABELS, type RoomCard, type RoomCenterBoard, type RoomSessionView } from '@shared/room-center';
+import { asksOvernight, MAX_MAINTENANCE_REASON, MAX_ROOM_NOTE, ROOM_STATUS_LABELS, type RoomCard, type RoomCenterBoard, type RoomSessionView } from '@shared/room-center';
 import { spaceLabel } from '@shared/spaces';
 import { api, errorMessage } from '../../lib/api';
 import { serverNowMs } from '../../lib/serverClock';
@@ -46,6 +46,10 @@ export function RoomActionStatus({ action, room, onResolved }: { action: ReturnT
 export function ExtendRoomDialog({ room, session: s, onClose, onDone }: { room: RoomCard; session: RoomSessionView; onClose: () => void; onDone: (board: RoomCenterBoard | null) => void }) {
   const me = useSession();
   const [quantity, setQuantity] = useState(1);
+  // 续单时也问客人是否过夜（重做第五批，PC25；按摩房、足浴房、SPA 房）
+  const guest = room.guests.find((g) => g.visitId === s.visitId);
+  const askOvernight = asksOvernight(room.kind, room.businessType) && !!guest?.registrationId;
+  const [overnight, setOvernight] = useState(guest?.overnight ?? false);
   const op = useFrontdeskOp<RoomCenterBoard | true>({ type: 'bill_post', visitId: s.visitId, staffName: me.staff.displayName, pick: foundPosted });
   const finish = (r: RoomCenterBoard | true) => onDone(r === true ? null : r);
   const total = s.unitPrice !== null ? s.unitPrice * quantity : 0;
@@ -54,7 +58,7 @@ export function ExtendRoomDialog({ room, session: s, onClose, onDone }: { room: 
     if (s.unitPrice === null) return;
     const done = await op.submit((key) => ({
       url: roomUrl(room.spaceId!, 'extend'),
-      body: { clientKey: key, sessionId: s.id, quantity, expectedTotal: total },
+      body: { clientKey: key, sessionId: s.id, quantity, expectedTotal: total, ...(askOvernight ? { overnight } : {}) },
       tagCodes: [room.guests.find((g) => g.visitId === s.visitId)?.tagCode ?? room.code],
       summary: `续钟 ${nameOf(room)}：${s.itemName} × ${quantity}（${s.techNo} 号 ${s.techName}）`,
       amount: total,
@@ -84,6 +88,18 @@ export function ExtendRoomDialog({ room, session: s, onClose, onDone }: { room: 
       <PendingPanel op={op} onResolved={finish} />
       <div className="flex flex-wrap items-center gap-3" data-testid="rc-extend">
         <ClockStepper value={quantity} onChange={setQuantity} disabled={op.locked} label="续几个钟" testId="rc-extend-qty" />
+        {askOvernight && (
+          <Segmented<'no' | 'yes'>
+            size="sm"
+            ariaLabel="客人是否过夜"
+            value={overnight ? 'yes' : 'no'}
+            onChange={(v) => setOvernight(v === 'yes')}
+            options={[
+              { value: 'no', label: '不过夜' },
+              { value: 'yes', label: '过夜' },
+            ]}
+          />
+        )}
         <span className="text-[13px] text-ink-3">
           × {s.unitPrice !== null ? formatYuan(s.unitPrice) : '（这张钟单没有有效的挂账）'} · 每钟 {perClock} 分钟，续完共 {s.minutes + perClock * quantity} 分钟
         </span>

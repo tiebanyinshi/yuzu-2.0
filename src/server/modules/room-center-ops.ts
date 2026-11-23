@@ -23,6 +23,8 @@ import {
   MAX_ROOM_NOTE,
   MAX_SELLER_NO,
   MAX_START_BACKDATE_MINUTES,
+  asksOvernight,
+  isLobbyBusinessType,
   roomKindOf,
   type RoomActionResult,
   type RoomCheckoutPreview,
@@ -170,8 +172,10 @@ export const RegisterInput = z
     /** 开始时间：现在开始 / 已经开始了（补记几点开始的）/ 稍后上钟（先占房，技师到了再点上钟） */
     start: z.enum(['now', 'at', 'later'], '请选择开始时间'),
     startedAt: z.iso.datetime({ offset: true, message: '开始时间不正确' }).optional(),
-    /** 同房加人：这间房已经有客人，再登记一位 */
+    /** 同房加人：这间房已经有客人，再登记一位（休息大厅不行，PC24） */
     join: z.boolean().default(false),
+    /** 客人是否过夜（按摩房、足浴房、SPA 房问，PC25） */
+    overnight: z.boolean().default(false),
     expectedTotal: positiveCents('本次合计'),
   })
   .refine((v) => v.start !== 'at' || !!v.startedAt, '已经开始了的，请填写几点开始的');
@@ -200,8 +204,16 @@ export async function registerRoom(deps: Deps, spaceId: number, raw: unknown, ct
     if (x.kind !== 'service') {
       throw unprocessable('ROOM_NOT_SERVICE', x.kind === 'hotel' ? HOTEL_ELSEWHERE : `${x.label} 是「${x.room.space.businessType}」，不是技师服务的房间，不能这样登记`);
     }
+    if (input.join && isLobbyBusinessType(x.room.space.businessType)) throw unprocessable('LOBBY_NO_JOIN', `${x.label} 是休息大厅，不能同房加人：请另选一个位置登记`);
+    if (input.overnight && !asksOvernight(x.kind, x.room.space.businessType)) throw unprocessable('OVERNIGHT_NOT_HERE', `${x.label} 不登记过夜（只有按摩房、足浴房、SPA 房问）`);
     assertOpenable(x, input.join);
     const seller = await findSeller(tx, input.sellerNo);
+    // 价目表的项目（重做第五批，PC23）：时长由项目带出，不自选钟数——一次登记一个项目
+    const [picked] = await tx<{ catalogKey: string | null; durationMinutes: number | null; name: string }[]>`
+      SELECT catalog_key, duration_minutes, name FROM service_items WHERE id = ${input.itemId}`;
+    if (picked?.catalogKey && picked.durationMinutes !== null && input.quantity !== 1) {
+      throw unprocessable('CATALOG_FIXED_DURATION', `「${picked.name}」的时长由价目表带出（${picked.durationMinutes} 分钟），不能自选钟数`);
+    }
     const [guest] = await tx<{ id: number; checkedInAt: string }[]>`
       SELECT v.id, v.checked_in_at FROM visits v JOIN hand_tags t ON t.id = v.tag_id
       WHERE t.code = ${input.tagCode} AND v.status = 'open' AND t.store_id = ${currentStoreId()}`;
@@ -258,8 +270,8 @@ export async function registerRoom(deps: Deps, spaceId: number, raw: unknown, ct
       await tx`UPDATE technician_sessions SET started_at = ${new Date(Math.min(startedAt.getTime(), at.getTime()))} WHERE id = ${sessionId} AND status = 'serving'`;
     }
     const [reg] = await tx<{ id: number }[]>`
-      INSERT INTO room_registrations (space_id, visit_id, session_id, seller_no, seller_name, note, opened_at, opened_by, open_key)
-      VALUES (${spaceId}, ${visitId}, ${sessionId}, ${seller.no}, ${seller.name}, ${input.note}, ${at}, ${ctx.actor.id}, ${key})
+      INSERT INTO room_registrations (space_id, visit_id, session_id, seller_no, seller_name, note, opened_at, opened_by, open_key, overnight)
+      VALUES (${spaceId}, ${visitId}, ${sessionId}, ${seller.no}, ${seller.name}, ${input.note}, ${at}, ${ctx.actor.id}, ${key}, ${input.overnight})
       RETURNING id`;
     await bumpRoomVersion(tx, [spaceId], ctx.actor.id, at);
     const detail = {
@@ -276,6 +288,7 @@ export async function registerRoom(deps: Deps, spaceId: number, raw: unknown, ct
       ...(startedAt ? { startedAt: startedAt.toISOString() } : {}),
       ...(input.note ? { note: input.note } : {}),
       ...(input.join ? { join: true } : {}),
+      ...(input.overnight ? { overnight: true } : {}),
     };
     await logRoomEvent(tx, { spaceId, kind: 'register', registrationId: Number(reg!.id), detail, staffId: ctx.actor.id, at });
     await writeAudit(tx, { staffId: ctx.actor.id, action: 'room_center_register', targetType: 'space', targetId: spaceId, detail, ip: ctx.ip, businessDate: today });
@@ -290,6 +303,8 @@ export const RoomExtendInput = z.object({
   sessionId: z.number('请选择续哪一张钟').int().positive(),
   quantity: z.number('请填写钟数').int('钟数要是整数').min(1, '续钟至少 1 个').max(9, '一次最多续 9 个钟'),
   expectedTotal: positiveCents('本次合计'),
+  /** 续钟时改「客人是否过夜」（不带不改；PC25） */
+  overnight: z.boolean().optional(),
 });
 
 /** 续钟：就是钟房的加钟（按这张钟单的项目与档次加收、钟数与计划时长累加），多记一条房间事件 */
@@ -304,12 +319,23 @@ export async function extendRoom(deps: Deps, spaceId: number, raw: unknown, ctx:
     const guest = x.room.guests.find((g) => g.sessions.some((s) => Number(s.id) === input.sessionId));
     const s = guest?.sessions.find((it) => Number(it.id) === input.sessionId);
     if (!guest || !s) throw conflict('SESSION_NOT_IN_ROOM', `这张钟单不在 ${x.label}（可能刚换了房或已经退房），请刷新`);
+    if (input.overnight !== undefined && !asksOvernight(x.kind, x.room.space.businessType)) throw unprocessable('OVERNIGHT_NOT_HERE', `${x.label} 不登记过夜（只有按摩房、足浴房、SPA 房问）`);
     const ext = await extensionLine(tx, input.sessionId, input.quantity);
     const posted = await postChargesTx(tx, deps, ext.visitId, parse(PostInput, { clientKey: key, lines: [ext.line], expectedTotal: input.expectedTotal }), { key, requestHash, backfill: null }, ctx, {
       session: { extendId: input.sessionId },
     });
+    if (input.overnight !== undefined && guest.registration) await tx`UPDATE room_registrations SET overnight = ${input.overnight} WHERE id = ${guest.registration.id}`;
     await bumpRoomVersion(tx, [spaceId], ctx.actor.id, at);
-    const detail = { room: x.label, tag: guest.visit.tagCode, item: s.itemName, technician: `${s.techNo} 号 ${s.techName}`, clocks: input.quantity, amount: posted.total, sessionNo: s.sessionNo };
+    const detail = {
+      room: x.label,
+      tag: guest.visit.tagCode,
+      item: s.itemName,
+      technician: `${s.techNo} 号 ${s.techName}`,
+      clocks: input.quantity,
+      amount: posted.total,
+      sessionNo: s.sessionNo,
+      ...(input.overnight !== undefined ? { overnight: input.overnight } : {}),
+    };
     await logRoomEvent(tx, { spaceId, kind: 'extend', registrationId: guest.registration ? Number(guest.registration.id) : null, detail, staffId: ctx.actor.id, at });
     await writeAudit(tx, { staffId: ctx.actor.id, action: 'room_center_extend', targetType: 'space', targetId: spaceId, detail, ip: ctx.ip, businessDate: today });
     return ext.visitId;
@@ -514,6 +540,7 @@ export async function mergeRooms(deps: Deps, spaceId: number, raw: unknown, ctx:
     assertRoomVersion(me.version, input.expectedVersion, me.label);
     for (const r of [me, main]) {
       if (r.kind === 'hotel' || r.kind === 'hall') throw unprocessable('MERGE_KIND', `${r.label} 是${r.kind === 'hotel' ? '客房' : '大厅类'}，不参加并房`);
+      if (isLobbyBusinessType(r.room.space.businessType)) throw unprocessable('MERGE_KIND', `${r.label} 是休息大厅，不参加并房`);
       if (!r.st.inUse) throw conflict('ROOM_NOT_IN_USE', `${r.label} 现在没有客人：两间都在用的房间才能并房`);
     }
     const inUse = (id: number) => (opened.facts.has(id) ? statusOfFacts(opened.facts.get(id)!).inUse : false);

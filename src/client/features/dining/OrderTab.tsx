@@ -22,7 +22,7 @@ import {
   type PendingDish,
   type TableSessionDetail,
 } from '@shared/dining';
-import { PRICE_TIER_LABELS, type PriceTier } from '@shared/catalog';
+import { itemCategoryKey, itemCategoryTabs, PRICE_TIER_LABELS, type ItemCategoryTab, type PriceTier } from '@shared/catalog';
 import { comboChoice, composeLineNote, methodChoiceProblem, methodsExtra, partsText, pickedMethods, type DishSwapChoice } from '@shared/dishes';
 import { ZONE_LABELS } from '@shared/frontdesk';
 import { api, errorMessage } from '../../lib/api';
@@ -40,6 +40,7 @@ import { DishOptionsDialog, methodOptionsOf, needsOptions, swappableOf, tierPric
 import { DishVoidDialog } from './DishVoid';
 import { ReceiptDialog, type ReceiptTarget } from './ReceiptDialog';
 import { GroupChips, OutletEntry, OutletFilter } from './slots';
+import { ALL_CATEGORIES, CategoryTabs } from '../../components/CategoryTabs';
 import { guestParams, OrderNoteInput, orderExtras, outletProblem, useOrderOutlets } from './OrderExtras';
 import { MAX_DELIVER_ROOM, outletBlockedText } from '@shared/dining-v8115';
 import { voidBlockedText, voidOutletsOf } from '@shared/frontdesk-v8117';
@@ -139,9 +140,14 @@ export function OrderTab() {
   /** 点单分类（8.1.7，CF4）：先在菜单区弹出的三个入口里选一处（null 为还没选），再按小分类点；下单成功后回到入口 */
   const [outlet, setOutlet] = useState<DiningOutlet | null>(null);
   const [groups, setGroups] = useState<string[]>([]);
+  // 价目表来的菜（重做第三批）：再按「餐段 → 菜品分类」两级切换，默认全部
+  const [period, setPeriod] = useState<string>(ALL_CATEGORIES);
+  const [dishCategory, setDishCategory] = useState<string>(ALL_CATEGORIES);
   const pickOutlet = (o: DiningOutlet | null) => {
     setOutlet(o);
     setGroups([]);
+    setPeriod(ALL_CATEGORIES);
+    setDishCategory(ALL_CATEGORIES);
   };
   /** 点菜单（小票可视化，CF8） */
   const [receipt, setReceipt] = useState<ReceiptTarget | null>(null);
@@ -192,7 +198,23 @@ export function OrderTab() {
   const canVoid = (p: PendingDish) => !voidBlockedText(byId.get(p.itemId)?.outlet, voidOutlets);
   // 这一处的菜，再按小分类筛（8.1.7）
   const inOutlet = useMemo(() => (outlet ? dishes.filter((d) => d.outlet === outlet) : []), [dishes, outlet]);
-  const shown = groups.length ? inOutlet.filter((d) => groups.includes(d.group)) : inOutlet;
+  const inGroups = groups.length ? inOutlet.filter((d) => groups.includes(d.group)) : inOutlet;
+  // 餐段（价目表的上一级）与这一餐段里的菜品分类，名称与顺序照价目表
+  const periodTabs = useMemo((): ItemCategoryTab[] => {
+    const tabs = new Map<string, ItemCategoryTab & { sort: number }>();
+    for (const d of inGroups) {
+      const c = d.catalogCategory;
+      if (!c) continue;
+      const had = tabs.get(c.group);
+      if (had) had.count += 1;
+      else tabs.set(c.group, { key: c.group, label: c.group, group: '', count: 1, sort: c.sort });
+    }
+    return [...tabs.values()].sort((a, b) => a.sort - b.sort).map(({ sort: _sort, ...t }) => t);
+  }, [inGroups]);
+  const inPeriod = period === ALL_CATEGORIES ? inGroups : inGroups.filter((d) => d.catalogCategory?.group === period);
+  const dishTabs = useMemo(() => (period === ALL_CATEGORIES ? [] : itemCategoryTabs(inPeriod)), [inPeriod, period]);
+  const shown = dishCategory === ALL_CATEGORIES ? inPeriod : inPeriod.filter((d) => itemCategoryKey(d) === dishCategory);
+  const narrowed = period !== ALL_CATEGORIES || dishCategory !== ALL_CATEGORIES;
   const outletCounts = useMemo(() => {
     const c: Partial<Record<DiningOutlet, number>> = {};
     for (const d of dishes) c[d.outlet] = (c[d.outlet] ?? 0) + 1;
@@ -557,7 +579,32 @@ export function OrderTab() {
               </div>
               {outletDef(outlet).groups.length > 0 && (
                 <div className="mt-2.5">
-                  <GroupChips outlet={outlet} value={groups} onChange={setGroups} testPrefix="dining" counts={groupCounts} />
+                  <GroupChips
+                    outlet={outlet}
+                    value={groups}
+                    onChange={(g) => {
+                      setGroups(g);
+                      setPeriod(ALL_CATEGORIES);
+                      setDishCategory(ALL_CATEGORIES);
+                    }}
+                    testPrefix="dining"
+                    counts={groupCounts}
+                  />
+                </div>
+              )}
+              {periodTabs.length > 0 && (
+                <div className="mt-2.5">
+                  <CategoryTabs
+                    tabs={periodTabs}
+                    value={period}
+                    onChange={(k) => {
+                      setPeriod(k);
+                      setDishCategory(ALL_CATEGORIES);
+                    }}
+                    total={inGroups.length}
+                    testId="dining-periods"
+                  />
+                  {dishTabs.length > 0 && <CategoryTabs tabs={dishTabs} value={dishCategory} onChange={setDishCategory} total={inPeriod.length} testId="dining-dish-categories" />}
                 </div>
               )}
               {shown.length === 0 ? (
@@ -565,7 +612,7 @@ export function OrderTab() {
                   {DINING_OUTLET_LABELS[outlet]}
                   {groups.length ? `的「${groups.join('、')}」` : ''}还没有菜。店主在「后台 → 餐饮 → 出品档口与菜品」里给菜选点单分类。
                 </p>
-              ) : groups.length === 0 && outletDef(outlet).groups.length > 1 ? (
+              ) : groups.length === 0 && !narrowed && outletDef(outlet).groups.length > 1 ? (
                 // 「全部」：按小分类分段排
                 outletDef(outlet)
                   .groups.map((g) => ({ g, list: shown.filter((d) => d.group === g) }))

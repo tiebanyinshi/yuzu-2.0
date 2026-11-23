@@ -225,7 +225,7 @@ function storeSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       if (minutes === null) ctx.error(S, r, '项目', `门票时长「${item}」看不懂（写 12H、24H）`);
       const meal = /含/.test(note) && !/不含/.test(note);
       out.push({
-        ...single(blank(S, 'ticket', `门票 ${item} ${meal ? '含餐' : '不含餐'}`, r, sort), cents),
+        ...single(blank(S, 'ticket', `${item} ${meal ? '含餐' : '不含餐'}`, r, sort), cents),
         section: type,
         durationMinutes: minutes,
         includesMeal: meal,
@@ -246,7 +246,7 @@ function storeSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
     } else if (type === '餐票') {
       const w = windowOf(time);
       if (!w) ctx.error(S, r, '时间', `供应时段「${oneLine(time)}」看不懂（写 7:30--10:00）`);
-      out.push({ ...single(blank(S, 'meal_ticket', `${item}餐票`, r, sort), cents), section: type, windowStart: w?.[0] ?? null, windowEnd: w?.[1] ?? null, unit: '张', note });
+      out.push({ ...single(blank(S, 'meal_ticket', item, r, sort), cents), section: type, windowStart: w?.[0] ?? null, windowEnd: w?.[1] ?? null, unit: '张', note });
     } else ctx.error(S, r, '类型', `类型「${type}」不认识（门票、夜间票、餐票、服务费）`);
   }
   return out;
