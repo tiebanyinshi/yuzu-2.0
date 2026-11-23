@@ -2,14 +2,20 @@
 // 续钟要挂账，与前台同一套「结果待确认」；换房、退房、并房、维修、恢复、标待清 8.1.16 起也带操作编号（queries.ts 的 useRoomAction）：
 // 结果不确定时这间房上同一类的动作锁住，对话框里查回、按原内容重新提交或确认作废。
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { Banknote, CircleStop } from 'lucide-react';
+import { PRICE_TIER_LABELS, tierPrice, type PriceTier } from '@shared/catalog';
+import type { ClockroomBoard } from '@shared/clockroom';
 import { formatYuan } from '@shared/money';
+import { ROOM_SERVICE_EXCLUDED_CATEGORIES } from '@shared/price-catalog';
 import { asksOvernight, MAX_MAINTENANCE_REASON, MAX_ROOM_NOTE, ROOM_STATUS_LABELS, type RoomCard, type RoomCenterBoard, type RoomSessionView } from '@shared/room-center';
 import { spaceLabel } from '@shared/spaces';
+import { canServe, gradeLabel, tierFor } from '@shared/technicians';
 import { api, errorMessage } from '../../lib/api';
 import { serverNowMs } from '../../lib/serverClock';
+import { useCatalog } from '../../lib/queries';
 import { useCan, useSession } from '../../lib/session';
 import { cn, formatDateTime } from '../../lib/utils';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -18,8 +24,9 @@ import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Button, ConfirmCheck, Field, Input, Notice, Segmented, Skeleton } from '../../components/ui';
 import { FRONTDESK_OP_LABELS, PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
-import { roomUrl, useCheckoutPreview, useRefreshRoomCenter, useRoomAction } from './queries';
-import { ClockStepper, foundPosted } from './RegisterDialog';
+import { durationText, ItemPicker } from './ItemPicker';
+import { clockroomKey, roomUrl, useCheckoutPreview, useRefreshRoomCenter, useRoomAction } from './queries';
+import { DUAL_LABELS, foundPosted } from './RegisterDialog';
 import { STATUS_META } from './status';
 
 const nameOf = (room: Pick<RoomCard, 'code' | 'name'>) => spaceLabel(room.code, room.name);
@@ -42,25 +49,54 @@ export function RoomActionStatus({ action, room, onResolved }: { action: ReturnT
   );
 }
 
-/** 续钟：原技师继续，按这张钟单的项目与档次加收，计划时长跟着加 */
+/** 加钟：再选一个项目（店主 2026-11-23，PC27）——时长、价格照价目表，不选钟数；原技师接着做，挂到这位客人的手牌账单上，计时跟着往后延 */
 export function ExtendRoomDialog({ room, session: s, onClose, onDone }: { room: RoomCard; session: RoomSessionView; onClose: () => void; onDone: (board: RoomCenterBoard | null) => void }) {
   const me = useSession();
-  const [quantity, setQuantity] = useState(1);
+  const catalog = useCatalog();
+  const clock = useQuery({ queryKey: clockroomKey, queryFn: () => api.get<ClockroomBoard>('/api/clockroom') });
+  const [itemId, setItemId] = useState<number | null>(null);
+  const [tier, setTier] = useState<PriceTier | null>(null);
   // 续单时也问客人是否过夜（重做第五批，PC25；按摩房、足浴房、SPA 房）
   const guest = room.guests.find((g) => g.visitId === s.visitId);
   const askOvernight = asksOvernight(room.kind, room.businessType) && !!guest?.registrationId;
   const [overnight, setOvernight] = useState(guest?.overnight ?? false);
   const op = useFrontdeskOp<RoomCenterBoard | true>({ type: 'bill_post', visitId: s.visitId, staffName: me.staff.displayName, pick: foundPosted });
   const finish = (r: RoomCenterBoard | true) => onDone(r === true ? null : r);
-  const total = s.unitPrice !== null ? s.unitPrice * quantity : 0;
-  const perClock = Math.round(s.minutes / s.clocks);
+  const rules = clock.data?.techRules;
+  const tech = clock.data?.technicians.find((t) => t.id === s.technicianId) ?? null;
+  // 能选的项目：要技师的、在用的（浴区的助浴、护理不在房间里做，PC22）
+  const items = useMemo(() => (catalog.data?.items ?? []).filter((i) => i.active && i.technicianRequired && !ROOM_SERVICE_EXCLUDED_CATEGORIES.includes(i.catalogCategory?.code ?? '')), [catalog.data]);
+  const item = items.find((i) => i.id === itemId) ?? null;
+  const dual = !!item?.catalogCategory && item.prices.length === 2 && item.prices.every((p) => p.tier === 'professional' || p.tier === 'premium');
+  const byGrade = !!rules?.tierByGrade && !!item && item.prices.length > 1;
+  const cant = item && tech && rules ? canServe(tech, item, rules.tierByGrade) : null;
+  const chosenTier: PriceTier | null = item ? (tech && rules ? tierFor(tech, item, tier ?? item.prices[0]!.tier, rules.tierByGrade) : (tier ?? item.prices[0]!.tier)) : null;
+  const tierMismatch = dual && byGrade && tier !== null && chosenTier !== tier;
+  const total = item && chosenTier ? (tierPrice(item.prices, chosenTier) ?? 0) : 0;
+  const problem = !item
+    ? '请选一个项目'
+    : !tech || !rules
+      ? '技师没取回来'
+      : cant
+        ? `${s.techNo} 号 ${s.techName}${cant}`
+        : tierMismatch
+          ? `${s.techNo} 号 ${s.techName}是${gradeLabel(tech.grade)}，做不了这一档`
+          : null;
   const submit = async () => {
-    if (s.unitPrice === null) return;
+    if (!item || !chosenTier || problem) return;
     const done = await op.submit((key) => ({
       url: roomUrl(room.spaceId!, 'extend'),
-      body: { clientKey: key, sessionId: s.id, quantity, expectedTotal: total, ...(askOvernight ? { overnight } : {}) },
-      tagCodes: [room.guests.find((g) => g.visitId === s.visitId)?.tagCode ?? room.code],
-      summary: `续钟 ${nameOf(room)}：${s.itemName} × ${quantity}（${s.techNo} 号 ${s.techName}）`,
+      body: {
+        clientKey: key,
+        sessionId: s.id,
+        itemId: item.id,
+        ...(byGrade ? {} : { tier: chosenTier }),
+        quantity: 1,
+        expectedTotal: total,
+        ...(askOvernight ? { overnight } : {}),
+      },
+      tagCodes: [guest?.tagCode ?? room.code],
+      summary: `加钟 ${nameOf(room)}：${item.name}（${s.techNo} 号 ${s.techName}）`,
       amount: total,
     }));
     if (done) finish(done);
@@ -69,8 +105,9 @@ export function ExtendRoomDialog({ room, session: s, onClose, onDone }: { room: 
     <Dialog
       open
       onClose={op.busy ? () => {} : onClose}
-      title={`续钟 · ${nameOf(room)}`}
-      description={`${s.techNo} 号 ${s.techName} · ${s.itemName}。原技师继续，按原来的档次加收，挂到这位客人的手牌账单上；计时跟着往后延。`}
+      title={`加钟 · ${nameOf(room)}`}
+      description={`${s.techNo} 号 ${s.techName} 接着做。加钟是再选一个项目，时长、价格照价目表；挂到这位客人的手牌账单上，计时跟着往后延。`}
+      width="max-w-2xl"
       footer={
         <>
           <span className="mr-auto self-center text-[13px] text-ink-3">
@@ -79,31 +116,73 @@ export function ExtendRoomDialog({ room, session: s, onClose, onDone }: { room: 
           <Button variant="ghost" onClick={onClose} disabled={op.busy}>
             取消
           </Button>
-          <Button variant="primary" size="lg" disabled={s.unitPrice === null || op.locked} loading={op.busy} onClick={() => void submit()} data-testid="rc-extend-submit">
-            续 {quantity} 钟
+          <Button variant="primary" size="lg" disabled={!!problem || op.locked} loading={op.busy} onClick={() => void submit()} data-testid="rc-extend-submit">
+            加钟
           </Button>
         </>
       }
     >
       <PendingPanel op={op} onResolved={finish} />
-      <div className="flex flex-wrap items-center gap-3" data-testid="rc-extend">
-        <ClockStepper value={quantity} onChange={setQuantity} disabled={op.locked} label="续几个钟" testId="rc-extend-qty" />
-        {askOvernight && (
-          <Segmented<'no' | 'yes'>
-            size="sm"
-            ariaLabel="客人是否过夜"
-            value={overnight ? 'yes' : 'no'}
-            onChange={(v) => setOvernight(v === 'yes')}
-            options={[
-              { value: 'no', label: '不过夜' },
-              { value: 'yes', label: '过夜' },
-            ]}
-          />
-        )}
-        <span className="text-[13px] text-ink-3">
-          × {s.unitPrice !== null ? formatYuan(s.unitPrice) : '（这张钟单没有有效的挂账）'} · 每钟 {perClock} 分钟，续完共 {s.minutes + perClock * quantity} 分钟
-        </span>
-      </div>
+      {catalog.isError && !catalog.data ? (
+        <LoadFailed title="项目没取回来" onRetry={() => void catalog.refetch()} retrying={catalog.isFetching} />
+      ) : clock.isError && !clock.data ? (
+        <LoadFailed title="技师没取回来" onRetry={() => void clock.refetch()} retrying={clock.isFetching} />
+      ) : !catalog.data || !clock.data ? (
+        <Skeleton className="h-48" />
+      ) : (
+        <div className="space-y-4" data-testid="rc-extend">
+          <Field label="项目">
+            <ItemPicker
+              items={items}
+              value={itemId}
+              onChange={(i) => {
+                setItemId(i.id);
+                setTier(null);
+              }}
+              disabled={op.locked}
+              testId="rc-extend"
+            />
+          </Field>
+          {item && (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[15px] font-bold text-ink" data-testid="rc-extend-duration">
+                {durationText(item)}
+                <span className="ml-2 text-[12.5px] font-normal text-ink-3">按项目带出</span>
+              </span>
+              {item.prices.length > 1 && !byGrade ? (
+                <Segmented<PriceTier>
+                  size="sm"
+                  ariaLabel={dual ? '专业价或资深价' : '档次'}
+                  value={tier ?? item.prices[0]!.tier}
+                  onChange={setTier}
+                  options={item.prices.map((p) => ({ value: p.tier, label: `${dual ? DUAL_LABELS[p.tier] : PRICE_TIER_LABELS[p.tier]} ${formatYuan(p.price)}` }))}
+                />
+              ) : (
+                chosenTier && (
+                  <span className="text-[13px] text-ink-3" data-testid="rc-extend-tier">
+                    {dual ? DUAL_LABELS[chosenTier] : PRICE_TIER_LABELS[chosenTier]} {formatYuan(total)}
+                  </span>
+                )
+              )}
+            </div>
+          )}
+          {askOvernight && (
+            <Field label="客人是否过夜">
+              <Segmented<'no' | 'yes'>
+                size="sm"
+                ariaLabel="客人是否过夜"
+                value={overnight ? 'yes' : 'no'}
+                onChange={(v) => setOvernight(v === 'yes')}
+                options={[
+                  { value: 'no', label: '不过夜' },
+                  { value: 'yes', label: '过夜' },
+                ]}
+              />
+            </Field>
+          )}
+          {item && problem && <Notice tone="warning" title={problem} data-testid="rc-extend-problem" />}
+        </div>
+      )}
       {op.state.phase === 'error' && <Notice tone="error" title={op.state.message} className="mt-4" />}
     </Dialog>
   );

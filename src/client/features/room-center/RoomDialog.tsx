@@ -66,7 +66,9 @@ function SessionRow({
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5" data-testid={`rc-session-${s.sessionNo}`}>
       <span className="min-w-0 flex-1 basis-48">
         <span className="block text-[14px] font-bold text-ink">
-          {s.techNo} 号 {s.techName} · {s.itemName} × {s.clocks}
+          {s.techNo} 号 {s.techName} · {s.itemName}
+          {s.clocks > 1 && <span className="ml-1 text-[12.5px] font-semibold text-ink-3">（加钟 {s.clocks - 1} 次）</span>}
+          <span className="ml-1 text-[12.5px] font-normal text-ink-3">· 共 {s.minutes} 分钟</span>
         </span>
         <span className="block text-[12.5px] text-ink-3">
           <span className={cn('font-semibold', s.status === 'serving' ? 'text-lake' : 'text-ember-deep')}>{SESSION_STATE[s.status]}</span>
@@ -90,7 +92,7 @@ function SessionRow({
         {s.status === 'serving' && (
           <>
             <Button size="sm" variant="secondary" icon={<Plus className="size-3.5" />} disabled={!canPost || busy} onClick={onExtend} data-testid={`rc-extend-${s.sessionNo}`}>
-              续钟
+              加钟
             </Button>
             <Button size="sm" variant="secondary" icon={<Square className="size-3.5" />} disabled={!canDispatch || busy} onClick={() => onClock('finish')} data-testid={`rc-finish-${s.sessionNo}`}>
               下钟

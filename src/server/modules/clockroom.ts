@@ -128,13 +128,25 @@ function queueOrder(statuses: Map<number, Status>) {
 export interface SessionPostOptions {
   /** 加钟：明细挂到这张上钟中的钟单 */
   extendId?: number;
+  /** 加钟时另选一个项目（房态中心加钟＝再选一个项目，店主 2026-11-23，PC27）：项目可以与钟单的不同，计划时长按新项目的时长累加 */
+  extendAnyItem?: boolean;
   /**
    * 钟房派钟：立即上钟；轮钟不派给第一位时的原因；服务的房间（v0.7.16，可不选）；
    * 预约到店派钟（8.0.8，A04）记预约编号；assign 为给前台已点、交给钟房派钟的明细补派（8.0.8，A01：不另挂一笔）；
    * fixedTier：补派、转钟时价格档已经定了（不改金额），轮钟「该派给谁」只算这一档能做的技师；
    * excludeId：转钟时原技师（刚按退钟回到原位）不算在轮钟「该派给谁」里，与转钟对话框一致（Codex 审查 9470097）
    */
-  dispatch?: { startNow: boolean; skipReason?: string; spaceId?: number; bookingId?: number; assign?: boolean; fixedTier?: PriceTier; excludeId?: number };
+  dispatch?: {
+    startNow: boolean;
+    skipReason?: string;
+    spaceId?: number;
+    bookingId?: number;
+    assign?: boolean;
+    fixedTier?: PriceTier;
+    excludeId?: number;
+    /** 计划时长（分钟）照给的算，不按项目 × 钟数：转钟时原钟单挂了不同项目（房态中心加钟另选项目，PC27），照原来各项目的时长合计 */
+    minutes?: number;
+  };
   /** 按实际时间补录的纸质单：钟单直接记为已下钟，不动排位 */
   backfill?: boolean;
 }
@@ -235,7 +247,7 @@ export async function attachSessions(
     if (!s) throw notFound('钟单不存在');
     for (const l of args.lines) {
       if (s.status !== 'serving') throw conflict('SESSION_NOT_SERVING', `钟单 ${s.sessionNo} 不在上钟中，不能加钟`);
-      if (s.visitId !== args.visitId || s.technicianId !== l.technicianId || s.itemId !== l.itemId) {
+      if (s.visitId !== args.visitId || s.technicianId !== l.technicianId || (!options.extendAnyItem && s.itemId !== l.itemId)) {
         throw conflict('SESSION_MISMATCH', '加钟的技师、项目或客人与钟单不一致，请刷新后重试');
       }
       // 加的这段时间不能和这位技师的预约重叠（测试会话 ded1958 的 P2）
@@ -265,7 +277,7 @@ export async function attachSessions(
   for (const l of args.lines) {
     const t = techs.get(l.technicianId)!;
     const status = statuses.get(t.id) ?? offStatus;
-    const minutes = perClock(l.itemId) * l.quantity;
+    const minutes = options.dispatch?.minutes ?? perClock(l.itemId) * l.quantity;
     const item = durations.get(l.itemId)!;
 
     if (options.backfill) {
@@ -442,6 +454,21 @@ const lockSession = async (tx: Tx, id: number) =>
   )[0];
 
 /**
+ * 钟单挂了不同项目时（房态中心加钟另选项目，PC27）按有效明细各自项目的时长合计；只挂过钟单本身那个项目的返回 null（照原来的算法）。
+ * 「挂过」连已作废的明细一起看：作废了另选的那一行以后，剩下的也要按项目时长重算，不能再按平均每钟（Codex 审查 9101d88）。
+ */
+export async function mixedSessionMinutes(tx: Tx, sessionId: number, itemId: number): Promise<number | null> {
+  const [mixed] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM bill_lines WHERE session_id = ${sessionId} AND item_id IS DISTINCT FROM ${itemId}`;
+  if (!mixed || mixed.n === 0) return null;
+  const rules = await loadClockroomRules(tx);
+  const [r] = await tx<{ minutes: number }[]>`
+    SELECT coalesce(sum(l.quantity * coalesce(i.duration_minutes, ${rules.defaultMinutes})), 0)::int AS minutes
+    FROM bill_lines l LEFT JOIN service_items i ON i.id = l.item_id
+    WHERE l.session_id = ${sessionId} AND l.status = 'active'`;
+  return r!.minutes;
+}
+
+/**
  * 钟单的明细作废之后：还剩有效明细时按剩下的钟数改钟单；一条都不剩时钟单作废（没上钟为取消，上了钟为被退钟），
  * 技师按规则回到原位，连续被退钟到次数排到队尾。调用前已锁好来访、账单与明细，并已拿技师队列锁。
  */
@@ -452,8 +479,9 @@ export async function syncSessionAfterVoid(tx: Tx, deps: Deps, sessionId: number
     SELECT coalesce(sum(quantity), 0)::int AS clocks FROM bill_lines WHERE session_id = ${sessionId} AND status = 'active'`;
   const today = await businessDate(tx, deps, at);
   if (left!.clocks > 0) {
-    const perClock = Math.max(1, Math.round(s.minutes / s.clocks));
-    await tx`UPDATE technician_sessions SET clocks = ${left!.clocks}, minutes = ${perClock * left!.clocks} WHERE id = ${s.id}`;
+    const mixed = await mixedSessionMinutes(tx, s.id, Number(s.itemId));
+    const minutes = mixed ?? Math.max(1, Math.round(s.minutes / s.clocks)) * left!.clocks;
+    await tx`UPDATE technician_sessions SET clocks = ${left!.clocks}, minutes = ${Math.max(1, minutes)} WHERE id = ${s.id}`;
     return;
   }
   const rejected = s.status === 'serving';
@@ -847,6 +875,9 @@ export async function transferSession(deps: Deps, sessionId: number, raw: unknow
     const t = await checkTechnicianForLine(tx, { itemId: Number(lines[0]!.itemId), tier: lines[0]!.tier, name: lines[0]!.name }, input.technicianId);
     for (const l of lines.slice(1)) await checkTechnicianForLine(tx, { itemId: Number(l.itemId), tier: l.tier, name: l.name }, input.technicianId);
     const text = `转钟：${input.reason}`;
+    // 挂了不同项目的钟单（房态中心加钟另选项目，PC27）：新钟单照各项目的时长合计，预约冲突也按它查（Codex 审查 9101d88）
+    const [sessItem] = await tx<{ itemId: number }[]>`SELECT item_id FROM technician_sessions WHERE id = ${sessionId}`;
+    const mixedMinutes = await mixedSessionMinutes(tx, sessionId, Number(sessItem!.itemId));
     for (const l of lines) {
       await tx`UPDATE bill_lines SET status = 'voided', void_reason = ${text}, voided_by = ${ctx.actor.id}, voided_at = ${at} WHERE id = ${l.id}`;
     }
@@ -874,6 +905,7 @@ export async function transferSession(deps: Deps, sessionId: number, raw: unknow
           bookingId: old.bookingId ?? undefined,
           fixedTier: lineTier(lines[0]!.tier),
           excludeId: Number(old.technicianId),
+          ...(mixedMinutes !== null ? { minutes: mixedMinutes } : {}),
         },
       },
     });

@@ -359,7 +359,7 @@ describe('续钟、换房', () => {
     expect(await counts()).toEqual(n);
     expect((await bill(card.guests[0]!.visitId)).bill.amountCents).toBe(39600);
     const h = await history('S301');
-    expect(h.rows[0]).toMatchObject({ label: '续钟', kind: 'extend' });
+    expect(h.rows[0]).toMatchObject({ label: '加钟', kind: 'extend' });
     expect(h.rows[0]!.text).toContain('加 1 钟');
   });
 
@@ -874,6 +874,61 @@ describe('权限、看得到什么、给别的模块的入口', () => {
     const g2 = await enter();
     const hall = await register('H201', { tagCode: g2.tagCode, technicianId: tech['01'], overnight: true });
     expect(hall.status).toBe(422);
+    await release(code);
+  });
+
+  it('加钟＝再选一个项目（店主 2026-11-23，PC27）：同一位技师接着做，按新项目的价格挂账、时长累加；不选钟数；同一个编号重提不重复', async () => {
+    const neck = await api(ctx.app, ctx.owner, 'POST', '/api/items', { name: '肩颈', category: '足疗', durationMinutes: 60, technicianRequired: true, price: 12800 });
+    expect(neck.status, JSON.stringify(neck.body)).toBe(200);
+    const neckId = neck.body.items.find((i: { name: string }) => i.name === '肩颈').id as number;
+    const g = await enter();
+    const code = (await board()).rooms.find((x) => x.kind === 'service' && x.status === 'free' && x.businessType === 'SPA')!.code;
+    expect((await register(code, { tagCode: g.tagCode, technicianId: tech['01'] })).status).toBe(200);
+    const s = (await room(code)).guests[0]!.sessions[0]!;
+    expect(s).toMatchObject({ clocks: 1, status: 'serving' });
+    // 另选项目时不能再带钟数
+    const many = await api(ctx.app, ctx.clerk, 'POST', on(code, 'extend'), { clientKey: randomUUID(), sessionId: s.id, itemId: neckId, quantity: 2, expectedTotal: 25600 });
+    expect(many.body.error?.code, JSON.stringify(many.body)).toBe('CATALOG_FIXED_DURATION');
+    // 价目表的项目按原项目加钟，也不能选钟数
+    await ctx.sql`UPDATE service_items SET catalog_key = 'massage|康疗||足疗演练' WHERE id = ${foot}`;
+    const same = await api(ctx.app, ctx.clerk, 'POST', on(code, 'extend'), { clientKey: randomUUID(), sessionId: s.id, quantity: 2, expectedTotal: 39600 });
+    expect(same.body.error?.code, JSON.stringify(same.body)).toBe('CATALOG_FIXED_DURATION');
+    await ctx.sql`UPDATE service_items SET catalog_key = NULL WHERE id = ${foot}`;
+    // 再选一个「肩颈」：按它的价格挂账，时长加 60 分钟，同一张钟单、同一位技师
+    const body = { clientKey: randomUUID(), sessionId: s.id, itemId: neckId, expectedTotal: 12800 };
+    const r = await api(ctx.app, ctx.clerk, 'POST', on(code, 'extend'), body);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const after = (await room(code)).guests[0]!.sessions[0]!;
+    expect(after).toMatchObject({ id: s.id, technicianId: tech['01'], clocks: 2, minutes: s.minutes + 60, amount: 19800 + 12800 });
+    const lines = await ctx.sql<{ itemId: number; amount: number; sessionId: number; technicianId: number }[]>`
+      SELECT item_id, amount, session_id, technician_id FROM bill_lines WHERE session_id = ${s.id} ORDER BY id`;
+    expect(lines.map((l) => [Number(l.itemId), Number(l.amount)])).toEqual([
+      [foot, 19800],
+      [neckId, 12800],
+    ]);
+    expect(lines.every((l) => Number(l.technicianId) === tech['01'])).toBe(true);
+    // 原样重提不重复
+    const n = await counts();
+    expect((await api(ctx.app, ctx.clerk, 'POST', on(code, 'extend'), body)).status).toBe(200);
+    expect(await counts()).toEqual(n);
+    const h = await history(code);
+    expect(h.rows[0]).toMatchObject({ label: '加钟', kind: 'extend' });
+    expect(h.rows[0]!.text).toContain('加钟：肩颈');
+    // 价格对不上（项目刚改价）照旧拒绝
+    expect((await api(ctx.app, ctx.clerk, 'POST', on(code, 'extend'), { ...body, clientKey: randomUUID(), expectedTotal: 1 })).body.error.code).toBe('PRICE_CHANGED');
+    // 转钟：新钟单照两个项目的时长合计（不是原项目 × 2；Codex 审查 9101d88）
+    const tr = await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${s.id}/transfer`, { clientKey: randomUUID(), reason: '客人要换技师', technicianId: tech['03'], callType: 'designated' });
+    expect(tr.status, JSON.stringify(tr.body)).toBe(200);
+    const [moved] = await ctx.sql<{ id: number; minutes: number; clocks: number }[]>`SELECT id, minutes, clocks FROM technician_sessions WHERE transferred_from = ${s.id}`;
+    expect(moved).toMatchObject({ minutes: s.minutes + 60, clocks: 2 });
+    // 作废另选的那一行：剩下的按原项目的时长算（不是按平均每钟）
+    const [neckLine] = await ctx.sql<{ id: number }[]>`SELECT id FROM bill_lines WHERE session_id = ${moved!.id} AND item_id = ${neckId} AND status = 'active'`;
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/lines/${neckLine!.id}/void`, { reason: '客人不加了' })).status).toBe(200);
+    const [left] = await ctx.sql<{ minutes: number; clocks: number }[]>`SELECT minutes, clocks FROM technician_sessions WHERE id = ${moved!.id}`;
+    expect(left).toMatchObject({ minutes: s.minutes, clocks: 1 });
+    // 收尾：新技师可能还在别的钟上（等钟），把剩下那一行也作废，钟单取消，房间腾出来
+    const [rest] = await ctx.sql<{ id: number }[]>`SELECT id FROM bill_lines WHERE session_id = ${moved!.id} AND status = 'active'`;
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/lines/${rest!.id}/void`, { reason: '演练收尾' })).status).toBe(200);
     await release(code);
   });
 });

@@ -301,7 +301,11 @@ export async function registerRoom(deps: Deps, spaceId: number, raw: unknown, ct
 export const RoomExtendInput = z.object({
   clientKey,
   sessionId: z.number('请选择续哪一张钟').int().positive(),
-  quantity: z.number('请填写钟数').int('钟数要是整数').min(1, '续钟至少 1 个').max(9, '一次最多续 9 个钟'),
+  /** 加钟＝再选一个项目（店主 2026-11-23，PC27）：项目的时长、价格照价目表，同一位技师接着做；不带就是按原项目加一钟 */
+  itemId: z.number('请选择项目').int().positive('请选择项目').optional(),
+  /** 档次（价格档）：另选的项目是双价的、或档次可选时带上；价格跟技师等级时不带 */
+  tier: z.enum(PRICE_TIERS, '档次不正确').optional(),
+  quantity: z.number('请填写钟数').int('钟数要是整数').min(1, '续钟至少 1 个').max(9, '一次最多续 9 个钟').default(1),
   expectedTotal: positiveCents('本次合计'),
   /** 续钟时改「客人是否过夜」（不带不改；PC25） */
   overnight: z.boolean().optional(),
@@ -320,20 +324,29 @@ export async function extendRoom(deps: Deps, spaceId: number, raw: unknown, ctx:
     const s = guest?.sessions.find((it) => Number(it.id) === input.sessionId);
     if (!guest || !s) throw conflict('SESSION_NOT_IN_ROOM', `这张钟单不在 ${x.label}（可能刚换了房或已经退房），请刷新`);
     if (input.overnight !== undefined && !asksOvernight(x.kind, x.room.space.businessType)) throw unprocessable('OVERNIGHT_NOT_HERE', `${x.label} 不登记过夜（只有按摩房、足浴房、SPA 房问）`);
+    if (input.itemId !== undefined && input.quantity !== 1) throw unprocessable('CATALOG_FIXED_DURATION', '加钟是再选一个项目，一次加一个，不选钟数');
     const ext = await extensionLine(tx, input.sessionId, input.quantity);
-    const posted = await postChargesTx(tx, deps, ext.visitId, parse(PostInput, { clientKey: key, lines: [ext.line], expectedTotal: input.expectedTotal }), { key, requestHash, backfill: null }, ctx, {
-      session: { extendId: input.sessionId },
+    // 按原项目加钟时，价目表的项目（有时长的）也只能一次一个：时长由项目带出，不选钟数（PC23）
+    const [orig] = await tx<{ catalogKey: string | null; durationMinutes: number | null; name: string }[]>`
+      SELECT catalog_key, duration_minutes, name FROM service_items WHERE id = ${ext.line.itemId}`;
+    if (input.itemId === undefined && orig?.catalogKey && orig.durationMinutes !== null && input.quantity !== 1) {
+      throw unprocessable('CATALOG_FIXED_DURATION', `「${orig.name}」的时长由价目表带出（${orig.durationMinutes} 分钟），加钟请再选一个项目，不选钟数`);
+    }
+    const line = input.itemId === undefined ? ext.line : { ...ext.line, itemId: input.itemId, quantity: 1, tier: input.tier };
+    const posted = await postChargesTx(tx, deps, ext.visitId, parse(PostInput, { clientKey: key, lines: [line], expectedTotal: input.expectedTotal }), { key, requestHash, backfill: null }, ctx, {
+      session: { extendId: input.sessionId, extendAnyItem: input.itemId !== undefined },
     });
     if (input.overnight !== undefined && guest.registration) await tx`UPDATE room_registrations SET overnight = ${input.overnight} WHERE id = ${guest.registration.id}`;
     await bumpRoomVersion(tx, [spaceId], ctx.actor.id, at);
     const detail = {
       room: x.label,
       tag: guest.visit.tagCode,
-      item: s.itemName,
+      item: input.itemId === undefined ? s.itemName : posted.lines[0]!.name,
       technician: `${s.techNo} 号 ${s.techName}`,
       clocks: input.quantity,
       amount: posted.total,
       sessionNo: s.sessionNo,
+      ...(input.itemId !== undefined ? { picked: true } : {}),
       ...(input.overnight !== undefined ? { overnight: input.overnight } : {}),
     };
     await logRoomEvent(tx, { spaceId, kind: 'extend', registrationId: guest.registration ? Number(guest.registration.id) : null, detail, staffId: ctx.actor.id, at });

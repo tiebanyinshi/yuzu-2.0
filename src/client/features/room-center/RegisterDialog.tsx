@@ -4,8 +4,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Minus, Plus } from 'lucide-react';
-import { itemCategoryKey, itemCategoryTabs, matchesItemSearch, PRICE_TIER_LABELS, tierPrice, type PriceTier } from '@shared/catalog';
+import { PRICE_TIER_LABELS, tierPrice, type PriceTier } from '@shared/catalog';
 import { ROOM_SERVICE_EXCLUDED_CATEGORIES } from '@shared/price-catalog';
 import type { BoardTechnician, ClockroomBoard } from '@shared/clockroom';
 import { formatYuan } from '@shared/money';
@@ -28,38 +27,17 @@ import { useCatalog } from '../../lib/queries';
 import { serverNowMs } from '../../lib/serverClock';
 import { useSession } from '../../lib/session';
 import { cn, formatTime } from '../../lib/utils';
-import { ALL_CATEGORIES, CategoryTabs } from '../../components/CategoryTabs';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
-import { QtyInput } from '../../components/QtyInput';
 import { Button, Field, Input, Notice, Segmented, Skeleton } from '../../components/ui';
 import { PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
 import { clockroomKey, roomUrl } from './queries';
+import { durationText, ItemPicker } from './ItemPicker';
 import { TagField } from './TagField';
 
-/** 钟数的加减（1–9）：加减按钮 44 像素，中间可以直接输 */
 /** 价目表双价的叫法（PC7：专业价 → 专业档、资深价 → 优选档） */
-const DUAL_LABELS: Record<PriceTier, string> = { standard: '标准价', professional: '专业价', premium: '资深价' };
-
-export function ClockStepper({ value, onChange, disabled, label, testId }: { value: number; onChange: (n: number) => void; disabled?: boolean; label: string; testId: string }) {
-  const [hint, setHint] = useState<string | null>(null);
-  const side = 'flex size-11 items-center justify-center rounded-lg border border-line-strong bg-card text-ink-2 hover:border-ink-3 disabled:text-ink-4';
-  return (
-    <div>
-      <div className="flex items-center gap-2">
-        <button type="button" className={side} aria-label="少一个钟" disabled={disabled || value <= 1} onClick={() => onChange(Math.max(1, value - 1))}>
-          <Minus className="size-4" />
-        </button>
-        <QtyInput value={value} min={1} max={9} onChange={onChange} onHint={setHint} label={label} disabled={disabled} className="h-11 w-12 text-[18px]" testId={testId} />
-        <button type="button" className={side} aria-label="多一个钟" disabled={disabled || value >= 9} onClick={() => onChange(Math.min(9, value + 1))}>
-          <Plus className="size-4" />
-        </button>
-      </div>
-      {hint && <p className="mt-1 text-[12.5px] text-clay">{hint}</p>}
-    </div>
-  );
-}
+export const DUAL_LABELS: Record<PriceTier, string> = { standard: '标准价', professional: '专业价', premium: '资深价' };
 
 /** 「结果待确认」查回来：按挂账的编号查到这位客人的账单，就是登记（续钟）已经生效——没有最新的看板，交给页面重新取 */
 export const foundPosted = (found: { found: true } | { found: false }): true | null => (found.found && 'visit' in found ? true : null);
@@ -91,12 +69,9 @@ export function RegisterDialog({
   const [tag, setTag] = useState('');
   const [guest, setGuest] = useState<RoomGuestLookup | null>(null);
   const [itemId, setItemId] = useState<number | null>(null);
-  const [category, setCategory] = useState<string>(ALL_CATEGORIES);
-  const [search, setSearch] = useState('');
   const [techNoInput, setTechNoInput] = useState('');
   const [overnight, setOvernight] = useState(false);
   const [tier, setTier] = useState<PriceTier | null>(null);
-  const [quantity, setQuantity] = useState(1);
   const [callType, setCallType] = useState<CallType | null>(null);
   const [technicianId, setTechnicianId] = useState<number | null>(null);
   const [skipReason, setSkipReason] = useState('');
@@ -133,16 +108,12 @@ export function RegisterDialog({
       ),
     [catalog.data, guest],
   );
-  const tabs = useMemo(() => itemCategoryTabs(allItems), [allItems]);
-  // 搜项目（重做第五批）：按名称或价目表编号，搜的时候不管分类
-  const items = search.trim() ? allItems.filter((i) => matchesItemSearch(i, search)) : category === ALL_CATEGORIES ? allItems : allItems.filter((i) => itemCategoryKey(i) === category);
   const item = allItems.find((i) => i.id === itemId) ?? null;
   // 价目表的双价项目（专业价 / 资深价，PC7）：选中后二选一，计费按所选；价格跟技师等级时只列这一档的技师
   const dual = !!item?.catalogCategory && item.prices.length === 2 && item.prices.every((p) => p.tier === 'professional' || p.tier === 'premium');
   const pickedTier: PriceTier | null = dual ? (tier ?? 'professional') : null;
-  // 价目表的项目时长由项目带出，不自选钟数（PC23）
-  const fixedMinutes = item?.catalogCategory && item.durationMinutes !== null ? item.durationMinutes : null;
-  const clocks = fixedMinutes !== null ? 1 : quantity;
+  // 时长由项目带出，不选钟数：一次登记一个项目，加钟是再选一个项目（PC23、PC27）
+  const clocks = 1;
   const byGrade = !!rules?.tierByGrade && !!item && item.prices.length > 1;
   const cant = (t: BoardTechnician) => {
     if (!item || !rules) return null;
@@ -211,7 +182,7 @@ export function RegisterDialog({
         expectedTotal: total,
       },
       tagCodes: [guest.tagCode],
-      summary: `房态登记 ${where}：${item.name} × ${clocks}${overnight && askOvernight ? '（过夜）' : ''}（${tech.techNo} 号 ${tech.name} · ${CALL_TYPE_LABELS[mode]}，出单员 ${seller.data!.name}）`,
+      summary: `房态登记 ${where}：${item.name}${overnight && askOvernight ? '（过夜）' : ''}（${tech.techNo} 号 ${tech.name} · ${CALL_TYPE_LABELS[mode]}，出单员 ${seller.data!.name}）`,
       amount: total,
     }));
     if (done) finish(done);
@@ -264,21 +235,16 @@ export function RegisterDialog({
         <div className="grid gap-5 md:grid-cols-[250px_minmax(0,1fr)]" data-testid="rc-register">
           <div className="space-y-4">
             <TagField value={tag} onChange={setTag} onGuest={setGuest} disabled={op.locked} />
-            {fixedMinutes !== null ? (
-              <Field label="时长">
+            <Field label="时长">
+              {item ? (
                 <p className="text-[15px] font-bold text-ink" data-testid="rc-register-duration">
-                  {fixedMinutes} 分钟<span className="ml-2 text-[12.5px] font-normal text-ink-3">按项目带出</span>
+                  {durationText(item)}
+                  <span className="ml-2 text-[12.5px] font-normal text-ink-3">按项目带出</span>
                 </p>
-              </Field>
-            ) : item ? (
-              <Field label="钟数">
-                <ClockStepper value={quantity} onChange={setQuantity} disabled={op.locked} label="钟数" testId="rc-register-qty" />
-              </Field>
-            ) : (
-              <Field label="时长">
-                <p className="text-[13px] text-ink-3">选了项目自动带出</p>
-              </Field>
-            )}
+              ) : (
+                <p className="text-[13px] text-ink-3">{durationText(null)}</p>
+              )}
+            </Field>
             {askOvernight && (
               <Field label="客人是否过夜">
                 <Segmented<'no' | 'yes'>
@@ -339,45 +305,17 @@ export function RegisterDialog({
           </div>
           <div className="min-w-0 space-y-4">
             <Field label="项目">
-              {allItems.length > 0 && (
-                <Input
-                  className="mb-2"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="搜项目名称或编号"
-                  aria-label="搜项目"
-                  disabled={op.locked}
-                  data-testid="rc-register-search"
-                />
-              )}
-              {allItems.length > 0 && !search.trim() && <CategoryTabs tabs={tabs} value={category} onChange={setCategory} total={allItems.length} testId="rc-register-categories" />}
-              {search.trim() && items.length === 0 && <p className="text-[13px] text-ink-3">没有搜到「{search.trim()}」</p>}
-              {allItems.length === 0 ? (
-                <p className="text-[13px] text-ink-3">没有需要技师的项目（在「后台 → 技师」里勾选）</p>
-              ) : (
-                <div className="flex flex-wrap gap-1.5" data-testid="rc-register-items">
-                  {items.map((i) => (
-                    <button
-                      key={i.id}
-                      type="button"
-                      disabled={op.locked}
-                      onClick={() => {
-                        setItemId(i.id);
-                        setTier(null);
-                        setTechnicianId(null);
-                      }}
-                      aria-pressed={itemId === i.id}
-                      className={cn(
-                        'h-11 rounded-full border px-3.5 text-[13.5px] font-semibold',
-                        itemId === i.id ? 'border-pine bg-pine-tint text-pine' : 'border-line-strong text-ink-2 hover:border-ink-4',
-                      )}
-                      data-testid={`rc-register-item-${i.name}`}
-                    >
-                      {i.name}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <ItemPicker
+                items={allItems}
+                value={itemId}
+                onChange={(i) => {
+                  setItemId(i.id);
+                  setTier(null);
+                  setTechnicianId(null);
+                }}
+                disabled={op.locked}
+                testId="rc-register"
+              />
             </Field>
             {item && (
               <Field
@@ -398,7 +336,7 @@ export function RegisterDialog({
                 ) : byGrade || item.prices.length === 1 ? (
                   <p className="text-[14px] font-semibold text-ink" data-testid="rc-register-tier">
                     {chosenTier ? PRICE_TIER_LABELS[chosenTier] : ''}
-                    {unit !== null && <span className="ml-2 text-ink-3">每钟 {formatYuan(unit)}</span>}
+                    {unit !== null && <span className="ml-2 text-ink-3">{formatYuan(unit)}</span>}
                   </p>
                 ) : (
                   <Segmented<PriceTier>

@@ -38,7 +38,7 @@ export const ROOM_SOURCE_LABELS: Record<RoomSource, string> = {
   hall: '大厅类',
 };
 export const ROOM_SOURCE_HINTS: Record<RoomSource, string> = {
-  service: '点卡片登记手牌、项目与技师；之后换房、续钟、退房',
+  service: '点卡片登记手牌、项目与技师；之后换房、加钟、退房',
   party: '点卡片开单（使用单），结束时按时长计费',
   hotel: '照客房的入住单：入住、续住、换房、退房',
   hall: '没有业务单据，只标待清、维修',
@@ -256,7 +256,7 @@ export const ROOM_EVENT_LABELS: Record<RoomEventKind, string> = {
   move_out: '换房（换出）',
   move_in: '换房（换入）',
   checkout: '退房',
-  extend: '续钟',
+  extend: '加钟',
   merge: '并房',
   unmerge: '拆并',
   dirty: '标为待清',
