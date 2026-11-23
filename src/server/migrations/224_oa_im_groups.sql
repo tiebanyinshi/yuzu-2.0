@@ -1,0 +1,130 @@
+-- OA-16 通讯录与群管理（docs/OA.md 第 19 节；需求文档六（二）、六（三））。
+--   · oa_im_conversations：dept_key = 部门群对应的部门（没解散的同一个部门只有一个）；notice = 群公告（谁、什么时候）；dissolved_at = 解散时间
+--     （解散后不能再发、不能再管，历史照留）。
+--   · oa_im_members：source = 进群方式：manual 建群、拉人 / dept 部门同步（部门群里因部门进来的，不能被踢、不能自己退）。
+--   · 部门群同步与离职退群：员工（岗位、启用、角色）与员工档案（在职状态）一变，触发器在同一个事务里给这个人进出群，
+--     不管是哪条路径改的。不在职（停用、离职、专用账号）的退出全部没解散的群（群主转给最早的管理员，没有就转给最早进群的成员）；
+--     在职的：部门同步进来的、部门变了的退出原部门群；本部门有部门群而不在里面的进群（读到的位置记在最新一条，没有积压的未读）。
+--     锁顺序：员工 / 员工档案（改的那一句已经锁着）→ 成员同步锁（advisory 独占；建群、拉人也先拿它）→ 会话行（FOR UPDATE，按会话编号）→ 成员行 → 系统提示消息。
+--     部门群里的人走光过（没有群主）的，第一个回来的接任群主。自己选的岗位（position_chosen_at 不为空，后台没核实）不自动进部门群。
+--   · 迁移末尾按现在的状态把已经不在职的人从群里同步出去一次（升级以前只改员工状态、没退群的）。
+-- 回滚：docs/rollback/224_oa_im_groups.down.sql。
+
+ALTER TABLE oa_im_conversations
+  ADD COLUMN dept_key        text REFERENCES org_departments (key),
+  ADD COLUMN notice          text CHECK (notice IS NULL OR char_length(notice) <= 500),
+  ADD COLUMN notice_by       bigint REFERENCES staff (id),
+  ADD COLUMN notice_at       timestamptz,
+  ADD COLUMN dissolved_at    timestamptz,
+  ADD CONSTRAINT oa_im_conversations_dept_group CHECK (dept_key IS NULL OR kind = 'group');
+CREATE UNIQUE INDEX oa_im_conversations_dept_uq ON oa_im_conversations (dept_key) WHERE dept_key IS NOT NULL AND dissolved_at IS NULL;
+
+ALTER TABLE oa_im_members ADD COLUMN source text NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'dept'));
+
+-- 在会话里留一条系统提示（会话行已经锁着）
+CREATE FUNCTION oa_im_system_message(p_conversation bigint, p_sender bigint, p_body text) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE v_id bigint;
+BEGIN
+  INSERT INTO oa_im_messages (conversation_id, sender_id, kind, body) VALUES (p_conversation, p_sender, 'system', p_body) RETURNING id INTO v_id;
+  UPDATE oa_im_conversations SET last_message_id = v_id, last_message_at = now() WHERE id = p_conversation;
+END $$;
+
+-- 给一位员工进出群：离职 / 停用 / 专用账号退出全部群；部门变了退出原部门群、进新部门群
+CREATE FUNCTION oa_im_sync_staff(p_staff bigint) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_on_duty boolean;
+  v_dept    text;
+  v_name    text;
+  v_self    boolean;
+  r         record;
+BEGIN
+  SELECT s.active AND NOT s.system AND s.role <> ALL (ARRAY['tablet', 'other_store', 'designer']) AND COALESCE(p.status, 'active') = 'active',
+         CASE WHEN s.position IS NULL THEN NULL WHEN s.position = 'president' THEN 'company' WHEN s.position = 'gmo' THEN 'gmo'
+              ELSE split_part(s.position, '.', 1) END,
+         s.display_name, s.position_chosen_at IS NOT NULL
+    INTO v_on_duty, v_dept, v_name, v_self
+    FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id WHERE s.id = p_staff;
+  IF NOT FOUND THEN RETURN; END IF;
+  -- 成员同步锁（独占，Codex 审查 1adec4f、ae2d4b6）：建群、拉人、员工变动都先拿它再锁会话行。整个事务（一次导入很多员工也一样）
+  -- 拿了它以后才锁会话，离职、导入、拉人之间不会等成环；建群、拉人读在职名单时在途的离职、调岗已经提交
+  PERFORM pg_advisory_xact_lock(hashtextextended('oa_im_dept_sync', 0));
+
+  -- 不在职的：退出全部群；在职的：退出因部门进来、部门变了的部门群。都包括已经解散的（Codex 安全审查 beecb4e、7c4eb7b：
+  -- 解散群的历史只认没退出的成员，留着的话复职、调走后照样看得到）；解散了的群只记退出，不转群主、不留提示
+  FOR r IN
+    SELECT c.id FROM oa_im_members m JOIN oa_im_conversations c ON c.id = m.conversation_id
+     WHERE m.staff_id = p_staff AND m.left_at IS NULL AND c.kind = 'group'
+       AND (NOT v_on_duty OR (m.source = 'dept' AND c.dept_key IS DISTINCT FROM v_dept))
+     ORDER BY c.id
+  LOOP
+    PERFORM 1 FROM oa_im_conversations WHERE id = r.id FOR UPDATE;
+    -- 锁到以后再看一次（等锁期间别人可能已经把他踢了）
+    PERFORM 1 FROM oa_im_members m WHERE m.conversation_id = r.id AND m.staff_id = p_staff AND m.left_at IS NULL;
+    CONTINUE WHEN NOT FOUND;
+    UPDATE oa_im_members SET left_at = now(), role = 'member' WHERE conversation_id = r.id AND staff_id = p_staff;
+    CONTINUE WHEN EXISTS (SELECT 1 FROM oa_im_conversations WHERE id = r.id AND dissolved_at IS NOT NULL);
+    -- 群主走了：转给最早的管理员，没有就转给最早进群的成员
+    IF NOT EXISTS (SELECT 1 FROM oa_im_members WHERE conversation_id = r.id AND left_at IS NULL AND role = 'owner') THEN
+      UPDATE oa_im_members SET role = 'owner'
+       WHERE (conversation_id, staff_id) = (
+         SELECT conversation_id, staff_id FROM oa_im_members WHERE conversation_id = r.id AND left_at IS NULL
+          ORDER BY (role = 'admin') DESC, joined_at, staff_id LIMIT 1);
+    END IF;
+    PERFORM oa_im_system_message(r.id, p_staff, v_name || CASE WHEN v_on_duty THEN '调离了部门，退出了群聊' ELSE '已离职，退出了群聊' END);
+  END LOOP;
+
+  -- 自己选的岗位（后台还没改过、没核实）不自动进部门群（Codex 安全审查 1adec4f：进群就看得到群里以前的消息）；
+  -- 后台给他定岗位时 position_chosen_at 清空、岗位一变就照常进群，群主、管理员也可以手动拉
+  IF v_on_duty AND v_dept IS NOT NULL AND NOT v_self THEN
+    FOR r IN
+      SELECT c.id FROM oa_im_conversations c
+       WHERE c.dept_key = v_dept AND c.dissolved_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM oa_im_members m WHERE m.conversation_id = c.id AND m.staff_id = p_staff AND m.left_at IS NULL)
+       ORDER BY c.id
+    LOOP
+      PERFORM 1 FROM oa_im_conversations WHERE id = r.id FOR UPDATE;
+      PERFORM 1 FROM oa_im_conversations c WHERE c.id = r.id AND c.dissolved_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM oa_im_members m WHERE m.conversation_id = c.id AND m.staff_id = p_staff AND m.left_at IS NULL);
+      CONTINUE WHEN NOT FOUND;
+      INSERT INTO oa_im_members (conversation_id, staff_id, role, source, last_read_message_id)
+        SELECT r.id, p_staff, 'member', 'dept', COALESCE(last_message_id, 0) FROM oa_im_conversations WHERE id = r.id
+      ON CONFLICT (conversation_id, staff_id) DO UPDATE
+        SET left_at = NULL, role = 'member', source = 'dept', joined_at = now(),
+            last_read_message_id = GREATEST(oa_im_members.last_read_message_id, EXCLUDED.last_read_message_id);
+      PERFORM oa_im_system_message(r.id, p_staff, v_name || '加入了群聊');
+      -- 部门群里的人走光过、没有群主（Codex 审查 1adec4f）：第一个回来的接任群主
+      IF NOT EXISTS (SELECT 1 FROM oa_im_members WHERE conversation_id = r.id AND left_at IS NULL AND role = 'owner') THEN
+        UPDATE oa_im_members SET role = 'owner' WHERE conversation_id = r.id AND staff_id = p_staff;
+        PERFORM oa_im_system_message(r.id, p_staff, v_name || '成为群主');
+      END IF;
+    END LOOP;
+  END IF;
+END $$;
+
+CREATE FUNCTION oa_im_staff_sync_trg() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM oa_im_sync_staff(NEW.id);
+  RETURN NULL;
+END $$;
+CREATE FUNCTION oa_im_profile_sync_trg() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM oa_im_sync_staff(NEW.staff_id);
+  RETURN NULL;
+END $$;
+
+CREATE TRIGGER oa_im_staff_sync_ins AFTER INSERT ON staff FOR EACH ROW EXECUTE FUNCTION oa_im_staff_sync_trg();
+CREATE TRIGGER oa_im_staff_sync_upd AFTER UPDATE OF position, active, role, position_chosen_at ON staff FOR EACH ROW
+  WHEN (OLD.position IS DISTINCT FROM NEW.position OR OLD.active IS DISTINCT FROM NEW.active OR OLD.role IS DISTINCT FROM NEW.role
+        OR OLD.position_chosen_at IS DISTINCT FROM NEW.position_chosen_at)
+  EXECUTE FUNCTION oa_im_staff_sync_trg();
+CREATE TRIGGER oa_im_profile_sync AFTER INSERT OR UPDATE OF status ON staff_profiles FOR EACH ROW EXECUTE FUNCTION oa_im_profile_sync_trg();
+
+-- 升级以前就已经停用、离职、改成专用账号的人（OA-14、15 时期只改员工状态、不退群）：按现在的状态同步一次，
+-- 退出他们还在的群（群主交给最早的管理员或成员）；以后的变动由上面的触发器管（Codex 审查 4bd532c）
+SELECT oa_im_sync_staff(s.id) FROM staff s
+ WHERE EXISTS (SELECT 1 FROM oa_im_members m WHERE m.staff_id = s.id AND m.left_at IS NULL)
+ ORDER BY s.id;

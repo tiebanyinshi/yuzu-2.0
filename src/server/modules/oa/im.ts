@@ -3,7 +3,7 @@
 //   · 消息：文本（含表情）、图片、文件（OA-03 附件，只有会话成员看得到）；发送带操作编号（同一个人同一个编号只有一条，原样重提返回原来那一条）。
 //   · 撤回：发的人、2 分钟内（服务端时间）；撤回以后原内容不再给出。@：群聊里 @成员 / @所有人，被 @ 的人收到站内通知。
 //   · 历史分页（before）、取新消息与最近的撤回（after，页面每 3 秒取一次）、上报读到哪一条（只往前走）。
-//   · 已读回执、统一实时通道、新消息进站内通知在 OA-15；通讯录、群管理在 OA-16。
+//   · 已读回执、统一实时通道、新消息进站内通知在 OA-15；通讯录、群管理在 OA-16（群管理的接口在 im-groups.ts，解散了的群这里不让发、不让上报以外的写）。
 // 加锁（docs/LOCKING.md「即时通讯」）：发消息 = 会话行（FOR UPDATE）→ 消息 → 附件行 → 通知；撤回 = 消息行（FOR UPDATE）；已读 = 自己的成员行。
 
 import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
@@ -25,6 +25,7 @@ import {
   type ImPollResult,
   type ImRead,
   type ImSync,
+  type ImMemberSource,
   type ImRole,
   type ImSent,
 } from '@shared/oa-im';
@@ -45,7 +46,7 @@ import { NOT_EMPLOYEE_ROLES } from './org';
  * 登录检查之后再按库里的账号与员工档案核对一次（专用账号的会话不能靠直接调接口进来）
  */
 const loggedIn = guard();
-function employeeOnly(db: Db): preHandlerAsyncHookHandler {
+export function employeeOnly(db: Db): preHandlerAsyncHookHandler {
   return async function (req, reply) {
     await loggedIn.call(this, req, reply);
     if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(req.actor.role) || !(await onDutyIds(db, [req.actor.id])).length) {
@@ -61,8 +62,37 @@ const REVOKED_OVERLAP_SECONDS = 60;
 /** 建群限额（Codex 安全审查 accf8fb）：每人 10 分钟内最多建几个、一天最多建几个 */
 const GROUP_QUOTA = { burst: 10, burstMinutes: 10, daily: 30 };
 
+/**
+ * 群成员与员工在职、部门的同步锁（OA-16，Codex 审查 1adec4f、ae2d4b6）：迁移 224 的触发器（员工的岗位、启用、角色、在职一变）
+ * 进出群之前拿它；建群、拉人在读在职名单、写成员之前也拿它。拿了它再锁会话行，所以整个事务（包括一次导入很多员工）
+ * 不会和离职、拉人互相等成环；读到的在职名单是在途的离职、调岗都提交以后的。员工变动不常有，串行的代价可以接受。
+ */
+export async function lockMembershipSync(tx: Tx): Promise<void> {
+  await tx`SELECT pg_advisory_xact_lock(hashtextextended('oa_im_dept_sync', 0))`;
+}
+
+/** 拿到成员同步锁以后再核对一次请求的人还在职（预检查在锁外，等锁期间可能被停用、办了离职，Codex 审查 fd91220） */
+export async function assertActorOnDuty(tx: Tx, me: number): Promise<void> {
+  if (!(await onDutyIds(tx, [me])).length) throw forbidden('这个账号不能用即时通讯');
+}
+
+/**
+ * 建群限额（Codex 安全审查 accf8fb）：一个人不能在短时间里拉一大堆群把别人的会话列表刷掉；按人串行核对。
+ * 普通建群与建部门群共用（部门群也算，Codex 审查 1adec4f；打开已有的部门群不算）
+ */
+export async function assertGroupQuota(tx: Tx, me: number): Promise<void> {
+  await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`oa_im_group_quota:${me}`}, 0))`;
+  const [made] = await tx<{ burst: number; daily: number }[]>`
+    SELECT count(*) FILTER (WHERE created_at > now() - make_interval(mins => ${GROUP_QUOTA.burstMinutes}))::int AS burst,
+           count(*) FILTER (WHERE created_at > now() - interval '1 day')::int AS daily
+    FROM oa_im_conversations WHERE created_by = ${me} AND kind = 'group' AND created_at > now() - interval '1 day'`;
+  if (made!.burst >= GROUP_QUOTA.burst || made!.daily >= GROUP_QUOTA.daily) {
+    throw unprocessable('GROUP_QUOTA', `建群太频繁：每人 ${GROUP_QUOTA.burstMinutes} 分钟内最多建 ${GROUP_QUOTA.burst} 个、一天最多 ${GROUP_QUOTA.daily} 个，请稍后再建`);
+  }
+}
+
 /** 在职员工（与审批转交选人同一个名单）；s = staff，p = staff_profiles */
-const onDuty = (db: Db) => db`s.active AND NOT s.system AND s.role <> ALL(${NOT_EMPLOYEE_ROLES}) AND COALESCE(p.status, 'active') = 'active'`;
+export const onDuty = (db: Db) => db`s.active AND NOT s.system AND s.role <> ALL(${NOT_EMPLOYEE_ROLES}) AND COALESCE(p.status, 'active') = 'active'`;
 
 /** 我在不在这个会话里（没退出） */
 async function memberOf(db: Db, conversationId: number, staffId: number): Promise<{ kind: 'direct' | 'group'; name: string | null } | null> {
@@ -156,12 +186,13 @@ type ListRow = {
   lmFile: string | null;
   unread: number;
   mentioned: boolean;
+  dissolved: boolean;
 };
 
 async function listConversations(db: Db, me: number, q: string | undefined): Promise<ImConversationList> {
   const like = q ? `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
   const rows = await db<ListRow[]>`
-    SELECT c.id, c.kind, c.name, c.last_message_at,
+    SELECT c.id, c.kind, c.name, c.last_message_at, c.dissolved_at IS NOT NULL AS dissolved,
            (SELECT count(*) FROM oa_im_members x WHERE x.conversation_id = c.id AND x.left_at IS NULL)::int AS member_count,
            peer.staff_id AS peer_id, ps.display_name AS peer_name,
            lm.kind AS lm_kind, lm.body AS lm_body, lm.revoked_at IS NOT NULL AS lm_revoked, ls.display_name AS lm_sender, la.file_name AS lm_file,
@@ -200,6 +231,7 @@ async function listConversations(db: Db, me: number, q: string | undefined): Pro
       lastMessageAt: new Date(r.lastMessageAt).toISOString(),
       unread: r.unread,
       mentioned: r.mentioned,
+      dissolved: r.dissolved,
     }),
   );
   // 未读合计按全部会话算（列表只给最近 200 个，不能拿它加，Codex 审查 15f56d2）
@@ -210,25 +242,33 @@ async function listConversations(db: Db, me: number, q: string | undefined): Pro
   return { items, unread: total!.unread };
 }
 
-async function detailOf(db: Db, id: number, me: number): Promise<ImConversationDetail> {
+export async function detailOf(db: Db, id: number, me: number): Promise<ImConversationDetail> {
   const c = await memberOf(db, id, me);
   if (!c) throw notFound('会话不存在');
-  const members = await db<{ staffId: number; name: string; role: ImRole; lastRead: number }[]>`
-    SELECT m.staff_id, s.display_name AS name, m.role, m.last_read_message_id AS last_read FROM oa_im_members m JOIN staff s ON s.id = m.staff_id
+  const members = await db<{ staffId: number; name: string; role: ImRole; source: ImMemberSource; lastRead: number }[]>`
+    SELECT m.staff_id, s.display_name AS name, m.role, m.source, m.last_read_message_id AS last_read FROM oa_im_members m JOIN staff s ON s.id = m.staff_id
     WHERE m.conversation_id = ${id} AND m.left_at IS NULL
     ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, m.joined_at, m.staff_id`;
   const peer = members.find((m) => Number(m.staffId) !== me);
+  const mine = members.find((m) => Number(m.staffId) === me);
+  const [extra] = await db<{ deptKey: string | null; notice: string | null; noticeBy: string | null; noticeAt: Date | null; dissolved: boolean }[]>`
+    SELECT c.dept_key, c.notice, ns.display_name AS notice_by, c.notice_at, c.dissolved_at IS NOT NULL AS dissolved
+    FROM oa_im_conversations c LEFT JOIN staff ns ON ns.id = c.notice_by WHERE c.id = ${id}`;
   return {
     id,
     kind: c.kind,
     title: c.kind === 'group' ? (c.name ?? '') : (peer?.name ?? ''),
-    members: members.map((m) => ({ staffId: Number(m.staffId), name: m.name, role: m.role })),
-    lastReadMessageId: Number(members.find((m) => Number(m.staffId) === me)?.lastRead ?? 0),
+    members: members.map((m) => ({ staffId: Number(m.staffId), name: m.name, role: m.role, source: m.source })),
+    lastReadMessageId: Number(mine?.lastRead ?? 0),
+    deptKey: extra!.deptKey,
+    notice: extra!.notice ? { text: extra!.notice, byName: extra!.noticeBy ?? '', at: new Date(extra!.noticeAt!).toISOString() } : null,
+    dissolved: extra!.dissolved,
+    myRole: mine?.role ?? 'member',
   };
 }
 
 /** 一位在职员工（单聊对象、群成员） */
-async function onDutyIds(db: Db, ids: readonly number[]): Promise<number[]> {
+export async function onDutyIds(db: Db, ids: readonly number[]): Promise<number[]> {
   if (!ids.length) return [];
   const rows = await db<{ id: number }[]>`SELECT s.id FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id WHERE s.id IN ${db([...ids])} AND ${onDuty(db)}`;
   return rows.map((r) => Number(r.id));
@@ -254,7 +294,7 @@ const AfterQuery = z.object({ after: z.coerce.number().int().min(0), since: z.st
 const ReadInput = z.object({ upTo: z.number().int().min(0) });
 
 /** 发一条消息（调用方的事务里，已锁会话行、核对过是成员）；返回编号 */
-async function insertMessage(
+export async function insertMessage(
   tx: Tx,
   conversationId: number,
   senderId: number,
@@ -276,7 +316,8 @@ async function send(tx: Tx, actor: Actor, conversationId: number, input: z.infer
   const { clientKey, ...rest } = input;
   const hash = hashRequest({ conversationId, ...rest });
   // 会话行锁：同一会话的消息串行（最后一条、编号顺序不乱）
-  const [c] = await tx<{ kind: 'direct' | 'group'; name: string | null }[]>`SELECT kind, name FROM oa_im_conversations WHERE id = ${conversationId} FOR UPDATE`;
+  const [c] = await tx<{ kind: 'direct' | 'group'; name: string | null; dissolved: boolean }[]>`
+    SELECT kind, name, dissolved_at IS NOT NULL AS dissolved FROM oa_im_conversations WHERE id = ${conversationId} FOR UPDATE`;
   const [mine] = await tx`SELECT 1 FROM oa_im_members WHERE conversation_id = ${conversationId} AND staff_id = ${actor.id} AND left_at IS NULL`;
   if (!c || !mine) throw notFound('会话不存在或你已经不在这个群里');
   const [seen] = await tx<{ id: number; requestHash: string | null }[]>`
@@ -285,6 +326,8 @@ async function send(tx: Tx, actor: Actor, conversationId: number, input: z.infer
     if (seen.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一条消息，请刷新后重新发送');
     return { id: Number(seen.id), replayed: true };
   }
+  // 解散了的群只能看历史（解散以前发出去的那条，原样重提照旧返回，上面已经处理）
+  if (c.dissolved) throw unprocessable('GROUP_DISSOLVED', '这个群已经解散，不能再发消息');
   const body = input.kind === 'text' ? input.body.trim() : input.body.trim().slice(0, 200);
   if (input.kind === 'text' && !body) throw unprocessable('MESSAGE_EMPTY', '消息不能是空的');
   if (input.kind !== 'text') {
@@ -408,15 +451,10 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
         return { id: Number(seen.refId), replayed: true };
       }
       await assertNotFenced(tx, clientKey, 'oa_im_group', erpOpAbandoned);
-      // 限额：一个人不能在短时间里拉一大堆群把别人的会话列表刷掉（Codex 安全审查 accf8fb）；按人串行核对
-      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`oa_im_group_quota:${me}`}, 0))`;
-      const [made] = await tx<{ burst: number; daily: number }[]>`
-        SELECT count(*) FILTER (WHERE created_at > now() - make_interval(mins => ${GROUP_QUOTA.burstMinutes}))::int AS burst,
-               count(*) FILTER (WHERE created_at > now() - interval '1 day')::int AS daily
-        FROM oa_im_conversations WHERE created_by = ${me} AND kind = 'group' AND created_at > now() - interval '1 day'`;
-      if (made!.burst >= GROUP_QUOTA.burst || made!.daily >= GROUP_QUOTA.daily) {
-        throw unprocessable('GROUP_QUOTA', `建群太频繁：每人 ${GROUP_QUOTA.burstMinutes} 分钟内最多建 ${GROUP_QUOTA.burst} 个、一天最多 ${GROUP_QUOTA.daily} 个，请稍后再建`);
-      }
+      // 先拿成员同步锁：读在职名单与写成员之间，别人办不了这几个人的离职（Codex 审查 ae2d4b6）
+      await lockMembershipSync(tx);
+      await assertActorOnDuty(tx, me);
+      await assertGroupQuota(tx, me);
       const wanted = [...new Set(input.memberIds.filter((x) => x !== me))];
       const others = await onDutyIds(tx, wanted);
       if (others.length !== wanted.length) throw unprocessable('MEMBER_INVALID', '有成员不存在或已经离职，请刷新后重选');
@@ -500,12 +538,16 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
   app.post('/api/oa/im/conversations/:id/leave', { preHandler: auth }, async (req): Promise<{ ok: true }> => {
     const { id } = parse(idParam, req.params);
     await sql.begin(async (tx) => {
-      const [c] = await tx<{ kind: 'direct' | 'group' }[]>`SELECT kind FROM oa_im_conversations WHERE id = ${id} FOR UPDATE`;
-      const [m] = await tx<{ role: ImRole; leftAt: Date | null }[]>`SELECT role, left_at FROM oa_im_members WHERE conversation_id = ${id} AND staff_id = ${req.actor.id}`;
+      const [c] = await tx<{ kind: 'direct' | 'group'; dissolved: boolean }[]>`
+        SELECT kind, dissolved_at IS NOT NULL AS dissolved FROM oa_im_conversations WHERE id = ${id} FOR UPDATE`;
+      const [m] = await tx<{ role: ImRole; source: ImMemberSource; leftAt: Date | null }[]>`
+        SELECT role, source, left_at FROM oa_im_members WHERE conversation_id = ${id} AND staff_id = ${req.actor.id}`;
       if (!c || !m) throw notFound('会话不存在');
       if (m.leftAt) return;
       if (c.kind !== 'group') throw unprocessable('IM_LEAVE_DIRECT', '单聊不能退出');
-      if (m.role === 'owner') throw unprocessable('IM_OWNER_LEAVE', '群主不能直接退出：请先把群主转给别人');
+      // 解散了的群谁都能退（只是从会话列表里去掉）；没解散的：群主先转让，部门群里按部门进来的要调岗才出群（OA-16）
+      if (!c.dissolved && m.role === 'owner') throw unprocessable('IM_OWNER_LEAVE', '群主不能直接退出：请先把群主转给别人');
+      if (!c.dissolved && m.source === 'dept') throw unprocessable('IM_DEPT_MEMBER', '这是部门群，本部门的人不能自己退出；调到别的部门会自动出群');
       await tx`UPDATE oa_im_members SET left_at = now() WHERE conversation_id = ${id} AND staff_id = ${req.actor.id}`;
       await insertMessage(tx, id, req.actor.id, { kind: 'system', body: `${req.actor.displayName}退出了群聊` });
     });

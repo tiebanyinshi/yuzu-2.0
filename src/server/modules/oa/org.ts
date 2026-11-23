@@ -3,14 +3,15 @@
 // 办理离职 = 档案记离职、账号停用、登录会话作废；考勤、审批、工资条等历史都不删。
 // 加锁顺序（docs/LOCKING.md「组织架构与员工档案」）：在职店主行 → 目标员工行 → 员工档案行 → 部门行（按 key）。
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import { departmentOfPosition, EMP_NO_PATTERN, PHONE_PATTERN, wouldCycle, type EmployeeProfile, type EmploymentStatus, type OrgDepartmentNode, type OrgOverview } from '@shared/oa';
 import type { OrgDepartment, PositionKey } from '@shared/positions';
 import { isUniqueViolation, type Db, type Tx } from '../../db';
 import { maskPhone } from '@shared/labels';
-import { can } from '@shared/permissions';
+import { can, type Duty, type Role } from '@shared/permissions';
 import { guardAny } from '../../auth/guard';
+import { subjectOf } from '../../auth/role-permissions';
 import { destroyStaffSessions } from '../../auth/session';
 import { writeAudit } from '../../lib/audit';
 import type { Actor, Deps } from '../../lib/context';
@@ -19,7 +20,33 @@ import { DEFAULT_STORE_ID } from '../../lib/store-context';
 import { dateSchema, idParam, parse } from '../../lib/validate';
 import { allowedStores } from '../stores';
 
-const canManage = guardAny('hr.org', 'staff.manage');
+/**
+ * 管组织架构的人（OA-01 的组织架构接口，OA-16 看全员手机号、改可见范围、建 / 打开任意部门群）：总裁（staff.manage），或有 hr.org、岗位由后台给的人。
+ * 自己选成人力负责人（hr.org 随岗位来）、后台还没核实的不算（Codex 安全审查 fd91220）
+ */
+export async function managesOrg(db: Db, actor: Actor): Promise<boolean> {
+  // 按库里现在的岗位、角色、个人微调重算权限（不用请求开始时会话里存的那份：在成员同步锁里调用时，等锁期间刚调岗的要按调岗后算，
+  // Codex 审查 4bd532c）
+  const [me] = await db<{ role: Role; duties: Duty[] | null; position: unknown; permissionAdjust: unknown; active: boolean; selfChosen: boolean }[]>`
+    SELECT role, duties, position, permission_adjust, active, position_chosen_at IS NOT NULL AS self_chosen FROM staff WHERE id = ${actor.id}`;
+  if (!me?.active) return false;
+  const now = await subjectOf(db, me);
+  if (can(now, 'staff.manage')) return true;
+  return can(now, 'hr.org') && !me.selfChosen;
+}
+
+/**
+ * 组织架构接口的门：有 hr.org / staff.manage，而且按库里现在的权限、岗位是后台核实过的（managesOrg）。
+ * 自己选成人力负责人的老账号（hr.org 随岗位来）不能改部门主管、员工档案（Codex 安全审查 4bd532c：
+ * 不然可以把自己指定成某个部门的主管，OA-16 认指定的主管，就进得了那个部门群）
+ */
+const guardOrg = guardAny('hr.org', 'staff.manage');
+function canManageOrg(db: Db): preHandlerAsyncHookHandler {
+  return async function (req, reply) {
+    await guardOrg.call(this, req, reply);
+    if (!(await managesOrg(db, req.actor))) throw forbidden('你的岗位还没由后台核实，不能管组织架构');
+  };
+}
 
 /**
  * 专用账号（点餐平板、他店查询、设计师）不是员工：不进组织架构，也不用办公（考勤、审批、即时通讯）。
@@ -170,6 +197,7 @@ function translateUnique(error: unknown): never {
 }
 
 export function registerOaOrgRoutes(app: FastifyInstance, { sql }: Deps) {
+  const canManage = canManageOrg(sql);
   app.get('/api/oa/org', { preHandler: canManage }, async (req) => loadOrg(sql, await orgScope(sql, req.actor)));
 
   app.put('/api/oa/org/departments/:key', { preHandler: canManage }, async (req) => {

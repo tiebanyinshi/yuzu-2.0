@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, AtSign, FileText, ImagePlus, MessageCirclePlus, Paperclip, Search, SendHorizontal, Smile, Users } from 'lucide-react';
+import { ArrowLeft, AtSign, FileText, ImagePlus, Megaphone, MessageCirclePlus, Paperclip, Search, SendHorizontal, Settings2, Smile, Users } from 'lucide-react';
 import {
   IM_GROUP_MAX,
   IM_GROUP_MIN,
@@ -43,6 +43,7 @@ import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Skeleton, Textarea } from '../../components/ui';
 import { uploadFile } from './oaImage';
+import { GroupSettingsDialog } from './ImGroupSettings';
 
 const EMOJI = ['😀', '😂', '😊', '😍', '🤔', '😅', '😭', '😡', '👍', '👌', '🙏', '👏', '💪', '🎉', '❤️', '🌹', '☕', '🍵', '✅', '❌', '⏰', '📌', '🔥', '🙂'];
 const LIST_KEY = ['oa', 'im', 'list'] as const;
@@ -121,6 +122,7 @@ function ImListPage() {
                       <span className="flex items-baseline gap-2">
                         <span className="truncate font-semibold text-ink">{c.title}</span>
                         {c.kind === 'group' && <span className="num text-[12px] text-ink-3">{c.memberCount} 人</span>}
+                        {c.dissolved && <Badge>已解散</Badge>}
                         <span className="num ml-auto shrink-0 text-[12px] text-ink-3">{timeText(c.lastMessageAt)}</span>
                       </span>
                       <span className="flex items-center gap-2">
@@ -326,6 +328,7 @@ function ImChatPage({ id }: { id: number }) {
   const [showEmoji, setShowEmoji] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [settings, setSettings] = useState(false);
   const [leaveBusy, setLeaveBusy] = useState(false);
   const navigate = useNavigate();
   const leave = async () => {
@@ -398,6 +401,8 @@ function ImChatPage({ id }: { id: number }) {
         });
       }
       if (r.messages.length) setCursor((c) => Math.max(c, r.messages.at(-1)!.id));
+      // 系统提示（拉人、踢人、改群名、公告、转让、解散）：群的现状变了，重取一次（OA-16）
+      if (r.messages.some((x) => x.kind === 'system')) void qc.invalidateQueries({ queryKey: ['oa', 'im', 'conv', id] });
       else void reportRead(cursor);
     },
     [id, cursor, messages === null],
@@ -527,12 +532,24 @@ function ImChatPage({ id }: { id: number }) {
               会话列表
             </Link>
             {d?.kind === 'group' && <span className="ml-auto min-w-0 truncate text-[12px] text-ink-3">{d.members.map((m) => m.name).join('、')}</span>}
-            {d?.kind === 'group' && d.members.find((m) => m.staffId === me)?.role !== 'owner' && (
-              <Button size="sm" variant="ghost" onClick={() => setLeaving(true)} data-testid="im-leave">
-                退出群聊
+            {d?.kind === 'group' && (
+              <Button size="sm" variant="ghost" icon={<Settings2 className="size-4" />} onClick={() => setSettings(true)} data-testid="im-settings">
+                群设置
               </Button>
             )}
           </div>
+          {d?.notice && (
+            <button
+              type="button"
+              className="tap flex items-start gap-2 border-b border-line bg-yuzu-tint px-3 py-2 text-left text-[13px] text-ink-2"
+              onClick={() => setSettings(true)}
+              data-testid="im-notice"
+            >
+              <Megaphone className="mt-0.5 size-4 shrink-0 text-ink-3" />
+              <span className="line-clamp-2 min-w-0 flex-1 whitespace-pre-wrap">{d.notice.text}</span>
+              <span className="shrink-0 text-[12px] text-ink-3">{d.notice.byName}</span>
+            </button>
+          )}
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3" data-testid="im-messages">
             {detail.isError && !d ? (
               <LoadFailed title="会话没有取回来" onRetry={() => detail.refetch()} retrying={detail.isFetching} />
@@ -597,84 +614,90 @@ function ImChatPage({ id }: { id: number }) {
               </>
             )}
           </div>
-          <div className="relative border-t border-line p-2">
-            {candidates.length > 0 && (
-              <ul className="absolute right-2 bottom-full left-2 mb-1 max-h-48 overflow-y-auto rounded-md border border-line bg-card shadow-card" data-testid="im-at-list">
-                {candidates.map((m) => (
-                  <li key={m.id}>
-                    <button type="button" onClick={() => pick(m)} className="tap relative flex w-full items-center gap-2 px-3 py-2 text-left text-[14px]" data-testid={`im-at-${m.id}`}>
-                      <AtSign className="size-4 text-ink-3" />
-                      {m.name}
+          {d?.dissolved ? (
+            <p className="border-t border-line p-3 text-center text-[13px] text-ink-3" data-testid="im-dissolved">
+              这个群已经解散，只能看历史消息
+            </p>
+          ) : (
+            <div className="relative border-t border-line p-2">
+              {candidates.length > 0 && (
+                <ul className="absolute right-2 bottom-full left-2 mb-1 max-h-48 overflow-y-auto rounded-md border border-line bg-card shadow-card" data-testid="im-at-list">
+                  {candidates.map((m) => (
+                    <li key={m.id}>
+                      <button type="button" onClick={() => pick(m)} className="tap relative flex w-full items-center gap-2 px-3 py-2 text-left text-[14px]" data-testid={`im-at-${m.id}`}>
+                        <AtSign className="size-4 text-ink-3" />
+                        {m.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {showEmoji && (
+                <div className="mb-2 grid grid-cols-8 gap-1" data-testid="im-emoji">
+                  {EMOJI.map((e) => (
+                    <button key={e} type="button" className="tap relative rounded-md py-1 text-[20px] hover:bg-paper-2" onClick={() => setText((t) => t + e)}>
+                      {e}
                     </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {showEmoji && (
-              <div className="mb-2 grid grid-cols-8 gap-1" data-testid="im-emoji">
-                {EMOJI.map((e) => (
-                  <button key={e} type="button" className="tap relative rounded-md py-1 text-[20px] hover:bg-paper-2" onClick={() => setText((t) => t + e)}>
-                    {e}
-                  </button>
-                ))}
-              </div>
-            )}
-            <Textarea
-              value={text}
-              maxLength={IM_TEXT_MAX}
-              rows={1}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  sendText();
-                }
-              }}
-              placeholder={d?.kind === 'group' ? '说点什么，输入 @ 提醒同事' : '说点什么'}
-              className="max-h-32 min-h-10 w-full resize-none"
-              aria-label="消息"
-              data-testid="im-input"
-            />
-            <div className="mt-1 flex items-center gap-1">
-              <Button size="sm" variant="ghost" icon={<Smile className="size-5" />} aria-label="表情" onClick={() => setShowEmoji((v) => !v)} />
-              <Button size="sm" variant="ghost" icon={<ImagePlus className="size-5" />} aria-label="发图片" disabled={uploading} onClick={() => imageInput.current?.click()} />
-              <Button size="sm" variant="ghost" icon={<Paperclip className="size-5" />} aria-label="发文件" disabled={uploading} onClick={() => fileInput.current?.click()} />
+                  ))}
+                </div>
+              )}
+              <Textarea
+                value={text}
+                maxLength={IM_TEXT_MAX}
+                rows={1}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    sendText();
+                  }
+                }}
+                placeholder={d?.kind === 'group' ? '说点什么，输入 @ 提醒同事' : '说点什么'}
+                className="max-h-32 min-h-10 w-full resize-none"
+                aria-label="消息"
+                data-testid="im-input"
+              />
+              <div className="mt-1 flex items-center gap-1">
+                <Button size="sm" variant="ghost" icon={<Smile className="size-5" />} aria-label="表情" onClick={() => setShowEmoji((v) => !v)} />
+                <Button size="sm" variant="ghost" icon={<ImagePlus className="size-5" />} aria-label="发图片" disabled={uploading} onClick={() => imageInput.current?.click()} />
+                <Button size="sm" variant="ghost" icon={<Paperclip className="size-5" />} aria-label="发文件" disabled={uploading} onClick={() => fileInput.current?.click()} />
 
-              <Button className="ml-auto" icon={<SendHorizontal className="size-4" />} disabled={!text.trim() || !me} onClick={sendText} data-testid="im-send">
-                发送
-              </Button>
+                <Button className="ml-auto" icon={<SendHorizontal className="size-4" />} disabled={!text.trim() || !me} onClick={sendText} data-testid="im-send">
+                  发送
+                </Button>
+              </div>
+              <input
+                ref={imageInput}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                hidden
+                data-testid="im-image-input"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) void sendFile(f, 'image');
+                }}
+              />
+              <input
+                ref={fileInput}
+                type="file"
+                hidden
+                data-testid="im-file-input"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) void sendFile(f, 'file');
+                }}
+              />
             </div>
-            <input
-              ref={imageInput}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              hidden
-              data-testid="im-image-input"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.target.value = '';
-                if (f) void sendFile(f, 'image');
-              }}
-            />
-            <input
-              ref={fileInput}
-              type="file"
-              hidden
-              data-testid="im-file-input"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.target.value = '';
-                if (f) void sendFile(f, 'file');
-              }}
-            />
-          </div>
+          )}
         </Card>
       </div>
       <Dialog
         open={leaving}
         onClose={() => setLeaving(false)}
         title="退出群聊"
-        description="退出以后看不到这个群的消息，群里会显示你退出了；要回来请群主再拉你（OA-16）"
+        description="退出以后看不到这个群的消息，群里会显示你退出了；要回来请群主或管理员再拉你"
         footer={
           <>
             <Button variant="secondary" size="lg" onClick={() => setLeaving(false)}>
@@ -689,6 +712,20 @@ function ImChatPage({ id }: { id: number }) {
         <p className="text-[14px] text-ink-2">确定退出「{d?.title}」吗？</p>
       </Dialog>
       <ReceiptDialog messageId={receiptOf} detail={d} reads={reads} onClose={() => setReceiptOf(null)} />
+      {d?.kind === 'group' && (
+        <GroupSettingsDialog
+          open={settings}
+          detail={d}
+          me={me}
+          onClose={() => setSettings(false)}
+          onChanged={(next) => qc.setQueryData(['oa', 'im', 'conv', id], next)}
+          onRefresh={() => void detail.refetch()}
+          onLeave={() => {
+            setSettings(false);
+            setLeaving(true);
+          }}
+        />
+      )}
     </>
   );
 }
