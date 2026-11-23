@@ -28,6 +28,7 @@ import { readXlsx } from '../src/server/lib/xlsx-read';
 import { minutesOf, parsePriceCatalog, roomNumbersOf, windowOf, yuanToCents } from '../src/server/modules/price-catalog/parse';
 import { itemCategoryKey, itemCategoryTabs } from '../src/shared/catalog';
 import type { Catalog } from '../src/shared/types';
+import type { DiningMenu } from '../src/shared/dining';
 import { api, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -1400,6 +1401,19 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
       ],
     });
     expect(catalog.items.find((i) => i.name === '泰式私汤药浴(女宾)')).toMatchObject({ gender: 'female', catalogCategory: { code: 'massage.08', name: '助浴' } });
+
+    // 第三批：点单页的菜单带「餐段 → 菜品分类」；2 楼零点两道待定价的不在菜单里（不能下单）
+    const menu = (await api(ctx.app, ctx.owner, 'GET', '/api/dining/menu')).body as DiningMenu;
+    const fromCatalog = menu.dishes.filter((d) => d.catalogCategory);
+    expect(fromCatalog.map((d) => `${d.catalogCategory!.group}/${d.catalogCategory!.name}/${d.name}`).sort()).toEqual(
+      ['早餐/生滚粥/生滚牛肉粥', '早餐/生滚粥/皮蛋瘦肉粥', '午餐/中式零点/玻璃脆皮妙龄乳鸽', '晚餐/中式零点/蚝皇扣鲍鱼'].sort(),
+    );
+    expect(fromCatalog.every((d) => d.outlet === 'restaurant')).toBe(true);
+    // 午餐、晚餐都有「中式零点」：编码不同，分开切换
+    const lunch = fromCatalog.find((d) => d.name === '玻璃脆皮妙龄乳鸽')!;
+    const dinner = fromCatalog.find((d) => d.name === '蚝皇扣鲍鱼')!;
+    expect(itemCategoryKey(lunch)).not.toBe(itemCategoryKey(dinner));
+    expect(itemCategoryTabs(fromCatalog).map((t) => t.label)).toEqual(['生滚粥', '午餐 · 中式零点', '晚餐 · 中式零点']);
 
     // 前台挂一张门票：按价目表的价
     await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'K', from: 1, to: 2, width: 3, zone: 'male' });
