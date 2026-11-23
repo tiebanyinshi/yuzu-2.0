@@ -56,6 +56,11 @@ export function DirectoryPage() {
     try {
       const r = await api.post<{ id: number; created: boolean }>('/api/oa/im/dept-groups', { deptKey: dept.key });
       if (r.created) toast({ tone: 'success', title: `「${dept.name}群」建好了`, body: '本部门的同事已经自动加入' });
+      if (r.created && !(d?.people.find((p) => p.staffId === me)?.department === dept.key)) {
+        // 不是本部门的人建的：自己不在群里，不跳过去
+        void qc.invalidateQueries({ queryKey: KEY });
+        return;
+      }
       void qc.invalidateQueries({ queryKey: KEY });
       void navigate(`/oa/im/${r.id}`);
     } catch (e) {
@@ -101,7 +106,8 @@ export function DirectoryPage() {
     const people = byDept.get(dept.key) ?? [];
     const children = d!.departments.filter((x) => x.parentKey === dept.key);
     const expanded = open.has(dept.key);
-    const canGroup = !!dept.group?.id || dept.canCreateGroup;
+    // 部门群：我在群里的能打开；还没建的、我能建的能建（建好的不在群里不显示：要进群请群主、管理员拉）
+    const canGroup = !!dept.group?.id || (!dept.group && dept.canCreateGroup);
     return (
       <div key={dept.key} className={depth ? 'border-l border-line pl-2' : ''} data-testid={`dir-dept-${dept.key}`}>
         <div className="flex items-center gap-2 py-2">

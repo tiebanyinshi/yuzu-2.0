@@ -91,9 +91,9 @@ describe('OA-16 部门群', () => {
     expect(d.members.find((m) => m.staffId === e.lead!.id)?.role).toBe('owner');
     const again = await api<{ id: number; created: boolean }>(ctx.app, e.lead!.cookie, 'POST', '/api/oa/im/dept-groups', { deptKey: 'eng' });
     expect(again.body).toEqual({ id: dg, created: false });
-    // 管组织架构的人（总裁，不是本部门的）点：拉他进群再打开
-    const own = await api<{ id: number; created: boolean }>(ctx.app, ctx.owner, 'POST', '/api/oa/im/dept-groups', { deptKey: 'eng' });
-    expect(own.body).toEqual({ id: dg, created: false });
+    // 管组织架构的人（总裁，不是本部门的）点：不靠身份进群（Codex 安全审查 3deff8a），要进群请群主、管理员拉
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/oa/im/dept-groups', { deptKey: 'eng' })).status).toBe(403);
+    expect((await api<Directory>(ctx.app, ctx.owner, 'GET', '/api/oa/directory')).body.departments.find((x) => x.key === 'eng')?.group).toEqual({ id: null });
     expect((await api<Directory>(ctx.app, e.a!.cookie, 'GET', '/api/oa/directory')).body.departments.find((x) => x.key === 'eng')?.group).toEqual({ id: dg });
   });
 
@@ -414,5 +414,18 @@ describe('OA-16 部门群的边界', () => {
     // 后台核实以后照常能管
     await ctx.sql`UPDATE staff SET position_chosen_at = NULL WHERE id = ${h3.id}`;
     expect((await api(ctx.app, h3.cookie, 'GET', '/api/oa/org')).status).toBe(200);
+  });
+
+  it('不是本部门的人建部门群：自己不进群，群主是本部门核实过的主管；身份没了也谈不上撤', async () => {
+    const kl = await hire('g_kl', 'kangmei.lead');
+    const k1 = await hire('g_k1x', 'kangmei.staff');
+    const r = await api<{ id: number; created: boolean }>(ctx.app, ctx.owner, 'POST', '/api/oa/im/dept-groups', { deptKey: 'kangmei' });
+    expect(r.status).toBe(201);
+    const d = (await detail(k1, r.body.id)).body;
+    expect(memberIds(d)).toEqual([kl.id, k1.id].sort((x, y) => x - y));
+    expect(d.members.find((m) => m.role === 'owner')?.staffId).toBe(kl.id);
+    expect(d.members.every((m) => m.source === 'dept')).toBe(true);
+    // 部门里没有在职员工（外联部的主管前面已经调走）：不建
+    expect(code(await api(ctx.app, ctx.owner, 'POST', '/api/oa/im/dept-groups', { deptKey: 'outreach' }))).toBe('DEPT_EMPTY');
   });
 });

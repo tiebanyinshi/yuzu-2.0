@@ -70,15 +70,6 @@ async function addMembers(tx: Tx, id: number, ids: readonly number[], source: Im
   return rows.map((r) => r.name);
 }
 
-/** 群里没有群主时让这个人接任（会话行已经锁着）；返回接没接 */
-async function ensureOwner(tx: Tx, id: number, staffId: number): Promise<boolean> {
-  const rows = await tx`
-    UPDATE oa_im_members SET role = 'owner' WHERE conversation_id = ${id} AND staff_id = ${staffId} AND left_at IS NULL
-      AND NOT EXISTS (SELECT 1 FROM oa_im_members WHERE conversation_id = ${id} AND left_at IS NULL AND role = 'owner')
-    RETURNING staff_id`;
-  return rows.length > 0;
-}
-
 async function memberCount(tx: Tx, id: number): Promise<number> {
   const [r] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_im_members WHERE conversation_id = ${id} AND left_at IS NULL`;
   return r!.n;
@@ -243,14 +234,11 @@ export function registerOaImGroupRoutes(app: FastifyInstance, { sql }: Deps) {
       // FOR UPDATE 会等在途的解散提交、再按解散后的样子重新判断：刚解散的群这里取不到，接着建新的（Codex 审查 fd91220）
       const [had] = await tx<{ id: number }[]>`SELECT id FROM oa_im_conversations WHERE dept_key = ${deptKey} AND dissolved_at IS NULL FOR UPDATE`;
       if (had) {
-        // 已经有了：我在群里就打开；不在（比如管组织架构的人不是本部门的）拉我进去，再打开
+        // 已经有了：我在群里就打开。不在的不拉进去（Codex 安全审查 3deff8a）：管组织架构、外部门的指定主管这种身份会变，
+        // 靠身份进的群在身份没了以后撤不干净；部门群只有本部门同步进来的人和群主、管理员拉进来的人
         const id = Number(had.id);
-        const added = await addMembers(tx, id, [me.id], 'manual');
-        // 部门群里的人都走光了、没有群主（Codex 审查 1adec4f）：能建部门群的人点进来就接任群主
-        const owner = await ensureOwner(tx, id, me.id);
-        if (added.length && (await memberCount(tx, id)) > IM_GROUP_MAX) throw unprocessable('GROUP_TOO_LARGE', `一个群最多 ${IM_GROUP_MAX} 人`);
-        if (added.length) await insertMessage(tx, id, me.id, { kind: 'system', body: `${me.displayName}加入了群聊` });
-        if (owner) await insertMessage(tx, id, me.id, { kind: 'system', body: `${me.displayName}成为群主` });
+        const [mine] = await tx`SELECT 1 FROM oa_im_members WHERE conversation_id = ${id} AND staff_id = ${me.id} AND left_at IS NULL`;
+        if (!mine) throw forbidden('这个部门群已经建好了，你不在群里；要进群请群主或管理员拉你');
         return { id, created: false };
       }
       await assertGroupQuota(tx, me.id);
@@ -261,16 +249,19 @@ export function registerOaImGroupRoutes(app: FastifyInstance, { sql }: Deps) {
           AND CASE WHEN s.position = 'president' THEN 'company' WHEN s.position = 'gmo' THEN 'gmo' ELSE split_part(s.position, '.', 1) END = ${deptKey}
         ORDER BY s.id`;
       const deptIds = rows.map((r) => Number(r.id));
-      if (deptIds.length + (deptIds.includes(me.id) ? 0 : 1) > IM_GROUP_MAX) throw unprocessable('GROUP_TOO_LARGE', `一个群最多 ${IM_GROUP_MAX} 人`);
+      if (!deptIds.length) throw unprocessable('DEPT_EMPTY', '这个部门现在没有在职员工，等有人了再建部门群');
+      if (deptIds.length > IM_GROUP_MAX) throw unprocessable('GROUP_TOO_LARGE', `一个群最多 ${IM_GROUP_MAX} 人`);
+      // 群里只有本部门的人（建群的人不是本部门的不进群，见上）；群主：建群的人在本部门就是他，否则本部门核实过的主管，再否则最早的员工
+      const head = (await verifiedHeads(tx)).get(dept.key);
+      const ownerId = deptIds.includes(me.id) ? me.id : head !== undefined && deptIds.includes(head) ? head : deptIds[0]!;
       const name = `${dept.name}群`.slice(0, IM_GROUP_NAME_MAX);
       const [c] = await tx<{ id: number }[]>`
         INSERT INTO oa_im_conversations (kind, name, created_by, dept_key) VALUES ('group', ${name}, ${me.id}, ${deptKey}) RETURNING id`;
       const convId = Number(c!.id);
       await tx`
         INSERT INTO oa_im_members (conversation_id, staff_id, role, source)
-        SELECT ${convId}, x, CASE WHEN x = ${me.id} THEN 'owner' ELSE 'member' END,
-               CASE WHEN x = ANY(${deptIds}::bigint[]) THEN 'dept' ELSE 'manual' END
-        FROM unnest(${[...new Set([me.id, ...deptIds])]}::bigint[]) AS t(x)`;
+        SELECT ${convId}, x, CASE WHEN x = ${ownerId} THEN 'owner' ELSE 'member' END, 'dept'
+        FROM unnest(${deptIds}::bigint[]) AS t(x)`;
       await insertMessage(tx, convId, me.id, { kind: 'system', body: `${me.displayName}创建了部门群「${name}」，本部门的同事已自动加入` });
       await writeAudit(tx, { staffId: me.id, action: 'oa_im_dept_group_created', targetType: 'oa_im_conversation', targetId: convId, detail: { deptKey }, ip: req.ip });
       return { id: convId, created: true };
