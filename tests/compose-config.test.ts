@@ -85,6 +85,12 @@ describe.skipIf(!hasCompose && !process.env.CI)('compose.yaml：已有实例的 
     expect(Object.fromEntries(keys.map((k) => [k, on[k]]))).toEqual(set);
   });
 
+  it('工资表原件的加密密钥（OA-17）传进容器；不设时为空、不能上传工资表 Excel', () => {
+    expect(app({}).environment.PAYROLL_FILE_KEY ?? '').toBe('');
+    const key = 'a'.repeat(64);
+    expect(app({ PAYROLL_FILE_KEY: key }).environment.PAYROLL_FILE_KEY).toBe(key);
+  });
+
   it('COOKIE_SECURE、TRUST_PROXY 传进容器；不设时不加 Secure、不信任代理', () => {
     const off = app({}).environment;
     expect([off.COOKIE_SECURE, off.TRUST_PROXY ?? '']).toEqual(['false', '']);

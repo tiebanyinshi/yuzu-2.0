@@ -44,6 +44,11 @@ export interface AppConfig {
    * 平板菜单就换上；没放照旧用 Average Sans。字体文件不进 Git、不进镜像（Docker 部署挂 compose.yaml 旁边的 ./brand-fonts，只读）
    */
   brandFontPath: string;
+  /**
+   * 工资表原件的加密密钥（PAYROLL_FILE_KEY，OA-17，docs/OA.md 第 20 节）：至少 32 个字符；没配为空——正式、试用环境不能上传工资表 Excel，
+   * 开发、测试用固定的开发密钥
+   */
+  payrollFileKey: string | null;
 }
 
 /**
@@ -189,6 +194,13 @@ export function resolveInstance(env: AppEnv, raw: string | undefined): InstanceK
   return value as InstanceKind;
 }
 
+/** 工资表原件的加密密钥：设了就要够长（短了宁可起不来，也不用弱密钥加密工资表） */
+export function loadPayrollFileKey(env: NodeJS.ProcessEnv): string | null {
+  const key = env.PAYROLL_FILE_KEY?.trim() || null;
+  if (key && key.length < 32) throw new Error('PAYROLL_FILE_KEY 至少 32 个字符（可以用 openssl rand -hex 32 生成）');
+  return key;
+}
+
 export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   if (!overrides.databaseUrl) readEnvFile();
   const env = overrides.env ?? ((process.env.APP_ENV ?? 'development') as AppEnv);
@@ -226,6 +238,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     integrations: overrides.integrations ?? loadIntegrationsConfig(process.env, env, instance),
     protection: overrides.protection ?? loadProtectionConfig(process.env, env),
     brandFontPath: resolvePath(process.env.BRAND_FONT_PATH?.trim() || 'brand-fonts'),
+    payrollFileKey: loadPayrollFileKey(process.env),
     ...overrides,
   };
 }
