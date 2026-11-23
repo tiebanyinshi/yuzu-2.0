@@ -369,6 +369,25 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
     expect(code(await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/slips/${emp.leftBefore!.id}/add`, {}))).toBe('NOT_ON_ROSTER');
   });
 
+  it('有公式却没存结果的单元格整份拒绝；换过密钥后重传同一份原件另存一份、下载得了', async () => {
+    const b = (await api<PayrollBatchSummary[]>(ctx.app, hr(), 'GET', '/api/oa/payroll/batches')).body.find((x) => x.title === '大小写')!;
+    const withFormula = buildWorkbook([
+      { name: '工资表', widths: [], rows: [{ cells: ['标题'] }, { cells: header() }, { cells: ['E001', emp.a!.name, '', ...std.fields.slice(0, 9).map(() => null), { v: null, f: '5000+100' }] }] },
+    ]).toString('base64');
+    const bad = await api(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import/preview`, { fileName: 'f.xlsx', xlsxBase64: withFormula });
+    expect(code(bad)).toBe('IMPORT_FILE_INVALID');
+    expect(JSON.stringify(bad.body)).toContain('M3');
+
+    const file = xlsx([['标题'], header(), ['E001', emp.a!.name, '', '100', ...std.fields.slice(1).map(() => null)]]);
+    const first = (await api<PayrollImportResult>(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import`, { fileName: 'k.xlsx', xlsxBase64: file })).body;
+    await ctx.sql`UPDATE oa_payroll_files SET key_id = '0000000000000000' WHERE id = ${first.fileId}`;
+    const again = (await api<PayrollImportResult>(ctx.app, hr(), 'POST', `/api/oa/payroll/batches/${b.id}/import`, { fileName: 'k.xlsx', xlsxBase64: file })).body;
+    expect(again.fileId).not.toBe(first.fileId);
+    const dl = await ctx.app.inject({ method: 'GET', url: `/api/oa/payroll/batches/${b.id}/files/${again.fileId}`, headers: { cookie: hr() } });
+    expect(dl.statusCode).toBe(200);
+    expect(dl.rawPayload.equals(Buffer.from(file, 'base64'))).toBe(true);
+  });
+
   it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {
     const body = { month: '2026-12', title: '同时建', templateId: std.id };
     const [x, y] = await Promise.all([

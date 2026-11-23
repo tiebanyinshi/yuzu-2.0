@@ -41,6 +41,7 @@ import type { Actor, Deps } from '../../lib/context';
 import { attachment } from '../../lib/csv';
 import { conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
 import { readSheet, type Sheet } from '../../lib/sheet-read';
+import { readXlsx } from '../../lib/xlsx-read';
 import { parse } from '../../lib/validate';
 import { buildWorkbook, colName, type WbSheet } from '../../lib/xlsx';
 import { NOT_EMPLOYEE_ROLES } from './org';
@@ -405,6 +406,20 @@ function sheetOf(d: PayrollBatchDetail): Buffer {
 
 const isHeader = (cells: string[]) => cells.includes('姓名') && cells.includes('工号');
 
+/**
+ * 读上传的工资表。有公式却没存计算结果的单元格整份拒绝（Codex 审查 940087b）：读出来会是空的，整张替换时就把原来的金额清掉了；
+ * 请先在 Excel 里重新计算、保存（Excel、WPS 保存时都会存结果）
+ */
+function readPayrollSheet(f: { xlsxBase64: string }): Sheet {
+  const sheet = readSheet(f, { findHeader: isHeader });
+  const first = readXlsx(Buffer.from(f.xlsxBase64, 'base64')).sheets[0];
+  for (const line of first?.rows.values() ?? [])
+    for (const c of line.values())
+      if (c.formula !== null && (c.value === null || c.value === ''))
+        throw unprocessable('IMPORT_FILE_INVALID', `${colName(c.col)}${c.row} 是公式、文件里没有算好的结果：请在 Excel 里重新计算（或打开后直接保存）再上传`);
+  return sheet;
+}
+
 interface ImportPlan extends PayrollImportPreview {
   sha256: string;
   /** 没有问题的行：人 → 值 */
@@ -655,7 +670,7 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
     const { id } = parse(BatchParam, req.params);
     const f = parse(FileInput, req.body);
     const b = await loadBatch(sql, id);
-    const sheet = readSheet(f, { findHeader: isHeader });
+    const sheet = readPayrollSheet(f);
     const { sha256: _s, good: _g, ...preview } = planImport(sheet, f.fileName, b.fields, await staffFor(sql, b.month));
     return preview;
   });
@@ -664,7 +679,7 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
     const { id } = parse(BatchParam, req.params);
     const f = parse(FileInput, req.body);
     if (!key) throw unprocessable('PAYROLL_KEY_MISSING', '服务器还没配工资表原件的加密密钥（PAYROLL_FILE_KEY），不能上传 Excel；请先在线编辑，或请管理员配好再传');
-    const sheet = readSheet(f, { findHeader: isHeader });
+    const sheet = readPayrollSheet(f);
     const original = Buffer.from(f.xlsxBase64, 'base64');
     const sealed = encryptFile(key, original);
     return sql.begin(async (tx) => {
@@ -672,8 +687,9 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
       const p = planImport(sheet, f.fileName, b.fields, await staffFor(tx, b.month));
       if (p.errorCount) throw unprocessable('IMPORT_HAS_ERRORS', `有 ${p.errorCount} 行不对，整份没有导入：请先预览、改好再传`);
       // 同一份文件原样重提：工资条照样整张替换（结果一样），原件不重复存
-      const [last] = await tx<{ id: number; sha256: string }[]>`SELECT id, sha256 FROM oa_payroll_files WHERE batch_id = ${id} ORDER BY id DESC LIMIT 1`;
-      let fileId = last && last.sha256 === p.sha256 ? Number(last.id) : 0;
+      // 摘要、密钥都一样才复用（换过密钥以后重传同一份，要用新密钥另存一份，原件才下载得了，Codex 审查 940087b）
+      const [last] = await tx<{ id: number; sha256: string; keyId: string }[]>`SELECT id, sha256, key_id FROM oa_payroll_files WHERE batch_id = ${id} ORDER BY id DESC LIMIT 1`;
+      let fileId = last && last.sha256 === p.sha256 && last.keyId === sealed.keyId ? Number(last.id) : 0;
       if (!fileId) {
         const [row] = await tx<{ id: number }[]>`
           INSERT INTO oa_payroll_files (batch_id, file_name, size, sha256, iv, tag, ciphertext, key_id, row_count, uploaded_by)
