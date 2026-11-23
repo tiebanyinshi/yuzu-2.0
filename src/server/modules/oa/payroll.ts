@@ -41,7 +41,6 @@ import type { Actor, Deps } from '../../lib/context';
 import { attachment } from '../../lib/csv';
 import { conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
 import { readSheet, type Sheet } from '../../lib/sheet-read';
-import { readXlsx } from '../../lib/xlsx-read';
 import { parse } from '../../lib/validate';
 import { buildWorkbook, colName, type WbSheet } from '../../lib/xlsx';
 import { NOT_EMPLOYEE_ROLES } from './org';
@@ -405,19 +404,26 @@ function sheetOf(d: PayrollBatchDetail): Buffer {
 }
 
 const isHeader = (cells: string[]) => cells.includes('姓名') && cells.includes('工号');
+const PAYROLL_XLSX_LIMITS = { maxTotal: 32 * 1024 * 1024, maxCells: (PAYROLL_MAX_ROWS + 20) * (PAYSLIP_MAX_FIELDS + 20) };
 
 /**
  * 读上传的工资表。有公式却没存计算结果的单元格整份拒绝（Codex 审查 940087b）：读出来会是空的，整张替换时就把原来的金额清掉了；
  * 请先在 Excel 里重新计算、保存（Excel、WPS 保存时都会存结果）
  */
 function readPayrollSheet(f: { xlsxBase64: string }): Sheet {
-  const sheet = readSheet(f, { findHeader: isHeader });
-  const first = readXlsx(Buffer.from(f.xlsxBase64, 'base64')).sheets[0];
-  for (const line of first?.rows.values() ?? [])
-    for (const c of line.values())
-      // 没有存结果时读出来是 null；算出空字符串（t="str" 配 <v></v>）是存了结果的，照常读（Codex 审查 2601251）
-      if (c.formula !== null && c.value === null) throw unprocessable('IMPORT_FILE_INVALID', `${colName(c.col)}${c.row} 是公式、文件里没有算好的结果：请在 Excel 里重新计算（或打开后直接保存）再上传`);
-  return sheet;
+  // 只解析一次，在同一份解析结果里查公式；工资表用更紧的上限（解压后 32 MiB、表头加 2000 行 × 60 列以内），
+  // 不让一份异常文件把整个服务的内存撑爆（Codex 安全审查 a205c7f）
+  return readSheet(f, {
+    findHeader: isHeader,
+    xlsxLimits: PAYROLL_XLSX_LIMITS,
+    onWorkbook: (book) => {
+      for (const line of book.sheets[0]?.rows.values() ?? [])
+        for (const c of line.values())
+          // 没有存结果时读出来是 null；算出空字符串（t="str" 配 <v></v>）是存了结果的，照常读（Codex 审查 2601251）
+          if (c.formula !== null && c.value === null)
+            throw unprocessable('IMPORT_FILE_INVALID', `${colName(c.col)}${c.row} 是公式、文件里没有算好的结果：请在 Excel 里重新计算（或打开后直接保存）再上传`);
+    },
+  });
 }
 
 interface ImportPlan extends PayrollImportPreview {

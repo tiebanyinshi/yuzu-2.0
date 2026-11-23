@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { parseCsvRecords, unclosedQuoteMessage, type CsvRecord } from '@shared/csv-read';
 import { unprocessable } from './errors';
 import { colName } from './xlsx';
-import { readXlsx, serialToDate, XlsxReadError } from './xlsx-read';
+import { readXlsx, serialToDate, XlsxReadError, type XlsxLimits, type XlsxWorkbook } from './xlsx-read';
 
 export interface Sheet {
   sha256: string;
@@ -29,6 +29,10 @@ export interface SheetOptions {
   /** 表头是哪一行：在前 headerScan 行（默认 10）里找第一行满足的；不给就是第一行有内容的 */
   findHeader?: (cells: string[]) => boolean;
   headerScan?: number;
+  /** Excel 的读表上限（不给用默认的） */
+  xlsxLimits?: XlsxLimits;
+  /** 拿到解析好的工作簿再看一眼（如核对公式有没有存结果），不用再解析一遍 */
+  onWorkbook?: (book: XlsxWorkbook) => void;
 }
 
 /** 按 RFC 4180 读 CSV（实现在 @shared/csv-read，页面预览与服务端共用）；引号没有配对时整份拒绝 */
@@ -60,11 +64,13 @@ export function readSheet(f: { csv?: string; xlsxBase64?: string }, options: str
   const buf = Buffer.from(f.xlsxBase64!, 'base64');
   let book;
   try {
-    book = readXlsx(buf);
+    book = readXlsx(buf, opts.xlsxLimits);
   } catch (error) {
     if (error instanceof XlsxReadError) throw unprocessable('IMPORT_FILE_INVALID', error.message);
     throw error;
   }
+  opts.onWorkbook?.(book);
+
   const sheet = book.sheets[0];
   if (!sheet) throw unprocessable('IMPORT_EMPTY', 'Excel 文件里没有工作表');
   const rowNos = [...sheet.rows.keys()].sort((a, b) => a - b);

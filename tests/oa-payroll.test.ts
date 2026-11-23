@@ -400,6 +400,13 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
     expect(dl.rawPayload.equals(Buffer.from(file, 'base64'))).toBe(true);
   });
 
+  it('读表的上限收得更紧：单元格、解压后大小超了直接拒绝（只解析一次，Codex 安全审查 a205c7f）', () => {
+    const buf = Buffer.from(xlsx([['标题'], header(), ['E001', 'x', '', ...std.fields.map(() => '1')]]), 'base64');
+    expect(() => readXlsx(buf, { maxCells: 5 })).toThrow(/单元格太多/);
+    expect(() => readXlsx(buf, { maxTotal: 100 })).toThrow(/解压后太大/);
+    expect(readXlsx(buf).sheets[0]!.rows.size).toBe(3);
+  });
+
   it('两个人同时新建同月同标题：都打开同一张，不报服务器错误', async () => {
     const body = { month: '2026-12', title: '同时建', templateId: std.id };
     const [x, y] = await Promise.all([

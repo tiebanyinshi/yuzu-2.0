@@ -14,7 +14,7 @@ const MAX_TOTAL = 256 * 1024 * 1024;
 
 export class XlsxReadError extends Error {}
 
-export function unzip(buf: Buffer): Map<string, Buffer> {
+export function unzip(buf: Buffer, maxTotal = MAX_TOTAL): Map<string, Buffer> {
   const sig = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
   const end = buf.lastIndexOf(sig);
   if (end < 0 || end + 22 > buf.length) throw new XlsxReadError('不是有效的 Excel 文件（.xlsx）');
@@ -46,7 +46,7 @@ export function unzip(buf: Buffer): Map<string, Buffer> {
     else if (method === 8) data = inflateRawSync(body, { maxOutputLength: MAX_ENTRY });
     else throw new XlsxReadError(`不支持的压缩方式（${method}）`);
     total += data.length;
-    if (total > MAX_TOTAL) throw new XlsxReadError('Excel 文件解压后太大');
+    if (total > maxTotal) throw new XlsxReadError('Excel 文件解压后太大');
     out.set(name, data);
   }
   return out;
@@ -237,8 +237,15 @@ function rels(files: Map<string, Buffer>, partPath: string): Map<string, { targe
 /** 单元格最多多少个（防止异常文件把内存撑爆） */
 const MAX_CELLS = 500_000;
 
-export function readXlsx(buf: Buffer): XlsxWorkbook {
-  const files = unzip(buf);
+/** 读表的上限：默认整份解压后 256 MiB、50 万个单元格；用途单一的导入（如工资表）可以收得更紧 */
+export interface XlsxLimits {
+  maxTotal?: number;
+  maxCells?: number;
+}
+
+export function readXlsx(buf: Buffer, limits: XlsxLimits = {}): XlsxWorkbook {
+  const files = unzip(buf, limits.maxTotal ?? MAX_TOTAL);
+  const maxCells = limits.maxCells ?? MAX_CELLS;
   const wbPath = 'xl/workbook.xml';
   const wbRaw = files.get(wbPath);
   if (!wbRaw) throw new XlsxReadError('不是 Excel 工作簿（缺 xl/workbook.xml）');
@@ -297,7 +304,7 @@ export function readXlsx(buf: Buffer): XlsxWorkbook {
         const formula = f && f.text.trim() !== '' ? f.text.trim() : null;
         if (value === null && formula === null) continue;
         if (value !== null && type === 'string' && value === '' && formula === null) continue;
-        if (++cells > MAX_CELLS) throw new XlsxReadError('Excel 文件的单元格太多');
+        if (++cells > maxCells) throw new XlsxReadError('Excel 文件的单元格太多');
         let line = sheet.rows.get(pos.row);
         if (!line) sheet.rows.set(pos.row, (line = new Map()));
         line.set(pos.col, { row: pos.row, col: pos.col, type, value, formula });
