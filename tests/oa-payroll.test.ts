@@ -458,6 +458,9 @@ describe('OA-17 工资条：审查补的几处（Codex 审查 3b5a8bf）', () =>
     expect(() => parseXml('<a b="1>')).toThrow();
     // 嵌套几千层：解析时就拒绝
     expect(() => parseXml(`${'<si><t>x</t>'.repeat(2000)}${'</si>'.repeat(2000)}`)).toThrow(/嵌套太深/);
+    // 一个元素最多 64 个属性：几十万个不同名的属性不建（复核 139c8f5）
+    expect(() => parseXml(`<row ${Array.from({ length: 65 }, (_, k) => `a${k}="1"`).join(' ')}/>`)).toThrow(/属性太多/);
+    expect(parseXml(`<row ${Array.from({ length: 64 }, (_, k) => `a${k}="1"`).join(' ')}/>`).children[0]!.attrs.a63).toBe('1');
     expect(parseXml(`${'<a>'.repeat(30)}${'</a>'.repeat(30)}`).children).toHaveLength(1);
   });
 

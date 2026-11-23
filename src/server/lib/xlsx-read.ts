@@ -84,9 +84,13 @@ const isSpace = (c: string | undefined) => c === ' ' || c === '\t' || c === '\n'
  * 读一个标签里的属性：从左往右一次扫完（线性），名字后面不是「=」的跳过、引号没配对的拒绝。
  * 原来用不锚定的正则逐个找「名字 = 值」，没有等号的长片段会每个字符重试一遍（二次方耗时），几百字节的文件就能卡住服务（Codex 审查 8e1514e）
  */
+/** 一个元素最多几个属性（正常的 Excel 不过十来个）：超了拒绝，不建几十万个键（复核 139c8f5 的 P2） */
+const XML_MAX_ATTRS = 64;
+
 function readAttrs(tag: string, start: number, out: Record<string, string>) {
   let j = start;
   const n = tag.length;
+  let count = 0;
   while (j < n) {
     while (j < n && isSpace(tag[j])) j++;
     const nameStart = j;
@@ -100,7 +104,10 @@ function readAttrs(tag: string, start: number, out: Record<string, string>) {
     if (q !== '"' && q !== "'") continue;
     const end = tag.indexOf(q, j + 1);
     if (end < 0) throw new XlsxReadError('Excel 文件里的 XML 不完整');
-    if (name) out[name] = decode(tag.slice(j + 1, end));
+    if (name) {
+      if (++count > XML_MAX_ATTRS) throw new XlsxReadError('Excel 文件里的 XML 一个元素的属性太多，请另存后再传');
+      out[name] = decode(tag.slice(j + 1, end));
+    }
     j = end + 1;
   }
 }

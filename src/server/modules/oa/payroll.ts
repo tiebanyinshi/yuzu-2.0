@@ -442,8 +442,9 @@ const PAYROLL_XLSX_LIMITS = {
   // 坐标也限住：读表按行号、列号铺成数组，稀疏的大坐标会把内存撑爆（Codex 审查 6190bd4）
   maxRow: PAYROLL_MAX_ROWS + 20,
   maxCols: PAYSLIP_MAX_FIELDS + 20,
-  // 解析前先数结构（元素 + 属性），空行、无关属性都算（Codex 安全审查 503f199、f6c14e7）；只读第一张表
-  maxNodes: 800_000,
+  // 解析前先数结构（元素 + 属性），空行、无关属性都算（Codex 安全审查 503f199、f6c14e7）；只读第一张表。
+  // 30 万：2000 行 × 60 列、带 WPS 常见行属性的正常工资表约 19 万（复核 139c8f5：80 万时最坏情况一次要阻塞约 1.8 秒）
+  maxNodes: 300_000,
   maxSheets: 1,
 };
 
