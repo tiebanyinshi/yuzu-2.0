@@ -221,5 +221,9 @@ describe('OA-14 即时通讯', () => {
     await ctx.sql`UPDATE staff SET role = 'designer' WHERE id = ${emp.a!.id}`;
     expect((await own()).statusCode).toBe(404);
     expect((await ctx.app.inject({ method: 'GET', url: `/api/oa/attachments/${picId}/thumb`, headers: { cookie: emp.a!.cookie } })).statusCode).toBe(404);
+    // 改成专用账号以后，原来的 @ 通知也不再给出（通知列表与未读数都不算）
+    expect((await ctx.sql`SELECT 1 FROM oa_notifications WHERE staff_id = ${emp.a!.id} AND kind = 'im_message'`).length).toBeGreaterThan(0);
+    const page = (await api<{ items: { kind: string }[] }>(ctx.app, emp.a!.cookie, 'GET', '/api/oa/notifications')).body;
+    expect(page.items.some((n) => n.kind === 'im_message')).toBe(false);
   });
 });

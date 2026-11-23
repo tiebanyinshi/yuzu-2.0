@@ -35,7 +35,7 @@ import { hashRequest } from '../../lib/idempotency';
 import { idParam, parse } from '../../lib/validate';
 import { attachmentsOf, bindAttachments, registerAttachmentRef } from './attachments';
 import { erpOpAbandoned } from '../erp-ops';
-import { notify } from './notifications';
+import { notify, registerNotificationVisibility } from './notifications';
 import { NOT_EMPLOYEE_ROLES } from './org';
 
 /**
@@ -69,6 +69,17 @@ async function memberOf(db: Db, conversationId: number, staffId: number): Promis
     WHERE c.id = ${conversationId} AND m.staff_id = ${staffId} AND m.left_at IS NULL`;
   return c ?? null;
 }
+
+// @ 通知：只给现在还在那个会话里、还能用即时通讯的人看（通知列表与未读数都按这个筛）
+registerNotificationVisibility(
+  'im_message',
+  (db, staffId) => db`
+  (oa_notifications.ref_type = 'oa_im_message' AND EXISTS (
+     SELECT 1 FROM oa_im_messages msg
+     JOIN oa_im_members m ON m.conversation_id = msg.conversation_id AND m.staff_id = ${staffId} AND m.left_at IS NULL
+     JOIN staff s ON s.id = m.staff_id LEFT JOIN staff_profiles p ON p.staff_id = s.id
+     WHERE msg.id = oa_notifications.ref_id AND ${onDuty(db)}))`,
+);
 
 // 聊天文件：只有这个会话现在的成员、而且现在还能用即时通讯（在职员工，不是专用账号）才看得到；撤回了的不再给
 registerAttachmentRef(
@@ -294,10 +305,16 @@ async function send(tx: Tx, actor: Actor, conversationId: number, input: z.infer
     hash,
   });
   if (input.kind !== 'text') await bindAttachments(tx, [input.attachmentId!], actor, { type: REF, id });
-  // 被 @ 的人：站内通知（强提醒）；同一个会话没读的只留一条
-  const targets = mentionAll
-    ? (await tx<{ staffId: number }[]>`SELECT staff_id FROM oa_im_members WHERE conversation_id = ${conversationId} AND left_at IS NULL AND staff_id <> ${actor.id}`).map((r) => Number(r.staffId))
-    : mentions;
+  // 被 @ 的人：站内通知（强提醒）；只发给现在还能用即时通讯的成员（改成专用账号、离职的不发，Codex 安全审查 93437a4）
+  const targets =
+    mentionAll || mentions.length
+      ? (
+          await tx<{ staffId: number }[]>`
+            SELECT m.staff_id FROM oa_im_members m JOIN staff s ON s.id = m.staff_id LEFT JOIN staff_profiles p ON p.staff_id = s.id
+            WHERE m.conversation_id = ${conversationId} AND m.left_at IS NULL AND m.staff_id <> ${actor.id} AND ${onDuty(tx)}
+              ${mentionAll ? tx`` : tx`AND m.staff_id IN ${tx(mentions)}`}`
+        ).map((r) => Number(r.staffId))
+      : [];
   if (targets.length) {
     await notify(tx, targets, {
       kind: 'im_message',
