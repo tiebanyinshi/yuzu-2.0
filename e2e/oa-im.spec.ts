@@ -1,5 +1,5 @@
 // OA-14 浏览器验收：两位新员工在「办公 → 消息」里单聊：A 发起、发一句；B 首页「消息」有未读角标，点开看到，回一句；
-// A 不刷新页面几秒内看到回复（短轮询）；A 撤回刚发的一句，两边都显示撤回（docs/OA.md 第 17 节）。
+// A 不刷新页面几秒内看到回复（短轮询）与「已读」（OA-15）；A 撤回刚发的一句，两边都显示撤回（docs/OA.md 第 17 节）。
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026。每次新开两个店员账号。
 import { expect, test, type Browser, type Page } from '@playwright/test';
 
@@ -36,6 +36,8 @@ test.describe('OA-14 即时通讯', () => {
     await a.page.getByTestId('im-send').click();
     await expect(a.page.getByTestId('im-messages')).toContainText('你好，下午换班吗 😀');
     await expect(a.page.getByTestId('im-pending')).toHaveCount(0);
+    // OA-15 已读回执：对方还没看是「未读」
+    await expect(a.page.locator('[data-testid^="im-receipt-"]').first()).toHaveText('未读');
 
     // B：首页「消息」有未读，点开看到，回一句
     await b.page.goto('/oa');
@@ -43,6 +45,8 @@ test.describe('OA-14 即时通讯', () => {
     await b.page.getByTestId('oa-tile-im').click();
     await b.page.getByText(a.name).click();
     await expect(b.page.getByTestId('im-messages')).toContainText('你好，下午换班吗 😀');
+    // A 不刷新，几秒内变成「已读」
+    await expect(a.page.locator('[data-testid^="im-receipt-"]').first()).toHaveText('已读', { timeout: 10_000 });
     await b.page.getByTestId('im-input').fill('可以');
     await b.page.getByTestId('im-input').press('Enter');
 

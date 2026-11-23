@@ -23,6 +23,8 @@ import {
   type ImMessageKind,
   type ImMessagePage,
   type ImPollResult,
+  type ImRead,
+  type ImSync,
   type ImRole,
   type ImSent,
 } from '@shared/oa-im';
@@ -70,15 +72,18 @@ async function memberOf(db: Db, conversationId: number, staffId: number): Promis
   return c ?? null;
 }
 
-// @ 通知：只给现在还在那个会话里、还能用即时通讯的人看（通知列表与未读数都按这个筛）
+// 即时通讯的通知（@ 提醒挂在那一条消息上，OA-15 的新消息通知挂在会话上）：只给现在还在那个会话里、还能用即时通讯的人看
+// （通知列表与未读数都按这个筛）
 registerNotificationVisibility(
   'im_message',
   (db, staffId) => db`
-  (oa_notifications.ref_type = 'oa_im_message' AND EXISTS (
-     SELECT 1 FROM oa_im_messages msg
-     JOIN oa_im_members m ON m.conversation_id = msg.conversation_id AND m.staff_id = ${staffId} AND m.left_at IS NULL
+  EXISTS (
+     SELECT 1 FROM oa_im_members m
      JOIN staff s ON s.id = m.staff_id LEFT JOIN staff_profiles p ON p.staff_id = s.id
-     WHERE msg.id = oa_notifications.ref_id AND ${onDuty(db)}))`,
+     WHERE m.staff_id = ${staffId} AND m.left_at IS NULL AND ${onDuty(db)}
+       AND m.conversation_id = CASE oa_notifications.ref_type
+         WHEN 'oa_im_message' THEN (SELECT conversation_id FROM oa_im_messages WHERE id = oa_notifications.ref_id)
+         WHEN 'oa_im_conversation' THEN oa_notifications.ref_id END)`,
 );
 
 // 聊天文件：只有这个会话现在的成员、而且现在还能用即时通讯（在职员工，不是专用账号）才看得到；撤回了的不再给
@@ -305,6 +310,16 @@ async function send(tx: Tx, actor: Actor, conversationId: number, input: z.infer
     hash,
   });
   if (input.kind !== 'text') await bindAttachments(tx, [input.attachmentId!], actor, { type: REF, id });
+  // OA-15 新消息通知：其余还能用即时通讯的成员各一条，同一个会话没读的只留一条（更新时间）；不抄正文（撤回也不留原文）。
+  // 一条语句写完（群最多 500 人，不逐人写）
+  await tx`
+    INSERT INTO oa_notifications (staff_id, kind, title, body, link, ref_type, ref_id)
+    SELECT m.staff_id, 'im_message', ${c.kind === 'group' ? `「${c.name ?? ''}」有新消息` : `${actor.displayName}发来新消息`}, '',
+           ${`/oa/im/${conversationId}`}, 'oa_im_conversation', ${conversationId}
+    FROM oa_im_members m JOIN staff s ON s.id = m.staff_id LEFT JOIN staff_profiles p ON p.staff_id = s.id
+    WHERE m.conversation_id = ${conversationId} AND m.left_at IS NULL AND m.staff_id <> ${actor.id} AND ${onDuty(tx)}
+    ON CONFLICT (staff_id, kind, ref_type, ref_id) WHERE read_at IS NULL AND ref_type IS NOT NULL
+    DO UPDATE SET title = EXCLUDED.title, refreshed_at = now()`;
   // 被 @ 的人：站内通知（强提醒）；只发给现在还能用即时通讯的成员（改成专用账号、离职的不发，Codex 安全审查 93437a4）
   const targets =
     mentionAll || mentions.length
@@ -328,9 +343,31 @@ async function send(tx: Tx, actor: Actor, conversationId: number, input: z.infer
   return { id, replayed: false };
 }
 
+/** OA-15 已读回执：这个会话现在的其他成员各读到哪一条（页面按它算自己发的每条消息几人已读） */
+async function readsOf(db: Db, conversationId: number, me: number): Promise<ImRead[]> {
+  const rows = await db<{ staffId: number; lastRead: number }[]>`
+    SELECT staff_id, last_read_message_id AS last_read FROM oa_im_members
+    WHERE conversation_id = ${conversationId} AND left_at IS NULL AND staff_id <> ${me} ORDER BY staff_id`;
+  return rows.map((r) => ({ staffId: Number(r.staffId), lastRead: Number(r.lastRead) }));
+}
+
 export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
   const auth = employeeOnly(sql);
   const one = async (id: number) => (await loadMessages(sql, sql`msg.id = ${id}`, sql`msg.id`, 1))[0]!;
+
+  // OA-15 统一的同步接口（短轮询兜底通道）：未读合计与我所在的会话里最新一条消息的编号；页面看到变了再取会话列表
+  app.get('/api/oa/im/sync', { preHandler: auth }, async (req): Promise<ImSync> => {
+    const me = req.actor.id;
+    const [r] = await sql<{ unread: number; lastMessageId: number; revokedAt: Date | null }[]>`
+      SELECT (SELECT count(*) FROM oa_im_members m
+              JOIN oa_im_messages u ON u.conversation_id = m.conversation_id AND u.id > m.last_read_message_id AND u.sender_id <> ${me} AND u.kind <> 'system'
+              WHERE m.staff_id = ${me} AND m.left_at IS NULL)::int AS unread,
+             COALESCE((SELECT max(c.last_message_id) FROM oa_im_members m JOIN oa_im_conversations c ON c.id = m.conversation_id
+                       WHERE m.staff_id = ${me} AND m.left_at IS NULL), 0)::bigint AS last_message_id,
+             (SELECT max(u.revoked_at) FROM oa_im_members m JOIN oa_im_messages u ON u.conversation_id = m.conversation_id AND u.revoked_at IS NOT NULL
+               WHERE m.staff_id = ${me} AND m.left_at IS NULL) AS revoked_at`;
+    return { unread: r!.unread, lastMessageId: Number(r!.lastMessageId), revokedAt: r!.revokedAt ? new Date(r!.revokedAt).toISOString() : null };
+  });
 
   app.get('/api/oa/im/conversations', { preHandler: auth }, async (req): Promise<ImConversationList> => {
     const q = parse(ListQuery, req.query ?? {});
@@ -407,7 +444,7 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
     if (!(await memberOf(sql, id, req.actor.id))) throw notFound('会话不存在');
     const rows = await loadMessages(sql, sql`msg.conversation_id = ${id} ${q.before ? sql`AND msg.id < ${q.before}` : sql``}`, sql`msg.id DESC`, IM_PAGE + 1);
     const now = (await sql<{ now: Date }[]>`SELECT now()`)[0]!.now;
-    return { messages: rows.slice(0, IM_PAGE).reverse(), hasMore: rows.length > IM_PAGE, syncedAt: new Date(now).toISOString() };
+    return { messages: rows.slice(0, IM_PAGE).reverse(), hasMore: rows.length > IM_PAGE, syncedAt: new Date(now).toISOString(), reads: await readsOf(sql, id, req.actor.id) };
   });
 
   // 取新消息（页面每 3 秒一次）：after 之后的，与最近几分钟撤回的
@@ -421,7 +458,7 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
     const revoked = await sql<{ id: number }[]>`
       SELECT id FROM oa_im_messages WHERE conversation_id = ${id} AND revoked_at IS NOT NULL AND id <= ${after}
         AND revoked_at > ${since ? sql`${since}::timestamptz - make_interval(secs => ${REVOKED_OVERLAP_SECONDS})` : sql`now() - make_interval(mins => ${REVOKED_WINDOW_MINUTES})`}`;
-    return { messages, revoked: revoked.map((r) => Number(r.id)), syncedAt: new Date(now).toISOString() };
+    return { messages, revoked: revoked.map((r) => Number(r.id)), syncedAt: new Date(now).toISOString(), reads: await readsOf(sql, id, req.actor.id) };
   });
 
   app.post('/api/oa/im/conversations/:id/messages', { preHandler: auth }, async (req, reply): Promise<ImSent> => {
@@ -479,18 +516,30 @@ export function registerOaImRoutes(app: FastifyInstance, { sql }: Deps) {
   app.post('/api/oa/im/conversations/:id/read', { preHandler: auth }, async (req): Promise<{ lastReadMessageId: number }> => {
     const { id } = parse(idParam, req.params);
     const { upTo } = parse(ReadInput, req.body);
-    const [m] = await sql<{ lastRead: number }[]>`
-      UPDATE oa_im_members SET last_read_message_id = GREATEST(last_read_message_id,
-               LEAST(${upTo}, COALESCE((SELECT max(id) FROM oa_im_messages WHERE conversation_id = ${id}), 0)))
-      WHERE conversation_id = ${id} AND staff_id = ${req.actor.id} AND left_at IS NULL
-      RETURNING last_read_message_id AS last_read`;
-    if (!m) throw notFound('会话不存在');
-    // 只清读到的位置之前的 @ 通知：那之后刚到、还没看到的照旧提醒（Codex 审查 accf8fb）
-    await sql`
-      UPDATE oa_notifications n SET read_at = now()
-      FROM oa_im_messages msg
-      WHERE n.staff_id = ${req.actor.id} AND n.kind = 'im_message' AND n.ref_type = 'oa_im_message' AND n.read_at IS NULL
-        AND msg.id = n.ref_id AND msg.conversation_id = ${id} AND msg.id <= ${Number(m.lastRead)}`;
+    // 先对会话行加共享锁（与发消息的 FOR UPDATE 串行）：在途的发送提交以后再判断「读到底没有」，
+    // 不会把它刚刷新的新消息通知当成已读清掉（Codex 审查 38e6250）
+    const m = await sql.begin(async (tx) => {
+      await tx`SELECT 1 FROM oa_im_conversations WHERE id = ${id} FOR SHARE`;
+      const [m] = await tx<{ lastRead: number }[]>`
+        UPDATE oa_im_members SET last_read_message_id = GREATEST(last_read_message_id,
+                 LEAST(${upTo}, COALESCE((SELECT max(id) FROM oa_im_messages WHERE conversation_id = ${id}), 0)))
+        WHERE conversation_id = ${id} AND staff_id = ${req.actor.id} AND left_at IS NULL
+        RETURNING last_read_message_id AS last_read`;
+      if (!m) throw notFound('会话不存在');
+      // 只清读到的位置之前的 @ 通知：那之后刚到、还没看到的照旧提醒（Codex 审查 accf8fb）
+      await tx`
+        UPDATE oa_notifications n SET read_at = now()
+        FROM oa_im_messages msg
+        WHERE n.staff_id = ${req.actor.id} AND n.kind = 'im_message' AND n.ref_type = 'oa_im_message' AND n.read_at IS NULL
+          AND msg.id = n.ref_id AND msg.conversation_id = ${id} AND msg.id <= ${Number(m.lastRead)}`;
+      // 新消息通知：读到了这个会话里别人发的最新一条才记已读（之后又来的照旧提醒）
+      await tx`
+        UPDATE oa_notifications SET read_at = now()
+        WHERE staff_id = ${req.actor.id} AND kind = 'im_message' AND ref_type = 'oa_im_conversation' AND ref_id = ${id} AND read_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM oa_im_messages u WHERE u.conversation_id = ${id} AND u.id > ${Number(m.lastRead)}
+                            AND u.sender_id <> ${req.actor.id} AND u.kind <> 'system')`;
+      return m;
+    });
     return { lastReadMessageId: Number(m.lastRead) };
   });
 }

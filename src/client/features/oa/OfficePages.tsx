@@ -11,7 +11,7 @@ import { Bell, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerpri
 import { shiftDate } from '@shared/labels';
 import type { MySchedule, MyScheduleItem } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
-import { IM_LIST_POLL_MS, type ImConversationList } from '@shared/oa-im';
+import { IM_LIST_POLL_MS, type ImSync } from '@shared/oa-im';
 import { clockText } from '@shared/technician-admin';
 import { api } from '../../lib/api';
 import { useLivePoll } from '../../lib/livePoll';
@@ -68,7 +68,8 @@ function OfficeHomePage() {
   const approvals = useQuery({ queryKey: ['oa', 'approvals', 'summary'], queryFn: () => api.get<ApprovalSummary>('/api/oa/approvals/summary') });
   const todo = approvals.data?.todo ?? 0;
   // 消息的角标：所有会话的未读合计
-  const im = useQuery({ queryKey: ['oa', 'im', 'list', ''], queryFn: () => api.get<ImConversationList>('/api/oa/im/conversations') });
+  // OA-15：首页只问统一的同步接口（未读合计），不取整份会话列表
+  const im = useQuery({ queryKey: ['oa', 'im', 'sync'], queryFn: () => api.get<ImSync>('/api/oa/im/sync') });
   // 停在首页时也按会话列表的节奏刷新（Codex 审查 ce07d7e）
   useLivePoll(async () => void (await im.refetch()), [], { intervalMs: IM_LIST_POLL_MS });
   const unread = im.data?.unread ?? 0;
