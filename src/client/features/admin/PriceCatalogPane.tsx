@@ -66,7 +66,7 @@ export function PriceCatalogPane() {
   return (
     <div className="space-y-4" data-testid="price-catalog">
       {/* 导入、整体回滚结果不确定时（断网、超时）：查回、按原内容重新提交（同一编号）或确认作废，不另起一笔 */}
-      <ErpPendingPanel types={PENDING_TYPES} className="space-y-2" onFound={() => void invalidatePriceCaches(qc)} />
+      <ErpPendingPanel types={PENDING_TYPES} className="space-y-2" onRegistered={() => void invalidatePriceCaches(qc)} />
       <ImportCard onImported={() => setWhich('draft')} />
       {overview.isPending ? (
         <Skeleton className="h-48" />

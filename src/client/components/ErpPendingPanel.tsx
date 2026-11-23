@@ -171,6 +171,12 @@ function refOfResponse(type: ErpOpType, data: unknown): ErpOpRef | null {
     // 退卡退押金（8.1.15）：返回那位会员
     case 'member_card_return':
       return typeof d.memberId === 'number' ? { refId: d.memberId } : null;
+    case 'price_import':
+    case 'price_rollback':
+    case 'price_entry':
+    case 'price_set':
+    case 'price_link':
+      return null;
   }
 }
 
@@ -179,11 +185,14 @@ const refOfLookup = (r: ErpOpLookup): ErpOpRef | null => (r.found && r.refId ? {
 export function ErpPendingPanel({
   types,
   onFound,
+  onRegistered,
   className,
   filter,
 }: {
   types: readonly ErpOpType[];
   onFound?: (op: ErpPendingOp, ref: ErpOpRef) => void;
+  /** 查回或重提成功后刷新数据，包括没有单据编号的操作。 */
+  onRegistered?: () => void;
   className?: string;
   /** 只列其中一部分（例如会员详情只列发给这位会员的券） */
   filter?: (op: ErpPendingOp) => boolean;
@@ -195,6 +204,8 @@ export function ErpPendingPanel({
   const checked = useRef(new Set<string>());
   const onFoundRef = useRef(onFound);
   onFoundRef.current = onFound;
+  const onRegisteredRef = useRef(onRegistered);
+  onRegisteredRef.current = onRegistered;
 
   // 进入页面先查回一次：已登记、已作废的不用员工再处理。
   // 按「有哪些编号」触发，不按数组本身（v0.7.22）：传了 filter 时每次渲染都是新数组，原来每次重新渲染都会把查回失败的再查一次——
@@ -216,6 +227,7 @@ export function ErpPendingPanel({
             toast({ tone: 'success', title: `已查回：${ERP_OP_LABELS[op.type]}已登记`, body: `${op.summary}。只登记了一次，不用重新填写。` });
             const ref = refOfLookup(r);
             if (ref) onFoundRef.current?.(op, ref);
+            onRegisteredRef.current?.();
           }
         })
         .catch(() => checked.current.delete(op.key));
@@ -228,13 +240,21 @@ export function ErpPendingPanel({
   return (
     <div className={className ?? 'space-y-2'} data-testid="erp-pending">
       {ops.map((op) => (
-        <PendingRow key={op.key} op={op} onFound={onFound} />
+        <PendingRow key={op.key} op={op} onFound={onFound} onRegistered={onRegistered} />
       ))}
     </div>
   );
 }
 
-function PendingRow({ op, onFound }: { op: ErpPendingOp; onFound?: (op: ErpPendingOp, ref: ErpOpRef) => void }) {
+function PendingRow({
+  op,
+  onFound,
+  onRegistered,
+}: {
+  op: ErpPendingOp;
+  onFound?: (op: ErpPendingOp, ref: ErpOpRef) => void;
+  onRegistered?: () => void;
+}) {
   const qc = useQueryClient();
   const toast = useToast();
   const [busy, setBusy] = useState<null | 'check' | 'resend' | 'abandon'>(null);
@@ -245,9 +265,10 @@ function PendingRow({ op, onFound }: { op: ErpPendingOp; onFound?: (op: ErpPendi
   const settle = (r: ErpOpLookup | null, ref: ErpOpRef | null) => {
     removeErpPending(op.key);
     void qc.invalidateQueries({ queryKey: ['inv'] });
-    if (ref) {
+    if (ref || (onRegistered && (!r || r.found))) {
       toast({ tone: 'success', title: `${label}已登记`, body: `${op.summary}。只登记了一次。` });
-      onFound?.(op, ref);
+      if (ref) onFound?.(op, ref);
+      onRegistered?.();
     } else if (r?.abandoned) {
       toast({ tone: 'info', title: `${label}已作废`, body: '这笔没有登记；如仍需办理，请重新填写。' });
     }
