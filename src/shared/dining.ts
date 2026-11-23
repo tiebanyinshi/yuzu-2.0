@@ -11,6 +11,7 @@
 import type { CheckoutMember } from './checkout';
 import type { LedgerKind, LedgerVoidRate, TableStateInfo, VoidBlame } from './dining-v8115';
 import type { TierPrice } from './catalog';
+import type { ItemCatalogCategory } from './types';
 import type { ComboPartOption, DishAddonOption, DishMethodGroup, DishMethodOption, DishPart } from './dishes';
 
 export interface DiningRules {
@@ -272,6 +273,8 @@ export interface MenuDish {
   /** 点单分类（8.1.7）：在哪一处、哪个小分类（后台没设的按默认归） */
   outlet: DiningOutlet;
   group: string;
+  /** 价目表的分类（价目表重做第三批）：零点菜品「餐段 → 菜品分类」，上一级（group）是餐段；不是价目表来的不带 */
+  catalogCategory?: ItemCatalogCategory | null;
   /**
    * 菜品管理（8.1.15，docs/DISHES_V8115.md）：可选的做法（不加钱，选了写进出品备注）、能点的加料（另起一行、备注写「配 某菜」）、
    * 套餐含哪几样（下单一行，出品单上列出来）。点单页的菜单才带，都没有的菜不带；厨房屏的沽清列表不带

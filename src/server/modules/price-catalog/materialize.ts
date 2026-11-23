@@ -5,7 +5,7 @@
 //   · 价目表新建的那些，名称、时长、是否要技师、适用性别、停用跟着价目表走；待定价、不可下单、已停用的停用（不能下单）。
 // 不落库的：服务费（比例，结账时算）、房型 / 轰趴房 / 餐饮包房（房间按房态中心开房，不是卖给客人的项目，试算照旧按价目表算）。
 // 只有本店（编号 1）新建收银项目（收银项目全公司一份）；第二家店只同步本店价（第四批）。
-// 菜品要挂出品档口才能进点单页与厨房屏：新建的菜品挂第一个在用的档口（PC20），没有档口时不建，列出来。
+// 菜品要挂出品档口才能进点单页与厨房屏：新建的菜品挂餐厅原有的菜用得最多的档口（PC20；可在菜品管理里改），没有档口时不建，列出来。
 
 import { priceCategoriesOf, priceNameKey, type PriceCatalogEntry, type PriceCategory } from '@shared/price-catalog';
 import type { Tx } from '../../db';
@@ -100,7 +100,11 @@ export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], o
     if (id === null) {
       if (e.sheet === 'dish') {
         if (station === undefined) {
-          const [s] = await tx<{ id: number }[]>`SELECT id FROM kitchen_stations WHERE active ORDER BY sort_order, id LIMIT 1`;
+          // 餐厅原有的菜用得最多的档口（不挂到水吧、果吧）；还没有餐厅的菜时用第一个在用的档口
+          const [s] = await tx<{ id: number }[]>`
+            SELECT k.id FROM kitchen_stations k
+            LEFT JOIN service_items i ON i.station_id = k.id AND i.active AND i.dining_outlet = 'restaurant' AND NOT i.catalog_managed
+            WHERE k.active GROUP BY k.id, k.sort_order ORDER BY count(i.id) DESC, k.sort_order, k.id LIMIT 1`;
           station = s ? Number(s.id) : null;
         }
         if (station === null) {
