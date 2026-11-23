@@ -1,12 +1,12 @@
 // OA-11 员工「办公 → 审批」（docs/OA.md 第 14 节；需求文档五（三））。
 //   · 列表：待我审批、我发起的、抄送我的、我处理过的（状态筛选、往下翻）；「发起审批」到 ApprovalForm.tsx。
-//   · 详情：表单内容、附件、审批链、时间线；审批人通过 / 驳回（必填原因）/ 转交，发起人撤销 / 催办 / 修改后重新提交，相关的人评论；抄送人打开记已读。
+//   · 详情：表单内容、附件、审批链、时间线；审批人通过 / 驳回（必填原因）/ 转交，发起人撤销 / 催办 / 修改后重新提交，相关的人评论；抄送人打开记已读；等谁审批就能「找他聊」（OA-16）。
 //   · 提交与处理带操作编号、先记在本机再发；没收到结果的在列表页上方查回、原样重提或作废（只看本人的）。
 
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Paperclip, Plus } from 'lucide-react';
+import { MessageCircle, Paperclip, Plus } from 'lucide-react';
 import {
   APPROVAL_EVENT_LABELS,
   APPROVAL_STATUS_LABELS,
@@ -418,8 +418,24 @@ function Actions({
   onResubmit: () => void;
 }) {
   const [opinion, setOpinion] = useState('');
+  const me = useSession().staff.id;
+  const navigate = useNavigate();
+  const toast = useToast();
+  const [chatting, setChatting] = useState(0);
   const { can } = d;
-  if (!can.approve && !can.withdraw && !can.urge && !can.resubmit) return null;
+  // OA-16：等谁审批就能直接找他聊（催办）；审批人是自己的不显示
+  const waiting = [...new Map(d.steps.filter((x) => x.status === 'pending' && x.approverId !== me).map((x) => [x.approverId, x.approverName])).entries()];
+  const chat = async (staffId: number) => {
+    setChatting(staffId);
+    try {
+      void navigate(`/oa/im/${(await api.post<{ id: number }>('/api/oa/im/direct', { staffId })).id}`);
+    } catch (e) {
+      toast({ tone: 'error', title: '没有打开聊天', body: errorMessage(e) });
+    } finally {
+      setChatting(0);
+    }
+  };
+  if (!can.approve && !can.withdraw && !can.urge && !can.resubmit && !waiting.length) return null;
   return (
     <Card className="space-y-3 p-4 md:p-5" data-testid="oa-approval-actions">
       {can.approve && (
@@ -446,6 +462,11 @@ function Actions({
             催办
           </Button>
         )}
+        {waiting.map(([id, name]) => (
+          <Button key={id} variant="ghost" icon={<MessageCircle className="size-4" />} loading={chatting === id} onClick={() => void chat(id)} data-testid={`oa-approval-chat-${id}`}>
+            找{name}聊
+          </Button>
+        ))}
         {can.withdraw && (
           <Button variant="ghost" disabled={busy} onClick={() => void act('withdraw', {}, '已撤销')} data-testid="oa-approval-withdraw">
             撤销

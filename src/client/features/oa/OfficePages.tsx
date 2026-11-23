@@ -1,4 +1,4 @@
-// OA 员工端（docs/OA.md 第 1、8 节）：「办公」首页与「我的排班」。OA-14 起首页多「消息」（ImPages.tsx，角标是未读合计）。登录就能用，只看本人的。
+// OA 员工端（docs/OA.md 第 1、8 节）：「办公」首页与「我的排班」。OA-14 起首页多「消息」（ImPages.tsx，角标是未读合计），OA-16 起多「通讯录」（DirectoryPage.tsx）。登录就能用，只看本人的。
 // 入口在账号菜单「办公」（主导航那一列在小屏电脑上已经放不下新的一组；只用 ERP 的后勤也不因此多出门店主导航）。
 //   · 办公首页：常用的几样（打卡、我的排班、通知；审批等随后面的 PR 加进来），手机上一行两个。
 //   · 打卡：PunchPage.tsx（OA-06）。
@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, MessagesSquare, Palmtree, ScanFace, Stamp } from 'lucide-react';
+import { Bell, BookUser, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, MessagesSquare, Palmtree, ScanFace, Stamp } from 'lucide-react';
 import { shiftDate } from '@shared/labels';
 import type { MySchedule, MyScheduleItem } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
@@ -20,6 +20,7 @@ import { PageHeader } from '../../components/AppShell';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Button, Card, Skeleton } from '../../components/ui';
 import { ApprovalPages } from './ApprovalPages';
+import { DirectoryPage } from './DirectoryPage';
 import { ImPages } from './ImPages';
 import { NotificationsPage } from './Notifications';
 import { FacePage } from './FacePage';
@@ -29,6 +30,7 @@ import { PunchPage } from './PunchPage';
 
 const TILES = [
   { to: '/oa/im', label: '消息', hint: '同事单聊、群聊，发图片与文件', icon: MessagesSquare, testId: 'oa-tile-im' },
+  { to: '/oa/directory', label: '通讯录', hint: '按部门找同事、看资料、发消息', icon: BookUser, testId: 'oa-tile-directory' },
   { to: '/oa/approvals', label: '审批', hint: '请假、加班、出差、报销、补卡', icon: Stamp, testId: 'oa-tile-approvals' },
   { to: '/oa/punch', label: '打卡', hint: '按排班打上下班卡、外勤打卡', icon: Fingerprint, testId: 'oa-tile-punch' },
   { to: '/oa/schedule', label: '我的排班', hint: '这个月每天上什么班', icon: CalendarDays, testId: 'oa-tile-schedule' },
@@ -46,6 +48,8 @@ export function OfficePage() {
     <ApprovalPages />
   ) : path.startsWith('/oa/im') ? (
     <ImPages />
+  ) : path === '/oa/directory' ? (
+    <DirectoryPage />
   ) : path === '/oa/schedule' ? (
     <MySchedulePage />
   ) : path === '/oa/notifications' ? (

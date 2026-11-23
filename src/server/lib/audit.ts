@@ -34,6 +34,10 @@ export type AuditAction =
   | 'oa_approval_template_saved'
   | 'oa_holidays_saved'
   | 'oa_staff_imported'
+  // OA-16 通讯录与群管理
+  | 'oa_im_dept_group_created'
+  | 'oa_im_group_dissolved'
+  | 'oa_directory_settings_saved'
   | 'position_chosen'
   | 'member_created'
   | 'member_updated'

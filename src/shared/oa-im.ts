@@ -24,7 +24,12 @@ export interface ImMember {
   staffId: number;
   name: string;
   role: ImRole;
+  /** 进群方式（OA-16）：manual 建群、拉人 / dept 部门群按部门同步进来的（不能被踢、不能自己退） */
+  source: ImMemberSource;
 }
+export type ImMemberSource = 'manual' | 'dept';
+/** 群公告最多几个字 */
+export const IM_NOTICE_MAX = 500;
 
 /** 会话列表的一行 */
 export interface ImConversationItem {
@@ -41,6 +46,8 @@ export interface ImConversationItem {
   unread: number;
   /** 读到的位置之后有人 @ 我（或 @所有人） */
   mentioned: boolean;
+  /** 群已解散（OA-16）：只能看历史 */
+  dissolved: boolean;
 }
 export interface ImConversationList {
   items: ImConversationItem[];
@@ -70,6 +77,25 @@ export interface ImConversationDetail {
   members: ImMember[];
   /** 我读到哪一条 */
   lastReadMessageId: number;
+  /** OA-16：部门群对应的部门（不是部门群为空） */
+  deptKey: string | null;
+  /** 群公告 */
+  notice: { text: string; byName: string; at: string } | null;
+  /** 群已解散：不能再发消息、不能再管 */
+  dissolved: boolean;
+  /** 我在群里的身份（单聊为成员） */
+  myRole: ImRole;
+}
+
+/** 群里谁能做什么（OA-16，服务端照这个核对）：群主、管理员拉人、改群名、发公告；群主设管理员、转让、解散；踢人见 canKick */
+export function canManageGroup(role: ImRole): boolean {
+  return role === 'owner' || role === 'admin';
+}
+/** 能不能把 target 踢出去：群主踢管理员与成员，管理员只踢成员；部门同步进来的不能踢；不能踢自己 */
+export function canKick(me: { staffId: number; role: ImRole }, target: ImMember): boolean {
+  if (target.staffId === me.staffId || target.source === 'dept') return false;
+  if (me.role === 'owner') return target.role !== 'owner';
+  return me.role === 'admin' && target.role === 'member';
 }
 
 /** 一页消息：按编号从小到大；hasMore = 往上还有更早的 */
