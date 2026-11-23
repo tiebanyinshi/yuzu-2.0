@@ -1,5 +1,7 @@
 // OA-14 员工端「办公 → 消息」（docs/OA.md 第 17 节）：会话列表与聊天。
-//   · 会话列表：按最后一条消息倒序、未读数、「有人@我」；搜索会话名、成员、消息文字；发起单聊、建群。每 5 秒刷新。
+//   · 会话列表：按最后一条消息倒序、未读数、「有人@我」；搜索会话名、成员、消息文字；发起单聊、建群。
+//     每 3 秒问一次统一的同步接口（OA-15），未读、最新一条或撤回变了才重取列表。
+//   · 已读回执（OA-15，第 18 节）：自己发的消息下面写单聊「已读 / 未读」、群聊「N 人已读 / 全部已读」，点开看谁读了谁没读。
 //   · 聊天：先取最近 30 条，「查看更早的消息」往上翻；每 3 秒取新消息与最近的撤回，看到了上报读到哪一条。
 //     发文本（含表情）、图片、文件；群聊里输入 @ 在输入框上方列出成员（与「所有人」）；自己 2 分钟内的消息能撤回。
 //   · 发送带操作编号，先记在本机（存不下就不发）：没收到结果的标「没发出去」，「重发」用原编号（服务端收到过的返回原来那一条），
@@ -22,7 +24,10 @@ import {
   type ImMessage,
   type ImMessagePage,
   type ImPollResult,
+  type ImRead,
   type ImSent,
+  type ImSync,
+  readersOf,
 } from '@shared/oa-im';
 import type { ApprovalPerson } from '@shared/oa-approval';
 import { api, errorMessage, UncertainError } from '../../lib/api';
@@ -63,7 +68,22 @@ function ImListPage() {
   const [q, setQ] = useState('');
   const [dialog, setDialog] = useState<'direct' | 'group' | null>(null);
   const list = useQuery({ queryKey: [...LIST_KEY, q], queryFn: () => api.get<ImConversationList>(`/api/oa/im/conversations${q ? `?q=${encodeURIComponent(q)}` : ''}`) });
-  useLivePoll(async () => void (await qc.invalidateQueries({ queryKey: LIST_KEY })), [qc], { intervalMs: IM_LIST_POLL_MS });
+  // 统一的同步接口：未读合计或最新一条消息变了才重取列表（不变的时候每次只是一行小查询）
+  const synced = useRef<string | null>(null);
+  useLivePoll(
+    async (isLive) => {
+      const started = Date.now();
+      const r = await api.get<ImSync>('/api/oa/im/sync');
+      if (!isLive()) return;
+      const sig = `${r.unread}:${r.lastMessageId}:${r.revokedAt ?? ''}`;
+      // 第一次：列表可能是 5 秒内的旧缓存（staleTime），不是这次同步之后取的就重取一遍（Codex 审查 5c0dc60）
+      const fresh = (qc.getQueryState([...LIST_KEY, q])?.dataUpdatedAt ?? 0) >= started;
+      if (synced.current === null ? !fresh : synced.current !== sig) await qc.invalidateQueries({ queryKey: LIST_KEY });
+      synced.current = sig;
+    },
+    [qc],
+    { intervalMs: IM_LIST_POLL_MS },
+  );
   const d = list.data;
   return (
     <>
@@ -327,6 +347,9 @@ function ImChatPage({ id }: { id: number }) {
   // 同步游标：只由首次取历史与连续的「取新消息」推进（自己发出去的那条不推进它，
   // 不然别人刚好排在前面的那条就跳过了，Codex 审查 accf8fb）；上报已读也只报到这里
   const [cursor, setCursor] = useState(0);
+  // 已读回执：其他成员各读到哪一条（取历史、取新消息时一起带回来）
+  const [reads, setReads] = useState<ImRead[]>([]);
+  const [receiptOf, setReceiptOf] = useState<number | null>(null);
   const lastShown = messages?.at(-1)?.id ?? 0;
   // 服务端上次同步的时间：撤回从这里续传（页面在后台、断网好几分钟回来也补得上）
   const since = useRef<string | null>(null);
@@ -341,6 +364,7 @@ function ImChatPage({ id }: { id: number }) {
       setMessages(page.messages);
       setHasMore(page.hasMore);
       setCursor(page.messages.at(-1)?.id ?? 0);
+      setReads(page.reads);
       since.current = page.syncedAt;
     } catch (e) {
       setLoadError(errorMessage(e));
@@ -364,6 +388,7 @@ function ImChatPage({ id }: { id: number }) {
       const r = await api.get<ImPollResult>(`/api/oa/im/conversations/${id}/poll?after=${cursor}${since.current ? `&since=${encodeURIComponent(since.current)}` : ''}`);
       if (!isLive()) return;
       since.current = r.syncedAt;
+      setReads((old) => (JSON.stringify(old) === JSON.stringify(r.reads) ? old : r.reads));
       if (r.messages.length || r.revoked.length) {
         setMessages((xs) => {
           // 同一编号以服务端这次给的为准（自己发的那条已经显示、后来在别处撤回了，这里要跟着变，Codex 审查 ce07d7e）
@@ -528,7 +553,16 @@ function ImChatPage({ id }: { id: number }) {
                 )}
                 {messages.length === 0 && pending.length === 0 && <p className="py-10 text-center text-[13px] text-ink-3">还没有消息，打个招呼吧</p>}
                 {messages.map((m) => (
-                  <Bubble key={m.id} m={m} mine={m.senderId === me} group={d?.kind === 'group'} me={me} onRevoke={() => void revoke(m)} />
+                  <Bubble
+                    key={m.id}
+                    m={m}
+                    mine={m.senderId === me}
+                    group={d?.kind === 'group'}
+                    me={me}
+                    receipt={m.senderId === me && d ? receiptText(m.id, d, reads) : null}
+                    onReceipt={() => setReceiptOf(m.id)}
+                    onRevoke={() => void revoke(m)}
+                  />
                 ))}
                 {pending.map((p) => (
                   <div key={p.clientKey} className="flex flex-col items-end gap-1" data-testid="im-pending">
@@ -654,11 +688,56 @@ function ImChatPage({ id }: { id: number }) {
       >
         <p className="text-[14px] text-ink-2">确定退出「{d?.title}」吗？</p>
       </Dialog>
+      <ReceiptDialog messageId={receiptOf} detail={d} reads={reads} onClose={() => setReceiptOf(null)} />
     </>
   );
 }
 
-function Bubble({ m, mine, group, me, onRevoke }: { m: ImMessage; mine: boolean; group: boolean; me: number; onRevoke: () => void }) {
+/** 自己发的一条消息下面的回执：单聊「已读 / 未读」，群聊「N 人已读 / 全部已读」（只算现在还在会话里的人） */
+function receiptText(messageId: number, d: ImConversationDetail, reads: readonly ImRead[]): { text: string; done: boolean; clickable: boolean } | null {
+  const { read, unread } = readersOf(messageId, d.members, reads);
+  if (read.length + unread.length === 0) return null;
+  if (d.kind === 'direct') return { text: unread.length ? '未读' : '已读', done: unread.length === 0, clickable: false };
+  return { text: unread.length ? `${read.length} 人已读` : '全部已读', done: unread.length === 0, clickable: true };
+}
+
+function ReceiptDialog({ messageId, detail, reads, onClose }: { messageId: number | null; detail: ImConversationDetail | undefined; reads: readonly ImRead[]; onClose: () => void }) {
+  const { read, unread } = messageId && detail ? readersOf(messageId, detail.members, reads) : { read: [], unread: [] };
+  const list = (title: string, people: typeof read, testId: string) => (
+    <div data-testid={testId}>
+      <p className="mb-1 text-[13px] font-semibold text-ink-2">
+        {title} <span className="num">{people.length}</span>
+      </p>
+      <p className="text-[14px] text-ink">{people.length ? people.map((p) => p.name).join('、') : '—'}</p>
+    </div>
+  );
+  return (
+    <Dialog open={messageId !== null} onClose={onClose} title="已读情况">
+      <div className="space-y-4">
+        {list('已读', read, 'im-receipt-read')}
+        {list('未读', unread, 'im-receipt-unread')}
+      </div>
+    </Dialog>
+  );
+}
+
+function Bubble({
+  m,
+  mine,
+  group,
+  me,
+  receipt,
+  onReceipt,
+  onRevoke,
+}: {
+  m: ImMessage;
+  mine: boolean;
+  group: boolean;
+  me: number;
+  receipt: { text: string; done: boolean; clickable: boolean } | null;
+  onReceipt: () => void;
+  onRevoke: () => void;
+}) {
   if (m.kind === 'system') return <p className="text-center text-[12px] text-ink-3">{m.body}</p>;
   if (m.revoked) {
     return (
@@ -695,10 +774,29 @@ function Bubble({ m, mine, group, me, onRevoke }: { m: ImMessage; mine: boolean;
           </a>
         ) : null}
       </div>
-      {canRevoke && (
-        <Button size="sm" variant="ghost" onClick={onRevoke} data-testid={`im-revoke-${m.id}`}>
-          撤回
-        </Button>
+      {(receipt || canRevoke) && (
+        <span className="flex items-center gap-1">
+          {receipt &&
+            (receipt.clickable ? (
+              <button
+                type="button"
+                className={cn('tap px-1 text-[12px] underline-offset-2 hover:underline', receipt.done ? 'text-ink-3' : 'text-pine')}
+                onClick={onReceipt}
+                data-testid={`im-receipt-${m.id}`}
+              >
+                {receipt.text}
+              </button>
+            ) : (
+              <span className={cn('px-1 text-[12px]', receipt.done ? 'text-ink-3' : 'text-pine')} data-testid={`im-receipt-${m.id}`}>
+                {receipt.text}
+              </span>
+            ))}
+          {canRevoke && (
+            <Button size="sm" variant="ghost" onClick={onRevoke} data-testid={`im-revoke-${m.id}`}>
+              撤回
+            </Button>
+          )}
+        </span>
       )}
     </div>
   );
