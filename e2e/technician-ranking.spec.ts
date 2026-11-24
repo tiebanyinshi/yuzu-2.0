@@ -1,7 +1,7 @@
 // 技师榜单第二批浏览器验收（docs/TECH_RANKING.md，店主 2026-11-24《技师榜单模块需求说明》第三节 7）：
 //   技师管理 →「技师榜单」页签：工种标签（只看本用例的工种）、翻页（首页 / 上一页 / 页码 / 下一页 / 尾页）、搜索（技师号、姓名）、
 //   状态筛选（上牌的空闲、没上牌的未当班）、综合榜 / 人气榜切换（切换后回到第 1 页）；没照片的显示占位头像；
-//   在名册的编辑框里上传一张照片，榜单上换成照片；去掉后回到占位头像。
+//   在名册的编辑框里上传一张照片，榜单上换成照片；去掉（回复故意丢掉 → 结果待确认 → 原样重提）后回到占位头像。
 // 依赖独立演示库；账号：店主 linlan，密码 yuzu2026。用自己的 13 位技师（RK01–RK13，工种「E2E榜单」，没有就建、有就改回来），
 // 结束时（含失败）都下牌、去掉照片、停用，工种清单与技师功能的开关恢复成开始时的样子。可重复执行。
 import { expect, test, type Page } from '@playwright/test';
@@ -34,6 +34,13 @@ const roster = async (page: Page) => (await send<{ technicians: AdminTech[] }>(p
 const mine = async (page: Page) => (await send<TechnicianRankingView>(page, 'get', '/api/technician-ranking')).techs.filter((t) => NOS.includes(t.techNo));
 const body = (no: string, active: boolean) => ({ name: nameOf(no), nickname: '', kind: KIND, gender: 'female', grade: 'standard', skills: [] as string[], active, sortOrder: 0, note: '' });
 
+/** 去掉照片：按名册读回现在的照片版本号带上（换、去掉照片都按版本号写） */
+async function removePhoto(page: Page, id: number) {
+  const t = (await send<TechnicianAdminView>(page, 'get', '/api/technician-admin')).technicians.find((x) => x.id === id);
+  if (!t?.photoUrl) return;
+  await send(page, 'put', `/api/admin/technicians/${id}/photo`, { remove: true, version: t.photoVersion });
+}
+
 async function prepare(page: Page) {
   const before = await send<{ rules: { enabled: boolean } }>(page, 'get', '/api/admin/technicians');
   await send(page, 'put', '/api/admin/technicians/rules', { enabled: true });
@@ -51,7 +58,7 @@ async function prepare(page: Page) {
     if (want === 'off' && t.status !== 'off') await send(page, 'post', `/api/clockroom/technicians/${t.id}/state`, { action: 'sign_out' });
     if (want === 'idle' && t.status === 'off') await send(page, 'post', `/api/clockroom/technicians/${t.id}/state`, { action: 'sign_in' });
     if (t.note === 'rest') await send(page, 'post', `/api/clockroom/technicians/${t.id}/state`, { action: 'back' });
-    if (t.photoUrl) await send(page, 'put', `/api/admin/technicians/${t.id}/photo`, { remove: true });
+    if (t.photoUrl) await removePhoto(page, t.id);
   }
   const now = await mine(page);
   expect(now.map((t) => `${t.techNo}:${t.status}`).filter((x) => x.endsWith(':idle'))).toEqual(['RK01:idle', 'RK02:idle']);
@@ -144,8 +151,21 @@ test.describe('技师榜单：工种、翻页、搜索、状态、综合 / 人�
       await expect(page.getByTestId('ranking-card-RK01').getByTestId('ranking-placeholder')).toHaveCount(0);
       await page.getByTestId('tech-tab-roster').click();
       await page.getByTestId('tech-roster-edit-RK01').click();
+      // 去掉照片：请求到了服务器、回复丢了（结果待确认）→ 原样重提，服务端认得出是同一个请求，原样返回
+      let dropped = false;
+      await page.route('**/api/admin/technicians/*/photo', async (route) => {
+        if (dropped) return route.continue();
+        dropped = true;
+        await route.fetch(); // 服务器已经处理
+        await route.abort('connectionreset'); // 回复没到页面
+      });
       await page.getByTestId('technician-photo-remove').click();
+      await expect(page.getByTestId('technician-photo-pending')).toBeVisible();
+      await expect(page.getByTestId('technician-photo-pick')).toBeDisabled();
+      await page.getByTestId('technician-photo-retry').click();
       await expect(page.getByText('照片已去掉')).toBeVisible();
+      await expect(page.getByTestId('technician-photo-pending')).toHaveCount(0);
+      await page.unroute('**/api/admin/technicians/*/photo');
       await page.keyboard.press('Escape');
       await page.getByTestId('tech-tab-ranking').click();
       await page.getByTestId('ranking-search').fill('RK01');
@@ -153,7 +173,7 @@ test.describe('技师榜单：工种、翻页、搜索、状态、综合 / 人�
     } finally {
       for (const t of await mine(page)) {
         if (!t.service && t.status !== 'off') await page.request.post(`/api/clockroom/technicians/${t.id}/state`, { data: { action: 'sign_out' } });
-        if (t.photoUrl) await page.request.put(`/api/admin/technicians/${t.id}/photo`, { data: { remove: true } });
+        if (t.photoUrl) await removePhoto(page, t.id);
       }
       for (const t of (await roster(page)).filter((x) => NOS.includes(x.techNo) && x.active)) {
         await page.request.put(`/api/admin/technicians/${t.id}`, { data: body(t.techNo, false) });
