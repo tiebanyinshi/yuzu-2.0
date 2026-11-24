@@ -1,18 +1,21 @@
 // 新建、编辑技师的对话框：门店「技师管理 → 名册」与后台「技师 → 技师名册」共用（8.1.15 从后台的名册卡片里搬出来，
 // 补上花名、类型、入职日期）。保存走原来的名册接口（/api/admin/technicians，要「维护技师名册」权限）。
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { ImagePlus, Trash2, UserRound } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { PRICE_TIER_LABELS, PRICE_TIERS, type PriceTier } from '@shared/catalog';
 import { MAX_TECH_NAME, TECH_NO_PATTERN, type Technician, type TechnicianAdmin } from '@shared/technicians';
 import { api, errorMessage } from '../../lib/api';
 import { cn } from '../../lib/utils';
+import { imagePayload } from '../../components/Images';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Button, Field, Input, Notice, Segmented, Select } from '../../components/ui';
 import { useTechAdminRefresh } from './queries';
 
-export type EditableTechnician = Technician & { lineCount?: number };
+/** photoUrl：门店「技师管理 → 名册」带着（技师榜单的照片，docs/TECH_RANKING.md）；后台的名册不带，不显示照片 */
+export type EditableTechnician = Technician & { lineCount?: number; photoUrl?: string | null; photoVersion?: number };
 
 export function TechnicianDialog({
   target,
@@ -123,6 +126,7 @@ export function TechnicianDialog({
             <Input id="t-name" value={name} maxLength={MAX_TECH_NAME} onChange={(e) => setName(e.target.value)} data-testid="technician-name" />
           </Field>
         </div>
+        {existing && existing.photoUrl !== undefined && <PhotoField key={existing.id} techId={existing.id} initial={existing.photoUrl} version={existing.photoVersion ?? 0} />}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="花名" htmlFor="t-nickname" hint="选填；钟房里跟在名字后面，叫号时念花名">
             <Input id="t-nickname" value={nickname} maxLength={MAX_TECH_NAME} onChange={(e) => setNickname(e.target.value)} placeholder="例如：小雅" data-testid="technician-nickname" />
@@ -205,5 +209,68 @@ export function TechnicianDialog({
         {error && <Notice tone="error" title={error} />}
       </div>
     </Dialog>
+  );
+}
+
+/** 照片（技师榜单，TR5）：选了就上传（浏览器先压缩），不跟着「保存」走；去掉也是马上生效 */
+function PhotoField({ techId, initial, version: initialVersion }: { techId: number; initial: string | null; version: number }) {
+  const toast = useToast();
+  const refresh = useTechAdminRefresh();
+  const [url, setUrl] = useState(initial);
+  // 照片的版本号：带着它提交，别人刚改过就被拒绝（没收到结果的原样重提，服务端原样返回）
+  const [version, setVersion] = useState(initialVersion);
+  const [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const put = async (body: Record<string, unknown>) => {
+    setBusy(true);
+    try {
+      const r = await api.put<{ photoUrl: string | null; photoVersion: number }>(`/api/admin/technicians/${techId}/photo`, { ...body, version }, { timeoutMs: 30_000 });
+      setUrl(r.photoUrl);
+      setVersion(r.photoVersion);
+      refresh();
+      toast({ tone: 'success', title: r.photoUrl ? '照片已更新' : '照片已去掉' });
+    } catch (e) {
+      // 没收到结果：版本号不变，原样再传一次服务端认得出是同一个请求；被拒绝（别人刚改过）的关掉编辑框、刷新后再传
+      toast({ tone: 'error', title: '照片没有存上', body: errorMessage(e) });
+      refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      await put(await imagePayload(file));
+    } catch (e) {
+      toast({ tone: 'error', title: '照片读不了', body: errorMessage(e) });
+    }
+  };
+  return (
+    <Field label="照片" hint="技师榜单上显示；选了马上生效，不用再点保存">
+      <div className="flex items-center gap-3" data-testid="technician-photo">
+        <div className="flex h-24 w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-md bg-paper-3 text-ink-4">
+          {url ? <img src={url} alt="技师照片" className="size-full object-cover" /> : <UserRound className="size-9" strokeWidth={1.25} aria-label="没有照片" />}
+        </div>
+        <input
+          ref={input}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            void pick(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+          data-testid="technician-photo-input"
+        />
+        <Button variant="secondary" icon={<ImagePlus className="size-4" />} loading={busy} onClick={() => input.current?.click()} data-testid="technician-photo-pick">
+          {url ? '换一张' : '上传照片'}
+        </Button>
+        {url && (
+          <Button variant="ghost" icon={<Trash2 className="size-4" />} disabled={busy} onClick={() => void put({ remove: true })} data-testid="technician-photo-remove">
+            去掉
+          </Button>
+        )}
+      </div>
+    </Field>
   );
 }

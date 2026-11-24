@@ -3,6 +3,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { LeaveStatus, ScheduleView, TechLeave, TechnicianAdminView } from '@shared/technician-admin';
+import type { TechnicianRankingView } from '@shared/technician-ranking';
 import { api } from '../../lib/api';
 import { useLivePoll } from '../../lib/livePoll';
 
@@ -33,6 +34,10 @@ export const useSchedule = (from: string, days: number) => useQuery({ queryKey: 
 export const useLeaves = (status: LeaveStatus | 'all') =>
   useQuery({ queryKey: leavesKey(status), queryFn: () => api.get<TechLeave[]>(`/api/technician-admin/leaves${status === 'all' ? '' : `?status=${status}`}`) });
 
+/** 技师榜单（docs/TECH_RANKING.md）：名册 + 钟房状态 */
+export const rankingKey = ['technician-ranking'] as const;
+export const useTechRanking = (enabled = true) => useQuery({ queryKey: rankingKey, queryFn: () => api.get<TechnicianRankingView>('/api/technician-ranking'), enabled });
+
 /** 保存以后：技师管理的几样、钟房看板、后台名册、前台选技师都重新取 */
 export function useTechAdminRefresh() {
   const qc = useQueryClient();
@@ -41,5 +46,6 @@ export function useTechAdminRefresh() {
     void qc.invalidateQueries({ queryKey: ['clockroom'] });
     void qc.invalidateQueries({ queryKey: ['admin', 'technicians'] });
     void qc.invalidateQueries({ queryKey: ['frontdesk', 'technicians'] });
+    void qc.invalidateQueries({ queryKey: rankingKey });
   };
 }
