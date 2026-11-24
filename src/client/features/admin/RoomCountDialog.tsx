@@ -18,6 +18,7 @@ import { LoadFailed } from '../../components/LoadFailed';
 import { useToast } from '../../components/Toast';
 import { Button, Field, Input, Notice, Select, Skeleton } from '../../components/ui';
 import { useSpaceLedger, useInvalidateSpaces } from '../spaces/queries';
+import { QtyInput } from '../../components/QtyInput';
 
 /** 业态默认的编码前缀与名称前缀：大厅类按床位算 */
 function defaults(businessType: string) {
@@ -37,13 +38,14 @@ export function RoomCountDialog({ category, counts, onClose }: { category: RoomC
   const ledger = useSpaceLedger();
   const [businessType, setBusinessType] = useState(category.businessTypes[0] ?? '');
   const current = counts.get(businessType) ?? 0;
-  const [target, setTarget] = useState(String(Math.max(current, 1)));
+  const [target, setTarget] = useState(Math.max(current, 1));
   const [floorId, setFloorId] = useState<number | null>(null);
   const [zoneId, setZoneId] = useState<number | null>(null);
   const [prefix, setPrefix] = useState(defaults(businessType).prefix);
   const [namePrefix, setNamePrefix] = useState(defaults(businessType).namePrefix);
   const [start, setStart] = useState('');
-  const [capacity, setCapacity] = useState('1');
+  const [capacity, setCapacity] = useState(1);
+  const [hint, setHint] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,7 +54,7 @@ export function RoomCountDialog({ category, counts, onClose }: { category: RoomC
     const d = defaults(businessType);
     setPrefix(d.prefix);
     setNamePrefix(d.namePrefix);
-    setTarget(String(Math.max(counts.get(businessType) ?? 0, 1)));
+    setTarget(Math.max(counts.get(businessType) ?? 0, 1));
     setStart('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessType]);
@@ -67,10 +69,10 @@ export function RoomCountDialog({ category, counts, onClose }: { category: RoomC
   }, [ledger.data, businessType]);
   const zones = (ledger.data?.zones ?? []).filter((z) => z.active && z.floorId === floorId);
 
-  const n = intOrNull(target);
+  const n = target;
   const st = intOrNull(start);
-  const cap = intOrNull(capacity);
-  const valid = businessType && n !== null && !Number.isNaN(n) && n >= 1 && n <= MAX_CAPACITY && floorId !== null && /^[A-Za-z]{1,4}$/.test(prefix.trim()) && !Number.isNaN(st) && !Number.isNaN(cap);
+  const cap = capacity;
+  const valid = businessType && floorId !== null && /^[A-Za-z]{1,4}$/.test(prefix.trim()) && !Number.isNaN(st);
   const body = {
     businessType,
     target: n,
@@ -174,7 +176,15 @@ export function RoomCountDialog({ category, counts, onClose }: { category: RoomC
               </Select>
             </Field>
             <Field label={`设成几间（现有 ${current} 间）`}>
-              <Input type="number" inputMode="numeric" min={1} max={MAX_CAPACITY} value={target} onChange={(e) => setTarget(e.target.value)} data-testid="room-count-target" />
+              <QtyInput
+                value={target}
+                max={MAX_CAPACITY}
+                onChange={setTarget}
+                onHint={setHint}
+                label="设成几间"
+                className="rounded-md border border-line-strong bg-card h-11 w-full text-[15px]"
+                testId="room-count-target"
+              />
             </Field>
             <Field label="放在哪一层">
               <Select
@@ -212,10 +222,23 @@ export function RoomCountDialog({ category, counts, onClose }: { category: RoomC
             <Field label="名称前缀" hint="卡片上显示：名称前缀 + 序号，例如「床位 001」">
               <Input value={namePrefix} maxLength={20} onChange={(e) => setNamePrefix(e.target.value)} data-testid="room-count-name" />
             </Field>
-            <Field label="每间容量（人，可不填）">
-              <Input type="number" inputMode="numeric" min={1} max={MAX_CAPACITY} value={capacity} onChange={(e) => setCapacity(e.target.value)} data-testid="room-count-capacity" />
+            <Field label="每间容量（人）">
+              <QtyInput
+                value={capacity}
+                max={MAX_CAPACITY}
+                onChange={setCapacity}
+                onHint={setHint}
+                label="每间容量"
+                className="rounded-md border border-line-strong bg-card h-11 w-full text-[15px]"
+                testId="room-count-capacity"
+              />
             </Field>
           </div>
+          {hint && (
+            <p className="text-[13px] text-clay" role="status" data-testid="room-count-hint">
+              {hint}
+            </p>
+          )}
           <div className="rounded-lg border border-line bg-paper-2 px-4 py-3 text-[13.5px] text-ink-2" data-testid="room-count-preview">
             {!valid ? (
               <span>填好数量、楼层、编码前缀后自动预览</span>
