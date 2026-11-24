@@ -38,3 +38,12 @@
 ## 4. 不做的
 
 技师资料的新增、编辑、删除照旧在名册里做（本次只在编辑框里多一个照片）；不做排钟、派单、改单；不改系统主题色；不涉及 OA 考勤与审批；不改价目表。
+
+## 5. 各批交付与验收要点
+
+### 第一批（数据接口与模型）
+
+- 迁移 `250_technician_ranking.sql`（回滚 `docs/rollback/250_technician_ranking.down.sql`）：`technician_photos`（`store_id` + 内容摘要唯一、只追加触发器）、`technicians.photo_id`。
+- 服务端 `src/server/modules/technician-ranking.ts`，共用类型 `src/shared/technician-ranking.ts`；照片按文件头认格式沿用电子菜单的 `sniffImage`。
+- 用例 `tests/technician-ranking.test.ts`：七位合成技师覆盖空闲、休息、在钟上、已派待上、没上牌、停牌、离职；逐个对钟房 `/api/clockroom` 的状态；把上钟时刻往前挪核对已服务与剩余秒数、到点剩余为 0；人气值的 30 天边界、轮钟与没下钟的不算；工种字典的顺序与字典删掉的工种；权限与照片（去重、换、去掉、格式、审计、只追加、取图缓存）。
+- 验收：用独立演示库，钟房里让几位技师上牌、派钟、上钟、休息，`GET /api/technician-ranking` 的 `status` / `note` 与钟房一致；服务中的 `service.remainingSeconds` ≈ 计划下钟 − 现在；返回里没有客人姓名、手牌与房间。

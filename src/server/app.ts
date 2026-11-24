@@ -130,6 +130,7 @@ import { registerOaNotificationRoutes } from './modules/oa/notifications';
 import { registerOaAttachmentRoutes } from './modules/oa/attachments';
 import { registerTechnicianRoutes } from './modules/technicians';
 import { registerTechnicianAdminRoutes } from './modules/technician-admin';
+import { registerTechnicianRankingRoutes } from './modules/technician-ranking';
 import { registerClockroomRoutes } from './modules/clockroom';
 import { registerDiningRoutes } from './modules/dining';
 import { registerTableRoutes } from './modules/tables';
@@ -462,6 +463,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerRoomCenterRoutes(app, deps);
   // 技师管理（8.1.15，docs/TECHNICIANS_V8115.md）：组别、班次与排班、休假；名册与钟房的接口在各自原来的模块里
   registerTechnicianAdminRoutes(app, deps);
+  // 技师榜单（docs/TECH_RANKING.md）：名册 + 钟房状态的只读榜单、技师照片
+  registerTechnicianRankingRoutes(app, deps);
 
   // 前端静态资源（构建产物），全部从本机提供，外网中断不影响使用。
   const staticDir = resolve(process.env.STATIC_DIR ?? 'dist/client');
