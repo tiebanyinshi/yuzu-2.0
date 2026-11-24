@@ -3,8 +3,12 @@
 // 零点分餐段）、按工作表 / 板块 / 餐段分组列表、搜索（名称、编号、分类、房号）、只看待定价 / 停用、草稿与生效对比。
 // 第三批：单条新增、修改（改价）、停用 / 启用（表单在 PriceEntryDialog.tsx），改动记录（经办人、时间、旧价 → 新价），
 // 一键切换生效（条数与表格对不上要写原因）、整体回滚到上一版、放弃草稿。价格：无价格写「待定价」，不写 0 元；服务费写百分比。
+// 店主 2026-11-24《价目表模板替换与页面维护需求说明》：五个模块（门店 / 娱乐 / 房间 / 零点菜品 / 按摩及助浴）各自导入一张表
+// （草稿里只换这一张）、各自的模板、按模板格式导出（导出的再导入不丢、不重复）；地址带 ?sheet=room 直接到那个模块
+// （房态中心房型配置、菜品管理、康美部项目等页面的「价目表」入口带过来）。
 
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Download, FileUp, History, Plus, Undo2 } from 'lucide-react';
 import {
@@ -53,8 +57,16 @@ type Which = 'draft' | 'active';
 type SheetFilter = 'all' | PriceSheet;
 type Only = 'all' | 'none' | 'inactive';
 
+/** 地址里的 ?sheet=：从各模块页面带过来，直接看、导这一张表 */
+function useModuleSheet(): PriceSheet | null {
+  const [params] = useSearchParams();
+  const v = params.get('sheet');
+  return (PRICE_SHEETS as readonly string[]).includes(v ?? '') ? (v as PriceSheet) : null;
+}
+
 export function PriceCatalogPane() {
   const qc = useQueryClient();
+  const moduleSheet = useModuleSheet();
   const overview = useQuery({ queryKey: overviewKey, queryFn: () => api.get<PriceCatalogOverview>('/api/admin/price-catalog') });
   const [which, setWhich] = useState<Which>('active');
   const data = overview.data;
@@ -68,7 +80,7 @@ export function PriceCatalogPane() {
     <div className="space-y-4" data-testid="price-catalog">
       {/* 导入、整体回滚结果不确定时（断网、超时）：查回、按原内容重新提交（同一编号）或确认作废，不另起一笔 */}
       <ErpPendingPanel types={PENDING_TYPES} className="space-y-2" onFound={() => void invalidatePriceCaches(qc)} />
-      <ImportCard onImported={() => setWhich('draft')} />
+      <ImportCard initial={moduleSheet} onImported={() => setWhich('draft')} />
       {overview.isPending ? (
         <Skeleton className="h-48" />
       ) : overview.isError && !data ? (
@@ -122,6 +134,7 @@ export function PriceCatalogPane() {
               <Download className="size-4" />
               导出这一份（逐项核对用）
             </a>
+            <ExportSheets setId={shown.id} title={shown.title} />
             <CountTable counts={shown.counts} total={shown.total} />
           </Card>
           {other && otherSet.data && set.data && <DiffCard current={set.data} other={otherSet.data} />}
@@ -130,7 +143,7 @@ export function PriceCatalogPane() {
           ) : set.isError && !set.data ? (
             <LoadFailed title="条目取不回来" onRetry={() => void set.refetch()} />
           ) : set.data ? (
-            <EntryList key={set.data.id} setId={set.data.id} entries={set.data.entries} />
+            <EntryList key={set.data.id} setId={set.data.id} entries={set.data.entries} initialSheet={moduleSheet} />
           ) : null}
           {/* 第四批：生效中的价目表对接收银项目（开单、房态点单取价） */}
           {shown.status === 'active' && <PriceCategoryChecks />}
@@ -138,6 +151,28 @@ export function PriceCatalogPane() {
           <ChangesCard setId={shown.id} />
         </>
       )}
+    </div>
+  );
+}
+
+// ───────────────────────── 按模板格式导出 ─────────────────────────
+
+/** 按导入模板的格式导出（整份，或某个模块的一张表）：页面上改过的也在里面，导出的文件原样再导入不丢、不重复 */
+function ExportSheets({ setId, title }: { setId: number; title: string }) {
+  const link = 'tap relative inline-flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3 text-[13px] font-bold text-ink-2 hover:border-ink-3 hover:text-ink';
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2" data-testid="price-catalog-export-sheets">
+      <span className="text-[12.5px] text-ink-3">按模板格式导出（改好再导回来）：</span>
+      <a href={`/api/admin/price-catalog/sets/${setId}/export-sheets`} download={`${title}（导入格式）.xlsx`} className={link} data-testid="price-export-all">
+        <Download className="size-4" />
+        整份
+      </a>
+      {PRICE_SHEETS.map((s) => (
+        <a key={s} href={`/api/admin/price-catalog/sets/${setId}/export-sheets?sheet=${s}`} download={`${PRICE_SHEET_NAMES[s]}.xlsx`} className={link} data-testid={`price-export-${s}`}>
+          <Download className="size-4" />
+          {PRICE_SHEET_NAMES[s]}
+        </a>
+      ))}
     </div>
   );
 }
@@ -189,13 +224,13 @@ function CountTable({ counts, total }: { counts: PriceCountCheck[]; total: { exp
 
 const UNCERTAIN_ENTRY = '这一笔结果待确认：已记在本机，请在页面上方查回、按原内容重新提交或作废，确认之前先不改别的项';
 
-function EntryList({ setId, entries }: { setId: number; entries: PriceCatalogEntry[] }) {
+function EntryList({ setId, entries, initialSheet }: { setId: number; entries: PriceCatalogEntry[]; initialSheet: PriceSheet | null }) {
   const qc = useQueryClient();
   const session = useSession();
   // 单条改动、导入（会替换整份草稿）、切换 / 放弃 / 回滚有结果待确认的：查回、重提或作废之前不再改，
   // 不然原请求晚到会把刚改的连同草稿一起换掉（AGENTS.md「结果待确认」）
   const locked = useErpRecorded(PENDING_TYPES).length > 0;
-  const [sheet, setSheet] = useState<SheetFilter>('all');
+  const [sheet, setSheet] = useState<SheetFilter>(initialSheet ?? 'all');
   const [editing, setEditing] = useState<PriceCatalogEntry | 'new' | null>(null);
   const [history, setHistory] = useState<PriceCatalogEntry | null>(null);
   const [toggling, setToggling] = useState<PriceCatalogEntry | null>(null);
@@ -629,8 +664,11 @@ function DiffCard({ current, other }: { current: PriceCatalogSet; other: PriceCa
 // ───────────────────────── 导入 ─────────────────────────
 
 /** 导入成草稿以后直接看草稿（onImported） */
-function ImportCard({ onImported }: { onImported: () => void }) {
+function ImportCard({ initial, onImported }: { initial: PriceSheet | null; onImported: () => void }) {
   const qc = useQueryClient();
+  // 导哪一份：整份六张表，或某个模块单独的一张表（草稿里只换这一张）
+  const [target, setTarget] = useState<'all' | PriceSheet>(initial ?? 'all');
+  const sheetOf = target === 'all' ? {} : { sheet: target };
   const [file, setFile] = useState<LoadedTable | null>(null);
   const session = useSession();
   const pending = useErpRecorded(PENDING_TYPES);
@@ -645,7 +683,7 @@ function ImportCard({ onImported }: { onImported: () => void }) {
     if (!f) return;
     try {
       const loaded = await loadTableFile(f);
-      if (!loaded.xlsxBase64) throw new Error('价目表要用 Excel（.xlsx）导入：六张工作表在一个文件里');
+      if (!loaded.xlsxBase64) throw new Error('价目表要用 Excel（.xlsx）导入');
       setFile(loaded);
     } catch (e) {
       setFile(null);
@@ -657,7 +695,7 @@ function ImportCard({ onImported }: { onImported: () => void }) {
     setBusy('preview');
     setError(null);
     try {
-      setPreview(await api.post<PriceImportPreview & { digest: string }>('/api/admin/price-catalog/import/preview', { fileName: file.fileName, xlsxBase64: file.xlsxBase64 }));
+      setPreview(await api.post<PriceImportPreview & { digest: string }>('/api/admin/price-catalog/import/preview', { fileName: file.fileName, xlsxBase64: file.xlsxBase64, ...sheetOf }));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -676,11 +714,15 @@ function ImportCard({ onImported }: { onImported: () => void }) {
         key,
         type: 'price_import',
         url: '/api/admin/price-catalog/import',
-        body: { fileName: file.fileName, xlsxBase64: file.xlsxBase64, previewDigest: preview.digest, opKey: key },
-        summary: `价目表导入 · ${file.fileName} · ${preview.total.actual} 项`,
+        body: { fileName: file.fileName, xlsxBase64: file.xlsxBase64, ...sheetOf, previewDigest: preview.digest, opKey: key },
+        summary: `价目表导入${target === 'all' ? '' : `（${PRICE_SHEET_NAMES[target]}）`} · ${file.fileName} · ${preview.total.actual} 项`,
         staffName: session.staff.displayName,
       });
-      setDone(`已存成草稿「${set.title}」：${set.total.actual} 项。核对下面的条数与价格，确认后再切换生效。`);
+      setDone(
+        target === 'all'
+          ? `已存成草稿「${set.title}」：${set.total.actual} 项。核对下面的条数与价格，确认后再切换生效。`
+          : `${PRICE_SHEET_NAMES[target]}已导入草稿「${set.title}」（${preview.total.actual} 项，别的表照原样）。核对后再切换生效。`,
+      );
       setPreview(null);
       setFile(null);
       onImported();
@@ -703,20 +745,46 @@ function ImportCard({ onImported }: { onImported: () => void }) {
       <SectionTitle
         aside={
           <a
-            href="/api/admin/price-catalog/template"
-            download="价目表导入模板.xlsx"
+            href={target === 'all' ? '/api/admin/price-catalog/template' : `/api/admin/price-catalog/template?sheet=${target}`}
+            download={target === 'all' ? '价目表导入模板.xlsx' : `${PRICE_SHEET_NAMES[target]}.xlsx`}
             className="tap relative flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3 text-[13px] font-bold text-ink-2 hover:border-ink-3 hover:text-ink"
             data-testid="price-catalog-template"
           >
             <Download className="size-4" />
-            下载导入模板
+            {target === 'all' ? '下载导入模板' : `下载「${PRICE_SHEET_NAMES[target]}」模板`}
           </a>
         }
       >
         导入全品类价目表
       </SectionTitle>
-      <p className="mt-1 text-[12.5px] text-ink-3">
-        选《汤崎宝安全品类价目表》（六张工作表在一个 Excel 里）→ 预览逐行核对 → 没有问题再导入。导入先存成草稿（替换原来的草稿），不影响正在用的价格；核对条数后再切换生效。
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className="text-[13px] text-ink-3">导入</span>
+        <Select
+          fullWidth={false}
+          className="h-9 min-w-44"
+          value={target}
+          disabled={busy !== null}
+          onChange={(e) => {
+            setTarget(e.target.value as 'all' | PriceSheet);
+            setPreview(null);
+            setDone(null);
+            setError(null);
+          }}
+          aria-label="导入哪一份"
+          data-testid="price-catalog-target"
+        >
+          <option value="all">整份（六张表）</option>
+          {PRICE_SHEETS.map((s) => (
+            <option key={s} value={s}>
+              只导「{PRICE_SHEET_NAMES[s]}」
+            </option>
+          ))}
+        </Select>
+      </div>
+      <p className="mt-2 text-[12.5px] text-ink-3">
+        {target === 'all'
+          ? '选《汤崎宝安全品类价目表》（六张工作表在一个 Excel 里）→ 预览逐行核对 → 没有问题再导入。导入先存成草稿（替换原来的草稿），不影响正在用的价格；核对条数后再切换生效。'
+          : `选「${PRICE_SHEET_NAMES[target]}」表格（门店单独的一张，或在这里下载的模板 / 导出的文件）→ 预览逐行核对 → 导入。草稿里只换这一张表，别的表照现在的草稿（没有草稿就照生效中的）原样带过来；核对后再切换生效。`}
       </p>
       <label className="mt-3 flex cursor-pointer flex-wrap items-center gap-3 rounded-md border border-dashed border-line-strong px-4 py-3 text-[13px] hover:border-ink-3">
         <FileUp className="size-5 text-ink-3" />
@@ -742,7 +810,7 @@ function ImportCard({ onImported }: { onImported: () => void }) {
       {preview && (
         <div className="mt-3 space-y-3" data-testid="price-catalog-preview-result">
           {errors.length > 0 ? (
-            <Notice tone="error" title={`有 ${errors.length} 处问题，整份不能导入；改好表格再预览`} />
+            <Notice tone="error" title={`有 ${errors.length} 处问题，${target === 'all' ? '整份' : '这张表'}不能导入；改好表格再预览`} />
           ) : (
             <Notice tone="success" title={`没有问题：${preview.total.actual} 项（表格应有 ${preview.total.expected} 项）${warnings.length ? `，另有 ${warnings.length} 条提醒` : ''}`} />
           )}
@@ -753,6 +821,7 @@ function ImportCard({ onImported }: { onImported: () => void }) {
                 <li key={n} className="flex flex-wrap gap-x-2 px-3 py-1.5" data-level={i.level}>
                   <Badge tone={i.level === 'error' ? 'clay' : 'ember'}>{i.level === 'error' ? '问题' : '提醒'}</Badge>
                   <span className="text-ink-3">
+                    {i.file ? `${i.file} · ` : ''}
                     {i.sheet}
                     {i.row !== null ? ` 第 ${i.row} 行` : ''} · {i.field}
                   </span>
