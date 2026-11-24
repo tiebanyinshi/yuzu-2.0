@@ -264,3 +264,40 @@ export interface SpaceImportRecord {
 export function spaceLabel(code: string, displayName: string | null | undefined): string {
   return displayName && displayName !== code ? `${code} · ${displayName}` : code;
 }
+
+// ───────── 按数量建空间（房态中心房型「数量」，店主 2026-11-24：比如休息大厅设成 101 个床位） ─────────
+
+/** 一次最多新建几间 */
+export const SPACE_BATCH_MAX = 300;
+/** 编码前缀：1 到 4 个大写字母 */
+export const SPACE_BATCH_PREFIX_RE = /^[A-Z]{1,4}$/;
+
+/** 新建的第 i 个（从 0 起）的编码：前缀 + 补零的序号 */
+export function batchCode(prefix: string, start: number, width: number, i: number): string {
+  return `${prefix}${String(start + i).padStart(width, '0')}`;
+}
+
+/** 按数量建空间的预览 / 结果 */
+export interface SpaceBatchPlan {
+  businessType: string;
+  /** 现在这种业态在用的空间有几间 */
+  current: number;
+  target: number;
+  /** 要新建几间（target − current） */
+  create: number;
+  /** 序号从几开始（没填时接着这个前缀已有的最大序号） */
+  start: number;
+  /** 要新建的编码（预览最多列前后几个，见 codesFirst / codesLast） */
+  codesFirst: string[];
+  codesLast: string[];
+  /** 台账里已经有的编码（含停用的）：有就不能建，换前缀或起始号 */
+  taken: string[];
+  /** 保存时才有：实际新建了几间 */
+  created?: number;
+}
+
+/** 预览 / 保存的回答：保存的记成一次空间台账导入（import），同一个操作编号重提时 replayed */
+export interface SpaceBatchResult extends SpaceBatchPlan {
+  import?: { id: number };
+  replayed: boolean;
+}

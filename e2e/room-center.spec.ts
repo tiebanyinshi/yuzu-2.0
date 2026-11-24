@@ -348,6 +348,15 @@ test.describe('8.1.16 房态中心', () => {
       await dlg.getByTestId('room-category-source-hotel').click();
       await expect(page.getByTestId('room-category-save')).toBeDisabled();
       await page.keyboard.press('Escape');
+      // 设数量（店主 2026-11-24：休息大厅设几个床位）：只预览、不保存（不改演示数据）
+      await page.getByTestId('room-category-count-休息大厅').click();
+      const target = page.getByTestId('room-count-target');
+      const now = Number(await target.inputValue());
+      await target.fill(String(now + 3));
+      await expect(page.getByTestId('room-count-preview')).toContainText('新建 3 间');
+      await expect(page.getByTestId('room-count-save')).toHaveText('新建 3 间');
+      await expectFits(page);
+      await page.keyboard.press('Escape');
     } finally {
       await page.unrouteAll({ behavior: 'ignoreErrors' });
       await relogin(page, 'linlan');
