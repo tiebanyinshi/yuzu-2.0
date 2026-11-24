@@ -9,7 +9,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ClipboardList, PencilLine, Search, ShoppingCart, Store as StoreIcon, Warehouse } from 'lucide-react';
 import { formatYuan } from '@shared/money';
 import { formatQty, parseQty } from '@shared/quantity';
@@ -804,10 +804,19 @@ const DISPLAY_TONE: Partial<Record<MallDisplayStatus, 'pine' | 'ember' | 'clay' 
 
 function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
   const [priority, setPriority] = useState<RequestPriority | ''>('');
-  const q = useQuery({ queryKey: ['shop', 'requests', scope], queryFn: () => api.get<{ requests: MallRequestBrief[] }>(`/api/erp/shop/requests?scope=${scope}`) });
+  // 一页 50 张，从新到旧；紧急程度在服务端先筛再分页（老的单翻页也找得到，Codex 审查）
+  const q = useInfiniteQuery({
+    queryKey: ['shop', 'requests', scope, priority],
+    initialPageParam: null as number | null,
+    queryFn: ({ pageParam }) =>
+      api.get<{ requests: MallRequestBrief[]; nextBeforeId: number | null }>(
+        `/api/erp/shop/requests?scope=${scope}${priority ? `&priority=${priority}` : ''}${pageParam ? `&beforeId=${pageParam}` : ''}`,
+      ),
+    getNextPageParam: (last) => last.nextBeforeId,
+  });
   if (q.isPending) return <Skeleton className="h-64" />;
   if (q.error) return <LoadFailed title="需求没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
-  const list = q.data.requests.filter((r) => !priority || r.priority === priority);
+  const list = q.data.pages.flatMap((p) => p.requests);
   return (
     <div className="space-y-3" data-testid={`shop-${scope}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -838,6 +847,13 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
             </Link>
           ))}
         </Card>
+      )}
+      {q.hasNextPage && (
+        <div className="text-center">
+          <Button size="sm" loading={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()} data-testid={`shop-${scope}-more`}>
+            加载更早的
+          </Button>
+        </div>
       )}
     </div>
   );

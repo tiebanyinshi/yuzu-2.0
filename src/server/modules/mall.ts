@@ -497,6 +497,36 @@ export async function listMall(deps: Deps, actor: Actor, raw: unknown, opts: { m
   return { requests, nextCursor: page.length === q.limit ? { updatedSince: new Date(last.at).toISOString(), afterId: Number(last.id) } : null };
 }
 
+const PagedQuery = z.object({
+  priority: z.enum(REQUEST_PRIORITIES).optional(),
+  /** 接着上一页取：编号比它小的 */
+  beforeId: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+/**
+ * 柚子里的商城页面「我的采购需求」「需求池」（Codex 审查）：来源是商城的单，按编号从新到旧一页页取，紧急程度在库里先筛再截，
+ * 老的单翻页也找得到。mineOnly：审核、核库的人也只看本部门、自己提的、自己当主管的
+ */
+export async function pagedMall(deps: Deps, actor: Actor, raw: unknown, opts: { mineOnly: boolean }): Promise<{ requests: MallRequestBrief[]; nextBeforeId: number | null }> {
+  const q = parse(PagedQuery, raw ?? {});
+  const db = deps.sql;
+  const me = await myContext(db, actor);
+  const scope = (me.canReview || me.canStock) && !opts.mineOnly ? undefined : { staffId: actor.id, departmentId: me.departmentId };
+  const page = await db<{ id: number }[]>`
+    SELECT r.id FROM purchase_requests r
+    WHERE r.source = 'mall'
+      ${q.priority ? db`AND r.priority = ${q.priority}` : db``}
+      ${q.beforeId ? db`AND r.id < ${q.beforeId}` : db``}
+      ${scope ? db`AND ${REQUESTER_OR_DEPT(db, scope)}` : db``}
+    ORDER BY r.id DESC LIMIT ${q.limit}`;
+  if (!page.length) return { requests: [], nextBeforeId: null };
+  const ids = page.map((r) => Number(r.id));
+  const byId = new Map((await briefs(db, await summaries(db, { ids, timezone: deps.config.timezone }))).map((b) => [b.id, b]));
+  const requests = ids.map((i) => byId.get(i)).filter((b): b is MallRequestBrief => !!b);
+  return { requests, nextBeforeId: page.length === q.limit ? ids[ids.length - 1]! : null };
+}
+
 const BatchInput = z
   .object({
     ids: z.array(id).max(MALL_BATCH_LIMIT, `一次最多查 ${MALL_BATCH_LIMIT} 张`).default([]),

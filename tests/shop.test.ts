@@ -244,6 +244,30 @@ describe('我的需求与需求池', () => {
 });
 
 describe('SKU 的边界（Codex 审查）', () => {
+  it('我的采购需求一页页取（从新到旧，不重不漏）；紧急程度在服务端先筛再分页', async () => {
+    const line = { name: '分页测试', expectedCategory: '', qtyMilli: q(1), unit: '个', details: 'x', brandModel: '', link: '', reasonText: 'x', imageIds: [] };
+    for (const priority of ['urgent', 'normal', 'normal']) {
+      expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ priority }), kind: 'custom', line })).status).toBe(201);
+    }
+    const all = (await api(ctx.app, reqA, 'GET', '/api/erp/shop/requests?scope=mine&limit=100')).body.requests as { id: number }[];
+    const seen: number[] = [];
+    let before: number | null = null;
+    for (let i = 0; i < 100; i += 1) {
+      const page = (await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests?scope=mine&limit=1${before ? `&beforeId=${before}` : ''}`)).body as {
+        requests: { id: number }[];
+        nextBeforeId: number | null;
+      };
+      seen.push(...page.requests.map((r) => r.id));
+      before = page.nextBeforeId;
+      if (!before) break;
+    }
+    expect(seen).toEqual(all.map((r) => r.id));
+    expect([...seen].sort((a, b) => b - a)).toEqual(seen);
+    const urgent = (await api(ctx.app, reqA, 'GET', '/api/erp/shop/requests?scope=mine&priority=urgent&limit=1')).body.requests as { priority: string }[];
+    expect(urgent).toHaveLength(1);
+    expect(urgent[0]!.priority).toBe('urgent');
+  });
+
   it('只能给自己能去的门店提（Codex 安全审查）：目录只列这些门店，提交别的门店 403', async () => {
     const [entity] = await ctx.sql<{ entityId: number }[]>`SELECT entity_id FROM stores WHERE id = ${storeId}`;
     const [other] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('SHOPB', '商城测试分店', ${entity!.entityId}) RETURNING id`;

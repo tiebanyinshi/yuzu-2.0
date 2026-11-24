@@ -24,7 +24,7 @@ import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
 import { loadExpenseRules } from './expenses';
 import { docDateSchema } from './inventory/common';
-import { createMallRequest, listMall, mallRequest } from './mall';
+import { createMallRequest, mallRequest, pagedMall } from './mall';
 import { allowedStores } from './stores';
 import { hashRequest } from '../lib/idempotency';
 import { myContext } from './requests';
@@ -453,7 +453,7 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     const pool = q.scope === 'pool';
     if (pool && !can(req.actor, 'request.review') && !can(req.actor, 'request.stock')) throw forbidden('需求池只给采购、库管看');
     const { scope: _scope, ...rest } = q;
-    return listMall(deps, req.actor, { ...rest, source: 'mall', limit: rest.limit ?? 200 }, { mineOnly: !pool });
+    return pagedMall(deps, req.actor, rest, { mineOnly: !pool });
   });
   app.get(`${P}/requests/:id`, { preHandler: shopper }, async (req) => mallRequest(deps, req.actor, parse(idParam, req.params).id));
 
