@@ -18,6 +18,7 @@ import {
   type OaShift,
   type OaShiftTimes,
 } from '@shared/oa';
+import type { GeoInfo, GeoPlace } from '@shared/geo';
 import { positionLabel } from '@shared/positions';
 import { clockText, parseClock, shiftTimeText } from '@shared/technician-admin';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
@@ -38,6 +39,7 @@ import { AttendanceResultsTab } from './AttendanceResultsTab';
 import { FaceReviewTab } from './FaceReviewTab';
 import { HolidayTab } from './HolidayTab';
 import { LeaveTab } from './LeaveTab';
+import { MapPicker } from './MapPicker';
 import { PunchRecordsTab } from './PunchRecordsTab';
 import { ScheduleTab } from './ScheduleTab';
 
@@ -409,6 +411,12 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
   const [radius, setRadius] = useState('');
   const [active, setActive] = useState(true);
   const [locating, setLocating] = useState(false);
+  // 搜索地址选点（考勤排班优化第 1 条）：服务端代查，结果已经是 WGS-84
+  const geo = useQuery({ queryKey: ['oa', 'geo'], queryFn: () => api.get<GeoInfo>('/api/oa/attendance/geo'), enabled: !!target, staleTime: 600_000 });
+  const [keyword, setKeyword] = useState('');
+  const [places, setPlaces] = useState<GeoPlace[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   // 每次打开、关闭都换一个号：定位晚到时对话框已经关了或换成了别的打卡点，就不填（Codex 审查 56b128b）
   const locateToken = useRef(0);
   const save = useSave(onClose);
@@ -423,6 +431,9 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
       setLng(existing ? existing.lng.toFixed(6) : '');
       setRadius(String(existing?.radiusM ?? OA_LOCATION_RADIUS_DEFAULT));
       setActive(existing?.active ?? true);
+      setKeyword('');
+      setPlaces(null);
+      setSearchError(null);
       save.setError(null);
     },
     [target],
@@ -461,6 +472,30 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
       { enableHighAccuracy: true, timeout: 15_000 },
     );
   };
+  const search = async () => {
+    const q = keyword.trim();
+    if (q.length < 2) return setSearchError('至少输两个字');
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const r = await api.get<{ places: GeoPlace[] }>(`/api/oa/attendance/geo/search?q=${encodeURIComponent(q)}`);
+      setPlaces(r.places);
+      if (!r.places.length) setSearchError(`没搜到「${q}」，换个说法或用「定位当前位置」`);
+    } catch (e) {
+      setSearchError(errorMessage(e));
+    } finally {
+      setSearching(false);
+    }
+  };
+  /** 选一个搜到的地址：写入经纬度、地图挪过去（名字、地址空着的一并带上） */
+  const pick = (p: GeoPlace) => {
+    setLat(p.lat.toFixed(6));
+    setLng(p.lng.toFixed(6));
+    if (!name.trim()) setName(p.name.slice(0, 30));
+    if (!address.trim()) setAddress(p.address.slice(0, 100));
+    setPlaces(null);
+  };
+  const point = lat.trim() && lng.trim() && Number.isFinite(latN) && Number.isFinite(lngN) && Math.abs(latN) <= 90 && Math.abs(lngN) <= 180 ? { lat: latN, lng: lngN } : null;
   const submit = () => {
     if (problem) return;
     const body = { name: name.trim(), address: address.trim(), lat: latN, lng: lngN, radiusM: radiusN, active, version: existing?.version };
@@ -475,7 +510,8 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
       open={!!target}
       onClose={onClose}
       title={existing ? `编辑打卡点 · ${existing.name}` : '新建打卡点'}
-      description="经纬度用手机定位（WGS-84）取的数字；地图软件里复制来的坐标可能有几百米的偏差，填完可点「在地图上看看」核对。"
+      width="max-w-3xl"
+      description="三种取点方式：在门店里「定位当前位置」；搜地址后在地图上选点、确认前可微调；或手动填经纬度（手机定位的 WGS-84）。保存的都是 WGS-84，打卡判定不变。"
       footer={
         <>
           {(save.error || problem) && <span className="mr-auto self-center text-[13px] text-clay">{save.error ?? problem}</span>}
@@ -506,8 +542,8 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
         </Field>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <Button variant="secondary" icon={<LocateFixed className="size-4" />} loading={locating} onClick={locate}>
-          用当前位置
+        <Button variant="secondary" icon={<LocateFixed className="size-4" />} loading={locating} onClick={locate} data-testid="att-location-locate">
+          定位当前位置
         </Button>
         {!problem && (
           <a
@@ -520,6 +556,57 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
           </a>
         )}
       </div>
+      {geo.data && (
+        <div className="mt-4 space-y-2" data-testid="att-location-search">
+          <p className="text-[13px] font-semibold text-ink-2">搜索地址选点</p>
+          {geo.data.provider === 'off' ? (
+            <p className="text-[12.5px] text-ink-3">这台服务器没开地址搜索（管理员在 .env 配 AMAP_WEB_KEY 或 GEO_PROVIDER）；可以直接在地图上点、或用「定位当前位置」。</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                fullWidth={false}
+                className="w-full sm:w-72"
+                value={keyword}
+                maxLength={60}
+                onChange={(e) => setKeyword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void search();
+                  }
+                }}
+                placeholder="输门店名称或地址，如 某某路 88 号"
+                aria-label="搜索地址"
+                data-testid="att-location-keyword"
+              />
+              <Button variant="secondary" icon={<Search className="size-4" />} loading={searching} onClick={() => void search()} data-testid="att-location-search-go">
+                搜索
+              </Button>
+            </div>
+          )}
+          {searchError && <p className="text-[12.5px] text-clay">{searchError}</p>}
+          {places && places.length > 0 && (
+            <ul className="max-h-44 divide-y divide-line overflow-y-auto rounded-lg border border-line" data-testid="att-location-places">
+              {places.map((p, i) => (
+                <li key={`${p.lat},${p.lng},${i}`}>
+                  <button type="button" onClick={() => pick(p)} className="w-full px-3 py-2 text-left hover:bg-paper-2" data-testid={`att-location-place-${i}`}>
+                    <span className="block text-[13.5px] font-semibold text-ink">{p.name}</span>
+                    <span className="block truncate text-[12px] text-ink-3">{p.address}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <MapPicker
+            value={point}
+            provider={geo.data.provider}
+            onChange={(p) => {
+              setLat(p.lat.toFixed(6));
+              setLng(p.lng.toFixed(6));
+            }}
+          />
+        </div>
+      )}
       {existing && (
         <div className="mt-4">
           <ConfirmCheck checked={!active} onChange={(v) => setActive(!v)} tone="clay">
