@@ -1,7 +1,10 @@
 -- 回滚 234_price_catalog_op_fences.sql。先停服务、先备份；先回滚 234，再回滚 233、232、231、230。
 -- 删掉价目表的两种作废登记，再把这两个类型从 op_fences 的类型约束里去掉（其余类型照旧）。
 BEGIN;
+-- op_fences、idempotency_keys 只追加（001、006 的触发器）：维护性删除时临时关掉对应的触发器，删完马上恢复（不然有记录的库上回滚会整笔失败）
+ALTER TABLE op_fences DISABLE TRIGGER op_fences_append_only;
 DELETE FROM op_fences WHERE op_type IN ('price_import', 'price_rollback');
+ALTER TABLE op_fences ENABLE TRIGGER op_fences_append_only;
 DO $$
 DECLARE expression text;
 BEGIN
