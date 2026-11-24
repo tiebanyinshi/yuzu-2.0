@@ -6,6 +6,9 @@
 // 不落库的：服务费（比例，结账时算）、房型 / 轰趴房 / 餐饮包房（房间按房态中心开房，不是卖给客人的项目，试算照旧按价目表算）。
 // 只有本店（编号 1）新建收银项目（收银项目全公司一份）；第二家店只同步本店价（第四批）。
 // 菜品要挂出品档口才能进点单页与厨房屏：新建的菜品挂餐厅原有的菜用得最多的档口（PC20；可在菜品管理里改），没有档口时不建，列出来。
+// 对上门店原有的同名收银项目（不是价目表新建的）时，补齐上得了房态中心、点单页的那几样（PC28，店主 2026-11-24：正式服原有同名项目
+// 对上以后房态中心、点单页看不到）：按摩及助浴标「需要技师」、时长照价目表；菜品没挂档口的挂上、归到餐厅；名称、类别、价格以外的不动。
+// 双价的「专业 / 优选」两档由 syncLinkedPrices 写（本店去掉原来的「标准」档）。
 
 import { priceCategoriesOf, priceNameKey, type PriceCatalogEntry, type PriceCategory } from '@shared/price-catalog';
 import type { Tx } from '../../db';
@@ -37,6 +40,50 @@ export interface MaterializeResult {
   created: number;
   /** 没建的：菜品没有出品档口…… */
   skipped: { key: string; name: string; reason: string }[];
+  /** 补齐了设置的原有收银项目 */
+  fitted: { itemId: number; name: string; changes: string[] }[];
+}
+
+/** 餐厅原有的菜用得最多的档口（不挂到水吧、果吧）；还没有餐厅的菜时用第一个在用的档口；没有在用的档口为 null */
+async function pickStation(tx: Tx): Promise<number | null> {
+  const [s] = await tx<{ id: number }[]>`
+    SELECT k.id FROM kitchen_stations k
+    LEFT JOIN service_items i ON i.station_id = k.id AND i.active AND i.dining_outlet = 'restaurant' AND NOT i.catalog_managed
+    WHERE k.active GROUP BY k.id, k.sort_order ORDER BY count(i.id) DESC, k.sort_order, k.id LIMIT 1`;
+  return s ? Number(s.id) : null;
+}
+
+const NO_STATION = '还没有在用的出品档口，菜品上不了点单页（先在后台建一个档口，再切换生效一次）';
+
+/**
+ * 门店原有的收银项目对上价目表的一项以后，补齐上得了房态中心、点单页的设置（PC28）。只补缺的，已经对的不动；
+ * 返回改了哪几样（空的说明本来就齐），或者补不了的原因
+ */
+async function fitExisting(tx: Tx, id: number, e: PriceCatalogEntry, station: () => Promise<number | null>): Promise<string[] | { reason: string }> {
+  const [it] = await tx<{ technicianRequired: boolean; durationMinutes: number | null; stationId: number | null; stationActive: boolean | null; diningOutlet: string | null; diningGroup: string }[]>`
+    SELECT i.technician_required, i.duration_minutes, i.station_id, k.active AS station_active, i.dining_outlet, i.dining_group
+    FROM service_items i LEFT JOIN kitchen_stations k ON k.id = i.station_id WHERE i.id = ${id}`;
+  if (!it) return [];
+  const changes: string[] = [];
+  if (e.sheet === 'massage') {
+    const minutes = minutesOf(e) ?? it.durationMinutes;
+    if (!it.technicianRequired || minutes !== it.durationMinutes) {
+      if (!it.technicianRequired) changes.push('标为需要技师');
+      if (minutes !== it.durationMinutes) changes.push(`时长 ${it.durationMinutes ?? '—'} → ${minutes} 分钟`);
+      await tx`UPDATE service_items SET technician_required = true, duration_minutes = ${minutes}, updated_at = clock_timestamp() WHERE id = ${id}`;
+    }
+  }
+  if (e.sheet === 'dish' && (it.stationId === null || !it.stationActive || !it.diningOutlet)) {
+    const sid = it.stationId !== null && it.stationActive ? Number(it.stationId) : await station();
+    if (sid === null) return { reason: NO_STATION };
+    if (sid !== (it.stationId === null ? null : Number(it.stationId))) changes.push('挂上出品档口');
+    if (!it.diningOutlet) changes.push('归到餐厅点单');
+    await tx`
+      UPDATE service_items SET station_id = ${sid}, dining_outlet = coalesce(dining_outlet, 'restaurant'),
+        dining_group = CASE WHEN dining_group = '' THEN '餐饮' ELSE dining_group END, updated_at = clock_timestamp()
+      WHERE id = ${id}`;
+  }
+  return changes;
 }
 
 /**
@@ -45,7 +92,7 @@ export interface MaterializeResult {
  */
 export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], opts: { keys?: string[]; staffId: number }): Promise<MaterializeResult> {
   const storeId = currentStoreId();
-  const out: MaterializeResult = { created: 0, skipped: [] };
+  const out: MaterializeResult = { created: 0, skipped: [], fitted: [] };
   const { byEntry } = priceCategoriesOf(entries);
   // 同名的在用项优先（与对比、对接同一个键）
   const byKey = new Map<string, { e: PriceCatalogEntry; c: PriceCategory }>();
@@ -69,6 +116,17 @@ export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], o
   const entriesByName = new Map<string, number>();
   for (const { e } of byKey.values()) if (e.active) entriesByName.set(nameKey(e.name), (entriesByName.get(nameKey(e.name)) ?? 0) + 1);
   let station: number | null | undefined;
+  const stationOf = async () => {
+    if (station === undefined) station = await pickStation(tx);
+    return station;
+  };
+  // 原有的同名收银项目：补齐设置（PC28），记下改了什么、补不了的原因
+  const fit = async (id: number, key: string, e: PriceCatalogEntry) => {
+    const r = await fitExisting(tx, id, e, stationOf);
+    if (Array.isArray(r)) {
+      if (r.length) out.fitted.push({ itemId: id, name: e.name, changes: r });
+    } else out.skipped.push({ key, name: e.name, reason: r.reason });
+  };
   for (const [key, { e, c }] of byKey) {
     if (wanted && !wanted.has(key)) continue;
     const itemId = links.get(key);
@@ -82,6 +140,7 @@ export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], o
         UPDATE service_items SET name = ${e.name}, duration_minutes = ${minutesOf(e)}, gender = ${genderOf(e)}, technician_required = ${e.sheet === 'massage'},
           active = ${sellable(e)}, updated_at = clock_timestamp()
         WHERE id = ${itemId} AND catalog_managed AND dish_deleted_at IS NULL`;
+      if (storeId === DEFAULT_STORE_ID && sellable(e)) await fit(itemId, key, e);
       continue;
     }
     // 第二家店不新建（收银项目全公司一份）；待定价的先不建（收银项目必须有价），补价后再建
@@ -96,19 +155,12 @@ export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], o
         UPDATE service_items SET catalog_key = ${key}, catalog_category_code = ${c.code}, catalog_category_name = ${c.name}, catalog_group = ${c.group}, catalog_sort = ${c.sort},
           catalog_code = ${e.code || null}, updated_at = clock_timestamp()
         WHERE id = ${id}`;
+      await fit(id, key, e);
     }
     if (id === null) {
       if (e.sheet === 'dish') {
-        if (station === undefined) {
-          // 餐厅原有的菜用得最多的档口（不挂到水吧、果吧）；还没有餐厅的菜时用第一个在用的档口
-          const [s] = await tx<{ id: number }[]>`
-            SELECT k.id FROM kitchen_stations k
-            LEFT JOIN service_items i ON i.station_id = k.id AND i.active AND i.dining_outlet = 'restaurant' AND NOT i.catalog_managed
-            WHERE k.active GROUP BY k.id, k.sort_order ORDER BY count(i.id) DESC, k.sort_order, k.id LIMIT 1`;
-          station = s ? Number(s.id) : null;
-        }
-        if (station === null) {
-          out.skipped.push({ key, name: e.name, reason: '还没有在用的出品档口，菜品建不了（先在后台建一个档口）' });
+        if ((await stationOf()) === null) {
+          out.skipped.push({ key, name: e.name, reason: NO_STATION });
           continue;
         }
       }
@@ -123,7 +175,7 @@ export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], o
           duration_minutes: minutesOf(e),
           gender: genderOf(e),
           technician_required: e.sheet === 'massage',
-          station_id: dish ? station! : null,
+          station_id: dish ? station : null,
           dining_outlet: dish ? 'restaurant' : null,
           dining_group: dish ? '餐饮' : '',
           catalog_key: key,

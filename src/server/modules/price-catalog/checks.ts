@@ -3,12 +3,34 @@
 //     「点单页逐个分类点一遍，确认各分类下项目数与表格一致、无串类、无漏项」，页面上一张表直接看；
 //   · 导出：一份价目表按六张表各出一张工作表（分类编码、名称、价格、时长……一行一项），门店拿去与原表逐项核对。只读，不加锁。
 
-import { minutesText, PRICE_GENDER_LABELS, PRICE_SHEET_NAMES, PRICE_SHEETS, priceCategoriesOf, windowText, type PriceCatalogEntry, type PriceCategoryCheck } from '@shared/price-catalog';
+import { minutesText, PRICE_GENDER_LABELS, PRICE_SHEET_NAMES, PRICE_SHEETS, priceCategoriesOf, priceNameKey, windowText, type PriceCatalogEntry, type PriceCategoryCheck } from '@shared/price-catalog';
 import type { Db } from '../../db';
 import { currentStoreId } from '../../lib/store-context';
 import { buildWorkbook, type WbSheet } from '../../lib/xlsx';
 import { NOT_ITEMS, sellable } from './materialize';
 import { entriesOf } from './read';
+
+/**
+ * 能卖的一项在点单页上看不看得到，看不到的原因（PC28）：没对上收银项目、收银项目停用了、
+ * 按摩及助浴没标「需要技师」（房态中心登记不列）、菜品没挂在用的出品档口或没归到点单页（点单页不列）
+ */
+function hiddenReason(e: PriceCatalogEntry, it: ItemRow | undefined, hasStation: boolean): string | null {
+  if (!it && e.sheet === 'dish' && !hasStation) return '还没有在用的出品档口，菜品建不了（先在后台建一个档口，再切换生效一次）';
+  if (!it) return '还没对上收银项目（切换生效一次就会建）';
+  if (!it.active) return `对上的收银项目「${it.name}」停用了`;
+  if (e.sheet === 'massage' && !it.technicianRequired) return `对上的收银项目「${it.name}」没标需要技师，房态中心登记不列（切换生效一次就会补上）`;
+  if (e.sheet === 'dish' && (!it.stationActive || !it.diningOutlet)) return `对上的收银项目「${it.name}」没挂在用的出品档口，点单页不列（切换生效一次就会补上；没有档口的先建一个）`;
+  return null;
+}
+
+interface ItemRow {
+  entryKey: string;
+  name: string;
+  active: boolean;
+  technicianRequired: boolean;
+  stationActive: boolean;
+  diningOutlet: string | null;
+}
 
 export async function priceCategoryChecks(db: Db): Promise<PriceCategoryCheck[]> {
   const [active] = await db<{ id: number }[]>`SELECT id FROM price_catalog_sets WHERE store_id = ${currentStoreId()} AND status = 'active'`;
@@ -17,24 +39,33 @@ export async function priceCategoryChecks(db: Db): Promise<PriceCategoryCheck[]>
   const { categories, byEntry } = priceCategoriesOf(entries);
   const items = new Map(
     (
-      await db<{ code: string; n: number }[]>`
-        SELECT i.catalog_category_code AS code, count(*)::int AS n
-        FROM service_items i JOIN price_catalog_links l ON l.item_id = i.id AND l.store_id = ${currentStoreId()}
-        WHERE i.active AND i.catalog_category_code IS NOT NULL GROUP BY 1`
-    ).map((r) => [r.code, Number(r.n)]),
+      await db<ItemRow[]>`
+        SELECT l.entry_key, i.name, i.active, i.technician_required, coalesce(k.active, false) AS station_active, i.dining_outlet
+        FROM price_catalog_links l JOIN service_items i ON i.id = l.item_id LEFT JOIN kitchen_stations k ON k.id = i.station_id
+        WHERE l.store_id = ${currentStoreId()}`
+    ).map((r) => [r.entryKey, r]),
   );
+  const [st] = await db<{ n: number }[]>`SELECT count(*)::int AS n FROM kitchen_stations WHERE active`;
+  const hasStation = st!.n > 0;
   return categories.map((c) => {
     const mine = entries.filter((_, i) => byEntry[i]!.code === c.code);
     const sheet = mine[0]!.sheet;
     const noItems = mine.every((e) => NOT_ITEMS.has(e.kind));
+    const sold = noItems ? [] : mine.filter(sellable);
+    const hidden = sold.flatMap((e) => {
+      const reason = hiddenReason(e, items.get(priceNameKey(e)), hasStation);
+      return reason ? [{ name: e.name, reason }] : [];
+    });
     return {
       code: c.code,
       name: c.name,
       group: c.group,
       sheet,
       entries: mine.length,
-      sellable: noItems ? 0 : mine.filter(sellable).length,
-      items: noItems ? null : (items.get(c.code) ?? 0),
+      sellable: sold.length,
+      // 点单页（前台开单、房态中心登记、点单页）上看得到的：能卖的里头对上了、在用、上得了页面的
+      items: noItems ? null : sold.length - hidden.length,
+      hidden,
     };
   });
 }

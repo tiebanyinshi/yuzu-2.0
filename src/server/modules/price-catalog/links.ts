@@ -69,7 +69,9 @@ export function targetTiers(e: PriceCatalogEntry | undefined, current: readonly 
   const has = new Set(current.map((t) => t.tier));
   const out = new Map<PriceTier, number>();
   if (e.priceMode === 'dual' && e.price2Cents !== null) {
-    if (has.has('standard')) out.set('standard', e.priceCents);
+    // 本店：双价一律是「专业 / 优选」两档（与价目表新建的一样，房态中心登记才出「专业价 / 资深价」二选一），原有的「标准」档去掉；
+    // 第二家店只写本店价、不增删档，有「标准」档的也写专业价
+    if (has.has('standard') && !opts.canAdd) out.set('standard', e.priceCents);
     if (has.has('professional') || opts.canAdd) out.set('professional', e.priceCents);
     if (has.has('premium') || opts.canAdd) out.set('premium', e.price2Cents);
   } else {
@@ -108,7 +110,22 @@ export async function syncLinkedPrices(tx: Tx, ctx: OpContext, opts: { keys?: st
   if (!active) return [];
   const entries = await entriesOf(tx, Number(active.id));
   // 重做第一批：先落库（没对接的新建收银项目并对上、补分类），再按对接写价
-  await materializeCatalog(tx, entries, { keys: opts.keys, staffId: ctx.actor.id });
+  const made = await materializeCatalog(tx, entries, { keys: opts.keys, staffId: ctx.actor.id });
+  // 原有的同名收银项目补齐了设置（PC28）：记一条审计，写明哪几个、改了什么
+  if (made.fitted.length) {
+    await writeAudit(tx, {
+      staffId: ctx.actor.id,
+      action: 'price_catalog',
+      targetType: 'price_catalog_set',
+      targetId: String(active.id),
+      detail: {
+        action: 'fit_items',
+        label: `${opts.why}：${made.fitted.length} 个原有的收银项目补齐了设置（需要技师、时长、出品档口）`,
+        items: made.fitted,
+      },
+      ip: ctx.ip,
+    });
+  }
   const links = await tx<{ entryKey: string; itemId: number }[]>`
     SELECT entry_key, item_id FROM price_catalog_links WHERE store_id = ${storeId} ${opts.keys ? tx`AND entry_key IN ${tx(opts.keys.length ? opts.keys : [''])}` : tx``}
     ORDER BY item_id`;

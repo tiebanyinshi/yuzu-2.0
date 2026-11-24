@@ -1,5 +1,6 @@
 // 价目表重做第四批：分类核对（需求说明第三节 7「点单页逐个分类点一遍，确认各分类下项目数与表格一致、无串类、无漏项」）。
-// 生效中的价目表每个分类：表格里在用几项、能卖几项、点单页上对上这个分类的收银项目几个；能卖的与点单页上的对不上标红。
+// 生效中的价目表每个分类：表格里在用几项、能卖几项、点单页上看得到几个；能卖的与点单页上的对不上标红，
+// 下面逐项写看不到的原因（PC28：没对上、停用、按摩没标需要技师、菜品没挂档口）。
 
 import { useQuery } from '@tanstack/react-query';
 import { PRICE_SHEET_NAMES, type PriceCategoryCheck } from '@shared/price-catalog';
@@ -52,14 +53,31 @@ export function PriceCategoryChecks() {
       </SectionTitle>
       <p className="mt-1 text-[12.5px] text-ink-3">
         每个分类：表格里在用几项、能卖的几项（服务费、房间不落库；待定价、不可下单的不能卖）、前台开单 / 房态中心登记 /
-        点单页上实际在用的几个。能卖的与点单页上的对不上时，先切换生效或改一下这一项，让它同步一次。
+        点单页上看得到的几个。对不上的，下面写了哪几项、为什么；多数切换生效一次就会补上。
       </p>
       {q.isPending ? (
         <Skeleton className="mt-3 h-40" />
       ) : q.isError && !q.data ? (
         <LoadFailed title="分类核对取不回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />
       ) : (
-        <DataTable className="mt-3" variant="plain" columns={columns} rows={rows} rowKey={(r) => r.code} rowTestId={(r) => `price-category-${r.code}`} testId="price-category-table" />
+        <>
+          <DataTable className="mt-3" variant="plain" columns={columns} rows={rows} rowKey={(r) => r.code} rowTestId={(r) => `price-category-${r.code}`} testId="price-category-table" />
+          {bad.some((r) => r.hidden.length) && (
+            <div className="mt-4 rounded-md border border-clay/40 bg-clay-soft/40 p-3" data-testid="price-category-hidden">
+              <p className="text-[13px] font-bold text-clay">这些能卖的项在前台开单、房态中心登记或点单页上看不到：</p>
+              <ul className="mt-1.5 space-y-1 text-[13px] text-ink-2">
+                {bad.flatMap((r) =>
+                  r.hidden.map((h) => (
+                    <li key={`${r.code}-${h.name}`}>
+                      <span className="text-ink-3">{r.name} · </span>
+                      <span className="font-semibold">{h.name}</span>：{h.reason}
+                    </li>
+                  )),
+                )}
+              </ul>
+            </div>
+          )}
+        </>
       )}
     </Card>
   );
