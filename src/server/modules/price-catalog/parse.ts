@@ -200,13 +200,16 @@ function storeSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
   if (!head) return [];
   const col = (n: string) => head.cols.get(n) ?? -1;
   const out: PriceCatalogEntry[] = [];
+  let lastType = '';
   for (const r of rowsOf(g).filter((r) => r > head.row)) {
-    const type = oneLine(at(g, r, col('类型')));
     const item = oneLine(at(g, r, col('项目')));
     const priceText = at(g, r, col('价格'));
     const note = oneLine(at(g, r, col('备注')));
     const time = at(g, r, col('时间'));
+    // 「类型」只在组首行写、后面留空（合并或没合并都一样）：留空沿用上一行的类型
+    const type = oneLine(at(g, r, col('类型'))) || (item || priceText ? lastType : '');
     if (!type && !item && !priceText) continue;
+    lastType = type;
     const sort = out.length + 1;
     if (type === '服务费') {
       const v = Number(half(priceText).replace('%', ''));
@@ -241,7 +244,8 @@ function storeSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
         windowStart: w?.[0] ?? null,
         windowEnd: w?.[1] ?? null,
         unit: '张',
-        note: oneLine([note && `含${note}`, time].filter(Boolean).join('；')),
+        // 备注写「早餐+夜宵」存成「含早餐+夜宵」；已经写了「含…」的不再加（导出再导入不会变成「含含…」）
+        note: oneLine([note && (note.startsWith('含') ? note : `含${note}`), time].filter(Boolean).join('；')),
       });
     } else if (type === '餐票') {
       const w = windowOf(time);
@@ -367,9 +371,10 @@ function roomSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
   // 合并的房型（轰趴房占 4 行）按房型合成一项，每一行是一档
   const groups: { type: string; rows: number[] }[] = [];
   for (const r of rows) {
-    const type = oneLine(at(g, r, cType));
-    if (!type && !at(g, r, cPrice)) continue;
     const last = groups[groups.length - 1];
+    // 房型只在组首行写、后面留空（轰趴房按面积几行）：留空、却写着收费参考的沿用上一行的房型
+    const type = oneLine(at(g, r, cType)) || (at(g, r, cPrice) && last ? last.type : '');
+    if (!type && !at(g, r, cPrice)) continue;
     if (last && last.type === type) last.rows.push(r);
     else groups.push({ type, rows: [r] });
   }
@@ -548,6 +553,9 @@ function checkRooms(ctx: Ctx, S: PriceSheet, r: number, type: string, units: num
 
 // ───────────────────────── 零点菜品价格 ─────────────────────────
 
+/** 同一个分类的几种写法统一成一种（店主 2026-11-24《价目表模板替换与页面维护需求说明》：「中餐零点 / 中式零点」统一） */
+export const dishCategory = (text: string) => (/^中[餐式]零点$/.test(text) ? '中式零点' : text);
+
 const DISH_HEADS = ['序号', '菜品分类', '菜品名称', '售价', '单位'];
 const DISH_REQUIRED = ['菜品分类', '菜品名称', '售价', '单位'];
 
@@ -596,7 +604,7 @@ function dishSheet(g: Grid, ctx: Ctx): PriceCatalogEntry[] {
       if (at(g, r, cols.get('售价') ?? -1) || at(g, r, cols.get('单位') ?? -1)) ctx.error(S, r, '菜品名称', '菜品名称为空（这一行还写着售价 / 单位）');
       continue;
     }
-    const cat = oneLine(at(g, r, cols.get('菜品分类') ?? -1));
+    const cat = dishCategory(oneLine(at(g, r, cols.get('菜品分类') ?? -1)));
     if (cat) category = cat;
     const priceText = at(g, r, cols.get('售价') ?? -1);
     const unit = oneLine(at(g, r, cols.get('单位') ?? -1));
@@ -714,20 +722,30 @@ const PARSERS: Record<PriceSheet, (g: Grid, ctx: Ctx) => PriceCatalogEntry[]> = 
   massage: massageSheet,
 };
 
-/** 六张表按工作表名认（名字前后的空格不管）；少了哪张报哪张 */
-export function parsePriceCatalog(book: XlsxWorkbook): ParsedPriceCatalog {
+/**
+ * 六张表按工作表名认（名字前后的空格不管）；少了哪张报哪张。
+ * only：只读这一张表（各模块单独的模板，店主 2026-11-24）——文件里只有这一张也行，工作表名对不上、但整份只有一张表的照样认；
+ * fileName：写进每条问题，报错指明文件、行号、字段与原因。
+ */
+export function parsePriceCatalog(book: XlsxWorkbook, opts: { only?: PriceSheet; fileName?: string } = {}): ParsedPriceCatalog {
   const issues: PriceImportIssue[] = [];
+  const file = opts.fileName ? { file: opts.fileName } : {};
   const ctx: Ctx = {
     issues,
-    error: (sheet, row, field, message) => issues.push({ sheet: PRICE_SHEET_NAMES[sheet], row, field, message, level: 'error' }),
-    warn: (sheet, row, field, message) => issues.push({ sheet: PRICE_SHEET_NAMES[sheet], row, field, message, level: 'warning' }),
+    error: (sheet, row, field, message) => issues.push({ ...file, sheet: PRICE_SHEET_NAMES[sheet], row, field, message, level: 'error' }),
+    warn: (sheet, row, field, message) => issues.push({ ...file, sheet: PRICE_SHEET_NAMES[sheet], row, field, message, level: 'warning' }),
   };
   const byName = new Map(book.sheets.map((s) => [s.name.trim(), s]));
+  // 单独的模板：工作表名可能被改过（「Sheet1」），整份只有一张有内容的表时就认它
+  if (opts.only && !byName.has(PRICE_SHEET_NAMES[opts.only])) {
+    const filled = book.sheets.filter((s) => s.rows.size > 0);
+    if (filled.length === 1) byName.set(PRICE_SHEET_NAMES[opts.only], filled[0]!);
+  }
   const entries: PriceCatalogEntry[] = [];
-  for (const sheet of Object.keys(PARSERS) as PriceSheet[]) {
+  for (const sheet of (opts.only ? [opts.only] : Object.keys(PARSERS)) as PriceSheet[]) {
     const ws = byName.get(PRICE_SHEET_NAMES[sheet]);
     if (!ws) {
-      ctx.error(sheet, null, '工作表', `少了「${PRICE_SHEET_NAMES[sheet]}」这张表`);
+      ctx.error(sheet, null, '工作表', opts.only ? `文件里没有「${PRICE_SHEET_NAMES[sheet]}」这张表` : `少了「${PRICE_SHEET_NAMES[sheet]}」这张表`);
       continue;
     }
     const grid = gridOf(ws);
@@ -766,7 +784,7 @@ export function parsePriceCatalog(book: XlsxWorkbook): ParsedPriceCatalog {
     for (const problem of priceEntryProblems(e)) ctx.error(e.sheet, e.sourceRow, e.name, problem);
   }
   const notes: Record<string, string> = {};
-  const sv = byName.get(STORED_VALUE_SHEET_NAME);
+  const sv = opts.only ? undefined : byName.get(STORED_VALUE_SHEET_NAME);
   if (sv) {
     const grid = gridOf(sv);
     const text = rowsOf(grid)
