@@ -15,10 +15,9 @@ import { cn, formatDateTime } from '../../lib/utils';
 import { Money } from '../../components/Money';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Notice, PendingBadge, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
-import { AdminPage } from './AdminShell';
+import { AdminPage, PriceSheetLink } from './AdminShell';
 import { SubPane } from '../../components/SubNav';
 import { TechnicianDialog } from '../technicians/TechnicianDialog';
-import { PriceSheetLink } from './PriceSheetLink';
 
 const adminKey = ['admin', 'technicians'] as const;
 const useTechnicianAdmin = () => useQuery({ queryKey: adminKey, queryFn: () => api.get<TechnicianAdmin>('/api/admin/technicians') });

@@ -34,10 +34,9 @@ import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, MoneyInput, Notice, PendingBadge, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
-import { AdminPage } from './AdminShell';
+import { AdminPage, PriceSheetLink } from './AdminShell';
 import { SubPane } from '../../components/SubNav';
 import { RoomOrderConfigCard } from './RoomOrderConfigCard';
-import { PriceSheetLink } from './PriceSheetLink';
 
 const adminKey = ['admin', 'dining'] as const;
 const useDiningAdmin = () => useQuery({ queryKey: adminKey, queryFn: () => api.get<DiningAdmin>('/api/admin/dining') });

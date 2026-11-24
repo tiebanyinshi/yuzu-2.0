@@ -25,7 +25,7 @@ import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Skeleton } from '../../components/ui';
-import { PriceSheetLink } from './PriceSheetLink';
+import { PriceSheetLink } from './AdminShell';
 
 const KEY = ['admin', 'room-categories'] as const;
 

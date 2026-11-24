@@ -17,11 +17,10 @@ import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, ConfirmCheck, Field, Input, MoneyInput, Notice, PendingBadge, SectionTitle, Segmented, Skeleton } from '../../components/ui';
 import { SubPane } from '../../components/SubNav';
-import { AdminPage } from './AdminShell';
+import { AdminPage, PriceSheetLink } from './AdminShell';
 import { useSession } from '../../lib/session';
 import { StorePricesCard } from './StorePricesCard';
 import { PriceCatalogPane } from './PriceCatalogPane';
-import { PriceSheetLink } from './PriceSheetLink';
 
 type Editing = { kind: 'plan'; data: RechargePlan | null } | { kind: 'item'; data: ServiceItem | null } | null;
 
