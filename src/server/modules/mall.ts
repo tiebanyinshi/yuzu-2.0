@@ -211,9 +211,11 @@ export async function createMallRequest(
   ip?: string,
   /** 柚子里的商城页面（8.1.32）：在建单的事务里、写单之前锁住并核对 SKU（价格版本、能不能买） */
   beforeWrite?: (tx: Db) => Promise<void>,
+  /** 柚子里的商城页面：按页面原样提交的内容算的摘要（明细是按当时的 SKU 拼出来的，SKU 之后改了也不影响原样重提认得出来） */
+  requestHashOverride?: string,
 ): Promise<MallCreateResult> {
   const input = parse(MallCreateInput, raw);
-  const requestHash = hashRequest({ ...input, clientKey: undefined });
+  const requestHash = requestHashOverride ?? hashRequest({ ...input, clientKey: undefined });
   const findExisting = async (db: Db) => {
     const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
     if (!row) return null;

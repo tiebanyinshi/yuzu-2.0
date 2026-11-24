@@ -16,7 +16,9 @@ import { formatQty, parseQty } from '@shared/quantity';
 import { MALL_DISPLAY_LABELS, type MallDisplayStatus, type MallRequest, type MallRequestBrief } from '@shared/mall';
 import { PAYMENT_INTENT_LABELS, PRIORITY_LABELS, REQUEST_PRIORITIES, type MallPaymentIntent, type RequestPriority } from '@shared/requests';
 import { lineGrossCents, SHOP_BLOCK_LABELS, SHOP_CUSTOM_UNITS, type ShopCatalog, type ShopItem, type ShopOffer } from '@shared/shop';
-import { api, ApiError, errorMessage } from '../../lib/api';
+import { api, errorMessage, UncertainError } from '../../lib/api';
+import { sendErpOp } from '../../lib/erpPending';
+import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { useSession } from '../../lib/session';
 import { cn, formatDateTime, uuid } from '../../lib/utils';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -27,6 +29,7 @@ import { PriorityDot } from '../requests/parts';
 import { SkuAdmin } from './SkuAdmin';
 
 const BASE = '/erp/shop';
+const SUBMIT_URL = '/api/erp/shop/requests';
 const catalogKey = (storeId: number | null) => ['shop', 'catalog', storeId] as const;
 
 // ───────────────────────── 本机的清单与待确认的提交 ─────────────────────────
@@ -79,41 +82,15 @@ function useCart() {
   return { cart, setCart };
 }
 
-interface PendingSubmit {
-  clientKey: string;
-  body: Record<string, unknown>;
-  at: string;
-}
-function usePendingSubmit() {
-  const session = useSession();
-  const key = `yuzu.shop.pending.${session.staff.id}`;
-  const [pending, setState] = useState<PendingSubmit | null>(() => {
-    try {
-      return JSON.parse(store.get(key) ?? 'null') as PendingSubmit | null;
-    } catch {
-      return null;
-    }
-  });
-  return {
-    pending,
-    /** 记不到本机（隐私模式、满了）就返回 false：不发请求 */
-    save: (p: PendingSubmit | null) => {
-      const ok = store.set(key, p === null ? null : JSON.stringify(p));
-      setState(p);
-      return ok || p === null;
-    },
-  };
-}
-
 // ───────────────────────── 外壳 ─────────────────────────
 
 export function ShopPage() {
   const params = useParams();
+  const navigate = useNavigate();
   const path = (params['*'] ?? '').replace(/\/+$/, '');
   const [storeId, setStoreId] = useState<number | null>(null);
   const q = useQuery({ queryKey: catalogKey(storeId), queryFn: () => api.get<ShopCatalog>(`/api/erp/shop/catalog${storeId ? `?storeId=${storeId}` : ''}`) });
   const { cart, setCart } = useCart();
-  const pending = usePendingSubmit();
   const count = cart.lines.length;
   const c = q.data;
   const tabs: { to: string; label: string; icon: ReactNode; show: boolean }[] = [
@@ -150,8 +127,8 @@ export function ShopPage() {
   else if (path === '') body = <Home c={q.data} setStore={setStoreId} />;
   else if (path.startsWith('item/')) body = <ItemPage c={q.data} materialId={Number(path.slice(5))} cart={cart} setCart={setCart} />;
   else if (path === 'cart') body = <CartPage c={q.data} cart={cart} setCart={setCart} />;
-  else if (path === 'checkout') body = <Checkout c={q.data} cart={cart} setCart={setCart} pending={pending} />;
-  else if (path === 'custom') body = <CustomForm c={q.data} pending={pending} />;
+  else if (path === 'checkout') body = <Checkout c={q.data} cart={cart} setCart={setCart} />;
+  else if (path === 'custom') body = <CustomForm c={q.data} />;
   else if (path === 'mine' || path === 'pool') body = <RequestList scope={path} />;
   else if (path.startsWith('mine/') || path.startsWith('pool/')) body = <RequestDetail id={Number(path.split('/')[1])} cart={cart} setCart={setCart} c={q.data} />;
   else if (path === 'skus') body = <SkuAdmin catalog={q.data} />;
@@ -159,90 +136,10 @@ export function ShopPage() {
   return (
     <ErpPage title="采购商城" description="选品比价、加清单、提采购需求；商城里没有的走自主申请。提交后就是一张采购需求单，主管确认、核库、采购审核照常办。">
       {nav}
-      {pending.pending && <PendingBanner pending={pending} />}
+      {/* 结果待确认的提交：与 ERP 其他单据同一套（本机先存、读回核对再发；查回、原样重提、确认作废） */}
+      <ErpPendingPanel types={['purchase_request']} filter={(op) => op.url === SUBMIT_URL} onFound={(_, ref) => navigate(`${BASE}/mine/${ref.refId}`)} className="mb-4" />
       {body}
     </ErpPage>
-  );
-}
-
-/** 上一次提交没收到结果：原样重提、查回或确认作废（不直接丢掉本机记录） */
-function PendingBanner({ pending: p }: { pending: ReturnType<typeof usePendingSubmit> }) {
-  const toast = useToast();
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  const [busy, setBusy] = useState(false);
-  const op = p.pending!;
-  const done = (refId: number) => {
-    p.save(null);
-    void qc.invalidateQueries({ queryKey: ['shop'] });
-    navigate(`${BASE}/mine/${refId}`);
-  };
-  const run = async (fn: () => Promise<void>) => {
-    setBusy(true);
-    try {
-      await fn();
-    } catch (e) {
-      toast({ tone: 'error', title: errorMessage(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Notice
-      tone="warning"
-      title={`上一次提交（${formatDateTime(op.at)}）没收到结果`}
-      data-testid="shop-pending"
-      action={
-        <span className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            loading={busy}
-            onClick={() =>
-              void run(async () => {
-                const r = await api.get<{ found: boolean; abandoned: boolean; refId?: number }>(`/api/erp/ops/${op.clientKey}?type=purchase_request`);
-                if (r.found && r.refId) done(r.refId);
-                else toast({ tone: 'info', title: r.abandoned ? '这一笔已确认作废，没有登记' : '还查不到这一笔：查不到不等于没生效，可以原样重提，或确认作废后重新填写' });
-                if (r.abandoned) p.save(null);
-              })
-            }
-          >
-            查询结果
-          </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            loading={busy}
-            onClick={() =>
-              void run(async () => {
-                const r = await api.post<{ request: MallRequest }>('/api/erp/shop/requests', op.body);
-                done(r.request.id);
-              })
-            }
-          >
-            原样重提
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            loading={busy}
-            onClick={() =>
-              void run(async () => {
-                const r = await api.post<{ found: boolean; refId?: number }>(`/api/erp/ops/${op.clientKey}/abandon`, { type: 'purchase_request', summary: '采购商城提交没收到结果，确认作废' });
-                if (r.found && r.refId) done(r.refId);
-                else {
-                  p.save(null);
-                  toast({ tone: 'success', title: '已确认作废：原来那一笔不会再登记，可以重新填写' });
-                }
-              })
-            }
-          >
-            确认作废
-          </Button>
-        </span>
-      }
-    >
-      同一个操作编号重提不会生成两张单；已经生成的会直接打开那一张。
-    </Notice>
   );
 }
 
@@ -489,6 +386,14 @@ function CartPage({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (
     const milli = parseQty(text);
     if (milli !== null && milli > 0) setCart({ ...cart, lines: cart.lines.map((l) => (l.skuId === skuId ? { ...l, qtyMilli: milli } : l)) });
   };
+  // 输入框里的数量不对（0、负数、写错）时不能去结算：显示的和清单里记着的会不一样（Codex 审查）
+  const badEdit = (skuId: number) => {
+    const t = edit[skuId];
+    if (t === undefined) return false;
+    const milli = parseQty(t);
+    return milli === null || milli <= 0;
+  };
+  const anyBadEdit = cart.lines.some((l) => badEdit(l.skuId));
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_290px]" data-testid="shop-cart">
       <Card className="divide-y divide-line">
@@ -503,6 +408,7 @@ function CartPage({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (
               <p className="truncate text-[14px] font-bold text-ink">{r.item?.material.name ?? `SKU ${r.line.skuId}`}</p>
               <p className="text-[12px] text-ink-3">{r.offer ? `${r.offer.supplier.name} · ${r.offer.skuCode} · V${r.offer.priceVersion} · ${formatYuan(r.offer.grossCents)}（含税）` : ''}</p>
               {r.problem && <p className="text-[12px] font-semibold text-clay">{r.problem}</p>}
+              {badEdit(r.line.skuId) && <p className="text-[12px] font-semibold text-clay">数量要大于 0（最多三位小数），改对了才能去结算</p>}
             </div>
             <Input aria-label="数量" className="w-24" inputMode="decimal" value={edit[r.line.skuId] ?? formatQty(r.line.qtyMilli)} onChange={(e) => setQty(r.line.skuId, e.target.value)} />
             <span className="w-28 text-right text-[13.5px] font-bold">{formatYuan(r.gross)}</span>
@@ -531,7 +437,7 @@ function CartPage({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (
           <span data-testid="shop-cart-total">{formatYuan(total)}</span>
         </p>
         <p className="text-[12px] text-ink-3">预估金额不作为合同或付款依据；采购执行时可能按供应商拆成几张采购单。</p>
-        <Button variant="primary" className="w-full" disabled={!sameStore || rows.some((r) => r.problem)} onClick={() => navigate(`${BASE}/checkout`)} data-testid="shop-to-checkout">
+        <Button variant="primary" className="w-full" disabled={!sameStore || anyBadEdit || rows.some((r) => r.problem)} onClick={() => navigate(`${BASE}/checkout`)} data-testid="shop-to-checkout">
           填写采购需求 →
         </Button>
         <Link to={BASE} className="block text-center text-[12.5px] font-semibold text-pine hover:underline">
@@ -669,31 +575,30 @@ function headerBody(c: ShopCatalog, f: HeaderForm, fallbackName: string) {
 const headerMissing = (f: HeaderForm) => !f.departmentId || !f.entityId || !f.budgetProject.trim() || !f.needBy || !f.deliveryAddress.trim();
 
 /** 提交：先在本机记下编号与内容再发；记不下就不发；明确被拒的清掉本机记录，结果不确定的留着（上面的提示条里处理） */
-function useSubmit(pending: ReturnType<typeof usePendingSubmit>, onDone: (r: MallRequest) => void) {
+function useSubmit(onDone: (r: MallRequest) => void) {
+  const session = useSession();
   const toast = useToast();
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
-  const send = async (body: Record<string, unknown>) => {
-    if (pending.pending) {
-      toast({ tone: 'error', title: '上一次提交还没确认结果：先在上面处理那一笔' });
-      return;
-    }
-    const clientKey = uuid();
-    if (!pending.save({ clientKey, body: { ...body, clientKey }, at: new Date().toISOString() })) {
-      pending.save(null);
-      toast({ tone: 'error', title: '这台电脑存不了本机记录（隐私模式或浏览器设置），没有提交；换一台或改设置再试' });
-      return;
-    }
+  const send = async (body: Record<string, unknown>, summary: string) => {
     setBusy(true);
     try {
-      const r = await api.post<{ request: MallRequest }>('/api/erp/shop/requests', { ...body, clientKey });
-      pending.save(null);
+      // 每次提交新的操作编号；本机记不下（读回核对不上）就不发，结果不明的留在页面顶部按原编号处理
+      const clientKey = uuid();
+      const r = await sendErpOp<{ request: MallRequest }>({
+        key: clientKey,
+        type: 'purchase_request',
+        url: SUBMIT_URL,
+        body: { ...body, clientKey },
+        summary: `采购商城 · ${summary}`,
+        staffName: session.staff.displayName,
+      });
       void qc.invalidateQueries({ queryKey: ['shop'] });
       toast({ tone: 'success', title: `已提交：${r.request.docNo}`, body: '采购需求单已生成，等部门主管确认' });
       onDone(r.request);
     } catch (e) {
-      if (e instanceof ApiError) pending.save(null);
-      toast({ tone: 'error', title: errorMessage(e) });
+      if (e instanceof UncertainError) toast({ tone: 'info', title: '结果待确认', body: '在页面顶部查回、原样重提或确认作废，不要重新填一张' });
+      else toast({ tone: 'error', title: errorMessage(e) });
     } finally {
       setBusy(false);
     }
@@ -701,14 +606,14 @@ function useSubmit(pending: ReturnType<typeof usePendingSubmit>, onDone: (r: Mal
   return { send, busy };
 }
 
-function Checkout({ c, cart, setCart, pending }: { c: ShopCatalog; cart: Cart; setCart: (c: Cart) => void; pending: ReturnType<typeof usePendingSubmit> }) {
+function Checkout({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (c: Cart) => void }) {
   const session = useSession();
   const navigate = useNavigate();
   const [f, setF] = useState<HeaderForm>(() => emptyHeader(c));
   const rows = cartRows(c, cart);
   // 提交成功先跳到这张单，再清清单：清单一空本页会跳回清单页，用 submitted 拦住，不跟跳转抢
   const [submitted, setSubmitted] = useState(false);
-  const { send, busy } = useSubmit(pending, (r) => {
+  const { send, busy } = useSubmit((r) => {
     setSubmitted(true);
     navigate(`${BASE}/mine/${r.id}`);
     setCart({ storeId: null, lines: [] });
@@ -756,7 +661,9 @@ function Checkout({ c, cart, setCart, pending }: { c: ShopCatalog; cart: Cart; s
           variant="primary"
           loading={busy}
           disabled={bad || headerMissing(f)}
-          onClick={() => void send({ ...headerBody(c, f, session.staff.displayName), kind: 'catalog', lines: cart.lines })}
+          onClick={() =>
+            void send({ ...headerBody(c, f, session.staff.displayName), kind: 'catalog', lines: cart.lines }, `${rows[0]?.item?.material.name ?? ''}${rows.length > 1 ? ` 等 ${rows.length} 行` : ''}`)
+          }
           data-testid="shop-submit"
         >
           提交采购需求
@@ -766,12 +673,12 @@ function Checkout({ c, cart, setCart, pending }: { c: ShopCatalog; cart: Cart; s
   );
 }
 
-function CustomForm({ c, pending }: { c: ShopCatalog; pending: ReturnType<typeof usePendingSubmit> }) {
+function CustomForm({ c }: { c: ShopCatalog }) {
   const session = useSession();
   const navigate = useNavigate();
   const [f, setF] = useState<HeaderForm>(() => emptyHeader(c));
   const [line, setLine] = useState({ name: '', expectedCategory: '', qty: '1', unit: '个', details: '', brandModel: '', link: '', reasonText: '' });
-  const { send, busy } = useSubmit(pending, (r) => navigate(`${BASE}/mine/${r.id}`));
+  const { send, busy } = useSubmit((r) => navigate(`${BASE}/mine/${r.id}`));
   const qtyMilli = parseQty(line.qty);
   const linkBad = !!line.link && !/^https?:\/\/\S+$/i.test(line.link);
   const missing = !line.name.trim() || !line.details.trim() || !line.reasonText.trim() || !qtyMilli || linkBad || headerMissing(f);
@@ -828,11 +735,14 @@ function CustomForm({ c, pending }: { c: ShopCatalog; pending: ReturnType<typeof
           loading={busy}
           disabled={missing}
           onClick={() =>
-            void send({
-              ...headerBody(c, f, session.staff.displayName),
-              kind: 'custom',
-              line: { ...line, name: line.name.trim(), qtyMilli, details: line.details.trim(), reasonText: line.reasonText.trim(), imageIds: [] },
-            })
+            void send(
+              {
+                ...headerBody(c, f, session.staff.displayName),
+                kind: 'custom',
+                line: { ...line, name: line.name.trim(), qtyMilli, details: line.details.trim(), reasonText: line.reasonText.trim(), imageIds: [] },
+              },
+              `自主申请 · ${line.name.trim()}`,
+            )
           }
           data-testid="shop-custom-submit"
         >

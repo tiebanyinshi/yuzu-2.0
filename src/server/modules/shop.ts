@@ -25,6 +25,7 @@ import { idParam, parse } from '../lib/validate';
 import { loadExpenseRules } from './expenses';
 import { docDateSchema } from './inventory/common';
 import { createMallRequest, listMall, mallRequest } from './mall';
+import { hashRequest } from '../lib/idempotency';
 import { myContext } from './requests';
 
 const id = z.number().int().positive();
@@ -188,6 +189,15 @@ const SubmitInput = z.discriminatedUnion('kind', [CatalogSubmit, CustomSubmit]);
 
 async function submit(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
   const input = parse(SubmitInput, raw);
+  // 原样重提（Codex 审查）：按页面提交的内容算摘要，先认这个操作编号建过的单——在按现在的 SKU 重新核对、拼明细之前，
+  // 不然之前那次已经生效、之后 SKU 停用、过期、改价或物料改了名，原样重提会被拒绝或报内容不同
+  const requestHash = hashRequest({ ...input, clientKey: undefined });
+  const [done] = await deps.sql<{ opType: string; requestHash: string; refId: number; staffId: number }[]>`
+    SELECT op_type, request_hash, ref_id, staff_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+  if (done) {
+    if (done.opType !== 'purchase_request' || done.requestHash !== requestHash || Number(done.staffId) !== actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的申请');
+    return { request: await mallRequest(deps, actor, Number(done.refId)), replayed: true };
+  }
   const header = {
     clientKey: input.clientKey,
     externalNo: `YZ-${input.clientKey}`,
@@ -227,6 +237,8 @@ async function submit(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
       },
       actor,
       ip,
+      undefined,
+      requestHash,
     );
   }
   // 选品：先按现在的 SKU 算好明细（参考价写含税单价），建单的事务里再锁住核对一遍
@@ -278,6 +290,7 @@ async function submit(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
     actor,
     ip,
     async (tx) => check(await read(tx, true)),
+    requestHash,
   );
 }
 
@@ -492,11 +505,11 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
       return 'disable';
     }),
   );
-  // 停用的重新上架要再审一次
+  // 停用的重新上架要再审一次；价格版本加 1（Codex 审查）：再审时可能被退回成草稿改价、换物料，停用前加进清单的提交时都要重新确认新价
   app.post(`${P}/skus/:id/enable`, { preHandler: guardAny('purchase.manage') }, async (req) =>
     skuOp(deps, req.actor, parse(idParam, req.params).id, req.ip, async (tx, k) => {
       if (k.status !== 'disabled') throw unprocessable('SKU_STATUS', '只有停用的能重新上架');
-      await tx`UPDATE mall_skus SET status = 'pending', submitted_by = ${req.actor.id}, submitted_at = now(), approved_by = NULL, approved_at = NULL, version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
+      await tx`UPDATE mall_skus SET status = 'pending', submitted_by = ${req.actor.id}, submitted_at = now(), approved_by = NULL, approved_at = NULL, price_version = price_version + 1, version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
       return 'enable';
     }),
   );

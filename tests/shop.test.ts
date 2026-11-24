@@ -192,6 +192,16 @@ describe('提交', () => {
     const first = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', body);
     const again = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', body);
     expect(again.body).toMatchObject({ replayed: true, request: { id: first.body.request.id } });
+    // 之后 SKU 停用了、物料改了名：原样重提照样认得是同一笔（先认操作编号，再按现在的 SKU 核对）
+    await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${ok.id}/disable`, {});
+    await ctx.sql`UPDATE materials SET name = name || '（新）' WHERE id = ${mat.id}`;
+    const late = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', body);
+    expect(late.status, JSON.stringify(late.body)).toBe(200);
+    expect(late.body).toMatchObject({ replayed: true, request: { id: first.body.request.id } });
+    // 同一个编号换了内容：拒绝
+    expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...body, note: '改了' })).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    // 停用后重新上架：价格版本加 1，停用前加进清单的要重新确认
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${ok.id}/enable`, {})).body).toMatchObject({ status: 'pending', priceVersion: 2 });
   });
 
   it('自主申请：不要求链接与图片；理由、规格必填；链接要 http(s)', async () => {
