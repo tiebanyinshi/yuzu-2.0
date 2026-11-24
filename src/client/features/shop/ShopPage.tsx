@@ -17,7 +17,7 @@ import { MALL_DISPLAY_LABELS, type MallDisplayStatus, type MallRequest, type Mal
 import { PAYMENT_INTENT_LABELS, PRIORITY_LABELS, REQUEST_PRIORITIES, type MallPaymentIntent, type RequestPriority } from '@shared/requests';
 import { lineGrossCents, SHOP_BLOCK_LABELS, SHOP_CUSTOM_UNITS, type ShopCatalog, type ShopItem, type ShopOffer } from '@shared/shop';
 import { api, errorMessage, UncertainError } from '../../lib/api';
-import { sendErpOp } from '../../lib/erpPending';
+import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { useSession } from '../../lib/session';
 import { cn, formatDateTime, uuid } from '../../lib/utils';
@@ -458,6 +458,7 @@ interface HeaderForm {
   paymentIntent: MallPaymentIntent;
   priority: RequestPriority;
   note: string;
+  purpose: string;
 }
 
 const PRIORITY_HINT: Record<RequestPriority, string> = {
@@ -508,6 +509,15 @@ function HeaderFields({ c, f, set }: { c: ShopCatalog; f: HeaderForm; set: (f: H
       <Field label="收货地点" htmlFor="shop-address">
         <Input id="shop-address" value={f.deliveryAddress} maxLength={120} onChange={(e) => set({ ...f, deliveryAddress: e.target.value })} placeholder="例如：本店布草仓" />
       </Field>
+      <Field label="用途" htmlFor="shop-purpose">
+        <Select id="shop-purpose" value={f.purpose} onChange={(e) => set({ ...f, purpose: e.target.value })}>
+          {c.purposes.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </Select>
+      </Field>
       <Field label="拟定支付方式" htmlFor="shop-pay">
         <Select id="shop-pay" value={f.paymentIntent} onChange={(e) => set({ ...f, paymentIntent: e.target.value as MallPaymentIntent })}>
           {(Object.keys(PAYMENT_INTENT_LABELS) as MallPaymentIntent[]).map((k) => (
@@ -556,6 +566,7 @@ const emptyHeader = (c: ShopCatalog): HeaderForm => ({
   paymentIntent: 'company_direct',
   priority: 'normal',
   note: '',
+  purpose: c.purposes.includes('其他') ? '其他' : (c.purposes[0] ?? ''),
 });
 
 function headerBody(c: ShopCatalog, f: HeaderForm, fallbackName: string) {
@@ -570,6 +581,7 @@ function headerBody(c: ShopCatalog, f: HeaderForm, fallbackName: string) {
     paymentIntent: f.paymentIntent,
     priority: f.priority,
     note: f.note.trim(),
+    purpose: f.purpose,
   };
 }
 const headerMissing = (f: HeaderForm) => !f.departmentId || !f.entityId || !f.budgetProject.trim() || !f.needBy || !f.deliveryAddress.trim();
@@ -580,7 +592,14 @@ function useSubmit(onDone: (r: MallRequest) => void) {
   const toast = useToast();
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
+  // 上一笔结果还没确认（超时、断网、服务器出错；含刷新页面以后）：不许用新编号再提一笔，先在页面顶部查回、原样重提或确认作废（Codex 审查）
+  const recorded = useErpRecorded(['purchase_request']).filter((op) => op.url === SUBMIT_URL);
+  const blocked = recorded.length > 0;
   const send = async (body: Record<string, unknown>, summary: string) => {
+    if (blocked) {
+      toast({ tone: 'error', title: '上一次提交还没确认结果', body: '先在页面顶部查回、原样重提或确认作废，再提新的' });
+      return;
+    }
     setBusy(true);
     try {
       // 每次提交新的操作编号；本机记不下（读回核对不上）就不发，结果不明的留在页面顶部按原编号处理
@@ -603,7 +622,7 @@ function useSubmit(onDone: (r: MallRequest) => void) {
       setBusy(false);
     }
   };
-  return { send, busy };
+  return { send, busy, blocked };
 }
 
 function Checkout({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (c: Cart) => void }) {
@@ -613,7 +632,7 @@ function Checkout({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (
   const rows = cartRows(c, cart);
   // 提交成功先跳到这张单，再清清单：清单一空本页会跳回清单页，用 submitted 拦住，不跟跳转抢
   const [submitted, setSubmitted] = useState(false);
-  const { send, busy } = useSubmit((r) => {
+  const { send, busy, blocked } = useSubmit((r) => {
     setSubmitted(true);
     navigate(`${BASE}/mine/${r.id}`);
     setCart({ storeId: null, lines: [] });
@@ -660,7 +679,7 @@ function Checkout({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (
         <Button
           variant="primary"
           loading={busy}
-          disabled={bad || headerMissing(f)}
+          disabled={bad || blocked || headerMissing(f)}
           onClick={() =>
             void send({ ...headerBody(c, f, session.staff.displayName), kind: 'catalog', lines: cart.lines }, `${rows[0]?.item?.material.name ?? ''}${rows.length > 1 ? ` 等 ${rows.length} 行` : ''}`)
           }
@@ -678,10 +697,10 @@ function CustomForm({ c }: { c: ShopCatalog }) {
   const navigate = useNavigate();
   const [f, setF] = useState<HeaderForm>(() => emptyHeader(c));
   const [line, setLine] = useState({ name: '', expectedCategory: '', qty: '1', unit: '个', details: '', brandModel: '', link: '', reasonText: '' });
-  const { send, busy } = useSubmit((r) => navigate(`${BASE}/mine/${r.id}`));
+  const { send, busy, blocked } = useSubmit((r) => navigate(`${BASE}/mine/${r.id}`));
   const qtyMilli = parseQty(line.qty);
   const linkBad = !!line.link && !/^https?:\/\/\S+$/i.test(line.link);
-  const missing = !line.name.trim() || !line.details.trim() || !line.reasonText.trim() || !qtyMilli || linkBad || headerMissing(f);
+  const missing = !line.name.trim() || !line.details.trim() || !line.reasonText.trim() || !qtyMilli || linkBad || blocked || headerMissing(f);
   return (
     <div className="space-y-4" data-testid="shop-custom">
       <Card className="p-4">

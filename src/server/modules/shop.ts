@@ -160,6 +160,8 @@ const Header = z.object({
   paymentIntent: z.enum(['company_direct', 'dept_petty']),
   priority: z.enum(REQUEST_PRIORITIES),
   note: z.string().trim().max(500).default(''),
+  /** 用途（费用规则里的用途清单）：不选的按「其他」，没有「其他」的用清单第一项（mall.ts withPurposes） */
+  purpose: z.string().trim().max(20).default(''),
 });
 
 const CatalogSubmit = Header.extend({
@@ -223,7 +225,7 @@ async function submit(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
           {
             materialId: null,
             name: l.name,
-            purpose: '',
+            purpose: input.purpose,
             qtyMilli: l.qtyMilli,
             unit: l.unit,
             details: l.details,
@@ -278,7 +280,7 @@ async function submit(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
           mallSkuCode: k.skuCode,
           priceVersion: `V${k.priceVersion}`,
           name: k.materialName.slice(0, 100),
-          purpose: '',
+          purpose: input.purpose,
           qtyMilli: l.qtyMilli,
           unit: k.unit.slice(0, 8),
           refPriceCents: grossCents(Number(k.priceCents), k.taxRateBp),

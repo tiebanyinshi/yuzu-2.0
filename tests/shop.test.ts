@@ -212,6 +212,21 @@ describe('提交', () => {
     expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'custom', line: { ...line, reasonText: '' } })).status).toBe(400);
     expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'custom', line: { ...line, link: 'ftp://x' } })).body.error.code).toBe('LINK_INVALID');
     expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ needBy: shiftDate(today, -1) }), kind: 'custom', line })).body.error.code).toBe('NEED_BY_PAST');
+    // 用途：可以选；不选的按「其他」，店里把「其他」去掉了就用用途清单第一项（不再一律 PURPOSE_INVALID）
+    const chosen = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ purpose: '客用消耗' }), kind: 'custom', line });
+    expect(chosen.status, JSON.stringify(chosen.body)).toBe(201);
+    expect(chosen.body.request.lines[0].purpose).toBe('客用消耗');
+    const [rules] = await ctx.sql<{ value: unknown }[]>`SELECT value FROM settings WHERE key = 'expense_rules'`;
+    await ctx.sql`INSERT INTO settings (key, value) VALUES ('expense_rules', ${ctx.sql.json({ purposes: ['客用消耗', '办公用品'] })})
+                  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
+    try {
+      const fallback = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'custom', line });
+      expect(fallback.status, JSON.stringify(fallback.body)).toBe(201);
+      expect(fallback.body.request.lines[0].purpose).toBe('客用消耗');
+    } finally {
+      if (rules) await ctx.sql`UPDATE settings SET value = ${ctx.sql.json(rules.value as object)} WHERE key = 'expense_rules'`;
+      else await ctx.sql`DELETE FROM settings WHERE key = 'expense_rules'`;
+    }
   });
 });
 

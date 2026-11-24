@@ -199,9 +199,10 @@ async function checkRefs(db: Db, input: z.infer<typeof MallCreateInput>, today: 
 }
 
 /** 用途空着的按「其他」（ERP 的固定用途里有「其他」时） */
+/** 没填用途的：按「其他」；店里把「其他」从用途清单里去掉了就用清单第一项（Codex 审查：不然商城的单一律 PURPOSE_INVALID） */
 async function withPurposes(db: Db, lines: z.infer<typeof MallLineInput>[]) {
   const { purposes } = await loadExpenseRules(db);
-  return lines.map((l) => ({ ...l, purpose: l.purpose || (purposes.includes('其他') ? '其他' : '') }));
+  return lines.map((l) => ({ ...l, purpose: l.purpose || (purposes.includes('其他') ? '其他' : (purposes[0] ?? '')) }));
 }
 
 export async function createMallRequest(
