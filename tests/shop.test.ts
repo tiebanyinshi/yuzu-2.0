@@ -242,3 +242,48 @@ describe('我的需求与需求池', () => {
     expect(pool.length).toBeGreaterThanOrEqual(mine.length);
   });
 });
+
+describe('SKU 的边界（Codex 审查）', () => {
+  it('带版本号的操作：上一次已经生效、再点一次被拒（SKU_CHANGED），不重复生效', async () => {
+    const s = await sku();
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/submit`, { version: s.version })).status).toBe(200);
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/submit`, { version: s.version })).body.error.code).toBe('SKU_CHANGED');
+  });
+
+  it('含税单价超过 100 万元：建、改、提改动都拒（不然上架了也提交不了）', async () => {
+    const r = await api(ctx.app, buyer, 'POST', '/api/erp/shop/skus', {
+      materialId: mat.id,
+      supplierId: supA,
+      skuCode: `SKU-${randomUUID().slice(0, 8)}`,
+      priceCents: 100_000_000,
+      taxRateBp: 1300,
+      moqMilli: q(1),
+      leadDays: 1,
+      freightCents: 0,
+      validUntil: shiftDate(today, 30),
+      storeIds: [],
+    });
+    expect(r.body.error.code).toBe('SKU_PRICE_TOO_HIGH');
+  });
+
+  it('物料的采购单位改了：已上架的报价暂停采购（按旧单位报的价不能当新单位提交）；重新上架审核后按新单位', async () => {
+    const s = await listed((await sku()).id);
+    expect((await offer(reqA, s.id))!.block).toBeNull();
+    const [m] = await ctx.sql<{ purchaseUnit: string }[]>`SELECT purchase_unit FROM materials WHERE id = ${mat.id}`;
+    await ctx.sql`UPDATE materials SET purchase_unit = '包' WHERE id = ${mat.id}`;
+    try {
+      expect((await offer(reqA, s.id))!.block).toBe('unit');
+      const r = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'catalog', lines: [{ skuId: s.id, priceVersion: s.priceVersion, qtyMilli: q(100) }] });
+      expect(r.body.error.code).toBe('SKU_UNAVAILABLE');
+      // 停用 → 重新上架（价格版本加一）→ 审核：按新单位
+      await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/disable`, {});
+      await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/enable`, {});
+      expect((await api(ctx.app, boss, 'POST', `/api/erp/shop/skus/${s.id}/approve`, {})).status).toBe(200);
+      const again = (await offer(reqA, s.id))!;
+      expect(again.block).toBeNull();
+      expect(again.priceVersion).toBe(s.priceVersion + 1);
+    } finally {
+      await ctx.sql`UPDATE materials SET purchase_unit = ${m!.purchaseUnit} WHERE id = ${mat.id}`;
+    }
+  });
+});

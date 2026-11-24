@@ -7,7 +7,7 @@ import { Plus } from 'lucide-react';
 import { formatYuan, parseYuan } from '@shared/money';
 import { formatQty, parseQty } from '@shared/quantity';
 import { SHOP_SKU_STATUS_LABELS, SHOP_TAX_RATES, type ShopCatalog, type ShopSku, type ShopSkuCore } from '@shared/shop';
-import { api, errorMessage } from '../../lib/api';
+import { api, errorMessage, UncertainError } from '../../lib/api';
 import { formatDateTime } from '../../lib/utils';
 import { Dialog } from '../../components/Overlay';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -67,7 +67,9 @@ export function SkuAdmin({ catalog }: { catalog: ShopCatalog }) {
       await api.post(url, body);
       toast({ tone: 'success', title: ok });
     } catch (e) {
-      toast({ tone: 'error', title: errorMessage(e) });
+      // 结果不确定（超时、断网、服务器出错）：列表已刷新，看这条是不是已经变了；请求带着版本号，再点一次已经生效的会被拒、不会重复生效
+      if (e instanceof UncertainError) toast({ tone: 'info', title: '结果待确认', body: '列表已刷新：先看这条 SKU 的状态有没有变，没变再点一次（不会重复生效）' });
+      else toast({ tone: 'error', title: errorMessage(e) });
     } finally {
       setBusy(false);
       void qc.invalidateQueries({ queryKey: ['shop'] });
@@ -112,7 +114,11 @@ export function SkuAdmin({ catalog }: { catalog: ShopCatalog }) {
               {s.pendingChange && (
                 <Notice tone="warning" title={`待审改动（${s.pendingChange.requestedByName}）：${s.pendingChange.reason}`}>
                   改成：未税 {formatYuan(s.pendingChange.after.priceCents)}、税 {s.pendingChange.after.taxRateBp / 100}%、起订 {formatQty(s.pendingChange.after.moqMilli)}、运费{' '}
-                  {formatYuan(s.pendingChange.after.freightCents)}、有效至 {s.pendingChange.after.validUntil}。审核期间这条 SKU 暂停采购。
+                  {formatYuan(s.pendingChange.after.freightCents)}、有效至 {s.pendingChange.after.validUntil}、适用门店{' '}
+                  <b data-testid={`shop-sku-change-stores-${s.id}`}>
+                    {s.pendingChange.after.storeIds.length ? s.pendingChange.after.storeIds.map((id) => catalog.stores.find((x) => x.id === id)?.name ?? `门店 ${id}`).join('、') : '全部门店'}
+                  </b>
+                  。审核期间这条 SKU 暂停采购。
                   <span className="mt-2 flex flex-wrap gap-2">
                     {catalog.me.canApproveSku && (
                       <>
@@ -137,16 +143,28 @@ export function SkuAdmin({ catalog }: { catalog: ShopCatalog }) {
                   </Button>
                 )}
                 {catalog.me.canManageSku && s.status === 'draft' && (
-                  <Button size="sm" variant="primary" loading={busy} onClick={() => void act(`/api/erp/shop/skus/${s.id}/submit`, {}, '已提交审核')} data-testid={`shop-sku-submit-${s.id}`}>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    loading={busy}
+                    onClick={() => void act(`/api/erp/shop/skus/${s.id}/submit`, { version: s.version }, '已提交审核')}
+                    data-testid={`shop-sku-submit-${s.id}`}
+                  >
                     提交审核
                   </Button>
                 )}
                 {catalog.me.canApproveSku && s.status === 'pending' && (
                   <>
-                    <Button size="sm" variant="primary" loading={busy} onClick={() => void act(`/api/erp/shop/skus/${s.id}/approve`, {}, '已上架')} data-testid={`shop-sku-approve-${s.id}`}>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      loading={busy}
+                      onClick={() => void act(`/api/erp/shop/skus/${s.id}/approve`, { version: s.version }, '已上架')}
+                      data-testid={`shop-sku-approve-${s.id}`}
+                    >
                       审核上架
                     </Button>
-                    <Button size="sm" loading={busy} onClick={() => void act(`/api/erp/shop/skus/${s.id}/return`, { note: '请补充资料' }, '已退回草稿')}>
+                    <Button size="sm" loading={busy} onClick={() => void act(`/api/erp/shop/skus/${s.id}/return`, { note: '请补充资料', version: s.version }, '已退回草稿')}>
                       退回
                     </Button>
                   </>
@@ -157,12 +175,12 @@ export function SkuAdmin({ catalog }: { catalog: ShopCatalog }) {
                   </Button>
                 )}
                 {catalog.me.canManageSku && s.status === 'approved' && (
-                  <Button size="sm" variant="ghost" loading={busy} onClick={() => void act(`/api/erp/shop/skus/${s.id}/disable`, {}, '已停用')}>
+                  <Button size="sm" variant="ghost" loading={busy} onClick={() => void act(`/api/erp/shop/skus/${s.id}/disable`, { version: s.version }, '已停用')}>
                     停用
                   </Button>
                 )}
                 {catalog.me.canManageSku && s.status === 'disabled' && (
-                  <Button size="sm" variant="ghost" loading={busy} onClick={() => void act(`/api/erp/shop/skus/${s.id}/enable`, {}, '已提交重新上架，等审核')}>
+                  <Button size="sm" variant="ghost" loading={busy} onClick={() => void act(`/api/erp/shop/skus/${s.id}/enable`, { version: s.version }, '已提交重新上架，等审核')}>
                     重新上架
                   </Button>
                 )}
@@ -313,7 +331,7 @@ function ChangeDialog({ catalog, sku, onClose }: { catalog: ShopCatalog; sku: Sh
     if (typeof core === 'string') return toast({ tone: 'error', title: core });
     setBusy(true);
     try {
-      await api.post(`/api/erp/shop/skus/${sku.id}/changes`, { ...core, reason: reason.trim() });
+      await api.post(`/api/erp/shop/skus/${sku.id}/changes`, { ...core, reason: reason.trim(), version: sku.version });
       toast({ tone: 'success', title: '已提交改动：审核期间这条 SKU 暂停采购' });
       void qc.invalidateQueries({ queryKey: ['shop'] });
       onClose();

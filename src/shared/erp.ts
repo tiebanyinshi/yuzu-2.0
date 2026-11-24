@@ -111,7 +111,7 @@ export const ERP_MODULES: Record<ErpModuleKey, ErpModuleDef> = {
     path: '/erp/shop',
     pages: ['/erp/shop'],
     apis: ['/api/erp/shop'],
-    perms: ['request.create', 'request.review', 'request.stock', 'purchase.manage'],
+    perms: ['request.create', 'request.review', 'request.stock', 'purchase.manage', 'purchase.rules'],
     defaultEnabled: true,
     requires: ['requests'],
   },

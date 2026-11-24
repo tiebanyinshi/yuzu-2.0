@@ -50,17 +50,23 @@ interface SkuRow {
   status: ShopSkuStatus;
   corePending: boolean;
   supplierActive: boolean;
+  /** 报价时的采购单位 */
+  unit: string;
+  /** 物料现在的采购单位、换算与报价时的一样 */
+  unitOk: boolean;
 }
 
 const SKU_COLS = (db: Db) => db`
   k.id, k.material_id, k.supplier_id, sp.name AS supplier_name, sp.admission, sp.active AS supplier_active, k.sku_code, k.price_cents, k.tax_rate_bp,
-  k.moq_milli, k.lead_days, k.freight_cents, to_char(k.valid_until, 'YYYY-MM-DD') AS valid_until, k.store_ids, k.price_version, k.status, k.core_pending`;
+  k.moq_milli, k.lead_days, k.freight_cents, to_char(k.valid_until, 'YYYY-MM-DD') AS valid_until, k.store_ids, k.price_version, k.status, k.core_pending, k.unit,
+  (SELECT m.purchase_unit = k.unit AND m.purchase_factor_milli = k.unit_factor_milli FROM materials m WHERE m.id = k.material_id) AS unit_ok`;
 
 /** 这条 SKU 在这家门店为什么不能采购（能买为空），按原型的顺序取第一个 */
-export function blockOf(k: Pick<SkuRow, 'corePending' | 'status' | 'admission' | 'supplierActive' | 'validUntil' | 'storeIds'>, storeId: number, today: string): ShopBlock | null {
+export function blockOf(k: Pick<SkuRow, 'corePending' | 'status' | 'admission' | 'supplierActive' | 'validUntil' | 'storeIds' | 'unitOk'>, storeId: number, today: string): ShopBlock | null {
   if (k.corePending) return 'core_pending';
   if (k.status !== 'approved') return k.status;
   if (k.admission !== 'approved' || !k.supplierActive) return 'supplier';
+  if (!k.unitOk) return 'unit';
   if (k.validUntil < today) return 'expired';
   if (k.storeIds.length && !k.storeIds.map(Number).includes(storeId)) return 'store';
   return null;
@@ -250,7 +256,7 @@ async function submit(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
     new Map(
       (
         await db<(SkuRow & { materialName: string; unit: string })[]>`
-          SELECT ${SKU_COLS(db)}, m.name AS material_name, m.purchase_unit AS unit
+          SELECT ${SKU_COLS(db)}, m.name AS material_name
           FROM mall_skus k JOIN suppliers sp ON sp.id = k.supplier_id JOIN materials m ON m.id = k.material_id
           WHERE k.id IN ${db(ids)} ORDER BY k.id ${lock ? db`FOR SHARE OF k` : db``}`
       ).map((k) => [Number(k.id), k]),
@@ -306,6 +312,11 @@ const CoreInput = z.object({
   validUntil: docDateSchema,
   storeIds: z.array(id).max(50).default([]),
 });
+/** 含税单价写进需求单的参考单价（上限 100 万元，mall.ts MallLineInput）：报价时就按这个上限核对，免得上架了却提交不了（Codex 审查） */
+const MAX_GROSS_CENTS = 100_000_000;
+function assertGross(v: { priceCents: number; taxRateBp: number }) {
+  if (grossCents(v.priceCents, v.taxRateBp) > MAX_GROSS_CENTS) throw unprocessable('SKU_PRICE_TOO_HIGH', '含税单价不能超过 100 万元');
+}
 const SkuInput = CoreInput.extend({
   materialId: id,
   supplierId: id,
@@ -401,10 +412,15 @@ const lockSku = async (tx: Db, skuId: number): Promise<SkuLock> => {
   return { ...k, priceCents: Number(k.priceCents), moqMilli: Number(k.moqMilli), freightCents: Number(k.freightCents), storeIds: k.storeIds.map(Number) };
 };
 
-async function skuOp(deps: Deps, actor: Actor, skuId: number, ip: string | undefined, fn: (tx: Db, k: SkuLock) => Promise<string>) {
+/** 页面带上看到的版本号（Codex 审查）：结果不确定后重提，第一次已经生效的会因为版本变了被拒（SKU_CHANGED），不会重复生效 */
+const VersionBody = z.object({ version: z.number().int().positive().optional() }).passthrough();
+
+async function skuOp(deps: Deps, actor: Actor, skuId: number, ip: string | undefined, fn: (tx: Db, k: SkuLock) => Promise<string>, body?: unknown) {
+  const expected = parse(VersionBody, body ?? {}).version;
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const k = await lockSku(tx, skuId);
+    if (expected !== undefined && k.version !== expected) throw conflict('SKU_CHANGED', '这条 SKU 刚变过（可能是上一次操作已经生效），请看刷新后的状态再决定');
     const action = await fn(tx, k);
     await writeAudit(tx, { staffId: actor.id, action: 'mall_sku', targetType: 'mall_sku', targetId: skuId, detail: { action }, ip });
   });
@@ -416,8 +432,10 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   const P = '/api/erp/shop';
   const shopper = guardAny('request.create', 'request.review', 'request.stock', 'purchase.manage');
   const skuRead = guardAny('purchase.manage', 'purchase.rules');
+  // 目录是页面的起点：只审 SKU 的（「采购规则」）也要能进来，才找得到「SKU 维护」（Codex 审查）
+  const catalogRead = guardAny('request.create', 'request.review', 'request.stock', 'purchase.manage', 'purchase.rules');
 
-  app.get(`${P}/catalog`, { preHandler: shopper }, async (req) => catalog(deps, req.actor, (req.query as { storeId?: string } | undefined)?.storeId));
+  app.get(`${P}/catalog`, { preHandler: catalogRead }, async (req) => catalog(deps, req.actor, (req.query as { storeId?: string } | undefined)?.storeId));
   app.post(`${P}/requests`, { preHandler: guardAny('request.create') }, async (req, reply) => {
     const r = await submit(deps, req.body, req.actor, req.ip);
     if (!r.replayed) reply.code(201);
@@ -436,15 +454,18 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   app.get(`${P}/skus`, { preHandler: skuRead }, async () => listSkus(sql));
   app.post(`${P}/skus`, { preHandler: guardAny('purchase.manage') }, async (req, reply) => {
     const v = parse(SkuInput, req.body);
+    assertGross(v);
     const skuId = await sql.begin(async (tx) => {
       await setTxTimeouts(tx);
       await checkSkuRefs(tx, v);
       const [dup] = await tx<{ id: number }[]>`SELECT id FROM mall_skus WHERE sku_code = ${v.skuCode}`;
       if (dup) throw conflict('SKU_CODE_EXISTS', `SKU 编码 ${v.skuCode} 已经有了`);
       const [row] = await tx<{ id: number }[]>`
-        INSERT INTO mall_skus (material_id, supplier_id, sku_code, price_cents, tax_rate_bp, moq_milli, lead_days, freight_cents, valid_until, store_ids, note, created_by)
-        VALUES (${v.materialId}, ${v.supplierId}, ${v.skuCode}, ${v.priceCents}, ${v.taxRateBp}, ${v.moqMilli}, ${v.leadDays}, ${v.freightCents}, ${v.validUntil},
-                ${v.storeIds}, ${v.note}, ${req.actor.id})
+        INSERT INTO mall_skus (material_id, supplier_id, sku_code, price_cents, tax_rate_bp, moq_milli, lead_days, freight_cents, valid_until, store_ids, note, created_by,
+                               unit, unit_factor_milli)
+        SELECT ${v.materialId}, ${v.supplierId}, ${v.skuCode}, ${v.priceCents}, ${v.taxRateBp}, ${v.moqMilli}, ${v.leadDays}, ${v.freightCents}, ${v.validUntil},
+               ${v.storeIds}, ${v.note}, ${req.actor.id}, m.purchase_unit, m.purchase_factor_milli
+        FROM materials m WHERE m.id = ${v.materialId}
         RETURNING id`;
       await writeAudit(tx, { staffId: req.actor.id, action: 'mall_sku', targetType: 'mall_sku', targetId: row!.id, detail: { action: 'create', ...v }, ip: req.ip });
       return Number(row!.id);
@@ -456,6 +477,7 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   app.put(`${P}/skus/:id`, { preHandler: guardAny('purchase.manage') }, async (req) => {
     const skuId = parse(idParam, req.params).id;
     const v = parse(SkuEdit, req.body);
+    assertGross(v);
     return skuOp(deps, req.actor, skuId, req.ip, async (tx, k) => {
       if (k.version !== v.version) throw conflict('SKU_CHANGED', '这条 SKU 刚被别人改过，请刷新后再改');
       if (k.status === 'draft') {
@@ -463,8 +485,9 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
         await tx`
           UPDATE mall_skus SET material_id = ${v.materialId}, supplier_id = ${v.supplierId}, sku_code = ${v.skuCode}, price_cents = ${v.priceCents},
                  tax_rate_bp = ${v.taxRateBp}, moq_milli = ${v.moqMilli}, lead_days = ${v.leadDays}, freight_cents = ${v.freightCents},
-                 valid_until = ${v.validUntil}, store_ids = ${v.storeIds}, note = ${v.note}, version = version + 1, updated_at = now()
-          WHERE id = ${skuId}`;
+                 valid_until = ${v.validUntil}, store_ids = ${v.storeIds}, note = ${v.note}, version = version + 1, updated_at = now(),
+                 unit = m.purchase_unit, unit_factor_milli = m.purchase_factor_milli
+          FROM materials m WHERE mall_skus.id = ${skuId} AND m.id = ${v.materialId}`;
         return 'edit';
       }
       // 提交以后：只改不影响价格的（交期、备注）；核心信息要另提改动
@@ -476,63 +499,109 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     });
   });
   app.post(`${P}/skus/:id/submit`, { preHandler: guardAny('purchase.manage') }, async (req) =>
-    skuOp(deps, req.actor, parse(idParam, req.params).id, req.ip, async (tx, k) => {
-      if (k.status !== 'draft') throw unprocessable('SKU_STATUS', '只有草稿能提交');
-      await tx`UPDATE mall_skus SET status = 'pending', submitted_by = ${req.actor.id}, submitted_at = now(), version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
-      return 'submit';
-    }),
+    skuOp(
+      deps,
+      req.actor,
+      parse(idParam, req.params).id,
+      req.ip,
+      async (tx, k) => {
+        if (k.status !== 'draft') throw unprocessable('SKU_STATUS', '只有草稿能提交');
+        await tx`UPDATE mall_skus SET status = 'pending', submitted_by = ${req.actor.id}, submitted_at = now(), version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
+        return 'submit';
+      },
+      req.body,
+    ),
   );
+  // 上架时照物料现在的采购单位、换算重新抄一遍：审核人看到的就是按这个单位报的价
   app.post(`${P}/skus/:id/approve`, { preHandler: guardAny('purchase.rules', 'settings.manage') }, async (req) =>
-    skuOp(deps, req.actor, parse(idParam, req.params).id, req.ip, async (tx, k) => {
-      if (k.status !== 'pending') throw unprocessable('SKU_STATUS', '只有待审核的能上架');
-      assertApprover(req.actor, k.submittedBy);
-      await tx`UPDATE mall_skus SET status = 'approved', approved_by = ${req.actor.id}, approved_at = now(), version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
-      return 'approve';
-    }),
+    skuOp(
+      deps,
+      req.actor,
+      parse(idParam, req.params).id,
+      req.ip,
+      async (tx, k) => {
+        if (k.status !== 'pending') throw unprocessable('SKU_STATUS', '只有待审核的能上架');
+        assertApprover(req.actor, k.submittedBy);
+        await tx`UPDATE mall_skus SET status = 'approved', approved_by = ${req.actor.id}, approved_at = now(), version = version + 1, updated_at = now(),
+                 unit = m.purchase_unit, unit_factor_milli = m.purchase_factor_milli
+          FROM materials m WHERE mall_skus.id = ${parse(idParam, req.params).id} AND m.id = mall_skus.material_id`;
+        return 'approve';
+      },
+      req.body,
+    ),
   );
   app.post(`${P}/skus/:id/return`, { preHandler: guardAny('purchase.rules', 'settings.manage') }, async (req) => {
     const { note } = parse(NoteInput, req.body ?? {});
-    return skuOp(deps, req.actor, parse(idParam, req.params).id, req.ip, async (tx, k) => {
-      if (k.status !== 'pending') throw unprocessable('SKU_STATUS', '只有待审核的能退回');
-      assertApprover(req.actor, k.submittedBy);
-      await tx`UPDATE mall_skus SET status = 'draft', submitted_by = NULL, submitted_at = NULL, note = ${note || '审核退回'}, version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
-      return 'return';
-    });
+    return skuOp(
+      deps,
+      req.actor,
+      parse(idParam, req.params).id,
+      req.ip,
+      async (tx, k) => {
+        if (k.status !== 'pending') throw unprocessable('SKU_STATUS', '只有待审核的能退回');
+        assertApprover(req.actor, k.submittedBy);
+        await tx`UPDATE mall_skus SET status = 'draft', submitted_by = NULL, submitted_at = NULL, note = ${note || '审核退回'}, version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
+        return 'return';
+      },
+      req.body,
+    );
   });
   app.post(`${P}/skus/:id/disable`, { preHandler: guardAny('purchase.manage') }, async (req) =>
-    skuOp(deps, req.actor, parse(idParam, req.params).id, req.ip, async (tx, k) => {
-      if (k.status === 'disabled') return 'disable';
-      if (k.status !== 'approved') throw unprocessable('SKU_STATUS', '草稿、待审核的不用停用');
-      await tx`UPDATE mall_skus SET status = 'disabled', version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
-      return 'disable';
-    }),
+    skuOp(
+      deps,
+      req.actor,
+      parse(idParam, req.params).id,
+      req.ip,
+      async (tx, k) => {
+        if (k.status === 'disabled') return 'disable';
+        if (k.status !== 'approved') throw unprocessable('SKU_STATUS', '草稿、待审核的不用停用');
+        await tx`UPDATE mall_skus SET status = 'disabled', version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
+        return 'disable';
+      },
+      req.body,
+    ),
   );
   // 停用的重新上架要再审一次；价格版本加 1（Codex 审查）：再审时可能被退回成草稿改价、换物料，停用前加进清单的提交时都要重新确认新价
   app.post(`${P}/skus/:id/enable`, { preHandler: guardAny('purchase.manage') }, async (req) =>
-    skuOp(deps, req.actor, parse(idParam, req.params).id, req.ip, async (tx, k) => {
-      if (k.status !== 'disabled') throw unprocessable('SKU_STATUS', '只有停用的能重新上架');
-      await tx`UPDATE mall_skus SET status = 'pending', submitted_by = ${req.actor.id}, submitted_at = now(), approved_by = NULL, approved_at = NULL, price_version = price_version + 1, version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
-      return 'enable';
-    }),
+    skuOp(
+      deps,
+      req.actor,
+      parse(idParam, req.params).id,
+      req.ip,
+      async (tx, k) => {
+        if (k.status !== 'disabled') throw unprocessable('SKU_STATUS', '只有停用的能重新上架');
+        await tx`UPDATE mall_skus SET status = 'pending', submitted_by = ${req.actor.id}, submitted_at = now(), approved_by = NULL, approved_at = NULL, price_version = price_version + 1, version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
+        return 'enable';
+      },
+      req.body,
+    ),
   );
 
   // 核心改动：提了以后这条 SKU 暂停采购，批了才换成新的、价格版本加一
   app.post(`${P}/skus/:id/changes`, { preHandler: guardAny('purchase.manage') }, async (req) => {
     const skuId = parse(idParam, req.params).id;
     const after = parse(CoreInput, req.body);
+    assertGross(after);
     const { reason } = parse(ReasonInput, req.body);
-    return skuOp(deps, req.actor, skuId, req.ip, async (tx, k) => {
-      if (k.status !== 'approved') throw unprocessable('SKU_STATUS', '只有已上架的提改动；草稿直接改');
-      if (k.corePending) throw conflict('SKU_CHANGE_PENDING', '这条 SKU 已经有一张改动在审核');
-      if (after.storeIds.length) {
-        const n = await tx<{ id: number }[]>`SELECT id FROM stores WHERE id IN ${tx(after.storeIds)} AND active`;
-        if (n.length !== new Set(after.storeIds).size) throw unprocessable('STORE_INVALID', '适用门店里有不存在或已停用的');
-      }
-      const before: ShopSkuCore = { priceCents: k.priceCents, taxRateBp: k.taxRateBp, moqMilli: k.moqMilli, freightCents: k.freightCents, validUntil: k.validUntil, storeIds: k.storeIds };
-      await tx`INSERT INTO mall_sku_changes (sku_id, before, after, reason, requested_by) VALUES (${skuId}, ${tx.json({ ...before })}, ${tx.json({ ...after })}, ${reason}, ${req.actor.id})`;
-      await tx`UPDATE mall_skus SET core_pending = true, version = version + 1, updated_at = now() WHERE id = ${skuId}`;
-      return 'change_request';
-    });
+    return skuOp(
+      deps,
+      req.actor,
+      skuId,
+      req.ip,
+      async (tx, k) => {
+        if (k.status !== 'approved') throw unprocessable('SKU_STATUS', '只有已上架的提改动；草稿直接改');
+        if (k.corePending) throw conflict('SKU_CHANGE_PENDING', '这条 SKU 已经有一张改动在审核');
+        if (after.storeIds.length) {
+          const n = await tx<{ id: number }[]>`SELECT id FROM stores WHERE id IN ${tx(after.storeIds)} AND active`;
+          if (n.length !== new Set(after.storeIds).size) throw unprocessable('STORE_INVALID', '适用门店里有不存在或已停用的');
+        }
+        const before: ShopSkuCore = { priceCents: k.priceCents, taxRateBp: k.taxRateBp, moqMilli: k.moqMilli, freightCents: k.freightCents, validUntil: k.validUntil, storeIds: k.storeIds };
+        await tx`INSERT INTO mall_sku_changes (sku_id, before, after, reason, requested_by) VALUES (${skuId}, ${tx.json({ ...before })}, ${tx.json({ ...after })}, ${reason}, ${req.actor.id})`;
+        await tx`UPDATE mall_skus SET core_pending = true, version = version + 1, updated_at = now() WHERE id = ${skuId}`;
+        return 'change_request';
+      },
+      req.body,
+    );
   });
   for (const decision of ['approve', 'reject', 'withdraw'] as const) {
     app.post(`${P}/changes/:id/${decision}`, { preHandler: guardAny('purchase.manage', 'purchase.rules', 'settings.manage') }, async (req) => {

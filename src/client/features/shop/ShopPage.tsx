@@ -137,7 +137,20 @@ export function ShopPage() {
     <ErpPage title="采购商城" description="选品比价、加清单、提采购需求；商城里没有的走自主申请。提交后就是一张采购需求单，主管确认、核库、采购审核照常办。">
       {nav}
       {/* 结果待确认的提交：与 ERP 其他单据同一套（本机先存、读回核对再发；查回、原样重提、确认作废） */}
-      <ErpPendingPanel types={['purchase_request']} filter={(op) => op.url === SUBMIT_URL} onFound={(_, ref) => navigate(`${BASE}/mine/${ref.refId}`)} className="mb-4" />
+      <ErpPendingPanel
+        types={['purchase_request']}
+        filter={(op) => op.url === SUBMIT_URL}
+        onFound={(op, ref) => {
+          // 查回或原样重提确认已经登记：清单里这一笔买过的行拿掉（之后又加的留着），免得再提一次重复下单（Codex 审查）
+          const body = op.body as { kind?: string; lines?: { skuId: number }[] };
+          if (body.kind === 'catalog' && body.lines) {
+            const done = new Set(body.lines.map((l) => l.skuId));
+            setCart({ ...cart, lines: cart.lines.filter((l) => !done.has(l.skuId)) });
+          }
+          navigate(`${BASE}/mine/${ref.refId}`);
+        }}
+        className="mb-4"
+      />
       {body}
     </ErpPage>
   );

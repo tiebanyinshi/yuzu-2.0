@@ -19,6 +19,10 @@ CREATE TABLE mall_skus (
   valid_until     date NOT NULL,
   -- 适用门店（业态）：空数组 = 全部门店
   store_ids       bigint[] NOT NULL DEFAULT '{}',
+  -- 报价按的采购单位与换算（上架审核时照物料抄下来，Codex 审查）：物料的采购单位、换算之后改了，这条 SKU 暂停采购，
+  -- 停用后重新上架审核（价格版本加一）——免得清单里「2 箱」的价格被当成「2 个」提交
+  unit            text NOT NULL CHECK (char_length(unit) BETWEEN 1 AND 8),
+  unit_factor_milli bigint NOT NULL CHECK (unit_factor_milli > 0),
   price_version   integer NOT NULL DEFAULT 1 CHECK (price_version >= 1),
   status          text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'pending', 'approved', 'disabled')),
   core_pending    boolean NOT NULL DEFAULT false,

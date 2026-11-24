@@ -6,13 +6,14 @@ export type ShopSkuStatus = 'draft' | 'pending' | 'approved' | 'disabled';
 export const SHOP_SKU_STATUS_LABELS: Record<ShopSkuStatus, string> = { draft: '草稿', pending: '待审核', approved: '已上架', disabled: '已停用' };
 
 /** 为什么不能采购（按这个顺序取第一个）；全都不是 = 可采购 */
-export type ShopBlock = 'core_pending' | 'draft' | 'pending' | 'disabled' | 'supplier' | 'expired' | 'store';
+export type ShopBlock = 'core_pending' | 'draft' | 'pending' | 'disabled' | 'supplier' | 'unit' | 'expired' | 'store';
 export const SHOP_BLOCK_LABELS: Record<ShopBlock, string> = {
   core_pending: '改价审核中',
   draft: '草稿',
   pending: '待审核上架',
   disabled: '已停用',
   supplier: '供应商未准入',
+  unit: '物料的采购单位改过了，要重新审核上架',
   expired: '价格已过期',
   store: '这家门店不适用',
 };
