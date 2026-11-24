@@ -71,7 +71,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { businessDateOf, ISO_DATE } from '@shared/business-date';
 import { ZONE_LABELS } from '@shared/frontdesk';
-import { parseHandTagCsv } from '@shared/hand-tag-import';
+import { parseHandTagCsv, parseHandTagTable } from '@shared/hand-tag-import';
 import { formatYuan, parseYuan } from '@shared/money';
 import { decodeImportFile, encodingNote } from '@shared/text-decode';
 import { DEFAULT_BRIDGE_PORT } from '@shared/devices';
@@ -499,7 +499,8 @@ async function main() {
           const file = args.find((a) => !a.startsWith('--'));
           if (!storeList && !file) throw new Error('用法：import-hand-tags <清单.csv> | --store-list [--apply] [--deactivate-missing]');
           await prepareDb(sql, config);
-          const parsed = parseHandTagCsv(storeList ? STORE_HAND_TAGS_CSV : await readImportFile(file!));
+          // 8.1.35：.xlsx 也认（福田旧系统的「手牌管理导入模板」，带手牌 ID 芯片号）
+          const parsed = storeList ? parseHandTagCsv(STORE_HAND_TAGS_CSV) : /\.xlsx$/i.test(file!) ? parseHandTagTable(await readTableFile(file!)) : parseHandTagCsv(await readImportFile(file!));
           if (parsed.errors.length) {
             for (const e of parsed.errors.slice(0, 20)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
             throw new Error(`清单有 ${parsed.errors.length} 处需要修改，未导入`);

@@ -345,6 +345,8 @@ export const ImportInput = z.object({
           zone: z.enum(ZONES, '性别应为 male / female'),
           kind: z.enum(TAG_KINDS, '柜型应为 normal / vip'),
           vipLevel,
+          /** 8.1.35：芯片号；不带 = 不动已有的，null = 清单里这一格是空的（也不动，不解绑） */
+          cardUid: z.string().transform(normalizeCardUid).pipe(z.string().regex(CARD_UID_PATTERN, '芯片号应为 4–32 位数字或字母')).nullable().optional(),
         })
         .refine(kindLevelOk, KIND_LEVEL_MESSAGE),
     )
@@ -375,29 +377,40 @@ export async function importHandTags(
   if (dupes.length) throw badRequest(`清单里牌号重复：${[...new Set(dupes)].slice(0, 5).join('、')}`);
   return sql.begin(async (tx) => {
     await setTxTimeouts(tx);
-    const existing = await tx<{ id: number; code: string; zone: string; kind: string; vipLevel: number | null; active: boolean }[]>`
-      SELECT id, code, zone, kind, vip_level, active FROM hand_tags WHERE store_id = ${currentStoreId()} ORDER BY id ${input.dryRun ? tx`` : tx`FOR UPDATE`}`;
+    const existing = await tx<{ id: number; code: string; zone: string; kind: string; vipLevel: number | null; active: boolean; cardUid: string | null }[]>`
+      SELECT id, code, zone, kind, vip_level, active, card_uid FROM hand_tags WHERE store_id = ${currentStoreId()} ORDER BY id ${input.dryRun ? tx`` : tx`FOR UPDATE`}`;
+    // 芯片号（8.1.35）：清单里的芯片号已经绑在本店另一张手牌上的，这一行的芯片号不导（报出来，牌照常导）
+    const uidOwner = new Map(existing.filter((t) => t.cardUid).map((t) => [t.cardUid!, t.code]));
+    const uidOf = (r: (typeof input.rows)[number]) => {
+      if (!r.cardUid) return undefined;
+      const owner = uidOwner.get(r.cardUid);
+      return owner && owner !== r.code ? undefined : r.cardUid;
+    };
     const inUse = new Set((await tx<{ tagId: number }[]>`SELECT tag_id FROM visits WHERE status = 'open'`).map((r) => r.tagId));
     const byCode = new Map(existing.map((t) => [t.code, t]));
     const listed = new Set(input.rows.map((r) => r.code));
 
     const create: typeof input.rows = [];
-    const update: { id: number; code: string; zone: string; kind: string; vipLevel: number | null }[] = [];
+    const update: { id: number; code: string; zone: string; kind: string; vipLevel: number | null; cardUid: string | null }[] = [];
     const blocked: HandTagImportReport['blocked'] = [];
     let unchanged = 0;
+    for (const r of input.rows) {
+      if (r.cardUid && uidOf(r) === undefined) blocked.push({ code: r.code, reason: `芯片号 ${r.cardUid} 已绑在 ${uidOwner.get(r.cardUid)} 上，这一张的芯片号没导（牌照常导）` });
+    }
     for (const r of input.rows) {
       const t = byCode.get(r.code);
       if (!t) {
         create.push(r);
         continue;
       }
-      const same = t.zone === r.zone && t.kind === r.kind && t.vipLevel === r.vipLevel;
+      const uid = uidOf(r) ?? t.cardUid;
+      const same = t.zone === r.zone && t.kind === r.kind && t.vipLevel === r.vipLevel && uid === t.cardUid;
       if (same && t.active) {
         unchanged += 1;
       } else if (!same && inUse.has(t.id)) {
         blocked.push({ code: r.code, reason: '在店，分区或柜型未修改（客人换牌后再导入）' });
       } else {
-        update.push({ id: t.id, code: r.code, zone: r.zone, kind: r.kind, vipLevel: r.vipLevel });
+        update.push({ id: t.id, code: r.code, zone: r.zone, kind: r.kind, vipLevel: r.vipLevel, cardUid: uid });
       }
     }
     const deactivate: { id: number; code: string }[] = [];
@@ -421,18 +434,18 @@ export async function importHandTags(
     if (!input.dryRun) {
       if (create.length) {
         const rows = await tx<{ code: string }[]>`
-          INSERT INTO hand_tags (code, zone, kind, vip_level, is_synthetic)
-          SELECT u.code, u.zone, u.kind, u.vip_level, ${options.synthetic ?? false}
+          INSERT INTO hand_tags (code, zone, kind, vip_level, is_synthetic, card_uid)
+          SELECT u.code, u.zone, u.kind, u.vip_level, ${options.synthetic ?? false}, u.card_uid
           FROM unnest(${create.map((r) => r.code)}::text[], ${create.map((r) => r.zone)}::text[], ${create.map((r) => r.kind)}::text[],
-                      ${create.map((r) => r.vipLevel) as never}::smallint[]) AS u(code, zone, kind, vip_level)
+                      ${create.map((r) => r.vipLevel) as never}::smallint[], ${create.map((r) => uidOf(r) ?? null) as never}::text[]) AS u(code, zone, kind, vip_level, card_uid)
           ON CONFLICT (store_id, code) DO NOTHING RETURNING code`;
         if (rows.length !== create.length) throw conflict('TAGS_CHANGED', '手牌池刚刚有其他人新建了手牌，请重新预览后再导入');
       }
       if (update.length) {
         await tx`
-          UPDATE hand_tags t SET zone = u.zone, kind = u.kind, vip_level = u.vip_level, active = true, deleted_at = NULL, deleted_by = NULL, updated_at = now()
+          UPDATE hand_tags t SET zone = u.zone, kind = u.kind, vip_level = u.vip_level, card_uid = u.card_uid, active = true, deleted_at = NULL, deleted_by = NULL, updated_at = now()
           FROM unnest(${update.map((u) => u.id)}::bigint[], ${update.map((u) => u.zone)}::text[], ${update.map((u) => u.kind)}::text[],
-                      ${update.map((u) => u.vipLevel) as never}::smallint[]) AS u(id, zone, kind, vip_level)
+                      ${update.map((u) => u.vipLevel) as never}::smallint[], ${update.map((u) => u.cardUid) as never}::text[]) AS u(id, zone, kind, vip_level, card_uid)
           WHERE t.id = u.id`;
       }
       if (deactivate.length) {
