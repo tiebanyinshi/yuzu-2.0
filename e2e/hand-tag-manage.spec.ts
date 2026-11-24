@@ -42,7 +42,10 @@ test.describe('手牌管理', () => {
       const codes = (await plan.locator('span.num').allTextContents()).map((s) => s.trim());
       expect(codes).toHaveLength(6);
       expect(new Set(codes).size).toBe(6);
-      for (const c of codes) expect(c).toMatch(/^ZQ\d{4}$/), expect(c).not.toMatch(/[47]$/);
+      for (const c of codes) {
+        expect(c).toMatch(/^ZQ\d{4}$/);
+        expect(c).not.toMatch(/[47]$/);
+      }
       await card.getByTestId('gen-create').click();
       created.push(...codes);
       await expect(page.getByText(/已添加 6 张/)).toBeVisible();
@@ -53,7 +56,11 @@ test.describe('手牌管理', () => {
       await page.getByTestId(`admin-tag-${first}`).click();
       const dialog = page.getByRole('dialog');
       const service = dialog.getByTestId('tag-service-field');
-      await service.getByRole('radio', { name: '维修中' }).or(service.getByRole('button', { name: '维修中' })).first().click();
+      await service
+        .getByRole('radio', { name: '维修中' })
+        .or(service.getByRole('button', { name: '维修中' }))
+        .first()
+        .click();
       await service.getByTestId('tag-service-note').fill('锁坏了');
       await service.getByTestId('tag-service-save').click();
       await expect(dialog).toHaveCount(0);
@@ -70,14 +77,18 @@ test.describe('手牌管理', () => {
       await page.goto('/admin/tags/pool');
       await page.getByTestId(`admin-tag-${first}`).click();
       const service2 = page.getByRole('dialog').getByTestId('tag-service-field');
-      await service2.getByRole('radio', { name: '正常' }).or(service2.getByRole('button', { name: '正常' })).first().click();
+      await service2
+        .getByRole('radio', { name: '正常' })
+        .or(service2.getByRole('button', { name: '正常' }))
+        .first()
+        .click();
       await service2.getByTestId('tag-service-save').click();
       await expect(page.getByTestId(`admin-tag-${first}`)).toHaveAttribute('data-service', 'normal');
       await page.goto('/frontdesk');
       await expect(page.getByTestId(`tag-${first}`)).toHaveAttribute('data-state', 'free');
 
       // ③ 改牌号
-      const renamed = `ZQ${String(start + 900).padStart(4, '0')}`.slice(0, 6);
+      const renamed = `ZQ${String(start + 900).padStart(4, '0')}`;
       await page.goto('/admin/tags/pool');
       await page.getByTestId(`admin-tag-${second}`).click();
       await page.getByRole('dialog').getByTestId('tag-code').fill(renamed);
