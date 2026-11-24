@@ -1,3 +1,4 @@
+import { visibleBoardSections } from '@shared/admin';
 import { ERP_MODULE_KEYS, ERP_MODULES } from '@shared/erp';
 import { useCan, useSession } from '../../lib/session';
 import { useStoreNavItems } from '../../components/storeNav';
@@ -13,10 +14,14 @@ export function useErpAccess() {
   const storeNav = useStoreNavItems().filter((n) => !n.guestFacing);
   const modules = ERP_MODULE_KEYS.filter((k) => session.erpModules.includes(k) && ERP_MODULES[k].perms.some((p) => can(p)));
   const canSettings = can('settings.manage');
+  // 原来后台里归 ERP 的分区（门店与主体、对外接口、期初与旧账、操作审计，店主 2026-11-24，docs/BOARDS.md）：
+  // 只有这些权限（比如只看审计）、没有能用的 ERP 模块的，也要进得了 ERP 找到它们（Codex 审查 292af3d）
+  const adminSections = visibleBoardSections('erp', can, session.erpModules);
   return {
     modules,
-    /** 能进 ERP：有能用的模块，或者是能改模块开关的店主 */
-    canEnter: modules.length > 0 || canSettings,
+    /** 能进 ERP：有能用的模块，或者是能改模块开关的店主，或者有归 ERP 的设置分区 */
+    canEnter: modules.length > 0 || canSettings || adminSections.length > 0,
+    adminSections,
     canSettings,
     /** 只用 ERP 的人登录后直接进第一个能用的模块 */
     landing: modules.length ? ERP_MODULES[modules[0]!].path : null,
