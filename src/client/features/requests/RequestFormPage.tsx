@@ -559,7 +559,7 @@ function RequestForm({
                 </p>
               )}
             </Field>
-            <Field label="采购优先级" hint="红点紧急、绿点普通；采购审核时紧急的排在前面">
+            <Field label="采购优先级" hint="红点紧急、黄点较急、绿点普通；采购审核时按紧急、较急、普通排；只有紧急的不核库">
               <Segmented
                 ariaLabel="采购优先级"
                 value={priority}
@@ -571,6 +571,15 @@ function RequestForm({
                       <span className="inline-flex items-center gap-1.5">
                         <PriorityDot priority="normal" />
                         普通
+                      </span>
+                    ),
+                  },
+                  {
+                    value: 'high',
+                    label: (
+                      <span className="inline-flex items-center gap-1.5">
+                        <PriorityDot priority="high" />
+                        较急
                       </span>
                     ),
                   },

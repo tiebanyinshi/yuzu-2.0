@@ -20,6 +20,7 @@ import {
   MAX_IMAGE_BYTES,
   REQUEST_STATUS_LABELS,
   MAX_LINE_IMAGES,
+  REQUEST_PRIORITIES,
   type OpenRequestLine,
   type PurchaseRequest,
   type PurchaseRequestSummary,
@@ -56,7 +57,7 @@ const ReasonInput = z.object({ reason: z.string().trim().min(2, '请填写原因
 
 // ───────────────────────── 谁在看 ─────────────────────────
 
-async function myContext(db: Db, actor: Actor) {
+export async function myContext(db: Db, actor: Actor) {
   const [me] = await db<{ departmentId: number | null; departmentName: string | null }[]>`
     SELECT s.department_id, d.name AS department_name FROM staff s LEFT JOIN departments d ON d.id = s.department_id WHERE s.id = ${actor.id}`;
   // 我当主管的部门（8.0.17，LC1）：这些部门的需求单我都看得到、要确认的由我确认
@@ -73,7 +74,7 @@ async function myContext(db: Db, actor: Actor) {
 }
 
 /** 看得到这张需求单：审核的人、核库的库管看全部；部门申购看本部门的与自己提的 */
-function visible(me: Awaited<ReturnType<typeof myContext>>, actor: Actor, r: { departmentId: number; requesterId: number; deptHeadId?: number | null }) {
+export function visible(me: Awaited<ReturnType<typeof myContext>>, actor: Actor, r: { departmentId: number; requesterId: number; deptHeadId?: number | null }) {
   return (
     me.canReview ||
     me.canStock ||
@@ -148,17 +149,71 @@ function progressOf(p: RawProgress | null, s: { id: number; docNo: string } | nu
   };
 }
 
+/** 普通员工看得到的需求单：自己提的、本部门的、要自己确认的、自己当主管的部门的（与 visible() 一样；列表与采购商城的增量同步共用） */
+export const REQUESTER_OR_DEPT = (db: Db, v: { staffId: number; departmentId: number | null }) => db`
+  (r.requester_id = ${v.staffId} OR r.department_id = ${v.departmentId ?? 0}
+   OR r.dept_head_id = ${v.staffId}
+   OR r.department_id IN (SELECT hd2.id FROM departments hd2 WHERE hd2.head_id = ${v.staffId}))`;
+
+/**
+ * 一批需求单各行的进度状态（与详情 getRequest 的算法一样：有效采购单、到货、关单、询价、整行从库存领用）。
+ * 采购商城的列表、批量查状态用它合出显示状态，不再只按「到齐的行数」猜（Codex 审查：部分到货、采购单关闭在列表上看错）
+ */
+export async function lineStates(db: Db, requestIds: number[]): Promise<Map<number, RequestLineProgress['state'][]>> {
+  const out = new Map<number, RequestLineProgress['state'][]>();
+  if (!requestIds.length) return out;
+  const rows = await db<{ requestId: number; qtyMilli: number; progress: RawProgress | null; sourcing: { id: number; docNo: string } | null; stock: RequestLineStock | null }[]>`
+    SELECT l.request_id, l.qty_milli, ${PROGRESS_SQL(db)} AS progress, ${SOURCING_SQL(db)} AS sourcing, ${LINE_STOCK_SQL(db)} AS stock
+    FROM purchase_request_lines l WHERE l.request_id IN ${db(requestIds)} ORDER BY l.request_id, l.line_no`;
+  for (const l of rows) {
+    const progress = progressOf(l.progress, l.sourcing);
+    const stock = lineStockOf(l.stock);
+    const issuedAll = !!stock?.issueDoc && !stock.issueDoc.voided && stock.issuedQtyMilli >= Number(l.qtyMilli);
+    const state = issuedAll && !progress.po ? ('issued' as const) : progress.state;
+    const id = Number(l.requestId);
+    out.set(id, [...(out.get(id) ?? []), state]);
+  }
+  return out;
+}
+
+/** 需求单进度最后一次变的时刻（SQL 表达式，r 是 purchase_requests）：需求单本身、审批流水、采购单、收货退货单、询价单、核库与核库领用单（作废也算）、解开采购单关联的记号里最晚的 */
+export const PROGRESS_AT_SQL = (db: Db) => db`GREATEST(
+      r.updated_at,
+      (SELECT max(a.created_at) FROM approval_logs a WHERE a.doc_kind = 'purchase_request' AND a.doc_id = r.id),
+      (SELECT max(po.updated_at) FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
+         JOIN purchase_order_lines pl ON pl.id = x.po_line_id JOIN purchase_orders po ON po.id = pl.po_id WHERE l.request_id = r.id),
+      (SELECT max(d.updated_at) FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
+         JOIN inv_doc_lines il ON il.po_line_id = x.po_line_id JOIN inv_docs d ON d.id = il.doc_id WHERE l.request_id = r.id),
+      (SELECT max(rd.updated_at) FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
+         JOIN inv_doc_lines src ON src.po_line_id = x.po_line_id JOIN inv_doc_lines rl ON rl.source_line_id = src.id
+         JOIN inv_docs rd ON rd.id = rl.doc_id WHERE l.request_id = r.id),
+      (SELECT max(e.updated_at) FROM purchase_request_lines l JOIN sourcing_line_requests sr ON sr.request_line_id = l.id
+         JOIN sourcing_lines sl ON sl.id = sr.sourcing_line_id JOIN sourcing_events e ON e.id = sl.event_id WHERE l.request_id = r.id),
+      (SELECT max(GREATEST(s.decided_at, s.answered_at)) FROM request_line_stock s WHERE s.request_id = r.id),
+      (SELECT max(d.updated_at) FROM request_line_stock s JOIN inv_docs d ON d.id = s.inv_doc_id WHERE s.request_id = r.id),
+      (SELECT max(m.at) FROM purchase_request_progress_marks m WHERE m.request_id = r.id)
+    )`;
+
 /** 待审核不含还在核库的（8.1.10：核完才能审核）；待核库是待审核里还在核库、等部门确认替代的。列表与导出共用（导出的筛选与列表一样，Codex 审查 b3ca67a） */
+/** 优先级排序（8.1.31 三档）：紧急 → 较急 → 普通 */
+const PRIORITY_RANK = (db: Db, col: ReturnType<Db>) => db`(CASE ${col} WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END)`;
+
 const STOCK_FILTER = (db: Db, f: { status?: RequestStatus; stock?: boolean }) =>
   f.stock ? db`AND r.status = 'submitted' AND r.stock_check IN ('pending', 'confirming')` : f.status === 'submitted' ? db`AND r.stock_check NOT IN ('pending', 'confirming')` : db``;
 
-async function summaries(
+export async function summaries(
   db: Db,
   f: {
     ids?: number[];
+    /** 采购商城（8.1.31）：按商城单号、来源、更新时间筛 */
+    externalNos?: string[];
+    source?: 'mall';
+    updatedSince?: string;
     status?: RequestStatus;
     /** 待核库（8.1.10）：待审核里还在核库、等部门确认替代的 */
     stock?: boolean;
+    /** 采购商城（8.1.31）：status 只按状态筛，不套 ERP 待审核队列「不含核库中」的口径 */
+    plainStatus?: boolean;
     departmentId?: number;
     requesterOrDept?: { staffId: number; departmentId: number | null };
     from?: string;
@@ -183,7 +238,7 @@ async function summaries(
     })[]
   >`
     SELECT r.id, r.doc_no, r.status, r.need_by, r.created_at, r.department_id, d.name AS department_name, r.requester_id, s.display_name AS requester_name,
-           r.priority, r.submitted_at, r.approvable_on, r.source,
+           r.priority, r.submitted_at, r.approvable_on, r.source, r.external_no, r.updated_at,
            r.dept_confirm, r.dept_head_id, hd.display_name AS dept_head_name, cf.display_name AS dept_confirmed_by_name, r.dept_confirmed_at,
            r.stock_check, r.stock_check_since,
            (r.status = 'submitted' AND r.approvable_on IS NOT NULL AND ${today}::date IS NOT NULL AND r.approvable_on > ${today}::date) AS locked_today,
@@ -201,31 +256,28 @@ async function summaries(
     LEFT JOIN staff hd ON hd.id = r.dept_head_id LEFT JOIN staff cf ON cf.id = r.dept_confirmed_by
     WHERE TRUE
       ${f.ids ? db`AND r.id IN ${db(f.ids)}` : db``}
+      ${f.externalNos ? db`AND r.external_no IN ${db(f.externalNos)}` : db``}
+      ${f.source ? db`AND r.source = ${f.source}` : db``}
+      ${f.updatedSince ? db`AND r.updated_at >= ${f.updatedSince}` : db``}
       ${f.status ? db`AND r.status = ${f.status}` : db``}
-      ${STOCK_FILTER(db, f)}
+      ${f.plainStatus ? db`` : STOCK_FILTER(db, f)}
       ${f.departmentId ? db`AND r.department_id = ${f.departmentId}` : db``}
       ${f.from && f.timezone ? db`AND (r.created_at AT TIME ZONE ${f.timezone})::date >= ${f.from}` : db``}
       ${f.to && f.timezone ? db`AND (r.created_at AT TIME ZONE ${f.timezone})::date <= ${f.to}` : db``}
-      ${
-        f.requesterOrDept
-          ? db`AND (r.requester_id = ${f.requesterOrDept.staffId} OR r.department_id = ${f.requesterOrDept.departmentId ?? 0}
-                  OR r.dept_head_id = ${f.requesterOrDept.staffId}
-                  OR r.department_id IN (SELECT hd2.id FROM departments hd2 WHERE hd2.head_id = ${f.requesterOrDept.staffId}))`
-          : db``
-      }
+      ${f.requesterOrDept ? db`AND ${REQUESTER_OR_DEPT(db, f.requesterOrDept)}` : db``}
     ${
       f.stock
         ? // 待核库：待核库的在前，进待核库早的在前
           db`ORDER BY (r.stock_check = 'pending') DESC, r.stock_check_since, r.id`
         : f.status === 'submitted'
           ? // 待审核（CG02）：紧急在前 → 期望到货日期早的在前（没填的排后）→ 提交早的在前（与 @shared/requests 的 reviewOrder 一样）
-            db`ORDER BY (r.priority = 'urgent') DESC, r.need_by ASC NULLS LAST, r.submitted_at, r.id`
+            db`ORDER BY ${PRIORITY_RANK(db, db`r.priority`)}, r.need_by ASC NULLS LAST, r.submitted_at, r.id`
           : db`ORDER BY r.created_at DESC, r.id DESC`
     }
     LIMIT 500`;
 }
 
-const toSummary = (r: Awaited<ReturnType<typeof summaries>>[number]): PurchaseRequestSummary => {
+export const toSummary = (r: Awaited<ReturnType<typeof summaries>>[number]): PurchaseRequestSummary => {
   const { departmentId, departmentName, requesterId, requesterName, deptConfirm, deptHeadId, deptHeadName, deptConfirmedByName, deptConfirmedAt, ...rest } = r;
   return {
     ...rest,
@@ -259,10 +311,26 @@ export async function getRequest(db: Db, actor: Actor, requestId: number, timezo
   const canStockCheck = me.canStock && row.status === 'submitted' && row.stockCheck === 'pending';
   const canAnswerSubstitute = row.status === 'submitted' && row.stockCheck === 'confirming' && (row.requesterId === actor.id || isHeadOf(me, actor, row));
   const [extra] = await db<
-    { note: string; reviewedByName: string | null; reviewedAt: string | null; reason: string | null; isSynthetic: boolean; stockCheckedByName: string | null; stockCheckedAt: string | null }[]
+    {
+      note: string;
+      reviewedByName: string | null;
+      reviewedAt: string | null;
+      reason: string | null;
+      isSynthetic: boolean;
+      stockCheckedByName: string | null;
+      stockCheckedAt: string | null;
+      mall: PurchaseRequest['mall'];
+    }[]
   >`
-    SELECT r.note, rb.display_name AS reviewed_by_name, r.reviewed_at, r.reason, r.is_synthetic, sc.display_name AS stock_checked_by_name, r.stock_checked_at
-    FROM purchase_requests r LEFT JOIN staff rb ON rb.id = r.reviewed_by LEFT JOIN staff sc ON sc.id = r.stock_checked_by WHERE r.id = ${requestId}`;
+    SELECT r.note, rb.display_name AS reviewed_by_name, r.reviewed_at, r.reason, r.is_synthetic, sc.display_name AS stock_checked_by_name, r.stock_checked_at,
+           CASE WHEN r.source = 'mall' THEN json_build_object(
+             'externalNo', r.external_no, 'contactName', r.contact_name,
+             'store', CASE WHEN st.id IS NULL THEN NULL ELSE json_build_object('id', st.id, 'name', st.name) END,
+             'entity', CASE WHEN le.id IS NULL THEN NULL ELSE json_build_object('id', le.id, 'name', le.name) END,
+             'budgetProject', r.budget_project, 'deliveryAddress', r.delivery_address, 'paymentIntent', r.payment_intent) END AS mall
+    FROM purchase_requests r LEFT JOIN staff rb ON rb.id = r.reviewed_by LEFT JOIN staff sc ON sc.id = r.stock_checked_by
+    LEFT JOIN stores st ON st.id = r.store_id LEFT JOIN legal_entities le ON le.id = r.entity_id
+    WHERE r.id = ${requestId}`;
   const lines = await db<
     (Omit<PurchaseRequest['lines'][number], 'progress' | 'stock' | 'centralStock'> & {
       progress: RawProgress | null;
@@ -273,12 +341,16 @@ export async function getRequest(db: Db, actor: Actor, requestId: number, timezo
   >`
     SELECT l.id, l.line_no, l.material_id, m.name AS material_name, l.name, l.purpose, l.qty_milli, l.unit, l.link, l.details,
            l.ref_price_cents, l.note, l.applicant, l.channel,
+           CASE WHEN r.source = 'mall' THEN json_build_object(
+             'skuCode', l.mall_sku_code, 'priceVersion', l.price_version, 'brandModel', l.brand_model, 'expectedCategory', l.expected_category,
+             'reasonText', l.reason_text, 'freightCents', l.freight_cents, 'taxRateBp', l.tax_rate_bp) END AS mall,
            CASE WHEN l.supplier_id IS NULL THEN NULL ELSE json_build_object('id', sp.id, 'name', sp.name) END AS supplier,
            coalesce((SELECT json_agg(json_build_object('id', i.image_id, 'url', '/api/erp/images/' || i.image_id) ORDER BY i.sort_no)
                      FROM purchase_request_line_images i WHERE i.request_line_id = l.id), '[]'::json) AS images,
            ${PROGRESS_SQL(db)} AS progress, ${SOURCING_SQL(db)} AS sourcing,
            ${LINE_STOCK_SQL(db)} AS stock, ${CENTRAL_STOCK_SQL(db)} AS central_raw
-    FROM purchase_request_lines l LEFT JOIN materials m ON m.id = l.material_id LEFT JOIN suppliers sp ON sp.id = l.supplier_id
+    FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
+    LEFT JOIN materials m ON m.id = l.material_id LEFT JOIN suppliers sp ON sp.id = l.supplier_id
     WHERE l.request_id = ${requestId} ORDER BY l.line_no`;
   const approvals = await db<PurchaseRequest['approvals']>`
     SELECT a.id, a.action, s.display_name AS actor_name, a.reason, a.created_at
@@ -328,7 +400,7 @@ export async function openLines(db: Db, ids?: number[]): Promise<OpenRequestLine
       -- 整行从库存领用了的不再转采购（8.1.10）
       AND coalesce(ls.issued_qty_milli, 0) < l.qty_milli
       ${ids ? db`AND l.id IN ${db(ids)}` : db``}
-    ORDER BY (r.priority = 'urgent') DESC, r.need_by ASC NULLS LAST, r.submitted_at, r.id, l.line_no
+    ORDER BY ${PRIORITY_RANK(db, db`r.priority`)}, r.need_by ASC NULLS LAST, r.submitted_at, r.id, l.line_no
     LIMIT 500`;
   return rows.map(({ departmentId, departmentName, ...r }) => ({ ...r, issuedQtyMilli: Number(r.issuedQtyMilli), department: { id: departmentId, name: departmentName } }));
 }
@@ -363,13 +435,29 @@ const BodyInput = z.object({
   departmentId: id.nullable().default(null),
   needBy: docDateSchema.nullable().default(null),
   /** 采购优先级（02，CG02）：紧急 / 普通，默认普通 */
-  priority: z.enum(['urgent', 'normal']).default('normal'),
+  priority: z.enum(REQUEST_PRIORITIES).default('normal'),
   note: z.string().trim().max(200).default(''),
   lines: z.array(LineInput).min(1, '至少一行').max(50, '一张需求单最多 50 行'),
 });
 const CreateInput = BodyInput.extend({ clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试') });
 
-async function validateLines(db: Db, lines: z.infer<typeof LineInput>[]) {
+/** 采购商城带来的行（8.1.31）：意向供应商与商城的几项，写进同一张需求单 */
+export interface MallLineExtra {
+  supplierId: number | null;
+  mallSkuCode: string;
+  priceVersion: string;
+  brandModel: string;
+  expectedCategory: string;
+  reasonText: string;
+  freightCents: number | null;
+  taxRateBp: number | null;
+}
+export type LineWrite = z.infer<typeof LineInput> & Partial<MallLineExtra>;
+
+/**
+ * 校验明细行。商城来的（mall）：新产品不要求链接与图片（店主 2026-11-24 定：自主申请不强制），意向供应商要存在、在用
+ */
+export async function validateLines(db: Db, lines: LineWrite[], opts: { mall?: boolean } = {}) {
   const rules = await loadExpenseRules(db);
   const matIds = [...new Set(lines.map((l) => l.materialId).filter((x): x is number => x !== null))];
   const mats = matIds.length
@@ -383,7 +471,7 @@ async function validateLines(db: Db, lines: z.infer<typeof LineInput>[]) {
     if (l.materialId !== null) {
       const m = mats.get(l.materialId);
       if (!m || !m.active || !m.tracked) throw unprocessable('MATERIAL_INACTIVE', '选的物料不存在、已停用或不是受管物料');
-    } else {
+    } else if (!opts.mall) {
       // 新产品：图片与链接为必填（12 条自检第 12 条）
       if (!/^https?:\/\/\S+$/i.test(l.link)) throw unprocessable('LINK_REQUIRED', `「${l.name}」是新产品，请填写参考链接（http 或 https 开头）`);
       if (l.imageIds.length === 0) throw unprocessable('IMAGE_REQUIRED', `「${l.name}」是新产品，请至少上传一张图片`);
@@ -392,15 +480,23 @@ async function validateLines(db: Db, lines: z.infer<typeof LineInput>[]) {
     if (new Set(l.imageIds).size !== l.imageIds.length) throw badRequest('同一张图片在一行里只能出现一次');
     for (const i of l.imageIds) if (!images.has(i)) throw unprocessable('IMAGE_NOT_FOUND', '有图片没有上传成功，请重新上传');
   }
+  const supplierIds = [...new Set(lines.map((l) => l.supplierId ?? null).filter((x): x is number => x !== null))];
+  if (supplierIds.length) {
+    const ok = new Set((await db<{ id: number }[]>`SELECT id FROM suppliers WHERE id IN ${db(supplierIds)} AND active`).map((r) => Number(r.id)));
+    for (const sid of supplierIds) if (!ok.has(sid)) throw unprocessable('SUPPLIER_INACTIVE', '选的供应商不存在或已停用');
+  }
 }
 
-async function writeLines(tx: Db, requestId: number, lines: z.infer<typeof LineInput>[]) {
+export async function writeLines(tx: Db, requestId: number, lines: LineWrite[]) {
   let lineNo = 0;
   for (const l of lines) {
     lineNo += 1;
     const [row] = await tx<{ id: number }[]>`
-      INSERT INTO purchase_request_lines (request_id, line_no, material_id, name, purpose, qty_milli, unit, link, details, ref_price_cents, note)
-      VALUES (${requestId}, ${lineNo}, ${l.materialId}, ${l.name}, ${l.purpose}, ${l.qtyMilli}, ${l.unit}, ${l.link}, ${l.details}, ${l.refPriceCents}, ${l.note})
+      INSERT INTO purchase_request_lines (request_id, line_no, material_id, name, purpose, qty_milli, unit, link, details, ref_price_cents, note,
+                                          supplier_id, mall_sku_code, price_version, brand_model, expected_category, reason_text, freight_cents, tax_rate_bp)
+      VALUES (${requestId}, ${lineNo}, ${l.materialId}, ${l.name}, ${l.purpose}, ${l.qtyMilli}, ${l.unit}, ${l.link}, ${l.details}, ${l.refPriceCents}, ${l.note},
+              ${l.supplierId ?? null}, ${l.mallSkuCode ?? ''}, ${l.priceVersion ?? ''}, ${l.brandModel ?? ''}, ${l.expectedCategory ?? ''}, ${l.reasonText ?? ''},
+              ${l.freightCents ?? null}, ${l.taxRateBp ?? null})
       RETURNING id`;
     let sort = 0;
     for (const imageId of l.imageIds) {
@@ -411,7 +507,7 @@ async function writeLines(tx: Db, requestId: number, lines: z.infer<typeof LineI
 }
 
 /** 需求单记在哪个部门：部门申购只能是员工档案里的所属部门；店主或审核的人可以替任何部门提 */
-async function resolveDepartment(db: Db, actor: Actor, wanted: number | null) {
+export async function resolveDepartment(db: Db, actor: Actor, wanted: number | null) {
   const me = await myContext(db, actor);
   const free = actor.role === 'owner' || me.canReview;
   const deptId = free ? (wanted ?? me.departmentId) : me.departmentId;
@@ -433,13 +529,15 @@ export async function deptConfirmFor(
   deptId: number,
   actor: Actor,
   lines: { qtyMilli: number; refPriceCents: number | null }[],
+  /** 采购商城来的（8.1.31，店主 2026-11-24 定「全部需求单都审」）：不看规则与金额，部门有主管就要他确认 */
+  always = false,
 ): Promise<{ state: 'none' | 'pending' | 'confirmed'; headId: number | null }> {
   const rules = await loadPurchaseRules(db);
-  if (rules.deptConfirm === 'off') return { state: 'none', headId: null };
+  if (rules.deptConfirm === 'off' && !always) return { state: 'none', headId: null };
   const [d] = await db<{ headId: number | null; headActive: boolean | null }[]>`
     SELECT d.head_id, h.active AS head_active FROM departments d LEFT JOIN staff h ON h.id = d.head_id WHERE d.id = ${deptId}`;
   if (!d?.headId || !d.headActive) return { state: 'none', headId: null };
-  if (rules.deptConfirm === 'threshold') {
+  if (rules.deptConfirm === 'threshold' && !always) {
     const estimate = lines.reduce((sum, l) => sum + (l.refPriceCents === null ? 0 : Math.round((l.qtyMilli * l.refPriceCents) / 1000)), 0);
     if (rules.quoteThresholdCents <= 0 || estimate < rules.quoteThresholdCents) return { state: 'none', headId: null };
   }
@@ -525,9 +623,10 @@ async function lockRequest(tx: Db, requestId: number) {
       deptConfirm: 'none' | 'pending' | 'confirmed';
       deptHeadId: number | null;
       stockCheck: StockCheckState;
+      source: PurchaseRequestSummary['source'];
     }[]
   >`
-    SELECT id, status, requester_id, department_id, doc_no, approvable_on, priority, dept_confirm, dept_head_id, stock_check
+    SELECT id, status, requester_id, department_id, doc_no, approvable_on, priority, dept_confirm, dept_head_id, stock_check, source
     FROM purchase_requests WHERE id = ${requestId} FOR UPDATE`;
   if (!r) throw notFound('需求单不存在');
   return r;
@@ -542,6 +641,9 @@ export async function updateRequest(deps: Deps, requestId: number, raw: unknown,
     const r = await lockRequest(tx, requestId);
     if (r.requesterId !== actor.id && actor.role !== 'owner') throw forbidden('只能改自己提的需求单');
     if (r.status !== 'submitted' && r.status !== 'returned') throw conflict('INVALID_STATE', '需求单已结束审核，不能再改');
+    // 采购商城来的单：明细带着 SKU、价格版本、意向供应商与商城的几项，ERP 的填单页改不了这些（改了会丢）——
+    // 不在这里改；退回的撤回以后在商城里重新提
+    if (r.source === 'mall') throw conflict('MALL_EDIT_IN_SHOP', '采购商城提的需求单不能在这里改：退回的请撤回，再到采购商城里重新提一张');
     if (input.departmentId !== null && input.departmentId !== r.departmentId) throw badRequest('需求单的部门不能改，请撤回后重新提');
     // 核库（8.1.10）：已经有行从库存领用的不能再改（数据库守卫兜底）；没领用的核库结果随明细一起换掉，改完重新看要不要核库
     if (await hasIssuedLines(tx, requestId)) throw conflict('STOCK_ISSUED_LOCKED', '这张需求单已经有行从库存领用，不能再改；剩下的不要了可以撤回');
@@ -680,6 +782,30 @@ export async function saveImage(db: Db, raw: unknown, actor: Actor, scope: 'gene
   return { id: imageId, url: imageUrl(imageId) };
 }
 
+/**
+ * 读一张需求单、采购单用的图片（采购商城的图片接口也走这里，8.1.31）。
+ * 数据隔离（v0.7.30，A9）：只有「部门申购」的账号只能看自己上传的、本部门与自己提的需求单里的图片（编号是连续的，不能靠猜）；
+ * 自己草稿里的图片也能看（供应链二次整改 03：同一张图别人先传过时，草稿恢复也要看得到）。
+ * 合同扫描件不经这里给（v0.7.31 迁移 079）：只经合同的接口看，要「查看合同」、合同模块开着
+ */
+export async function readImageFor(db: Db, actor: Actor, imageId: number): Promise<{ mime: string; data: Buffer }> {
+  if (!can(actor, 'request.review') && !can(actor, 'inventory.read') && !can(actor, 'expense.read')) {
+    const me = await myContext(db, actor);
+    const [mine] = await db<{ ok: boolean }[]>`
+      SELECT true AS ok FROM erp_images i
+      WHERE i.id = ${imageId}
+        AND (i.created_by = ${actor.id} OR EXISTS (
+          SELECT 1 FROM purchase_request_line_images li JOIN purchase_request_lines l ON l.id = li.request_line_id
+          JOIN purchase_requests r ON r.id = l.request_id
+          WHERE li.image_id = i.id AND (r.requester_id = ${actor.id} OR r.department_id = ${me.departmentId ?? 0}))
+          OR EXISTS (SELECT 1 FROM erp_drafts d WHERE d.staff_id = ${actor.id} AND d.closed_at IS NULL AND i.id = ANY(d.image_ids)))`;
+    if (!mine) throw notFound('图片不存在');
+  }
+  const [img] = await db<{ mime: string; data: Buffer }[]>`SELECT mime, data FROM erp_images WHERE id = ${imageId} AND scope = 'general'`;
+  if (!img) throw notFound('图片不存在');
+  return img;
+}
+
 // ───────────────────────── 自检 ─────────────────────────
 
 export async function requestChecks(db: Db) {
@@ -700,8 +826,9 @@ export async function requestChecks(db: Db) {
     WHERE po.status <> 'cancelled' AND r.status <> 'approved'
     UNION ALL
     SELECT r.doc_no, '新产品「' || l.name || '」没有链接或图片' FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
-    -- 集采导入的不要求链接和图片（8.0.1 CG06）；部门表格导入的（sheet）只收物料档案里的，之后在页面上改成新产品的照样要
-    WHERE l.material_id IS NULL AND r.source <> 'import'
+    -- 集采导入的不要求链接和图片（8.0.1 CG06）；部门表格导入的（sheet）只收物料档案里的，之后在页面上改成新产品的照样要；
+    -- 采购商城的自主申请也不要求（8.1.31，店主 2026-11-24 定）
+    WHERE l.material_id IS NULL AND r.source NOT IN ('import', 'mall')
       AND (l.link = '' OR NOT EXISTS (SELECT 1 FROM purchase_request_line_images i WHERE i.request_line_id = l.id))`;
   const [n] = await db<{ requests: number; images: number; bytes: number }[]>`
     SELECT (SELECT count(*)::int FROM purchase_requests) AS requests, (SELECT count(*)::int FROM erp_images) AS images,
@@ -713,7 +840,7 @@ export async function requestChecks(db: Db) {
       ok: bad.length === 0,
       detail: bad.length
         ? bad.map((b) => `${b.docNo} ${b.why}`).join('；')
-        : `需求单 ${n!.requests} 张：每一行需求最多对应一行有效的采购单，物料一致；新产品都有链接和图片（图片 ${n!.images} 张，共 ${(Number(n!.bytes) / 1024 / 1024).toFixed(1)} MB）`,
+        : `需求单 ${n!.requests} 张：每一行需求最多对应一行有效的采购单，物料一致；新产品都有链接和图片（集采导入、采购商城的不要求；图片 ${n!.images} 张，共 ${(Number(n!.bytes) / 1024 / 1024).toFixed(1)} MB）`,
     },
   ];
 }
@@ -917,24 +1044,7 @@ export function registerRequestRoutes(app: FastifyInstance, deps: Deps) {
     return img;
   });
   app.get('/api/erp/images/:id', { preHandler: guardAny('request.create', 'request.review', 'inventory.read', 'expense.read') }, async (req, reply) => {
-    const imageId = docId(req);
-    // 数据隔离（v0.7.30，A9）：只有「部门申购」的账号只能看自己上传的、本部门与自己提的需求单里的图片（编号是连续的，不能靠猜）；
-    // 自己草稿里的图片也能看（供应链二次整改 03：同一张图别人先传过时，草稿恢复也要看得到）
-    if (!can(req.actor, 'request.review') && !can(req.actor, 'inventory.read') && !can(req.actor, 'expense.read')) {
-      const me = await myContext(sql, req.actor);
-      const [mine] = await sql<{ ok: boolean }[]>`
-        SELECT true AS ok FROM erp_images i
-        WHERE i.id = ${imageId}
-          AND (i.created_by = ${req.actor.id} OR EXISTS (
-            SELECT 1 FROM purchase_request_line_images li JOIN purchase_request_lines l ON l.id = li.request_line_id
-            JOIN purchase_requests r ON r.id = l.request_id
-            WHERE li.image_id = i.id AND (r.requester_id = ${req.actor.id} OR r.department_id = ${me.departmentId ?? 0}))
-            OR EXISTS (SELECT 1 FROM erp_drafts d WHERE d.staff_id = ${req.actor.id} AND d.closed_at IS NULL AND i.id = ANY(d.image_ids)))`;
-      if (!mine) throw notFound('图片不存在');
-    }
-    // 合同扫描件不经这里给（v0.7.31 迁移 079）：只经合同的接口看，要「查看合同」、合同模块开着
-    const [img] = await sql<{ mime: string; data: Buffer }[]>`SELECT mime, data FROM erp_images WHERE id = ${imageId} AND scope = 'general'`;
-    if (!img) throw notFound('图片不存在');
+    const img = await readImageFor(sql, req.actor, docId(req));
     reply.header('content-type', img.mime).header('cache-control', 'private, max-age=31536000, immutable');
     return reply.send(img.data);
   });

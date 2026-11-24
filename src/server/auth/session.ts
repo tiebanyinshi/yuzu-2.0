@@ -20,42 +20,28 @@ export async function createSession(db: Db, staffId: number, ttlHours: number, m
   return token;
 }
 
-/** 校验会话；有效时顺延过期时间（滑动过期，最多每分钟写一次）。 */
-export async function resolveSession(db: Db, token: string, ttlHours: number): Promise<Actor | null> {
-  const rows = await db<
-    (Actor & {
-      active: boolean;
-      tokenHash: string;
-      stale: boolean;
-      overrides: unknown;
-      positionOverrides: unknown;
-      suggested: string[] | null;
-      inCatalog: boolean;
-      permissionAdjust: unknown;
-      financeHides: unknown;
-      sessionStoreId: number | null;
-      storeIds: number[];
-    })[]
-  >`
-    SELECT s.token_hash, st.id, st.username, st.display_name, st.role, st.duties, st.must_change_password, st.active,
-           st.position, st.permission_adjust, st.needs_position,
-           s.last_seen_at < now() - interval '1 minute' AS stale,
-           (SELECT value FROM settings WHERE key = 'role_permissions') AS overrides,
-           (SELECT value FROM settings WHERE key = 'position_permissions') AS position_overrides,
-           (SELECT array_agg(ps.permission) FROM position_suggestions ps WHERE ps.position_key = st.position) AS suggested,
-           EXISTS (SELECT 1 FROM position_catalog pc WHERE pc.key = st.position AND NOT pc.all_permissions) AS in_catalog,
-           (SELECT value FROM settings WHERE key = 'finance_hides_marketing_cost') AS finance_hides,
-           s.store_id AS session_store_id,
-           ${storeIdsOf(db)} AS store_ids
-    FROM sessions s JOIN staff st ON st.id = s.staff_id
-    WHERE s.token_hash = ${hashToken(token)} AND s.expires_at > now()`;
-  const row = rows[0];
-  if (!row || !row.active) return null;
-  if (row.stale) {
-    await db`
-      UPDATE sessions SET last_seen_at = now(), expires_at = now() + make_interval(hours => ${ttlHours})
-      WHERE token_hash = ${row.tokenHash}`;
-  }
+/** 拼一个账号（Actor）要读的列：权限按店主在后台调整后的岗位权限现算，能进的门店按最近用过的排 */
+type ActorRow = Actor & {
+  active: boolean;
+  overrides: unknown;
+  positionOverrides: unknown;
+  suggested: string[] | null;
+  inCatalog: boolean;
+  permissionAdjust: unknown;
+  financeHides: unknown;
+  storeIds: number[];
+};
+const actorColumns = (db: Db) => db`
+  st.id, st.username, st.display_name, st.role, st.duties, st.must_change_password, st.active,
+  st.position, st.permission_adjust, st.needs_position,
+  (SELECT value FROM settings WHERE key = 'role_permissions') AS overrides,
+  (SELECT value FROM settings WHERE key = 'position_permissions') AS position_overrides,
+  (SELECT array_agg(ps.permission) FROM position_suggestions ps WHERE ps.position_key = st.position) AS suggested,
+  EXISTS (SELECT 1 FROM position_catalog pc WHERE pc.key = st.position AND NOT pc.all_permissions) AS in_catalog,
+  (SELECT value FROM settings WHERE key = 'finance_hides_marketing_cost') AS finance_hides,
+  ${storeIdsOf(db)} AS store_ids`;
+
+function actorOf(row: ActorRow, preferredStoreId: number | null): Actor {
   const role = row.role as Role;
   const duties = (row.duties ?? []) as Duty[];
   const position = positionFrom(row.position);
@@ -77,8 +63,36 @@ export async function resolveSession(db: Db, token: string, ttlHours: number): P
         financeExclusion: row.financeHides !== false,
       },
     ),
-    storeId: effectiveStore(row.sessionStoreId, (row.storeIds ?? []).map(Number)),
+    storeId: effectiveStore(preferredStoreId, (row.storeIds ?? []).map(Number)),
   };
+}
+
+/** 校验会话；有效时顺延过期时间（滑动过期，最多每分钟写一次）。 */
+export async function resolveSession(db: Db, token: string, ttlHours: number): Promise<Actor | null> {
+  const rows = await db<(ActorRow & { tokenHash: string; stale: boolean; sessionStoreId: number | null })[]>`
+    SELECT s.token_hash, s.last_seen_at < now() - interval '1 minute' AS stale, s.store_id AS session_store_id, ${actorColumns(db)}
+    FROM sessions s JOIN staff st ON st.id = s.staff_id
+    WHERE s.token_hash = ${hashToken(token)} AND s.expires_at > now()`;
+  const row = rows[0];
+  if (!row || !row.active) return null;
+  if (row.stale) {
+    await db`
+      UPDATE sessions SET last_seen_at = now(), expires_at = now() + make_interval(hours => ${ttlHours})
+      WHERE token_hash = ${row.tokenHash}`;
+  }
+  return actorOf(row, row.sessionStoreId);
+}
+
+/**
+ * 不经浏览器会话、按员工编号现拼一个账号（8.1.31 采购商城的服务端调用，docs/MALL_V8131.md 第 2 节）：每次请求都重查，
+ * 员工在 ERP 停用、改了权限马上生效。停用或不存在的为空；storeIds 是能进的门店（按最近用过的排）。
+ * preferredStoreId 给了且能进就用它，不然用能进的第一家（与会话一样）。
+ */
+export async function resolveStaffActor(db: Db, staffId: number, preferredStoreId: number | null): Promise<{ actor: Actor; storeIds: number[] } | null> {
+  const rows = await db<ActorRow[]>`SELECT ${actorColumns(db)} FROM staff st WHERE st.id = ${staffId}`;
+  const row = rows[0];
+  if (!row || !row.active) return null;
+  return { actor: actorOf(row, preferredStoreId), storeIds: (row.storeIds ?? []).map(Number) };
 }
 
 /**

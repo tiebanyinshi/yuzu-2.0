@@ -7,14 +7,18 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { ClipboardList, Download, ExternalLink, Inbox, PackageCheck, PackageSearch, Pencil, Plus, ShoppingCart, X } from 'lucide-react';
 import { formatQty } from '@shared/quantity';
+import { formatYuan } from '@shared/money';
 import {
+  PAYMENT_INTENT_LABELS,
   REQUEST_STATUS_LABELS,
   requestStatusLabel,
   stockCheckOpen,
   type PurchaseRequest,
   type PurchaseRequestSummary,
   type RequestLine,
+  type RequestLineMallInfo,
   type RequestLineProgress,
+  type RequestMallInfo,
   type RequestStatus,
 } from '@shared/requests';
 import { channelLabel } from '@shared/purchasing';
@@ -256,7 +260,7 @@ export function RequestsPage() {
                           <span className="block truncate text-[12px] text-ink-3">
                             {r.department.name} · {r.requester.name}
                             {r.needBy ? ` · 期望 ${r.needBy} 到货` : ''}
-                            {r.source === 'import' ? ' · 集采导入' : r.source === 'sheet' ? ' · 表格导入' : ''}
+                            {r.source === 'import' ? ' · 集采导入' : r.source === 'sheet' ? ' · 表格导入' : r.source === 'mall' ? ` · 商城 ${r.externalNo ?? ''}` : ''}
                           </span>
                           {r.lockedToday && (
                             <span className="block text-[12px] font-semibold text-clay" data-testid={`request-locked-${r.id}`}>
@@ -470,8 +474,9 @@ function LineCard({ l, canSeePo, request }: { l: RequestLine; canSeePo: boolean;
         {l.note && ` · 备注：${l.note}`}
         {l.applicant && ` · 申请人：${l.applicant}`}
         {l.channel && ` · ${channelLabel(l.channel)}`}
-        {l.supplier && ` · 供应商：${l.supplier.name}`}
+        {l.supplier && ` · ${request.source === 'mall' ? '意向供应商（部门选的，仅供参考，以采购确认为准）' : '供应商'}：${l.supplier.name}`}
       </p>
+      {l.mall && <MallLineInfo m={l.mall} />}
       {l.link && <ExternalLinkText href={l.link} />}
       <ImageThumbs images={l.images} />
       <LineStockInfo l={l} request={request} />
@@ -550,6 +555,11 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
               {r.needBy && <span className="text-[12.5px] text-ink-3">期望 {r.needBy} 到货</span>}
               {r.source === 'import' && <Badge tone="neutral">集采导入</Badge>}
               {r.source === 'sheet' && <Badge tone="neutral">表格导入</Badge>}
+              {r.source === 'mall' && (
+                <Badge tone="lake" data-testid="request-source-mall">
+                  商城 {r.externalNo}
+                </Badge>
+              )}
               {r.status === 'approved' && (
                 <span className="ml-auto flex items-center gap-1 text-[12.5px] text-ink-2">
                   <PackageCheck className="size-4" />
@@ -605,6 +615,7 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
                 今天可以先退回或定为不采购；急需的请找采购走急采。
               </Notice>
             )}
+            {r.mall && <MallInfo m={r.mall} />}
             {r.note && <p className="text-[13px] text-ink-2">备注：{r.note}</p>}
             <ul className="divide-y divide-line rounded-lg border border-line">
               {r.lines.map((l) => (
@@ -630,7 +641,8 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
               <Button variant="ghost" disabled={busy} onClick={() => setReasonFor('cancel')}>
                 撤回
               </Button>
-              {!anyIssued && (
+              {/* 采购商城来的单不在这里改（会丢 SKU 与价格版本），撤回后在商城重新提 */}
+              {!anyIssued && r.source !== 'mall' && (
                 <Link to={`/erp/requests/${r.id}/edit`}>
                   <Button variant="secondary" icon={<Pencil className="size-4" />} disabled={busy}>
                     修改
@@ -692,4 +704,36 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
       />
     </Sheet>
   );
+}
+
+/** 采购商城提来的单（8.1.31，docs/MALL_V8131.md）：经办人、门店、费用主体、预算项目、收货地点、拟定支付方式 */
+function MallInfo({ m }: { m: RequestMallInfo }) {
+  const items = [
+    m.contactName && `经办人：${m.contactName}`,
+    m.store && `适用门店：${m.store.name}`,
+    m.entity && `费用主体：${m.entity.name}`,
+    m.budgetProject && `预算项目：${m.budgetProject}`,
+    m.deliveryAddress && `收货地点：${m.deliveryAddress}`,
+    m.paymentIntent && `拟定支付：${PAYMENT_INTENT_LABELS[m.paymentIntent]}`,
+  ].filter(Boolean);
+  if (!items.length) return null;
+  return (
+    <p className="text-[12.5px] text-ink-2" data-testid="request-mall-info">
+      {items.join(' · ')}
+    </p>
+  );
+}
+
+/** 商城带来的行信息：SKU 与价格版本、品牌型号、预期分类、采购理由、运费、税率 */
+function MallLineInfo({ m }: { m: RequestLineMallInfo }) {
+  const parts = [
+    m.skuCode && `SKU ${m.skuCode}${m.priceVersion ? `（${m.priceVersion}）` : ''}`,
+    m.brandModel && `品牌型号：${m.brandModel}`,
+    m.expectedCategory && `预期分类：${m.expectedCategory}`,
+    m.taxRateBp !== null && `税率 ${m.taxRateBp / 100}%`,
+    m.freightCents !== null && `运费 ${formatYuan(m.freightCents)}`,
+    m.reasonText && `采购理由：${m.reasonText}`,
+  ].filter(Boolean);
+  if (!parts.length) return null;
+  return <p className="text-[12px] text-ink-3">{parts.join(' · ')}</p>;
 }
