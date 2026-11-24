@@ -58,6 +58,7 @@
 - [`FLOORPLAN_FINISH.md`](FLOORPLAN_FINISH.md)：平面图收尾（v0.7.19，定稿）：开单即占用、对客导览、PDF 底图、图纸治理
 - [`FLOW_V8017.md`](FLOW_V8017.md)：ERP 流程图 · 采购从提需求到付款（8.0.17）
 - [`FRONTDESK_RISK_V8115.md`](FRONTDESK_RISK_V8115.md)：8.1.15 追加 · 前台：NFC 发牌、发牌前风控、发牌后异常处置（块 A）
+- [`FRONTDESK_TAGS_V8127.md`](FRONTDESK_TAGS_V8127.md)：手牌管理：批量规则、修改删除、暂停 / 维修（店主 2026-11-24）
 - [`FRONTDESK_V808.md`](FRONTDESK_V808.md)：8.0.8 前台整改（钟房、收银、派对房、预约、餐饮、客房）
 - [`FRONTDESK_V8117.md`](FRONTDESK_V8117.md)：8.1.17 · 前台、桌台、退菜、本店价、流水（BW-1、BW-2、BW-3 发卡台、BW-4、BW-11、BW-12）
 - [`GIFTS_V819.md`](GIFTS_V819.md)：8.1.9 · 全局签赠（签赠券、授权人、签赠台账）

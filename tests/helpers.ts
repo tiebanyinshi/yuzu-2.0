@@ -391,6 +391,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '240_price_catalog_items.sql',
   '241_room_overnight.sql',
   '250_technician_ranking.sql',
+  '260_hand_tag_manage.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

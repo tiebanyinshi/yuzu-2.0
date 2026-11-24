@@ -1,8 +1,22 @@
 // 手牌池：按清单导入、批量建牌、锁定 / 解锁、改分区与柜型、停用。在店手牌不能改分区、柜型、停用或锁定（先换牌）。
 // 8.1.15：手牌绑芯片号（card_uid），发牌时刷卡带出牌号（docs/FRONTDESK_RISK_V8115.md 第 2 节）。
+// 手牌管理（店主 2026-11-24，docs/FRONTDESK_TAGS_V8127.md）：按规则批量生成（数量、起始号码、排除尾数 / 含某数字的号）、
+// 改牌号、删除（发过的标「已删除」）、柜子标「暂停使用 / 维修中」（前台发不出）。在店的手牌这些都不能做。
 
 import { z } from 'zod';
-import { MAX_VIP_LEVEL, normalizeTagCode, tagArea, TAG_CODE_PATTERN, TAG_KINDS, ZONES, type HandTag } from '@shared/frontdesk';
+import {
+  MAX_VIP_LEVEL,
+  normalizeTagCode,
+  planTagCodes,
+  tagArea,
+  TAG_CODE_PATTERN,
+  TAG_GENERATE_MAX,
+  TAG_KINDS,
+  TAG_SERVICE_LABELS,
+  TAG_SERVICE_STATUSES,
+  ZONES,
+  type HandTag,
+} from '@shared/frontdesk';
 import { HAND_TAG_IMPORT_MAX_ROWS, type HandTagImportReport } from '@shared/hand-tag-import';
 import { CARD_UID_PATTERN, normalizeCardUid, type TagByCard } from '@shared/frontdesk-risk';
 import { isUniqueViolation, type Db, type Sql } from '../../db';
@@ -14,13 +28,16 @@ import type { Deps } from '../../lib/context';
 import { setTxTimeouts } from './common';
 import { currentStoreId } from '../../lib/store-context';
 
-export async function listTags(db: Db): Promise<(HandTag & { inUse: boolean; lockedByName: string | null; lockedAt: string | null; cardUid: string | null })[]> {
+export async function listTags(
+  db: Db,
+): Promise<(HandTag & { inUse: boolean; lockedByName: string | null; lockedAt: string | null; cardUid: string | null; serviceByName: string | null; serviceAt: string | null })[]> {
   return db`
     SELECT t.id, t.code, t.zone, t.kind, t.vip_level, t.locked, t.lock_reason, t.active, t.is_synthetic, t.locked_at, t.card_uid,
-           s.display_name AS locked_by_name,
+           t.service_status, t.service_note, t.service_at,
+           s.display_name AS locked_by_name, ss.display_name AS service_by_name,
            EXISTS (SELECT 1 FROM visits v WHERE v.tag_id = t.id AND v.status = 'open') AS in_use
-    FROM hand_tags t LEFT JOIN staff s ON s.id = t.locked_by
-    WHERE t.store_id = ${currentStoreId()}
+    FROM hand_tags t LEFT JOIN staff s ON s.id = t.locked_by LEFT JOIN staff ss ON ss.id = t.service_by
+    WHERE t.store_id = ${currentStoreId()} AND t.deleted_at IS NULL
     ORDER BY CASE t.zone WHEN 'male' THEN 0 WHEN 'female' THEN 1 ELSE 2 END, t.kind = 'vip', t.vip_level,
              regexp_replace(t.code, '[0-9]', '', 'g'), length(t.code), t.code`;
 }
@@ -75,9 +92,10 @@ export async function batchCreate(deps: Deps, raw: unknown, ctx: OpContext) {
  * 会把刚发出的手牌误判为空闲，于是锁定 / 停用 / 改分区与发牌同时成功。
  */
 async function lockTag(tx: Db, id: number) {
-  const [tag] = await tx<{ id: number; code: string; zone: string; kind: string; vipLevel: number | null; locked: boolean; active: boolean }[]>`
-    SELECT id, code, zone, kind, vip_level, locked, active FROM hand_tags WHERE id = ${id} AND store_id = ${currentStoreId()} FOR UPDATE`;
-  if (!tag) throw notFound('手牌不存在');
+  const [tag] = await tx<{ id: number; code: string; zone: string; kind: string; vipLevel: number | null; locked: boolean; active: boolean; serviceStatus: string; serviceNote: string | null }[]>`
+    SELECT id, code, zone, kind, vip_level, locked, active, service_status, service_note FROM hand_tags
+    WHERE id = ${id} AND store_id = ${currentStoreId()} AND deleted_at IS NULL FOR UPDATE`;
+  if (!tag) throw notFound('手牌不存在（可能刚被删除），请刷新');
   const [use] = await tx<{ inUse: boolean }[]>`
     SELECT EXISTS (SELECT 1 FROM visits WHERE tag_id = ${id} AND status = 'open') AS in_use`;
   return { ...tag, inUse: use!.inUse };
@@ -111,6 +129,8 @@ export async function unlockHandTag(deps: Deps, id: number, ctx: OpContext) {
 
 export const UpdateInput = z
   .object({
+    /** 改牌号（不带就不改）：在店的、和别的牌重号的不行 */
+    code: z.string().transform(normalizeTagCode).pipe(z.string().regex(TAG_CODE_PATTERN, '牌号是 0–2 个字母加 1–5 位数字，例如 A023')).optional(),
     zone: z.enum(ZONES, '请选择男宾或女宾'),
     active: z.boolean(),
     // 旧版本页面不带柜型时保持原样
@@ -126,12 +146,22 @@ export async function updateHandTag(deps: Deps, id: number, raw: unknown, ctx: O
     const tag = await lockTag(tx, id);
     const kind = input.kind ?? tag.kind;
     const level = input.kind === undefined ? tag.vipLevel : (input.vipLevel ?? null);
-    if (tag.inUse && (tag.zone !== input.zone || !input.active || tag.kind !== kind || tag.vipLevel !== level)) {
-      throw conflict('TAG_IN_USE', `手牌 ${tag.code} 上有在店客人，不能改分区、柜型或停用`);
+    const code = input.code ?? tag.code;
+    if (tag.inUse && (code !== tag.code || tag.zone !== input.zone || !input.active || tag.kind !== kind || tag.vipLevel !== level)) {
+      throw conflict('TAG_IN_USE', `手牌 ${tag.code} 上有在店客人，不能改牌号、分区、柜型或停用`);
     }
-    await tx`
-      UPDATE hand_tags SET zone = ${input.zone}, active = ${input.active}, kind = ${kind}, vip_level = ${level}, updated_at = now()
-      WHERE id = ${id}`;
+    if (code !== tag.code) {
+      const [taken] = await tx<{ deleted: boolean }[]>`SELECT deleted_at IS NOT NULL AS deleted FROM hand_tags WHERE store_id = ${currentStoreId()} AND code = ${code}`;
+      if (taken) throw conflict('TAG_CODE_TAKEN', `牌号 ${code} 已经有了${taken.deleted ? '（是删除了的牌，在「建牌与导入」里按清单导入这个牌号可以恢复）' : ''}，换一个`);
+    }
+    try {
+      await tx`
+        UPDATE hand_tags SET code = ${code}, zone = ${input.zone}, active = ${input.active}, kind = ${kind}, vip_level = ${level}, updated_at = now()
+        WHERE id = ${id}`;
+    } catch (e) {
+      if (isUniqueViolation(e)) throw conflict('TAG_CODE_TAKEN', `牌号 ${code} 刚被别人建了，换一个`);
+      throw e;
+    }
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'hand_tag_updated',
@@ -139,8 +169,137 @@ export async function updateHandTag(deps: Deps, id: number, raw: unknown, ctx: O
       targetId: id,
       detail: {
         code: tag.code,
-        before: { zone: tag.zone, active: tag.active, kind: tag.kind, vipLevel: tag.vipLevel },
-        after: { zone: input.zone, active: input.active, kind, vipLevel: level },
+        summary: code !== tag.code ? `手牌 ${tag.code} 改成 ${code}` : `修改了手牌 ${tag.code}`,
+        before: { code: tag.code, zone: tag.zone, active: tag.active, kind: tag.kind, vipLevel: tag.vipLevel },
+        after: { code, zone: input.zone, active: input.active, kind, vipLevel: level },
+      },
+      ip: ctx.ip,
+    });
+  });
+}
+
+// ───────────────────────── 手牌管理（店主 2026-11-24） ─────────────────────────
+
+export const GenerateInput = z
+  .object({
+    prefix: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z]{0,2}$/, '前缀只能是 0–2 个英文字母'),
+    start: z.number('请填起始号码').int('起始号码要是整数').min(0, '起始号码不能小于 0').max(99999, '起始号码最多 5 位'),
+    count: z.number('请填数量').int('数量要是整数').min(1, '数量至少 1').max(TAG_GENERATE_MAX, `一次最多生成 ${TAG_GENERATE_MAX} 张`),
+    width: z.number().int().min(1).max(5),
+    zone: z.enum(ZONES, '请选择男宾或女宾'),
+    kind: z.enum(TAG_KINDS, '请选择柜型').default('normal'),
+    vipLevel,
+    skipEndDigits: z.array(z.number().int().min(0).max(9)).max(10).default([]),
+    skipAnyDigits: z.array(z.number().int().min(0).max(9)).max(10).default([]),
+    /** 只预览，不建 */
+    preview: z.boolean().default(false),
+  })
+  .refine(kindLevelOk, KIND_LEVEL_MESSAGE)
+  .refine((v) => String(v.start).length <= v.width, '起始号码的位数超过了设定位数')
+  .refine((v) => new Set([...v.skipEndDigits, ...v.skipAnyDigits]).size < 10, '排除的数字不能把 0–9 都排除了');
+
+/**
+ * 按规则批量生成：从起始号码往后数，排除尾数 / 含某数字的号，已有的牌号（含删除了的）跳过，凑够数量。
+ * 在台账锁里算：两个人同时生成不会撞号（撞了也由唯一约束兜底，整笔拒绝、请重新预览）。
+ */
+export async function generateTags(deps: Deps, raw: unknown, ctx: OpContext) {
+  const input = parse(GenerateInput, raw);
+  const plan = async (db: Db) => {
+    const existing = new Set((await db<{ code: string }[]>`SELECT code FROM hand_tags WHERE store_id = ${currentStoreId()}`).map((r) => r.code));
+    const p = planTagCodes(input, existing);
+    if (!p.codes.length) throw conflict('TAG_GENERATE_EMPTY', '按这个规则一张也生成不出来（号码用完了或都已存在），换起始号码、位数或前缀');
+    return p;
+  };
+  if (input.preview) return { ...(await plan(deps.sql)), created: 0 };
+  return deps.sql.begin(async (tx) => {
+    await setTxTimeouts(tx);
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`hand_tags_generate:${currentStoreId()}`}, 0))`;
+    const p = await plan(tx);
+    try {
+      await tx`
+        INSERT INTO hand_tags (code, zone, kind, vip_level) SELECT unnest(${p.codes}::text[]), ${input.zone}, ${input.kind}, ${input.vipLevel}`;
+    } catch (e) {
+      if (isUniqueViolation(e)) throw conflict('TAG_CODE_TAKEN', '有牌号刚被别人建了，请重新预览后再生成');
+      throw e;
+    }
+    await writeAudit(tx, {
+      staffId: ctx.actor.id,
+      action: 'hand_tags_created',
+      targetType: 'hand_tag',
+      detail: {
+        rule: { prefix: input.prefix, start: input.start, count: input.count, width: input.width, skipEndDigits: input.skipEndDigits, skipAnyDigits: input.skipAnyDigits },
+        zone: input.zone,
+        kind: input.kind,
+        vipLevel: input.vipLevel,
+        created: p.codes.length,
+        first: p.codes[0],
+        last: p.codes.at(-1),
+      },
+      ip: ctx.ip,
+    });
+    return { ...p, created: p.codes.length };
+  });
+}
+
+/**
+ * 删除一张手牌：在店的不能删；从来没发过的直接删掉；发过的（来访、换牌记录引用着它）标「已删除」并停用，
+ * 手牌池与前台都不再列出，历史单据照旧显示牌号。
+ */
+export async function deleteHandTag(deps: Deps, id: number, ctx: OpContext) {
+  return deps.sql.begin(async (tx) => {
+    await setTxTimeouts(tx);
+    const tag = await lockTag(tx, id);
+    if (tag.inUse) throw conflict('TAG_IN_USE', `手牌 ${tag.code} 上有在店客人，不能删除；请先在前台给客人换牌`);
+    // 手牌表本来就禁止物理删除（004 迁移的触发器：历史来访、换牌记录还引用它）：删除 = 停用并标「已删除」，
+    // 后台列表、前台都不再出现，牌号不再被生成；按清单导入同一个牌号可以恢复
+    await tx`UPDATE hand_tags SET active = false, deleted_at = now(), deleted_by = ${ctx.actor.id}, card_uid = NULL, updated_at = now() WHERE id = ${id}`;
+    const [hist] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM visits WHERE tag_id = ${id}`;
+    const used = { used: (hist?.n ?? 0) > 0 };
+    await writeAudit(tx, {
+      staffId: ctx.actor.id,
+      action: 'hand_tag_updated',
+      targetType: 'hand_tag',
+      targetId: id,
+      detail: { summary: `删除了手牌 ${tag.code}${used.used ? '（发过的，历史照旧可查）' : ''}`, code: tag.code, deleted: true, kept: used.used },
+      ip: ctx.ip,
+    });
+    return { code: tag.code, kept: used.used };
+  });
+}
+
+export const ServiceInput = z
+  .object({
+    status: z.enum(TAG_SERVICE_STATUSES, '状态不对'),
+    note: z.string().trim().max(100, '说明最多 100 字').default(''),
+  })
+  .transform((v) => ({ status: v.status, note: v.status === 'normal' ? null : v.note || null }));
+
+/** 手牌柜标「暂停使用 / 维修中」或恢复正常：在店的不能标（先换牌）；恢复正常随时可以 */
+export async function setTagService(deps: Deps, id: number, raw: unknown, ctx: OpContext) {
+  const input = parse(ServiceInput, raw);
+  await deps.sql.begin(async (tx) => {
+    await setTxTimeouts(tx);
+    const tag = await lockTag(tx, id);
+    if (tag.serviceStatus === input.status && tag.serviceNote === input.note) return;
+    if (input.status !== 'normal' && tag.inUse) throw conflict('TAG_IN_USE', `手牌 ${tag.code} 上有在店客人，不能标「${TAG_SERVICE_LABELS[input.status]}」；请先在前台给客人换牌`);
+    await tx`
+      UPDATE hand_tags SET service_status = ${input.status}, service_note = ${input.note},
+             service_by = ${input.status === 'normal' ? null : ctx.actor.id}, service_at = ${input.status === 'normal' ? null : new Date()}, updated_at = now()
+      WHERE id = ${id}`;
+    await writeAudit(tx, {
+      staffId: ctx.actor.id,
+      action: 'hand_tag_updated',
+      targetType: 'hand_tag',
+      targetId: id,
+      detail: {
+        summary: `手牌 ${tag.code}：${TAG_SERVICE_LABELS[tag.serviceStatus as keyof typeof TAG_SERVICE_LABELS] ?? tag.serviceStatus} → ${TAG_SERVICE_LABELS[input.status]}${input.note ? `（${input.note}）` : ''}`,
+        code: tag.code,
+        before: { serviceStatus: tag.serviceStatus, serviceNote: tag.serviceNote },
+        after: { serviceStatus: input.status, serviceNote: input.note },
       },
       ip: ctx.ip,
     });
@@ -243,7 +402,7 @@ export async function importHandTags(
       }
       if (update.length) {
         await tx`
-          UPDATE hand_tags t SET zone = u.zone, kind = u.kind, vip_level = u.vip_level, active = true, updated_at = now()
+          UPDATE hand_tags t SET zone = u.zone, kind = u.kind, vip_level = u.vip_level, active = true, deleted_at = NULL, deleted_by = NULL, updated_at = now()
           FROM unnest(${update.map((u) => u.id)}::bigint[], ${update.map((u) => u.zone)}::text[], ${update.map((u) => u.kind)}::text[],
                       ${update.map((u) => u.vipLevel) as never}::smallint[]) AS u(id, zone, kind, vip_level)
           WHERE t.id = u.id`;

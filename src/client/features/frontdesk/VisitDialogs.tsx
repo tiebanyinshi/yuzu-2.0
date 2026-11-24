@@ -6,6 +6,8 @@ import {
   PREVIEW_COLUMN_LABELS,
   PREVIEW_COLUMNS,
   previewBuckets,
+  tagBlockedText,
+  tagIssuable,
   uniqueTagMatch,
   ZONE_LABELS,
   type BoardTag,
@@ -88,7 +90,7 @@ export function SwapDialog({
     if (op.state.phase === 'error' && op.state.code && GRANT_ERRORS.includes(op.state.code)) setGrant(null);
   }, [op.state]);
 
-  const free = tags.filter((t) => t.zone === visit.zone && t.active && !t.locked && !t.visit);
+  const free = tags.filter((t) => t.zone === visit.zone && tagIssuable(t));
   const c = normalizeTagCode(code);
   const target = tags.find((t) => t.code === c);
   const problem = !c
@@ -101,11 +103,7 @@ export function SwapDialog({
           ? `${c} 是${ZONE_LABELS[target.zone].title}牌，客人是${ZONE_LABELS[visit.zone].title}`
           : target.visit
             ? `${c} 已在店`
-            : target.locked
-              ? `${c} 已锁定（${target.lockReason}）`
-              : !target.active
-                ? `${c} 已停用`
-                : null;
+            : tagBlockedText(target);
   // 只输了末位且对上多张空闲牌时，列出候选让员工点选，不自动取第一张
   const candidates = c && !target ? matchTags(free, c).slice(0, 8) : [];
   // VIP 柜：按这位客人的档级能用的柜子等级（散客为 0）
