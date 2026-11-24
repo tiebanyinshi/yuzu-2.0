@@ -452,7 +452,7 @@ export async function listMall(deps: Deps, actor: Actor, raw: unknown, opts: { m
   const tz = deps.config.timezone;
   const me = await myContext(db, actor);
   const scope = (me.canReview || me.canStock) && !opts.mineOnly ? undefined : { staffId: actor.id, departmentId: me.departmentId };
-  const filters = { status: q.status, departmentId: q.departmentId, source: q.source, from: q.from, to: q.to, timezone: tz, requesterOrDept: scope };
+  const filters = { status: q.status, departmentId: q.departmentId, source: q.source, from: q.from, to: q.to, timezone: tz, requesterOrDept: scope, plainStatus: true };
   if (!q.updatedSince) {
     // 不带增量：最近的单，按进度时刻从晚到早
     const list = await briefs(db, await summaries(db, filters));

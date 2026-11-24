@@ -176,7 +176,7 @@ export async function lineStates(db: Db, requestIds: number[]): Promise<Map<numb
   return out;
 }
 
-/** 需求单进度最后一次变的时刻（SQL 表达式，r 是 purchase_requests）：需求单本身、审批流水、采购单、收货退货单、询价单、核库、解开采购单关联的记号里最晚的 */
+/** 需求单进度最后一次变的时刻（SQL 表达式，r 是 purchase_requests）：需求单本身、审批流水、采购单、收货退货单、询价单、核库与核库领用单（作废也算）、解开采购单关联的记号里最晚的 */
 export const PROGRESS_AT_SQL = (db: Db) => db`GREATEST(
       r.updated_at,
       (SELECT max(a.created_at) FROM approval_logs a WHERE a.doc_kind = 'purchase_request' AND a.doc_id = r.id),
@@ -190,6 +190,7 @@ export const PROGRESS_AT_SQL = (db: Db) => db`GREATEST(
       (SELECT max(e.updated_at) FROM purchase_request_lines l JOIN sourcing_line_requests sr ON sr.request_line_id = l.id
          JOIN sourcing_lines sl ON sl.id = sr.sourcing_line_id JOIN sourcing_events e ON e.id = sl.event_id WHERE l.request_id = r.id),
       (SELECT max(GREATEST(s.decided_at, s.answered_at)) FROM request_line_stock s WHERE s.request_id = r.id),
+      (SELECT max(d.updated_at) FROM request_line_stock s JOIN inv_docs d ON d.id = s.inv_doc_id WHERE s.request_id = r.id),
       (SELECT max(m.at) FROM purchase_request_progress_marks m WHERE m.request_id = r.id)
     )`;
 
@@ -211,6 +212,8 @@ export async function summaries(
     status?: RequestStatus;
     /** 待核库（8.1.10）：待审核里还在核库、等部门确认替代的 */
     stock?: boolean;
+    /** 采购商城（8.1.31）：status 只按状态筛，不套 ERP 待审核队列「不含核库中」的口径 */
+    plainStatus?: boolean;
     departmentId?: number;
     requesterOrDept?: { staffId: number; departmentId: number | null };
     from?: string;
@@ -257,7 +260,7 @@ export async function summaries(
       ${f.source ? db`AND r.source = ${f.source}` : db``}
       ${f.updatedSince ? db`AND r.updated_at >= ${f.updatedSince}` : db``}
       ${f.status ? db`AND r.status = ${f.status}` : db``}
-      ${STOCK_FILTER(db, f)}
+      ${f.plainStatus ? db`` : STOCK_FILTER(db, f)}
       ${f.departmentId ? db`AND r.department_id = ${f.departmentId}` : db``}
       ${f.from && f.timezone ? db`AND (r.created_at AT TIME ZONE ${f.timezone})::date >= ${f.from}` : db``}
       ${f.to && f.timezone ? db`AND (r.created_at AT TIME ZONE ${f.timezone})::date <= ${f.to}` : db``}

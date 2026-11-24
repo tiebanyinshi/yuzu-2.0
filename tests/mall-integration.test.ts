@@ -358,6 +358,8 @@ describe('列表与批量的进度（Codex 审查）', () => {
       displayStatus: string;
     }[];
     expect(sub.find((x) => x.id === checking.id)?.displayStatus).toBe('stock_check');
+    const plain = (await call('GET', '/api/erp/mall/requests?status=submitted&limit=200', { staff: buyer })).body.requests as { id: number }[];
+    expect(plain.map((x) => x.id)).toContain(checking.id);
   });
 });
 
