@@ -25,6 +25,7 @@ import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Skeleton } from '../../components/ui';
+import { PriceSheetLink } from './PriceSheetLink';
 
 const KEY = ['admin', 'room-categories'] as const;
 
@@ -62,6 +63,7 @@ export function RoomCategoriesCard() {
           新建房型
         </Button>
       </div>
+      <PriceSheetLink sheet="room" />
       <p className="text-[13px] text-ink-2">房态中心按房型分页签。每个房型管空间台账里的几种业态（一种业态只归一个在用的房型），选它是哪一类房间：点卡片能做什么跟着这一类走。</p>
       {d.unmapped.length > 0 && (
         <Notice tone="warning" title={`有房间、还没归到房型的业态：${d.unmapped.join('、')}`} data-testid="room-categories-unmapped">

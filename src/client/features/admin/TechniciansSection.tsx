@@ -18,6 +18,7 @@ import { Badge, Button, Card, Notice, PendingBadge, SectionTitle, Segmented, Sel
 import { AdminPage } from './AdminShell';
 import { SubPane } from '../../components/SubNav';
 import { TechnicianDialog } from '../technicians/TechnicianDialog';
+import { PriceSheetLink } from './PriceSheetLink';
 
 const adminKey = ['admin', 'technicians'] as const;
 const useTechnicianAdmin = () => useQuery({ queryKey: adminKey, queryFn: () => api.get<TechnicianAdmin>('/api/admin/technicians') });
@@ -323,6 +324,7 @@ function ItemsCard() {
     <Card className="p-5" data-testid="technician-items">
       <SectionTitle aside={!editable && <Badge>能管理价目的岗位可改</Badge>}>需要技师的项目</SectionTitle>
       <p className="mt-1 text-[12.5px] text-ink-3">勾上的项目在技师功能开启后挂账时要选技师（按摩、足疗、搓澡等）。也可以在「价目与套餐」里逐个项目设置。现在 {required} 个在售项目需要技师。</p>
+      <PriceSheetLink sheet="massage" className="mt-2" />
       {items.length === 0 ? (
         <p className="mt-4 rounded-lg border border-dashed border-line-strong px-4 py-8 text-center text-[13px] text-ink-3">价目表里还没有项目</p>
       ) : (

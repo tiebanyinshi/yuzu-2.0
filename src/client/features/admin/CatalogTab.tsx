@@ -21,6 +21,7 @@ import { AdminPage } from './AdminShell';
 import { useSession } from '../../lib/session';
 import { StorePricesCard } from './StorePricesCard';
 import { PriceCatalogPane } from './PriceCatalogPane';
+import { PriceSheetLink } from './PriceSheetLink';
 
 type Editing = { kind: 'plan'; data: RechargePlan | null } | { kind: 'item'; data: ServiceItem | null } | null;
 
@@ -670,6 +671,7 @@ function TicketTypesCard() {
         接待时为每位客人选票种，留存当时的票价；离店结账按在店时长计算：每 12 小时一段，票价 = 24 小时档 × 整天数 + 剩余半天时再加一个 12 小时档（例：499 → 599 → 1098 → 1198）。跳档宽限在「手牌 →
         前台规则」设置。
       </p>
+      <PriceSheetLink sheet="store" className="mt-2" />
       {types.isPending ? (
         <Skeleton className="mt-3 h-24" />
       ) : (
