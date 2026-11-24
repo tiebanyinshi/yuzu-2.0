@@ -67,7 +67,8 @@ export function ScheduleBatchDialog({
   const [rangeTo, setRangeTo] = useState('');
   const [shiftId, setShiftId] = useState<number | null>(null);
   const [overwrite, setOverwrite] = useState(false);
-  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  // 「确认覆盖」绑在确认时那一次预览上：改了员工、日子、班次，或预览以后有变化，新的预览要重新确认
+  const [confirmedRevision, setConfirmedRevision] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useResetOnOpen(open, () => {
@@ -79,7 +80,7 @@ export function ScheduleBatchDialog({
     setRangeTo('');
     setShiftId(active[0]?.id ?? null);
     setOverwrite(false);
-    setConfirmOverwrite(false);
+    setConfirmedRevision(null);
     setError(null);
   }, [open]);
   const last = shiftDate(today, SCHEDULE_AHEAD_DAYS);
@@ -115,6 +116,7 @@ export function ScheduleBatchDialog({
   });
   const p = ready && JSON.stringify(debounced) === bodyKey ? preview.data : undefined;
   const needConfirm = !!p && p.overwrite > 0;
+  const confirmOverwrite = !!p && confirmedRevision === `${bodyKey}|${p.revision}`;
   const skippedBy = p ? SCHEDULE_SKIP_REASONS.map((r) => [r, p.skipped.filter((s) => s.reason === r).length] as const).filter(([, n]) => n > 0) : [];
   const shift = active.find((s) => s.id === shiftId);
 
@@ -142,7 +144,7 @@ export function ScheduleBatchDialog({
         onDone();
       } else if (e instanceof ApiError && e.code === 'SCHEDULE_CHANGED') {
         // 预览以后有人改过：重新预览、覆盖要重新确认
-        setConfirmOverwrite(false);
+        setConfirmedRevision(null);
         setError(errorMessage(e));
         void preview.refetch();
       } else if (e instanceof ErpPendingStoreError) setError(e.message);
@@ -294,7 +296,7 @@ export function ScheduleBatchDialog({
             checked={overwrite}
             onChange={(v) => {
               setOverwrite(v);
-              setConfirmOverwrite(false);
+              setConfirmedRevision(null);
             }}
           >
             已有别的排班的日子也换成这个班次（不勾就跳过那几天）
@@ -332,7 +334,7 @@ export function ScheduleBatchDialog({
                 </ul>
               )}
               {needConfirm && (
-                <ConfirmCheck checked={confirmOverwrite} onChange={setConfirmOverwrite} tone="clay">
+                <ConfirmCheck checked={confirmOverwrite} onChange={(v) => setConfirmedRevision(v ? `${bodyKey}|${p.revision}` : null)} tone="clay">
                   确认覆盖：这 {p.overwrite} 格原来的排班换成「{shift?.name}」
                 </ConfirmCheck>
               )}
