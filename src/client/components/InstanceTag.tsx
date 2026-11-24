@@ -26,16 +26,13 @@ export function InstanceBadge({ instance, className }: { instance: InstanceKind;
 }
 
 /**
- * 门店侧栏最下面「返回门户」下面的环境标识（店主 2026-11-24，docs/PORTAL.md PT5）：短标识按环境上色，下面常显版本与提交 SHA
- * （AGENTS.md：导航栏常显实例标识与「版本 + SHA」，Codex 审查 023cc78）；悬停看完整标识
+ * 门店侧栏最下面「返回门户」下面只写版本号（店主 2026-11-24 定，docs/PORTAL.md PT5）：环境标识与提交 SHA 常显在门户页顶栏；
+ * 悬停看完整的标识与「版本 + SHA」
  */
 export function InstanceTone({ instance, version, commit }: { instance: InstanceKind; version: string; commit: string }) {
-  const short = labelOf(instance).split('·')[0]!;
   return (
-    <div data-testid="instance-tag" title={`${labelOf(instance)} · ${versionText(version, commit)}`} className="flex w-full flex-col items-center gap-0.5 text-center">
-      <span className={cn('w-full truncate rounded-md px-1 py-0.5 text-[12px] leading-tight font-bold', toneOf(instance))}>{short}</span>
-      <span className="num w-full text-[12px] leading-tight break-all text-paper/60">v{version}</span>
-      {commit && <span className="num text-[12px] leading-tight text-paper/60">{commit.slice(0, 7)}</span>}
-    </div>
+    <span data-testid="instance-tag" title={`${labelOf(instance)} · ${versionText(version, commit)}`} className="num w-full text-center text-[12px] leading-tight break-all text-paper/60">
+      v{version}
+    </span>
   );
 }
