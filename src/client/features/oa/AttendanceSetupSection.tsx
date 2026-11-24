@@ -39,7 +39,6 @@ import { AttendanceResultsTab } from './AttendanceResultsTab';
 import { FaceReviewTab } from './FaceReviewTab';
 import { HolidayTab } from './HolidayTab';
 import { LeaveTab } from './LeaveTab';
-import { MapPicker } from './MapPicker';
 import { PunchRecordsTab } from './PunchRecordsTab';
 import { ScheduleTab } from './ScheduleTab';
 
@@ -495,7 +494,6 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
     if (!address.trim()) setAddress(p.address.slice(0, 100));
     setPlaces(null);
   };
-  const point = lat.trim() && lng.trim() && Number.isFinite(latN) && Number.isFinite(lngN) && Math.abs(latN) <= 90 && Math.abs(lngN) <= 180 ? { lat: latN, lng: lngN } : null;
   const submit = () => {
     if (problem) return;
     const body = { name: name.trim(), address: address.trim(), lat: latN, lng: lngN, radiusM: radiusN, active, version: existing?.version };
@@ -511,7 +509,7 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
       onClose={onClose}
       title={existing ? `编辑打卡点 · ${existing.name}` : '新建打卡点'}
       width="max-w-3xl"
-      description="三种取点方式：在门店里「定位当前位置」；搜地址后在地图上选点、确认前可微调；或手动填经纬度（手机定位的 WGS-84）。保存的都是 WGS-84，打卡判定不变。"
+      description="三种取点方式：在门店里「定位当前位置」；搜地址后从结果里选一个；或手动填经纬度（手机定位的 WGS-84）。保存的都是 WGS-84，打卡判定不变。"
       footer={
         <>
           {(save.error || problem) && <span className="mr-auto self-center text-[13px] text-clay">{save.error ?? problem}</span>}
@@ -545,22 +543,12 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
         <Button variant="secondary" icon={<LocateFixed className="size-4" />} loading={locating} onClick={locate} data-testid="att-location-locate">
           定位当前位置
         </Button>
-        {!problem && (
-          <a
-            href={`https://www.openstreetmap.org/?mlat=${latN}&mlon=${lngN}#map=17/${latN}/${lngN}`}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-[13px] font-bold text-lake hover:underline"
-          >
-            在地图上看看
-          </a>
-        )}
       </div>
       {geo.data && (
         <div className="mt-4 space-y-2" data-testid="att-location-search">
           <p className="text-[13px] font-semibold text-ink-2">搜索地址选点</p>
           {geo.data.provider === 'off' ? (
-            <p className="text-[12.5px] text-ink-3">这台服务器没开地址搜索（管理员在 .env 配 AMAP_WEB_KEY 或 GEO_PROVIDER）；可以直接在地图上点、或用「定位当前位置」。</p>
+            <p className="text-[12.5px] text-ink-3">这台服务器没开地址搜索（管理员在 .env 配 AMAP_WEB_KEY 或 GEO_PROVIDER）；可以用「定位当前位置」或手动填经纬度。</p>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               <Input
@@ -597,14 +585,6 @@ function LocationDialog({ target, onClose }: { target: OaLocation | 'new' | null
               ))}
             </ul>
           )}
-          <MapPicker
-            value={point}
-            provider={geo.data.provider}
-            onChange={(p) => {
-              setLat(p.lat.toFixed(6));
-              setLng(p.lng.toFixed(6));
-            }}
-          />
         </div>
       )}
       {existing && (

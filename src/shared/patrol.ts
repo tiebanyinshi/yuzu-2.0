@@ -1,7 +1,7 @@
 // 8.0.9 安保巡场（docs/PATROL_V809.md）：员工端（柚子饭堂「工作台 → 巡场」）与后台（ERP「员工工作台 → 安保巡场」）共用的格式与数据。
 // 8.0.11 巡场轮次（店主 2026-11-11，docs/PATROL_V809.md 第 11 节）：营业日按巡场间隔分成几轮，同一个场所每轮只记一次打卡。
 
-import { businessDayStart } from './business-date';
+import { businessDateOf, businessDayStart } from './business-date';
 
 /** 场所码：12 位 base32（大写字母与 2–7），随机生成；印在二维码里 */
 export const PATROL_TOKEN_LENGTH = 12;
@@ -95,15 +95,33 @@ export interface PatrolRoundSpan {
   end: string;
 }
 
-const plusOneDay = (date: string) => {
+const shiftDay = (date: string, days: number) => {
   const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 };
+const plusOneDay = (date: string) => shiftDay(date, 1);
 
-/** 起始整点在这个营业日里的时刻：比营业日切换时间早的整点落在第二天（例如切换 06:00、起始 02:00 → 第二天 02:00） */
-function anchorOf(date: string, timeZone: string, dayStartHour: number, startHour: number | null): number {
-  if (startHour === null) return businessDayStart(date, timeZone, dayStartHour).getTime();
-  return businessDayStart(startHour < dayStartHour ? plusOneDay(date) : date, timeZone, startHour).getTime();
+/**
+ * 巡场的一天从几点起（店主 2026-11-24，XC19）：设了巡查起始时间的，巡场的一天就从起始整点起 24 小时（起始 00:00 就是自然日），
+ * 每一轮都是整的间隔、不被营业日切换截短；没设的照原来跟营业日（XC4）。用这一天开始时的设置（前几天的改动、这一天整天生效的改动）。
+ */
+function naturalStartMs(changes: readonly PatrolRoundChange[], date: string, timeZone: string, businessDayStartHour: number): number {
+  return businessDayStart(date, timeZone, patrolConfigBefore(changes, date).startHour ?? businessDayStartHour).getTime();
+}
+
+/** 这一天实际从哪一刻开始：前一天改起始时间的那一刻晚于新的开始时（例如凌晨 3 点改成 00:00 起），这一天从改的那一刻开始，已经过去的不挪 */
+function dayStartMs(changes: readonly PatrolRoundChange[], date: string, timeZone: string, businessDayStartHour: number): number {
+  const prev = shiftDay(date, -1);
+  const ats = changes.filter((c) => c.from === prev && c.at).map((c) => Date.parse(c.at!));
+  return Math.max(naturalStartMs(changes, date, timeZone, businessDayStartHour), ...ats);
+}
+
+/** 某一刻记到巡场的哪一天（XC4、XC19）：这一天的开始不晚于这一刻的那一天 */
+export function patrolDateAt(changes: readonly PatrolRoundChange[], at: Date | string, timeZone: string, businessDayStartHour: number): string {
+  const t = new Date(at).getTime();
+  const day = businessDateOf(new Date(t), timeZone, 0);
+  // 任何一天都在当天 00:00–23:00 之间开始：不是这一天就是前一天
+  return dayStartMs(changes, day, timeZone, businessDayStartHour) <= t ? day : shiftDay(day, -1);
 }
 
 /** [from, end) 里按起点 anchor、每 step 一轮的分界：第一轮从 from 起，到 from 之后的第一个分界 */
@@ -122,13 +140,14 @@ function spansFrom(from: number, end: number, anchor: number, step: number): [nu
 }
 
 /**
- * 一个营业日的各轮：从营业日切换时间起，每 minutes 分钟一轮；最后一轮到下一个营业日开始为止（间隔除不尽 24 小时时最后一轮短一些）。
- * 设了起始整点（XC17）：分界按「起始时间 + N × 间隔」排，营业日开始到第一个分界是第 1 轮（可能短一些），跨午夜照营业日滚到下一个营业日开始。
+ * 一个巡场日的各轮（设置一直不变时）：从这一天的开始起每 minutes 分钟一轮；间隔除不尽 24 小时时最后一轮短一些。
+ * 这一天的开始：设了巡查起始整点（patrolStartHour）就是那个整点（XC19），没设就是营业日切换时间 startHour。
  */
 export function patrolRoundsOf(date: string, timeZone: string, startHour: number, minutes: number, patrolStartHour: number | null = null): PatrolRoundSpan[] {
-  const start = businessDayStart(date, timeZone, startHour).getTime();
-  const end = businessDayStart(plusOneDay(date), timeZone, startHour).getTime();
-  return spansFrom(start, end, anchorOf(date, timeZone, startHour, patrolStartHour), minutes * 60_000).map(([a, b], i) => ({
+  const hour = patrolStartHour ?? startHour;
+  const start = businessDayStart(date, timeZone, hour).getTime();
+  const end = businessDayStart(plusOneDay(date), timeZone, hour).getTime();
+  return spansFrom(start, end, start, minutes * 60_000).map(([a, b], i) => ({
     no: i + 1,
     start: new Date(a).toISOString(),
     end: new Date(b).toISOString(),
@@ -136,8 +155,9 @@ export function patrolRoundsOf(date: string, timeZone: string, startHour: number
 }
 
 /**
- * 某个营业日的各轮（按改动记录，XC13–XC18）与每一轮按的巡场间隔（打卡记下它，同一个场所同一轮只记一次）。
- * 这一天改过起始时间（有 at）的：at 以前开始的轮照旧；at 那一刻正在巡的那一轮到新设置的下一个分界为止；之后按新的排。
+ * 某个巡场日的各轮（按改动记录，XC13–XC19）与每一轮按的巡场间隔（打卡记下它，同一个场所同一轮只记一次）。
+ * 这一天从这一天开始时的设置算起，到下一天的开始为止（下一天按改过的设置开始，所以改起始时间的那一天会长一些或短一些）。
+ * 这一天改过起始时间（有 at）的：at 以前开始的轮照旧；at 那一刻正在巡的那一轮到新设置的下一个分界为止；之后从新起始整点往后排，最后一轮到第二天的开始为止。
  */
 export function patrolDayRounds(
   changes: readonly PatrolRoundChange[],
@@ -145,15 +165,16 @@ export function patrolDayRounds(
   timeZone: string,
   dayStartHour: number,
 ): { rounds: PatrolRoundSpan[]; minutes: number; minutesOf: (round: PatrolRoundSpan) => number } {
-  const start = businessDayStart(date, timeZone, dayStartHour).getTime();
-  const end = businessDayStart(plusOneDay(date), timeZone, dayStartHour).getTime();
+  const start = dayStartMs(changes, date, timeZone, dayStartHour);
+  const end = dayStartMs(changes, plusOneDay(date), timeZone, dayStartHour);
   const base = patrolConfigBefore(changes, date);
-  let spans = spansFrom(start, end, anchorOf(date, timeZone, dayStartHour, base.startHour), base.minutes * 60_000).map(([a, b]) => ({ a, b, minutes: base.minutes }));
+  let spans = spansFrom(start, end, naturalStartMs(changes, date, timeZone, dayStartHour), base.minutes * 60_000).map(([a, b]) => ({ a, b, minutes: base.minutes }));
   for (const c of sortedChanges(changes)) {
     if (c.from !== date || !c.at) continue;
     const at = Math.min(Math.max(Date.parse(c.at), start), end);
     const step = c.minutes * 60_000;
-    const anchor = anchorOf(date, timeZone, dayStartHour, c.startHour ?? null);
+    // 新设置的分界：从这一天的新起始整点往后排「起始 + N × 间隔」，最后一轮到第二天的开始为止（除不尽的短一些，与预览一致）
+    const anchor = businessDayStart(date, timeZone, c.startHour ?? dayStartHour).getTime();
     const kept = spans.filter((s) => s.a < at);
     let from = start;
     const last = kept.at(-1);
@@ -175,14 +196,13 @@ export function patrolDayRounds(
 }
 
 /**
- * 设置页的轮次时间表预览（XC17）：营业日切换整点起的一天，按起始整点与间隔排出每一轮的开始、结束（「09:00」，跨午夜照写钟点）。
+ * 设置页的轮次时间表预览（XC17、XC19）：从巡查起始整点（没设就是营业日切换整点）起的一天，每隔 minutes 一轮的开始、结束（「09:00」，跨午夜照写钟点）。
  * 与 patrolRoundsOf 同一个分法，只是按钟点算、不看日期与时区。
  */
 export function patrolRoundPreview(dayStartHour: number, minutes: number, startHour: number | null): { no: number; start: string; end: string; minutes: number }[] {
-  const from = dayStartHour * 60;
-  const anchor = startHour === null ? from : (startHour < dayStartHour ? startHour + 24 : startHour) * 60;
+  const from = (startHour ?? dayStartHour) * 60;
   const clock = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-  return spansFrom(from, from + 1440, anchor, minutes).map(([a, b], i) => ({ no: i + 1, start: clock(a), end: clock(b), minutes: b - a }));
+  return spansFrom(from, from + 1440, from, minutes).map(([a, b], i) => ({ no: i + 1, start: clock(a), end: clock(b), minutes: b - a }));
 }
 
 /** 某一刻在这一天的第几轮（不在这一天里返回 null） */

@@ -92,7 +92,7 @@ test.describe('OA-04 考勤设置', () => {
     await expect(page.getByTestId('att-shift-list').getByText(`重提${stamp}`)).toHaveCount(1);
   });
 
-  test('打卡点三种取点（考勤排班优化第 1 条）：定位当前位置；搜地址在地图上选点、微调；手输兜底——保存的是 WGS-84', async ({ browser }) => {
+  test('打卡点三种取点（考勤排班优化第 1 条）：定位当前位置；搜地址从结果里选（店主 2026-11-24 去掉了地图）；手输兜底——保存的是 WGS-84', async ({ browser }) => {
     // 授权定位、模拟一个位置（在门店里用手机打开的情形）
     const ctx = await browser.newContext({ baseURL: test.info().project.use.baseURL, geolocation: { latitude: 31.2297, longitude: 121.4712 }, permissions: ['geolocation'] });
     const page = await ctx.newPage();
@@ -100,37 +100,27 @@ test.describe('OA-04 考勤设置', () => {
     const stamp = Date.now().toString(36).slice(-5);
     await page.goto('/admin/attendance/locations');
 
-    // ① 定位当前位置：经纬度自动填上，地图上有标记
+    // ① 定位当前位置：经纬度自动填上；对话框里没有地图
     await page.getByTestId('att-location-new').click();
     await page.getByTestId('att-location-name').fill(`定位${stamp}`);
     await page.getByTestId('att-location-locate').click();
     await expect(page.getByTestId('att-location-lat')).toHaveValue('31.229700');
     await expect(page.getByTestId('att-location-lng')).toHaveValue('121.471200');
-    await expect(page.getByTestId('att-map-marker')).toBeVisible();
+    await expect(page.getByTestId('att-map')).toHaveCount(0);
     await page.getByTestId('att-location-save').click();
     await expect(page.getByTestId('att-location-list')).toContainText(`定位${stamp}`);
     await expect(page.getByTestId('att-location-list')).toContainText('31.229700, 121.471200');
 
-    // ② 搜索地址选点（服务器开了搜索时；开发、测试用 GEO_PROVIDER=mock）→ 选一个 → 微调往北 2 米 → 保存
+    // ② 搜索地址选点（服务器开了搜索时；开发、测试用 GEO_PROVIDER=mock）→ 选一个，经纬度与名称填上 → 保存
     await page.getByTestId('att-location-new').click();
     const provider = ((await (await page.request.get('/api/oa/attendance/geo')).json()) as { provider: string }).provider;
     test.skip(provider !== 'mock', '只在模拟的地址搜索（GEO_PROVIDER=mock）上跑，不连真的地图服务');
     await page.getByTestId('att-location-keyword').fill('演示门店');
     await page.getByTestId('att-location-search-go').click();
     await page.getByTestId('att-location-place-0').click();
-    const lat0 = Number(await page.getByTestId('att-location-lat').inputValue());
-    expect(lat0).not.toBe(0);
+    expect(Number(await page.getByTestId('att-location-lat').inputValue())).not.toBe(0);
     await expect(page.getByTestId('att-location-name')).not.toHaveValue('');
     await page.getByTestId('att-location-name').fill(`搜点${stamp}`);
-    await page.getByTestId('att-map-nudge-向北').click();
-    const lat1 = Number(await page.getByTestId('att-location-lat').inputValue());
-    expect(lat1).toBeGreaterThan(lat0);
-    expect(lat1 - lat0).toBeLessThan(0.0001);
-    // 在地图上点一下也能放点（点在别处，经纬度跟着变）
-    const map = page.getByTestId('att-map');
-    const box = (await map.boundingBox())!;
-    await page.mouse.click(box.x + box.width / 2 + 40, box.y + box.height / 2 + 30);
-    await expect(page.getByTestId('att-location-lat')).not.toHaveValue(lat1.toFixed(6));
     await page.getByTestId('att-location-save').click();
     await expect(page.getByTestId('att-location-list')).toContainText(`搜点${stamp}`);
     await ctx.close();
