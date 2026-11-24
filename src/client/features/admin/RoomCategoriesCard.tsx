@@ -2,6 +2,7 @@
 // 名称、排序、管空间台账里的哪几种业态、是哪一类房间（技师服务的房间 / 开单即占用的房间 / 客房 / 大厅类）、启用或停用。
 // 一种业态同时只归一个在用的房型；来源与业态要对得上（客房只管「客房」，技师服务的房间只管技师服务类的业态）——保存前页面先提示，服务端再核对一遍。
 // 有空间、却没归到房型的业态在房态中心放在「其他」页签里，这里写明是哪几种。修改带着看到的版本号，刚被别人改过的拒绝。
+// 「设数量」（店主 2026-11-24）：某种业态要几间 / 几个床位，缺的一次建进空间台账（RoomCountDialog）。
 
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -26,6 +27,7 @@ import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Skeleton } from '../../components/ui';
 import { PriceSheetLink } from './AdminShell';
+import { RoomCountDialog } from './RoomCountDialog';
 
 const KEY = ['admin', 'room-categories'] as const;
 
@@ -34,6 +36,7 @@ export function RoomCategoriesCard() {
   const toast = useToast();
   const q = useQuery({ queryKey: KEY, queryFn: () => api.get<RoomCategoriesAdmin>('/api/admin/room-categories') });
   const [editing, setEditing] = useState<RoomCategory | 'new' | null>(null);
+  const [counting, setCounting] = useState<RoomCategory | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const saved = (data: RoomCategoriesAdmin) => {
@@ -104,6 +107,13 @@ export function RoomCategoriesCard() {
                   ))}
                 </span>
               </span>
+              {c.source === 'hotel' ? (
+                <span className="text-[12.5px] text-ink-3">客房数量在「客房 → 房间」里加</span>
+              ) : (
+                <Button variant="secondary" className="h-11" onClick={() => setCounting(c)} data-testid={`room-category-count-${c.name}`}>
+                  设数量
+                </Button>
+              )}
               <Button variant="secondary" className="h-11" onClick={() => setEditing(c)} data-testid={`room-category-edit-${c.name}`}>
                 修改
               </Button>
@@ -111,6 +121,7 @@ export function RoomCategoriesCard() {
           ))}
         </ul>
       )}
+      {counting && <RoomCountDialog category={counting} counts={new Map(d.businessTypes.map((x) => [x.type, x.spaces]))} onClose={() => setCounting(null)} />}
       {editing && <CategoryDialog admin={d} category={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={saved} />}
     </Card>
   );
