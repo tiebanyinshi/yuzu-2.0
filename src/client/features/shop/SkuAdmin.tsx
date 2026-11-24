@@ -243,8 +243,12 @@ function SkuDialog({ catalog, sku, onClose }: { catalog: ShopCatalog; sku: ShopS
   const toast = useToast();
   const [f, setF] = useState<Form>(sku ? fromSku(sku) : blank);
   const [busy, setBusy] = useState(false);
-  const materials = useQuery({ queryKey: ['shop', 'materials'], queryFn: () => api.get<{ id: number; code: string; name: string; active: boolean; tracked: boolean }[]>('/api/inventory/materials') });
-  const suppliers = useQuery({ queryKey: ['shop', 'suppliers'], queryFn: () => api.get<{ id: number; code: string; name: string; active: boolean }[]>('/api/inventory/suppliers') });
+  // 选物料、供应商用商城自己的接口（只有「采购管理」的人也能取，Codex 审查）；取不回来显示原因与重试，不当成空的
+  const master = useQuery({
+    queryKey: ['shop', 'master'],
+    queryFn: () =>
+      api.get<{ materials: { id: number; code: string; name: string; unit: string }[]; suppliers: { id: number; code: string; name: string; admission: string }[] }>('/api/erp/shop/master'),
+  });
   const draft = !sku || sku.status === 'draft';
   const save = async () => {
     const core = coreOf(f);
@@ -270,34 +274,32 @@ function SkuDialog({ catalog, sku, onClose }: { catalog: ShopCatalog; sku: ShopS
       title={sku ? `修改 ${sku.skuCode}` : '新建 SKU'}
       width="max-w-2xl"
       footer={
-        <Button variant="primary" loading={busy} disabled={!f.materialId || !f.supplierId || !f.skuCode.trim()} onClick={() => void save()} data-testid="shop-sku-save">
+        <Button variant="primary" loading={busy} disabled={!master.data || !f.materialId || !f.supplierId || !f.skuCode.trim()} onClick={() => void save()} data-testid="shop-sku-save">
           保存
         </Button>
       }
     >
+      {master.isPending && <Skeleton className="mb-3 h-10" />}
+      {master.error && <LoadFailed title="物料、供应商没有取回来，暂时选不了" onRetry={() => void master.refetch()} retrying={master.isFetching} className="mb-3" />}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="物料" htmlFor="sku-mat">
           <Select id="sku-mat" value={f.materialId} disabled={!draft} onChange={(e) => setF({ ...f, materialId: e.target.value })}>
             <option value="">请选择</option>
-            {(materials.data ?? [])
-              .filter((m) => m.active && m.tracked)
-              .map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.code} {m.name}
-                </option>
-              ))}
+            {(master.data?.materials ?? []).map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.code} {m.name}
+              </option>
+            ))}
           </Select>
         </Field>
         <Field label="供应商" htmlFor="sku-sup">
           <Select id="sku-sup" value={f.supplierId} disabled={!draft} onChange={(e) => setF({ ...f, supplierId: e.target.value })}>
             <option value="">请选择</option>
-            {(suppliers.data ?? [])
-              .filter((s) => s.active)
-              .map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.code} {s.name}
-                </option>
-              ))}
+            {(master.data?.suppliers ?? []).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.code} {s.name}
+              </option>
+            ))}
           </Select>
         </Field>
         <Field label="SKU 编码" htmlFor="sku-code">

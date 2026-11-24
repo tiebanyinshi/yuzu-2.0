@@ -452,6 +452,17 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   app.get(`${P}/requests/:id`, { preHandler: shopper }, async (req) => mallRequest(deps, req.actor, parse(idParam, req.params).id));
 
   app.get(`${P}/skus`, { preHandler: skuRead }, async () => listSkus(sql));
+  // 维护 SKU 选物料、供应商用（Codex 审查）：只有「采购管理」没有「库存查看」的人也要能选；只给在用的、选得着的几项
+  app.get(`${P}/master`, { preHandler: skuRead }, async () => ({
+    materials: (
+      await sql<{ id: number; code: string; name: string; unit: string }[]>`
+      SELECT id, code, name, purchase_unit AS unit FROM materials WHERE active AND tracked ORDER BY code`
+    ).map((m) => ({ ...m, id: Number(m.id) })),
+    suppliers: (
+      await sql<{ id: number; code: string; name: string; admission: string }[]>`
+      SELECT id, code, name, admission FROM suppliers WHERE active ORDER BY code`
+    ).map((x) => ({ ...x, id: Number(x.id) })),
+  }));
   app.post(`${P}/skus`, { preHandler: guardAny('purchase.manage') }, async (req, reply) => {
     const v = parse(SkuInput, req.body);
     assertGross(v);
@@ -555,6 +566,8 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
       async (tx, k) => {
         if (k.status === 'disabled') return 'disable';
         if (k.status !== 'approved') throw unprocessable('SKU_STATUS', '草稿、待审核的不用停用');
+        // 有待审的改动时不能停用（Codex 审查）：不然停用 → 重新上架 → 退回草稿改了物料，旧改动批下来会套到另一份报价上
+        if (k.corePending) throw conflict('SKU_CHANGE_PENDING', '这条 SKU 有一张改动在审核，先批准、驳回或撤回再停用');
         await tx`UPDATE mall_skus SET status = 'disabled', version = version + 1, updated_at = now() WHERE id = ${parse(idParam, req.params).id}`;
         return 'disable';
       },
@@ -609,10 +622,12 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
       const { note } = parse(NoteInput, req.body ?? {});
       const [c] = await sql<{ skuId: number }[]>`SELECT sku_id FROM mall_sku_changes WHERE id = ${changeId}`;
       if (!c) throw notFound('改动不存在');
-      return skuOp(deps, req.actor, Number(c.skuId), req.ip, async (tx) => {
+      return skuOp(deps, req.actor, Number(c.skuId), req.ip, async (tx, k) => {
         const [ch] = await tx<{ status: string; requestedBy: number; after: ShopSkuCore }[]>`
           SELECT status, requested_by, after FROM mall_sku_changes WHERE id = ${changeId} FOR UPDATE`;
         if (!ch || ch.status !== 'pending') throw unprocessable('CHANGE_DECIDED', '这张改动已经定下来了');
+        // 改动只对提的时候那份上架中的报价有效：SKU 已经不在上架（或不在改动审核中）就不能批（Codex 审查）
+        if (decision === 'approve' && (k.status !== 'approved' || !k.corePending)) throw conflict('CHANGE_STALE', '这条 SKU 已经不是提改动时的状态，这张改动不能批，请驳回或撤回');
         if (decision === 'withdraw') {
           if (Number(ch.requestedBy) !== req.actor.id && req.actor.role !== 'owner') throw forbidden('只能撤回自己提的改动');
         } else assertApprover(req.actor, Number(ch.requestedBy));

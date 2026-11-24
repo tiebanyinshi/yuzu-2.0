@@ -244,6 +244,25 @@ describe('我的需求与需求池', () => {
 });
 
 describe('SKU 的边界（Codex 审查）', () => {
+  it('有待审改动时不能停用（不然旧改动会套到改过的报价上）；选物料、供应商的接口给 SKU 维护的人', async () => {
+    const s = await listed((await sku()).id);
+    const ch = await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/changes`, {
+      priceCents: 900,
+      taxRateBp: 1300,
+      moqMilli: q(100),
+      freightCents: 0,
+      validUntil: shiftDate(today, 365),
+      storeIds: [],
+      reason: '涨价',
+    });
+    expect(ch.status, JSON.stringify(ch.body)).toBe(200);
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/disable`, {})).body.error.code).toBe('SKU_CHANGE_PENDING');
+    const master = await api(ctx.app, buyer, 'GET', '/api/erp/shop/master');
+    expect(master.status).toBe(200);
+    expect(master.body.materials.some((m: { id: number }) => m.id === mat.id)).toBe(true);
+    expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/master')).status).toBe(403);
+  });
+
   it('带版本号的操作：上一次已经生效、再点一次被拒（SKU_CHANGED），不重复生效', async () => {
     const s = await sku();
     expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/submit`, { version: s.version })).status).toBe(200);
