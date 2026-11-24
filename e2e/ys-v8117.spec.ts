@@ -13,24 +13,24 @@ const PASSWORD = 'yuzu2026';
 
 /** 已经统一过的页面（8.1.16 合并以后加上房态中心、钟房、技师，与 8.1.17 的前台、收银、餐饮、菜品） */
 const PAGES = [
-  '/settlement',
-  '/shift',
-  '/devices',
-  '/bookings',
-  '/customer',
-  '/guide',
+  '/crm/settlement',
+  '/crm/shift',
+  '/crm/devices',
+  '/crm/bookings',
+  '/crm/customer',
+  '/crm/guide',
   '/admin',
   '/admin/rules',
   '/admin/catalog',
   '/inventory',
   '/payables',
-  '/frontdesk',
-  '/cashier',
-  '/dining',
-  '/dishes',
-  '/room-center',
-  '/clockroom',
-  '/technicians',
+  '/crm/frontdesk',
+  '/crm/cashier',
+  '/crm/dining',
+  '/crm/dishes',
+  '/crm/room-center',
+  '/crm/clockroom',
+  '/crm/technicians',
 ];
 
 const DEVICES = [
@@ -154,7 +154,7 @@ test.describe('8.1.17 整体样式：字号、关键金额、点按热区、不�
         await page.getByRole('button', { name: '登录' }).click();
         await passPortal(page);
         await page.waitForURL((u) => !u.pathname.startsWith('/login'));
-        await page.goto('/settlement');
+        await page.goto('/crm/settlement');
         // 日期条的「前一天」：宽 36、高 38 的图标按钮
         const prev = page.getByRole('button', { name: '前一天' });
         await expect(prev).toBeVisible();

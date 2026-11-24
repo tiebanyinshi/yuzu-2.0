@@ -109,7 +109,7 @@ test.describe('券与会员权益（v0.7.20）', () => {
       // ④ 会员详情：发两张、作废一张
       const members = await getJson<{ id: number; name: string; phone: string; status: string }[]>(page, '/api/members?q=19900001&limit=50');
       const member = members.find((m) => m.status === 'active')!;
-      await page.goto('/');
+      await page.goto('/crm');
       await page.getByLabel('搜索会员').fill(member.phone);
       await page.getByRole('option').filter({ hasText: member.name }).first().click(); // 列表里手机号打了码，按姓名点
       const card = page.getByTestId('coupon-member');
@@ -258,7 +258,7 @@ test.describe('券与会员权益（v0.7.20）', () => {
     const member = members.filter((m) => m.status === 'active').at(-2)!;
     const mine = async () => (await getJson<{ coupons: { templateId: number }[] }>(page, `/api/members/${member.id}/coupons`)).coupons.filter((c) => c.templateId === template.id);
     const openMember = async () => {
-      await page.goto('/');
+      await page.goto('/crm');
       await page.getByLabel('搜索会员').fill(member.phone);
       await page.getByRole('option').filter({ hasText: member.name }).first().click();
       await expect(page.getByTestId('coupon-member')).toBeVisible();

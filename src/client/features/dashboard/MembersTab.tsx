@@ -167,7 +167,7 @@ function MemberList({ title, hint, rows, value, testId }: { title: string; hint?
             return (
               <li key={m.id}>
                 {can('member.read') ? (
-                  <Link to={`/?m=${m.id}`} className="flex items-center gap-2 py-2 hover:bg-paper-2/50">
+                  <Link to={`/crm?m=${m.id}`} className="flex items-center gap-2 py-2 hover:bg-paper-2/50">
                     {body}
                   </Link>
                 ) : (

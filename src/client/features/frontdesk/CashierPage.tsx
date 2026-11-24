@@ -92,7 +92,7 @@ export function CashierPage() {
     if (!resume) return;
     // 发牌、挂账、换牌、转明细在发卡台处理：带着这几种来的转过去
     if (resume !== 'checkout' && resume !== 'checkout_refund') {
-      navigate(`/frontdesk?${params}`, { replace: true });
+      navigate(`/crm/frontdesk?${params}`, { replace: true });
       return;
     }
     if (!board.data) return;
@@ -215,7 +215,7 @@ export function CashierPage() {
               结账记录
             </Button>
             {(can('platform.redeem') || can('platform.settle')) && (
-              <Button size="sm" variant="ghost" icon={<Store className="size-4" />} onClick={() => navigate('/platform')} data-testid="open-platform">
+              <Button size="sm" variant="ghost" icon={<Store className="size-4" />} onClick={() => navigate('/crm/platform')} data-testid="open-platform">
                 平台核销
               </Button>
             )}

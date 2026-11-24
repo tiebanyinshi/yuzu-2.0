@@ -20,7 +20,7 @@ test.describe('回测整改 排位播报独立菜单；设立岗位', () => {
 
   test('技师组里钟房与排位播报平级；老地址跳到新页面；手动叫号进播报记录', async ({ page }) => {
     await login(page);
-    await page.goto('/');
+    await page.goto('/crm');
     const nav = page.getByTestId('nav-domain-technicians');
     await expect(nav.locator('[data-nav-item="排位播报"]')).toHaveCount(1);
     const items = await nav.locator('[data-nav-item]').evaluateAll((els) => els.map((e) => e.getAttribute('data-nav-item')));
@@ -29,11 +29,11 @@ test.describe('回测整改 排位播报独立菜单；设立岗位', () => {
     await expect(page).toHaveURL(/\/announcer$/);
     await expect(page.getByTestId('announcer-bar')).toBeVisible();
     // 钟房里没有播报条了，只有一条提示指过来
-    await page.goto('/clockroom');
+    await page.goto('/crm/clockroom');
     await expect(page.getByTestId('announcer-bar')).toHaveCount(0);
     await expect(page.getByTestId('clock-announcer-moved')).toBeVisible();
     // 老地址
-    await page.goto('/clockroom/announcer');
+    await page.goto('/crm/clockroom/announcer');
     await expect(page).toHaveURL(/\/announcer\?moved=1$/);
     await expect(page.getByTestId('announcer-moved')).toContainText('排位播报换了地方');
     // 手动叫号：排在队里的第一位，播报记录里多一条「手动叫号」

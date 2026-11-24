@@ -156,7 +156,7 @@ export function ErpShell() {
     enabled: access.modules.includes('receivables') && can('ar.read'),
     refetchInterval: 300_000,
   });
-  if (!access.canEnter) return <Navigate to="/" replace />;
+  if (!access.canEnter) return <Navigate to="/crm" replace />;
   const contractsDue = (expiring.data ?? []).filter((x) => !x.renewal);
   const paymentsBadge = payTodo.data ? (can('payable.manage') ? payTodo.data.awaitingPayment : 0) + payTodo.data.warrantyDue : undefined;
 
@@ -282,7 +282,7 @@ export function ErpShell() {
             返回门店
           </NavLink>
         ) : (
-          <NavLink to="/password" className="tap relative flex h-9 items-center rounded-full bg-white/10 px-3.5 text-[13px] font-semibold text-paper hover:bg-white/18">
+          <NavLink to="/crm/password" className="tap relative flex h-9 items-center rounded-full bg-white/10 px-3.5 text-[13px] font-semibold text-paper hover:bg-white/18">
             修改密码
           </NavLink>
         )}

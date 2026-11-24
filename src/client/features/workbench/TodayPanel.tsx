@@ -52,7 +52,7 @@ export function TodayPanel() {
               <p className="text-[12px] text-ink-3">{s.data.reversal.count} 笔</p>
             </div>
           </div>
-          <Link to="/settlement" className="flex items-center justify-between border-t border-line px-4 py-2.5 text-[13px] font-semibold text-pine hover:bg-pine-tint">
+          <Link to="/crm/settlement" className="flex items-center justify-between border-t border-line px-4 py-2.5 text-[13px] font-semibold text-pine hover:bg-pine-tint">
             {s.data.checks.every((c) => c.ok) ? '余额核对一致 · 查看日结' : '核对发现差异 · 查看日结'}
             <ArrowRight className="size-4" />
           </Link>

@@ -43,7 +43,7 @@ export function LoginPage() {
       const session = await api.post<SessionInfo>('/api/auth/login', { username, password });
       qc.setQueryData(qk.session, session);
       // 登录后先到门户页（店主 2026-11-24）：打开网页（首页）登录的也是；会话过期、点了某一页的链接被送回登录页的，回到原来那一页
-      navigate(state?.from && state.from !== '/login' && state.from !== '/' ? state.from : '/portal', { replace: true });
+      navigate(state?.from && state.from !== '/login' && state.from !== '/' && state.from !== '/portal' ? state.from : '/', { replace: true });
     } catch (err) {
       setError(errorMessage(err));
       setLoading(false);

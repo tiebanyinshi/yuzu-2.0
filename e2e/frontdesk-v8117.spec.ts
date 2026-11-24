@@ -156,7 +156,7 @@ test.describe('8.1.17 前台、桌台、退菜、流水', () => {
       ],
     });
 
-    await page.goto(`/ledger?tab=orders&oq=${done.checkoutNo}`);
+    await page.goto(`/crm/ledger?tab=orders&oq=${done.checkoutNo}`);
     await page.locator(`[data-testid="order-row-${done.checkoutNo}"]:visible, [data-testid="order-card-${done.checkoutNo}"]:visible`).click();
     const drawer = page.getByTestId('order-drawer');
     const receipt = drawer.getByTestId('checkout-receipt');
@@ -201,7 +201,7 @@ test.describe('8.1.17 前台、桌台、退菜（会登记单据）', () => {
     await login(page, 'zhangjl');
     const { code, visitId } = await checkinAgo(page.request, 14.5);
     try {
-      await page.goto(`/frontdesk?v=${visitId}`);
+      await page.goto(`/crm/frontdesk?v=${visitId}`);
       await expect(page.getByTestId('bill-tag')).toHaveText(code);
       await page.getByTestId('action-incident').click();
       await expect(page.getByRole('heading', { name: `异常处置 · ${code}` })).toBeVisible();
@@ -228,7 +228,7 @@ test.describe('8.1.17 前台、桌台、退菜（会登记单据）', () => {
           { timeout: 120_000, intervals: [5_000] },
         )
         .toBe(true);
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       await page.getByTestId('open-incident-todos').click();
       const todo = page.locator('[data-testid^="todo-"][data-kind="overtime"]').filter({ hasText: code });
       await expect(todo).toHaveCount(1);
@@ -260,7 +260,7 @@ test.describe('8.1.17 前台、桌台、退菜（会登记单据）', () => {
     try {
       await login(page, 'xiaozhou');
       // 发卡台「加项目」：水吧的菜标「不能在水吧下单」、不能点
-      await page.goto(`/frontdesk?v=${visitId}`);
+      await page.goto(`/crm/frontdesk?v=${visitId}`);
       await expect(page.getByTestId('bill-tag')).toHaveText(code);
       await page.getByTestId('action-add').click();
       const card = page.getByTestId(`item-${water}`);
@@ -268,7 +268,7 @@ test.describe('8.1.17 前台、桌台、退菜（会登记单据）', () => {
       await expectFits(page);
       await page.keyboard.press('Escape');
       // 点单页：这道水吧的菜没有「改」「退菜」，写明能退哪几处
-      await page.goto('/dining/order');
+      await page.goto('/crm/dining/order');
       await page.getByTestId('dining-tag').fill(code);
       await page.getByTestId('dining-find').click();
       await expect(page.getByTestId('dining-guest')).toBeVisible();
@@ -287,7 +287,7 @@ test.describe('8.1.17 前台、桌台、退菜（会登记单据）', () => {
     // 改回去：退菜按钮回来了
     await page.request.post('/api/auth/logout');
     await login(page, 'xiaozhou');
-    await page.goto('/dining/order');
+    await page.goto('/crm/dining/order');
     await page.getByTestId('dining-tag').fill(code);
     await page.getByTestId('dining-find').click();
     await expect(page.getByTestId(`dining-pending-${water}`).getByRole('button', { name: '退菜' })).toBeVisible();
@@ -307,7 +307,7 @@ test.describe('8.1.17 前台、桌台、退菜（会登记单据）', () => {
     await send(owner, 'post', `/api/dining/tables/${tableId}/maintenance`, { clientKey: randomUUID(), reason: '浏览器用例：桌腿松了', expectedBackAt: new Date(Date.now() + 70_000).toISOString() });
     try {
       await login(page, 'linlan');
-      await page.goto('/dining/tables');
+      await page.goto('/crm/dining/tables');
       const tile = page.getByTestId(`table-tile-${name}`);
       await expect(tile).toHaveAttribute('data-state', 'maintenance');
       await expect(page.getByTestId(`table-reminder-${name}`)).toHaveCount(0);
@@ -368,7 +368,7 @@ test.describe('8.1.17 前台、桌台、退菜（会登记单据）', () => {
       await expect(page.getByText(`「${dish}」本店价已保存`)).toBeVisible();
       await expectFits(page);
       // 改价记录：按门店筛
-      await page.goto('/dining/dishes');
+      await page.goto('/crm/dining/dishes');
       await page.getByTestId('dishes-history').click();
       await page.getByTestId('price-history-store').selectOption(String(store.id));
       const history = page.getByTestId('dish-price-history');

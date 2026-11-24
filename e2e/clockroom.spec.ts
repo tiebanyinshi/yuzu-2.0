@@ -103,7 +103,7 @@ test.describe('v0.7.1 钟房', () => {
       const visitId = (await getJson<{ tags: BoardTag[] }>(page, '/api/frontdesk/board')).tags.find((t) => t.code === tag)!.visit!.id;
 
       // ③ 钟房：派点钟给 E8（专业技师按专业档 238），技师到了立即上钟
-      await page.goto('/');
+      await page.goto('/crm');
       await clickNav(page, '钟房');
       await expect(page.getByTestId('clock-queue')).toContainText('E8');
       await page.getByTestId('clock-dispatch').click();
@@ -212,7 +212,7 @@ test.describe('v0.7.1 钟房', () => {
 
       // ⑨ 店主看技师业绩：有提成合计；导出的提成明细里有这张结账单的两钟（默认规则：售价 40% + 点钟每钟 ¥10）
       await login(page, 'linlan');
-      await page.goto('/dashboard/technicians');
+      await page.goto('/crm/dashboard/technicians');
       await expect(page.getByTestId('technicians-commission')).toBeVisible();
       await expect(page.getByTestId('technicians-row-E8')).toBeVisible();
       const today = (await getJson<{ today: string }>(page, '/api/auth/me')).today;

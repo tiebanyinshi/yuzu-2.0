@@ -88,7 +88,7 @@ test.describe('会员体系 v2 第三期', () => {
     const inviter = await memberWith(page, 'E2E 邀请人', uniquePhone('196'), 50_000_00);
     const friendPhone = uniquePhone('195');
 
-    await page.goto(`/?m=${inviter}`);
+    await page.goto(`/crm?m=${inviter}`);
     const card = page.getByTestId('member-trials');
     await expect(card).toBeVisible();
     await expect(card.getByTestId('trial-quota')).toContainText('L4');
@@ -108,7 +108,7 @@ test.describe('会员体系 v2 第三期', () => {
 
     const found = await getJson<{ id: number; phone: string }[]>(page, `/api/members?q=${friendPhone}&limit=5`);
     const friend = found.find((m) => m.phone === friendPhone)!;
-    await page.goto(`/?m=${friend.id}`);
+    await page.goto(`/crm?m=${friend.id}`);
     await expect(page.getByTestId('trial-active')).toContainText('体验中：L3');
     // 本月可享按体验的档阶
     await expect(page.getByTestId('member-benefits')).toContainText('L3');
@@ -118,14 +118,14 @@ test.describe('会员体系 v2 第三期', () => {
     const checkin = await postJson<{ visits: { id: number }[] }>(page, '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: 'male', memberId: friend.id }] });
     const visitId = checkin.visits[0]!.id;
     try {
-      await page.goto(`/frontdesk?v=${visitId}`);
+      await page.goto(`/crm/frontdesk?v=${visitId}`);
       await expect(page.getByTestId('bill-panel').getByTestId('bill-member-trial')).toContainText('体验 L3');
     } finally {
       await page.request.post(`/api/frontdesk/visits/${visitId}/cancel`, { data: { reason: 'E2E：收尾' } });
     }
 
     // 店主撤销
-    await page.goto(`/?m=${friend.id}`);
+    await page.goto(`/crm?m=${friend.id}`);
     const active = page.getByTestId('trial-active');
     await active.getByRole('button', { name: '撤销' }).click();
     await page.getByTestId('trial-cancel-reason').fill('E2E 验收撤销');
@@ -179,7 +179,7 @@ test.describe('会员体系 v2 第三期', () => {
       expect(d).toMatchObject({ code: 'QY-041', rate: 80 });
       expect(d.amount).toBeGreaterThan(0);
 
-      await page.goto(`/frontdesk?v=${visitId}`);
+      await page.goto(`/crm/frontdesk?v=${visitId}`);
       await page.getByTestId('bill-panel').getByTestId('go-cashier').click();
       await page.getByTestId('bill-panel').getByTestId('action-checkout').click();
       await expect(page.getByTestId('checkout-total')).toBeVisible();

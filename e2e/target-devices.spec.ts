@@ -1053,7 +1053,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await page.route('**/api/room-center', (route) => route.fulfill({ json: RC_BOARD }));
     await page.route('**/api/room-center/rooms/*/history', (route) => route.fulfill({ json: RC_HISTORY }));
     try {
-      await page.goto('/room-center');
+      await page.goto('/crm/room-center');
       await expect(page.getByTestId('rc-stats')).toBeVisible();
       await expectFits(page);
       await page.getByTestId(`rc-tab-${RC_CAT.spa}`).click();
@@ -1129,14 +1129,14 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
   },
   // 8.1.9 签赠台账：管家部、客户部（日期两格在手机上各占一行，「签赠发放」在屏幕里）
   'gift-ledger-concierge': async (page) => {
-    await page.goto('/concierge/gifts');
+    await page.goto('/crm/concierge/gifts');
     await expect(page.getByTestId('concierge-gift-ledger')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('gift-totals').or(page.getByTestId('gift-ledger-failed'))).toBeVisible();
     await expectFits(page);
     await expectOnScreen(page, ['gift-issue', 'gift-from', 'gift-to']);
   },
   'gift-ledger-customer': async (page) => {
-    await page.goto('/customer?tab=gifts');
+    await page.goto('/crm/customer?tab=gifts');
     await expect(page.getByTestId('customer-gift-ledger')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('gift-totals').or(page.getByTestId('gift-ledger-failed'))).toBeVisible();
     await expectFits(page);
@@ -1144,7 +1144,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
   },
   // 发卡台（8.1.15，原「前台」）：手牌板；点一张在店的手牌，客人卡上的加项目、换牌、去收银台都在屏幕里
   frontdesk: async (page) => {
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
     await expectFits(page);
     await page.locator('[data-testid^="tag-"][data-state="in_use"]').first().click();
@@ -1154,7 +1154,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
   },
   // 收银台（8.1.15）：查找框、排序、待结账清单；点第一张手牌，账单上的预结账、结账在屏幕里
   cashier: async (page) => {
-    await page.goto('/cashier');
+    await page.goto('/crm/cashier');
     await expect(page.getByTestId('cashier-queue')).toBeVisible();
     await expectFits(page);
     await expectOnScreen(page, ['tag-search', 'queue-sort']);
@@ -1164,19 +1164,19 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await expectOnScreen(page, ['action-preview', 'action-checkout']);
   },
   shift: async (page) => {
-    await page.goto('/shift');
+    await page.goto('/crm/shift');
     await expect(page.getByRole('heading', { name: '交班', exact: true })).toBeVisible();
     await expectFits(page);
   },
   workbench: async (page) => {
     // 会员工作台是首页
-    await page.goto('/');
+    await page.goto('/crm');
     await expect(page.getByTestId('workbench-coupon-issue')).toBeVisible();
     await expectFits(page);
   },
   // 点单：三个入口 → 选水吧（小分类一排）→ 换果吧
   'dining-order': async (page) => {
-    await page.goto('/dining/order');
+    await page.goto('/crm/dining/order');
     await expect(page.getByTestId('dining-outlets')).toBeVisible();
     await expectFits(page);
     await expectOnScreen(page, ['dining-outlet-restaurant', 'dining-outlet-water', 'dining-outlet-fruit']);
@@ -1190,7 +1190,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
   },
   // 点菜单：从桌台进点单页，「还没上的菜」旁打开
   'dining-receipt': async (page) => {
-    await page.goto(`/dining/order?table=${SID}`);
+    await page.goto(`/crm/dining/order?table=${SID}`);
     await expect(page.getByTestId('dining-table-selected')).toContainText('观澜厅');
     await expectOnScreen(page, ['dining-receipt-open']);
     await page.getByTestId('dining-receipt-open').click();
@@ -1204,7 +1204,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
   },
   // 桌台：分区卡片 → 景观包厢的详情 → 这一桌 → 点菜单
   'dining-tables': async (page) => {
-    await page.goto('/dining/tables');
+    await page.goto('/crm/dining/tables');
     await expect(page.getByTestId('table-zones')).toBeVisible();
     await expectFits(page);
     // 8.1.15：维修中的桌——格子上写维修中，点开看得到「恢复」「历史」
@@ -1229,7 +1229,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await expectReceiptNamesReadable(page);
   },
   'dining-kitchen': async (page) => {
-    await page.goto('/dining/kitchen');
+    await page.goto('/crm/dining/kitchen');
     await expect(page.getByTestId('kitchen')).toBeVisible();
     // 8.1.17：套餐在水吧做的一样单独一张子项单；套餐那一张写着它做到哪了
     await expect(page.getByTestId(`kds-part-${COMBO_PART.id}`)).toContainText(`套餐「${COMBO_DISH.name}」里的`);
@@ -1237,7 +1237,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await expectFits(page);
   },
   'dining-limits': async (page) => {
-    await page.goto('/dining/limits');
+    await page.goto('/crm/dining/limits');
     await expect(page.getByTestId('limits-group-餐厅 · 餐饮')).toBeVisible();
     await expectFits(page);
     await page.getByTestId('limits-outlet-water').click();
@@ -1245,7 +1245,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await expectFits(page);
   },
   'dining-ledger': async (page) => {
-    await page.goto('/dining/ledger');
+    await page.goto('/crm/dining/ledger');
     await expect(page.getByTestId('dining-ledger-outlet-all')).toBeVisible();
     await page.getByTestId('dining-ledger-outlet-water').click();
     await expect(page.getByTestId('dining-ledger-group-all')).toBeVisible();
@@ -1253,7 +1253,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
   },
   // 8.1.15：退菜记录并进台账，旧地址跳到台账的「退菜」
   'dining-voids': async (page) => {
-    await page.goto('/dining/voids');
+    await page.goto('/crm/dining/voids');
     await expect(page.getByTestId('dining-ledger-outlet-all')).toBeVisible();
     await expect(page.getByTestId('dining-ledger-type')).toBeVisible();
     await page.getByTestId('dining-ledger-outlet-fruit').click();
@@ -1269,7 +1269,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
   },
   // 8.1.15 菜品管理：菜品表（宽屏一张表、窄屏一道一张卡片），新增 / 编辑、改价（带改价记录）、导入三个弹窗
   'dining-dishes': async (page) => {
-    await page.goto('/dining/dishes');
+    await page.goto('/crm/dining/dishes');
     await expect(page.getByTestId('dishes-list')).toBeVisible();
     await expect(page.getByTestId(`dish-row-${COMBO_DISH.name}`)).toContainText('套餐');
     await expectFits(page);
@@ -1313,7 +1313,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
   },
   // 8.1.15 点单时选做法、加料：菜单上写着「可选做法、加料」「含 …」；点开弹窗，选一种做法、加一种料，「加入已点」在屏幕里
   'dining-dish-options': async (page) => {
-    await page.goto('/dining/order');
+    await page.goto('/crm/dining/order');
     await page.getByTestId('dining-outlet-restaurant').click();
     await expect(page.getByTestId(`dining-dish-${SPICY.name}`)).toContainText('可选做法、加料');
     await expect(page.getByTestId(`dining-dish-${COMBO_DISH.name}`)).toContainText('含 宫保鸡丁×1');
@@ -1339,7 +1339,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
   // 回测整改 P03：排位播报移到了单独的页面（这台是主播报终端，播报条上按钮最多），最后看那一页
   clockroom: async (page) => {
     await page.evaluate((id) => localStorage.setItem('yuzu.clock.announcer.client', id), ANNOUNCER_CLIENT);
-    await page.goto('/clockroom');
+    await page.goto('/crm/clockroom');
     await expect(page.getByTestId('announcer-bar')).toHaveCount(0);
     await expect(page.getByTestId('clock-queue')).toContainText('欧阳晓晓');
     await expectFits(page);
@@ -1355,14 +1355,14 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await expect(page.getByTestId('clock-tech-30')).toHaveAttribute('data-status', 'suspended');
     await expectFits(page);
     await expectOnScreen(page, ['clock-tech-call-15', 'clock-tech-rest-15', 'clock-tech-suspend-15', 'clock-tech-back-21']);
-    await page.goto('/announcer');
+    await page.goto('/crm/announcer');
     await expect(page.getByTestId('announcer-bar')).toHaveAttribute('data-announcer', 'on');
     await expectFits(page);
     await expectOnScreen(page, ['announcer-volume', 'announcer-mute', 'announcer-replay', 'announcer-test', 'announcer-release']);
   },
   // 8.1.16 技师管理：名册（与编辑技师的弹窗）、组别、班次与排班表（排班表在自己的框里左右滑；临时调班的弹窗）、休假（申请的弹窗）
   'technician-admin': async (page) => {
-    await page.goto('/technicians/roster');
+    await page.goto('/crm/technicians/roster');
     await expect(page.getByTestId('tech-roster-08')).toContainText('晓晓');
     await expectFits(page);
     await expectOnScreen(page, ['tech-roster-search', 'tech-roster-new', 'tech-kinds-edit', 'tech-roster-edit-08', 'tech-roster-edit-A12']);
@@ -1396,7 +1396,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
   },
   // 8.1.16 新建会员：第 1 步三种卡、第 2 步（实体卡：卡号、押金）不横向滚动，「建档」「上一步」在屏幕里（不提交）
   'member-create': async (page) => {
-    await page.goto('/');
+    await page.goto('/crm');
     await page.getByRole('button', { name: '新建会员' }).first().click();
     const dialog = page.getByRole('dialog').filter({ hasText: '新建会员' });
     await expect(dialog.getByTestId('member-card-type-step')).toBeVisible();
@@ -1429,7 +1429,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     });
     await page.route(`**/api/members/${m!.id}/cards`, (route) => (route.request().method() === 'GET' ? route.fulfill({ json: DETAIL_CARDS(m!.id) }) : route.fallback()));
     await page.route(`**/api/members/${m!.id}/card-deposits`, (route) => route.fulfill({ json: DETAIL_DEPOSITS }));
-    await page.goto(`/?m=${m!.id}`);
+    await page.goto(`/crm?m=${m!.id}`);
     await expect(page.getByTestId('member-profile-extras')).toContainText('实体卡');
     await expect(page.getByTestId('member-preferred-items')).toContainText('泰式精油推拿');
     await expect(page.getByTestId('member-card-deposit-held')).toContainText('20.00');

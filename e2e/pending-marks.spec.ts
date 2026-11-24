@@ -20,7 +20,7 @@ test.describe('「待确认」标记', () => {
   test('店主选择隐藏后，日结页不再显示「待确认」；改回显示后恢复', async ({ page }) => {
     await login(page, 'linlan');
     try {
-      await page.goto('/settlement');
+      await page.goto('/crm/settlement');
       await expect(page.getByRole('heading', { name: '日结' })).toBeVisible();
       await expect(page.getByText('待确认', { exact: true }).first()).toBeVisible();
 
@@ -30,14 +30,14 @@ test.describe('「待确认」标记', () => {
       await expect(page.getByText('经营规则已保存')).toBeVisible();
       await expect(page.getByText('店主已签认经营规则，「待确认」标记已隐藏')).toBeVisible();
 
-      await page.goto('/settlement');
+      await page.goto('/crm/settlement');
       await expect(page.getByRole('heading', { name: '日结' })).toBeVisible();
       await expect(page.getByText(/营业日每天 \d{2}:00 切换/)).toBeVisible();
       await expect(page.getByText('待确认', { exact: true })).toHaveCount(0);
     } finally {
       expect((await page.request.put('/api/settings', { data: { hidePendingMarks: false } })).ok()).toBe(true);
     }
-    await page.goto('/settlement');
+    await page.goto('/crm/settlement');
     await expect(page.getByText('待确认', { exact: true }).first()).toBeVisible();
   });
 });

@@ -40,7 +40,7 @@ test.describe('店主 2026-11-14 的需求：登记消费与预约', () => {
     // 需求 4：项目接口失败原来显示「还没有消费项目」、让店主去添加
     await page.route('**/api/catalog', (route) => route.abort('connectionreset'));
     await login(page, 'xiaozhou');
-    await page.goto('/');
+    await page.goto('/crm');
     await page.getByLabel('搜索会员').fill('周以安');
     const options = page.getByRole('listbox', { name: '会员列表' }).getByRole('option');
     await options.filter({ hasText: '周以安' }).first().click();
@@ -139,7 +139,7 @@ test.describe('店主 2026-11-14 的需求：登记消费与预约', () => {
     if (!roster.some((x) => x.techNo === TECH.techNo)) await send(page, 'post', '/api/admin/technicians', TECH);
     const me = await getJson<{ today: string }>(page, '/api/auth/me');
     // 看历史的页面不放开（店主能翻历史营业日）：流水页今天「后一天」照旧禁用、日期框最晚今天
-    await page.goto('/ledger');
+    await page.goto('/crm/ledger');
     await expect(page.getByLabel('选择营业日')).toHaveAttribute('max', me.today);
     await expect(page.getByRole('button', { name: '后一天' })).toBeDisabled();
     await page.request.post('/api/auth/logout');
@@ -152,19 +152,19 @@ test.describe('店主 2026-11-14 的需求：登记消费与预约', () => {
     const lastDay = shift(me.today, ahead);
 
     // 需求 2：今天打开预约页，「后一天」能点，切到明天；日期框最远到「今天 + 规则里的天数」；到那一天「后一天」禁用
-    await page.goto('/bookings');
+    await page.goto('/crm/bookings');
     await expect(page.getByTestId('bookings-technician')).toBeVisible();
     const nextDay = page.getByRole('button', { name: '后一天' });
     await expect(nextDay).toBeEnabled();
     await expect(page.getByLabel('选择营业日')).toHaveAttribute('max', lastDay);
     await nextDay.click();
     await expect(page).toHaveURL(new RegExp(`d=${tomorrow}`));
-    await page.goto(`/bookings?d=${lastDay}`);
+    await page.goto(`/crm/bookings?d=${lastDay}`);
     await expect(page.getByTestId('bookings-technician')).toBeVisible();
     await expect(nextDay).toBeDisabled();
 
     // 新建弹窗：在「今天」打开，最上面是预约日期（今天），点「明天」时段按明天取
-    await page.goto('/bookings');
+    await page.goto('/crm/bookings');
     await expect(page.getByTestId('bookings-technician')).toBeVisible();
     // 需求 6：项目多的时候有搜索、下拉按分类分组——看板的接口多回几个项目（只为看页面，不提交这些）
     await page.route(/\/api\/bookings\?date=/, async (route) => {

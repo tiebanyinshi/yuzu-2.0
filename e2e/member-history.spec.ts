@@ -40,7 +40,7 @@ test('旧系统流水：后台导入 → 会员详情看得到，不进正式账
   await expect(page.getByText('已导入旧系统流水 2 笔')).toBeVisible();
 
   // 会员详情：旧系统流水，新的在前；余额不变
-  await page.goto(`/?m=${m.id}`);
+  await page.goto(`/crm?m=${m.id}`);
   const box = page.getByTestId('member-legacy-history');
   await expect(box).toContainText('旧系统流水');
   await box.getByTestId('member-legacy-history-toggle').click();

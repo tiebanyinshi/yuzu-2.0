@@ -39,7 +39,7 @@ const TABS = [
 type FilterTab = CustomerTab | 'settlements';
 export function CustomerPage() {
   const can = useCan();
-  return can('customer.read') ? <CustomerWorkspace /> : <Navigate to="/" replace />;
+  return can('customer.read') ? <CustomerWorkspace /> : <Navigate to="/crm" replace />;
 }
 function CustomerWorkspace() {
   const today = useBusinessToday();
@@ -78,7 +78,7 @@ function CustomerWorkspace() {
       nextParams.delete('hour');
     }
     for (const [key, value] of Object.entries(extra)) nextParams.set(key, value);
-    return `/customer?${nextParams}`;
+    return `/crm/customer?${nextParams}`;
   };
   const tabs: SubTab[] = TABS.map((item) => ({
     key: item.id,
@@ -167,7 +167,7 @@ function CustomerWorkspace() {
         }
       />
       <div className="customer-tabs">
-        <SubNav tabs={tabs} base="/customer" active={tab} label="客户部模块" />
+        <SubNav tabs={tabs} base="/crm/customer" active={tab} label="客户部模块" />
       </div>
       <main className="customer-content">
         {/* 低余额、会员名单看的是此刻的会员余额与维护关系，不随营业日变：这两页不放日期；签赠台账自己选日期段 */}
@@ -186,7 +186,7 @@ function CustomerWorkspace() {
             <Notice tone="info" title="金额都来自前台的原单">
               到账实收、客户部已核业绩、还没核定归属的分开列；三个数对不上是因为有的还没核定、或者有退款冲减，不是没同步。这里不能改金额，也不办收款、退款。
             </Notice>
-            <SubNav tabs={dailyTabs} base="/customer" active={dailyMode} label="当日经营明细类别" />
+            <SubNav tabs={dailyTabs} base="/crm/customer" active={dailyMode} label="当日经营明细类别" />
             {dailyMode === 'recharge' ? <RechargeList {...listProps} /> : <SettlementList {...listProps} />}
           </div>
         )}
@@ -194,7 +194,7 @@ function CustomerWorkspace() {
         {listProps && tab === 'lowBalances' && <LowBalances {...listProps} />}
         {listProps && tab === 'members' && (
           <div className="customer-stack">
-            {data?.capabilities.manage && <SubNav tabs={memberTabs} base="/customer" active={memberMode} label="会员绑定工作区" />}
+            {data?.capabilities.manage && <SubNav tabs={memberTabs} base="/crm/customer" active={memberMode} label="会员绑定工作区" />}
             {data?.capabilities.manage && memberMode === 'bindings' ? <BindingQueue revision={revision} onRefresh={refresh} onRecord={openRecord} onForm={openForm} /> : <MemberList {...listProps} />}
           </div>
         )}

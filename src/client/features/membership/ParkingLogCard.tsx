@@ -14,13 +14,13 @@ import { Badge, Button, Card, Field, Input, Notice, SectionTitle } from '../../c
 
 export function ParkingLogPage() {
   const can = useCan();
-  if (!can('benefit.use') && !can('benefit.publish')) return <Navigate to="/" replace />;
+  if (!can('benefit.use') && !can('benefit.publish')) return <Navigate to="/crm" replace />;
   return (
     <>
       <PageHeader
         title={
           <span className="flex items-center gap-2.5">
-            <Link to="/" className="-ml-1 flex size-8 items-center justify-center rounded-md text-ink-3 hover:bg-paper-2 hover:text-ink" aria-label="返回会员工作台">
+            <Link to="/crm" className="-ml-1 flex size-8 items-center justify-center rounded-md text-ink-3 hover:bg-paper-2 hover:text-ink" aria-label="返回会员工作台">
               <ArrowLeft className="size-[18px]" />
             </Link>
             停车登记

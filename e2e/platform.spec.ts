@@ -21,7 +21,7 @@ test.describe('v0.7.28 平台核销补录', () => {
   test('前台补登记一张美团券；店主登记打款，对账表有应结、到账与差额', async ({ page }) => {
     const code = `MT${Date.now()}`;
     await login(page, 'xiaozhou');
-    await page.goto('/cashier');
+    await page.goto('/crm/cashier');
     await page.getByTestId('open-platform').click();
     await expect(page.getByTestId('platform-page')).toBeVisible();
     await page.getByTestId('platform-redeem-new').click();
@@ -34,7 +34,7 @@ test.describe('v0.7.28 平台核销补录', () => {
 
     await page.request.post('/api/auth/logout');
     await login(page, 'linlan');
-    await page.goto('/platform');
+    await page.goto('/crm/platform');
     await page.getByRole('radio', { name: '打款与对账' }).click();
     await page.getByTestId('platform-settle-new').click();
     await page.getByTestId('platform-settle-amount').fill('100');

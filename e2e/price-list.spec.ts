@@ -46,7 +46,7 @@ test.describe('汤崎价目表与多档价格', () => {
     };
     const code = board.tags.filter((t) => t.zone === 'male' && t.kind === 'normal' && t.active && !t.locked && !t.visit).reverse()[3]!.code;
     expect((await page.request.post('/api/frontdesk/checkins', { data: { clientKey: crypto.randomUUID(), guests: [{ tagCode: code, zone: 'male' }] } })).status()).toBe(201);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await page.getByTestId(`tag-${code}`).click();
     await expect(page.getByTestId('bill-tag')).toHaveText(code);
     await page.keyboard.press('F4');
@@ -73,7 +73,7 @@ test.describe('汤崎价目表与多档价格', () => {
       data: { idempotencyKey: crypto.randomUUID(), memberId: member!.id, planId: null, paidAmount: 50000, bonusAmount: 0, paymentMethod: 'wechat', paymentConfirmed: true },
     });
     expect(topUp.status()).toBe(200);
-    await page.goto('/');
+    await page.goto('/crm');
     await page.getByLabel('搜索会员').fill(name);
     await page.getByRole('option').filter({ hasText: name }).first().click();
     await page.getByRole('button', { name: /^消费/ }).first().click();

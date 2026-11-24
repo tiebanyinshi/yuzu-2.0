@@ -17,7 +17,7 @@ async function login(page: Page, username: string) {
 }
 
 async function openMember(page: Page, query: string) {
-  await page.goto('/');
+  await page.goto('/crm');
   await page.getByLabel('搜索会员').fill(query);
   await page.getByRole('option').filter({ hasText: query }).first().click();
   await expect(page.getByText('可用余额').first()).toBeVisible();
@@ -94,7 +94,7 @@ test.describe('单笔上限与撤销时限', () => {
     expect((await page.request.put('/api/settings', { data: { reversalWindowHours: 2 } })).status()).toBe(200);
     try {
       const openReversal = async () => {
-        await page.goto('/ledger');
+        await page.goto('/crm/ledger');
         for (let i = 0; i < daysBack; i += 1) await page.getByRole('button', { name: '前一天' }).click();
         await page.getByText(target!.docNo).first().click();
         await page.getByRole('button', { name: '撤销这张消费单' }).click();

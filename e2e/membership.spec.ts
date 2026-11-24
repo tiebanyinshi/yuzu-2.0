@@ -28,7 +28,7 @@ test.describe('会员体系 v2', () => {
     const created = await page.request.post('/api/members', { data: { name: '会员体系验收', phone } });
     expect(created.ok()).toBe(true);
     const member = (await created.json()) as { id: number };
-    await page.goto(`/?m=${member.id}`);
+    await page.goto(`/crm?m=${member.id}`);
     await expect(page.getByTestId('member-grade-label')).toHaveText('L0 青溪');
 
     await page.getByRole('button', { name: /^充值/ }).first().click();
@@ -57,7 +57,7 @@ test.describe('会员体系 v2', () => {
     await expect(page.getByTestId('member-grade-events')).toContainText('充值升档：L0 青溪 → L2 潭影 · 初');
     await expect(page.getByTestId('grade-badge').first()).toContainText('L2 潭影 · 初');
 
-    await page.goto('/dashboard/membership');
+    await page.goto('/crm/dashboard/membership');
     await expect(page.getByTestId('membership-states')).toContainText('L2 潭影');
     await expect(page.getByTestId('membership-today-events')).toContainText('会员体系验收');
   });
@@ -74,7 +74,7 @@ test.describe('会员体系 v2', () => {
       await new Promise((r) => setTimeout(r, 3000));
       await route.continue();
     });
-    await page.goto(`/?m=${member.id}`);
+    await page.goto(`/crm?m=${member.id}`);
     await page.getByRole('button', { name: /^充值/ }).first().click();
     await page.getByText('自定义金额').click();
     await page.fill('#paid', '10000');
@@ -103,7 +103,7 @@ test.describe('会员体系 v2', () => {
     const created = await page.request.post('/api/members', { data: { name: '调整待确认验收', phone } });
     expect(created.ok()).toBe(true);
     const member = (await created.json()) as { id: number };
-    await page.goto(`/?m=${member.id}`);
+    await page.goto(`/crm?m=${member.id}`);
     await expect(page.getByTestId('member-grade-label')).toHaveText('L0 青溪');
 
     // 请求真的到服务端、调整成功，回到页面的却是 500；查回暂时也连不上
@@ -146,7 +146,7 @@ test.describe('会员体系 v2', () => {
     expect((await page.request.post('/api/auth/login', { data: { username, password } })).ok()).toBe(true);
     const changed = await page.request.post('/api/auth/change-password', { data: { currentPassword: password, newPassword: `${password}9` } });
     expect(changed.ok(), await changed.text()).toBe(true);
-    await page.goto('/');
+    await page.goto('/crm');
     await expect(page).toHaveURL(/\/lookup$/);
     await page.getByTestId('member-lookup-input').fill('199 0000 8803');
     await page.getByTestId('member-lookup-submit').click();

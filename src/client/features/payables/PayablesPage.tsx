@@ -28,7 +28,7 @@ export function PayablesPage() {
   const [openingDialog, setOpeningDialog] = useState(false);
   const paymentId = Number(params.get('payment')) || null;
   const [opening, setOpening] = useState<OpeningPayableDoc | null>(null);
-  if (!can('payable.read')) return <Navigate to="/" replace />;
+  if (!can('payable.read')) return <Navigate to="/crm" replace />;
 
   const update = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);

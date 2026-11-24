@@ -115,7 +115,7 @@ export function AdminShell() {
       document.title = session.storeName;
     };
   }, [board.title, session.storeName]);
-  if (sections.length === 0) return <Navigate to="/" replace />;
+  if (sections.length === 0) return <Navigate to="/crm" replace />;
   // 没有后台首页的（只有看板、员工食堂或安保巡场的权限）：进来直接到自己的第一个分区
   if (!sections.includes('home') && location.pathname.replace(/\/+$/, '') === ADMIN_SECTIONS.home.path) return <Navigate to={ADMIN_SECTIONS[sections[0]!].path} replace />;
 

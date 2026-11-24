@@ -106,7 +106,7 @@ test.describe('ERP 工作区', () => {
     await page.goto('/erp/modules');
     await expect(page).toHaveURL(/\/erp$/);
     // 门店那边没有权限的页面直接打开：回到首页，也就是 ERP 的库存（不停在只有外壳、提示没有权限的页面；测试服 E2E 报告）
-    for (const url of ['/ledger', '/settlement', '/shift', '/frontdesk']) {
+    for (const url of ['/crm/ledger', '/crm/settlement', '/crm/shift', '/crm/frontdesk']) {
       await page.goto(url);
       await expect(page, url).toHaveURL(/\/inventory/);
       await expect(page.getByTestId('erp-shell')).toBeVisible();

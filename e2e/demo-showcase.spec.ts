@@ -36,12 +36,12 @@ test('演示场景：前台、客房与平面图、钟房、厨房、旧账都�
   expect(Object.keys(tagOf).sort()).toEqual([...expected.guests].sort());
 
   await test.step('前台：四位演示客人的手牌在用', async () => {
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     for (const code of Object.values(tagOf)) await expect(page.getByTestId(`tag-${code}`)).toHaveAttribute('data-state', 'in_use');
   });
 
   await test.step('客房：房态中心的「客房」页签（8.1.16 起原来的「客房」页并进房态中心，/rooms 跳过去）', async () => {
-    await page.goto('/rooms');
+    await page.goto('/crm/rooms');
     await expect(page).toHaveURL(/\/room-center\?tab=hotel/);
     // 客房原来的房态（在住 / 待打扫 / 维修）在房态中心是在用 / 待清 / 维修
     const STATUS: Record<string, string> = { vacant: 'free', occupied: 'in_use', dirty: 'dirty', maintenance: 'maintenance' };
@@ -49,7 +49,7 @@ test('演示场景：前台、客房与平面图、钟房、厨房、旧账都�
   });
 
   await test.step('平面图：房态颜色、房间人数、在场名单', async () => {
-    await page.goto('/rooms?view=map');
+    await page.goto('/crm/rooms?view=map');
     await expect(page.getByTestId('floormap')).toBeVisible();
     await expect(page.getByTestId('map-space-W301')).toHaveAttribute('data-state', 'occupied');
     await expect(page.getByTestId('map-space-W302')).toHaveAttribute('data-state', 'dirty');
@@ -74,7 +74,7 @@ test('演示场景：前台、客房与平面图、钟房、厨房、旧账都�
   });
 
   await test.step('对客导览：区域色块（派对区是动区）、设施图标，不显示房号', async () => {
-    await page.goto('/guide');
+    await page.goto('/crm/guide');
     const l2 = page.getByTestId('guide-map-L2');
     await expect(l2.locator('[data-kind="active"]')).toHaveCount(1);
     for (const k of ['reception', 'entrance', 'elevator']) await expect(l2.getByTestId(`guide-marker-${k}`)).toHaveCount(1);
@@ -88,15 +88,15 @@ test('演示场景：前台、客房与平面图、钟房、厨房、旧账都�
     const waiting = clock.sessions.find((s) => s.techNo === 'D02' && s.status === 'waiting');
     expect(serving?.tagCode).toBe(tagOf['演示客人乙']);
     expect(waiting?.tagCode).toBe(tagOf['演示客人丙']);
-    await page.goto('/clockroom');
+    await page.goto('/crm/clockroom');
     await expect(page.getByTestId(`clock-serving-${serving!.sessionNo}`)).toBeVisible();
     await expect(page.getByTestId(`clock-waiting-${waiting!.sessionNo}`)).toBeVisible();
   });
 
   await test.step('厨房：果汁待出、演示果汁沽清', async () => {
-    await page.goto('/dining/kitchen');
+    await page.goto('/crm/dining/kitchen');
     await expect(page.getByTestId('kds-col-queued')).toContainText('演示果汁');
-    await page.goto('/dining/limits');
+    await page.goto('/crm/dining/limits');
     await expect(page.getByTestId('limit-演示果汁')).toContainText('沽清');
   });
 
@@ -107,14 +107,14 @@ test('演示场景：前台、客房与平面图、钟房、厨房、旧账都�
 
   // 会员体系块（v0.7.24）：到期提醒、补充期名单里有演示会员，会员详情「本月可享」有本月的项目券
   await test.step('会员体系：到期提醒与补充期名单、本月可享、后台会员权益', async () => {
-    await page.goto('/dashboard/membership');
+    await page.goto('/crm/dashboard/membership');
     await expect(page.getByTestId('membership-retention')).toContainText('演示会员·将到期');
     await page.getByRole('radio', { name: /^补充期/ }).click();
     await expect(page.getByTestId('membership-retention')).toContainText('演示会员·补充期');
     await expect(page.getByTestId('membership-today-events')).toContainText('演示会员·刚降档');
     await expect(page.getByTestId('membership-benefits')).toContainText('按摩/足浴项目券');
     const [member] = await getJson<{ id: number }[]>(page, `/api/members?q=${encodeURIComponent('19900009001')}`);
-    await page.goto(`/?m=${member!.id}`);
+    await page.goto(`/crm?m=${member!.id}`);
     await expect(page.getByTestId('member-benefit-QY-040')).toContainText('本月发 1 / 1 张');
     await expect(page.getByTestId('member-benefit-QY-001')).toContainText('本月已用 0 / 4 次');
     await page.goto('/admin/benefits?view=list'); // 8.0.4 起默认「按档阶」看，原来的清单在「按类别」

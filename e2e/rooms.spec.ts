@@ -235,7 +235,7 @@ test.describe('S7 客房', () => {
       await expect(card(page, R2)).toHaveAttribute('data-status', 'in_use');
 
       // ⑤ 前台结账：客人还住着客房，不能确认结清；在结账对话框里直接退房（押金 ¥250 原路退回），房费随门票一起结
-      await page.goto(`/frontdesk?v=${g.visitId}`);
+      await page.goto(`/crm/frontdesk?v=${g.visitId}`);
       const panel = page.getByTestId('bill-panel');
       await expect(panel.getByTestId('bill-tag')).toHaveText(g.tag);
       await expect(panel).toContainText(`房费 ${R1}`);
@@ -275,7 +275,7 @@ test.describe('S7 客房', () => {
       expect(full.totalAmount - (full.bills[0]!.ticketAmount ?? 0)).toBe(DAILY.price);
 
       // ⑥ 改房态：E2E-01 打扫好（空闲）；E2E-03 设为维修（写原因）。原来的地址 /rooms 跳到房态中心的「客房」页签
-      await page.goto('/rooms');
+      await page.goto('/crm/rooms');
       await expect(page).toHaveURL(/\/room-center\?tab=hotel/);
       await expect(card(page, R2)).toHaveAttribute('data-status', 'dirty');
       await openCard(page, R1);
@@ -319,7 +319,7 @@ test.describe('S7 客房', () => {
 
       // ⑧ 店主看板「客房」：此刻在住、在住押金
       await relogin(page, 'linlan');
-      await page.goto('/dashboard/rooms');
+      await page.goto('/crm/dashboard/rooms');
       const dash = page.getByTestId('dashboard-rooms');
       await expect(dash.getByTestId('rooms-now')).toContainText('间');
       await expect(dash.getByTestId('rooms-deposit')).toContainText('¥');
@@ -350,7 +350,7 @@ test.describe('S7 客房', () => {
         { times: 1 },
       );
       await page.route('**/api/frontdesk/ops/*', (route) => route.abort('connectionreset'));
-      await page.goto('/rooms');
+      await page.goto('/crm/rooms');
       await openCard(page, R1);
       const dialog = page.getByRole('dialog').filter({ hasText: `入住 · ${R1}` });
       await dialog.getByTestId('room-checkin-tag').fill(g.tag);
@@ -395,7 +395,7 @@ test.describe('S7 客房', () => {
       await prepare(page);
       const g = await checkinGuest(page, 'E2E 改价');
       visit = g.visitId;
-      await page.goto('/rooms');
+      await page.goto('/crm/rooms');
       await openCard(page, R1);
       const dialog = page.getByRole('dialog').filter({ hasText: `入住 · ${R1}` });
       await expect(dialog).toContainText('¥288 / 晚');

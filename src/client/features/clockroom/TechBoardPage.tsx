@@ -159,8 +159,8 @@ export function TechBoardPage() {
     return () => window.clearTimeout(t);
   }, [current, paused, hoverPause, pages, interval]);
 
-  if (!session.technicians) return <Navigate to="/" replace />;
-  if (!can('technician.board') && !can('technician.dispatch') && !can('technician.announce')) return <Navigate to="/" replace />;
+  if (!session.technicians) return <Navigate to="/crm" replace />;
+  if (!can('technician.board') && !can('technician.dispatch') && !can('technician.announce')) return <Navigate to="/crm" replace />;
 
   const setMode = (m: TechBoardMode) => {
     const next = new URLSearchParams(params);

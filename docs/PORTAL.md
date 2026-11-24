@@ -5,7 +5,7 @@
 > 纯入口层改造：四个板块里面的功能、菜单、业务逻辑不改；登录认证与权限模型不改；不改主题色；没有迁移。
 > 规则 PT1–PT6 见 `PENDING_DECISIONS.md`「系统门户页」。
 >
-> **店主 2026-11-24 起四个板块改叫 CRM、ERP、WCP、Design**，原来管理后台的分区拆进各板块，见 [`BOARDS.md`](BOARDS.md)（下表是改名以前的写法，以 BOARDS.md 为准）。
+> **店主 2026-11-24 起四个板块改叫 CRM、ERP、WCP、Design**，原来管理后台的分区拆进各板块，见 [`BOARDS.md`](BOARDS.md)（下表是改名以前的写法，以 BOARDS.md 为准）。同一天起**门户就是首页 `/`**（`/portal` 跳过来），CRM 在 `/crm`（BOARDS.md 第 8 节）。
 
 ## 1. 门户页（`/portal`，`src/client/features/portal/PortalPage.tsx`）
 

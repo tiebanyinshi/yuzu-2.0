@@ -169,7 +169,7 @@ test.describe('打印', () => {
     await page.emulateMedia({ media: 'screen' });
 
     // 入口：日结页的「打印」在新窗口打开 A4 日结单
-    await page.goto('/settlement');
+    await page.goto('/crm/settlement');
     const [popup] = await Promise.all([page.waitForEvent('popup'), page.getByTestId('settlement-print').click()]);
     expect(popup.url()).toMatch(/\/print\/settlement\/\d{4}-\d{2}-\d{2}\?auto=1$/);
     await popup.close().catch(() => {});

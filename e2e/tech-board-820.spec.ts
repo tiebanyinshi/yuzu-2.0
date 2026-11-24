@@ -120,7 +120,7 @@ test.describe('技师上钟轮播', () => {
     await login(page);
     const prepared = await prepare(page);
     try {
-      await page.goto('/tech-board');
+      await page.goto('/crm/tech-board');
       const board = page.getByTestId('tech-board');
       await expect(board).toHaveAttribute('data-mode', 'item');
       await expect(page.getByTestId('tech-board-order')).toBeVisible();

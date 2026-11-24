@@ -96,7 +96,7 @@ export function BenefitsBody() {
           {/* 停车登记（8.0.19，IA4）：是前台每天要对的账，挪到门店会员工作台右上角的「停车登记」；这里留一条指路 */}
           <Notice tone="info" title="停车登记在门店里看" className="mt-4" data-testid="benefit-parking-moved">
             前台登记的停车优惠（车牌、免费几小时）与导出给停车场的清单，8.0.19 起在门店{' '}
-            <Link to="/parking-log" className="font-bold text-lake hover:underline">
+            <Link to="/crm/parking-log" className="font-bold text-lake hover:underline">
               会员工作台 → 停车登记
             </Link>
             。停车优惠这项权益本身（每次免几小时）仍在上面的清单里改。

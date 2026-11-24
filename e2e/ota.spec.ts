@@ -60,7 +60,7 @@ test.describe('8.0.21 OTA 渠道订单', () => {
     await expect(page.getByTestId('ota-channels')).toContainText(name);
 
     // 前台：导入
-    await page.goto('/bookings?view=ota');
+    await page.goto('/crm/bookings?view=ota');
     await page.getByTestId('ota-channel').selectOption({ label: name });
     const csv = [
       '订单号,入住人,联系电话,房型,入住日期,离店日期,间数,订单金额,支付方式,订单状态',
@@ -88,7 +88,7 @@ test.describe('8.0.21 OTA 渠道订单', () => {
     const me = (await (await page.request.get('/api/auth/me')).json()) as { today: string };
     const day = (n: number) => new Date(Date.parse(`${me.today}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 
-    await page.goto('/bookings?view=ota');
+    await page.goto('/crm/bookings?view=ota');
     await page.getByTestId('ota-channel').selectOption({ label: name });
     const csv = ['订单号,入住人,联系电话,房型,入住日期,离店日期,间数,订单金额,支付方式,订单状态', `P${stamp}01,待确认客人,,豪华大床,${day(6)},${day(7)},1,368.00,预付,已确认`].join('\r\n');
     await page.getByTestId('ota-file').setInputFiles({ name: `pending${tag}.csv`, mimeType: 'text/csv', buffer: Buffer.from(csv, 'utf8') });
@@ -137,7 +137,7 @@ test.describe('8.0.21 OTA 渠道订单', () => {
       ),
     };
 
-    await page.goto('/bookings?view=ota');
+    await page.goto('/crm/bookings?view=ota');
     // 甲导一次
     await page.getByTestId('ota-channel').selectOption({ label: a.name });
     await page.getByTestId('ota-file').setInputFiles(file);
@@ -168,7 +168,7 @@ test.describe('8.0.21 OTA 渠道订单', () => {
       route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'UNAVAILABLE', message: '服务暂时不可用' } }) });
     await page.route('**/api/ota/orders*', fail);
     await page.route('**/api/ota/recon?*', fail);
-    await page.goto('/bookings?view=ota');
+    await page.goto('/crm/bookings?view=ota');
     await expect(page.getByTestId('ota-orders-error')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('ota-recon-error')).toBeVisible({ timeout: 20_000 });
     await page.unroute('**/api/ota/orders*');
@@ -189,7 +189,7 @@ test.describe('8.0.21 OTA 渠道订单', () => {
       'b6a9b5a5bac52cc8ebd7a1c8cb2cb7bfd0cd2cc8ebd7a1c8d5c6da2cc0ebb5eac8d5c6da2cbce4cafd2cbdf0b6ee0d0a47424b3030312cd5c5c8fd2cb4f3b4b2b7bf2c323032362d31322d30312c323032362d31322d30332c312ca3a43630300d0a',
       'hex',
     );
-    await page.goto('/bookings?view=ota');
+    await page.goto('/crm/bookings?view=ota');
     await page.getByTestId('ota-channel').selectOption({ label: `GBK渠道${stamp}` });
     await page.getByTestId('ota-file').setInputFiles({ name: '携程订单.csv', mimeType: 'text/csv', buffer: gbk });
     // 旧代码按 UTF-8 读：表头乱码，必须有的列一个都认不出来

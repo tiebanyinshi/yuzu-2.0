@@ -86,7 +86,7 @@ export function PendingOpsBanner() {
   const open = (op: PendingOp) => {
     const params = new URLSearchParams({ m: String(op.memberId), resume: op.type });
     if (op.consumptionId) params.set('c', String(op.consumptionId));
-    navigate(`/?${params}`);
+    navigate(`/crm?${params}`);
   };
 
   return (

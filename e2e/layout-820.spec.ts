@@ -17,7 +17,7 @@ test.describe('回测整改 侧边栏固定，内容区独立滚动', () => {
     test.skip(testInfo.project.name !== '门店电脑', '桌面宽度的鼠标操作');
     await page.setViewportSize({ width: 1366, height: 600 });
     await login(page);
-    await page.goto('/room-center');
+    await page.goto('/crm/room-center');
     const rail = page.getByTestId('store-rail');
     await expect(rail).toBeVisible();
     const before = await rail.boundingBox();
@@ -72,7 +72,7 @@ test.describe('回测整改 侧边栏固定，内容区独立滚动', () => {
     test.skip(testInfo.project.name !== '门店电脑', '用桌面浏览器缩窄测一次');
     await page.setViewportSize({ width: 900, height: 900 });
     await login(page);
-    await page.goto('/room-center');
+    await page.goto('/crm/room-center');
     const rail = page.getByTestId('store-rail');
     await expect(rail).toHaveAttribute('data-mode', 'collapsed');
     const content = page.getByTestId('app-content');

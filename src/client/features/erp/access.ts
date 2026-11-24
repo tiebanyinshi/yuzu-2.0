@@ -24,6 +24,6 @@ export function useErpAccess() {
      * 「返回门店」回到哪一页：门店首页（会员工作台）；没有会员权限的回到门店主导航里第一个能用的页面
      * （门店首页会把只用 ERP 的人送回 ERP，例如开了餐饮时管厨房的后勤要直接进餐饮）
      */
-    storeHome: storeNav.find((n) => n.to === '/')?.to ?? storeNav[0]?.to ?? null,
+    storeHome: storeNav.find((n) => n.to === '/crm')?.to ?? storeNav[0]?.to ?? null,
   };
 }

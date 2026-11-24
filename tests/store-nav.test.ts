@@ -69,8 +69,8 @@ describe('主导航的业务域', () => {
       const perms: Permission[] = ['room.housekeep', perm];
       expect(visibleStoreNav(canOf(perms), session({ rooms: false, permissions: perms })).flatMap((d) => d.items.map((i) => i.label))).toContain('房态中心');
     }
-    expect(storeDomainOf('/room-center')).toBe('rooms');
-    expect(storePageOf('/room-center')?.label).toBe('房态中心');
+    expect(storeDomainOf('/crm/room-center')).toBe('rooms');
+    expect(storePageOf('/crm/room-center')?.label).toBe('房态中心');
     // 只有管家职责的后勤：会员这一组只剩「管家」，加上所有岗位都能看的导览
     const concierge: Permission[] = ['concierge.read', 'guide.view'];
     const nav = visibleStoreNav(canOf(concierge), session({ permissions: concierge }));
@@ -85,18 +85,18 @@ describe('主导航的业务域', () => {
     expect(visibleStoreNav(canOf(both), session({ permissions: both })).flatMap((d) => d.items.map((i) => i.label))).toEqual(['会员']);
   });
 
-  it('地址属于哪一组：子页面也算；会员工作台只认「/」；改密码这类不属于任何一组', () => {
-    expect(storeDomainOf('/frontdesk')).toBe('frontdesk');
-    expect(storeDomainOf('/cashier')).toBe('frontdesk');
-    expect(storeDomainOf('/dining/ledger')).toBe('dining');
-    expect(storeDomainOf('/settlement/2026-11-19')).toBe('finance');
-    expect(storeDomainOf('/concierge/members')).toBe('members');
-    expect(storeDomainOf('/')).toBe('members');
-    expect(storeDomainOf('/password')).toBeNull();
+  it('地址属于哪一组：子页面也算；会员工作台只认「/crm」（店主 2026-11-24 起 CRM 在 /crm 下面）；改密码这类不属于任何一组', () => {
+    expect(storeDomainOf('/crm/frontdesk')).toBe('frontdesk');
+    expect(storeDomainOf('/crm/cashier')).toBe('frontdesk');
+    expect(storeDomainOf('/crm/dining/ledger')).toBe('dining');
+    expect(storeDomainOf('/crm/settlement/2026-11-19')).toBe('finance');
+    expect(storeDomainOf('/crm/concierge/members')).toBe('members');
+    expect(storeDomainOf('/crm')).toBe('members');
+    expect(storeDomainOf('/crm/password')).toBeNull();
     expect(storeDomainOf('/network')).toBeNull();
     // 没有权限时退回首页用的判断照旧：会员工作台不算
-    expect(storePageOf('/')).toBeNull();
-    expect(storePageOf('/shift')?.label).toBe('交班');
+    expect(storePageOf('/crm')).toBeNull();
+    expect(storePageOf('/crm/shift')?.label).toBe('交班');
     expect(storePageOf('/admin/studio')?.label).toBe('CRM 设置');
   });
 
@@ -111,6 +111,6 @@ describe('主导航的业务域', () => {
     const dishesOnly: Permission[] = ['dish.water'];
     const nav = visibleStoreNav(canOf(dishesOnly), session({ permissions: dishesOnly }));
     expect(nav.map((d) => [d.label, d.items.map((i) => i.label)])).toEqual([['餐饮', ['菜品']]]);
-    expect(storeDomainOf('/dishes')).toBe('dining');
+    expect(storeDomainOf('/crm/dishes')).toBe('dining');
   });
 });

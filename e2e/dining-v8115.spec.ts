@@ -181,7 +181,7 @@ test.describe('8.1.15 餐饮：桌台动作、台账退菜、出品口与房号'
       await send(page, 'post', `/api/dining/tables/sessions/${sub}/orders`, { clientKey: randomUUID(), lines: [{ itemId: await itemId(page, TEA.name), quantity: 1 }], expectedTotal: TEA.price });
 
       // ① 主台的详情里并台：选乙
-      await page.goto('/dining/tables');
+      await page.goto('/crm/dining/tables');
       await page.getByTestId(`table-tile-${MAIN}`).click();
       await page.getByTestId('table-merge').click();
       const merge = page.getByTestId('table-merge-dialog');
@@ -254,7 +254,7 @@ test.describe('8.1.15 餐饮：桌台动作、台账退菜、出品口与房号'
     const visitId = (await getJson<{ tags: BoardTag[] }>(page, '/api/frontdesk/board')).tags.find((t) => t.code === tag)!.visit!.id;
     try {
       await send(page, 'post', '/api/dining/orders', { clientKey: randomUUID(), visitId, lines: [{ itemId: await itemId(page, FRUIT.name), quantity: 1 }], expectedTotal: FRUIT.price });
-      await page.goto('/dining/order');
+      await page.goto('/crm/dining/order');
       await page.getByTestId('dining-tag').fill(tag);
       await page.getByTestId('dining-find').click();
       await page.getByTestId('dining-pending').getByTestId(`dining-pending-${FRUIT.name}`).getByRole('button', { name: '退菜' }).click();
@@ -266,7 +266,7 @@ test.describe('8.1.15 餐饮：桌台动作、台账退菜、出品口与房号'
       await dialog.getByTestId('dish-void-confirm').click();
       await expect(page.getByText(`${FRUIT.name} 已退`)).toBeVisible();
 
-      await page.goto('/dining/voids');
+      await page.goto('/crm/dining/voids');
       await expect(page).toHaveURL(/\/dining\/ledger\?type=voided/);
       await expect(page.getByTestId('dining-tab-voids')).toHaveCount(0);
       const row = page.getByTestId('dining-ledger').locator('tbody tr').filter({ hasText: FRUIT.name }).first();
@@ -307,7 +307,7 @@ test.describe('8.1.15 餐饮：桌台动作、台账退菜、出品口与房号'
       await page.getByRole('button', { name: '保存新密码' }).click();
       await afterPasswordChange(page);
       await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
-      await page.goto('/dining/order');
+      await page.goto('/crm/dining/order');
 
       // 只有水吧、果吧
       await expect(page.getByTestId('dining-outlet-water')).toBeVisible();
@@ -342,7 +342,7 @@ test.describe('8.1.15 餐饮：桌台动作、台账退菜、出品口与房号'
       await expect(page.getByText(/已下单/)).toBeVisible();
 
       // 厨房屏：送到房、整单备注
-      await page.goto('/dining/kitchen');
+      await page.goto('/crm/dining/kitchen');
       const ticket = page
         .locator(`[data-dish="${TEA.name}"]`)
         .filter({ hasText: `送到房 ${roomNo}` })

@@ -122,7 +122,7 @@ test.describe('8.0.8 前台整改', () => {
       await relogin(page, 'xiaozhou');
 
       // ① 前台加项目：点护理项目 → 选技师那一步点「交给钟房派钟」→ 挂账
-      await page.goto(`/frontdesk?v=${guest.visitId}`);
+      await page.goto(`/crm/frontdesk?v=${guest.visitId}`);
       const panel = page.getByTestId('bill-panel');
       await expect(panel.getByTestId('bill-tag')).toHaveText(guest.tag);
       await panel.getByTestId('action-add').click();
@@ -133,7 +133,7 @@ test.describe('8.0.8 前台整改', () => {
       await expect(add).toBeHidden();
 
       // ② 钟房：待派钟里有这一条；补派点钟给 E6、立即上钟
-      await page.goto('/clockroom');
+      await page.goto('/crm/clockroom');
       const pending = page.getByTestId('clock-pending').locator('[data-testid^="clock-pending-"]').filter({ hasText: guest.tag });
       await expect(pending).toContainText(ITEM.name);
       await pending.getByRole('button', { name: '派钟' }).click();
@@ -203,7 +203,7 @@ test.describe('8.0.8 前台整改', () => {
       await relogin(page, 'xiaozhou');
 
       // ① 点单页：桌台点单下架，只有手牌下单
-      await page.goto('/dining/order');
+      await page.goto('/crm/dining/order');
       await expect(page.getByTestId('dining-tag-only')).toBeVisible();
       await page.getByTestId('dining-tag').fill(guest.tag);
       await page.getByTestId('dining-find').click();
@@ -313,7 +313,7 @@ test.describe('8.0.8 前台整改', () => {
 
       // ① 空闲的房：入住对话框左下角「改房态」→ 选待打扫、写备注 → 确认「从哪到哪」→ 看板马上变
       // （8.1.16 起原来的「客房」页并进房态中心：/rooms 跳到「客房」页签，卡片的状态是房态中心的空闲 / 在用 / 待清 / 维修）
-      await page.goto('/rooms');
+      await page.goto('/crm/rooms');
       await page.getByTestId(`rc-open-${ROOM}`).click();
       await page.getByTestId('rc-panel-go').click();
       await page
@@ -420,7 +420,7 @@ test.describe('8.0.8 前台整改', () => {
         }
         await route.continue();
       });
-      await page.goto('/clockroom');
+      await page.goto('/crm/clockroom');
       await page.getByTestId('clock-filter-off').click();
       await page.getByTestId(`clock-tech-suspend-${TECH.techNo}`).click();
       const dialog = page.getByRole('dialog');

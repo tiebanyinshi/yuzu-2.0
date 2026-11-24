@@ -104,7 +104,7 @@ test.describe('v0.7.0 技师', () => {
         .reverse()[0]!;
       const checkin = await page.request.post('/api/frontdesk/checkins', { data: { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: 'female', guestLabel: 'E2E 技师客人' }] } });
       expect(checkin.ok(), await checkin.text()).toBe(true);
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       await page.getByTestId(`tag-${tag}`).click();
       const panel = page.getByTestId('bill-panel');
       await expect(panel.getByTestId('bill-tag')).toHaveText(tag);
@@ -147,7 +147,7 @@ test.describe('v0.7.0 技师', () => {
 
       // ⑤ 店主看技师业绩：今天这位技师至少一个点钟
       await login(page, 'linlan');
-      await page.goto('/dashboard/technicians');
+      await page.goto('/crm/dashboard/technicians');
       const row = page.getByTestId(`technicians-row-${TECH_NO}`);
       await expect(row).toBeVisible();
       const designated = Number(await row.locator('td').nth(3).innerText());

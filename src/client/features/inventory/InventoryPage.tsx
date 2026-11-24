@@ -40,7 +40,7 @@ export function InventoryPage() {
   const warehouses = useWarehouses(read);
   const multiStore = (warehouses.data ?? []).some((w) => w.kind === 'store_main');
   const tabs = TABS.filter((t) => (t.key === 'cost' ? can('inventory.cost') : t.key === 'transfers' ? read && (multiStore || tab === 'transfers') : read));
-  if (tabs.length === 0) return <Navigate to="/" replace />;
+  if (tabs.length === 0) return <Navigate to="/crm" replace />;
   if (!tabs.some((t) => t.key === tab)) return <Navigate to={tabs[0]!.key === 'stock' ? '/inventory' : `/inventory/${tabs[0]!.key}`} replace />;
   return (
     <>

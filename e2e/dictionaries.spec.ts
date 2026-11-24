@@ -37,7 +37,7 @@ test.describe('8.0.21 数据字典与自定义字段', () => {
       await card.getByTestId('dict-lockReasons-save').click();
       await expect(page.getByText('锁牌的原因已保存')).toBeVisible();
       // 前台：新会话里带着新的字典
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       await page.getByTestId('open-tag-lock').click();
       const dialog = page.getByRole('dialog', { name: '锁牌 / 解锁' });
       // 快捷原因在填了一张空闲的牌以后出现
@@ -73,7 +73,7 @@ test.describe('8.0.21 数据字典与自定义字段', () => {
       // 会员详情：其他信息
       const members = (await (await page.request.get('/api/members?q=&limit=20')).json()) as { id: number; name: string; status: string }[];
       const member = members.find((m) => m.status === 'active')!;
-      await page.goto(`/?m=${member.id}`);
+      await page.goto(`/crm?m=${member.id}`);
       const card = page.getByTestId('custom-fields');
       await expect(card).toBeVisible({ timeout: 20_000 });
       await card.getByLabel(label).fill(`粤B${stamp}`);
@@ -94,7 +94,7 @@ test.describe('8.0.21 数据字典与自定义字段', () => {
       // 取不回来：写明加载失败、可以重试，不当成「没建字段」整块藏起来（Codex 审查 26fe580 后补）
       const sheetUrl = `**/api/custom-fields/member/${member.id}`;
       await page.route(sheetUrl, (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'UNAVAILABLE', message: '服务暂时不可用' } }) }));
-      await page.goto(`/?m=${member.id}`);
+      await page.goto(`/crm?m=${member.id}`);
       const failed = page.getByTestId('custom-fields-error');
       await expect(failed).toBeVisible({ timeout: 20_000 });
       await expect(failed).toContainText('其他信息加载失败');

@@ -103,7 +103,7 @@ export type AdminSection = keyof typeof ADMIN_SECTIONS;
 /** 门户的四个板块（店主 2026-11-24，docs/BOARDS.md）：原来管理后台的分区拆进各板块，地址与权限不变 */
 export type AdminBoard = 'crm' | 'erp' | 'wcp' | 'design';
 export const ADMIN_BOARDS: Record<AdminBoard, { name: string; title: string; back: { to: string; label: string } | null }> = {
-  crm: { name: 'CRM', title: 'CRM 设置', back: { to: '/', label: '返回 CRM' } },
+  crm: { name: 'CRM', title: 'CRM 设置', back: { to: '/crm', label: '返回 CRM' } },
   erp: { name: 'ERP', title: 'ERP 设置', back: { to: '/erp', label: '返回 ERP' } },
   wcp: { name: 'WCP', title: 'WCP 设置', back: { to: '/oa', label: '返回 WCP' } },
   design: { name: 'Design', title: 'Design', back: null },

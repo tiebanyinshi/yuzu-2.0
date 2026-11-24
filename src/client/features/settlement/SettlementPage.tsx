@@ -82,7 +82,7 @@ export function SettlementPage() {
         }
       />
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line px-5 py-3 md:px-7">
-        <DateNav value={date} today={today} locked={!historyAllowed} onChange={(v) => navigate(v === today ? '/settlement' : `/settlement/${v}`)} />
+        <DateNav value={date} today={today} locked={!historyAllowed} onChange={(v) => navigate(v === today ? '/crm/settlement' : `/crm/settlement/${v}`)} />
         {s.data && <CloseStatus s={s.data} />}
         <span className="flex-1" />
         <span className="flex items-center gap-1.5 text-[12px] text-ink-3">
@@ -397,7 +397,7 @@ function Summary({ s, dayLabel }: { s: SettlementSummary; dayLabel: string }) {
       </div>
 
       <Link
-        to={`/ledger${s.isToday ? '' : `?date=${s.businessDate}`}`}
+        to={`/crm/ledger${s.isToday ? '' : `?date=${s.businessDate}`}`}
         className="flex items-center justify-between rounded-lg border border-line bg-card px-5 py-4 text-[14px] font-bold text-pine shadow-card transition-colors hover:bg-pine-tint"
       >
         查看本营业日全部流水明细

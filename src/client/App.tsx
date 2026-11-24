@@ -70,6 +70,8 @@ const ShiftPrintPage = lazyPage(() => import('./features/print/ShiftPrintPage').
 const ReconPublicPage = lazyPage(() => import('./features/payables/ReconPublicPage').then((m) => m.ReconPublicPage));
 const SupplierPublicPage = lazyPage(() => import('./features/purchasing/SupplierPublicPage').then((m) => m.SupplierPublicPage));
 const ErpShell = lazyPage(() => import('./features/erp/ErpShell').then((m) => m.ErpShell));
+// WCP 的外壳（店主 2026-11-24）：办公不再套 CRM 的侧栏
+const WcpShell = lazyPage(() => import('./features/oa/WcpShell').then((m) => m.WcpShell));
 const ErpHome = lazyPage(() => import('./features/erp/ErpHome').then((m) => m.ErpHome));
 const ErpSettingsPage = lazyPage(() => import('./features/erp/ErpSettingsPage').then((m) => m.ErpSettingsPage));
 const ErpModulesMoved = lazyPage(() => import('./features/erp/ErpSettingsPage').then((m) => m.ErpModulesMoved));
@@ -137,7 +139,7 @@ const queryClient = new QueryClient({
 });
 
 /** 登录守卫：未登录跳转登录页；首次登录强制修改密码。shell：app 为门店（带导航栏），admin 为管理后台，erp 为 ERP 工作区，bare 用于打印页 */
-function AuthGate({ shell = 'app' }: { shell?: 'app' | 'admin' | 'erp' | 'bare' }) {
+function AuthGate({ shell = 'app' }: { shell?: 'app' | 'admin' | 'erp' | 'wcp' | 'bare' }) {
   const session = useSessionQuery();
   const navigate = useNavigate();
   const location = useLocation();
@@ -211,6 +213,12 @@ function AuthGate({ shell = 'app' }: { shell?: 'app' | 'admin' | 'erp' | 'bare' 
         <AdminShell />
       ) : shell === 'erp' ? (
         <ErpShell />
+      ) : shell === 'wcp' ? (
+        <WcpShell>
+          <ErrorBoundary resetKey={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
+        </WcpShell>
       ) : (
         <AppShell>
           <ErrorBoundary resetKey={location.pathname}>
@@ -234,17 +242,17 @@ function Home() {
   // 「点餐平板」账号（8.0.10）：只能打开点餐页，登录后直接进去
   if (homeIsEmenu(can)) return <Navigate to="/emenu" replace />;
   // 他店查询（v0.7.23）：另一家店的同事只能查会员档阶
-  if (can('member.lookup')) return <Navigate to="/lookup" replace />;
+  if (can('member.lookup')) return <Navigate to="/crm/lookup" replace />;
   if (erp.landing) return <Navigate to={erp.landing} replace />;
   // 管家（8.0.12）：后勤岗位加了管家职责的，登录后直接进管家部。排在「点餐平板」「他店查询」「只用 ERP」之后——
   // 原来排在最前面：以后给别的岗位勾上管家部的查看权限，平板、库管、采购登录都会被带到管家部（整改）
-  if (can('concierge.read')) return <Navigate to="/concierge" replace />;
-  if (dining && (can('dining.kitchen') || can('dining.order'))) return <Navigate to="/dining" replace />;
-  if (session?.rooms && (can('room.operate') || can('room.housekeep'))) return <Navigate to="/room-center" replace />;
+  if (can('concierge.read')) return <Navigate to="/crm/concierge" replace />;
+  if (dining && (can('dining.kitchen') || can('dining.order'))) return <Navigate to="/crm/dining" replace />;
+  if (session?.rooms && (can('room.operate') || can('room.housekeep'))) return <Navigate to="/crm/room-center" replace />;
   if (erp.canEnter) return <Navigate to="/erp" replace />;
   // 只有「看对客导览」的账号（门店大屏）：直接进大屏模式
   if (can('guide.view')) return <Navigate to="/guide/screen" replace />;
-  return <Navigate to="/password" replace />;
+  return <Navigate to="/crm/password" replace />;
 }
 
 /**
@@ -259,7 +267,7 @@ function RoomsMoved() {
   if (view === 'map') next.set('view', 'map');
   else if (!next.has('resume') && !next.has('booking')) next.set('tab', view === 'party' ? 'party' : 'hotel');
   const q = next.toString();
-  return <Navigate to={`/room-center${q ? `?${q}` : ''}`} replace />;
+  return <Navigate to={`/crm/room-center${q ? `?${q}` : ''}`} replace />;
 }
 
 /** 门店的旧地址 /dashboard、/dashboard/<页签>：看板 2026-11-10 起在后台「数据看板」，带上页签与查询参数跳过去 */
@@ -267,6 +275,40 @@ function DashboardMoved() {
   const { tab } = useParams();
   const { search } = useLocation();
   return <Navigate to={`${ADMIN_SECTIONS.dashboard.path}${tab ? `/${tab}` : ''}${search}`} replace />;
+}
+
+/** CRM 的页面搬到 /crm 以前的第一段地址（店主 2026-11-24，docs/BOARDS.md 第 8 节） */
+const CRM_MOVED = [
+  'frontdesk',
+  'cashier',
+  'clockroom',
+  'announcer',
+  'tech-board',
+  'dining',
+  'room-center',
+  'rooms',
+  'bookings',
+  'coupon-issue',
+  'parking-log',
+  'concierge',
+  'customer',
+  'platform',
+  'guide',
+  'devices',
+  'ledger',
+  'settlement',
+  'shift',
+  'dashboard',
+  'lookup',
+  'technicians',
+  'password',
+  'dishes',
+] as const;
+
+/** 旧地址跳到 /crm 下面：路径、查询参数、# 都带上 */
+function ToCrm() {
+  const { pathname, search, hash } = useLocation();
+  return <Navigate to={`/crm${pathname}${search}${hash}`} replace />;
 }
 
 const router = createBrowserRouter([
@@ -302,9 +344,22 @@ const router = createBrowserRouter([
   { path: '/studio/:surface', element: <AuthGate shell="bare" />, children: [{ index: true, element: <StudioPage /> }] },
   // 手机界面（小程序、员工食堂）的预览（8.1.2）：按预览码画出当时的草稿，375 宽
   { path: '/studio-preview/:surface/:code', element: <AuthGate shell="bare" />, children: [{ index: true, element: <PhonePreviewPage /> }] },
-  // 系统门户页（店主 2026-11-24）：登录后先到这里选板块（柚子、ERP、办公、管理后台）；自己有顶栏，不套门店的侧栏
-  { path: '/portal', element: <AuthGate shell="bare" />, children: [{ index: true, element: <PortalPage /> }] },
-  { path: '/admin/concierge', element: <Navigate to="/concierge" replace /> },
+  // 系统门户页（店主 2026-11-24）：打开网址先到这里选板块（CRM、ERP、WCP、Design）；自己有顶栏，不套门店的侧栏。
+  // 店主 2026-11-24（docs/BOARDS.md 第 8 节）：门户就是首页 /，CRM 搬到 /crm；原来的 /portal 跳过来
+  { path: '/', element: <AuthGate shell="bare" />, children: [{ index: true, element: <PortalPage /> }] },
+  { path: '/portal', element: <Navigate to="/" replace /> },
+  // CRM 搬到 /crm 以前的地址（书签、发出去的链接、打印出来的二维码）：带着后面的路径、查询参数和 # 跳到 /crm 下面
+  ...CRM_MOVED.map((seg) => ({ path: `/${seg}/*`, element: <ToCrm /> })),
+  // WCP（员工工作台，原「办公」）：自己的外壳与侧栏，不再套 CRM 的侧栏（店主 2026-11-24）
+  {
+    path: '/oa',
+    element: <AuthGate shell="wcp" />,
+    children: [
+      { index: true, element: <OfficePage /> },
+      { path: '*', element: <OfficePage /> },
+    ],
+  },
+  { path: '/admin/concierge', element: <Navigate to="/crm/concierge" replace /> },
   { path: '/admin', element: <AuthGate shell="admin" />, children: adminRoutes },
   // ERP 工作区（v0.7.3）：首页、模块设置、营业数据，以及库存、采购、货款、待办（原来的地址不变，门店主导航里不再有）。
   // 页面属于哪个模块按注册表（@shared/erp）里的页面前缀认，模块关着时 ERP 外壳提示没有开启
@@ -397,6 +452,7 @@ const router = createBrowserRouter([
     ],
   },
   {
+    path: '/crm',
     element: <AuthGate />,
     children: [
       { index: true, element: <Home /> },
@@ -412,7 +468,7 @@ const router = createBrowserRouter([
       // 排位播报（回测整改 P03）：独立页面；老地址跳过来并提示位置换了
       { path: 'announcer', element: <AnnouncerPage /> },
       { path: 'tech-board', element: <TechBoardPage /> },
-      { path: 'clockroom/announcer', element: <Navigate to="/announcer?moved=1" replace /> },
+      { path: 'clockroom/announcer', element: <Navigate to="/crm/announcer?moved=1" replace /> },
       { path: 'dining/:tab?', element: <DiningPage /> },
       { path: 'room-center', element: <RoomCenterPage /> },
       { path: 'rooms', element: <RoomsMoved /> },
@@ -426,7 +482,6 @@ const router = createBrowserRouter([
       { path: 'concierge/:view?', element: <ConciergePage /> },
       { path: 'customer', element: <CustomerPage /> },
       { path: 'platform', element: <PlatformPage /> },
-      { path: 'oa/*', element: <OfficePage /> },
       { path: 'guide', element: <GuidePage /> },
       { path: 'devices', element: <DevicesPage /> },
       { path: 'ledger', element: <LedgerPage /> },
@@ -439,9 +494,10 @@ const router = createBrowserRouter([
       { path: 'technicians/:tab?', element: <TechnicianAdminPage /> },
       { path: 'password', element: <ChangePasswordPage /> },
       { path: 'dishes', element: <DishesPage /> },
-      { path: '*', element: <Navigate to="/" replace /> },
+      { path: '*', element: <Navigate to="/crm" replace /> },
     ],
   },
+  { path: '*', element: <Navigate to="/" replace /> },
 ]);
 
 /** 当前地址（网络提示条在路由外面，按地址决定缩成角落的小提示、打印页不显示） */

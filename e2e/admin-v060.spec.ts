@@ -58,7 +58,7 @@ test.describe('v0.6.0 管理后台', () => {
       await page.request.post('/api/auth/logout');
 
       await login(page, 'xiaozhou');
-      await page.goto('/');
+      await page.goto('/crm');
       const phone = `198${String(Date.now()).slice(-8)}`;
       await page.getByRole('button', { name: '新建会员' }).click();
       const form = page.getByRole('dialog').filter({ hasText: '新建会员' });
@@ -100,7 +100,7 @@ test.describe('v0.6.0 管理后台', () => {
 
       await login(page, 'zhangjl');
       expect((await page.request.get('/api/ledger?date=2020-01-01')).status()).toBe(403);
-      await page.goto('/ledger');
+      await page.goto('/crm/ledger');
       await expect(page.getByRole('heading', { name: '流水' })).toBeVisible();
       await expect(page.getByRole('button', { name: '前一天' })).toHaveCount(0);
       await page.request.post('/api/auth/logout');
@@ -143,7 +143,7 @@ test.describe('v0.6.0 管理后台', () => {
     await expect(page.getByTestId('admin-nav-settings')).toHaveCount(0);
     await expect(page.getByTestId('admin-nav-home')).toHaveCount(0);
     // 门店的旧地址跳到后台；没权限的页签、别的后台分区都回到数据看板
-    await page.goto('/dashboard/overview');
+    await page.goto('/crm/dashboard/overview');
     await expect(page).toHaveURL(/\/admin\/dashboard$/);
     await page.goto('/admin/settings');
     await expect(page).toHaveURL(/\/admin\/dashboard$/);

@@ -29,7 +29,7 @@ test.describe('测试服 E2E 报告的回归', () => {
     const checkin = await page.request.post('/api/frontdesk/checkins', { data: { clientKey: randomUUID(), guests: [{ tagCode: tag.code, zone: 'male' }] } });
     expect(checkin.status()).toBe(201);
 
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await page.getByTestId(`tag-${tag.code}`).click();
     const panel = page.getByTestId('bill-panel');
     await expect(panel.getByTestId('bill-tag')).toHaveText(tag.code);

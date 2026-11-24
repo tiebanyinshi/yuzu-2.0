@@ -350,7 +350,7 @@ export function CheckoutRoomDialog({ room, onClose, onDone }: { room: RoomCard; 
     setFinishError(null);
     try {
       // 还没上钟的不能下钟：在钟房取消派钟（要写原因、作废明细），这里只带过去
-      if (waiting) return navigate('/clockroom');
+      if (waiting) return navigate('/crm/clockroom');
       await api.post(`/api/clockroom/sessions/${sessionId}/finish`);
     } catch (e) {
       setFinishError(errorMessage(e));
@@ -458,7 +458,7 @@ export function CheckoutRoomDialog({ room, onClose, onDone }: { room: RoomCard; 
                   variant="ghost"
                   icon={<Banknote className="size-4" />}
                   disabled={!can('frontdesk.read')}
-                  onClick={() => navigate(`/cashier?v=${g.visitId}`)}
+                  onClick={() => navigate(`/crm/cashier?v=${g.visitId}`)}
                   data-testid={`rc-checkout-cashier-${g.tagCode}`}
                 >
                   去收银台给这张手牌结账

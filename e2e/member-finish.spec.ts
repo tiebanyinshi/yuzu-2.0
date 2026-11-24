@@ -102,7 +102,7 @@ test.describe('会员体系收尾', () => {
     const before = await getJson<{ principalBalance: number; bonusBalance: number }>(page, `/api/members/${m.id}`);
     expect(before.principalBalance).toBe(6_000_00);
 
-    await page.goto(`/?m=${m.id}`);
+    await page.goto(`/crm?m=${m.id}`);
     const card = page.getByTestId('member-account');
     await expect(card).toContainText('没有退过储值');
     await card.getByTestId('member-refund-open').click();
@@ -135,7 +135,7 @@ test.describe('会员体系收尾', () => {
     const newPhone = uniquePhone('192');
 
     // 店员改手机号：写原因，保存时请值班经理授权
-    await page.goto(`/?m=${m.id}`);
+    await page.goto(`/crm?m=${m.id}`);
     await page.getByRole('button', { name: '编辑', exact: true }).click();
     const form = page.getByRole('dialog').filter({ hasText: '编辑会员资料' });
     await form.locator('#m-phone').fill(newPhone);
@@ -153,7 +153,7 @@ test.describe('会员体系收尾', () => {
 
     // 店主停用、再启用
     await login(page, 'linlan');
-    await page.goto(`/?m=${m.id}`);
+    await page.goto(`/crm?m=${m.id}`);
     const card = page.getByTestId('member-account');
     await card.getByTestId('member-status-open').click();
     let dialog = page.getByRole('dialog').filter({ hasText: '停用会员' });
@@ -178,7 +178,7 @@ test.describe('会员体系收尾', () => {
     const source = await memberWith(page, 'E2E 旧档案', 0);
     const target = await memberWith(page, 'E2E 新档案', 0);
 
-    await page.goto(`/?m=${source.id}`);
+    await page.goto(`/crm?m=${source.id}`);
     await page.getByTestId('member-account').getByTestId('member-merge-open').click();
     const dialog = page.getByRole('dialog').filter({ hasText: '合并会员' });
     await dialog.getByTestId('member-merge-search').fill(target.phone);
@@ -203,7 +203,7 @@ test.describe('会员体系收尾', () => {
     await expect(page.getByTestId('member-merge-open')).toHaveCount(0);
     await expect(page.getByTestId('member-refund-open')).toBeDisabled();
 
-    await page.goto(`/?m=${target.id}`);
+    await page.goto(`/crm?m=${target.id}`);
     await expect(page.getByTestId('member-account-history')).toContainText('合并转入');
     await expect(page.getByTestId('member-account-history')).toContainText('E2E 旧档案');
   });
@@ -265,7 +265,7 @@ test.describe('会员体系收尾', () => {
       const d = preview.memberDiscounts[0]!;
       expect(d).toMatchObject({ code: 'QY-041', rate: 80, target: 'companion_ticket', companions: [tagB] });
 
-      await page.goto(`/frontdesk?v=${visitIds[0]}`);
+      await page.goto(`/crm/frontdesk?v=${visitIds[0]}`);
       await page.getByTestId('bill-panel').getByTestId('go-cashier').click();
       await page.getByTestId('bill-panel').getByTestId('action-checkout').click();
       await expect(page.getByTestId('checkout-total')).toBeVisible();

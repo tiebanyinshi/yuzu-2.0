@@ -55,7 +55,7 @@ test('前台会员建立服务档案，原生资料实时同步，历史核对�
   const made = await page.request.post('/api/members', { data: { name, phone: '199' + stamp } });
   expect(made.status(), await made.text()).toBe(201);
   const native = await made.json();
-  await page.goto('/concierge');
+  await page.goto('/crm/concierge');
   await page.getByRole('button', { name: '建立服务档案', exact: true }).first().click();
   let dialog = page.getByRole('dialog', { name: '建立管家服务档案' });
   await dialog.getByRole('textbox', { name: '选择系统会员 *', exact: true }).fill(name);
@@ -115,7 +115,7 @@ test('内网 HTTP（没有 crypto.randomUUID）：新增会员 1 秒内弹窗、
     Object.defineProperty(Crypto.prototype, 'randomUUID', { value: undefined, configurable: true, writable: true });
   });
   await login(page);
-  await page.goto('/concierge');
+  await page.goto('/crm/concierge');
   await expect(page.getByRole('heading', { level: 1, name: /^今日工作台/ })).toBeVisible();
   expect(await page.evaluate(() => typeof (crypto as { randomUUID?: unknown }).randomUUID)).toBe('undefined');
   const enrolledCard = page.locator('.stat-card', { hasText: '服务会员' });
@@ -211,7 +211,7 @@ test('只有管家职责的后勤账号：登录直接进管家部；手机上�
     await p.getByRole('button', { name: '保存新密码' }).click();
     // 换好密码先在门户页（店主 2026-11-24）；首页直接进管家部（不是会员工作台，也不是餐饮、客房）
     await expect(p.getByTestId('portal')).toBeVisible({ timeout: 20_000 });
-    await p.goto('/');
+    await p.goto('/crm');
     await expect(p).toHaveURL(/\/concierge$/, { timeout: 20_000 });
     await expect(p.getByRole('heading', { level: 1, name: /^今日工作台/ })).toBeVisible();
     // 管家在门店主导航里只看得到自己能用的页面：有「管家」，没有「后台」「会员」「流水」
@@ -238,7 +238,7 @@ test('只有管家职责的后勤账号：登录直接进管家部；手机上�
     await expect(p.getByRole('heading', { level: 1, name: /^今日工作台/ })).toBeVisible();
     await expect(p.locator('.quick-actions').getByRole('button')).toHaveCount(3);
     await expect(p.getByRole('button', { name: /拍消费单|拍摄消费单/ })).toHaveCount(0);
-    await p.goto('/concierge/receipts');
+    await p.goto('/crm/concierge/receipts');
     await expect(p.getByRole('heading', { level: 1, name: /消费凭证历史/ })).toBeVisible();
     await expect(p.getByRole('button', { name: /拍消费单|拍摄消费单/ })).toHaveCount(0);
   } finally {
@@ -277,7 +277,7 @@ test('没有会员查看权限的管家：还没建档的会员手机号打码�
     await pw.nth(2).fill('E2e-mask-2027');
     await p.getByRole('button', { name: '保存新密码' }).click();
     await expect(p.getByTestId('portal')).toBeVisible({ timeout: 20_000 });
-    await p.goto('/');
+    await p.goto('/crm');
     await expect(p).toHaveURL(/\/concierge$/, { timeout: 20_000 });
     // 这位管家确实没有会员查看权限：会员工作台的查找接口不让用
     expect((await p.request.get('/api/members?q=' + phone)).status()).toBe(403);
@@ -332,7 +332,7 @@ test('两位低余额会员均无人工核对记录时重点跟进不崩溃', as
     const saved = await page.request.post('/api/concierge/workspace', { data: { action: 'createMember', requestId: randomUUID(), payload: { nativeMemberId: (await native.json()).id } } });
     expect(saved.status(), await saved.text()).toBe(200);
   }
-  await page.goto('/concierge');
+  await page.goto('/crm/concierge');
   await page.getByRole('button', { name: /低余额关注 \d+位/ }).click();
   await expect(page.getByRole('heading', { name: '低余额关注名单', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: new RegExp(`低余额验收甲${stamp}`) })).toBeVisible();
@@ -347,7 +347,7 @@ test('会员情况仅保留四个未到访分类，无到访会员仍可从全�
   const made = await page.request.post('/api/members', { data: { name, phone: '196' + stamp } });
   expect(made.status(), await made.text()).toBe(201);
   const native = await made.json();
-  await page.goto('/concierge');
+  await page.goto('/crm/concierge');
   await page.getByRole('button', { name: '会员情况', exact: true }).click();
   await expect(page.getByRole('heading', { name: '会员情况', exact: true })).toBeVisible();
   await expect(page.locator('.dormancy-card')).toHaveCount(4);
@@ -377,7 +377,7 @@ test('会员概览总人数、近期到访和沉睡人数均可下钻到实际�
   // CI动态种子的前台入场记录是真实来源，充值或预约不冒充到访。
   const recent = recentData.members.find((member) => member.profiles.length === 0);
   expect(recent, '隔离CI动态演示库须有近期实际到访且未建管家档案的会员').toBeTruthy();
-  await page.goto('/concierge');
+  await page.goto('/crm/concierge');
   await moduleNav(page).getByRole('button', { name: '会员档案', exact: true }).click();
   for (const label of ['查看全部会员档阶', '查看近1个月到店会员', '查看新增会员趋势', '查看沉睡会员名单']) await expect(page.getByRole('button', { name: label, exact: true })).toBeEnabled();
 
@@ -428,7 +428,7 @@ test('新增会员趋势按年展示12个月，并按原生创建月份下钻到
   expect(monthly.members.map((member) => member.id)).toContain(native.id);
   expect(monthly.growth.months.find((month) => month.month === createdMonth)!.count).toBeGreaterThan(0);
 
-  await page.goto('/concierge');
+  await page.goto('/crm/concierge');
   await moduleNav(page).getByRole('button', { name: '会员档案', exact: true }).click();
   await page.getByRole('button', { name: '查看新增会员趋势', exact: true }).click();
   const trend = page.getByRole('dialog', { name: '新增会员趋势', exact: true });
@@ -512,7 +512,7 @@ test('本月好评数字打开当月有效名单，记录可进入原图并返�
     expect(old.status(), await old.text()).toBe(200);
     recorded.push((await old.json()).id);
 
-    await page.goto('/concierge');
+    await page.goto('/crm/concierge');
     await moduleNav(page).getByRole('button', { name: '管家好评中心', exact: true }).click();
     const monthButton = page.getByRole('button', { name: '查看本月好评明细', exact: true });
     await expect(monthButton).toBeEnabled();
@@ -560,7 +560,7 @@ test('本月好评数字打开当月有效名单，记录可进入原图并返�
 // 8.0.18 整合：哪一页写进地址（与后台的二级页签同一个规矩）
 test('管家部的页写进地址：刷新留在原页、浏览器后退回上一页、直接打开某一页的地址', async ({ page }) => {
   await login(page);
-  await page.goto('/concierge');
+  await page.goto('/crm/concierge');
   await expect(page.getByRole('heading', { name: /今日工作台/ })).toBeVisible();
   await moduleNav(page).getByRole('button', { name: '会员中心', exact: true }).click();
   await expect(page).toHaveURL(/\/concierge\/tiers$/);
@@ -576,11 +576,11 @@ test('管家部的页写进地址：刷新留在原页、浏览器后退回上�
   await expect(page).toHaveURL(/\/concierge\/tiers$/);
   await expect(page.getByRole('heading', { name: '会员中心', exact: true })).toBeVisible();
   // 直接打开地址；认不得的页回工作台
-  await page.goto('/concierge/situation');
+  await page.goto('/crm/concierge/situation');
   await expect(page.getByRole('heading', { name: '会员情况', exact: true })).toBeVisible({ timeout: 20_000 });
-  await page.goto('/concierge/no-such-page');
+  await page.goto('/crm/concierge/no-such-page');
   await expect(page.getByRole('heading', { name: /今日工作台/ })).toBeVisible({ timeout: 20_000 });
   // 门店主导航里「管家部」在各页都亮着
-  await page.goto('/concierge/members');
+  await page.goto('/crm/concierge/members');
   await expect(page.getByRole('heading', { name: '会员档案', exact: true })).toBeVisible({ timeout: 20_000 });
 });

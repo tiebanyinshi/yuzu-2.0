@@ -259,7 +259,7 @@ export function RoomDialog({
             title={`今天 ${formatTime(room.booking.startsAt)}–${formatTime(room.booking.endsAt)} 已预订：${room.booking.guest} · ${room.booking.guests} 人`}
             data-testid="rc-booking-info"
             action={
-              <Button size="sm" variant="ghost" disabled={!can('booking.manage')} onClick={() => navigate('/bookings')}>
+              <Button size="sm" variant="ghost" disabled={!can('booking.manage')} onClick={() => navigate('/crm/bookings')}>
                 去预约看板
               </Button>
             }

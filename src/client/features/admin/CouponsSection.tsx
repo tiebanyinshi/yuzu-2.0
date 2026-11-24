@@ -87,7 +87,7 @@ const pendingToast = (label: string) => ({
 const COUPON_BASE = '/admin/coupons';
 /** 8.0.19 挪到门店「发券」的两个页签 */
 const MOVED_TABS = ['campaigns', 'batches'] as const;
-const COUPON_ISSUE_PATH = '/coupon-issue';
+const COUPON_ISSUE_PATH = '/crm/coupon-issue';
 const COUPON_TABS = TABS.map((t) => ({ key: t.value, label: <span data-testid={`coupon-tab-${t.value}`}>{t.label}</span> }));
 
 export function CouponsSection() {

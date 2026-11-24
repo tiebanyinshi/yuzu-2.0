@@ -70,7 +70,7 @@ test.describe('v0.7.28 预约', () => {
     const tomorrow = new Date(Date.parse(`${me.today}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
     await clickNav(page, '预约');
     await expect(page.getByTestId('bookings')).toBeVisible();
-    await page.goto(`/bookings?d=${tomorrow}`);
+    await page.goto(`/crm/bookings?d=${tomorrow}`);
     await expect(page.getByTestId('bookings-technician')).toBeVisible();
 
     // ③ 新建：技师 → 项目、E8 → 第一个能约的时段 → 客人姓名、电话

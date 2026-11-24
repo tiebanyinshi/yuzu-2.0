@@ -109,7 +109,7 @@ test.describe('会员权益', () => {
       const created = await page.request.post('/api/members', { data: { name: '权益验收', phone } });
       expect(created.ok()).toBe(true);
       const member = (await created.json()) as { id: number };
-      await page.goto(`/?m=${member.id}`);
+      await page.goto(`/crm?m=${member.id}`);
       const card = page.getByTestId('member-benefits');
       await expect(card).toContainText('L0 青溪');
       await expect(page.getByTestId('member-benefits-upcoming')).toContainText('会员专属通道（L2·初）');
@@ -170,7 +170,7 @@ test.describe('会员权益', () => {
       await expect(pending).toHaveCount(0);
       await expect(row).toContainText('本月已用 2 / 2 次');
 
-      await page.goto('/dashboard/membership');
+      await page.goto('/crm/dashboard/membership');
       const summary = page.getByTestId('membership-benefits');
       await expect(summary).toContainText('本月发券');
       await expect(summary).toContainText('首充礼');

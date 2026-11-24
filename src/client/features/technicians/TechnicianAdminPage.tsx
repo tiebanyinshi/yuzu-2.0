@@ -18,7 +18,7 @@ import { RankingTab } from './RankingTab';
 import { RosterTab } from './RosterTab';
 import { ShiftsTab } from './ShiftsTab';
 
-const TECH_ADMIN_PATH = '/technicians';
+const TECH_ADMIN_PATH = '/crm/technicians';
 
 const headerLink = 'flex h-11 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3.5 text-[13.5px] font-bold text-ink-2 hover:border-ink-3';
 
@@ -29,7 +29,7 @@ export function TechnicianAdminPage() {
   // 技师榜单（docs/TECH_RANKING.md，TR1）：只有「技师上钟轮播」的进来只看榜单
   const rankingOnly = !allowed && can('technician.board');
   const view = useTechAdmin(allowed && session.technicians);
-  if (!allowed && !rankingOnly) return <Navigate to="/" replace />;
+  if (!allowed && !rankingOnly) return <Navigate to="/crm" replace />;
   if (!session.technicians) {
     return (
       <>
@@ -74,7 +74,7 @@ export function TechnicianAdminPage() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {can('technician.dispatch') && (
-              <Link to="/clockroom" className={headerLink} data-testid="tech-admin-clockroom-link">
+              <Link to="/crm/clockroom" className={headerLink} data-testid="tech-admin-clockroom-link">
                 <Hourglass className="size-4" />
                 钟房
               </Link>

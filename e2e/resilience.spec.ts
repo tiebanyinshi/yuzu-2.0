@@ -156,7 +156,7 @@ test('页面代码第一次没下载下来：再导入一次；浏览器记住�
     if (tries === 1) await route.abort('connectionreset');
     else await route.continue();
   });
-  await page.goto('/clockroom');
+  await page.goto('/crm/clockroom');
   await expect(page.getByRole('heading', { name: '钟房' }).first()).toBeVisible({ timeout: 20_000 });
   expect(tries).toBeGreaterThanOrEqual(2);
   await expect(page.getByTestId('page-load-failed')).toHaveCount(0);
@@ -168,13 +168,13 @@ test('页面代码一直下载不下来：只自动重新加载一次，之后�
   let tries = 0;
   let loads = 0; // 钟房这一页的整页加载：打开那一次 + 自动重新加载
   page.on('request', (r) => {
-    if (r.isNavigationRequest() && r.frame() === page.mainFrame() && new URL(r.url()).pathname === '/clockroom') loads += 1;
+    if (r.isNavigationRequest() && r.frame() === page.mainFrame() && new URL(r.url()).pathname === '/crm/clockroom') loads += 1;
   });
   await page.route('**/assets/ClockroomPage-*.js', async (route) => {
     tries += 1;
     await route.abort('connectionreset');
   });
-  await page.goto('/clockroom');
+  await page.goto('/crm/clockroom');
   await expect(page.getByTestId('page-load-failed')).toBeVisible({ timeout: 20_000 });
   const seen = { tries, loads };
   await page.waitForTimeout(2_500);
@@ -193,11 +193,11 @@ test('页面出错：只换掉这一块（导航还能用）、报给服务器�
     route.fulfill({ status: 200, contentType: 'text/javascript', body: "export function ClockroomPage() { throw new Error('e2e：故意让这一页出错'); }" }),
   );
   const reported = page.waitForRequest((r) => r.url().endsWith('/api/client-errors') && r.method() === 'POST');
-  await page.goto('/clockroom');
+  await page.goto('/crm/clockroom');
   await expect(page.getByTestId('page-error')).toBeVisible();
   await expect(page.getByTestId('page-error')).toContainText('这一块出了点问题');
   const body = JSON.parse((await reported).postData() ?? '{}') as { kind: string; message: string; path: string };
-  expect(body).toMatchObject({ kind: 'render', path: '/clockroom' });
+  expect(body).toMatchObject({ kind: 'render', path: '/crm/clockroom' });
   expect(body.message).toContain('故意让这一页出错');
   // 导航还在，换一页就恢复
   await clickNav(page, '会员');

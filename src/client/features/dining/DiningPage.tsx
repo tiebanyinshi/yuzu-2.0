@@ -39,11 +39,11 @@ export function DiningPage() {
   const { tab } = useParams();
   const menu = useDiningMenu();
   // 8.1.15：退菜记录并进台账，旧地址（书签、交接说明里的链接）跳到台账的「退菜」
-  if (tab === 'voids') return <Navigate to="/dining/ledger?type=voided" replace />;
+  if (tab === 'voids') return <Navigate to="/crm/dining/ledger?type=voided" replace />;
   const tablesOff = menu.data ? !menu.data.rules.tablesEnabled : false;
   const tabs = TABS.filter((t) => t.perms.some((p) => can(p))).map((t) => (t.key === 'tables' && tablesOff ? { ...t, ...TABLES_OFF } : t));
   const current = tabs.find((t) => t.key === tab) ?? (tab ? undefined : tabs[0]);
-  if (!current) return <Navigate to={tabs.length ? '/dining' : '/'} replace />;
+  if (!current) return <Navigate to={tabs.length ? '/crm/dining' : '/'} replace />;
 
   if (!session.dining) {
     return (
@@ -66,7 +66,7 @@ export function DiningPage() {
           {tabs.map((t) => (
             <NavLink
               key={t.key}
-              to={`/dining/${t.key}`}
+              to={`/crm/dining/${t.key}`}
               role="tab"
               aria-selected={t.key === current.key}
               className={cn('relative flex h-11 items-center px-3.5 text-[14px] font-semibold whitespace-nowrap', t.key === current.key ? 'text-ink' : 'text-ink-3 hover:text-ink')}

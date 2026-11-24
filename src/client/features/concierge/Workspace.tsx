@@ -123,7 +123,7 @@ export default function Workspace({ initialData }: { initialData: WorkspaceData 
   const wantedView = SLUG_VIEW.get(viewSlug) ?? 'dashboard';
   // 经理监管只有经理看得到；别人打开那个地址回到工作台
   const view: View = wantedView === 'manager' && data.user.role !== 'manager' ? 'dashboard' : wantedView;
-  const setView = (v: View) => go(v === 'dashboard' ? '/concierge' : `/concierge/${VIEW_SLUG[v]}`);
+  const setView = (v: View) => go(v === 'dashboard' ? '/crm/concierge' : `/crm/concierge/${VIEW_SLUG[v]}`);
   const [insightBucket, setInsightBucket] = useState<'' | 'dormant'>('');
   const [search, setSearch] = useState('');
   const [group, setGroup] = useState('all');
@@ -1932,7 +1932,7 @@ export default function Workspace({ initialData }: { initialData: WorkspaceData 
                   <>
                     <h3 className="detail-section-title">基本信息</h3>
                     {member.nativeMemberId && canNative('member.read') && (
-                      <a className="native-link" href={`/?m=${member.nativeMember?.id || member.nativeMemberId}`} target="_blank" rel="noreferrer">
+                      <a className="native-link" href={`/crm?m=${member.nativeMember?.id || member.nativeMemberId}`} target="_blank" rel="noreferrer">
                         查看关联企业会员 #{member.nativeMemberId}
                       </a>
                     )}

@@ -88,7 +88,7 @@ test.describe('8.1.15 菜品管理', () => {
       await make({ name: TEA, slot: 'water:手作饮料', stationId: bar, prices: { standard: 1500 } });
 
       // ② 餐饮 → 菜品管理（有菜品权限的才有这个页签）
-      await page.goto('/dining');
+      await page.goto('/crm/dining');
       await page.getByTestId('dining-tab-dishes').click();
       await expect(page.getByTestId('dishes')).toBeVisible();
       await expect(page.getByTestId('dishes-summary')).toContainText('你能维护餐厅、水吧、果吧的菜');
@@ -297,7 +297,7 @@ test.describe('8.1.15 菜品管理', () => {
 
       // ① 值班经理：餐饮里有「菜品管理」；看得到全部，水吧的能改、能上下架，餐厅的按钮是灰的；不能新增、不能改价
       await relogin(page, 'zhangjl');
-      await page.goto('/dining');
+      await page.goto('/crm/dining');
       await page.getByTestId('dining-tab-dishes').click();
       await expect(page.getByTestId('dishes-summary')).toContainText('你能维护水吧的菜；餐厅、果吧的看得到、改不了');
       await expect(page.getByTestId('dishes-summary')).toContainText('没有「定价与改价」的权限');
@@ -320,20 +320,20 @@ test.describe('8.1.15 菜品管理', () => {
       expect(((await denied.json()) as { error: { message: string } }).error.message).toContain('没有餐厅的菜品维护权限');
       await expectFits(page);
       // 进得了餐饮的人打开单独的入口，直接到餐饮里的那个页签（不留两个一样的页面）
-      await page.goto('/dishes');
+      await page.goto('/crm/dishes');
       await expect(page).toHaveURL(/\/dining\/dishes$/);
       await expect(page.getByTestId('dishes')).toBeVisible();
 
       // ② 后勤（只剩菜品权限）：主导航有「菜品」，打开就是菜品表；餐饮进不去
       await relogin(page, 'lixiao');
-      await page.goto('/dishes');
+      await page.goto('/crm/dishes');
       await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '菜品' })).toBeVisible();
       await expect(navItem(page, '餐饮')).toHaveCount(0);
       await expect(page.getByRole('heading', { name: '菜品管理' })).toBeVisible();
       await expect(page.getByTestId('dishes-summary')).toContainText('你能维护果吧的菜；餐厅、水吧的看得到、改不了');
       await page.getByTestId('dishes-search').fill(RUN);
       await expect(row(page, HOT_DISH)).toHaveAttribute('data-editable', 'false');
-      await page.goto('/dining/dishes');
+      await page.goto('/crm/dining/dishes');
       await expect(page).not.toHaveURL(/\/dining/);
     } finally {
       await relogin(page, 'linlan');
@@ -373,7 +373,7 @@ test.describe('8.1.15 菜品管理', () => {
         prices: { standard: 1800 },
         active: false,
       });
-      await page.goto('/dining/dishes');
+      await page.goto('/crm/dining/dishes');
       await page.getByTestId('dishes-search').fill(DISH);
       await expect(row(page, DISH)).toHaveAttribute('data-active', 'false');
 

@@ -101,7 +101,7 @@ test.describe('收银完善（v0.7.20）', () => {
       const before = await shiftCash();
 
       // 结账记录 → 打开这张单 → 部分退款
-      await page.goto('/cashier');
+      await page.goto('/crm/cashier');
       await page.getByTestId('open-checkouts').click();
       const dialog = page.getByRole('dialog', { name: '结账记录' });
       await dialog.getByTestId('checkout-records').getByRole('button').filter({ hasText: paid.checkoutNo }).click();
@@ -213,7 +213,7 @@ test.describe('收银完善（v0.7.20）', () => {
       expect(preview.totalAmount, '门票够 100 元门槛').toBeGreaterThanOrEqual(10000);
       expect(preview.storeCoupons.find((c) => c.code === code)).toMatchObject({ usable: true, amount: 2000 });
 
-      await page.goto(`/frontdesk?v=${visitId}`);
+      await page.goto(`/crm/frontdesk?v=${visitId}`);
       const bill = page.getByTestId('bill-panel');
       await expect(bill.getByTestId('bill-tag')).toHaveText(tag);
       await bill.getByTestId('go-cashier').click();

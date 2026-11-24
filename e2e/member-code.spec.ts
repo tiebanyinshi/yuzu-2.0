@@ -60,7 +60,7 @@ test.describe('会员码', () => {
 
   test('会员工作台查找框扫到会员码：没配会员码时写明原因（不当手机号搜）', async ({ page }) => {
     await login(page, 'xiaozhou');
-    await page.goto('/');
+    await page.goto('/crm');
     const search = page.getByRole('textbox', { name: '搜索会员' });
     await search.fill('8000001123456789');
     await expect(page.getByTestId('member-search-status')).toContainText('没有配会员码');
@@ -79,7 +79,7 @@ test.describe('会员码', () => {
     const expiredCalls = await mockCode(page, expiredFirst, null);
     const selected = (id: number) => new RegExp(`[?&]m=${id}(&|$)`);
     try {
-      await page.goto('/');
+      await page.goto('/crm');
       const search = page.getByRole('textbox', { name: '搜索会员' });
       const status = page.getByTestId('member-search-status');
 
@@ -144,7 +144,7 @@ test.describe('会员码', () => {
     const calls = await mockCode(page, code, qiao);
     const expiredCalls = await mockCode(page, expiredFirst, null);
     try {
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       await expect(page.getByTestId('tag-board')).toBeVisible();
       await page.keyboard.press('F2');
       const dialog = page.getByRole('dialog', { name: '接待发牌' });

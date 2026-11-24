@@ -86,10 +86,10 @@ test.describe('视口冒烟', () => {
 
   test('看板：经营总览与会员总览（v0.6.0）', async ({ page }) => {
     await login(page, 'linlan');
-    await page.goto('/dashboard/overview');
+    await page.goto('/crm/dashboard/overview');
     await expect(page.getByTestId('overview-net')).toBeVisible();
     await expectFits(page);
-    await page.goto('/dashboard/members');
+    await page.goto('/crm/dashboard/members');
     await expect(page.getByTestId('members-total')).toBeVisible();
     await expectFits(page);
   });
@@ -130,7 +130,7 @@ test.describe('视口冒烟', () => {
     const tech = (await (await page.request.get('/api/admin/technicians')).json()) as { rules: { enabled: boolean } };
     if (!tech.rules.enabled) {
       // 功能关闭：看板没有「技师业绩」，直接打开回到看板
-      await page.goto('/dashboard/technicians');
+      await page.goto('/crm/dashboard/technicians');
       await expect(page).toHaveURL(/\/dashboard$/);
       await expect(page.getByTestId('dashboard-tab-technicians')).toHaveCount(0);
     }
@@ -149,7 +149,7 @@ test.describe('视口冒烟', () => {
     // 只临时打开技师功能看「技师业绩」，结束时恢复原样
     if (!tech.rules.enabled) expect((await page.request.put('/api/admin/technicians/rules', { data: { enabled: true } })).ok()).toBe(true);
     try {
-      await page.goto('/dashboard/technicians');
+      await page.goto('/crm/dashboard/technicians');
       await expect(page.getByTestId('technicians-clocks')).toBeVisible();
       await expectFits(page);
     } finally {
@@ -163,7 +163,7 @@ test.describe('视口冒烟', () => {
     const before = (await (await page.request.get('/api/admin/technicians')).json()) as { rules: { enabled: boolean } };
     if (!before.rules.enabled) expect((await page.request.put('/api/admin/technicians/rules', { data: { enabled: true } })).ok()).toBe(true);
     try {
-      await page.goto('/clockroom');
+      await page.goto('/crm/clockroom');
       await expect(page.getByTestId('clock-queue')).toBeVisible();
       await expectFits(page);
       if (!isMobile) {
@@ -193,7 +193,7 @@ test.describe('视口冒烟', () => {
     if (!tech.rules.enabled) expect((await page.request.put('/api/admin/technicians/rules', { data: { enabled: true } })).ok()).toBe(true);
     if (!dining.rules.enabled) expect((await page.request.put('/api/admin/dining/rules', { data: { enabled: true } })).ok()).toBe(true);
     try {
-      await page.goto('/dining');
+      await page.goto('/crm/dining');
       await expect(page.getByTestId('dining-order')).toBeVisible();
       await expect(page.getByTestId('dining-cart')).toBeVisible();
       await expectFits(page);
@@ -235,7 +235,7 @@ test.describe('视口冒烟', () => {
     if (!dining.rules.enabled) expect((await page.request.put('/api/admin/dining/rules', { data: { enabled: true } })).ok()).toBe(true);
     if (!rooms.rules.enabled) expect((await page.request.put('/api/admin/rooms/rules', { data: { ...rooms.rules, enabled: true } })).ok()).toBe(true);
     try {
-      await page.goto('/rooms');
+      await page.goto('/crm/rooms');
       await expect(page.getByTestId('room-center')).toBeVisible();
       await expectFits(page);
       if (!isMobile) {
@@ -250,7 +250,7 @@ test.describe('视口冒烟', () => {
       await page.getByTestId('subnav-rooms').click();
       await expect(page.getByTestId('rooms-rooms')).toBeVisible();
       await expectFits(page);
-      await page.goto('/dashboard/rooms');
+      await page.goto('/crm/dashboard/rooms');
       await expect(page.getByTestId('dashboard-rooms')).toBeVisible();
       await expect(page.getByTestId('rooms-now')).toBeVisible();
       await expectFits(page);
@@ -263,7 +263,7 @@ test.describe('视口冒烟', () => {
 
   test('流水：手机上不横向滚动（测试服 E2E 报告）', async ({ page }) => {
     await login(page, 'linlan');
-    await page.goto('/ledger');
+    await page.goto('/crm/ledger');
     await expect(page.getByRole('heading', { name: '流水' })).toBeVisible();
     await expectFits(page);
   });
@@ -348,7 +348,7 @@ test.describe('视口冒烟', () => {
   test('日结：营业口径、余额核对与异常', async ({ page }) => {
     await login(page, 'linlan');
     const day = await businessDay(page);
-    await page.goto(day.today ? '/settlement' : `/settlement/${day.date}`);
+    await page.goto(day.today ? '/crm/settlement' : `/crm/settlement/${day.date}`);
     await expect(page.getByRole('heading', { name: '日结' })).toBeVisible();
     await expect(page.getByTestId('settlement-business')).toBeVisible();
     await expectFits(page);
@@ -359,7 +359,7 @@ test.describe('视口冒烟', () => {
     await login(page, 'linlan');
     await expectFits(page);
 
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
     await page.getByTestId('tag-A8075').click();
     const panel = page.getByTestId('bill-panel');
@@ -383,7 +383,7 @@ test.describe('视口冒烟', () => {
     await inScreen(['bill-total', 'action-preview', 'action-checkout']);
     await expectFits(page);
 
-    await page.goto('/shift');
+    await page.goto('/crm/shift');
     // 精确匹配页面标题：本人有未交班的班次时还有「交班表 · BC…」小标题
     await expect(page.getByRole('heading', { name: '交班', exact: true })).toBeVisible();
     await expectFits(page);
@@ -404,7 +404,7 @@ test.describe('不认识 dvh 的老浏览器', () => {
     });
     await login(page, 'linlan');
     for (const [path, name] of [
-      ['/', '主导航'],
+      ['/crm', '主导航'],
       ['/admin', '后台导航'],
       ['/erp', 'ERP 导航'],
     ] as const) {

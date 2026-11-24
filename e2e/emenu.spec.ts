@@ -362,7 +362,7 @@ test.describe('8.0.10 点餐系统 · 平板电子菜单', () => {
       await expect(page.getByTestId('staff-pin-badge-xiaozhou')).toBeVisible();
       // 本人在「修改密码」页重新生成：旧的马上失效
       await loginStaff(clerkPage, 'xiaozhou');
-      await clerkPage.goto('/password');
+      await clerkPage.goto('/crm/password');
       const card = clerkPage.getByTestId('order-pin-card');
       await expect(card.getByTestId('order-pin-status')).toContainText('已有点单密码');
       await card.getByTestId('order-pin-make').click();
@@ -396,7 +396,7 @@ test.describe('8.0.10 点餐系统 · 平板电子菜单', () => {
       await noScroll(pad);
       await pad.goto('/admin');
       await expect(pad).toHaveURL(/\/emenu$/);
-      await pad.goto('/frontdesk');
+      await pad.goto('/crm/frontdesk');
       await expect(pad).toHaveURL(/\/emenu$/);
       expect((await pad.request.get('/api/members?q=1')).status()).toBe(403);
       expect((await pad.request.get('/api/frontdesk/board')).status()).toBe(403);
@@ -544,7 +544,7 @@ test.describe('8.0.10 点餐系统 · 平板电子菜单', () => {
         expect(k.tagCode).toBe(tag);
       }
       // 前台账单页也看得到
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       await page.getByTestId(`tag-${tag}`).click();
       await expect(page.getByTestId('bill-panel')).toContainText(ITEMS[1].name);
       await expect(page.getByTestId('bill-panel')).toContainText(ITEMS[2].name);

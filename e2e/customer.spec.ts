@@ -13,7 +13,7 @@ async function login(page: Page) {
   await expect(page.getByRole('navigation', { name: '主导航', exact: true })).toBeVisible({ timeout: 30_000 });
 }
 async function openCustomer(page: Page) {
-  await page.goto('/customer');
+  await page.goto('/crm/customer');
   await expect(page.getByTestId('customer-workbench')).toBeVisible();
   await expect(page.getByRole('button', { name: '查看今日已结消费详情', exact: true })).toBeVisible();
 }
@@ -119,7 +119,7 @@ test('经理可发现维护绑定审核队列并打开原始会员', async ({ pa
 });
 test('当日经营子页地址在刷新、收藏直达和后退时保留消费流程', async ({ page }) => {
   await login(page);
-  await page.goto('/customer?tab=daily');
+  await page.goto('/crm/customer?tab=daily');
   const dailyTabs = page.getByRole('navigation', { name: '当日经营明细类别', exact: true });
   await expect(dailyTabs.getByRole('link', { name: '充值原单与归属', exact: true })).toHaveAttribute('aria-current', 'page');
   await dailyTabs.getByRole('link', { name: '整单消费与独立扣卡', exact: true }).click();
@@ -141,7 +141,7 @@ test('当日经营子页地址在刷新、收藏直达和后退时保留消费�
 });
 test('会员绑定子页地址在刷新、收藏直达和后退时保留审核队列', async ({ page }) => {
   await login(page);
-  await page.goto('/customer?tab=members');
+  await page.goto('/crm/customer?tab=members');
   const memberTabs = page.getByRole('navigation', { name: '会员绑定工作区', exact: true });
   await expect(memberTabs.getByRole('link', { name: '会员名单', exact: true })).toHaveAttribute('aria-current', 'page');
   await memberTabs.getByRole('link', { name: '绑定审核', exact: true }).click();
@@ -181,7 +181,7 @@ test('个人权限深链不挂载绑定审核且地址参数不能放宽充值�
   page.on('request', (request) => {
     if (new URL(request.url()).pathname === '/api/customer/bindings') bindingRequests += 1;
   });
-  await page.goto('/customer?tab=members&member=bindings');
+  await page.goto('/crm/customer?tab=members&member=bindings');
   await expect(page.getByText('会员档案与维护关系', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: '绑定审核', exact: true })).toHaveCount(0);
   await expect(page.getByText('会员维护绑定审核', { exact: true })).toHaveCount(0);
@@ -189,7 +189,7 @@ test('个人权限深链不挂载绑定审核且地址参数不能放宽充值�
   await expect(page.getByText('会员档案与维护关系', { exact: true })).toBeVisible();
   expect(bindingRequests).toBe(0);
   const requested = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/customer/recharges');
-  await page.goto('/customer?tab=daily&daily=recharge&managerId=999999&scope=all');
+  await page.goto('/crm/customer?tab=daily&daily=recharge&managerId=999999&scope=all');
   const query = new URL((await requested).url()).searchParams;
   expect(query.has('managerId')).toBe(false);
   expect(query.has('scope')).toBe(false);
@@ -233,7 +233,7 @@ test('原生资金及历史项权限收回时保留客户服务并明确说明�
     visit.lines = [];
     await route.fulfill({ response, json: visit });
   });
-  await page.goto('/customer?tab=daily&daily=settlement');
+  await page.goto('/crm/customer?tab=daily&daily=settlement');
   await expect(page.getByText('消费原单按账号权限查看', { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: '搜索结账单 / 扣卡单 / 会员', exact: true })).toHaveCount(0);
   await page.getByTestId('customer-tab-overview').click();
@@ -284,7 +284,7 @@ test('会员资金时间轴原单入口同时遵守金融权限与服务端可�
     member.timelineHasMore = false;
     await route.fulfill({ response, json: member });
   });
-  await page.goto('/customer?tab=members');
+  await page.goto('/crm/customer?tab=members');
   await page.getByRole('button', { name: '查看档案', exact: true }).first().click();
   const member = page.getByRole('dialog', { name: '会员档案与维护时间轴', exact: true });
   await expect(member.getByText(/UI-PERMISSION-CHECK/)).toBeVisible();
@@ -306,7 +306,7 @@ test('无客户部权限时客户端隐藏入口且不读取客户部数据', as
   page.on('request', (request) => {
     if (new URL(request.url()).pathname.startsWith('/api/customer/')) customerRequests += 1;
   });
-  await page.goto('/customer');
+  await page.goto('/crm/customer');
   await expect(page).not.toHaveURL(/\/customer/);
   await expect(page.getByTestId('customer-workbench')).toHaveCount(0);
   await expect(navItem(page, '客户部')).toHaveCount(0);

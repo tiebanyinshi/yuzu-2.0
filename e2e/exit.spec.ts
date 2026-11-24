@@ -80,11 +80,11 @@ test.describe('8.1.15 平板电子菜单与工作台的退出', () => {
     await page.mouse.up();
     await expect(home).not.toHaveAttribute('data-holding', '');
     await expect(page).toHaveURL(/\/emenu/);
-    // 按住走满：回门店系统的首页（店主是会员工作台）
+    // 按住走满：回系统的首页（店主 2026-11-24 起首页是门户，docs/BOARDS.md 第 8 节）
     await page.mouse.down();
     await page.waitForURL((u) => u.pathname === '/', { timeout: 15_000 });
     await page.mouse.up();
-    await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('portal')).toBeVisible({ timeout: 30_000 });
     await setRequirePin(page, pinBefore);
   });
 

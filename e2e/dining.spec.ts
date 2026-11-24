@@ -151,7 +151,7 @@ test.describe('S5 餐饮', () => {
         .reverse()[0]!;
       await send(page, 'post', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: 'male', guestLabel: 'E2E 点单客人' }] });
       const visitId = (await getJson<{ tags: BoardTag[] }>(page, '/api/frontdesk/board')).tags.find((t) => t.code === tag)!.visit!.id;
-      await page.goto('/');
+      await page.goto('/crm');
       await clickNav(page, '餐饮');
 
       // ③ 沽清页：柠檬茶今天限量 2 份（上一轮留下的先取消）
@@ -262,7 +262,7 @@ test.describe('S5 餐饮', () => {
       await page.getByTestId('dining-submit').click();
       await expect(pending.getByTestId(`dining-pending-${TEA.name}`)).toContainText('待做');
       await noHorizontalScroll(page);
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       await page.getByTestId(`tag-${tag}`).click();
       const panel = page.getByTestId('bill-panel');
       await expect(panel).toContainText('餐饮');
@@ -315,7 +315,7 @@ test.describe('S5 餐饮', () => {
       await page.route('**/api/frontdesk/ops/*', (route) => route.abort('connectionreset'));
       // 8.1.15 起点单页下单的查回、作废走餐饮的地址（康美部没有前台权限，Codex 审查 f6327a4）：一样先连不上
       await page.route('**/api/dining/ops/*', (route) => route.abort('connectionreset'));
-      await page.goto('/dining/order');
+      await page.goto('/crm/dining/order');
       await page.getByTestId('dining-tag').fill(tag);
       await page.getByTestId('dining-find').click();
       await expect(page.getByTestId('dining-guest')).toBeVisible();
@@ -374,7 +374,7 @@ test.describe('S5 餐饮', () => {
 
       // 菜单第一次取不回来：写明加载失败、有重试，不说「还没有进厨房的菜」；放开后点重试正常
       await page.route('**/api/dining/menu', (route) => route.abort('connectionreset'));
-      await page.goto('/dining/order');
+      await page.goto('/crm/dining/order');
       const failed = page.getByTestId('dining-menu-error');
       await expect(failed).toBeVisible({ timeout: 30_000 });
       await expect(failed).toContainText('菜单加载失败');

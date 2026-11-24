@@ -4,7 +4,7 @@
 // 纯入口层：四个板块内部不改；同一套登录与权限，进去以后照旧按权限显示菜单。没有权限的板块显示但置灰、点不进去（不白屏）。
 
 import type { ReactNode } from 'react';
-import { Link, Navigate } from 'react-router';
+import { Link, Navigate, useLocation } from 'react-router';
 import { ArrowRight, Building2, CalendarClock, Lock, Palette, Waves, type LucideIcon } from 'lucide-react';
 import { visibleBoardSections } from '@shared/admin';
 import { versionText } from '@shared/instance';
@@ -50,7 +50,7 @@ export function usePortalBoards(): Board[] {
   // CRM（门店主导航，CRM 设置除外）：落到第一个能用的工作页面（会员工作台优先）；只有对客导览的（门店大屏）进导览
   const nav = useStoreNavItems().filter((n) => n.to !== '/admin');
   const work = nav.filter((n) => !n.guestFacing);
-  const storeTo = work.find((n) => n.to === '/')?.to ?? work[0]?.to ?? nav[0]?.to ?? null;
+  const storeTo = work.find((n) => n.to === '/crm')?.to ?? work[0]?.to ?? nav[0]?.to ?? null;
   return [
     { key: 'crm', name: 'CRM', hint: '客户与前台营业：房态、会员、技师、收银', icon: Waves, to: storeTo, tone: TONES.crm },
     { key: 'erp', name: 'ERP', hint: '财务与经营管理：库存、采购、货款、费用', icon: Building2, to: erp.canEnter ? '/erp' : null, tone: TONES.erp },
@@ -64,8 +64,11 @@ export function PortalPage() {
   const session = useSession();
   const can = useCan();
   const boards = usePortalBoards();
+  const { search, hash } = useLocation();
   // 点餐平板账号（8.0.10）只开点餐页：不经过门户
   if (homeIsEmenu(can)) return <Navigate to="/emenu" replace />;
+  // CRM 搬到 /crm 以前发出去的首页链接（/?m=会员、/?resume=……）：带着参数进 CRM 首页（店主 2026-11-24，docs/BOARDS.md 第 8 节）
+  if (search || hash) return <Navigate to={`/crm${search}${hash}`} replace />;
   const roles = [ROLE_LABELS[session.staff.role], ...session.staff.duties.map((d) => DUTY_LABELS[d].title)].join(' · ');
   return (
     <div className="flex min-h-dvh flex-col bg-paper" data-testid="portal">
@@ -129,7 +132,7 @@ function PortalTopBar() {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-paper/90 backdrop-blur" data-testid="portal-topbar">
       <div className="mx-auto flex h-16 max-w-6xl items-center gap-2 px-4 sm:gap-3 sm:px-6">
-        <Link to="/portal" className="flex min-w-0 flex-1 items-center gap-2.5" aria-label="柚子 yuzu 门户">
+        <Link to="/" className="flex min-w-0 flex-1 items-center gap-2.5" aria-label="柚子 yuzu 门户">
           <LogoMark className="size-9 shrink-0 rounded-[12px]" />
           <span className="min-w-0">
             <span className="block text-[16px] leading-tight font-bold text-ink">柚子 yuzu</span>

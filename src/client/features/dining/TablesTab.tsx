@@ -639,7 +639,7 @@ function SessionDialog({ id, board, onClose, onCheckout }: { id: number; board: 
               合计 <Money cents={d.amount} className="text-[18px] font-bold text-ink" />
             </span>
             {can('dining.order') && tablesOn && (
-              <Button variant="secondary" size="lg" icon={<Plus className="size-4" />} onClick={() => navigate(`/dining/order?table=${d.id}`)} data-testid="table-order">
+              <Button variant="secondary" size="lg" icon={<Plus className="size-4" />} onClick={() => navigate(`/crm/dining/order?table=${d.id}`)} data-testid="table-order">
                 点单
               </Button>
             )}
