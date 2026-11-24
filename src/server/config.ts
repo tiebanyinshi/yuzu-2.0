@@ -51,6 +51,11 @@ export interface AppConfig {
   payrollFileKey: string | null;
   /** 打卡点「搜索地址选点」与地图（考勤排班优化第 1 条）：用哪家的地址搜索与地图底图 */
   geo: GeoConfig;
+  /**
+   * 采购商城后端的服务密钥（MALL_API_KEY，8.1.31，docs/MALL_V8131.md 第 2 节）：商城后端调 /api/erp/mall/* 时放在 x-mall-key 里。
+   * 至少 32 个字符；没配为空——商城接口一律回 503 MALL_NOT_CONFIGURED。只写在 .env，不进 Git
+   */
+  mallApiKey: string | null;
 }
 
 /**
@@ -224,6 +229,14 @@ export function loadGeoConfig(env: NodeJS.ProcessEnv, appEnv: AppEnv): GeoConfig
   return { provider, amapKey };
 }
 
+/** 采购商城的服务密钥：没配为空；配了但不到 32 个字符不启动（太短的密钥等于没有） */
+export function loadMallApiKey(env: NodeJS.ProcessEnv): string | null {
+  const key = env.MALL_API_KEY?.trim() ?? '';
+  if (!key) return null;
+  if (key.length < 32) throw new Error('MALL_API_KEY 至少 32 个字符（可以用 openssl rand -hex 32 生成）；不对接采购商城就不要设');
+  return key;
+}
+
 export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   if (!overrides.databaseUrl) readEnvFile();
   const env = overrides.env ?? ((process.env.APP_ENV ?? 'development') as AppEnv);
@@ -263,6 +276,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     brandFontPath: resolvePath(process.env.BRAND_FONT_PATH?.trim() || 'brand-fonts'),
     payrollFileKey: loadPayrollFileKey(process.env),
     geo: overrides.geo ?? loadGeoConfig(process.env, env),
+    mallApiKey: loadMallApiKey(process.env),
     ...overrides,
   };
 }

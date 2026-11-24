@@ -54,7 +54,7 @@ const ApplyInput = FileFields.extend({ clientKey: z.uuid('缺少有效的操作�
   path: ['csv'],
 });
 
-export const PRIORITY_NAMES: Record<string, RequestPriority> = { '': 'normal', 普通: 'normal', 一般: 'normal', 紧急: 'urgent', 急: 'urgent', 加急: 'urgent' };
+export const PRIORITY_NAMES: Record<string, RequestPriority> = { '': 'normal', 普通: 'normal', 一般: 'normal', 紧急: 'urgent', 急: 'urgent', 加急: 'urgent', 较急: 'high' };
 /** 采购途径：固定三类（CG08），认常见写法 */
 function channelOf(text: string): RequestImportRow['channel'] | undefined {
   const t = text.replace(/\s|（|）|\(|\)|\//g, '');

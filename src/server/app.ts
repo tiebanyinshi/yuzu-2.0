@@ -38,6 +38,7 @@ import { registerErpOpsRoutes } from './modules/erp-ops';
 import { registerPurchaseLedgerRoutes } from './modules/purchase-ledger';
 import { registerLegacyRoutes } from './modules/legacy';
 import { registerRequestRoutes } from './modules/requests';
+import { authenticateMall, isMallPath, registerMallRoutes } from './modules/mall';
 import { registerRequestStockRoutes } from './modules/request-stock';
 import { registerRequestImportRoutes } from './modules/request-import';
 import { registerRequestDraftRoutes } from './modules/request-drafts';
@@ -199,6 +200,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
     if (!isApiRequest(req)) return;
     // 页面问「连不连得上」：不读会话、不查库
     if (decodedPath(req.url) === '/api/ping') return;
+    // 采购商城的服务端调用（8.1.31，docs/MALL_V8131.md 第 2 节）：只认服务密钥 + 员工编号，不读浏览器 Cookie、不做浏览器的来源检查
+    if (isMallPath(decodedPath(req.url))) return authenticateMall(req, sql, config);
     // 修改类请求必须来自本站页面（防止跨站请求伪造）
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       const origin = req.headers.origin;
@@ -416,6 +419,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   // 批量付款（8.0.21）
   registerPaymentBatchRoutes(app, deps);
   registerRequestRoutes(app, deps);
+  // 采购商城对接（8.1.31）
+  registerMallRoutes(app, deps);
   // 8.1.10 核库转领用：库管核库、部门答复替代
   registerRequestStockRoutes(app, deps);
   registerRequestImportRoutes(app, deps);

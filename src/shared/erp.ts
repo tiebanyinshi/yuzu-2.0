@@ -96,7 +96,7 @@ export const ERP_MODULES: Record<ErpModuleKey, ErpModuleDef> = {
     description: '部门提采购需求（链接、详情、图片），采购审核后一键转采购单，下单 / 到货 / 退货自动回写（v0.7.8，飞书需求 RQ-005）',
     path: '/erp/requests',
     pages: ['/erp/requests'],
-    apis: ['/api/erp/requests'],
+    apis: ['/api/erp/requests', '/api/erp/mall'],
     perms: ['request.create', 'request.review', 'request.stock'],
     defaultEnabled: true,
     requires: ['inventory', 'purchasing'],

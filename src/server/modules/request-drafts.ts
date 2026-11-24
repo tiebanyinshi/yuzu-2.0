@@ -15,6 +15,7 @@ import {
   DRAFT_MAX_PER_STAFF,
   imageUrl,
   MAX_LINE_IMAGES,
+  REQUEST_PRIORITIES,
   type RequestDraft,
   type RequestDraftBody,
   type RequestDraftsList,
@@ -50,7 +51,7 @@ const DraftBody = z.object({
     .string()
     .regex(/^(\d{4}-\d{2}-\d{2})?$/, '日期格式应为 YYYY-MM-DD')
     .default(''),
-  priority: z.enum(['urgent', 'normal']).default('normal'),
+  priority: z.enum(REQUEST_PRIORITIES).default('normal'),
   note: text(DRAFT_LIMITS.note),
   lines: z.array(DraftLine).min(1, '至少一行').max(50, '一张需求单最多 50 行'),
 });

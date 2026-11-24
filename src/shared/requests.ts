@@ -76,9 +76,14 @@ export interface SubstituteAnswerResult {
   message: string | null;
 }
 
-/** 采购优先级（8.0.1 采购组整改 02，CG02）：紧急标红点、普通标绿点 */
-export type RequestPriority = 'urgent' | 'normal';
-export const PRIORITY_LABELS: Record<RequestPriority, string> = { urgent: '紧急', normal: '普通' };
+/**
+ * 采购优先级（8.0.1 采购组整改 02，CG02）：紧急标红点、普通标绿点。
+ * 8.1.31（采购商城对接，店主 2026-11-24 定三档）：加「较急」黄点——商城的红 / 黄 / 绿对应紧急 / 较急 / 普通；
+ * 只有「紧急」不核库（较急照常核库），待审核按紧急 → 较急 → 普通排
+ */
+export type RequestPriority = 'urgent' | 'high' | 'normal';
+export const REQUEST_PRIORITIES = ['urgent', 'high', 'normal'] as const satisfies readonly RequestPriority[];
+export const PRIORITY_LABELS: Record<RequestPriority, string> = { urgent: '紧急', high: '较急', normal: '普通' };
 
 /** 每一行最多挂几张图 */
 export const MAX_LINE_IMAGES = 9;
@@ -136,6 +141,33 @@ export interface RequestLine {
   stock: RequestLineStock | null;
   /** 所需物品的总仓结存（8.1.10）：手填的新品为空 */
   centralStock: RequestLineCentralStock | null;
+  /** 采购商城带来的（8.1.31）：SKU 编码与价格版本、品牌型号、预期分类、采购理由、运费、税率（填单的都为空） */
+  mall: RequestLineMallInfo | null;
+}
+
+/** 采购商城提来的需求单多记的几项（8.1.31） */
+export interface RequestMallInfo {
+  externalNo: string;
+  /** 部门共用账号提交时的实际经办人 */
+  contactName: string;
+  store: { id: number; name: string } | null;
+  entity: { id: number; name: string } | null;
+  budgetProject: string;
+  deliveryAddress: string;
+  paymentIntent: MallPaymentIntent | null;
+}
+export type MallPaymentIntent = 'company_direct' | 'dept_petty';
+export const PAYMENT_INTENT_LABELS: Record<MallPaymentIntent, string> = { company_direct: '公司直付', dept_petty: '部门备用金' };
+
+export interface RequestLineMallInfo {
+  skuCode: string;
+  priceVersion: string;
+  brandModel: string;
+  expectedCategory: string;
+  reasonText: string;
+  freightCents: number | null;
+  /** 税率（基点，1300 = 13%） */
+  taxRateBp: number | null;
 }
 
 /**
@@ -179,8 +211,12 @@ export interface PurchaseRequestSummary {
   approvableOn: string | null;
   /** 截单后提交、今天还不能通过 */
   lockedToday: boolean;
-  /** 填单的、集采导入的（06），还是部门表格导入的（供应链二次整改 02） */
-  source: 'form' | 'import' | 'sheet';
+  /** 填单的、集采导入的（06），部门表格导入的（供应链二次整改 02），还是采购商城提来的（8.1.31） */
+  source: 'form' | 'import' | 'sheet' | 'mall';
+  /** 商城申请单号（商城来的才有，8.1.31） */
+  externalNo: string | null;
+  /** 最近一次改动（提交、审核、退回、主管确认、核库……） */
+  updatedAt: string;
   lineCount: number;
   /** 前几行的名称 */
   summary: string;
@@ -205,6 +241,8 @@ export interface PurchaseRequest extends PurchaseRequestSummary {
   reviewedAt: string | null;
   reason: string | null;
   isSynthetic: boolean;
+  /** 采购商城提来的单多记的几项（8.1.31，docs/MALL_V8131.md）；别的来源为空 */
+  mall: RequestMallInfo | null;
   lines: RequestLine[];
   approvals: { id: number; action: string; actorName: string; reason: string; createdAt: string }[];
 }
