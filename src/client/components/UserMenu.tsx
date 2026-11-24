@@ -118,7 +118,7 @@ export function UserMenu({ placement = 'rail' }: { placement?: MenuPlacement }) 
 }
 
 /** 菜单面板：从按钮的位置放大出来；关掉时留一个影子缩回去（8.0.16）。侧栏里往右展开，顶栏里往下、靠右对齐 */
-export function MenuPanel({ children, placement = 'rail', width = 'w-56' }: { children: ReactNode; placement?: MenuPlacement; width?: string }) {
+export function MenuPanel({ children, placement = 'rail', width = 'w-56', className }: { children: ReactNode; placement?: MenuPlacement; width?: string; className?: string }) {
   const ref = useExitGhost<HTMLDivElement>();
   return (
     <div
@@ -129,6 +129,7 @@ export function MenuPanel({ children, placement = 'rail', width = 'w-56' }: { ch
         'absolute z-30 animate-menu-in rounded-lg border border-line bg-card p-1.5 text-ink shadow-pop',
         width,
         placement === 'rail' ? 'bottom-0 left-[calc(100%+12px)] origin-bottom-left' : 'top-[calc(100%+8px)] right-0 origin-top-right',
+        className,
       )}
     >
       {children}

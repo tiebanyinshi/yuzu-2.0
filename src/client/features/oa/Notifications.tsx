@@ -21,19 +21,18 @@ import { Badge, Button, Card, Segmented, Skeleton } from '../../components/ui';
 const UNREAD_KEY = ['oa', 'notification-unread-count'] as const;
 const fetchUnread = async () => (await api.get<{ unread: number }>('/api/oa/notifications/unread-count')).unread;
 
-/** 铃铛：未读数（没有就不显示数字）。侧栏里（rail）点一下进「通知」页；门户页顶栏（bar）点开通知面板 */
-export function NotificationBell({ placement = 'rail' }: { placement?: MenuPlacement }) {
+/**
+ * 未读数（30 秒取一次，后台、断网不取）：变了的话「通知」页、面板的列表跟着刷新。
+ * 铃铛（门户页顶栏）与「通知」页各自挂着：浴族里没有铃铛以后，开着「通知」页也照样自动刷新（Codex 审查 023cc78）
+ */
+function useUnreadPoll(): number {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const ref = useDismissable(open, setOpen);
-  // 取数交给 useLivePoll（后台、断网不取）；显示读缓存，「通知」页标已读时直接改缓存，铃铛跟着变
   const { data: shown = 0 } = useQuery({ queryKey: UNREAD_KEY, queryFn: fetchUnread, enabled: false });
   useLivePoll(
     async (isLive) => {
       try {
         const n = await fetchUnread();
         if (!isLive()) return;
-        // 未读数变了（来了新通知，或在别处读过）：「通知」页、面板开着的话列表跟着刷新
         const before = qc.getQueryData<number>(UNREAD_KEY);
         qc.setQueryData(UNREAD_KEY, n);
         if (before !== undefined && before !== n) void qc.invalidateQueries({ queryKey: ['oa', 'notifications'] });
@@ -44,6 +43,14 @@ export function NotificationBell({ placement = 'rail' }: { placement?: MenuPlace
     [qc],
     { intervalMs: 30_000 },
   );
+  return shown;
+}
+
+/** 铃铛：未读数（没有就不显示数字）。侧栏里（rail）点一下进「通知」页；门户页顶栏（bar）点开通知面板 */
+export function NotificationBell({ placement = 'rail' }: { placement?: MenuPlacement }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismissable(open, setOpen);
+  const shown = useUnreadPoll();
   const label = shown ? `通知，${shown} 条未读` : '通知';
   const count = shown > 0 && (
     <span className="absolute -top-1 -right-1 flex min-w-5 items-center justify-center rounded-full bg-clay px-1 text-[12px] leading-5 font-bold text-paper" data-testid="notification-unread">
@@ -79,8 +86,9 @@ export function NotificationBell({ placement = 'rail' }: { placement?: MenuPlace
         <Bell className="size-[18px]" />
         {count}
       </button>
+      {/* 窄屏：面板贴着屏幕两边（铃铛右边还有标识、换店、头像，按铃铛右对齐会伸出屏幕左边，Codex 审查 023cc78） */}
       {open && (
-        <MenuPanel placement="bar" width="w-[min(22rem,calc(100vw-2rem))]">
+        <MenuPanel placement="bar" width="w-[22rem]" className="max-sm:fixed max-sm:top-[4.5rem] max-sm:right-4 max-sm:left-4 max-sm:w-auto">
           <NotificationPanel onClose={() => setOpen(false)} />
         </MenuPanel>
       )}
@@ -175,6 +183,7 @@ type Status = 'unread' | 'all';
 
 /** 「通知」页：未读 / 全部，点一条标已读并跳过去，全部标为已读 */
 export function NotificationsPage() {
+  useUnreadPoll();
   const [status, setStatus] = useState<Status>('unread');
   const qc = useQueryClient();
   const toast = useToast();

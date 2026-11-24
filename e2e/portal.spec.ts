@@ -57,7 +57,7 @@ test.describe('系统门户页', () => {
     await expect(page.getByTestId('portal-board-yuzu')).not.toHaveAttribute('data-disabled', 'true');
   });
 
-  test('窄屏：四张卡片两列两行', async ({ page }) => {
+  test('窄屏：四张卡片两列两行，通知面板不伸出屏幕', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginToPortal(page, 'linlan');
     const boxes = await Promise.all(['yuzu', 'erp', 'office', 'admin'].map(async (k) => (await page.getByTestId(`portal-board-${k}`).boundingBox())!));
@@ -66,5 +66,10 @@ test.describe('系统门户页', () => {
     expect(Math.abs(boxes[0]!.x - boxes[2]!.x)).toBeLessThan(2);
     // 页面不横向滚动
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    // 通知面板整个在屏幕里（Codex 审查 023cc78）
+    await page.getByTestId('notification-bell').click();
+    const panel = (await page.getByTestId('notification-panel').boundingBox())!;
+    expect(panel.x).toBeGreaterThanOrEqual(0);
+    expect(panel.x + panel.width).toBeLessThanOrEqual(390);
   });
 });
