@@ -170,11 +170,11 @@ export function StoreRail({ footer }: { footer: ReactNode }) {
         drawer && 'fixed inset-y-0 left-0 z-40 w-[240px] shadow-pop',
       )}
     >
-      <NavLink to="/" aria-label="浴族 yuzu 首页" className={cn('mb-4 flex items-center gap-2.5 short:mb-2', expanded ? 'mx-3 rounded-[14px]' : 'rounded-[14px] ring-1 ring-white/10')}>
+      <NavLink to="/" aria-label="柚子 yuzu 首页" className={cn('mb-4 flex items-center gap-2.5 short:mb-2', expanded ? 'mx-3 rounded-[14px]' : 'rounded-[14px] ring-1 ring-white/10')}>
         <LogoMark className={cn('size-10 shrink-0 short:size-8', expanded && 'rounded-[14px] ring-1 ring-white/10')} />
         {expanded && (
           <span className="min-w-0">
-            <span className="block text-[15px] leading-tight font-bold">浴族</span>
+            <span className="block text-[15px] leading-tight font-bold">柚子</span>
             <span className="block truncate text-[12px] leading-tight text-paper/60">{session.storeName}</span>
           </span>
         )}

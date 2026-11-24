@@ -441,7 +441,7 @@ describe('导出明细 CSV', () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/ledger/orders/export', headers: { cookie: duty } });
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/csv');
-    expect(decodeURIComponent(String(res.headers['content-disposition']))).toContain(`浴族订单明细-${today}.csv`);
+    expect(decodeURIComponent(String(res.headers['content-disposition']))).toContain(`柚子订单明细-${today}.csv`);
     expect(res.body.startsWith('﻿')).toBe(true);
     const [header, ...rows] = parseCsv(res.body);
     expect(header).toEqual([
@@ -498,7 +498,7 @@ describe('导出明细 CSV', () => {
   it('带搜索词：导出的就是页面上列出来的那几张', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: `/api/ledger/orders/export?q=${encodeURIComponent('张先生')}`, headers: { cookie: duty } });
     expect(res.statusCode).toBe(200);
-    expect(decodeURIComponent(String(res.headers['content-disposition']))).toContain('浴族订单明细-搜索结果.csv');
+    expect(decodeURIComponent(String(res.headers['content-disposition']))).toContain('柚子订单明细-搜索结果.csv');
     const [, ...rows] = parseCsv(res.body);
     expect(new Set(rows.map((r) => r[2]))).toEqual(new Set([zhang.checkoutNo, refund.refundNo]));
     expect(rows).toHaveLength(5);

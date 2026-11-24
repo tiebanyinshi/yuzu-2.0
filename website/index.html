@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>柚子 yuzu · 汤泉门店的一套系统</title>
+    <meta name="description" content="柚子是汤崎自己做的门店系统：发卡、收银、钟房、餐饮、房态、会员、ERP 与员工办公，从第一块手牌到最后一笔日结。" />
+    <meta name="theme-color" content="#f6f2ea" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href="fonts/smiley-sans-subset.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="styles.css" />
+    <script>
+      document.documentElement.classList.add('js');
+    </script>
+  </head>
+  <body>
+    <a class="skip" href="#main">跳到正文</a>
+
+    <header class="nav" data-nav>
+      <a class="wordmark" href="#top" aria-label="柚子 yuzu 首页">
+        <span class="wordmark-dot" aria-hidden="true"></span>
+        <span class="wordmark-zh">柚子</span>
+        <span class="wordmark-en">yuzu</span>
+      </a>
+      <a class="nav-staff" href="https://staff.yuzusystem.xyz">柚子饭堂</a>
+      <a class="btn btn-primary btn-sm" href="https://sys.yuzusystem.xyz" data-magnetic>进入系统</a>
+    </header>
+
+    <main id="main">
+      <!-- 首屏：左边是字，右边是一池柚子汤（WebGL，点一下水面起涟漪，柚子会躲开指针） -->
+      <section class="hero" id="top">
+        <div class="hero-copy">
+          <h1 class="hero-title" data-split>柚子</h1>
+          <p class="hero-lede" data-reveal>一家汤泉店，从发出第一块手牌到最后一笔日结，都在这里。</p>
+          <div class="hero-actions" data-reveal>
+            <a class="btn btn-primary" href="https://sys.yuzusystem.xyz" data-magnetic>进入柚子系统</a>
+            <a class="btn btn-ghost" href="#day">看它怎么过一天</a>
+          </div>
+        </div>
+        <figure class="hero-pool" aria-label="一池柚子汤：几颗柚子浮在水面上，点一下水面会起涟漪">
+          <canvas class="pool-canvas" data-pool aria-hidden="true"></canvas>
+          <figcaption class="pool-hint">点一下水面</figcaption>
+        </figure>
+      </section>
+
+      <!-- 一天：往下滚，时间往前走（宽屏横向钉住滚动；窄屏、减少动效时竖排） -->
+      <section class="day" id="day" aria-labelledby="day-title">
+        <div class="day-sky" aria-hidden="true"><span class="day-sun" data-day-sun></span></div>
+        <div class="day-head">
+          <h2 id="day-title" class="section-title">店里的一天</h2>
+          <p class="section-lede">柚子不分前台后台，跟着营业日走：几点该做什么，就把那一页递到谁手上。</p>
+        </div>
+        <div class="day-track" data-day-track>
+          <article class="hour">
+            <p class="hour-time">10:00</p>
+            <h3 class="hour-title">开门，发牌</h3>
+            <p>发卡台刷一下 NFC 手牌，会员是谁、还剩多少、有没有该提醒的，一眼就有。发牌前先过一遍风控。</p>
+          </article>
+          <article class="hour">
+            <p class="hour-time">13:30</p>
+            <h3 class="hour-title">上钟</h3>
+            <p>钟房按牌排钟、派钟、加钟；技师榜单在大屏上跟着转，谁在服务、谁空着、还剩几分钟。</p>
+          </article>
+          <article class="hour">
+            <p class="hour-time">18:00</p>
+            <h3 class="hour-title">开饭</h3>
+            <p>点单直接进后厨的出品口，水吧、果吧各管各的；填个房号，就知道送到哪间房。</p>
+          </article>
+          <article class="hour">
+            <p class="hour-time">22:00</p>
+            <h3 class="hour-title">清台、清房</h3>
+            <p>房态中心按房型看全部房间：在用、待清、维修。退房、换房、打扫完成，都在一张图上。</p>
+          </article>
+          <article class="hour">
+            <p class="hour-time">02:00</p>
+            <h3 class="hour-title">交班、日结</h3>
+            <p>每个钱箱各自交班，日结单把储值、现金、线上一行行对齐；对不上的地方，先说出来。</p>
+          </article>
+        </div>
+        <div class="day-meter" aria-hidden="true"><span data-day-meter></span></div>
+      </section>
+
+      <!-- 四扇门：与系统里的门户页一致 -->
+      <section class="doors" aria-labelledby="doors-title">
+        <h2 id="doors-title" class="section-title">一个账号，四扇门</h2>
+        <p class="section-lede">登录一次，按岗位看到自己能进的那几扇；进不去的门照样在那儿，只是不开。</p>
+        <div class="doors-grid">
+          <a class="door door-yuzu" href="https://sys.yuzusystem.xyz" data-tilt>
+            <span class="door-name">柚子</span>
+            <span class="door-text">前台营业：发卡台、收银台、钟房、餐饮、房态中心、会员与储值、流水与日结。</span>
+          </a>
+          <a class="door door-erp" href="https://sys.yuzusystem.xyz" data-tilt>
+            <span class="door-name">ERP</span>
+            <span class="door-text">库存、采购、货款、合同、费用与发票，审批都走一处。</span>
+          </a>
+          <a class="door door-office" href="https://sys.yuzusystem.xyz" data-tilt>
+            <span class="door-name">办公</span>
+            <span class="door-text">排班、考勤打卡、审批、通讯录与工资条。</span>
+          </a>
+          <a class="door door-admin" href="https://sys.yuzusystem.xyz" data-tilt>
+            <span class="door-name">管理后台</span>
+            <span class="door-text">规则、价目表、手牌池、员工与权限、数据看板。</span>
+          </a>
+        </div>
+      </section>
+
+      <!-- 一句话：钱怎么记（这一段的底是第二池水） -->
+      <section class="ledger" aria-labelledby="ledger-title">
+        <canvas class="ledger-canvas" data-ripple aria-hidden="true"></canvas>
+        <div class="ledger-inner">
+          <h2 id="ledger-title" class="ledger-title" data-fill aria-label="钱按分记，账只往后写。"><span class="line">钱按分记，</span><span class="line">账只往后写。</span></h2>
+          <div class="ledger-notes">
+            <p>金额一律是整数的分，不用小数算钱。记下的单子不改不删：撤销、作废、冲销都另记一笔，写上原因和经办人。</p>
+            <p>网断了、回复没收到，就先在这台电脑上存好，等连上了核对一遍再说，同一笔不会扣两次。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 员工自己的那一半 -->
+      <section class="staff" aria-labelledby="staff-title">
+        <div class="staff-copy">
+          <h2 id="staff-title" class="section-title">员工也有自己的柚子</h2>
+          <p class="section-lede">柚子饭堂开在员工的手机上：吃饭刷饭卡，安保扫码巡场，排班和通知也在这里。不用装应用，微信里扫一下就打开。</p>
+          <a class="btn btn-ghost" href="https://staff.yuzusystem.xyz">打开柚子饭堂</a>
+        </div>
+        <ul class="staff-list">
+          <li><span class="staff-k">饭卡</span><span class="staff-v">员工饭卡、点餐、跟柚子说想吃什么</span></li>
+          <li><span class="staff-k">巡场</span><span class="staff-v">扫场所码打卡，断网先记下，连上再补交</span></li>
+          <li><span class="staff-k">办公</span><span class="staff-v">我的排班、考勤、审批和工资条</span></li>
+        </ul>
+      </section>
+
+      <!-- 收尾：进门 -->
+      <section class="close" aria-labelledby="close-title">
+        <h2 id="close-title" class="close-title">进门吧</h2>
+        <a class="btn btn-primary btn-lg" href="https://sys.yuzusystem.xyz" data-magnetic>登录柚子系统</a>
+        <div class="marquee" aria-hidden="true">
+          <div class="marquee-row" data-marquee>
+            <span>发卡</span><span>收银</span><span>钟房</span><span>餐饮</span><span>房态</span><span>会员</span><span>储值</span><span>日结</span><span>ERP</span><span>办公</span><span>饭堂</span><span>巡场</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <p class="foot-mark">柚子 yuzu，汤崎的门店系统</p>
+      <nav class="foot-links" aria-label="站点">
+        <a href="https://sys.yuzusystem.xyz">sys.yuzusystem.xyz</a>
+        <a href="https://staff.yuzusystem.xyz">staff.yuzusystem.xyz</a>
+      </nav>
+      <p class="foot-note">© 2026 汤崎</p>
+    </footer>
+
+    <script src="vendor/lenis.min.js" defer></script>
+    <script src="vendor/gsap.min.js" defer></script>
+    <script src="vendor/ScrollTrigger.min.js" defer></script>
+    <script src="pool.js" defer></script>
+    <script src="main.js" defer></script>
+  </body>
+</html>

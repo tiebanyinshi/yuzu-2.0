@@ -23,7 +23,7 @@ const fetchUnread = async () => (await api.get<{ unread: number }>('/api/oa/noti
 
 /**
  * 未读数（30 秒取一次，后台、断网不取）：变了的话「通知」页、面板的列表跟着刷新。
- * 铃铛（门户页顶栏）与「通知」页各自挂着：浴族里没有铃铛以后，开着「通知」页也照样自动刷新（Codex 审查 023cc78）
+ * 铃铛（门户页顶栏）与「通知」页各自挂着：柚子里没有铃铛以后，开着「通知」页也照样自动刷新（Codex 审查 023cc78）
  */
 function useUnreadPoll(): number {
   const qc = useQueryClient();

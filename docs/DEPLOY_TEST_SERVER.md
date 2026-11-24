@@ -244,7 +244,7 @@ sudo chown yuzubackup:yuzubackup /srv/yuzu-offsite/backups && sudo chmod 700 /sr
 
 ```bash
 sudo tee /etc/ssh/sshd_config.d/yuzu-offsite.conf > /dev/null <<'EOF'
-# 浴族异地备份：yuzubackup 只能用 SFTP 往 /srv/yuzu-offsite/backups 写，不能删文件、不能改权限、不能开 shell
+# 柚子异地备份：yuzubackup 只能用 SFTP 往 /srv/yuzu-offsite/backups 写，不能删文件、不能改权限、不能开 shell
 Match User yuzubackup
     AuthorizedKeysFile /etc/ssh/yuzu-offsite.keys
     ChrootDirectory /srv/yuzu-offsite
@@ -272,7 +272,7 @@ sudo chmod 644 /etc/ssh/yuzu-offsite.keys
 
 ```bash
 sudo tee /etc/cron.d/yuzu-offsite > /dev/null <<'EOF'
-# 浴族异地副本：备份密文保留 7 天；没传完的 .part 与连通测试文件 1 天后删掉
+# 柚子异地副本：备份密文保留 7 天；没传完的 .part 与连通测试文件 1 天后删掉
 17 * * * * root find /srv/yuzu-offsite/backups -type f \( -name 'yuzu-*.age' -mmin +10080 -o ! -name '*.age' -mmin +1440 \) -delete
 EOF
 ```

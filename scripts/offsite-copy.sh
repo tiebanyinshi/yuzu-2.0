@@ -68,7 +68,7 @@ last_error() { tr -d '\r' < "$tmp/sftp.err" 2>/dev/null | grep -v '^sftp>' | awk
 
 if [[ "${1:-}" == "--check" ]]; then
   probe="yuzu-offsite-check-$(date +%Y%m%d-%H%M%S).txt"
-  echo "浴族异地副本连通测试 $(date '+%Y-%m-%d %H:%M:%S')" > "$tmp/$probe"
+  echo "柚子异地副本连通测试 $(date '+%Y-%m-%d %H:%M:%S')" > "$tmp/$probe"
   if printf 'put "%s" "%s"\nls -l "%s"\n' "$tmp/$probe" "$probe" "$probe" | sftp_batch > /dev/null 2> "$tmp/sftp.err"; then
     log "✓ 能连上 ${target}，备份目录可写（测试文件 $probe 由服务器的定时清理删掉）"
     exit 0

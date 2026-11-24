@@ -16,13 +16,13 @@ import { setup, type TestContext } from './helpers';
 let ctx: TestContext;
 let app: FastifyInstance;
 let dir: string;
-const js = 'console.log("浴族 yuzu");\n'.repeat(400);
+const js = 'console.log("柚子 yuzu");\n'.repeat(400);
 
 beforeAll(async () => {
   ctx = await setup();
   dir = await mkdtemp(join(tmpdir(), 'yuzu-static-'));
   await mkdir(join(dir, 'assets'));
-  await writeFile(join(dir, 'index.html'), '<!doctype html><title>浴族</title>');
+  await writeFile(join(dir, 'index.html'), '<!doctype html><title>柚子</title>');
   await writeFile(join(dir, 'assets', 'app-abc123.js'), js);
   await writeFile(join(dir, 'assets', 'font-abc123.woff2'), Buffer.alloc(4096, 7));
   // 与构建时同一个脚本
@@ -72,11 +72,11 @@ describe('静态资源预压缩', () => {
       expect(res.statusCode, url).toBe(404);
       expect(res.headers['content-type'], url).toMatch(/^text\/plain/);
       expect(res.headers['cache-control'], url).toBe('no-store');
-      expect(res.body, url).not.toContain('浴族');
+      expect(res.body, url).not.toContain('柚子');
     }
     const page = await app.inject({ url: '/concierge' });
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain('浴族');
+    expect(page.body).toContain('柚子');
   });
 
   it('不支持压缩时发原文件；首页与前端路由照常不缓存', async () => {
@@ -88,7 +88,7 @@ describe('静态资源预压缩', () => {
       expect(page.statusCode, url).toBe(200);
       expect(page.headers['content-type'], url).toMatch(/^text\/html/);
       expect(page.headers['cache-control'], url).toBe('no-cache');
-      expect(page.body, url).toContain('浴族');
+      expect(page.body, url).toContain('柚子');
     }
   });
 });

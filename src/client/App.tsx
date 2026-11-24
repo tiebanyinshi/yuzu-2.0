@@ -302,7 +302,7 @@ const router = createBrowserRouter([
   { path: '/studio/:surface', element: <AuthGate shell="bare" />, children: [{ index: true, element: <StudioPage /> }] },
   // 手机界面（小程序、员工食堂）的预览（8.1.2）：按预览码画出当时的草稿，375 宽
   { path: '/studio-preview/:surface/:code', element: <AuthGate shell="bare" />, children: [{ index: true, element: <PhonePreviewPage /> }] },
-  // 系统门户页（店主 2026-11-24）：登录后先到这里选板块（浴族、ERP、办公、管理后台）；自己有顶栏，不套门店的侧栏
+  // 系统门户页（店主 2026-11-24）：登录后先到这里选板块（柚子、ERP、办公、管理后台）；自己有顶栏，不套门店的侧栏
   { path: '/portal', element: <AuthGate shell="bare" />, children: [{ index: true, element: <PortalPage /> }] },
   { path: '/admin/concierge', element: <Navigate to="/concierge" replace /> },
   { path: '/admin', element: <AuthGate shell="admin" />, children: adminRoutes },

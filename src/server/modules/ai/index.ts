@@ -79,7 +79,7 @@ export function aiProvider(config: AppConfig, rules: AiRules): AiProvider | null
   const mode = aiMode(config);
   if (mode === 'mock') return mockAiProvider();
   if (mode !== 'live') return null;
-  // 只认专门给浴族配的密钥（显式传给适配器），不读 ANTHROPIC_API_KEY、DEEPSEEK_API_KEY 或别处的登录
+  // 只认专门给柚子配的密钥（显式传给适配器），不读 ANTHROPIC_API_KEY、DEEPSEEK_API_KEY 或别处的登录
   const apiKey = (process.env.YUZU_AI_API_KEY ?? '').trim();
   if (!apiKey) return null;
   const baseURL = process.env.YUZU_AI_BASE_URL?.trim() || undefined;
@@ -289,7 +289,7 @@ async function produceSummary(
     const [row] = await sql<{ pushed: boolean; name: string }[]>`
       SELECT a.pushed_at IS NOT NULL AS pushed, coalesce(st.name, '全公司') AS name FROM ai_summaries a LEFT JOIN stores st ON st.id = a.store_id WHERE a.id = ${id}`;
     if (row && !row.pushed) {
-      const content = truncateBytes(`**浴族 · 经营小结** · ${row.name} · ${target.date}\n${text}\n> AI 按当天的汇总数写的，数字以数据看板为准`, 4096);
+      const content = truncateBytes(`**柚子 · 经营小结** · ${row.name} · ${target.date}\n${text}\n> AI 按当天的汇总数写的，数字以数据看板为准`, 4096);
       try {
         await (opts.send ?? postWecom)(url, content);
         await sql`UPDATE ai_summaries SET pushed_at = now(), push_error = NULL WHERE id = ${id}`;

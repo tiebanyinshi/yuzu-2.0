@@ -1,4 +1,4 @@
-# 浴族 yuzu 运行环境（试用 / 正式）
+# 柚子 yuzu 运行环境（试用 / 正式）
 #   启动：docker compose up -d --build
 #   查看：docker compose ps / docker compose logs -f app
 # 同一台机器上要同时跑试用和正式环境时，用不同的 .env 与项目名区分，数据卷互不影响：

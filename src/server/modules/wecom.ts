@@ -89,7 +89,7 @@ export async function weeklyDigestLines(db: Db, today: string): Promise<string[]
 export async function buildWeeklyMessage(db: Db, config: Pick<AppConfig, 'timezone' | 'instance'>, now: Date, test = false): Promise<string> {
   const today = dateIn(now, config.timezone);
   const lines = await weeklyDigestLines(db, today);
-  const title = `**浴族 ERP ${test ? '推送试发' : '每周提醒'}** · ${today} · ${INSTANCE_LABELS[config.instance]}`;
+  const title = `**柚子 ERP ${test ? '推送试发' : '每周提醒'}** · ${today} · ${INSTANCE_LABELS[config.instance]}`;
   const body = lines.length ? lines.map((l) => `> ${l}`).join('\n') : '> ERP 里没有开着的相关模块（付款、审批、合同、库存、应收）';
   const foot = test ? `收到这条说明机器人地址配好了；每周一 ${WECOM_WEEKLY_AT} 以后（开关打开时）推一次，内容同上。` : `数字是 ${clockIn(config.timezone, now)} 的，详情到 ERP 里看。`;
   return truncateBytes(`${title}\n${body}\n${foot}`, MAX_BYTES);

@@ -137,7 +137,7 @@ export function registerLedgerRoutes(app: FastifyInstance, deps: Deps) {
     const date = await resolveReadableDate(deps, req, query.date);
     const rows = await listLedger(sql, { date });
     await writeAudit(sql, { staffId: req.actor.id, action: 'export', targetType: 'ledger', targetId: date, ip: req.ip });
-    attachment(reply, `浴族流水-${date}.csv`, CSV_TYPE);
+    attachment(reply, `柚子流水-${date}.csv`, CSV_TYPE);
     return ledgerCsv(rows, deps.config.timezone);
   });
 }

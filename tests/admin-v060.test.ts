@@ -242,9 +242,9 @@ describe('后台首页与规则总表', () => {
     let rules = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/rules')).body as { key: string; isDefault: boolean; updatedBy: string | null; value: string }[];
     expect(rules.length).toBeGreaterThanOrEqual(20);
     expect(rules.find((r) => r.key === 'store_name')).toMatchObject({ isDefault: true, updatedBy: null });
-    await api(ctx.app, ctx.owner, 'PUT', '/api/settings', { storeName: '浴族 · 测试店' });
+    await api(ctx.app, ctx.owner, 'PUT', '/api/settings', { storeName: '柚子 · 测试店' });
     rules = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/rules')).body;
-    expect(rules.find((r) => r.key === 'store_name')).toMatchObject({ isDefault: false, updatedBy: '测试店主', value: '浴族 · 测试店' });
+    expect(rules.find((r) => r.key === 'store_name')).toMatchObject({ isDefault: false, updatedBy: '测试店主', value: '柚子 · 测试店' });
     expect(rules.find((r) => r.key === 'membership_rules.grades')).toMatchObject({ section: 'membership', isDefault: true });
     expect(rules.find((r) => r.key === 'role_permissions')).toMatchObject({ value: '按默认' });
 

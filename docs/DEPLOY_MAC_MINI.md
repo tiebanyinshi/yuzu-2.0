@@ -2,7 +2,7 @@
 
 > **店主 2026-11-07 改定**：门店 Mac mini 改跑**内网测试服**（演练库 `YUZU_INSTANCE=test`、演示库 `APP_ENV=development`、`YUZU_INSTANCE=demo`），外网正式服放阿里云。下面装机、开机自启、Tailscale、备份的做法照用；手册里写「正式服」的地方按测试服理解。Mac mini 另外要做三件事：做 Tailscale 子网路由（让云上的正式服连得到门店的网口打印机）、接收正式服备份的异地副本并做恢复演练（也是冷备）、转发员工食堂的局域网访问。见 [`RELEASE_V800.md`](RELEASE_V800.md) 第 2.3、3 节。
 
-目标：办公室 Mac mini 运行浴族服务，门店电脑和平板在同一局域网内用浏览器访问；断电重启后自动恢复；每小时自动备份到外置盘（每份都在临时库里试恢复核验），每天加密后上传到阿里云 OSS。管理后台只在局域网和 Tailscale 内打开，不对公网做端口转发。
+目标：办公室 Mac mini 运行柚子服务，门店电脑和平板在同一局域网内用浏览器访问；断电重启后自动恢复；每小时自动备份到外置盘（每份都在临时库里试恢复核验），每天加密后上传到阿里云 OSS。管理后台只在局域网和 Tailscale 内打开，不对公网做端口转发。
 
 ## 1. 准备 Mac mini
 
@@ -13,7 +13,7 @@
 5. 安装 **Docker Desktop for Mac（Apple 芯片版）** 或 **OrbStack**，并在设置中勾选「登录时启动」。
 6. 安装 Git（首次执行 `git` 时系统会提示安装命令行工具）。
 7. 接上备份用的外置硬盘，例如挂载在 `/Volumes/YuzuBackup`，新建目录 `/Volumes/YuzuBackup/yuzu`，并在里面放一个哨兵文件：`touch /Volumes/YuzuBackup/yuzu/.yuzu-backup-target`。备份服务只在看到这个文件时才写备份，外置盘没挂载时不会误写到内置盘。外置盘在登录后应自动挂载，不要每次都弹出密码框。
-8. **路由器不要做端口转发**，不要把 8080 或其他浴族端口映射到公网。店外访问走第 10 节的 Tailscale。
+8. **路由器不要做端口转发**，不要把 8080 或其他柚子端口映射到公网。店外访问走第 10 节的 Tailscale。
 9. **系统设置 → 通用 → 日期与时间**：时区设为上海。备份服务按 `.env` 里的 `APP_TIMEZONE` 给备份命名，并把每天 4:00 之后的第一份记为 daily；上传任务按 Mac 的系统时区在 05:10 运行，两边需要一致。
 
 > 国内网络拉取 Docker 镜像较慢时：在 Docker Desktop → Settings → Docker Engine 配置镜像加速，或在 `.env` 中设置 `NODE_IMAGE` / `POSTGRES_IMAGE` / `NPM_REGISTRY` / `ALPINE_MIRROR` 使用国内镜像源（见 `.env.example`）。
@@ -51,7 +51,7 @@ open -e .env                 # 用文本编辑器修改
 export YUZU_VERSION=$(git describe --tags --always) YUZU_COMMIT=$(git rev-parse HEAD)   # 页面显示版本与 SHA
 docker compose up -d --build
 docker compose ps            # app、db 显示 (healthy)，backup 显示 Up
-docker compose logs app      # 应看到「已应用迁移」「已创建初始店主账号」「浴族 yuzu 已启动」
+docker compose logs app      # 应看到「已应用迁移」「已创建初始店主账号」「柚子 yuzu 已启动」
 docker compose logs backup   # 一两分钟内应看到「✓ yuzu-…-daily.dump（…自检 N/N）」
 ```
 
@@ -615,7 +615,7 @@ age -d -i ./age.txt -o ./restore.dump.json ./yuzu-20261126-150000-hourly.dump.js
 
 店外打开管理后台时，走 Tailscale，不走路由器端口转发。Mac mini 和店主的手机、家里的电脑加入同一个 tailnet 之后，用 Tailscale 分配的地址访问原来的 **8080** 端口。隧道本身是加密的，页面仍用 `http://`，不必为远程访问另配证书。
 
-管理后台仍然没有公网入口：不要在路由器上转发 8080，不要给浴族绑公网域名，不要开启 [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel)（Funnel 会把端口公布到公网上）。
+管理后台仍然没有公网入口：不要在路由器上转发 8080，不要给柚子绑公网域名，不要开启 [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel)（Funnel 会把端口公布到公网上）。
 
 ### 10.1 安装并在重启后自动连上
 
@@ -677,7 +677,7 @@ TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale status
 
 「本节由 Grok Bot 补充」
 
-美团、抖音、企业微信的回调需要一个公网 HTTPS 地址。到那一步时，再增加一台小型阿里云服务器，只做回调的接收和转发；浴族仍跑在店里的 Mac mini 上。
+美团、抖音、企业微信的回调需要一个公网 HTTPS 地址。到那一步时，再增加一台小型阿里云服务器，只做回调的接收和转发；柚子仍跑在店里的 Mac mini 上。
 
 - 服务器在中国内地时，域名要先完成 **ICP 备案**。备案完成前，不要把域名解析到这台服务器对外提供网页或接口。
 - 这台服务器加入第 10 节的同一个 Tailscale 网络。它收到回调后，通过 Tailscale 转发给 Mac mini。不要把 Mac mini 的 8080 映射到公网，也不要在云服务器上开放管理后台。

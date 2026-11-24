@@ -216,7 +216,7 @@ function facilities(w: SampleSink) {
 /** 合成样例图纸（ASCII DXF 文本）；opts.facilities 加上设施文字（卫生间、电梯……，对客导览识别图标用） */
 export function floorplanSampleDxf(variant: 1 | 2 = 1, opts: { facilities?: boolean } = {}): string {
   const w = new DxfWriter();
-  w.raw(999, '浴族 yuzu 底图转换合成样例（不是门店图纸）');
+  w.raw(999, '柚子 yuzu 底图转换合成样例（不是门店图纸）');
   w.raw(0, 'SECTION');
   w.raw(2, 'HEADER');
   w.raw(9, '$ACADVER');
@@ -469,7 +469,7 @@ function samplePage(kind: FloorplanPdfSampleKind, page: SamplePage, draw: (w: Sa
 
 /** 合成样例图纸的 PDF 版（1:100，与 DXF 第一版同样的两层）；kind 见上面的说明，预期结果在 floorplan-expected.json 的 pdf */
 export function floorplanSamplePdf(kind: FloorplanPdfSampleKind = 'standard'): Uint8Array {
-  const title = '浴族 yuzu 底图转换合成样例（不是门店图纸）';
+  const title = '柚子 yuzu 底图转换合成样例（不是门店图纸）';
   if (kind === 'scanned') {
     const [w, h] = [210 * PT_PER_MM, 297 * PT_PER_MM];
     const image = { dict: '/Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode', stream: `${'80'.repeat(64)}>` };

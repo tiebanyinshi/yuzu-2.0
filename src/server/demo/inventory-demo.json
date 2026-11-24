@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "title": "浴族库存与采购合成开发数据",
+    "title": "柚子库存与采购合成开发数据",
     "isSynthetic": true,
     "currency": "CNY",
     "period": {
@@ -8,7 +8,7 @@
       "to": "2026-10-25"
     },
     "businessTimezone": "Asia/Shanghai",
-    "notice": "全部为虚构开发样例，不是浴族或有马真实业务，也不是市场行情。",
+    "notice": "全部为虚构开发样例，不是柚子或有马真实业务，也不是市场行情。",
     "priceBasis": "模拟含税到货价，不拆税或单独分摊运费；真实口径待确认",
     "inventoryBoundary": "单店试点总库；部门只记录领用去向，未建部门子库存",
     "usage": "用于适配演示 seed 和验收，字段不约束数据库/API；仅独立演示库；不要自动写入现有试用库",

@@ -41,7 +41,7 @@ now=$(date +%s)
 
 json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 send() {
-  local text="【浴族·${label}】$1" resp
+  local text="【柚子·${label}】$1" resp
   log "$text"
   [[ -n "$webhook" ]] || return 0
   if ! resp=$(curl -sS -m 10 -H 'Content-Type: application/json' -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"$(json_escape "$text")\"}}" "$webhook" 2>&1); then
@@ -73,7 +73,7 @@ fi
 # 1. Docker
 if ! docker info >/dev/null 2>&1; then
   if [[ "$(uname)" == Darwin ]]; then open -a Docker >/dev/null 2>&1 || true; fi
-  alert docker "Docker 没有在运行，浴族服务停了。Mac 上已尝试打开 Docker Desktop；几分钟后仍未恢复请到现场查看。"
+  alert docker "Docker 没有在运行，柚子服务停了。Mac 上已尝试打开 Docker Desktop；几分钟后仍未恢复请到现场查看。"
   exit 0
 fi
 resolve docker "Docker 已在运行"
