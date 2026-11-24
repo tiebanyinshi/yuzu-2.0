@@ -1050,7 +1050,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await page.route('**/api/room-center/rooms/*/history', (route) => route.fulfill({ json: RC_HISTORY }));
     try {
       await page.goto('/room-center');
-      await expect(page.getByTestId('rc-summary')).toBeVisible();
+      await expect(page.getByTestId('rc-stats')).toBeVisible();
       await expectFits(page);
       await page.getByTestId(`rc-tab-${RC_CAT.spa}`).click();
       await expect(page.getByTestId('rc-room-S9905')).toHaveAttribute('data-status', 'booked');
@@ -1062,7 +1062,12 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
       await expectOnScreen(page, ['rc-act-checkout', 'rc-act-move', 'rc-act-join']);
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('rc-room-dialog')).toHaveCount(0);
+      // 点卡片展开详情栏（宽屏在右侧、窄屏是底部抽屉），主按钮登记
       await page.getByTestId('rc-open-S9901').click();
+      await expect(page.getByTestId('rc-panel')).toBeVisible();
+      await expectFits(page);
+      await expectOnScreen(page, ['rc-panel-go', 'rc-panel-close']);
+      await page.getByTestId('rc-panel-go').click();
       await expect(page.getByTestId('rc-register').or(page.getByText('技师没取回来'))).toBeVisible();
       await expectFits(page);
       await expectOnScreen(page, ['rc-register-submit']);

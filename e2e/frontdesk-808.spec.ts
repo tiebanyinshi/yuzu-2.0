@@ -313,6 +313,7 @@ test.describe('8.0.8 前台整改', () => {
       // （8.1.16 起原来的「客房」页并进房态中心：/rooms 跳到「客房」页签，卡片的状态是房态中心的空闲 / 在用 / 待清 / 维修）
       await page.goto('/rooms');
       await page.getByTestId(`rc-open-${ROOM}`).click();
+      await page.getByTestId('rc-panel-go').click();
       await page
         .getByRole('dialog')
         .filter({ hasText: `入住 · ${ROOM}` })
@@ -329,6 +330,7 @@ test.describe('8.0.8 前台整改', () => {
 
       // ② 改错了：撤回上一次修改 → 回到空闲
       await page.getByTestId(`rc-open-${ROOM}`).click();
+      await page.getByTestId('rc-panel-go').click();
       const hk2 = page.getByRole('dialog').filter({ hasText: `改房态 · ${ROOM}` });
       await expect(hk2.getByTestId('room-housekeeping-last')).toContainText('E2E 换床品');
       await hk2.getByTestId('room-housekeeping-revert').click();
