@@ -52,7 +52,12 @@ export interface TechnicianRules {
   tierByGrade: boolean;
   /** 选技师时默认的上钟方式（默认轮钟，待确认） */
   defaultCallType: CallType;
+  /** 技师榜单多久取一次（秒，10–300，默认 30；docs/TECH_RANKING.md TR7） */
+  rankingRefreshSeconds: number;
 }
+
+/** 技师榜单刷新间隔可选的几档（秒） */
+export const RANKING_REFRESH_CHOICES = [10, 15, 30, 60, 120, 300] as const;
 
 export const DEFAULT_TECHNICIAN_RULES: TechnicianRules = {
   // 8.0.20：功能开关都默认开（店主 2026-11-14，docs/PENDING_DECISIONS.md KG1–KG4）；要关在设置页关
@@ -60,6 +65,7 @@ export const DEFAULT_TECHNICIAN_RULES: TechnicianRules = {
   requireTechnician: true,
   tierByGrade: true,
   defaultCallType: 'rotation',
+  rankingRefreshSeconds: 30,
 };
 
 /** 明细上的技师（随明细留存；作废的明细照样显示是谁做的） */

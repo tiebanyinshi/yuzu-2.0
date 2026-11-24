@@ -1,18 +1,22 @@
 // 新建、编辑技师的对话框：门店「技师管理 → 名册」与后台「技师 → 技师名册」共用（8.1.15 从后台的名册卡片里搬出来，
 // 补上花名、类型、入职日期）。保存走原来的名册接口（/api/admin/technicians，要「维护技师名册」权限）。
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { ImagePlus, Trash2, UserRound } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { PRICE_TIER_LABELS, PRICE_TIERS, type PriceTier } from '@shared/catalog';
+import type { TechnicianAdminView } from '@shared/technician-admin';
 import { MAX_TECH_NAME, TECH_NO_PATTERN, type Technician, type TechnicianAdmin } from '@shared/technicians';
-import { api, errorMessage } from '../../lib/api';
+import { api, errorMessage, isRejected, notSentAsRejection } from '../../lib/api';
 import { cn } from '../../lib/utils';
+import { imagePayload } from '../../components/Images';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Button, Field, Input, Notice, Segmented, Select } from '../../components/ui';
 import { useTechAdminRefresh } from './queries';
 
-export type EditableTechnician = Technician & { lineCount?: number };
+/** photoUrl：门店「技师管理 → 名册」带着（技师榜单的照片，docs/TECH_RANKING.md）；后台的名册不带，不显示照片 */
+export type EditableTechnician = Technician & { lineCount?: number; photoUrl?: string | null; photoVersion?: number };
 
 export function TechnicianDialog({
   target,
@@ -123,6 +127,7 @@ export function TechnicianDialog({
             <Input id="t-name" value={name} maxLength={MAX_TECH_NAME} onChange={(e) => setName(e.target.value)} data-testid="technician-name" />
           </Field>
         </div>
+        {existing && existing.photoUrl !== undefined && <PhotoField key={existing.id} techId={existing.id} initial={existing.photoUrl} version={existing.photoVersion ?? 0} />}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="花名" htmlFor="t-nickname" hint="选填；钟房里跟在名字后面，叫号时念花名">
             <Input id="t-nickname" value={nickname} maxLength={MAX_TECH_NAME} onChange={(e) => setNickname(e.target.value)} placeholder="例如：小雅" data-testid="technician-nickname" />
@@ -205,5 +210,115 @@ export function TechnicianDialog({
         {error && <Notice tone="error" title={error} />}
       </div>
     </Dialog>
+  );
+}
+
+/** 照片（技师榜单，TR5）：选了就上传（浏览器先压缩），不跟着「保存」走；去掉也是马上生效 */
+function PhotoField({ techId, initial, version: initialVersion }: { techId: number; initial: string | null; version: number }) {
+  const toast = useToast();
+  const refresh = useTechAdminRefresh();
+  const [url, setUrl] = useState(initial);
+  // 照片的版本号：带着它提交，别人刚改过就被拒绝（没收到结果的原样重提，服务端原样返回）
+  const [version, setVersion] = useState(initialVersion);
+  const [busy, setBusy] = useState(false);
+  // 结果待确认：发出去没收到结果（超时、断网、服务器出错）时留着原请求（含当时的版本号），只能原样重提或放弃
+  const [pending, setPending] = useState<Record<string, unknown> | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  /** 放弃或被拒绝以后：按名册读回现在的照片与版本号 */
+  const reload = async () => {
+    refresh();
+    try {
+      const v = await api.get<TechnicianAdminView>('/api/technician-admin');
+      const t = v.technicians.find((x) => x.id === techId);
+      if (t) {
+        setUrl(t.photoUrl);
+        setVersion(t.photoVersion);
+      }
+    } catch {
+      /* 读不回来就照旧显示，下次打开编辑框再读 */
+    }
+  };
+  const send = async (payload: Record<string, unknown>, retry: boolean) => {
+    setBusy(true);
+    try {
+      const r = await api.put<{ photoUrl: string | null; photoVersion: number }>(`/api/admin/technicians/${techId}/photo`, payload, { timeoutMs: 30_000 });
+      setPending(null);
+      setUrl(r.photoUrl);
+      setVersion(r.photoVersion);
+      refresh();
+      toast({ tone: 'success', title: r.photoUrl ? '照片已更新' : '照片已去掉' });
+    } catch (e) {
+      const err = retry ? e : notSentAsRejection(e);
+      if (isRejected(err)) {
+        // 明确没处理：别人刚改过（PHOTO_CHANGED）或内容不对；读回现在的照片
+        setPending(null);
+        toast({ tone: 'error', title: '照片没有存上', body: errorMessage(err) });
+        if (err.code === 'PHOTO_CHANGED') void reload();
+      } else {
+        setPending(payload);
+        toast({ tone: 'info', title: '照片结果待确认', body: '可能已经存上了。请点「原样重提」核对（不会重复改），或「放弃」后看现在的照片' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+  const put = (body: Record<string, unknown>) => send({ ...body, version }, false);
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      await put(await imagePayload(file));
+    } catch (e) {
+      toast({ tone: 'error', title: '照片读不了', body: errorMessage(e) });
+    }
+  };
+  return (
+    <Field label="照片" hint="技师榜单上显示；选了马上生效，不用再点保存">
+      <div className="flex items-center gap-3" data-testid="technician-photo">
+        <div className="flex h-24 w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-md bg-paper-3 text-ink-4">
+          {url ? <img src={url} alt="技师照片" className="size-full object-cover" /> : <UserRound className="size-9" strokeWidth={1.25} aria-label="没有照片" />}
+        </div>
+        <input
+          ref={input}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            void pick(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+          data-testid="technician-photo-input"
+        />
+        <Button variant="secondary" icon={<ImagePlus className="size-4" />} loading={busy} disabled={!!pending} onClick={() => input.current?.click()} data-testid="technician-photo-pick">
+          {url ? '换一张' : '上传照片'}
+        </Button>
+        {url && (
+          <Button variant="ghost" icon={<Trash2 className="size-4" />} disabled={busy || !!pending} onClick={() => void put({ remove: true })} data-testid="technician-photo-remove">
+            去掉
+          </Button>
+        )}
+      </div>
+      {pending && (
+        <Notice tone="warning" title="照片的结果待确认" className="mt-2" data-testid="technician-photo-pending">
+          <p>刚才那次没收到结果，可能已经存上了。原样重提会核对，不会重复改，也不会覆盖别人之后的修改。</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" variant="primary" loading={busy} onClick={() => void send(pending, true)} data-testid="technician-photo-retry">
+              原样重提
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => {
+                setPending(null);
+                void reload();
+              }}
+              data-testid="technician-photo-abandon"
+            >
+              放弃，看现在的照片
+            </Button>
+          </div>
+        </Notice>
+      )}
+    </Field>
   );
 }

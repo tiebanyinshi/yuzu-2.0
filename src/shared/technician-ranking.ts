@@ -4,12 +4,18 @@
 /** 榜单上的三种状态 */
 export const RANKING_STATUSES = ['idle', 'serving', 'off'] as const;
 export type RankingStatus = (typeof RANKING_STATUSES)[number];
+export const RANKING_STATUS_LABELS: Record<RankingStatus, string> = { idle: '空闲', serving: '服务中', off: '未当班' };
 
 /** 状态下面的小字（钟房里的细分）：休息 / 待上钟 / 休假 / 停牌；没有为 null */
 export type RankingNote = 'rest' | 'waiting' | 'leave' | 'suspended' | null;
+export const RANKING_NOTE_LABELS: Record<Exclude<RankingNote, null>, string> = { rest: '休息', waiting: '待上钟', leave: '休假', suspended: '停牌' };
 
-/** 默认：30 秒取一次、每页 12 张（TR7）；人气值按近 30 天（TR3） */
-export const RANKING_DEFAULT_REFRESH_SECONDS = 30;
+/** 综合榜 / 人气榜 */
+export const RANKING_BOARDS = ['overall', 'popular'] as const;
+export type RankingBoard = (typeof RANKING_BOARDS)[number];
+export const RANKING_BOARD_LABELS: Record<RankingBoard, string> = { overall: '综合榜', popular: '人气榜' };
+
+/** 每页 12 张（TR7；刷新间隔在技师规则里，默认 30 秒）；人气值按近 30 天（TR3） */
 export const RANKING_PAGE_SIZE = 12;
 export const RANKING_POPULARITY_DAYS = 30;
 
@@ -65,3 +71,55 @@ export interface TechnicianRankingView {
 }
 
 export const technicianPhotoUrl = (id: number | null) => (id === null ? null : `/api/technician-photos/${id}`);
+
+/** 搜索：技师号（可带「No.」）、姓名、花名模糊匹配，不分大小写 */
+export function matchesRankingText(t: Pick<RankingTech, 'techNo' | 'name' | 'realName'>, text: string): boolean {
+  const q = text
+    .trim()
+    .toLowerCase()
+    .replace(/^no\.?\s*/, '');
+  if (!q) return true;
+  return t.techNo.toLowerCase().includes(q) || t.name.toLowerCase().includes(q) || t.realName.toLowerCase().includes(q);
+}
+
+/** 页面上的筛选：工种（null = 全部）、状态（all = 全部）、搜索词，三样叠加 */
+export function filterRanking(techs: readonly RankingTech[], f: { kind: string | null; status: RankingStatus | 'all'; text: string }): RankingTech[] {
+  return techs.filter((t) => (f.kind === null || t.kind === f.kind) && (f.status === 'all' || t.status === f.status) && matchesRankingText(t, f.text));
+}
+
+/** 第几页（1 起）的那几张；页码超出时落到最后一页 */
+export function pageOf<T>(list: readonly T[], page: number, size: number): { items: T[]; page: number; pages: number } {
+  const pages = Math.max(1, Math.ceil(list.length / size));
+  const p = Math.min(Math.max(1, page), pages);
+  return { items: list.slice((p - 1) * size, p * size), page: p, pages };
+}
+
+/**
+ * 榜单排序：综合榜照服务端给的顺序（钟房排位）；人气榜按人气值从高到低，同分按综合榜先后（TR3）。
+ * 名次在工种筛选之后、状态与搜索之前算（换工种看的是这个工种里的名次，筛状态、搜人不改名次）
+ */
+export function rankOf(techs: readonly RankingTech[], board: RankingBoard): { tech: RankingTech; rank: number }[] {
+  const sorted = board === 'popular' ? [...techs].sort((a, b) => b.popularity - a.popularity || a.overallRank - b.overallRank) : [...techs];
+  return sorted.map((tech, i) => ({ tech, rank: i + 1 }));
+}
+
+/** 前三名的标识（人气榜、人气值大于 0 的才给）：皇冠 / 银牌 / 铜牌 */
+export const podiumOf = (rank: number, popularity: number, board: RankingBoard): 1 | 2 | 3 | null => (board === 'popular' && popularity > 0 && rank <= 3 ? (rank as 1 | 2 | 3) : null);
+
+/** 服务进度（0–1）与剩余秒数：按页面上的「服务器时间」算；待上钟的没有 */
+export function serviceProgress(s: RankingService, serverNow: number): { elapsed: number; remaining: number; ratio: number } | null {
+  if (!s.startedAt || !s.plannedEnd) return null;
+  const start = new Date(s.startedAt).getTime();
+  const end = new Date(s.plannedEnd).getTime();
+  const elapsed = Math.max(0, Math.floor((serverNow - start) / 1000));
+  const remaining = Math.max(0, Math.ceil((end - serverNow) / 1000));
+  return { elapsed, remaining, ratio: end > start ? Math.min(1, Math.max(0, (serverNow - start) / (end - start))) : 1 };
+}
+
+/** 剩余时间：1:05:09 / 12:03 */
+export function countdownText(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const sec = seconds % 60;
+  return `${h ? `${h}:` : ''}${String(m).padStart(h ? 2 : 1, '0')}:${String(sec).padStart(2, '0')}`;
+}
