@@ -400,7 +400,7 @@ function GenerateCard({ onCreated }: { onCreated: () => void }) {
         key: op,
         type: 'hand_tag_generate',
         url: '/api/frontdesk/tags/generate',
-        body: { ...body, clientKey: op },
+        body: { ...body, clientKey: op, storeId: session.store.id },
         summary: `手牌批量添加 · ${ZONE_LABELS[zone].title} ${current?.codes.length ?? c} 张（${current?.codes[0] ?? ''} 起）`,
         staffName: session.staff.displayName,
       });

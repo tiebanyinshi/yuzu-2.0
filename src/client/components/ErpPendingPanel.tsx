@@ -97,6 +97,8 @@ const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
 };
 /** 返回里这个字段就是 refId（数字） */
 const REF_NUMBER: Partial<Record<ErpOpType, string>> = {
+  // 手牌批量添加：返回那一次生成的编号（重提成功也要刷新手牌池）
+  hand_tag_generate: 'opId',
   // OA-14 建群：返回那个会话的编号
   oa_im_group: 'id',
   customer_note: 'id',

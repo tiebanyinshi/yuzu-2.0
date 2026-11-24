@@ -228,6 +228,11 @@ export async function fenceKey(tx: Tx, key: string, opType: FencedOp, staffId: n
     const [event] = await tx<{ id: number }[]>`SELECT id FROM location_events WHERE op_key = ${key}`;
     if (event) return { existingOpType: opType };
   }
+  // 手牌批量添加：已经建了的不能再作废（作废了原样重提就查不回原来那批；Codex 审查 PR #191）
+  if (opType === 'hand_tag_generate') {
+    const [gen] = await tx<{ id: number }[]>`SELECT id FROM hand_tag_generate_ops WHERE op_key = ${key}`;
+    if (gen) return { existingOpType: opType };
+  }
   if (isCouponOp(opType) && (await couponOpRef(tx, key, opType)) !== null) return { existingOpType: opType };
   if (isDeviceOp(opType) && (await deviceOpRef(tx, key, opType)) !== null) return { existingOpType: opType };
   if (opType === 'grade_adjust' && (await gradeOpRef(tx, key)) !== null) return { existingOpType: opType };

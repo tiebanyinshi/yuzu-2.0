@@ -207,6 +207,8 @@ export const GenerateInput = z
     preview: z.boolean().default(false),
     /** 添加时要：操作编号（结果待确认时查回、原样重提返回第一次的结果，或确认作废；Codex 审查 PR #189） */
     clientKey: z.uuid('操作编号格式不正确').optional(),
+    /** 添加时要：提交时所在的门店（本机记下的原请求换了门店再重提时拒绝，免得建到别的店；Codex 审查 PR #191） */
+    storeId: z.number().int().positive().optional(),
   })
   .refine(kindLevelOk, KIND_LEVEL_MESSAGE)
   .refine((v) => String(v.start).length <= v.width, '起始号码的位数超过了设定位数')
@@ -226,16 +228,18 @@ export async function generateTags(deps: Deps, raw: unknown, ctx: OpContext) {
   };
   if (input.preview) return { ...(await plan(deps.sql)), created: 0, replayed: false };
   if (!input.clientKey) throw badRequest('缺少有效的操作编号，请刷新页面后重试');
+  if (input.storeId === undefined) throw badRequest('缺少提交时的门店，请刷新页面后重试');
+  if (input.storeId !== currentStoreId()) throw conflict('STORE_MISMATCH', '这笔批量添加是在另一家门店提交的：请切回原来的门店再查回或重提');
   const key = input.clientKey;
   const requestHash = hashRequest({ op: 'hand_tag_generate', ...input, clientKey: undefined, preview: undefined });
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     // 同一个编号排队、确认作废过的不再写入；原样重提返回第一次建的那些牌号，换了内容拒绝
     await assertNotFenced(tx, key, 'hand_tag_generate', erpOpAbandoned);
-    const [seen] = await tx<{ requestHash: string; codes: string[] }[]>`SELECT request_hash, codes FROM hand_tag_generate_ops WHERE op_key = ${key}`;
+    const [seen] = await tx<{ id: number; requestHash: string; codes: string[] }[]>`SELECT id, request_hash, codes FROM hand_tag_generate_ops WHERE op_key = ${key}`;
     if (seen) {
       if (seen.requestHash !== requestHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次批量添加，请刷新页面后重新预览');
-      return { codes: seen.codes, skippedByRule: 0, skippedExisting: [], exhausted: false, created: seen.codes.length, replayed: true };
+      return { codes: seen.codes, skippedByRule: 0, skippedExisting: [], exhausted: false, created: seen.codes.length, replayed: true, opId: Number(seen.id) };
     }
     await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`hand_tags_generate:${currentStoreId()}`}, 0))`;
     const p = await plan(tx);
@@ -246,9 +250,10 @@ export async function generateTags(deps: Deps, raw: unknown, ctx: OpContext) {
       if (isUniqueViolation(e)) throw conflict('TAG_CODE_TAKEN', '有牌号刚被别人建了，请重新预览后再生成');
       throw e;
     }
-    await tx`
+    const [op] = await tx<{ id: number }[]>`
       INSERT INTO hand_tag_generate_ops (op_key, store_id, request_hash, codes, created_by)
-      VALUES (${key}, ${currentStoreId()}, ${requestHash}, ${p.codes}::text[], ${ctx.actor.id})`;
+      VALUES (${key}, ${currentStoreId()}, ${requestHash}, ${p.codes}::text[], ${ctx.actor.id})
+      RETURNING id`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'hand_tags_created',
@@ -264,7 +269,7 @@ export async function generateTags(deps: Deps, raw: unknown, ctx: OpContext) {
       },
       ip: ctx.ip,
     });
-    return { ...p, created: p.codes.length, replayed: false };
+    return { ...p, created: p.codes.length, replayed: false, opId: Number(op!.id) };
   });
 }
 

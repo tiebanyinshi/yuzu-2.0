@@ -16,7 +16,7 @@ type Tag = { id: number; code: string; zone: string; active: boolean; serviceSta
 const tags = async () => (await api(ctx.app, ctx.owner, 'GET', '/api/frontdesk/tags')).body as Tag[];
 const tagOf = async (code: string) => (await tags()).find((t) => t.code === code);
 const generate = (body: object, cookie = ctx.owner) =>
-  api(ctx.app, cookie, 'POST', '/api/frontdesk/tags/generate', { prefix: 'A', start: 1, count: 10, width: 3, zone: 'male', clientKey: randomUUID(), ...body });
+  api(ctx.app, cookie, 'POST', '/api/frontdesk/tags/generate', { prefix: 'A', start: 1, count: 10, width: 3, zone: 'male', clientKey: randomUUID(), storeId: 1, ...body });
 const checkin = (code: string, zone = 'male') => api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: code, zone }] });
 
 describe('按规则批量生成', () => {
@@ -58,8 +58,15 @@ describe('按规则批量生成', () => {
     const key = randomUUID();
     const first = await generate({ prefix: 'C', count: 4, clientKey: key });
     expect(first.body).toMatchObject({ created: 4, replayed: false, codes: ['C001', 'C002', 'C003', 'C004'] });
+    expect(typeof first.body.opId).toBe('number');
     const again = await generate({ prefix: 'C', count: 4, clientKey: key });
-    expect(again.body).toMatchObject({ created: 4, replayed: true, codes: ['C001', 'C002', 'C003', 'C004'] });
+    expect(again.body).toMatchObject({ created: 4, replayed: true, opId: first.body.opId, codes: ['C001', 'C002', 'C003', 'C004'] });
+    // 已经建了的不能再作废：作废接口返回查到了，之后原样重提照旧返回原来那批（Codex 审查 PR #191）
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${key}/abandon`, { type: 'hand_tag_generate', summary: '测试' })).body).toMatchObject({ found: true });
+    expect((await generate({ prefix: 'C', count: 4, clientKey: key })).body).toMatchObject({ replayed: true, created: 4 });
+    // 换了门店重提拒绝；没带门店拒绝
+    expect((await generate({ prefix: 'E', count: 1, storeId: 999 })).body.error.code).toBe('STORE_MISMATCH');
+    expect((await generate({ prefix: 'E', count: 1, storeId: undefined })).status).toBe(400);
     expect((await tags()).filter((t) => t.code.startsWith('C'))).toHaveLength(4);
     expect((await generate({ prefix: 'C', count: 5, clientKey: key })).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
     const found = await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${key}?type=hand_tag_generate`);
