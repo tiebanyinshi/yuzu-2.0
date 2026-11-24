@@ -32,7 +32,7 @@
 ## 3. 接口
 
 - `GET /api/technician-ranking`：「维护技师名册」「钟房」「技师上钟轮播」任一项权限都能看（与技师管理、上钟轮播同一批人）。返回服务器时间、营业日、刷新间隔与每页张数、工种清单、技师卡片（按综合榜排好）、各状态人数。
-- `PUT /api/admin/technicians/:id/photo`：换照片（`{ mime, data }`，浏览器先压缩，1 MB 以内，JPEG / PNG / WebP 按文件头认）；`{ remove: true }` 去掉照片。要「维护技师名册」，记审计「保存技师」。
+- `PUT /api/admin/technicians/:id/photo`：换照片（`{ mime, data, version }`，浏览器先压缩，1 MB 以内，JPEG / PNG / WebP 按文件头认）；`{ remove: true, version }` 去掉照片。要「维护技师名册」，记审计「保存技师」。按版本号写（`technicians.photo_version`，每改一次加 1）：版本对不上说明别人刚改过，拒绝 `PHOTO_CHANGED`；没收到结果的原样重提（现在的版本正好大 1、照片就是这次要的）原样返回，不会把别人后来的修改改回去。
 - `GET /api/technician-photos/:id`：取照片（内容不变，浏览器长期缓存），看榜单的权限就能取。
 
 ## 4. 不做的
@@ -43,7 +43,7 @@
 
 ### 第一批（数据接口与模型）
 
-- 迁移 `250_technician_ranking.sql`（回滚 `docs/rollback/250_technician_ranking.down.sql`）：`technician_photos`（`store_id` + 内容摘要唯一、只追加触发器）、`technicians.photo_id`。
+- 迁移 `250_technician_ranking.sql`（回滚 `docs/rollback/250_technician_ranking.down.sql`）：`technician_photos`（`store_id` + 内容摘要唯一、只追加触发器）、`technicians.photo_id` 与照片版本号 `technicians.photo_version`。
 - 服务端 `src/server/modules/technician-ranking.ts`，共用类型 `src/shared/technician-ranking.ts`；照片按文件头认格式沿用电子菜单的 `sniffImage`。
 - 用例 `tests/technician-ranking.test.ts`：七位合成技师覆盖空闲、休息、在钟上、已派待上、没上牌、停牌、离职；逐个对钟房 `/api/clockroom` 的状态；把上钟时刻往前挪核对已服务与剩余秒数、到点剩余为 0；人气值的 30 天边界、轮钟与没下钟的不算；工种字典的顺序与字典删掉的工种；权限与照片（去重、换、去掉、格式、审计、只追加、取图缓存）。
 - 验收：用独立演示库，钟房里让几位技师上牌、派钟、上钟、休息，`GET /api/technician-ranking` 的 `status` / `note` 与钟房一致；服务中的 `service.remainingSeconds` ≈ 计划下钟 − 现在；返回里没有客人姓名、手牌与房间。

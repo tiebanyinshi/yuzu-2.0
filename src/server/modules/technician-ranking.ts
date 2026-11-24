@@ -23,7 +23,7 @@ import type { Db, Sql } from '../db';
 import { guard, guardAny } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
 import type { Deps } from '../lib/context';
-import { badRequest, notFound, unprocessable } from '../lib/errors';
+import { badRequest, conflict, notFound, unprocessable } from '../lib/errors';
 import { idParam, parse } from '../lib/validate';
 import { currentStoreId } from '../lib/store-context';
 import { clockroomBoard } from './clockroom';
@@ -126,18 +126,31 @@ export async function technicianRanking(db: Db, deps: Deps): Promise<TechnicianR
 
 // ───────────────────────── 照片 ─────────────────────────
 
+/** version：页面看到的照片版本号（名册里带着）；对不上说明别人刚改过，拒绝（没收到结果的原样重提也不会覆盖后来的修改） */
+const Version = z.number('缺少照片的版本号，请刷新页面').int().min(0);
 const PhotoInput = z.union([
-  z.object({ remove: z.literal(true) }).strict(),
+  z.object({ remove: z.literal(true), version: Version }).strict(),
   z
     .object({
       mime: z.enum(['image/jpeg', 'image/png', 'image/webp'], '只能上传 JPEG、PNG、WebP 图片'),
       data: z.string('照片内容为空').min(16, '照片内容为空').max(1_500_000, '照片太大'),
+      version: Version,
     })
     .strict(),
 ]);
 
-/** 换（或去掉）一位技师的照片；返回新的照片地址 */
-export async function saveTechnicianPhoto(db: Sql, id: number, raw: unknown, actor: { id: number }, ip: string): Promise<{ photoUrl: string | null }> {
+export interface PhotoResult {
+  photoUrl: string | null;
+  photoVersion: number;
+}
+
+/**
+ * 换（或去掉）一位技师的照片。按版本号写（与换房间同一个做法）：
+ *   · 版本号与现在的一样：照办（与现在相同的不算改动，版本号不变）；改了的版本号加 1、记审计；
+ *   · 现在的版本号正好大 1、照片就是这次要的：是同一个请求没收到结果的重提，原样返回；
+ *   · 其余（别人在这之后改过）：拒绝 PHOTO_CHANGED，不覆盖别人的修改。
+ */
+export async function saveTechnicianPhoto(db: Sql, id: number, raw: unknown, actor: { id: number }, ip: string): Promise<PhotoResult> {
   const input = parse(PhotoInput, raw);
   let image: { sha: string; mime: string; buf: Buffer } | null = null;
   if (!('remove' in input)) {
@@ -149,36 +162,48 @@ export async function saveTechnicianPhoto(db: Sql, id: number, raw: unknown, act
     image = { sha: createHash('sha256').update(buf).digest('hex'), mime, buf };
   }
   return db.begin(async (tx) => {
-    // 名册的写法：先锁技师那一行（docs/LOCKING.md「技师」）
-    const [before] = await tx<{ techNo: string; name: string; photoId: number | null }[]>`
-      SELECT tech_no, name, photo_id FROM technicians WHERE id = ${id} AND store_id = ${currentStoreId()} FOR UPDATE`;
+    // 名册的写法：先锁技师那一行（docs/LOCKING.md「技师榜单」）
+    const [before] = await tx<{ techNo: string; name: string; photoId: number | null; photoVersion: number }[]>`
+      SELECT tech_no, name, photo_id, photo_version FROM technicians WHERE id = ${id} AND store_id = ${currentStoreId()} FOR UPDATE`;
     if (!before) throw notFound('技师不存在');
+    const prev = before.photoId === null ? null : Number(before.photoId);
+    // 这次要的照片：同一家店同一张图只存一份
     let photoId: number | null = null;
     if (image) {
-      const [row] = await tx<{ id: number }[]>`
-        INSERT INTO technician_photos (store_id, sha256, mime, data, size_bytes, created_by)
-        VALUES (${currentStoreId()}, ${image.sha}, ${image.mime}, ${image.buf}, ${image.buf.length}, ${actor.id})
-        ON CONFLICT (store_id, sha256) DO NOTHING RETURNING id`;
-      photoId = Number(row?.id ?? (await tx<{ id: number }[]>`SELECT id FROM technician_photos WHERE store_id = ${currentStoreId()} AND sha256 = ${image.sha}`)[0]!.id);
+      const [hit] = await tx<{ id: number }[]>`SELECT id FROM technician_photos WHERE store_id = ${currentStoreId()} AND sha256 = ${image.sha}`;
+      photoId = hit ? Number(hit.id) : null;
+      if (photoId === null && before.photoVersion === input.version) {
+        const [row] = await tx<{ id: number }[]>`
+          INSERT INTO technician_photos (store_id, sha256, mime, data, size_bytes, created_by)
+          VALUES (${currentStoreId()}, ${image.sha}, ${image.mime}, ${image.buf}, ${image.buf.length}, ${actor.id})
+          ON CONFLICT (store_id, sha256) DO NOTHING RETURNING id`;
+        photoId = Number(row?.id ?? (await tx<{ id: number }[]>`SELECT id FROM technician_photos WHERE store_id = ${currentStoreId()} AND sha256 = ${image.sha}`)[0]!.id);
+      }
     }
-    const prev = before.photoId === null ? null : Number(before.photoId);
-    if (prev !== photoId) {
-      await tx`UPDATE technicians SET photo_id = ${photoId}, updated_at = now() WHERE id = ${id}`;
-      await writeAudit(tx, {
-        staffId: actor.id,
-        action: 'technician_saved',
-        targetType: 'technician',
-        targetId: id,
-        detail: {
-          name: before.name,
-          before: { photoId: prev },
-          after: { photoId },
-          summary: `${photoId === null ? '去掉' : prev === null ? '上传' : '更换'}技师照片 ${before.techNo} ${before.name}`,
-        },
-        ip,
-      });
+    const wantsNone = !image;
+    const current = { photoUrl: technicianPhotoUrl(prev), photoVersion: before.photoVersion };
+    if (before.photoVersion !== input.version) {
+      const replay = before.photoVersion === input.version + 1 && (wantsNone ? prev === null : photoId !== null && prev === photoId);
+      if (replay) return current;
+      throw conflict('PHOTO_CHANGED', '这位技师的照片刚被别人改过，请关掉编辑框、刷新后再传');
     }
-    return { photoUrl: technicianPhotoUrl(photoId) };
+    if (prev === photoId) return current;
+    const version = before.photoVersion + 1;
+    await tx`UPDATE technicians SET photo_id = ${photoId}, photo_version = ${version}, updated_at = now() WHERE id = ${id}`;
+    await writeAudit(tx, {
+      staffId: actor.id,
+      action: 'technician_saved',
+      targetType: 'technician',
+      targetId: id,
+      detail: {
+        name: before.name,
+        before: { photoId: prev },
+        after: { photoId },
+        summary: `${photoId === null ? '去掉' : prev === null ? '上传' : '更换'}技师照片 ${before.techNo} ${before.name}`,
+      },
+      ip,
+    });
+    return { photoUrl: technicianPhotoUrl(photoId), photoVersion: version };
   });
 }
 

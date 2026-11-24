@@ -48,8 +48,8 @@ const dispatch = async (no: string, opts: { startNow: boolean; callType: 'design
 // 最小的有效 PNG（1×1）；另一张换了一个字节的内容（仍以 PNG 文件头开头）
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 const PNG2 = Buffer.concat([PNG, Buffer.from([0])]);
-const photo = (no: string, body: unknown, cookie = ctx.owner) => api<{ photoUrl: string | null }>(ctx.app, cookie, 'PUT', `/api/admin/technicians/${tech[no]}/photo`, body);
-const png = (buf: Buffer) => ({ mime: 'image/png', data: buf.toString('base64') });
+const photo = (no: string, body: unknown, cookie = ctx.owner) => api<{ photoUrl: string | null; photoVersion: number }>(ctx.app, cookie, 'PUT', `/api/admin/technicians/${tech[no]}/photo`, body);
+const png = (buf: Buffer, version: number) => ({ mime: 'image/png', data: buf.toString('base64'), version });
 
 beforeAll(async () => {
   ctx = await setup();
@@ -178,14 +178,16 @@ describe('技师榜单接口（第一批）', () => {
   });
 
   it('照片：上传、同一张不重存、换、去掉；按文件头认；要维护名册权限；审计；取图带长期缓存，只给本店', async () => {
-    expect((await photo('32', png(PNG), ctx.clerk)).status).toBe(403);
-    expect((await photo('32', { mime: 'image/jpeg', data: PNG.toString('base64') })).body).toMatchObject({ error: { code: 'IMAGE_INVALID' } });
-    expect((await photo('32', { mime: 'image/png', data: Buffer.from('not an image at all, just text').toString('base64') })).status).toBe(422);
-    expect((await photo('32', { ...png(PNG), extra: 1 })).status).toBe(400);
-    const a = await photo('32', png(PNG));
+    expect((await photo('32', png(PNG, 0), ctx.clerk)).status).toBe(403);
+    expect((await photo('32', { mime: 'image/jpeg', data: PNG.toString('base64'), version: 0 })).body).toMatchObject({ error: { code: 'IMAGE_INVALID' } });
+    expect((await photo('32', { mime: 'image/png', data: Buffer.from('not an image at all, just text').toString('base64'), version: 0 })).status).toBe(422);
+    expect((await photo('32', { ...png(PNG, 0), extra: 1 })).status).toBe(400);
+    expect((await photo('32', { mime: 'image/png', data: PNG.toString('base64') })).status).toBe(400); // 没带版本号
+    const a = await photo('32', png(PNG, 0));
     expect(a.status, JSON.stringify(a.body)).toBe(200);
+    expect(a.body).toMatchObject({ photoVersion: 1 });
     expect(a.body.photoUrl).toMatch(/^\/api\/technician-photos\/\d+$/);
-    const b = await photo('33', png(PNG)); // 同一张图给另一位：只存一份
+    const b = await photo('33', png(PNG, 0)); // 同一张图给另一位：只存一份
     expect(b.body.photoUrl).toBe(a.body.photoUrl);
     expect((await ctx.sql`SELECT count(*)::int AS n FROM technician_photos`)[0]!.n).toBe(1);
     let r = await ranking();
@@ -197,11 +199,19 @@ describe('技师榜单接口（第一批）', () => {
     expect(img.rawPayload.equals(PNG)).toBe(true);
     expect((await ctx.app.inject({ method: 'GET', url: a.body.photoUrl!, headers: { cookie: backoffice } })).statusCode).toBe(403);
     expect((await ctx.app.inject({ method: 'GET', url: '/api/technician-photos/999999', headers: { cookie: ctx.clerk } })).statusCode).toBe(404);
-    // 换一张、重复提交同一张（不再记审计）、去掉
-    const c = await photo('32', png(PNG2));
+    // 没收到结果的原样重提（版本 0、同一张）：返回现在的，不再记审计
+    expect((await photo('32', png(PNG, 0))).body).toEqual(a.body);
+    // 换一张（版本 1 → 2）；之后迟到的「版本 0 传第一张」、「版本 1 去掉」都被拒绝，不覆盖
+    const c = await photo('32', png(PNG2, 1));
+    expect(c.body).toMatchObject({ photoVersion: 2 });
     expect(c.body.photoUrl).not.toBe(a.body.photoUrl);
-    expect((await photo('32', png(PNG2))).body.photoUrl).toBe(c.body.photoUrl);
-    expect((await photo('32', { remove: true })).body.photoUrl).toBeNull();
+    expect((await photo('32', png(PNG, 0))).body).toMatchObject({ error: { code: 'PHOTO_CHANGED' } });
+    expect((await photo('32', { remove: true, version: 0 })).body).toMatchObject({ error: { code: 'PHOTO_CHANGED' } });
+    expect((await photo('32', png(PNG2, 2))).body).toEqual(c.body); // 与现在的一样：不算改动
+    const d = await photo('32', { remove: true, version: 2 });
+    expect(d.body).toEqual({ photoUrl: null, photoVersion: 3 });
+    expect((await photo('32', { remove: true, version: 2 })).body).toEqual(d.body); // 去掉的重提
+    expect((await photo('32', png(PNG2, 1))).body).toMatchObject({ error: { code: 'PHOTO_CHANGED' } }); // 换照片的迟到重提不会把去掉的改回来
     r = await ranking();
     expect(r.body.techs.find((t) => t.techNo === '32')!.photoUrl).toBeNull();
     const audit = await ctx.sql<{ detail: { summary: string } }[]>`
@@ -213,6 +223,6 @@ describe('技师榜单接口（第一批）', () => {
       () => 'refused',
     );
     expect(deleted).toBe('refused');
-    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/999999/photo', png(PNG))).status).toBe(404);
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/999999/photo', png(PNG, 0))).status).toBe(404);
   });
 });
