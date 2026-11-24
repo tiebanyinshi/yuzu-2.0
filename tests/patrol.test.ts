@@ -572,6 +572,17 @@ describe('巡查起始时间（店主 2026-11-24，XC17、XC18）', () => {
     expect(rounds.at(-1)).toEqual({ no: rounds.length, start: z('07:00', true), end: z('09:00', true) });
     // 第二天：整天按 9:00 起每 2 小时
     expect(patrolDayRounds(changes, '2026-11-12', tz, 6).rounds).toEqual(patrolRoundsOf('2026-11-12', tz, 6, 120, 9));
+    // 间隔除不尽 24 小时（5 小时）：新的分界从这一天的 9:00 往后排（14、19、00、05），与预览一致，最后一轮到第二天 9:00
+    const five = patrolDayRounds([{ from: D, minutes: 300, startHour: 9, at: z('10:00') }], D, tz, 6).rounds;
+    expect(five.slice(1).map((x) => `${x.start}~${x.end}`)).toEqual(
+      [
+        ['09:00', '14:00'],
+        ['14:00', '19:00'],
+        ['19:00', '00:00'],
+        ['00:00', '05:00'],
+        ['05:00', '09:00'],
+      ].map(([a, b]) => `${z(a!, a! < '09:00')}~${z(b!, b! <= '09:00')}`),
+    );
     // 前一天：照旧
     expect(patrolDayRounds(changes, '2026-11-10', tz, 6).rounds).toEqual(patrolRoundsOf('2026-11-10', tz, 6, 180));
   });
@@ -594,6 +605,14 @@ describe('巡查起始时间（店主 2026-11-24，XC17、XC18）', () => {
     const at = Date.parse(last.at!);
     const startedBefore = (list: { start: string }[]) => list.filter((x) => Date.parse(x.start) < at).map((x) => x.start);
     expect(startedBefore(after.rounds)).toEqual(startedBefore(before.rounds));
+    // 之后只改间隔（Codex 审查 f1be53c）：今天从几点开始、之前开始的轮、今天是哪一天都不变
+    s = await settings();
+    const iv = await admin('PUT', '/api/erp/patrol/settings', { departmentIds: s.departmentIds, viewerIds: s.viewerIds, roundMinutes: s.roundMinutes === 120 ? 240 : 120, rev: s.rev });
+    expect(iv.status, JSON.stringify(iv.body)).toBe(200);
+    expect(iv.body).toMatchObject({ startHour: 9 });
+    const afterIv = (await admin('GET', '/api/erp/patrol/day')).body as { date: string; rounds: { start: string }[] };
+    expect(afterIv.date).toBe((before as unknown as { date: string }).date);
+    expect(afterIv.rounds[0]!.start).toBe(before.rounds[0]!.start);
     // 不传起始时间：不改
     s = await settings();
     expect((await admin('PUT', '/api/erp/patrol/settings', { departmentIds: s.departmentIds, viewerIds: s.viewerIds, rev: s.rev })).body).toMatchObject({ startHour: 9 });

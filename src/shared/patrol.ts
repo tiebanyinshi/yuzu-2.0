@@ -157,7 +157,7 @@ export function patrolRoundsOf(date: string, timeZone: string, startHour: number
 /**
  * 某个巡场日的各轮（按改动记录，XC13–XC19）与每一轮按的巡场间隔（打卡记下它，同一个场所同一轮只记一次）。
  * 这一天从这一天开始时的设置算起，到下一天的开始为止（下一天按改过的设置开始，所以改起始时间的那一天会长一些或短一些）。
- * 这一天改过起始时间（有 at）的：at 以前开始的轮照旧；at 那一刻正在巡的那一轮到新设置的下一个分界为止；之后按新的排，最后一轮正好到第二天的开始。
+ * 这一天改过起始时间（有 at）的：at 以前开始的轮照旧；at 那一刻正在巡的那一轮到新设置的下一个分界为止；之后从新起始整点往后排，最后一轮到第二天的开始为止。
  */
 export function patrolDayRounds(
   changes: readonly PatrolRoundChange[],
@@ -173,8 +173,8 @@ export function patrolDayRounds(
     if (c.from !== date || !c.at) continue;
     const at = Math.min(Math.max(Date.parse(c.at), start), end);
     const step = c.minutes * 60_000;
-    // 新设置的分界：按新起始整点在第二天的那一刻往回排（这一天改过以后，第二天就从那一刻开始）
-    const anchor = businessDayStart(plusOneDay(date), timeZone, c.startHour ?? dayStartHour).getTime();
+    // 新设置的分界：从这一天的新起始整点往后排「起始 + N × 间隔」，最后一轮到第二天的开始为止（除不尽的短一些，与预览一致）
+    const anchor = businessDayStart(date, timeZone, c.startHour ?? dayStartHour).getTime();
     const kept = spans.filter((s) => s.a < at);
     let from = start;
     const last = kept.at(-1);
