@@ -9,7 +9,6 @@ import { z } from 'zod';
 import { sortBoardTechnicians, techFilterOf, type BoardSession, type BoardTechnician } from '@shared/clockroom';
 import { MAX_IMAGE_BYTES } from '@shared/requests';
 import {
-  RANKING_DEFAULT_REFRESH_SECONDS,
   RANKING_PAGE_SIZE,
   RANKING_POPULARITY_DAYS,
   technicianPhotoUrl,
@@ -111,7 +110,7 @@ export async function technicianRanking(db: Db, deps: Deps): Promise<TechnicianR
   return {
     serverTime: board.serverTime,
     businessDate: board.businessDate,
-    refreshSeconds: RANKING_DEFAULT_REFRESH_SECONDS,
+    refreshSeconds: board.techRules.rankingRefreshSeconds,
     pageSize: RANKING_PAGE_SIZE,
     popularityDays: RANKING_POPULARITY_DAYS,
     kinds: [...dict, ...extra],

@@ -138,6 +138,7 @@ const RulesInput = z.object({
   requireTechnician: z.boolean(),
   tierByGrade: z.boolean(),
   defaultCallType: z.enum(CALL_TYPES, '默认上钟方式应为点钟或轮钟'),
+  rankingRefreshSeconds: z.number('技师榜单的刷新间隔要写秒数').int('技师榜单的刷新间隔要写整数秒').min(10, '技师榜单最快 10 秒刷新一次').max(300, '技师榜单最慢 300 秒刷新一次'),
 });
 
 const ClockroomRulesInput = z.object({
