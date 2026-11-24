@@ -9,7 +9,7 @@ import { Link, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Bell, BookUser, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, MessagesSquare, Palmtree, ReceiptText, ScanFace, Stamp } from 'lucide-react';
 import { shiftDate } from '@shared/labels';
-import type { MySchedule, MyScheduleItem } from '@shared/oa';
+import { MY_DAY_STATUS_LABELS, MY_DAY_STATUSES, type MyDayStatus, type MySchedule, type MyScheduleItem } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
 import { IM_LIST_POLL_MS, type ImSync } from '@shared/oa-im';
 import { clockText } from '@shared/technician-admin';
@@ -115,6 +115,28 @@ function addMonths(month: string, n: number): string {
   return d.toISOString().slice(0, 7);
 }
 
+/** 每天的底色（排班优化第 4 条）：系统现有的主题色，图例与格子同一张表 */
+const DAY_TONE: Record<MyDayStatus, { cell: string; swatch: string; text: string }> = {
+  work: { cell: 'bg-lake-soft border-lake/30', swatch: 'bg-lake-soft border-lake/40', text: 'text-lake' },
+  rest: { cell: 'bg-paper-2 border-line', swatch: 'bg-paper-2 border-line-strong', text: 'text-ink-3' },
+  leave: { cell: 'bg-yuzu-soft border-yuzu/40', swatch: 'bg-yuzu-soft border-yuzu/50', text: 'text-yuzu-deep' },
+  absent: { cell: 'bg-clay-soft border-clay/30', swatch: 'bg-clay-soft border-clay/40', text: 'text-clay' },
+};
+const LEAVE_PART: Record<'full' | 'am' | 'pm', string> = { full: '请假', am: '上午请假', pm: '下午请假' };
+
+function DayLegend() {
+  return (
+    <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1.5 text-[12.5px]" data-testid="my-schedule-legend">
+      {MY_DAY_STATUSES.map((s) => (
+        <span key={s} className="flex items-center gap-1.5 text-ink-2">
+          <span className={cn('size-4 rounded border', DAY_TONE[s].swatch)} aria-hidden />
+          {MY_DAY_STATUS_LABELS[s]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const itemText = (i: MyScheduleItem) => `${clockText(i.startMinute)}–${i.endMinute <= i.startMinute ? '次日 ' : ''}${clockText(i.endMinute)}`;
 
 function MySchedulePage() {
@@ -146,6 +168,7 @@ function MySchedulePage() {
                 data-testid="my-schedule-next"
               />
             </div>
+            <DayLegend />
             <MonthGrid data={data!} />
           </Card>
         )}
@@ -177,15 +200,19 @@ function MonthGrid({ data }: { data: MySchedule }) {
           <div
             key={day.date}
             data-testid={`my-day-${day.date}`}
+            data-status={day.status}
             className={cn(
               'min-h-14 min-w-0 rounded-md border px-1 py-1 sm:min-h-20 sm:px-1.5',
-              day.date === data.today ? 'border-pine bg-pine-tint' : 'border-line',
-              day.date < data.today && 'opacity-60',
+              DAY_TONE[day.status].cell,
+              day.date === data.today && 'ring-2 ring-pine',
+              day.date < data.today && 'opacity-70',
             )}
           >
             <p className="num font-semibold text-ink-2">{Number(day.date.slice(8))}</p>
-            {day.items.length === 0 && tonight.length === 0 && (
-              <p className="text-ink-4">
+            {day.status === 'leave' && <p className={cn('font-bold', DAY_TONE.leave.text)}>{LEAVE_PART[day.leavePart ?? 'full']}</p>}
+            {day.status === 'absent' && <p className={cn('font-bold', DAY_TONE.absent.text)}>缺勤</p>}
+            {day.items.length === 0 && tonight.length === 0 && day.status === 'rest' && (
+              <p className="text-ink-3">
                 休<span className="max-sm:hidden">息</span>
               </p>
             )}

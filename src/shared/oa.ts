@@ -300,10 +300,18 @@ export interface MyScheduleItem {
   endMinute: number;
   consecutive: boolean;
 }
+/**
+ * 员工「我的排班」每一天的状态（店主 2026-11-24《考勤排班功能优化需求说明》第 4 条）：用不同的底色区分，配图例。
+ * 请假（审批通过的请假覆盖到这一天，半天也算）＞ 缺勤（这一天有一班结算成旷工）＞ 上班（有排班）＞ 休息（没排班）。只是显示，不改考勤计算。
+ */
+export const MY_DAY_STATUSES = ['work', 'rest', 'leave', 'absent'] as const;
+export type MyDayStatus = (typeof MY_DAY_STATUSES)[number];
+export const MY_DAY_STATUS_LABELS: Record<MyDayStatus, string> = { work: '上班', rest: '休息', leave: '请假', absent: '缺勤' };
 export interface MySchedule {
   month: string;
   today: string;
-  days: { date: string; items: MyScheduleItem[] }[];
+  /** status：这一天的状态；leavePart：请假是整天还是上午 / 下午 */
+  days: { date: string; items: MyScheduleItem[]; status: MyDayStatus; leavePart?: 'full' | 'am' | 'pm' }[];
   /** 下个月 1 号：00:00 上班的在这个月最后一天写「今晚 24:00 上班」 */
   following: { date: string; items: MyScheduleItem[] };
 }

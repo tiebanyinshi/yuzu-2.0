@@ -15,6 +15,7 @@ import {
   SCHEDULE_MAX_DAYS,
   SCHEDULE_MAX_SHIFTS_PER_DAY,
   SCHEDULE_SAVE_MAX_CELLS,
+  type MyDayStatus,
   type MySchedule,
   type OaShift,
   type ScheduleCell,
@@ -255,8 +256,23 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
       ORDER BY o.work_date, sh.start_minute`;
     const itemsOf = (d: string) =>
       rows.filter((r) => r.workDate === d).map((r) => ({ shiftId: Number(r.shiftId), name: r.name, startMinute: r.startMinute, endMinute: r.endMinute, consecutive: r.consecutive }));
+    // 每一天的状态（排班优化第 4 条）：请假（审批通过的覆盖）＞ 缺勤（有一班结算成旷工）＞ 上班 ＞ 休息；只是显示
+    const leaves = await sql<{ workDate: string; part: 'full' | 'am' | 'pm' }[]>`
+      SELECT work_date::text AS work_date, part FROM oa_attendance_covers
+      WHERE staff_id = ${req.actor.id} AND kind = 'leave' AND work_date BETWEEN ${first} AND ${end} ORDER BY work_date, id`;
+    const absent = await sql<{ businessDate: string }[]>`
+      SELECT DISTINCT business_date::text AS business_date FROM oa_attendance_daily
+      WHERE staff_id = ${req.actor.id} AND status = 'absent' AND business_date BETWEEN ${first} AND ${end}`;
+    const leaveOf = new Map<string, 'full' | 'am' | 'pm'>();
+    for (const l of leaves) leaveOf.set(l.workDate, leaveOf.has(l.workDate) && leaveOf.get(l.workDate) !== l.part ? 'full' : l.part);
+    const absentDays = new Set(absent.map((a) => a.businessDate));
     const days: MySchedule['days'] = [];
-    for (let d = first; d <= end; d = shiftDate(d, 1)) days.push({ date: d, items: itemsOf(d) });
+    for (let d = first; d <= end; d = shiftDate(d, 1)) {
+      const items = itemsOf(d);
+      const leavePart = leaveOf.get(d);
+      const status: MyDayStatus = leavePart ? 'leave' : absentDays.has(d) ? 'absent' : items.length ? 'work' : 'rest';
+      days.push({ date: d, items, status, ...(leavePart ? { leavePart } : {}) });
+    }
     // 下个月 1 号的也带上：00:00 上班的要在这个月最后一天写「今晚 24:00 上班」
     const next = shiftDate(end, 1);
     return { month, today, days, following: { date: next, items: itemsOf(next) } };

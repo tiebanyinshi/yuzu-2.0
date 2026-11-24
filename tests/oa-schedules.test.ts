@@ -196,6 +196,36 @@ describe('OA-05 排班', () => {
     expect(dec.following).toEqual({ date: '2027-01-01', items: [{ shiftId: night, name: '夜班', startMinute: 0, endMinute: 480, consecutive: false }] });
     expect(dec.days.some((d) => d.date === '2027-01-01')).toBe(false);
   });
+
+  it('我的排班的四种状态（排班优化第 4 条）：上班、休息、请假（审批通过的覆盖，半天也算）、缺勤（有一班结算成旷工）', async () => {
+    const d1 = shiftDate(today, 2);
+    const d2 = shiftDate(today, 3);
+    const d3 = shiftDate(today, 4);
+    const month = d1.slice(0, 7);
+    await ctx.sql`INSERT INTO oa_schedules (staff_id, work_date, shift_id) VALUES (${b.id}, ${d1}, ${early}), (${b.id}, ${d2}, ${early}), (${b.id}, ${d3}, ${early})`;
+    // d2 下午请假（审批通过的覆盖）
+    const [t] = await ctx.sql<{ id: number }[]>`SELECT id FROM oa_approval_templates WHERE code = 'leave'`;
+    const [lt] = await ctx.sql<{ id: number }[]>`SELECT id FROM oa_leave_types ORDER BY id LIMIT 1`;
+    const [ap] = await ctx.sql<{ id: number }[]>`
+      INSERT INTO oa_approvals (template_id, template_code, template_name, fields, applicant_id, title, form, status, finished_at)
+      VALUES (${t!.id}, 'leave', '请假', '[]', ${b.id}, '演练请假', '{}', 'approved', now()) RETURNING id`;
+    await ctx.sql`INSERT INTO oa_attendance_covers (staff_id, work_date, kind, part, halves, leave_type_id, approval_id) VALUES (${b.id}, ${d2}, 'leave', 'pm', 1, ${lt!.id}, ${ap!.id})`;
+    // d3 结算成旷工
+    const [st] = await ctx.sql<{ storeId: number }[]>`SELECT store_id FROM oa_shifts WHERE id = ${early}`;
+    await ctx.sql`INSERT INTO oa_attendance_daily (store_id, staff_id, business_date, shift_id, status) VALUES (${st!.storeId}, ${b.id}, ${d3}, ${early}, 'absent')`;
+    const m = (await api(ctx.app, b.cookie, 'GET', `/api/oa/me/schedule?month=${month}`)).body as MySchedule;
+    const day = (d: string) => m.days.find((x) => x.date === d);
+    if (day(d1)) expect(day(d1)).toMatchObject({ status: 'work' });
+    if (day(d2)) expect(day(d2)).toMatchObject({ status: 'leave', leavePart: 'pm' });
+    if (day(d3)) expect(day(d3)).toMatchObject({ status: 'absent' });
+    // 没排班的日子是休息
+    const rest = m.days.find((x) => x.items.length === 0 && ![d1, d2, d3].includes(x.date));
+    if (rest) expect(rest.status).toBe('rest');
+    expect(m.days.every((x) => ['work', 'rest', 'leave', 'absent'].includes(x.status))).toBe(true);
+    // 别人看不到这位的状态（只看本人）
+    const other = (await api(ctx.app, a.cookie, 'GET', `/api/oa/me/schedule?month=${month}`)).body as MySchedule;
+    if (other.days.some((x) => x.date === d2)) expect(other.days.find((x) => x.date === d2)!.status).not.toBe('leave');
+  });
   it('调走的员工：原门店今后的排班不再算数（不进「我的排班」、不挡新门店的排班），历史照留', async () => {
     const mv = await hire('sch_mv', 'front.staff');
     const g = ((await api(ctx.app, ctx.owner, 'GET', '/api/oa/attendance/setup')).body as AttendanceSetup).groups.find((x) => x.id === groupId)!;
