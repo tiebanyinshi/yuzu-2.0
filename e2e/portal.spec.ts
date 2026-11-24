@@ -74,4 +74,15 @@ test.describe('系统门户页', () => {
     expect(panel.x).toBeGreaterThanOrEqual(0);
     expect(panel.x + panel.width).toBeLessThanOrEqual(390);
   });
+  test('通知面板取不回来：显示「重试」，连上以后点重试照常列出', async ({ page }) => {
+    await loginToPortal(page, 'linlan');
+    await page.route('**/api/oa/notifications?status=all', (route) => route.fulfill({ status: 503, json: { error: { code: 'BUSY', message: '系统忙' } } }));
+    await page.getByTestId('notification-bell').click();
+    const failed = page.getByTestId('notification-panel-failed');
+    await expect(failed).toBeVisible({ timeout: 20_000 });
+    await page.unroute('**/api/oa/notifications?status=all');
+    await failed.getByRole('button', { name: /重试/ }).click();
+    await expect(failed).toHaveCount(0);
+    await expect(page.locator('[data-testid^="notification-panel-"]').first()).toBeVisible();
+  });
 });

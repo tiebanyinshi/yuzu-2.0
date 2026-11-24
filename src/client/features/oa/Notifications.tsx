@@ -140,7 +140,7 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
         {q.isPending ? (
           <Skeleton className="m-2 h-24" />
         ) : q.isError && !q.data ? (
-          <p className="px-3 py-6 text-center text-[13px] text-ink-3">通知没有取回来，稍后再试</p>
+          <LoadFailed title="通知没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} className="m-2" testId="notification-panel-failed" />
         ) : items.length === 0 ? (
           <p className="px-3 py-6 text-center text-[13px] text-ink-3" data-testid="notification-panel-empty">
             还没有通知
