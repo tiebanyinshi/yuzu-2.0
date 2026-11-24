@@ -120,7 +120,7 @@ const STORE_NAV: StoreNavDomain[] = [
       // 回测整改 P09（回测 4-2）：技师上钟轮播，只读大屏；可单独授给值班经理、排位员
       { to: '/tech-board', label: '上钟轮播', icon: MonitorPlay, perm: ['technician.board', 'technician.dispatch', 'technician.announce'], when: (s) => s.technicians },
       // 技师管理（8.1.16 块 E，docs/TECHNICIANS_V8115.md）：技师名册、组别、班次与排班、休假；钟房的岗位能看、能替技师申请休假
-      { to: '/technicians', label: '技师管理', icon: IdCard, perm: ['technician.manage', 'technician.dispatch'], when: (s) => s.technicians },
+      { to: '/technicians', label: '技师管理', icon: IdCard, perm: ['technician.manage', 'technician.dispatch', 'technician.board'], when: (s) => s.technicians },
     ],
   },
   {

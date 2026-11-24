@@ -151,6 +151,10 @@ export const leaveRangeText = (l: { fromDate: string; toDate: string }) => (l.fr
 
 export interface RosterTechnician extends Technician {
   groupName: string | null;
+  /** 技师照片的地址（技师榜单，docs/TECH_RANKING.md）；没有为 null */
+  photoUrl: string | null;
+  /** 照片的版本号：换、去掉照片时原样带回，对不上（别人刚改过）就拒绝 */
+  photoVersion: number;
   /** 今天排的班（没排、排休为 null） */
   shiftToday: Pick<TechShift, 'id' | 'name' | 'startMinute' | 'endMinute'> | null;
   restToday: boolean;

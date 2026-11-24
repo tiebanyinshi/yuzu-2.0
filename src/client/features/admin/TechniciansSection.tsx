@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { HandHeart, Plus } from 'lucide-react';
 import { PRICE_TIERS } from '@shared/catalog';
-import { CALL_TYPE_LABELS, DEFAULT_TECHNICIAN_RULES, gradeLabel, type CallType, type TechnicianAdmin, type TechnicianRules } from '@shared/technicians';
+import { CALL_TYPE_LABELS, DEFAULT_TECHNICIAN_RULES, gradeLabel, RANKING_REFRESH_CHOICES, type CallType, type TechnicianAdmin, type TechnicianRules } from '@shared/technicians';
 import { api, errorMessage } from '../../lib/api';
 import { ClockroomRulesCard, CommissionCard } from './ClockroomCards';
 import { qk, useCatalog } from '../../lib/queries';
@@ -14,7 +14,7 @@ import { useCan } from '../../lib/session';
 import { cn, formatDateTime } from '../../lib/utils';
 import { Money } from '../../components/Money';
 import { useToast } from '../../components/Toast';
-import { Badge, Button, Card, Notice, PendingBadge, SectionTitle, Segmented, Skeleton } from '../../components/ui';
+import { Badge, Button, Card, Notice, PendingBadge, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
 import { AdminPage } from './AdminShell';
 import { SubPane } from '../../components/SubNav';
 import { TechnicianDialog } from '../technicians/TechnicianDialog';
@@ -146,6 +146,28 @@ function RulesCard() {
             onChange={(v: CallType) => editable && set({ defaultCallType: v })}
             options={(['rotation', 'designated'] as const).map((c) => ({ value: c, label: CALL_TYPE_LABELS[c], disabled: !editable }))}
           />,
+          true,
+        )}
+        {row(
+          '技师榜单刷新间隔',
+          '技师管理里的「技师榜单」多久从钟房取一次状态；服务中的剩余时间每秒倒计时，不靠它。',
+          <Select
+            aria-label="技师榜单刷新间隔"
+            value={String(draft.rankingRefreshSeconds)}
+            disabled={!editable}
+            onChange={(e) => set({ rankingRefreshSeconds: Number(e.target.value) })}
+            fullWidth={false}
+            className="w-32"
+            data-testid="technician-ranking-refresh"
+          >
+            {[...new Set([...RANKING_REFRESH_CHOICES, draft.rankingRefreshSeconds])]
+              .sort((a, b) => a - b)
+              .map((n) => (
+                <option key={n} value={n}>
+                  {n < 60 ? `${n} 秒` : `${n / 60} 分钟`}
+                </option>
+              ))}
+          </Select>,
           true,
         )}
       </div>

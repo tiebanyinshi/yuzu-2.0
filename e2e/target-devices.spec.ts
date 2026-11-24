@@ -635,6 +635,8 @@ const CLOCK_BOARD: ClockroomBoard = {
 };
 const ROSTER: RosterTechnician[] = BOARD_TECHS.map(({ state: _s, position: _p, busy: _b, waiting: _w, todayClocks: _t, rejectStreak: _r, approvedLeave, ...t }) => ({
   ...t,
+  photoUrl: null,
+  photoVersion: 0,
   leaveToday: approvedLeave,
 }));
 const TECH_VIEW: TechnicianAdminView = {
