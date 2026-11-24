@@ -64,7 +64,7 @@ export function PriceCategoryChecks() {
           <DataTable className="mt-3" variant="plain" columns={columns} rows={rows} rowKey={(r) => r.code} rowTestId={(r) => `price-category-${r.code}`} testId="price-category-table" />
           {bad.some((r) => r.hidden.length) && (
             <div className="mt-4 rounded-md border border-clay/40 bg-clay-soft/40 p-3" data-testid="price-category-hidden">
-              <p className="text-[13px] font-bold text-clay">这些能卖的项在前台开单、房态中心登记或点单页上看不到：</p>
+              <p className="text-[13px] font-bold text-clay">这些项与前台开单、房态中心登记、点单页对不上：</p>
               <ul className="mt-1.5 space-y-1 text-[13px] text-ink-2">
                 {bad.flatMap((r) =>
                   r.hidden.map((h) => (

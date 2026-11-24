@@ -1488,9 +1488,37 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     const porridge = await legacy({ name: '生滚牛肉粥', category: '餐饮', price: 3000 });
     // 另一家店给原有的「伊索抗衰面部护理」的标准档定了本店价：本店换成专业 / 优选时这一档留着，本店价照旧有着落
     const facial = await legacy({ name: '伊索抗衰面部护理', category: '按摩', price: 70000, technicianRequired: true });
+    const ocean = await legacy({ name: '海蓝之谜清洁面部护理', category: '按摩', price: 70000, technicianRequired: true });
     const [store2] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('PC28', '二店', 1) RETURNING id`;
     await ctx.sql`INSERT INTO service_item_store_prices (store_id, item_id, tier, price, updated_by) VALUES (${store2!.id}, ${facial}, 'standard', 72000, 1)`;
+    // 切换前按「标准」档开出的钟（价格不跟技师等级）：切换后标准档去掉了，加钟照样能加，按专业档（价目表把专业价写在标准档上）
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/rules', { enabled: true, requireTechnician: false, tierByGrade: false })).status).toBe(200);
+    const techRes = await api(ctx.app, ctx.owner, 'POST', '/api/admin/technicians', { techNo: 'Q28', name: '合成技师', gender: 'female', grade: 'standard' });
+    const techId = (techRes.body.technicians as { id: number; techNo: string }[]).find((t) => t.techNo === 'Q28')!.id;
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/technicians/${techId}/state`, { action: 'sign_in' })).status).toBe(200);
+    await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'Q', from: 1, to: 1, width: 3, zone: 'female' });
+    const qVisit = (await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: 'Q001', zone: 'female' }] })).body.visits[0].id as number;
+    const dispatched = await api(ctx.app, ctx.clerk, 'POST', '/api/clockroom/dispatch', {
+      clientKey: randomUUID(),
+      visitId: qVisit,
+      itemId: ocean,
+      tier: 'standard',
+      quantity: 1,
+      expectedTotal: 70000,
+      technicianId: techId,
+      callType: 'designated',
+      startNow: true,
+    });
+    expect(dispatched.status, JSON.stringify(dispatched.body)).toBe(200);
+    const sessionId = (dispatched.body.sessions as { id: number; technicianId: number }[]).find((x) => x.technicianId === techId)!.id;
     await activateNew('原有同名·没有档口');
+    const ext = await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${sessionId}/extend`, { clientKey: randomUUID(), quantity: 1, expectedTotal: 80000 });
+    expect(ext.status, JSON.stringify(ext.body)).toBe(200);
+    const extLines = await ctx.sql<{ tier: string; unitPrice: number }[]>`SELECT tier, unit_price FROM bill_lines WHERE session_id = ${sessionId} AND status = 'active' ORDER BY id`;
+    expect(extLines).toEqual([
+      { tier: 'standard', unitPrice: 70000 },
+      { tier: 'professional', unitPrice: 80000 },
+    ]);
 
     // 没有档口：粥对上了原有的项目但上不了点单页，别的菜建不了——分类核对逐项写明
     let checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
@@ -1528,6 +1556,15 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
     expect(checks.filter((c) => c.items !== null && c.items !== c.sellable)).toEqual([]);
     expect(checks.every((c) => c.hidden.length === 0)).toBe(true);
+    // 价目表里把粥改成不可下单：原有的收银项目不跟着停用、还在点单页上——分类核对查得出来、写明
+    const overview = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as { active: { id: number } };
+    const current = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${overview.active.id}`)).body as PriceCatalogSet;
+    const beef = current.entries.find((e) => e.name === '生滚牛肉粥')!;
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${beef.id}`, { ...beef, orderable: false, opKey: randomUUID() })).status).toBe(200);
+    checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
+    const congee2 = checks.find((c) => c.name === '生滚粥')!;
+    expect(congee2).toMatchObject({ sellable: 1, items: 2 });
+    expect(congee2.hidden).toEqual([{ name: '生滚牛肉粥', reason: expect.stringMatching(/不能卖.*还在点单页上/) }]);
     // 补齐设置记了审计，写明哪几个、改了什么；名称、类别不动
     const audit = await ctx.sql<{ detail: { label: string; items: { itemId: number; changes: string[] }[] } }[]>`
       SELECT detail FROM audit_logs WHERE action = 'price_catalog' AND detail->>'action' = 'fit_items' ORDER BY id`;

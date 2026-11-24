@@ -573,8 +573,8 @@ export interface PriceCategoryCheck {
   entries: number;
   /** 能卖的（在用、可以下单、有价；服务费、房间不算） */
   sellable: number;
-  /** 点单页上看得到的（能卖的里头对上了收银项目、在用、上得了页面的）；服务费、房间这类不落库的为 null */
+  /** 点单页上看得到的（对上了收银项目、在用、上得了页面的，不能卖的也算上）；服务费、房间这类不落库的为 null */
   items: number | null;
-  /** 能卖、但点单页上看不到的项与原因（PC28） */
+  /** 对不上的项与原因（PC28）：能卖但点单页上看不到的，不能卖却还在点单页上的 */
   hidden: { name: string; reason: string }[];
 }

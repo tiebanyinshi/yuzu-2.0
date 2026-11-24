@@ -57,6 +57,14 @@ export async function priceCategoryChecks(db: Db): Promise<PriceCategoryCheck[]>
       const reason = hiddenReason(e, items.get(priceNameKey(e)), hasStation);
       return reason ? [{ name: e.name, reason }] : [];
     });
+    // 不能卖的（待定价、不可下单）对上的收银项目却还在页面上（门店原有的项目不跟着价目表停用）：也算进「点单页上」，单独写明
+    const extra = noItems
+      ? []
+      : mine.flatMap((e) => {
+          const it = items.get(priceNameKey(e));
+          if (sellable(e) || !it || hiddenReason(e, it, hasStation) !== null) return [];
+          return [{ name: e.name, reason: `价目表里这一项不能卖（待定价或不可下单），对上的收银项目「${it.name}」却还在点单页上（到后台价目里停用它，或在价目表里补价）` }];
+        });
     return {
       code: c.code,
       name: c.name,
@@ -65,8 +73,8 @@ export async function priceCategoryChecks(db: Db): Promise<PriceCategoryCheck[]>
       entries: mine.length,
       sellable: sold.length,
       // 点单页（前台开单、房态中心登记、点单页）上看得到的：能卖的里头对上了、在用、上得了页面的
-      items: noItems ? null : sold.length - hidden.length,
-      hidden,
+      items: noItems ? null : sold.length - hidden.length + extra.length,
+      hidden: [...hidden, ...extra],
     };
   });
 }

@@ -1372,7 +1372,14 @@ export async function extensionLine(db: Db, sessionId: number, quantity: number)
   if (s.status !== 'serving') throw conflict('SESSION_NOT_SERVING', '只有上钟中的钟单可以加钟');
   const rules = await loadClockroomRules(db);
   const callType: CallType = rules.extensionAsDesignated ? 'designated' : s.callType;
-  return { visitId: Number(s.visitId), line: { itemId: Number(s.itemId), quantity, tier: s.tier ?? undefined, technicianId: Number(s.technicianId), callType } };
+  // 上钟以后项目的价格档可能变了（全品类价目表把原有的双价项目换成「专业 / 优选」两档，PC28）：原来那一档没了的，
+  // 「标准」改按「专业」加（价目表把专业价写在标准档上，同一个价），别的没了的不带档、按项目的默认档
+  let tier = s.tier ?? undefined;
+  if (tier) {
+    const tiers = new Set((await db<{ tier: PriceTier }[]>`SELECT tier FROM service_item_prices WHERE item_id = ${s.itemId}`).map((r) => r.tier));
+    if (!tiers.has(tier)) tier = tier === 'standard' && tiers.has('professional') ? 'professional' : undefined;
+  }
+  return { visitId: Number(s.visitId), line: { itemId: Number(s.itemId), quantity, tier, technicianId: Number(s.technicianId), callType } };
 }
 
 export function registerClockroomRoutes(app: FastifyInstance, deps: Deps) {
