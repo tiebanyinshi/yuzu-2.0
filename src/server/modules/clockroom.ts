@@ -1363,7 +1363,7 @@ export const ExtendInput = z.object({
  * 加钟要挂的那一条明细：同一位客人、同一个项目、同一个价格档（按钟单第一条明细）、原技师；上钟方式按规则（加钟记为点钟，或照原来的）。
  * 只读地核对钟单在上钟中——挂账的事务里锁住钟单以后还会再核对一次。钟房的加钟与房态中心的续钟共用
  */
-export async function extensionLine(db: Db, sessionId: number, quantity: number) {
+export async function extensionLine(db: Db, sessionId: number, quantity: number, opts: { remapTier?: boolean } = {}) {
   const [s] = await db<{ visitId: number; itemId: number; technicianId: number; callType: CallType; status: string; tier: PriceTier | null }[]>`
     SELECT s.visit_id, s.item_id, s.technician_id, s.call_type, s.status,
            (SELECT l.tier FROM bill_lines l WHERE l.session_id = s.id ORDER BY l.id LIMIT 1) AS tier
@@ -1372,7 +1372,14 @@ export async function extensionLine(db: Db, sessionId: number, quantity: number)
   if (s.status !== 'serving') throw conflict('SESSION_NOT_SERVING', '只有上钟中的钟单可以加钟');
   const rules = await loadClockroomRules(db);
   const callType: CallType = rules.extensionAsDesignated ? 'designated' : s.callType;
-  return { visitId: Number(s.visitId), line: { itemId: Number(s.itemId), quantity, tier: s.tier ?? undefined, technicianId: Number(s.technicianId), callType } };
+  // 上钟以后项目的价格档可能变了（全品类价目表把原有的双价项目换成「专业 / 优选」两档，PC28）：原来那一档没了的，
+  // 「标准」改按「专业」加（价目表把专业价写在标准档上，同一个价），别的没了的不带档、按项目的默认档
+  let tier = s.tier ?? undefined;
+  if (tier && opts.remapTier !== false) {
+    const tiers = new Set((await db<{ tier: PriceTier }[]>`SELECT tier FROM service_item_prices WHERE item_id = ${s.itemId}`).map((r) => r.tier));
+    if (!tiers.has(tier)) tier = tier === 'standard' && tiers.has('professional') ? 'professional' : undefined;
+  }
+  return { visitId: Number(s.visitId), line: { itemId: Number(s.itemId), quantity, tier, technicianId: Number(s.technicianId), callType } };
 }
 
 export function registerClockroomRoutes(app: FastifyInstance, deps: Deps) {
@@ -1413,9 +1420,35 @@ export function registerClockroomRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/clockroom/sessions/:id/extend', { preHandler: guard('technician.dispatch', 'frontdesk.operate') }, async (req) => {
     const { id } = parse(idParam, req.params);
     const e = parse(ExtendInput, req.body);
-    const x = await extensionLine(sql, id, e.quantity);
-    const postCharges = await post();
-    await postCharges(deps, x.visitId, { clientKey: e.clientKey, lines: [x.line], expectedTotal: e.expectedTotal }, ctxOf(req), { session: { extendId: id } });
+    const { PostInput, postChargesTx } = await import('./frontdesk/bills');
+    // 操作编号的摘要按提交上来的（钟单、钟数、合计）算，不按查出来的明细算：价格档在两次提交之间变了（PC28，标准档换成专业档）
+    // 原样重提照样认得出是同一笔（与房态中心续钟同一个做法）
+    const requestHash = hashRequest({ op: 'session_extend', sessionId: id, quantity: e.quantity, expectedTotal: e.expectedTotal });
+    // 升级前发出、没收到结果的原请求，编号记的是按当时明细算的摘要：对得上就原样当重提
+    const [had] = await sql<{ opType: string; requestHash: string }[]>`SELECT op_type, request_hash FROM idempotency_keys WHERE key = ${e.clientKey}`;
+    if (had && had.opType === 'bill_post' && had.requestHash !== requestHash) {
+      for (const remapTier of [false, true]) {
+        const x = await extensionLine(sql, id, e.quantity, { remapTier }).catch(() => null);
+        if (!x) continue;
+        const { clientKey: _k, ...payload } = parse(PostInput, { clientKey: e.clientKey, lines: [x.line], expectedTotal: e.expectedTotal });
+        if (hashRequest({ visitId: x.visitId, ...payload }) === had.requestHash) return clockroomBoard(sql, deps);
+      }
+    }
+    await runIdempotent(deps, { key: e.clientKey, opType: 'bill_post', requestHash }, async (tx) => {
+      const x = await extensionLine(tx, id, e.quantity);
+      const posted = await postChargesTx(
+        tx,
+        deps,
+        x.visitId,
+        parse(PostInput, { clientKey: e.clientKey, lines: [x.line], expectedTotal: e.expectedTotal }),
+        { key: e.clientKey, requestHash, backfill: null },
+        ctxOf(req),
+        {
+          session: { extendId: id },
+        },
+      );
+      return posted.visitId;
+    });
     return clockroomBoard(sql, deps);
   });
 
