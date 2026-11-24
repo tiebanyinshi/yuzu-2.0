@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildCanteenApp } from '../src/server/modules/canteen/portal';
-import { patrolLink, parsePatrolToken, patrolRoundMinutesOn, patrolRoundsOf } from '../src/shared/patrol';
+import { patrolDayRounds, patrolLink, parsePatrolToken, patrolRoundMinutesOn, patrolRoundPreview, patrolRoundsOf } from '../src/shared/patrol';
 import { minuteOfDay } from '../src/shared/business-date';
 import { api, setup, type TestContext } from './helpers';
 
@@ -476,5 +476,96 @@ describe('巡场轮次（8.0.11，XC13–XC15）', () => {
     // 以前的日子照旧按当时的（默认 3 小时）
     const old = new Date(Date.parse(`${t}T00:00:00Z`) - 10 * 86_400_000).toISOString().slice(0, 10);
     expect((await admin('GET', `/api/erp/patrol/day?date=${old}`)).body).toMatchObject({ roundMinutes: 180 });
+  });
+});
+
+describe('巡查起始时间（店主 2026-11-24，XC17、XC18）', () => {
+  const D = '2026-11-11';
+  const tz = 'Asia/Shanghai';
+  // 北京时间 = UTC + 8：营业日 06:00 切换 = 前一天 22:00Z
+  const z = (hhmm: string, nextDay = false) => {
+    const [h, m] = hhmm.split(':').map(Number) as [number, number];
+    return new Date(Date.UTC(2026, 10, 11 + (nextDay ? 1 : 0), h - 8, m)).toISOString();
+  };
+
+  it('起始 9:00、间隔 2 小时：9:00 起每 2 小时一轮；营业日切换到 9:00 之间按同一组分界分（06–07、07–09），跨午夜排到下一次切换', () => {
+    const r = patrolRoundsOf(D, tz, 6, 120, 9);
+    expect(r.map((x) => x.start)).toContain(z('09:00'));
+    const from9 = r.slice(r.findIndex((x) => x.start === z('09:00')));
+    for (let i = 1; i < from9.length - 1; i++) expect(Date.parse(from9[i]!.start) - Date.parse(from9[i - 1]!.start)).toBe(120 * 60_000);
+    expect(r[0]).toEqual({ no: 1, start: z('06:00'), end: z('07:00') });
+    expect(r[1]).toEqual({ no: 2, start: z('07:00'), end: z('09:00') });
+    expect(r.at(-1)!.end).toBe(z('06:00', true));
+    // 与预览一致
+    const p = patrolRoundPreview(6, 120, 9);
+    expect(p.map((x) => `${x.start}-${x.end}`).slice(0, 4)).toEqual(['06:00-07:00', '07:00-09:00', '09:00-11:00', '11:00-13:00']);
+    expect(p).toHaveLength(r.length);
+    // 起始整点比切换时间早（02:00）：落在第二天凌晨，分界照样按 2 小时排
+    expect(patrolRoundsOf(D, tz, 6, 120, 2).map((x) => x.start)).toContain(z('02:00', true));
+  });
+
+  it('不设起始时间：与原来完全一致；起始整点恰好是切换时间也一样', () => {
+    for (const m of [30, 120, 180, 300, 1440]) {
+      expect(patrolRoundsOf(D, tz, 6, m, null)).toEqual(patrolRoundsOf(D, tz, 6, m));
+      expect(patrolRoundsOf(D, tz, 6, m, 6)).toEqual(patrolRoundsOf(D, tz, 6, m));
+      expect(patrolDayRounds([{ from: '2026-11-01', minutes: m }], D, tz, 6).rounds).toEqual(patrolRoundsOf(D, tz, 6, m));
+    }
+    expect(patrolDayRounds([], D, tz, 6).rounds).toEqual(patrolRoundsOf(D, tz, 6, 180));
+  });
+
+  it('当天改起始时间：之前开始的轮不动，正在巡的那一轮到新起点的下一个整点为止，之后按新的排；第二天整天按新的', () => {
+    // 原来每 3 小时（06、09、12…）；10:30 改成 9:00 起每 2 小时
+    const changes = [{ from: D, minutes: 120, startHour: 9, at: z('10:30') }];
+    const { rounds, minutesOf } = patrolDayRounds(changes, D, tz, 6);
+    expect(rounds.slice(0, 4)).toEqual([
+      { no: 1, start: z('06:00'), end: z('09:00') },
+      { no: 2, start: z('09:00'), end: z('11:00') },
+      { no: 3, start: z('11:00'), end: z('13:00') },
+      { no: 4, start: z('13:00'), end: z('15:00') },
+    ]);
+    // 已经开始的那两轮按原来的 3 小时记（打卡的唯一键不变），之后的按 2 小时
+    expect(minutesOf(rounds[0]!)).toBe(180);
+    expect(minutesOf(rounds[1]!)).toBe(180);
+    expect(minutesOf(rounds[2]!)).toBe(120);
+    // 刚好在分界上改（12:00）：09–12 那一轮一点不动，12:00 起到新起点的下一个整点 13:00
+    const onEdge = patrolDayRounds([{ from: D, minutes: 120, startHour: 9, at: z('12:00') }], D, tz, 6).rounds;
+    expect(onEdge.slice(1, 4)).toEqual([
+      { no: 2, start: z('09:00'), end: z('12:00') },
+      { no: 3, start: z('12:00'), end: z('13:00') },
+      { no: 4, start: z('13:00'), end: z('15:00') },
+    ]);
+    // 第二天：整天按 9:00 起每 2 小时
+    expect(patrolDayRounds(changes, '2026-11-12', tz, 6).rounds).toEqual(patrolRoundsOf('2026-11-12', tz, 6, 120, 9));
+    // 前一天：照旧
+    expect(patrolDayRounds(changes, '2026-11-10', tz, 6).rounds).toEqual(patrolRoundsOf('2026-11-10', tz, 6, 180));
+  });
+
+  it('接口：起始时间只收整点 0–23，null 是取消；保存记下改的时刻，只影响之后的轮；不传不改；带版本号', async () => {
+    let s = await settings();
+    for (const bad of [24, -1, 9.5, '9']) {
+      const r = await admin('PUT', '/api/erp/patrol/settings', { departmentIds: s.departmentIds, viewerIds: s.viewerIds, startHour: bad, rev: s.rev });
+      expect(r.status, `${bad}`).toBe(400);
+    }
+    const before = (await admin('GET', '/api/erp/patrol/day')).body as { rounds: { no: number; start: string; end: string }[] };
+    const r = await admin('PUT', '/api/erp/patrol/settings', { departmentIds: s.departmentIds, viewerIds: s.viewerIds, startHour: 9, rev: s.rev });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ startHour: 9, businessDayStartHour: expect.any(Number) });
+    const last = (r.body.roundChanges as { startHour?: number; at?: string; minutes: number }[]).at(-1)!;
+    expect(last).toMatchObject({ startHour: 9, minutes: s.roundMinutes });
+    expect(Date.parse(last.at!)).toBeLessThanOrEqual(Date.now());
+    // 今天在这一刻以前开始的轮照旧
+    const after = (await admin('GET', '/api/erp/patrol/day')).body as { rounds: { no: number; start: string; end: string }[] };
+    const at = Date.parse(last.at!);
+    const startedBefore = (list: { start: string }[]) => list.filter((x) => Date.parse(x.start) < at).map((x) => x.start);
+    expect(startedBefore(after.rounds)).toEqual(startedBefore(before.rounds));
+    // 不传起始时间：不改
+    s = await settings();
+    expect((await admin('PUT', '/api/erp/patrol/settings', { departmentIds: s.departmentIds, viewerIds: s.viewerIds, rev: s.rev })).body).toMatchObject({ startHour: 9 });
+    // 取消（null）：回到从营业日切换时间起
+    s = await settings();
+    const off = await admin('PUT', '/api/erp/patrol/settings', { departmentIds: s.departmentIds, viewerIds: s.viewerIds, startHour: null, rev: s.rev });
+    expect(off.body).toMatchObject({ startHour: null });
+    // 旧版本号：拒绝
+    expect((await admin('PUT', '/api/erp/patrol/settings', { departmentIds: s.departmentIds, viewerIds: s.viewerIds, startHour: 10, rev: s.rev })).body.error.code).toBe('PATROL_SETTINGS_CHANGED');
   });
 });
