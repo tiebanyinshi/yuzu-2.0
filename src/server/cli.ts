@@ -140,6 +140,26 @@ async function readImportFile(file: string): Promise<string> {
   return text;
 }
 
+/**
+ * 多门店（8.1.35 福田迁移，docs/FUTIAN_MIGRATION.md）：这几个导入命令带 `--store <门店代码>` 时整条命令在那家店里跑（runInStore），
+ * 不带是本店（与以往一样）。门店代码从参数里拿掉，免得被当成文件名。别的命令不认 --store（daily-recon 自己处理）。
+ */
+const STORE_FLAG_COMMANDS = new Set(['import-hand-tags', 'import-opening', 'import-count-cards']);
+async function withStoreFlag(sql: Sql, command: string | undefined, args: string[], run: () => Promise<void>): Promise<void> {
+  const at = args.indexOf('--store');
+  if (at < 0 || command === 'daily-recon') return run();
+  if (!command || !STORE_FLAG_COMMANDS.has(command)) throw new Error(`${command ?? '这个命令'} 不按门店跑，不认 --store（认的有：${[...STORE_FLAG_COMMANDS].join('、')}、daily-recon）`);
+  const code = args[at + 1]?.trim().toUpperCase();
+  if (!code || code.startsWith('--')) throw new Error('--store 后面要写门店代码，如 --store FT');
+  args.splice(at, 2);
+  const [st] = await sql<{ id: number; name: string; active: boolean }[]>`SELECT id, name, active FROM stores WHERE code = ${code}`;
+  if (!st) throw new Error(`没有代码为 ${code} 的门店（先在后台「门店与主体」建）`);
+  if (!st.active) throw new Error(`门店 ${code}（${st.name}）已停用`);
+  if (command === 'import-hand-tags' && args.includes('--store-list') && Number(st.id) !== DEFAULT_STORE_ID) throw new Error('--store-list 是本店（宝安）的柜号清单，不能导到别的门店');
+  console.log(`门店：${code}（${st.name}）`);
+  await runInStore(Number(st.id), run);
+}
+
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : undefined;
@@ -344,506 +364,510 @@ async function main() {
   const config = loadConfig();
   const sql = createSql(config.databaseUrl, { max: 2 });
   try {
-    switch (command) {
-      case 'migrate': {
-        const applied = await prepareDb(sql, config, console.log);
-        console.log(applied.length ? `完成，共应用 ${applied.length} 个迁移。` : '数据库已是最新结构。');
-        break;
-      }
-      case 'create-owner': {
-        const username = args[0]?.toLowerCase();
-        if (!username) throw new Error('用法：create-owner <账号> [--name 姓名] [--password 密码]');
-        await prepareDb(sql, config);
-        const password = flag(args, 'password') ?? generateTempPassword();
-        const weak = checkPasswordStrength(password);
-        if (weak) throw new Error(weak);
-        const id = await createStaff(sql, {
-          username,
-          displayName: flag(args, 'name') ?? '店主',
-          role: 'owner',
-          password,
-          mustChangePassword: true,
-        });
-        await writeAudit(sql, { staffId: null, action: 'staff_created', targetType: 'staff', targetId: id, detail: { username, via: 'cli' } });
-        console.log(`已创建店主「${username}」，临时密码：${password}\n首次登录后需要修改密码。`);
-        break;
-      }
-      case 'reset-password': {
-        const username = args[0]?.toLowerCase();
-        if (!username) throw new Error('用法：reset-password <账号>');
-        const password = generateTempPassword();
-        const rows = await sql<{ id: number }[]>`
+    await withStoreFlag(sql, command, args, async () => {
+      switch (command) {
+        case 'migrate': {
+          const applied = await prepareDb(sql, config, console.log);
+          console.log(applied.length ? `完成，共应用 ${applied.length} 个迁移。` : '数据库已是最新结构。');
+          break;
+        }
+        case 'create-owner': {
+          const username = args[0]?.toLowerCase();
+          if (!username) throw new Error('用法：create-owner <账号> [--name 姓名] [--password 密码]');
+          await prepareDb(sql, config);
+          const password = flag(args, 'password') ?? generateTempPassword();
+          const weak = checkPasswordStrength(password);
+          if (weak) throw new Error(weak);
+          const id = await createStaff(sql, {
+            username,
+            displayName: flag(args, 'name') ?? '店主',
+            role: 'owner',
+            password,
+            mustChangePassword: true,
+          });
+          await writeAudit(sql, { staffId: null, action: 'staff_created', targetType: 'staff', targetId: id, detail: { username, via: 'cli' } });
+          console.log(`已创建店主「${username}」，临时密码：${password}\n首次登录后需要修改密码。`);
+          break;
+        }
+        case 'reset-password': {
+          const username = args[0]?.toLowerCase();
+          if (!username) throw new Error('用法：reset-password <账号>');
+          const password = generateTempPassword();
+          const rows = await sql<{ id: number }[]>`
           UPDATE staff SET password_hash = ${await hashPassword(password)}, must_change_password = true, active = true, updated_at = now()
           WHERE username = ${username} RETURNING id`;
-        if (!rows[0]) throw new Error(`账号「${username}」不存在`);
-        await destroyStaffSessions(sql, rows[0].id);
-        await writeAudit(sql, { staffId: null, action: 'staff_password_reset', targetType: 'staff', targetId: rows[0].id, detail: { via: 'cli' } });
-        console.log(`已重置「${username}」的密码，临时密码：${password}\n首次登录后需要修改密码。`);
-        break;
-      }
-      case 'seed-demo': {
-        await prepareDb(sql, config);
-        const result = await seedDemo(sql, config, { force: args.includes('--force') });
-        if (result.skipped) {
-          console.log('已存在演示数据，跳过。');
-        } else {
-          console.log(`已写入演示数据：${result.members} 位合成会员。`);
-          console.log(`演示账号：店主 ${result.owner} / 店员 ${result.clerk}，密码均为 ${DEMO_PASSWORD}`);
-        }
-        break;
-      }
-      case 'seed-inventory-demo': {
-        await prepareDb(sql, config);
-        const result = await seedInventoryDemo(sql, config);
-        if (result.skipped) {
-          console.log('已存在库存演示数据，跳过。');
-        } else {
-          console.log(`已写入库存演示数据：${result.materials} 项物料、${result.suppliers} 家供应商、${result.purchaseOrders} 张采购单、${result.docs} 张单据。`);
-          console.log(`演示账号：店主 linlan / 物资经办 lixiao / 采购对账 zhouyi，密码均为 ${DEMO_PASSWORD}`);
-        }
-        break;
-      }
-      case 'seed-frontdesk-demo': {
-        refuseLiveEnv(config, '前台');
-        await prepareDb(sql, config);
-        // 营业日切换后不久灌数据会跨营业日（PR #13 复核 P2-3）：提示，或按 --previous-day 整体放到前一个营业日
-        const t = await demoSeedTime(sql, { timeZone: config.timezone, kind: 'frontdesk', previousDay: args.includes('--previous-day') });
-        if (t.warning) console.warn(`⚠ ${t.warning}`);
-        const result = await seedFrontdeskDemo(sql, config, { now: t.now });
-        if (result.skipped) {
-          console.log('已存在前台演示数据，跳过。');
-        } else {
-          if (t.anchored && t.now) await rememberDemoAnchor(sql, t.now);
-          if (t.notice) console.log(`· ${t.notice}`);
-          console.log(`已写入前台演示数据：${result.tags} 张手牌、${result.inStore} 位在店客人。预期结果见 src/server/demo/frontdesk-expected.json`);
-          console.log(`演示账号：店主 linlan / 前台 xiaozhou / 值班经理 zhangjl，密码均为 ${DEMO_PASSWORD}`);
-        }
-        break;
-      }
-      case 'seed-billing-demo': {
-        refuseLiveEnv(config, '结账');
-        await prepareDb(sql, config);
-        const t = await demoSeedTime(sql, { timeZone: config.timezone, kind: 'billing', previousDay: args.includes('--previous-day') });
-        if (t.warning) console.warn(`⚠ ${t.warning}`);
-        const result = await seedBillingDemo(sql, config, { now: t.now });
-        if (result.skipped) {
-          console.log('已存在结账演示数据，跳过。');
-        } else {
-          if (t.notice) console.log(`· ${t.notice}`);
-          console.log(`已写入结账演示数据：${result.checkouts} 张结账单、${result.voided} 张反结账，以及一个已交班的班次。预期结果见 src/server/demo/billing-expected.json`);
-          console.log(`演示账号：收银员 chenyin / 值班经理 zhangjl / 店主 linlan，密码均为 ${DEMO_PASSWORD}`);
-        }
-        break;
-      }
-      case 'import-devices': {
-        if (!args.includes('--quote')) throw new Error('用法：import-devices --quote [--apply]（按需求文档里的采购清单登记设备，默认只预览）');
-        await prepareDb(sql, config);
-        const preview = await importPreview(sql);
-        console.log(`采购清单共 ${preview.total} 台：会新建 ${preview.create.length} 台，编号已有、跳过 ${preview.skipped.length} 台`);
-        for (const d of preview.create.slice(0, 200)) console.log(`  ${d.code}  ${d.name}（${d.area}）`);
-        if (!args.includes('--apply')) {
-          console.log('以上为预览，没有写入。确认无误后加 --apply 执行导入（真实门店数据，门店环境须店主同意）；IP、端口、所属终端由现场在后台「设备」填。');
+          if (!rows[0]) throw new Error(`账号「${username}」不存在`);
+          await destroyStaffSessions(sql, rows[0].id);
+          await writeAudit(sql, { staffId: null, action: 'staff_password_reset', targetType: 'staff', targetId: rows[0].id, detail: { via: 'cli' } });
+          console.log(`已重置「${username}」的密码，临时密码：${password}\n首次登录后需要修改密码。`);
           break;
         }
-        const r = await importDevices(sql, null);
-        console.log(`✓ 已导入：新建 ${r.created} 台，跳过 ${r.skipped} 台。`);
-        break;
-      }
-      case 'import-hand-tags': {
-        const storeList = args.includes('--store-list');
-        const file = args.find((a) => !a.startsWith('--'));
-        if (!storeList && !file) throw new Error('用法：import-hand-tags <清单.csv> | --store-list [--apply] [--deactivate-missing]');
-        await prepareDb(sql, config);
-        const parsed = parseHandTagCsv(storeList ? STORE_HAND_TAGS_CSV : await readImportFile(file!));
-        if (parsed.errors.length) {
-          for (const e of parsed.errors.slice(0, 20)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
-          throw new Error(`清单有 ${parsed.errors.length} 处需要修改，未导入`);
+        case 'seed-demo': {
+          await prepareDb(sql, config);
+          const result = await seedDemo(sql, config, { force: args.includes('--force') });
+          if (result.skipped) {
+            console.log('已存在演示数据，跳过。');
+          } else {
+            console.log(`已写入演示数据：${result.members} 位合成会员。`);
+            console.log(`演示账号：店主 ${result.owner} / 店员 ${result.clerk}，密码均为 ${DEMO_PASSWORD}`);
+          }
+          break;
         }
-        const apply = args.includes('--apply');
-        const report = await importHandTags(sql, { rows: parsed.rows, deactivateMissing: args.includes('--deactivate-missing'), dryRun: !apply }, { staffId: null, via: 'cli' });
-        console.log(`清单共 ${report.total} 个柜号：`);
-        for (const g of report.groups) {
-          console.log(`  ${ZONE_LABELS[g.zone].title} ${g.kind === 'vip' ? `VIP 第 ${g.vipLevel} 级` : `普通柜 ${g.area || ''} 区`}：${g.count}`);
+        case 'seed-inventory-demo': {
+          await prepareDb(sql, config);
+          const result = await seedInventoryDemo(sql, config);
+          if (result.skipped) {
+            console.log('已存在库存演示数据，跳过。');
+          } else {
+            console.log(`已写入库存演示数据：${result.materials} 项物料、${result.suppliers} 家供应商、${result.purchaseOrders} 张采购单、${result.docs} 张单据。`);
+            console.log(`演示账号：店主 linlan / 物资经办 lixiao / 采购对账 zhouyi，密码均为 ${DEMO_PASSWORD}`);
+          }
+          break;
         }
-        console.log(`新建 ${report.created} · 更新 ${report.updated} · 未变 ${report.unchanged} · 停用清单外 ${report.deactivated}`);
-        for (const b of report.blocked) console.log(`  未改动 ${b.code}：${b.reason}`);
-        console.log(apply ? '✓ 已导入。' : '以上为预览，没有写入。确认无误后加 --apply 执行导入。');
-        break;
-      }
-      case 'price-audit': {
-        // 8.1.34 价目核对（docs/PRICE_V8134.md）：默认只读；--apply 停用两类明显多余的收银项目（门票项目、与已对接项目同名的）
-        await prepareDb(sql, config);
-        const apply = args.includes('--apply');
-        const r = await priceAudit(sql, { apply, staffId: null });
-        const list = (title: string, rows: { id: number; name: string; category: string; lastSoldAt: string | null }[]) => {
-          console.log(`${title}：${rows.length}`);
-          for (const i of rows.slice(0, 200)) console.log(`  #${i.id} ${i.name}（${i.category || '无分类'}）${i.lastSoldAt ? ` 最近开单 ${String(i.lastSoldAt).slice(0, 10)}` : ' 没开过单'}`);
-          if (rows.length > 200) console.log(`  ……另有 ${rows.length - 200} 个`);
-        };
-        console.log(r.activeSet ? `生效中的价目表：「${r.activeSet.title}」（#${r.activeSet.id}）` : '✗ 还没有生效的全品类价目表：先在后台导入并切换生效，再核对');
-        console.log(`在售收银项目 ${r.totals.activeItems} 个：对接了价目表 ${r.totals.linked}，没对接 ${r.totals.unlinked}`);
-        console.log('— 以下两类 --apply 会停用（不删；开单即占用规则在用的不动）—');
-        list('价目表以前建的门票 / 夜间票项目', r.ticketItems);
-        list('没对接、和已对接的在售项目同名', r.duplicates);
-        console.log('— 以下只列出，由店主、店总在后台决定 —');
-        list('在售、没对接价目表（价目表管不到的房费、开台费可以留着）', r.unlinked);
-        list('对接了的双价项目还留着「标准」档（下次切换生效会去掉）', r.standardOnDual);
-        list('价目表里在用、收银项目却停用了', r.linkedButInactive);
-        console.log(`门票票种与价目表：${r.ticketTypeMismatch.length ? '' : '一致'}`);
-        for (const m of r.ticketTypeMismatch) console.log(`  ✗ ${m}`);
-        if (r.protectedIds.length) console.log(`开单即占用规则在用的项目（不停用）：${r.protectedIds.map((x) => `#${x}`).join('、')}`);
-        console.log(apply ? `✓ 已停用 ${r.deactivated} 个，记了审计。` : '以上为核对结果，没有写入。确认上面两类都该停用后加 --apply。');
-        break;
-      }
-      case 'import-opening': {
-        const file = args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'));
-        const username = flag(args, 'operator')?.toLowerCase();
-        if (!file || !username) {
-          throw new Error('用法：import-opening <余额.csv> --operator <店主账号> [--control 人数,本金,赠金,累计充值] [--exclude <排除清单.csv>] [--source EBC] [--note 备注] [--apply]');
+        case 'seed-frontdesk-demo': {
+          refuseLiveEnv(config, '前台');
+          await prepareDb(sql, config);
+          // 营业日切换后不久灌数据会跨营业日（PR #13 复核 P2-3）：提示，或按 --previous-day 整体放到前一个营业日
+          const t = await demoSeedTime(sql, { timeZone: config.timezone, kind: 'frontdesk', previousDay: args.includes('--previous-day') });
+          if (t.warning) console.warn(`⚠ ${t.warning}`);
+          const result = await seedFrontdeskDemo(sql, config, { now: t.now });
+          if (result.skipped) {
+            console.log('已存在前台演示数据，跳过。');
+          } else {
+            if (t.anchored && t.now) await rememberDemoAnchor(sql, t.now);
+            if (t.notice) console.log(`· ${t.notice}`);
+            console.log(`已写入前台演示数据：${result.tags} 张手牌、${result.inStore} 位在店客人。预期结果见 src/server/demo/frontdesk-expected.json`);
+            console.log(`演示账号：店主 linlan / 前台 xiaozhou / 值班经理 zhangjl，密码均为 ${DEMO_PASSWORD}`);
+          }
+          break;
         }
-        await prepareDb(sql, config);
-        const [actor] = await sql<{ id: number; username: string; displayName: string; role: string; active: boolean }[]>`
+        case 'seed-billing-demo': {
+          refuseLiveEnv(config, '结账');
+          await prepareDb(sql, config);
+          const t = await demoSeedTime(sql, { timeZone: config.timezone, kind: 'billing', previousDay: args.includes('--previous-day') });
+          if (t.warning) console.warn(`⚠ ${t.warning}`);
+          const result = await seedBillingDemo(sql, config, { now: t.now });
+          if (result.skipped) {
+            console.log('已存在结账演示数据，跳过。');
+          } else {
+            if (t.notice) console.log(`· ${t.notice}`);
+            console.log(`已写入结账演示数据：${result.checkouts} 张结账单、${result.voided} 张反结账，以及一个已交班的班次。预期结果见 src/server/demo/billing-expected.json`);
+            console.log(`演示账号：收银员 chenyin / 值班经理 zhangjl / 店主 linlan，密码均为 ${DEMO_PASSWORD}`);
+          }
+          break;
+        }
+        case 'import-devices': {
+          if (!args.includes('--quote')) throw new Error('用法：import-devices --quote [--apply]（按需求文档里的采购清单登记设备，默认只预览）');
+          await prepareDb(sql, config);
+          const preview = await importPreview(sql);
+          console.log(`采购清单共 ${preview.total} 台：会新建 ${preview.create.length} 台，编号已有、跳过 ${preview.skipped.length} 台`);
+          for (const d of preview.create.slice(0, 200)) console.log(`  ${d.code}  ${d.name}（${d.area}）`);
+          if (!args.includes('--apply')) {
+            console.log('以上为预览，没有写入。确认无误后加 --apply 执行导入（真实门店数据，门店环境须店主同意）；IP、端口、所属终端由现场在后台「设备」填。');
+            break;
+          }
+          const r = await importDevices(sql, null);
+          console.log(`✓ 已导入：新建 ${r.created} 台，跳过 ${r.skipped} 台。`);
+          break;
+        }
+        case 'import-hand-tags': {
+          const storeList = args.includes('--store-list');
+          const file = args.find((a) => !a.startsWith('--'));
+          if (!storeList && !file) throw new Error('用法：import-hand-tags <清单.csv> | --store-list [--apply] [--deactivate-missing]');
+          await prepareDb(sql, config);
+          const parsed = parseHandTagCsv(storeList ? STORE_HAND_TAGS_CSV : await readImportFile(file!));
+          if (parsed.errors.length) {
+            for (const e of parsed.errors.slice(0, 20)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
+            throw new Error(`清单有 ${parsed.errors.length} 处需要修改，未导入`);
+          }
+          const apply = args.includes('--apply');
+          const report = await importHandTags(sql, { rows: parsed.rows, deactivateMissing: args.includes('--deactivate-missing'), dryRun: !apply }, { staffId: null, via: 'cli' });
+          console.log(`清单共 ${report.total} 个柜号：`);
+          for (const g of report.groups) {
+            console.log(`  ${ZONE_LABELS[g.zone].title} ${g.kind === 'vip' ? `VIP 第 ${g.vipLevel} 级` : `普通柜 ${g.area || ''} 区`}：${g.count}`);
+          }
+          console.log(`新建 ${report.created} · 更新 ${report.updated} · 未变 ${report.unchanged} · 停用清单外 ${report.deactivated}`);
+          for (const b of report.blocked) console.log(`  未改动 ${b.code}：${b.reason}`);
+          console.log(apply ? '✓ 已导入。' : '以上为预览，没有写入。确认无误后加 --apply 执行导入。');
+          break;
+        }
+        case 'price-audit': {
+          // 8.1.34 价目核对（docs/PRICE_V8134.md）：默认只读；--apply 停用两类明显多余的收银项目（门票项目、与已对接项目同名的）
+          await prepareDb(sql, config);
+          const apply = args.includes('--apply');
+          const r = await priceAudit(sql, { apply, staffId: null });
+          const list = (title: string, rows: { id: number; name: string; category: string; lastSoldAt: string | null }[]) => {
+            console.log(`${title}：${rows.length}`);
+            for (const i of rows.slice(0, 200)) console.log(`  #${i.id} ${i.name}（${i.category || '无分类'}）${i.lastSoldAt ? ` 最近开单 ${String(i.lastSoldAt).slice(0, 10)}` : ' 没开过单'}`);
+            if (rows.length > 200) console.log(`  ……另有 ${rows.length - 200} 个`);
+          };
+          console.log(r.activeSet ? `生效中的价目表：「${r.activeSet.title}」（#${r.activeSet.id}）` : '✗ 还没有生效的全品类价目表：先在后台导入并切换生效，再核对');
+          console.log(`在售收银项目 ${r.totals.activeItems} 个：对接了价目表 ${r.totals.linked}，没对接 ${r.totals.unlinked}`);
+          console.log('— 以下两类 --apply 会停用（不删；开单即占用规则在用的不动）—');
+          list('价目表以前建的门票 / 夜间票项目', r.ticketItems);
+          list('没对接、和已对接的在售项目同名', r.duplicates);
+          console.log('— 以下只列出，由店主、店总在后台决定 —');
+          list('在售、没对接价目表（价目表管不到的房费、开台费可以留着）', r.unlinked);
+          list('对接了的双价项目还留着「标准」档（下次切换生效会去掉）', r.standardOnDual);
+          list('价目表里在用、收银项目却停用了', r.linkedButInactive);
+          console.log(`门票票种与价目表：${r.ticketTypeMismatch.length ? '' : '一致'}`);
+          for (const m of r.ticketTypeMismatch) console.log(`  ✗ ${m}`);
+          if (r.protectedIds.length) console.log(`开单即占用规则在用的项目（不停用）：${r.protectedIds.map((x) => `#${x}`).join('、')}`);
+          console.log(apply ? `✓ 已停用 ${r.deactivated} 个，记了审计。` : '以上为核对结果，没有写入。确认上面两类都该停用后加 --apply。');
+          break;
+        }
+        case 'import-opening': {
+          const file = args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'));
+          const username = flag(args, 'operator')?.toLowerCase();
+          if (!file || !username) {
+            throw new Error('用法：import-opening <余额.csv> --operator <店主账号> [--control 人数,本金,赠金,累计充值] [--exclude <排除清单.csv>] [--source EBC] [--note 备注] [--apply]');
+          }
+          await prepareDb(sql, config);
+          const [actor] = await sql<{ id: number; username: string; displayName: string; role: string; active: boolean }[]>`
           SELECT id, username, display_name, role, active FROM staff WHERE username = ${username}`;
-        if (!actor || !actor.active) throw new Error(`账号「${username}」不存在或已停用`);
-        if (actor.role !== 'owner') throw new Error('期初导入只能由店主账号经办');
-        const csv = await readImportFile(file);
-        const excludeFile = flag(args, 'exclude');
-        const body = {
-          source: flag(args, 'source') ?? 'EBC',
-          fileName: basename(file),
-          note: flag(args, 'note') ?? '',
-          csv,
-          control: parseControl(flag(args, 'control')),
-          excludedCsv: excludeFile ? await readImportFile(excludeFile) : '',
-        };
-        const deps = { sql, config };
-        const preview = await previewOpeningImport(deps, body);
-        console.log(`文件共 ${preview.total} 位会员：新建档案 ${preview.createCount} · 匹配已有会员 ${preview.matchCount} · 余额为 0 只建档 ${preview.zeroCount}`);
-        console.log(`期初本金 ${formatYuan(preview.principalTotal)} · 期初赠金 ${formatYuan(preview.bonusTotal)} · 旧系统累计充值 ${formatYuan(preview.legacyRechargedTotal)}`);
-        if (preview.control) {
-          const { expected: e, excluded: x } = preview.control;
-          console.log(`EBC 控制总数：${e.count} 位 · 本金 ${formatYuan(e.principal)} · 赠金 ${formatYuan(e.bonus)} · 累计充值 ${formatYuan(e.legacyRecharged)}`);
-          if (x.count) console.log(`排除清单：${x.count} 位 · 本金 ${formatYuan(x.principal)} · 赠金 ${formatYuan(x.bonus)} · 累计充值 ${formatYuan(x.legacyRecharged)}`);
-          for (const m of preview.control.mismatches) console.log(`✗ ${m}`);
-          console.log(preview.control.ok ? '✓ 导入 + 排除 = 控制总数，四项一致' : '✗ 与控制总数不一致：不能导入');
-          if (!preview.control.ok) process.exitCode = 1;
-        } else {
-          console.log('· 没有给 EBC 控制总数（--control 人数,本金,赠金,累计充值），没有比对；正式环境导入时必须给');
-        }
-        if (preview.errors.length) {
-          for (const e of preview.errors.slice(0, 30)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
-          throw new Error(`有 ${preview.errors.length} 处需要修改，未导入`);
-        }
-        if (!args.includes('--apply')) {
-          console.log('以上为预览，没有写入。确认无误后加 --apply 执行导入。');
+          if (!actor || !actor.active) throw new Error(`账号「${username}」不存在或已停用`);
+          if (actor.role !== 'owner') throw new Error('期初导入只能由店主账号经办');
+          const csv = await readImportFile(file);
+          const excludeFile = flag(args, 'exclude');
+          const body = {
+            source: flag(args, 'source') ?? 'EBC',
+            fileName: basename(file),
+            note: flag(args, 'note') ?? '',
+            csv,
+            control: parseControl(flag(args, 'control')),
+            excludedCsv: excludeFile ? await readImportFile(excludeFile) : '',
+          };
+          const deps = { sql, config };
+          const preview = await previewOpeningImport(deps, body);
+          console.log(`文件共 ${preview.total} 位会员：新建档案 ${preview.createCount} · 匹配已有会员 ${preview.matchCount} · 余额为 0 只建档 ${preview.zeroCount}`);
+          console.log(`期初本金 ${formatYuan(preview.principalTotal)} · 期初赠金 ${formatYuan(preview.bonusTotal)} · 旧系统累计充值 ${formatYuan(preview.legacyRechargedTotal)}`);
+          if (preview.control) {
+            const { expected: e, excluded: x } = preview.control;
+            console.log(`EBC 控制总数：${e.count} 位 · 本金 ${formatYuan(e.principal)} · 赠金 ${formatYuan(e.bonus)} · 累计充值 ${formatYuan(e.legacyRecharged)}`);
+            if (x.count) console.log(`排除清单：${x.count} 位 · 本金 ${formatYuan(x.principal)} · 赠金 ${formatYuan(x.bonus)} · 累计充值 ${formatYuan(x.legacyRecharged)}`);
+            for (const m of preview.control.mismatches) console.log(`✗ ${m}`);
+            console.log(preview.control.ok ? '✓ 导入 + 排除 = 控制总数，四项一致' : '✗ 与控制总数不一致：不能导入');
+            if (!preview.control.ok) process.exitCode = 1;
+          } else {
+            console.log('· 没有给 EBC 控制总数（--control 人数,本金,赠金,累计充值），没有比对；正式环境导入时必须给');
+          }
+          if (preview.errors.length) {
+            for (const e of preview.errors.slice(0, 30)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
+            throw new Error(`有 ${preview.errors.length} 处需要修改，未导入`);
+          }
+          if (!args.includes('--apply')) {
+            console.log('以上为预览，没有写入。确认无误后加 --apply 执行导入。');
+            break;
+          }
+          const report = await applyOpeningImport(
+            deps,
+            { ...body, clientKey: randomUUID() },
+            { actor: { id: actor.id, username: actor.username, displayName: actor.displayName, role: 'owner', duties: [], mustChangePassword: false } },
+            { via: 'cli' },
+          );
+          console.log(`✓ 已导入，批次 ${report.importNo}：${report.total} 位会员，本金 ${formatYuan(report.principalTotal)}，赠金 ${formatYuan(report.bonusTotal)}。`);
+          console.log('请运行 check 核对：期初 + 本日变动 = 期末。');
           break;
         }
-        const report = await applyOpeningImport(
-          deps,
-          { ...body, clientKey: randomUUID() },
-          { actor: { id: actor.id, username: actor.username, displayName: actor.displayName, role: 'owner', duties: [], mustChangePassword: false } },
-          { via: 'cli' },
-        );
-        console.log(`✓ 已导入，批次 ${report.importNo}：${report.total} 位会员，本金 ${formatYuan(report.principalTotal)}，赠金 ${formatYuan(report.bonusTotal)}。`);
-        console.log('请运行 check 核对：期初 + 本日变动 = 期末。');
-        break;
-      }
-      case 'import-member-history': {
-        // 旧 EBC 逐笔流水只读导入（v0.7.28 ⑩）：默认只预览，加 --apply 才写入（真实业务数据，门店环境须店主同意）
-        const file = args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'));
-        const username = flag(args, 'operator')?.toLowerCase();
-        if (!file || !username) throw new Error('用法：import-member-history <流水.csv> --operator <店主账号> [--source EBC] [--note 备注] [--apply]');
-        await prepareDb(sql, config);
-        const [actor] = await sql<{ id: number; username: string; displayName: string; role: string; active: boolean }[]>`
+        case 'import-member-history': {
+          // 旧 EBC 逐笔流水只读导入（v0.7.28 ⑩）：默认只预览，加 --apply 才写入（真实业务数据，门店环境须店主同意）
+          const file = args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'));
+          const username = flag(args, 'operator')?.toLowerCase();
+          if (!file || !username) throw new Error('用法：import-member-history <流水.csv> --operator <店主账号> [--source EBC] [--note 备注] [--apply]');
+          await prepareDb(sql, config);
+          const [actor] = await sql<{ id: number; username: string; displayName: string; role: string; active: boolean }[]>`
           SELECT id, username, display_name, role, active FROM staff WHERE username = ${username}`;
-        if (!actor || !actor.active) throw new Error(`账号「${username}」不存在或已停用`);
-        if (actor.role !== 'owner') throw new Error('旧系统流水导入只能由店主账号经办');
-        const body = { source: flag(args, 'source') ?? 'EBC', fileName: basename(file), note: flag(args, 'note') ?? '', csv: await readImportFile(file) };
-        const deps = { sql, config };
-        const p = await previewMemberHistory(deps, body);
-        console.log(`文件共 ${p.totalRows} 行：认出会员 ${p.matchedRows} 行（${p.memberCount} 位会员；按旧卡号 ${p.byLegacyNo}、按手机号 ${p.byPhone}）· 认不出会员 ${p.unmatched.count} 行（不导入）`);
-        if (p.firstAt)
+          if (!actor || !actor.active) throw new Error(`账号「${username}」不存在或已停用`);
+          if (actor.role !== 'owner') throw new Error('旧系统流水导入只能由店主账号经办');
+          const body = { source: flag(args, 'source') ?? 'EBC', fileName: basename(file), note: flag(args, 'note') ?? '', csv: await readImportFile(file) };
+          const deps = { sql, config };
+          const p = await previewMemberHistory(deps, body);
           console.log(
-            `时间从 ${p.firstAt.slice(0, 10)} 到 ${p.lastAt!.slice(0, 10)}；${p.byKind.map((k) => `${MEMBER_HISTORY_KIND_LABELS[k.kind]} ${k.count} 笔 ${describeHistoryAmount(k.amount)}`).join('，')}`,
+            `文件共 ${p.totalRows} 行：认出会员 ${p.matchedRows} 行（${p.memberCount} 位会员；按旧卡号 ${p.byLegacyNo}、按手机号 ${p.byPhone}）· 认不出会员 ${p.unmatched.count} 行（不导入）`,
           );
-        for (const u of p.unmatched.lines.slice(0, 20)) console.log(`· 第 ${u.line} 行认不出会员（手机号 ${u.phone || '—'}，旧卡号 ${u.legacyNo || '—'}）`);
-        if (p.duplicateOf) console.log(`✗ 这份文件已经导入过（批次 ${p.duplicateOf}），要重新导入请先在页面上作废那一批`);
-        if (p.errors.length) {
-          for (const e of p.errors.slice(0, 30)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
-          throw new Error(`有 ${p.errors.length} 行格式不对，未导入`);
-        }
-        if (p.duplicateOf) throw new Error('同一份文件不能重复导入');
-        if (!args.includes('--apply')) {
-          console.log('以上为预览，没有写入。确认无误后加 --apply 执行导入（只读，不进正式账）。');
+          if (p.firstAt)
+            console.log(
+              `时间从 ${p.firstAt.slice(0, 10)} 到 ${p.lastAt!.slice(0, 10)}；${p.byKind.map((k) => `${MEMBER_HISTORY_KIND_LABELS[k.kind]} ${k.count} 笔 ${describeHistoryAmount(k.amount)}`).join('，')}`,
+            );
+          for (const u of p.unmatched.lines.slice(0, 20)) console.log(`· 第 ${u.line} 行认不出会员（手机号 ${u.phone || '—'}，旧卡号 ${u.legacyNo || '—'}）`);
+          if (p.duplicateOf) console.log(`✗ 这份文件已经导入过（批次 ${p.duplicateOf}），要重新导入请先在页面上作废那一批`);
+          if (p.errors.length) {
+            for (const e of p.errors.slice(0, 30)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
+            throw new Error(`有 ${p.errors.length} 行格式不对，未导入`);
+          }
+          if (p.duplicateOf) throw new Error('同一份文件不能重复导入');
+          if (!args.includes('--apply')) {
+            console.log('以上为预览，没有写入。确认无误后加 --apply 执行导入（只读，不进正式账）。');
+            break;
+          }
+          const report = await importMemberHistory(
+            deps,
+            { ...body, clientKey: randomUUID() },
+            { actor: { id: actor.id, username: actor.username, displayName: actor.displayName, role: 'owner', duties: [], mustChangePassword: false } },
+          );
+          console.log(`✓ 已导入，批次 ${report.importNo}：${report.matchedRows} 行、${report.memberCount} 位会员；会员详情「旧系统流水」里看。`);
           break;
         }
-        const report = await importMemberHistory(
-          deps,
-          { ...body, clientKey: randomUUID() },
-          { actor: { id: actor.id, username: actor.username, displayName: actor.displayName, role: 'owner', duties: [], mustChangePassword: false } },
-        );
-        console.log(`✓ 已导入，批次 ${report.importNo}：${report.matchedRows} 行、${report.memberCount} 位会员；会员详情「旧系统流水」里看。`);
-        break;
-      }
-      case 'import-legacy': {
-        const file = args.find((a, i) => !a.startsWith('--') && !['--operator', '--replace'].includes(args[i - 1] ?? ''));
-        const username = flag(args, 'operator')?.toLowerCase();
-        if (!file || !username) throw new Error('用法：import-legacy <文件.xlsx> --operator <店主账号> [--apply] [--replace 原因]');
-        await prepareDb(sql, config);
-        const actor = await ownerOperator(sql, username, '旧账导入');
-        const buf = await readFile(file);
-        let parsed;
-        try {
-          parsed = parseLegacyWorkbook(buf);
-        } catch (e) {
-          if (e instanceof LegacyParseError) throw new Error(`✗ ${e.message}`);
-          throw e;
-        }
-        const meta = fileMeta(basename(file), buf);
-        const { audit, existing } = await previewLegacyImport(sql, parsed, meta);
-        console.log(`文件：${meta.fileName}（${(meta.bytes / 1024).toFixed(0)} KB，摘要 ${meta.sha256.slice(0, 12)}）`);
-        console.log(
-          `认出是「${LEGACY_SOURCE_LABELS[parsed.source]}」：${parsed.sheets.map((s) => `「${s.name}」${s.rows} 行`).join('、')}${parsed.images.size ? `；单元格图 ${parsed.images.size} 张` : ''}`,
-        );
-        for (const w of parsed.warnings) console.log(`· ${w}`);
-        for (const [k, v] of Object.entries(parsed.fileTotals)) console.log(`· 表里自带的合计「${k}」：${formatYuan(v)}`);
-        printLegacyAudit(audit);
-        if (existing)
+        case 'import-legacy': {
+          const file = args.find((a, i) => !a.startsWith('--') && !['--operator', '--replace'].includes(args[i - 1] ?? ''));
+          const username = flag(args, 'operator')?.toLowerCase();
+          if (!file || !username) throw new Error('用法：import-legacy <文件.xlsx> --operator <店主账号> [--apply] [--replace 原因]');
+          await prepareDb(sql, config);
+          const actor = await ownerOperator(sql, username, '旧账导入');
+          const buf = await readFile(file);
+          let parsed;
+          try {
+            parsed = parseLegacyWorkbook(buf);
+          } catch (e) {
+            if (e instanceof LegacyParseError) throw new Error(`✗ ${e.message}`);
+            throw e;
+          }
+          const meta = fileMeta(basename(file), buf);
+          const { audit, existing } = await previewLegacyImport(sql, parsed, meta);
+          console.log(`文件：${meta.fileName}（${(meta.bytes / 1024).toFixed(0)} KB，摘要 ${meta.sha256.slice(0, 12)}）`);
           console.log(
-            existing.sha256 === meta.sha256
-              ? '· 同一个文件已经导入过（再导入直接返回原来那次）'
-              : `· 这份表已经导入过（第 ${existing.id} 次导入：${existing.fileName}）；换成这个文件要加 --replace "原因"`,
+            `认出是「${LEGACY_SOURCE_LABELS[parsed.source]}」：${parsed.sheets.map((s) => `「${s.name}」${s.rows} 行`).join('、')}${parsed.images.size ? `；单元格图 ${parsed.images.size} 张` : ''}`,
           );
-        if (!args.includes('--apply')) {
-          console.log('\n以上是预览，没有写入。核对无误后加 --apply 写进只读表（不进正式账）。');
+          for (const w of parsed.warnings) console.log(`· ${w}`);
+          for (const [k, v] of Object.entries(parsed.fileTotals)) console.log(`· 表里自带的合计「${k}」：${formatYuan(v)}`);
+          printLegacyAudit(audit);
+          if (existing)
+            console.log(
+              existing.sha256 === meta.sha256
+                ? '· 同一个文件已经导入过（再导入直接返回原来那次）'
+                : `· 这份表已经导入过（第 ${existing.id} 次导入：${existing.fileName}）；换成这个文件要加 --replace "原因"`,
+            );
+          if (!args.includes('--apply')) {
+            console.log('\n以上是预览，没有写入。核对无误后加 --apply 写进只读表（不进正式账）。');
+            break;
+          }
+          const r = await applyLegacyImport(sql, parsed, meta, { operatorId: actor.id, replaceReason: flag(args, 'replace') ?? null });
+          console.log(
+            r.replayed
+              ? `同一个文件已经导入过：第 ${r.importId} 次导入，没有重复写入。`
+              : `已写入只读表：第 ${r.importId} 次导入${r.voidedId ? `（第 ${r.voidedId} 次导入已作废）` : ''}。在 ERP「费用与备用金 → 旧账对照」查看。`,
+          );
           break;
         }
-        const r = await applyLegacyImport(sql, parsed, meta, { operatorId: actor.id, replaceReason: flag(args, 'replace') ?? null });
-        console.log(
-          r.replayed
-            ? `同一个文件已经导入过：第 ${r.importId} 次导入，没有重复写入。`
-            : `已写入只读表：第 ${r.importId} 次导入${r.voidedId ? `（第 ${r.voidedId} 次导入已作废）` : ''}。在 ERP「费用与备用金 → 旧账对照」查看。`,
-        );
-        break;
-      }
-      case 'void-legacy-import': {
-        const id = Number(args[0]);
-        const username = flag(args, 'operator')?.toLowerCase();
-        const reason = flag(args, 'reason');
-        if (!Number.isInteger(id) || id <= 0 || !username || !reason) throw new Error('用法：void-legacy-import <导入编号> --operator <店主账号> --reason <原因>');
-        const actor = await ownerOperator(sql, username, '作废旧账导入');
-        await voidLegacyImport(sql, id, reason, actor.id);
-        console.log(`已作废第 ${id} 次旧账导入。`);
-        break;
-      }
-      case 'legacy-samples': {
-        const dir = args[0];
-        if (!dir) throw new Error('用法：legacy-samples <目录>');
-        await mkdir(dir, { recursive: true });
-        for (const f of legacySampleFiles()) {
-          await writeFile(join(dir, f.name), f.data);
-          console.log(`已写出 ${join(dir, f.name)}`);
-        }
-        console.log('这四份是合成样例（内容是编的），导入后的核验结果见 src/server/demo/legacy-expected.json');
-        break;
-      }
-      case 'seed-legacy-demo': {
-        refuseLiveEnv(config, '旧账');
-        await prepareDb(sql, config);
-        const result = await seedLegacyDemo(sql, config);
-        if (result.skipped) console.log('已经有旧账导入，跳过。');
-        else {
-          for (const f of result.files) console.log(`已导入 ${f.name}：「${LEGACY_SOURCE_LABELS[f.source]}」${f.rows} 行（第 ${f.importId} 次导入）`);
-          console.log(`导入人：${result.operator}。预期结果见 src/server/demo/legacy-expected.json；在 ERP「费用与备用金 → 旧账对照」查看。`);
-        }
-        break;
-      }
-      case 'demo-prepare': {
-        refuseLiveDemo(config);
-        const startedAt = Date.now();
-        try {
-          const r = await demoPrepare(sql, config, { previousDay: args.includes('--previous-day'), log: (l) => console.log(l) });
-          printPrepare(r, startedAt);
-          if (!r.check.ok) process.exitCode = 1;
-        } catch (error) {
-          if (error instanceof ShowcaseConflictError) console.log('· 前面几块已按顺序准备（已有的跳过），只有场景块没写');
-          throw error;
-        }
-        break;
-      }
-      case 'demo-check': {
-        const r = await demoCheck(sql, config);
-        printDemoCheck(r);
-        if (!r.ok) process.exitCode = 1;
-        break;
-      }
-      case 'demo-reset': {
-        const startedAt = Date.now();
-        assertResettable(config);
-        const dir = backupDirFromEnv();
-        await assertBackupTarget(dir, backupPolicyFromEnv());
-        const r = await demoReset(sql, config, { confirm: flag(args, 'confirm'), backupDir: dir, log: (l) => console.log(l) });
-        printPrepare(r.prepare, startedAt);
-        if (!r.prepare.check.ok) process.exitCode = 1;
-        break;
-      }
-      case 'check': {
-        const all = await consistencyChecks(sql, config.timezone);
-        for (const c of all) console.log(`${c.ok ? '✓' : '✗'} ${c.label}：${c.detail}`);
-        if (all.some((c) => !c.ok)) process.exitCode = 1;
-        break;
-      }
-      case 'fingerprint': {
-        const fp = await computeFingerprint(sql);
-        const expect = flag(args, 'expect');
-        if (args.includes('--json')) console.log(JSON.stringify(fp, null, 2));
-        else {
-          // 比对时只打印结论，不逐表列出
-          if (expect === undefined) for (const t of fp.tables) console.log(`${t.name}\t${t.rows}\t${t.digest}`);
-          console.log(`数据指纹：${fp.digest}`);
-        }
-        if (expect !== undefined) {
-          const same = expect === fp.digest;
-          console.log(same ? '✓ 与备份时记下的指纹一致' : `✗ 与备份时记下的指纹不同（备份时 ${expect}）`);
-          if (!same) process.exitCode = 1;
-        }
-        break;
-      }
-      case 'backup': {
-        const dir = backupDirFromEnv();
-        await assertBackupTarget(dir, backupPolicyFromEnv());
-        const m = await createBackup(config, dir, flag(args, 'label') ?? 'manual');
-        if (!m.verified) {
-          console.error(`✗ 已导出 ${m.file}，但在临时库恢复失败：${m.verifyError}`);
-          process.exitCode = 1;
+        case 'void-legacy-import': {
+          const id = Number(args[0]);
+          const username = flag(args, 'operator')?.toLowerCase();
+          const reason = flag(args, 'reason');
+          if (!Number.isInteger(id) || id <= 0 || !username || !reason) throw new Error('用法：void-legacy-import <导入编号> --operator <店主账号> --reason <原因>');
+          const actor = await ownerOperator(sql, username, '作废旧账导入');
+          await voidLegacyImport(sql, id, reason, actor.id);
+          console.log(`已作废第 ${id} 次旧账导入。`);
           break;
         }
-        console.log(`✓ 已备份：${m.file}（${(m.bytes / 1024 / 1024).toFixed(1)} MB）；已在临时库恢复核验，指纹 ${m.fingerprintDigest}`);
-        // 自检不一致说明的是当前数据，备份本身完好：照样算备份成功，升级、恢复（往往正是为了修它）不被拦住
-        const failed = m.checks!.failed;
-        for (const c of failed) console.log(`✗ ${c.label}：${c.detail}`);
-        if (failed.length) console.log(`· 当前数据自检有 ${failed.length} 项不一致（备份本身完好），请告知店主与 Codex`);
-        break;
-      }
-      case 'backup-loop': {
-        await backupLoop(config, backupDirFromEnv(), backupPolicyFromEnv());
-        break;
-      }
-      case 'daily-recon': {
-        // 多门店（8.0.22）：--store <门店代码> 出那家店的对账包，不给是本店（与以往一样）
-        const storeCode = flag(args, 'store');
-        let storeId = DEFAULT_STORE_ID;
-        let dirSuffix = '';
-        if (storeCode) {
-          const [st] = await sql<{ id: number; code: string }[]>`SELECT id, code FROM stores WHERE code = ${storeCode.trim().toUpperCase()}`;
-          if (!st) throw new Error(`没有代码为 ${storeCode} 的门店`);
-          storeId = Number(st.id);
-          if (storeId !== DEFAULT_STORE_ID) dirSuffix = `-${st.code}`;
-        }
-        await runInStore(storeId, async () => {
-          const date = flag(args, 'date') ?? businessDateOf(new Date(), config.timezone, (await loadSettings(sql)).businessDayStartHour);
-          if (!ISO_DATE.test(date)) throw new Error('--date 应为 YYYY-MM-DD');
-          const recon = await buildDailyRecon(sql, config, date);
-          const dir = join(flag(args, 'out') ?? './recon', `${date}${dirSuffix}`);
+        case 'legacy-samples': {
+          const dir = args[0];
+          if (!dir) throw new Error('用法：legacy-samples <目录>');
           await mkdir(dir, { recursive: true });
-          for (const f of recon.files) await writeFile(join(dir, f.name), f.content);
-          for (const line of recon.summary) console.log(line);
-          console.log(`${recon.ok ? '✓' : '✗'} 对账包已写到 ${dir}（${recon.files.length} 个文件）`);
-          if (!recon.ok) process.exitCode = 1;
-        });
-        break;
-      }
-      case 'balance-changes': {
-        const sinceText = flag(args, 'since');
-        const since = sinceText ? parseLocalTime(sinceText, config.timezone) : null;
-        if (!since) throw new Error('用法：balance-changes --since "YYYY-MM-DD HH:MM"（门店时间）[--include-opening] [--out 文件.csv]');
-        const rows = await balanceChanges(sql, since, args.includes('--include-opening'));
-        const stampOf = (iso: string) => new Date(iso).toLocaleString('zh-CN', { timeZone: config.timezone, hour12: false });
-        const csv = balanceChangesCsv(rows, stampOf);
-        const out = flag(args, 'out');
-        if (!out) {
-          process.stdout.write(csv);
+          for (const f of legacySampleFiles()) {
+            await writeFile(join(dir, f.name), f.data);
+            console.log(`已写出 ${join(dir, f.name)}`);
+          }
+          console.log('这四份是合成样例（内容是编的），导入后的核验结果见 src/server/demo/legacy-expected.json');
           break;
         }
-        await writeFile(out, csv);
-        console.log(`${sinceText} 之后有余额变动的会员 ${rows.length} 位，已写到 ${out}`);
-        break;
-      }
-      case 'changes-since': {
-        const sinceText = flag(args, 'since');
-        const since = sinceText ? parseLocalTime(sinceText, config.timezone) : null;
-        if (!since) throw new Error('用法：changes-since --since "YYYY-MM-DD HH:MM"（门店时间）或带时区的时刻（如 2026-11-15T03:00:00Z）');
-        for (const line of changesSinceLines(await changesSince(sql, since), sinceText!)) console.log(line);
-        break;
-      }
-      case 'verify-backup': {
-        const file = args[0];
-        if (!file) throw new Error('用法：verify-backup <备份文件.dump>');
-        const result = await verifyBackup(config, file);
-        for (const line of result.lines) console.log(line);
-        console.log(result.ok ? '✓ 备份可以恢复，内容与备份时一致' : '✗ 备份核验没有通过');
-        if (!result.ok) process.exitCode = 1;
-        break;
-      }
-      case 'membership-daily': {
-        // 会员到期处理与会员权益自动发放（应用每分钟自己会跑；应用停着、要马上补跑时用）
-        await prepareDb(sql, config);
-        const run = await runMembershipDaily({ sql, config });
-        console.log(
-          run
-            ? `会员到期处理（营业日 ${run.businessDate}）：处理 ${run.processed} 位，保级 ${run.retained}、进补充期 ${run.grace}、降档 ${run.downgraded}${run.trialsExpired ? `；体验到期 ${run.trialsExpired} 位` : ''}${run.error ? `；出错：${run.error}` : ''}`
-            : '今天已经处理过，没有到期的会员',
-        );
-        // 只写这一次新发的；运行记录一个营业日一条、同一天累加，累计的写在括号里（原来只写累计的，清单改过以后再跑、一张没发也像又发了一轮）
-        const benefits = await runBenefitsDaily({ sql, config });
-        console.log(
-          benefits
-            ? `会员权益自动发放（营业日 ${benefits.businessDate}）：${benefits.thisRun.coupons ? `这一次 ${benefits.thisRun.processed} 位会员、${benefits.thisRun.coupons} 张券` : '这一次没有要发的'}（当天累计 ${benefits.processed} 位、${benefits.coupons} 张）${benefits.error ? `；出错：${benefits.error}` : ''}`
-            : '会员权益今天已经发过，权益清单之后没有改过',
-        );
-        // 会员挑战（v0.7.28）：这个月到店天数满了、还没送过的会员送一次
-        const challenge = await runVisitChallenges({ sql, config });
-        console.log(challenge.members ? `会员挑战：${challenge.members} 位会员满了，发券 ${challenge.coupons} 张` : '会员挑战：没有新满的会员');
-        if (run?.error || benefits?.error) process.exitCode = 1;
-        break;
-      }
-      case 'import-count-cards': {
-        const file = args.find((a, i) => !a.startsWith('--') && !['--operator', '--batch'].includes(args[i - 1] ?? ''));
-        const username = flag(args, 'operator')?.toLowerCase();
-        if (!file || !username) throw new Error('用法：import-count-cards <旧次卡.csv> --operator <店主账号> [--batch 批次备注] [--apply]');
-        await prepareDb(sql, config);
-        const actor = await ownerOperator(sql, username, '旧次卡期初导入');
-        const parsed = parseOpeningCountCardsCsv(await readImportFile(file));
-        for (const e of parsed.errors.slice(0, 30)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
-        if (parsed.errors.length) throw new Error(`有 ${parsed.errors.length} 处格式不对，未导入（表头：${OPENING_COUNT_CARD_HEADER.join('、')}）`);
-        const apply = args.includes('--apply');
-        const r = await importOpeningCountCards({ sql, config }, parsed.rows, { operatorId: actor.id, apply, batch: flag(args, 'batch') ?? basename(file) });
-        for (const row of r.rows)
-          console.log(`${row.ok ? '✓' : '✗'} 第 ${row.line} 行 ${row.memberName ?? '（找不到会员）'} · ${row.name} · 剩 ${row.remaining} 次${row.problem ? `：${row.problem}` : ''}`);
-        if (r.bad) throw new Error(`有 ${r.bad} 行不对，整批没有写入；改好后重新预览`);
-        console.log(apply ? `✓ 已导入 ${r.ok} 张旧次卡（只记次数，不是收款）。请运行 check 核对。` : `以上为预览（${r.ok} 张），没有写入。确认无误后加 --apply 执行导入（门店环境须店主同意）。`);
-        break;
-      }
-      case 'import-benefits': {
-        if (!args.includes('--quote')) throw new Error('用法：import-benefits --quote [--apply]（导入本店权益清单，默认只预览）');
-        await prepareDb(sql, config);
-        const preview = await catalogImportPreview(sql);
-        console.log(`本店权益清单共 ${preview.total} 项：会新建 ${preview.create.length} 项（草稿，文档写明暂缓的为暂缓），编号已有、跳过 ${preview.skipped.length} 项`);
-        for (const e of preview.create) console.log(`  ${e.code}  ${e.name}（${e.startDefault ?? e.start}）${e.status === 'paused' ? '  暂缓' : ''}`);
-        if (!args.includes('--apply')) {
-          console.log('以上为预览，没有写入。确认无误后加 --apply 执行导入（门店环境须店主同意）；导入后在后台「会员权益」逐项改好、发布。');
+        case 'seed-legacy-demo': {
+          refuseLiveEnv(config, '旧账');
+          await prepareDb(sql, config);
+          const result = await seedLegacyDemo(sql, config);
+          if (result.skipped) console.log('已经有旧账导入，跳过。');
+          else {
+            for (const f of result.files) console.log(`已导入 ${f.name}：「${LEGACY_SOURCE_LABELS[f.source]}」${f.rows} 行（第 ${f.importId} 次导入）`);
+            console.log(`导入人：${result.operator}。预期结果见 src/server/demo/legacy-expected.json；在 ERP「费用与备用金 → 旧账对照」查看。`);
+          }
           break;
         }
-        const r = await importCatalog(sql, null);
-        console.log(`✓ 已导入：新建 ${r.created} 项，跳过 ${r.skipped} 项。`);
-        break;
+        case 'demo-prepare': {
+          refuseLiveDemo(config);
+          const startedAt = Date.now();
+          try {
+            const r = await demoPrepare(sql, config, { previousDay: args.includes('--previous-day'), log: (l) => console.log(l) });
+            printPrepare(r, startedAt);
+            if (!r.check.ok) process.exitCode = 1;
+          } catch (error) {
+            if (error instanceof ShowcaseConflictError) console.log('· 前面几块已按顺序准备（已有的跳过），只有场景块没写');
+            throw error;
+          }
+          break;
+        }
+        case 'demo-check': {
+          const r = await demoCheck(sql, config);
+          printDemoCheck(r);
+          if (!r.ok) process.exitCode = 1;
+          break;
+        }
+        case 'demo-reset': {
+          const startedAt = Date.now();
+          assertResettable(config);
+          const dir = backupDirFromEnv();
+          await assertBackupTarget(dir, backupPolicyFromEnv());
+          const r = await demoReset(sql, config, { confirm: flag(args, 'confirm'), backupDir: dir, log: (l) => console.log(l) });
+          printPrepare(r.prepare, startedAt);
+          if (!r.prepare.check.ok) process.exitCode = 1;
+          break;
+        }
+        case 'check': {
+          const all = await consistencyChecks(sql, config.timezone);
+          for (const c of all) console.log(`${c.ok ? '✓' : '✗'} ${c.label}：${c.detail}`);
+          if (all.some((c) => !c.ok)) process.exitCode = 1;
+          break;
+        }
+        case 'fingerprint': {
+          const fp = await computeFingerprint(sql);
+          const expect = flag(args, 'expect');
+          if (args.includes('--json')) console.log(JSON.stringify(fp, null, 2));
+          else {
+            // 比对时只打印结论，不逐表列出
+            if (expect === undefined) for (const t of fp.tables) console.log(`${t.name}\t${t.rows}\t${t.digest}`);
+            console.log(`数据指纹：${fp.digest}`);
+          }
+          if (expect !== undefined) {
+            const same = expect === fp.digest;
+            console.log(same ? '✓ 与备份时记下的指纹一致' : `✗ 与备份时记下的指纹不同（备份时 ${expect}）`);
+            if (!same) process.exitCode = 1;
+          }
+          break;
+        }
+        case 'backup': {
+          const dir = backupDirFromEnv();
+          await assertBackupTarget(dir, backupPolicyFromEnv());
+          const m = await createBackup(config, dir, flag(args, 'label') ?? 'manual');
+          if (!m.verified) {
+            console.error(`✗ 已导出 ${m.file}，但在临时库恢复失败：${m.verifyError}`);
+            process.exitCode = 1;
+            break;
+          }
+          console.log(`✓ 已备份：${m.file}（${(m.bytes / 1024 / 1024).toFixed(1)} MB）；已在临时库恢复核验，指纹 ${m.fingerprintDigest}`);
+          // 自检不一致说明的是当前数据，备份本身完好：照样算备份成功，升级、恢复（往往正是为了修它）不被拦住
+          const failed = m.checks!.failed;
+          for (const c of failed) console.log(`✗ ${c.label}：${c.detail}`);
+          if (failed.length) console.log(`· 当前数据自检有 ${failed.length} 项不一致（备份本身完好），请告知店主与 Codex`);
+          break;
+        }
+        case 'backup-loop': {
+          await backupLoop(config, backupDirFromEnv(), backupPolicyFromEnv());
+          break;
+        }
+        case 'daily-recon': {
+          // 多门店（8.0.22）：--store <门店代码> 出那家店的对账包，不给是本店（与以往一样）
+          const storeCode = flag(args, 'store');
+          let storeId = DEFAULT_STORE_ID;
+          let dirSuffix = '';
+          if (storeCode) {
+            const [st] = await sql<{ id: number; code: string }[]>`SELECT id, code FROM stores WHERE code = ${storeCode.trim().toUpperCase()}`;
+            if (!st) throw new Error(`没有代码为 ${storeCode} 的门店`);
+            storeId = Number(st.id);
+            if (storeId !== DEFAULT_STORE_ID) dirSuffix = `-${st.code}`;
+          }
+          await runInStore(storeId, async () => {
+            const date = flag(args, 'date') ?? businessDateOf(new Date(), config.timezone, (await loadSettings(sql)).businessDayStartHour);
+            if (!ISO_DATE.test(date)) throw new Error('--date 应为 YYYY-MM-DD');
+            const recon = await buildDailyRecon(sql, config, date);
+            const dir = join(flag(args, 'out') ?? './recon', `${date}${dirSuffix}`);
+            await mkdir(dir, { recursive: true });
+            for (const f of recon.files) await writeFile(join(dir, f.name), f.content);
+            for (const line of recon.summary) console.log(line);
+            console.log(`${recon.ok ? '✓' : '✗'} 对账包已写到 ${dir}（${recon.files.length} 个文件）`);
+            if (!recon.ok) process.exitCode = 1;
+          });
+          break;
+        }
+        case 'balance-changes': {
+          const sinceText = flag(args, 'since');
+          const since = sinceText ? parseLocalTime(sinceText, config.timezone) : null;
+          if (!since) throw new Error('用法：balance-changes --since "YYYY-MM-DD HH:MM"（门店时间）[--include-opening] [--out 文件.csv]');
+          const rows = await balanceChanges(sql, since, args.includes('--include-opening'));
+          const stampOf = (iso: string) => new Date(iso).toLocaleString('zh-CN', { timeZone: config.timezone, hour12: false });
+          const csv = balanceChangesCsv(rows, stampOf);
+          const out = flag(args, 'out');
+          if (!out) {
+            process.stdout.write(csv);
+            break;
+          }
+          await writeFile(out, csv);
+          console.log(`${sinceText} 之后有余额变动的会员 ${rows.length} 位，已写到 ${out}`);
+          break;
+        }
+        case 'changes-since': {
+          const sinceText = flag(args, 'since');
+          const since = sinceText ? parseLocalTime(sinceText, config.timezone) : null;
+          if (!since) throw new Error('用法：changes-since --since "YYYY-MM-DD HH:MM"（门店时间）或带时区的时刻（如 2026-11-15T03:00:00Z）');
+          for (const line of changesSinceLines(await changesSince(sql, since), sinceText!)) console.log(line);
+          break;
+        }
+        case 'verify-backup': {
+          const file = args[0];
+          if (!file) throw new Error('用法：verify-backup <备份文件.dump>');
+          const result = await verifyBackup(config, file);
+          for (const line of result.lines) console.log(line);
+          console.log(result.ok ? '✓ 备份可以恢复，内容与备份时一致' : '✗ 备份核验没有通过');
+          if (!result.ok) process.exitCode = 1;
+          break;
+        }
+        case 'membership-daily': {
+          // 会员到期处理与会员权益自动发放（应用每分钟自己会跑；应用停着、要马上补跑时用）
+          await prepareDb(sql, config);
+          const run = await runMembershipDaily({ sql, config });
+          console.log(
+            run
+              ? `会员到期处理（营业日 ${run.businessDate}）：处理 ${run.processed} 位，保级 ${run.retained}、进补充期 ${run.grace}、降档 ${run.downgraded}${run.trialsExpired ? `；体验到期 ${run.trialsExpired} 位` : ''}${run.error ? `；出错：${run.error}` : ''}`
+              : '今天已经处理过，没有到期的会员',
+          );
+          // 只写这一次新发的；运行记录一个营业日一条、同一天累加，累计的写在括号里（原来只写累计的，清单改过以后再跑、一张没发也像又发了一轮）
+          const benefits = await runBenefitsDaily({ sql, config });
+          console.log(
+            benefits
+              ? `会员权益自动发放（营业日 ${benefits.businessDate}）：${benefits.thisRun.coupons ? `这一次 ${benefits.thisRun.processed} 位会员、${benefits.thisRun.coupons} 张券` : '这一次没有要发的'}（当天累计 ${benefits.processed} 位、${benefits.coupons} 张）${benefits.error ? `；出错：${benefits.error}` : ''}`
+              : '会员权益今天已经发过，权益清单之后没有改过',
+          );
+          // 会员挑战（v0.7.28）：这个月到店天数满了、还没送过的会员送一次
+          const challenge = await runVisitChallenges({ sql, config });
+          console.log(challenge.members ? `会员挑战：${challenge.members} 位会员满了，发券 ${challenge.coupons} 张` : '会员挑战：没有新满的会员');
+          if (run?.error || benefits?.error) process.exitCode = 1;
+          break;
+        }
+        case 'import-count-cards': {
+          const file = args.find((a, i) => !a.startsWith('--') && !['--operator', '--batch'].includes(args[i - 1] ?? ''));
+          const username = flag(args, 'operator')?.toLowerCase();
+          if (!file || !username) throw new Error('用法：import-count-cards <旧次卡.csv> --operator <店主账号> [--batch 批次备注] [--apply]');
+          await prepareDb(sql, config);
+          const actor = await ownerOperator(sql, username, '旧次卡期初导入');
+          const parsed = parseOpeningCountCardsCsv(await readImportFile(file));
+          for (const e of parsed.errors.slice(0, 30)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
+          if (parsed.errors.length) throw new Error(`有 ${parsed.errors.length} 处格式不对，未导入（表头：${OPENING_COUNT_CARD_HEADER.join('、')}）`);
+          const apply = args.includes('--apply');
+          const r = await importOpeningCountCards({ sql, config }, parsed.rows, { operatorId: actor.id, apply, batch: flag(args, 'batch') ?? basename(file) });
+          for (const row of r.rows)
+            console.log(`${row.ok ? '✓' : '✗'} 第 ${row.line} 行 ${row.memberName ?? '（找不到会员）'} · ${row.name} · 剩 ${row.remaining} 次${row.problem ? `：${row.problem}` : ''}`);
+          if (r.bad) throw new Error(`有 ${r.bad} 行不对，整批没有写入；改好后重新预览`);
+          console.log(apply ? `✓ 已导入 ${r.ok} 张旧次卡（只记次数，不是收款）。请运行 check 核对。` : `以上为预览（${r.ok} 张），没有写入。确认无误后加 --apply 执行导入（门店环境须店主同意）。`);
+          break;
+        }
+        case 'import-benefits': {
+          if (!args.includes('--quote')) throw new Error('用法：import-benefits --quote [--apply]（导入本店权益清单，默认只预览）');
+          await prepareDb(sql, config);
+          const preview = await catalogImportPreview(sql);
+          console.log(`本店权益清单共 ${preview.total} 项：会新建 ${preview.create.length} 项（草稿，文档写明暂缓的为暂缓），编号已有、跳过 ${preview.skipped.length} 项`);
+          for (const e of preview.create) console.log(`  ${e.code}  ${e.name}（${e.startDefault ?? e.start}）${e.status === 'paused' ? '  暂缓' : ''}`);
+          if (!args.includes('--apply')) {
+            console.log('以上为预览，没有写入。确认无误后加 --apply 执行导入（门店环境须店主同意）；导入后在后台「会员权益」逐项改好、发布。');
+            break;
+          }
+          const r = await importCatalog(sql, null);
+          console.log(`✓ 已导入：新建 ${r.created} 项，跳过 ${r.skipped} 项。`);
+          break;
+        }
+        default:
+          console.log(
+            '可用命令：migrate | create-owner <账号> | reset-password <账号> | seed-demo [--force] | seed-inventory-demo | seed-frontdesk-demo [--previous-day] | seed-billing-demo [--previous-day] | seed-legacy-demo | demo-prepare [--previous-day] | demo-check | demo-reset --confirm <数据库名> | import-hand-tags | price-audit [--apply] | import-opening | check | fingerprint | backup | backup-loop | verify-backup | daily-recon | balance-changes | floorplan-convert | floorplan-sample | import-devices | device-selftest | device-printer-mock | device-bridge-mock | membership-daily | import-benefits | import-count-cards',
+          );
+          process.exitCode = command ? 1 : 0;
       }
-      default:
-        console.log(
-          '可用命令：migrate | create-owner <账号> | reset-password <账号> | seed-demo [--force] | seed-inventory-demo | seed-frontdesk-demo [--previous-day] | seed-billing-demo [--previous-day] | seed-legacy-demo | demo-prepare [--previous-day] | demo-check | demo-reset --confirm <数据库名> | import-hand-tags | price-audit [--apply] | import-opening | check | fingerprint | backup | backup-loop | verify-backup | daily-recon | balance-changes | floorplan-convert | floorplan-sample | import-devices | device-selftest | device-printer-mock | device-bridge-mock | membership-daily | import-benefits | import-count-cards',
-        );
-        process.exitCode = command ? 1 : 0;
-    }
+    });
   } finally {
     await sql.end({ timeout: 5 });
   }

@@ -58,6 +58,8 @@ node dist/server/cli.js membership-daily               # 会员到期处理与�
 
 ## 4. 导入（真实业务数据：默认只预览，`--apply` 才写入，门店环境须店主同意）
 
+8.1.35 起 `import-hand-tags`、`import-opening`、`import-count-cards` 可以加 `--store <门店代码>`（如 `--store FT`）导到第二家店；不加是本店。别的命令不认 `--store`（`daily-recon` 照旧自己认）。福田的导入步骤见 `docs/FUTIAN_MIGRATION.md` 第 4 节。
+
 ```bash
 node dist/server/cli.js import-hand-tags --store-list   # 预览导入店主 747 个真实柜号；--apply 才写入（真实业务数据，门店环境须店主同意）
 node dist/server/cli.js price-audit                    # 8.1.34 价目核对：收银项目与全品类价目表对不上的地方（只读）；--apply 只停用门票项目、与已对接项目同名的两类（不删，docs/PRICE_V8134.md）。老的 import-price-list 已删，价目在后台「全品类价目表」导入
