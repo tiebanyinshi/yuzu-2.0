@@ -224,7 +224,7 @@ describe('提交', () => {
       expect(fallback.status, JSON.stringify(fallback.body)).toBe(201);
       expect(fallback.body.request.lines[0].purpose).toBe('客用消耗');
     } finally {
-      if (rules) await ctx.sql`UPDATE settings SET value = ${ctx.sql.json(rules.value as object)} WHERE key = 'expense_rules'`;
+      if (rules) await ctx.sql`UPDATE settings SET value = ${ctx.sql.json(rules.value as Parameters<typeof ctx.sql.json>[0])} WHERE key = 'expense_rules'`;
       else await ctx.sql`DELETE FROM settings WHERE key = 'expense_rules'`;
     }
   });

@@ -3,6 +3,9 @@
 BEGIN;
 UPDATE settings SET value = '"浴族 · 城市汤泉"'::jsonb, updated_at = now()
 WHERE key = 'store_name' AND value = '"柚子 · 城市汤泉"'::jsonb;
-UPDATE stores SET name = '浴族 · 城市汤泉' WHERE name = '柚子 · 城市汤泉';
-UPDATE legal_entities SET name = '浴族 · 城市汤泉' WHERE name = '柚子 · 城市汤泉';
+-- 升级时撞名没改的（默认那一行还叫「浴族 · 城市汤泉」）：「柚子 · 城市汤泉」是店里自己那家，不动
+UPDATE stores SET name = '浴族 · 城市汤泉' WHERE name = '柚子 · 城市汤泉'
+  AND NOT EXISTS (SELECT 1 FROM stores o WHERE o.name = '浴族 · 城市汤泉');
+UPDATE legal_entities SET name = '浴族 · 城市汤泉' WHERE name = '柚子 · 城市汤泉'
+  AND NOT EXISTS (SELECT 1 FROM legal_entities o WHERE o.name = '浴族 · 城市汤泉');
 COMMIT;

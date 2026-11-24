@@ -145,6 +145,15 @@ function migrationChanges(base) {
   return changes.filter((c) => c.file.endsWith('.sql') || c.from.endsWith('.sql'));
 }
 
+/**
+ * 店主明确同意破例改的已发布迁移（只许「改动」，不许删、改名）：文件名 → 依据。只在店主当面同意时加一行，写清日期与原因。
+ * 改过以后只对还没登记这份迁移的库生效（迁移按文件名登记、不核对内容），加之前先确认对已经跑过的库没有影响。
+ */
+const OWNER_APPROVED_EDITS = {
+  // 店主 2026-11-24「请你直接编辑262，这次破例」：新名字被别的分店、主体占了时 262 整份失败、升级停住（测试会话 P1），改成撞名就跳过
+  '262_rename_yuzu.sql': '店主 2026-11-24 同意破例：撞名时跳过，不让升级失败',
+};
+
 function main() {
   const argv = process.argv.slice(2);
   const all = argv.includes('--all');
@@ -164,7 +173,8 @@ function main() {
       console.error(`✗ 拿不到相对 ${base} 的改动（没有这个提交？CI 里要 fetch-depth: 0）`);
       process.exit(2);
     }
-    for (const c of changes.filter((x) => x.status !== 'A')) problems.push(`${c.from}：已有的迁移被${{ M: '改动', D: '删除', R: '改名' }[c.status] ?? '改动'}了——迁移只增不改，新变化写新的迁移`);
+    for (const c of changes.filter((x) => x.status !== 'A' && !(x.status === 'M' && OWNER_APPROVED_EDITS[x.from.split('/').at(-1)])))
+      problems.push(`${c.from}：已有的迁移被${{ M: '改动', D: '删除', R: '改名' }[c.status] ?? '改动'}了——迁移只增不改，新变化写新的迁移`);
     targets = changes.filter((c) => c.status === 'A').map((c) => c.file);
   }
   for (const file of targets) {
