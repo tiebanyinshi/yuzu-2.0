@@ -1,7 +1,9 @@
 // 房态中心的房间卡片：房号、状态（颜色 + 文字 + 图标）、客人、技师、已用时长、金额（《浴族系统需求汇总》房态中心第 3 条）。
 // 点卡片：空闲的技师服务房间直接登记、空闲的派对房直接开单、客房打开入住或入住单；别的打开房间详情。右上角的「详情」什么时候都能点。
 // 客房的卡片多两行客房原来的内容：手牌、几号入住（预离）或钟点房已住多久、押金（8.1.16，原来的「客房」页并进来）。
-// 回测整改 P08：「在用」的房间右上角多一个「点单」（只有能在水吧或果吧下单的账号看得到），卡片上写房里现在的客人从房态点了几单、多少钱。
+// 回测整改 P08：「在用」的房间多一个「点单」（只有能在水吧或果吧下单的账号看得到），卡片上写房里现在的客人从房态点了几单、多少钱。
+// 排版优化（店主 2026-11-24）：房号 + 右上角状态标签、区域与房型小字；空闲写「可排房」；维修的斜纹底；点卡片在右侧展开详情栏（选中的描边），
+// 原来点卡片做的那一下挪到详情栏的主按钮上；右上角的「详情」照旧。
 
 import { ChevronRight, CupSoda, Link2, Users } from 'lucide-react';
 import { elapsedText, type RoomCard as Room } from '@shared/room-center';
@@ -120,13 +122,19 @@ function CardBody({ room, now, hint }: { room: Room; now: number; hint: string |
       </p>
     );
   }
-  return hint ? <p className={cn('mt-auto pt-1 text-[13px] font-semibold', STATUS_META.free.text)}>{hint}</p> : null;
+  return room.status === 'free' ? (
+    <p className={cn('mt-auto pt-1 text-[13px] font-semibold', STATUS_META.free.text)} data-testid="rc-free-hint">
+      可排房{hint ? <span className="ml-1 font-normal text-ink-3">· {hint}</span> : null}
+    </p>
+  ) : null;
 }
 
 export function RoomCard({
   room,
   now,
   hint,
+  area,
+  selected = false,
   highlight = false,
   onOpen,
   onDetail,
@@ -135,6 +143,10 @@ export function RoomCard({
   room: Room;
   now: number;
   hint: string | null;
+  /** 区域（房态中心的房型）名，写在房号下面的小字里 */
+  area?: string;
+  /** 右侧详情栏开着的就是这一张 */
+  selected?: boolean;
   /** 预约到店（客房）：同房型的空房标出来 */
   highlight?: boolean;
   onOpen: () => void;
@@ -149,23 +161,29 @@ export function RoomCard({
         'relative flex min-h-[148px] rounded-xl border border-l-[6px] transition-colors',
         STATUS_META[room.status].card,
         STATUS_META[room.status].bar,
+        // 维修：同一个维修色的斜纹底（不加新颜色）
+        room.status === 'maintenance' && 'bg-[repeating-linear-gradient(135deg,transparent_0_10px,color-mix(in_srgb,var(--color-room-maintenance)_10%,transparent)_10px_20px)]',
         highlight && 'ring-2 ring-pine ring-offset-1',
+        selected && 'ring-2 ring-ink-2 ring-offset-1',
       )}
       data-testid={`rc-room-${room.code}`}
       data-status={room.status}
+      data-selected={selected ? 'true' : undefined}
       data-highlight={highlight ? 'booking' : undefined}
     >
       <button
         type="button"
         onClick={onOpen}
-        className="flex min-w-0 flex-1 flex-col items-stretch gap-0.5 rounded-xl px-3.5 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-pine/50"
+        aria-expanded={selected}
+        className={cn('flex min-w-0 flex-1 flex-col items-stretch gap-0.5 rounded-xl px-3.5 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-pine/50', order && 'pb-12')}
         data-testid={`rc-open-${room.code}`}
       >
-        <span className={cn('flex items-center gap-2', order ? 'pr-[104px]' : 'pr-9')}>
-          <span className="num min-w-0 truncate text-[20px] leading-7 font-bold text-ink">{room.code}</span>
-          <StatusChip status={room.status} />
+        <span className="flex items-center gap-2 pr-9">
+          <span className="num min-w-0 flex-1 truncate text-[20px] leading-7 font-bold text-ink">{room.code}</span>
+          <StatusChip status={room.status} compact />
         </span>
         <span className="truncate text-[12px] text-ink-3">
+          {area ? `${area} · ` : ''}
           {room.name}
           {room.floor ? ` · ${room.floor}` : ''}
           {room.capacity ? ` · ${room.capacity} 人` : ''}
@@ -182,7 +200,7 @@ export function RoomCard({
           type="button"
           onClick={order}
           aria-label={`${room.code} 点单（水吧、果吧）`}
-          className="absolute top-1.5 right-12 flex h-9 items-center gap-1 rounded-lg border border-lake/40 bg-card/80 px-2.5 text-[13px] font-semibold text-lake hover:bg-card"
+          className="absolute bottom-2 left-3 flex h-9 items-center gap-1 rounded-lg border border-lake/40 bg-card/80 px-2.5 text-[13px] font-semibold text-lake hover:bg-card"
           data-testid={`rc-order-${room.code}`}
         >
           <CupSoda className="size-4" aria-hidden />
