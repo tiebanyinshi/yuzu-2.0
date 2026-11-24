@@ -88,13 +88,10 @@ describe('迁移 262：改名遇到新名字已被占用', () => {
       // 再跑一次什么都不做
       expect(await migrate(sql)).toEqual([]);
       expect(await snapshot()).toEqual(after);
-      // 回滚：撞名没改的不动，店里自己那家也不动
-      const down = (await readFile(new URL('../docs/rollback/262_rename_yuzu.down.sql', import.meta.url), 'utf8')).replace(/^\s*(BEGIN|COMMIT);\s*$/gm, '');
+      // 手工回退脚本只读（迁移没记改之前的值，凭名字改回去会误改；要回到升级前用升级前的备份）：跑完什么都不变
+      const down = await readFile(new URL('../docs/rollback/262_rename_yuzu.down.sql', import.meta.url), 'utf8');
       await sql.begin((tx) => tx.unsafe(down));
-      const back = await snapshot();
-      expect(back.setting).toBe(OLD);
-      for (const s of before.stores) expect(back.stores.find((y) => y.id === s.id)!.name).toBe(s.name);
-      for (const e of before.entities) expect(back.entities.find((y) => y.id === e.id)!.name).toBe(e.name);
+      expect(await snapshot()).toEqual(after);
     });
   }
 
@@ -109,8 +106,20 @@ describe('迁移 262：改名遇到新名字已被占用', () => {
     const before = await snapshot();
     expect(await migrate(sql)).toContain(MINE);
     expect(await snapshot()).toEqual(before);
-    const down = (await readFile(new URL('../docs/rollback/262_rename_yuzu.down.sql', import.meta.url), 'utf8')).replace(/^\s*(BEGIN|COMMIT);\s*$/gm, '');
+    const down = await readFile(new URL('../docs/rollback/262_rename_yuzu.down.sql', import.meta.url), 'utf8');
     await sql.begin((tx) => tx.unsafe(down));
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('回退：1 号本店、本公司、store_name 升级前就叫新名字——升级不改，手工回退脚本也不改（测试会话报告）', async () => {
+    await schemaBefore262();
+    await sql`UPDATE settings SET value = ${sql.json(NEW)} WHERE key = 'store_name'`;
+    await sql`UPDATE stores SET name = ${NEW} WHERE id = 1`;
+    await sql`UPDATE legal_entities SET name = ${NEW} WHERE id = 1`;
+    const before = await snapshot();
+    expect(await migrate(sql)).toContain(MINE);
+    expect(await snapshot()).toEqual(before);
+    await sql.begin(async (tx) => tx.unsafe(await readFile(new URL('../docs/rollback/262_rename_yuzu.down.sql', import.meta.url), 'utf8')));
     expect(await snapshot()).toEqual(before);
   });
 
