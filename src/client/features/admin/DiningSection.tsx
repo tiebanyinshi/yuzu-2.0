@@ -34,7 +34,7 @@ import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, MoneyInput, Notice, PendingBadge, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
-import { AdminPage } from './AdminShell';
+import { AdminPage, PriceSheetLink } from './AdminShell';
 import { SubPane } from '../../components/SubNav';
 import { RoomOrderConfigCard } from './RoomOrderConfigCard';
 
@@ -611,6 +611,7 @@ function ItemsCard() {
         每道菜另选「点单分类」：点单页先选餐厅、水吧、果吧再点，沽清列表、台账、退菜记录也按它分；没选的按默认归（价目分类、出品档口的名字），不改价目表的分类。
         {stations.length === 0 && ' 请先在上面建档口。'}
       </p>
+      <PriceSheetLink sheet="dish" className="mt-2" />
       {dishes.length === 0 ? (
         <p className="mt-4 rounded-lg border border-dashed border-line-strong px-4 py-6 text-center text-[13px] text-ink-3" data-testid="dining-items-empty">
           还没有菜品。
