@@ -28,8 +28,12 @@ import {
   SPACE_ALIAS_KINDS,
   SPACE_ALIAS_LABELS,
   SPACE_BUSINESS_TYPES,
+  SPACE_BATCH_MAX,
+  SPACE_BATCH_PREFIX_RE,
   SPACE_CODE_RE,
   SPACE_EXPORT_COLUMNS,
+  batchCode,
+  type SpaceBatchPlan,
   SPACE_IMPORT_COLUMN_ALIASES,
   SPACE_IMPORT_COLUMNS,
   SPACE_IMPORT_KINDS,
@@ -356,6 +360,102 @@ async function createSpace(deps: Deps, raw: unknown, ctx: OpContext) {
       if (isUniqueViolation(e)) throw conflict('SPACE_CODE_TAKEN', `编码 ${s.code} 刚被别人建了，请刷新后查看`);
       throw e;
     }
+  });
+}
+
+// 按数量建空间（店主 2026-11-24：房态中心房型里设「休息大厅 101 个床位」）：某种业态在用的空间设成 N 间，
+// 缺几间就按「前缀 + 补零序号」一次建好（显示名 = 名称前缀 + 序号）；比现在少的不在这里减（停用要过空间台账的各项检查）。
+// 保存带着预览时看到的「现有几间」：锁里重数对不上就拒绝；已经是目标数（上一次其实成功了）就当成功、不重复建。
+const SpaceBatchInput = z.object({
+  businessType: text('业态', MAX_BUSINESS_TYPE),
+  target: z.number('请填数量').int('数量要是整数').min(1, '数量至少 1').max(MAX_CAPACITY, `数量最多 ${MAX_CAPACITY}`),
+  floorId: z.number('请选择楼层').int().positive('请选择楼层'),
+  zoneId: z.number('区域不正确').int().positive('区域不正确').nullable().default(null),
+  prefix: z.string('请填编码前缀').trim().toUpperCase().regex(SPACE_BATCH_PREFIX_RE, '编码前缀是 1 到 4 个大写字母，例如 D'),
+  /** 不填：接着这个前缀已有的最大序号 */
+  start: z.number('起始序号不正确').int('起始序号要是整数').min(0, '起始序号不能小于 0').nullable().default(null),
+  width: z.number().int().min(1).max(4).default(3),
+  // 名称前缀末尾的空格保留（「床位 」+ 001 = 「床位 001」）
+  namePrefix: z
+    .string()
+    .max(MAX_DISPLAY_NAME - 4, `名称前缀最多 ${MAX_DISPLAY_NAME - 4} 个字`)
+    .transform((v) => v.trimStart())
+    .default(''),
+  capacity: z.number('容量不正确').int('容量要是整数').min(1, '容量至少 1 人').max(MAX_CAPACITY, `容量最多 ${MAX_CAPACITY} 人`).nullable().default(null),
+  preview: z.boolean().default(false),
+  /** 保存时要：预览时看到的现有间数 */
+  current: z.number().int().min(0).optional(),
+});
+
+async function planSpaceBatch(db: Db, s: z.infer<typeof SpaceBatchInput>): Promise<SpaceBatchPlan & { codes: string[] }> {
+  const store = currentStoreId();
+  const [row] = await db<{ current: number }[]>`
+    SELECT count(*)::int AS current FROM spaces WHERE store_id = ${store} AND active AND business_type = ${s.businessType}`;
+  const current = row!.current;
+  if (s.target < current) {
+    throw unprocessable('SPACE_BATCH_SHRINK', `「${s.businessType}」现在已有 ${current} 间在用，比 ${s.target} 多；要减少请在空间台账里停用多出来的（停用前会检查有没有客人）`);
+  }
+  const create = s.target - current;
+  if (create > SPACE_BATCH_MAX) throw unprocessable('SPACE_BATCH_TOO_MANY', `一次最多新建 ${SPACE_BATCH_MAX} 间，这次要建 ${create} 间：请分几次设（先设小一点的数量）`);
+  let start = s.start;
+  if (start === null) {
+    const rows = await db<{ code: string }[]>`SELECT code FROM spaces WHERE store_id = ${store} AND code ~ ${`^${s.prefix}[0-9]+$`}`;
+    start = rows.reduce((m, r) => Math.max(m, Number(r.code.slice(s.prefix.length))), 0) + 1;
+  }
+  const codes = Array.from({ length: create }, (_, i) => batchCode(s.prefix, start, s.width, i));
+  const bad = codes.find((c) => c.length > s.prefix.length + s.width || !SPACE_CODE_RE.test(c));
+  if (bad) throw unprocessable('SPACE_BATCH_CODE', `编码 ${bad} 不合规（大写字母开头、2 到 8 位，序号不能超过 ${s.width} 位）：换短一点的前缀、加大位数或改起始序号`);
+  const taken = codes.length ? (await db<{ code: string }[]>`SELECT code FROM spaces WHERE store_id = ${store} AND code IN ${db(codes)} ORDER BY code`).map((r) => r.code) : [];
+  return { businessType: s.businessType, current, target: s.target, create, start, codes, codesFirst: codes.slice(0, 5), codesLast: codes.length > 5 ? codes.slice(-3) : [], taken };
+}
+
+async function createSpaceBatch(deps: Deps, raw: unknown, ctx: OpContext): Promise<SpaceBatchPlan> {
+  const s = parse(SpaceBatchInput, raw);
+  const strip = ({ codes: _codes, ...plan }: SpaceBatchPlan & { codes: string[] }): SpaceBatchPlan => plan;
+  if (s.preview) return strip(await planSpaceBatch(deps.sql, s));
+  if (s.current === undefined || s.start === null) throw unprocessable('SPACE_BATCH_PREVIEW', '请先预览，核对要建的编码后再保存');
+  return deps.sql.begin(async (tx) => {
+    await lockLedger(tx);
+    const plan = await planSpaceBatch(tx, s);
+    // 上一次其实已经成功（结果没收到又点了一次）：已经是目标数，不重复建
+    if (plan.current === s.target && s.current !== plan.current) return { ...strip(plan), created: 0 };
+    if (plan.current !== s.current) throw conflict('SPACE_BATCH_CHANGED', `预览以后「${s.businessType}」的间数变了（现在 ${plan.current} 间），这次没有保存；请重新预览`);
+    if (plan.taken.length) throw conflict('SPACE_CODE_TAKEN', `编码 ${plan.taken.slice(0, 5).join('、')}${plan.taken.length > 5 ? ` 等 ${plan.taken.length} 个` : ''} 已在台账里：换前缀或起始序号`);
+    if (!plan.create) return { ...strip(plan), created: 0 };
+    const floor = await checkPlace(tx, s.floorId, s.zoneId);
+    const at = new Date();
+    const rows = plan.codes.map((code) => ({
+      code,
+      floor_id: s.floorId,
+      zone_id: s.zoneId,
+      business_type: s.businessType,
+      capacity: s.capacity,
+      display_name: `${s.namePrefix}${code.slice(s.prefix.length)}`.trim() || code,
+      verify_status: 'confirmed',
+      verified_by: ctx.actor.id,
+      verified_at: at,
+      created_by: ctx.actor.id,
+    }));
+    try {
+      await tx`INSERT INTO spaces ${tx(rows, 'code', 'floor_id', 'zone_id', 'business_type', 'capacity', 'display_name', 'verify_status', 'verified_by', 'verified_at', 'created_by')}`;
+    } catch (e) {
+      if (isUniqueViolation(e)) throw conflict('SPACE_CODE_TAKEN', '有编码刚被别人建了，请重新预览');
+      throw e;
+    }
+    await writeAudit(tx, {
+      staffId: ctx.actor.id,
+      action: 'space_saved',
+      targetType: 'space',
+      detail: {
+        summary: `按数量新建 ${plan.create} 间「${s.businessType}」（${floor.code}，${plan.codes[0]}～${plan.codes.at(-1)}），现在共 ${s.target} 间`,
+        businessType: s.businessType,
+        from: plan.current,
+        to: s.target,
+        codes: [plan.codes[0], plan.codes.at(-1)],
+      },
+      ip: ctx.ip,
+    });
+    return { ...strip(plan), created: plan.create };
   });
 }
 
@@ -1067,6 +1167,7 @@ export function registerSpaceRoutes(app: FastifyInstance, deps: Deps) {
     await retireAlias(deps, id, aliasId, ctxOf(req));
     return spaceLedger(sql);
   });
+  app.post('/api/admin/spaces/batch', { preHandler: admin }, async (req) => createSpaceBatch(deps, req.body, ctxOf(req)));
   app.post('/api/admin/spaces/bulk-zone', { preHandler: admin }, async (req) => {
     await bulkSetZone(deps, req.body, ctxOf(req));
     return spaceLedger(sql);
