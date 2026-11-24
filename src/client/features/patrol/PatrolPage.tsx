@@ -235,10 +235,14 @@ function RecordsTab({ manage }: { manage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const session = useSession();
-  // 营业日（与巡场记的营业日同一个口径，XC4）
-  const today = session.today;
-  const [from, setFrom] = useState(today);
-  const [to, setTo] = useState(today);
+  // 巡场的今天（与打卡记的日期同一个口径：设了起始时间的从起始整点起，XC19；没设的是营业日，XC4）；取回来以前先用营业日
+  const patrolToday = useQuery({ queryKey: [...KEY, 'day', null], queryFn: () => api.get<PatrolDay>('/api/erp/patrol/day') }).data?.today;
+  const today = patrolToday ?? session.today;
+  const [picked, setPicked] = useState<{ from?: string; to?: string }>({});
+  const from = picked.from ?? today;
+  const to = picked.to ?? today;
+  const setFrom = (v: string) => setPicked((p) => ({ ...p, from: v }));
+  const setTo = (v: string) => setPicked((p) => ({ ...p, to: v }));
   const [pointId, setPointId] = useState('');
   const [employeeId, setEmployeeId] = useState('');
   /** 选中的那个人的名字：换了场所、日期以后结果里没有他，也留在选项里，看得出正在按谁筛（Codex 审查 b0a8bf6） */
@@ -711,12 +715,12 @@ function SettingsTab() {
             ))}
           </Select>
           <span className="text-[12.5px] text-ink-3">
-            一天 {preview.length} 轮{preview.some((r) => r.minutes !== roundMinutes) ? '（除不尽或起点不在切换时间，头尾的轮短一些）' : ''}
+            一天 {preview.length} 轮{preview.some((r) => r.minutes !== roundMinutes) ? '（间隔除不尽 24 小时，最后一轮短一些）' : `，每轮 ${patrolIntervalText(roundMinutes)}`}
           </span>
         </div>
         <p className="mt-2 text-[12.5px] text-ink-3">
-          巡查起始时间只能选整点：第 N 轮 = 起始时间 + N × 间隔；营业日切换到第一个起点之间算第 1
-          轮，过了午夜照营业日排到下一次切换。改了起始时间只影响之后的轮——已经巡完的、正在巡的这一轮开始时间不变（正在巡的这一轮到新起点算出的下一个整点为止），以前的记录照当时的设置。
+          巡查起始时间只能选整点：巡场的一天从起始时间起算 24 小时（选 00:00 就是从零点到零点），第 1 轮从起始时间开始，每隔一个间隔一轮，24
+          小时平分、每轮一样长；每天起始时间以前的打卡算前一天。不设起始时间照原来跟营业日切换时间。改了起始时间只影响之后的轮——已经巡完的、正在巡的这一轮开始时间不变（正在巡的这一轮到新起点算出的下一个整点为止），以前的记录照当时的设置。
         </p>
         <div className="mt-3" data-testid="patrol-round-preview">
           <p className="text-[12.5px] font-semibold text-ink-2">轮次时间表（预览）</p>

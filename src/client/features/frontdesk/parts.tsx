@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { AlarmClock, Crown, DoorOpen, Link2, Lock, TriangleAlert, UserRound } from 'lucide-react';
-import { tagArea, ZONE_LABELS, type BoardTag, type HandTag, type TagKind, type TagZone } from '@shared/frontdesk';
+import { tagArea, TAG_SERVICE_LABELS, ZONE_LABELS, type BoardTag, type HandTag, type TagKind, type TagServiceStatus, type TagZone } from '@shared/frontdesk';
 import { overstayOf } from '@shared/frontdesk-risk';
 import { cn } from '../../lib/utils';
 import { Money } from '../../components/Money';
@@ -12,6 +12,15 @@ export const ZONE_STYLE: Record<TagZone, { chip: string; strip: string; soft: st
   female: { chip: 'bg-ember-soft text-ember', strip: 'bg-ember', soft: 'bg-ember-soft/50', text: 'text-ember' },
   child: { chip: 'bg-moss-soft text-moss', strip: 'bg-moss', soft: 'bg-moss-soft/60', text: 'text-moss' },
 };
+
+/** 手牌柜「暂停使用 / 维修中」的颜色（后台手牌池、前台选牌一致）：暂停 = 柚黄，维修 = 深墨底（房态四色只给房态用） */
+export const TAG_SERVICE_STYLE: Record<Exclude<TagServiceStatus, 'normal'>, string> = {
+  paused: 'border-yuzu-deep/50 bg-yuzu-soft text-yuzu-deep',
+  repair: 'border-ink-2 bg-ink-2 text-paper',
+};
+
+/** 没锁定、标了暂停 / 维修的牌（前台卡片、紧凑标签用）；其余为 null */
+const outOf = (tag: BoardTag) => (!tag.locked && tag.serviceStatus !== 'normal' ? tag.serviceStatus : null);
 
 export function ZoneChip({ zone, size = 'sm', className }: { zone: TagZone; size?: 'sm' | 'md'; className?: string }) {
   return (
@@ -176,13 +185,14 @@ export function TagCard({
   const v = tag.visit;
   const style = ZONE_STYLE[tag.zone];
   const over = v ? overstayOf(stayMinutes(v.checkedInAt, now)) : null;
-  const state = v ? (v.awaySince ? '在店（临时外出）' : '在店') : tag.locked ? '锁定' : '空闲';
+  const out = outOf(tag);
+  const state = v ? (v.awaySince ? '在店（临时外出）' : '在店') : tag.locked ? '锁定' : out ? TAG_SERVICE_LABELS[out] : '空闲';
   return (
     <button
       type="button"
       onClick={onClick}
       data-testid={`tag-${tag.code}`}
-      data-state={v ? 'in_use' : tag.locked ? 'locked' : 'free'}
+      data-state={v ? 'in_use' : tag.locked ? 'locked' : (out ?? 'free')}
       aria-label={`手牌 ${tag.code}，${ZONE_LABELS[tag.zone].title}${tag.kind === 'vip' ? `，VIP ${tag.vipLevel} 级` : ''}，${state}${over ? `，${over.label}` : ''}${v?.memberGradeLabel ? `，会员 ${v.memberGradeLabel}` : ''}${v ? `，未结 ${(v.amountCents / 100).toFixed(2)} 元` : ''}`}
       data-away={v?.awaySince ? 'true' : undefined}
       aria-pressed={selected}
@@ -193,7 +203,9 @@ export function TagCard({
           ? 'border-line bg-card shadow-card hover:border-line-strong hover:shadow-lift'
           : tag.locked
             ? 'border-line bg-[repeating-linear-gradient(135deg,var(--color-paper-2)_0_6px,var(--color-paper-3)_6px_7px)] text-ink-3'
-            : 'border-dashed border-line-strong bg-paper/60 hover:border-ink-4 hover:bg-card',
+            : out
+              ? TAG_SERVICE_STYLE[out]
+              : 'border-dashed border-line-strong bg-paper/60 hover:border-ink-4 hover:bg-card',
         selected && 'border-pine ring-2 ring-pine ring-offset-2 ring-offset-paper',
         !selected && companion && 'border-pine/60 ring-1 ring-pine/40',
         matched && !selected && 'ring-2 ring-yuzu ring-offset-1 ring-offset-paper',
@@ -242,6 +254,10 @@ export function TagCard({
               <Lock className="size-4 shrink-0 text-clay" />
               <span className="truncate text-clay">锁定 · {tag.lockReason}</span>
             </>
+          ) : out ? (
+            <span className="truncate">
+              {state} {tag.serviceNote}
+            </span>
           ) : (
             <>
               <span className="text-ink-4 group-hover:hidden">空闲</span>
@@ -259,25 +275,29 @@ export function TagCard({
  * 与完整卡片同样的 data-testid 与状态，点一下即可发牌。
  */
 export function TagChip({ tag, matched, primaryMatch, onClick }: { tag: BoardTag; matched: boolean; primaryMatch: boolean; onClick: () => void }) {
-  const state = tag.locked ? '锁定' : '空闲';
+  const out = outOf(tag);
+  const state = tag.locked ? `锁定（${tag.lockReason}）` : out ? `${TAG_SERVICE_LABELS[out]} ${tag.serviceNote ?? ''}` : '空闲';
   return (
     <button
       type="button"
       onClick={onClick}
       data-testid={`tag-${tag.code}`}
-      data-state={tag.locked ? 'locked' : 'free'}
-      aria-label={`手牌 ${tag.code}，${ZONE_LABELS[tag.zone].title}${tag.kind === 'vip' ? `，VIP ${tag.vipLevel} 级` : ''}，${state}${tag.locked ? `（${tag.lockReason}）` : ''}`}
-      title={tag.locked ? `锁定：${tag.lockReason}` : '空闲，点此发牌'}
+      data-state={tag.locked ? 'locked' : (out ?? 'free')}
+      aria-label={`手牌 ${tag.code}，${ZONE_LABELS[tag.zone].title}${tag.kind === 'vip' ? `，VIP ${tag.vipLevel} 级` : ''}，${state}`}
+      title={tag.locked || out ? state : '空闲，点此发牌'}
       className={cn(
         'tap relative num flex h-[34px] min-w-[74px] items-center justify-center gap-1 rounded-[10px] border px-2 text-[14px] font-bold transition-[box-shadow,border-color,background-color] duration-150 active:scale-[0.98]',
         tag.locked
           ? 'border-clay/30 bg-[repeating-linear-gradient(135deg,var(--color-paper-2)_0_6px,var(--color-paper-3)_6px_7px)] text-clay'
-          : 'border-dashed border-line-strong bg-paper/60 text-ink-2 hover:border-pine hover:bg-card hover:text-pine',
+          : out
+            ? TAG_SERVICE_STYLE[out]
+            : 'border-dashed border-line-strong bg-paper/60 text-ink-2 hover:border-pine hover:bg-card hover:text-pine',
         matched && 'ring-2 ring-yuzu ring-offset-1 ring-offset-paper',
         primaryMatch && 'shadow-lift',
       )}
     >
       {tag.locked && <Lock className="size-3" />}
+      {out && <TriangleAlert className="size-3" />}
       {tag.code}
     </button>
   );

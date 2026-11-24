@@ -8,7 +8,7 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { base32 } from '@shared/canteen';
-import { businessDateOf, ISO_DATE } from '@shared/business-date';
+import { ISO_DATE } from '@shared/business-date';
 import {
   MAX_PATROL_POINT_AREA,
   MAX_PATROL_POINT_NAME,
@@ -26,6 +26,8 @@ import {
   parsePatrolToken,
   patrolRoundAt,
   patrolDayRounds,
+  patrolDateAt,
+  patrolSettingOn,
   type PatrolApp,
   type PatrolCheckinResult,
   type PatrolCheckinRow,
@@ -64,10 +66,10 @@ const MINUTE = 60_000;
 
 // ───────────────────────── 营业日 ─────────────────────────
 
-/** 某一刻属于哪个营业日（XC4：与营业额同一个切换时间） */
+/** 某一刻记到巡场的哪一天（XC4：与营业额同一个切换时间；设了巡查起始时间的从起始整点起，XC19） */
 export async function patrolDateOf(db: Db, config: AppConfig, at: Date): Promise<string> {
-  const s = await loadSettings(db);
-  return businessDateOf(at, config.timezone, s.businessDayStartHour);
+  const { businessDayStartHour } = await loadSettings(db);
+  return patrolDateAt((await loadPatrolSettings(db)).roundChanges, at, config.timezone, businessDayStartHour);
 }
 
 /** 某个营业日的各轮（按这一天的巡场间隔，XC13） */
@@ -163,9 +165,13 @@ export async function savePatrolSettings(sql: Sql, config: AppConfig, raw: unkno
         roundChanges = [...before.roundChanges, change].slice(-MAX_ROUND_CHANGES);
       } else if (minutes !== before.roundMinutes) {
         // 只改间隔：照原来，从今天（营业日）起整天按新的间隔分（XC15），起始时间带着
+        // 今天改过起始时间（有 at）的几条留着、换成新的间隔：今天从几点开始、之后几点换的起点都不变（XC19）
         const today = await patrolDateOf(tx, config, new Date());
-        const change: PatrolRoundChange = { from: today, minutes, ...(startHour !== null ? { startHour } : {}) };
-        roundChanges = [...before.roundChanges.filter((c) => c.from < today), change].slice(-MAX_ROUND_CHANGES);
+        const earlier = before.roundChanges.filter((c) => c.from < today);
+        const dayStartHour = patrolSettingOn(earlier, today).startHour;
+        const change: PatrolRoundChange = { from: today, minutes, ...(dayStartHour !== null ? { startHour: dayStartHour } : {}) };
+        const timed = before.roundChanges.filter((c) => c.from === today && c.at).map((c) => ({ ...c, minutes }));
+        roundChanges = [...earlier, change, ...timed].slice(-MAX_ROUND_CHANGES);
       }
       return {
         departmentIds,
@@ -496,13 +502,17 @@ export async function recordPatrolCheckin(deps: { sql: Sql; config: AppConfig },
  */
 export async function patrolDay(db: Db, config: AppConfig, date: string, today: string, nowMs = Date.now()): Promise<PatrolDay> {
   const { minutes, rounds: spans } = await roundsOn(db, config, date);
+  // 按这一天的时间段取打卡（不按记下的日期）：分界改过（XC19）以前记下的日期与现在的分界对不上时，照样归进对的轮
+  const from = new Date(spans[0]!.start);
+  const to = new Date(spans.at(-1)!.end);
+  const inDay = db`c.scanned_at >= ${from} AND c.scanned_at < ${to}`;
   const points = await db<{ id: number; name: string; area: string; active: boolean; createdAt: string }[]>`
     SELECT p.id, p.name, p.area, p.active, p.created_at FROM patrol_points p
-    WHERE p.active OR EXISTS (SELECT 1 FROM patrol_checkins c WHERE c.point_id = p.id AND c.business_date = ${date} AND c.voided_at IS NULL)
+    WHERE p.active OR EXISTS (SELECT 1 FROM patrol_checkins c WHERE c.point_id = p.id AND ${inDay} AND c.voided_at IS NULL)
     ORDER BY p.sort_order, p.id`;
   const scans = await db<{ id: number; pointId: number; at: string; recordedAt: string; employeeId: number; name: string; empNo: string; via: PatrolDay['points'][number]['scans'][number]['via'] }[]>`
     SELECT c.id, c.point_id, c.scanned_at AS at, c.recorded_at, c.employee_id, c.employee_name AS name, c.emp_no, c.via
-    FROM patrol_checkins c WHERE c.business_date = ${date} AND c.voided_at IS NULL ORDER BY c.scanned_at, c.id`;
+    FROM patrol_checkins c WHERE ${inDay} AND c.voided_at IS NULL ORDER BY c.scanned_at, c.id`;
   const byPoint = new Map<number, PatrolScan[]>();
   const people = new Map<number, PatrolDay['people'][number]>();
   for (const s of scans) {
@@ -589,27 +599,33 @@ export async function patrolRecords(db: Db, config: AppConfig, raw: unknown): Pr
   const q = parse(RecordsQuery, raw);
   if (q.from > q.to) throw badRequest('开始日期不能晚于结束日期');
   if (daysBetween(q.from, q.to) >= PATROL_MAX_DAYS) throw badRequest(`一次最多查 ${PATROL_MAX_DAYS} 天`);
+  // 按所选巡场日的时间段取（不按记下的日期）：分界改过（XC19）以前记下的日期对不上时，与「今天」一致
+  const settings = await loadPatrolSettings(db);
+  const first = await roundsOn(db, config, q.from, settings);
+  const last = await roundsOn(db, config, q.to, settings);
   const rows = await db<Omit<PatrolCheckinRow, 'roundNo'>[]>`
     SELECT c.id, c.point_id, c.point_name, c.employee_id, c.emp_no, c.employee_name AS name, c.department_name AS department,
            c.business_date, c.scanned_at, c.recorded_at, c.via,
            (c.recorded_at - c.scanned_at) > ${`${PATROL_LATE_MINUTES} minutes`}::interval AS late,
            c.voided_at, c.void_reason, s.display_name AS voided_by_name
     FROM patrol_checkins c LEFT JOIN staff s ON s.id = c.voided_by
-    WHERE c.business_date BETWEEN ${q.from} AND ${q.to}
+    WHERE c.scanned_at >= ${new Date(first.rounds[0]!.start)} AND c.scanned_at < ${new Date(last.rounds.at(-1)!.end)}
       AND ${q.pointId ? db`c.point_id = ${q.pointId}` : db`true`}
       AND ${q.employeeId ? db`c.employee_id = ${q.employeeId}` : db`true`}
       AND ${q.voided === 'exclude' ? db`c.voided_at IS NULL` : db`true`}
     ORDER BY c.scanned_at DESC, c.id DESC`;
-  // 每条在那一天的第几轮（按那一天的巡场间隔）
-  const settings = await loadPatrolSettings(db);
+  // 每条在那一天的第几轮（按扫到的时间现在算出的巡场日与那一天的分轮；8.1.27 按旧分界记的日期也照新的分界归轮，XC19）
+  const { businessDayStartHour } = await loadSettings(db);
+  const dayOf = (at: string) => patrolDateAt(settings.roundChanges, at, config.timezone, businessDayStartHour);
   const roundsByDate = new Map<string, PatrolRoundSpan[]>();
-  for (const date of new Set(rows.map((r) => r.businessDate))) roundsByDate.set(date, (await roundsOn(db, config, date, settings)).rounds);
+  for (const date of new Set(rows.map((r) => dayOf(r.scannedAt)))) roundsByDate.set(date, (await roundsOn(db, config, date, settings)).rounds);
   const list = rows.map((r) => ({
     ...r,
+    businessDate: dayOf(r.scannedAt),
     id: Number(r.id),
     pointId: Number(r.pointId),
     employeeId: Number(r.employeeId),
-    roundNo: patrolRoundAt(roundsByDate.get(r.businessDate) ?? [], r.scannedAt)?.no ?? null,
+    roundNo: patrolRoundAt(roundsByDate.get(dayOf(r.scannedAt)) ?? [], r.scannedAt)?.no ?? null,
   }));
   return { rows: list, total: list.filter((r) => !r.voidedAt).length, voided: list.filter((r) => r.voidedAt).length };
 }

@@ -3,7 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { FilePenLine, Hash, Keyboard, Lock, Search, ShieldCheck, TriangleAlert, UserPlus, X } from 'lucide-react';
-import { matchTags, normalizeTagCode, TAG_ZONES, uniqueTagMatch, ZONE_LABELS, type BoardTag, type CheckinResult, type TagZone, type VisitDetail } from '@shared/frontdesk';
+import {
+  matchTags,
+  normalizeTagCode,
+  TAG_SERVICE_LABELS,
+  TAG_ZONES,
+  tagIssuable,
+  uniqueTagMatch,
+  ZONE_LABELS,
+  type BoardTag,
+  type CheckinResult,
+  type TagZone,
+  type VisitDetail,
+} from '@shared/frontdesk';
 import { useCan, useSession } from '../../lib/session';
 import { cn, isTypingTarget } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
@@ -21,9 +33,13 @@ import { TicketDialog } from './CheckoutDialog';
 import { MemberEntitlements } from './desk';
 import { groupTags, Stat, StatusChip, TagCard, TagChip, VipChip, ZoneChip } from './parts';
 import { useBoard, useFrontdeskChecks, useRefreshFrontdesk, useServerNow, useVisit } from './queries';
-import { FindGuestDialog, TagLockDialog } from './ToolDialogs';
+import { FindGuestDialog } from './ToolDialogs';
 import { JoinGroupDialog, SwapDialog } from './VisitDialogs';
 import { MoveLinesDialog } from './MoveLinesDialog';
+import { lazyPage } from '../../lib/lazyPage';
+
+/** 锁牌 / 解锁：用得少，按需加载（不进首屏主包） */
+const TagLockDialog = lazyPage(() => import('./TagLockDialog').then((m) => m.TagLockDialog));
 
 type StatusFilter = 'all' | 'in' | 'free' | 'locked';
 
@@ -83,6 +99,8 @@ export function FrontdeskPage() {
       } else if (t.locked) {
         if (can('frontdesk.tags')) setTool({ kind: 'lock', code: t.code });
         else toast({ tone: 'error', title: `手牌 ${t.code} 已锁定`, body: `${t.lockReason}。请换一张，或请值班经理在前台「锁牌 / 解锁」解锁。` });
+      } else if (t.serviceStatus !== 'normal') {
+        toast({ tone: 'error', title: `手牌 ${t.code} ${TAG_SERVICE_LABELS[t.serviceStatus]}，请换一张`, body: t.serviceNote ?? undefined });
       } else if (t.zone === 'child') {
         toast({ tone: 'error', title: `手牌 ${t.code} 属于已取消的儿童区`, body: '儿童跟同性别家长用男宾或女宾的牌；请店主在「管理 → 手牌」把这张牌改为男宾或女宾。' });
       } else if (can('frontdesk.operate')) {
@@ -153,7 +171,9 @@ export function FrontdeskPage() {
 
   /** 状态板上的分区：男宾、女宾；库里还有旧儿童区手牌时另列 */
   const zonesInPool = TAG_ZONES.filter((z) => z !== 'child' || tags.some((t) => t.zone === 'child'));
-  const visible = tags.filter((t) => (zone === 'all' || t.zone === zone) && (status === 'all' || (status === 'in' ? !!t.visit : status === 'free' ? !t.visit && !t.locked : t.locked)));
+  const visible = tags.filter(
+    (t) => (zone === 'all' || t.zone === zone) && (status === 'all' || (status === 'in' ? !!t.visit : status === 'free' ? tagIssuable(t) : t.locked || t.serviceStatus !== 'normal')),
+  );
 
   const afterCheckin = (r: CheckinResult) => {
     setDialog(null);
@@ -218,6 +238,7 @@ export function FrontdeskPage() {
               </span>
               <Stat label="空闲">{stats.free}</Stat>
               {stats.locked > 0 && <Stat label="锁定">{stats.locked}</Stat>}
+              {stats.outOfService > 0 && <Stat label="暂停 / 维修">{stats.outOfService}</Stat>}
               <Stat label="同行">{stats.groups} 组</Stat>
             </span>
           ) : (
@@ -350,7 +371,7 @@ export function FrontdeskPage() {
                         <span className="num">{t.code}</span>
                         <span className="text-[12px] font-semibold opacity-75">
                           {ZONE_LABELS[t.zone].short}
-                          {t.kind === 'vip' ? ` · VIP${t.vipLevel}` : ''} · {t.visit ? '在店' : t.locked ? '锁定' : '空闲'}
+                          {t.kind === 'vip' ? ` · VIP${t.vipLevel}` : ''} · {t.visit ? '在店' : t.locked ? '锁定' : t.serviceStatus !== 'normal' ? TAG_SERVICE_LABELS[t.serviceStatus] : '空闲'}
                         </span>
                         {t === primary && <Kbd className="ml-0.5 border-white/30 bg-white/15 text-paper">↵</Kbd>}
                       </button>
@@ -376,7 +397,7 @@ export function FrontdeskPage() {
                     { value: 'all', label: '全部' },
                     { value: 'in', label: '在店' },
                     { value: 'free', label: '空闲' },
-                    { value: 'locked', label: '锁定' },
+                    { value: 'locked', label: '锁定 / 暂停维修' },
                   ]}
                 />
               </div>
@@ -394,7 +415,7 @@ export function FrontdeskPage() {
             ) : board.error ? (
               <Notice tone="error" title={board.error.message} />
             ) : tags.length === 0 ? (
-              <EmptyState art="pool" title="手牌池还是空的" description={can('frontdesk.tags') ? '先在「管理 → 手牌」导入柜号清单，或按号段建牌。' : '请店主先在「管理 → 手牌」导入柜号清单。'} />
+              <EmptyState art="pool" title="手牌池还是空的" description={can('frontdesk.tags') ? '先在「管理 → 手牌」导入柜号清单，或按规则批量添加。' : '请店主先在「管理 → 手牌」导入柜号清单。'} />
             ) : (
               zonesInPool
                 .filter((z) => zone === 'all' || z === zone)
@@ -420,7 +441,7 @@ export function FrontdeskPage() {
                             <p className="mb-1.5 flex items-center gap-2 text-[12.5px] font-semibold text-ink-3">
                               {g.kind === 'vip' ? <VipChip level={g.vipLevel!} size="md" /> : <span className="text-[13px] font-bold text-ink-2">{g.area ? `${g.area} 区` : '普通柜'}</span>}
                               <span className="num">
-                                在店 {all.filter((t) => t.visit).length} · 空闲 {all.filter((t) => !t.visit && !t.locked).length} / {all.length}
+                                在店 {all.filter((t) => t.visit).length} · 空闲 {all.filter(tagIssuable).length} / {all.length}
                               </span>
                             </p>
                             {cards.length > 0 && (
@@ -520,17 +541,19 @@ export function FrontdeskPage() {
       )}
       <ChecksDialog open={checksOpen} onClose={() => setChecksOpen(false)} />
       <FindGuestDialog open={tool?.kind === 'find'} tags={tags} onClose={() => setTool(null)} onPick={select} />
-      <TagLockDialog
-        open={tool?.kind === 'lock'}
-        tags={tags}
-        initialCode={tool?.kind === 'lock' ? tool.code : undefined}
-        onClose={() => setTool(null)}
-        onDone={(message) => {
-          setTool(null);
-          refresh();
-          toast({ tone: 'success', title: message });
-        }}
-      />
+      {tool?.kind === 'lock' && (
+        <TagLockDialog
+          open
+          tags={tags}
+          initialCode={tool.code}
+          onClose={() => setTool(null)}
+          onDone={(message) => {
+            setTool(null);
+            refresh();
+            toast({ tone: 'success', title: message });
+          }}
+        />
+      )}
     </>
   );
 }

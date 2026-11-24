@@ -6,7 +6,7 @@
 //   · 账单合计与明细在同一事务内更新，自检核对二者一致。
 
 import { businessDateOf } from '@shared/business-date';
-import { DEFAULT_FRONTDESK_RULES, type FrontdeskRules, type TagKind, type TagZone, ZONE_LABELS } from '@shared/frontdesk';
+import { DEFAULT_FRONTDESK_RULES, TAG_SERVICE_LABELS, type FrontdeskRules, type TagKind, type TagZone, ZONE_LABELS } from '@shared/frontdesk';
 import { can, type Permission } from '@shared/permissions';
 import { isUniqueViolation, type Db, type Tx } from '../../db';
 import type { Actor, Deps } from '../../lib/context';
@@ -209,6 +209,9 @@ export interface LockedTag {
   locked: boolean;
   lockReason: string | null;
   active: boolean;
+  /** 手牌柜的使用状态（店主 2026-11-24）：暂停使用、维修中的发不出 */
+  serviceStatus: 'normal' | 'paused' | 'repair';
+  serviceNote: string | null;
 }
 
 /** 按 id 升序锁定手牌；牌号不存在时提示具体牌号 */
@@ -216,7 +219,7 @@ export async function lockTagsByCode(tx: Tx, codes: string[]): Promise<Map<strin
   const unique = [...new Set(codes)];
   if (unique.length === 0) return new Map();
   const rows = await tx<LockedTag[]>`
-    SELECT id, code, zone, kind, vip_level, locked, lock_reason, active FROM hand_tags
+    SELECT id, code, zone, kind, vip_level, locked, lock_reason, active, service_status, service_note FROM hand_tags
     WHERE code IN ${tx(unique)} AND store_id = ${currentStoreId()} ORDER BY id FOR UPDATE`;
   const byCode = new Map(rows.map((r) => [r.code, r]));
   const missing = unique.filter((c) => !byCode.has(c));
@@ -229,6 +232,9 @@ export async function lockTagsByCode(tx: Tx, codes: string[]): Promise<Map<strin
 export function assertTagIssuable(tag: LockedTag, zone: TagZone) {
   if (!tag.active) throw unprocessable('TAG_INACTIVE', `手牌 ${tag.code} 已停用，请换一张`);
   if (tag.locked) throw unprocessable('TAG_LOCKED', `手牌 ${tag.code} 已锁定（${tag.lockReason}），请换一张`);
+  if (tag.serviceStatus !== 'normal') {
+    throw unprocessable('TAG_OUT_OF_SERVICE', `手牌 ${tag.code} ${TAG_SERVICE_LABELS[tag.serviceStatus]}${tag.serviceNote ? `（${tag.serviceNote}）` : ''}，请换一张`);
+  }
   if (tag.zone !== zone) {
     throw unprocessable('ZONE_MISMATCH', `手牌 ${tag.code} 是${ZONE_LABELS[tag.zone].title}牌，不能发给${ZONE_LABELS[zone].title}，请换一张${ZONE_LABELS[zone].title}牌`, {
       tagZone: tag.zone,
