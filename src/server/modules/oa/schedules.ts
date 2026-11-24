@@ -5,6 +5,9 @@
 //   · 部门负责人（hr.attendanceDept）只看本部门员工的排班，不能改。
 //   · 保存带操作编号（oa_schedule_save）：结果不确定的在页面上方查回、原样重提或确认作废；一次最多 SCHEDULE_SAVE_MAX_CELLS 格，页面按员工分批。
 //   · 员工「我的排班」：本人一个月的排班。排班有变的员工收到站内通知（同一人没读的只留一条）。
+//   · 批量排班（店主 2026-11-24《考勤排班功能优化需求说明》第 2、3 条）：勾几位员工、勾几天，一键套同一个班次。先预览（只读：员工数 × 天数、
+//     要写几格、其中覆盖几格、跳过的格子与原因），再带操作编号保存（与单格保存同一个类型 oa_schedule_save、同一套锁）。请假的日子、已经过了的、
+//     太远的、原来那班已经打过卡的自动跳过；已有别的排班的，勾了「覆盖」才换，没勾跳过。批量排完照样能单格调整。
 // 加锁（docs/LOCKING.md「排班」）：门店的考勤设置咨询锁（与班次、考勤组的保存串行）→ 排班行（按员工、日期改）。
 
 import type { FastifyInstance } from 'fastify';
@@ -12,13 +15,18 @@ import { z } from 'zod';
 import {
   departmentOfPosition,
   SCHEDULE_AHEAD_DAYS,
+  SCHEDULE_BATCH_MAX_CELLS,
+  SCHEDULE_BATCH_MAX_DAYS,
+  SCHEDULE_BATCH_MAX_STAFF,
   SCHEDULE_MAX_DAYS,
   SCHEDULE_MAX_SHIFTS_PER_DAY,
   SCHEDULE_SAVE_MAX_CELLS,
   type MyDayStatus,
   type MySchedule,
   type OaShift,
+  type ScheduleBatchResult,
   type ScheduleCell,
+  type ScheduleSkipReason,
   type ScheduleWeek,
 } from '@shared/oa';
 import { shiftDate } from '@shared/labels';
@@ -73,6 +81,73 @@ const SaveInput = z.object({
     )
     .min(1, '没有要保存的格子')
     .max(SCHEDULE_SAVE_MAX_CELLS, `一次最多保存 ${SCHEDULE_SAVE_MAX_CELLS} 格`),
+});
+
+const BatchInput = z
+  .object({
+    /** 保存时要（预览不要）：与单格保存同一个做法 */
+    clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试').optional(),
+    storeId: z.number().int().positive(),
+    groupId: z.number().int().positive(),
+    staffIds: z.array(z.number().int().positive()).min(1, '请勾选员工').max(SCHEDULE_BATCH_MAX_STAFF, `一次最多 ${SCHEDULE_BATCH_MAX_STAFF} 位员工`),
+    dates: z.array(dateSchema('日期')).min(1, '请勾选日期').max(SCHEDULE_BATCH_MAX_DAYS, `一次最多 ${SCHEDULE_BATCH_MAX_DAYS} 天`),
+    shiftId: z.number('请选班次').int().positive('请选班次'),
+    /** 已有别的排班的日子换成这个班（不勾就跳过） */
+    overwrite: z.boolean().default(false),
+    /** 只预览，不保存 */
+    preview: z.boolean().default(false),
+  })
+  .refine((v) => new Set(v.staffIds).size * new Set(v.dates).size <= SCHEDULE_BATCH_MAX_CELLS, `一次最多 ${SCHEDULE_BATCH_MAX_CELLS} 格（员工数 × 天数），请分几次排`)
+  .refine((v) => v.preview || !!v.clientKey, '缺少有效的操作编号，请刷新页面后重试');
+
+type BatchCell = { staffId: number; date: string; current: number[]; action: 'write' | 'overwrite' | 'same' | ScheduleSkipReason };
+
+/** 批量排班每一格怎么处理（预览与保存同一个算法；保存时在锁里再算一次） */
+async function planBatch(db: Db, today: string, store: number, staffIds: readonly number[], dates: readonly string[], shiftId: number, overwrite: boolean, lock: boolean): Promise<BatchCell[]> {
+  const sorted = [...dates].sort();
+  const rows = await db<{ staffId: number; workDate: string; shiftId: number }[]>`
+    SELECT staff_id, work_date::text AS work_date, shift_id FROM oa_schedules
+    WHERE store_id = ${store} AND staff_id IN ${db(staffIds)} AND work_date IN ${db(sorted)} ORDER BY staff_id, work_date, shift_id
+    ${lock ? db`FOR UPDATE` : db``}`;
+  const leaves = await db<{ staffId: number; workDate: string }[]>`
+    SELECT DISTINCT staff_id, work_date::text AS work_date FROM oa_attendance_covers WHERE kind = 'leave' AND staff_id IN ${db(staffIds)} AND work_date IN ${db(sorted)}`;
+  const punched = await db<{ staffId: number; businessDate: string; shiftId: number }[]>`
+    SELECT DISTINCT staff_id, business_date::text AS business_date, shift_id FROM oa_punches
+    WHERE store_id = ${store} AND staff_id IN ${db(staffIds)} AND business_date IN ${db(sorted)} AND shift_id IS NOT NULL`;
+  const cur = new Map<string, number[]>();
+  for (const r of rows) cur.set(`${r.staffId}|${r.workDate}`, [...(cur.get(`${r.staffId}|${r.workDate}`) ?? []), Number(r.shiftId)]);
+  const onLeave = new Set(leaves.map((l) => `${l.staffId}|${l.workDate}`));
+  const punchedOf = new Map<string, number[]>();
+  for (const p of punched) punchedOf.set(`${p.staffId}|${p.businessDate}`, [...(punchedOf.get(`${p.staffId}|${p.businessDate}`) ?? []), Number(p.shiftId)]);
+  const out: BatchCell[] = [];
+  for (const staffId of [...staffIds].sort((a, b) => a - b)) {
+    for (const date of sorted) {
+      const k = `${staffId}|${date}`;
+      const current = cur.get(k) ?? [];
+      const cell = (action: BatchCell['action']) => out.push({ staffId, date, current, action });
+      if (date < today) cell('past');
+      else if (daysBetween(today, date) > SCHEDULE_AHEAD_DAYS) cell('too_far');
+      else if (onLeave.has(k)) cell('leave');
+      else if (current.length === 1 && current[0] === shiftId) cell('same');
+      else if (!current.length) cell('write');
+      else if (!overwrite) cell('exists');
+      else if ((punchedOf.get(k) ?? []).some((id) => id !== shiftId && current.includes(id))) cell('punched');
+      else cell('overwrite');
+    }
+  }
+  return out;
+}
+
+const summarize = (cells: BatchCell[], names: Map<number, string>, staff: number, days: number): ScheduleBatchResult => ({
+  staff,
+  days,
+  total: cells.length,
+  write: cells.filter((c) => c.action === 'write' || c.action === 'overwrite').length,
+  overwrite: cells.filter((c) => c.action === 'overwrite').length,
+  same: cells.filter((c) => c.action === 'same').length,
+  skipped: cells
+    .filter((c): c is BatchCell & { action: ScheduleSkipReason } => !['write', 'overwrite', 'same'].includes(c.action))
+    .map((c) => ({ staffId: c.staffId, name: names.get(c.staffId) ?? '', date: c.date, reason: c.action })),
 });
 
 const sameSet = (a: readonly number[], b: readonly number[]) => a.length === b.length && [...a].sort((x, y) => x - y).every((v, i) => v === [...b].sort((x, y) => x - y)[i]);
@@ -239,6 +314,85 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
       return changes.length;
     });
     return { changed, saved: { id: input.groupId } };
+  });
+
+  // 批量排班：先预览（只读），再带操作编号保存
+  app.post('/api/oa/attendance/schedule/batch', { preHandler: manage }, async (req): Promise<ScheduleBatchResult> => {
+    const input = parse(BatchInput, req.body);
+    const store = currentStoreId();
+    if (input.storeId !== store) throw conflict('STORE_SWITCHED', '这次排班是在别的门店做的：请换回那家门店再查回或重新提交');
+    const staffIds = [...new Set(input.staffIds)].sort((a, b) => a - b);
+    const dates = [...new Set(input.dates)].sort();
+    const check = async (db: Db) => {
+      const [group] = await db<{ id: number; name: string }[]>`SELECT id, name FROM oa_attendance_groups WHERE id = ${input.groupId} AND store_id = ${store} AND active`;
+      if (!group) throw notFound('考勤组不存在或已停用，请刷新');
+      const members = await db<{ id: number; name: string }[]>`
+        SELECT s.id, s.display_name AS name FROM oa_group_members m JOIN staff s ON s.id = m.staff_id WHERE m.group_id = ${group.id} AND s.id IN ${db(staffIds)} AND ${storeEmployee(db)}`;
+      if (members.length !== staffIds.length) throw unprocessable('SCHEDULE_MEMBER', '有员工已经不在这个考勤组里或已离职，请刷新');
+      const [shift] = await db<{ id: number; name: string }[]>`SELECT id, name FROM oa_shifts WHERE id = ${input.shiftId} AND store_id = ${store} AND active`;
+      if (!shift) throw unprocessable('SCHEDULE_SHIFT', '班次不存在或已停用，请刷新');
+      return { group, shift, names: new Map(members.map((m) => [Number(m.id), m.name])) };
+    };
+    if (input.preview) {
+      const { names } = await check(sql);
+      return summarize(await planBatch(sql, todayOf(deps), store, staffIds, dates, input.shiftId, input.overwrite, false), names, staffIds.length, dates.length);
+    }
+    const hash = hashRequest({ op: 'schedule_batch', groupId: input.groupId, staffIds, dates, shiftId: input.shiftId, overwrite: input.overwrite });
+    const key = input.clientKey!;
+    return sql.begin(async (tx): Promise<ScheduleBatchResult> => {
+      await lockSetup(tx);
+      await lockOpKey(tx, key);
+      const [seen] = await tx<{ opType: string; requestHash: string }[]>`SELECT op_type, request_hash FROM idempotency_keys WHERE key = ${key}`;
+      if (seen) {
+        if (seen.opType !== 'oa_schedule_save' || seen.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次操作，请刷新页面后重新排');
+        return { staff: staffIds.length, days: dates.length, total: 0, write: 0, overwrite: 0, same: 0, skipped: [], changed: 0, saved: { id: input.groupId } };
+      }
+      await assertNotFenced(tx, key, 'oa_schedule_save', erpOpAbandoned);
+      const { group, shift, names } = await check(tx);
+      // 这几位员工的考勤锁：同时到的打卡、单格保存等这次保存完
+      await lockStaffAttendance(tx, staffIds);
+      const plan = await planBatch(tx, todayOf(deps), store, staffIds, dates, input.shiftId, input.overwrite, true);
+      const todo = plan.filter((c) => c.action === 'write' || c.action === 'overwrite');
+      for (const c of todo) {
+        await tx`DELETE FROM oa_schedules WHERE staff_id = ${c.staffId} AND work_date = ${c.date} AND store_id = ${store}`;
+        const removed = c.current.filter((id) => id !== input.shiftId);
+        if (removed.length) await tx`DELETE FROM oa_attendance_daily WHERE staff_id = ${c.staffId} AND business_date = ${c.date} AND shift_id IN ${tx(removed)}`;
+        await tx`
+          INSERT INTO oa_schedules (staff_id, work_date, shift_id, consecutive, created_by, updated_by)
+          VALUES (${c.staffId}, ${c.date}, ${input.shiftId}, false, ${req.actor.id}, ${req.actor.id})`;
+      }
+      await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${key}, 'oa_schedule_save', ${hash}, ${group.id}, ${req.actor.id})`;
+      const result = { ...summarize(plan, names, staffIds.length, dates.length), changed: todo.length, saved: { id: group.id } };
+      if (!todo.length) return result;
+      const touched = [...new Set(todo.map((c) => c.staffId))];
+      const ds = todo.map((c) => c.date).sort();
+      const problem = await overlapProblem(tx, touched, ds[0]!, ds.at(-1)!);
+      if (problem) throw unprocessable('SCHEDULE_OVERLAP', problem);
+      for (const staffId of touched) {
+        const mine = todo.filter((c) => c.staffId === staffId).map((c) => c.date);
+        await notify(tx, [staffId], {
+          kind: 'schedule_change',
+          title: '排班有变动',
+          body: `${mine.slice(0, 6).join('、')}${mine.length > 6 ? ` 等 ${mine.length} 天` : ''}排成了「${shift.name}」，点开看「我的排班」`,
+          link: '/oa/schedule',
+          ref: { type: 'oa_schedule', id: staffId },
+        });
+      }
+      await writeAudit(tx, {
+        staffId: req.actor.id,
+        action: 'oa_schedule_saved',
+        targetType: 'oa_attendance_group',
+        targetId: group.id,
+        detail: {
+          batch: { staffIds, dates, shiftId: input.shiftId, shift: shift.name, overwrite: input.overwrite },
+          changed: todo.length,
+          skipped: result.skipped.length,
+          summary: `考勤组「${group.name}」批量排班：${staffIds.length} 人 × ${dates.length} 天排「${shift.name}」，改了 ${todo.length} 格、跳过 ${result.skipped.length} 格`,
+        },
+        ip: req.ip,
+      });
+      return result;
+    });
   });
 
   // 员工「我的排班」：本人一个月（各门店的都算）；登录就能看

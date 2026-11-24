@@ -268,6 +268,40 @@ export const SCHEDULE_MAX_SHIFTS_PER_DAY = 4;
 /** 一次保存最多几格（页面按员工分批，一个人一周的格子总在同一批里） */
 export const SCHEDULE_SAVE_MAX_CELLS = 500;
 
+/**
+ * 批量排班（店主 2026-11-24《考勤排班功能优化需求说明》第 2、3 条）：勾几位员工、勾几天，一键套同一个班次。
+ * 一次最多这么多天、这么多人、这么多格；先预览（只读）再保存。
+ */
+export const SCHEDULE_BATCH_MAX_DAYS = 62;
+export const SCHEDULE_BATCH_MAX_STAFF = 200;
+export const SCHEDULE_BATCH_MAX_CELLS = 3000;
+/** 批量排班里跳过的格子为什么跳过 */
+export const SCHEDULE_SKIP_REASONS = ['leave', 'past', 'too_far', 'punched', 'exists'] as const;
+export type ScheduleSkipReason = (typeof SCHEDULE_SKIP_REASONS)[number];
+export const SCHEDULE_SKIP_LABELS: Record<ScheduleSkipReason, string> = {
+  leave: '请假',
+  past: '已经过了',
+  too_far: '超过最远可排的日子',
+  punched: '原来那班已经打过卡',
+  exists: '已有别的排班（没选覆盖）',
+};
+/** 批量排班的预览 / 保存结果：员工数 × 天数，要写几格、其中覆盖几格、已经是这个班的几格、跳过的格子（原因） */
+export interface ScheduleBatchResult {
+  staff: number;
+  days: number;
+  total: number;
+  /** 要写（新排的 + 覆盖的） */
+  write: number;
+  /** 其中原来有别的排班、要换成这个班的 */
+  overwrite: number;
+  /** 已经是这个班，不用动 */
+  same: number;
+  skipped: { staffId: number; name: string; date: string; reason: ScheduleSkipReason }[];
+  /** 保存时才有：实际改了几格 */
+  changed?: number;
+  saved?: { id: number };
+}
+
 /** 排班的一格：员工 × 业务日期；shiftIds 空 = 休息（没排） */
 export interface ScheduleCell {
   staffId: number;

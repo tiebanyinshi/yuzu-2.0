@@ -2,7 +2,7 @@
 // 跨天班、部门负责人只看本部门、员工「我的排班」、排班变更通知、审计。
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { scheduleSpan, type AttendanceSetup, type MySchedule, type NotificationPage, type ScheduleWeek } from '../src/shared/oa';
+import { scheduleSpan, type AttendanceSetup, type MySchedule, type NotificationPage, type ScheduleBatchResult, type ScheduleWeek } from '../src/shared/oa';
 import { shiftDate } from '../src/shared/labels';
 import { DEFAULT_STORE_ID } from '../src/server/lib/store-context';
 import { overlapProblem } from '../src/server/modules/oa/schedule-overlap';
@@ -248,5 +248,89 @@ describe('OA-05 排班', () => {
     expect(await ctx.sql.begin((tx) => overlapProblem(tx, [mv.id], d, d))).toBeNull();
     // 原门店的那条还在（历史不删）
     expect((await ctx.sql`SELECT 1 FROM oa_schedules WHERE staff_id = ${mv.id} AND store_id = ${DEFAULT_STORE_ID}`).length).toBe(1);
+  });
+
+  describe('批量排班（店主 2026-11-24《考勤排班功能优化需求说明》第 2、3 条）', () => {
+    const batch = (body: object, cookie = ctx.owner) => api(ctx.app, cookie, 'POST', '/api/oa/attendance/schedule/batch', { storeId: DEFAULT_STORE_ID, groupId, ...body });
+    const range = (from: string, n: number) => Array.from({ length: n }, (_, i) => shiftDate(from, i));
+    const cellsOf = async (staffId: number, dates: string[]) =>
+      ctx.sql<
+        { workDate: string; shiftId: number }[]
+      >`SELECT work_date::text AS work_date, shift_id FROM oa_schedules WHERE staff_id = ${staffId} AND work_date IN ${ctx.sql(dates)} ORDER BY work_date`;
+
+    it('单员工一个月一次排完：预览只读、写几格；已有别的排班的不勾覆盖跳过、勾了换掉；原样重提不重复；之后照样能单格改', async () => {
+      const m = await hire('sch_month', 'front.staff');
+      const g = ((await api(ctx.app, ctx.owner, 'GET', '/api/oa/attendance/setup')).body as AttendanceSetup).groups.find((x) => x.id === groupId)!;
+      expect(
+        (await api(ctx.app, ctx.owner, 'PUT', `/api/oa/attendance/groups/${groupId}`, { name: g.name, gpsRequired: false, active: true, version: g.version, memberIds: [...g.memberIds, m.id] }))
+          .status,
+      ).toBe(200);
+      const days = range(shiftDate(today, 40), 30);
+      // 其中一天先排了晚班
+      await ctx.sql`INSERT INTO oa_schedules (staff_id, work_date, shift_id) VALUES (${m.id}, ${days[5]!}, ${late})`;
+      const pv = await batch({ staffIds: [m.id], dates: days, shiftId: early, preview: true });
+      expect(pv.status, JSON.stringify(pv.body)).toBe(200);
+      expect(pv.body).toMatchObject({ staff: 1, days: 30, total: 30, write: 29, overwrite: 0, same: 0 });
+      expect((pv.body as ScheduleBatchResult).skipped).toEqual([{ staffId: m.id, name: 'sch_month', date: days[5], reason: 'exists' }]);
+      expect(await cellsOf(m.id, days)).toHaveLength(1); // 预览不写
+      // 勾覆盖保存：30 格都是早班
+      const key = randomUUID();
+      const r = await batch({ clientKey: key, staffIds: [m.id], dates: days, shiftId: early, overwrite: true });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body).toMatchObject({ write: 30, overwrite: 1, changed: 30, skipped: [] });
+      const rows = await cellsOf(m.id, days);
+      expect(rows).toHaveLength(30);
+      expect(rows.every((x) => Number(x.shiftId) === early)).toBe(true);
+      // 原样重提：不重复；换了内容拒绝
+      expect((await batch({ clientKey: key, staffIds: [m.id], dates: days, shiftId: early, overwrite: true })).body).toMatchObject({ changed: 0 });
+      expect(code(await batch({ clientKey: key, staffIds: [m.id], dates: days, shiftId: night, overwrite: true }))).toBe('IDEMPOTENCY_CONFLICT');
+      // 再排一次：都已经是早班
+      expect((await batch({ staffIds: [m.id], dates: days, shiftId: early, preview: true })).body).toMatchObject({ write: 0, same: 30 });
+      // 批量后单格照样能改
+      const wk = await week(ctx.owner, days[0]);
+      expect(wk.cells.find((c) => c.staffId === m.id && c.date === days[0])).toMatchObject({ shiftIds: [early] });
+      expect((await save([{ staffId: m.id, date: days[0], shiftIds: [late], expected: { shiftIds: [early], consecutive: false } }])).status).toBe(200);
+      expect((await cellsOf(m.id, [days[0]!]))[0]).toMatchObject({ shiftId: late });
+      // 员工收到排班变动的通知
+      const n = (await api(ctx.app, m.cookie, 'GET', '/api/oa/notifications')).body as NotificationPage;
+      expect(n.items.some((x) => x.title === '排班有变动')).toBe(true);
+    });
+
+    it('多员工 × 一段日子统一排：请假的日子自动跳过并列出；过去的跳过；不在组里的拒绝；部门负责人不能排', async () => {
+      const g = ((await api(ctx.app, ctx.owner, 'GET', '/api/oa/attendance/setup')).body as AttendanceSetup).groups.find((x) => x.id === groupId)!;
+      const c3 = await hire('sch_c3', 'front.staff');
+      expect(
+        (await api(ctx.app, ctx.owner, 'PUT', `/api/oa/attendance/groups/${groupId}`, { name: g.name, gpsRequired: false, active: true, version: g.version, memberIds: [...g.memberIds, c3.id] }))
+          .status,
+      ).toBe(200);
+      const staffIds = [a.id, b.id, c3.id];
+      const days = range(shiftDate(today, 75), 10);
+      // c3 第 3 天请假（审批通过的覆盖）
+      const [t] = await ctx.sql<{ id: number }[]>`SELECT id FROM oa_approval_templates WHERE code = 'leave'`;
+      const [lt] = await ctx.sql<{ id: number }[]>`SELECT id FROM oa_leave_types ORDER BY id LIMIT 1`;
+      const [ap] = await ctx.sql<{ id: number }[]>`
+        INSERT INTO oa_approvals (template_id, template_code, template_name, fields, applicant_id, title, form, status, finished_at)
+        VALUES (${t!.id}, 'leave', '请假', '[]', ${c3.id}, '批量排班演练请假', '{}', 'approved', now()) RETURNING id`;
+      await ctx.sql`INSERT INTO oa_attendance_covers (staff_id, work_date, kind, part, halves, leave_type_id, approval_id) VALUES (${c3.id}, ${days[2]!}, 'leave', 'full', 2, ${lt!.id}, ${ap!.id})`;
+      const pv = (await batch({ staffIds, dates: days, shiftId: early, preview: true })).body as ScheduleBatchResult;
+      expect(pv).toMatchObject({ staff: 3, days: 10, total: 30, write: 29 });
+      expect(pv.skipped).toEqual([{ staffId: c3.id, name: 'sch_c3', date: days[2], reason: 'leave' }]);
+      const r = await batch({ clientKey: randomUUID(), staffIds, dates: days, shiftId: early });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body).toMatchObject({ changed: 29 });
+      for (const id of staffIds) expect(await cellsOf(id, days)).toHaveLength(id === c3.id ? 9 : 10);
+      expect((await cellsOf(c3.id, [days[2]!])).length).toBe(0);
+      // 过去的、太远的跳过
+      const odd = (await batch({ staffIds: [a.id], dates: [shiftDate(today, -1), shiftDate(today, 200)], shiftId: early, preview: true })).body as ScheduleBatchResult;
+      expect(odd.skipped.map((x) => x.reason).sort()).toEqual(['past', 'too_far']);
+      // 不在这个组里的员工：拒绝
+      const out = await hire('sch_out', 'front.staff');
+      expect(code(await batch({ staffIds: [out.id], dates: days, shiftId: early, preview: true }))).toBe('SCHEDULE_MEMBER');
+      // 没有排班权限的（部门负责人只能看）：拒绝
+      const lead = await hire('sch_lead', 'front.lead');
+      expect((await batch({ staffIds: [a.id], dates: days, shiftId: early, preview: true }, lead.cookie)).status).toBe(403);
+      // 保存要操作编号
+      expect((await batch({ staffIds: [a.id], dates: days, shiftId: early })).status).toBe(400);
+    });
   });
 });
