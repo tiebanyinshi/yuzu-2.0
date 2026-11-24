@@ -59,6 +59,7 @@ import { lockQueue, syncLeaveToday } from './clockroom';
 import { businessDate } from './frontdesk/common';
 import { approvedLeavesOn, groupNames, scheduleOn } from './technician-day';
 import { loadTechnicianKinds, loadTechnicians } from './technicians';
+import { technicianPhotoUrl } from '@shared/technician-ranking';
 
 /** 组别、班次、排班的保存之间串行（都是管理动作，不频繁）；按门店各一把 */
 const lockTechAdmin = (tx: Tx) => tx`SELECT pg_advisory_xact_lock(hashtext(${currentStoreId() === DEFAULT_STORE_ID ? 'technician_admin' : `technician_admin:${currentStoreId()}`}))`;
@@ -85,11 +86,16 @@ async function adminView(db: Db, deps: Deps, canManage: boolean): Promise<Techni
   const names = await groupNames(db);
   const schedule = await scheduleOn(db, today);
   const leaves = new Map((await approvedLeavesOn(db, today)).map((l) => [l.technicianId, l]));
+  const photos = await db<{ id: number; photoId: number | null; photoVersion: number }[]>`
+    SELECT id, photo_id, photo_version FROM technicians WHERE store_id = ${currentStoreId()} AND (photo_id IS NOT NULL OR photo_version > 0)`;
+  const photoOf = new Map(photos.map((p) => [Number(p.id), p]));
   const technicians: RosterTechnician[] = [...(await loadTechnicians(db)).values()].map((t) => {
     const leave = leaves.get(t.id);
     return {
       ...t,
       groupName: t.groupId === null ? null : (names.get(t.groupId) ?? null),
+      photoUrl: technicianPhotoUrl(photoOf.get(t.id)?.photoId ?? null),
+      photoVersion: photoOf.get(t.id)?.photoVersion ?? 0,
       shiftToday: schedule.get(t.id)?.shift ?? null,
       restToday: schedule.get(t.id)?.rest ?? false,
       leaveToday: leave ? { id: leave.id, fromDate: leave.fromDate, toDate: leave.toDate, leaveType: leave.leaveType } : null,

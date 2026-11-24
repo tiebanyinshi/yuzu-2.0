@@ -214,6 +214,11 @@ describe('技师榜单接口（第一批）', () => {
     expect((await photo('32', png(PNG2, 1))).body).toMatchObject({ error: { code: 'PHOTO_CHANGED' } }); // 换照片的迟到重提不会把去掉的改回来
     r = await ranking();
     expect(r.body.techs.find((t) => t.techNo === '32')!.photoUrl).toBeNull();
+    // 技师管理的名册带着照片地址与版本号（新打开的页面按它提交）
+    const roster = (await api(ctx.app, ctx.owner, 'GET', '/api/technician-admin')).body.technicians as { techNo: string; photoUrl: string | null; photoVersion: number }[];
+    expect(roster.find((t) => t.techNo === '32')).toMatchObject({ photoUrl: null, photoVersion: 3 });
+    expect(roster.find((t) => t.techNo === '33')).toMatchObject({ photoUrl: a.body.photoUrl, photoVersion: 1 });
+    expect(roster.find((t) => t.techNo === '34')).toMatchObject({ photoUrl: null, photoVersion: 0 });
     const audit = await ctx.sql<{ detail: { summary: string } }[]>`
       SELECT detail FROM audit_logs WHERE action = 'technician_saved' AND target_id = ${tech['32']!} AND detail->>'summary' LIKE '%照片%' ORDER BY id`;
     expect(audit.map((x) => x.detail.summary)).toEqual(['上传技师照片 32 李婷', '更换技师照片 32 李婷', '去掉技师照片 32 李婷']);
