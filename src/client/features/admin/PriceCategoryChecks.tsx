@@ -12,7 +12,8 @@ import { Card, SectionTitle, Skeleton } from '../../components/ui';
 export function PriceCategoryChecks() {
   const q = useQuery({ queryKey: ['admin', 'price-catalog', 'category-checks'], queryFn: () => api.get<PriceCategoryCheck[]>('/api/admin/price-catalog/category-checks') });
   const rows = q.data ?? [];
-  const bad = rows.filter((r) => r.items !== null && r.items !== r.sellable);
+  // 个数对不上，或者有对不上的项（少一项又多一项时个数会相等）都算
+  const bad = rows.filter((r) => (r.items !== null && r.items !== r.sellable) || r.hidden.length > 0);
   const columns: DataColumn<PriceCategoryCheck>[] = [
     { key: 'sheet', header: '工作表', dataLabel: '工作表', cell: (r) => <span className="text-ink-3">{PRICE_SHEET_NAMES[r.sheet]}</span> },
     {
@@ -35,7 +36,11 @@ export function PriceCategoryChecks() {
       numeric: true,
       dataLabel: '点单页上',
       cell: (r) =>
-        r.items === null ? <span className="text-[12.5px] text-ink-3">不落库</span> : <span className={r.items === r.sellable ? 'font-bold text-pine' : 'font-bold text-clay'}>{r.items}</span>,
+        r.items === null ? (
+          <span className="text-[12.5px] text-ink-3">不落库</span>
+        ) : (
+          <span className={r.items === r.sellable && r.hidden.length === 0 ? 'font-bold text-pine' : 'font-bold text-clay'}>{r.items}</span>
+        ),
     },
   ];
   return (

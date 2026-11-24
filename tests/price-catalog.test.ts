@@ -1511,11 +1511,17 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     });
     expect(dispatched.status, JSON.stringify(dispatched.body)).toBe(200);
     const sessionId = (dispatched.body.sessions as { id: number; technicianId: number }[]).find((x) => x.technicianId === techId)!.id;
+    // 切换前加的一钟（标准档）没收到结果：切换以后原样重提，认得出是同一笔、不再加
+    const before = { clientKey: randomUUID(), quantity: 1, expectedTotal: 70000 };
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${sessionId}/extend`, before)).status).toBe(200);
     await activateNew('原有同名·没有档口');
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${sessionId}/extend`, before)).status).toBe(200);
+    expect((await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM bill_lines WHERE session_id = ${sessionId} AND status = 'active'`)[0]!.n).toBe(2);
     const ext = await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${sessionId}/extend`, { clientKey: randomUUID(), quantity: 1, expectedTotal: 80000 });
     expect(ext.status, JSON.stringify(ext.body)).toBe(200);
     const extLines = await ctx.sql<{ tier: string; unitPrice: number }[]>`SELECT tier, unit_price FROM bill_lines WHERE session_id = ${sessionId} AND status = 'active' ORDER BY id`;
     expect(extLines).toEqual([
+      { tier: 'standard', unitPrice: 70000 },
       { tier: 'standard', unitPrice: 70000 },
       { tier: 'professional', unitPrice: 80000 },
     ]);
