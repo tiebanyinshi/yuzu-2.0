@@ -295,3 +295,9 @@ export interface SpaceBatchPlan {
   /** 保存时才有：实际新建了几间 */
   created?: number;
 }
+
+/** 预览 / 保存的回答：保存的记成一次空间台账导入（import），同一个操作编号重提时 replayed */
+export interface SpaceBatchResult extends SpaceBatchPlan {
+  import?: { id: number };
+  replayed: boolean;
+}

@@ -105,9 +105,13 @@ export function RoomCategoriesCard() {
                   ))}
                 </span>
               </span>
-              <Button variant="secondary" className="h-11" onClick={() => setCounting(c)} data-testid={`room-category-count-${c.name}`}>
-                设数量
-              </Button>
+              {c.source === 'hotel' ? (
+                <span className="text-[12.5px] text-ink-3">客房数量在「客房 → 房间」里加</span>
+              ) : (
+                <Button variant="secondary" className="h-11" onClick={() => setCounting(c)} data-testid={`room-category-count-${c.name}`}>
+                  设数量
+                </Button>
+              )}
               <Button variant="secondary" className="h-11" onClick={() => setEditing(c)} data-testid={`room-category-edit-${c.name}`}>
                 修改
               </Button>

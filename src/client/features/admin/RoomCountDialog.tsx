@@ -1,13 +1,18 @@
 // 房态中心房型的「数量」（店主 2026-11-24：比如休息大厅设成 101 个床位）：选这个房型里的一种业态，填要几间（几个床位），
 // 缺的按「编码前缀 + 补零序号」一次建进空间台账（显示名 = 名称前缀 + 序号），房态中心马上多出这些卡片。
 // 先预览（现有几间、要新建几间、编码从哪到哪、有没有编码已被占）再保存；保存带着预览时看到的「现有几间」，期间有变化服务端拒绝。
+// 保存带操作编号（与空间台账导入同一个类型 space_import）：没收到结果时记在本机，在空间台账页面上方查回、原样重提或作废，
+// 确认前不能改了设置再保存（免得原来那次晚到，用旧的设置建了）。客房不在这里设（卡片来自「客房 → 房间」）。
 // 比现有的少不在这里减：停用到空间台账里一间间停（停用前会检查有没有客人、有没有挂客房）。
 
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { RoomCategory } from '@shared/room-center';
-import { MAX_CAPACITY, SPACE_BATCH_MAX, type SpaceBatchPlan } from '@shared/spaces';
+import { MAX_CAPACITY, SPACE_BATCH_MAX, type SpaceBatchResult } from '@shared/spaces';
 import { api, errorMessage, UncertainError } from '../../lib/api';
+import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
+import { useSession } from '../../lib/session';
+import { uuid } from '../../lib/utils';
 import { Dialog } from '../../components/Overlay';
 import { LoadFailed } from '../../components/LoadFailed';
 import { useToast } from '../../components/Toast';
@@ -25,6 +30,9 @@ const intOrNull = (v: string) => (v.trim() === '' ? null : Number.isInteger(Numb
 export function RoomCountDialog({ category, counts, onClose }: { category: RoomCategory; counts: Map<string, number>; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const session = useSession();
+  // 上一次「设数量 / 导入」结果待确认（含还在路上的）：先在页面上方查回、重提或作废
+  const blocked = useErpRecorded(['space_import']).length > 0;
   const invalidate = useInvalidateSpaces();
   const ledger = useSpaceLedger();
   const [businessType, setBusinessType] = useState(category.businessTypes[0] ?? '');
@@ -82,7 +90,7 @@ export function RoomCountDialog({ category, counts, onClose }: { category: RoomC
   }, [bodyKey]);
   const preview = useQuery({
     queryKey: ['admin', 'spaces', 'batch-preview', debounced],
-    queryFn: () => api.post<SpaceBatchPlan>('/api/admin/spaces/batch', { ...(JSON.parse(debounced) as object), preview: true }),
+    queryFn: () => api.post<SpaceBatchResult>('/api/admin/spaces/batch', { ...(JSON.parse(debounced) as object), preview: true }),
     enabled: !!valid && debounced === bodyKey,
     retry: false,
   });
@@ -90,19 +98,33 @@ export function RoomCountDialog({ category, counts, onClose }: { category: RoomC
 
   const save = async () => {
     if (!p || !p.create || p.taken.length) return;
+    if (blocked) return setError('上一次设数量或导入的结果待确认：请先在页面上方查回、按原内容重新提交或作废，再保存');
     setSaving(true);
     setError(null);
+    const key = uuid();
     try {
-      const r = await api.post<SpaceBatchPlan>('/api/admin/spaces/batch', { ...body, start: p.start, current: p.current });
-      toast({ tone: 'success', title: r.created ? `已新建 ${r.created} 间「${businessType}」，现在共 ${r.target} 间` : `「${businessType}」已经是 ${r.target} 间` });
+      const r = await sendErpOp<SpaceBatchResult>({
+        key,
+        type: 'space_import',
+        url: '/api/admin/spaces/batch',
+        body: { ...body, start: p.start, current: p.current, clientKey: key },
+        summary: `设数量 · ${businessType} ${p.current} → ${p.target} 间（${p.codesFirst[0]} 起）`,
+        staffName: session.staff.displayName,
+      });
+      toast({ tone: 'success', title: `已新建 ${r.created ?? 0} 间「${businessType}」，现在共 ${r.target} 间` });
       await invalidate();
       await qc.invalidateQueries({ queryKey: ['admin', 'room-categories'] });
       await qc.invalidateQueries({ queryKey: ['room-center'] });
       onClose();
     } catch (e) {
-      // 结果不确定：重新预览就知道建上没有（保存是按目标数算的，已经建好的再点一次不会重复建）
-      setError(e instanceof UncertainError ? '没收到结果：请稍等再看预览里的「现有」间数，已经建好就不用再保存；没建好再点一次保存（不会重复建）' : errorMessage(e));
-      void preview.refetch();
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '设数量结果待确认', body: '已记在本机：请在页面上方查回、按原内容重新提交或作废；确认前不要改了设置再保存。' });
+        onClose();
+      } else if (e instanceof ErpPendingStoreError) setError(e.message);
+      else {
+        setError(errorMessage(e));
+        void preview.refetch();
+      }
     } finally {
       setSaving(false);
     }
@@ -125,7 +147,7 @@ export function RoomCountDialog({ category, counts, onClose }: { category: RoomC
           <Button variant="secondary" size="lg" onClick={onClose} disabled={saving}>
             取消
           </Button>
-          <Button variant="primary" size="lg" loading={saving} disabled={!p || !p.create || p.taken.length > 0} onClick={() => void save()} data-testid="room-count-save">
+          <Button variant="primary" size="lg" loading={saving} disabled={!p || !p.create || p.taken.length > 0 || blocked} onClick={() => void save()} data-testid="room-count-save">
             {p && p.create ? `新建 ${p.create} 间` : '保存'}
           </Button>
         </>

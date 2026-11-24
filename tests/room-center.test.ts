@@ -952,24 +952,34 @@ describe('房型设数量（店主 2026-11-24：比如休息大厅设成 101 个
     });
     // 预览不写
     expect((await ctx.sql`SELECT 1 FROM spaces WHERE code LIKE 'BED%'`).length).toBe(0);
-    // 不先预览（不带现有间数）：拒绝
-    expect((await batch(body)).status).toBe(422);
+    // 不先预览（不带现有间数）、不带操作编号：拒绝
+    expect((await batch({ ...body, clientKey: randomUUID() })).status).toBe(422);
+    expect((await batch({ ...body, start: 1, current: 1 })).status).toBe(422);
+    // 客房的卡片来自客房的房间，不在这里设
+    expect((await batch({ ...body, businessType: '客房', preview: true })).body.error.code).toBe('SPACE_BATCH_HOTEL');
     // 店员不能设
     expect((await batch({ ...body, preview: true }, ctx.clerk)).status).toBe(403);
     // 预览时以为有 0 间：对不上，拒绝，一间不建
-    const stale = await batch({ ...body, start: 1, current: 0 });
+    const stale = await batch({ ...body, start: 1, current: 0, clientKey: randomUUID() });
     expect(stale.body.error.code, JSON.stringify(stale.body)).toBe('SPACE_BATCH_CHANGED');
     expect((await ctx.sql`SELECT 1 FROM spaces WHERE code LIKE 'BED%'`).length).toBe(0);
     // 保存：新建 100 间，显示名「床位 001」
-    const r = await batch({ ...body, start: 1, current: 1 });
+    const key = randomUUID();
+    const r = await batch({ ...body, start: 1, current: 1, clientKey: key });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    expect(r.body).toMatchObject({ created: 100, target: 101 });
+    expect(r.body).toMatchObject({ created: 100, target: 101, replayed: false });
+    // 记成一次空间台账导入，新建的空间带着它；操作编号按 space_import 查得回
+    const [imp] = await ctx.sql<{ fileName: string; createdCount: number }[]>`SELECT file_name, created_count FROM space_imports WHERE id = ${r.body.import.id}`;
+    expect(imp).toMatchObject({ fileName: '按数量新建：休息大厅 1 → 101 间', createdCount: 100 });
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${key}?type=space_import`)).body).toMatchObject({ found: true, refId: r.body.import.id });
     const [first] = await ctx.sql<{ displayName: string; businessType: string; capacity: number }[]>`SELECT display_name, business_type, capacity FROM spaces WHERE code = 'BED001'`;
     expect(first).toMatchObject({ displayName: '床位 001', businessType: '休息大厅', capacity: 1 });
     const hall = (await board()).categories.find((c) => c.name === '休息大厅')!;
     expect(hall.counts.total).toBe(101);
-    // 原样重提（上一次其实成功了）：不重复建
-    expect((await batch({ ...body, start: 1, current: 1 })).body).toMatchObject({ created: 0, current: 101 });
+    // 同一个编号原样重提（上一次其实成功了）：得到原来的结果，不重复建；换了设置拒绝；换个编号再提：间数已变，拒绝
+    expect((await batch({ ...body, start: 1, current: 1, clientKey: key })).body).toMatchObject({ created: 100, replayed: true, import: { id: r.body.import.id } });
+    expect((await batch({ ...body, prefix: 'BX', start: 1, current: 1, clientKey: key })).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect((await batch({ ...body, start: 1, current: 1, clientKey: randomUUID() })).body.error.code).toBe('SPACE_BATCH_CHANGED');
     expect((await ctx.sql`SELECT 1 FROM spaces WHERE code LIKE 'BED%'`).length).toBe(100);
     // 再加 2 个：序号自动接着 101；减少要到空间台账里停用
     expect((await batch({ ...body, target: 103, preview: true })).body).toMatchObject({ current: 101, create: 2, start: 101, codesFirst: ['BED101', 'BED102'] });
@@ -977,10 +987,15 @@ describe('房型设数量（店主 2026-11-24：比如休息大厅设成 101 个
     // 指定起始序号撞上已有的编码：预览列出来，保存拒绝
     const clash = (await batch({ ...body, target: 103, start: 99, preview: true })).body;
     expect(clash.taken).toEqual(['BED099', 'BED100']);
-    expect((await batch({ ...body, target: 103, start: 99, current: 101 })).body.error.code).toBe('SPACE_CODE_TAKEN');
+    expect((await batch({ ...body, target: 103, start: 99, current: 101, clientKey: randomUUID() })).body.error.code).toBe('SPACE_CODE_TAKEN');
     // 一次太多、编码超长：拒绝
     expect((await batch({ ...body, target: 999, preview: true })).body.error.code).toBe('SPACE_BATCH_TOO_MANY');
     expect((await batch({ ...body, target: 103, start: 999, preview: true })).body.error.code).toBe('SPACE_BATCH_CODE');
+    // 确认作废过的编号晚到：整笔拒绝，一间不建
+    const gone = randomUUID();
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${gone}/abandon`, { type: 'space_import' })).body).toMatchObject({ found: false, abandoned: true });
+    expect((await batch({ ...body, target: 103, start: 101, current: 101, clientKey: gone })).body.error.code).toBe('OP_ABANDONED');
+    expect((await ctx.sql`SELECT 1 FROM spaces WHERE code LIKE 'BED%'`).length).toBe(100);
     // 后台的操作记录有一条
     const [audit] = await ctx.sql<{ detail: { summary: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'space_saved' AND detail->>'businessType' = '休息大厅' ORDER BY id DESC LIMIT 1`;
     expect(audit!.detail.summary).toContain('新建 100 间');
