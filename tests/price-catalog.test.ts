@@ -1571,6 +1571,14 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     const congee2 = checks.find((c) => c.name === '生滚粥')!;
     expect(congee2).toMatchObject({ sellable: 1, items: 2 });
     expect(congee2.hidden).toEqual([{ name: '生滚牛肉粥', reason: expect.stringMatching(/不能卖.*还在点单页上/) }]);
+    // 再把这一项在价目表里停用：原有的收银项目照样还在点单页上，分类核对照样查得出（停用的项不在「在用」里，按对接的收银项目数）
+    const set3 = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${overview.active.id}`)).body as PriceCatalogSet;
+    const beef3 = set3.entries.find((e) => e.name === '生滚牛肉粥')!;
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${beef3.id}/active`, { version: beef3.version, active: false, opKey: randomUUID() })).status).toBe(200);
+    checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
+    const congee3 = checks.find((c) => c.name === '生滚粥')!;
+    expect(congee3).toMatchObject({ entries: 1, sellable: 1, items: 2 });
+    expect(congee3.hidden).toEqual([{ name: '生滚牛肉粥', reason: expect.stringMatching(/停用.*还在点单页上/) }]);
     // 补齐设置记了审计，写明哪几个、改了什么；名称、类别不动
     const audit = await ctx.sql<{ detail: { label: string; items: { itemId: number; changes: string[] }[] } }[]>`
       SELECT detail FROM audit_logs WHERE action = 'price_catalog' AND detail->>'action' = 'fit_items' ORDER BY id`;
