@@ -1,0 +1,346 @@
+// 采购商城并进柚子（8.1.32，docs/MALL_V8132.md）：SKU 上架与改价审核、目录里能不能买、选品与自主申请提交、
+// 价格版本与起订量的核对、我的需求与需求池的可见范围、商城的单在 ERP 填单页改不了、自检照过。
+
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { todayIn } from '../src/server/modules/inventory/common';
+import { requestChecks } from '../src/server/modules/requests';
+import { createStaff } from '../src/server/modules/staff';
+import { seedInventoryDemo } from '../src/server/seed-inventory';
+import { shiftDate } from '../src/shared/labels';
+import { api, login, PASSWORD, setup, type TestContext } from './helpers';
+
+let ctx: TestContext;
+let boss: string; // 店主 linlan：有「采购规则」
+let buyer: string; // 采购经办 zhouyi：purchase.manage
+let reqA: string; // 部门申购（运营部）
+let reqB: string; // 部门申购（水吧）
+let deptA: number;
+let storeId: number;
+let entityId: number;
+let mat: { id: number };
+let supA: number;
+let supB: number;
+let today: string;
+const q = (n: number) => Math.round(n * 1000);
+
+const header = (over: Record<string, unknown> = {}) => ({
+  clientKey: randomUUID(),
+  storeId,
+  entityId,
+  contactName: '王小明',
+  budgetProject: '布草消耗预算',
+  needBy: shiftDate(today, 3),
+  deliveryAddress: '本店布草仓',
+  paymentIntent: 'company_direct',
+  priority: 'high',
+  note: '',
+  ...over,
+});
+
+async function sku(over: Record<string, unknown> = {}) {
+  const r = await api(ctx.app, buyer, 'POST', '/api/erp/shop/skus', {
+    materialId: mat.id,
+    supplierId: supA,
+    skuCode: `SKU-${randomUUID().slice(0, 8)}`,
+    priceCents: 850,
+    taxRateBp: 1300,
+    moqMilli: q(100),
+    leadDays: 5,
+    freightCents: 0,
+    validUntil: shiftDate(today, 365),
+    storeIds: [],
+    ...over,
+  });
+  expect(r.status, JSON.stringify(r.body)).toBe(201);
+  return r.body as { id: number; status: string; version: number; priceVersion: number; skuCode: string };
+}
+async function listed(skuId: number) {
+  expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${skuId}/submit`, {})).status).toBe(200);
+  const r = await api(ctx.app, boss, 'POST', `/api/erp/shop/skus/${skuId}/approve`, {});
+  expect(r.status, JSON.stringify(r.body)).toBe(200);
+  return r.body as { id: number; status: string; priceVersion: number };
+}
+const catalog = async (cookie: string) => (await api(ctx.app, cookie, 'GET', `/api/erp/shop/catalog?storeId=${storeId}`)).body;
+const offer = async (cookie: string, skuId: number) =>
+  ((await catalog(cookie)).items as { offers: { skuId: number; block: string | null; priceVersion: number; grossCents: number }[] }[]).flatMap((i) => i.offers).find((o) => o.skuId === skuId);
+
+beforeAll(async () => {
+  ctx = await setup();
+  today = todayIn(ctx.config.timezone);
+  expect((await seedInventoryDemo(ctx.sql, ctx.config)).skipped).toBe(false);
+  boss = await login(ctx.app, 'linlan', 'yuzu2026');
+  buyer = await login(ctx.app, 'zhouyi', 'yuzu2026');
+  const mk = async (name: string) => {
+    await api(ctx.app, boss, 'POST', '/api/inventory/departments', { name });
+    return ((await api(ctx.app, boss, 'GET', '/api/inventory/departments?all=1')).body as { id: number; name: string }[]).find((d) => d.name === name)!.id;
+  };
+  deptA = await mk('运营部');
+  const deptB = await mk('水吧');
+  await createStaff(ctx.sql, { username: 'shop_a', displayName: '运营部申购', role: 'backoffice', duties: ['request'], departmentId: deptA, password: PASSWORD, mustChangePassword: false });
+  await createStaff(ctx.sql, { username: 'shop_b', displayName: '水吧申购', role: 'backoffice', duties: ['request'], departmentId: deptB, password: PASSWORD, mustChangePassword: false });
+  reqA = await login(ctx.app, 'shop_a');
+  reqB = await login(ctx.app, 'shop_b');
+  storeId = Number((await ctx.sql<{ id: number }[]>`SELECT id FROM stores ORDER BY id LIMIT 1`)[0]!.id);
+  entityId = Number((await ctx.sql<{ id: number }[]>`SELECT id FROM legal_entities ORDER BY id LIMIT 1`)[0]!.id);
+  mat = (await ctx.sql<{ id: number }[]>`SELECT id FROM materials WHERE code = 'M016'`)[0]!;
+  supA = Number((await ctx.sql<{ id: number }[]>`SELECT id FROM suppliers WHERE code = 'S004'`)[0]!.id);
+  supB = Number((await ctx.sql<{ id: number }[]>`SELECT id FROM suppliers WHERE code <> 'S004' AND active ORDER BY id LIMIT 1`)[0]!.id);
+  await ctx.sql`UPDATE suppliers SET admission = 'approved' WHERE id IN (${supA}, ${supB})`;
+}, 120_000);
+afterAll(async () => ctx.close());
+
+describe('SKU 上架与改价', () => {
+  it('草稿 → 提交 → 有「采购规则」的人审核上架；没权限的批不了；草稿、待审的部门看不到', async () => {
+    const s = await sku();
+    expect(s.status).toBe('draft');
+    expect(await offer(reqA, s.id)).toBeUndefined();
+    await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/submit`, {});
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/approve`, {})).status).toBe(403);
+    expect(await offer(reqA, s.id)).toBeUndefined();
+    const ok = await api(ctx.app, boss, 'POST', `/api/erp/shop/skus/${s.id}/approve`, {});
+    expect(ok.body).toMatchObject({ status: 'approved', approvedByName: expect.any(String) });
+    expect((await offer(reqA, s.id))!.block).toBeNull();
+    // 部门申购看不到 SKU 维护
+    expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/skus')).status).toBe(403);
+  });
+
+  it('上架后直接改价被拒；提改动后暂停采购，批了价格版本加一、恢复采购；SKU 不能删', async () => {
+    const s = await listed((await sku()).id);
+    const cur = (await api(ctx.app, buyer, 'GET', '/api/erp/shop/skus')).body.find((x: { id: number }) => x.id === s.id);
+    const edit = await api(ctx.app, buyer, 'PUT', `/api/erp/shop/skus/${s.id}`, {
+      materialId: mat.id,
+      supplierId: supA,
+      skuCode: cur.skuCode,
+      priceCents: 900,
+      taxRateBp: 1300,
+      moqMilli: q(100),
+      leadDays: 5,
+      freightCents: 0,
+      validUntil: cur.validUntil,
+      storeIds: [],
+      version: cur.version,
+    });
+    expect(edit.body.error.code).toBe('SKU_CORE_CHANGE');
+    const ch = await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/changes`, {
+      priceCents: 900,
+      taxRateBp: 1300,
+      moqMilli: q(50),
+      freightCents: 0,
+      validUntil: cur.validUntil,
+      storeIds: [],
+      reason: '供应商调价',
+    });
+    expect(ch.body).toMatchObject({ corePending: true, pendingChange: { reason: '供应商调价' } });
+    expect((await offer(reqA, s.id))!.block).toBe('core_pending');
+    const done = await api(ctx.app, boss, 'POST', `/api/erp/shop/changes/${ch.body.pendingChange.id}/approve`, {});
+    expect(done.body).toMatchObject({ corePending: false, priceVersion: 2, priceCents: 900, moqMilli: q(50) });
+    expect((await offer(reqA, s.id))!.block).toBeNull();
+    await expect(ctx.sql`DELETE FROM mall_skus WHERE id = ${s.id}`).rejects.toThrow(/不能删除/);
+  });
+
+  it('能不能买：供应商没准入、价格过期、不适用这家门店', async () => {
+    const other = Number((await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('S2', '第二家店', ${entityId}) RETURNING id`)[0]!.id);
+    const onlyOther = await listed((await sku({ storeIds: [other] })).id);
+    expect((await offer(reqA, onlyOther.id))!.block).toBe('store');
+    const expired = await listed((await sku({ validUntil: shiftDate(today, -1) })).id);
+    expect((await offer(reqA, expired.id))!.block).toBe('expired');
+    const pendingSup = Number((await ctx.sql<{ id: number }[]>`INSERT INTO suppliers (code, name, admission) VALUES ('S-NEW', '待准入供应商', 'pending') RETURNING id`)[0]!.id);
+    const noAdmit = await listed((await sku({ supplierId: pendingSup })).id);
+    expect((await offer(reqA, noAdmit.id))!.block).toBe('supplier');
+  });
+});
+
+describe('提交', () => {
+  it('选品：一张需求单、来源商城、带 SKU 与价格版本、含税参考价、意向供应商；要主管确认的照规则', async () => {
+    const s = await listed((await sku({ priceCents: 1000, taxRateBp: 1300, freightCents: 500 })).id);
+    const r = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'catalog', lines: [{ skuId: s.id, priceVersion: 1, qtyMilli: q(120) }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const req = r.body.request;
+    expect(req).toMatchObject({ source: 'mall', priority: 'high', contactName: '王小明', budgetProject: '布草消耗预算' });
+    expect(req.externalNo).toMatch(/^YZ-/);
+    expect(req.lines[0]).toMatchObject({ materialId: mat.id, supplier: { id: supA }, priceVersion: 'V1', refPriceCents: 1130 });
+    const checks = await requestChecks(ctx.sql);
+    expect(checks[0]!.ok, checks[0]!.detail).toBe(true);
+    // ERP 的填单页改不了商城的单
+    const edit = await api(ctx.app, reqA, 'PUT', `/api/erp/requests/${req.id}`, { departmentId: null, needBy: null, priority: 'normal', note: '', lines: [] });
+    expect(edit.body.error?.code ?? edit.body.error).toBeDefined();
+    const edit2 = await api(ctx.app, reqA, 'PUT', `/api/erp/requests/${req.id}`, {
+      departmentId: null,
+      needBy: null,
+      priority: 'normal',
+      note: '',
+      lines: [{ materialId: mat.id, name: 'x', purpose: '其他', qtyMilli: q(1), unit: '箱', imageIds: [] }],
+    });
+    expect(edit2.body.error.code).toBe('MALL_EDIT_IN_SHOP');
+  });
+
+  it('加清单以后改过价：PRICE_CHANGED；低于起订量：BELOW_MOQ；不能买：SKU_UNAVAILABLE；同一个操作编号原样重提给同一张', async () => {
+    const s = await listed((await sku()).id);
+    expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'catalog', lines: [{ skuId: s.id, priceVersion: 9, qtyMilli: q(100) }] })).body.error.code).toBe(
+      'PRICE_CHANGED',
+    );
+    expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'catalog', lines: [{ skuId: s.id, priceVersion: 1, qtyMilli: q(10) }] })).body.error.code).toBe(
+      'BELOW_MOQ',
+    );
+    await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/disable`, {});
+    expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'catalog', lines: [{ skuId: s.id, priceVersion: 1, qtyMilli: q(100) }] })).body.error.code).toBe(
+      'SKU_UNAVAILABLE',
+    );
+    const ok = await listed((await sku()).id);
+    const body = { ...header(), kind: 'catalog', lines: [{ skuId: ok.id, priceVersion: 1, qtyMilli: q(100) }] };
+    const first = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', body);
+    const again = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', body);
+    expect(again.body).toMatchObject({ replayed: true, request: { id: first.body.request.id } });
+    // 之后 SKU 停用了、物料改了名：原样重提照样认得是同一笔（先认操作编号，再按现在的 SKU 核对）
+    await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${ok.id}/disable`, {});
+    await ctx.sql`UPDATE materials SET name = name || '（新）' WHERE id = ${mat.id}`;
+    const late = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', body);
+    expect(late.status, JSON.stringify(late.body)).toBe(200);
+    expect(late.body).toMatchObject({ replayed: true, request: { id: first.body.request.id } });
+    // 同一个编号换了内容：拒绝
+    expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...body, note: '改了' })).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    // 停用后重新上架：价格版本加 1，停用前加进清单的要重新确认
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${ok.id}/enable`, {})).body).toMatchObject({ status: 'pending', priceVersion: 2 });
+  });
+
+  it('自主申请：不要求链接与图片；理由、规格必填；链接要 http(s)', async () => {
+    const line = { name: '定制工作服', expectedCategory: '', qtyMilli: q(20), unit: '套', details: '藏青色', brandModel: '', link: '', reasonText: '新员工入职', imageIds: [] };
+    const r = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ priority: 'urgent' }), kind: 'custom', line });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.request.lines[0]).toMatchObject({ materialId: null, reasonText: '新员工入职', link: '' });
+    expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'custom', line: { ...line, reasonText: '' } })).status).toBe(400);
+    expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'custom', line: { ...line, link: 'ftp://x' } })).body.error.code).toBe('LINK_INVALID');
+    expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ needBy: shiftDate(today, -1) }), kind: 'custom', line })).body.error.code).toBe('NEED_BY_PAST');
+    // 用途：可以选；不选的按「其他」，店里把「其他」去掉了就用用途清单第一项（不再一律 PURPOSE_INVALID）
+    const chosen = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ purpose: '客用消耗' }), kind: 'custom', line });
+    expect(chosen.status, JSON.stringify(chosen.body)).toBe(201);
+    expect(chosen.body.request.lines[0].purpose).toBe('客用消耗');
+    const [rules] = await ctx.sql<{ value: unknown }[]>`SELECT value FROM settings WHERE key = 'expense_rules'`;
+    await ctx.sql`INSERT INTO settings (key, value) VALUES ('expense_rules', ${ctx.sql.json({ purposes: ['客用消耗', '办公用品'] })})
+                  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
+    try {
+      const fallback = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'custom', line });
+      expect(fallback.status, JSON.stringify(fallback.body)).toBe(201);
+      expect(fallback.body.request.lines[0].purpose).toBe('客用消耗');
+    } finally {
+      if (rules) await ctx.sql`UPDATE settings SET value = ${ctx.sql.json(rules.value as Parameters<typeof ctx.sql.json>[0])} WHERE key = 'expense_rules'`;
+      else await ctx.sql`DELETE FROM settings WHERE key = 'expense_rules'`;
+    }
+  });
+});
+
+describe('我的需求与需求池', () => {
+  it('部门只看自己的；采购看需求池；需求池部门申购进不去', async () => {
+    const mine = (await api(ctx.app, reqA, 'GET', '/api/erp/shop/requests?scope=mine')).body.requests as { id: number; department: { id: number } }[];
+    expect(mine.length).toBeGreaterThan(0);
+    expect(mine.every((r) => r.department.id === deptA)).toBe(true);
+    expect(((await api(ctx.app, reqB, 'GET', '/api/erp/shop/requests?scope=mine')).body.requests as unknown[]).length).toBe(0);
+    expect((await api(ctx.app, reqB, 'GET', `/api/erp/shop/requests/${mine[0]!.id}`)).status).toBe(404);
+    expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/requests?scope=pool')).status).toBe(403);
+    const pool = (await api(ctx.app, buyer, 'GET', '/api/erp/shop/requests?scope=pool')).body.requests as { id: number }[];
+    expect(pool.length).toBeGreaterThanOrEqual(mine.length);
+  });
+});
+
+describe('SKU 的边界（Codex 审查）', () => {
+  it('我的采购需求一页页取（从新到旧，不重不漏）；紧急程度在服务端先筛再分页', async () => {
+    const line = { name: '分页测试', expectedCategory: '', qtyMilli: q(1), unit: '个', details: 'x', brandModel: '', link: '', reasonText: 'x', imageIds: [] };
+    for (const priority of ['urgent', 'normal', 'normal']) {
+      expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ priority }), kind: 'custom', line })).status).toBe(201);
+    }
+    const all = (await api(ctx.app, reqA, 'GET', '/api/erp/shop/requests?scope=mine&limit=100')).body.requests as { id: number }[];
+    const seen: number[] = [];
+    let before: number | null = null;
+    for (let i = 0; i < 100; i += 1) {
+      const page = (await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests?scope=mine&limit=1${before ? `&beforeId=${before}` : ''}`)).body as {
+        requests: { id: number }[];
+        nextBeforeId: number | null;
+      };
+      seen.push(...page.requests.map((r) => r.id));
+      before = page.nextBeforeId;
+      if (!before) break;
+    }
+    expect(seen).toEqual(all.map((r) => r.id));
+    expect([...seen].sort((a, b) => b - a)).toEqual(seen);
+    const urgent = (await api(ctx.app, reqA, 'GET', '/api/erp/shop/requests?scope=mine&priority=urgent&limit=1')).body.requests as { priority: string }[];
+    expect(urgent).toHaveLength(1);
+    expect(urgent[0]!.priority).toBe('urgent');
+  });
+
+  it('只能给自己能去的门店提（Codex 安全审查）：目录只列这些门店，提交别的门店 403', async () => {
+    const [entity] = await ctx.sql<{ entityId: number }[]>`SELECT entity_id FROM stores WHERE id = ${storeId}`;
+    const [other] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('SHOPB', '商城测试分店', ${entity!.entityId}) RETURNING id`;
+    const [me] = await ctx.sql<{ id: number }[]>`SELECT id FROM staff WHERE username = 'shop_a'`;
+    await ctx.sql`INSERT INTO staff_stores (staff_id, store_id) VALUES (${me!.id}, ${storeId}) ON CONFLICT DO NOTHING`;
+    const stores = (await catalog(reqA)).stores as { id: number }[];
+    expect(stores.map((s) => s.id)).not.toContain(Number(other!.id));
+    const line = { name: '跨店', expectedCategory: '', qtyMilli: q(1), unit: '个', details: 'x', brandModel: '', link: '', reasonText: 'x', imageIds: [] };
+    const r = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ storeId: Number(other!.id) }), kind: 'custom', line });
+    expect(r.status, JSON.stringify(r.body)).toBe(403);
+    // 店主哪家都能提
+    expect(((await catalog(boss)).stores as { id: number }[]).map((s) => s.id)).toContain(Number(other!.id));
+  });
+
+  it('有待审改动时不能停用（不然旧改动会套到改过的报价上）；选物料、供应商的接口给 SKU 维护的人', async () => {
+    const s = await listed((await sku()).id);
+    const ch = await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/changes`, {
+      priceCents: 900,
+      taxRateBp: 1300,
+      moqMilli: q(100),
+      freightCents: 0,
+      validUntil: shiftDate(today, 365),
+      storeIds: [],
+      reason: '涨价',
+    });
+    expect(ch.status, JSON.stringify(ch.body)).toBe(200);
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/disable`, {})).body.error.code).toBe('SKU_CHANGE_PENDING');
+    const master = await api(ctx.app, buyer, 'GET', '/api/erp/shop/master');
+    expect(master.status).toBe(200);
+    expect(master.body.materials.some((m: { id: number }) => m.id === mat.id)).toBe(true);
+    expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/master')).status).toBe(403);
+  });
+
+  it('带版本号的操作：上一次已经生效、再点一次被拒（SKU_CHANGED），不重复生效', async () => {
+    const s = await sku();
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/submit`, { version: s.version })).status).toBe(200);
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/submit`, { version: s.version })).body.error.code).toBe('SKU_CHANGED');
+  });
+
+  it('含税单价超过 100 万元：建、改、提改动都拒（不然上架了也提交不了）', async () => {
+    const r = await api(ctx.app, buyer, 'POST', '/api/erp/shop/skus', {
+      materialId: mat.id,
+      supplierId: supA,
+      skuCode: `SKU-${randomUUID().slice(0, 8)}`,
+      priceCents: 100_000_000,
+      taxRateBp: 1300,
+      moqMilli: q(1),
+      leadDays: 1,
+      freightCents: 0,
+      validUntil: shiftDate(today, 30),
+      storeIds: [],
+    });
+    expect(r.body.error.code).toBe('SKU_PRICE_TOO_HIGH');
+  });
+
+  it('物料的采购单位改了：已上架的报价暂停采购（按旧单位报的价不能当新单位提交）；重新上架审核后按新单位', async () => {
+    const s = await listed((await sku()).id);
+    expect((await offer(reqA, s.id))!.block).toBeNull();
+    const [m] = await ctx.sql<{ purchaseUnit: string }[]>`SELECT purchase_unit FROM materials WHERE id = ${mat.id}`;
+    await ctx.sql`UPDATE materials SET purchase_unit = '包' WHERE id = ${mat.id}`;
+    try {
+      expect((await offer(reqA, s.id))!.block).toBe('unit');
+      const r = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'catalog', lines: [{ skuId: s.id, priceVersion: s.priceVersion, qtyMilli: q(100) }] });
+      expect(r.body.error.code).toBe('SKU_UNAVAILABLE');
+      // 停用 → 重新上架（价格版本加一）→ 审核：按新单位
+      await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/disable`, {});
+      await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/enable`, {});
+      expect((await api(ctx.app, boss, 'POST', `/api/erp/shop/skus/${s.id}/approve`, {})).status).toBe(200);
+      const again = (await offer(reqA, s.id))!;
+      expect(again.block).toBeNull();
+      expect(again.priceVersion).toBe(s.priceVersion + 1);
+    } finally {
+      await ctx.sql`UPDATE materials SET purchase_unit = ${m!.purchaseUnit} WHERE id = ${mat.id}`;
+    }
+  });
+});

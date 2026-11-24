@@ -643,7 +643,7 @@ export async function updateRequest(deps: Deps, requestId: number, raw: unknown,
     if (r.status !== 'submitted' && r.status !== 'returned') throw conflict('INVALID_STATE', '需求单已结束审核，不能再改');
     // 采购商城来的单：明细带着 SKU、价格版本、意向供应商与商城的几项，ERP 的填单页改不了这些（改了会丢）——
     // 不在这里改；退回的撤回以后在商城里重新提
-    if (r.source === 'mall') throw conflict('MALL_EDIT_IN_SHOP', '采购商城提的需求单不能在这里改：退回的请撤回，再到采购商城里重新提一张');
+    if (r.source === 'mall') throw conflict('MALL_EDIT_IN_SHOP', '采购商城提的需求单不能在这里改：退回的请撤回，再到「采购商城 → 我的采购需求」按原单再提一张');
     if (input.departmentId !== null && input.departmentId !== r.departmentId) throw badRequest('需求单的部门不能改，请撤回后重新提');
     // 核库（8.1.10）：已经有行从库存领用的不能再改（数据库守卫兜底）；没领用的核库结果随明细一起换掉，改完重新看要不要核库
     if (await hasIssuedLines(tx, requestId)) throw conflict('STOCK_ISSUED_LOCKED', '这张需求单已经有行从库存领用，不能再改；剩下的不要了可以撤回');

@@ -186,11 +186,13 @@ const MallCreateInput = z.object({
   lines: z.array(MallLineInput).min(1, '至少一行').max(50, '一张需求单最多 50 行'),
 });
 
-async function checkRefs(db: Db, input: z.infer<typeof MallCreateInput>, today: string) {
+async function checkRefs(db: Db, input: z.infer<typeof MallCreateInput>, today: string, actor: Actor) {
   if (input.needBy !== null && input.needBy < today) throw unprocessable('NEED_BY_PAST', '期望到货日期不能早于今天');
   if (input.storeId !== null) {
     const [s] = await db<{ active: boolean }[]>`SELECT active FROM stores WHERE id = ${input.storeId}`;
     if (!s?.active) throw unprocessable('STORE_INVALID', '适用门店不存在或已停用');
+    // 只能给自己能去的门店提（Codex 安全审查）：店主全部，其他人按员工档案里的门店（allowedStores）
+    if (!(await allowedStores(db, actor)).some((x) => Number(x.id) === input.storeId)) throw forbidden('只能给自己所在的门店提采购需求');
   }
   if (input.entityId !== null) {
     const [e] = await db<{ active: boolean }[]>`SELECT active FROM legal_entities WHERE id = ${input.entityId}`;
@@ -199,14 +201,24 @@ async function checkRefs(db: Db, input: z.infer<typeof MallCreateInput>, today: 
 }
 
 /** 用途空着的按「其他」（ERP 的固定用途里有「其他」时） */
+/** 没填用途的：按「其他」；店里把「其他」从用途清单里去掉了就用清单第一项（Codex 审查：不然商城的单一律 PURPOSE_INVALID） */
 async function withPurposes(db: Db, lines: z.infer<typeof MallLineInput>[]) {
   const { purposes } = await loadExpenseRules(db);
-  return lines.map((l) => ({ ...l, purpose: l.purpose || (purposes.includes('其他') ? '其他' : '') }));
+  return lines.map((l) => ({ ...l, purpose: l.purpose || (purposes.includes('其他') ? '其他' : (purposes[0] ?? '')) }));
 }
 
-export async function createMallRequest(deps: Deps, raw: unknown, actor: Actor, ip?: string): Promise<MallCreateResult> {
+export async function createMallRequest(
+  deps: Deps,
+  raw: unknown,
+  actor: Actor,
+  ip?: string,
+  /** 柚子里的商城页面（8.1.32）：在建单的事务里、写单之前锁住并核对 SKU（价格版本、能不能买） */
+  beforeWrite?: (tx: Db) => Promise<void>,
+  /** 柚子里的商城页面：按页面原样提交的内容算的摘要（明细是按当时的 SKU 拼出来的，SKU 之后改了也不影响原样重提认得出来） */
+  requestHashOverride?: string,
+): Promise<MallCreateResult> {
   const input = parse(MallCreateInput, raw);
-  const requestHash = hashRequest({ ...input, clientKey: undefined });
+  const requestHash = requestHashOverride ?? hashRequest({ ...input, clientKey: undefined });
   const findExisting = async (db: Db) => {
     const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
     if (!row) return null;
@@ -225,7 +237,8 @@ export async function createMallRequest(deps: Deps, raw: unknown, actor: Actor, 
       const [dup] = await tx<{ docNo: string }[]>`SELECT doc_no FROM purchase_requests WHERE external_no = ${input.externalNo}`;
       if (dup) throw conflict('EXTERNAL_NO_EXISTS', `商城申请单号 ${input.externalNo} 已经建过需求单 ${dup.docNo}`, { docNo: dup.docNo });
       const today = todayIn(deps.config.timezone);
-      await checkRefs(tx, input, today);
+      await checkRefs(tx, input, today, actor);
+      if (beforeWrite) await beforeWrite(tx);
       const deptId = await resolveDepartment(tx, actor, input.departmentId);
       const lines = await withPurposes(tx, input.lines);
       await validateLines(tx, lines, { mall: true });
@@ -310,7 +323,7 @@ function briefDisplayOf(r: PurchaseRequestSummary, states: readonly RequestLineP
   return reviewDisplayOf(r) ?? progressDisplayOf(states);
 }
 
-async function mallRequest(deps: Deps, actor: Actor, requestId: number): Promise<MallRequest> {
+export async function mallRequest(deps: Deps, actor: Actor, requestId: number): Promise<MallRequest> {
   const r = await getRequest(deps.sql, actor, requestId, deps.config.timezone);
   const [extra] = await deps.sql<
     {
@@ -482,6 +495,36 @@ export async function listMall(deps: Deps, actor: Actor, raw: unknown, opts: { m
   const requests = page.map((r) => byId.get(Number(r.id))).filter((b): b is MallRequestBrief => !!b);
   const last = page[page.length - 1]!;
   return { requests, nextCursor: page.length === q.limit ? { updatedSince: new Date(last.at).toISOString(), afterId: Number(last.id) } : null };
+}
+
+const PagedQuery = z.object({
+  priority: z.enum(REQUEST_PRIORITIES).optional(),
+  /** 接着上一页取：编号比它小的 */
+  beforeId: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+/**
+ * 柚子里的商城页面「我的采购需求」「需求池」（Codex 审查）：来源是商城的单，按编号从新到旧一页页取，紧急程度在库里先筛再截，
+ * 老的单翻页也找得到。mineOnly：审核、核库的人也只看本部门、自己提的、自己当主管的
+ */
+export async function pagedMall(deps: Deps, actor: Actor, raw: unknown, opts: { mineOnly: boolean }): Promise<{ requests: MallRequestBrief[]; nextBeforeId: number | null }> {
+  const q = parse(PagedQuery, raw ?? {});
+  const db = deps.sql;
+  const me = await myContext(db, actor);
+  const scope = (me.canReview || me.canStock) && !opts.mineOnly ? undefined : { staffId: actor.id, departmentId: me.departmentId };
+  const page = await db<{ id: number }[]>`
+    SELECT r.id FROM purchase_requests r
+    WHERE r.source = 'mall'
+      ${q.priority ? db`AND r.priority = ${q.priority}` : db``}
+      ${q.beforeId ? db`AND r.id < ${q.beforeId}` : db``}
+      ${scope ? db`AND ${REQUESTER_OR_DEPT(db, scope)}` : db``}
+    ORDER BY r.id DESC LIMIT ${q.limit}`;
+  if (!page.length) return { requests: [], nextBeforeId: null };
+  const ids = page.map((r) => Number(r.id));
+  const byId = new Map((await briefs(db, await summaries(db, { ids, timezone: deps.config.timezone }))).map((b) => [b.id, b]));
+  const requests = ids.map((i) => byId.get(i)).filter((b): b is MallRequestBrief => !!b);
+  return { requests, nextBeforeId: page.length === q.limit ? ids[ids.length - 1]! : null };
 }
 
 const BatchInput = z

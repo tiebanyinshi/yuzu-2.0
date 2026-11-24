@@ -258,10 +258,11 @@
   - `260`（`260_hand_tag_manage.sql`）：`hand_tags` 加柜子状态（`service_status` 正常 / 暂停使用 / 维修中、说明、经办人与时间）与删除标记（`deleted_at`、`deleted_by`；删了的必须是停用的）。回滚脚本 `docs/rollback/260_hand_tag_manage.down.sql`。
   - `261`（`261_hand_tag_generate_ops.sql`，Codex 审查 PR #189）：按规则批量添加的操作编号 `hand_tag_generate_ops`（只追加：编号、请求摘要、建了哪些牌号），`op_fences` 的类型约束追加 `hand_tag_generate`。回滚脚本 `docs/rollback/261_hand_tag_generate_ops.down.sql`。
 - **改名（店主 2026-11-24）**：系统中文名「浴族」改叫「柚子」，代码、界面、文档、用例里的称呼都改（已发布的迁移、交接说明与更新记录这些历史快照、引用店主原文件名的《浴族……》不改）；同时做柚子官网（`website/`，`docs/WEBSITE.md`）。
-  - `262`（`262_rename_yuzu.sql`）：还是旧默认值「浴族 · 城市汤泉」的门店名（设置、本店、本公司）改成「柚子 · 城市汤泉」，店里自己设过的不动。回滚脚本 `docs/rollback/262_rename_yuzu.down.sql`。
+  - `262`（`262_rename_yuzu.sql`）：还是旧默认值「浴族 · 城市汤泉」的门店名（设置、本店、本公司）改成「柚子 · 城市汤泉」，店里自己设过的不动。回滚脚本 `docs/rollback/262_rename_yuzu.down.sql`。8.1.32 破例改过一次（店主 2026-11-24 同意）：新名字已被别的分店、主体占用时那一行跳过、留旧名，不再让升级失败；`scripts/check-migrations.mjs` 的 `OWNER_APPROVED_EDITS` 登记，用例 `tests/upgrade-rename-yuzu.test.ts`。
 - **四个板块（店主 2026-11-24 登记，设计见 `docs/BOARDS.md`）**：门户四个板块改叫 CRM、ERP、WCP、Design；原来管理后台的分区拆进各板块（地址、权限不变）；UI 工作台、电子菜单的版面与字体、对客导览、官网搬进 Design；Design 里做素材库（字体、图片、视频，按用途一键切换）。分三批：板块与入口 → 素材库 → 官网接素材库。不改版本号。迁移号预留 `265`–`269`（第二批起用）。官网部署说明给 Codex：`docs/DEPLOY_WEBSITE.md`。
 - **采购商城 V1.1 对接（店主 2026-11-24 登记，8.1.31，设计见 `docs/MALL_V8131.md`）**：yuzu 侧——商城后端经 `/api/erp/mall/*`（服务密钥 + 员工编号）认人、建采购需求单（操作编号幂等、商城单号去重）、查进度与退回原因、只读主数据（供应商脱敏）；需求单三档紧急程度；ERP 页面显示商城带来的内容。商城后端另立项目。迁移号预留 `270`–`274`。
   - `270`（`270_mall_integration.sql`）：需求单来源加「商城」、三档优先级、商城单号（唯一）与经办人、门店、主体、预算项目、收货地点、拟定支付方式；明细行放宽长度、加 SKU 与价格版本、品牌型号、预期分类、采购理由、运费、税率；守卫触发器多管来源与商城单号。回滚脚本 `docs/rollback/270_mall_integration.down.sql`。
+  - `271`（`271_mall_skus.sql`，8.1.32 采购商城并进柚子，`docs/MALL_V8132.md`）：商城 SKU（`mall_skus`：物料 × 供应商 × 价格、起订量、交期、运费、有效期、适用门店、价格版本、上架审核）与核心改动审核（`mall_sku_changes`，同一 SKU 只有一张待审）；SKU 不能删、改动只追加状态。回滚脚本 `docs/rollback/271_mall_skus.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

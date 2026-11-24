@@ -89,6 +89,8 @@ describe('ERP 模块开关', () => {
         ['inventory', false, false],
         ['purchasing', true, false],
         ['requests', true, false],
+        // 采购商城（8.1.32）依赖采购需求单
+        ['shop', true, false],
         ['deptStock', true, false],
         ['payables', true, false],
         // 资产与易耗（8.0.7）依赖库存
