@@ -25,6 +25,7 @@ import { idParam, parse } from '../lib/validate';
 import { loadExpenseRules } from './expenses';
 import { docDateSchema } from './inventory/common';
 import { createMallRequest, listMall, mallRequest } from './mall';
+import { allowedStores } from './stores';
 import { hashRequest } from '../lib/idempotency';
 import { myContext } from './requests';
 
@@ -75,13 +76,18 @@ export function blockOf(k: Pick<SkuRow, 'corePending' | 'status' | 'admission' |
 async function catalog(deps: Deps, actor: Actor, storeIdRaw: unknown): Promise<ShopCatalog> {
   const db = deps.sql;
   const today = todayIn(deps.config.timezone);
-  const stores = (await db<{ id: number; name: string; entityId: number | null }[]>`SELECT id, name, entity_id FROM stores WHERE active ORDER BY sort_order, id`).map((s) => ({
+  // 只列自己能去的门店（店主全部；Codex 安全审查），提交时 mall.ts 再核对一遍
+  const allowed = (await allowedStores(db, actor)).map((x) => Number(x.id));
+  const stores = (
+    await db<{ id: number; name: string; entityId: number | null }[]>`SELECT id, name, entity_id FROM stores WHERE active AND id IN ${db(allowed.length ? allowed : [0])} ORDER BY sort_order, id`
+  ).map((s) => ({
     id: Number(s.id),
     name: s.name,
     entityId: s.entityId === null ? null : Number(s.entityId),
   }));
   const wanted = Number(storeIdRaw);
-  const storeId = stores.some((s) => s.id === wanted) ? wanted : (actor.storeId ?? stores[0]?.id ?? 1);
+  const pick = [wanted, actor.storeId].find((x) => x != null && stores.some((s) => s.id === x));
+  const storeId = pick ?? stores[0]?.id ?? 1;
   const entities = (await db<{ id: number; name: string }[]>`SELECT id, name FROM legal_entities WHERE active ORDER BY id`).map((e) => ({ id: Number(e.id), name: e.name }));
   const materials = await db<{ id: number; code: string; name: string; category: string; specification: string; unit: string; note: string }[]>`
     SELECT id, code, name, category, specification, purchase_unit AS unit, note FROM materials WHERE active AND tracked ORDER BY category, code`;

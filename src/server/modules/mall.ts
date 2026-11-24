@@ -186,11 +186,13 @@ const MallCreateInput = z.object({
   lines: z.array(MallLineInput).min(1, '至少一行').max(50, '一张需求单最多 50 行'),
 });
 
-async function checkRefs(db: Db, input: z.infer<typeof MallCreateInput>, today: string) {
+async function checkRefs(db: Db, input: z.infer<typeof MallCreateInput>, today: string, actor: Actor) {
   if (input.needBy !== null && input.needBy < today) throw unprocessable('NEED_BY_PAST', '期望到货日期不能早于今天');
   if (input.storeId !== null) {
     const [s] = await db<{ active: boolean }[]>`SELECT active FROM stores WHERE id = ${input.storeId}`;
     if (!s?.active) throw unprocessable('STORE_INVALID', '适用门店不存在或已停用');
+    // 只能给自己能去的门店提（Codex 安全审查）：店主全部，其他人按员工档案里的门店（allowedStores）
+    if (!(await allowedStores(db, actor)).some((x) => Number(x.id) === input.storeId)) throw forbidden('只能给自己所在的门店提采购需求');
   }
   if (input.entityId !== null) {
     const [e] = await db<{ active: boolean }[]>`SELECT active FROM legal_entities WHERE id = ${input.entityId}`;
@@ -235,7 +237,7 @@ export async function createMallRequest(
       const [dup] = await tx<{ docNo: string }[]>`SELECT doc_no FROM purchase_requests WHERE external_no = ${input.externalNo}`;
       if (dup) throw conflict('EXTERNAL_NO_EXISTS', `商城申请单号 ${input.externalNo} 已经建过需求单 ${dup.docNo}`, { docNo: dup.docNo });
       const today = todayIn(deps.config.timezone);
-      await checkRefs(tx, input, today);
+      await checkRefs(tx, input, today, actor);
       if (beforeWrite) await beforeWrite(tx);
       const deptId = await resolveDepartment(tx, actor, input.departmentId);
       const lines = await withPurposes(tx, input.lines);

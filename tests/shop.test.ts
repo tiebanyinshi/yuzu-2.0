@@ -244,6 +244,20 @@ describe('我的需求与需求池', () => {
 });
 
 describe('SKU 的边界（Codex 审查）', () => {
+  it('只能给自己能去的门店提（Codex 安全审查）：目录只列这些门店，提交别的门店 403', async () => {
+    const [entity] = await ctx.sql<{ entityId: number }[]>`SELECT entity_id FROM stores WHERE id = ${storeId}`;
+    const [other] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('SHOPB', '商城测试分店', ${entity!.entityId}) RETURNING id`;
+    const [me] = await ctx.sql<{ id: number }[]>`SELECT id FROM staff WHERE username = 'shop_a'`;
+    await ctx.sql`INSERT INTO staff_stores (staff_id, store_id) VALUES (${me!.id}, ${storeId}) ON CONFLICT DO NOTHING`;
+    const stores = (await catalog(reqA)).stores as { id: number }[];
+    expect(stores.map((s) => s.id)).not.toContain(Number(other!.id));
+    const line = { name: '跨店', expectedCategory: '', qtyMilli: q(1), unit: '个', details: 'x', brandModel: '', link: '', reasonText: 'x', imageIds: [] };
+    const r = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ storeId: Number(other!.id) }), kind: 'custom', line });
+    expect(r.status, JSON.stringify(r.body)).toBe(403);
+    // 店主哪家都能提
+    expect(((await catalog(boss)).stores as { id: number }[]).map((s) => s.id)).toContain(Number(other!.id));
+  });
+
   it('有待审改动时不能停用（不然旧改动会套到改过的报价上）；选物料、供应商的接口给 SKU 维护的人', async () => {
     const s = await listed((await sku()).id);
     const ch = await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${s.id}/changes`, {
