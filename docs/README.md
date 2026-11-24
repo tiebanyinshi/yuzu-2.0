@@ -18,11 +18,11 @@
 - [`COMMANDS.md`](COMMANDS.md)：常用命令
 - [`CONVENTIONS.md`](CONVENTIONS.md)：开发约定（专题）
 - [`TESTING.md`](TESTING.md)：测试与 CI（飞书需求 RQ-008，v0.7.18 定稿；2026-11-20 改成按改动与风险挑选，见第 6 节）
-- [`ROADMAP.md`](ROADMAP.md)：浴族 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
-- [`DESIGN.md`](DESIGN.md)：浴族设计语言
+- [`DESIGN.md`](DESIGN.md)：柚子设计语言
 - [`UI_V8016.md`](UI_V8016.md)：后台整体 UI 优化 · 动效套件（8.0.16）
 - [`IA_V8017.md`](IA_V8017.md)：后台架构重新整理 · 信息架构方案（8.0.17）
 
@@ -94,6 +94,7 @@
 - [`TECH_RANKING.md`](TECH_RANKING.md)：技师榜单（店主 2026-11-24《技师榜单模块需求说明》）
 - [`TEST_AUDIT.md`](TEST_AUDIT.md)：用例体检（2026-11-18，工程治理三期）
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
+- [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面
 - [`YUZU_REQ_V8115.md`](YUZU_REQ_V8115.md)：8.1.15 追加 ·《浴族系统需求汇总》：对照现状与做法
 - [`YUZU_REQ_V8117.md`](YUZU_REQ_V8117.md)：8.1.17 ·《浴族系统需求汇总》整体样式与没做完的部分

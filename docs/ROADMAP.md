@@ -1,4 +1,4 @@
-# 浴族 yuzu 推进路线（ROADMAP）
+# 柚子 yuzu 推进路线（ROADMAP）
 
 本文件是店主与所有 AI（Claude 开发会话与测试会话、Codex 部署与关口验收、店主安排的真机测试 AI、Gemini 复审）共用的**需求、里程碑、门禁与分工依据**，由店主的《浴族分阶段 MVP 需求与 AI 验收排期》整理，并按 2026-10-29 的代码与复测结论更新。排期表 v2（xlsx）由店主保管，内容与本文件一致；两者不一致时以本文件为准。经营规则的细节与店主原话见 [待确认经营事项](PENDING_DECISIONS.md)，协作红线见 [AGENTS.md](../AGENTS.md)。
 
@@ -257,6 +257,8 @@
 - **手牌管理（店主 2026-11-24 登记，设计见 `docs/FRONTDESK_TAGS_V8127.md`）**：按规则批量添加（数量、起始号码、排除尾数 / 含某数字、不重号）、改牌号与删除（二次确认，在店的不能改删）、手牌柜标「暂停使用 / 维修中」（前台发不出，改回正常就能发）。一个 PR，不改版本号。迁移号预留 `260`–`264`。
   - `260`（`260_hand_tag_manage.sql`）：`hand_tags` 加柜子状态（`service_status` 正常 / 暂停使用 / 维修中、说明、经办人与时间）与删除标记（`deleted_at`、`deleted_by`；删了的必须是停用的）。回滚脚本 `docs/rollback/260_hand_tag_manage.down.sql`。
   - `261`（`261_hand_tag_generate_ops.sql`，Codex 审查 PR #189）：按规则批量添加的操作编号 `hand_tag_generate_ops`（只追加：编号、请求摘要、建了哪些牌号），`op_fences` 的类型约束追加 `hand_tag_generate`。回滚脚本 `docs/rollback/261_hand_tag_generate_ops.down.sql`。
+- **改名（店主 2026-11-24）**：系统中文名「浴族」改叫「柚子」，代码、界面、文档、用例里的称呼都改（已发布的迁移、交接说明与更新记录这些历史快照、引用店主原文件名的《浴族……》不改）；同时做柚子官网（`website/`，`docs/WEBSITE.md`）。
+  - `262`（`262_rename_yuzu.sql`）：还是旧默认值「浴族 · 城市汤泉」的门店名（设置、本店、本公司）改成「柚子 · 城市汤泉」，店里自己设过的不动。回滚脚本 `docs/rollback/262_rename_yuzu.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

@@ -1,6 +1,6 @@
 # GEMINI.md · 给 Gemini（小程序线开发）的补充说明
 
-店主 2026-11-15 起，浴族 yuzu 的**小程序线**交给 Gemini 开发。所有 AI 共用的约定在 [`AGENTS.md`](AGENTS.md)，以它为准；本文件只写 Gemini 专用的几条。交接说明、现状与验收流程见 [`docs/HANDOFF_MP_GEMINI.md`](docs/HANDOFF_MP_GEMINI.md)。
+店主 2026-11-15 起，柚子 yuzu 的**小程序线**交给 Gemini 开发。所有 AI 共用的约定在 [`AGENTS.md`](AGENTS.md)，以它为准；本文件只写 Gemini 专用的几条。交接说明、现状与验收流程见 [`docs/HANDOFF_MP_GEMINI.md`](docs/HANDOFF_MP_GEMINI.md)。
 
 （Gemini CLI 按 `.gemini/settings.json` 同时读 `AGENTS.md` 与本文件；Antigravity 本来就读这两个文件。）
 

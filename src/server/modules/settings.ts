@@ -80,7 +80,7 @@ export const SETTINGS_KEYS = KEY_MAP;
 // 单笔上限按店主 2026-10-27 答复（#9）默认 50 万元；营业时间默认全天；
 // 撤销与反结账时限默认 48 小时、收款前必须先开班（店主 2026-10-29 签认，迁移 017 把仍是「不限」的时限改为 48 小时）
 const DEFAULTS: StoreSettings = {
-  storeName: '浴族 · 城市汤泉',
+  storeName: '柚子 · 城市汤泉',
   deductionRule: 'principal_first',
   businessDayStartHour: 6,
   maxRechargeCents: 50_000_000,

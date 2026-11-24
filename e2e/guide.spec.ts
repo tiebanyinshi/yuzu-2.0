@@ -146,7 +146,7 @@ test.describe('v0.7.19 对客导览', () => {
   const W = 3000;
   const H = 1500;
   const fake: GuideData = {
-    storeName: '浴族 · 合成门店',
+    storeName: '柚子 · 合成门店',
     batchId: 900201,
     carouselSeconds: 300,
     floors: [

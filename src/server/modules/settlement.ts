@@ -697,7 +697,7 @@ export function settlementCsv(s: SettlementSummary): string {
   const signed = (cents: number) => (cents < 0 ? '-' : '') + y(cents);
   const biz = businessBreakdown(s.business);
   const rows: (string | number)[][] = [
-    ['浴族日结汇总', s.businessDate],
+    ['柚子日结汇总', s.businessDate],
     [],
     ['项目', '笔数', '金额（元）', '说明'],
     ['充值实收', s.recharge.count, y(s.recharge.paid), '实际收款，等额计入本金'],
@@ -852,7 +852,7 @@ export function registerSettlementRoutes(app: FastifyInstance, deps: Deps) {
     const today = await todayNow();
     const summary = await readSnapshot(sql, (tx) => computeSettlement(tx, target, today));
     await writeAudit(sql, { staffId: req.actor.id, action: 'export', targetType: 'settlement', targetId: target, ip: req.ip });
-    attachment(reply, `浴族日结-${target}.csv`, CSV_TYPE);
+    attachment(reply, `柚子日结-${target}.csv`, CSV_TYPE);
     return settlementCsv(summary);
   });
 }

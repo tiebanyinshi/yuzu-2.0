@@ -58,7 +58,7 @@ export function LoginPage() {
         <div className="relative flex h-full flex-col p-7 sm:p-10 lg:p-14">
           <div className="flex items-center gap-3">
             <LogoMark className="size-10" />
-            <span className="text-[13px] font-bold tracking-[0.32em] text-pine">浴族 · YUZU</span>
+            <span className="text-[13px] font-bold tracking-[0.32em] text-pine">柚子 · YUZU</span>
           </div>
           <div className="mt-6 max-w-md sm:mt-10 lg:mt-24">
             <p className="font-display text-[56px] leading-[0.9] tracking-tight text-ink italic sm:text-[76px] lg:text-[104px]">yuzu</p>
@@ -71,7 +71,7 @@ export function LoginPage() {
       <section className="flex items-center justify-center px-6 py-10 sm:px-10">
         <div className="w-full max-w-[380px] animate-rise">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-[13px] font-semibold text-ink-3">{info.data?.storeName ?? '浴族 · 城市汤泉'}</p>
+            <p className="text-[13px] font-semibold text-ink-3">{info.data?.storeName ?? '柚子 · 城市汤泉'}</p>
             {info.data && <InstanceBadge instance={info.data.instance} />}
           </div>
           <h1 className="mt-1.5 text-[28px] font-bold tracking-tight text-ink">欢迎回来</h1>
@@ -144,7 +144,7 @@ export function LoginPage() {
           )}
           {info.data && (
             <p className="num mt-10 text-[12px] text-ink-4" data-testid="login-version">
-              浴族门店经营系统 · {versionText(info.data.version, info.data.commit)}
+              柚子门店经营系统 · {versionText(info.data.version, info.data.commit)}
             </p>
           )}
         </div>

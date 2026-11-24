@@ -152,7 +152,7 @@ export function buildTestPage(info: TestPageInfo): Buffer {
   p.pair('型号', info.device.model || '—', cols);
   p.pair('地址', info.device.host ? `${info.device.host}:${info.device.port ?? ''}` : '—', cols);
   p.rule(cols);
-  p.line('中文样张：浴族 yuzu 门店系统');
+  p.line('中文样张：柚子 yuzu 门店系统');
   p.line('汤泉、助浴、水吧、餐厅、客房、钟房');
   p.line('全角标点：，。、；：？！（）【】《》');
   p.line('数字字母：0123456789 ABCabc ¥1,234.50');

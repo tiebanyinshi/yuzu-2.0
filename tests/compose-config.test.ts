@@ -62,7 +62,7 @@ describe.skipIf(!hasCompose && !process.env.CI)('compose.yaml：已有实例的 
       SMS_PROVIDER: 'aliyun',
       SMS_ACCESS_KEY_ID: 'id-check',
       SMS_ACCESS_KEY_SECRET: 'secret-check',
-      SMS_SIGN_NAME: '浴族',
+      SMS_SIGN_NAME: '柚子',
       SMS_TEMPLATE_COUPON: 'SMS_1',
       SMS_ENDPOINT: 'https://example.invalid/',
     };

@@ -1,5 +1,5 @@
 // 系统门户页（店主 2026-11-24《系统门户页改造需求说明》，docs/PORTAL.md）：登录后的第一个界面。
-// 自上而下：顶栏（左 Logo 与名称；右 通知铃铛、环境标识、换店、版本号、头像）→ 欢迎语 → 四大板块入口（浴族、ERP、办公、管理后台）。
+// 自上而下：顶栏（左 Logo 与名称；右 通知铃铛、环境标识、换店、版本号、头像）→ 欢迎语 → 四大板块入口（柚子、ERP、办公、管理后台）。
 // 纯入口层：四个板块内部不改；同一套登录与权限，进去以后照旧按权限显示菜单。没有权限的板块显示但置灰、点不进去（不白屏）。
 
 import type { ReactNode } from 'react';
@@ -28,7 +28,7 @@ interface Board {
   icon: LucideIcon;
   /** 进得去时跳到哪里；进不去为 null（卡片置灰） */
   to: string | null;
-  /** 卡片的配色：浴族墨绿、ERP 沿用 ERP 顶栏的深蓝、办公轻量、后台中性灰绿（都是现有的主题色，不另加） */
+  /** 卡片的配色：柚子墨绿、ERP 沿用 ERP 顶栏的深蓝、办公轻量、后台中性灰绿（都是现有的主题色，不另加） */
   tone: { card: string; icon: string; name: string; hint: string; arrow: string };
 }
 
@@ -43,12 +43,12 @@ const TONES: Record<PortalBoard, Board['tone']> = {
 export function usePortalBoards(): Board[] {
   const can = useCan();
   const erp = useErpAccess();
-  // 浴族（门店主导航，后台除外）：落到第一个能用的工作页面（会员工作台优先）；只有对客导览的（门店大屏）进导览
+  // 柚子（门店主导航，后台除外）：落到第一个能用的工作页面（会员工作台优先）；只有对客导览的（门店大屏）进导览
   const nav = useStoreNavItems().filter((n) => n.to !== '/admin');
   const work = nav.filter((n) => !n.guestFacing);
   const storeTo = work.find((n) => n.to === '/')?.to ?? work[0]?.to ?? nav[0]?.to ?? null;
   return [
-    { key: 'yuzu', name: '浴族', hint: '前台营业：房态、会员、技师、财务收银', icon: Waves, to: storeTo, tone: TONES.yuzu },
+    { key: 'yuzu', name: '柚子', hint: '前台营业：房态、会员、技师、财务收银', icon: Waves, to: storeTo, tone: TONES.yuzu },
     { key: 'erp', name: 'ERP', hint: '财务与经营管理：库存、采购、货款、费用', icon: Building2, to: erp.canEnter ? '/erp' : null, tone: TONES.erp },
     // 办公（OA）人人都有：自己的排班、考勤、审批、通知
     { key: 'office', name: '办公', hint: '员工办公：排班、考勤、审批', icon: CalendarClock, to: '/oa', tone: TONES.office },
@@ -125,10 +125,10 @@ function PortalTopBar() {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-paper/90 backdrop-blur" data-testid="portal-topbar">
       <div className="mx-auto flex h-16 max-w-6xl items-center gap-2 px-4 sm:gap-3 sm:px-6">
-        <Link to="/portal" className="flex min-w-0 flex-1 items-center gap-2.5" aria-label="浴族 yuzu 门户">
+        <Link to="/portal" className="flex min-w-0 flex-1 items-center gap-2.5" aria-label="柚子 yuzu 门户">
           <LogoMark className="size-9 shrink-0 rounded-[12px]" />
           <span className="min-w-0">
-            <span className="block text-[16px] leading-tight font-bold text-ink">浴族 yuzu</span>
+            <span className="block text-[16px] leading-tight font-bold text-ink">柚子 yuzu</span>
             <span className="block truncate text-[12px] leading-tight text-ink-3">{session.storeName}</span>
           </span>
         </Link>

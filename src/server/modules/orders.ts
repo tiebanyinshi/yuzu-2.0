@@ -351,6 +351,6 @@ export function registerOrderRoutes(app: FastifyInstance, deps: Deps) {
       detail: { q: result.q, date: result.date, orders: result.rows.length, lines, truncated: result.truncated },
       ip: req.ip,
     });
-    return csvReply(reply, `浴族订单明细-${result.q ? '搜索结果' : result.date}.csv`, csv);
+    return csvReply(reply, `柚子订单明细-${result.q ? '搜索结果' : result.date}.csv`, csv);
   });
 }

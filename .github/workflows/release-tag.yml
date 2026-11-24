@@ -103,6 +103,6 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${tag}" -m "浴族 yuzu ${tag}" "${sha}"
+          git tag -a "${tag}" -m "柚子 yuzu ${tag}" "${sha}"
           git push origin "refs/tags/${tag}"
           echo "已创建标签 ${tag} → ${sha}"

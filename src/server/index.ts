@@ -46,7 +46,7 @@ async function main() {
   const deviceLog = (msg: string, err: unknown) => app.log.error({ err }, msg);
   await recoverJobs({ sql, config }, deviceLog).catch((error) => app.log.error({ err: error }, '打印任务恢复失败'));
   await app.listen({ host: config.host, port: config.port });
-  app.log.info(`浴族 yuzu 已启动：http://${config.host}:${config.port}（${config.env}）`);
+  app.log.info(`柚子 yuzu 已启动：http://${config.host}:${config.port}（${config.env}）`);
   // 微信小程序（小程序线）：单开的小程序端口，只挂给网关的 /api/mp/*；没设 MP_PORT 不开
   const mpApp = config.mp.port ? await buildMpApp(sql, config) : null;
   if (mpApp) {

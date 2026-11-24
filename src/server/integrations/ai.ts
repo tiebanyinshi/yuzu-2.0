@@ -2,7 +2,7 @@
 //   · 8.1.1 起默认用 DeepSeek（店主 2026-11-15 定 MD8，适配器在 ai-deepseek.ts）；这里的 Claude 适配器留作可选
 //     （YUZU_AI_PROVIDER=claude），服务端回退（MD9）只对它有用。
 //   · 只认 YUZU_AI_API_KEY（显式传给 SDK）：不读 ANTHROPIC_API_KEY、`ant auth` 的登录或机器上别处的密钥——
-//     店主没给浴族专门配，就一条数据都不发出去（MD7：发出去的只有打码后的汇总）。
+//     店主没给柚子专门配，就一条数据都不发出去（MD7：发出去的只有打码后的汇总）。
 //   · 模型默认 claude-opus-5-5（YUZU_AI_MODEL 可换），思考深度显式设 medium；请求带服务端回退
 //     （server-side-fallback-2026-07-01，fallbacks: "default"：模型因安全分类拒答时由服务端按类别换模型重跑，MD9）。
 //   · 模拟（INTEGRATIONS_MOCK=true，只许开发、测试实例）不出网：按给的材料套固定模板，用例与演示用。

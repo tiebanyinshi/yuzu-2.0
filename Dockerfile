@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# 浴族 yuzu 应用镜像：构建前端与后端，运行时只保留生产依赖。
+# 柚子 yuzu 应用镜像：构建前端与后端，运行时只保留生产依赖。
 # 官方 node 镜像同时提供 amd64 与 arm64（Apple Silicon）版本。
 
 ARG NODE_IMAGE=node:22-alpine

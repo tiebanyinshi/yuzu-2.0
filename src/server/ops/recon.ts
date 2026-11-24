@@ -986,7 +986,7 @@ export async function buildDailyRecon(sql: Sql, config: AppConfig, date: string,
   files.unshift({
     name: '00-说明.txt',
     content: [
-      `浴族每日对账包 · ${settings.storeName}`,
+      `柚子每日对账包 · ${settings.storeName}`,
       `实例：${INSTANCE_LABELS[config.instance] ?? config.instance} · 版本 v${config.version}${config.commit ? ` · ${config.commit.slice(0, 7)}` : ''}`,
       `生成时刻：${stampOf(now.toISOString())}（只读生成，没有改任何数据）`,
       `数据指纹：${fingerprint.digest}`,
