@@ -14,6 +14,7 @@ import type { RoomCard, RoomCenterBoard, RoomCheckoutPreview } from '../src/shar
 import type { SpaceLedger } from '../src/shared/spaces';
 import { expectFits } from './fits';
 import { clickNav } from './nav';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const [SPA1, SPA2, PARTY, HALL] = ['Q391', 'Q392', 'Q393', 'Q394'] as const;
@@ -31,6 +32,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录', exact: true }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

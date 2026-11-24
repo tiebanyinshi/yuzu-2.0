@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_EMENU_PERIODS, type EmenuAdmin, type EmenuMenu } from '../src/shared/emenu';
 import type { StaffRecord } from '../src/shared/types';
-import { passPortal } from './portal';
+import { afterPasswordChange, passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const PAD = { username: 'e2epad', password: 'e2e-pad-2026' };
@@ -390,6 +390,7 @@ test.describe('8.0.10 点餐系统 · 平板电子菜单', () => {
       await pad.fill('#new', PAD.password);
       await pad.fill('#confirm', PAD.password);
       await pad.getByRole('button', { name: '保存新密码' }).click();
+      await afterPasswordChange(pad);
       await expect(pad).toHaveURL(/\/emenu$/, { timeout: 30_000 });
       await expect(pad.getByTestId('emenu-start')).toBeVisible();
       await noScroll(pad);

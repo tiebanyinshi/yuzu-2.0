@@ -8,3 +8,9 @@ export async function passPortal(page: Page): Promise<void> {
   await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 30_000 });
   if (new URL(page.url()).pathname === '/portal') await page.goto('/');
 }
+
+/** 首次登录改好密码以后（回到门户页；点餐平板从门户页直接进点餐页）：按原来的首页继续 */
+export async function afterPasswordChange(page: Page): Promise<void> {
+  await page.waitForURL((u) => u.pathname === '/portal' || u.pathname === '/emenu', { timeout: 30_000 });
+  if (new URL(page.url()).pathname === '/portal') await page.goto('/');
+}
