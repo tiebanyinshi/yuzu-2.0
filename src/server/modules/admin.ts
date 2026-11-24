@@ -1441,6 +1441,8 @@ function describeChange(action: string, detail: Record<string, unknown>): string
       return `修改了员工账号${name ? `「${name}」` : ''}`;
     case 'hand_tags_created':
       return '按号段建了手牌';
+    case 'hand_tag_updated':
+      return typeof detail.summary === 'string' ? detail.summary : '修改了手牌';
     case 'hand_tags_imported':
       return '导入了柜号清单';
     case 'opening_imported':

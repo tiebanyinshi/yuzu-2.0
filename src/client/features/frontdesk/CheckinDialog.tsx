@@ -1,6 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { CalendarCheck, CircleAlert, CircleCheck, Crown, History, Link2, Plus, Search, ShieldBan, ShieldCheck, Trash2, UserRound, Users } from 'lucide-react';
-import { matchTags, normalizeTagCode, uniqueTagMatch, ZONE_LABELS, ZONES, type BoardTag, type CheckinResult, type FrontdeskBoardRules, type Zone } from '@shared/frontdesk';
+import {
+  matchTags,
+  normalizeTagCode,
+  tagBlockedText,
+  tagIssuable,
+  uniqueTagMatch,
+  ZONE_LABELS,
+  ZONES,
+  type BoardTag,
+  type CheckinResult,
+  type FrontdeskBoardRules,
+  type Zone,
+} from '@shared/frontdesk';
 import { cardProblem, riskGrantCovers, type MemberRisk, type TagCardFound } from '@shared/frontdesk-risk';
 import {
   grantCovers,
@@ -54,7 +66,7 @@ type TagStatus = { ok: true; tag: BoardTag } | { ok: false; message: string; cho
 /** 授权或等级相关的错误：清掉已有授权，请经理按当前内容重新授权 */
 const GRANT_ERRORS = ['VIP_AUTH_REQUIRED', 'TICKET_AUTH_REQUIRED', 'CHECKIN_RISK_AUTH_REQUIRED', 'GUEST_BLACKLISTED', 'GRANT_INVALID', 'GRANT_USED', 'GRANT_EXPIRED', 'GRANT_SCOPE'];
 
-const issuable = (t: BoardTag) => t.active && !t.locked && !t.visit;
+const issuable = (t: BoardTag) => tagIssuable(t);
 
 function statusOf(tags: BoardTag[], code: string, zone: Zone, usedElsewhere: Set<string>): TagStatus {
   const c = normalizeTagCode(code);
@@ -79,8 +91,8 @@ function statusOf(tags: BoardTag[], code: string, zone: Zone, usedElsewhere: Set
     }
   }
   if (usedElsewhere.has(tag.code)) return { ok: false, message: `${tag.code} 已分给本次另一位客人` };
-  if (!tag.active) return { ok: false, message: `${tag.code} 已停用` };
-  if (tag.locked) return { ok: false, message: `${tag.code} 已锁定（${tag.lockReason}）` };
+  const blocked = tagBlockedText(tag);
+  if (blocked) return { ok: false, message: `${blocked}，请换一张` };
   if (tag.visit) return { ok: false, message: `${tag.code} 已在店，不能重复发出` };
   if (tag.zone !== zone) return { ok: false, message: `${tag.code} 是${ZONE_LABELS[tag.zone].title}牌，不能发给${ZONE_LABELS[zone].title}` };
   return { ok: true, tag };
@@ -157,7 +169,7 @@ export function CheckinDialog({
     op.clearError();
   });
 
-  const freeOf = (zone: Zone, except: Set<string>) => tags.filter((t) => t.zone === zone && t.active && !t.locked && !t.visit && !except.has(t.code));
+  const freeOf = (zone: Zone, except: Set<string>) => tags.filter((t) => t.zone === zone && tagIssuable(t) && !except.has(t.code));
 
   const statuses = rows.map((r) => {
     const others = new Set(

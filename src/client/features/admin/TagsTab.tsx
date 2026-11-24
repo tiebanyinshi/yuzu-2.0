@@ -1,8 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FileUp, Lock, Nfc, Plus, ShieldCheck } from 'lucide-react';
+import { Eye, FileUp, Lock, Nfc, Plus, ShieldCheck, Trash2, Wrench } from 'lucide-react';
 import { Link } from 'react-router';
-import { MAX_VIP_LEVEL, TAG_KIND_LABELS, TAG_ZONES, ZONE_LABELS, ZONES, type FrontdeskRules, type HandTag, type TagKind, type Zone } from '@shared/frontdesk';
+import {
+  MAX_VIP_LEVEL,
+  TAG_CODE_PATTERN,
+  TAG_GENERATE_MAX,
+  TAG_KIND_LABELS,
+  TAG_SERVICE_LABELS,
+  TAG_SERVICE_STATUSES,
+  TAG_ZONES,
+  ZONE_LABELS,
+  ZONES,
+  type FrontdeskRules,
+  type HandTag,
+  type TagKind,
+  type TagServiceStatus,
+  type Zone,
+} from '@shared/frontdesk';
 import { CARD_UID_PATTERN, normalizeCardUid, type FrontdeskRiskRules } from '@shared/frontdesk-risk';
 import { MAX_OVERTIME_HOURLY_CENTS } from '@shared/frontdesk-v8117';
 import { parseHandTagCsv, type HandTagCsvResult, type HandTagImportReport } from '@shared/hand-tag-import';
@@ -14,7 +29,7 @@ import { cn } from '../../lib/utils';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, ConfirmCheck, Field, Input, MoneyInput, Notice, PendingBadge, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
-import { groupTags, tagKindText, VipChip, ZoneChip, ZONE_STYLE } from '../frontdesk/parts';
+import { groupTags, tagKindText, TAG_SERVICE_STYLE, VipChip, ZoneChip, ZONE_STYLE } from '../frontdesk/parts';
 import { BlacklistPane } from '../frontdesk/blacklist';
 import { ReaderStatusLine, useCardReader, type CardMessage } from '../frontdesk/TagCardInput';
 import { SubPane } from '../../components/SubNav';
@@ -25,7 +40,7 @@ type AdminTag = HandTag & { inUse: boolean; lockedByName: string | null; lockedA
 const LEVELS = Array.from({ length: MAX_VIP_LEVEL }, (_, i) => i + 1);
 
 /**
- * 手牌池：按清单导入、按号段建牌、锁定 / 解锁、改分区与柜型、停用；前台规则（更正时限、丢牌赔偿、VIP 等级）。
+ * 手牌池：按清单导入、按规则批量添加（2026-11-24）、改牌号与删除、暂停 / 维修、锁定 / 解锁、改分区与柜型、停用；前台规则（更正时限、丢牌赔偿、VIP 等级）。
  * 8.1.15（docs/FRONTDESK_RISK_V8115.md）：手牌绑 / 解绑芯片号（点一张牌）、发牌前风控的开关（前台规则页签）、黑名单页签
  */
 export function TagsTab() {
@@ -45,10 +60,10 @@ export function TagsTab() {
     ...(can('settings.manage') ? [{ key: 'rules', label: '前台规则' }] : []),
     { key: 'pool', label: '手牌池' },
     ...(can('frontdesk.blacklist') ? [{ key: 'blacklist', label: '黑名单' }] : []),
-    { key: 'create', label: '建牌与导入' },
+    { key: 'create', label: '批量添加与导入' },
   ];
   return (
-    <AdminPage section="tags" description="前台规则、手牌池（分区、VIP 柜、芯片号、锁定与停用）、黑名单、按号段建牌与柜号清单导入。" tabs={tabs}>
+    <AdminPage section="tags" description="前台规则、手牌池（分区、VIP 柜、芯片号、暂停 / 维修、锁定与停用）、黑名单、按规则批量生成与柜号清单导入。" tabs={tabs}>
       {can('settings.manage') && (
         <SubPane tab="rules" className="space-y-5">
           <RulesCard
@@ -67,16 +82,24 @@ export function TagsTab() {
         </SubPane>
       )}
       <SubPane tab="create" className="space-y-5">
+        <GenerateCard onCreated={refresh} />
         <ImportCard onImported={refresh} />
-        <BatchCard onCreated={refresh} />
       </SubPane>
 
       <SubPane tab="pool">
         <Card className="p-5">
           <SectionTitle>手牌池</SectionTitle>
           <p className="mt-1 text-[12.5px] text-ink-3">
-            点一张手牌可锁定 / 解锁、改分区与柜型、停用，或绑定 / 解绑芯片号（绑了的牌带 <Nfc className="inline size-3.5 align-[-2px]" />{' '}
-            标，发牌时刷卡就能带出牌号）。在店手牌不能改分区、柜型、停用或锁定，请先在前台给客人换牌。
+            点一张手牌可改牌号、分区与柜型，标「暂停使用 / 维修中」，锁定 / 解锁、停用、删除，或绑定 / 解绑芯片号（绑了的牌带 <Nfc className="inline size-3.5 align-[-2px]" />{' '}
+            标，发牌时刷卡就能带出牌号）。在店手牌不能改牌号、删除、标暂停或维修，请先在前台给客人换牌。
+          </p>
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-3" data-testid="tag-pool-legend">
+            <span className="rounded-md border border-line bg-card px-2 py-0.5 font-semibold text-ink-2">空闲</span>
+            <span className={cn('rounded-md border px-2 py-0.5 font-semibold', TAG_SERVICE_STYLE.paused)}>{TAG_SERVICE_LABELS.paused}</span>
+            <span className={cn('rounded-md border px-2 py-0.5 font-semibold', TAG_SERVICE_STYLE.repair)}>{TAG_SERVICE_LABELS.repair}</span>
+            <span className="rounded-md border border-clay/40 bg-clay-soft/60 px-2 py-0.5 font-semibold text-clay">锁定</span>
+            <span className="rounded-md border border-line bg-paper-2 px-2 py-0.5 font-semibold text-ink-4 line-through">停用</span>
+            <span>在店的按分区颜色显示；暂停、维修、锁定、停用的前台都发不出</span>
           </p>
           {tags.isPending ? (
             <Skeleton className="mt-3 h-40" />
@@ -90,7 +113,8 @@ export function TagsTab() {
                 <div key={z} className="mt-5" data-testid={`admin-zone-${z}`}>
                   <p className="mb-2 flex flex-wrap items-center gap-2 text-[13px] font-semibold text-ink-3">
                     <ZoneChip zone={z} size="md" /> 共 {list.length} 张 · 在店 {list.filter((t) => t.inUse).length} · 锁定 {list.filter((t) => t.locked).length} · 停用{' '}
-                    {list.filter((t) => !t.active).length} · 已绑芯片 {list.filter((t) => t.cardUid).length}
+                    {list.filter((t) => !t.active).length} · 暂停 {list.filter((t) => t.serviceStatus === 'paused').length} · 维修 {list.filter((t) => t.serviceStatus === 'repair').length} · 已绑芯片{' '}
+                    {list.filter((t) => t.cardUid).length}
                     {z === 'child' && <span className="text-clay">儿童区已取消，请把这些牌改为男宾或女宾，或停用</span>}
                   </p>
                   {groupTags(list).map((g) => (
@@ -105,21 +129,25 @@ export function TagsTab() {
                             key={t.id}
                             type="button"
                             onClick={() => setEditing(t)}
-                            title={`${t.locked ? `锁定：${t.lockReason}` : t.inUse ? '在店' : t.active ? '空闲' : '已停用'}${t.cardUid ? ` · 芯片号 ${t.cardUid}` : ' · 没绑芯片号'}`}
+                            title={`${t.locked ? `锁定：${t.lockReason}` : t.inUse ? '在店' : !t.active ? '已停用' : t.serviceStatus !== 'normal' ? `${TAG_SERVICE_LABELS[t.serviceStatus]}${t.serviceNote ? `：${t.serviceNote}` : ''}` : '空闲'}${t.cardUid ? ` · 芯片号 ${t.cardUid}` : ' · 没绑芯片号'}`}
                             data-testid={`admin-tag-${t.code}`}
                             data-card={t.cardUid ?? ''}
+                            data-service={t.serviceStatus}
                             className={cn(
                               'num flex h-8 items-center gap-1 rounded-md border px-2.5 text-[13px] font-bold',
                               !t.active
                                 ? 'border-line bg-paper-2 text-ink-4 line-through'
                                 : t.locked
                                   ? 'border-clay/40 bg-clay-soft/60 text-clay'
-                                  : t.inUse
-                                    ? cn('border-transparent', ZONE_STYLE[t.zone].chip)
-                                    : 'border-line bg-card text-ink-2 hover:border-line-strong',
+                                  : t.serviceStatus !== 'normal'
+                                    ? TAG_SERVICE_STYLE[t.serviceStatus]
+                                    : t.inUse
+                                      ? cn('border-transparent', ZONE_STYLE[t.zone].chip)
+                                      : 'border-line bg-card text-ink-2 hover:border-line-strong',
                             )}
                           >
                             {t.locked && <Lock className="size-3" />}
+                            {!t.locked && t.serviceStatus === 'repair' && <Wrench className="size-3" />}
                             {t.code}
                             {t.cardUid && <Nfc className="size-3 opacity-70" aria-label="已绑芯片号" />}
                           </button>
@@ -286,52 +314,95 @@ function ImportCard({ onImported }: { onImported: () => void }) {
   );
 }
 
-// ───────────────────────── 按号段建牌 ─────────────────────────
+// ───────────────────────── 按规则批量添加 ─────────────────────────
 
-function BatchCard({ onCreated }: { onCreated: () => void }) {
+type GeneratePlan = { codes: string[]; skippedByRule: number; skippedExisting: string[]; exhausted: boolean; created: number };
+const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+/** 一排 0–9 的数字开关（排除规则用） */
+function DigitPicker({ value, onChange, label, testId }: { value: number[]; onChange: (v: number[]) => void; label: string; testId: string }) {
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label={label} data-testid={testId}>
+      {DIGITS.map((d) => {
+        const on = value.includes(d);
+        return (
+          <button
+            key={d}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(on ? value.filter((x) => x !== d) : [...value, d].sort())}
+            className={cn('num size-9 rounded-md border text-[14px] font-bold', on ? 'border-clay bg-clay-soft text-clay line-through' : 'border-line bg-card text-ink-2 hover:border-line-strong')}
+          >
+            {d}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * 按规则批量添加（店主 2026-11-24，docs/FRONTDESK_TAGS_V8127.md）：数量、起始号码、位数、前缀，排除尾数 / 含某数字的号；
+ * 已有的牌号（含删除了的）自动跳过、接着往后凑够数量，不会重号。先预览，再生成；改了规则要重新预览。
+ */
+function GenerateCard({ onCreated }: { onCreated: () => void }) {
   const toast = useToast();
   const [zone, setZone] = useState<Zone>('male');
   const [kind, setKind] = useState<TagKind>('normal');
   const [vipLevel, setVipLevel] = useState(1);
   const [prefix, setPrefix] = useState('A');
-  const [from, setFrom] = useState('1');
-  const [to, setTo] = useState('40');
+  const [start, setStart] = useState('1');
+  const [count, setCount] = useState('50');
   const [width, setWidth] = useState('3');
+  const [skipEnd, setSkipEnd] = useState<number[]>([4]);
+  const [skipAny, setSkipAny] = useState<number[]>([]);
+  const [plan, setPlan] = useState<{ key: string; result: GeneratePlan } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const f = Number(from);
-  const t = Number(to);
+  const s = Number(start);
+  const c = Number(count);
   const w = Number(width);
-  const valid = /^[A-Z]{0,2}$/.test(prefix) && Number.isInteger(f) && Number.isInteger(t) && t >= f && t - f < 500 && w >= 1 && w <= 5 && String(t).length <= w;
-  const sample = useMemo(() => (valid ? `${prefix}${String(f).padStart(w, '0')} – ${prefix}${String(t).padStart(w, '0')}` : ''), [valid, prefix, f, t, w]);
+  const problem = !/^[A-Z]{0,2}$/.test(prefix)
+    ? '前缀只能是 0–2 个英文字母'
+    : start.trim() === '' || !Number.isInteger(s) || s < 0
+      ? '起始号码要是 0 或正整数'
+      : !Number.isInteger(w) || w < 1 || w > 5
+        ? '位数 1–5'
+        : String(s).length > w
+          ? '起始号码的位数超过了设定位数'
+          : !Number.isInteger(c) || c < 1 || c > TAG_GENERATE_MAX
+            ? `数量 1–${TAG_GENERATE_MAX}`
+            : new Set([...skipEnd, ...skipAny]).size >= 10
+              ? '排除的数字不能把 0–9 都排除了'
+              : null;
+  const body = { prefix, start: s, count: c, width: w, zone, kind, vipLevel: kind === 'vip' ? vipLevel : null, skipEndDigits: skipEnd, skipAnyDigits: skipAny };
+  const key = JSON.stringify(body);
+  const current = plan?.key === key ? plan.result : null;
 
-  const create = async () => {
+  const call = async (preview: boolean) => {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.post<{ created: number; skipped: string[] }>('/api/frontdesk/tags/batch', {
-        prefix,
-        from: f,
-        to: t,
-        width: w,
-        zone,
-        kind,
-        vipLevel: kind === 'vip' ? vipLevel : null,
-      });
-      toast({ tone: 'success', title: `已建 ${r.created} 张${ZONE_LABELS[zone].title}牌`, body: r.skipped.length ? `${r.skipped.length} 张已存在，已跳过` : undefined });
-      onCreated();
+      const r = await api.post<GeneratePlan>('/api/frontdesk/tags/generate', { ...body, preview });
+      if (preview) setPlan({ key, result: r });
+      else {
+        setPlan(null);
+        toast({ tone: 'success', title: `已添加 ${r.created} 张${ZONE_LABELS[zone].title}牌`, body: `${r.codes[0]} – ${r.codes[r.codes.length - 1]}` });
+        onCreated();
+      }
     } catch (e) {
       setError(errorMessage(e));
+      if (!preview) setPlan(null);
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Card className="p-5">
-      <SectionTitle>按号段建牌</SectionTitle>
+    <Card className="p-5" data-testid="tag-generate">
+      <SectionTitle aside={<PendingBadge title="排除规则的默认值（排除尾数 4）待确认（docs/PENDING_DECISIONS.md PC32）" />}>按规则批量添加</SectionTitle>
       <p className="mt-1 text-[12.5px] text-ink-3">
-        真实柜号不连续，请优先按清单导入；这里用于补充连续号段的新柜。分区决定能发给哪类宾客（男宾牌不能发给女宾），VIP 柜按等级使用。已存在的牌号自动跳过。
+        从起始号码往后数，按排除规则跳过不要的号（比如尾数是 4、7 的），已有的牌号自动跳过、接着往后补，凑够数量，不会重号。分区决定能发给哪类宾客，VIP 柜按等级使用。先预览，确认再添加。
       </p>
       <div className="mt-4 space-y-4">
         <div className="flex flex-wrap gap-3">
@@ -359,32 +430,66 @@ function BatchCard({ onCreated }: { onCreated: () => void }) {
           )}
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Field label="前缀（区号）" hint="0–2 个字母">
-            <Input value={prefix} onChange={(e) => setPrefix(e.target.value.toUpperCase())} maxLength={2} className="num" />
+          <Field label="数量" hint={`一次最多 ${TAG_GENERATE_MAX} 张`}>
+            <Input value={count} onChange={(e) => setCount(e.target.value)} inputMode="numeric" className="num" data-testid="gen-count" />
           </Field>
-          <Field label="起始号">
-            <Input value={from} onChange={(e) => setFrom(e.target.value)} inputMode="numeric" className="num" />
-          </Field>
-          <Field label="结束号">
-            <Input value={to} onChange={(e) => setTo(e.target.value)} inputMode="numeric" className="num" />
+          <Field label="起始号码">
+            <Input value={start} onChange={(e) => setStart(e.target.value)} inputMode="numeric" className="num" data-testid="gen-start" />
           </Field>
           <Field label="数字位数" hint="不足补 0">
-            <Input value={width} onChange={(e) => setWidth(e.target.value)} inputMode="numeric" className="num" />
+            <Input value={width} onChange={(e) => setWidth(e.target.value)} inputMode="numeric" className="num" data-testid="gen-width" />
+          </Field>
+          <Field label="前缀（区号）" hint="0–2 个字母，可不填">
+            <Input value={prefix} onChange={(e) => setPrefix(e.target.value.toUpperCase())} maxLength={2} className="num" data-testid="gen-prefix" />
+          </Field>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Field label="排除尾数" hint="尾数是这些数字的号跳过">
+            <DigitPicker value={skipEnd} onChange={setSkipEnd} label="排除尾数" testId="gen-skip-end" />
+          </Field>
+          <Field label="排除含有" hint="任何一位含这些数字的号都跳过（比尾数更严）">
+            <DigitPicker value={skipAny} onChange={setSkipAny} label="排除含有的数字" testId="gen-skip-any" />
           </Field>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Button variant="secondary" icon={<Plus className="size-4" />} disabled={!valid} loading={busy} onClick={create}>
-            建立手牌
+          <Button variant="secondary" icon={<Eye className="size-4" />} disabled={!!problem} loading={busy && !current} onClick={() => call(true)} data-testid="gen-preview">
+            预览
           </Button>
-          {valid ? (
-            <span className="text-[13px] text-ink-2">
-              将建立 <b className="num">{sample}</b>，共 <b className="num">{t - f + 1}</b> 张{ZONE_LABELS[zone].title}
-              {kind === 'vip' ? ` VIP 第 ${vipLevel} 级柜` : '普通柜'}
-            </span>
-          ) : (
-            <span className="text-[13px] text-clay">请检查号段：结束号不小于起始号、一次最多 500 张、位数足够</span>
-          )}
+          <Button variant="primary" icon={<Plus className="size-4" />} disabled={!!problem || !current} loading={busy && !!current} onClick={() => call(false)} data-testid="gen-create">
+            {current ? `添加这 ${current.codes.length} 张` : '添加'}
+          </Button>
+          {problem ? <span className="text-[13px] text-clay">{problem}</span> : !current && <span className="text-[13px] text-ink-3">先预览，看清楚要添加哪些号</span>}
         </div>
+        {current && (
+          <div className="rounded-lg border border-line bg-paper/60 p-4" data-testid="gen-plan">
+            <p className="text-[13px] text-ink-2">
+              将添加 <b className="num">{current.codes.length}</b> 张{ZONE_LABELS[zone].title}
+              {kind === 'vip' ? ` VIP 第 ${vipLevel} 级柜` : '普通柜'}
+              {current.skippedByRule > 0 && (
+                <>
+                  ，按排除规则跳过 <b className="num">{current.skippedByRule}</b> 个号
+                </>
+              )}
+              {current.skippedExisting.length > 0 && (
+                <>
+                  ，已有（或删除过）的 <b className="num">{current.skippedExisting.length}</b> 个号跳过
+                </>
+              )}
+            </p>
+            {current.exhausted && current.codes.length < c && (
+              <p className="mt-1 text-[12.5px] text-clay">
+                {w} 位数的号码用完了，只凑出 {current.codes.length} 张；要更多请加大位数或换前缀
+              </p>
+            )}
+            <div className="mt-2 flex max-h-40 flex-wrap gap-1 overflow-y-auto">
+              {current.codes.map((code) => (
+                <span key={code} className="num rounded border border-line bg-card px-1.5 py-0.5 text-[12.5px] font-semibold">
+                  {code}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         {error && <Notice tone="error" title={error} />}
       </div>
     </Card>
@@ -509,10 +614,12 @@ function TagDialog({ tag, onClose, onDone }: { tag: AdminTag; onClose: () => voi
   const [kind, setKind] = useState<TagKind>(tag.kind);
   const [vipLevel, setVipLevel] = useState(tag.vipLevel ?? 1);
   const [active, setActive] = useState(tag.active);
+  const [code, setCode] = useState(tag.code);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const changed = legacy || zone !== tag.zone || active !== tag.active || kind !== tag.kind || (kind === 'vip' && vipLevel !== tag.vipLevel);
+  const codeOk = TAG_CODE_PATTERN.test(code.trim().toUpperCase());
+  const changed = legacy || code.trim().toUpperCase() !== tag.code || zone !== tag.zone || active !== tag.active || kind !== tag.kind || (kind === 'vip' && vipLevel !== tag.vipLevel);
   const run = async (fn: () => Promise<unknown>, message: string) => {
     setBusy(true);
     setError(null);
@@ -535,6 +642,9 @@ function TagDialog({ tag, onClose, onDone }: { tag: AdminTag; onClose: () => voi
           {tag.kind === 'vip' && <VipChip level={tag.vipLevel!} size="md" />}
           {tag.inUse && <Badge tone="pine">在店</Badge>}
           {tag.locked && <Badge tone="clay">已锁定</Badge>}
+          {tag.serviceStatus !== 'normal' && (
+            <span className={cn('rounded-full border px-2 py-0.5 text-[12px] font-semibold', TAG_SERVICE_STYLE[tag.serviceStatus])}>{TAG_SERVICE_LABELS[tag.serviceStatus]}</span>
+          )}
         </span>
       }
       description={tagKindText(tag)}
@@ -545,10 +655,16 @@ function TagDialog({ tag, onClose, onDone }: { tag: AdminTag; onClose: () => voi
           </Button>
           <Button
             variant="primary"
-            disabled={busy || !changed}
-            onClick={() => run(() => api.put(`/api/frontdesk/tags/${tag.id}`, { zone, active, kind, vipLevel: kind === 'vip' ? vipLevel : null }), `${tag.code} 已更新`)}
+            disabled={busy || !changed || !codeOk}
+            data-testid="tag-save"
+            onClick={() =>
+              run(
+                () => api.put(`/api/frontdesk/tags/${tag.id}`, { code: code.trim().toUpperCase(), zone, active, kind, vipLevel: kind === 'vip' ? vipLevel : null }),
+                `${code.trim().toUpperCase()} 已更新`,
+              )
+            }
           >
-            保存分区、柜型与启用
+            保存修改
           </Button>
         </>
       }
@@ -559,6 +675,9 @@ function TagDialog({ tag, onClose, onDone }: { tag: AdminTag; onClose: () => voi
             请改为男宾或女宾后保存，或选择停用。
           </Notice>
         )}
+        <Field label="牌号" hint={tag.inUse ? '在店的不能改牌号' : '0–2 个字母加 1–5 位数字，如 A023'}>
+          <Input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={7} disabled={tag.inUse} className="num w-40" data-testid="tag-code" />
+        </Field>
         <Field label="分区">
           <Segmented value={zone} onChange={setZone} options={ZONES.map((z) => ({ value: z, label: ZONE_LABELS[z].title }))} />
         </Field>
@@ -593,6 +712,7 @@ function TagDialog({ tag, onClose, onDone }: { tag: AdminTag; onClose: () => voi
             ]}
           />
         </Field>
+        <TagServiceField tag={tag} onDone={onDone} />
         <TagCardField tag={tag} onDone={onDone} />
         <div className="rounded-lg border border-line bg-paper/60 p-4">
           {tag.locked ? (
@@ -633,9 +753,95 @@ function TagDialog({ tag, onClose, onDone }: { tag: AdminTag; onClose: () => voi
             </>
           )}
         </div>
+        <TagDeleteField tag={tag} onDone={onDone} />
         {error && <Notice tone="error" title={error} />}
       </div>
     </Dialog>
+  );
+}
+
+/** 手牌柜「暂停使用 / 维修中」：标了前台发不出，改回正常就能发；在店的不能标（先换牌） */
+function TagServiceField({ tag, onDone }: { tag: AdminTag; onDone: (message: string) => void }) {
+  const [status, setStatus] = useState<TagServiceStatus>(tag.serviceStatus);
+  const [note, setNote] = useState(tag.serviceNote ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const blocked = status !== 'normal' && tag.inUse;
+  const changed = status !== tag.serviceStatus || (status !== 'normal' && note.trim() !== (tag.serviceNote ?? ''));
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/api/frontdesk/tags/${tag.id}/service`, { status, note: status === 'normal' ? '' : note.trim() });
+      onDone(status === 'normal' ? `${tag.code} 已恢复正常，前台可以发了` : `${tag.code} 已标「${TAG_SERVICE_LABELS[status]}」，前台发不出`);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="rounded-lg border border-line bg-paper/60 p-4" data-testid="tag-service-field">
+      <p className="text-[13px] font-semibold text-ink-2">柜子状态：暂停使用、维修中的前台发不出，改回正常就能发</p>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <Segmented value={status} onChange={setStatus} ariaLabel="柜子状态" options={TAG_SERVICE_STATUSES.map((v) => ({ value: v, label: TAG_SERVICE_LABELS[v] }))} />
+        {status !== 'normal' && (
+          <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={100} placeholder="说明（可不填），如：锁坏了" className="w-56" aria-label="说明" data-testid="tag-service-note" />
+        )}
+        <Button variant="secondary" disabled={!changed || blocked} loading={busy} onClick={save} data-testid="tag-service-save">
+          保存状态
+        </Button>
+      </div>
+      {blocked && <p className="mt-2 text-[12.5px] text-clay">这张牌上有在店客人，请先在前台给客人换牌，再标暂停或维修。</p>}
+      {error && <Notice tone="error" className="mt-2" title={error} />}
+    </div>
+  );
+}
+
+/** 删除手牌：二次确认；在店的不能删。删了的列表、前台都不再有，牌号不会再生成；发过的历史照旧可查，按清单导入同一牌号可恢复 */
+function TagDeleteField({ tag, onDone }: { tag: AdminTag; onDone: (message: string) => void }) {
+  const [asking, setAsking] = useState(false);
+  const [sure, setSure] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/api/frontdesk/tags/${tag.id}/delete`);
+      onDone(`${tag.code} 已删除`);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="rounded-lg border border-clay/30 p-4" data-testid="tag-delete-field">
+      {!asking ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="ghost" icon={<Trash2 className="size-4" />} disabled={tag.inUse} onClick={() => setAsking(true)} data-testid="tag-delete">
+            删除这张手牌
+          </Button>
+          {tag.inUse && <span className="text-[12.5px] text-clay">在店的不能删，请先在前台给客人换牌</span>}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <ConfirmCheck checked={sure} onChange={setSure} tone="clay">
+            确认删除手牌 <b className="num">{tag.code}</b>：删除后后台列表和前台都不再有这张牌，牌号也不会再被批量生成；发过的来访历史照旧可查，要恢复用「按清单导入」导入同一牌号。
+          </ConfirmCheck>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => (setAsking(false), setSure(false))}>
+              取消
+            </Button>
+            <Button variant="danger" disabled={!sure} loading={busy} onClick={remove} data-testid="tag-delete-confirm">
+              确认删除
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && <Notice tone="error" className="mt-2" title={error} />}
+    </div>
   );
 }
 
