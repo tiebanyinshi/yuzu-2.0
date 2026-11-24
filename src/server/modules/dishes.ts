@@ -637,7 +637,7 @@ export async function updateDishTx(tx: Tx, ctx: OpContext, id: number, f: DishFi
   const kids = await childrenOf(tx, id);
 
   // 8.1.34：对接了「全品类价目表」的菜，名称与分类在价目表里改（做法、加料、套餐、图片、档口、排序照常在这里）
-  if (cur.name !== f.name || cur.category !== f.category) await assertNotPriceLinked(tx, [id], { what: '名称与分类' });
+  if (cur.name !== f.name || cur.category !== f.category) await assertNotPriceLinked(tx, [id], { what: '名称与分类', managedOnly: true });
   const changes: FieldChange[] = [];
   if (cur.name !== f.name) changes.push({ label: '名称', before: cur.name, after: f.name });
   if (cur.category !== f.category) changes.push({ label: '分类', before: cur.category || '（空）', after: f.category || '（空）' });

@@ -319,7 +319,10 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
   const [saving, setSaving] = useState(false);
   const [last, setLast] = useState<Editing>(null);
   /** 8.1.34：对接了「全品类价目表」的项目（带价目表分类）——名称、分类、价格、时长、适用宾客只在价目表里改 */
-  const fromCatalog = !!editing?.data?.catalogCategory;
+  // 价目表新建的项目：名称、分类、时长、性别限定随价目表同步，这里只读（门店原有、后来对接上的照常能改，Codex 审查）
+  const fromCatalog = !!editing?.data?.catalogManaged;
+  // 对接了价目表的（不论是不是价目表新建的）：价格以价目表为准（服务端 PRICE_LINKED）
+  const linked = !!editing?.data?.catalogCategory;
 
   if (editing !== last) {
     setLast(editing);
@@ -416,6 +419,11 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
             名称、分类、价格、时长与适用宾客在 价目与套餐 → 全品类价目表 里改，改完切换生效就同步过来；这里只改力道、精油、说明、排序、停用这些。
           </Notice>
         )}
+        {linked && !fromCatalog && (
+          <Notice tone="info" title="价格由「全品类价目表」管" data-testid="item-price-linked">
+            这一项对接了价目表：价格在 价目与套餐 → 全品类价目表 里改，切换生效就同步过来；名称、分类、时长等照常在这里改。
+          </Notice>
+        )}
         <fieldset disabled={fromCatalog} className="grid min-w-0 gap-4 disabled:opacity-60">
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
             <Field label="名称" htmlFor="c-name">
@@ -426,14 +434,14 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
             </Field>
           </div>
           <Field label="价格" hint="某一档不提供时留空；不带档位的旧请求按标准 → 专业 → 优选中第一个提供的计价">
-            <div className="grid grid-cols-3 gap-2.5">
+            <fieldset disabled={linked} className="grid grid-cols-3 gap-2.5 disabled:opacity-60">
               {PRICE_TIERS.map((t) => (
                 <label key={t} className="flex flex-col gap-1 text-[12px] font-semibold text-ink-3">
                   {PRICE_TIER_LABELS[t]}
                   <MoneyInput value={prices[t]} onChange={(e) => setPrices((p) => ({ ...p, [t]: e.target.value }))} aria-label={`${PRICE_TIER_LABELS[t]}价`} placeholder="不提供" />
                 </label>
               ))}
-            </div>
+            </fieldset>
           </Field>
           <div className="grid gap-4 sm:grid-cols-[140px_minmax(0,1fr)]">
             <Field label="时长（分钟）" htmlFor="c-duration" hint="选填">

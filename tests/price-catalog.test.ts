@@ -990,9 +990,15 @@ describe('价目表录入 第四批：对接收银项目', () => {
     const edit = await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '台 球', category: '娱乐', price: 3500 });
     expect(edit.status).toBe(409);
     expect(edit.body.error.code).toBe('PRICE_LINKED');
-    const renameRefused = await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '桌球', category: '娱乐', price: 3900 });
+    // 价目表新建的（斯诺克）：名称、分类随价目表同步，这里改名被拒
+    const managed = keyOf('斯诺克')!;
+    const [mp] = (await ctx.sql<{ price: number }[]>`SELECT price FROM service_item_prices WHERE item_id = ${managed} ORDER BY tier LIMIT 1`) as unknown as [{ price: number }];
+    const renameRefused = await api(ctx.app, ctx.owner, 'PUT', `/api/items/${managed}`, { name: '桌上斯诺克', category: '娱乐', price: Number(mp.price) });
     expect(renameRefused.body.error?.code).toBe('PRICE_LINKED');
     expect(renameRefused.body.error?.message).toContain('名称、分类');
+    // 门店原有、后来对接上的（台 球）：价目表不改它的名称、分类，这里照常能改（Codex 审查：不然两边都改不了）；改价照旧被拒
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '桌球', category: '娱乐', price: 3900 })).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '台 球', category: '娱乐', price: 3900 })).status).toBe(200);
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '台 球', category: '娱乐', price: 3900, note: '按小时' })).status).toBe(200);
 
     // 前台挂账按收银项目取价 = 价目表的价

@@ -65,7 +65,7 @@ type ItemData = z.output<typeof ItemInput>;
 
 const ITEM_COLUMNS = (db: Db, base = false) => db`
   i.id, i.name, i.category, i.price, i.duration_minutes, i.gender, i.strength, i.essential_oil, i.heat_therapy, i.popular,
-  i.technician_required, i.note, i.active, i.sort_order, i.catalog_code, ${pricesColumn(db, { base })} AS prices,
+  i.technician_required, i.note, i.active, i.sort_order, i.catalog_code, i.catalog_managed, ${pricesColumn(db, { base })} AS prices,
   CASE WHEN i.catalog_category_code IS NULL THEN NULL
        ELSE json_build_object('code', i.catalog_category_code, 'name', i.catalog_category_name, 'group', coalesce(i.catalog_group, ''), 'sort', coalesce(i.catalog_sort, 0)) END AS catalog_category`;
 
@@ -162,7 +162,7 @@ export function registerCatalogRoutes(app: FastifyInstance, { sql }: Deps) {
       if (cur && !samePrices(cur.prices, i.tiers)) await assertNotPriceLinked(tx, [id]);
       // 8.1.34：对接了的项目，名称、分类、时长、性别限定也以价目表为准（力道、精油、说明、排序、停用照常能改）
       if (cur && (cur.name !== i.name || cur.category !== i.category || cur.durationMinutes !== i.durationMinutes || cur.gender !== i.gender)) {
-        await assertNotPriceLinked(tx, [id], { what: '名称、分类、时长与性别限定' });
+        await assertNotPriceLinked(tx, [id], { what: '名称、分类、时长与性别限定', managedOnly: true });
       }
       // 菜品的改价进改价记录（8.1.15 菜品管理）：这道是菜品、价格有变化的，每一档记一条
       const before = await dishPriceState(tx, id);

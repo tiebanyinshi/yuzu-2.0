@@ -11,11 +11,15 @@ import { DEFAULT_STORE_ID } from '../../lib/store-context';
  * 调用方已经锁住这几个收银项目（与对接、同步排队）。改的是全公司的价目（本店、后台价目、菜品改价）查编号 1 的对接；
  * 改第二家店的本店价查那家店的对接。
  */
-export async function assertNotPriceLinked(db: Db | Tx, itemIds: number[], opts: { storeId?: number; what?: string } = {}): Promise<void> {
+/**
+ * managedOnly：只拦价目表新建的项目（catalog_managed）。名称、分类、时长、性别限定只有这些项目会随价目表同步（materialize.ts）；
+ * 门店原有、后来对接上的项目这几样价目表不改，也就不拦，不然改价目表改不到、在这里又改不了（Codex 审查）。改价、删菜照旧全拦
+ */
+export async function assertNotPriceLinked(db: Db | Tx, itemIds: number[], opts: { storeId?: number; what?: string; managedOnly?: boolean } = {}): Promise<void> {
   if (itemIds.length === 0) return;
   const [hit] = await db<{ name: string }[]>`
     SELECT i.name FROM price_catalog_links l JOIN service_items i ON i.id = l.item_id
-    WHERE l.store_id = ${opts.storeId ?? DEFAULT_STORE_ID} AND l.item_id IN ${db([...new Set(itemIds)])} ORDER BY i.id LIMIT 1`;
+    WHERE l.store_id = ${opts.storeId ?? DEFAULT_STORE_ID} AND l.item_id IN ${db([...new Set(itemIds)])} AND (${!opts.managedOnly} OR i.catalog_managed) ORDER BY i.id LIMIT 1`;
   if (hit) {
     throw conflict('PRICE_LINKED', `「${hit.name}」的${opts.what ?? '价格'}由「全品类价目表」管：请到 后台 → 价目与套餐 → 全品类价目表 里改，或先取消对接`);
   }

@@ -200,6 +200,8 @@ export interface ServiceItem {
   catalogCategory: ItemCatalogCategory | null;
   /** 价目表的原始编号（重做第五批，点单时按名称或编号搜）；没有的为 null */
   catalogCode: string | null;
+  /** 价目表新建的（8.1.34）：名称、分类、时长、性别限定随价目表同步，后台只读；门店原有、后来对接上的为 false */
+  catalogManaged?: boolean;
 }
 
 /** 收银项目上的价目表分类：编码 + 名称（表格原文）+ 上一级（零点菜品是餐段，其余是工作表名）+ 排序 */

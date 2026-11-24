@@ -13,7 +13,7 @@
 //                                         按清单导入手牌池（真实业务数据，默认只预览，加 --apply 才写入）；
 //                                         --store-list 使用店主 2026-10-27 的 747 个真实柜号；--deactivate-missing 同时停用清单外的空闲手牌
 //   price-audit [--apply]                  8.1.34 价目核对：收银项目与全品类价目表对不上、看着奇怪的地方（默认只读；--apply 停用门票项目、
-//                                         与已对接项目同名的、没有价格的三类，不删；docs/PRICE_V8134.md）
+//                                         与已对接项目同名的两类，不删；docs/PRICE_V8134.md）
 //   import-opening <余额.csv> --operator <店主账号> [--control 人数,本金,赠金,累计充值] [--exclude <排除清单.csv>]
 //                  [--source EBC] [--note 备注] [--apply]
 //                                         导入旧系统（EBC）会员余额作为期初（真实业务数据，默认只预览，加 --apply 才写入）；
@@ -471,7 +471,7 @@ async function main() {
         break;
       }
       case 'price-audit': {
-        // 8.1.34 价目核对（docs/PRICE_V8134.md）：默认只读；--apply 停用三类明显多余的收银项目（门票项目、与已对接项目同名的、没有价格的）
+        // 8.1.34 价目核对（docs/PRICE_V8134.md）：默认只读；--apply 停用两类明显多余的收银项目（门票项目、与已对接项目同名的）
         await prepareDb(sql, config);
         const apply = args.includes('--apply');
         const r = await priceAudit(sql, { apply, staffId: null });
@@ -482,10 +482,9 @@ async function main() {
         };
         console.log(r.activeSet ? `生效中的价目表：「${r.activeSet.title}」（#${r.activeSet.id}）` : '✗ 还没有生效的全品类价目表：先在后台导入并切换生效，再核对');
         console.log(`在售收银项目 ${r.totals.activeItems} 个：对接了价目表 ${r.totals.linked}，没对接 ${r.totals.unlinked}`);
-        console.log('— 以下三类 --apply 会停用（不删；开单即占用规则在用的不动）—');
+        console.log('— 以下两类 --apply 会停用（不删；开单即占用规则在用的不动）—');
         list('价目表以前建的门票 / 夜间票项目', r.ticketItems);
         list('没对接、和已对接的在售项目同名', r.duplicates);
-        list('一档价格都没有', r.noPrice);
         console.log('— 以下只列出，由店主、店总在后台决定 —');
         list('在售、没对接价目表（价目表管不到的房费、开台费可以留着）', r.unlinked);
         list('对接了的双价项目还留着「标准」档（下次切换生效会去掉）', r.standardOnDual);
@@ -493,7 +492,7 @@ async function main() {
         console.log(`门票票种与价目表：${r.ticketTypeMismatch.length ? '' : '一致'}`);
         for (const m of r.ticketTypeMismatch) console.log(`  ✗ ${m}`);
         if (r.protectedIds.length) console.log(`开单即占用规则在用的项目（不停用）：${r.protectedIds.map((x) => `#${x}`).join('、')}`);
-        console.log(apply ? `✓ 已停用 ${r.deactivated} 个，记了审计。` : '以上为核对结果，没有写入。确认上面三类都该停用后加 --apply。');
+        console.log(apply ? `✓ 已停用 ${r.deactivated} 个，记了审计。` : '以上为核对结果，没有写入。确认上面两类都该停用后加 --apply。');
         break;
       }
       case 'import-opening': {

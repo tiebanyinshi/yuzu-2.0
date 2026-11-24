@@ -1,9 +1,8 @@
 // 价目核对与清理（8.1.34，店主 2026-11-24「价目、消费项目太乱，以价目表为准重构；看看正式服的价目数据有没有奇怪的地方，删掉」）。
 // 命令行 `price-audit`（docs/PRICE_V8134.md）：默认只读，列出收银项目（service_items）里与「全品类价目表」对不上、看着奇怪的地方；
-// 加 --apply 只做一类事——把下面三种明显多余的收银项目停用（不删：已开的单、改价记录、券、次卡都按编号指着它们）：
+// 加 --apply 只做一类事——把下面两种明显多余的收银项目停用（不删：已开的单、改价记录、券、次卡都按编号指着它们）：
 //   · 价目表以前建的门票、夜间票（8.1.34 起门票按「门票」票种结账，不再有能挂单的门票项目）；
 //   · 没对接、但和一个已对接的在售项目同名的（同一个东西两个收银项目，前台会挑错）；
-//   · 一档价格都没有的（开不了单）。
 // 「开单即占用」规则里当房费、开台费用的项目不停用。其余（价目表里没有的在售项目等）只列出来，由店主、店总在后台决定。
 // 加锁：只在 --apply 时写；取全品类价目表的门店锁（与切换生效、对接排队），再按 id 升序锁要停用的收银项目（FOR NO KEY UPDATE，与 syncLinkedPrices 同一个顺序）。
 
@@ -27,10 +26,9 @@ export interface PriceAuditReport {
   /** 生效中的价目表（本店）；没有时其余几项只能参考 */
   activeSet: { id: number; title: string } | null;
   totals: { activeItems: number; linked: number; unlinked: number };
-  /** 以下三类 --apply 会停用 */
+  /** 以下两类 --apply 会停用（「没有价格」不算：数据库要求项目本身的价格大于 0，开单按它当标准档，pricing.ts；Codex 审查） */
   ticketItems: PriceAuditItem[];
   duplicates: (PriceAuditItem & { sameAsId: number })[];
-  noPrice: PriceAuditItem[];
   /** 只列出：在售、没对接价目表的（价目表管不到的房费、开台费之类可以留着） */
   unlinked: PriceAuditItem[];
   /** 只列出：对接了的双价项目还留着「标准」档（下次切换生效会去掉） */
@@ -64,7 +62,7 @@ async function usageItemIds(db: Sql | Tx): Promise<Set<number>> {
   return ids;
 }
 
-/** 本店（编号 1）的收银项目与价目表核对；apply 为真时停用三类明显多余的 */
+/** 本店（编号 1）的收银项目与价目表核对；apply 为真时停用两类明显多余的 */
 export async function priceAudit(sql: Sql, opts: { apply: boolean; staffId: number | null }): Promise<PriceAuditReport> {
   return runInStore(DEFAULT_STORE_ID, () =>
     sql.begin(async (tx) => {
@@ -109,8 +107,7 @@ export async function priceAudit(sql: Sql, opts: { apply: boolean; staffId: numb
           const twin = linkedByName.get(nameKey(i.name));
           return twin && twin.id !== i.id ? [{ ...view(i), sameAsId: Number(twin.id) }] : [];
         });
-      const noPrice = live.filter((i) => !i.tiers || i.tiers.length === 0);
-      const flagged = new Set([...ticketItems.map((i) => Number(i.id)), ...duplicates.map((d) => d.id), ...noPrice.map((i) => Number(i.id))]);
+      const flagged = new Set([...ticketItems.map((i) => Number(i.id)), ...duplicates.map((d) => d.id)]);
       const unlinked = live.filter((i) => i.linkKey === null && !flagged.has(Number(i.id)));
       const standardOnDual = linked.filter((i) => {
         const e = entryByKey.get(i.linkKey!);
@@ -154,7 +151,6 @@ export async function priceAudit(sql: Sql, opts: { apply: boolean; staffId: numb
         totals: { activeItems: live.length, linked: linked.length, unlinked: live.length - linked.length },
         ticketItems: ticketItems.map(view),
         duplicates,
-        noPrice: noPrice.map(view),
         unlinked: unlinked.map(view),
         standardOnDual: standardOnDual.map(view),
         linkedButInactive: linkedButInactive.map(view),
