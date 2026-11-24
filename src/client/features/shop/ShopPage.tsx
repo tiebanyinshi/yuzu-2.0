@@ -87,6 +87,7 @@ function useCart() {
 export function ShopPage() {
   const params = useParams();
   const navigate = useNavigate();
+  const session = useSession();
   const path = (params['*'] ?? '').replace(/\/+$/, '');
   const [storeId, setStoreId] = useState<number | null>(null);
   const q = useQuery({ queryKey: catalogKey(storeId), queryFn: () => api.get<ShopCatalog>(`/api/erp/shop/catalog${storeId ? `?storeId=${storeId}` : ''}`) });
@@ -139,7 +140,8 @@ export function ShopPage() {
       {/* 结果待确认的提交：与 ERP 其他单据同一套（本机先存、读回核对再发；查回、原样重提、确认作废） */}
       <ErpPendingPanel
         types={['purchase_request']}
-        filter={(op) => op.url === SUBMIT_URL}
+        // 本机的登记是整个浏览器共用的：只认这个账号自己提的（换人登录不会替别人查回、清别人的清单，Codex 审查）
+        filter={(op) => op.url === SUBMIT_URL && op.staffId === session.staff.id}
         onFound={(op, ref) => {
           // 查回或原样重提确认已经登记：清单里这一笔买过的行拿掉（之后又加的留着），免得再提一次重复下单（Codex 审查）
           const body = op.body as { kind?: string; lines?: { skuId: number }[] };
@@ -606,7 +608,7 @@ function useSubmit(onDone: (r: MallRequest) => void) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   // 上一笔结果还没确认（超时、断网、服务器出错；含刷新页面以后）：不许用新编号再提一笔，先在页面顶部查回、原样重提或确认作废（Codex 审查）
-  const recorded = useErpRecorded(['purchase_request']).filter((op) => op.url === SUBMIT_URL);
+  const recorded = useErpRecorded(['purchase_request']).filter((op) => op.url === SUBMIT_URL && op.staffId === session.staff.id);
   const blocked = recorded.length > 0;
   const send = async (body: Record<string, unknown>, summary: string) => {
     if (blocked) {
@@ -624,6 +626,7 @@ function useSubmit(onDone: (r: MallRequest) => void) {
         body: { ...body, clientKey },
         summary: `采购商城 · ${summary}`,
         staffName: session.staff.displayName,
+        staffId: session.staff.id,
       });
       void qc.invalidateQueries({ queryKey: ['shop'] });
       toast({ tone: 'success', title: `已提交：${r.request.docNo}`, body: '采购需求单已生成，等部门主管确认' });
