@@ -167,7 +167,8 @@ test.describe('8.1.16 房态中心', () => {
       await clickNav(page, '房态中心');
       await expect(page).toHaveURL(/\/room-center/);
       await expect(page.getByTestId('rc-overview')).toBeVisible();
-      await expect(page.getByTestId(`rc-summary-${spaKey}`)).toContainText('SPA 房');
+      await expect(page.getByTestId('rc-stats')).toBeVisible();
+      await expect(page.getByTestId(`rc-group-head-${spaKey}`)).toContainText('SPA 房');
       await page.getByTestId(`rc-tab-${spaKey}`).click();
       await expect(page.getByTestId(`rc-tab-${spaKey}`)).toHaveAttribute('aria-selected', 'true');
       await expect(page).toHaveURL(new RegExp(`tab=${spaKey}`));
@@ -181,6 +182,7 @@ test.describe('8.1.16 房态中心', () => {
 
       // ② 点空闲的 SPA 房卡片登记：键盘式读卡器刷手牌带出客人；项目、点钟指定技师、出单员（默认自己的登录名）；必填的没填不能提交
       await page.getByTestId(`rc-open-${SPA1}`).click();
+      await page.getByTestId('rc-panel-go').click();
       const reg = page.getByRole('dialog').filter({ hasText: `登记 · ${SPA1}` });
       await expect(reg.getByTestId('rc-register')).toBeVisible();
       await expect(reg.getByTestId('rc-register-submit')).toBeDisabled();
@@ -277,6 +279,7 @@ test.describe('8.1.16 房态中心', () => {
       await expect(room1).toHaveAttribute('data-status', 'maintenance');
       await expect(room1).toContainText('E2E 空调漏水');
       await page.getByTestId(`rc-open-${SPA1}`).click();
+      await page.getByTestId('rc-panel-go').click();
       await page.getByTestId('rc-room-dialog').getByTestId('rc-act-restore').click();
       await page
         .getByRole('dialog')
@@ -291,6 +294,7 @@ test.describe('8.1.16 房态中心', () => {
       const party = page.getByTestId(`rc-room-${PARTY}`);
       await expect(party).toHaveAttribute('data-status', 'free');
       await page.getByTestId(`rc-open-${PARTY}`).click();
+      await page.getByTestId('rc-panel-go').click();
       const open = page.getByRole('dialog').filter({ hasText: `开单 · ${PARTY}` });
       await open.getByTestId('usage-open-tag').fill(g2.tag);
       await open.getByTestId('usage-open-submit').click();
@@ -376,6 +380,7 @@ test.describe('8.1.16 房态中心', () => {
       // 登记对话框（空闲的 SPA 房；不提交）
       if ((await cardOf(page, SPA2)).status === 'free') {
         await page.getByTestId(`rc-open-${SPA2}`).click();
+        await page.getByTestId('rc-panel-go').click();
         await expect(page.getByTestId('rc-register')).toBeVisible();
         await expectFits(page);
         await expect(page.getByTestId('rc-register-submit')).toBeInViewport();

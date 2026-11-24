@@ -6,6 +6,9 @@
 //     平面图是「视图 → 平面图」，派对房在自己的房型页签里；旧地址 /rooms 跳到这里（App.tsx 的 RoomsMoved）；
 //   · 地址里记着页签、状态筛选、视图（?tab=c3&status=dirty、?view=map），刷新、返回都还在；顶部「结果待确认」的「去处理」带 ?resume=
 //     回到那间房（入住、入住单、开单、使用单、房间动作），预约到店带 ?booking=（客房页签里同房型的空房标出来）。
+//   · 排版优化（店主 2026-11-24《房态中心排版优化需求说明》，docs/ROOM_CENTER_V8115.md 第 12 节）：顶部五张统计卡 → 筛选条（区域页签、
+//     状态数量、搜索）→ 按区域分组的卡片网格（分组头写共几间与各状态几间，每行最多 5 张）→ 点卡片在右侧展开详情栏（手机是底部抽屉），
+//     原来点卡片做的那一下（登记、开单、入住……）是详情栏的主按钮。只改排版：颜色、功能、权限、接口都不变。
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
@@ -36,7 +39,8 @@ import { RoomCard as RoomTile } from './RoomCard';
 import { RoomDialog, type RoomDialogAction } from './RoomDialog';
 import { RoomOrderPanel, RoomOrdersDialog, useRoomOrderOutlets } from './RoomOrders';
 import { RegisterDialog } from './RegisterDialog';
-import { CountChips, STATUS_META } from './status';
+import { RoomPanel, primaryLabel } from './RoomPanel';
+import { CountChips, GroupHead, StatCards } from './status';
 
 /** 「总览」页签的键（房型页签是 c<编号>、没归类的是 other；地址里 tab=hotel、tab=party 指第一个客房、派对房房型） */
 const OVERVIEW = 'all';
@@ -76,6 +80,8 @@ function RoomCenterBody() {
   const now = useServerNow(q.data?.serverTime, 30_000);
 
   const [detail, setDetail] = useState<number | null>(null);
+  // 右侧详情栏开着的那一间（卡片的 key，看板刷新以后照样对得上）；再点同一张收起
+  const [panelKey, setPanelKey] = useState<string | null>(null);
   // 搜索（重做第五批）：房号、手牌号、客人姓名，命中的跨房型列出来
   const [search, setSearch] = useState('');
   const [action, setAction] = useState<Action | null>(null);
@@ -178,7 +184,7 @@ function RoomCenterBody() {
     else if (canHousekeep) setHousekeepRoomId(h.id);
     else toast({ tone: 'info', title: `${h.roomNo} ${ROOM_BOARD_LABELS[h.status]}`, body: '入住要有「客房入住、退房」权限，改房态要有「客房打扫、维修」权限' });
   };
-  /** 点卡片：空闲（或已预订）的技师服务房间登记、派对房开单；别的打开房间详情 */
+  /** 原来点卡片做的那一下（现在是详情栏的主按钮）：空闲（或已预订）的技师服务房间登记、派对房开单；别的打开房间详情 */
   const open = (room: RoomCard) => {
     if (room.kind === 'hotel') return openHotel(room);
     const vacant = room.status === 'free' || room.status === 'booked';
@@ -194,22 +200,29 @@ function RoomCenterBody() {
     else setMapUsage(a);
   };
   const highlighted = (room: RoomCard) => !!forBooking && room.kind === 'hotel' && room.hotel?.status === 'vacant' && room.hotel.typeName === forBooking.roomTypeName;
+  const areaOf = (room: RoomCard) => cats.find((c) => c.key === room.categoryKey)?.name ?? '';
+  // 卡片网格：按这一块的宽度排，最多 5 张一行，窄了减到 4 / 3 / 2 / 1 张（右侧详情栏打开时也跟着减）
   const grid = (list: RoomCard[]) => (
-    <div className="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5" data-testid="rc-grid">
-      {list.map((r) => (
-        <RoomTile
-          key={r.key}
-          room={r}
-          now={now}
-          hint={hintOf(r, canPost, canOperate)}
-          highlight={highlighted(r)}
-          onOpen={() => open(r)}
-          onDetail={() => openDetail(r)}
-          onOrder={orderOutlets.length ? () => setOrdering({ key: r.key, view: 'order' }) : undefined}
-        />
-      ))}
+    <div className="@container">
+      <div className="grid grid-cols-1 gap-2.5 @min-[420px]:grid-cols-2 @min-[640px]:grid-cols-3 @min-[860px]:grid-cols-4 @min-[1080px]:grid-cols-5" data-testid="rc-grid">
+        {list.map((r) => (
+          <RoomTile
+            key={r.key}
+            room={r}
+            now={now}
+            hint={null}
+            area={areaOf(r)}
+            selected={panelKey === r.key}
+            highlight={highlighted(r)}
+            onOpen={() => setPanelKey((k) => (k === r.key ? null : r.key))}
+            onDetail={() => openDetail(r)}
+            onOrder={orderOutlets.length ? () => setOrdering({ key: r.key, view: 'order' }) : undefined}
+          />
+        ))}
+      </div>
     </div>
   );
+  const panelRoom = panelKey ? (board.rooms.find((r) => r.key === panelKey) ?? null) : null;
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-4 px-4 py-4 md:px-7 md:py-5" data-testid="room-center" data-tab={tab}>
@@ -256,27 +269,30 @@ function RoomCenterBody() {
         <FloorMapView board={hotel ?? NO_HOTEL_ROOMS} onAction={mapAction} />
       ) : (
         <>
-          <Tabs cats={cats} total={board.total.total} active={tab} onPick={(key) => setParam({ tab: key === OVERVIEW ? null : key, status: null })} />
+          <StatCards counts={cat ? cat.counts : board.total} filter={filter} onFilter={(st) => setParam({ status: st })} />
+          <div className="space-y-2.5 rounded-xl border border-line bg-card p-3" data-testid="rc-filters">
+            <Tabs cats={cats} total={board.total.total} active={tab} onPick={(key) => setParam({ tab: key === OVERVIEW ? null : key, status: null })} />
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <CountChips counts={cat ? cat.counts : board.total} filter={filter} onFilter={(st) => setParam({ status: st })} testId="rc-counts" />
+              </div>
+              <Input
+                fullWidth={false}
+                className="h-10 w-full sm:w-64"
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜房号、手牌号、客人姓名"
+                aria-label="搜房态"
+                data-testid="rc-search"
+              />
+            </div>
+          </div>
           {cat?.hint && (
             <Notice tone="info" title={cat.hint} data-testid="rc-tab-hint">
               {hotelTab && '客房照旧走入住单：点卡片入住、看入住单、改房态。'}
             </Notice>
           )}
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <CountChips counts={cat ? cat.counts : board.total} filter={filter} onFilter={(s) => setParam({ status: s })} testId="rc-counts" />
-            </div>
-            <Input
-              fullWidth={false}
-              className="h-10 w-full sm:w-64"
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜房号、手牌号、客人姓名"
-              aria-label="搜房态"
-              data-testid="rc-search"
-            />
-          </div>
           {hotelTab && hotel && (
             <div className="space-y-2" data-testid="rc-hotel-tools">
               <div className="flex flex-wrap items-center justify-end gap-2">
@@ -306,13 +322,36 @@ function RoomCenterBody() {
               )}
             </div>
           )}
-          {search.trim() ? (
-            <SearchRooms board={board} q={search} filter={filter} grid={grid} onClear={() => setSearch('')} />
-          ) : cat ? (
-            <CategoryRooms board={board} cat={cat} filter={filter} grid={grid} onAll={() => setParam({ status: null })} />
-          ) : (
-            <Overview board={board} filter={filter} grid={grid} onPick={(key) => setParam({ tab: key, status: null })} onAll={() => setParam({ status: null })} />
-          )}
+          <div className={cn('grid gap-4', panelRoom && 'lg:grid-cols-[minmax(0,1fr)_340px]')}>
+            <div className={cn('min-w-0', panelRoom && 'pb-[45vh] lg:pb-0')}>
+              {search.trim() ? (
+                <SearchRooms board={board} q={search} filter={filter} grid={grid} onClear={() => setSearch('')} />
+              ) : cat ? (
+                <CategoryRooms board={board} cat={cat} filter={filter} grid={grid} onAll={() => setParam({ status: null })} />
+              ) : (
+                <Overview board={board} filter={filter} grid={grid} onAll={() => setParam({ status: null })} />
+              )}
+            </div>
+            {panelRoom && (
+              <RoomPanel
+                room={panelRoom}
+                area={areaOf(panelRoom)}
+                now={now}
+                label={primaryLabel(panelRoom, { canPost, canOperate, canHousekeep })}
+                onClose={() => setPanelKey(null)}
+                // 打开对话框时收起详情栏（对话框接手；之后再点卡片重新展开）
+                onGo={() => {
+                  setPanelKey(null);
+                  open(panelRoom);
+                }}
+                onDetail={() => {
+                  setPanelKey(null);
+                  openDetail(panelRoom);
+                }}
+                onOrder={orderOutlets.length && panelRoom.status === 'in_use' ? () => setOrdering({ key: panelRoom.key, view: 'order' }) : undefined}
+              />
+            )}
+          </div>
         </>
       )}
 
@@ -420,15 +459,6 @@ function RoomCenterBody() {
   );
 }
 
-/** 空闲卡片上的那句提示：点了会做什么（没权限的不写） */
-function hintOf(room: RoomCard, canPost: boolean, canOperate: boolean): string | null {
-  if (room.status !== 'free') return null;
-  if (room.kind === 'service') return canPost ? '空闲 · 点这里登记' : '空闲';
-  if (room.kind === 'party') return canOperate ? '空闲 · 点这里开单' : '空闲';
-  if (room.kind === 'hotel') return canOperate ? '空闲 · 点这里入住' : '空闲';
-  return '空闲';
-}
-
 /** 页签：总览 + 每个房型（带总间数）；手机上一行左右滑，宽屏折行 */
 function Tabs({ cats, total, active, onPick }: { cats: RoomCategoryView[]; total: number; active: string; onPick: (key: string) => void }) {
   const tabs = [{ key: OVERVIEW, name: '总览', total }, ...cats.map((c) => ({ key: c.key, name: c.name, total: c.counts.total }))];
@@ -501,7 +531,12 @@ function CategoryRooms({ board, cat, filter, grid, onAll }: { board: RoomCenterB
     );
   }
   if (list.length === 0) return <NoMatch filter={filter!} onAll={onAll} />;
-  return grid(list);
+  return (
+    <section aria-label={cat.name} data-testid={`rc-group-${cat.key}`}>
+      <GroupHead name={cat.name} counts={cat.counts} testId={`rc-group-head-${cat.key}`} />
+      {grid(list)}
+    </section>
+  );
 }
 
 function NoMatch({ filter, onAll }: { filter: RoomStatus; onAll: () => void }) {
@@ -518,65 +553,20 @@ function NoMatch({ filter, onAll }: { filter: RoomStatus; onAll: () => void }) {
   );
 }
 
-/** 总览：每个房型一张小卡（各状态几间，点一下进那个页签），下面按房型分组列全部的房间（按状态筛过的） */
-function Overview({
-  board,
-  filter,
-  grid,
-  onPick,
-  onAll,
-}: {
-  board: RoomCenterBoard;
-  filter: RoomStatus | null;
-  grid: (list: RoomCard[]) => ReactNode;
-  onPick: (key: string) => void;
-  onAll: () => void;
-}) {
+/** 总览：按区域（房态中心的房型）分组列全部的房间（按状态筛过的），每组一个分组头：区域名、共几间、各状态几间（排版优化第二节 3） */
+function Overview({ board, filter, grid, onAll }: { board: RoomCenterBoard; filter: RoomStatus | null; grid: (list: RoomCard[]) => ReactNode; onAll: () => void }) {
   if (board.rooms.length === 0) {
     return <EmptyState art="calm" title="还没有房间" description="房间来自空间台账：店主在「后台 → 空间台账」导入或新建房间，在「房态中心房型」里把业态归到房型以后，这里按房型看房态。" />;
   }
   const groups = board.categories.map((c) => [c, board.rooms.filter((r) => r.categoryKey === c.key && (!filter || r.status === filter))] as const).filter(([, list]) => list.length > 0);
   return (
-    <div className="space-y-5" data-testid="rc-overview">
-      <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4" data-testid="rc-summary">
-        {board.categories.map((c) => (
-          <button
-            key={c.key}
-            type="button"
-            onClick={() => onPick(c.key)}
-            className="flex min-h-11 flex-col gap-1 rounded-xl border border-line bg-card px-3.5 py-2.5 text-left hover:border-line-strong"
-            data-testid={`rc-summary-${c.key}`}
-          >
-            <span className="flex items-baseline gap-2">
-              <span className="min-w-0 flex-1 truncate text-[15px] font-bold text-ink">{c.name}</span>
-              <span className="text-[13px] text-ink-3">
-                共 <b className="num text-[16px] text-ink">{c.counts.total}</b> 间
-              </span>
-            </span>
-            <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-[13px]">
-              {(['free', 'in_use', 'dirty', 'maintenance'] as const).map((s) => {
-                const Icon = STATUS_META[s].icon;
-                const n = c.counts[s === 'in_use' ? 'inUse' : s];
-                return (
-                  <span key={s} className={cn('flex items-center gap-1 font-semibold', n > 0 ? STATUS_META[s].text : 'text-ink-4')}>
-                    <Icon className="size-3.5" aria-hidden />
-                    {ROOM_STATUS_LABELS[s]} <b className="num">{n}</b>
-                  </span>
-                );
-              })}
-            </span>
-          </button>
-        ))}
-      </div>
+    <div className="space-y-6" data-testid="rc-overview">
       {groups.length === 0 && filter ? (
         <NoMatch filter={filter} onAll={onAll} />
       ) : (
         groups.map(([c, list]) => (
           <section key={c.key} aria-label={c.name} data-testid={`rc-group-${c.key}`}>
-            <h3 className="mb-2 flex items-baseline gap-2 text-[15px] font-bold text-ink-2">
-              {c.name}
-              <span className="text-[13px] font-normal text-ink-3">{list.length} 间</span>
-            </h3>
+            <GroupHead name={c.name} counts={c.counts} testId={`rc-group-head-${c.key}`} />
             {grid([...list])}
           </section>
         ))
