@@ -476,7 +476,8 @@ export async function listMall(deps: Deps, actor: Actor, raw: unknown, opts: { m
     WHERE x.at > ${since} OR (x.at = ${since} AND x.id > ${q.afterId ?? 0})
     ORDER BY x.at, x.id LIMIT ${q.limit}`;
   if (!page.length) return { requests: [], nextCursor: null };
-  const rows = await summaries(db, { ...filters, ids: page.map((r) => Number(r.id)) });
+  // 这一页已经按商城的筛选挑好了，只按编号取：不再套 ERP 待审核队列的口径（待审核不含核库中），免得核库中的单被丢掉、游标却跳过了它（Codex 审查）
+  const rows = await summaries(db, { ids: page.map((r) => Number(r.id)), timezone: tz });
   const byId = new Map((await briefs(db, rows)).map((b) => [b.id, b]));
   const requests = page.map((r) => byId.get(Number(r.id))).filter((b): b is MallRequestBrief => !!b);
   const last = page[page.length - 1]!;

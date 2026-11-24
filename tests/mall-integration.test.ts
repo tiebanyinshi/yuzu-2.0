@@ -343,6 +343,21 @@ describe('列表与批量的进度（Codex 审查）', () => {
     expect(new Set(seen).size).toBe(seen.length);
     expect(seen.sort((a, c) => a - c)).toEqual((all.requests as { id: number }[]).map((x) => x.id).sort((a, c) => a - c));
     expect(seen).toContain(r.id);
+    // 带 status=submitted 的增量也给核库中的单（不套 ERP 待审核队列「不含核库中」的口径）
+    const checking = (
+      await call('POST', '/api/erp/mall/requests', {
+        staff: reqA,
+        body: body({ priority: 'normal', lines: [{ materialId: mat.id, supplierId, name: '一次性护理床单', purpose: '客用消耗', qtyMilli: q(1), unit: '箱' }] }),
+      })
+    ).body.request;
+    await api(mall, await login(mall, 'head_a'), 'POST', `/api/erp/requests/${checking.id}/dept-confirm`, {});
+    // 演示库存够、核库直接跳过了：直接把这张单放进「待核库」，只看同步口径
+    await ctx.sql`UPDATE purchase_requests SET stock_check = 'pending', stock_check_since = now() WHERE id = ${checking.id}`;
+    const sub = (await call('GET', `/api/erp/mall/requests?status=submitted&updatedSince=${encodeURIComponent('2000-01-01T00:00:00Z')}&limit=200`, { staff: buyer })).body.requests as {
+      id: number;
+      displayStatus: string;
+    }[];
+    expect(sub.find((x) => x.id === checking.id)?.displayStatus).toBe('stock_check');
   });
 });
 
