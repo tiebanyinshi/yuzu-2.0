@@ -4,9 +4,16 @@
 /** 榜单上的三种状态 */
 export const RANKING_STATUSES = ['idle', 'serving', 'off'] as const;
 export type RankingStatus = (typeof RANKING_STATUSES)[number];
+export const RANKING_STATUS_LABELS: Record<RankingStatus, string> = { idle: '空闲', serving: '服务中', off: '未当班' };
 
 /** 状态下面的小字（钟房里的细分）：休息 / 待上钟 / 休假 / 停牌；没有为 null */
 export type RankingNote = 'rest' | 'waiting' | 'leave' | 'suspended' | null;
+export const RANKING_NOTE_LABELS: Record<Exclude<RankingNote, null>, string> = { rest: '休息', waiting: '待上钟', leave: '休假', suspended: '停牌' };
+
+/** 综合榜 / 人气榜 */
+export const RANKING_BOARDS = ['overall', 'popular'] as const;
+export type RankingBoard = (typeof RANKING_BOARDS)[number];
+export const RANKING_BOARD_LABELS: Record<RankingBoard, string> = { overall: '综合榜', popular: '人气榜' };
 
 /** 默认：30 秒取一次、每页 12 张（TR7）；人气值按近 30 天（TR3） */
 export const RANKING_DEFAULT_REFRESH_SECONDS = 30;
@@ -65,3 +72,25 @@ export interface TechnicianRankingView {
 }
 
 export const technicianPhotoUrl = (id: number | null) => (id === null ? null : `/api/technician-photos/${id}`);
+
+/** 搜索：技师号（可带「No.」）、姓名、花名模糊匹配，不分大小写 */
+export function matchesRankingText(t: Pick<RankingTech, 'techNo' | 'name' | 'realName'>, text: string): boolean {
+  const q = text
+    .trim()
+    .toLowerCase()
+    .replace(/^no\.?\s*/, '');
+  if (!q) return true;
+  return t.techNo.toLowerCase().includes(q) || t.name.toLowerCase().includes(q) || t.realName.toLowerCase().includes(q);
+}
+
+/** 页面上的筛选：工种（null = 全部）、状态（all = 全部）、搜索词，三样叠加 */
+export function filterRanking(techs: readonly RankingTech[], f: { kind: string | null; status: RankingStatus | 'all'; text: string }): RankingTech[] {
+  return techs.filter((t) => (f.kind === null || t.kind === f.kind) && (f.status === 'all' || t.status === f.status) && matchesRankingText(t, f.text));
+}
+
+/** 第几页（1 起）的那几张；页码超出时落到最后一页 */
+export function pageOf<T>(list: readonly T[], page: number, size: number): { items: T[]; page: number; pages: number } {
+  const pages = Math.max(1, Math.ceil(list.length / size));
+  const p = Math.min(Math.max(1, page), pages);
+  return { items: list.slice((p - 1) * size, p * size), page: p, pages };
+}

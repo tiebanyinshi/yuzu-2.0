@@ -1,5 +1,5 @@
-// 技师管理（8.1.15，《浴族系统需求汇总》技师 3，docs/TECHNICIANS_V8115.md 第 4 节）：门店页面，四个页签——
-// 技师名册、技师组别、技师班次（班次、排班表、临时调班）、休假名册（申请、审批）。
+// 技师管理（8.1.15，《浴族系统需求汇总》技师 3，docs/TECHNICIANS_V8115.md 第 4 节）：门店页面，五个页签——
+// 技师名册、技师组别、技师班次（班次、排班表、临时调班）、休假名册（申请、审批），技师榜单（docs/TECH_RANKING.md）。
 // 看：有「维护技师名册」或钟房权限的都能进；改名册、组别、班次、排班与审批休假要「维护技师名册」，申请与撤回休假钟房的岗位就能做。
 // 技师的规则、提成、哪些项目需要技师仍在「后台 → 技师」（当班不会动的）。
 
@@ -14,6 +14,7 @@ import { Notice, Skeleton } from '../../components/ui';
 import { GroupsTab } from './GroupsTab';
 import { LeavesTab } from './LeavesTab';
 import { useTechAdmin } from './queries';
+import { RankingTab } from './RankingTab';
 import { RosterTab } from './RosterTab';
 import { ShiftsTab } from './ShiftsTab';
 
@@ -25,8 +26,10 @@ export function TechnicianAdminPage() {
   const session = useSession();
   const can = useCan();
   const allowed = can('technician.manage') || can('technician.dispatch');
+  // 技师榜单（docs/TECH_RANKING.md，TR1）：只有「技师上钟轮播」的进来只看榜单
+  const rankingOnly = !allowed && can('technician.board');
   const view = useTechAdmin(allowed && session.technicians);
-  if (!allowed) return <Navigate to="/" replace />;
+  if (!allowed && !rankingOnly) return <Navigate to="/" replace />;
   if (!session.technicians) {
     return (
       <>
@@ -39,12 +42,25 @@ export function TechnicianAdminPage() {
       </>
     );
   }
+  if (rankingOnly) {
+    return (
+      <>
+        <PageHeader title="技师榜单" subtitle="按工种看技师与实时状态" />
+        <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-[1280px] px-5 py-5 md:px-7">
+            <RankingTab />
+          </div>
+        </div>
+      </>
+    );
+  }
   const v = view.data;
   const tabs: SubTab[] = [
     { key: 'roster', label: '技师名册', testId: 'tech-tab-roster' },
     { key: 'groups', label: '技师组别', testId: 'tech-tab-groups' },
     { key: 'shifts', label: '技师班次', testId: 'tech-tab-shifts' },
     { key: 'leaves', label: '休假名册', badge: v?.pendingLeaves, testId: 'tech-tab-leaves' },
+    { key: 'ranking', label: '技师榜单', testId: 'tech-tab-ranking' },
   ];
   return (
     <>
@@ -96,6 +112,9 @@ export function TechnicianAdminPage() {
               </SubPane>
               <SubPane tab="leaves" lazy>
                 <LeavesTab view={v} />
+              </SubPane>
+              <SubPane tab="ranking" lazy>
+                <RankingTab />
               </SubPane>
             </SubTabPage>
           )}

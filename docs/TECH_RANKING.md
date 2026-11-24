@@ -47,3 +47,10 @@
 - 服务端 `src/server/modules/technician-ranking.ts`，共用类型 `src/shared/technician-ranking.ts`；照片按文件头认格式沿用电子菜单的 `sniffImage`。
 - 用例 `tests/technician-ranking.test.ts`：七位合成技师覆盖空闲、休息、在钟上、已派待上、没上牌、停牌、离职；逐个对钟房 `/api/clockroom` 的状态；把上钟时刻往前挪核对已服务与剩余秒数、到点剩余为 0；人气值的 30 天边界、轮钟与没下钟的不算；工种字典的顺序与字典删掉的工种；权限与照片（去重、换、去掉、格式、审计、只追加、取图缓存）。
 - 验收：用独立演示库，钟房里让几位技师上牌、派钟、上钟、休息，`GET /api/technician-ranking` 的 `status` / `note` 与钟房一致；服务中的 `service.remainingSeconds` ≈ 计划下钟 − 现在；返回里没有客人姓名、手牌与房间。
+
+### 第二批（榜单页面）
+
+- 技师管理第五个页签「技师榜单」（`src/client/features/technicians/RankingTab.tsx`，路由 `/technicians/ranking`）；只有「技师上钟轮播」权限的进技师管理只看到榜单（导航「技师管理」也对他们显示）。
+- 名册的编辑框（门店「技师管理 → 名册」）多一栏「照片」：选了马上上传（浏览器先压缩），「去掉」马上生效，不跟着「保存」走；带着名册给的照片版本号提交。后台「技师 → 名册」的编辑框不显示照片。
+- 状态标签：空闲苔绿、服务中湖蓝、未当班灰（房态的四色只给房态用，`tests/room-colors.test.ts`）。
+- 用例 `e2e/technician-ranking.spec.ts` 第一个：工种、翻页、状态、搜索、综合 / 人气榜切换、占位头像、名册里上传与去掉照片。
