@@ -15,7 +15,8 @@ afterAll(async () => ctx.close());
 type Tag = { id: number; code: string; zone: string; active: boolean; serviceStatus: string; serviceNote: string | null; inUse: boolean };
 const tags = async () => (await api(ctx.app, ctx.owner, 'GET', '/api/frontdesk/tags')).body as Tag[];
 const tagOf = async (code: string) => (await tags()).find((t) => t.code === code);
-const generate = (body: object, cookie = ctx.owner) => api(ctx.app, cookie, 'POST', '/api/frontdesk/tags/generate', { prefix: 'A', start: 1, count: 10, width: 3, zone: 'male', ...body });
+const generate = (body: object, cookie = ctx.owner) =>
+  api(ctx.app, cookie, 'POST', '/api/frontdesk/tags/generate', { prefix: 'A', start: 1, count: 10, width: 3, zone: 'male', clientKey: randomUUID(), storeId: 1, ...body });
 const checkin = (code: string, zone = 'male') => api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: code, zone }] });
 
 describe('按规则批量生成', () => {
@@ -26,6 +27,8 @@ describe('按规则批量生成', () => {
     const any = planTagCodes({ prefix: '', start: 38, count: 5, width: 2, skipEndDigits: [], skipAnyDigits: [4] }, new Set(['39']));
     expect(any.codes).toEqual(['38', '50', '51', '52', '53']);
     expect(any.skippedExisting).toEqual(['39']);
+    // 按补零以后的号码判断：排除含 0 时 001–009 都跳过（Codex 审查 PR #189）
+    expect(planTagCodes({ prefix: 'A', start: 1, count: 3, width: 3, skipEndDigits: [], skipAnyDigits: [0] }, new Set()).codes).toEqual(['A111', 'A112', 'A113']);
     const out = planTagCodes({ prefix: 'B', start: 97, count: 5, width: 2, skipEndDigits: [], skipAnyDigits: [] }, new Set());
     expect(out).toMatchObject({ codes: ['B97', 'B98', 'B99'], exhausted: true });
   });
@@ -49,6 +52,32 @@ describe('按规则批量生成', () => {
     expect((await generate({ skipAnyDigits: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] })).status).toBe(400);
     expect((await generate({ prefix: 'B', zone: 'female', count: 5 })).body).toMatchObject({ created: 5 });
   });
+
+  it('操作编号：没带拒绝；原样重提返回第一次的牌号、不再建一批；同一编号换内容拒绝；确认作废过的编号不再写入', async () => {
+    expect((await generate({ prefix: 'C', clientKey: undefined })).status).toBe(400);
+    const key = randomUUID();
+    const first = await generate({ prefix: 'C', count: 4, clientKey: key });
+    expect(first.body).toMatchObject({ created: 4, replayed: false, codes: ['C001', 'C002', 'C003', 'C004'] });
+    expect(typeof first.body.opId).toBe('number');
+    const again = await generate({ prefix: 'C', count: 4, clientKey: key });
+    expect(again.body).toMatchObject({ created: 4, replayed: true, opId: first.body.opId, codes: ['C001', 'C002', 'C003', 'C004'] });
+    // 已经建了的不能再作废：作废接口返回查到了，之后原样重提照旧返回原来那批（Codex 审查 PR #191）
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${key}/abandon`, { type: 'hand_tag_generate', summary: '测试' })).body).toMatchObject({ found: true });
+    expect((await generate({ prefix: 'C', count: 4, clientKey: key })).body).toMatchObject({ replayed: true, created: 4 });
+    // 换了门店重提拒绝；没带门店拒绝
+    expect((await generate({ prefix: 'E', count: 1, storeId: 999 })).body.error.code).toBe('STORE_MISMATCH');
+    expect((await generate({ prefix: 'E', count: 1, storeId: undefined })).status).toBe(400);
+    expect((await tags()).filter((t) => t.code.startsWith('C'))).toHaveLength(4);
+    expect((await generate({ prefix: 'C', count: 5, clientKey: key })).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    const found = await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${key}?type=hand_tag_generate`);
+    expect(found.body).toMatchObject({ found: true });
+    // 作废在先：原请求晚到不写入
+    const late = randomUUID();
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${late}/abandon`, { type: 'hand_tag_generate', summary: '测试' })).status).toBe(200);
+    expect((await generate({ prefix: 'D', count: 2, clientKey: late })).body.error.code).toBe('OP_ABANDONED');
+    expect((await tags()).some((t) => t.code.startsWith('D'))).toBe(false);
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/erp/ops/${key}?type=hand_tag_generate`)).status).toBe(403);
+  });
 });
 
 describe('修改、删除', () => {
@@ -71,7 +100,11 @@ describe('修改、删除', () => {
     const v = await checkin('A005');
     expect(v.status).toBe(201);
     await ctx.sql`UPDATE visits SET status = 'cancelled', closed_at = now(), closed_by = ${ctx.ownerId} WHERE tag_id = ${a5.id}`;
+    // 发过的牌不能改号（历史单据按牌号显示；Codex 审查 PR #189），改分区照常
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/frontdesk/tags/${a5.id}`, { code: 'A905', zone: 'male', active: true })).body.error.code).toBe('TAG_HAS_HISTORY');
     expect((await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/tags/${a5.id}/delete`)).body).toMatchObject({ code: 'A005', kept: true });
+    // 删了的牌不能再绑芯片号（开着的绑卡窗口晚到也不行）
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/frontdesk/tags/${a5.id}/card`, { cardUid: '04AA11BB' })).status).toBe(404);
     expect(await tagOf('A005')).toBeUndefined();
     const [row] = await ctx.sql<{ active: boolean; deleted: boolean }[]>`SELECT active, deleted_at IS NOT NULL AS deleted FROM hand_tags WHERE id = ${a5.id}`;
     expect(row).toEqual({ active: false, deleted: true });

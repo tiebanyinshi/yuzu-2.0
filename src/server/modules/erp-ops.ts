@@ -69,6 +69,8 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   supplier_recon_void: ['payable.manage', 'purchase.manage'],
   // 空间台账导入（v0.7.14）：店主、店总（与后台「客房」同一组权限）
   space_import: ['settings.manage', 'catalog.manage'],
+  // 手牌按规则批量添加：与生成接口一致
+  hand_tag_generate: ['frontdesk.tags'],
   // 模拟刷卡（v0.7.17）：与上报接口一致
   location_report: ['location.report'],
   // 券与会员权益（v0.7.20）：与各自的提交接口一致
@@ -184,6 +186,7 @@ const READ: Record<ErpOpType, Permission[]> = {
   supplier_recon: ['payable.read'],
   supplier_recon_void: ['payable.read'],
   space_import: ['settings.manage', 'catalog.manage'],
+  hand_tag_generate: ['frontdesk.tags'],
   location_report: ['location.report'],
   coupon_template: ['coupon.manage'],
   coupon_rule: ['coupon.manage'],
@@ -301,6 +304,11 @@ export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise
   if (type === 'studio_publish') {
     const [v] = await db<{ id: number }[]>`SELECT id FROM studio_versions WHERE client_key = ${key}`;
     if (v) return { found: true, abandoned: false, refId: Number(v.id) };
+  }
+  // 手牌按规则批量添加的编号记在 hand_tag_generate_ops：refId 是那一次生成
+  if (type === 'hand_tag_generate') {
+    const [op] = await db<{ id: number }[]>`SELECT id FROM hand_tag_generate_ops WHERE op_key = ${key}`;
+    if (op) return { found: true, abandoned: false, refId: Number(op.id) };
   }
   // 模拟刷卡（v0.7.17）的编号记在位置事件上：refId 是那条位置事件
   if (type === 'location_report') {

@@ -385,6 +385,8 @@ export const ERP_OP_TYPES = [
   // 后台「空间台账」的导入（v0.7.14）与模拟刷卡（v0.7.17）：不属于 ERP 模块，借用同一套「结果待确认」
   'space_import',
   'location_report',
+  // 手牌按规则批量添加（Codex 审查 PR #189：回复丢了重提不能再建一批）
+  'hand_tag_generate',
   // 券与会员权益（v0.7.20）：新建券模板、发券规则，生成无记名券，发券给会员（Codex 复审 6c3765c：断网后刷新也要能查回、重提或作废）
   'coupon_template',
   'coupon_rule',
@@ -521,6 +523,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   supplier_recon: '对账登记',
   supplier_recon_void: '撤销对账登记',
   space_import: '空间台账导入',
+  hand_tag_generate: '手牌批量添加',
   location_report: '模拟刷卡',
   coupon_template: '新建券模板',
   coupon_rule: '加发券规则',

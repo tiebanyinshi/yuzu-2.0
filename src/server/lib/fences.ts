@@ -41,6 +41,8 @@ export const FENCED_OPS = [
   'supplier_recon_void',
   // 空间台账导入（v0.7.14）
   'space_import',
+  // 手牌按规则批量添加（迁移 261）：编号记在 hand_tag_generate_ops.op_key，不进 idempotency_keys
+  'hand_tag_generate',
   // 模拟刷卡（v0.7.17）：编号记在位置事件上（location_events.op_key），不进 idempotency_keys
   'location_report',
   // 派对房等的使用单（v0.7.19）：开单、结束、撤单
@@ -225,6 +227,11 @@ export async function fenceKey(tx: Tx, key: string, opType: FencedOp, staffId: n
   if (opType === 'location_report') {
     const [event] = await tx<{ id: number }[]>`SELECT id FROM location_events WHERE op_key = ${key}`;
     if (event) return { existingOpType: opType };
+  }
+  // 手牌批量添加：已经建了的不能再作废（作废了原样重提就查不回原来那批；Codex 审查 PR #191）
+  if (opType === 'hand_tag_generate') {
+    const [gen] = await tx<{ id: number }[]>`SELECT id FROM hand_tag_generate_ops WHERE op_key = ${key}`;
+    if (gen) return { existingOpType: opType };
   }
   if (isCouponOp(opType) && (await couponOpRef(tx, key, opType)) !== null) return { existingOpType: opType };
   if (isDeviceOp(opType) && (await deviceOpRef(tx, key, opType)) !== null) return { existingOpType: opType };
