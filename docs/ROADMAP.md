@@ -255,6 +255,7 @@
   - `250`（`250_technician_ranking.sql`，第一批）：技师照片 `technician_photos`（按内容去重、只追加）与名册上的 `technicians.photo_id`。回滚脚本 `docs/rollback/250_technician_ranking.down.sql`。
 - **手牌管理（店主 2026-11-24 登记，设计见 `docs/FRONTDESK_TAGS_V8127.md`）**：按规则批量添加（数量、起始号码、排除尾数 / 含某数字、不重号）、改牌号与删除（二次确认，在店的不能改删）、手牌柜标「暂停使用 / 维修中」（前台发不出，改回正常就能发）。一个 PR，不改版本号。迁移号预留 `260`–`264`。
   - `260`（`260_hand_tag_manage.sql`）：`hand_tags` 加柜子状态（`service_status` 正常 / 暂停使用 / 维修中、说明、经办人与时间）与删除标记（`deleted_at`、`deleted_by`；删了的必须是停用的）。回滚脚本 `docs/rollback/260_hand_tag_manage.down.sql`。
+  - `261`（`261_hand_tag_generate_ops.sql`，Codex 审查 PR #189）：按规则批量添加的操作编号 `hand_tag_generate_ops`（只追加：编号、请求摘要、建了哪些牌号），`op_fences` 的类型约束追加 `hand_tag_generate`。回滚脚本 `docs/rollback/261_hand_tag_generate_ops.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
