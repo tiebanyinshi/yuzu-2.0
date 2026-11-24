@@ -171,6 +171,19 @@ describe('技师榜单接口（第一批）', () => {
     expect(pop('37')).toBe(1); // 第 29 天前（含今天共 30 天）还算
   });
 
+  it('刷新间隔：技师规则里改（10–300 秒，默认 30），榜单接口跟着给', async () => {
+    expect((await ranking()).body.refreshSeconds).toBe(30);
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/rules', { rankingRefreshSeconds: 5 })).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/rules', { rankingRefreshSeconds: 301 })).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/rules', { rankingRefreshSeconds: 12.5 })).status).toBe(400);
+    const ok = await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/rules', { rankingRefreshSeconds: 60 });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.rules).toMatchObject({ enabled: true, rankingRefreshSeconds: 60 });
+    expect((await ranking()).body.refreshSeconds).toBe(60);
+    expect((await api(ctx.app, ctx.clerk, 'PUT', '/api/admin/technicians/rules', { rankingRefreshSeconds: 10 })).status).toBe(403);
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/rules', { rankingRefreshSeconds: 30 })).status).toBe(200);
+  });
+
   it('权限：维护名册、钟房能看；都没有的不行；没登录 401', async () => {
     expect((await ranking(ctx.owner)).status).toBe(200);
     expect((await ranking(backoffice)).status).toBe(403);

@@ -3,18 +3,24 @@
 //   · 左侧：综合榜 / 人气榜竖排切换（默认综合榜）；
 //   · 中部：深色照片卡片网格（宽屏一行 6 张，每页 12 张；窄屏少几列），没照片显示占位头像，照片加载失败也换成占位；
 //   · 底部：首页 / 上一页 / 页码 / 下一页 / 尾页。筛选、搜索、切换榜单后回到第 1 页。
+//   · 第三批：按技师规则里的间隔（默认 30 秒）重新取；服务中的卡片按服务器时间每秒倒计时、画进度条（不靠取数），
+//     到点没下钟的写「待下钟」，钟房下钟后下一次取数变空闲；人气榜按人气值排，前三名皇冠 / 银牌 / 铜牌。
 // 状态由服务端按钟房算好，这里只显示；不显示客人信息（TR6）。
 
-import { useState } from 'react';
-import { ChevronFirst, ChevronLast, ChevronLeft, ChevronRight, Flame, Search, UserRound } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChevronFirst, ChevronLast, ChevronLeft, ChevronRight, Crown, Flame, Medal, Search, UserRound } from 'lucide-react';
 import {
+  countdownText,
   filterRanking,
   pageOf,
+  podiumOf,
   RANKING_BOARD_LABELS,
   RANKING_BOARDS,
   RANKING_NOTE_LABELS,
   RANKING_STATUS_LABELS,
   RANKING_STATUSES,
+  rankOf,
+  serviceProgress,
   type RankingBoard,
   type RankingStatus,
   type RankingTech,
@@ -31,8 +37,20 @@ const STATUS_TONE: Record<RankingStatus, string> = {
   off: 'bg-ink-3 text-paper',
 };
 
+/** 服务器时间：取数时记下与本机的时差，之后每秒走一格（纯界面的计时器，不取数） */
+function useServerNow(serverTime: string | undefined, receivedAt: number) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const offset = serverTime ? new Date(serverTime).getTime() - receivedAt : 0;
+  return now + offset;
+}
+
 export function RankingTab() {
   const q = useTechRanking();
+  const serverNow = useServerNow(q.data?.serverTime, q.dataUpdatedAt);
   const [kind, setKind] = useState<string | null>(null);
   const [status, setStatus] = useState<RankingStatus | 'all'>('all');
   const [text, setText] = useState('');
@@ -49,7 +67,18 @@ export function RankingTab() {
   if (q.isPending) return <Skeleton className="h-96" />;
   if (!q.data) return <LoadFailed title="技师榜单没取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} testId="ranking-failed" />;
   const v = q.data;
-  const list = filterRanking(v.techs, { kind, status, text });
+  // 名次在工种之内算；状态、搜索只挑出来看，不改名次
+  const ranked = rankOf(
+    v.techs.filter((t) => kind === null || t.kind === kind),
+    board,
+  );
+  const visible = new Set(
+    filterRanking(
+      ranked.map((r) => r.tech),
+      { kind: null, status, text },
+    ).map((t) => t.id),
+  );
+  const list = ranked.filter((r) => visible.has(r.tech.id));
   const shown = pageOf(list, page, v.pageSize);
   const onDuty = v.counts.idle + v.counts.serving;
 
@@ -121,9 +150,9 @@ export function RankingTab() {
             <EmptyState title="没有符合条件的技师" description="换个工种、状态，或清掉搜索词再看" />
           ) : (
             <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6" data-testid="ranking-grid">
-              {shown.items.map((t) => (
-                <li key={t.id}>
-                  <RankingCard t={t} popular={board === 'popular'} />
+              {shown.items.map(({ tech, rank }) => (
+                <li key={tech.id}>
+                  <RankingCard t={tech} rank={rank} board={board} serverNow={serverNow} />
                 </li>
               ))}
             </ul>
@@ -185,8 +214,18 @@ function PageButton({ label, disabled, onClick, testId, children }: { label: str
   );
 }
 
-/** 一张技师卡片：照片（没有或加载失败为占位头像）、No.技师号、名字与工种、状态；服务中的写项目与已服务时长 */
-function RankingCard({ t, popular }: { t: RankingTech; popular: boolean }) {
+const PODIUM = {
+  1: { icon: Crown, label: '第一名', tone: 'bg-yuzu text-ink' },
+  2: { icon: Medal, label: '第二名', tone: 'bg-paper-3 text-ink' },
+  3: { icon: Medal, label: '第三名', tone: 'bg-ember text-paper' },
+} as const;
+
+/** 一张技师卡片：照片（没有或加载失败为占位头像）、No.技师号、名字与工种、状态；服务中的写项目、已服务时长、进度条与剩余时间 */
+function RankingCard({ t, rank, board, serverNow }: { t: RankingTech; rank: number; board: RankingBoard; serverNow: number }) {
+  const popular = board === 'popular';
+  const podium = podiumOf(rank, t.popularity, board);
+  const PodiumIcon = podium ? PODIUM[podium].icon : null;
+  const progress = t.service ? serviceProgress(t.service, serverNow) : null;
   const [broken, setBroken] = useState<string | null>(null);
   const photo = t.photoUrl && broken !== t.photoUrl ? t.photoUrl : null;
   return (
@@ -202,8 +241,19 @@ function RankingCard({ t, popular }: { t: RankingTech; popular: boolean }) {
         <span className={cn('absolute top-2 right-2 rounded-full px-2 py-0.5 text-[12px] font-bold', STATUS_TONE[t.status])} data-testid="ranking-status-tag">
           {RANKING_STATUS_LABELS[t.status]}
         </span>
+        {podium && PodiumIcon && (
+          <span
+            className={cn('absolute top-2 left-2 flex size-8 items-center justify-center rounded-full shadow', PODIUM[podium].tone)}
+            title={PODIUM[podium].label}
+            aria-label={PODIUM[podium].label}
+            data-testid="ranking-podium"
+            data-rank={podium}
+          >
+            <PodiumIcon className="size-4.5" aria-hidden />
+          </span>
+        )}
         {popular && (
-          <span className="absolute top-2 left-2 flex items-center gap-0.5 rounded-full bg-ink/70 px-2 py-0.5 text-[12px] font-bold text-yuzu" data-testid="ranking-popularity">
+          <span className="absolute bottom-2 left-2 flex items-center gap-0.5 rounded-full bg-ink/70 px-2 py-0.5 text-[12px] font-bold text-yuzu" data-testid="ranking-popularity">
             <Flame className="size-3.5" aria-hidden />
             <span className="num">{t.popularity}</span>
           </span>
@@ -219,10 +269,40 @@ function RankingCard({ t, popular }: { t: RankingTech; popular: boolean }) {
           {t.kind && <span className="text-paper-3"> · {t.kind}</span>}
         </p>
         {t.service && (
-          <p className="truncate text-[12px] text-paper-3" data-testid="ranking-service">
-            {t.service.itemName}
-            {t.service.elapsedSeconds !== null && <> · 已服务 {Math.floor(t.service.elapsedSeconds / 60)} 分</>}
-          </p>
+          <div className="space-y-1 pt-0.5" data-testid="ranking-service">
+            <p className="truncate text-[12px] text-paper-2">{t.service.itemName}</p>
+            {progress ? (
+              <>
+                <div
+                  className="h-1.5 overflow-hidden rounded-full bg-ink-2"
+                  role="progressbar"
+                  aria-label="服务进度"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(progress.ratio * 100)}
+                  data-testid="ranking-progress"
+                >
+                  <div className={cn('h-full rounded-full', progress.remaining > 0 ? 'bg-lake' : 'bg-ember')} style={{ width: `${progress.ratio * 100}%` }} />
+                </div>
+                <p className="flex justify-between gap-1 text-[12px] text-paper-3">
+                  <span className="num" data-testid="ranking-elapsed">
+                    已服务 {Math.floor(progress.elapsed / 60)} 分
+                  </span>
+                  {progress.remaining > 0 ? (
+                    <span className="num font-semibold text-paper" data-testid="ranking-remaining">
+                      剩 {countdownText(progress.remaining)}
+                    </span>
+                  ) : (
+                    <span className="font-semibold text-ember" data-testid="ranking-remaining">
+                      待下钟
+                    </span>
+                  )}
+                </p>
+              </>
+            ) : (
+              <p className="text-[12px] text-paper-3">已派钟，还没上钟</p>
+            )}
+          </div>
         )}
       </div>
     </article>

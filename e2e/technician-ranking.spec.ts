@@ -2,11 +2,13 @@
 //   技师管理 →「技师榜单」页签：工种标签（只看本用例的工种）、翻页（首页 / 上一页 / 页码 / 下一页 / 尾页）、搜索（技师号、姓名）、
 //   状态筛选（上牌的空闲、没上牌的未当班）、综合榜 / 人气榜切换（切换后回到第 1 页）；没照片的显示占位头像；
 //   在名册的编辑框里上传一张照片，榜单上换成照片；去掉（回复故意丢掉 → 结果待确认 → 原样重提）后回到占位头像。
+// 第三批（第二个用例，榜单接口换成模拟数据、浏览器用假时钟）：服务中的卡片每秒倒计时、进度条，到点写「待下钟」，
+//   按设置的间隔再取一次，钟房下了钟的变空闲；人气榜按人气值排，前三名皇冠 / 银牌 / 铜牌，人气值为 0 的不给。
 // 依赖独立演示库；账号：店主 linlan，密码 yuzu2026。用自己的 13 位技师（RK01–RK13，工种「E2E榜单」，没有就建、有就改回来），
 // 结束时（含失败）都下牌、去掉照片、停用，工种清单与技师功能的开关恢复成开始时的样子。可重复执行。
 import { expect, test, type Page } from '@playwright/test';
 import type { TechnicianAdminView } from '../src/shared/technician-admin';
-import type { TechnicianRankingView } from '../src/shared/technician-ranking';
+import type { RankingTech, TechnicianRankingView } from '../src/shared/technician-ranking';
 
 const PASSWORD = 'yuzu2026';
 const KIND = 'E2E榜单';
@@ -180,6 +182,113 @@ test.describe('技师榜单：工种、翻页、搜索、状态、综合 / 人�
       }
       await page.request.put('/api/technician-admin/kinds', { data: { kinds: before.kinds } });
       await page.request.put('/api/admin/technicians/rules', { data: { enabled: before.enabled } });
+    }
+  });
+
+  test('第三批：倒计时与进度、到点待下钟、按间隔刷新后变空闲；人气榜排序与前三名', async ({ page }) => {
+    await login(page, 'linlan');
+    const before = await send<{ rules: { enabled: boolean } }>(page, 'get', '/api/admin/technicians');
+    await send(page, 'put', '/api/admin/technicians/rules', { enabled: true });
+    try {
+      // 榜单接口换成模拟数据：第一次 M1 在钟上、还剩 10 秒；之后 M1 已下钟（空闲）
+      let calls = 0;
+      const base = (no: string, over: Partial<RankingTech>): RankingTech => ({
+        id: 990_000 + Number(no.slice(1)),
+        techNo: no,
+        name: `模拟${no}`,
+        realName: `模拟${no}`,
+        kind: '足浴',
+        photoUrl: null,
+        status: 'idle',
+        note: null,
+        popularity: 0,
+        overallRank: Number(no.slice(1)),
+        service: null,
+        ...over,
+      });
+      await page.route('**/api/technician-ranking', async (route) => {
+        calls += 1;
+        const now = Date.now();
+        const started = now - (60 * 60 - 10) * 1000;
+        const serving = calls === 1;
+        const techs = [
+          base('M1', {
+            status: serving ? 'serving' : 'idle',
+            service: serving
+              ? {
+                  sessionId: 1,
+                  itemName: '模拟足疗',
+                  phase: 'serving',
+                  startedAt: new Date(started).toISOString(),
+                  minutes: 60,
+                  plannedEnd: new Date(started + 3_600_000).toISOString(),
+                  elapsedSeconds: 3590,
+                  remainingSeconds: 10,
+                }
+              : null,
+          }),
+          base('M2', { popularity: 5 }),
+          base('M3', { popularity: 3 }),
+          base('M4', { popularity: 1, status: 'off' }),
+          base('M5', { popularity: 1 }),
+        ];
+        const view: TechnicianRankingView = {
+          serverTime: new Date(now).toISOString(),
+          businessDate: '2026-11-24',
+          refreshSeconds: 30,
+          pageSize: 12,
+          popularityDays: 30,
+          kinds: ['足浴'],
+          techs,
+          counts: { idle: techs.filter((t) => t.status === 'idle').length, serving: serving ? 1 : 0, off: 1 },
+        };
+        await route.fulfill({ json: view });
+      });
+      await page.clock.install();
+      await page.goto('/technicians/ranking');
+      const m1 = page.getByTestId('ranking-card-M1');
+      await expect(m1.getByTestId('ranking-status-tag')).toHaveText('服务中');
+      await expect(m1.getByTestId('ranking-service')).toContainText('模拟足疗');
+      await expect(m1.getByTestId('ranking-elapsed')).toHaveText('已服务 59 分');
+      await expect(m1.getByTestId('ranking-remaining')).toHaveText(/剩 0:(10|09)/);
+      const progress = Number(await m1.getByTestId('ranking-progress').getAttribute('aria-valuenow'));
+      expect(progress).toBeGreaterThanOrEqual(99);
+      // 每秒倒计时（不靠取数）：过 5 秒剩 0:05 左右，过了 10 秒写「待下钟」
+      await page.clock.fastForward(5_000);
+      await expect(m1.getByTestId('ranking-remaining')).toHaveText(/剩 0:0[456]/);
+      expect(calls).toBe(1);
+      await page.clock.fastForward(6_000);
+      await expect(m1.getByTestId('ranking-remaining')).toHaveText('待下钟');
+      await expect(m1.getByTestId('ranking-progress')).toHaveAttribute('aria-valuenow', '100');
+      // 到了刷新间隔（30 秒）再取一次：钟房已下钟，变空闲
+      await page.clock.fastForward(30_000);
+      await expect(m1.getByTestId('ranking-status-tag')).toHaveText('空闲');
+      await expect(m1.getByTestId('ranking-service')).toHaveCount(0);
+      expect(calls).toBeGreaterThanOrEqual(2);
+
+      // 人气榜：M2 5、M3 3、M4 1、M5 1（同分按综合榜先后）、M1 0；前三名标识，人气值 0 的不给
+      await page.getByTestId('ranking-board-popular').click();
+      const order = await page
+        .getByTestId('ranking-grid')
+        .locator('[data-testid^="ranking-card-"]')
+        .evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
+      expect(order).toEqual(['ranking-card-M2', 'ranking-card-M3', 'ranking-card-M4', 'ranking-card-M5', 'ranking-card-M1']);
+      await expect(page.getByTestId('ranking-card-M2').getByTestId('ranking-podium')).toHaveAttribute('data-rank', '1');
+      await expect(page.getByTestId('ranking-card-M3').getByTestId('ranking-podium')).toHaveAttribute('data-rank', '2');
+      await expect(page.getByTestId('ranking-card-M4').getByTestId('ranking-podium')).toHaveAttribute('data-rank', '3');
+      await expect(page.getByTestId('ranking-card-M5').getByTestId('ranking-podium')).toHaveCount(0);
+      await expect(page.getByTestId('ranking-card-M1').getByTestId('ranking-podium')).toHaveCount(0);
+      // 筛状态不改名次：只看空闲的，M2 仍是皇冠
+      await page.getByTestId('ranking-status').selectOption('idle');
+      await expect(page.getByTestId('ranking-card-M4')).toHaveCount(0);
+      await expect(page.getByTestId('ranking-card-M2').getByTestId('ranking-podium')).toHaveAttribute('data-rank', '1');
+      await expect(page.getByTestId('ranking-card-M5').getByTestId('ranking-podium')).toHaveCount(0);
+      // 综合榜没有名次标识
+      await page.getByTestId('ranking-board-overall').click();
+      await expect(page.getByTestId('ranking-podium')).toHaveCount(0);
+    } finally {
+      await page.unrouteAll({ behavior: 'ignoreErrors' });
+      await page.request.put('/api/admin/technicians/rules', { data: { enabled: before.rules.enabled } });
     }
   });
 });

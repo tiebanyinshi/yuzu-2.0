@@ -36,7 +36,20 @@ export const useLeaves = (status: LeaveStatus | 'all') =>
 
 /** 技师榜单（docs/TECH_RANKING.md）：名册 + 钟房状态 */
 export const rankingKey = ['technician-ranking'] as const;
-export const useTechRanking = (enabled = true) => useQuery({ queryKey: rankingKey, queryFn: () => api.get<TechnicianRankingView>('/api/technician-ranking'), enabled });
+/** 第三批：按技师规则里的间隔（默认 30 秒）再取，后台不取、断网不取、回到页面与网络恢复时马上取 */
+export function useTechRanking() {
+  const query = useQuery({ queryKey: rankingKey, queryFn: () => api.get<TechnicianRankingView>('/api/technician-ranking') });
+  const { refetch } = query;
+  const intervalMs = (query.data?.refreshSeconds ?? 30) * 1000;
+  useLivePoll(
+    async () => {
+      await refetch({ cancelRefetch: false });
+    },
+    [refetch, intervalMs],
+    { intervalMs, delayMs: intervalMs },
+  );
+  return query;
+}
 
 /** 保存以后：技师管理的几样、钟房看板、后台名册、前台选技师都重新取 */
 export function useTechAdminRefresh() {
