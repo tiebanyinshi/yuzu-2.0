@@ -97,6 +97,11 @@ import { applyLegacyImport, fileMeta, LegacyParseError, parseLegacyWorkbook, pre
 import { legacySampleFiles } from './modules/legacy/samples';
 import { LEGACY_SOURCE_LABELS, type LegacyAudit } from '@shared/legacy';
 import { priceAudit } from './modules/price-catalog/audit';
+import { importTechnicians } from './modules/technician-import';
+import { parseGradeMap, parseTechnicianTable } from '@shared/technician-import';
+import { readCsvTable } from '@shared/csv-read';
+import { PRICE_TIER_LABELS, type PriceTier } from '@shared/catalog';
+import { readXlsx } from './lib/xlsx-read';
 import { STORE_HAND_TAGS_CSV } from './demo/hand-tags-2026-10-27';
 import { importHandTags } from './modules/frontdesk/tags';
 import { applyOpeningImport, previewOpeningImport } from './modules/opening';
@@ -134,6 +139,25 @@ function parseControl(text: string | undefined) {
 }
 
 /** 读导入文件：自动识别 UTF-8 / GBK（中文 Excel、WPS 默认存 GBK），乱码时报错 */
+/** 导入用的表格：.xlsx 取第一张工作表，其余按 CSV 读；返回每行的单元格文字 */
+async function readTableFile(file: string): Promise<string[][]> {
+  if (/\.xlsx$/i.test(file)) {
+    const book = readXlsx(await readFile(file));
+    const sheet = book.sheets[0];
+    if (!sheet) throw new Error('表格里没有工作表');
+    const last = Math.max(0, ...sheet.rows.keys());
+    const out: string[][] = [];
+    for (let r = 1; r <= last; r += 1) {
+      const cells = sheet.rows.get(r);
+      const width = cells ? Math.max(0, ...cells.keys()) + 1 : 0;
+      out.push(Array.from({ length: width }, (_, c) => cells?.get(c)?.value ?? ''));
+    }
+    return out;
+  }
+  const t = readCsvTable(await readImportFile(file));
+  return [...(t.header ? [t.header] : []), ...t.rows].map((r) => r.cells);
+}
+
 async function readImportFile(file: string): Promise<string> {
   const { text, encoding } = decodeImportFile(new Uint8Array(await readFile(file)));
   if (encoding !== 'UTF-8') console.log(`· ${encodingNote(encoding)}`);
@@ -144,7 +168,7 @@ async function readImportFile(file: string): Promise<string> {
  * 多门店（8.1.35 福田迁移，docs/FUTIAN_MIGRATION.md）：这几个导入命令带 `--store <门店代码>` 时整条命令在那家店里跑（runInStore），
  * 不带是本店（与以往一样）。门店代码从参数里拿掉，免得被当成文件名。别的命令不认 --store（daily-recon 自己处理）。
  */
-const STORE_FLAG_COMMANDS = new Set(['import-hand-tags', 'import-opening', 'import-count-cards']);
+const STORE_FLAG_COMMANDS = new Set(['import-hand-tags', 'import-opening', 'import-count-cards', 'import-technicians']);
 async function withStoreFlag(sql: Sql, command: string | undefined, args: string[], run: () => Promise<void>): Promise<void> {
   const at = args.indexOf('--store');
   if (at < 0 || command === 'daily-recon') return run();
@@ -516,6 +540,30 @@ async function main() {
           console.log(apply ? `✓ 已停用 ${r.deactivated} 个，记了审计。` : '以上为核对结果，没有写入。确认上面两类都该停用后加 --apply。');
           break;
         }
+        case 'import-technicians': {
+          // 8.1.35 福田迁移第二批（docs/FUTIAN_MIGRATION.md 第 2.4 节）：旧系统「技师导入模板」（xlsx 或 csv），配 --store 导到那家店
+          const file = args.find((a, i) => !a.startsWith('--') && !['--skip-group', '--grade-map'].includes(args[i - 1] ?? ''));
+          if (!file) throw new Error('用法：import-technicians <技师导入模板.xlsx|csv> [--store 门店代码] [--grade-map 一星=标准,五星=专业] [--skip-group 测试组,培训组] [--skip-invalid] [--apply]');
+          await prepareDb(sql, config);
+          const gradeMap = parseGradeMap(flag(args, 'grade-map') ?? '');
+          if (typeof gradeMap === 'string') throw new Error(gradeMap);
+          const parsed = parseTechnicianTable(await readTableFile(file), { gradeMap });
+          for (const e of parsed.errors.slice(0, 50)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
+          if (parsed.errors.length > 50) console.log(`  ……另有 ${parsed.errors.length - 50} 处`);
+          if (parsed.errors.length && !args.includes('--skip-invalid')) throw new Error(`有 ${parsed.errors.length} 行要改，整批没有导入（改好后重新预览；或加 --skip-invalid 只导没问题的）`);
+          const apply = args.includes('--apply');
+          const r = await importTechnicians(sql, parsed.rows, { apply, staffId: null, skipGroups: (flag(args, 'skip-group') ?? '').split(/[,，]/) });
+          console.log(
+            `表里 ${r.total} 位（问题行另计 ${parsed.errors.length}）：新建 ${r.created} 位（${
+              Object.entries(r.byGrade)
+                .map(([g, n]) => `${PRICE_TIER_LABELS[g as PriceTier]} ${n}`)
+                .join('、') || '无'
+            }），技师号已有跳过 ${r.existing.length} 位，按组别跳过 ${r.skippedByGroup} 位`,
+          );
+          if (r.groupsCreated.length) console.log(`新建分组 ${r.groupsCreated.length} 个：${r.groupsCreated.join('、')}`);
+          console.log(apply ? '✓ 已导入，记了审计。' : '以上为预览，没有写入。确认无误后加 --apply（真实门店数据，门店环境须店主同意）。');
+          break;
+        }
         case 'import-opening': {
           const file = args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'));
           const username = flag(args, 'operator')?.toLowerCase();
@@ -863,7 +911,7 @@ async function main() {
         }
         default:
           console.log(
-            '可用命令：migrate | create-owner <账号> | reset-password <账号> | seed-demo [--force] | seed-inventory-demo | seed-frontdesk-demo [--previous-day] | seed-billing-demo [--previous-day] | seed-legacy-demo | demo-prepare [--previous-day] | demo-check | demo-reset --confirm <数据库名> | import-hand-tags | price-audit [--apply] | import-opening | check | fingerprint | backup | backup-loop | verify-backup | daily-recon | balance-changes | floorplan-convert | floorplan-sample | import-devices | device-selftest | device-printer-mock | device-bridge-mock | membership-daily | import-benefits | import-count-cards',
+            '可用命令：migrate | create-owner <账号> | reset-password <账号> | seed-demo [--force] | seed-inventory-demo | seed-frontdesk-demo [--previous-day] | seed-billing-demo [--previous-day] | seed-legacy-demo | demo-prepare [--previous-day] | demo-check | demo-reset --confirm <数据库名> | import-hand-tags | price-audit [--apply] | import-technicians | import-opening | check | fingerprint | backup | backup-loop | verify-backup | daily-recon | balance-changes | floorplan-convert | floorplan-sample | import-devices | device-selftest | device-printer-mock | device-bridge-mock | membership-daily | import-benefits | import-count-cards',
           );
           process.exitCode = command ? 1 : 0;
       }

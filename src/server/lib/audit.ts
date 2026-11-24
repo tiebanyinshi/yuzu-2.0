@@ -111,6 +111,8 @@ export type AuditAction =
   | 'hand_tag_unlocked'
   | 'hand_tag_updated'
   | 'technician_saved'
+  // 8.1.35 福田迁移：技师名册导入
+  | 'technicians_imported'
   | 'items_technician_updated'
   // 餐饮（S5 第一步）：出品档口、菜品的出品档口、沽清
   | 'kitchen_station_saved'
