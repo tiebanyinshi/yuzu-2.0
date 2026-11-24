@@ -979,7 +979,7 @@ describe('价目表录入 第四批：对接收银项目', () => {
     expect([snooker1, snooker2]).not.toContain(keyOf('斯诺克'));
     expect(keyOf('斯诺克')).toBeDefined();
     // 双价：标准 / 专业 = 专业价，优选 = 资深价（PC7）；单价：每一档都是这个价
-    expect(await tiers(yoga)).toEqual({ premium: 69900, professional: 59900, standard: 59900 });
+    expect(await tiers(yoga)).toEqual({ premium: 69900, professional: 59900 });
     expect(await tiers(pool)).toEqual({ standard: 3900 });
     // 原样重提：返回第一次的结果，不再对一遍
     const again = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/links/auto', { opKey });
@@ -1045,12 +1045,12 @@ describe('价目表录入 第四批：对接收银项目', () => {
     // 改双价：专业 619、资深 719
     const yogaEntry = find(active, '瑜伽泰式');
     expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${yogaEntry.id}`, { ...yogaEntry, priceCents: 61900, price2Cents: 71900, opKey: randomUUID() })).status).toBe(200);
-    expect(await tiers(yoga)).toEqual({ premium: 71900, professional: 61900, standard: 61900 });
+    expect(await tiers(yoga)).toEqual({ premium: 71900, professional: 61900 });
 
     // 整体回滚：收银项目回到上一版的价（瑜伽泰式 599 / 699）；改了名的台球在上一版里没有这个名字，不动（同步结果里写明）；同步记审计
     const overview = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as PriceCatalogOverview;
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/rollback', { opKey: randomUUID(), activeId: overview.active!.id, reason: '演练回滚' })).status).toBe(200);
-    expect(await tiers(yoga)).toEqual({ premium: 69900, professional: 59900, standard: 59900 });
+    expect(await tiers(yoga)).toEqual({ premium: 69900, professional: 59900 });
     expect(await tiers(pool)).toEqual({ standard: 4500 });
     const audits = await ctx.sql<{ detail: { action: string; label: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'price_catalog' ORDER BY id`;
     expect(audits.map((a) => a.detail.action)).toEqual(expect.arrayContaining(['link', 'unlink', 'sync']));
@@ -1360,5 +1360,132 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     // 已开的单照旧显示原名称、原价
     const [line] = await ctx.sql<{ name: string; unitPrice: number }[]>`SELECT name, unit_price FROM bill_lines WHERE item_id = ${ticket.id}`;
     expect(line).toMatchObject({ name: '12H 不含餐', unitPrice: 49900 });
+  });
+
+  it('PC28：门店原有的同名收银项目对上以后补齐设置（需要技师、时长、专业 / 优选两档、出品档口），房态中心登记与点单页看得到；别的门店定了本店价的档留着；没有档口时分类核对写明原因', async () => {
+    const activateNew = async (title: string) => {
+      const file = workbook();
+      const p = (await preview(file)).body as PriceImportPreview & { digest: string };
+      const draft = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/import', { fileName: `${title}.xlsx`, xlsxBase64: file, previewDigest: p.digest, title, opKey: randomUUID() }))
+        .body as PriceCatalogSet;
+      const r = await api(ctx.app, ctx.owner, 'POST', '/api/admin/price-catalog/activate', { opKey: randomUUID(), draftId: draft.id, countReason: '合成的演练表' });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+    };
+    const tiers = async (id: number) =>
+      Object.fromEntries((await ctx.sql<{ tier: string; price: number }[]>`SELECT tier, price FROM service_item_prices WHERE item_id = ${id} ORDER BY tier`).map((r) => [r.tier, Number(r.price)]));
+    // 正式服的样子：门店原来就有同名的收银项目（以前录的），没标需要技师、只有标准价、菜品没挂档口；先也没有在用的出品档口
+    await ctx.sql`DELETE FROM price_catalog_links`;
+    await ctx.sql`UPDATE service_items SET active = false, catalog_managed = false, catalog_key = NULL`;
+    const stations = (await ctx.sql<{ id: number }[]>`UPDATE kitchen_stations SET active = false WHERE active RETURNING id`).map((r) => Number(r.id));
+    const legacy = async (body: Record<string, unknown>) => {
+      const r = await api(ctx.app, ctx.owner, 'POST', '/api/items', body);
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      return Number((await ctx.sql<{ id: number }[]>`SELECT id FROM service_items WHERE name = ${body.name as string} AND active ORDER BY id DESC LIMIT 1`)[0]!.id);
+    };
+    const gufa = await legacy({ name: '古法中式', category: '按摩', price: 45000, technicianRequired: false });
+    const porridge = await legacy({ name: '生滚牛肉粥', category: '餐饮', price: 3000 });
+    // 另一家店给原有的「伊索抗衰面部护理」的标准档定了本店价：本店换成专业 / 优选时这一档留着，本店价照旧有着落
+    const facial = await legacy({ name: '伊索抗衰面部护理', category: '按摩', price: 70000, technicianRequired: true });
+    const ocean = await legacy({ name: '海蓝之谜清洁面部护理', category: '按摩', price: 70000, technicianRequired: true });
+    const [store2] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('PC28', '二店', 1) RETURNING id`;
+    await ctx.sql`INSERT INTO service_item_store_prices (store_id, item_id, tier, price, updated_by) VALUES (${store2!.id}, ${facial}, 'standard', 72000, 1)`;
+    // 切换前按「标准」档开出的钟（价格不跟技师等级）：切换后标准档去掉了，加钟照样能加，按专业档（价目表把专业价写在标准档上）
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/rules', { enabled: true, requireTechnician: false, tierByGrade: false })).status).toBe(200);
+    const techRes = await api(ctx.app, ctx.owner, 'POST', '/api/admin/technicians', { techNo: 'Q28', name: '合成技师', gender: 'female', grade: 'standard' });
+    const techId = (techRes.body.technicians as { id: number; techNo: string }[]).find((t) => t.techNo === 'Q28')!.id;
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/technicians/${techId}/state`, { action: 'sign_in' })).status).toBe(200);
+    await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'Q', from: 1, to: 1, width: 3, zone: 'female' });
+    const qVisit = (await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: 'Q001', zone: 'female' }] })).body.visits[0].id as number;
+    const dispatched = await api(ctx.app, ctx.clerk, 'POST', '/api/clockroom/dispatch', {
+      clientKey: randomUUID(),
+      visitId: qVisit,
+      itemId: ocean,
+      tier: 'standard',
+      quantity: 1,
+      expectedTotal: 70000,
+      technicianId: techId,
+      callType: 'designated',
+      startNow: true,
+    });
+    expect(dispatched.status, JSON.stringify(dispatched.body)).toBe(200);
+    const sessionId = (dispatched.body.sessions as { id: number; technicianId: number }[]).find((x) => x.technicianId === techId)!.id;
+    // 切换前加的一钟（标准档）没收到结果：切换以后原样重提，认得出是同一笔、不再加
+    const before = { clientKey: randomUUID(), quantity: 1, expectedTotal: 70000 };
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${sessionId}/extend`, before)).status).toBe(200);
+    await activateNew('原有同名·没有档口');
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${sessionId}/extend`, before)).status).toBe(200);
+    expect((await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM bill_lines WHERE session_id = ${sessionId} AND status = 'active'`)[0]!.n).toBe(2);
+    const ext = await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${sessionId}/extend`, { clientKey: randomUUID(), quantity: 1, expectedTotal: 80000 });
+    expect(ext.status, JSON.stringify(ext.body)).toBe(200);
+    const extLines = await ctx.sql<{ tier: string; unitPrice: number }[]>`SELECT tier, unit_price FROM bill_lines WHERE session_id = ${sessionId} AND status = 'active' ORDER BY id`;
+    expect(extLines).toEqual([
+      { tier: 'standard', unitPrice: 70000 },
+      { tier: 'standard', unitPrice: 70000 },
+      { tier: 'professional', unitPrice: 80000 },
+    ]);
+
+    // 没有档口：粥对上了原有的项目但上不了点单页，别的菜建不了——分类核对逐项写明
+    let checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
+    const congee = checks.find((c) => c.name === '生滚粥')!;
+    expect(congee).toMatchObject({ sellable: 2, items: 0 });
+    expect(congee.hidden.map((h) => h.name).sort()).toEqual(['生滚牛肉粥', '皮蛋瘦肉粥']);
+    expect(congee.hidden.every((h) => /档口/.test(h.reason))).toBe(true);
+    // 按摩的原有项目已经补好：标了需要技师、时长照价目表、专业 / 优选两档（原来的标准档去掉），没有新建一个
+    const [g] = await ctx.sql<{ technicianRequired: boolean; durationMinutes: number | null; catalogManaged: boolean; code: string }[]>`
+      SELECT technician_required, duration_minutes, catalog_managed, catalog_category_code AS code FROM service_items WHERE id = ${gufa}`;
+    expect(g).toMatchObject({ technicianRequired: true, durationMinutes: 80, catalogManaged: false, code: 'massage.01' });
+    expect(await tiers(gufa)).toEqual({ premium: 59900, professional: 49900 });
+    expect((await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM service_items WHERE name = '古法中式' AND active`)[0]!.n).toBe(1);
+    expect(checks.find((c) => c.code === 'massage.01')).toMatchObject({ items: 2, hidden: [] });
+    expect(await tiers(facial)).toEqual({ premium: 90000, professional: 80000, standard: 80000 });
+    expect((await ctx.sql<{ price: number }[]>`SELECT price FROM service_item_store_prices WHERE item_id = ${facial} AND tier = 'standard'`)[0]!.price).toBe(72000);
+    // 房态中心登记（康美部）列得出它，价格是「专业价 / 资深价」两档
+    let catalog = (await api(ctx.app, ctx.clerk, 'GET', '/api/catalog')).body as Catalog;
+    const g2 = catalog.items.find((i) => i.id === gufa)!;
+    expect(g2).toMatchObject({ technicianRequired: true, durationMinutes: 80 });
+    expect(g2.prices.map((p) => p.tier)).toEqual(['professional', 'premium']);
+    expect(catalog.items.filter((i) => i.technicianRequired && !ROOM_SERVICE_EXCLUDED_CATEGORIES.includes(i.catalogCategory?.code ?? '')).map((i) => i.id)).toContain(gufa);
+
+    // 建了档口以后再切换生效一次：粥挂上档口、归到餐厅，别的菜也建出来；分类核对都对得上
+    await ctx.sql`UPDATE kitchen_stations SET active = true WHERE id IN ${ctx.sql(stations.length ? stations : [0])}`;
+    if (!stations.length) await ctx.sql`INSERT INTO kitchen_stations (name) VALUES ('演练热菜')`;
+    await activateNew('原有同名·有档口');
+    // 只挂上档口；点单分区没写的照旧按类别归到默认分区（「餐饮」→ 餐厅），不改
+    const [pr] = await ctx.sql<{ stationId: number | null; diningOutlet: string | null; catalogManaged: boolean }[]>`
+      SELECT station_id, dining_outlet, catalog_managed FROM service_items WHERE id = ${porridge}`;
+    expect(pr).toMatchObject({ diningOutlet: null, catalogManaged: false });
+    expect(pr!.stationId).not.toBeNull();
+    const menu = (await api(ctx.app, ctx.owner, 'GET', '/api/dining/menu')).body as DiningMenu;
+    expect(menu.dishes.find((d) => d.id === porridge)).toMatchObject({ outlet: 'restaurant', catalogCategory: { name: '生滚粥' } });
+    checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
+    expect(checks.filter((c) => c.items !== null && c.items !== c.sellable)).toEqual([]);
+    expect(checks.every((c) => c.hidden.length === 0)).toBe(true);
+    // 价目表里把粥改成不可下单：原有的收银项目不跟着停用、还在点单页上——分类核对查得出来、写明
+    const overview = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog')).body as { active: { id: number } };
+    const current = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${overview.active.id}`)).body as PriceCatalogSet;
+    const beef = current.entries.find((e) => e.name === '生滚牛肉粥')!;
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${beef.id}`, { ...beef, orderable: false, opKey: randomUUID() })).status).toBe(200);
+    checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
+    const congee2 = checks.find((c) => c.name === '生滚粥')!;
+    expect(congee2).toMatchObject({ sellable: 1, items: 2 });
+    expect(congee2.hidden).toEqual([{ name: '生滚牛肉粥', reason: expect.stringMatching(/不能卖.*还在点单页上/) }]);
+    // 再把这一项在价目表里停用：原有的收银项目照样还在点单页上，分类核对照样查得出（停用的项不在「在用」里，按对接的收银项目数）
+    const set3 = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/price-catalog/sets/${overview.active.id}`)).body as PriceCatalogSet;
+    const beef3 = set3.entries.find((e) => e.name === '生滚牛肉粥')!;
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/price-catalog/entries/${beef3.id}/active`, { version: beef3.version, active: false, opKey: randomUUID() })).status).toBe(200);
+    checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
+    const congee3 = checks.find((c) => c.name === '生滚粥')!;
+    expect(congee3).toMatchObject({ entries: 1, sellable: 1, items: 2 });
+    expect(congee3.hidden).toEqual([{ name: '生滚牛肉粥', reason: expect.stringMatching(/停用.*还在点单页上/) }]);
+    // 补齐设置记了审计，写明哪几个、改了什么；名称、类别不动
+    const audit = await ctx.sql<{ detail: { label: string; items: { itemId: number; changes: string[] }[] } }[]>`
+      SELECT detail FROM audit_logs WHERE action = 'price_catalog' AND detail->>'action' = 'fit_items' ORDER BY id`;
+    const changesOf = (id: number) => audit.flatMap((a) => a.detail.items.filter((i) => i.itemId === id).map((i) => i.changes));
+    expect(changesOf(gufa)).toEqual([['标为需要技师', '时长 — → 80 分钟']]); // 补过一次，第二次切换不再改
+    expect(changesOf(porridge)).toEqual([['挂上出品档口']]);
+    expect(audit.at(-1)!.detail.label).toMatch(/原有的收银项目补齐了设置/);
+    catalog = (await api(ctx.app, ctx.clerk, 'GET', '/api/catalog')).body as Catalog;
+    expect(catalog.items.find((i) => i.id === porridge)).toMatchObject({ name: '生滚牛肉粥', category: '餐饮' });
+    expect(catalog.items.find((i) => i.id === gufa)).toMatchObject({ name: '古法中式', category: '按摩' });
   });
 });
