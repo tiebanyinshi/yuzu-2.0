@@ -86,7 +86,7 @@ describe('技师名册', () => {
   it('技师规则：默认关闭；只有店主能改，只改提交的字段；规则总表与后台首页列出', async () => {
     const fd = await api(ctx.app, ctx.clerk, 'GET', '/api/frontdesk/technicians');
     expect(fd.status).toBe(200);
-    expect(fd.body.rules).toEqual({ enabled: false, requireTechnician: true, tierByGrade: true, defaultCallType: 'rotation' });
+    expect(fd.body.rules).toEqual({ enabled: false, requireTechnician: true, tierByGrade: true, defaultCallType: 'rotation', rankingRefreshSeconds: 30 });
     expect(fd.body.technicians.map((t: { techNo: string; todayClocks: number }) => [t.techNo, t.todayClocks])).toEqual([
       ['08', 0],
       ['12', 0],
@@ -95,7 +95,7 @@ describe('技师名册', () => {
     expect((await setRules({ defaultCallType: 'sometimes' })).status).toBe(400);
     const r = await setRules({ enabled: true });
     expect(r.status).toBe(200);
-    expect(r.body.rules).toEqual({ enabled: true, requireTechnician: true, tierByGrade: true, defaultCallType: 'rotation' });
+    expect(r.body.rules).toEqual({ enabled: true, requireTechnician: true, tierByGrade: true, defaultCallType: 'rotation', rankingRefreshSeconds: 30 });
     expect(r.body.rulesUpdatedBy).toBe('测试店主');
 
     const rules = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/rules')).body as { key: string; group: string; isDefault: boolean; section: string }[];
