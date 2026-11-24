@@ -204,7 +204,14 @@ async function withPurposes(db: Db, lines: z.infer<typeof MallLineInput>[]) {
   return lines.map((l) => ({ ...l, purpose: l.purpose || (purposes.includes('其他') ? '其他' : '') }));
 }
 
-export async function createMallRequest(deps: Deps, raw: unknown, actor: Actor, ip?: string): Promise<MallCreateResult> {
+export async function createMallRequest(
+  deps: Deps,
+  raw: unknown,
+  actor: Actor,
+  ip?: string,
+  /** 柚子里的商城页面（8.1.32）：在建单的事务里、写单之前锁住并核对 SKU（价格版本、能不能买） */
+  beforeWrite?: (tx: Db) => Promise<void>,
+): Promise<MallCreateResult> {
   const input = parse(MallCreateInput, raw);
   const requestHash = hashRequest({ ...input, clientKey: undefined });
   const findExisting = async (db: Db) => {
@@ -226,6 +233,7 @@ export async function createMallRequest(deps: Deps, raw: unknown, actor: Actor, 
       if (dup) throw conflict('EXTERNAL_NO_EXISTS', `商城申请单号 ${input.externalNo} 已经建过需求单 ${dup.docNo}`, { docNo: dup.docNo });
       const today = todayIn(deps.config.timezone);
       await checkRefs(tx, input, today);
+      if (beforeWrite) await beforeWrite(tx);
       const deptId = await resolveDepartment(tx, actor, input.departmentId);
       const lines = await withPurposes(tx, input.lines);
       await validateLines(tx, lines, { mall: true });
@@ -310,7 +318,7 @@ function briefDisplayOf(r: PurchaseRequestSummary, states: readonly RequestLineP
   return reviewDisplayOf(r) ?? progressDisplayOf(states);
 }
 
-async function mallRequest(deps: Deps, actor: Actor, requestId: number): Promise<MallRequest> {
+export async function mallRequest(deps: Deps, actor: Actor, requestId: number): Promise<MallRequest> {
   const r = await getRequest(deps.sql, actor, requestId, deps.config.timezone);
   const [extra] = await deps.sql<
     {

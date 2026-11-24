@@ -8,6 +8,7 @@ export const ERP_MODULE_KEYS = [
   'inventory',
   'purchasing',
   'requests',
+  'shop',
   'deptStock',
   'payables',
   'assets',
@@ -100,6 +101,19 @@ export const ERP_MODULES: Record<ErpModuleKey, ErpModuleDef> = {
     perms: ['request.create', 'request.review', 'request.stock'],
     defaultEnabled: true,
     requires: ['inventory', 'purchasing'],
+  },
+  // 采购商城（8.1.32，店主 2026-11-24：商城模块并进柚子，docs/MALL_V8132.md）：部门在这里选品、比价、加清单、提需求；
+  // 提交生成的就是采购需求单（来源「商城」），所以依赖「采购需求单」
+  shop: {
+    label: '采购商城',
+    group: '供应链',
+    description: '部门选品与多供应商比选、采购清单、商城外自主申请、我的采购需求；采购维护供应商 SKU（上架审核、改价审核）、看需求池（8.1.32）',
+    path: '/erp/shop',
+    pages: ['/erp/shop'],
+    apis: ['/api/erp/shop'],
+    perms: ['request.create', 'request.review', 'request.stock', 'purchase.manage'],
+    defaultEnabled: true,
+    requires: ['requests'],
   },
   deptStock: {
     label: '本部门小仓',
@@ -311,7 +325,7 @@ export const ERP_MODULES: Record<ErpModuleKey, ErpModuleDef> = {
  */
 export const ERP_NAV_GROUPS: readonly { key: string; title: string; modules: readonly ErpModuleKey[] }[] = [
   { key: 'approvals', title: '审批', modules: ['approvals'] },
-  { key: 'supply', title: '供应链', modules: ['inventory', 'purchasing', 'requests', 'deptStock', 'pettyPool', 'assets', 'linen'] },
+  { key: 'supply', title: '供应链', modules: ['inventory', 'purchasing', 'requests', 'shop', 'deptStock', 'pettyPool', 'assets', 'linen'] },
   { key: 'finance', title: '财务', modules: ['payments', 'payables', 'expenses', 'invoices', 'salesInvoices', 'receivables', 'bank'] },
   { key: 'contracts', title: '合同', modules: ['contracts'] },
   // 已经挪到后台的：页面不在 ERP 里。8.0.18 在 ERP 导航里各留了一条跳转，8.0.19 去掉；这一组留着是为了「每个模块都有归属」，

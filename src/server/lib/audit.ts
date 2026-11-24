@@ -310,6 +310,8 @@ export type AuditAction =
   | 'studio_rollback'
   | 'studio_cancel'
   | 'studio_pack_import'
+  // 采购商城（8.1.32）：SKU 的新建、修改、提交、审核、停用、改动（detail.action 写是哪一样）
+  | 'mall_sku'
   // 8.1.9 零采备用金：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）
   | 'pool_use'
   // 8.1.9 库管入库台账导入

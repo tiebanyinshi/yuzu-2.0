@@ -69,6 +69,7 @@ const ShiftPrintPage = lazyPage(() => import('./features/print/ShiftPrintPage').
 // 供应商在线对账确认（8.0.7 2.6）：供应商打开链接，不用登录
 const ReconPublicPage = lazyPage(() => import('./features/payables/ReconPublicPage').then((m) => m.ReconPublicPage));
 const SupplierPublicPage = lazyPage(() => import('./features/purchasing/SupplierPublicPage').then((m) => m.SupplierPublicPage));
+const ShopPage = lazyPage(() => import('./features/shop/ShopPage').then((m) => m.ShopPage));
 const ErpShell = lazyPage(() => import('./features/erp/ErpShell').then((m) => m.ErpShell));
 // WCP 的外壳（店主 2026-11-24）：办公不再套 CRM 的侧栏
 const WcpShell = lazyPage(() => import('./features/oa/WcpShell').then((m) => m.WcpShell));
@@ -393,6 +394,8 @@ const router = createBrowserRouter([
       { path: 'petty', element: <PettyPage /> },
       { path: 'petty/accounts', element: <PettyAccountsPage /> },
       { path: 'requests', element: <RequestsPage /> },
+      // 采购商城（8.1.32，docs/MALL_V8132.md）：选品比价、清单、自主申请、我的需求、需求池、SKU 维护
+      { path: 'shop/*', element: <ShopPage /> },
       { path: 'dept-stock', element: <DeptStockPage /> },
       { path: 'dept-stock/new/:type', element: <DeptDocFormPage /> },
       { path: 'dept-stock/docs/:id/edit', element: <DeptDocFormPage /> },

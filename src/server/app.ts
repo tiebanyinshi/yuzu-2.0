@@ -39,6 +39,7 @@ import { registerPurchaseLedgerRoutes } from './modules/purchase-ledger';
 import { registerLegacyRoutes } from './modules/legacy';
 import { registerRequestRoutes } from './modules/requests';
 import { authenticateMall, isMallPath, registerMallRoutes } from './modules/mall';
+import { registerShopRoutes } from './modules/shop';
 import { registerRequestStockRoutes } from './modules/request-stock';
 import { registerRequestImportRoutes } from './modules/request-import';
 import { registerRequestDraftRoutes } from './modules/request-drafts';
@@ -421,6 +422,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerRequestRoutes(app, deps);
   // 采购商城对接（8.1.31）
   registerMallRoutes(app, deps);
+  // 采购商城页面（8.1.32）
+  registerShopRoutes(app, deps);
   // 8.1.10 核库转领用：库管核库、部门答复替代
   registerRequestStockRoutes(app, deps);
   registerRequestImportRoutes(app, deps);
