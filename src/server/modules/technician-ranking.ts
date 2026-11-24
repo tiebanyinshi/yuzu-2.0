@@ -67,12 +67,15 @@ function serviceOf(t: BoardTechnician, sessions: BoardSession[], now: number): R
   };
 }
 
-/** 人气值：近 N 个营业日（含今天）点钟、已下钟的钟数 */
+/**
+ * 人气值：近 N 个营业日（含今天）已下钟的钟单里，按点钟记的钟数。按钟单挂的账单明细算（没作废的），
+ * 轮钟的钟单「加钟算点钟」时加的那几钟记在明细上是点钟，也算进去（钟单本身仍是轮钟）
+ */
 async function popularityOf(db: Db, businessDate: string): Promise<Map<number, number>> {
   const rows = await db<{ technicianId: number; clocks: number }[]>`
-    SELECT s.technician_id, sum(s.clocks)::int AS clocks
-    FROM technician_sessions s JOIN technicians t ON t.id = s.technician_id
-    WHERE s.call_type = 'designated' AND s.status = 'done' AND t.store_id = ${currentStoreId()}
+    SELECT s.technician_id, sum(l.quantity)::int AS clocks
+    FROM technician_sessions s JOIN technicians t ON t.id = s.technician_id JOIN bill_lines l ON l.session_id = s.id
+    WHERE s.status = 'done' AND l.status = 'active' AND l.call_type = 'designated' AND t.store_id = ${currentStoreId()}
       AND s.business_date > ${businessDate}::date - ${RANKING_POPULARITY_DAYS}::int AND s.business_date <= ${businessDate}::date
     GROUP BY 1`;
   return new Map(rows.map((r) => [Number(r.technicianId), r.clocks]));

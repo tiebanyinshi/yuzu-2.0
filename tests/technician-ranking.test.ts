@@ -78,6 +78,11 @@ beforeAll(async () => {
     const id = await dispatch('37', { startNow: true, callType });
     expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${id}/finish`)).status).toBe(200);
   }
+  // 32 做一个轮钟，加 2 钟（默认「加钟算点钟」：加的 2 钟记成点钟，人气值 2），下钟
+  const ext = await dispatch('32', { startNow: true, callType: 'rotation' });
+  const e = await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${ext}/extend`, { clientKey: randomUUID(), quantity: 2, expectedTotal: 25600 });
+  expect(e.status, JSON.stringify(e.body)).toBe(200);
+  expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${ext}/finish`)).status).toBe(200);
   await dispatch('31', { startNow: true, callType: 'designated' }); // 在钟上
   await dispatch('35', { startNow: false, callType: 'rotation' }); // 已派待上
   expect((await state('33', 'rest')).status).toBe(200); // 休息
@@ -151,12 +156,13 @@ describe('技师榜单接口（第一批）', () => {
     expect(r.body.kinds).toEqual(['按摩', '足浴', 'SPA', '其他', '采耳']);
   });
 
-  it('人气值：近 30 天点钟、已下钟的钟数；轮钟、没下钟的不算；超过 30 天的不算', async () => {
+  it('人气值：近 30 天已下钟的点钟钟数（按明细，轮钟上加的点钟也算）；轮钟、没下钟的不算；超过 30 天的不算', async () => {
     let r = await ranking();
     const pop = (no: string) => r.body.techs.find((t) => t.techNo === no)!.popularity;
     expect(pop('37')).toBe(1);
     expect(pop('31')).toBe(0); // 点钟还没下钟
-    expect(pop('32')).toBe(0);
+    expect(pop('32')).toBe(2); // 轮钟不算，轮钟上加的 2 钟算点钟
+    expect(pop('33')).toBe(0);
     await ctx.sql`UPDATE technician_sessions SET business_date = business_date - 30 WHERE technician_id = ${tech['37']!} AND status = 'done'`;
     r = await ranking();
     expect(pop('37')).toBe(0);
