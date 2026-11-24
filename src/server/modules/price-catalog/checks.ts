@@ -12,14 +12,16 @@ import { entriesOf } from './read';
 
 /**
  * 能卖的一项在点单页上看不看得到，看不到的原因（PC28）：没对上收银项目、收银项目停用了、
- * 按摩及助浴没标「需要技师」（房态中心登记不列）、菜品没挂在用的出品档口或没归到点单页（点单页不列）
+ * 按摩及助浴没标「需要技师」（房态中心登记不列）、菜品没挂在用的出品档口（点单页不列）
  */
 function hiddenReason(e: PriceCatalogEntry, it: ItemRow | undefined, hasStation: boolean): string | null {
   if (!it && e.sheet === 'dish' && !hasStation) return '还没有在用的出品档口，菜品建不了（先在后台建一个档口，再切换生效一次）';
   if (!it) return '还没对上收银项目（切换生效一次就会建）';
   if (!it.active) return `对上的收银项目「${it.name}」停用了`;
   if (e.sheet === 'massage' && !it.technicianRequired) return `对上的收银项目「${it.name}」没标需要技师，房态中心登记不列（切换生效一次就会补上）`;
-  if (e.sheet === 'dish' && (!it.stationActive || !it.diningOutlet)) return `对上的收银项目「${it.name}」没挂在用的出品档口，点单页不列（切换生效一次就会补上；没有档口的先建一个）`;
+  // 与点单菜单（kitchenDishes）同一个条件：挂在在用的档口上、不要技师；没写点单分区的按类别归到默认分区，照样列
+  if (e.sheet === 'dish' && !it.stationActive) return `对上的收银项目「${it.name}」没挂在用的出品档口，点单页不列（切换生效一次就会补上；没有档口的先建一个）`;
+  if (e.sheet === 'dish' && it.technicianRequired) return `对上的收银项目「${it.name}」标了需要技师，点单页不列（在后台价目里去掉「需要技师」）`;
   return null;
 }
 
@@ -29,7 +31,6 @@ interface ItemRow {
   active: boolean;
   technicianRequired: boolean;
   stationActive: boolean;
-  diningOutlet: string | null;
 }
 
 export async function priceCategoryChecks(db: Db): Promise<PriceCategoryCheck[]> {
@@ -40,7 +41,7 @@ export async function priceCategoryChecks(db: Db): Promise<PriceCategoryCheck[]>
   const items = new Map(
     (
       await db<ItemRow[]>`
-        SELECT l.entry_key, i.name, i.active, i.technician_required, coalesce(k.active, false) AS station_active, i.dining_outlet
+        SELECT l.entry_key, i.name, i.active, i.technician_required, coalesce(k.active, false) AS station_active
         FROM price_catalog_links l JOIN service_items i ON i.id = l.item_id LEFT JOIN kitchen_stations k ON k.id = i.station_id
         WHERE l.store_id = ${currentStoreId()}`
     ).map((r) => [r.entryKey, r]),

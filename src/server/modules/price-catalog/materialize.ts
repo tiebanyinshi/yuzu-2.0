@@ -7,7 +7,7 @@
 // 只有本店（编号 1）新建收银项目（收银项目全公司一份）；第二家店只同步本店价（第四批）。
 // 菜品要挂出品档口才能进点单页与厨房屏：新建的菜品挂餐厅原有的菜用得最多的档口（PC20；可在菜品管理里改），没有档口时不建，列出来。
 // 对上门店原有的同名收银项目（不是价目表新建的）时，补齐上得了房态中心、点单页的那几样（PC28，店主 2026-11-24：正式服原有同名项目
-// 对上以后房态中心、点单页看不到）：按摩及助浴标「需要技师」、时长照价目表；菜品没挂档口的挂上、归到餐厅；名称、类别、价格以外的不动。
+// 对上以后房态中心、点单页看不到）：按摩及助浴标「需要技师」、时长照价目表；菜品没挂（或挂的停用了）档口的挂上；名称、类别、点单分区、价格以外的不动。
 // 双价的「专业 / 优选」两档由 syncLinkedPrices 写（本店去掉原来的「标准」档）。
 
 import { priceCategoriesOf, priceNameKey, type PriceCatalogEntry, type PriceCategory } from '@shared/price-catalog';
@@ -60,8 +60,8 @@ const NO_STATION = '还没有在用的出品档口，菜品上不了点单页（
  * 返回改了哪几样（空的说明本来就齐），或者补不了的原因
  */
 async function fitExisting(tx: Tx, id: number, e: PriceCatalogEntry, station: () => Promise<number | null>): Promise<string[] | { reason: string }> {
-  const [it] = await tx<{ technicianRequired: boolean; durationMinutes: number | null; stationId: number | null; stationActive: boolean | null; diningOutlet: string | null; diningGroup: string }[]>`
-    SELECT i.technician_required, i.duration_minutes, i.station_id, k.active AS station_active, i.dining_outlet, i.dining_group
+  const [it] = await tx<{ technicianRequired: boolean; durationMinutes: number | null; stationId: number | null; stationActive: boolean | null }[]>`
+    SELECT i.technician_required, i.duration_minutes, i.station_id, k.active AS station_active
     FROM service_items i LEFT JOIN kitchen_stations k ON k.id = i.station_id WHERE i.id = ${id}`;
   if (!it) return [];
   const changes: string[] = [];
@@ -73,15 +73,12 @@ async function fitExisting(tx: Tx, id: number, e: PriceCatalogEntry, station: ()
       await tx`UPDATE service_items SET technician_required = true, duration_minutes = ${minutes}, updated_at = clock_timestamp() WHERE id = ${id}`;
     }
   }
-  if (e.sheet === 'dish' && (it.stationId === null || !it.stationActive || !it.diningOutlet)) {
-    const sid = it.stationId !== null && it.stationActive ? Number(it.stationId) : await station();
+  // 点单页列的是挂在在用档口上、在用、不要技师的菜；没写点单分区的按类别归到默认分区（diningSlotOf），这里不改它
+  if (e.sheet === 'dish' && (it.stationId === null || !it.stationActive)) {
+    const sid = await station();
     if (sid === null) return { reason: NO_STATION };
-    if (sid !== (it.stationId === null ? null : Number(it.stationId))) changes.push('挂上出品档口');
-    if (!it.diningOutlet) changes.push('归到餐厅点单');
-    await tx`
-      UPDATE service_items SET station_id = ${sid}, dining_outlet = coalesce(dining_outlet, 'restaurant'),
-        dining_group = CASE WHEN dining_group = '' THEN '餐饮' ELSE dining_group END, updated_at = clock_timestamp()
-      WHERE id = ${id}`;
+    changes.push(it.stationId === null ? '挂上出品档口' : '换到在用的出品档口');
+    await tx`UPDATE service_items SET station_id = ${sid}, updated_at = clock_timestamp() WHERE id = ${id}`;
   }
   return changes;
 }

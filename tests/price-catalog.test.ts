@@ -1464,7 +1464,7 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     expect(line).toMatchObject({ name: '12H 不含餐', unitPrice: 49900 });
   });
 
-  it('PC28：门店原有的同名收银项目对上以后补齐设置（需要技师、时长、专业 / 优选两档、出品档口），房态中心登记与点单页看得到；没有档口时分类核对写明原因', async () => {
+  it('PC28：门店原有的同名收银项目对上以后补齐设置（需要技师、时长、专业 / 优选两档、出品档口），房态中心登记与点单页看得到；别的门店定了本店价的档留着；没有档口时分类核对写明原因', async () => {
     const activateNew = async (title: string) => {
       const file = workbook();
       const p = (await preview(file)).body as PriceImportPreview & { digest: string };
@@ -1486,6 +1486,10 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     };
     const gufa = await legacy({ name: '古法中式', category: '按摩', price: 45000, technicianRequired: false });
     const porridge = await legacy({ name: '生滚牛肉粥', category: '餐饮', price: 3000 });
+    // 另一家店给原有的「伊索抗衰面部护理」的标准档定了本店价：本店换成专业 / 优选时这一档留着，本店价照旧有着落
+    const facial = await legacy({ name: '伊索抗衰面部护理', category: '按摩', price: 70000, technicianRequired: true });
+    const [store2] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('PC28', '二店', 1) RETURNING id`;
+    await ctx.sql`INSERT INTO service_item_store_prices (store_id, item_id, tier, price, updated_by) VALUES (${store2!.id}, ${facial}, 'standard', 72000, 1)`;
     await activateNew('原有同名·没有档口');
 
     // 没有档口：粥对上了原有的项目但上不了点单页，别的菜建不了——分类核对逐项写明
@@ -1501,6 +1505,8 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     expect(await tiers(gufa)).toEqual({ premium: 59900, professional: 49900 });
     expect((await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM service_items WHERE name = '古法中式' AND active`)[0]!.n).toBe(1);
     expect(checks.find((c) => c.code === 'massage.01')).toMatchObject({ items: 2, hidden: [] });
+    expect(await tiers(facial)).toEqual({ premium: 90000, professional: 80000, standard: 80000 });
+    expect((await ctx.sql<{ price: number }[]>`SELECT price FROM service_item_store_prices WHERE item_id = ${facial} AND tier = 'standard'`)[0]!.price).toBe(72000);
     // 房态中心登记（康美部）列得出它，价格是「专业价 / 资深价」两档
     let catalog = (await api(ctx.app, ctx.clerk, 'GET', '/api/catalog')).body as Catalog;
     const g2 = catalog.items.find((i) => i.id === gufa)!;
@@ -1512,9 +1518,10 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     await ctx.sql`UPDATE kitchen_stations SET active = true WHERE id IN ${ctx.sql(stations.length ? stations : [0])}`;
     if (!stations.length) await ctx.sql`INSERT INTO kitchen_stations (name) VALUES ('演练热菜')`;
     await activateNew('原有同名·有档口');
-    const [pr] = await ctx.sql<{ stationId: number | null; diningOutlet: string | null; diningGroup: string; catalogManaged: boolean }[]>`
-      SELECT station_id, dining_outlet, dining_group, catalog_managed FROM service_items WHERE id = ${porridge}`;
-    expect(pr).toMatchObject({ diningOutlet: 'restaurant', diningGroup: '餐饮', catalogManaged: false });
+    // 只挂上档口；点单分区没写的照旧按类别归到默认分区（「餐饮」→ 餐厅），不改
+    const [pr] = await ctx.sql<{ stationId: number | null; diningOutlet: string | null; catalogManaged: boolean }[]>`
+      SELECT station_id, dining_outlet, catalog_managed FROM service_items WHERE id = ${porridge}`;
+    expect(pr).toMatchObject({ diningOutlet: null, catalogManaged: false });
     expect(pr!.stationId).not.toBeNull();
     const menu = (await api(ctx.app, ctx.owner, 'GET', '/api/dining/menu')).body as DiningMenu;
     expect(menu.dishes.find((d) => d.id === porridge)).toMatchObject({ outlet: 'restaurant', catalogCategory: { name: '生滚粥' } });
@@ -1526,7 +1533,7 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
       SELECT detail FROM audit_logs WHERE action = 'price_catalog' AND detail->>'action' = 'fit_items' ORDER BY id`;
     const changesOf = (id: number) => audit.flatMap((a) => a.detail.items.filter((i) => i.itemId === id).map((i) => i.changes));
     expect(changesOf(gufa)).toEqual([['标为需要技师', '时长 — → 80 分钟']]); // 补过一次，第二次切换不再改
-    expect(changesOf(porridge)).toEqual([['挂上出品档口', '归到餐厅点单']]);
+    expect(changesOf(porridge)).toEqual([['挂上出品档口']]);
     expect(audit.at(-1)!.detail.label).toMatch(/原有的收银项目补齐了设置/);
     catalog = (await api(ctx.app, ctx.clerk, 'GET', '/api/catalog')).body as Catalog;
     expect(catalog.items.find((i) => i.id === porridge)).toMatchObject({ name: '生滚牛肉粥', category: '餐饮' });

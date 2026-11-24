@@ -61,7 +61,7 @@ export interface PriceLink {
 }
 
 /** 按价目表的一项算这个收银项目各档该是多少（PC17）；不能同步的返回原因 */
-export function targetTiers(e: PriceCatalogEntry | undefined, current: readonly TierPrice[], opts: { canAdd: boolean }): TierPrice[] | string {
+export function targetTiers(e: PriceCatalogEntry | undefined, current: readonly TierPrice[], opts: { canAdd: boolean; keep?: ReadonlySet<PriceTier> }): TierPrice[] | string {
   if (!e) return '生效中的价目表里没有这一项';
   if (!e.active) return '价目表里这一项已停用';
   if (e.priceMode === 'rate') return '比例（服务费）不写到收银项目上';
@@ -69,9 +69,10 @@ export function targetTiers(e: PriceCatalogEntry | undefined, current: readonly 
   const has = new Set(current.map((t) => t.tier));
   const out = new Map<PriceTier, number>();
   if (e.priceMode === 'dual' && e.price2Cents !== null) {
-    // 本店：双价一律是「专业 / 优选」两档（与价目表新建的一样，房态中心登记才出「专业价 / 资深价」二选一），原有的「标准」档去掉；
+    // 本店：双价一律是「专业 / 优选」两档（与价目表新建的一样，房态中心登记才出「专业价 / 资深价」二选一），原有的「标准」档去掉——
+    // 但别的门店给这一档定了本店价的留着（全公司那一档去掉，本店价就没了着落），照旧写专业价；
     // 第二家店只写本店价、不增删档，有「标准」档的也写专业价
-    if (has.has('standard') && !opts.canAdd) out.set('standard', e.priceCents);
+    if (has.has('standard') && (!opts.canAdd || opts.keep?.has('standard'))) out.set('standard', e.priceCents);
     if (has.has('professional') || opts.canAdd) out.set('professional', e.priceCents);
     if (has.has('premium') || opts.canAdd) out.set('premium', e.price2Cents);
   } else {
@@ -141,13 +142,19 @@ export async function syncLinkedPrices(tx: Tx, ctx: OpContext, opts: { keys?: st
   await tx`SELECT id FROM service_items WHERE id IN ${tx(ids)} ORDER BY id FOR NO KEY UPDATE`;
   const items = await itemPrices(tx, ids);
   const dishes = await dishIdsAmong(tx, ids);
+  // 别的门店定了本店价的档：本店同步时不去掉（PC28）
+  const overridden = new Map<number, Set<PriceTier>>();
+  for (const r of await tx<{ itemId: number; tier: PriceTier }[]>`SELECT DISTINCT item_id, tier FROM service_item_store_prices WHERE item_id IN ${tx(ids)}`) {
+    const k = Number(r.itemId);
+    overridden.set(k, new Set([...(overridden.get(k) ?? []), r.tier]));
+  }
   const out: PriceSyncResult[] = [];
   for (const l of links) {
     const itemId = Number(l.itemId);
     const item = items.get(itemId)!;
     const base = storeId === DEFAULT_STORE_ID;
     const current = base ? item.base : item.store;
-    const target = targetTiers(byKey.get(l.entryKey), current, { canAdd: base });
+    const target = targetTiers(byKey.get(l.entryKey), current, { canAdd: base, keep: overridden.get(itemId) });
     if (typeof target === 'string') {
       out.push({ entryKey: l.entryKey, itemId, itemName: item.name, changed: false, skipped: target });
       continue;
