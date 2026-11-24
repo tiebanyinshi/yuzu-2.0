@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildCanteenApp } from '../src/server/modules/canteen/portal';
-import { patrolDayRounds, patrolLink, parsePatrolToken, patrolRoundMinutesOn, patrolRoundPreview, patrolRoundsOf } from '../src/shared/patrol';
+import { patrolDateAt, patrolDayRounds, patrolLink, parsePatrolToken, patrolRoundMinutesOn, patrolRoundPreview, patrolRoundsOf } from '../src/shared/patrol';
 import { minuteOfDay } from '../src/shared/business-date';
 import { api, setup, type TestContext } from './helpers';
 
@@ -488,20 +488,54 @@ describe('巡查起始时间（店主 2026-11-24，XC17、XC18）', () => {
     return new Date(Date.UTC(2026, 10, 11 + (nextDay ? 1 : 0), h - 8, m)).toISOString();
   };
 
-  it('起始 9:00、间隔 2 小时：9:00 起每 2 小时一轮；营业日切换到 9:00 之间按同一组分界分（06–07、07–09），跨午夜排到下一次切换', () => {
+  it('起始 9:00、间隔 2 小时：巡场的一天从 9:00 起 24 小时，12 轮每轮都是 2 小时，到第二天 9:00（XC19）', () => {
     const r = patrolRoundsOf(D, tz, 6, 120, 9);
-    expect(r.map((x) => x.start)).toContain(z('09:00'));
-    const from9 = r.slice(r.findIndex((x) => x.start === z('09:00')));
-    for (let i = 1; i < from9.length - 1; i++) expect(Date.parse(from9[i]!.start) - Date.parse(from9[i - 1]!.start)).toBe(120 * 60_000);
-    expect(r[0]).toEqual({ no: 1, start: z('06:00'), end: z('07:00') });
-    expect(r[1]).toEqual({ no: 2, start: z('07:00'), end: z('09:00') });
-    expect(r.at(-1)!.end).toBe(z('06:00', true));
+    expect(r).toHaveLength(12);
+    expect(r[0]).toEqual({ no: 1, start: z('09:00'), end: z('11:00') });
+    for (const x of r) expect(Date.parse(x.end) - Date.parse(x.start)).toBe(120 * 60_000);
+    expect(r.at(-1)!.end).toBe(z('09:00', true));
     // 与预览一致
     const p = patrolRoundPreview(6, 120, 9);
-    expect(p.map((x) => `${x.start}-${x.end}`).slice(0, 4)).toEqual(['06:00-07:00', '07:00-09:00', '09:00-11:00', '11:00-13:00']);
+    expect(p.map((x) => `${x.start}-${x.end}`).slice(0, 4)).toEqual(['09:00-11:00', '11:00-13:00', '13:00-15:00', '15:00-17:00']);
     expect(p).toHaveLength(r.length);
-    // 起始整点比切换时间早（02:00）：落在第二天凌晨，分界照样按 2 小时排
-    expect(patrolRoundsOf(D, tz, 6, 120, 2).map((x) => x.start)).toContain(z('02:00', true));
+  });
+
+  it('店主 2026-11-24：00:00 起每 4 小时一轮 = 一天 6 轮、每轮 4 小时（00–04……20–24），不被营业日切换截短', () => {
+    const p = patrolRoundPreview(6, 240, 0);
+    expect(p.map((x) => `${x.no} ${x.start}-${x.end} ${x.minutes}`)).toEqual([
+      '1 00:00-04:00 240',
+      '2 04:00-08:00 240',
+      '3 08:00-12:00 240',
+      '4 12:00-16:00 240',
+      '5 16:00-20:00 240',
+      '6 20:00-00:00 240',
+    ]);
+    const changes = [{ from: '2026-11-01', minutes: 240, startHour: 0, at: '2026-11-01T02:00:00.000Z' }];
+    const { rounds } = patrolDayRounds(changes, D, tz, 6);
+    expect(rounds.map((x) => x.start)).toEqual(['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'].map((h) => z(h)));
+    expect(rounds.at(-1)!.end).toBe(z('00:00', true));
+    // 凌晨的打卡记在这一天（不再按营业日切换算前一天）；没设起始时间的照原来
+    expect(patrolDateAt(changes, z('05:00'), tz, 6)).toBe(D);
+    expect(patrolDateAt(changes, z('23:59'), tz, 6)).toBe(D);
+    expect(patrolDateAt([], z('05:00'), tz, 6)).toBe('2026-11-10');
+    expect(patrolDateAt([], z('06:00'), tz, 6)).toBe(D);
+    // 除不尽 24 小时的：最后一轮短一些
+    expect(patrolRoundPreview(6, 300, 0).map((x) => x.minutes)).toEqual([300, 300, 300, 300, 240]);
+  });
+
+  it('凌晨（营业日还没切换）改成 00:00 起：这一天到改的那一刻为止，下一天从那一刻开始，已经过去的不挪', () => {
+    const changes = [{ from: D, minutes: 240, startHour: 0, at: z('03:00', true) }];
+    const today = patrolDayRounds(changes, D, tz, 6).rounds;
+    expect(today[0]!.start).toBe(z('06:00'));
+    expect(today.at(-1)).toMatchObject({ start: z('00:00', true), end: z('03:00', true) });
+    expect(patrolDateAt(changes, z('02:00', true), tz, 6)).toBe(D);
+    expect(patrolDateAt(changes, z('03:30', true), tz, 6)).toBe('2026-11-12');
+    const next = patrolDayRounds(changes, '2026-11-12', tz, 6).rounds;
+    expect(next.slice(0, 2)).toEqual([
+      { no: 1, start: z('03:00', true), end: z('04:00', true) },
+      { no: 2, start: z('04:00', true), end: z('08:00', true) },
+    ]);
+    expect(next.at(-1)!.end).toBe(new Date(Date.UTC(2026, 10, 12, 16)).toISOString());
   });
 
   it('不设起始时间：与原来完全一致；起始整点恰好是切换时间也一样', () => {
@@ -534,6 +568,8 @@ describe('巡查起始时间（店主 2026-11-24，XC17、XC18）', () => {
       { no: 3, start: z('12:00'), end: z('13:00') },
       { no: 4, start: z('13:00'), end: z('15:00') },
     ]);
+    // 这一天到第二天 9:00 为止（第二天从新起点开始），之后每轮都是整的 2 小时
+    expect(rounds.at(-1)).toEqual({ no: rounds.length, start: z('07:00', true), end: z('09:00', true) });
     // 第二天：整天按 9:00 起每 2 小时
     expect(patrolDayRounds(changes, '2026-11-12', tz, 6).rounds).toEqual(patrolRoundsOf('2026-11-12', tz, 6, 120, 9));
     // 前一天：照旧

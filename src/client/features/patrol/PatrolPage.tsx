@@ -711,12 +711,12 @@ function SettingsTab() {
             ))}
           </Select>
           <span className="text-[12.5px] text-ink-3">
-            一天 {preview.length} 轮{preview.some((r) => r.minutes !== roundMinutes) ? '（除不尽或起点不在切换时间，头尾的轮短一些）' : ''}
+            一天 {preview.length} 轮{preview.some((r) => r.minutes !== roundMinutes) ? '（间隔除不尽 24 小时，最后一轮短一些）' : `，每轮 ${patrolIntervalText(roundMinutes)}`}
           </span>
         </div>
         <p className="mt-2 text-[12.5px] text-ink-3">
-          巡查起始时间只能选整点：第 N 轮 = 起始时间 + N × 间隔；营业日切换到第一个起点之间算第 1
-          轮，过了午夜照营业日排到下一次切换。改了起始时间只影响之后的轮——已经巡完的、正在巡的这一轮开始时间不变（正在巡的这一轮到新起点算出的下一个整点为止），以前的记录照当时的设置。
+          巡查起始时间只能选整点：巡场的一天从起始时间起算 24 小时（选 00:00 就是从零点到零点），第 1 轮从起始时间开始，每隔一个间隔一轮，24
+          小时平分、每轮一样长；每天起始时间以前的打卡算前一天。不设起始时间照原来跟营业日切换时间。改了起始时间只影响之后的轮——已经巡完的、正在巡的这一轮开始时间不变（正在巡的这一轮到新起点算出的下一个整点为止），以前的记录照当时的设置。
         </p>
         <div className="mt-3" data-testid="patrol-round-preview">
           <p className="text-[12.5px] font-semibold text-ink-2">轮次时间表（预览）</p>

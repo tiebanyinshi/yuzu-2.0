@@ -8,7 +8,7 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { base32 } from '@shared/canteen';
-import { businessDateOf, ISO_DATE } from '@shared/business-date';
+import { ISO_DATE } from '@shared/business-date';
 import {
   MAX_PATROL_POINT_AREA,
   MAX_PATROL_POINT_NAME,
@@ -26,6 +26,7 @@ import {
   parsePatrolToken,
   patrolRoundAt,
   patrolDayRounds,
+  patrolDateAt,
   type PatrolApp,
   type PatrolCheckinResult,
   type PatrolCheckinRow,
@@ -64,10 +65,10 @@ const MINUTE = 60_000;
 
 // ───────────────────────── 营业日 ─────────────────────────
 
-/** 某一刻属于哪个营业日（XC4：与营业额同一个切换时间） */
+/** 某一刻记到巡场的哪一天（XC4：与营业额同一个切换时间；设了巡查起始时间的从起始整点起，XC19） */
 export async function patrolDateOf(db: Db, config: AppConfig, at: Date): Promise<string> {
-  const s = await loadSettings(db);
-  return businessDateOf(at, config.timezone, s.businessDayStartHour);
+  const { businessDayStartHour } = await loadSettings(db);
+  return patrolDateAt((await loadPatrolSettings(db)).roundChanges, at, config.timezone, businessDayStartHour);
 }
 
 /** 某个营业日的各轮（按这一天的巡场间隔，XC13） */
