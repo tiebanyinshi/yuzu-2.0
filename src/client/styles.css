@@ -74,9 +74,7 @@
   /* 柚黄、橙色这类亮色块上的字：两套主题里都用深色 */
   --color-on-bright: #1c231f;
 
-  --font-sans:
-    'Plus Jakarta Sans Variable', 'PingFang SC', 'HarmonyOS Sans SC', 'MiSans', 'Microsoft YaHei UI',
-    'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC', system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans Variable', 'PingFang SC', 'HarmonyOS Sans SC', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC', system-ui, sans-serif;
   --font-display: 'Instrument Serif', 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
 
   --radius-sm: 8px;
@@ -117,28 +115,64 @@
   --animate-tick: tick var(--dur-base) var(--ease-spring) both;
 
   @keyframes dialog-in {
-    from { opacity: 0; transform: translateY(10px) scale(0.98); }
-    to { opacity: 1; transform: none; }
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
   @keyframes sheet-in {
-    from { opacity: 0.6; transform: translateX(36px); }
-    to { opacity: 1; transform: none; }
+    from {
+      opacity: 0.6;
+      transform: translateX(36px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
   @keyframes toast-in {
-    from { opacity: 0; transform: translateX(18px); }
-    to { opacity: 1; transform: none; }
+    from {
+      opacity: 0;
+      transform: translateX(18px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
   @keyframes menu-in {
-    from { opacity: 0; transform: scale(0.94); }
-    to { opacity: 1; transform: none; }
+    from {
+      opacity: 0;
+      transform: scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
   @keyframes notice-in {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: none; }
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
   @keyframes tick {
-    from { opacity: 0; transform: scale(0.5); }
-    to { opacity: 1; transform: none; }
+    from {
+      opacity: 0;
+      transform: scale(0.5);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
 
   --animate-rise: rise 0.32s var(--ease-out-soft) both;
@@ -149,25 +183,54 @@
   --animate-flash: flash 0.6s ease-in-out 4 both;
 
   @keyframes rise {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: none; }
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
   @keyframes fade {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
   @keyframes slide-in {
-    from { opacity: 0; transform: translateX(24px); }
-    to { opacity: 1; transform: none; }
+    from {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
   @keyframes pop {
-    0% { opacity: 0; transform: scale(0.6); }
-    60% { opacity: 1; transform: scale(1.06); }
-    100% { transform: scale(1); }
+    0% {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.06);
+    }
+    100% {
+      transform: scale(1);
+    }
   }
   @keyframes flash {
-    0%, 100% { opacity: 0; }
-    50% { opacity: 1; }
+    0%,
+    100% {
+      opacity: 0;
+    }
+    50% {
+      opacity: 1;
+    }
   }
 }
 
@@ -314,9 +377,7 @@
     scrollbar-color: var(--color-line-strong) transparent;
   }
   .paper-grain {
-    background-image:
-      radial-gradient(120% 80% at 0% 0%, rgb(242 194 48 / 0.10), transparent 55%),
-      radial-gradient(90% 70% at 100% 100%, rgb(36 73 58 / 0.07), transparent 60%);
+    background-image: radial-gradient(120% 80% at 0% 0%, rgb(242 194 48 / 0.1), transparent 55%), radial-gradient(90% 70% at 100% 100%, rgb(36 73 58 / 0.07), transparent 60%);
   }
   .text-balance {
     text-wrap: balance;
@@ -351,19 +412,33 @@
 
 /* 登录页蒸汽缓慢上升 */
 @keyframes steam {
-  0% { transform: translateY(8px); opacity: 0; }
-  30% { opacity: 0.75; }
-  100% { transform: translateY(-36px); opacity: 0; }
+  0% {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.75;
+  }
+  100% {
+    transform: translateY(-36px);
+    opacity: 0;
+  }
 }
 .steam path {
   animation: steam 6s ease-in-out infinite;
 }
-.steam path:nth-child(2) { animation-delay: 2s; }
-.steam path:nth-child(3) { animation-delay: 4s; }
+.steam path:nth-child(2) {
+  animation-delay: 2s;
+}
+.steam path:nth-child(3) {
+  animation-delay: 4s;
+}
 
 /* 成功勾选描线 */
 @keyframes draw {
-  to { stroke-dashoffset: 0; }
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 .draw-check {
   stroke-dasharray: 32;
@@ -404,19 +479,33 @@
   animation: mo-menu-out var(--dur-micro) var(--ease-in-quick) both;
 }
 @keyframes mo-fade-out {
-  to { opacity: 0; }
+  to {
+    opacity: 0;
+  }
 }
 @keyframes mo-dialog-out {
-  to { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
 }
 @keyframes mo-sheet-out {
-  to { opacity: 0.4; transform: translateX(100%); }
+  to {
+    opacity: 0.4;
+    transform: translateX(100%);
+  }
 }
 @keyframes mo-toast-out {
-  to { opacity: 0; transform: translateX(18px); }
+  to {
+    opacity: 0;
+    transform: translateX(18px);
+  }
 }
 @keyframes mo-menu-out {
-  to { opacity: 0; transform: scale(0.96); }
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
 }
 
 /* 依次出现：一组卡片、一列行第一次出现时一个接一个升起（最多前 12 个，后面的直接显示）。
@@ -424,17 +513,39 @@
 .mo-stagger > * {
   animation: rise var(--dur-base) var(--ease-out-soft) both;
 }
-.mo-stagger > :nth-child(2) { animation-delay: 28ms; }
-.mo-stagger > :nth-child(3) { animation-delay: 56ms; }
-.mo-stagger > :nth-child(4) { animation-delay: 84ms; }
-.mo-stagger > :nth-child(5) { animation-delay: 112ms; }
-.mo-stagger > :nth-child(6) { animation-delay: 140ms; }
-.mo-stagger > :nth-child(7) { animation-delay: 168ms; }
-.mo-stagger > :nth-child(8) { animation-delay: 196ms; }
-.mo-stagger > :nth-child(9) { animation-delay: 224ms; }
-.mo-stagger > :nth-child(10) { animation-delay: 252ms; }
-.mo-stagger > :nth-child(11) { animation-delay: 280ms; }
-.mo-stagger > :nth-child(12) { animation-delay: 308ms; }
+.mo-stagger > :nth-child(2) {
+  animation-delay: 28ms;
+}
+.mo-stagger > :nth-child(3) {
+  animation-delay: 56ms;
+}
+.mo-stagger > :nth-child(4) {
+  animation-delay: 84ms;
+}
+.mo-stagger > :nth-child(5) {
+  animation-delay: 112ms;
+}
+.mo-stagger > :nth-child(6) {
+  animation-delay: 140ms;
+}
+.mo-stagger > :nth-child(7) {
+  animation-delay: 168ms;
+}
+.mo-stagger > :nth-child(8) {
+  animation-delay: 196ms;
+}
+.mo-stagger > :nth-child(9) {
+  animation-delay: 224ms;
+}
+.mo-stagger > :nth-child(10) {
+  animation-delay: 252ms;
+}
+.mo-stagger > :nth-child(11) {
+  animation-delay: 280ms;
+}
+.mo-stagger > :nth-child(12) {
+  animation-delay: 308ms;
+}
 .mo-stagger > :nth-child(n + 13) {
   animation: none;
 }
@@ -509,7 +620,9 @@
   animation: mo-shimmer 1.5s ease-in-out infinite;
 }
 @keyframes mo-shimmer {
-  to { transform: translateX(100%); }
+  to {
+    transform: translateX(100%);
+  }
 }
 
 /* 表格行、列表行：悬停、选中的底色缓缓变（各页自己写了 hover 的颜色，这里只补过渡） */

@@ -77,10 +77,9 @@ function flyoutPosition(button: HTMLElement, itemCount: number): CSSProperties {
 }
 
 /**
- * footer：导航最下面一列（换店、实例标识、账号）；
- * beside：和「收起 / 展开导航」放在同一行的小按钮（通知铃铛，OA-03），不另占一行：小屏电脑上导航那一列已经没有余量
+ * footer：导航最下面一列（「返回门户」与环境标识；换店、版本号、账号、通知铃铛 2026-11-24 起在门户页顶栏）
  */
-export function StoreRail({ footer, beside }: { footer: ReactNode; beside?: ReactNode }) {
+export function StoreRail({ footer }: { footer: ReactNode }) {
   const session = useSession();
   const domains = useStoreNav();
   const { pathname } = useLocation();
@@ -209,13 +208,12 @@ export function StoreRail({ footer, beside }: { footer: ReactNode; beside?: Reac
           data-testid="nav-mode-toggle"
           className={cn(
             'flex shrink-0 items-center rounded-[12px] text-paper/60 transition-colors hover:bg-white/6 hover:text-paper',
-            expanded ? 'h-11 flex-1 gap-2.5 px-3 text-[13px] font-semibold' : cn('justify-center', beside ? 'size-9' : 'size-11'),
+            expanded ? 'h-11 flex-1 gap-2.5 px-3 text-[13px] font-semibold' : 'size-11 justify-center',
           )}
         >
           {expanded ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
           {expanded && '收起导航'}
         </button>
-        {beside}
       </div>
       <div className="flex flex-col items-center">{footer}</div>
     </nav>

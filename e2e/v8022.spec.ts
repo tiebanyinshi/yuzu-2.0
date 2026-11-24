@@ -45,8 +45,8 @@ test.describe('8.0.22 多门店、调拨与 AI 辅助', () => {
     await page.getByTestId('store-save').click();
     await expect(page.getByTestId(`store-row-${code}`)).toBeVisible();
     try {
-      // 门店的顶栏（左侧导航）换到这家店
-      await page.goto('/');
+      // 换店在门户页顶栏（店主 2026-11-24）
+      await page.goto('/portal');
       await page.getByTestId('store-switcher').click();
       await page.getByTestId(`store-pick-${code}`).click();
       await expect(page.getByTestId('store-current')).toHaveText(code);
@@ -57,7 +57,7 @@ test.describe('8.0.22 多门店、调拨与 AI 辅助', () => {
       await expect(page.getByTestId('transfer-to').locator('option')).not.toHaveCount(0);
       await page.keyboard.press('Escape');
       // 换回本店
-      await page.goto('/');
+      await page.goto('/portal');
       await page.getByTestId('store-switcher').click();
       await page.getByTestId('store-pick-HQ').click();
       await expect(page.getByTestId('store-current')).toHaveText('HQ');
@@ -73,7 +73,8 @@ test.describe('8.0.22 多门店、调拨与 AI 辅助', () => {
       }
     }
     // 停用以后只剩一家店：顶栏不再显示换店
-    await page.goto('/');
+    await page.goto('/portal');
+    await expect(page.getByTestId('portal')).toBeVisible();
     await expect(page.getByTestId('store-switcher')).toHaveCount(0);
   });
 

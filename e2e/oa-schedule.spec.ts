@@ -57,8 +57,8 @@ test.describe('OA-05 排班', () => {
     const ctx = await browser.newContext({ baseURL: test.info().project.use.baseURL });
     const emp = await ctx.newPage();
     await login(emp, 'xiaozhou');
-    await emp.getByTestId('user-menu').click();
-    await emp.getByTestId('user-menu-oa').click();
+    await emp.getByTestId('portal-back').click();
+    await emp.getByTestId('portal-board-office').click();
     await expect(emp).toHaveURL(/\/oa$/);
     await emp.getByTestId('oa-tile-schedule').click();
     await expect(emp.getByTestId('my-schedule')).toBeVisible();

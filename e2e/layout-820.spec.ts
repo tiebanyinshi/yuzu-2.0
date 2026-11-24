@@ -56,9 +56,8 @@ test.describe('回测整改 侧边栏固定，内容区独立滚动', () => {
     // 移出这一组：稍等收起
     await page.mouse.move(900, 400);
     await expect(flyout).toBeHidden();
-    // 左下角的用户菜单整个看得到（导航不裁掉弹出的菜单，Codex 审查 f1e5186 的 P1）
-    await page.getByTestId('user-menu').click();
-    const logout = page.getByRole('menuitem', { name: '退出登录' });
+    // 左下角的「返回门户」整个看得到、点得到（头像菜单 2026-11-24 起在门户页顶栏）
+    const logout = page.getByTestId('portal-back');
     await expect(logout).toBeVisible();
     expect(
       await logout.evaluate((el) => {

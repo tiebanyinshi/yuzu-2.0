@@ -19,10 +19,10 @@ async function login(page: Page, username: string, landing: RegExp | string) {
 
 const nav = (page: Page, name: string) => page.getByRole('navigation', { name: 'ERP 导航' }).getByRole('link', { name, exact: true });
 
-/** 门店那边的人（店主）从用户菜单进 ERP */
+/** 门店那边的人（店主）从「返回门户」进 ERP（店主 2026-11-24 门户页） */
 async function enterErp(page: Page) {
-  await page.getByTestId('user-menu').click();
-  await page.getByTestId('user-menu-erp').click();
+  await page.getByTestId('portal-back').click();
+  await page.getByTestId('portal-board-erp').click();
   await expect(page.getByTestId('erp-shell')).toBeVisible();
 }
 

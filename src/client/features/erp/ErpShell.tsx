@@ -43,6 +43,7 @@ import { api } from '../../lib/api';
 import { useCan, useSession } from '../../lib/session';
 import { cn } from '../../lib/utils';
 import { ThemeToggleButton } from '../../components/ThemeSwitch';
+import { PortalBackButton } from '../../components/PortalBack';
 import { LogoMark } from '../../components/Brand';
 import { InstanceBadge } from '../../components/InstanceTag';
 import { Notice } from '../../components/ui';
@@ -261,6 +262,8 @@ export function ErpShell() {
           {session.staff.displayName} · {[ROLE_LABELS[session.staff.role], ...session.staff.duties.map((d) => DUTY_LABELS[d].title)].join(' · ')}
         </span>
         <ThemeToggleButton className="size-9" />
+        {/* 返回门户（店主 2026-11-24，docs/PORTAL.md）：回到四大板块切换系统 */}
+        <PortalBackButton />
         {access.storeHome ? (
           <NavLink
             to={access.storeHome}

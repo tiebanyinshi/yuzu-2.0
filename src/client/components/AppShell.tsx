@@ -1,12 +1,10 @@
-import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router';
 import { describeBusinessHours, isOpenAt, minuteOfDay } from '@shared/business-date';
 import { describeDate } from '@shared/labels';
 import { usePageEnter } from '../lib/motion';
 import { useCan, useSession } from '../lib/session';
-import { InstanceTag } from './InstanceTag';
-import { StoreSwitcher } from './StoreSwitcher';
-import { UserMenu } from './UserMenu';
+import { PortalBackRail } from './PortalBack';
 import { storePageOf } from './storeNav';
 import { StoreRail } from './StoreRail';
 import { PendingOpsBanner } from './PendingOpsBanner';
@@ -14,28 +12,8 @@ import { FrontdeskPendingBanner } from '../features/frontdesk/PendingBanner';
 import { TerminalBridgeRunner } from '../features/devices/terminal';
 import { Badge } from './ui';
 
-/**
- * 通知铃铛（OA-03）按需加载：首屏主包有体积上限（check:bundle），铃铛晚一点出现不碍事。
- * 不用 React.lazy：代码没下载下来时 lazy 会当渲染出错往上抛，连导航和前台一起卸掉；
- * 这里下载失败只是先不显示铃铛，30 秒后再试，不影响别的。
- */
-function NotificationBellSlot() {
-  const [Bell, setBell] = useState<ComponentType | null>(null);
-  // AppShell 登录期间一直在，不必管卸载
-  useEffect(() => {
-    const load = () =>
-      void import('../features/oa/Notifications').then(
-        (m) => setBell(() => m.NotificationBell),
-        () => setTimeout(load, 30_000),
-      );
-    load();
-  }, []);
-  return Bell ? <Bell /> : null;
-}
-
 export function AppShell({ children }: { children: ReactNode }) {
   const can = useCan();
-  const session = useSession();
   // ERP（库存、采购、货款、待办）在单独的工作区，主导航里没有（v0.7.3）；待办的数字在 ERP 导航上。
   // 主导航按业务域分组（8.1.15），在 StoreRail 里
   const { pathname } = useLocation();
@@ -51,17 +29,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex h-dvh min-h-0 overflow-hidden bg-paper">
       {/* 设备（v0.7.21）：选了「这台终端」的设备常连本机的设备服务、替它上报（不在设备页也照常） */}
       <TerminalBridgeRunner />
-      <StoreRail
-        beside={<NotificationBellSlot />}
-        footer={
-          <>
-            {/* 能进不止一家店的人：当前门店、点一下换店（8.0.22）；只有一家店时不显示 */}
-            <StoreSwitcher />
-            <InstanceTag instance={session.instance} version={session.version} commit={session.commit} />
-            <UserMenu />
-          </>
-        }
-      />
+      {/* 门户页改造（店主 2026-11-24）：换店、实例标识、版本号、头像、通知铃铛移到门户页顶栏；侧栏最下面是「返回门户」 */}
+      <StoreRail footer={<PortalBackRail />} />
       <div ref={content} className="scroll-thin flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto" data-testid="app-content">
         <PendingOpsBanner />
         {can('frontdesk.operate') && <FrontdeskPendingBanner />}

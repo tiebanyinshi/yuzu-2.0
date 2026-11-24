@@ -50,6 +50,7 @@ import { ROLE_LABELS } from '@shared/labels';
 import { useCan, useSession } from '../../lib/session';
 import { cn } from '../../lib/utils';
 import { ThemeToggleButton } from '../../components/ThemeSwitch';
+import { PortalBackButton } from '../../components/PortalBack';
 import { LogoMark } from '../../components/Brand';
 import { InstanceBadge } from '../../components/InstanceTag';
 import { Notice } from '../../components/ui';
@@ -164,6 +165,8 @@ export function AdminShell() {
           {session.staff.displayName} · {ROLE_LABELS[session.staff.role]}
         </span>
         <ThemeToggleButton className="size-9" />
+        {/* 返回门户（店主 2026-11-24，docs/PORTAL.md）：回到四大板块切换系统 */}
+        <PortalBackButton />
         <NavLink to="/" className="tap relative flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3.5 text-[13px] font-semibold text-paper hover:bg-white/18" data-testid="admin-exit">
           <ArrowLeft className="size-4" />
           返回前台

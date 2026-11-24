@@ -25,22 +25,19 @@ export function InstanceBadge({ instance, className }: { instance: InstanceKind;
   );
 }
 
-/** 导航栏底部：窄栏里分两行显示标识，下面是版本与提交 SHA */
-export function InstanceTag({ instance, version, commit }: { instance: InstanceKind; version: string; commit: string }) {
-  const [main, sub] = labelOf(instance).split('·');
+/**
+ * 门店侧栏最下面的「返回门户」（店主 2026-11-24，docs/PORTAL.md PT5）：环境标识、版本号移到了门户页顶栏，
+ * 侧栏这一格按环境上色、写短标识（正式服之外一眼看得出「不作数」），悬停看完整标识与「版本 + SHA」
+ */
+export function InstanceTone({ instance, version, commit }: { instance: InstanceKind; version: string; commit: string }) {
+  const short = labelOf(instance).split('·')[0]!;
   return (
-    <div data-testid="instance-tag" title={`${labelOf(instance)} · ${versionText(version, commit)}`} className="mb-3 flex w-[64px] flex-col items-center gap-1 text-center short:mb-2 short:gap-0.5">
-      <span className={cn('w-full rounded-md px-1 py-1 text-[12px] leading-tight font-bold', toneOf(instance))}>
-        {main}
-        {sub && (
-          <>
-            <br />
-            {sub}
-          </>
-        )}
-      </span>
-      <span className="num w-full text-[12px] leading-tight break-all text-paper/60">v{version}</span>
-      {commit && <span className="num text-[12px] leading-tight text-paper/60">{commit.slice(0, 7)}</span>}
-    </div>
+    <span
+      data-testid="instance-tag"
+      title={`${labelOf(instance)} · ${versionText(version, commit)}`}
+      className={cn('w-full truncate rounded-md px-1 py-0.5 text-center text-[12px] leading-tight font-bold', toneOf(instance))}
+    >
+      {short}
+    </span>
   );
 }

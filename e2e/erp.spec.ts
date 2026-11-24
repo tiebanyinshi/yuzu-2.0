@@ -31,8 +31,8 @@ test.describe('ERP 工作区', () => {
       await expect(main.getByRole('link', { name: '会员', exact: true })).toBeVisible();
       for (const name of ['库存', '采购', '货款', '待办']) await expect(main.getByRole('link', { name, exact: true })).toHaveCount(0);
 
-      await page.getByTestId('user-menu').click();
-      await page.getByTestId('user-menu-erp').click();
+      await page.getByTestId('portal-back').click();
+      await page.getByTestId('portal-board-erp').click();
       await expect(page).toHaveURL(/\/erp$/);
       for (const k of ['inventory', 'purchasing', 'payables', 'approvals']) await expect(page.getByTestId(`erp-card-${k}`)).toBeVisible();
       // 8.0.19：营业数据的页面在后台数据看板，ERP 首页与导航不再列它（8.0.18 留过一条跳转）

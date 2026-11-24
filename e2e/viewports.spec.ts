@@ -61,19 +61,14 @@ async function expectNavFits(page: Page, names: string[]) {
   expect(scroll, '主导航那一列不用滚动就看得到全部业务域').toBeLessThanOrEqual(client + 1);
 }
 
-/** 主导航那一列的余量：实例标识是一行时（开发环境）还要放得下多一行（演示库、测试服的标识是两行，Codex 复测 PR #18 P2），已经是两行时不用滚动就行 */
+/** 主导航那一列的余量：不用滚动（2026-11-24 起侧栏最下面只有「返回门户」与一行环境标识，原来两行的实例标识、版本号、头像在门户页顶栏） */
 async function expectNavRoomForTwoLineTag(nav: Locator) {
-  const twoLines = await nav
-    .getByTestId('instance-tag')
-    .locator('span')
-    .first()
-    .evaluate((el) => el.querySelector('br') !== null);
   const free = await nav.getByTestId('nav-list').evaluate((list) => {
     const kids = [...list.children].filter((c) => !c.classList.contains('mo-indicator')) as HTMLElement[];
     const bottom = Math.max(0, ...kids.map((c) => c.offsetTop + c.offsetHeight));
     return list.clientHeight - bottom;
   });
-  expect(free, twoLines ? '主导航那一列不用滚动' : '主导航那一列还放得下实例标识多出来的一行').toBeGreaterThanOrEqual(twoLines ? 0 : 16);
+  expect(free, '主导航那一列不用滚动').toBeGreaterThanOrEqual(0);
 }
 
 test.describe('视口冒烟', () => {
