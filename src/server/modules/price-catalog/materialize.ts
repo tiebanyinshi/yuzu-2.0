@@ -14,8 +14,12 @@ import { priceCategoriesOf, priceNameKey, type PriceCatalogEntry, type PriceCate
 import type { Tx } from '../../db';
 import { currentStoreId, DEFAULT_STORE_ID } from '../../lib/store-context';
 
-/** 不落库的类型 */
-export const NOT_ITEMS = new Set<PriceCatalogEntry['kind']>(['service_fee', 'room_type', 'party_room', 'dining_room']);
+/**
+ * 不落库的类型。门票、夜间票（8.1.34，店主 2026-11-24 价目重构）也不建收银项目：门票费由前台结账按「门票」票种（ticket_types）按在店时长算，
+ * 再建一个能挂单的「入场」项目会重复收费；票价在「价目与套餐 → 门票」里照价目表填（docs/PRICE_V8134.md）。
+ * 以前建过的，下次切换生效时按「价目表新建的、这份里已经没有的」停用。餐票照旧建（单独卖的餐）。
+ */
+export const NOT_ITEMS = new Set<PriceCatalogEntry['kind']>(['service_fee', 'room_type', 'party_room', 'dining_room', 'ticket', 'night_ticket']);
 
 /** 收银项目上的类别（部门营业额、券、会员折扣按它算；PC21） */
 export function itemCategoryOf(e: Pick<PriceCatalogEntry, 'sheet' | 'kind' | 'section'>): string {

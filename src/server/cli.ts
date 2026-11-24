@@ -12,9 +12,6 @@
 //   import-hand-tags <清单.csv> | --store-list [--apply] [--deactivate-missing]
 //                                         按清单导入手牌池（真实业务数据，默认只预览，加 --apply 才写入）；
 //                                         --store-list 使用店主 2026-10-27 的 747 个真实柜号；--deactivate-missing 同时停用清单外的空闲手牌
-//   import-price-list <价目表.csv> | --tangqi [--apply] [--deactivate-missing]
-//                                         按价目表导入消费项目与多档价格（真实业务数据，默认只预览，加 --apply 才写入）；
-//                                         --tangqi 使用店主 2026-10-27 的汤崎价目表；--deactivate-missing 同时停用清单外的项目
 //   import-opening <余额.csv> --operator <店主账号> [--control 人数,本金,赠金,累计充值] [--exclude <排除清单.csv>]
 //                  [--source EBC] [--note 备注] [--apply]
 //                                         导入旧系统（EBC）会员余额作为期初（真实业务数据，默认只预览，加 --apply 才写入）；
@@ -74,7 +71,6 @@ import { businessDateOf, ISO_DATE } from '@shared/business-date';
 import { ZONE_LABELS } from '@shared/frontdesk';
 import { parseHandTagCsv } from '@shared/hand-tag-import';
 import { formatYuan, parseYuan } from '@shared/money';
-import { parsePriceListCsv } from '@shared/price-list-import';
 import { decodeImportFile, encodingNote } from '@shared/text-decode';
 import { DEFAULT_BRIDGE_PORT } from '@shared/devices';
 import { decodePrintedText } from './devices/escpos';
@@ -99,8 +95,6 @@ import { applyLegacyImport, fileMeta, LegacyParseError, parseLegacyWorkbook, pre
 import { legacySampleFiles } from './modules/legacy/samples';
 import { LEGACY_SOURCE_LABELS, type LegacyAudit } from '@shared/legacy';
 import { STORE_HAND_TAGS_CSV } from './demo/hand-tags-2026-10-27';
-import { TANGQI_PRICE_LIST_CSV } from './demo/price-list-tangqi-2026-10-27';
-import { importPriceList } from './modules/catalog';
 import { importHandTags } from './modules/frontdesk/tags';
 import { applyOpeningImport, previewOpeningImport } from './modules/opening';
 import { importMemberHistory, previewMemberHistory } from './modules/member-history';
@@ -473,24 +467,6 @@ async function main() {
         console.log(apply ? '✓ 已导入。' : '以上为预览，没有写入。确认无误后加 --apply 执行导入。');
         break;
       }
-      case 'import-price-list': {
-        const tangqi = args.includes('--tangqi');
-        const file = args.find((a) => !a.startsWith('--'));
-        if (!tangqi && !file) throw new Error('用法：import-price-list <价目表.csv> | --tangqi [--apply] [--deactivate-missing]');
-        await prepareDb(sql, config);
-        const parsed = parsePriceListCsv(tangqi ? TANGQI_PRICE_LIST_CSV : await readImportFile(file!));
-        if (parsed.errors.length) {
-          for (const e of parsed.errors.slice(0, 20)) console.log(`✗ 第 ${e.line} 行：${e.message}`);
-          throw new Error(`价目表有 ${parsed.errors.length} 处需要修改，未导入`);
-        }
-        const apply = args.includes('--apply');
-        const report = await importPriceList(sql, { rows: parsed.rows, deactivateMissing: args.includes('--deactivate-missing'), dryRun: !apply }, { staffId: null, via: 'cli' });
-        console.log(`价目表共 ${report.total} 个项目：`);
-        for (const g of report.groups) console.log(`  ${g.category}：${g.count}`);
-        console.log(`新建 ${report.created} · 更新 ${report.updated} · 未变 ${report.unchanged} · 停用清单外 ${report.deactivated}`);
-        console.log(apply ? '✓ 已导入。' : '以上为预览，没有写入。确认无误后加 --apply 执行导入。');
-        break;
-      }
       case 'import-opening': {
         const file = args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'));
         const username = flag(args, 'operator')?.toLowerCase();
@@ -836,7 +812,7 @@ async function main() {
       }
       default:
         console.log(
-          '可用命令：migrate | create-owner <账号> | reset-password <账号> | seed-demo [--force] | seed-inventory-demo | seed-frontdesk-demo [--previous-day] | seed-billing-demo [--previous-day] | seed-legacy-demo | demo-prepare [--previous-day] | demo-check | demo-reset --confirm <数据库名> | import-hand-tags | import-price-list | import-opening | check | fingerprint | backup | backup-loop | verify-backup | daily-recon | balance-changes | floorplan-convert | floorplan-sample | import-devices | device-selftest | device-printer-mock | device-bridge-mock | membership-daily | import-benefits | import-count-cards',
+          '可用命令：migrate | create-owner <账号> | reset-password <账号> | seed-demo [--force] | seed-inventory-demo | seed-frontdesk-demo [--previous-day] | seed-billing-demo [--previous-day] | seed-legacy-demo | demo-prepare [--previous-day] | demo-check | demo-reset --confirm <数据库名> | import-hand-tags | import-opening | check | fingerprint | backup | backup-loop | verify-backup | daily-recon | balance-changes | floorplan-convert | floorplan-sample | import-devices | device-selftest | device-printer-mock | device-bridge-mock | membership-daily | import-benefits | import-count-cards',
         );
         process.exitCode = command ? 1 : 0;
     }

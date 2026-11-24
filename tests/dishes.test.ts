@@ -507,7 +507,7 @@ describe('改价', () => {
     expect((await reprice(await dishOf('宫保鸡丁'), { standard: 4800 }, '改回原价')).status).toBe(200);
   });
 
-  it('后台价目里改到菜品价格的两处也进改价记录（单个项目、价目表导入）；不是菜品的项目不记', async () => {
+  it('后台价目里改到菜品价格的也进改价记录；不是菜品的项目不记', async () => {
     const d = await dishOf('鲜切果盘');
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${d.id}`, { name: '鲜切果盘', category: '果吧', prices: { standard: 4200, premium: 6800 } })).status).toBe(200);
     expect((await history(d.id)).map((c) => `${c.tier}|${c.oldPrice}→${c.newPrice}|${c.reason}|${c.source}`)).toEqual([
@@ -520,19 +520,6 @@ describe('改价', () => {
     // 不是菜品的项目改价不进这份记录
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${legacy['汤泉门票']}`, { name: '汤泉门票', category: '门票', price: 13800 })).status).toBe(200);
     expect((await history(legacy['汤泉门票'])).length).toBe(0);
-    // 价目表导入
-    const rows = [
-      { category: '果吧', name: '鲜切果盘', durationMinutes: null, gender: null, prices: [{ tier: 'standard', price: 3800 }] },
-      { category: '门票', name: '汤泉门票', durationMinutes: null, gender: null, prices: [{ tier: 'standard', price: 12800 }] },
-    ];
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/items/import', { rows, dryRun: false })).status).toBe(200);
-    expect((await history(d.id)).slice(0, 2).map((c) => `${c.tier}|${c.oldPrice}→${c.newPrice}|${c.reason}|${c.source}`)).toEqual([
-      'premium|6800→null|按价目表导入|price_list',
-      'standard|4200→3800|按价目表导入|price_list',
-    ]);
-    expect((await history(legacy['汤泉门票'])).length).toBe(0);
-    // 价目表导入会按清单重排、把出品口这些留着：菜品还是菜品
-    expect(await dishOf('鲜切果盘')).toMatchObject({ price: 3800, outlet: 'fruit', stationName: '果吧档' });
     // 全部菜品的改价记录：新的在前
     const all = await history();
     expect(all[0]!.itemName).toBe('鲜切果盘');
