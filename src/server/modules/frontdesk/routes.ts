@@ -21,7 +21,7 @@ import { previewTableCheckout } from '../tables';
 import { listTicketTypes, saveTicketType, setVisitTicket, type TicketTypeInputData } from './tickets';
 import { frontdeskChecks } from './checks';
 import { businessDate, FRONTDESK_OP_PERMISSIONS, FRONTDESK_OPS, loadFrontdeskRules } from './common';
-import { batchCreate, importHandTags, listTags, lockHandTag, setTagCard, tagByCard, unlockHandTag, updateHandTag, type ImportInputData } from './tags';
+import { batchCreate, deleteHandTag, generateTags, setTagService, importHandTags, listTags, lockHandTag, setTagCard, tagByCard, unlockHandTag, updateHandTag, type ImportInputData } from './tags';
 import { registerIncidentRoutes } from './incidents';
 import { registerRiskRoutes } from './risk';
 import { memberLockerGrades } from './vip';
@@ -297,6 +297,14 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/frontdesk/tags/import', { preHandler: guard('frontdesk.tags') }, async (req) => importHandTags(sql, req.body as ImportInputData, { staffId: req.actor.id, ip: req.ip, via: 'web' }));
 
   app.post('/api/frontdesk/tags/batch', { preHandler: guard('frontdesk.tags') }, async (req) => batchCreate(deps, req.body, ctxOf(req)));
+
+  // 手牌管理（店主 2026-11-24）：按规则批量生成（预览 / 建）、删除、柜子标暂停使用 / 维修中
+  app.post('/api/frontdesk/tags/generate', { preHandler: guard('frontdesk.tags') }, async (req) => generateTags(deps, req.body, ctxOf(req)));
+  app.post('/api/frontdesk/tags/:id/delete', { preHandler: guard('frontdesk.tags') }, async (req) => deleteHandTag(deps, parse(idParam, req.params).id, ctxOf(req)));
+  app.post('/api/frontdesk/tags/:id/service', { preHandler: guard('frontdesk.tags') }, async (req) => {
+    await setTagService(deps, parse(idParam, req.params).id, req.body, ctxOf(req));
+    return { ok: true };
+  });
 
   app.post('/api/frontdesk/tags/:id/lock', { preHandler: guard('frontdesk.operate') }, async (req) => {
     const { id } = parse(idParam, req.params);

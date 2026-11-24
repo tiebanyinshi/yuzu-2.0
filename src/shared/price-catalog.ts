@@ -108,6 +108,8 @@ export interface PriceCatalogEntry {
 }
 
 export interface PriceImportIssue {
+  /** 文件名（各模块单独导入时写明是哪个文件） */
+  file?: string;
   /** 工作表原名 */
   sheet: string;
   row: number | null;
@@ -137,6 +139,8 @@ export interface PriceImportPreview {
   total: { expected: number; actual: number };
   /** 不录入、只记下来的（储值政策那一句） */
   notes: Record<string, string>;
+  /** 只导一张表时是哪一张（条数对照只列这一张；导入只换草稿里的这一张） */
+  sheet?: PriceSheet;
 }
 
 export interface PriceCatalogSetSummary {

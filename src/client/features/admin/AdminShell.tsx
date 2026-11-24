@@ -271,3 +271,27 @@ export function AdminModuleGate({ section, children }: { section: AdminSection; 
     </div>
   );
 }
+
+/**
+ * 各模块页面上的「价目表」入口（店主 2026-11-24《价目表模板替换与页面维护需求说明》）：门票、房态中心房型、菜品、技师项目
+ * 这些页面不另写一套导入 / 改价，点过去到「价目与套餐 → 全品类价目表」，直接是这个模块的那张表（导入、模板、导出、新增、改价、停用都在那里）。
+ * 放在这里（后台各页本来就依赖的这一份）而不是单独一个文件：单独的文件会让首屏主包里每个页面的依赖清单都多一项。
+ * 工作表名照 @shared/price-catalog 的 PRICE_SHEET_NAMES（不引那个模块，免得这几个页面都多拉一份价目表的代码）。
+ */
+const PRICE_SHEET_LABELS = { store: '门店价格', room: '房间价格', dish: '零点菜品价格', massage: '按摩及助浴价格' } as const;
+
+export function PriceSheetLink({ sheet, className }: { sheet: keyof typeof PRICE_SHEET_LABELS; className?: string }) {
+  return (
+    <Link
+      to={`/admin/catalog/full?sheet=${sheet}`}
+      className={cn(
+        'tap relative inline-flex min-h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3 text-[13px] font-bold text-ink-2 hover:border-ink-3 hover:text-ink',
+        className,
+      )}
+      data-testid={`price-sheet-link-${sheet}`}
+    >
+      {/* 箭头写成字符：引图标会让后台每一页都多依赖一个图标文件，首屏主包里的依赖清单跟着变长 */}
+      价目表「{PRICE_SHEET_LABELS[sheet]}」：导入 / 模板 / 导出 / 改价 →
+    </Link>
+  );
+}

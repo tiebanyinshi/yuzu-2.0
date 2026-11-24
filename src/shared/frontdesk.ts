@@ -91,6 +91,67 @@ export const MAX_MOVE_LINES = 20;
 
 export const TAG_CODE_PATTERN = /^[A-Z]{0,2}[0-9]{1,5}$/;
 
+// ───────── 手牌管理（店主 2026-11-24）：柜子的使用状态、按规则批量生成 ─────────
+
+export const TAG_SERVICE_STATUSES = ['normal', 'paused', 'repair'] as const;
+export type TagServiceStatus = (typeof TAG_SERVICE_STATUSES)[number];
+export const TAG_SERVICE_LABELS: Record<TagServiceStatus, string> = { normal: '正常', paused: '暂停使用', repair: '维修中' };
+
+/** 前台能不能把这张牌发出去：启用、没锁定、柜子正常、没人在用 */
+export const tagIssuable = (t: Pick<HandTag, 'active' | 'locked' | 'serviceStatus'> & { visit?: unknown }) => t.active && !t.locked && t.serviceStatus === 'normal' && !t.visit;
+
+/** 发不出去的原因（发牌、换牌时提示）；能发的为 null */
+export function tagBlockedText(t: Pick<HandTag, 'code' | 'active' | 'locked' | 'lockReason' | 'serviceStatus' | 'serviceNote'>): string | null {
+  if (!t.active) return `${t.code} 已停用`;
+  if (t.locked) return `${t.code} 已锁定（${t.lockReason ?? ''}）`;
+  if (t.serviceStatus !== 'normal') return `${t.code} ${TAG_SERVICE_LABELS[t.serviceStatus]}${t.serviceNote ? `（${t.serviceNote}）` : ''}`;
+  return null;
+}
+
+/** 一次最多生成多少张 */
+export const TAG_GENERATE_MAX = 500;
+
+export interface TagGenerateRule {
+  /** 前缀（区号）：0–2 个字母 */
+  prefix: string;
+  /** 起始号码 */
+  start: number;
+  /** 要几张 */
+  count: number;
+  /** 数字位数，不足补 0 */
+  width: number;
+  /** 尾数是这些数字的跳过（例如 4、7） */
+  skipEndDigits: number[];
+  /** 号码里含这些数字的跳过（任何一位） */
+  skipAnyDigits: number[];
+}
+
+/**
+ * 按规则生成牌号：从起始号码往后数，尾数 / 含有排除数字的跳过，已有的牌号（existing）跳过，凑够 count 张为止；
+ * 号码用到位数能写下的最大值（width 位 9…9）还不够就停，返回实际生成的。页面预览与服务端用同一个。
+ */
+export function planTagCodes(rule: TagGenerateRule, existing: ReadonlySet<string>): { codes: string[]; skippedByRule: number; skippedExisting: string[]; exhausted: boolean } {
+  const codes: string[] = [];
+  const skippedExisting: string[] = [];
+  let skippedByRule = 0;
+  const max = 10 ** rule.width - 1;
+  let n = rule.start;
+  for (; n <= max && codes.length < rule.count; n++) {
+    const digits = String(n);
+    if (rule.skipEndDigits.includes(Number(digits.at(-1))) || rule.skipAnyDigits.some((d) => digits.includes(String(d)))) {
+      skippedByRule += 1;
+      continue;
+    }
+    const code = `${rule.prefix}${digits.padStart(rule.width, '0')}`;
+    if (existing.has(code)) {
+      skippedExisting.push(code);
+      continue;
+    }
+    codes.push(code);
+  }
+  return { codes, skippedByRule, skippedExisting, exhausted: codes.length < rule.count };
+}
+
 export function normalizeTagCode(input: string): string {
   return input.trim().toUpperCase().replace(/\s+/g, '');
 }
@@ -165,6 +226,9 @@ export interface HandTag {
   lockReason: string | null;
   active: boolean;
   isSynthetic: boolean;
+  /** 手牌柜的使用状态（店主 2026-11-24 手牌管理）：正常 / 暂停使用 / 维修中；不是「正常」的前台发不出 */
+  serviceStatus: TagServiceStatus;
+  serviceNote: string | null;
 }
 
 /** 在店手牌状态板上的一张卡片 */
@@ -208,6 +272,8 @@ export interface FrontdeskBoard {
     inStoreByZone: Record<TagZone, number>;
     free: number;
     locked: number;
+    /** 标了「暂停使用 / 维修中」的（不含锁定、在店） */
+    outOfService: number;
     unsettledCents: number;
     groups: number;
   };

@@ -786,11 +786,14 @@ export async function voidCheckout(deps: Deps, checkoutId: number, raw: unknown,
 
     // ① 手牌（id 升序）：必须启用、未锁定、没有其他在店客人
     const tags = items.length
-      ? await tx<{ id: number; code: string; locked: boolean; active: boolean }[]>`
-          SELECT id, code, locked, active FROM hand_tags WHERE id IN ${tx(items.map((i) => i.tagId))} ORDER BY id FOR UPDATE`
+      ? await tx<{ id: number; code: string; locked: boolean; active: boolean; serviceStatus: string }[]>`
+          SELECT id, code, locked, active, service_status FROM hand_tags WHERE id IN ${tx(items.map((i) => i.tagId))} ORDER BY id FOR UPDATE`
       : [];
     for (const t of tags) {
-      if (!t.active || t.locked) throw conflict('TAG_UNAVAILABLE', `手牌 ${t.code} 已${t.active ? '锁定' : '停用'}，不能恢复在店；请先在手牌管理里处理`);
+      if (!t.active || t.locked || t.serviceStatus !== 'normal') {
+        const why = !t.active ? '停用' : t.locked ? '锁定' : t.serviceStatus === 'repair' ? '标了维修中' : '标了暂停使用';
+        throw conflict('TAG_UNAVAILABLE', `手牌 ${t.code} 已${why}，不能恢复在店；请先在手牌管理里处理`);
+      }
     }
     const busy = tags.length
       ? await tx<{ code: string }[]>`

@@ -15,6 +15,7 @@ import {
   type VisitDetail,
   type VisitHistoryEvent,
   ZONE_LABELS,
+  type HandTag,
 } from '@shared/frontdesk';
 import { businessDateOf } from '@shared/business-date';
 import { backfillText, type BackfillMark } from '@shared/backfill';
@@ -699,7 +700,7 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
       openTodos: number | null;
     })[]
   >`
-    SELECT t.id, t.code, t.zone, t.kind, t.vip_level, t.locked, t.lock_reason, t.active, t.is_synthetic,
+    SELECT t.id, t.code, t.zone, t.kind, t.vip_level, t.locked, t.lock_reason, t.active, t.is_synthetic, t.service_status, t.service_note,
            v.id AS visit_id, v.visit_no, v.bill_id, v.checked_in_at, v.member_id, m.name AS member_name, right(m.phone, 4) AS member_phone_tail,
            v.guest_label,
            v.group_id, g.group_no,
@@ -725,6 +726,8 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
     lockReason: r.lockReason,
     active: r.active,
     isSynthetic: r.isSynthetic,
+    serviceStatus: r.serviceStatus,
+    serviceNote: r.serviceNote,
     visit: r.visitId
       ? {
           id: r.visitId,
@@ -758,8 +761,9 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
     stats: {
       inStore: inStore.length,
       inStoreByZone,
-      free: tags.filter((t) => !t.visit && !t.locked && t.active).length,
+      free: tags.filter((t) => !t.visit && !t.locked && t.active && t.serviceStatus === 'normal').length,
       locked: tags.filter((t) => t.locked).length,
+      outOfService: tags.filter((t) => !t.visit && !t.locked && t.serviceStatus !== 'normal').length,
       unsettledCents: inStore.reduce((s, t) => s + t.visit!.amountCents, 0),
       groups: new Set(inStore.map((t) => t.visit!.groupId).filter(Boolean)).size,
     },
@@ -801,6 +805,8 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
       tagLockReason: string | null;
       tagActive: boolean;
       tagSynthetic: boolean;
+      tagServiceStatus: HandTag['serviceStatus'];
+      tagServiceNote: string | null;
       vipOverrideByName: string | null;
       backfill: BackfillMark | null;
       awaySince: string | null;
@@ -815,6 +821,7 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
            b.id AS bill_id, b.bill_no, b.status AS bill_status, b.amount_cents, b.line_count,
            t.id AS tag_id, t.code AS tag_code, t.zone AS tag_zone, t.kind AS tag_kind, t.vip_level AS tag_vip_level,
            t.locked AS tag_locked, t.lock_reason AS tag_lock_reason, t.active AS tag_active, t.is_synthetic AS tag_synthetic,
+           t.service_status AS tag_service_status, t.service_note AS tag_service_note,
            os.display_name AS vip_override_by_name,
            v.away_since, rk.display_name AS risk_approved_by_name, v.risk_approved_at, v.risk_reason
     FROM visits v JOIN bills b ON b.id = v.bill_id JOIN hand_tags t ON t.id = v.tag_id
@@ -971,6 +978,8 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
       lockReason: v.tagLockReason,
       active: v.tagActive,
       isSynthetic: v.tagSynthetic,
+      serviceStatus: v.tagServiceStatus,
+      serviceNote: v.tagServiceNote,
     },
     member: member ?? null,
     memberGrade,

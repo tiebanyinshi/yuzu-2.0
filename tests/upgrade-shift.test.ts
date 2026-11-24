@@ -119,6 +119,8 @@ beforeAll(async () => {
   await sql`CREATE TABLE bookings (id bigint, booking_no text, status text, arrival_visit_id bigint, arrived_at timestamptz)`;
   // 现版本结账时一起结束这几位客人在房态中心的登记单（190 才有）：写入期间临时建空表，迁移前删掉
   await sql`CREATE TABLE room_registrations (id bigint, space_id bigint, visit_id bigint, status text)`;
+  // 现版本发牌时核对手牌柜是不是暂停使用 / 维修中（260 才有这两列）：写入期间临时加列（都是正常），迁移前删掉
+  await sql`ALTER TABLE hand_tags ADD COLUMN service_status text NOT NULL DEFAULT 'normal', ADD COLUMN service_note text`;
   const deps = { sql, config };
   const as = (id: number, username: string): Actor => ({ id, username, displayName: username, role: username === 'owner' ? 'owner' : 'clerk', duties: [], mustChangePassword: false });
   const cash = (amount: number) => ({ idempotencyKey: randomUUID(), memberId, planId: null, paidAmount: amount, bonusAmount: 0, paymentMethod: 'cash' as const, paymentConfirmed: true as const });
@@ -163,6 +165,7 @@ beforeAll(async () => {
   await sql`DELETE FROM settings WHERE key = 'stock_usage_rules'`;
   for (const t of ['hand_tags', 'visits', 'shifts', 'checkouts']) await sql.unsafe(`ALTER TABLE ${t} DROP COLUMN store_id`);
   await sql`ALTER TABLE visits DROP COLUMN risk_approved_by, DROP COLUMN risk_approved_at, DROP COLUMN risk_reason`;
+  await sql`ALTER TABLE hand_tags DROP COLUMN service_status, DROP COLUMN service_note`;
   await sql`DROP TABLE bookings`;
 
   expect(await migrate(sql)).toEqual(migrationsFrom('016_shift_boundary.sql'));

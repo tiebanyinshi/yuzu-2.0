@@ -262,3 +262,47 @@ test.describe('价目表录入 第四批：前台试算与对接收银项目', (
     await expect(trial.getByTestId('price-trial-total')).toHaveText('¥1,865.60');
   });
 });
+
+test.describe('价目表模板替换（店主 2026-11-24）：各模块单独导入一张表、模板、按模板导出', () => {
+  test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '会导入草稿，只在门店电脑尺寸执行一次');
+
+  test('从房态中心房型配置进来 → 只导「房间价格」（用这一份导出的文件改价再导回）→ 草稿里只换了房间，别的表照原样', async ({ page }) => {
+    await login(page);
+    // 先有一份草稿（整份）
+    await page.goto('/admin/catalog/full');
+    const root = page.getByTestId('price-catalog');
+    await importDraft(root);
+    // 房态中心房型配置上的「价目表」入口：到全品类价目表，直接是「房间价格」
+    await page.goto('/admin/spaces/room-categories');
+    await page.getByTestId('price-sheet-link-room').click();
+    await expect(page).toHaveURL(/\/admin\/catalog\/full\?sheet=room/);
+    await expect(root.getByTestId('price-catalog-target')).toHaveValue('room');
+    await expect(root.getByTestId('price-catalog-template')).toHaveAttribute('href', '/api/admin/price-catalog/template?sheet=room');
+    // 按模板格式导出这一张，把 spa房 改成 429 再导回
+    const ov = await (await page.request.get('/api/admin/price-catalog')).json();
+    const exported = await page.request.get(`/api/admin/price-catalog/sets/${ov.draft.id}/export-sheets?sheet=room`);
+    expect(exported.ok()).toBe(true);
+    const { readXlsx } = await import('../src/server/lib/xlsx-read');
+    const rows = [...readXlsx(Buffer.from(await exported.body())).sheets[0]!.rows.values()].map((r) => [...r.values()].map((c) => c.value));
+    expect(rows.flat()).toContain('399/2H起开');
+    const edited = buildWorkbook([
+      {
+        name: '房间价格',
+        widths: [10],
+        rows: rows.map((cells) => ({ cells: cells.map((v) => (v === '399/2H起开' ? '429/2H起开' : v)) })),
+      },
+    ]);
+    await root.getByTestId('price-catalog-file').setInputFiles({ name: '房间价格.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: edited });
+    await root.getByTestId('price-catalog-preview').click();
+    await expect(root.getByTestId('price-catalog-preview-result')).toContainText('没有问题：1 项');
+    await root.getByTestId('price-catalog-apply').click();
+    await expect(root.getByTestId('price-catalog-done')).toContainText('房间价格已导入草稿');
+    const after = await (await page.request.get(`/api/admin/price-catalog/sets/${(await (await page.request.get('/api/admin/price-catalog')).json()).draft.id}`)).json();
+    expect(after.entries.find((e: { name: string }) => e.name === 'spa房').priceCents).toBe(42900);
+    // 别的表照原样：门店、娱乐、零点、按摩都还在
+    for (const name of ['12H 不含餐', '台球', '生滚牛肉粥', '古法中式']) expect(after.entries.some((e: { name: string }) => e.name === name)).toBe(true);
+    // 按模板格式导出的几个入口
+    await expect(root.getByTestId('price-catalog-export-sheets')).toBeVisible();
+    await expect(root.getByTestId('price-export-dish')).toHaveAttribute('href', /export-sheets\?sheet=dish/);
+  });
+});
