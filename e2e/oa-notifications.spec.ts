@@ -2,12 +2,14 @@
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026。只读，可重复执行。
 // 通知由各模块在服务端发（OA-04 起接上）；这里核对入口、未读 / 全部切换、全部标为已读后铃铛清零。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page, username: string) {
   await page.goto('/login');
   await page.fill('#username', username);
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

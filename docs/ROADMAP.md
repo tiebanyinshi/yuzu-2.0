@@ -252,6 +252,7 @@
   - `240`（`240_price_catalog_items.sql`，第一批）：收银项目上加价目表的分类（编码、名称、上一级、排序）与 `catalog_key` / `catalog_managed`（价目表新建的收银项目）。回滚脚本 `docs/rollback/240_price_catalog_items.down.sql`。
   - `241`（`241_room_overnight.sql`，第五批）：房态中心登记单记「客人是否过夜」（`room_registrations.overnight`）；收银项目上记价目表的原始编号（`catalog_code`，点单时按编号搜）。回滚脚本 `docs/rollback/241_room_overnight.down.sql`。
 - **技师榜单（店主 2026-11-24 登记，设计见 `docs/TECH_RANKING.md`）**：店主《技师榜单模块需求说明》，分三批（数据接口与模型 → 榜单页面 → 实时刷新与排序）依次串行，由主线开发会话在 `claude/epic-edison-qhc43r` 做，每批一个 PR；不改版本号（三批做完店主统一发版）。迁移号预留 `250`–`259`（需求说明写的 230 起已被价目表用掉）。
+- **系统门户页（店主 2026-11-24 登记，设计见 `docs/PORTAL.md`）**：店主《系统门户页改造需求说明》，分两批（门户页与路由 → 侧栏清理与三项迁移），纯入口层、不改版本号、没有迁移；开发完先给店主预览图，不合并。
   - `250`（`250_technician_ranking.sql`，第一批）：技师照片 `technician_photos`（按内容去重、只追加）与名册上的 `technicians.photo_id`。回滚脚本 `docs/rollback/250_technician_ranking.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）

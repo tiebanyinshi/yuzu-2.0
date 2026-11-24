@@ -18,6 +18,7 @@ import type { MemberCardDeposits } from '../src/shared/member-form';
 import type { RosterTechnician, ScheduleView, TechLeave, TechnicianAdminView } from '../src/shared/technician-admin';
 import { DEFAULT_TECHNICIAN_RULES } from '../src/shared/technicians';
 import { expectFits } from './fits';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -894,6 +895,7 @@ async function openDevice(browser: Browser, baseURL: string, d: Device) {
   await page.fill('#username', 'linlan');
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
   return { ctx, page };
 }
@@ -1451,6 +1453,7 @@ test.describe('三台目标设备（docs/DEVICES.md）', () => {
     await page.fill('#username', 'linlan');
     await page.fill('#password', PASSWORD);
     await page.getByRole('button', { name: '登录' }).click();
+    await passPortal(page);
     await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
     const before = ((await (await page.request.get('/api/admin/dining')).json()) as { rules: { enabled: boolean; tablesEnabled: boolean } }).rules;
     const put = async (data: Record<string, boolean>) => expect((await page.request.put('/api/admin/dining/rules', { data })).ok()).toBe(true);

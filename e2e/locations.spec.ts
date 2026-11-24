@@ -16,6 +16,7 @@ import type { RoomBoard } from '../src/shared/rooms';
 import type { SpaceLedger } from '../src/shared/spaces';
 import { floorplanSampleDxf } from '../src/server/demo/floorplan-sample';
 import { clickNav } from './nav';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const READER = { code: 'E2E-R2', name: 'E2E 足浴门口' };
@@ -26,6 +27,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 async function relogin(page: Page, username: string) {

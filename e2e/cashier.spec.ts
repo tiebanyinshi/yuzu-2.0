@@ -5,6 +5,7 @@
 // 这里核对与口径无关的部分：两人交班表的应有现金变动合计 = 实际净收现金。
 import { expect, test, type Page } from '@playwright/test';
 import { clickNav } from './nav';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -13,6 +14,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 }); // 刚启动的服务第一次登录可能较慢
 }
 

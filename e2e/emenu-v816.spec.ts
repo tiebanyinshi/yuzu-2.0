@@ -11,6 +11,7 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
 import { DEFAULT_EMENU_PERIODS, type EmenuMenu } from '../src/shared/emenu';
 import { defaultStudioDoc, DocSchema, EMENU_HEADER_LAYOUT, findSlotDef, resolveSlot, slotDefault, slotSpot, type EmenuSlotMode, type StudioDoc, type StudioState } from '../src/shared/studio';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 /** 小米平板 6S Pro 12.4：屏幕 3048 × 2032，HyperOS 默认显示大小下网页看到 1355 × 903 */
@@ -23,6 +24,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

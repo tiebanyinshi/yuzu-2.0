@@ -1,6 +1,7 @@
 // v0.7.28 ⑧ 浏览器验收：停车优惠（QY-016）。店主在后台把 QY-016 设成每次免 2 小时并发布（接口准备）→ 会员页「本月可享」登记停车：
 // 填车牌、免费几小时 → 今天已登记 → 后台「会员权益」下方的停车登记里看得到。依赖演示数据（仅独立演示库）；账号：店主 linlan。可重复执行。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const run = Date.now().toString(36).toUpperCase().slice(-5);
@@ -10,6 +11,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

@@ -6,12 +6,14 @@
 //   导入生成 1 张库管入库、1 张部门领料；再从导入页导出这个月的台账，标题写着「系统导出」。
 // 依赖演示数据（seed-demo 与 seed-inventory-demo：物资 lixiao，密码 yuzu2026）。会登记单据，只在门店电脑尺寸执行。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page, username: string) {
   await page.goto('/login');
   await page.fill('#username', username);
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: /主导航|ERP 导航/ })).toBeVisible({ timeout: 30_000 });
 }
 

@@ -3,6 +3,7 @@
 // 老账号第一次登录选岗要改库里的标记，浏览器用例不做，接口与级别封顶见 tests/positions-api.test.ts。
 
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -11,6 +12,7 @@ async function login(page: Page, username: string, password = PASSWORD) {
   await page.fill('#username', username);
   await page.fill('#password', password);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

@@ -32,6 +32,7 @@ import type {
   MpReminderMessageAdmin,
   MpReminderStatus,
 } from '../src/shared/mp';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 /** 本机「结果待确认」记录（src/client/features/mp/mpPending.ts） */
@@ -42,6 +43,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

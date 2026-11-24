@@ -1,24 +1,16 @@
-import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router';
-import { useQueryClient } from '@tanstack/react-query';
-import { Building2, CalendarClock, KeyRound, LogOut, MonitorSmartphone, Wifi } from 'lucide-react';
-import { useTerminalState } from '../features/devices/terminal';
+import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
+import { Navigate, useLocation } from 'react-router';
 import { describeBusinessHours, isOpenAt, minuteOfDay } from '@shared/business-date';
-import { describeDate, DUTY_LABELS, ROLE_LABELS } from '@shared/labels';
-import { api } from '../lib/api';
-import { useExitGhost, usePageEnter } from '../lib/motion';
+import { describeDate } from '@shared/labels';
+import { usePageEnter } from '../lib/motion';
 import { useCan, useSession } from '../lib/session';
-import { cn } from '../lib/utils';
 import { InstanceTag } from './InstanceTag';
 import { StoreSwitcher } from './StoreSwitcher';
-import { ThemeMenuRow } from './ThemeSwitch';
+import { UserMenu } from './UserMenu';
 import { storePageOf } from './storeNav';
 import { StoreRail } from './StoreRail';
 import { PendingOpsBanner } from './PendingOpsBanner';
-import { useLocalPendingCount } from './LocalPendingNotice';
-import { useConnection } from '../lib/connection';
 import { FrontdeskPendingBanner } from '../features/frontdesk/PendingBanner';
-import { useErpAccess } from '../features/erp/access';
 import { TerminalBridgeRunner } from '../features/devices/terminal';
 import { Badge } from './ui';
 
@@ -76,172 +68,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         {children}
       </div>
     </div>
-  );
-}
-
-function UserMenu() {
-  const session = useSession();
-  const can = useCan();
-  const erp = useErpAccess();
-  // 这台电脑现在设成了哪台终端（记在本机浏览器里；没设 = 不上报）
-  const terminalCode = useTerminalState().terminal;
-  const link = useConnection();
-  const pendingCount = useLocalPendingCount();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', esc);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', esc);
-    };
-  }, [open]);
-
-  const logout = async () => {
-    await api.post('/api/auth/logout').catch(() => {});
-    qc.clear();
-    navigate('/login', { replace: true });
-  };
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        data-testid="user-menu"
-        className="tap relative flex size-11 items-center justify-center rounded-full bg-yuzu text-[15px] font-bold text-ink ring-2 ring-white/15 transition hover:ring-white/35 short:size-9 short:text-[14px]"
-        title={`${session.staff.displayName} · ${roleText(session.staff)}`}
-      >
-        {session.staff.displayName.slice(0, 1)}
-      </button>
-      {open && (
-        <MenuPanel>
-          <div className="px-3 pt-2 pb-2.5">
-            <p className="text-[14px] font-bold">{session.staff.displayName}</p>
-            <p className="text-[12px] text-ink-3">
-              {roleText(session.staff)} · {session.staff.username}
-            </p>
-          </div>
-          <div className="my-1 h-px bg-line" />
-          {erp.canEnter && (
-            // ERP 不在主导航里显示（店主 2026-10-30 定）：有 ERP 权限的人从这里进
-            <MenuItem
-              icon={<Building2 className="size-4" />}
-              onClick={() => {
-                setOpen(false);
-                navigate('/erp');
-              }}
-              testId="user-menu-erp"
-            >
-              进入 ERP
-            </MenuItem>
-          )}
-          {/* 办公（OA，docs/OA.md 第 8 节）：员工自己的排班、通知等；人人都有，不占主导航 */}
-          <MenuItem
-            icon={<CalendarClock className="size-4" />}
-            onClick={() => {
-              setOpen(false);
-              navigate('/oa');
-            }}
-            testId="user-menu-oa"
-          >
-            办公
-          </MenuItem>
-          {can('device.view') && (
-            // 本机终端（8.0.19，IA 第 3.4 节）：这台电脑是哪台终端在门店「设备」页右边设；从哪一页都点得到
-            <MenuItem
-              icon={<MonitorSmartphone className="size-4" />}
-              onClick={() => {
-                setOpen(false);
-                navigate('/devices#terminal');
-              }}
-              testId="user-menu-terminal"
-            >
-              本机终端
-              <span className="ml-auto max-w-[96px] truncate text-[12px] text-ink-3" data-testid="user-menu-terminal-current">
-                {terminalCode ?? '未设置'}
-              </span>
-            </MenuItem>
-          )}
-          {/* 网络与同步（8.1.3 WL12）：连接、版本、这台电脑上的待确认、最近的问题 */}
-          <MenuItem
-            icon={<Wifi className="size-4" />}
-            onClick={() => {
-              setOpen(false);
-              navigate('/network');
-            }}
-            testId="user-menu-network"
-          >
-            网络与同步
-            <span className="ml-auto flex items-center gap-1.5 text-[12px] text-ink-3">
-              {pendingCount > 0 && <span data-testid="user-menu-network-pending">{pendingCount} 笔待确认</span>}
-              <span className={cn('size-2 rounded-full', link.state === 'offline' ? 'bg-clay' : link.updated ? 'bg-lake' : 'bg-pine')} />
-            </span>
-          </MenuItem>
-          {/* 外观（8.1.15）：浅色 / 深色 / 跟随系统，记在这台设备上 */}
-          <div className="my-1 h-px bg-line" />
-          <ThemeMenuRow />
-          <div className="my-1 h-px bg-line" />
-          <MenuItem
-            icon={<KeyRound className="size-4" />}
-            onClick={() => {
-              setOpen(false);
-              navigate('/password');
-            }}
-          >
-            修改密码
-          </MenuItem>
-          <MenuItem icon={<LogOut className="size-4" />} onClick={logout}>
-            退出登录
-          </MenuItem>
-        </MenuPanel>
-      )}
-    </div>
-  );
-}
-
-/** 用户菜单的面板：从头像的位置放大出来；关掉时留一个影子缩回去（8.0.16） */
-function MenuPanel({ children }: { children: ReactNode }) {
-  const ref = useExitGhost<HTMLDivElement>();
-  return (
-    <div
-      ref={ref}
-      role="menu"
-      data-mo-out="menu"
-      className="absolute bottom-0 left-[calc(100%+12px)] z-30 w-56 origin-bottom-left animate-menu-in rounded-lg border border-line bg-card p-1.5 text-ink shadow-pop"
-    >
-      {children}
-    </div>
-  );
-}
-
-function roleText(staff: { role: keyof typeof ROLE_LABELS; duties: (keyof typeof DUTY_LABELS)[] }) {
-  return [ROLE_LABELS[staff.role], ...staff.duties.map((d) => DUTY_LABELS[d].title)].join(' · ');
-}
-
-function MenuItem({ icon, children, onClick, testId }: { icon: ReactNode; children: ReactNode; onClick: () => void; testId?: string }) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      data-testid={testId}
-      className="tap relative flex h-10 w-full items-center gap-2.5 rounded-md px-3 text-left text-[14px] font-medium text-ink-2 hover:bg-paper-2 hover:text-ink"
-    >
-      {icon}
-      {children}
-    </button>
   );
 }
 

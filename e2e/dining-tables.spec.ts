@@ -10,6 +10,7 @@ import type { DiningAdmin, KitchenBoard, TableSessionDetail, TablesAdmin, Tables
 import type { CheckoutDetail } from '../src/shared/checkout';
 import type { MemberSummary } from '../src/shared/types';
 import { ensureShift } from './shift';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 // 8.1.7：点单页先选一处（餐厅 / 水吧 / 果吧）再点菜；两道菜的点单分类在准备时写明（不靠默认归类）
@@ -32,6 +33,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

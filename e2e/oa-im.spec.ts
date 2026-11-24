@@ -2,6 +2,7 @@
 // A 不刷新页面几秒内看到回复（短轮询）与「已读」（OA-15）；A 撤回刚发的一句，两边都显示撤回（docs/OA.md 第 17 节）。
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026。每次新开两个店员账号。
 import { expect, test, type Browser, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function staffPage(browser: Browser, owner: Page, tag: string, stamp: string): Promise<{ page: Page; id: number; name: string }> {
   const username = `im${tag}${stamp}`;
@@ -21,6 +22,7 @@ test.describe('OA-14 即时通讯', () => {
     await page.fill('#username', 'linlan');
     await page.fill('#password', 'yuzu2026');
     await page.getByRole('button', { name: '登录' }).click();
+    await passPortal(page);
     await page.waitForURL((u) => !u.pathname.startsWith('/login'));
     const stamp = Date.now().toString(36).slice(-5);
     const a = await staffPage(browser, page, 'a', stamp);

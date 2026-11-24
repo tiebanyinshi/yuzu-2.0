@@ -4,6 +4,7 @@
 //   物资经办登录直接进 ERP 的库存，没有营业数据与模块设置；开了餐饮时，物资经办的「返回门店」进餐饮的厨房出品屏。
 // 依赖四套演示数据（仅独立演示库）；账号：店主 linlan、物资经办 lixiao，密码 yuzu2026。结束时把模块开关恢复为全部开启。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -12,6 +13,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   // 刚启动的服务第一次登录可能较慢；门店账号进主导航，只用 ERP 的账号进 ERP
   await expect(page.getByRole('navigation', { name: /主导航|ERP 导航/ })).toBeVisible({ timeout: 30_000 });
 }

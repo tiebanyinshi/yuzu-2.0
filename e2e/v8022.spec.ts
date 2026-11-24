@@ -4,6 +4,7 @@
 //   · AI 辅助（MD-D）：经营总览顶上「昨日小结」、看板「问数」、后台「对外接口」的 AI 开关。应用带 INTEGRATIONS_MOCK=true 启动时
 //     问一次、合同表单上「AI 看一下条款」；没带时核对「还没配置」的样子（CI 的浏览器验收没带）。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -12,6 +13,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

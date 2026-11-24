@@ -5,6 +5,7 @@
 //   · 自定义字段：给会员建一个「列表里显示」的文字字段 → 会员详情「其他信息」填了保存 → 会员列表那一行看得到；
 //   · 按字段查：查得到这位会员。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const stamp = String(Date.now()).slice(-6);
@@ -14,6 +15,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

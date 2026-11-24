@@ -7,6 +7,7 @@
 //   · 不横向滚动。
 // 只读，可重复执行；依赖演示数据（仅独立演示库），账号店主 linlan。统一过的页面加到 PAGES 里。
 import { expect, test, type Browser, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -107,6 +108,7 @@ async function openDevice(browser: Browser, baseURL: string, d: (typeof DEVICES)
   await page.fill('#username', 'linlan');
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
   return { ctx, page };
 }
@@ -150,6 +152,7 @@ test.describe('8.1.17 整体样式：字号、关键金额、点按热区、不�
         await page.fill('#username', 'linlan');
         await page.fill('#password', PASSWORD);
         await page.getByRole('button', { name: '登录' }).click();
+        await passPortal(page);
         await page.waitForURL((u) => !u.pathname.startsWith('/login'));
         await page.goto('/settlement');
         // 日期条的「前一天」：宽 36、高 38 的图标按钮

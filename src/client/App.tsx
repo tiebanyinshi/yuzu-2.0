@@ -44,6 +44,8 @@ const PlatformPage = lazyPage(() => import('./features/platform/PlatformPage').t
 const OfficePage = lazyPage(() => import('./features/oa/OfficePages').then((m) => m.OfficePage));
 const GuidePage = lazyPage(() => import('./features/guide/GuidePage').then((m) => m.GuidePage));
 const GuideScreenPage = lazyPage(() => import('./features/guide/GuidePage').then((m) => m.GuideScreenPage));
+// 系统门户页（店主 2026-11-24，docs/PORTAL.md）：登录后的第一个界面，四大板块入口
+const PortalPage = lazyPage(() => import('./features/portal/PortalPage').then((m) => m.PortalPage));
 const DevicesPage = lazyPage(() => import('./features/devices/DevicesPage').then((m) => m.DevicesPage));
 // 点餐系统 · 平板电子菜单（8.0.10，docs/EMENU.md）：放在餐桌上的平板，没有导航
 const EmenuPage = lazyPage(() => import('./features/emenu/EmenuPage').then((m) => m.EmenuPage));
@@ -300,6 +302,8 @@ const router = createBrowserRouter([
   { path: '/studio/:surface', element: <AuthGate shell="bare" />, children: [{ index: true, element: <StudioPage /> }] },
   // 手机界面（小程序、员工食堂）的预览（8.1.2）：按预览码画出当时的草稿，375 宽
   { path: '/studio-preview/:surface/:code', element: <AuthGate shell="bare" />, children: [{ index: true, element: <PhonePreviewPage /> }] },
+  // 系统门户页（店主 2026-11-24）：登录后先到这里选板块（浴族、ERP、办公、管理后台）；自己有顶栏，不套门店的侧栏
+  { path: '/portal', element: <AuthGate shell="bare" />, children: [{ index: true, element: <PortalPage /> }] },
   { path: '/admin/concierge', element: <Navigate to="/concierge" replace /> },
   { path: '/admin', element: <AuthGate shell="admin" />, children: adminRoutes },
   // ERP 工作区（v0.7.3）：首页、模块设置、营业数据，以及库存、采购、货款、待办（原来的地址不变，门店主导航里不再有）。

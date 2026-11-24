@@ -1,6 +1,7 @@
 // 安保巡场起始时间（店主 2026-11-24，docs/PATROL_V809.md 第 12 节，XC17、XC18）：
 // 后台「安保巡场 → 设置」选巡查起始时间（只有整点）、间隔 2 小时，预览 9:00 起每 2 小时一轮（巡场的一天从起始时间起，XC19）；保存后再取回来是 9:00；用完恢复原来的设置。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -9,6 +10,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

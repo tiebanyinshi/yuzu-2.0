@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { relaxRechargeMinimum } from './membership';
 import { ensureShift } from './shift';
 import { clickNav } from './nav';
+import { passPortal } from './portal';
 
 relaxRechargeMinimum();
 
@@ -13,6 +14,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('heading', { name: '会员工作台' })).toBeVisible({ timeout: 30_000 }); // 刚启动的服务第一次登录可能较慢
   await ensureShift(page); // 收款前必须先开班（R1.2）
 }

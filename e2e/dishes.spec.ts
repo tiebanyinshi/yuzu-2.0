@@ -12,6 +12,7 @@ import { navItem } from './nav';
 import type { DiningAdmin, DiningMenu, KitchenBoard } from '../src/shared/dining';
 import type { DishRow, DishSaveResult, DishesBoard } from '../src/shared/dishes';
 import { expectFits } from './fits';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const HOT = 'E2E 菜品 热菜';
@@ -28,6 +29,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   // 门店账号进主导航，只用 ERP 的账号（后勤）进 ERP
   await expect(page.getByRole('navigation', { name: /主导航|ERP 导航/ })).toBeVisible({ timeout: 30_000 });
 }

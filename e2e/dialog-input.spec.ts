@@ -4,6 +4,7 @@
 // 另有结账收款按钮：应收合计取回之前是灰色（店主 2026-10-30 定）。
 // 依赖四套演示数据（仅独立演示库）；账号：店员 xiaozhou，密码 yuzu2026。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -12,6 +13,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

@@ -2,6 +2,7 @@
 // 依赖 seed-demo 与 seed-frontdesk-demo（仅独立演示库）；每次自动挑空闲手牌，可重复执行。
 import { expect, test, type Page } from '@playwright/test';
 import { matchTags } from '../src/shared/frontdesk';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -10,6 +11,7 @@ async function login(page: Page) {
   await page.fill('#username', 'xiaozhou');
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 }); // 刚启动的服务第一次登录可能较慢
 }
 

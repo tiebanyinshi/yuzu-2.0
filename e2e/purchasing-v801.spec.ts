@@ -2,6 +2,7 @@
 // 赠品台账（登记、作废）、签约供应商的合同 PDF。急采的整条流程在 warehouses.spec.ts。
 // 依赖 seed-demo 与 seed-inventory-demo（仅独立演示库）。账号：店主 linlan，密码 yuzu2026。会改演示数据，断言都用相对变化。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -10,6 +11,7 @@ async function login(page: Page, username: string, landing: RegExp | string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('heading', { name: landing })).toBeVisible({ timeout: 30_000 });
 }
 const getJson = async <T>(page: Page, url: string) => (await (await page.request.get(url)).json()) as T;

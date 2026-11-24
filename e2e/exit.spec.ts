@@ -8,6 +8,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { EmenuAdmin } from '../src/shared/emenu';
 import { defaultStudioDoc, type StudioState } from '../src/shared/studio';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -16,6 +17,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 30_000 });
 }
 

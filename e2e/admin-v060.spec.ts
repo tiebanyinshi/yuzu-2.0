@@ -3,6 +3,7 @@
 // 会改规则的流程只在门店电脑尺寸执行，结束时恢复（渠道停用、岗位权限恢复默认），可重复执行。
 import { expect, test, type Page } from '@playwright/test';
 import { clickNav, navItem } from './nav';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -11,6 +12,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

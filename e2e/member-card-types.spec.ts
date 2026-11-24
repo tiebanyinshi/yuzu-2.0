@@ -8,6 +8,7 @@
 // 依赖演示数据（仅独立演示库）；账号：店主 linlan，密码 yuzu2026。每次新建会员、新的卡号，可重复执行。
 import { expect, test, type Page } from '@playwright/test';
 import { ensureShift } from './shift';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const run = Date.now().toString(36).toUpperCase().slice(-6);
@@ -18,6 +19,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

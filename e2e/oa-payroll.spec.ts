@@ -2,6 +2,7 @@
 // 下载表格再原样上传看到预览、模板页能新建模板。
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026（总裁，有 payroll.manage）。
 import { expect, test } from '@playwright/test';
+import { passPortal } from './portal';
 
 test.describe('OA-17 工资条模板与制表', () => {
   test('新建工资表、在线填一行、预览、下载表格再上传预览；新建模板', async ({ page }) => {
@@ -9,6 +10,7 @@ test.describe('OA-17 工资条模板与制表', () => {
     await page.fill('#username', 'linlan');
     await page.fill('#password', 'yuzu2026');
     await page.getByRole('button', { name: '登录' }).click();
+    await passPortal(page);
     await page.waitForURL((u) => !u.pathname.startsWith('/login'));
     const stamp = Date.now().toString(36).slice(-5);
 

@@ -13,6 +13,7 @@ import type { DiningAdmin, DiningMenu, KitchenBoard, KitchenItem, KitchenPartIte
 import type { DishRow, DishSaveResult, DishesBoard } from '../src/shared/dishes';
 import { DEFAULT_EMENU_PERIODS, type EmenuMenu } from '../src/shared/emenu';
 import { expectFits } from './fits';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const HOT = 'E2E 菜品 热菜';
@@ -32,6 +33,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: /主导航|ERP 导航/ })).toBeVisible({ timeout: 30_000 });
 }
 

@@ -11,6 +11,7 @@ import { expect, test, type Page } from '@playwright/test';
 import type { ClockroomBoard } from '../src/shared/clockroom';
 import type { TechLeave, TechnicianAdminView } from '../src/shared/technician-admin';
 import { clickNav } from './nav';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const ITEM = 'E2E 技师足疗';
@@ -28,6 +29,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

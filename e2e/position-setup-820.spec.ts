@@ -2,12 +2,14 @@
 // 改了没保存换岗位先问「是否放弃当前修改」；按模块分组、本组全选、反选；与建议不同的项标出来，「恢复建议权限」一键回去；
 // 保存后再进来照样回显；两个岗位的勾选互不串台。依赖演示数据（店主 linlan，密码 yuzu2026）。最后恢复建议权限并保存，可重复执行；只在门店电脑跑。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page) {
   await page.goto('/login');
   await page.fill('#username', 'linlan');
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: /主导航|后台/ }).first()).toBeVisible({ timeout: 30_000 });
 }
 

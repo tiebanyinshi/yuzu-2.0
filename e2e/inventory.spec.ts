@@ -4,6 +4,7 @@
 // 业务流程只在门店电脑尺寸跑一遍（会改变演示数据，断言都用相对变化）；平板尺寸检查主要页面布局。
 import { expect, request, test, type Page } from '@playwright/test';
 import { navItem } from './nav';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -12,6 +13,7 @@ async function login(page: Page, username: string, landing: RegExp | string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('heading', { name: landing })).toBeVisible({ timeout: 30_000 }); // 刚启动的服务第一次登录可能较慢
 }
 

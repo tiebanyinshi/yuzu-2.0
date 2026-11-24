@@ -1,6 +1,7 @@
 // 「待确认」标记（R1.3）：店主签认经营规则后，在管理后台「经营规则」选择隐藏，所有页面不再显示「待确认」；只影响显示，不改规则。
 // 依赖演示数据（店主 linlan、前台 xiaozhou，密码 yuzu2026）；结束时恢复为显示，可重复执行。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -9,6 +10,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

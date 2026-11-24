@@ -6,6 +6,7 @@
 //   · 弹窗里选了文件再关掉：页面照常（8.0.17）；
 //   · 分段开关的滑块、后台导航里当前分区的底块跟着当前项。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -14,6 +15,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

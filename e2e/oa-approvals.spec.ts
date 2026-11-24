@@ -3,6 +3,7 @@
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026。演示库里前厅部、总经办都没有负责人，前厅部员工的「本部门主管」
 // 一路往上取到总裁——没选岗位的老店主账号 linlan 兜底（OA12）。每次新开一个店员账号。
 import { expect, test } from '@playwright/test';
+import { passPortal } from './portal';
 
 test.describe('OA-11 办公审批', () => {
   test('员工发起「通用」审批，审批人在待我审批里通过，员工看到已通过并评论', async ({ page, browser }) => {
@@ -10,6 +11,7 @@ test.describe('OA-11 办公审批', () => {
     await page.fill('#username', 'linlan');
     await page.fill('#password', 'yuzu2026');
     await page.getByRole('button', { name: '登录' }).click();
+    await passPortal(page);
     await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 
     const stamp = Date.now().toString(36).slice(-5);

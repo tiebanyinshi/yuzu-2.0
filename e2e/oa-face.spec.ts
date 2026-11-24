@@ -4,12 +4,14 @@
 // 应用没带 INTEGRATIONS_MOCK=true 时人脸比对服务是「没配置」，打卡照常、记「人脸待人工核对」；带了是模拟，记「人脸通过」。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page, username: string) {
   await page.goto('/login');
   await page.fill('#username', username);
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

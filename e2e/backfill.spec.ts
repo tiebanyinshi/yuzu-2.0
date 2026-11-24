@@ -5,6 +5,7 @@
 //   · 会话接口一时出错（5xx、断网）不跳登录页，页面上没提交的内容保留（PR #13 P2-2）。
 // 账号：值班经理 zhangjl、店主 linlan，密码 yuzu2026。会改数据，只在门店电脑尺寸执行；每次自动挑没用过的空闲手牌，可重复执行。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const H = 3_600_000;
@@ -14,6 +15,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

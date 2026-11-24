@@ -1,12 +1,14 @@
 // 回测整改 P02（回测 2-1，docs/YUZU_REQ_V820.md 第 3 节）：门店页面左侧主导航固定、内容区独立滚动；收起时悬停弹出二级入口；
 // 窄屏（1024 以下）展开是盖在内容上的抽屉，点遮罩收回。只读，不写数据。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page) {
   await page.goto('/login');
   await page.fill('#username', 'linlan');
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 
