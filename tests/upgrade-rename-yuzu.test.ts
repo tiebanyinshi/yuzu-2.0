@@ -98,6 +98,22 @@ describe('迁移 262：改名遇到新名字已被占用', () => {
     });
   }
 
+  it('回退：1 号本店、本公司升级前就是自定义名字，另有分店、主体升级前就叫新名字——回退一行都不改（测试会话报告）', async () => {
+    await schemaBefore262();
+    await sql`UPDATE settings SET value = '"城南店"'::jsonb WHERE key = 'store_name'`;
+    await sql`UPDATE stores SET name = '城南店' WHERE id = 1`;
+    await sql`UPDATE legal_entities SET name = '城南公司' WHERE id = 1`;
+    await sql`INSERT INTO legal_entities (name) VALUES (${NEW})`;
+    const [e2] = await sql<{ id: number }[]>`SELECT id FROM legal_entities WHERE name = ${NEW}`;
+    await sql`INSERT INTO stores (code, name, entity_id) VALUES ('B2', ${NEW}, ${e2!.id})`;
+    const before = await snapshot();
+    expect(await migrate(sql)).toContain(MINE);
+    expect(await snapshot()).toEqual(before);
+    const down = (await readFile(new URL('../docs/rollback/262_rename_yuzu.down.sql', import.meta.url), 'utf8')).replace(/^\s*(BEGIN|COMMIT);\s*$/gm, '');
+    await sql.begin((tx) => tx.unsafe(down));
+    expect(await snapshot()).toEqual(before);
+  });
+
   it('店里自己改过名字的不动', async () => {
     await schemaBefore262();
     await sql`UPDATE settings SET value = '"城南店"'::jsonb WHERE key = 'store_name'`;
