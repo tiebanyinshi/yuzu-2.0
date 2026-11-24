@@ -27,6 +27,8 @@ function hiddenReason(e: PriceCatalogEntry, it: ItemRow | undefined, hasStation:
 
 interface ItemRow {
   entryKey: string;
+  /** 收银项目上的价目表分类编码（对上时写的；停用的项也留着） */
+  code: string | null;
   name: string;
   active: boolean;
   technicianRequired: boolean;
@@ -41,7 +43,7 @@ export async function priceCategoryChecks(db: Db): Promise<PriceCategoryCheck[]>
   const items = new Map(
     (
       await db<ItemRow[]>`
-        SELECT l.entry_key, i.name, i.active, i.technician_required, coalesce(k.active, false) AS station_active
+        SELECT l.entry_key, i.catalog_category_code AS code, i.name, i.active, i.technician_required, coalesce(k.active, false) AS station_active
         FROM price_catalog_links l JOIN service_items i ON i.id = l.item_id LEFT JOIN kitchen_stations k ON k.id = i.station_id
         WHERE l.store_id = ${currentStoreId()}`
     ).map((r) => [r.entryKey, r]),
@@ -57,14 +59,23 @@ export async function priceCategoryChecks(db: Db): Promise<PriceCategoryCheck[]>
       const reason = hiddenReason(e, items.get(priceNameKey(e)), hasStation);
       return reason ? [{ name: e.name, reason }] : [];
     });
-    // 不能卖的（待定价、不可下单）对上的收银项目却还在页面上（门店原有的项目不跟着价目表停用）：也算进「点单页上」，单独写明
+    // 多出来的：对上这个分类、还在页面上的收银项目，价目表里却不能卖——待定价、不可下单，或者停用了 / 这一份里已经没有
+    // （门店原有的项目不跟着价目表停用）。按对接的收银项目独立数，不受价目表里在不在用影响
+    const soldKeys = new Set(sold.map(priceNameKey));
+    const onPage = (it: ItemRow) => it.active && (sheet === 'massage' ? it.technicianRequired : sheet === 'dish' ? it.stationActive && !it.technicianRequired : true);
     const extra = noItems
       ? []
-      : mine.flatMap((e) => {
-          const it = items.get(priceNameKey(e));
-          if (sellable(e) || !it || hiddenReason(e, it, hasStation) !== null) return [];
-          return [{ name: e.name, reason: `价目表里这一项不能卖（待定价或不可下单），对上的收银项目「${it.name}」却还在点单页上（到后台价目里停用它，或在价目表里补价）` }];
-        });
+      : [...items.values()]
+          .filter((it) => it.code === c.code && !soldKeys.has(it.entryKey) && onPage(it))
+          .map((it) => {
+            const e = mine.find((x) => priceNameKey(x) === it.entryKey);
+            return {
+              name: e?.name ?? it.name,
+              reason: e
+                ? `价目表里这一项不能卖（待定价或不可下单），对上的收银项目「${it.name}」却还在点单页上（到后台价目里停用它，或在价目表里补价）`
+                : `价目表里这一项已经停用（或这一份里没有），对上的收银项目「${it.name}」却还在点单页上（到后台价目里停用它）`,
+            };
+          });
     return {
       code: c.code,
       name: c.name,
