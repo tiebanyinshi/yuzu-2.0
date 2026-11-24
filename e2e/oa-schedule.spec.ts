@@ -79,4 +79,65 @@ test.describe('OA-05 排班', () => {
     const off = await page.request.put(`/api/oa/attendance/groups/${group.id}`, { data: { name: `排班${stamp}`, gpsRequired: false, active: false, version: group.version } });
     expect(off.status(), await off.text()).toBe(200);
   });
+
+  test('批量排班：单员工下个月整月一键排一个班（预览写几格）→ 员工「我的排班」按状态分底色、有图例', async ({ page, browser }) => {
+    await login(page, 'linlan');
+    const stamp = Date.now().toString(36).slice(-5);
+    const me = (await (await page.request.get('/api/auth/me')).json()) as { store: { id: number } };
+    const make = async (path: string, data: object) => {
+      const r = await page.request.post(`/api/oa/attendance/${path}`, { data: { clientKey: randomUUID(), storeId: me.store.id, ...data } });
+      expect(r.status(), await r.text()).toBe(201);
+      return (await r.json()) as Setup;
+    };
+    let setup = (await (await page.request.get('/api/oa/attendance/setup')).json()) as Setup;
+    const zhou = setup.employees.find((e) => e.name === '周小舟')!;
+    await make('shifts', { name: `中${stamp}`, startMinute: 720, endMinute: 1200 });
+    setup = await make('groups', { name: `批量${stamp}`, gpsRequired: false, memberIds: [zhou.staffId] });
+    const group = setup.groups.find((g) => g.name === `批量${stamp}`)!;
+    const sid = setup.shifts.find((s) => s.name === `中${stamp}`)!.id;
+
+    await page.goto('/admin/attendance/schedule');
+    await page.getByTestId('att-schedule-group').selectOption(String(group.id));
+    await page.getByTestId('att-schedule-batch').click();
+    const dlg = page.getByTestId('att-batch');
+    await dlg.getByTestId(`att-batch-staff-${zhou.staffId}`).check();
+    await dlg.getByTestId('att-batch-shift').selectOption(String(sid));
+    // 翻到下个月，整月选上
+    await dlg.getByRole('button', { name: '下个月' }).click();
+    const month = (await dlg.getByTestId('att-batch-month').innerText()).replace(/\s/g, '').replace('年', '-').replace('月', '');
+    await dlg.getByTestId('att-batch-month-all').click();
+    const days = Number((await dlg.getByTestId('att-batch-day-count').innerText()).match(/\d+/)![0]);
+    expect(days).toBeGreaterThanOrEqual(28);
+    await expect(dlg.getByTestId('att-batch-summary')).toContainText(`1 人 × ${days} 天`);
+    await expect(page.getByTestId('att-batch-save')).toContainText(`排 ${days} 格`);
+    await page.getByTestId('att-batch-save').click();
+    await expect(page.getByText(`批量排班已保存：改了 ${days} 格`)).toBeVisible();
+
+    // 员工：我的排班翻到下个月，上班的日子是「上班」底色，有图例
+    const ctx = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+    const emp = await ctx.newPage();
+    await login(emp, 'xiaozhou');
+    await emp.goto('/oa/schedule');
+    await expect(emp.getByTestId('my-schedule-legend')).toContainText('请假');
+    await emp.getByTestId('my-schedule-next').click();
+    const first = `${month.slice(0, 4)}-${month.slice(5).padStart(2, '0')}-01`;
+    await expect(emp.getByTestId(`my-day-${first}`)).toHaveAttribute('data-status', 'work');
+    await expect(emp.getByTestId(`my-day-${first}`)).toContainText(`中${stamp}`);
+    await ctx.close();
+
+    // 收尾：清掉这个月的、停用组
+    const dates: string[] = [];
+    for (let d = new Date(`${first}T00:00:00Z`); d.getUTCMonth() === new Date(`${first}T00:00:00Z`).getUTCMonth(); d.setUTCDate(d.getUTCDate() + 1)) dates.push(d.toISOString().slice(0, 10));
+    const clear = await page.request.post('/api/oa/attendance/schedule', {
+      data: {
+        clientKey: randomUUID(),
+        storeId: me.store.id,
+        groupId: group.id,
+        cells: dates.map((date) => ({ staffId: zhou.staffId, date, shiftIds: [], consecutive: false, expected: { shiftIds: [sid], consecutive: false } })),
+      },
+    });
+    expect(clear.status(), await clear.text()).toBe(200);
+    const off = await page.request.put(`/api/oa/attendance/groups/${group.id}`, { data: { name: `批量${stamp}`, gpsRequired: false, active: false, version: group.version } });
+    expect(off.status(), await off.text()).toBe(200);
+  });
 });

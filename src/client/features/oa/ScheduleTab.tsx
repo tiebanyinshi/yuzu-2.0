@@ -9,7 +9,7 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Copy } from 'lucide-react';
+import { CalendarRange, ChevronLeft, ChevronRight, Copy } from 'lucide-react';
 import { describeDate, shiftDate } from '@shared/labels';
 import { SCHEDULE_MAX_SHIFTS_PER_DAY, SCHEDULE_SAVE_MAX_CELLS, type OaShift, type ScheduleSaved, type ScheduleWeek } from '@shared/oa';
 import { positionLabel } from '@shared/positions';
@@ -25,6 +25,7 @@ import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, ConfirmCheck, Notice, Select, Skeleton } from '../../components/ui';
+import { ScheduleBatchDialog } from './ScheduleBatchDialog';
 
 type Cell = { shiftIds: number[]; consecutive: boolean };
 /** 改过的一格：要排成的样子 + 第一次改它时看到的原排班（提交时核对用，页面重新取数也不换） */
@@ -56,6 +57,8 @@ export function ScheduleTab() {
   const [editing, setEditing] = useState<{ staffId: number; date: string; cell: Cell; expected: Cell } | null>(null);
   const [saving, setSaving] = useState(false);
   const [copying, setCopying] = useState(false);
+  // 批量排班（排班优化第 2、3 条）
+  const [batching, setBatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const key = ['oa', 'schedule', groupId, monday] as const;
   const q = useQuery({ queryKey: key, queryFn: () => api.get<ScheduleWeek>(weekUrl(groupId, monday)) });
@@ -190,6 +193,21 @@ export function ScheduleTab() {
 
   return (
     <Card className="p-5" data-testid="att-schedule">
+      {w.group && w.editable && (
+        <ScheduleBatchDialog
+          open={batching}
+          group={w.group}
+          members={w.members}
+          shifts={w.shifts}
+          today={w.today}
+          blocked={pending.length > 0}
+          onClose={() => setBatching(false)}
+          onDone={() => {
+            setBatching(false);
+            reload();
+          }}
+        />
+      )}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {w.groups.length > 0 && (
           <Select value={w.group?.id ?? ''} onChange={(e) => pickGroup(Number(e.target.value))} disabled={busy} fullWidth={false} className="w-44" aria-label="考勤组" data-testid="att-schedule-group">
@@ -212,6 +230,19 @@ export function ScheduleTab() {
         </div>
         {w.editable && w.group && (
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              icon={<CalendarRange className="size-4" />}
+              disabled={busy || w.members.length === 0}
+              onClick={() => {
+                if (dirty.length && !window.confirm('这一周改了还没保存的格子会丢掉，确定先批量排班吗？')) return;
+                reset();
+                setBatching(true);
+              }}
+              data-testid="att-schedule-batch"
+            >
+              批量排班
+            </Button>
             <Button variant="secondary" icon={<Copy className="size-4" />} loading={copying} disabled={saving} onClick={copyLastWeek} data-testid="att-schedule-copy">
               复制上周
             </Button>

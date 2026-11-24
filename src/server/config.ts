@@ -49,6 +49,8 @@ export interface AppConfig {
    * 开发、测试用固定的开发密钥
    */
   payrollFileKey: string | null;
+  /** 打卡点「搜索地址选点」与地图（考勤排班优化第 1 条）：用哪家的地址搜索与地图底图 */
+  geo: GeoConfig;
 }
 
 /**
@@ -201,6 +203,27 @@ export function loadPayrollFileKey(env: NodeJS.ProcessEnv): string | null {
   return key;
 }
 
+/**
+ * 打卡点选点用的地图（店主 2026-11-24《考勤排班功能优化需求说明》第 1 条）：
+ *   amap：高德（配了 AMAP_WEB_KEY 就用它；国内地址搜得准，坐标是 GCJ-02，进出都换成手机定位用的 WGS-84）；
+ *   osm：OpenStreetMap（不用 key，国内地址少一些，坐标就是 WGS-84）；
+ *   mock：开发、测试环境的假数据（不出网）；off：不能搜（只能定位当前位置或手输经纬度）。
+ * GEO_PROVIDER 可以指定；没指定时有 key 用高德，测试环境关掉，别的用 OpenStreetMap。
+ */
+export type GeoProvider = 'amap' | 'osm' | 'mock' | 'off';
+export interface GeoConfig {
+  provider: GeoProvider;
+  amapKey: string | null;
+}
+export function loadGeoConfig(env: NodeJS.ProcessEnv, appEnv: AppEnv): GeoConfig {
+  const amapKey = env.AMAP_WEB_KEY?.trim() || null;
+  const want = env.GEO_PROVIDER?.trim().toLowerCase();
+  if (want === 'mock' && appEnv !== 'development' && appEnv !== 'test') throw new Error('GEO_PROVIDER=mock 只能在开发、测试环境用');
+  if (want === 'amap' && !amapKey) throw new Error('GEO_PROVIDER=amap 要配 AMAP_WEB_KEY（高德 Web 服务的 key）');
+  const provider: GeoProvider = want === 'amap' || want === 'osm' || want === 'mock' || want === 'off' ? want : amapKey ? 'amap' : appEnv === 'test' ? 'off' : 'osm';
+  return { provider, amapKey };
+}
+
 export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   if (!overrides.databaseUrl) readEnvFile();
   const env = overrides.env ?? ((process.env.APP_ENV ?? 'development') as AppEnv);
@@ -239,6 +262,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     protection: overrides.protection ?? loadProtectionConfig(process.env, env),
     brandFontPath: resolvePath(process.env.BRAND_FONT_PATH?.trim() || 'brand-fonts'),
     payrollFileKey: loadPayrollFileKey(process.env),
+    geo: overrides.geo ?? loadGeoConfig(process.env, env),
     ...overrides,
   };
 }
