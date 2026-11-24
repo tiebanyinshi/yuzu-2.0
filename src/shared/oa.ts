@@ -287,6 +287,8 @@ export const SCHEDULE_SKIP_LABELS: Record<ScheduleSkipReason, string> = {
 };
 /** 批量排班的预览 / 保存结果：员工数 × 天数，要写几格、其中覆盖几格、已经是这个班的几格、跳过的格子（原因） */
 export interface ScheduleBatchResult {
+  /** 预览的版本：保存时原样带回，预览以后排班有变化就拒绝（SCHEDULE_CHANGED） */
+  revision: string;
   staff: number;
   days: number;
   total: number;

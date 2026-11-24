@@ -13,7 +13,7 @@ import { describeDate, shiftDate } from '@shared/labels';
 import { SCHEDULE_AHEAD_DAYS, SCHEDULE_BATCH_MAX_DAYS, SCHEDULE_SKIP_LABELS, SCHEDULE_SKIP_REASONS, type OaShift, type ScheduleBatchResult, type ScheduleWeek } from '@shared/oa';
 import { positionLabel } from '@shared/positions';
 import { shiftTimeText } from '@shared/technician-admin';
-import { api, errorMessage, UncertainError } from '../../lib/api';
+import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
 import { ErpPendingStoreError, sendErpOp } from '../../lib/erpPending';
 import { useSession } from '../../lib/session';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
@@ -130,7 +130,7 @@ export function ScheduleBatchDialog({
         key,
         type: 'oa_schedule_save',
         url: '/api/oa/attendance/schedule/batch',
-        body: { ...body, clientKey: key },
+        body: { ...body, clientKey: key, revision: p.revision },
         summary: `${group.name} 批量排班 · ${staffIds.length} 人 × ${dates.length} 天「${shift.name}」`,
         staffName: session.staff.displayName,
       });
@@ -140,6 +140,11 @@ export function ScheduleBatchDialog({
       if (e instanceof UncertainError) {
         toast({ tone: 'info', title: '批量排班结果待确认', body: '已记在本机：请在页面上方查回、按原内容重新提交或作废；确认前不要重新排。' });
         onDone();
+      } else if (e instanceof ApiError && e.code === 'SCHEDULE_CHANGED') {
+        // 预览以后有人改过：重新预览、覆盖要重新确认
+        setConfirmOverwrite(false);
+        setError(errorMessage(e));
+        void preview.refetch();
       } else if (e instanceof ErpPendingStoreError) setError(e.message);
       else setError(errorMessage(e));
     } finally {

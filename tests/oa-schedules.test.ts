@@ -273,17 +273,27 @@ describe('OA-05 排班', () => {
       expect(pv.body).toMatchObject({ staff: 1, days: 30, total: 30, write: 29, overwrite: 0, same: 0 });
       expect((pv.body as ScheduleBatchResult).skipped).toEqual([{ staffId: m.id, name: 'sch_month', date: days[5], reason: 'exists' }]);
       expect(await cellsOf(m.id, days)).toHaveLength(1); // 预览不写
-      // 勾覆盖保存：30 格都是早班
+      // 勾覆盖预览以后，别人又在另一天排了晚班：保存拒绝（SCHEDULE_CHANGED），一格不写，不悄悄覆盖
+      const stale = (await batch({ staffIds: [m.id], dates: days, shiftId: early, overwrite: true, preview: true })).body as ScheduleBatchResult;
+      expect(stale).toMatchObject({ write: 30, overwrite: 1 });
+      await ctx.sql`INSERT INTO oa_schedules (staff_id, work_date, shift_id) VALUES (${m.id}, ${days[9]!}, ${late})`;
+      expect(code(await batch({ clientKey: randomUUID(), staffIds: [m.id], dates: days, shiftId: early, overwrite: true, revision: stale.revision }))).toBe('SCHEDULE_CHANGED');
+      expect(await cellsOf(m.id, days)).toHaveLength(2);
+      // 没带预览版本的保存：拒绝
+      expect((await batch({ clientKey: randomUUID(), staffIds: [m.id], dates: days, shiftId: early, overwrite: true })).status).toBe(400);
+      // 重新预览（看到 2 格覆盖）再保存：30 格都是早班
+      const fresh = (await batch({ staffIds: [m.id], dates: days, shiftId: early, overwrite: true, preview: true })).body as ScheduleBatchResult;
+      expect(fresh).toMatchObject({ write: 30, overwrite: 2 });
       const key = randomUUID();
-      const r = await batch({ clientKey: key, staffIds: [m.id], dates: days, shiftId: early, overwrite: true });
+      const r = await batch({ clientKey: key, staffIds: [m.id], dates: days, shiftId: early, overwrite: true, revision: fresh.revision });
       expect(r.status, JSON.stringify(r.body)).toBe(200);
-      expect(r.body).toMatchObject({ write: 30, overwrite: 1, changed: 30, skipped: [] });
+      expect(r.body).toMatchObject({ write: 30, overwrite: 2, changed: 30, skipped: [] });
       const rows = await cellsOf(m.id, days);
       expect(rows).toHaveLength(30);
       expect(rows.every((x) => Number(x.shiftId) === early)).toBe(true);
       // 原样重提：不重复；换了内容拒绝
-      expect((await batch({ clientKey: key, staffIds: [m.id], dates: days, shiftId: early, overwrite: true })).body).toMatchObject({ changed: 0 });
-      expect(code(await batch({ clientKey: key, staffIds: [m.id], dates: days, shiftId: night, overwrite: true }))).toBe('IDEMPOTENCY_CONFLICT');
+      expect((await batch({ clientKey: key, staffIds: [m.id], dates: days, shiftId: early, overwrite: true, revision: fresh.revision })).body).toMatchObject({ changed: 0 });
+      expect(code(await batch({ clientKey: key, staffIds: [m.id], dates: days, shiftId: night, overwrite: true, revision: fresh.revision }))).toBe('IDEMPOTENCY_CONFLICT');
       // 再排一次：都已经是早班
       expect((await batch({ staffIds: [m.id], dates: days, shiftId: early, preview: true })).body).toMatchObject({ write: 0, same: 30 });
       // 批量后单格照样能改
@@ -315,7 +325,7 @@ describe('OA-05 排班', () => {
       const pv = (await batch({ staffIds, dates: days, shiftId: early, preview: true })).body as ScheduleBatchResult;
       expect(pv).toMatchObject({ staff: 3, days: 10, total: 30, write: 29 });
       expect(pv.skipped).toEqual([{ staffId: c3.id, name: 'sch_c3', date: days[2], reason: 'leave' }]);
-      const r = await batch({ clientKey: randomUUID(), staffIds, dates: days, shiftId: early });
+      const r = await batch({ clientKey: randomUUID(), staffIds, dates: days, shiftId: early, revision: pv.revision });
       expect(r.status, JSON.stringify(r.body)).toBe(200);
       expect(r.body).toMatchObject({ changed: 29 });
       for (const id of staffIds) expect(await cellsOf(id, days)).toHaveLength(id === c3.id ? 9 : 10);
@@ -330,7 +340,7 @@ describe('OA-05 排班', () => {
       const lead = await hire('sch_lead', 'front.lead');
       expect((await batch({ staffIds: [a.id], dates: days, shiftId: early, preview: true }, lead.cookie)).status).toBe(403);
       // 保存要操作编号
-      expect((await batch({ staffIds: [a.id], dates: days, shiftId: early })).status).toBe(400);
+      expect((await batch({ staffIds: [a.id], dates: days, shiftId: early, revision: pv.revision })).status).toBe(400);
     });
   });
 });

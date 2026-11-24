@@ -96,9 +96,15 @@ const BatchInput = z
     overwrite: z.boolean().default(false),
     /** 只预览，不保存 */
     preview: z.boolean().default(false),
+    /** 保存时要：预览返回的版本（每一格当时的排班与处理方式）；锁里重算不一样就拒绝，不悄悄改掉预览以后别人排的 */
+    revision: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/, '缺少预览版本，请重新预览')
+      .optional(),
   })
   .refine((v) => new Set(v.staffIds).size * new Set(v.dates).size <= SCHEDULE_BATCH_MAX_CELLS, `一次最多 ${SCHEDULE_BATCH_MAX_CELLS} 格（员工数 × 天数），请分几次排`)
-  .refine((v) => v.preview || !!v.clientKey, '缺少有效的操作编号，请刷新页面后重试');
+  .refine((v) => v.preview || !!v.clientKey, '缺少有效的操作编号，请刷新页面后重试')
+  .refine((v) => v.preview || !!v.revision, '缺少预览版本，请重新预览');
 
 type BatchCell = { staffId: number; date: string; current: number[]; action: 'write' | 'overwrite' | 'same' | ScheduleSkipReason };
 
@@ -138,7 +144,11 @@ async function planBatch(db: Db, today: string, store: number, staffIds: readonl
   return out;
 }
 
+/** 预览的版本：每一格原来的排班与要怎么处理；保存时锁里重算，对不上说明预览以后有人改过 */
+const planRevision = (cells: BatchCell[]) => hashRequest(cells.map((c) => [c.staffId, c.date, [...c.current].sort((a, b) => a - b), c.action]));
+
 const summarize = (cells: BatchCell[], names: Map<number, string>, staff: number, days: number): ScheduleBatchResult => ({
+  revision: planRevision(cells),
   staff,
   days,
   total: cells.length,
@@ -337,7 +347,7 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
       const { names } = await check(sql);
       return summarize(await planBatch(sql, todayOf(deps), store, staffIds, dates, input.shiftId, input.overwrite, false), names, staffIds.length, dates.length);
     }
-    const hash = hashRequest({ op: 'schedule_batch', groupId: input.groupId, staffIds, dates, shiftId: input.shiftId, overwrite: input.overwrite });
+    const hash = hashRequest({ op: 'schedule_batch', groupId: input.groupId, staffIds, dates, shiftId: input.shiftId, overwrite: input.overwrite, revision: input.revision });
     const key = input.clientKey!;
     return sql.begin(async (tx): Promise<ScheduleBatchResult> => {
       await lockSetup(tx);
@@ -345,13 +355,14 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
       const [seen] = await tx<{ opType: string; requestHash: string }[]>`SELECT op_type, request_hash FROM idempotency_keys WHERE key = ${key}`;
       if (seen) {
         if (seen.opType !== 'oa_schedule_save' || seen.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次操作，请刷新页面后重新排');
-        return { staff: staffIds.length, days: dates.length, total: 0, write: 0, overwrite: 0, same: 0, skipped: [], changed: 0, saved: { id: input.groupId } };
+        return { revision: input.revision!, staff: staffIds.length, days: dates.length, total: 0, write: 0, overwrite: 0, same: 0, skipped: [], changed: 0, saved: { id: input.groupId } };
       }
       await assertNotFenced(tx, key, 'oa_schedule_save', erpOpAbandoned);
       const { group, shift, names } = await check(tx);
       // 这几位员工的考勤锁：同时到的打卡、单格保存等这次保存完
       await lockStaffAttendance(tx, staffIds);
       const plan = await planBatch(tx, todayOf(deps), store, staffIds, dates, input.shiftId, input.overwrite, true);
+      if (planRevision(plan) !== input.revision) throw conflict('SCHEDULE_CHANGED', '预览以后这些员工的排班、请假或打卡有变化，已重新预览：请核对后再保存');
       const todo = plan.filter((c) => c.action === 'write' || c.action === 'overwrite');
       for (const c of todo) {
         await tx`DELETE FROM oa_schedules WHERE staff_id = ${c.staffId} AND work_date = ${c.date} AND store_id = ${store}`;
