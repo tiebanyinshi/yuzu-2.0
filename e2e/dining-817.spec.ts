@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import type { DiningAdmin, DiningReceipt, KitchenBoard, TableSessionDetail, TablesAdmin, TablesBoard } from '../src/shared/dining';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const DISHES = [
@@ -26,6 +27,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

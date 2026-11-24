@@ -1,6 +1,7 @@
 // OA-09 浏览器验收：后台「考勤设置 → 假种与余额」给一位员工调整今年年假（加 2.5 天，带操作编号），员工「办公 → 假期余额」看得到；
 // 「考勤月报」页签打得开（docs/OA.md 第 12 节）。依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026。每次新开一个店员账号。
 import { expect, test } from '@playwright/test';
+import { passPortal } from './portal';
 
 test.describe('OA-09 假期余额与考勤月报', () => {
   test('人事调整年假，员工在「假期余额」里看到；考勤月报打得开', async ({ page, browser }) => {
@@ -8,6 +9,7 @@ test.describe('OA-09 假期余额与考勤月报', () => {
     await page.fill('#username', 'linlan');
     await page.fill('#password', 'yuzu2026');
     await page.getByRole('button', { name: '登录' }).click();
+    await passPortal(page);
     await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 
     const stamp = Date.now().toString(36).slice(-5);

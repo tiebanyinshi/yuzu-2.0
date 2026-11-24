@@ -6,6 +6,7 @@
 //   · 员工食堂、安保巡场在后台「人员与行政」，营业数据在数据看板；旧地址跳过去；
 //   · 规则总表里 ERP 的规则「去 ERP 设置」直达页签。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -14,6 +15,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

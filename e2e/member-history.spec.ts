@@ -1,6 +1,7 @@
 // v0.7.28 ⑩ 浏览器验收：旧 EBC 逐笔流水只读导入（N12）。后台「期初导入」选流水文件 → 预览（认出几行、认不出的行）→ 确认导入 →
 // 会员详情「旧系统流水」看得到，余额不变。依赖演示数据（仅独立演示库）；账号：店主 linlan。每次用新的会员与文件内容，可重复执行。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const run = Date.now().toString(36).toUpperCase().slice(-6);
@@ -10,6 +11,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

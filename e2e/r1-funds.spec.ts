@@ -5,6 +5,7 @@
 // 账号：收银员 chenyin（演示里已交班）、值班经理 zhangjl，密码 yuzu2026。会改数据，只在门店电脑尺寸执行；每次自动挑空闲手牌，可重复执行。
 import { expect, test, type Page } from '@playwright/test';
 import { clickNav } from './nav';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -13,6 +14,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 }); // 刚启动的服务第一次登录可能较慢
 }
 

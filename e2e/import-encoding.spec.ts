@@ -1,6 +1,7 @@
 // R1.5 期初导入：中文 Excel / WPS 默认存的 GBK 文件自动识别；填 EBC 控制总数后逐项比对，不一致不能导入。
 // 只预览、不导入（演示库里不写期初）。手机号 199000099xx 不与演示会员重复。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 // 「姓名,手机号,本金,赠金,累计充值 / 验收甲,19900009901,100,20,1000 / 验收乙,19900009902,50.5,0,500」按 GBK 存
 const GBK_CSV = Buffer.from(
@@ -13,6 +14,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

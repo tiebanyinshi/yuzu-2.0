@@ -4,6 +4,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { ensureShift } from './shift';
 import { relaxRechargeMinimum } from './membership';
+import { passPortal } from './portal';
 
 // 会员体系 v2 的最低充值（默认 5,000 元）在这个文件里设成不限，结束后恢复
 relaxRechargeMinimum();
@@ -45,6 +46,7 @@ async function login(page: Page) {
   await page.fill('#username', 'xiaozhou');
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 }); // 刚启动的服务第一次登录可能较慢
   await ensureShift(page); // 收款前必须先开班（R1.2）
 }

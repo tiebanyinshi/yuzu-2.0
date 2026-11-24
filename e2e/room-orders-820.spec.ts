@@ -9,6 +9,7 @@ import type { BoardTag } from '../src/shared/frontdesk';
 import type { DiningAdmin } from '../src/shared/dining';
 import type { RoomCard, RoomCenterBoard } from '../src/shared/room-center';
 import type { SpaceLedger } from '../src/shared/spaces';
+import { passPortal } from './portal';
 
 const ROOM = 'Q395';
 const DISH = { name: 'E2E 房态奶茶', category: '手作饮料', price: 1800 };
@@ -18,6 +19,7 @@ async function login(page: Page) {
   await page.fill('#username', 'linlan');
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: /主导航|后台/ }).first()).toBeVisible({ timeout: 30_000 });
 }
 

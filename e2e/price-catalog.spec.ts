@@ -7,6 +7,7 @@
 // 店主 linlan（密码 yuzu2026）。导入只替换草稿，不影响正在用的价格；可重复执行。只在门店电脑尺寸跑。
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { buildWorkbook, type WbSheet } from '../src/server/lib/xlsx';
+import { passPortal } from './portal';
 
 type Row = (string | number | null)[];
 const sheet = (name: string, rows: Row[], merges: string[] = []): WbSheet => ({ name, widths: [10], rows: rows.map((cells) => ({ cells })), merges });
@@ -50,6 +51,7 @@ test.describe('价目表录入 第二批：列表与搜索', () => {
     await page.fill('#username', 'linlan');
     await page.fill('#password', 'yuzu2026');
     await page.getByRole('button', { name: '登录' }).click();
+    await passPortal(page);
     await expect(page.getByRole('navigation', { name: /主导航|后台/ }).first()).toBeVisible({ timeout: 30_000 });
     await page.goto('/admin/catalog/full');
     const root = page.getByTestId('price-catalog');
@@ -99,6 +101,7 @@ async function login(page: Page) {
   await page.fill('#username', 'linlan');
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: /主导航|后台/ }).first()).toBeVisible({ timeout: 30_000 });
 }
 

@@ -2,6 +2,7 @@
 // 员工「办公 → 我的考勤」的汇总有请假、出差、加班（docs/OA.md 第 16 节）。审批通过对考勤的联动由 tests/oa-attendance-link.test.ts 覆盖。
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026。每次新开一个店员账号；节假日用明年那一页，每次先清空再录。
 import { expect, test } from '@playwright/test';
+import { passPortal } from './portal';
 
 test.describe('OA-13 考勤与审批联动', () => {
   test('节假日表录入保存；月报有请假明细；我的考勤汇总有请假、出差、加班', async ({ page, browser }) => {
@@ -9,6 +10,7 @@ test.describe('OA-13 考勤与审批联动', () => {
     await page.fill('#username', 'linlan');
     await page.fill('#password', 'yuzu2026');
     await page.getByRole('button', { name: '登录' }).click();
+    await passPortal(page);
     await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 
     // 后台：节假日（明年）

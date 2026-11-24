@@ -3,11 +3,13 @@ import { expect, test, type Page } from '@playwright/test';
 import type { CustomerOverview, CustomerBindingQueue, CustomerLowBalancePage, CustomerMemberDetail, CustomerTargets, CustomerVisitDetail, CustomerVisitPage } from '../src/shared/customer';
 import type { SessionInfo } from '../src/shared/types';
 import { navItem } from './nav';
+import { passPortal } from './portal';
 async function login(page: Page) {
   await page.goto('/login');
   await page.locator('#username').fill('linlan');
   await page.locator('#password').fill('yuzu2026');
   await page.getByRole('button', { name: '登录', exact: true }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航', exact: true })).toBeVisible({ timeout: 30_000 });
 }
 async function openCustomer(page: Page) {

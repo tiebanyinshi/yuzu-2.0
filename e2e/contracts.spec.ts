@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { DEFAULT_PAYMENT_TERMS } from '../src/shared/contracts';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -19,6 +20,7 @@ async function login(page: Page, username: string, password = PASSWORD) {
   await page.fill('#username', username);
   await page.fill('#password', password);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: /主导航|ERP 导航/ })).toBeVisible({ timeout: 30_000 });
 }
 

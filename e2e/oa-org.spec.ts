@@ -2,6 +2,7 @@
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026。会新建一个员工账号（每次用新的名字）、
 // 给它填档案、办理离职再复职；部门树只读不改，可重复执行。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -10,6 +11,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

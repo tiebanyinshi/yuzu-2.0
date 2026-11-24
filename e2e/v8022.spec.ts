@@ -4,6 +4,7 @@
 //   · AI 辅助（MD-D）：经营总览顶上「昨日小结」、看板「问数」、后台「对外接口」的 AI 开关。应用带 INTEGRATIONS_MOCK=true 启动时
 //     问一次、合同表单上「AI 看一下条款」；没带时核对「还没配置」的样子（CI 的浏览器验收没带）。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -12,6 +13,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -43,8 +45,8 @@ test.describe('8.0.22 多门店、调拨与 AI 辅助', () => {
     await page.getByTestId('store-save').click();
     await expect(page.getByTestId(`store-row-${code}`)).toBeVisible();
     try {
-      // 门店的顶栏（左侧导航）换到这家店
-      await page.goto('/');
+      // 换店在门户页顶栏（店主 2026-11-24）
+      await page.goto('/portal');
       await page.getByTestId('store-switcher').click();
       await page.getByTestId(`store-pick-${code}`).click();
       await expect(page.getByTestId('store-current')).toHaveText(code);
@@ -55,7 +57,7 @@ test.describe('8.0.22 多门店、调拨与 AI 辅助', () => {
       await expect(page.getByTestId('transfer-to').locator('option')).not.toHaveCount(0);
       await page.keyboard.press('Escape');
       // 换回本店
-      await page.goto('/');
+      await page.goto('/portal');
       await page.getByTestId('store-switcher').click();
       await page.getByTestId('store-pick-HQ').click();
       await expect(page.getByTestId('store-current')).toHaveText('HQ');
@@ -71,7 +73,8 @@ test.describe('8.0.22 多门店、调拨与 AI 辅助', () => {
       }
     }
     // 停用以后只剩一家店：顶栏不再显示换店
-    await page.goto('/');
+    await page.goto('/portal');
+    await expect(page.getByTestId('portal')).toBeVisible();
     await expect(page.getByTestId('store-switcher')).toHaveCount(0);
   });
 

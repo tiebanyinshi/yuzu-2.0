@@ -9,6 +9,7 @@
 //   · 发货预告没送到、重新提交时门店暂时关了链接（PORTAL_PAUSED）：这一份还留着、不能另填，恢复以后按原内容重新提交只记一批（Codex 审查 970c95c 后补）。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Browser, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const tag = String(Date.now()).slice(-6);
@@ -18,6 +19,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

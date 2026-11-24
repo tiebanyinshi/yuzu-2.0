@@ -3,6 +3,7 @@
 // （半小时前开始、二十分钟前结束、打卡窗口都是 0）；收尾停用考勤组。门店所在地零点半以前跑不了（今天还没有「已经结束」的时段），跳过。
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { passPortal } from './portal';
 
 test.describe('OA-08 考勤结算', () => {
   test('今天已经结束的一班没打卡：重新结算后是旷工；员工在「我的考勤」里看到', async ({ page, browser }) => {
@@ -10,6 +11,7 @@ test.describe('OA-08 考勤结算', () => {
     await page.fill('#username', 'linlan');
     await page.fill('#password', 'yuzu2026');
     await page.getByRole('button', { name: '登录' }).click();
+    await passPortal(page);
     await page.waitForURL((u) => !u.pathname.startsWith('/login'));
     const today = (await (await page.request.get('/api/oa/attendance/today')).json()) as { now: number; today: string };
     const minute = ((today.now % 1440) + 1440) % 1440;

@@ -4,6 +4,7 @@
 //   · 二级页签写进地址：点页签地址跟着变，刷新还在这个页签，不认识的页签回到第一个；
 //   · 换页签不丢填到一半的东西；分区的旧地址、券的旧 ?tab= 地址照旧能用。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -12,6 +13,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

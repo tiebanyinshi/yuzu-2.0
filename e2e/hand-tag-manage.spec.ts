@@ -4,6 +4,7 @@
 //   ③ 改牌号；删除要勾确认，删了的手牌池里没有了。
 // 依赖演示数据（值班经理 zhangjl，密码 yuzu2026）。每次用一个新的号段（前缀 ZQ、起始号码随机），做完把建的牌都删掉；只在门店电脑尺寸执行。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -12,6 +13,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

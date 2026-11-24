@@ -6,6 +6,7 @@
 //   · 选好文件以后换渠道：按新渠道重新预览（重复与否、房型对照都按新渠道），导入进的是看过预览的那个渠道（Codex 审查 26fe580 后补）；
 //   · 渠道订单、渠道对账取不回来：写明加载失败、可以重试（Codex 审查 73ae462 后补）。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const stamp = String(Date.now()).slice(-6);
@@ -15,6 +16,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

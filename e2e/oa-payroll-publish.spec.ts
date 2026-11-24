@@ -2,6 +2,7 @@
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026（总裁：建的是全店的表，表里有自己）。
 // 先用接口建一张只留自己的工资表、填好金额，再走页面发放。
 import { expect, test } from '@playwright/test';
+import { passPortal } from './portal';
 
 test.describe('OA-18 发放与签收', () => {
   test('发放 → 员工看到并签收 → 后台看到签收与审计', async ({ page }) => {
@@ -9,6 +10,7 @@ test.describe('OA-18 发放与签收', () => {
     await page.fill('#username', 'linlan');
     await page.fill('#password', 'yuzu2026');
     await page.getByRole('button', { name: '登录' }).click();
+    await passPortal(page);
     await page.waitForURL((u) => !u.pathname.startsWith('/login'));
     const stamp = Date.now().toString(36).slice(-5);
     const me = ((await (await page.request.get('/api/auth/me')).json()) as { staff: { id: number } }).staff.id;

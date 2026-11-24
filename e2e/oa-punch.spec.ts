@@ -4,12 +4,14 @@
 // 一个要 GPS 的考勤组（组里只有这个店员）和打卡点，把今天排上这一班；收尾时停用考勤组与打卡点。打卡明细只追加，留在演示库里。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page, username: string) {
   await page.goto('/login');
   await page.fill('#username', username);
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

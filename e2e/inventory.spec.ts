@@ -4,6 +4,7 @@
 // 业务流程只在门店电脑尺寸跑一遍（会改变演示数据，断言都用相对变化）；平板尺寸检查主要页面布局。
 import { expect, request, test, type Page } from '@playwright/test';
 import { navItem } from './nav';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -12,15 +13,16 @@ async function login(page: Page, username: string, landing: RegExp | string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('heading', { name: landing })).toBeVisible({ timeout: 30_000 }); // 刚启动的服务第一次登录可能较慢
 }
 
 const nav = (page: Page, name: string) => page.getByRole('navigation', { name: 'ERP 导航' }).getByRole('link', { name, exact: true });
 
-/** 门店那边的人（店主）从用户菜单进 ERP */
+/** 门店那边的人（店主）从「返回门户」进 ERP（店主 2026-11-24 门户页） */
 async function enterErp(page: Page) {
-  await page.getByTestId('user-menu').click();
-  await page.getByTestId('user-menu-erp').click();
+  await page.getByTestId('portal-back').click();
+  await page.getByTestId('portal-board-erp').click();
   await expect(page.getByTestId('erp-shell')).toBeVisible();
 }
 

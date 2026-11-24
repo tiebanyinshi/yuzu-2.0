@@ -2,12 +2,14 @@
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026。每次用新的名字建班次、打卡点、考勤组，可重复执行；
 // 收尾时把建的考勤组停用（成员回到「没进考勤组」），演示库里不留多出来的启用中的组。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page, username: string) {
   await page.goto('/login');
   await page.fill('#username', username);
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 

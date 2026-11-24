@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { changedScreens, defaultStudioDoc, type StudioDoc, type StudioState, type StudioVersionView } from '../src/shared/studio';
+import { afterPasswordChange, passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const DESIGNER = { username: 'e2esheji', displayName: 'E2E 设计师', password: 'E2e-sheji-2026' };
@@ -26,6 +27,7 @@ async function login(page: Page, username: string, password = PASSWORD) {
   await page.fill('#username', username);
   await page.fill('#password', password);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
 }
 
 async function getJson<T>(page: Page, url: string): Promise<T> {
@@ -80,6 +82,7 @@ test.describe('8.1.1 UI 工作台', () => {
       await page.fill('#new', DESIGNER.password);
       await page.fill('#confirm', DESIGNER.password);
       await page.getByRole('button', { name: '保存新密码' }).click();
+      await afterPasswordChange(page);
       await expect(page).toHaveURL(/\/admin\/studio$/, { timeout: 30_000 });
       await expect(page.getByTestId('studio-section')).toBeVisible();
       await expect(page.getByRole('link', { name: '电子菜单' })).toHaveCount(0);

@@ -6,6 +6,7 @@
 //   · 用户菜单「本机终端」：到「设备」页并定位到那一块。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -14,6 +15,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -190,7 +192,8 @@ test.describe('8.0.19 门店的日常入口', () => {
     const created = await page.request.post('/api/devices', { data: { clientKey: randomUUID(), code, name: `测试终端 ${code}`, kind: 'terminal', area: '收银', connection: 'none' } });
     expect(created.ok(), await created.text()).toBe(true);
     try {
-      await page.goto('/ledger');
+      // 头像菜单 2026-11-24 起在门户页顶栏
+      await page.goto('/portal');
       await page.getByTestId('user-menu').click();
       await expect(page.getByTestId('user-menu-terminal')).toContainText('本机终端');
       await expect(page.getByTestId('user-menu-terminal-current')).toHaveText('未设置');
@@ -202,9 +205,10 @@ test.describe('8.0.19 门店的日常入口', () => {
       await expect(panel).toHaveAttribute('data-focused', 'true');
       // 选上这台：用户菜单里跟着写出来；改回「不是终端」免得这个浏览器一直替它上报
       await page.getByTestId('terminal-select').selectOption(code);
+      await page.goto('/portal');
       await page.getByTestId('user-menu').click();
       await expect(page.getByTestId('user-menu-terminal-current')).toHaveText(code);
-      await page.keyboard.press('Escape');
+      await page.getByTestId('user-menu-terminal').click();
       await page.getByTestId('terminal-select').selectOption('');
     } finally {
       const list = ((await (await page.request.get('/api/devices/overview')).json()) as { devices: { id: number; code: string; enabled: boolean; version: number }[] }).devices;

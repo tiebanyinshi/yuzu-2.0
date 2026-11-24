@@ -1,6 +1,7 @@
 // v0.7.28 ⑤ 浏览器验收：平台核销补录。前台从「前台」页进「平台核销」，补登记一张美团券（已在平台 App 核销、没有结账）→ 当天列表里有；
 // 店主在「打款与对账」登记一笔打款，对账表里有这个平台的应结、到账与差额。账号：店主 linlan、前台 xiaozhou，密码 yuzu2026。可重复执行（券码带时间戳）。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -9,6 +10,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

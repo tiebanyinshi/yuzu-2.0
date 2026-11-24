@@ -12,6 +12,7 @@ import type { DishesBoard } from '../src/shared/dishes';
 import type { BoardTag } from '../src/shared/frontdesk';
 import type { RoomBoard, RoomsAdmin, StayDetail } from '../src/shared/rooms';
 import { ensureShift } from './shift';
+import { afterPasswordChange, passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const DISHES = [
@@ -30,6 +31,7 @@ async function login(page: Page, username: string, password = PASSWORD) {
   await page.fill('#username', username);
   await page.fill('#password', password);
   await page.getByRole('button', { name: '登录', exact: true }).click();
+  await passPortal(page);
 }
 
 async function getJson<T>(page: Page, url: string): Promise<T> {
@@ -303,6 +305,7 @@ test.describe('8.1.15 餐饮：桌台动作、台账退菜、出品口与房号'
       await pw.nth(1).fill('E2e-kangmei-2027');
       await pw.nth(2).fill('E2e-kangmei-2027');
       await page.getByRole('button', { name: '保存新密码' }).click();
+      await afterPasswordChange(page);
       await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
       await page.goto('/dining/order');
 

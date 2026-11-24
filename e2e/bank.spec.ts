@@ -4,6 +4,7 @@
 //   · 打开结息那条 →「不用对」点快捷原因 → 到「不用对」里；同一份文件再导，预览提示已经导入过；
 //   · 预览回来的先后乱了（先选的文件那一次回来得晚）：只用最后一次的预览，导进去的是现在选的文件（Codex 审查 0edd8df 后补）。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const stamp = String(Date.now()).slice(-7);
@@ -13,6 +14,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

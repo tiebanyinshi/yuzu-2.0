@@ -3,6 +3,7 @@
 // 老账号第一次登录选岗要改库里的标记，浏览器用例不做，接口与级别封顶见 tests/positions-api.test.ts。
 
 import { expect, test, type Page } from '@playwright/test';
+import { afterPasswordChange, passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -11,6 +12,7 @@ async function login(page: Page, username: string, password = PASSWORD) {
   await page.fill('#username', username);
   await page.fill('#password', password);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 
@@ -42,6 +44,7 @@ test.describe('8.1.18 组织架构与岗位', () => {
     await staff.fill('#new', 'Outreach2026');
     await staff.fill('#confirm', 'Outreach2026');
     await staff.getByRole('button', { name: '保存新密码' }).click();
+    await afterPasswordChange(staff);
     // 只用 ERP 的人登录后直接进第一个能用的模块（库存）
     await expect(staff).toHaveURL(/\/inventory/);
     const me = await (await staff.request.get('/api/auth/me')).json();

@@ -6,6 +6,7 @@
 //   · 「收了钱没入账」取不回来：收银台顶上写明查不到、可以重试（Codex 审查 0edd8df 后补）。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const authCode = () => `1345${String(Date.now()).slice(-10)}8888`;
@@ -15,6 +16,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

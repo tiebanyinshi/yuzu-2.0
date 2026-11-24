@@ -1,12 +1,14 @@
 // 回测整改 P05（docs/YUZU_REQ_V820.md 第 6 节）：后台「岗位权限 → 分部门岗位职权配置」——按部门列岗位、搜索、改建议权限（换岗位前问是否放弃修改）、
 // 变更记录、导出 Excel、旧岗位表从这里点进去。依赖演示数据（店主 linlan，密码 yuzu2026）。改了的建议权限最后改回去，可重复执行；只在门店电脑跑。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page) {
   await page.goto('/login');
   await page.fill('#username', 'linlan');
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: /主导航|后台/ }).first()).toBeVisible({ timeout: 30_000 });
 }
 

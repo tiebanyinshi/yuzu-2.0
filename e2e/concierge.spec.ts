@@ -4,11 +4,13 @@ import { expect, test, type Page } from '@playwright/test';
 import type { MemberInsights } from '../src/shared/concierge/insights-types';
 import type { PraiseCenterData } from '../src/shared/concierge/praise-types';
 import { navItem } from './nav';
+import { passPortal } from './portal';
 async function login(page: Page) {
   await page.goto('/login');
   await page.fill('#username', 'linlan');
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录', exact: true }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({
     timeout: 30000,
   });
@@ -207,7 +209,9 @@ test('只有管家职责的后勤账号：登录直接进管家部；手机上�
     await pw.nth(1).fill('E2e-guanjia-2027');
     await pw.nth(2).fill('E2e-guanjia-2027');
     await p.getByRole('button', { name: '保存新密码' }).click();
-    // 直接进管家部（不是会员工作台，也不是餐饮、客房）
+    // 换好密码先在门户页（店主 2026-11-24）；首页直接进管家部（不是会员工作台，也不是餐饮、客房）
+    await expect(p.getByTestId('portal')).toBeVisible({ timeout: 20_000 });
+    await p.goto('/');
     await expect(p).toHaveURL(/\/concierge$/, { timeout: 20_000 });
     await expect(p.getByRole('heading', { level: 1, name: /^今日工作台/ })).toBeVisible();
     // 管家在门店主导航里只看得到自己能用的页面：有「管家」，没有「后台」「会员」「流水」
@@ -272,6 +276,8 @@ test('没有会员查看权限的管家：还没建档的会员手机号打码�
     await pw.nth(1).fill('E2e-mask-2027');
     await pw.nth(2).fill('E2e-mask-2027');
     await p.getByRole('button', { name: '保存新密码' }).click();
+    await expect(p.getByTestId('portal')).toBeVisible({ timeout: 20_000 });
+    await p.goto('/');
     await expect(p).toHaveURL(/\/concierge$/, { timeout: 20_000 });
     // 这位管家确实没有会员查看权限：会员工作台的查找接口不让用
     expect((await p.request.get('/api/members?q=' + phone)).status()).toBe(403);

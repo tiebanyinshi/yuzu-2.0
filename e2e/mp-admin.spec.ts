@@ -7,6 +7,7 @@
 //   ⑨ 本机的待确认记录读不出来（读存储出错、记录认不出）：不发新的请求、不盖掉原来的记录，读得出来后照常处理。
 // 依赖 seed-demo（仅独立演示库）。账号：店主 linlan，密码 yuzu2026。每次的标题带时间，结束时把开关关上、轮播停用，可重复执行。
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 // 1×1 的 PNG：页面会压缩成 JPEG 再上传
@@ -17,6 +18,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

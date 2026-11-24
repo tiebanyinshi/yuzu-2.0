@@ -13,6 +13,7 @@ import type { CheckoutDetail } from '../src/shared/checkout';
 import type { RoomBoard, RoomsAdmin, StayDetail } from '../src/shared/rooms';
 import { ensureShift } from './shift';
 import { clickNav } from './nav';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const DAILY = { name: 'E2E 标准间', kind: 'daily', price: 28800, blockMinutes: null } as const;
@@ -43,6 +44,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

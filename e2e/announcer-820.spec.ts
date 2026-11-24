@@ -4,12 +4,14 @@
 // 依赖演示数据（店主 linlan，密码 yuzu2026）。手动叫号会记一条叫号（只追加，不动别的数据），只在门店电脑跑。
 import { expect, test, type Page } from '@playwright/test';
 import { navLink } from './nav';
+import { passPortal } from './portal';
 
 async function login(page: Page) {
   await page.goto('/login');
   await page.fill('#username', 'linlan');
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

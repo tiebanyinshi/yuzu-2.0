@@ -6,6 +6,7 @@
 //   · 付款账户取不回来：写明加载失败、可以重试，不说「先建一个银行账户」（Codex 审查 76d9c72 后补）。
 // 生成、导出、导入流水自动记账的整条链在 tests/payments.test.ts「批量付款（8.0.21）」里。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const stamp = String(Date.now()).slice(-6);
@@ -15,6 +16,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   // 店主落在门店（主导航），后勤岗位（对账付款）落在 ERP（ERP 导航）
   await expect(page.getByRole('navigation', { name: /^(主导航|ERP 导航)$/ })).toBeVisible({ timeout: 30_000 });
 }

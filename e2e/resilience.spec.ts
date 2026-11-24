@@ -5,6 +5,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { relaxRechargeMinimum } from './membership';
 import { ensureShift } from './shift';
 import { clickNav } from './nav';
+import { passPortal } from './portal';
 
 relaxRechargeMinimum();
 test.beforeEach(({}, info) => {
@@ -18,6 +19,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('heading', { name: '会员工作台' })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -139,7 +141,8 @@ test('系统忙（等锁超时）：页面原样自动重发，员工不用再�
   await page.unroute('**/api/recharges');
   await page.getByRole('button', { name: '完成' }).click();
   await expect.poll(() => availableCents(page)).toBe(before + 30000 + bonus);
-  // 「网络与同步」里记着这次自动重发
+  // 「网络与同步」里记着这次自动重发（头像菜单 2026-11-24 起在门户页顶栏）
+  await page.getByTestId('portal-back').click();
   await page.getByTestId('user-menu').click();
   await page.getByTestId('user-menu-network').click();
   await expect(page.getByTestId('network-problems')).toContainText('秒后自动重发');
@@ -210,6 +213,7 @@ test('系统更新了：提示方便时刷新（不自动刷新），可以先�
     const res = await route.fetch();
     await route.fulfill({ response: res, json: { ...(await res.json()), version: '9.9.9', client: '/assets/index-e2e-new.js' } });
   });
+  await page.getByTestId('portal-back').click();
   await page.getByTestId('user-menu').click();
   await page.getByTestId('user-menu-network').click();
   await page.getByTestId('network-check').click();

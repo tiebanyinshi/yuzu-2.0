@@ -3,12 +3,14 @@
 // 每次用新的名字建班次与考勤组（组里只有 xiaozhou），排在下周（不碰今天以前的日子）；收尾时把排的清掉、组停用。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page, username: string) {
   await page.goto('/login');
   await page.fill('#username', username);
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 
@@ -55,8 +57,8 @@ test.describe('OA-05 排班', () => {
     const ctx = await browser.newContext({ baseURL: test.info().project.use.baseURL });
     const emp = await ctx.newPage();
     await login(emp, 'xiaozhou');
-    await emp.getByTestId('user-menu').click();
-    await emp.getByTestId('user-menu-oa').click();
+    await emp.getByTestId('portal-back').click();
+    await emp.getByTestId('portal-board-office').click();
     await expect(emp).toHaveURL(/\/oa$/);
     await emp.getByTestId('oa-tile-schedule').click();
     await expect(emp.getByTestId('my-schedule')).toBeVisible();

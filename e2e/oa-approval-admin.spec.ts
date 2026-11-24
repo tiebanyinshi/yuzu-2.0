@@ -2,6 +2,7 @@
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026（总裁，两项权限都有）。先用接口发一张「通用」单。
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { passPortal } from './portal';
 
 test.describe('OA-12 办公审批管理端', () => {
   test('全部审批单筛到刚发的单、看板打得开、模板设置能保存', async ({ page }) => {
@@ -9,6 +10,7 @@ test.describe('OA-12 办公审批管理端', () => {
     await page.fill('#username', 'linlan');
     await page.fill('#password', 'yuzu2026');
     await page.getByRole('button', { name: '登录' }).click();
+    await passPortal(page);
     await page.waitForURL((u) => !u.pathname.startsWith('/login'));
     const stamp = Date.now().toString(36).slice(-5);
     const templates = (await (await page.request.get('/api/oa/approval/templates')).json()) as { id: number; code: string }[];

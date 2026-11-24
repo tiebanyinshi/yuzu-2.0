@@ -3,6 +3,7 @@
 // ⑤ 现金结账后反结账（A8071）。演示单据按执行时刻生成，可能落在今天或前一个营业日，所以用能看历史营业日的店主账号查。
 import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const demo = JSON.parse(readFileSync(new URL('../src/server/demo/billing-expected.json', import.meta.url), 'utf8')) as { member: { name: string; phone: string } };
@@ -20,6 +21,7 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

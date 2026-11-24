@@ -7,6 +7,7 @@
 //   · 验券请求断在路上（结果待确认）：刷新页面、重新打开验券还在（本机存着原编号），确认作废以后才能重新验。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const stamp = String(Date.now()).slice(-8);
@@ -16,6 +17,7 @@ async function login(page: Page, username = 'linlan') {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 

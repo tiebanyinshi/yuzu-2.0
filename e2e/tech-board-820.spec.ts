@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import type { BoardTag } from '../src/shared/frontdesk';
+import { passPortal } from './portal';
 
 const ITEM = { name: 'E2E 轮播足疗', category: 'E2E 轮播', price: 9800, durationMinutes: 60, technicianRequired: true };
 const TECH = { techNo: 'R96', name: 'E2E 轮播技师' };
@@ -15,6 +16,7 @@ async function login(page: Page) {
   await page.fill('#username', 'linlan');
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: /主导航|后台/ }).first()).toBeVisible({ timeout: 30_000 });
 }
 

@@ -2,21 +2,26 @@
 // 依赖演示数据（仅独立演示库），账号：店主 linlan，密码 yuzu2026。只读，可重复执行。
 // 通知由各模块在服务端发（OA-04 起接上）；这里核对入口、未读 / 全部切换、全部标为已读后铃铛清零。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page, username: string) {
   await page.goto('/login');
   await page.fill('#username', username);
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 
 test.describe('OA-03 站内通知', () => {
   test('铃铛进「通知」页；未读 / 全部切换；全部标为已读后没有未读', async ({ page }) => {
     await login(page, 'linlan');
+    // 铃铛 2026-11-24 起在门户页顶栏，点开是面板，「查看全部通知」进「通知」页
+    await page.goto('/portal');
     const bell = page.getByTestId('notification-bell');
     await expect(bell).toBeVisible();
     await bell.click();
+    await page.getByTestId('notification-panel-all').click();
     await expect(page).toHaveURL(/\/oa\/notifications$/);
     await expect(page.getByRole('heading', { level: 1, name: '通知' })).toBeVisible();
 
@@ -30,7 +35,10 @@ test.describe('OA-03 站内通知', () => {
     }
     await expect(readAll).toBeDisabled();
     await expect(page.getByTestId('notifications-empty')).toContainText('没有未读的通知');
+    await page.goto('/portal');
+    await expect(page.getByTestId('notification-bell')).toBeVisible();
     await expect(page.getByTestId('notification-unread')).toHaveCount(0);
+    await page.goto('/oa/notifications');
 
     // 全部：有就是列表，没有就是空状态
     await page.getByRole('radio', { name: '全部' }).click();

@@ -1,12 +1,14 @@
 // 回测整改 P02（回测 2-1，docs/YUZU_REQ_V820.md 第 3 节）：门店页面左侧主导航固定、内容区独立滚动；收起时悬停弹出二级入口；
 // 窄屏（1024 以下）展开是盖在内容上的抽屉，点遮罩收回。只读，不写数据。
 import { expect, test, type Page } from '@playwright/test';
+import { passPortal } from './portal';
 
 async function login(page: Page) {
   await page.goto('/login');
   await page.fill('#username', 'linlan');
   await page.fill('#password', 'yuzu2026');
   await page.getByRole('button', { name: '登录' }).click();
+  await passPortal(page);
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -54,9 +56,8 @@ test.describe('回测整改 侧边栏固定，内容区独立滚动', () => {
     // 移出这一组：稍等收起
     await page.mouse.move(900, 400);
     await expect(flyout).toBeHidden();
-    // 左下角的用户菜单整个看得到（导航不裁掉弹出的菜单，Codex 审查 f1e5186 的 P1）
-    await page.getByTestId('user-menu').click();
-    const logout = page.getByRole('menuitem', { name: '退出登录' });
+    // 左下角的「返回门户」整个看得到、点得到（头像菜单 2026-11-24 起在门户页顶栏）
+    const logout = page.getByTestId('portal-back');
     await expect(logout).toBeVisible();
     expect(
       await logout.evaluate((el) => {
