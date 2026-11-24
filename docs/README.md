@@ -31,6 +31,7 @@
 - [`AI_V8022.md`](AI_V8022.md)：8.0.22 设计 · AI 辅助（MD-D）
 - [`APPROVALS.md`](APPROVALS.md)：审批中心（v0.7.30）
 - [`BENEFITS.md`](BENEFITS.md)：会员体系 v2 第二期：本店权益自动发放（v0.7.24 设计稿）
+- [`BOARDS.md`](BOARDS.md)：四个板块：CRM、ERP、WCP、Design（店主 2026-11-24）
 - [`BUDGET_INVOICES.md`](BUDGET_INVOICES.md)：费用预算与进项发票台账（8.0.3）· 设计稿
 - [`CANTEEN.md`](CANTEEN.md)：员工食堂 · 柚子饭堂
 - [`CASHIER.md`](CASHIER.md)：收银完善（v0.7.6 起）
@@ -105,6 +106,7 @@
 - [`DEMO_DATA.md`](DEMO_DATA.md)：演示数据（飞书需求 RQ-007，v0.7.18 定稿）
 - [`DEPLOY_MAC_MINI.md`](DEPLOY_MAC_MINI.md)：Mac mini 部署手册
 - [`DEPLOY_TEST_SERVER.md`](DEPLOY_TEST_SERVER.md)：测试服部署手册（阿里云深圳）
+- [`DEPLOY_WEBSITE.md`](DEPLOY_WEBSITE.md)：柚子官网部署手册（yuzusystem.xyz；给 Codex）
 - [`EVALUATION.md`](EVALUATION.md)：上线评测说明（v0.7.21 · 初期开发收口）
 - [`RELEASE_V800.md`](RELEASE_V800.md)：正式版 8.0.0：发版前的检查与环境安排
 - [`RELEASE_V810.md`](RELEASE_V810.md)：8.1.0：切到 8.1 的准备
