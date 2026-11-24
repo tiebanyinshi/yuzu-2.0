@@ -302,26 +302,31 @@
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
 
+    // 只留一条渲染循环：停下时取消已经排上的那一帧（切走标签页再回来，不会叠出两条循环，Codex 审查 1b3667e）
     var running = false;
     var visible = true;
     var last = 0;
+    var rafId = 0;
     function frame() {
+      rafId = 0;
       if (!running) return;
       var t = now();
       var dt = Math.min(0.05, t - last || 0.016);
       last = t;
       step(dt, t);
       draw(t);
-      requestAnimationFrame(frame);
+      rafId = requestAnimationFrame(frame);
     }
     function play() {
       if (running || reduce || !visible || document.hidden) return;
       running = true;
       last = now();
-      requestAnimationFrame(frame);
+      if (!rafId) rafId = requestAnimationFrame(frame);
     }
     function pause() {
       running = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = 0;
     }
 
     if ('IntersectionObserver' in window) {

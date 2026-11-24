@@ -13,12 +13,20 @@
   var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var hasGsap = typeof window.gsap !== 'undefined' && typeof window.ScrollTrigger !== 'undefined';
 
-  // 把标题拆成一个个字（分行的标题按 .line 一行行拆，保留换行）
+  // 把标题拆成一个个字（分行的标题按 .line 一行行拆，保留换行）。标题本身留给读屏（用 aria-label 读整句），
+  // 只把拆出来的字藏起来：没有 .line 的标题先包一层再藏这一层，不藏标题本身（Codex 审查 1b3667e）
   function splitChars(el) {
     if (!el || el.dataset.splitDone) return [];
     if (!el.getAttribute('aria-label')) el.setAttribute('aria-label', el.textContent);
     var lines = el.querySelectorAll('.line');
-    var targets = lines.length ? Array.from(lines) : [el];
+    if (!lines.length) {
+      var wrap = document.createElement('span');
+      wrap.className = 'line-inline';
+      wrap.textContent = el.textContent;
+      el.textContent = '';
+      el.appendChild(wrap);
+    }
+    var targets = lines.length ? Array.from(lines) : [el.firstChild];
     var out = [];
     targets.forEach(function (target) {
       var text = target.textContent;
