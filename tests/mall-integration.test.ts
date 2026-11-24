@@ -258,6 +258,94 @@ describe('进度与可见范围', () => {
   });
 });
 
+describe('列表与批量的进度（Codex 审查）', () => {
+  it('部分到货、采购单关闭在批量查状态里与详情一致；采购单解开关联也算进度变动；增量按游标一页页取完；ERP 不改商城的单', async () => {
+    const today = todayIn(ctx.config.timezone);
+    const b = body({
+      priority: 'urgent',
+      lines: [{ materialId: mat.id, supplierId, mallSkuCode: 'SKU-P', priceVersion: 'v1', name: '一次性护理床单', purpose: '客用消耗', qtyMilli: q(10), unit: '箱' }],
+    });
+    const r = (await call('POST', '/api/erp/mall/requests', { staff: reqA, body: b })).body.request;
+    // ERP 的修改页改不了商城的单（会丢 SKU、价格版本），退回的在商城重新提
+    const erpEdit = await api(mall, await login(mall, 'mall_a'), 'PUT', `/api/erp/requests/${r.id}`, {
+      lines: [{ materialId: mat.id, name: '一次性护理床单', purpose: '客用消耗', qtyMilli: q(1), unit: '箱' }],
+    });
+    expect(erpEdit.body.error?.code).toBe('MALL_EDIT_IN_SHOP');
+    expect((await api(mall, await login(mall, 'head_a'), 'POST', `/api/erp/requests/${r.id}/dept-confirm`, {})).status).toBe(200);
+    const approved = await api(mall, boss, 'POST', `/api/erp/requests/${r.id}/approve`, {});
+    expect(approved.body.status, JSON.stringify(approved.body)).toBe('approved');
+    const lineId = approved.body.lines[0].id as number;
+    const status = async () => (await call('POST', '/api/erp/mall/requests/batch-status', { staff: reqA, body: { ids: [r.id] } })).body.requests[0];
+    const detail = async () => (await call('GET', `/api/erp/mall/requests/${r.id}`, { staff: reqA })).body;
+
+    const created = await api(mall, boss, 'POST', '/api/purchase-orders', {
+      clientKey: randomUUID(),
+      supplierId,
+      orderDate: today,
+      action: 'save',
+      lines: [{ materialId: mat.id, purchaseQtyMilli: q(10), priceCents: 100, requestLineIds: [lineId] }],
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const po = created.body.po;
+    expect((await status()).displayStatus).toBe('ordered');
+    // 采购单改版解开关联：需求单回到「已通过」，增量里能取到它，进度时刻不往回走
+    const before = (await status()).progressUpdatedAt as string;
+    const since = new Date().toISOString();
+    const put = (requestLineIds: number[]) =>
+      api(mall, boss, 'PUT', `/api/purchase-orders/${po.id}`, {
+        supplierId,
+        orderDate: today,
+        action: 'save',
+        lines: [{ id: po.lines[0].id, materialId: mat.id, purchaseQtyMilli: q(10), priceCents: 100, requestLineIds }],
+      });
+    const unl = await put([]);
+    expect(unl.status, JSON.stringify(unl.body)).toBe(200);
+    const unlinked = await status();
+    expect(unlinked.displayStatus).toBe('approved');
+    expect(unlinked.progressUpdatedAt >= before).toBe(true);
+    const inc = (await call('GET', `/api/erp/mall/requests?updatedSince=${encodeURIComponent(since)}`, { staff: reqA })).body.requests as { id: number }[];
+    expect(inc.map((x) => x.id)).toContain(r.id);
+    expect((await put([lineId])).status).toBe(200);
+    await api(mall, boss, 'POST', `/api/purchase-orders/${po.id}/submit`, {});
+    await api(mall, boss, 'POST', `/api/purchase-orders/${po.id}/approve`, {});
+    const fresh = (await api(mall, boss, 'GET', `/api/purchase-orders/${po.id}`)).body;
+    expect(fresh.status).toBe('approved');
+    // 到 3 箱：部分到货（列表与详情一样）
+    const rec = await api(mall, boss, 'POST', '/api/inventory/docs', {
+      clientKey: randomUUID(),
+      docType: 'receipt',
+      docDate: today,
+      supplierId,
+      purchaseOrderId: po.id,
+      coAcceptorId: buyer,
+      lines: [{ materialId: mat.id, poLineId: fresh.lines[0].id, deliveredMilli: q(3), acceptedMilli: q(3) }],
+    });
+    expect(rec.status, JSON.stringify(rec.body)).toBe(201);
+    if (rec.body.status !== 'confirmed') await api(mall, boss, 'POST', `/api/inventory/docs/${rec.body.id}/confirm`, {});
+    expect((await detail()).displayStatus).toBe('partial');
+    expect((await status()).displayStatus).toBe('partial');
+    // 关单：没到齐的不再到，列表上是「已关闭」
+    expect((await api(mall, boss, 'POST', `/api/purchase-orders/${po.id}/close`, { reason: '供应商缺货' })).status).toBe(200);
+    expect((await detail()).displayStatus).toBe('closed');
+    expect((await status()).displayStatus).toBe('closed');
+
+    // 增量一页一张，跟着游标取完：不重、不漏，按进度时刻从早到晚
+    const all = (await call('GET', `/api/erp/mall/requests?updatedSince=${encodeURIComponent('2000-01-01T00:00:00Z')}&limit=200`, { staff: buyer })).body;
+    const seen: number[] = [];
+    type Cursor = { updatedSince: string; afterId: number } | null;
+    let cursor: Cursor = { updatedSince: '2000-01-01T00:00:00.000Z', afterId: 0 };
+    for (let i = 0; cursor && i < 100; i += 1) {
+      const qs: string = `updatedSince=${encodeURIComponent(cursor.updatedSince)}${cursor.afterId ? `&afterId=${cursor.afterId}` : ''}&limit=1`;
+      const page = (await call('GET', `/api/erp/mall/requests?${qs}`, { staff: buyer })).body as { requests: { id: number; progressUpdatedAt: string }[]; nextCursor: Cursor };
+      seen.push(...page.requests.map((x) => x.id));
+      cursor = page.nextCursor;
+    }
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen.sort((a, c) => a - c)).toEqual((all.requests as { id: number }[]).map((x) => x.id).sort((a, c) => a - c));
+    expect(seen).toContain(r.id);
+  });
+});
+
 describe('ERP 模块开关', () => {
   it('「采购需求单」关着：商城接口一律 403 ERP_MODULE_DISABLED（登录校验也是）', async () => {
     const [row] = await ctx.sql<{ value: Record<string, boolean> }[]>`SELECT value FROM settings WHERE key = 'erp_modules'`;

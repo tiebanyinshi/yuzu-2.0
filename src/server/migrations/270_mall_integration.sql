@@ -66,3 +66,28 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+
+-- 进度变动记号（Codex 审查）：采购单改版时解开了与需求行的关联（purchase_order_line_requests 删行；询价的关联只追加，不会删），
+-- 需求单本身不变，跟着关联算的「进度最后变动时刻」会往回走，增量同步（updatedSince）就漏了这张单。删关联时记一笔，只追加。
+CREATE TABLE purchase_request_progress_marks (
+  id bigserial PRIMARY KEY,
+  request_id bigint NOT NULL REFERENCES purchase_requests (id),
+  at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX purchase_request_progress_marks_req_idx ON purchase_request_progress_marks (request_id, at);
+
+CREATE OR REPLACE FUNCTION yuzu_request_progress_mark() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO purchase_request_progress_marks (request_id)
+  SELECT l.request_id FROM purchase_request_lines l WHERE l.id = OLD.request_line_id;
+  RETURN OLD;
+END $$;
+CREATE TRIGGER purchase_order_line_requests_progress_mark AFTER DELETE ON purchase_order_line_requests
+  FOR EACH ROW EXECUTE FUNCTION yuzu_request_progress_mark();
+
+CREATE OR REPLACE FUNCTION yuzu_request_progress_mark_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION '进度变动记号只追加' USING ERRCODE = 'P0001';
+END $$;
+CREATE TRIGGER purchase_request_progress_marks_guard BEFORE UPDATE OR DELETE ON purchase_request_progress_marks
+  FOR EACH ROW EXECUTE FUNCTION yuzu_request_progress_mark_guard();

@@ -641,7 +641,8 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
               <Button variant="ghost" disabled={busy} onClick={() => setReasonFor('cancel')}>
                 撤回
               </Button>
-              {!anyIssued && (
+              {/* 采购商城来的单不在这里改（会丢 SKU 与价格版本），撤回后在商城重新提 */}
+              {!anyIssued && r.source !== 'mall' && (
                 <Link to={`/erp/requests/${r.id}/edit`}>
                   <Button variant="secondary" icon={<Pencil className="size-4" />} disabled={busy}>
                     修改

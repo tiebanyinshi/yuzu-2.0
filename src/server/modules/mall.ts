@@ -27,7 +27,7 @@ import {
   type MallRequest,
   type MallRequestBrief,
 } from '@shared/mall';
-import { MAX_LINE_IMAGES, REQUEST_PRIORITIES, REQUEST_STATUS_LABELS, type PurchaseRequest, type RequestStatus, type PurchaseRequestSummary } from '@shared/requests';
+import { MAX_LINE_IMAGES, REQUEST_PRIORITIES, REQUEST_STATUS_LABELS, type PurchaseRequest, type PurchaseRequestSummary, type RequestLineProgress, type RequestStatus } from '@shared/requests';
 import { isUniqueViolation, type Db, type Sql } from '../db';
 import { guard, guardAny } from '../auth/guard';
 import { checkLock, clearFailures, recordFailure } from '../auth/lockout';
@@ -50,7 +50,23 @@ import { loadExpenseRules } from './expenses';
 import { docDateSchema, logApproval } from './inventory/common';
 import { loadPurchaseRules } from './inventory/purchase-rules';
 import { enterStockCheck } from './request-stock';
-import { approvableOnFor, deptConfirmFor, getRequest, myContext, readImageFor, resolveDepartment, saveImage, summaries, toSummary, validateLines, visible, writeLines } from './requests';
+import {
+  approvableOnFor,
+  deptConfirmFor,
+  getRequest,
+  lineStates,
+  myContext,
+  PROGRESS_AT_SQL,
+  readImageFor,
+  REQUESTER_OR_DEPT,
+  resolveDepartment,
+  saveImage,
+  summaries,
+  toSummary,
+  validateLines,
+  visible,
+  writeLines,
+} from './requests';
 
 const digest = (s: string) => createHash('sha256').update(s).digest();
 
@@ -257,58 +273,41 @@ export async function createMallRequest(deps: Deps, raw: unknown, actor: Actor, 
 
 // ───────────────────────── 读取 ─────────────────────────
 
-/** 进度最后一次变的时刻：需求单本身、审批流水、采购单、收货退货单、询价单里最晚的 */
+/** 进度最后一次变的时刻：需求单本身、审批流水、采购单、收货退货单、询价单、核库、解开采购单关联里最晚的 */
 async function progressTimes(db: Db, ids: number[]): Promise<Map<number, string>> {
   if (!ids.length) return new Map();
-  const rows = await db<{ id: number; at: string }[]>`
-    SELECT r.id, GREATEST(
-      r.updated_at,
-      (SELECT max(a.created_at) FROM approval_logs a WHERE a.doc_kind = 'purchase_request' AND a.doc_id = r.id),
-      (SELECT max(po.updated_at) FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
-         JOIN purchase_order_lines pl ON pl.id = x.po_line_id JOIN purchase_orders po ON po.id = pl.po_id WHERE l.request_id = r.id),
-      (SELECT max(d.updated_at) FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
-         JOIN inv_doc_lines il ON il.po_line_id = x.po_line_id JOIN inv_docs d ON d.id = il.doc_id WHERE l.request_id = r.id),
-      (SELECT max(rd.updated_at) FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
-         JOIN inv_doc_lines src ON src.po_line_id = x.po_line_id JOIN inv_doc_lines rl ON rl.source_line_id = src.id
-         JOIN inv_docs rd ON rd.id = rl.doc_id WHERE l.request_id = r.id),
-      (SELECT max(e.updated_at) FROM purchase_request_lines l JOIN sourcing_line_requests sr ON sr.request_line_id = l.id
-         JOIN sourcing_lines sl ON sl.id = sr.sourcing_line_id JOIN sourcing_events e ON e.id = sl.event_id WHERE l.request_id = r.id),
-      (SELECT max(GREATEST(s.decided_at, s.answered_at)) FROM request_line_stock s WHERE s.request_id = r.id)
-    ) AS at
-    FROM purchase_requests r WHERE r.id IN ${db(ids)}`;
+  const rows = await db<{ id: number; at: string }[]>`SELECT r.id, ${PROGRESS_AT_SQL(db)} AS at FROM purchase_requests r WHERE r.id IN ${db(ids)}`;
   return new Map(rows.map((r) => [Number(r.id), r.at]));
 }
 
-/** 详情（各行进度齐全）合出给商城看的状态 */
-function displayOf(r: PurchaseRequest): MallDisplayStatus {
+/** 审核前的几步（详情与列表一样） */
+function reviewDisplayOf(r: Pick<PurchaseRequestSummary, 'status' | 'deptConfirm' | 'stockCheck'>): MallDisplayStatus | null {
   if (r.status === 'submitted') {
     if (r.deptConfirm.state === 'pending') return 'dept_pending';
     if (r.stockCheck === 'pending') return 'stock_check';
     if (r.stockCheck === 'confirming') return 'stock_confirming';
     return 'reviewing';
   }
-  if (r.status !== 'approved') return r.status;
-  const states = r.lines.map((l) => l.progress.state);
-  if (states.every((s) => s === 'received' || s === 'issued' || s === 'closed')) return states.some((s) => s === 'closed') ? 'closed' : 'received';
+  return r.status !== 'approved' ? r.status : null;
+}
+
+/** 通过以后按各行进度合出来：都到齐（或领用、关单）= 已到货 / 已关闭；有到货的 = 部分到货；有下单的 = 已下单；询价中；都没动 = 已通过 */
+function progressDisplayOf(states: readonly RequestLineProgress['state'][]): MallDisplayStatus {
+  if (states.length && states.every((s) => s === 'received' || s === 'issued' || s === 'closed')) return states.some((s) => s === 'closed') ? 'closed' : 'received';
   if (states.some((s) => s === 'partial' || s === 'received')) return 'partial';
   if (states.some((s) => s === 'ordered' || s === 'closed')) return 'ordered';
   if (states.some((s) => s === 'sourcing')) return 'sourcing';
   return 'approved';
 }
 
-/** 列表上（只有行数统计）合出来的状态：询价中在列表上看不出来，按待下单写；要准的看详情 */
-function briefDisplayOf(r: PurchaseRequestSummary): MallDisplayStatus {
-  if (r.status === 'submitted') {
-    if (r.deptConfirm.state === 'pending') return 'dept_pending';
-    if (r.stockCheck === 'pending') return 'stock_check';
-    if (r.stockCheck === 'confirming') return 'stock_confirming';
-    return 'reviewing';
-  }
-  if (r.status !== 'approved') return r.status;
-  if (r.lineCount > 0 && r.receivedLines >= r.lineCount) return 'received';
-  if (r.receivedLines > 0) return 'partial';
-  if (r.orderedLines > 0) return 'ordered';
-  return 'approved';
+/** 详情（各行进度齐全）合出给商城看的状态 */
+function displayOf(r: PurchaseRequest): MallDisplayStatus {
+  return reviewDisplayOf(r) ?? progressDisplayOf(r.lines.map((l) => l.progress.state));
+}
+
+/** 列表、批量查状态：各行进度另查一次（lineStates，与详情同一个算法），部分到货、采购单关闭在列表上也对 */
+function briefDisplayOf(r: PurchaseRequestSummary, states: readonly RequestLineProgress['state'][]): MallDisplayStatus {
+  return reviewDisplayOf(r) ?? progressDisplayOf(states);
 }
 
 async function mallRequest(deps: Deps, actor: Actor, requestId: number): Promise<MallRequest> {
@@ -389,8 +388,8 @@ async function mallRequest(deps: Deps, actor: Actor, requestId: number): Promise
   };
 }
 
-function briefOf(r: PurchaseRequestSummary & { reason: string | null }, at: string): MallRequestBrief {
-  const display = briefDisplayOf(r);
+function briefOf(r: PurchaseRequestSummary & { reason: string | null }, at: string, states: readonly RequestLineProgress['state'][]): MallRequestBrief {
+  const display = briefDisplayOf(r, states);
   return {
     id: r.id,
     docNo: r.docNo,
@@ -418,12 +417,13 @@ type SummaryRow = Awaited<ReturnType<typeof summaries>>[number];
 async function briefs(db: Db, rows: readonly SummaryRow[]): Promise<MallRequestBrief[]> {
   const ids = rows.map((r) => Number(r.id));
   const times = await progressTimes(db, ids);
+  const states = await lineStates(db, ids);
   const reasons = ids.length
     ? new Map((await db<{ id: number; reason: string | null }[]>`SELECT id, reason FROM purchase_requests WHERE id IN ${db(ids)}`).map((x) => [Number(x.id), x.reason]))
     : new Map<number, string | null>();
   return rows.map((row) => {
     const s = toSummary(row);
-    return briefOf({ ...s, reason: reasons.get(s.id) ?? null }, times.get(s.id) ?? s.updatedAt);
+    return briefOf({ ...s, reason: reasons.get(s.id) ?? null }, times.get(s.id) ?? s.updatedAt, states.get(s.id) ?? []);
   });
 }
 
@@ -431,54 +431,56 @@ const ListQuery = z.object({
   status: z.enum(Object.keys(REQUEST_STATUS_LABELS) as [RequestStatus, ...RequestStatus[]]).optional(),
   departmentId: z.coerce.number().int().positive().optional(),
   source: z.literal('mall').optional(),
-  /** 进度在这个时刻以后变过的（ISO 时间） */
+  /** 进度在这个时刻以后（含）变过的（ISO 时间）：按进度时刻从早到晚给，一页给不完的带 nextCursor 接着取 */
   updatedSince: z.iso.datetime({ offset: true }).optional(),
+  /** 接着上一页取（nextCursor.afterId）：进度时刻与 updatedSince 相同的，只给编号比它大的 */
+  afterId: z.coerce.number().int().positive().optional(),
   from: docDateSchema.optional(),
   to: docDateSchema.optional(),
   limit: z.coerce.number().int().min(1).max(MALL_LIST_LIMIT).default(50),
 });
 
-async function listMall(deps: Deps, actor: Actor, raw: unknown): Promise<{ requests: MallRequestBrief[] }> {
+export interface MallListCursor {
+  updatedSince: string;
+  afterId: number;
+}
+
+/** mineOnly（柚子里的「我的采购需求」）：审核、核库的人也只看本部门、自己提的、自己当主管的 */
+export async function listMall(deps: Deps, actor: Actor, raw: unknown, opts: { mineOnly?: boolean } = {}): Promise<{ requests: MallRequestBrief[]; nextCursor: MallListCursor | null }> {
   const q = parse(ListQuery, raw ?? {});
   const db = deps.sql;
+  const tz = deps.config.timezone;
   const me = await myContext(db, actor);
-  // 进度增量：先按进度时刻挑出这段时间里变过的单（不限于最近 500 张），再取简表
-  let ids: number[] | undefined;
-  if (q.updatedSince) {
-    const changed = await db<{ id: number }[]>`
-      SELECT r.id FROM purchase_requests r
-      WHERE r.updated_at >= ${q.updatedSince}
-         OR EXISTS (SELECT 1 FROM approval_logs a WHERE a.doc_kind = 'purchase_request' AND a.doc_id = r.id AND a.created_at >= ${q.updatedSince})
-         OR EXISTS (SELECT 1 FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
-                    JOIN purchase_order_lines pl ON pl.id = x.po_line_id JOIN purchase_orders po ON po.id = pl.po_id
-                    WHERE l.request_id = r.id AND po.updated_at >= ${q.updatedSince})
-         OR EXISTS (SELECT 1 FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
-                    JOIN inv_doc_lines il ON il.po_line_id = x.po_line_id JOIN inv_docs d ON d.id = il.doc_id
-                    WHERE l.request_id = r.id AND d.updated_at >= ${q.updatedSince})
-         OR EXISTS (SELECT 1 FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
-                    JOIN inv_doc_lines src ON src.po_line_id = x.po_line_id JOIN inv_doc_lines rl ON rl.source_line_id = src.id
-                    JOIN inv_docs rd ON rd.id = rl.doc_id WHERE l.request_id = r.id AND rd.updated_at >= ${q.updatedSince})
-         OR EXISTS (SELECT 1 FROM purchase_request_lines l JOIN sourcing_line_requests sr ON sr.request_line_id = l.id
-                    JOIN sourcing_lines sl ON sl.id = sr.sourcing_line_id JOIN sourcing_events e ON e.id = sl.event_id
-                    WHERE l.request_id = r.id AND e.updated_at >= ${q.updatedSince})
-         OR EXISTS (SELECT 1 FROM request_line_stock s WHERE s.request_id = r.id AND GREATEST(s.decided_at, s.answered_at) >= ${q.updatedSince})
-      ORDER BY r.id DESC LIMIT 2000`;
-    ids = changed.map((r) => Number(r.id));
-    if (!ids.length) return { requests: [] };
+  const scope = (me.canReview || me.canStock) && !opts.mineOnly ? undefined : { staffId: actor.id, departmentId: me.departmentId };
+  const filters = { status: q.status, departmentId: q.departmentId, source: q.source, from: q.from, to: q.to, timezone: tz, requesterOrDept: scope };
+  if (!q.updatedSince) {
+    // 不带增量：最近的单，按进度时刻从晚到早
+    const list = await briefs(db, await summaries(db, filters));
+    list.sort((a, b) => (a.progressUpdatedAt < b.progressUpdatedAt ? 1 : a.progressUpdatedAt > b.progressUpdatedAt ? -1 : b.id - a.id));
+    return { requests: list.slice(0, q.limit), nextCursor: null };
   }
-  const rows = await summaries(db, {
-    ids,
-    status: q.status,
-    departmentId: q.departmentId,
-    source: q.source,
-    from: q.from,
-    to: q.to,
-    timezone: deps.config.timezone,
-    requesterOrDept: me.canReview || me.canStock ? undefined : { staffId: actor.id, departmentId: me.departmentId },
-  });
-  const list = await briefs(db, rows);
-  list.sort((a, b) => (a.progressUpdatedAt < b.progressUpdatedAt ? 1 : a.progressUpdatedAt > b.progressUpdatedAt ? -1 : b.id - a.id));
-  return { requests: list.slice(0, q.limit) };
+  // 进度增量（Codex 审查）：筛选与可见范围先在数据库里做，按（进度时刻, 编号）从早到晚排、取一页，给续取的游标——
+  // 变动再多也能一页页取完，不会因为先截了「最近 500 张」漏掉老单的进度。时刻截到毫秒（与接口给出去的一样），游标才对得上
+  const since = new Date(q.updatedSince);
+  const page = await db<{ id: number; at: Date }[]>`
+    SELECT x.id, x.at FROM (
+      SELECT r.id, date_trunc('milliseconds', ${PROGRESS_AT_SQL(db)}) AS at FROM purchase_requests r
+      WHERE TRUE
+        ${q.source ? db`AND r.source = ${q.source}` : db``}
+        ${q.status ? db`AND r.status = ${q.status}` : db``}
+        ${q.departmentId ? db`AND r.department_id = ${q.departmentId}` : db``}
+        ${q.from ? db`AND (r.created_at AT TIME ZONE ${tz})::date >= ${q.from}` : db``}
+        ${q.to ? db`AND (r.created_at AT TIME ZONE ${tz})::date <= ${q.to}` : db``}
+        ${scope ? db`AND ${REQUESTER_OR_DEPT(db, scope)}` : db``}
+    ) x
+    WHERE x.at > ${since} OR (x.at = ${since} AND x.id > ${q.afterId ?? 0})
+    ORDER BY x.at, x.id LIMIT ${q.limit}`;
+  if (!page.length) return { requests: [], nextCursor: null };
+  const rows = await summaries(db, { ...filters, ids: page.map((r) => Number(r.id)) });
+  const byId = new Map((await briefs(db, rows)).map((b) => [b.id, b]));
+  const requests = page.map((r) => byId.get(Number(r.id))).filter((b): b is MallRequestBrief => !!b);
+  const last = page[page.length - 1]!;
+  return { requests, nextCursor: page.length === q.limit ? { updatedSince: new Date(last.at).toISOString(), afterId: Number(last.id) } : null };
 }
 
 const BatchInput = z

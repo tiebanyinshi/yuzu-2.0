@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation, useNavigate, useParams } from 'react-router';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { ApiError, onAuthError, queryRetryDelay, shouldRetryQuery } from './lib/api';
@@ -145,12 +145,17 @@ function AuthGate({ shell = 'app' }: { shell?: 'app' | 'admin' | 'erp' | 'wcp' |
   const location = useLocation();
   const qc = useQueryClient();
 
+  // 登录后回到原来那一页：路径、查询参数、# 都带上（测试会话报告：未登录打开书签，会话接口的 401 先把人送到登录页、没带原页面，登录后落在门户）
+  const here = location.pathname + location.search + location.hash;
+  const hereRef = useRef(here);
+  hereRef.current = here;
+
   useEffect(
     () =>
       onAuthError((error) => {
         if (error.status === 401) {
           qc.clear();
-          navigate('/login', { replace: true, state: { expired: true } });
+          navigate('/login', { replace: true, state: { expired: true, from: hereRef.current } });
         } else {
           void qc.invalidateQueries({ queryKey: qk.session });
         }
@@ -185,7 +190,7 @@ function AuthGate({ shell = 'app' }: { shell?: 'app' | 'admin' | 'erp' | 'wcp' |
     );
   }
   if (!session.data || expired) {
-    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+    return <Navigate to="/login" replace state={{ from: here }} />;
   }
   if (session.data.staff.mustChangePassword) {
     return (

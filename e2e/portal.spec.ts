@@ -76,6 +76,23 @@ test.describe('系统门户页', () => {
     await expect(page.getByTestId('wcp-shell')).toBeVisible();
   });
 
+  test('未登录打开书签（旧地址或 /crm 下的），登录后回到原页面：路径、查询参数、# 都在（测试会话报告）', async ({ browser }) => {
+    for (const start of ['/devices?from=bookmark#terminal', '/crm/devices?from=bookmark#terminal']) {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(start);
+      await page.waitForURL((u) => u.pathname === '/login');
+      await page.fill('#username', 'linlan');
+      await page.fill('#password', PASSWORD);
+      await page.getByRole('button', { name: '登录' }).click();
+      await page.waitForURL((u) => u.pathname === '/crm/devices', { timeout: 30_000 });
+      const u = new URL(page.url());
+      expect(u.search).toBe('?from=bookmark');
+      expect(u.hash).toBe('#terminal');
+      await context.close();
+    }
+  });
+
   test('没有权限的板块显示但置灰、点不进去', async ({ page }) => {
     // 店员（xiaozhou）没有 ERP
     await loginToPortal(page, 'xiaozhou');

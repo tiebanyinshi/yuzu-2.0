@@ -1,6 +1,10 @@
 -- 回滚 270_mall_integration.sql。先停服务、先备份。
 -- 有商城来的需求单（source = 'mall'）或用了「较急」（high）的单时回滚会失败：先确认这些单怎么处理（店主定），不要直接删。
 BEGIN;
+DROP TRIGGER purchase_order_line_requests_progress_mark ON purchase_order_line_requests;
+DROP TABLE purchase_request_progress_marks;
+DROP FUNCTION yuzu_request_progress_mark();
+DROP FUNCTION yuzu_request_progress_mark_guard();
 CREATE OR REPLACE FUNCTION yuzu_request_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN

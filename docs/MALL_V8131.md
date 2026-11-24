@@ -36,7 +36,7 @@
 | `GET /master/materials`                 | 同上              | 在用的受管物料                                                                                                           |
 | `GET /master/suppliers`                 | 同上              | 在用供应商：编号、名字、联系人、准入状态、更新时间——**不给银行账户、电话、证照**                                         |
 | `POST /requests`                        | 能提需求          | 建需求单，见第 4 节；新建 201，原样重提 200 + `replayed: true`                                                           |
-| `GET /requests`                         | 提 / 审 / 核库    | `status`、`departmentId`、`source=mall`、`updatedSince`（按进度时刻）、`from`、`to`、`limit`（≤ 200）；按 ERP 的可见范围 |
+| `GET /requests`                         | 提 / 审 / 核库    | `status`、`departmentId`、`source=mall`、`updatedSince`（按进度时刻，含）与 `afterId`（续取）、`from`、`to`、`limit`（≤ 200）；按 ERP 的可见范围；带 `updatedSince` 时按进度时刻从早到晚给，`nextCursor` 不为空就带着它接着取 |
 | `GET /requests/:id`                     | 同上              | 详情：给商城看的状态、退回原因、审批流水、每行进度                                                                       |
 | `GET /requests/by-external/:externalNo` | 同上              | 按商城单号查                                                                                                             |
 | `GET /requests/by-key/:key`             | 能提需求          | 超时后按操作编号查回：`{ found, abandoned, request }`；只能查自己的                                                      |
@@ -46,7 +46,11 @@
 
 **可见范围**与 ERP 一样：部门申购看本部门的、自己提的、自己当主管的部门的；审核、核库的看全部。看不到的单一律 404（不区分是不是存在）。
 
-**给商城看的状态**（`displayStatus` 与 `displayLabel`，`@shared/mall`）：待主管确认、待核库、待部门确认替代、待采购审核、已退回、不采购、已撤回、已转领用、已通过待下单、询价中、已下单、部分到货、已到货、已关闭。列表与批量查状态只按行数统计合（看不出「询价中」），要准的看详情。`progressUpdatedAt` 是审批流水、采购单、收货退货、询价、核库里最晚的一次变动，商城按它判断要不要刷新。
+**给商城看的状态**（`displayStatus` 与 `displayLabel`，`@shared/mall`）：待主管确认、待核库、待部门确认替代、待采购审核、已退回、不采购、已撤回、已转领用、已通过待下单、询价中、已下单、部分到货、已到货、已关闭。列表、批量查状态与详情用同一个算法（各行进度：有效采购单、到货、关单、询价、领用），部分到货、采购单关闭在列表上也对（Codex 审查）。`progressUpdatedAt` 是审批流水、采购单、收货退货、询价、核库、采购单解开关联（`purchase_request_progress_marks`，只追加）里最晚的一次变动，截到毫秒，商城按它判断要不要刷新。
+
+**增量同步**（Codex 审查）：`GET /requests?updatedSince=<上次同步到的时刻>`，筛选与可见范围先在库里做，按（进度时刻, 编号）从早到晚给一页；返回的 `nextCursor = { updatedSince, afterId }` 不为空就带着它再取，直到为空，再把最后一张的 `progressUpdatedAt` 记作下次的起点。变动再多也不会漏（不再先截「最近 500 张」）。
+
+**商城的单不在 ERP 的填单页改**：ERP 的修改页没有 SKU、价格版本、意向供应商、商城的几项，改了会丢、主管确认也会被重置，所以 `PUT /api/erp/requests/:id` 对来源是商城的单一律 409 `MALL_EDIT_IN_SHOP`，页面上不出「修改」。退回的单撤回后在商城重新提（店主 2026-11-24 第 3 问：商城里退回单只看原因）。
 
 ## 4. 建需求单
 

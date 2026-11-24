@@ -149,6 +149,50 @@ function progressOf(p: RawProgress | null, s: { id: number; docNo: string } | nu
   };
 }
 
+/** 普通员工看得到的需求单：自己提的、本部门的、要自己确认的、自己当主管的部门的（与 visible() 一样；列表与采购商城的增量同步共用） */
+export const REQUESTER_OR_DEPT = (db: Db, v: { staffId: number; departmentId: number | null }) => db`
+  (r.requester_id = ${v.staffId} OR r.department_id = ${v.departmentId ?? 0}
+   OR r.dept_head_id = ${v.staffId}
+   OR r.department_id IN (SELECT hd2.id FROM departments hd2 WHERE hd2.head_id = ${v.staffId}))`;
+
+/**
+ * 一批需求单各行的进度状态（与详情 getRequest 的算法一样：有效采购单、到货、关单、询价、整行从库存领用）。
+ * 采购商城的列表、批量查状态用它合出显示状态，不再只按「到齐的行数」猜（Codex 审查：部分到货、采购单关闭在列表上看错）
+ */
+export async function lineStates(db: Db, requestIds: number[]): Promise<Map<number, RequestLineProgress['state'][]>> {
+  const out = new Map<number, RequestLineProgress['state'][]>();
+  if (!requestIds.length) return out;
+  const rows = await db<{ requestId: number; qtyMilli: number; progress: RawProgress | null; sourcing: { id: number; docNo: string } | null; stock: RequestLineStock | null }[]>`
+    SELECT l.request_id, l.qty_milli, ${PROGRESS_SQL(db)} AS progress, ${SOURCING_SQL(db)} AS sourcing, ${LINE_STOCK_SQL(db)} AS stock
+    FROM purchase_request_lines l WHERE l.request_id IN ${db(requestIds)} ORDER BY l.request_id, l.line_no`;
+  for (const l of rows) {
+    const progress = progressOf(l.progress, l.sourcing);
+    const stock = lineStockOf(l.stock);
+    const issuedAll = !!stock?.issueDoc && !stock.issueDoc.voided && stock.issuedQtyMilli >= Number(l.qtyMilli);
+    const state = issuedAll && !progress.po ? ('issued' as const) : progress.state;
+    const id = Number(l.requestId);
+    out.set(id, [...(out.get(id) ?? []), state]);
+  }
+  return out;
+}
+
+/** 需求单进度最后一次变的时刻（SQL 表达式，r 是 purchase_requests）：需求单本身、审批流水、采购单、收货退货单、询价单、核库、解开采购单关联的记号里最晚的 */
+export const PROGRESS_AT_SQL = (db: Db) => db`GREATEST(
+      r.updated_at,
+      (SELECT max(a.created_at) FROM approval_logs a WHERE a.doc_kind = 'purchase_request' AND a.doc_id = r.id),
+      (SELECT max(po.updated_at) FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
+         JOIN purchase_order_lines pl ON pl.id = x.po_line_id JOIN purchase_orders po ON po.id = pl.po_id WHERE l.request_id = r.id),
+      (SELECT max(d.updated_at) FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
+         JOIN inv_doc_lines il ON il.po_line_id = x.po_line_id JOIN inv_docs d ON d.id = il.doc_id WHERE l.request_id = r.id),
+      (SELECT max(rd.updated_at) FROM purchase_request_lines l JOIN purchase_order_line_requests x ON x.request_line_id = l.id
+         JOIN inv_doc_lines src ON src.po_line_id = x.po_line_id JOIN inv_doc_lines rl ON rl.source_line_id = src.id
+         JOIN inv_docs rd ON rd.id = rl.doc_id WHERE l.request_id = r.id),
+      (SELECT max(e.updated_at) FROM purchase_request_lines l JOIN sourcing_line_requests sr ON sr.request_line_id = l.id
+         JOIN sourcing_lines sl ON sl.id = sr.sourcing_line_id JOIN sourcing_events e ON e.id = sl.event_id WHERE l.request_id = r.id),
+      (SELECT max(GREATEST(s.decided_at, s.answered_at)) FROM request_line_stock s WHERE s.request_id = r.id),
+      (SELECT max(m.at) FROM purchase_request_progress_marks m WHERE m.request_id = r.id)
+    )`;
+
 /** 待审核不含还在核库的（8.1.10：核完才能审核）；待核库是待审核里还在核库、等部门确认替代的。列表与导出共用（导出的筛选与列表一样，Codex 审查 b3ca67a） */
 /** 优先级排序（8.1.31 三档）：紧急 → 较急 → 普通 */
 const PRIORITY_RANK = (db: Db, col: ReturnType<Db>) => db`(CASE ${col} WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END)`;
@@ -217,13 +261,7 @@ export async function summaries(
       ${f.departmentId ? db`AND r.department_id = ${f.departmentId}` : db``}
       ${f.from && f.timezone ? db`AND (r.created_at AT TIME ZONE ${f.timezone})::date >= ${f.from}` : db``}
       ${f.to && f.timezone ? db`AND (r.created_at AT TIME ZONE ${f.timezone})::date <= ${f.to}` : db``}
-      ${
-        f.requesterOrDept
-          ? db`AND (r.requester_id = ${f.requesterOrDept.staffId} OR r.department_id = ${f.requesterOrDept.departmentId ?? 0}
-                  OR r.dept_head_id = ${f.requesterOrDept.staffId}
-                  OR r.department_id IN (SELECT hd2.id FROM departments hd2 WHERE hd2.head_id = ${f.requesterOrDept.staffId}))`
-          : db``
-      }
+      ${f.requesterOrDept ? db`AND ${REQUESTER_OR_DEPT(db, f.requesterOrDept)}` : db``}
     ${
       f.stock
         ? // 待核库：待核库的在前，进待核库早的在前
@@ -582,9 +620,10 @@ async function lockRequest(tx: Db, requestId: number) {
       deptConfirm: 'none' | 'pending' | 'confirmed';
       deptHeadId: number | null;
       stockCheck: StockCheckState;
+      source: PurchaseRequestSummary['source'];
     }[]
   >`
-    SELECT id, status, requester_id, department_id, doc_no, approvable_on, priority, dept_confirm, dept_head_id, stock_check
+    SELECT id, status, requester_id, department_id, doc_no, approvable_on, priority, dept_confirm, dept_head_id, stock_check, source
     FROM purchase_requests WHERE id = ${requestId} FOR UPDATE`;
   if (!r) throw notFound('需求单不存在');
   return r;
@@ -599,6 +638,9 @@ export async function updateRequest(deps: Deps, requestId: number, raw: unknown,
     const r = await lockRequest(tx, requestId);
     if (r.requesterId !== actor.id && actor.role !== 'owner') throw forbidden('只能改自己提的需求单');
     if (r.status !== 'submitted' && r.status !== 'returned') throw conflict('INVALID_STATE', '需求单已结束审核，不能再改');
+    // 采购商城来的单：明细带着 SKU、价格版本、意向供应商与商城的几项，ERP 的填单页改不了这些（改了会丢）——
+    // 不在这里改；退回的撤回以后在商城里重新提
+    if (r.source === 'mall') throw conflict('MALL_EDIT_IN_SHOP', '采购商城提的需求单不能在这里改：退回的请撤回，再到采购商城里重新提一张');
     if (input.departmentId !== null && input.departmentId !== r.departmentId) throw badRequest('需求单的部门不能改，请撤回后重新提');
     // 核库（8.1.10）：已经有行从库存领用的不能再改（数据库守卫兜底）；没领用的核库结果随明细一起换掉，改完重新看要不要核库
     if (await hasIssuedLines(tx, requestId)) throw conflict('STOCK_ISSUED_LOCKED', '这张需求单已经有行从库存领用，不能再改；剩下的不要了可以撤回');
