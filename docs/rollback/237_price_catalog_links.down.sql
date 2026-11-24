@@ -3,13 +3,16 @@
 -- 收银项目上已经同步过去的价格不动（那是收银项目现在的价）；来源为 price_catalog 的菜品改价记录改不了来源（只追加），
 -- 所以有这类记录时先停下来，与店主确认后再处理。
 BEGIN;
+-- op_fences、idempotency_keys 只追加（001、006 的触发器）：维护性删除时临时关掉对应的触发器，删完马上恢复（不然有记录的库上回滚会整笔失败）
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM dish_price_changes WHERE source = 'price_catalog') THEN
     RAISE EXCEPTION '已有来源为「全品类价目表」的菜品改价记录，不能直接回滚 237，请先与店主确认';
   END IF;
 END $$;
+ALTER TABLE op_fences DISABLE TRIGGER op_fences_append_only;
 DELETE FROM op_fences WHERE op_type = 'price_link';
+ALTER TABLE op_fences ENABLE TRIGGER op_fences_append_only;
 DO $$
 DECLARE expression text;
 BEGIN

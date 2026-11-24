@@ -1,7 +1,10 @@
 -- 回滚 236_price_catalog_set_ops_more.sql。先停服务、先备份；先回滚 236，再回滚 235…230。
 -- 删掉切换生效、放弃草稿的操作编号与这一类作废登记，price_catalog_set_ops 回到只记整体回滚，op_fences 去掉 price_set。
 BEGIN;
+-- op_fences、idempotency_keys 只追加（001、006 的触发器）：维护性删除时临时关掉对应的触发器，删完马上恢复（不然有记录的库上回滚会整笔失败）
+ALTER TABLE op_fences DISABLE TRIGGER op_fences_append_only;
 DELETE FROM op_fences WHERE op_type = 'price_set';
+ALTER TABLE op_fences ENABLE TRIGGER op_fences_append_only;
 DELETE FROM price_catalog_set_ops WHERE action <> 'rollback';
 ALTER TABLE price_catalog_set_ops DROP CONSTRAINT price_catalog_set_ops_action_check;
 ALTER TABLE price_catalog_set_ops ADD CONSTRAINT price_catalog_set_ops_action_check CHECK (action IN ('rollback'));

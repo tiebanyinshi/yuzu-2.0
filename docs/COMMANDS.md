@@ -54,6 +54,8 @@ node dist/server/cli.js changes-since --since "YYYY-MM-DD HH:MM"     # 某时刻
 node dist/server/cli.js membership-daily               # 会员到期处理与会员权益自动发放（v0.7.23 / v0.7.24；应用每分钟自己会跑，停机后要马上补跑时用）
 ```
 
+单个迁移的回滚脚本在 `docs/rollback/<迁移>.down.sql`（先停服务、先备份，按脚本开头写的顺序执行）。脚本里删只追加表（`op_fences`、`idempotency_keys` 等迁移里建了禁止删除触发器的表）的记录时，删之前 `ALTER TABLE … DISABLE TRIGGER …`、删完马上 `ENABLE`，不然有记录的库上回滚会整笔失败；`tests/rollback-append-only.test.ts`（秒级）核对每一份。
+
 ## 4. 导入（真实业务数据：默认只预览，`--apply` 才写入，门店环境须店主同意）
 
 ```bash
