@@ -623,4 +623,31 @@ describe('巡查起始时间（店主 2026-11-24，XC17、XC18）', () => {
     // 旧版本号：拒绝
     expect((await admin('PUT', '/api/erp/patrol/settings', { departmentIds: s.departmentIds, viewerIds: s.viewerIds, startHour: 10, rev: s.rev })).body.error.code).toBe('PATROL_SETTINGS_CHANGED');
   });
+  it('8.1.27 按旧分界记下日期的打卡：「今天」、记录筛选、记录里的日期与轮次都按新的分界（Codex 审查 86d338a、f1efa4a）', async () => {
+    const [row] = await ctx.sql<{ value: Record<string, unknown> }[]>`SELECT value FROM settings WHERE key = 'patrol'`;
+    const saved = row!.value;
+    try {
+      // 起始 00:00、每 4 小时（很早以前设的）；营业日 06:00 切换
+      const t = await today();
+      const day = new Date(Date.parse(`${t}T00:00:00Z`) - 3 * 86_400_000).toISOString().slice(0, 10);
+      const prev = new Date(Date.parse(`${day}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+      const value = { ...saved, roundChanges: [{ from: '2026-01-01', minutes: 240, startHour: 0, at: '2026-01-01T00:00:00.000Z' }] };
+      await ctx.sql`UPDATE settings SET value = ${ctx.sql.json(value as never)} WHERE key = 'patrol'`;
+      const p = (await addPoint(`旧分界${randomUUID().slice(0, 4)}`)).body.point as { id: number; name: string };
+      const [e] = await ctx.sql<{ id: number }[]>`SELECT id FROM canteen_employees ORDER BY id LIMIT 1`;
+      // 那一天凌晨 02:00（北京时间）扫的，按旧分界记在前一天
+      const scannedAt = new Date(`${day}T02:00:00+08:00`);
+      await ctx.sql`
+        INSERT INTO patrol_checkins (point_id, point_name, employee_id, emp_no, employee_name, business_date, scanned_at, via, client_key, round_start, round_minutes)
+        VALUES (${p.id}, ${p.name}, ${e!.id}, 'X1', '旧分界', ${prev}, ${scannedAt}, 'scan', ${randomUUID()}, ${scannedAt}, 240)`;
+      const v = (await admin('GET', `/api/erp/patrol/day?date=${day}`)).body as { points: { name: string; byRound: ({ name: string }[] | null)[] }[] };
+      expect(v.points.find((x) => x.name === p.name)!.byRound[0]!.map((x) => x.name)).toEqual(['旧分界']);
+      const recs = (await admin('GET', `/api/erp/patrol/records?from=${day}&to=${day}`)).body as { rows: { pointName: string; businessDate: string; roundNo: number }[] };
+      expect(recs.rows.filter((r) => r.pointName === p.name)).toEqual([expect.objectContaining({ businessDate: day, roundNo: 1 })]);
+      const before = (await admin('GET', `/api/erp/patrol/records?from=${prev}&to=${prev}`)).body as { rows: { pointName: string }[] };
+      expect(before.rows.some((r) => r.pointName === p.name)).toBe(false);
+    } finally {
+      await ctx.sql`UPDATE settings SET value = ${ctx.sql.json(saved as never)} WHERE key = 'patrol'`;
+    }
+  });
 });

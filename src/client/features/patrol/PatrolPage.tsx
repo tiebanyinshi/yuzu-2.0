@@ -235,10 +235,14 @@ function RecordsTab({ manage }: { manage: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const session = useSession();
-  // 营业日（与巡场记的营业日同一个口径，XC4）
-  const today = session.today;
-  const [from, setFrom] = useState(today);
-  const [to, setTo] = useState(today);
+  // 巡场的今天（与打卡记的日期同一个口径：设了起始时间的从起始整点起，XC19；没设的是营业日，XC4）；取回来以前先用营业日
+  const patrolToday = useQuery({ queryKey: [...KEY, 'day', null], queryFn: () => api.get<PatrolDay>('/api/erp/patrol/day') }).data?.today;
+  const today = patrolToday ?? session.today;
+  const [picked, setPicked] = useState<{ from?: string; to?: string }>({});
+  const from = picked.from ?? today;
+  const to = picked.to ?? today;
+  const setFrom = (v: string) => setPicked((p) => ({ ...p, from: v }));
+  const setTo = (v: string) => setPicked((p) => ({ ...p, to: v }));
   const [pointId, setPointId] = useState('');
   const [employeeId, setEmployeeId] = useState('');
   /** 选中的那个人的名字：换了场所、日期以后结果里没有他，也留在选项里，看得出正在按谁筛（Codex 审查 b0a8bf6） */

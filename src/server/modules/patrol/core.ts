@@ -599,25 +599,29 @@ export async function patrolRecords(db: Db, config: AppConfig, raw: unknown): Pr
   const q = parse(RecordsQuery, raw);
   if (q.from > q.to) throw badRequest('开始日期不能晚于结束日期');
   if (daysBetween(q.from, q.to) >= PATROL_MAX_DAYS) throw badRequest(`一次最多查 ${PATROL_MAX_DAYS} 天`);
+  // 按所选巡场日的时间段取（不按记下的日期）：分界改过（XC19）以前记下的日期对不上时，与「今天」一致
+  const settings = await loadPatrolSettings(db);
+  const first = await roundsOn(db, config, q.from, settings);
+  const last = await roundsOn(db, config, q.to, settings);
   const rows = await db<Omit<PatrolCheckinRow, 'roundNo'>[]>`
     SELECT c.id, c.point_id, c.point_name, c.employee_id, c.emp_no, c.employee_name AS name, c.department_name AS department,
            c.business_date, c.scanned_at, c.recorded_at, c.via,
            (c.recorded_at - c.scanned_at) > ${`${PATROL_LATE_MINUTES} minutes`}::interval AS late,
            c.voided_at, c.void_reason, s.display_name AS voided_by_name
     FROM patrol_checkins c LEFT JOIN staff s ON s.id = c.voided_by
-    WHERE c.business_date BETWEEN ${q.from} AND ${q.to}
+    WHERE c.scanned_at >= ${new Date(first.rounds[0]!.start)} AND c.scanned_at < ${new Date(last.rounds.at(-1)!.end)}
       AND ${q.pointId ? db`c.point_id = ${q.pointId}` : db`true`}
       AND ${q.employeeId ? db`c.employee_id = ${q.employeeId}` : db`true`}
       AND ${q.voided === 'exclude' ? db`c.voided_at IS NULL` : db`true`}
     ORDER BY c.scanned_at DESC, c.id DESC`;
   // 每条在那一天的第几轮（按扫到的时间现在算出的巡场日与那一天的分轮；8.1.27 按旧分界记的日期也照新的分界归轮，XC19）
-  const settings = await loadPatrolSettings(db);
   const { businessDayStartHour } = await loadSettings(db);
   const dayOf = (at: string) => patrolDateAt(settings.roundChanges, at, config.timezone, businessDayStartHour);
   const roundsByDate = new Map<string, PatrolRoundSpan[]>();
   for (const date of new Set(rows.map((r) => dayOf(r.scannedAt)))) roundsByDate.set(date, (await roundsOn(db, config, date, settings)).rounds);
   const list = rows.map((r) => ({
     ...r,
+    businessDate: dayOf(r.scannedAt),
     id: Number(r.id),
     pointId: Number(r.pointId),
     employeeId: Number(r.employeeId),
