@@ -11,7 +11,8 @@ import type { PositionKey, PositionOverrides } from './positions';
 export const ADMIN_SECTIONS = {
   home: {
     path: '/admin',
-    label: '后台首页',
+    // 店主 2026-11-24（docs/BOARDS.md）：后台首页成了 CRM 设置的首页
+    label: '设置首页',
     perms: [
       'settings.manage',
       'catalog.manage',
@@ -53,6 +54,8 @@ export const ADMIN_SECTIONS = {
   dining: { path: '/admin/dining', label: '餐饮', perms: ['settings.manage', 'catalog.manage'] },
   // 电子菜单（8.0.10，docs/EMENU.md）：餐桌平板上的菜单——分类与版面、菜品图文、平板点餐的设置；默认店主、店总
   emenu: { path: '/admin/emenu', label: '电子菜单', perms: ['emenu.manage'] },
+  // Design 首页（店主 2026-11-24，docs/BOARDS.md 第 3 节）：Design 板块的入口；有其中任一分区权限的进得去
+  design: { path: '/admin/design', label: 'Design 首页', perms: ['studio.edit', 'settings.manage', 'catalog.manage', 'emenu.manage'] },
   // UI 工作台（8.1.1，docs/WORKBENCH_V811.md；GZ4：工作台就在后台）：设计师改版面、发布、回滚；编辑器在 /studio/<界面>（整屏）
   studio: { path: '/admin/studio', label: '工作台', perms: ['studio.edit'] },
   rooms: { path: '/admin/rooms', label: '客房', perms: ['settings.manage', 'catalog.manage'] },
@@ -97,26 +100,86 @@ export type AdminSection = keyof typeof ADMIN_SECTIONS;
  * 每个分区必须在且只在一个分组里（tests/admin-ia.test.ts 核对）——8.0.16 以前分组写在侧栏的组件里，
  * 「设备」漏了，侧栏里一直没有它。
  */
-export const ADMIN_GROUPS: readonly { key: string; title: string; items: readonly AdminSection[] }[] = [
-  { key: 'overview', title: '概览', items: ['home', 'dashboard'] },
-  { key: 'rules', title: '规则中心', items: ['settings', 'rules', 'dictionaries'] },
-  { key: 'members', title: '会员与营销', items: ['membership', 'coupons', 'gifts'] },
-  { key: 'business', title: '营业项目', items: ['catalog', 'tags', 'technicians', 'dining', 'emenu', 'studio', 'rooms', 'bookings'] },
-  { key: 'venue', title: '场地、设备与线上', items: ['spaces', 'guide', 'devices', 'integrations', 'mp'] },
-  { key: 'staff', title: '人员与行政', items: ['stores', 'staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'permissions', 'canteen', 'patrol'] },
-  { key: 'data', title: '数据与审计', items: ['audit', 'opening'] },
+/** 门户的四个板块（店主 2026-11-24，docs/BOARDS.md）：原来管理后台的分区拆进各板块，地址与权限不变 */
+export type AdminBoard = 'crm' | 'erp' | 'wcp' | 'design';
+export const ADMIN_BOARDS: Record<AdminBoard, { name: string; title: string; back: { to: string; label: string } | null }> = {
+  crm: { name: 'CRM', title: 'CRM 设置', back: { to: '/', label: '返回 CRM' } },
+  erp: { name: 'ERP', title: 'ERP 设置', back: { to: '/erp', label: '返回 ERP' } },
+  wcp: { name: 'WCP', title: 'WCP 设置', back: { to: '/oa', label: '返回 WCP' } },
+  design: { name: 'Design', title: 'Design', back: null },
+};
+
+/**
+ * 后台的一级分组（8.0.17，docs/IA_V8017.md 第 3.2 节）：侧栏、窄屏的横排、后台首页的分区卡片都按它排。
+ * 每个分区必须在且只在一个分组里（tests/admin-ia.test.ts 核对）——8.0.16 以前分组写在侧栏的组件里，
+ * 「设备」漏了，侧栏里一直没有它。
+ * 店主 2026-11-24（docs/BOARDS.md 第 2 节）：每个分组归一个板块；进了某个板块的分区，侧栏只列这个板块的分组。
+ */
+export const ADMIN_GROUPS: readonly { key: string; title: string; board: AdminBoard; items: readonly AdminSection[] }[] = [
+  { key: 'overview', title: '概览', board: 'crm', items: ['home', 'dashboard'] },
+  { key: 'rules', title: '规则中心', board: 'crm', items: ['settings', 'rules', 'dictionaries'] },
+  { key: 'members', title: '会员与营销', board: 'crm', items: ['membership', 'coupons', 'gifts'] },
+  { key: 'business', title: '营业项目', board: 'crm', items: ['catalog', 'tags', 'technicians', 'dining', 'emenu', 'rooms', 'bookings'] },
+  { key: 'venue', title: '场地、设备与线上', board: 'crm', items: ['spaces', 'devices', 'mp'] },
+  { key: 'erpSystem', title: '主体、接口与审计', board: 'erp', items: ['stores', 'integrations', 'opening', 'audit'] },
+  { key: 'staff', title: '人员与行政', board: 'wcp', items: ['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'permissions', 'canteen', 'patrol'] },
+  { key: 'design', title: '品牌与设计', board: 'design', items: ['design', 'studio', 'guide'] },
 ];
+
+/** 分区归哪个板块 */
+export function boardOfSection(section: AdminSection): AdminBoard {
+  return ADMIN_GROUPS.find((g) => g.items.includes(section))?.board ?? 'crm';
+}
+/** 板块里的分区（按分组的顺序） */
+export function boardSections(board: AdminBoard): AdminSection[] {
+  return ADMIN_GROUPS.filter((g) => g.board === board).flatMap((g) => g.items);
+}
+/** 地址落在哪个分区（/admin/rules/shift → rules）；认不出的算后台首页 */
+export function adminSectionOfPath(pathname: string): AdminSection {
+  const p = pathname.replace(/\/+$/, '');
+  let best: AdminSection = 'home';
+  for (const k of Object.keys(ADMIN_SECTIONS) as AdminSection[]) {
+    const path: string = ADMIN_SECTIONS[k].path;
+    if ((p === path || p.startsWith(`${path}/`)) && path.length > ADMIN_SECTIONS[best].path.length) best = k;
+  }
+  return best;
+}
 /** 能进后台首页、看后台各个设置分区的权限（有其一即可） */
 export const ADMIN_PERMISSIONS: readonly Permission[] = ADMIN_SECTIONS.home.perms;
 /**
  * 不进后台首页也看得到的分区：数据看板（店主 2026-11-10），员工食堂、安保巡场（8.0.18，食堂负责人、安保主管原来只进 ERP）。
  * 只有这些分区的权限的岗位能进后台，但只看得到自己的这几个分区
  */
-export const ADMIN_STANDALONE_SECTIONS: readonly AdminSection[] = ['dashboard', 'canteen', 'patrol', 'studio', 'staff', 'org', 'attendance', 'oaApprovals', 'payroll'];
+export const ADMIN_STANDALONE_SECTIONS: readonly AdminSection[] = ['dashboard', 'canteen', 'patrol', 'design', 'studio', 'staff', 'org', 'attendance', 'oaApprovals', 'payroll'];
 /** 跟着 ERP 模块开关走的分区：模块关着时只有能改模块开关的人还看得到（页面上提示去开启） */
 export const ADMIN_SECTION_MODULES: Partial<Record<AdminSection, ErpModuleKey>> = { canteen: 'canteen', patrol: 'patrol' };
 /** 能进后台的权限（有其一即可）：后台首页的权限，加上不进首页也看得到的那几个分区的权限 */
 export const ADMIN_ENTRY_PERMISSIONS: readonly Permission[] = [...new Set<Permission>([...ADMIN_SECTIONS.home.perms, ...ADMIN_STANDALONE_SECTIONS.flatMap((k) => ADMIN_SECTIONS[k].perms)])];
+
+/**
+ * 当前账号能进的后台分区（纯函数：后台外壳、ERP 侧栏、办公首页、门户都用这一份）：
+ * 进不了后台首页的只看得到不进首页也能看的那几个分区；跟着 ERP 模块开关走的分区关着时只有能去开的人还看得到。
+ */
+export function visibleAdminSections(can: (p: Permission) => boolean, erpModules: readonly string[]): AdminSection[] {
+  const all = (Object.keys(ADMIN_SECTIONS) as AdminSection[])
+    .filter((k) => ADMIN_SECTIONS[k].perms.some((p) => can(p)))
+    .filter((k) => {
+      const module = ADMIN_SECTION_MODULES[k];
+      return !module || erpModules.includes(module) || can('settings.manage');
+    });
+  return all.includes('home') ? all : all.filter((k) => ADMIN_STANDALONE_SECTIONS.includes(k));
+}
+/** 这个账号在某个板块里能进的分区（按侧栏的顺序） */
+export function visibleBoardSections(board: AdminBoard, can: (p: Permission) => boolean, erpModules: readonly string[]): AdminSection[] {
+  const visible = visibleAdminSections(can, erpModules);
+  return boardSections(board).filter((k) => visible.includes(k));
+}
+/**
+ * 门店主导航「CRM 设置」的权限：设置首页归 CRM，有首页权限的都进得去；没有首页权限的只看得到 CRM 里不进首页也能看的分区（数据看板）
+ */
+export const CRM_SETTINGS_PERMISSIONS: readonly Permission[] = [
+  ...new Set<Permission>([...ADMIN_SECTIONS.home.perms, ...ADMIN_STANDALONE_SECTIONS.filter((k) => boardOfSection(k) === 'crm').flatMap((k) => ADMIN_SECTIONS[k].perms)]),
+];
 
 export const RULE_GROUPS = {
   store: '门店与营业',

@@ -37,8 +37,8 @@ test.describe('8.0.18 ERP 的信息架构', () => {
     await expect(group('财务')).toHaveText([/^付款/, /应付货款/, /费用与备用金/, /发票台账/, /^开票/, /应收与挂账/, /银行流水/]);
     await expect(group('合同')).toHaveText([/合同/]);
     await expect(page.getByTestId('erp-nav-settings')).toHaveText('ERP 设置');
-    // 设置是最后一组
-    await expect(nav.getByRole('link').last()).toHaveText('ERP 设置');
+    // 设置是最后一组：ERP 设置，后面是原来后台里归 ERP 的分区（店主 2026-11-24，docs/BOARDS.md）
+    await expect(group('设置')).toHaveText(['ERP 设置', '门店与主体', '对外接口', '期初与旧账', '操作审计']);
   });
 
   test('「ERP 设置」：七个页签写进地址、刷新还在；每个页签里是原来那张卡片；旧地址跳到对应的页签', async ({ page }) => {
@@ -153,7 +153,8 @@ test.describe('8.0.18 ERP 的信息架构', () => {
 
   test('员工食堂、安保巡场在后台「人员与行政」（模块关着时提示去哪开），营业数据在数据看板；旧地址跳过去', async ({ page }) => {
     await login(page, 'linlan');
-    await page.goto('/admin');
+    // 店主 2026-11-24（docs/BOARDS.md）：人员与行政归 WCP 设置
+    await page.goto('/admin/staff');
     await expect(page.getByTestId('admin-nav-canteen')).toHaveText('员工食堂');
     await expect(page.getByTestId('admin-nav-patrol')).toHaveText('安保巡场');
     const modules = ((await (await page.request.get('/api/auth/me')).json()) as { erpModules: string[] }).erpModules;

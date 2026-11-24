@@ -27,7 +27,7 @@ import {
   Megaphone,
   MonitorPlay,
 } from 'lucide-react';
-import { ADMIN_ENTRY_PERMISSIONS } from '@shared/admin';
+import { CRM_SETTINGS_PERMISSIONS } from '@shared/admin';
 import { DISH_PERMISSIONS } from '@shared/dishes';
 import { deskEntries } from '@shared/frontdesk';
 import type { Permission } from '@shared/permissions';
@@ -156,8 +156,9 @@ const STORE_NAV: StoreNavDomain[] = [
       { to: '/devices', label: '设备', icon: Printer, perm: 'device.view' },
       // 对客导览（v0.7.19）：所有岗位默认能看（区域导览图、大屏轮播）
       { to: '/guide', label: '导览', icon: MapPinned, perm: 'guide.view', guestFacing: true },
-      // 管理后台是单独的一套页面（规则、价目、手牌池、员工与权限、数据看板）；只有看板权限的岗位进去只看得到数据看板
-      { to: '/admin', label: '后台', icon: Settings2, perm: [...ADMIN_ENTRY_PERMISSIONS] },
+      // CRM 设置（店主 2026-11-24，docs/BOARDS.md：原来的「后台」拆进各板块，这里只进 CRM 的那些分区）：
+      // 规则、价目、手牌池、会员、数据看板……；只有看板权限的岗位进去只看得到数据看板
+      { to: '/admin', label: 'CRM 设置', icon: Settings2, perm: [...CRM_SETTINGS_PERMISSIONS] },
     ],
   },
 ];

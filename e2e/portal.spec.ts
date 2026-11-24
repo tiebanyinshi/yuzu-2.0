@@ -16,7 +16,7 @@ async function loginToPortal(page: Page, username: string) {
 test.describe('系统门户页', () => {
   test('店主登录后先到门户页：四个板块都能进，各自进到原来的系统；顶栏有铃铛、环境标识、版本号、头像', async ({ page }) => {
     await loginToPortal(page, 'linlan');
-    for (const k of ['yuzu', 'erp', 'office', 'admin']) await expect(page.getByTestId(`portal-board-${k}`)).toBeVisible();
+    for (const k of ['crm', 'erp', 'wcp', 'design']) await expect(page.getByTestId(`portal-board-${k}`)).toBeVisible();
     await expect(page.getByTestId('portal-welcome')).toContainText('林岚');
     await expect(page.getByTestId('instance-badge')).toBeVisible();
     await expect(page.getByTestId('portal-version')).toContainText('v');
@@ -34,10 +34,10 @@ test.describe('系统门户页', () => {
       await expect(page).toHaveURL(url);
       await check();
     };
-    await go('yuzu', /\/$/, () => expect(page.getByRole('heading', { name: '会员工作台' })).toBeVisible());
+    await go('crm', /\/$/, () => expect(page.getByRole('heading', { name: '会员工作台' })).toBeVisible());
     await go('erp', /\/erp/, () => expect(page.getByTestId('erp-shell')).toBeVisible());
-    await go('office', /\/oa/, async () => {});
-    await go('admin', /\/admin/, () => expect(page.getByTestId('admin-shell')).toBeVisible());
+    await go('wcp', /\/oa/, async () => {});
+    await go('design', /\/admin\/design$/, () => expect(page.getByTestId('design-home')).toBeVisible());
 
     // 头像菜单：退出登录回到登录页
     await page.goto('/portal');
@@ -54,13 +54,13 @@ test.describe('系统门户页', () => {
     await expect(erp).toContainText('没有这个板块的权限');
     await erp.click({ force: true });
     await expect(page).toHaveURL(/\/portal$/);
-    await expect(page.getByTestId('portal-board-yuzu')).not.toHaveAttribute('data-disabled', 'true');
+    await expect(page.getByTestId('portal-board-crm')).not.toHaveAttribute('data-disabled', 'true');
   });
 
   test('窄屏：四张卡片两列两行，通知面板不伸出屏幕', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginToPortal(page, 'linlan');
-    const boxes = await Promise.all(['yuzu', 'erp', 'office', 'admin'].map(async (k) => (await page.getByTestId(`portal-board-${k}`).boundingBox())!));
+    const boxes = await Promise.all(['crm', 'erp', 'wcp', 'design'].map(async (k) => (await page.getByTestId(`portal-board-${k}`).boundingBox())!));
     expect(Math.abs(boxes[0]!.y - boxes[1]!.y)).toBeLessThan(2);
     expect(boxes[2]!.y).toBeGreaterThan(boxes[0]!.y + boxes[0]!.height - 2);
     expect(Math.abs(boxes[0]!.x - boxes[2]!.x)).toBeLessThan(2);

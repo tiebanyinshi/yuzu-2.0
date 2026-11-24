@@ -218,7 +218,7 @@ test('只有管家职责的后勤账号：登录直接进管家部；手机上�
     const nav = p.getByRole('navigation', { name: '主导航' });
     await expect(nav.getByRole('link', { name: '管家' })).toBeVisible();
     // 不只是折着看不见：这些入口根本不在主导航里
-    for (const hidden of ['后台', '会员', '流水', '发卡台', '收银台']) await expect(navItem(p, hidden)).toHaveCount(0);
+    for (const hidden of ['CRM 设置', '会员', '流水', '发卡台', '收银台']) await expect(navItem(p, hidden)).toHaveCount(0);
     // 后台进不去：回到管家部
     await p.goto('/admin');
     await expect(p).toHaveURL(/\/concierge$/);

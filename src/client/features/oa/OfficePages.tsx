@@ -7,7 +7,8 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, BookUser, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, MessagesSquare, Palmtree, ReceiptText, ScanFace, Stamp } from 'lucide-react';
+import { Bell, BookUser, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, MessagesSquare, Palmtree, ReceiptText, ScanFace, SlidersHorizontal, Stamp } from 'lucide-react';
+import { ADMIN_SECTIONS, visibleBoardSections } from '@shared/admin';
 import { shiftDate } from '@shared/labels';
 import { MY_DAY_STATUS_LABELS, MY_DAY_STATUSES, type MyDayStatus, type MySchedule, type MyScheduleItem } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
@@ -15,6 +16,7 @@ import { IM_LIST_POLL_MS, type ImSync } from '@shared/oa-im';
 import { clockText } from '@shared/technician-admin';
 import { api } from '../../lib/api';
 import { useLivePoll } from '../../lib/livePoll';
+import { useCan, useSession } from '../../lib/session';
 import { cn } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -81,11 +83,18 @@ function OfficeHomePage() {
   // 停在首页时也按会话列表的节奏刷新（Codex 审查 ce07d7e）
   useLivePoll(async () => void (await im.refetch()), [], { intervalMs: IM_LIST_POLL_MS });
   const unread = im.data?.unread ?? 0;
+  // WCP 设置（店主 2026-11-24，docs/BOARDS.md 第 2 节）：原来后台「人员与行政」的分区；有其中一项的才显示，进第一个能进的
+  const can = useCan();
+  const session = useSession();
+  const wcp = visibleBoardSections('wcp', can, session.erpModules);
+  const tiles = wcp.length
+    ? [...TILES, { to: ADMIN_SECTIONS[wcp[0]!].path, label: 'WCP 设置', hint: '员工账号、组织架构、考勤、审批模板、工资条、食堂与巡场', icon: SlidersHorizontal, testId: 'oa-tile-settings' }]
+    : TILES;
   return (
     <>
-      <PageHeader dateMode="calendar" title="办公" subtitle="排班、打卡、审批、工资条等员工自己的事" />
+      <PageHeader dateMode="calendar" title="WCP" subtitle="员工工作台：排班、打卡、审批、工资条等员工自己的事" />
       <div className="mx-auto grid w-full max-w-3xl grid-cols-2 gap-3 p-4 md:grid-cols-3 md:p-7" data-testid="oa-home">
-        {TILES.map((t) => (
+        {tiles.map((t) => (
           <Link key={t.to} to={t.to} data-testid={t.testId} className="tap relative rounded-lg border border-line bg-card p-4 shadow-card transition-colors hover:border-line-strong">
             <t.icon className="size-6 text-pine" />
             {t.to === '/oa/im' && unread > 0 && (

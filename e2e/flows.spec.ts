@@ -191,7 +191,7 @@ test('请求超时：显示结果待确认，可查回原单且不重复记账',
 
 test('权限：店员进后台只看得到数据看板（2026-11-10 起看板在后台），不能查看历史营业日', async ({ page }) => {
   await login(page, 'xiaozhou');
-  await clickNav(page, '后台');
+  await clickNav(page, 'CRM 设置');
   await expect(page).toHaveURL(/\/admin\/dashboard$/);
   await expect(page.getByTestId('admin-nav-dashboard')).toHaveCount(1);
   await expect(page.getByTestId('admin-nav-settings')).toHaveCount(0);

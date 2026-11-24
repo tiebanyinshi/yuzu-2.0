@@ -36,6 +36,7 @@ import type { PaymentTodo } from '@shared/payments';
 import type { InvoiceTodo } from '@shared/invoices';
 import type { SupplyTodo } from '@shared/supply';
 import type { ArTodo } from '@shared/ar';
+import { ADMIN_SECTIONS, visibleBoardSections } from '@shared/admin';
 import { ERP_MODULES, ERP_NAV_GROUPS, ERP_SETTINGS_PATH, erpModuleOfPage, type ErpModuleKey } from '@shared/erp';
 import { versionText } from '@shared/instance';
 import { DUTY_LABELS, ROLE_LABELS } from '@shared/labels';
@@ -201,7 +202,14 @@ export function ErpShell() {
   const groups: { title: string; items: Item[] }[] = [
     { title: '概览', items: [{ key: 'home', to: '/erp', label: 'ERP 首页', icon: LayoutGrid, end: true }] },
     ...ERP_NAV_GROUPS.filter((g) => g.key !== 'moved').map((g) => ({ title: g.title, items: g.modules.filter((k) => access.modules.includes(k)).map(moduleItem) })),
-    { title: '设置', items: settingsTabs.length ? [{ key: 'settings', to: ERP_SETTINGS_PATH, label: 'ERP 设置', icon: SlidersHorizontal }] : [] },
+    {
+      title: '设置',
+      items: [
+        ...(settingsTabs.length ? [{ key: 'settings', to: ERP_SETTINGS_PATH, label: 'ERP 设置', icon: SlidersHorizontal }] : []),
+        // 原来后台里归 ERP 的分区（店主 2026-11-24，docs/BOARDS.md 第 2 节）：门店与主体、对外接口、期初与旧账、操作审计
+        ...visibleBoardSections('erp', can, session.erpModules).map((k) => ({ key: `admin-${k}`, to: ADMIN_SECTIONS[k].path, label: ADMIN_SECTIONS[k].label, icon: SlidersHorizontal })),
+      ],
+    },
   ].filter((g) => g.items.length > 0);
 
   // 现在在哪个模块：模块下的其他页面也算；规则类的旧地址（采购规则）现在都在「ERP 设置」里

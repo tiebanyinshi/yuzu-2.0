@@ -1,11 +1,12 @@
 // 系统门户页（店主 2026-11-24《系统门户页改造需求说明》，docs/PORTAL.md）：登录后的第一个界面。
-// 自上而下：顶栏（左 Logo 与名称；右 通知铃铛、环境标识、换店、版本号、头像）→ 欢迎语 → 四大板块入口（柚子、ERP、办公、管理后台）。
+// 自上而下：顶栏（左 Logo 与名称；右 通知铃铛、环境标识、换店、版本号、头像）→ 欢迎语 → 四大板块入口。
+// 店主 2026-11-24（docs/BOARDS.md）：四个板块改叫 CRM、ERP、WCP、Design；原来管理后台的分区拆进各板块，Design 是品牌与设计。
 // 纯入口层：四个板块内部不改；同一套登录与权限，进去以后照旧按权限显示菜单。没有权限的板块显示但置灰、点不进去（不白屏）。
 
 import type { ReactNode } from 'react';
 import { Link, Navigate } from 'react-router';
-import { ArrowRight, Building2, CalendarClock, Lock, Settings2, Waves, type LucideIcon } from 'lucide-react';
-import { ADMIN_ENTRY_PERMISSIONS } from '@shared/admin';
+import { ArrowRight, Building2, CalendarClock, Lock, Palette, Waves, type LucideIcon } from 'lucide-react';
+import { visibleBoardSections } from '@shared/admin';
 import { versionText } from '@shared/instance';
 import { DUTY_LABELS, ROLE_LABELS } from '@shared/labels';
 import { LogoMark } from '../../components/Brand';
@@ -19,7 +20,7 @@ import { cn } from '../../lib/utils';
 import { NotificationBell } from '../oa/Notifications';
 import { useErpAccess } from '../erp/access';
 
-export type PortalBoard = 'yuzu' | 'erp' | 'office' | 'admin';
+export type PortalBoard = 'crm' | 'erp' | 'wcp' | 'design';
 
 interface Board {
   key: PortalBoard;
@@ -28,31 +29,34 @@ interface Board {
   icon: LucideIcon;
   /** 进得去时跳到哪里；进不去为 null（卡片置灰） */
   to: string | null;
-  /** 卡片的配色：柚子墨绿、ERP 沿用 ERP 顶栏的深蓝、办公轻量、后台中性灰绿（都是现有的主题色，不另加） */
+  /** 卡片的配色：CRM 墨绿、ERP 沿用 ERP 顶栏的深蓝、WCP 轻量、Design 中性灰绿（都是现有的主题色，不另加） */
   tone: { card: string; icon: string; name: string; hint: string; arrow: string };
 }
 
 const TONES: Record<PortalBoard, Board['tone']> = {
-  yuzu: { card: 'bg-rail text-paper border-transparent hover:border-yuzu', icon: 'bg-white/10 text-yuzu', name: 'text-paper', hint: 'text-paper/70', arrow: 'text-yuzu' },
+  crm: { card: 'bg-rail text-paper border-transparent hover:border-yuzu', icon: 'bg-white/10 text-yuzu', name: 'text-paper', hint: 'text-paper/70', arrow: 'text-yuzu' },
   erp: { card: 'bg-rail-erp text-paper border-transparent hover:border-yuzu', icon: 'bg-white/10 text-paper', name: 'text-paper', hint: 'text-paper/70', arrow: 'text-yuzu' },
-  office: { card: 'bg-card border-line hover:border-lake', icon: 'bg-lake-soft text-lake', name: 'text-ink', hint: 'text-ink-3', arrow: 'text-lake' },
-  admin: { card: 'bg-paper-3 border-line hover:border-moss', icon: 'bg-moss-soft text-moss', name: 'text-ink', hint: 'text-ink-3', arrow: 'text-moss' },
+  wcp: { card: 'bg-card border-line hover:border-lake', icon: 'bg-lake-soft text-lake', name: 'text-ink', hint: 'text-ink-3', arrow: 'text-lake' },
+  design: { card: 'bg-paper-3 border-line hover:border-moss', icon: 'bg-moss-soft text-moss', name: 'text-ink', hint: 'text-ink-3', arrow: 'text-moss' },
 };
 
 /** 这位账号的四个板块：进得去的给地址，进不去的为 null（纯函数式的判断都在现有的权限上，不另加） */
 export function usePortalBoards(): Board[] {
   const can = useCan();
+  const session = useSession();
   const erp = useErpAccess();
-  // 柚子（门店主导航，后台除外）：落到第一个能用的工作页面（会员工作台优先）；只有对客导览的（门店大屏）进导览
+  // Design：品牌与设计的分区（UI 工作台、对客导览……）有一个进得去就能进，落在 Design 首页
+  const design = visibleBoardSections('design', can, session.erpModules);
+  // CRM（门店主导航，CRM 设置除外）：落到第一个能用的工作页面（会员工作台优先）；只有对客导览的（门店大屏）进导览
   const nav = useStoreNavItems().filter((n) => n.to !== '/admin');
   const work = nav.filter((n) => !n.guestFacing);
   const storeTo = work.find((n) => n.to === '/')?.to ?? work[0]?.to ?? nav[0]?.to ?? null;
   return [
-    { key: 'yuzu', name: '柚子', hint: '前台营业：房态、会员、技师、财务收银', icon: Waves, to: storeTo, tone: TONES.yuzu },
+    { key: 'crm', name: 'CRM', hint: '客户与前台营业：房态、会员、技师、收银', icon: Waves, to: storeTo, tone: TONES.crm },
     { key: 'erp', name: 'ERP', hint: '财务与经营管理：库存、采购、货款、费用', icon: Building2, to: erp.canEnter ? '/erp' : null, tone: TONES.erp },
-    // 办公（OA）人人都有：自己的排班、考勤、审批、通知
-    { key: 'office', name: '办公', hint: '员工办公：排班、考勤、审批', icon: CalendarClock, to: '/oa', tone: TONES.office },
-    { key: 'admin', name: '管理后台', hint: '系统设置与配置：规则、价目、员工与权限', icon: Settings2, to: ADMIN_ENTRY_PERMISSIONS.some((p) => can(p)) ? '/admin' : null, tone: TONES.admin },
+    // WCP（员工工作台，原「办公」）人人都有：自己的排班、考勤、审批、通知
+    { key: 'wcp', name: 'WCP', hint: '员工工作台：排班、考勤、审批、工资条', icon: CalendarClock, to: '/oa', tone: TONES.wcp },
+    { key: 'design', name: 'Design', hint: '品牌与设计：素材、版面、导览、官网', icon: Palette, to: design.length ? '/admin/design' : null, tone: TONES.design },
   ];
 }
 

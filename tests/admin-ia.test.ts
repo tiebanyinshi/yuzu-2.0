@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ADMIN_GROUPS, ADMIN_SECTIONS, type AdminSection } from '../src/shared/admin';
+import { ADMIN_GROUPS, ADMIN_SECTIONS, adminSectionOfPath, boardOfSection, boardSections, type AdminBoard, type AdminSection } from '../src/shared/admin';
 
 const ADMIN_DIR = join(__dirname, '..', 'src', 'client', 'features', 'admin');
 const routes = readFileSync(join(ADMIN_DIR, 'AdminPage.tsx'), 'utf8');
@@ -15,8 +15,8 @@ describe('后台的一级分组', () => {
     expect(placed).toContain('devices');
   });
 
-  it('7 个分组，名称与顺序固定；规则中心里是规则总表、门店基本规则、数据字典与字段', () => {
-    expect(ADMIN_GROUPS.map((g) => g.title)).toEqual(['概览', '规则中心', '会员与营销', '营业项目', '场地、设备与线上', '人员与行政', '数据与审计']);
+  it('8 个分组，名称与顺序固定；规则中心里是规则总表、门店基本规则、数据字典与字段', () => {
+    expect(ADMIN_GROUPS.map((g) => g.title)).toEqual(['概览', '规则中心', '会员与营销', '营业项目', '场地、设备与线上', '主体、接口与审计', '人员与行政', '品牌与设计']);
     // 8.0.18：「人员与权限」改叫「人员与行政」，员工食堂、安保巡场从 ERP 挪进来（tests/erp-ia.test.ts）
     // 8.0.21：数据字典与字段（docs/FINANCE_V8021.md 第 1 节）
     expect(ADMIN_GROUPS.find((g) => g.key === 'rules')!.items).toEqual(['settings', 'rules', 'dictionaries']);
@@ -36,7 +36,8 @@ describe('后台的一级分组', () => {
     // 8.1.9：签赠（docs/GIFTS_V819.md）
     expect(ADMIN_GROUPS.find((g) => g.key === 'members')!.items).toEqual(['membership', 'coupons', 'gifts']);
     expect(ADMIN_SECTIONS.guide).toMatchObject({ path: '/admin/guide', label: '对客导览', perms: ADMIN_SECTIONS.spaces.perms });
-    expect(ADMIN_GROUPS.find((g) => g.key === 'venue')!.items).toEqual(['spaces', 'guide', 'devices', 'integrations', 'mp']);
+    // 店主 2026-11-24（docs/BOARDS.md）：对客导览归 Design，对外接口归 ERP
+    expect(ADMIN_GROUPS.find((g) => g.key === 'venue')!.items).toEqual(['spaces', 'devices', 'mp']);
     for (const path of ["path: 'membership/:tab?'", "path: 'benefits'", "path: 'members'", "path: 'guide'", "path: 'spaces/guide'", "path: 'vip-lockers'"]) expect(routes, path).toContain(path);
     // 三个页签各自还是原来的权限，顺序：规则 → 清单 → 渠道与标签
     const section = readFileSync(join(ADMIN_DIR, '..', 'membership', 'MembershipSection.tsx'), 'utf8');
@@ -45,6 +46,39 @@ describe('后台的一级分组', () => {
       'benefits:benefit.publish',
       'channels:settings.manage',
     ]);
+  });
+
+  it('四个板块（店主 2026-11-24，docs/BOARDS.md 第 2 节）：每个分组归一个板块；地址认得出分区', () => {
+    const of = (b: AdminBoard) => boardSections(b);
+    expect(of('crm')).toEqual([
+      'home',
+      'dashboard',
+      'settings',
+      'rules',
+      'dictionaries',
+      'membership',
+      'coupons',
+      'gifts',
+      'catalog',
+      'tags',
+      'technicians',
+      'dining',
+      'emenu',
+      'rooms',
+      'bookings',
+      'spaces',
+      'devices',
+      'mp',
+    ]);
+    expect(of('erp')).toEqual(['stores', 'integrations', 'opening', 'audit']);
+    expect(of('wcp')).toEqual(['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'permissions', 'canteen', 'patrol']);
+    expect(of('design')).toEqual(['design', 'studio', 'guide']);
+    expect(boardOfSection('guide')).toBe('design');
+    expect(adminSectionOfPath('/admin')).toBe('home');
+    expect(adminSectionOfPath('/admin/rules/shift')).toBe('rules');
+    expect(adminSectionOfPath('/admin/oa-approvals/templates')).toBe('oaApprovals');
+    expect(adminSectionOfPath('/admin/design/')).toBe('design');
+    expect(adminSectionOfPath('/admin/nope')).toBe('home');
   });
 
   it('侧栏不再自己写一份分组', () => {

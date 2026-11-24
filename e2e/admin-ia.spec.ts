@@ -1,6 +1,6 @@
 // 8.0.17 浏览器验收：后台的信息架构（docs/IA_V8017.md）。只读（不保存任何东西），可重复执行；
 // 依赖演示数据（仅独立演示库），账号：店主 linlan、值班经理 dutymgr（没有就跳过那一段），密码 yuzu2026。
-//   · 侧栏 7 个一级分组，「设备」在里面；后台首页的分区卡片按同一套分组；
+//   · 侧栏按板块（店主 2026-11-24）：CRM 设置五个分组，ERP、WCP、Design 各自的分组，「设备」在里面；后台首页的分区卡片按同一套分组；
 //   · 二级页签写进地址：点页签地址跟着变，刷新还在这个页签，不认识的页签回到第一个；
 //   · 换页签不丢填到一半的东西；分区的旧地址、券的旧 ?tab= 地址照旧能用。
 import { expect, test, type Page } from '@playwright/test';
@@ -18,32 +18,61 @@ async function login(page: Page, username: string) {
 }
 
 test.describe('8.0.17 后台的信息架构', () => {
-  test('侧栏：7 个一级分组、改过名的分区、「设备」进了侧栏；后台首页的分区卡片按同一套分组', async ({ page }, info) => {
+  test('侧栏按板块（店主 2026-11-24，docs/BOARDS.md）：CRM 设置五个分组、改过名的分区、「设备」在侧栏；ERP、WCP、Design 的分区各在自己的板块里', async ({ page }, info) => {
     test.skip(info.project.name !== '门店电脑', '宽屏的侧栏，只跑一次');
     await login(page, 'linlan');
     await page.goto('/admin');
     const nav = page.getByRole('navigation', { name: '后台导航' });
-    await expect(nav.locator('p')).toHaveText(['概览', '规则中心', '会员与营销', '营业项目', '场地、设备与线上', '人员与行政', '数据与审计']);
+    await expect(page.getByTestId('admin-board')).toHaveText('CRM 设置');
+    await expect(nav.locator('p')).toHaveText(['概览', '规则中心', '会员与营销', '营业项目', '场地、设备与线上']);
     // 规则中心：规则总表、门店基本规则（原「经营规则」）
     await expect(page.getByTestId('admin-nav-settings')).toHaveText('规则总表');
     await expect(page.getByTestId('admin-nav-rules')).toHaveText('门店基本规则');
-    // 8.0.19：会员规则、会员权益、渠道与标签合成「会员体系」一个分区；对客导览单列
+    // 8.0.19：会员规则、会员权益、渠道与标签合成「会员体系」一个分区
     await expect(page.getByTestId('admin-nav-membership')).toHaveText('会员体系');
     await expect(page.getByTestId('admin-nav-members')).toHaveCount(0);
     await expect(page.getByTestId('admin-nav-benefits')).toHaveCount(0);
-    await expect(page.getByTestId('admin-nav-guide')).toHaveText('对客导览');
     await expect(page.getByTestId('admin-nav-coupons')).toHaveText('券');
-    await expect(page.getByTestId('admin-nav-opening')).toHaveText('期初与旧账');
+    // 别的板块的分区不在 CRM 设置的侧栏里
+    for (const k of ['guide', 'opening', 'staff', 'stores', 'studio']) await expect(page.getByTestId(`admin-nav-${k}`)).toHaveCount(0);
     // 设备：8.0.16 以前不在侧栏里
     await page.getByTestId('admin-nav-devices').click();
     await expect(page).toHaveURL(/\/admin\/devices$/);
     await expect(page.getByRole('heading', { level: 1, name: '设备' })).toBeVisible();
-    // 后台首页：同一套分组（没有「后台首页」自己）
+    // 设置首页：同一套分组（没有「设置首页」自己）
     await page.goto('/admin');
     const groups = page.getByTestId('admin-home-groups');
-    await expect(groups.locator('> div > p')).toHaveText(['概览', '规则中心', '会员与营销', '营业项目', '场地、设备与线上', '人员与行政', '数据与审计']);
+    await expect(groups.locator('> div > p')).toHaveText(['概览', '规则中心', '会员与营销', '营业项目', '场地、设备与线上']);
     await groups.getByRole('link', { name: /门店基本规则/ }).click();
     await expect(page).toHaveURL(/\/admin\/rules$/);
+
+    // ERP：期初与旧账、操作审计……在 ERP 设置里，「返回 ERP」回 /erp
+    await page.goto('/admin/opening');
+    await expect(page.getByTestId('admin-board')).toHaveText('ERP 设置');
+    await expect(nav.locator('p')).toHaveText(['主体、接口与审计']);
+    await expect(page.getByTestId('admin-nav-opening')).toHaveText('期初与旧账');
+    await expect(page.getByTestId('admin-exit')).toHaveText('返回 ERP');
+    await page.getByTestId('admin-exit').click();
+    await expect(page).toHaveURL(/\/erp$/);
+    await page.getByTestId('erp-nav-admin-stores').click();
+    await expect(page).toHaveURL(/\/admin\/stores$/);
+    // WCP：人员与行政
+    await page.goto('/admin/staff');
+    await expect(page.getByTestId('admin-board')).toHaveText('WCP 设置');
+    await expect(nav.locator('p')).toHaveText(['人员与行政']);
+    await expect(page.getByTestId('admin-exit')).toHaveText('返回 WCP');
+    await page.getByTestId('admin-exit').click();
+    await expect(page).toHaveURL(/\/oa$/);
+    await page.getByTestId('oa-tile-settings').click();
+    await expect(page).toHaveURL(/\/admin\/staff$/);
+    // Design：对客导览在这里；没有「返回」，只回门户
+    await page.goto('/admin/guide');
+    await expect(page.getByTestId('admin-board')).toHaveText('Design');
+    await expect(page.getByTestId('admin-nav-guide')).toHaveText('对客导览');
+    await expect(page.getByTestId('admin-exit')).toHaveCount(0);
+    await page.getByTestId('admin-nav-design').click();
+    await expect(page.getByTestId('design-card-studio')).toBeVisible();
+    await expect(page.getByTestId('design-fonts')).toBeVisible();
   });
 
   test('二级页签写进地址：点页签地址变、刷新还在、不认识的回到第一个；规则在最前、导入在最后', async ({ page }, info) => {

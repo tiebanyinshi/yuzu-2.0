@@ -48,7 +48,7 @@ describe('主导航的业务域', () => {
       交班: '财务',
       设备: '设置',
       导览: '设置',
-      后台: '设置',
+      'CRM 设置': '设置',
     });
   });
 
@@ -97,7 +97,7 @@ describe('主导航的业务域', () => {
     // 没有权限时退回首页用的判断照旧：会员工作台不算
     expect(storePageOf('/')).toBeNull();
     expect(storePageOf('/shift')?.label).toBe('交班');
-    expect(storePageOf('/admin/studio')?.label).toBe('后台');
+    expect(storePageOf('/admin/studio')?.label).toBe('CRM 设置');
   });
 
   it('两个台的入口按各自的权限（YB2）；只有菜品权限、进不了餐饮的看到「菜品」（CP7），都在对的组里', () => {

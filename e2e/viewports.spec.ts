@@ -168,7 +168,7 @@ test.describe('视口冒烟', () => {
       await expectFits(page);
       if (!isMobile) {
         const nav = page.getByRole('navigation', { name: '主导航' });
-        await expectNavFits(page, ['发卡台', '收银台', '钟房', '会员', '流水', '日结', '交班', '后台']);
+        await expectNavFits(page, ['发卡台', '收银台', '钟房', '会员', '流水', '日结', '交班', 'CRM 设置']);
         await expectNavRoomForTwoLineTag(nav);
       }
       await page.getByTestId('clock-dispatch').click();
@@ -199,7 +199,7 @@ test.describe('视口冒烟', () => {
       await expectFits(page);
       if (!isMobile) {
         const nav = page.getByRole('navigation', { name: '主导航' });
-        await expectNavFits(page, ['发卡台', '收银台', '钟房', '餐饮', '会员', '流水', '日结', '交班', '后台']);
+        await expectNavFits(page, ['发卡台', '收银台', '钟房', '餐饮', '会员', '流水', '日结', '交班', 'CRM 设置']);
         await expectNavRoomForTwoLineTag(nav);
       }
       await page.getByTestId('dining-tab-kitchen').click();
@@ -240,7 +240,7 @@ test.describe('视口冒烟', () => {
       await expectFits(page);
       if (!isMobile) {
         const nav = page.getByRole('navigation', { name: '主导航' });
-        await expectNavFits(page, ['发卡台', '收银台', '钟房', '餐饮', '房态中心', '会员', '流水', '日结', '交班', '后台']);
+        await expectNavFits(page, ['发卡台', '收银台', '钟房', '餐饮', '房态中心', '会员', '流水', '日结', '交班', 'CRM 设置']);
         await expectNavRoomForTwoLineTag(nav);
       }
       await page.goto('/admin/rooms');
@@ -273,10 +273,10 @@ test.describe('视口冒烟', () => {
     await login(page, 'linlan');
     const nav = page.getByRole('navigation', { name: '主导航' });
     const viewport = page.viewportSize()!;
-    await expectNavFits(page, ['发卡台', '收银台', '会员', '流水', '日结', '交班', '后台']);
+    await expectNavFits(page, ['发卡台', '收银台', '会员', '流水', '日结', '交班', 'CRM 设置']);
     await expect(nav.locator('[data-nav-domain]').first()).toContainText('前台');
     // 每个入口：所在的组折着的先点开，点得到、在屏幕里
-    for (const name of ['发卡台', '收银台', '流水', '日结', '交班', '后台']) {
+    for (const name of ['发卡台', '收银台', '流水', '日结', '交班', 'CRM 设置']) {
       const link = await navLink(page, name);
       await link.scrollIntoViewIfNeeded();
       const box = (await link.boundingBox())!;
