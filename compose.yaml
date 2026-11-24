@@ -79,7 +79,7 @@ services:
       YUZU_AI_MODEL: ${YUZU_AI_MODEL:-}
       # 工资表原件的加密密钥（OA-17，docs/OA.md 第 20 节）：至少 32 个字符（openssl rand -hex 32），只放 .env；没配时不能上传工资表 Excel
       PAYROLL_FILE_KEY: ${PAYROLL_FILE_KEY:-}
-      # 采购商城后端的服务密钥（8.1.31，docs/MALL_V8131.md 第 2 节）：配了才开 /api/erp/mall/*；至少 32 个字符，只写 .env
+      # 采购商城后端的服务密钥（docs/MALL_V8131.md 第 2 节）：配了才开 /api/erp/mall/*；至少 32 个字符，只写 .env
       MALL_API_KEY: ${MALL_API_KEY:-}
       # 打卡点搜地址（考勤排班优化，docs/OA.md 第 22 节）：高德 Web 服务 Key 只放 .env；GEO_PROVIDER 不配时有 Key 用高德、没有用 OpenStreetMap
       AMAP_WEB_KEY: ${AMAP_WEB_KEY:-}

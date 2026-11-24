@@ -52,7 +52,7 @@ export interface AppConfig {
   /** 打卡点「搜索地址选点」与地图（考勤排班优化第 1 条）：用哪家的地址搜索与地图底图 */
   geo: GeoConfig;
   /**
-   * 采购商城后端的服务密钥（MALL_API_KEY，8.1.31，docs/MALL_V8131.md 第 2 节）：商城后端调 /api/erp/mall/* 时放在 x-mall-key 里。
+   * 采购商城后端的服务密钥（MALL_API_KEY，docs/MALL_V8131.md 第 2 节）：商城后端调 /api/erp/mall/* 时放在 x-mall-key 里。
    * 至少 32 个字符；没配为空——商城接口一律回 503 MALL_NOT_CONFIGURED。只写在 .env，不进 Git
    */
   mallApiKey: string | null;
