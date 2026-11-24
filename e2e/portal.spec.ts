@@ -64,6 +64,8 @@ test.describe('系统门户页', () => {
     expect(Math.abs(boxes[0]!.y - boxes[1]!.y)).toBeLessThan(2);
     expect(boxes[2]!.y).toBeGreaterThan(boxes[0]!.y + boxes[0]!.height - 2);
     expect(Math.abs(boxes[0]!.x - boxes[2]!.x)).toBeLessThan(2);
+    // 窄屏顶栏也常显版本号（AGENTS.md）
+    await expect(page.getByTestId('portal-version')).toBeVisible();
     // 页面不横向滚动
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     // 通知面板整个在屏幕里（Codex 审查 023cc78）

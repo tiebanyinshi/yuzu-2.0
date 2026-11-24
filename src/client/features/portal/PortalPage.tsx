@@ -133,14 +133,14 @@ function PortalTopBar() {
           </span>
         </Link>
         <NotificationBell placement="bar" />
-        {/* 实例标识与「版本 + SHA」常显（AGENTS.md 环境隔离）：窄屏也显示标识，版本号收在标识的提示里 */}
-        <span className="flex items-center gap-2" data-testid="portal-instance" title={versionText(session.version, session.commit)}>
+        {/* 实例标识与「版本 + SHA」常显（AGENTS.md 环境隔离）：宽屏一行，窄屏版本号排在标识下面（Codex 审查 d4c9231） */}
+        <span className="flex flex-col items-end gap-0.5 sm:flex-row sm:items-center sm:gap-2" data-testid="portal-instance">
           <InstanceBadge instance={session.instance} className="h-6 px-2.5 text-[12px]" />
+          <span className="num text-[12px] leading-none text-ink-3 sm:order-last" data-testid="portal-version">
+            {versionText(session.version, session.commit)}
+          </span>
         </span>
         <StoreSwitcher placement="bar" />
-        <span className="num hidden text-[12px] text-ink-3 sm:inline" data-testid="portal-version">
-          {versionText(session.version, session.commit)}
-        </span>
         <UserMenu placement="bar" />
       </div>
     </header>
