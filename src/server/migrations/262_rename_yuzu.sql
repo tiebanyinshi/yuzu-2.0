@@ -6,11 +6,11 @@
 UPDATE settings SET value = '"柚子 · 城市汤泉"'::jsonb, updated_at = now()
 WHERE key = 'store_name' AND value = '"浴族 · 城市汤泉"'::jsonb;
 
--- 新名字已经被别的分店、别的公司主体用了（名称唯一）：这一行不改，留旧名，ID 与关联不动、已有那家的名字也不动，店里在后台自己改。
+-- 新名字已经被别的分店、别的公司主体用了（名称唯一，按唯一索引的口径 lower(btrim(name)) 比，带首尾空格的也算）：这一行不改，留旧名，ID 与关联不动、已有那家的名字也不动，店里在后台自己改。
 -- 8.1.32 补（店主 2026-11-24 同意破例改已发布的迁移）：原来的写法遇到这种库整份迁移失败、升级停在 262；
 -- 只在当时失败过、还没登记 262 的库上行为不同，已经跑成功的库不受影响（迁移按文件名登记，不核对内容）。
 UPDATE stores SET name = '柚子 · 城市汤泉' WHERE name = '浴族 · 城市汤泉'
-  AND NOT EXISTS (SELECT 1 FROM stores o WHERE o.name = '柚子 · 城市汤泉');
+  AND NOT EXISTS (SELECT 1 FROM stores o WHERE lower(btrim(o.name)) = lower(btrim('柚子 · 城市汤泉')));
 
 UPDATE legal_entities SET name = '柚子 · 城市汤泉' WHERE name = '浴族 · 城市汤泉'
-  AND NOT EXISTS (SELECT 1 FROM legal_entities o WHERE o.name = '柚子 · 城市汤泉');
+  AND NOT EXISTS (SELECT 1 FROM legal_entities o WHERE lower(btrim(o.name)) = lower(btrim('柚子 · 城市汤泉')));
