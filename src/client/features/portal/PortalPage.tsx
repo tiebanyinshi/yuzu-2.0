@@ -6,7 +6,7 @@
 import type { ReactNode } from 'react';
 import { Link, Navigate, useLocation } from 'react-router';
 import { ArrowRight, Building2, CalendarClock, Lock, Palette, Waves, type LucideIcon } from 'lucide-react';
-import { visibleBoardSections } from '@shared/admin';
+import { ADMIN_SECTIONS, visibleBoardSections } from '@shared/admin';
 import { versionText } from '@shared/instance';
 import { DUTY_LABELS, ROLE_LABELS } from '@shared/labels';
 import { LogoMark } from '../../components/Brand';
@@ -50,7 +50,9 @@ export function usePortalBoards(): Board[] {
   // CRM（门店主导航，CRM 设置除外）：落到第一个能用的工作页面（会员工作台优先）；只有对客导览的（门店大屏）进导览
   const nav = useStoreNavItems().filter((n) => n.to !== '/admin');
   const work = nav.filter((n) => !n.guestFacing);
-  const storeTo = work.find((n) => n.to === '/crm')?.to ?? work[0]?.to ?? nav[0]?.to ?? null;
+  // 没有能用的 CRM 工作页面、只有 CRM 设置分区（比如只管会员规则）的：落到第一个能进的 CRM 设置分区（Codex 审查 7a586da）
+  const crmSettings = visibleBoardSections('crm', can, session.erpModules);
+  const storeTo = work.find((n) => n.to === '/crm')?.to ?? work[0]?.to ?? nav[0]?.to ?? (crmSettings[0] ? ADMIN_SECTIONS[crmSettings[0]].path : null);
   return [
     { key: 'crm', name: 'CRM', hint: '客户与前台营业：房态、会员、技师、收银', icon: Waves, to: storeTo, tone: TONES.crm },
     { key: 'erp', name: 'ERP', hint: '财务与经营管理：库存、采购、货款、费用', icon: Building2, to: erp.canEnter ? '/erp' : null, tone: TONES.erp },
