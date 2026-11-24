@@ -66,7 +66,7 @@ test.describe('转单（v0.7.6）', () => {
       expect(posted.ok(), await posted.text()).toBe(true);
       const line = ((await posted.json()) as { lines: Line[] }).lines.find((l) => l.name === 'E2E 转单测试')!;
 
-      await page.goto(`/frontdesk?v=${va}`);
+      await page.goto(`/crm/frontdesk?v=${va}`);
       await expect(page.getByTestId('bill-tag')).toHaveText(a!);
       await page.getByTestId('action-more').click();
       await page.getByRole('menuitem', { name: '明细转到别的手牌' }).click();
@@ -84,7 +84,7 @@ test.describe('转单（v0.7.6）', () => {
 
       expect((await visitLines(page, va)).find((l) => l.id === line.id)).toMatchObject({ status: 'voided', voidReason: `转到手牌 ${b}：挂错手牌` });
       expect((await visitLines(page, vb)).filter((l) => l.status === 'active').map((l) => [l.name, l.amount])).toEqual([['E2E 转单测试', 3800]]);
-      await page.goto(`/frontdesk?v=${vb}`);
+      await page.goto(`/crm/frontdesk?v=${vb}`);
       await expect(page.getByTestId('bill-tag')).toHaveText(b!);
       await expect(page.getByTestId('bill-panel')).toContainText('E2E 转单测试');
     } finally {
@@ -126,7 +126,7 @@ test.describe('转单（v0.7.6）', () => {
       expect(posted.ok(), await posted.text()).toBe(true);
       const line = ((await posted.json()) as { lines: Line[] }).lines.find((l) => l.name === 'E2E 时钟偏差')!;
 
-      await page.goto(`/frontdesk?v=${visitId}`);
+      await page.goto(`/crm/frontdesk?v=${visitId}`);
       await expect(page.getByTestId('bill-tag')).toHaveText(code);
       await page.getByTestId('action-more').click();
       await page.getByRole('menuitem', { name: '明细转到别的手牌' }).click();

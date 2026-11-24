@@ -133,7 +133,7 @@ test.describe('S5 餐饮第二步 · 桌台', () => {
       await ensureShift(page);
 
       // ① 桌台页：A1 空闲 → 开台 3 人，登记会员
-      await page.goto('/dining/tables');
+      await page.goto('/crm/dining/tables');
       const tileA1 = page.getByTestId(`table-tile-${A1}`);
       await expect(tileA1).toHaveAttribute('data-state', 'free');
       await tileA1.click();
@@ -257,7 +257,7 @@ test.describe('S5 餐饮第二步 · 桌台', () => {
 
       // ⑧ 店主在结账记录里反结账：两桌恢复为用餐中，储值退回
       await relogin(page, 'linlan');
-      await page.goto('/dining/tables');
+      await page.goto('/crm/dining/tables');
       await page.getByTestId('tables-records').click();
       const records = page.getByRole('dialog').filter({ hasText: '结账记录' });
       await records.getByText(done.checkoutNo).click();
@@ -293,7 +293,7 @@ test.describe('S5 餐饮第二步 · 桌台', () => {
         { times: 1 },
       );
       await page.route('**/api/frontdesk/ops/*', (route) => route.abort('connectionreset'));
-      await page.goto('/dining/tables');
+      await page.goto('/crm/dining/tables');
       await page.getByTestId(`table-tile-${B2}`).click();
       const openDialog = page.getByRole('dialog').filter({ hasText: `开台 · 桌 ${B2}` });
       await openDialog.getByTestId('table-guests').fill('2');
@@ -337,7 +337,7 @@ test.describe('S5 餐饮第二步 · 桌台', () => {
       await relogin(page, 'xiaozhou');
       // 点单请求没到服务器（断网）：记在「结果待确认」
       await page.route('**/api/dining/tables/sessions/*/orders', (route) => route.abort('connectionreset'));
-      await page.goto(`/dining/order?table=${s.id}`);
+      await page.goto(`/crm/dining/order?table=${s.id}`);
       await expect(page.getByTestId('dining-table-selected')).toContainText(`桌 ${B1}`);
       await openOutlet(page, TEA);
       await page.getByTestId(`dining-dish-${TEA.name}`).click();
@@ -347,7 +347,7 @@ test.describe('S5 餐饮第二步 · 桌台', () => {
       // 店主把桌台点单下架（另开会话）
       expect((await owner.put('/api/admin/dining/rules', { data: { tablesEnabled: false } })).ok()).toBe(true);
       // 顶部提醒「去处理」：照样回到这一桌的点单（只为处理这一笔），查不到 → 确认作废
-      await page.goto('/dining/tables');
+      await page.goto('/crm/dining/tables');
       const banner = page.getByTestId('frontdesk-pending-banner');
       await expect(banner).toContainText(`桌 ${B1}`);
       await banner.getByRole('button', { name: '去处理' }).click();
@@ -393,7 +393,7 @@ test.describe('S5 餐饮第二步 · 桌台', () => {
         return route.fulfill(expired);
       });
 
-      await page.goto('/dining/tables');
+      await page.goto('/crm/dining/tables');
       await page.getByTestId(`table-tile-${B1}`).click();
       const openDialog = page.getByRole('dialog').filter({ hasText: `开台 · 桌 ${B1}` });
       const search = openDialog.getByTestId('table-member-search');

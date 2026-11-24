@@ -91,7 +91,7 @@ test.describe('8.1.9 签赠', () => {
     const members = await getJson<{ id: number; name: string; phone: string; status: string; gender: 'male' | 'female' | null }[]>(page, '/api/members?q=19900001&limit=50');
     const member = members.filter((m) => m.status === 'active' && !inStore.has(m.id)).at(0);
     expect(member, '演示会员（seed-demo）里没有不在店的').toBeTruthy();
-    await page.goto('/concierge/gifts');
+    await page.goto('/crm/concierge/gifts');
     await expect(page.getByTestId('concierge-gift-ledger')).toBeVisible({ timeout: 30_000 });
     await page.getByTestId('gift-issue').click();
     const issue = page.getByTestId('gift-issue-dialog');
@@ -124,7 +124,7 @@ test.describe('8.1.9 签赠', () => {
       const tag = (await freeTags(page, zone))[4]!;
       const checkin = await postJson<{ visits: { id: number }[] }>(page, '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: tag, zone, memberId: member!.id }] });
       visitId = checkin.visits[0]!.id;
-      await page.goto(`/frontdesk?v=${visitId}`);
+      await page.goto(`/crm/frontdesk?v=${visitId}`);
       const bill = page.getByTestId('bill-panel');
       await expect(bill.getByTestId('bill-tag')).toHaveText(tag);
       await bill.getByTestId('go-cashier').click();
@@ -150,7 +150,7 @@ test.describe('8.1.9 签赠', () => {
 
     // ④ 店主看客户部的签赠台账：已使用、核销的结账单、按授权人
     await login(page, 'linlan');
-    await page.goto('/customer?tab=gifts');
+    await page.goto('/crm/customer?tab=gifts');
     const panel = page.getByTestId('customer-gift-ledger');
     await expect(panel).toBeVisible({ timeout: 30_000 });
     const row = panel.getByTestId(`gift-row-${coupon.couponId}`);
@@ -176,7 +176,7 @@ test.describe('8.1.9 签赠', () => {
     });
     const members = await getJson<{ id: number; phone: string; status: string }[]>(page, '/api/members?q=19900001&limit=50');
     const member = members.find((m) => m.status === 'active')!;
-    await page.goto('/customer?tab=gifts');
+    await page.goto('/crm/customer?tab=gifts');
     const ledger = page.getByTestId('customer-gift-ledger');
     await expect(ledger).toBeVisible({ timeout: 30_000 });
     // 服务器出错（5xx）：可能已经发出去了，这一笔记在本机「结果待确认」里

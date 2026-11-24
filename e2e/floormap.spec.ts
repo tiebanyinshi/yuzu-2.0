@@ -258,7 +258,7 @@ test.describe('v0.7.16 房态图', () => {
       visit = (await getJson<{ tags: BoardTag[] }>(page, '/api/frontdesk/board')).tags.find((t) => t.code === tag)!.visit!.id;
 
       // ① 钟房派点钟给 E7，选房间 T301（列表按楼层分组、写占用）
-      await page.goto('/clockroom');
+      await page.goto('/crm/clockroom');
       await page.getByTestId('clock-dispatch').click();
       const dispatch = page.getByRole('dialog', { name: '派钟' });
       await dispatch.getByTestId('dispatch-tag').fill(tag);
@@ -421,7 +421,7 @@ test.describe('v0.7.16 房态图', () => {
 
       // ⑥ 钟房换房间：T301 → T302；平面图 5 秒内跟着变（不刷新页面）
       const rooms = page.url();
-      await page.goto('/clockroom');
+      await page.goto('/crm/clockroom');
       await page
         .getByTestId(/^clock-serving-/)
         .filter({ hasText: tag })
@@ -612,7 +612,7 @@ test.describe('v0.7.16 房态图 · 各尺寸', () => {
   test('双指捏合缩放（触屏平板；测试报告建议补的浏览器用例）：两指分开放大、并拢缩小', async ({ page }) => {
     await login(page, 'xiaozhou');
     await mockMap(page);
-    await page.goto('/rooms');
+    await page.goto('/crm/rooms');
     await page.getByRole('radiogroup', { name: '视图' }).getByRole('radio', { name: '平面图' }).click();
     await expect(page.locator('[data-testid^="map-space-"]')).toHaveCount(COLS * ROWS);
     const zoom = page.getByTestId('floormap-zoom');
@@ -655,7 +655,7 @@ test.describe('v0.7.16 房态图 · 各尺寸', () => {
   test('单层 300 个空间 2 秒内画完；缩放平移；点房间出侧栏；不横向滚动', async ({ page }) => {
     await login(page, 'xiaozhou');
     await mockMap(page);
-    await page.goto('/rooms');
+    await page.goto('/crm/rooms');
     await expect(page.getByRole('radiogroup', { name: '视图' })).toBeVisible();
     const t0 = Date.now();
     await page.getByRole('radiogroup', { name: '视图' }).getByRole('radio', { name: '平面图' }).click();

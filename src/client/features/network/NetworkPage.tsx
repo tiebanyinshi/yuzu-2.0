@@ -182,7 +182,7 @@ export function NetworkPage() {
             <li>
               发卡台与收银台（手牌、结账、客房、预约等）：{frontdeskOps.length} 笔
               {frontdeskOps.length ? (
-                <Link to="/frontdesk" className="ml-2 text-pine underline">
+                <Link to="/crm/frontdesk" className="ml-2 text-pine underline">
                   去处理
                 </Link>
               ) : null}

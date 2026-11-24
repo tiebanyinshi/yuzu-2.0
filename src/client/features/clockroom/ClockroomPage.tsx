@@ -343,7 +343,7 @@ export function ClockroomPage() {
                             <span className="min-w-0 flex-1 truncate font-semibold">{techName(t)}</span>
                             {t.approvedLeave ? (
                               // 休假单批的（8.1.15）：钟房不能取消，到技师管理里销假
-                              <Link to="/technicians/leaves" className="font-semibold text-pine underline-offset-2 hover:underline" data-testid={`clock-leave-approved-${t.techNo}`}>
+                              <Link to="/crm/technicians/leaves" className="font-semibold text-pine underline-offset-2 hover:underline" data-testid={`clock-leave-approved-${t.techNo}`}>
                                 休假单至 {t.approvedLeave.toDate.slice(5)} · 去销假
                               </Link>
                             ) : (
@@ -932,7 +932,7 @@ function FilteredTechs({
                 {status === 'leave' && t.approvedLeave && (
                   <p className="mt-1.5 text-[12.5px] text-ink-2" data-testid={`clock-tech-leave-${t.techNo}`}>
                     休假单：{leaveRangeText(t.approvedLeave)}（{LEAVE_TYPE_LABELS[t.approvedLeave.leaveType]}）。要上牌先
-                    <Link to="/technicians/leaves" className="font-semibold text-pine underline-offset-2 hover:underline">
+                    <Link to="/crm/technicians/leaves" className="font-semibold text-pine underline-offset-2 hover:underline">
                       到技师管理销假
                     </Link>
                   </p>
@@ -1138,7 +1138,7 @@ function AnnouncerMoved() {
       <Notice tone="info" title="排位播报移到了「技师 → 排位播报」" data-testid="clock-announcer-moved">
         自动叫号、重播、音量与静音、播报记录都在那一页；要出声的终端开着那一页。钟房里点「叫号」照旧记一条叫号。
         <span className="mt-1 flex gap-3">
-          <Link to="/announcer" className="font-bold text-lake hover:underline" data-testid="clock-go-announcer">
+          <Link to="/crm/announcer" className="font-bold text-lake hover:underline" data-testid="clock-go-announcer">
             去排位播报
           </Link>
           <button type="button" className="font-semibold text-ink-3 hover:text-ink" onClick={dismiss}>

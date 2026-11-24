@@ -222,7 +222,7 @@ function RosterCard() {
       <p className="mt-1 text-[12.5px] text-ink-3" data-testid="technician-roster-store-link">
         {/* 8.1.15：组别、班次与排班、休假在门店的「技师管理」里（当班会用到的不放后台）；名册两边都能改，是同一份 */}
         技师的组别、班次与排班、休假在门店的
-        <Link to="/technicians" className="font-semibold text-pine underline-offset-2 hover:underline">
+        <Link to="/crm/technicians" className="font-semibold text-pine underline-offset-2 hover:underline">
           「技师管理」
         </Link>
         里；名册在那里也能改（同一份）。

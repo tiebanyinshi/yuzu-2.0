@@ -153,7 +153,7 @@ test.describe('8.1.16 技师：钟房搜索筛选、排位播报、技师管理'
     try {
       // 另一台终端在播：本机不出声
       await send(page, 'post', '/api/clockroom/announcer', { action: 'claim', clientId: 'e2e-other-terminal', label: 'E2E 另一台' });
-      await page.goto('/');
+      await page.goto('/crm');
       await clickNav(page, '钟房');
       // 回测整改 P03：钟房里没有播报条了（在「技师 → 排位播报」），只有一条提示
       await expect(page.getByTestId('announcer-bar')).toHaveCount(0);
@@ -273,7 +273,7 @@ test.describe('8.1.16 技师：钟房搜索筛选、排位播报、技师管理'
     const GROUP = `E2E 组 ${RUN}`;
     const SHIFT = `E2E班${RUN}`;
     try {
-      await page.goto('/');
+      await page.goto('/crm');
       await clickNav(page, '技师管理');
       await expect(page.getByTestId('technician-admin')).toBeVisible();
 
@@ -366,7 +366,7 @@ test.describe('8.1.16 技师：钟房搜索筛选、排位播报、技师管理'
       expect(t2).toMatchObject({ state: 'leave', position: null });
       expect(t2.approvedLeave?.id).toBe(leave.id);
 
-      await page.goto('/clockroom');
+      await page.goto('/crm/clockroom');
       await expect(page.getByTestId('clock-leave-T2')).toBeVisible();
       await expect(page.getByTestId('clock-leave-approved-T2')).toBeVisible();
       await expect(page.getByTestId('clock-queue-T2')).toHaveCount(0);
@@ -376,14 +376,14 @@ test.describe('8.1.16 技师：钟房搜索筛选、排位播报、技师管理'
       await expect(page.getByTestId('clock-tech-leave-T2')).toContainText('到技师管理销假');
       await expect(page.getByTestId('clock-tech-sign_in-T2')).toHaveCount(0);
 
-      await page.goto('/technicians/leaves');
+      await page.goto('/crm/technicians/leaves');
       await page.getByTestId('tech-leaves-filter-all').click();
       await page.getByTestId(`tech-leave-cancel-${leave.id}`).click();
       await page.getByTestId('tech-leave-action-note').fill('E2E：事情办完了');
       await page.getByTestId('tech-leave-action-confirm').click();
       await expect(page.getByTestId(`tech-leave-status-${leave.id}`)).toHaveText('已取消');
       expect((await stateOf(page, 'T2')).state).toBe('off');
-      await page.goto('/clockroom');
+      await page.goto('/crm/clockroom');
       await expect(page.getByTestId('clock-sign-in-T2')).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
     } finally {

@@ -330,16 +330,16 @@ test.describe('8.1.16 房态中心', () => {
       await fits(page);
 
       // ⑨ 原来的「客房」页：地址跳到房态中心（平面图 → 「视图 → 平面图」，房态看板 → 「客房」页签）
-      await page.goto('/rooms?view=map');
+      await page.goto('/crm/rooms?view=map');
       await expect(page).toHaveURL(/\/room-center\?view=map/);
       await expect(page.getByRole('radiogroup', { name: '视图' }).getByRole('radio', { name: '平面图' })).toHaveAttribute('aria-checked', 'true');
-      await page.goto('/rooms');
+      await page.goto('/crm/rooms');
       await expect(page).toHaveURL(/\/room-center\?tab=hotel/);
       await expect(page.getByTestId('room-center')).toHaveAttribute('data-tab', /^c\d+$/);
 
       // ⑩ 店主：后台「空间台账 → 房态中心房型」；房态中心顶上的「房型配置」带过去
       await relogin(page, 'linlan');
-      await page.goto('/room-center');
+      await page.goto('/crm/room-center');
       await page.getByTestId('rc-admin-link').click();
       await expect(page).toHaveURL(/\/admin\/spaces\/room-categories/);
       await expect(page.getByTestId('room-categories')).toContainText('SPA 房');
@@ -375,7 +375,7 @@ test.describe('8.1.16 房态中心', () => {
     await login(page, 'linlan');
     const techWasOn = await ensureData(page);
     try {
-      await page.goto('/room-center');
+      await page.goto('/crm/room-center');
       await expect(page.getByTestId('rc-overview')).toBeVisible();
       await expectFits(page);
       const spaKey = (await cardOf(page, SPA1)).categoryKey;

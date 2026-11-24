@@ -115,7 +115,7 @@ test.describe('回测整改 房态点单', () => {
     await login(page);
     const visitId = await prepare(page);
     try {
-      await page.goto('/room-center');
+      await page.goto('/crm/room-center');
       const code = ROOM;
       const partyKey = (await cardOf(page)).categoryKey;
       await page.getByTestId(`rc-tab-${partyKey}`).click();

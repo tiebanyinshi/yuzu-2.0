@@ -62,7 +62,7 @@ test.describe('v0.7.28 次卡', () => {
     // ③ 停售时：没有卡的会员，会员页不显示次卡，也没有「售次卡」；接口拒绝
     const phone = `194${String(Date.now()).slice(-8)}`;
     const m = await postJson<{ id: number }>(page, '/api/members', { name: 'E2E 次卡会员', phone });
-    await page.goto(`/?m=${m.id}`);
+    await page.goto(`/crm?m=${m.id}`);
     await expect(page.getByTestId('member-registered')).toBeVisible();
     await expect(page.getByTestId('member-count-cards')).toHaveCount(0);
     await expect(page.getByTestId('count-card-sell-open')).toHaveCount(0);
@@ -92,7 +92,7 @@ test.describe('v0.7.28 次卡', () => {
     const checkin = await postJson<{ visits: { id: number }[] }>(page, '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: 'male', memberId: m.id }] });
     const visitId = checkin.visits[0]!.id;
     await postJson(page, `/api/frontdesk/visits/${visitId}/charges`, { clientKey: randomUUID(), lines: [{ itemId: item.id, quantity: 1 }], expectedTotal: 19800 });
-    await page.goto(`/frontdesk?v=${visitId}`);
+    await page.goto(`/crm/frontdesk?v=${visitId}`);
     await page.getByTestId('bill-panel').getByTestId('go-cashier').click();
     await page.getByTestId('bill-panel').getByTestId('action-checkout').click();
     await expect(page.getByTestId('checkout-total')).toBeVisible();

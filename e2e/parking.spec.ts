@@ -42,7 +42,7 @@ test('停车优惠：会员页登记车牌与免费几小时，后台停车登�
   const plate = `粤B${run}`;
 
   // 会员页「本月可享」：登记停车
-  await page.goto(`/?m=${m.id}`);
+  await page.goto(`/crm?m=${m.id}`);
   const row = page.getByTestId('member-benefit-QY-016');
   await expect(row).toContainText('每次免 2 小时');
   await row.getByTestId('benefit-use-QY-016').click();
@@ -54,7 +54,7 @@ test('停车优惠：会员页登记车牌与免费几小时，后台停车登�
   await expect(row.getByTestId('benefit-use-QY-016')).toBeDisabled();
 
   // 停车登记：8.0.19 起在门店「会员工作台 → 停车登记」（默认看今天）；后台「会员权益」原处留一条指路
-  await page.goto('/');
+  await page.goto('/crm');
   await page.getByTestId('workbench-parking-log').click();
   await expect(page).toHaveURL(/\/parking-log$/);
   const log = page.getByTestId('benefit-parking-log');

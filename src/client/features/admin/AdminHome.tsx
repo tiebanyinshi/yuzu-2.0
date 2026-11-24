@@ -49,7 +49,7 @@ export function AdminHome() {
   const q = useQuery({ queryKey: ['admin', 'overview'], queryFn: () => api.get<AdminOverview>('/api/admin/overview') });
   const d = q.data;
   return (
-    <AdminPage section="home" description="规则设置与主数据集中在后台维护；前台只管当班的接待、收银与交班。">
+    <AdminPage section="home" description="CRM 的规则与主数据在这里维护；前台只管当班的接待、收银与交班。人员与行政在 WCP 设置，门店主体与审计在 ERP 设置，品牌与设计在 Design。">
       {q.isPending ? (
         <Skeleton className="h-72" />
       ) : q.error ? (
@@ -98,10 +98,11 @@ export function AdminHome() {
 
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
               <Card className="p-5">
-                <SectionTitle>后台分区</SectionTitle>
-                {/* 与侧栏同一套分组（8.0.17）：规则中心、会员与营销、营业项目…… */}
+                <SectionTitle>CRM 设置的分区</SectionTitle>
+                {/* 与侧栏同一套分组（8.0.17）：规则中心、会员与营销、营业项目……；只列 CRM 板块的（店主 2026-11-24，docs/BOARDS.md） */}
                 <div className="mt-3 space-y-4" data-testid="admin-home-groups">
-                  {ADMIN_GROUPS.map((g) => ({ ...g, items: g.items.filter((k) => k !== 'home' && sections.includes(k)) }))
+                  {ADMIN_GROUPS.filter((g) => g.board === 'crm')
+                    .map((g) => ({ ...g, items: g.items.filter((k) => k !== 'home' && sections.includes(k)) }))
                     .filter((g) => g.items.length > 0)
                     .map((g) => (
                       <div key={g.key}>

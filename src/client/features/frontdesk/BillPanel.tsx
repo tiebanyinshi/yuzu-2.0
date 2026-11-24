@@ -440,7 +440,7 @@ export function BillPanel({
           {issue ? (
             // 发卡台不结账：有结账权限的人从这里带着这张手牌去收银台；已经结过的去收银台看结账单
             (open ? can('frontdesk.checkout') : !!visit.checkout) && (
-              <Button variant="secondary" className="@min-[22rem]:ml-auto" icon={<ArrowRight className="size-4" />} onClick={() => navigate(`/cashier?v=${visit.id}`)} data-testid="go-cashier">
+              <Button variant="secondary" className="@min-[22rem]:ml-auto" icon={<ArrowRight className="size-4" />} onClick={() => navigate(`/crm/cashier?v=${visit.id}`)} data-testid="go-cashier">
                 {open ? '去收银台结账' : '去收银台看结账单'}
               </Button>
             )
@@ -469,7 +469,7 @@ export function BillPanel({
             <Lock className="size-3.5 shrink-0" />
             收银台只看不改：加项目、作废、换牌请到发卡台。
             {can('frontdesk.operate') && (
-              <button type="button" onClick={() => navigate(`/frontdesk?v=${visit.id}`)} className="font-semibold text-pine hover:underline" data-testid="go-issue">
+              <button type="button" onClick={() => navigate(`/crm/frontdesk?v=${visit.id}`)} className="font-semibold text-pine hover:underline" data-testid="go-issue">
                 去发卡台处理 →
               </button>
             )}

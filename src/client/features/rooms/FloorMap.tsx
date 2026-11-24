@@ -1024,7 +1024,7 @@ function UsagePart({
             撤单
           </Button>
           {canPost && (
-            <Link to={`/frontdesk?v=${u.visitId}`} className="inline-flex h-8 items-center px-2 text-[13px] font-semibold text-pine hover:underline" data-testid="floormap-usage-post">
+            <Link to={`/crm/frontdesk?v=${u.visitId}`} className="inline-flex h-8 items-center px-2 text-[13px] font-semibold text-pine hover:underline" data-testid="floormap-usage-post">
               去发卡台挂账 →
             </Link>
           )}
@@ -1064,7 +1064,7 @@ function SessionsPart({ sessions, now, canDispatch }: { sessions: FloorMapSessio
         </ul>
       )}
       {canDispatch && (
-        <Link to="/clockroom" className="inline-block text-[13px] font-semibold text-pine hover:underline" data-testid="floormap-to-clockroom">
+        <Link to="/crm/clockroom" className="inline-block text-[13px] font-semibold text-pine hover:underline" data-testid="floormap-to-clockroom">
           去钟房 →
         </Link>
       )}

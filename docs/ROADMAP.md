@@ -259,6 +259,7 @@
   - `261`（`261_hand_tag_generate_ops.sql`，Codex 审查 PR #189）：按规则批量添加的操作编号 `hand_tag_generate_ops`（只追加：编号、请求摘要、建了哪些牌号），`op_fences` 的类型约束追加 `hand_tag_generate`。回滚脚本 `docs/rollback/261_hand_tag_generate_ops.down.sql`。
 - **改名（店主 2026-11-24）**：系统中文名「浴族」改叫「柚子」，代码、界面、文档、用例里的称呼都改（已发布的迁移、交接说明与更新记录这些历史快照、引用店主原文件名的《浴族……》不改）；同时做柚子官网（`website/`，`docs/WEBSITE.md`）。
   - `262`（`262_rename_yuzu.sql`）：还是旧默认值「浴族 · 城市汤泉」的门店名（设置、本店、本公司）改成「柚子 · 城市汤泉」，店里自己设过的不动。回滚脚本 `docs/rollback/262_rename_yuzu.down.sql`。
+- **四个板块（店主 2026-11-24 登记，设计见 `docs/BOARDS.md`）**：门户四个板块改叫 CRM、ERP、WCP、Design；原来管理后台的分区拆进各板块（地址、权限不变）；UI 工作台、电子菜单的版面与字体、对客导览、官网搬进 Design；Design 里做素材库（字体、图片、视频，按用途一键切换）。分三批：板块与入口 → 素材库 → 官网接素材库。不改版本号。迁移号预留 `265`–`269`（第二批起用）。官网部署说明给 Codex：`docs/DEPLOY_WEBSITE.md`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

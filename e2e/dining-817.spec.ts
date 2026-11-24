@@ -128,7 +128,7 @@ test.describe('8.1.7 餐饮分区与点菜单', () => {
       await relogin(page, 'xiaozhou');
 
       // ② 桌台：上面一排分区卡片；点「景观包厢」只看这个区、写出明细，选的区记在地址里
-      await page.goto('/dining/tables');
+      await page.goto('/crm/dining/tables');
       await expect(page.getByTestId('table-zones')).toBeVisible();
       for (const z of ['全部', '散桌', '景观包厢', '休闲水吧区', '休息果吧区']) await expect(page.getByTestId(`table-zone-${z === '全部' ? 'all' : z}`)).toBeVisible();
       await page.getByTestId('table-zone-景观包厢').click();
@@ -234,7 +234,7 @@ test.describe('8.1.7 餐饮分区与点菜单', () => {
       await expect(receipt).toHaveCount(0);
 
       // 桌台详情里也能看点菜单
-      await page.goto('/dining/tables?zone=景观包厢');
+      await page.goto('/crm/dining/tables?zone=景观包厢');
       await page.getByTestId(`table-tile-${BOX}`).click();
       await expect(page.getByTestId('table-session')).toBeVisible();
       await page.getByTestId('table-receipt').click();
@@ -243,7 +243,7 @@ test.describe('8.1.7 餐饮分区与点菜单', () => {
       await page.keyboard.press('Escape');
 
       // ⑥ 沽清列表：只看果吧
-      await page.goto('/dining/limits');
+      await page.goto('/crm/dining/limits');
       await page.getByTestId('limits-outlet-fruit').click();
       await expect(page.getByTestId('limits-group-果吧')).toContainText(FRUIT.name);
       await expect(page.getByTestId(`limit-${KUNGPAO.name}`)).toHaveCount(0);
@@ -251,7 +251,7 @@ test.describe('8.1.7 餐饮分区与点菜单', () => {
       await expect(page.getByTestId('limits-group-水吧 · 调酒')).toContainText(MOJITO.name);
 
       // ⑦ 台账：水吧 · 糖水只有甘露；导出带「价目分类」一列
-      await page.goto('/dining/ledger');
+      await page.goto('/crm/dining/ledger');
       const ledger = page.getByTestId('dining-ledger');
       await page.getByTestId('dining-ledger-outlet-water').click();
       await page.getByTestId('dining-ledger-group-糖水').click();
@@ -260,7 +260,7 @@ test.describe('8.1.7 餐饮分区与点菜单', () => {
       await expect(ledger.locator('tbody tr').filter({ hasText: KUNGPAO.name })).toHaveCount(0);
 
       // ⑧ 退菜（8.1.15 起并进台账，旧地址跳到台账的「退菜」）：果吧里有退掉的果盘
-      await page.goto('/dining/voids');
+      await page.goto('/crm/dining/voids');
       await expect(page).toHaveURL(/\/dining\/ledger\?type=voided/);
       await page.getByTestId('dining-ledger-outlet-fruit').click();
       const voidRow = page.getByTestId('dining-ledger').locator('tbody tr').filter({ hasText: FRUIT.name }).first();
@@ -293,7 +293,7 @@ test.describe('8.1.7 餐饮分区与点菜单', () => {
         .reverse()[0]!;
       await send(page, 'post', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: 'male', guestLabel: 'E2E 817 客人' }] });
       visitId = (await getJson<typeof board>(page, '/api/frontdesk/board')).tags.find((t) => t.code === tag)!.visit!.id;
-      await page.goto('/dining/order');
+      await page.goto('/crm/dining/order');
       await page.getByTestId('dining-tag').fill(tag);
       await page.getByTestId('dining-find').click();
       await expect(page.getByTestId('dining-guest')).toContainText('E2E 817 客人');

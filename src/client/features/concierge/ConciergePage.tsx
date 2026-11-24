@@ -50,7 +50,7 @@ export function ConciergePage() {
       live = false;
     };
   }, [generation, session.staff.id]);
-  if (!can('concierge.read')) return <Navigate to="/" replace />;
+  if (!can('concierge.read')) return <Navigate to="/crm" replace />;
   return (
     <>
       <PendingPanel

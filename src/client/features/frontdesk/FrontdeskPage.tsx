@@ -116,7 +116,7 @@ export function FrontdeskPage() {
     if (!resume) return;
     // 结账、退款单在收银台处理（8.1.15）：旧链接、书签带着这两种来的转过去
     if (resume === 'checkout' || resume === 'checkout_refund') {
-      navigate(`/cashier?${params}`, { replace: true });
+      navigate(`/crm/cashier?${params}`, { replace: true });
       return;
     }
     if (!board.data) return;

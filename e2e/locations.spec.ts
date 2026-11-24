@@ -269,7 +269,7 @@ test.describe('v0.7.17 第一级实时位置', () => {
       expect(((await late.json()) as { error: { code: string } }).error.code).toBe('OP_ABANDONED');
       expect(await events()).toBe(before + 2);
 
-      await page.goto('/rooms?view=map');
+      await page.goto('/crm/rooms?view=map');
       await expect(page.getByTestId('map-people-V312')).toHaveAttribute('data-count', '1');
       await page.getByTestId('map-space-V312').click();
       await expect(page.getByTestId('floormap-panel-people')).toContainText(`手牌 ${tag}`);
@@ -413,7 +413,7 @@ test.describe('v0.7.17 第一级实时位置', () => {
     await page.route('**/api/floorplans/900101/floors/L3/svg', (route) => route.fulfill({ status: 200, contentType: 'image/svg+xml', body: svg }));
     await page.route('**/api/locations/current', json(located));
     await page.route('**/api/locations/tracks?*', json(trackData));
-    await page.goto('/rooms?view=map');
+    await page.goto('/crm/rooms?view=map');
     await expect(page.getByTestId('map-zone-11')).toHaveAttribute('data-count', '2');
     await expect(page.getByTestId('map-people-V312')).toHaveAttribute('data-count', '2');
     await expect(page.getByTestId('floormap-people-summary')).toContainText('在店客人 5（有位置 3 · 位置不明 2）');

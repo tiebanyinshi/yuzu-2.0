@@ -86,7 +86,7 @@ export function UserMenu({ placement = 'rail' }: { placement?: MenuPlacement }) 
           <div className="my-1 h-px bg-line" />
           {can('device.view') && (
             // 本机终端（8.0.19，IA 第 3.4 节）：这台电脑是哪台终端在门店「设备」页右边设；从哪一页都点得到
-            <MenuItem icon={<MonitorSmartphone className="size-4" />} onClick={() => go('/devices#terminal')} testId="user-menu-terminal">
+            <MenuItem icon={<MonitorSmartphone className="size-4" />} onClick={() => go('/crm/devices#terminal')} testId="user-menu-terminal">
               本机终端
               <span className="ml-auto max-w-[96px] truncate text-[12px] text-ink-3" data-testid="user-menu-terminal-current">
                 {terminalCode ?? '未设置'}
@@ -105,7 +105,7 @@ export function UserMenu({ placement = 'rail' }: { placement?: MenuPlacement }) 
           <div className="my-1 h-px bg-line" />
           <ThemeMenuRow />
           <div className="my-1 h-px bg-line" />
-          <MenuItem icon={<KeyRound className="size-4" />} onClick={() => go('/password')}>
+          <MenuItem icon={<KeyRound className="size-4" />} onClick={() => go('/crm/password')}>
             修改密码
           </MenuItem>
           <MenuItem icon={<LogOut className="size-4" />} onClick={logout} testId="user-menu-logout">

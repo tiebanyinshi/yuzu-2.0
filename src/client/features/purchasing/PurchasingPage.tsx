@@ -51,7 +51,7 @@ export function PurchasingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, urlQ]);
 
-  if (!can('inventory.read')) return <Navigate to="/" replace />;
+  if (!can('inventory.read')) return <Navigate to="/crm" replace />;
 
   return (
     <>

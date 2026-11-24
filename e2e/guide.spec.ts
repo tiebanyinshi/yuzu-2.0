@@ -121,7 +121,7 @@ test.describe('v0.7.19 对客导览', () => {
       await page.request.post('/api/auth/logout');
       await login(page, 'linlan');
       await send(page, 'put', '/api/admin/guide/rules', { carouselSeconds: 5 });
-      await page.goto('/guide');
+      await page.goto('/crm/guide');
       await page.getByTestId('guide-screen').click();
       await expect(page).toHaveURL(/\/guide\/screen$/);
       const screen = page.getByTestId('guide-screen-page');
@@ -230,7 +230,7 @@ test.describe('v0.7.19 对客导览', () => {
   test('导览页与大屏模式：各尺寸不横向滚动，图、图例都在', async ({ page }) => {
     await login(page, 'xiaozhou');
     await mock(page);
-    await page.goto('/guide');
+    await page.goto('/crm/guide');
     await expect(page.getByTestId('guide-map-L1')).toBeVisible();
     await expect(page.getByTestId('guide-legend')).toContainText('合成水区');
     await expect(page.getByTestId('guide-legend')).toContainText('Restroom');

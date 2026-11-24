@@ -49,7 +49,7 @@ export function SourcingPage() {
   const status = params.get('status') ?? '';
   const list = useSourcingList({ status: status || undefined });
   const [creating, setCreating] = useState(false);
-  if (!can('inventory.read')) return <Navigate to="/" replace />;
+  if (!can('inventory.read')) return <Navigate to="/crm" replace />;
   const gate = rules.data?.quoteThresholdCents ?? 0;
   return (
     <>
@@ -336,7 +336,7 @@ export function SourcingDetailPage() {
   const { id } = useParams();
   const eventId = Number(id) || null;
   const ev = useSourcing(eventId);
-  if (!can('inventory.read')) return <Navigate to="/" replace />;
+  if (!can('inventory.read')) return <Navigate to="/crm" replace />;
   return (
     <>
       <PageHeader

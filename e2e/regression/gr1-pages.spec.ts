@@ -65,7 +65,7 @@ async function newGuest(page: Page) {
 }
 
 async function openBill(page: Page, code: string) {
-  await page.goto('/frontdesk');
+  await page.goto('/crm/frontdesk');
   await expect(page.getByTestId('tag-board')).toBeVisible();
   await page.getByTestId(`tag-${code}`).click();
   await expect(page.getByTestId('bill-tag')).toHaveText(code);
@@ -85,7 +85,7 @@ test.describe('G-R1 页面回归', () => {
   test('S1 充值：没开班时确认页出现开班提示、不能入账；就地开班后可以入账', async ({ page }) => {
     await login(page, 'xiaozhou');
     await closeOpenShift(page);
-    await page.goto('/');
+    await page.goto('/crm');
     await page.getByLabel('搜索会员').fill('黎明月');
     await page.getByRole('option').filter({ hasText: '黎明月' }).first().click();
     await expect(page.getByText('可用余额').first()).toBeVisible();

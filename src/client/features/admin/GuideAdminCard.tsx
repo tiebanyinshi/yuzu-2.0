@@ -76,7 +76,7 @@ export function GuideAdminCard() {
         <div className="flex flex-wrap items-center gap-2">
           <SectionTitle>对客导览</SectionTitle>
           <span className="flex-1" />
-          <Link to="/guide" className="inline-flex items-center gap-1 text-[13px] font-semibold text-pine hover:underline" data-testid="guide-admin-preview">
+          <Link to="/crm/guide" className="inline-flex items-center gap-1 text-[13px] font-semibold text-pine hover:underline" data-testid="guide-admin-preview">
             <MapPinned className="size-4" /> 打开导览页
           </Link>
           <Link to="/guide/screen" className="text-[13px] font-semibold text-pine hover:underline">

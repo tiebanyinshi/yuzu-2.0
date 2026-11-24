@@ -22,7 +22,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   // 没有权限的门店页面（流水、日结、交班、前台……）回到首页：只用 ERP 的人回到 ERP，客户经理回到会员工作台。
   // 功能没开启（钟房、餐饮）不算没有权限，页面自己提示
   const page = storePageOf(pathname);
-  if (page && !(Array.isArray(page.perm) ? page.perm : [page.perm]).some((p) => can(p))) return <Navigate to="/" replace />;
+  if (page && !(Array.isArray(page.perm) ? page.perm : [page.perm]).some((p) => can(p))) return <Navigate to="/crm" replace />;
   return (
     // 回测整改 P02（回测 2-1）：整屏不滚，左侧主导航固定、撑满一屏（菜单长了在导航里面滚）；右边内容区自己滚，
     // 页头（PageHeader）贴在内容区顶上。页面自己有滚动区的照旧在里面滚，不会出现两条滚动条

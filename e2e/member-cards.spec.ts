@@ -29,7 +29,7 @@ test('发卡 → 刷卡找会员 → 挂失后刷卡提醒 → 补卡', async ({
   const second = `C${run}02`;
 
   // ① 发卡：读卡器按模拟键盘把卡号打进输入框、跟一个回车
-  await page.goto(`/?m=${m.id}`);
+  await page.goto(`/crm?m=${m.id}`);
   const box = page.getByTestId('member-cards');
   await expect(box).toContainText('还没有发实体卡');
   await box.getByTestId('member-card-issue-open').click();

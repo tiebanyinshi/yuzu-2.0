@@ -1048,7 +1048,7 @@ function TablePicker({
       {tables.length === 0 && !detail ? (
         <p className="text-[13px] text-ink-3">
           现在没有用餐中的桌。先到{' '}
-          <NavLink to="/dining/tables" className="font-semibold text-pine hover:underline">
+          <NavLink to="/crm/dining/tables" className="font-semibold text-pine hover:underline">
             桌台
           </NavLink>{' '}
           开台，再回来点单。

@@ -110,7 +110,7 @@ test.describe('8.1.17 菜品补完', () => {
       await make({ name: FRUIT_A, slot: 'fruit', stationId: hot, prices: { standard: 3800 } });
       await make({ name: FRUIT_B, slot: 'fruit', stationId: hot, prices: { standard: 4800 } });
 
-      await page.goto('/dining');
+      await page.goto('/crm/dining');
       await page.getByTestId('dining-tab-dishes').click();
       await expect(page.getByTestId('dishes')).toBeVisible();
       await page.getByTestId('dishes-search').fill(RUN);
@@ -299,7 +299,7 @@ test.describe('8.1.17 菜品补完', () => {
     try {
       await mockDining(page);
       // 点单弹窗
-      await page.goto('/dining/order');
+      await page.goto('/crm/dining/order');
       await page.getByTestId('dining-outlet-restaurant').click();
       await expect(page.getByTestId(`dining-dish-${SYN_SET.name}`)).toContainText('可选换菜');
       await expectFits(page);
@@ -320,7 +320,7 @@ test.describe('8.1.17 菜品补完', () => {
       await expectOnScreen(page, ['dish-options-add', `dish-options-swap-${SYN_TEA}-合成杨枝甘露`]);
       await page.keyboard.press('Escape');
       // 厨房屏：合成的套餐那一张（带别的档口的进度）与一张子项单
-      await page.goto('/dining/kitchen');
+      await page.goto('/crm/dining/kitchen');
       await expect(page.getByTestId(`kds-part-${SYN_PART.id}`)).toContainText(`套餐「${SYN_SET.name}」里的（原 ${SYN_TEA}）`);
       await expect(page.getByTestId(`kds-part-tickets-${SYN_COMBO_TICKET.id}`)).toContainText('合成杨枝甘露×2');
       await expectFits(page);

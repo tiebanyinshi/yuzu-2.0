@@ -45,7 +45,7 @@ test.describe('对话框打开后马上输入', () => {
     await login(page, 'xiaozhou');
 
     // 会员工作台「新建会员」：姓名。8.1.15 起先选卡类型再填表——点开以后选电子卡，表单一出来马上输入
-    await page.goto('/');
+    await page.goto('/crm');
     await expect(page.getByRole('button', { name: '新建会员' }).first()).toBeVisible();
     for (let i = 0; i < 5; i++) {
       await page.getByRole('button', { name: '新建会员' }).first().click();
@@ -57,7 +57,7 @@ test.describe('对话框打开后马上输入', () => {
     }
 
     // 前台：点空闲手牌打开接待，牌号预先填好；马上改成别的牌号，不会被打开时的预填盖回去
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
     // 手牌接口回来之前状态板只是骨架：先等真正的空闲牌出现，再验证「打开后马上输入」（测试会话复测 v0.7.6 的观察）
     await expect(page.locator('[data-testid^="tag-"][data-state="free"]').first()).toBeVisible();
@@ -71,7 +71,7 @@ test.describe('对话框打开后马上输入', () => {
 
   test('结账：应收合计取回之前收款方式按钮是灰色，取回后才能点（店主 2026-10-30 定；只打开、不收款）', async ({ page }) => {
     await login(page, 'xiaozhou');
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     // 演示数据：一家三口 A8075 / A6010 / A8076 在店
     await page.getByTestId('tag-A8075').click();
     const panel = page.getByTestId('bill-panel');

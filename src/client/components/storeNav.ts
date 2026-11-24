@@ -27,7 +27,7 @@ import {
   Megaphone,
   MonitorPlay,
 } from 'lucide-react';
-import { ADMIN_ENTRY_PERMISSIONS } from '@shared/admin';
+import { CRM_SETTINGS_PERMISSIONS } from '@shared/admin';
 import { DISH_PERMISSIONS } from '@shared/dishes';
 import { deskEntries } from '@shared/frontdesk';
 import type { Permission } from '@shared/permissions';
@@ -73,10 +73,10 @@ const STORE_NAV: StoreNavDomain[] = [
       // 收银台管离店结账（只读账单、预结账、结账、结账记录）。两个都按「查看在店手牌」显示，台里的操作照各自的权限
       // 8.1.15 前台 1 细化（YB2）：入口再按各自的权限分——有「接待发牌、挂账、换牌」的看得到发卡台，有「结账收款」的看得到收银台；
       // 两项都没有、只有查看的两个都看得到（进去只能看）。规则在 @shared/frontdesk 的 deskEntries
-      { to: '/frontdesk', label: '发卡台', icon: ConciergeBell, perm: 'frontdesk.read', when: (s) => deskEntries(s.permissions).issue },
-      { to: '/cashier', label: '收银台', icon: Banknote, perm: 'frontdesk.read', when: (s) => deskEntries(s.permissions).cashier },
+      { to: '/crm/frontdesk', label: '发卡台', icon: ConciergeBell, perm: 'frontdesk.read', when: (s) => deskEntries(s.permissions).issue },
+      { to: '/crm/cashier', label: '收银台', icon: Banknote, perm: 'frontdesk.read', when: (s) => deskEntries(s.permissions).cashier },
       // 预约（v0.7.28 ③）：技师、派对房等、客房电话预订的预约看板；小程序的预约在这里确认
-      { to: '/bookings', label: '预约', icon: CalendarClock, perm: 'booking.manage' },
+      { to: '/crm/bookings', label: '预约', icon: CalendarClock, perm: 'booking.manage' },
     ],
   },
   {
@@ -85,9 +85,9 @@ const STORE_NAV: StoreNavDomain[] = [
     icon: UtensilsCrossed,
     items: [
       // 8.0.8：看日结的（导出流水、经营总览）也能进来看「台账」
-      { to: '/dining', label: '餐饮', icon: UtensilsCrossed, perm: ['dining.order', 'dining.kitchen', 'frontdesk.checkout', 'ledger.export', 'report.executive'], when: (s) => s.dining },
+      { to: '/crm/dining', label: '餐饮', icon: UtensilsCrossed, perm: ['dining.order', 'dining.kitchen', 'frontdesk.checkout', 'ledger.export', 'report.executive'], when: (s) => s.dining },
       // 菜品管理（8.1.15，docs/DISHES_V8115.md，CP7）：平时是「餐饮」里的一个页签；只有菜品权限、进不了餐饮的岗位（少见）才显示这个入口
-      { to: '/dishes', label: '菜品', icon: UtensilsCrossed, perm: [...DISH_PERMISSIONS], when: (s) => s.dining && !canEnter('/dining', s.permissions) },
+      { to: '/crm/dishes', label: '菜品', icon: UtensilsCrossed, perm: [...DISH_PERMISSIONS], when: (s) => s.dining && !canEnter('/crm/dining', s.permissions) },
     ],
   },
   {
@@ -100,7 +100,7 @@ const STORE_NAV: StoreNavDomain[] = [
       // 只有「客房打扫、维修」的（后勤账号，库存、采购、财务也是后勤）照 8.1.15 以前的「客房」入口，客房功能开着才有：
       // 不然只用 ERP 的人都多出门店主导航与「返回门店」（FT11 补充，待确认）
       {
-        to: '/room-center',
+        to: '/crm/room-center',
         label: '房态中心',
         icon: BedDouble,
         // 回测整改 P08：能在水吧、果吧下单的（康美部）也有入口，在「在用」的房间上点单
@@ -114,13 +114,13 @@ const STORE_NAV: StoreNavDomain[] = [
     label: '技师',
     icon: Hourglass,
     items: [
-      { to: '/clockroom', label: '钟房', icon: Hourglass, perm: 'technician.dispatch', when: (s) => s.technicians },
+      { to: '/crm/clockroom', label: '钟房', icon: Hourglass, perm: 'technician.dispatch', when: (s) => s.technicians },
       // 排位播报（回测整改 P03，回测 4-1）：从钟房里移出来，与钟房同级；权限单独授，排位员可以只有这一项
-      { to: '/announcer', label: '排位播报', icon: Megaphone, perm: ['technician.announce', 'technician.dispatch'], when: (s) => s.technicians },
+      { to: '/crm/announcer', label: '排位播报', icon: Megaphone, perm: ['technician.announce', 'technician.dispatch'], when: (s) => s.technicians },
       // 回测整改 P09（回测 4-2）：技师上钟轮播，只读大屏；可单独授给值班经理、排位员
-      { to: '/tech-board', label: '上钟轮播', icon: MonitorPlay, perm: ['technician.board', 'technician.dispatch', 'technician.announce'], when: (s) => s.technicians },
+      { to: '/crm/tech-board', label: '上钟轮播', icon: MonitorPlay, perm: ['technician.board', 'technician.dispatch', 'technician.announce'], when: (s) => s.technicians },
       // 技师管理（8.1.16 块 E，docs/TECHNICIANS_V8115.md）：技师名册、组别、班次与排班、休假；钟房的岗位能看、能替技师申请休假
-      { to: '/technicians', label: '技师管理', icon: IdCard, perm: ['technician.manage', 'technician.dispatch', 'technician.board'], when: (s) => s.technicians },
+      { to: '/crm/technicians', label: '技师管理', icon: IdCard, perm: ['technician.manage', 'technician.dispatch', 'technician.board'], when: (s) => s.technicians },
     ],
   },
   {
@@ -128,12 +128,12 @@ const STORE_NAV: StoreNavDomain[] = [
     label: '会员',
     icon: UsersRound,
     items: [
-      { to: '/', label: '会员', icon: UsersRound, end: true, perm: 'member.read' },
+      { to: '/crm', label: '会员', icon: UsersRound, end: true, perm: 'member.read' },
       // 他店查询（v0.7.23，会员体系 v2）：另一家店的同事按手机号或会员号查会员的档阶（只读）；本店能看会员的岗位用会员工作台，不另显示
-      { to: '/lookup', label: '会员查询', icon: ScanSearch, perm: 'member.lookup', when: (s) => !s.permissions.includes('member.read') },
-      { to: '/customer', label: '客户部', icon: BriefcaseBusiness, perm: 'customer.read' },
+      { to: '/crm/lookup', label: '会员查询', icon: ScanSearch, perm: 'member.lookup', when: (s) => !s.permissions.includes('member.read') },
+      { to: '/crm/customer', label: '客户部', icon: BriefcaseBusiness, perm: 'customer.read' },
       // 管家部（8.0.12）：管家的日常工作页面（管家会员、人工余额、协调预约与接待、拍单、交班）；后台是给店主、店总做设置与监管的，管家不进后台
-      { to: '/concierge', label: '管家', icon: HandHeart, perm: 'concierge.read' },
+      { to: '/crm/concierge', label: '管家', icon: HandHeart, perm: 'concierge.read' },
     ],
   },
   {
@@ -141,9 +141,9 @@ const STORE_NAV: StoreNavDomain[] = [
     label: '财务',
     icon: Wallet,
     items: [
-      { to: '/ledger', label: '流水', icon: ReceiptText, perm: 'ledger.readToday' },
-      { to: '/settlement', label: '日结', icon: CalendarCheck2, perm: 'ledger.readToday' },
-      { to: '/shift', label: '交班', icon: ClipboardCheck, perm: 'ledger.readToday' },
+      { to: '/crm/ledger', label: '流水', icon: ReceiptText, perm: 'ledger.readToday' },
+      { to: '/crm/settlement', label: '日结', icon: CalendarCheck2, perm: 'ledger.readToday' },
+      { to: '/crm/shift', label: '交班', icon: ClipboardCheck, perm: 'ledger.readToday' },
       // 看板 2026-11-10 起整合到后台「数据看板」（店主：统一在后台查看、管理）；门店的旧地址 /dashboard 跳过去
     ],
   },
@@ -153,11 +153,12 @@ const STORE_NAV: StoreNavDomain[] = [
     icon: Settings2,
     items: [
       // 设备（v0.7.21，RQ-001）：一屏看全部设备、本机终端
-      { to: '/devices', label: '设备', icon: Printer, perm: 'device.view' },
+      { to: '/crm/devices', label: '设备', icon: Printer, perm: 'device.view' },
       // 对客导览（v0.7.19）：所有岗位默认能看（区域导览图、大屏轮播）
-      { to: '/guide', label: '导览', icon: MapPinned, perm: 'guide.view', guestFacing: true },
-      // 管理后台是单独的一套页面（规则、价目、手牌池、员工与权限、数据看板）；只有看板权限的岗位进去只看得到数据看板
-      { to: '/admin', label: '后台', icon: Settings2, perm: [...ADMIN_ENTRY_PERMISSIONS] },
+      { to: '/crm/guide', label: '导览', icon: MapPinned, perm: 'guide.view', guestFacing: true },
+      // CRM 设置（店主 2026-11-24，docs/BOARDS.md：原来的「后台」拆进各板块，这里只进 CRM 的那些分区）：
+      // 规则、价目、手牌池、会员、数据看板……；只有看板权限的岗位进去只看得到数据看板
+      { to: '/admin', label: 'CRM 设置', icon: Settings2, perm: [...CRM_SETTINGS_PERMISSIONS] },
     ],
   },
 ];
@@ -172,7 +173,7 @@ function canEnter(to: string, permissions: readonly Permission[]): boolean {
 
 /** 一个入口管不管这个地址（会员工作台 / 只认它自己） */
 function covers(item: StoreNavItem, pathname: string): boolean {
-  if (item.to === '/') return pathname === '/';
+  if (item.to === '/crm') return pathname === '/crm' || pathname === '/crm/';
   return pathname === item.to || pathname.startsWith(`${item.to}/`);
 }
 
@@ -181,7 +182,7 @@ function covers(item: StoreNavItem, pathname: string): boolean {
  * 没有这个页面权限的人打开它时，门店外壳回到首页（与看板、后台一致；测试服 E2E 报告）。
  */
 export function storePageOf(pathname: string): StoreNavItem | null {
-  return ALL_ITEMS.find(({ item }) => item.to !== '/' && covers(item, pathname))?.item ?? null;
+  return ALL_ITEMS.find(({ item }) => item.to !== '/crm' && covers(item, pathname))?.item ?? null;
 }
 
 /** 地址属于哪个业务域（主导航里这一组标成当前、展开时默认打开）；不属于任何一组（改密码、网络与同步）为 null */
@@ -206,24 +207,24 @@ export function useStoreNav(): StoreNavDomain[] {
  * ERP 顶栏的「返回门店」回到其中第一个能用的页面：分组以后各岗位回到哪一页照旧不变。
  */
 const LEGACY_ORDER = [
-  '/frontdesk',
-  '/cashier',
-  '/clockroom',
-  '/announcer',
-  '/tech-board',
-  '/dining',
-  '/room-center',
-  '/bookings',
-  '/',
-  '/customer',
-  '/concierge',
-  '/ledger',
-  '/settlement',
-  '/shift',
-  '/lookup',
-  '/guide',
-  '/devices',
-  '/dishes',
+  '/crm/frontdesk',
+  '/crm/cashier',
+  '/crm/clockroom',
+  '/crm/announcer',
+  '/crm/tech-board',
+  '/crm/dining',
+  '/crm/room-center',
+  '/crm/bookings',
+  '/crm',
+  '/crm/customer',
+  '/crm/concierge',
+  '/crm/ledger',
+  '/crm/settlement',
+  '/crm/shift',
+  '/crm/lookup',
+  '/crm/guide',
+  '/crm/devices',
+  '/crm/dishes',
   '/admin',
 ];
 const legacyRank = (to: string) => {

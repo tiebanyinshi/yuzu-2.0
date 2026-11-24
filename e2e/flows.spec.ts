@@ -149,7 +149,7 @@ test('店主：前台结账的储值消费不能在会员这里单独撤销，�
       break;
     }
   }
-  await page.goto(`/ledger?date=${date}&q=${encodeURIComponent('沈先生')}`);
+  await page.goto(`/crm/ledger?date=${date}&q=${encodeURIComponent('沈先生')}`);
   await expect(page.getByLabel('搜索流水')).toHaveValue('沈先生');
   await page
     .getByText(/^手牌结账 JZ/)
@@ -191,13 +191,13 @@ test('请求超时：显示结果待确认，可查回原单且不重复记账',
 
 test('权限：店员进后台只看得到数据看板（2026-11-10 起看板在后台），不能查看历史营业日', async ({ page }) => {
   await login(page, 'xiaozhou');
-  await clickNav(page, '后台');
+  await clickNav(page, 'CRM 设置');
   await expect(page).toHaveURL(/\/admin\/dashboard$/);
   await expect(page.getByTestId('admin-nav-dashboard')).toHaveCount(1);
   await expect(page.getByTestId('admin-nav-settings')).toHaveCount(0);
   await page.goto('/admin/staff');
   await expect(page).toHaveURL(/\/admin\/dashboard$/);
-  await page.goto('/ledger');
+  await page.goto('/crm/ledger');
   await expect(page.getByRole('button', { name: '前一天' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '导出 CSV' })).toHaveCount(0);
   const res = await page.request.get('/api/ledger?date=2020-01-01');

@@ -77,7 +77,7 @@ test.describe('技师榜单：工种、翻页、搜索、状态、综合 / 人�
     await login(page, 'linlan');
     const before = await prepare(page);
     try {
-      await page.goto('/technicians/ranking');
+      await page.goto('/crm/technicians/ranking');
       const ranking = page.getByTestId('tech-ranking');
       await expect(ranking).toBeVisible();
       const grid = page.getByTestId('ranking-grid');
@@ -247,7 +247,7 @@ test.describe('技师榜单：工种、翻页、搜索、状态、综合 / 人�
         await route.fulfill({ json: view });
       });
       await page.clock.install();
-      await page.goto('/technicians/ranking');
+      await page.goto('/crm/technicians/ranking');
       const m1 = page.getByTestId('ranking-card-M1');
       await expect(m1.getByTestId('ranking-status-tag')).toHaveText('服务中');
       await expect(m1.getByTestId('ranking-service')).toContainText('模拟足疗');

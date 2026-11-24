@@ -67,7 +67,7 @@ test.describe('本机存储写入失败时不提交', () => {
     const countBefore = await recharges();
     const sent = await countLostRequests(page, '**/api/recharges');
 
-    await page.goto('/');
+    await page.goto('/crm');
     await page.getByLabel('搜索会员').fill(name);
     await page.getByRole('option').filter({ hasText: name }).first().click();
     const recharge = async () => {
@@ -114,7 +114,7 @@ test.describe('本机存储写入失败时不提交', () => {
     };
     const sent = await countLostRequests(page, '**/api/frontdesk/visits/*/charges');
 
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await page.getByTestId(`tag-${code}`).click();
     await expect(page.getByTestId('bill-tag')).toHaveText(code);
     await page.keyboard.press('F4');

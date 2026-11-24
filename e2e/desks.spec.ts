@@ -170,7 +170,7 @@ async function synthesizePreview(page: Page, tagCode: string) {
 
 /** 收银台选中一张在店的手牌、打开预结账 */
 async function openPreview(page: Page, visitId: number, code: string) {
-  await page.goto(`/cashier?v=${visitId}`);
+  await page.goto(`/crm/cashier?v=${visitId}`);
   const panel = page.getByTestId('bill-panel');
   await expect(panel.getByTestId('bill-tag')).toHaveText(code);
   await panel.getByTestId('action-preview').click();
@@ -336,7 +336,7 @@ test.describe('8.1.15 发卡台与收银台', () => {
 
   test('收银台：输牌号直接选中、按条件筛待结账清单；没有选手牌时提示从清单里选', async ({ page }) => {
     await login(page, 'linlan');
-    await page.goto('/cashier');
+    await page.goto('/crm/cashier');
     await expect(page.getByTestId('cashier-queue')).toBeVisible();
     await expect(page.getByTestId('cashier-empty')).toBeVisible();
     // 演示数据里在店未结的手牌都在清单里
@@ -483,12 +483,12 @@ test.describe('8.1.15 发卡台与收银台', () => {
       await setClerk(['frontdesk.checkout']);
       await sees(true, false);
       // 入口只管主导航：地址直接打开收银台照旧进得去（按「查看在店手牌」），里面没有结账的按钮可用
-      await staff.goto('/cashier');
+      await staff.goto('/crm/cashier');
       await expect(staff.getByTestId('cashier-queue')).toBeVisible();
 
       await setClerk(['frontdesk.operate']);
       await sees(false, true);
-      await staff.goto('/frontdesk');
+      await staff.goto('/crm/frontdesk');
       await expect(staff.getByTestId('tag-board')).toBeVisible();
 
       await setClerk(['frontdesk.operate', 'frontdesk.checkout']);

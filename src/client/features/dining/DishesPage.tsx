@@ -12,8 +12,8 @@ import { DishesTab } from './DishesTab';
 export function DishesPage() {
   const session = useSession();
   const can = useCan();
-  const dining = storePageOf('/dining');
-  if (dining && (Array.isArray(dining.perm) ? dining.perm : [dining.perm]).some((p) => can(p))) return <Navigate to="/dining/dishes" replace />;
+  const dining = storePageOf('/crm/dining');
+  if (dining && (Array.isArray(dining.perm) ? dining.perm : [dining.perm]).some((p) => can(p))) return <Navigate to="/crm/dining/dishes" replace />;
   return (
     <>
       <PageHeader title="菜品管理" subtitle="全部菜品在一张表里：新增、编辑、上下架、做法、加料、套餐、改价（留改价记录），Excel 导出与导入" />

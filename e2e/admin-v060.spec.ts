@@ -21,7 +21,7 @@ test.describe('v0.6.0 管理后台', () => {
 
   test('店主从「后台」进入：后台首页、规则总表、返回前台；实例标识与版本常显', async ({ page }) => {
     await login(page, 'linlan');
-    await clickNav(page, '后台');
+    await clickNav(page, 'CRM 设置');
     await expect(page.getByTestId('admin-shell')).toBeVisible();
     await expect(page.getByTestId('admin-instance')).toContainText('v');
     await expect(page.getByTestId('admin-home')).toBeVisible();
@@ -58,7 +58,7 @@ test.describe('v0.6.0 管理后台', () => {
       await page.request.post('/api/auth/logout');
 
       await login(page, 'xiaozhou');
-      await page.goto('/');
+      await page.goto('/crm');
       const phone = `198${String(Date.now()).slice(-8)}`;
       await page.getByRole('button', { name: '新建会员' }).click();
       const form = page.getByRole('dialog').filter({ hasText: '新建会员' });
@@ -100,7 +100,7 @@ test.describe('v0.6.0 管理后台', () => {
 
       await login(page, 'zhangjl');
       expect((await page.request.get('/api/ledger?date=2020-01-01')).status()).toBe(403);
-      await page.goto('/ledger');
+      await page.goto('/crm/ledger');
       await expect(page.getByRole('heading', { name: '流水' })).toBeVisible();
       await expect(page.getByRole('button', { name: '前一天' })).toHaveCount(0);
       await page.request.post('/api/auth/logout');
@@ -118,7 +118,7 @@ test.describe('v0.6.0 管理后台', () => {
   test('看板按岗位（2026-11-10 起在后台「数据看板」）：店主有今日、经营总览、会员总览；店员只有今日，进后台只看得到数据看板', async ({ page }) => {
     await login(page, 'linlan');
     await expect(navItem(page, '看板')).toHaveCount(0);
-    await clickNav(page, '后台');
+    await clickNav(page, 'CRM 设置');
     await page.getByTestId('admin-nav-dashboard').click();
     await expect(page).toHaveURL(/\/admin\/dashboard$/);
     await page.getByTestId('dashboard-tab-today').click();
@@ -134,7 +134,7 @@ test.describe('v0.6.0 管理后台', () => {
     await page.request.post('/api/auth/logout');
 
     await login(page, 'xiaozhou');
-    await clickNav(page, '后台');
+    await clickNav(page, 'CRM 设置');
     // 店员没有后台首页：进来直接到数据看板，后台里只有这一个分区
     await expect(page).toHaveURL(/\/admin\/dashboard$/);
     await expect(page.getByTestId('dashboard')).toContainText('今日净营业额');
@@ -143,7 +143,7 @@ test.describe('v0.6.0 管理后台', () => {
     await expect(page.getByTestId('admin-nav-settings')).toHaveCount(0);
     await expect(page.getByTestId('admin-nav-home')).toHaveCount(0);
     // 门店的旧地址跳到后台；没权限的页签、别的后台分区都回到数据看板
-    await page.goto('/dashboard/overview');
+    await page.goto('/crm/dashboard/overview');
     await expect(page).toHaveURL(/\/admin\/dashboard$/);
     await page.goto('/admin/settings');
     await expect(page).toHaveURL(/\/admin\/dashboard$/);

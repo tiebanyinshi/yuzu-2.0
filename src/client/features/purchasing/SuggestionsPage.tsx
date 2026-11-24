@@ -31,7 +31,7 @@ export function SuggestionsPage() {
   const can = useCan();
   const data = useSuggestions();
   const modeOps = useReplenishModeOps();
-  if (!can('inventory.read')) return <Navigate to="/" replace />;
+  if (!can('inventory.read')) return <Navigate to="/crm" replace />;
   const d = data.data;
   return (
     <>

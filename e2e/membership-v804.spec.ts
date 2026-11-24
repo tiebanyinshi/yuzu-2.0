@@ -108,7 +108,7 @@ test.describe('8.0.4 会员体系整改', () => {
     for (const n of [1, 2]) members.push((await postJson<{ id: number }>(page, '/api/members', { name: `E2E圈选${run}-${n}`, phone: phone(n), tagIds: [tag.id] })).id);
     const cash = await postJson<{ id: number }>(page, '/api/coupons/templates', { clientKey: randomUUID(), name: `E2E批量${run}`, kind: 'cash', faceValue: 1000, validity: 'days', validDays: 30 });
     // 8.0.19：批量发券在门店「会员工作台 → 发券」（从工作台右上角进）
-    await page.goto('/');
+    await page.goto('/crm');
     await page.getByTestId('workbench-coupon-issue').click();
     await expect(page).toHaveURL(/\/coupon-issue$/);
     await expect(page.getByTestId('coupon-tab-campaigns')).toHaveAttribute('aria-current', 'page');
@@ -160,7 +160,7 @@ test.describe('8.0.4 会员体系整改', () => {
         paymentMethod: 'wechat',
         paymentConfirmed: true,
       });
-      await page.goto(`/?m=${member.id}`);
+      await page.goto(`/crm?m=${member.id}`);
       await expect(page.getByTestId('member-spend-quota')).toContainText('今日储值可用 ¥7,000.00');
 
       // 记录：两块默认展开，看得到刚才的充值；查询与导出收着
@@ -184,7 +184,7 @@ test.describe('8.0.4 会员体系整改', () => {
 
   test('数据看板「营销成本」：店主看得到；对账付款（财务职责）看不到', async ({ page }) => {
     await login(page, 'linlan');
-    await page.goto('/dashboard/marketing');
+    await page.goto('/crm/dashboard/marketing');
     await expect(page.getByTestId('dashboard-tab-marketing')).toBeVisible();
     await expect(page.getByTestId('dashboard-marketing-cost')).toBeVisible();
     await expect(page.getByTestId('marketing-cost-total')).toBeVisible();
@@ -194,7 +194,7 @@ test.describe('8.0.4 会员体系整改', () => {
     await login(page, 'qianfen');
     const res = await page.request.get('/api/marketing-cost?from=2026-11-01&to=2026-11-09');
     expect(res.status()).toBe(403);
-    await page.goto('/dashboard/marketing');
+    await page.goto('/crm/dashboard/marketing');
     await expect(page.getByTestId('dashboard-marketing-cost')).toHaveCount(0);
   });
 });

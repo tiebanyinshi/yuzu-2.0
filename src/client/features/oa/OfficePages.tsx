@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, BookUser, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Fingerprint, MessagesSquare, Palmtree, ReceiptText, ScanFace, Stamp } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { shiftDate } from '@shared/labels';
 import { MY_DAY_STATUS_LABELS, MY_DAY_STATUSES, type MyDayStatus, type MySchedule, type MyScheduleItem } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
@@ -28,19 +28,7 @@ import { MyAttendancePage } from './MyAttendancePage';
 import { MyLeavePage } from './MyLeavePage';
 import { MyPayslipPages } from './MyPayslipPages';
 import { PunchPage } from './PunchPage';
-
-const TILES = [
-  { to: '/oa/im', label: '消息', hint: '同事单聊、群聊，发图片与文件', icon: MessagesSquare, testId: 'oa-tile-im' },
-  { to: '/oa/directory', label: '通讯录', hint: '按部门找同事、看资料、发消息', icon: BookUser, testId: 'oa-tile-directory' },
-  { to: '/oa/approvals', label: '审批', hint: '请假、加班、出差、报销、补卡', icon: Stamp, testId: 'oa-tile-approvals' },
-  { to: '/oa/punch', label: '打卡', hint: '按排班打上下班卡、外勤打卡', icon: Fingerprint, testId: 'oa-tile-punch' },
-  { to: '/oa/schedule', label: '我的排班', hint: '这个月每天上什么班', icon: CalendarDays, testId: 'oa-tile-schedule' },
-  { to: '/oa/attendance', label: '我的考勤', hint: '每天的考勤结果、迟到缺卡', icon: CalendarCheck, testId: 'oa-tile-attendance' },
-  { to: '/oa/leave', label: '假期余额', hint: '年假等还剩几天、发放与扣减明细', icon: Palmtree, testId: 'oa-tile-leave' },
-  { to: '/oa/payslips', label: '工资条', hint: '按月看本人的工资条、确认签收', icon: ReceiptText, testId: 'oa-tile-payslips' },
-  { to: '/oa/face', label: '人脸录入', hint: '打卡要人脸的先录入、等审核', icon: ScanFace, testId: 'oa-tile-face' },
-  { to: '/oa/notifications', label: '通知', hint: '排班变更、审批、工资条等提醒', icon: Bell, testId: 'oa-tile-notifications' },
-];
+import { useWcpNav } from './wcpNav';
 
 /** /oa 下面的几页放在一个按需加载的文件里（首屏主包有体积上限，路由表里只占一行） */
 export function OfficePage() {
@@ -81,11 +69,13 @@ function OfficeHomePage() {
   // 停在首页时也按会话列表的节奏刷新（Codex 审查 ce07d7e）
   useLivePoll(async () => void (await im.refetch()), [], { intervalMs: IM_LIST_POLL_MS });
   const unread = im.data?.unread ?? 0;
+  // WCP 设置（店主 2026-11-24，docs/BOARDS.md 第 2 节）：有人员与行政任一分区的才显示，进第一个能进的
+  const tiles = useWcpNav();
   return (
     <>
-      <PageHeader dateMode="calendar" title="办公" subtitle="排班、打卡、审批、工资条等员工自己的事" />
+      <PageHeader dateMode="calendar" title="WCP" subtitle="员工工作台：排班、打卡、审批、工资条等员工自己的事" />
       <div className="mx-auto grid w-full max-w-3xl grid-cols-2 gap-3 p-4 md:grid-cols-3 md:p-7" data-testid="oa-home">
-        {TILES.map((t) => (
+        {tiles.map((t) => (
           <Link key={t.to} to={t.to} data-testid={t.testId} className="tap relative rounded-lg border border-line bg-card p-4 shadow-card transition-colors hover:border-line-strong">
             <t.icon className="size-6 text-pine" />
             {t.to === '/oa/im' && unread > 0 && (

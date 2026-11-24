@@ -66,7 +66,7 @@ test('按钱箱交班：后台切换 → 选钱箱开班 → 别人加入、收�
     }
 
     // ② 交班页：选钱箱、登记备用金、开班
-    await page.goto('/shift');
+    await page.goto('/crm/shift');
     await page.getByTestId('shift-drawer').selectOption(k1.key);
     await page.getByTestId('shift-opening-cash').fill('200');
     await page.getByTestId('shift-start-submit').click();

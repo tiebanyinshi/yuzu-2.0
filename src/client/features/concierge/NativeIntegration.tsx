@@ -129,7 +129,7 @@ export function MemberIdentityFields({ member, initialNative }: { member?: Membe
             <Summary member={native} />
             {Number(id) !== native.id && <small>原关联已合并，现读取主会员 {native.memberNo}；原服务记录保留。</small>}
             {can('member.read') && (
-              <a href={`/?m=${native.id}`} target="_blank" rel="noreferrer">
+              <a href={`/crm?m=${native.id}`} target="_blank" rel="noreferrer">
                 查看会员工作台
               </a>
             )}

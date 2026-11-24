@@ -66,7 +66,7 @@ test.describe('v0.5.0 前台', () => {
     const slip = `E2E-${Date.now().toString(36).toUpperCase()}`;
     const base = Date.now();
 
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
     await page.getByTestId('backfill-toggle').click();
     const bar = page.getByTestId('backfill-bar');
@@ -124,7 +124,7 @@ test.describe('v0.5.0 前台', () => {
       if (mine.some((a) => a.description.startsWith('补录结账'))) checkoutDate = date;
     }
     expect(found).toBe(3);
-    await page.goto(`/settlement/${checkoutDate}`);
+    await page.goto(`/crm/settlement/${checkoutDate}`);
     await expect(page.getByText(new RegExp(`补录结账.*纸质单 ${slip}`)).first()).toBeVisible();
   });
 
@@ -132,7 +132,7 @@ test.describe('v0.5.0 前台', () => {
     await login(page, 'zhangjl');
     const tag = (await board(page)).find((t) => t.visit?.memberPhoneTail && t.visit.memberName);
     test.skip(!tag, '演示库里没有在店会员');
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await page.getByTestId('open-find-guest').click();
     const input = page.getByTestId('find-guest-input');
     await input.fill(tag!.visit!.memberPhoneTail!);
@@ -145,7 +145,7 @@ test.describe('v0.5.0 前台', () => {
   test('值班经理在前台锁牌、点锁定的牌解锁', async ({ page }) => {
     await login(page, 'zhangjl');
     const code = (await board(page)).find((t) => t.zone === 'female' && t.kind === 'normal' && t.active && !t.locked && !t.visit)!.code;
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await page.getByTestId('open-tag-lock').click();
     const dialog = page.getByRole('dialog', { name: '锁牌 / 解锁' });
     await dialog.getByTestId('tag-lock-code').fill(code);
@@ -168,7 +168,7 @@ test.describe('v0.5.0 前台', () => {
   test('会话接口一时出错不跳登录：页面与补录条里没提交的单号都还在（PR #13 P2-2）', async ({ page }) => {
     await page.clock.install();
     await login(page, 'zhangjl');
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
     await page.getByTestId('backfill-toggle').click();
     await page.getByTestId('backfill-slip').fill('KEEP-0001');
@@ -189,7 +189,7 @@ test.describe('v0.5.0 前台', () => {
     const d = (await (await page.request.get('/api/dashboard')).json()) as { inStore: { count: number; unsettled: number; ticketEstimate: number } };
     test.skip(d.inStore.count === 0, '演示库里没有在店客人');
     expect(d.inStore.ticketEstimate).toBeGreaterThan(0);
-    await page.goto('/dashboard');
+    await page.goto('/crm/dashboard');
     await expect(page.getByTestId('dashboard-instore-estimate')).toContainText('门票估算');
   });
 });

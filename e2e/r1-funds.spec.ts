@@ -37,7 +37,7 @@ async function newGuest(page: Page): Promise<string> {
 }
 
 async function openBill(page: Page, code: string) {
-  await page.goto('/frontdesk');
+  await page.goto('/crm/frontdesk');
   await expect(page.getByTestId('tag-board')).toBeVisible();
   await page.getByTestId(`tag-${code}`).click();
   await expect(page.getByTestId('bill-tag')).toHaveText(code);
@@ -132,7 +132,7 @@ test.describe('R1.2 收银', () => {
     const code = tags.find((t) => t.zone === 'male' && t.kind === 'normal' && t.active && !t.locked && !t.visit)!.code;
     const types = (await (await page.request.get('/api/frontdesk/ticket-types')).json()) as { id: number; name: string }[];
     const child = types.find((t) => t.name.startsWith('儿童免票'))!;
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
     await page.keyboard.press('F2');
     const dialog = page.getByRole('dialog', { name: '接待发牌' });

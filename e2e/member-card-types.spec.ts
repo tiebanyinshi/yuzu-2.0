@@ -37,7 +37,7 @@ const formRules = async (page: Page) => (await getJson<{ rules: { memberForm: Fo
 
 /** 会员工作台点「新建会员」，停在第 1 步（选卡类型） */
 async function openCreate(page: Page) {
-  await page.goto('/');
+  await page.goto('/crm');
   await page.getByRole('button', { name: '新建会员' }).first().click();
   const dialog = page.getByRole('dialog').filter({ hasText: '新建会员' });
   await expect(dialog.getByTestId('member-card-type-step')).toBeVisible();

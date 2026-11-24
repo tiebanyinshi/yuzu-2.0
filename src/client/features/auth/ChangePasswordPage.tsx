@@ -39,7 +39,7 @@ export function ChangePasswordPage({ forced = false }: { forced?: boolean }) {
       qc.setQueryData(qk.session, info);
       toast({ tone: 'success', title: '密码已修改', body: '其他设备上的登录已退出。' });
       // 改好以后回到门户页（店主 2026-11-24：登录后先到门户页；首次登录先改密码的也是）
-      navigate('/portal', { replace: true });
+      navigate('/', { replace: true });
     } catch (err) {
       const field = err instanceof ApiError ? (err.details?.field as string | undefined) : undefined;
       setErrors(field ? { [field]: errorMessage(err) } : { form: errorMessage(err) });

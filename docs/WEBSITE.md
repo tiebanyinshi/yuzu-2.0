@@ -45,7 +45,7 @@
 
 ## 4. 部署
 
-纯静态文件，网关服务器的 Caddy 加一个站点即可：
+完整步骤（取版本、原子切换、Caddy 站点与安全头、核对、回退、两个子域名怎么换过来）见 [`DEPLOY_WEBSITE.md`](DEPLOY_WEBSITE.md)。最简单的样子是 Caddy 加一个站点：
 
 ```
 yuzusystem.xyz, www.yuzusystem.xyz {

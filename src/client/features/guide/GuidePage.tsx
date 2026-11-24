@@ -201,7 +201,7 @@ export function GuideScreenPage() {
   }, [n, seconds, index]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') navigate('/guide');
+      if (e.key === 'Escape') navigate('/crm/guide');
       if (e.key === 'ArrowRight' && n) setIndex((i) => (i + 1) % n);
       if (e.key === 'ArrowLeft' && n) setIndex((i) => (i - 1 + n) % n);
     };
@@ -242,7 +242,7 @@ export function GuideScreenPage() {
         </button>
         <button
           type="button"
-          onClick={() => navigate('/guide')}
+          onClick={() => navigate('/crm/guide')}
           className="rounded-full p-2 text-ink-3 hover:bg-white/60"
           aria-label="退出大屏模式"
           title="退出（Esc）"

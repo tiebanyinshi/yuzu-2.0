@@ -134,7 +134,7 @@ export function WorkbenchPage() {
           <span className="flex flex-wrap items-center gap-2">
             {(can('benefit.use') || can('benefit.publish')) && (
               <Link
-                to="/parking-log"
+                to="/crm/parking-log"
                 className="flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3.5 text-[13.5px] font-bold text-ink-2 hover:border-ink-3"
                 data-testid="workbench-parking-log"
               >
@@ -144,7 +144,7 @@ export function WorkbenchPage() {
             )}
             {can('coupon.manage') && (
               <Link
-                to="/coupon-issue"
+                to="/crm/coupon-issue"
                 className="flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3.5 text-[13.5px] font-bold text-ink-2 hover:border-ink-3"
                 data-testid="workbench-coupon-issue"
               >

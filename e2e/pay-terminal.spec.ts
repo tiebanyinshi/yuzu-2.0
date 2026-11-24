@@ -37,7 +37,7 @@ test.describe('8.0.21 扫码收款', () => {
     test.skip(status.mode !== 'mock', '应用没有带 INTEGRATIONS_MOCK=true 启动（只在开发、测试实例）');
     await ensureShift(page);
 
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     const free = page.locator('[data-testid^="tag-"][data-state="free"]').first();
     const tag = ((await free.getAttribute('data-testid')) ?? '').replace(/^tag-/, '');
     const checkin = await page.request.post('/api/frontdesk/checkins', { data: { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: tag.startsWith('B') ? 'female' : 'male' }] } });
@@ -88,7 +88,7 @@ test.describe('8.0.21 扫码收款', () => {
     await page.route('**/api/pay/terminal/open', (route) =>
       route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'UNAVAILABLE', message: '服务暂时不可用' } }) }),
     );
-    await page.goto('/cashier');
+    await page.goto('/crm/cashier');
     const failed = page.getByTestId('unsettled-pay-error');
     await expect(failed).toBeVisible({ timeout: 20_000 });
     await expect(failed).toContainText('收了钱没入账的扫码收款查不到');
@@ -103,7 +103,7 @@ test.describe('8.0.21 扫码收款', () => {
     const status = (await (await page.request.get('/api/pay/terminal/status')).json()) as { mode: string };
     test.skip(status.mode !== 'mock', '应用没有带 INTEGRATIONS_MOCK=true 启动（只在开发、测试实例）');
     await ensureShift(page);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     const free = page.locator('[data-testid^="tag-"][data-state="free"]').first();
     const tag = ((await free.getAttribute('data-testid')) ?? '').replace(/^tag-/, '');
     const checkin = await page.request.post('/api/frontdesk/checkins', { data: { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: tag.startsWith('B') ? 'female' : 'male' }] } });

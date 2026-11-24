@@ -72,52 +72,52 @@ export function FrontdeskPendingBanner() {
     if (isTableOp(op.type)) {
       const s = op.sessionIds?.[0];
       if (op.type === 'table_post' && s) {
-        navigate(`/dining/order?table=${s}`);
+        navigate(`/crm/dining/order?table=${s}`);
         return;
       }
       if (op.tableId) params.set('t', String(op.tableId));
       if (s) params.set('s', String(s));
-      navigate(`/dining/tables?${params}`);
+      navigate(`/crm/dining/tables?${params}`);
       return;
     }
     // 客房的操作到房态中心处理（8.1.16 客房页并进了房态中心）：入住回到那间房的入住对话框，其余回到那张入住单
     if (isRoomOp(op.type)) {
       if (op.roomId) params.set('r', String(op.roomId));
       if (op.stayIds?.[0]) params.set('s', String(op.stayIds[0]));
-      navigate(`/room-center?${params}`);
+      navigate(`/crm/room-center?${params}`);
       return;
     }
     // 派对房等的使用单（v0.7.19）、房态中心的房间动作（8.1.16）到房态中心处理：开单、房间动作回到那间房，结束、撤单回到那张使用单
     if (isUsageOp(op.type) || isSpaceOp(op.type)) {
       if (op.spaceId) params.set('sp', String(op.spaceId));
       if (op.usageIds?.[0]) params.set('u', String(op.usageIds[0]));
-      navigate(`/room-center?${params}`);
+      navigate(`/crm/room-center?${params}`);
       return;
     }
     // 房态点单（回测整改 P08）到房态中心处理：打开那间房的点单面板
     if (op.type === 'room_order') {
       const m = /\/rooms\/([sr]\d+)\/orders$/.exec(op.url);
       if (m) params.set('rk', m[1]!);
-      navigate(`/room-center?${params}`);
+      navigate(`/crm/room-center?${params}`);
       return;
     }
     // 预约（v0.7.28）到「预约」页处理：改动回到那张预约单
     if (isBookingOp(op.type)) {
       if (op.bookingIds?.[0]) params.set('b', String(op.bookingIds[0]));
-      navigate(`/bookings?${params}`);
+      navigate(`/crm/bookings?${params}`);
       return;
     }
     // 技师停牌、复牌、休假（8.0.8）到钟房处理：打开那位技师的对话框
     if (isTechOp(op.type)) {
       if (op.technicianIds?.[0]) params.set('t', String(op.technicianIds[0]));
-      navigate(`/clockroom?${params}`);
+      navigate(`/crm/clockroom?${params}`);
       return;
     }
     // 退款单（v0.7.20）回到前台「结账记录」里的原结账单
     if (op.type === 'checkout_refund' && op.checkoutIds?.[0]) params.set('c', String(op.checkoutIds[0]));
     if (op.visitId) params.set('v', String(op.visitId));
     // 8.1.15：结账、退款单在收银台处理，发牌、挂账、换牌、转明细在发卡台
-    navigate(`${op.type === 'checkout' || op.type === 'checkout_refund' ? '/cashier' : '/frontdesk'}?${params}`);
+    navigate(`${op.type === 'checkout' || op.type === 'checkout_refund' ? '/crm/cashier' : '/crm/frontdesk'}?${params}`);
   };
   const anyTable = ops.some((op) => isTableOp(op.type));
   const anyRoom = ops.some((op) => isRoomOp(op.type) || isUsageOp(op.type) || isSpaceOp(op.type) || op.type === 'room_order');

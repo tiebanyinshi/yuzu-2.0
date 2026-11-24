@@ -174,7 +174,7 @@ function TrialsSummaryCard({ summary: t }: { summary: TrialSummary }) {
                 {list.data.rows.map((r) => (
                   <tr key={r.id}>
                     <td className="py-1.5 pr-3">
-                      <Link to={`/?m=${r.memberId}`} className="font-semibold text-ink hover:text-pine hover:underline">
+                      <Link to={`/crm?m=${r.memberId}`} className="font-semibold text-ink hover:text-pine hover:underline">
                         {r.memberName}
                       </Link>{' '}
                       <span className="num text-[12px] text-ink-4">{r.memberNo}</span>
@@ -294,7 +294,7 @@ function RetentionCard({ rules, expiring, grace }: { rules: MembershipRules; exp
               {rows.map((r) => (
                 <tr key={r.memberId}>
                   <td className="py-1.5 pr-3">
-                    <Link to={`/?m=${r.memberId}`} className="font-semibold text-ink hover:text-pine hover:underline">
+                    <Link to={`/crm?m=${r.memberId}`} className="font-semibold text-ink hover:text-pine hover:underline">
                       {r.name}
                     </Link>
                     <span className="num block text-[12px] text-ink-3">{formatPhone(r.phone)}</span>
@@ -339,7 +339,7 @@ function TodayEvents({ rules, today }: { rules: MembershipRules; today: string }
         <ul className="mt-2 divide-y divide-line/70 text-[13px]" data-testid="membership-today-events">
           {rows.slice(0, 50).map((e) => (
             <li key={e.id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 py-1.5">
-              <Link to={`/?m=${e.memberId}`} className="font-semibold text-ink hover:text-pine hover:underline">
+              <Link to={`/crm?m=${e.memberId}`} className="font-semibold text-ink hover:text-pine hover:underline">
                 {e.memberName}
               </Link>
               <span className="font-semibold text-ink-2">{GRADE_EVENT_LABELS[e.kind]}</span>

@@ -68,7 +68,7 @@ test.describe('手牌管理', () => {
       await expect(dialog).toHaveCount(0);
       await expect(page.getByTestId(`admin-tag-${first}`)).toHaveAttribute('data-service', 'repair');
 
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       const tile = page.getByTestId(`tag-${first}`);
       await expect(tile).toHaveAttribute('data-state', 'repair');
       await tile.click();
@@ -86,7 +86,7 @@ test.describe('手牌管理', () => {
         .click();
       await service2.getByTestId('tag-service-save').click();
       await expect(page.getByTestId(`admin-tag-${first}`)).toHaveAttribute('data-service', 'normal');
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       await expect(page.getByTestId(`tag-${first}`)).toHaveAttribute('data-state', 'free');
 
       // ③ 改牌号

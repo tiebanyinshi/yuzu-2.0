@@ -40,7 +40,7 @@ test.describe('8.0.19 门店的日常入口', () => {
 
   test('发券：从会员工作台进，两个页签写进地址；后台「券」只留规则、模板、统计、使用率，旧地址跳过来', async ({ page }) => {
     await login(page, 'linlan');
-    await page.goto('/');
+    await page.goto('/crm');
     await page.getByTestId('workbench-coupon-issue').click();
     await expect(page).toHaveURL(/\/coupon-issue$/);
     await expect(page.getByRole('heading', { level: 1 })).toContainText('发券');
@@ -73,11 +73,11 @@ test.describe('8.0.19 门店的日常入口', () => {
 
   test('店员（不能维护券）：工作台没有「发券」，直接打开地址回工作台；有「停车登记」，打得开', async ({ page }) => {
     await login(page, 'xiaozhou');
-    await page.goto('/');
+    await page.goto('/crm');
     await expect(page.getByRole('heading', { level: 1, name: '会员工作台' })).toBeVisible();
     await expect(page.getByTestId('workbench-coupon-issue')).toHaveCount(0);
-    await page.goto('/coupon-issue');
-    await expect(page).toHaveURL(/\/$/);
+    await page.goto('/crm/coupon-issue');
+    await expect(page).toHaveURL(/\/crm$/);
     await page.getByTestId('workbench-parking-log').click();
     await expect(page).toHaveURL(/\/parking-log$/);
     await expect(page.getByTestId('benefit-parking-log')).toBeVisible();
@@ -93,13 +93,13 @@ test.describe('8.0.19 门店的日常入口', () => {
     // 没开小程序的门店（W10）：演示会员没有绑过，这一行不显示（等读绑定的接口回来再看）
     await mockMiniProgram(page, false);
     const read = page.waitForResponse((r) => r.url().includes(`/api/admin/mp/members/${member.id}/bindings`));
-    await page.goto(`/?m=${member.id}`);
+    await page.goto(`/crm?m=${member.id}`);
     await read;
     await expect(page.getByTestId('member-cards')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('member-wechat')).toHaveCount(0);
     // 开了小程序：真的接口，没绑的写「没有绑定」
     await mockMiniProgram(page, true);
-    await page.goto(`/?m=${member.id}`);
+    await page.goto(`/crm?m=${member.id}`);
     await expect(page.getByTestId('member-wechat')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('member-wechat-none')).toContainText('没有绑定');
 
@@ -136,7 +136,7 @@ test.describe('8.0.19 门店的日常入口', () => {
     try {
       await login(clerk, 'xiaozhou');
       await clerk.route(`**/api/admin/mp/members/${member.id}/bindings`, (route) => route.fulfill({ json: [BINDING] }));
-      await clerk.goto(`/?m=${member.id}`);
+      await clerk.goto(`/crm?m=${member.id}`);
       await expect(clerk.getByTestId(`member-wechat-binding-${BINDING.id}`)).toContainText('已绑定');
       await expect(clerk.getByTestId('member-wechat-unbind')).toHaveCount(0);
     } finally {
@@ -152,7 +152,7 @@ test.describe('8.0.19 门店的日常入口', () => {
     await page.route(`**/api/admin/mp/members/${member.id}/bindings`, (route) => route.fulfill({ json: [BINDING] }));
     // 请求发出去了、回复丢了
     await page.route(`**/api/admin/mp/bindings/${BINDING.id}/unbind`, (route) => route.abort('connectionreset'));
-    await page.goto(`/?m=${member.id}`);
+    await page.goto(`/crm?m=${member.id}`);
     await page.getByTestId('member-wechat-unbind').click();
     await page.getByTestId('member-wechat-unbind-reason').fill('换微信');
     await page.getByTestId('member-wechat-unbind-submit').click();

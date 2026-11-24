@@ -44,7 +44,7 @@ async function openFreshVisit(page: Page): Promise<string> {
   const code = free[0]!.code;
   const res = await page.request.post('/api/frontdesk/checkins', { data: { clientKey: crypto.randomUUID(), guests: [{ tagCode: code, zone: 'male' }] } });
   expect(res.status()).toBe(201);
-  await page.goto('/frontdesk');
+  await page.goto('/crm/frontdesk');
   await page.getByTestId(`tag-${code}`).click();
   await expect(page.getByTestId('bill-tag')).toHaveText(code);
   return code;
@@ -138,7 +138,7 @@ test.describe('前台待确认操作与明确选牌', () => {
 
   test('接待响应丢失后重新登录：提醒仍在，查回后只开了一张牌', async ({ page }) => {
     await login(page);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     const code = (await board(page)).filter((t) => freeNormal(t, 'female')).reverse()[0]!.code;
     await page.route(
       '**/api/frontdesk/checkins',
@@ -158,7 +158,7 @@ test.describe('前台待确认操作与明确选牌', () => {
     // 退出再登录：本机记录仍在，重新打开接待时先处理原操作
     await page.request.post('/api/auth/logout');
     await login(page);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('frontdesk-pending-banner')).toContainText(code);
     await pressF2(page);
     await expect(dialog.getByTestId('pending-op')).toContainText(code);
@@ -174,7 +174,7 @@ test.describe('前台待确认操作与明确选牌', () => {
 
   test('按原内容重提被明确拒绝（牌已被其他终端发出）：先作废原编号，原请求随后到达也不生效', async ({ page }) => {
     await login(page);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     const code = (await board(page)).filter((t) => freeNormal(t, 'male')).reverse()[1]!.code;
     // 截下原请求、让浏览器以为断网，留着稍后原样送到服务器
     let original: { clientKey: string } | null = null;
@@ -211,7 +211,7 @@ test.describe('前台待确认操作与明确选牌', () => {
 
   test('末位对上多张空闲牌：不自动取第一张，必须点选', async ({ page }) => {
     await login(page);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     // 发牌框里的候选：同分区全部空闲牌（含 VIP 柜），排序与页面相同
     const free = (await board(page)).filter((t) => t.zone === 'male' && t.active && !t.locked && !t.visit);
     // 找一个末位数字对上至少两张空闲男宾牌、且没有数字完全相同空闲牌的输入

@@ -48,7 +48,7 @@ test.describe('订单查询', () => {
     const wallet = found.find((r) => r.kind === 'checkout' && r.status === 'completed' && r.tagCodes.includes('A8066'))!;
     expect(wallet, '结账演示 ②（A8066 + A8067）').toBeTruthy();
 
-    await page.goto('/ledger');
+    await page.goto('/crm/ledger');
     const tabs = page.getByTestId('ledger-tabs');
     await expect(tabs.getByRole('radio', { name: '余额流水' })).toHaveAttribute('aria-checked', 'true');
     await tabs.getByRole('radio', { name: '订单查询' }).click();
@@ -87,7 +87,7 @@ test.describe('订单查询', () => {
       bills: { tagCode: string; lines: { name: string; quantity: number }[] }[];
     };
 
-    await page.goto(`/ledger?tab=orders&oq=${wallet.docNo}`);
+    await page.goto(`/crm/ledger?tab=orders&oq=${wallet.docNo}`);
     await rowOf(page, wallet.docNo).click();
     const drawer = page.getByTestId('order-drawer');
     await expect(page.getByTestId('order-drawer-no')).toHaveText(wallet.docNo);
@@ -132,7 +132,7 @@ test.describe('订单查询', () => {
     test.skip((page.viewportSize()?.width ?? 0) < 1280, '导出与换账号在门店电脑尺寸执行一次');
     await login(page, 'linlan');
     const wallet = (await find(page, 'A8067')).find((r) => r.kind === 'checkout' && r.status === 'completed' && r.tagCodes.includes('A8066'))!;
-    await page.goto(`/ledger?tab=orders&oq=${wallet.docNo}`);
+    await page.goto(`/crm/ledger?tab=orders&oq=${wallet.docNo}`);
     await expect(rowOf(page, wallet.docNo)).toBeVisible();
     const [file] = await Promise.all([page.waitForEvent('download'), page.getByTestId('orders-export').click()]);
     const text = readFileSync((await file.path())!, 'utf8');
@@ -146,7 +146,7 @@ test.describe('订单查询', () => {
     // 店员：没有「导出流水与日结」、没有「查看历史营业日」
     await page.context().clearCookies();
     await login(page, 'chenyin');
-    await page.goto('/ledger?tab=orders&oq=A8067');
+    await page.goto('/crm/ledger?tab=orders&oq=A8067');
     await expect(page.getByTestId('orders-scope')).toContainText('当前岗位只查得到本营业日的单');
     await expect(page.getByTestId('orders-export')).toHaveCount(0);
   });

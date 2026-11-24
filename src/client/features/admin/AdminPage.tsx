@@ -6,6 +6,8 @@ import { lazyPage } from '../../lib/lazyPage';
 
 // 各分区第一次打开时再下载（v0.7.22）；门店前台用不到这些代码
 const AdminHome = lazyPage(() => import('./AdminHome').then((m) => m.AdminHome));
+// Design 首页（店主 2026-11-24，docs/BOARDS.md 第 3 节）
+const DesignHome = lazyPage(() => import('./DesignHome').then((m) => m.DesignHome));
 const AdminPage = lazyPage(() => import('./AdminShell').then((m) => m.AdminPage));
 const AuditTab = lazyPage(() => import('./AuditTab').then((m) => m.AuditTab));
 const CatalogTab = lazyPage(() => import('./CatalogTab').then((m) => m.CatalogTab));
@@ -79,6 +81,7 @@ export const adminRoutes: RouteObject[] = [
   { path: 'technicians/:tab?', element: <TechniciansSection /> },
   { path: 'dining/:tab?', element: <DiningSection /> },
   { path: 'emenu/:tab?', element: <EmenuAdminSection /> },
+  { path: 'design', element: <DesignHome /> },
   { path: 'studio', element: <StudioSection /> },
   { path: 'rooms/:tab?', element: <RoomsSection /> },
   { path: 'bookings', element: <BookingsSection /> },

@@ -60,7 +60,7 @@ export function DocDrawer({ row, onClose, onReverse }: { row: LedgerRow | null; 
       <div className="scroll-thin flex-1 space-y-4 overflow-y-auto p-5">
         <div className="rounded-lg border border-line bg-card px-4 py-1">
           <SummaryRow label="会员">
-            <Link to={`/?m=${row.memberId}`} className="inline-flex items-center gap-1 text-pine hover:underline">
+            <Link to={`/crm?m=${row.memberId}`} className="inline-flex items-center gap-1 text-pine hover:underline">
               {row.memberName} <ArrowUpRight className="size-3.5" />
             </Link>
           </SummaryRow>

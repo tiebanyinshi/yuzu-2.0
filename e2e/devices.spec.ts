@@ -125,7 +125,7 @@ test.describe('设备', () => {
         hostDeviceCode: terminal,
         bridgeKey: 'rc300',
       });
-      await page.goto('/devices');
+      await page.goto('/crm/devices');
       const panel = page.getByTestId('terminal-panel');
       await panel.getByTestId('terminal-bridge-url').fill(bridge.url);
       await panel.getByTestId('terminal-bridge-connect').click();
@@ -165,7 +165,7 @@ test.describe('设备', () => {
         ((await (await page.request.get('/api/devices/events?type=card&limit=50')).json()) as { deviceCode: string; data: { value: string } }[]).filter((e) => e.data.value === value);
       const second = await page.context().newPage();
       try {
-        await second.goto('/devices');
+        await second.goto('/crm/devices');
         const panel2 = second.getByTestId('terminal-panel');
         await expect(panel2.getByTestId('terminal-bridge-state')).toContainText('设备服务已连上');
         await expect.poll(() => bridge.clients()).toBe(2);
@@ -259,7 +259,7 @@ test.describe('设备', () => {
 
   test('设备页各尺寸不横向溢出', async ({ page }) => {
     await login(page);
-    await page.goto('/devices');
+    await page.goto('/crm/devices');
     await expect(page.getByTestId('devices-page')).toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);

@@ -144,7 +144,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
     const busy = await checkin(page.request, c!.code);
     const created: number[] = [busy];
     try {
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       await openCheckin(page);
       // 读卡器状态：浏览器用例里没有本机设备服务，写着没连上、请手输
       await expect(page.getByTestId('reader-status')).toContainText('读卡器没连上');
@@ -218,7 +218,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
   test('断网后自动核对：发牌请求没到服务器，网络恢复后按原编号重提一次，只发一次', async ({ page, context }) => {
     await login(page, 'xiaozhou');
     const [t] = await freeTags(page.request);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await openCheckin(page);
     await page.getByTestId('guest-row-0').getByLabel('第 1 位牌号').fill(t!.code);
     // 第一次发牌：请求没到服务器、连接断了（结果待确认）
@@ -252,7 +252,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
     const name = `黑名单用例${String(Date.now()).slice(-5)}`;
     const m = await newMember(page.request, name);
     // 会员详情里只多了这一处入口
-    await page.goto(`/?m=${m.id}`);
+    await page.goto(`/crm?m=${m.id}`);
     const card = page.getByTestId('member-blacklist');
     await expect(card).toHaveAttribute('data-listed', 'false');
     await card.getByTestId('member-blacklist-add').click();
@@ -264,7 +264,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
 
     // 接待发牌选这位：写明不能发，确认发牌点不了；绕过页面直接调接口也被拒绝
     const [t] = await freeTags(page.request);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await openCheckin(page);
     await page.getByRole('radio', { name: '会员' }).click();
     await page.getByLabel('查找会员').fill(name);
@@ -293,7 +293,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
     await expect(page.getByTestId('blacklist-list').locator('li').filter({ hasText: name })).toContainText('已解除');
 
     // 解除以后照常发牌
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await openCheckin(page);
     await page.getByRole('radio', { name: '会员' }).click();
     await page.getByLabel('查找会员').fill(name);
@@ -316,7 +316,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
     const todosBefore = (await board(page.request)).risk.openTodos;
 
     // 客人卡 → 异常处置 → 未结离店
-    await page.goto(`/frontdesk?v=${first}`);
+    await page.goto(`/crm/frontdesk?v=${first}`);
     await expect(page.getByTestId('bill-tag')).toHaveText(t1!.code);
     await page.getByTestId('action-incident').click();
     await page.getByTestId('incident-action-unsettled').click();
@@ -339,7 +339,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
 
     // 这张牌撤掉以后（客人走了），这位会员再来：发牌要当场授权
     await cleanup(page.request, first);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await openCheckin(page);
     await page.getByRole('radio', { name: '会员' }).click();
     await page.getByLabel('查找会员').fill(name);
@@ -377,7 +377,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
     const [t] = await freeTags(page.request);
     const visitId = await checkin(page.request, t!.code);
     try {
-      await page.goto(`/frontdesk?v=${visitId}`);
+      await page.goto(`/crm/frontdesk?v=${visitId}`);
       await expect(page.getByTestId('bill-tag')).toHaveText(t!.code);
       await expect(page.getByTestId('bill-incidents')).toContainText('没有异常记录');
       const open = async (action: string) => {
@@ -471,7 +471,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
     const c = (await freeTags(page.request))[0];
     const fresh = await checkin(page.request, c!.code);
     try {
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       await expect(page.getByTestId(`tag-${a!.code}-overstay`)).toHaveText('超 12 小时');
       await expect(page.getByTestId(`tag-${a!.code}-overstay`)).toHaveAttribute('data-tone', 'yuzu');
       await expect(page.getByTestId(`tag-${b!.code}-overstay`)).toHaveText('超 24 小时');
@@ -483,7 +483,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
       await expect(page.getByTestId('bill-overstay')).toHaveText('超 24 小时');
 
       // 收银台的待结账清单一样；「超 12 小时」的筛选只留超时的
-      await page.goto('/cashier');
+      await page.goto('/crm/cashier');
       await expect(page.getByTestId(`queue-${a!.code}-overstay`)).toHaveText('超 12 小时');
       await expect(page.getByTestId(`queue-${b!.code}-overstay`)).toHaveText('超 24 小时');
       await page.getByRole('radio', { name: '超 12 小时' }).click();
@@ -542,7 +542,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
       };
       try {
         // 接待发牌：读卡器状态那一行、风控提示都在；确认发牌在屏幕里
-        await page.goto('/frontdesk');
+        await page.goto('/crm/frontdesk');
         await expect(page.getByTestId('tag-board')).toBeVisible();
         await page.getByTestId('open-checkin').click();
         await expect(page.getByTestId('reader-line')).toBeVisible();
@@ -559,7 +559,7 @@ test.describe('发卡台 · NFC 发牌、发牌前风控、异常处置', () => 
         await page.keyboard.press('Escape');
 
         // 客人卡 → 异常处置：六个处置方式、提交按钮
-        await page.goto(`/frontdesk?v=${visitId}`);
+        await page.goto(`/crm/frontdesk?v=${visitId}`);
         await expect(page.getByTestId('bill-tag')).toHaveText(t!.code);
         await expectFits(page);
         await page.getByTestId('action-incident').click();

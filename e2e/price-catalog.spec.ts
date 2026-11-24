@@ -246,7 +246,7 @@ test.describe('价目表录入 第四批：前台试算与对接收银项目', (
     }
 
     // 收银台试算：spa房用 150 分钟（399 + 超时 1 × 199）+ 古法中式资深价 599 + 门票 12H 不含餐 499
-    await page.goto('/cashier');
+    await page.goto('/crm/cashier');
     await page.getByTestId('open-price-trial').click();
     const trial = page.getByTestId('price-trial');
     for (const q of ['spa房', '古法中式', '12H 不含餐']) {

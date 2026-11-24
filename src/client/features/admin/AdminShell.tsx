@@ -26,6 +26,7 @@ import {
   Layers,
   LayoutDashboard,
   LayoutGrid,
+  Palette,
   PenTool,
   ListChecks,
   Map as MapIcon,
@@ -43,7 +44,7 @@ import {
   type LucideIcon,
   Store,
 } from 'lucide-react';
-import { ADMIN_GROUPS, ADMIN_SECTION_MODULES, ADMIN_SECTIONS, ADMIN_STANDALONE_SECTIONS, type AdminSection } from '@shared/admin';
+import { ADMIN_BOARDS, ADMIN_GROUPS, ADMIN_SECTION_MODULES, ADMIN_SECTIONS, adminSectionOfPath, boardOfSection, visibleAdminSections, type AdminSection } from '@shared/admin';
 import { ERP_MODULES, ERP_SETTINGS_PATH } from '@shared/erp';
 import { versionText } from '@shared/instance';
 import { ROLE_LABELS } from '@shared/labels';
@@ -70,6 +71,7 @@ const ICONS: Record<AdminSection, LucideIcon> = {
   technicians: HandHeart,
   dining: UtensilsCrossed,
   emenu: BookOpenText,
+  design: Palette,
   studio: PenTool,
   rooms: BedDouble,
   bookings: CalendarClock,
@@ -95,14 +97,7 @@ const ICONS: Record<AdminSection, LucideIcon> = {
 export function useAdminSections() {
   const can = useCan();
   const session = useSession();
-  const all = (Object.keys(ADMIN_SECTIONS) as AdminSection[])
-    .filter((k) => ADMIN_SECTIONS[k].perms.some((p) => can(p)))
-    // 跟着 ERP 模块开关走的分区（员工食堂、安保巡场，8.0.18）：关着时只有能去开的人还看得到
-    .filter((k) => {
-      const module = ADMIN_SECTION_MODULES[k];
-      return !module || session.erpModules.includes(module) || can('settings.manage');
-    });
-  return all.includes('home') ? all : all.filter((k) => ADMIN_STANDALONE_SECTIONS.includes(k));
+  return visibleAdminSections(can, session.erpModules);
 }
 
 export function AdminShell() {
@@ -112,17 +107,21 @@ export function AdminShell() {
   // 动效（8.0.16）：导航里当前分区的底块滑过去（宽屏的侧栏与窄屏的横排各一块）
   const sidePill = useSlidingIndicator<HTMLElement>('.nav-on', `${location.pathname}|${sections.length}`, 140);
   const tabPill = useSlidingIndicator<HTMLElement>('.nav-on', `${location.pathname}|${sections.length}`, 140);
+  // 四个板块（店主 2026-11-24，docs/BOARDS.md 第 2 节）：现在这一页归哪个板块，侧栏只列这个板块的分区、顶上写板块名、「返回」回这个板块
+  const board = ADMIN_BOARDS[boardOfSection(adminSectionOfPath(location.pathname))];
   useEffect(() => {
-    document.title = `管理后台 · ${session.storeName}`;
+    document.title = `${board.title} · ${session.storeName}`;
     return () => {
       document.title = session.storeName;
     };
-  }, [session.storeName]);
-  if (sections.length === 0) return <Navigate to="/" replace />;
+  }, [board.title, session.storeName]);
+  if (sections.length === 0) return <Navigate to="/crm" replace />;
   // 没有后台首页的（只有看板、员工食堂或安保巡场的权限）：进来直接到自己的第一个分区
   if (!sections.includes('home') && location.pathname.replace(/\/+$/, '') === ADMIN_SECTIONS.home.path) return <Navigate to={ADMIN_SECTIONS[sections[0]!].path} replace />;
 
-  const groups = ADMIN_GROUPS.map((g) => ({ ...g, items: g.items.filter((k) => sections.includes(k)) })).filter((g) => g.items.length > 0);
+  const groups = ADMIN_GROUPS.filter((g) => ADMIN_BOARDS[g.board] === board)
+    .map((g) => ({ ...g, items: g.items.filter((k) => sections.includes(k)) }))
+    .filter((g) => g.items.length > 0);
   const link = (k: AdminSection, compact: boolean) => {
     const Icon = ICONS[k];
     const pill = compact ? tabPill : sidePill;
@@ -130,7 +129,7 @@ export function AdminShell() {
       <NavLink
         key={k}
         to={ADMIN_SECTIONS[k].path}
-        end={k === 'home'}
+        end={k === 'home' || k === 'design'}
         data-testid={compact ? `admin-tab-${k}` : `admin-nav-${k}`}
         className={({ isActive }) =>
           cn(
@@ -153,7 +152,8 @@ export function AdminShell() {
         <LogoMark className="size-8 rounded-[10px] ring-1 ring-white/10" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[15px] leading-tight font-bold">
-            管理后台<span className="hidden font-semibold text-paper/60 sm:inline"> · {session.storeName}</span>
+            <span data-testid="admin-board">{board.title}</span>
+            <span className="hidden font-semibold text-paper/60 sm:inline"> · {session.storeName}</span>
           </p>
           {/* 实例标识与「版本 + SHA」常显（窄屏也显示） */}
           <p className="mt-0.5 flex min-w-0 items-center gap-1.5" data-testid="admin-instance" title={versionText(session.version, session.commit)}>
@@ -165,12 +165,18 @@ export function AdminShell() {
           {session.staff.displayName} · {ROLE_LABELS[session.staff.role]}
         </span>
         <ThemeToggleButton className="size-9" />
-        {/* 返回门户（店主 2026-11-24，docs/PORTAL.md）：回到四大板块切换系统 */}
+        {/* 返回门户（店主 2026-11-24，docs/PORTAL.md）：回到四大板块切换系统；右边「返回」回这个板块自己的页面（Design 没有，只回门户） */}
         <PortalBackButton />
-        <NavLink to="/" className="tap relative flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3.5 text-[13px] font-semibold text-paper hover:bg-white/18" data-testid="admin-exit">
-          <ArrowLeft className="size-4" />
-          返回前台
-        </NavLink>
+        {board.back && (
+          <NavLink
+            to={board.back.to}
+            className="tap relative flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3.5 text-[13px] font-semibold text-paper hover:bg-white/18"
+            data-testid="admin-exit"
+          >
+            <ArrowLeft className="size-4" />
+            {board.back.label}
+          </NavLink>
+        )}
       </header>
       {/* 窄屏：分区横排在顶部，可横向滑动 */}
       <nav ref={tabPill.ref} aria-label="后台分区" className="relative flex shrink-0 gap-1.5 overflow-x-auto border-b border-line bg-card px-3 py-2 lg:hidden">

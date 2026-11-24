@@ -155,7 +155,7 @@ test.describe('前台流程', () => {
       const ctx = await b.newContext();
       const page = await ctx.newPage();
       await login(page, 'xiaozhou');
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       return page;
     };
     const [p1, p2] = [await open(browser), await open(browser)];
@@ -180,7 +180,7 @@ test.describe('前台流程', () => {
 
   test('从状态板点空闲男宾牌：分区跟着手牌固定为男宾，不给女宾选；清掉牌号才能改分区（门店同事反馈）', async ({ page }) => {
     await login(page, 'xiaozhou');
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     const [tag] = await freeTags(page, 'male');
     await page.getByTestId(`tag-${tag}`).click();
     const dialog = page.getByRole('dialog', { name: '接待发牌' });
@@ -203,7 +203,7 @@ test.describe('VIP 柜与丢牌', () => {
     const owner = await asOwner(playwright, baseURL);
     try {
       await login(page, 'xiaozhou');
-      await page.goto('/frontdesk');
+      await page.goto('/crm/frontdesk');
       const vip = (await boardTags(page)).find((t) => t.zone === 'male' && t.kind === 'vip' && t.vipLevel === 1 && t.active && !t.locked && !t.visit)!;
       const [normal] = await freeTags(page, 'male');
 
@@ -266,7 +266,7 @@ test.describe('VIP 柜与丢牌', () => {
 test.describe('前台布局', () => {
   test('双栏工作台：手牌矩阵 + 小票，金额与按钮不截断、无横向滚动', async ({ page, viewport }) => {
     await login(page, 'linlan');
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
     // 演示数据：A8062 王先生未结 ¥172；A8090 丢失已锁定；一家三口 A8075 / A6010 / A8076
     await expect(page.getByTestId('tag-A8062')).toContainText('172');
@@ -292,7 +292,7 @@ test.describe('前台布局', () => {
 
   test('结账对话框：储值只能用本次结账客人里的会员（不再搜索其他会员）；登记现金后无横向滚动', async ({ page }) => {
     await login(page, 'linlan');
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
     // A8062 是散客：没有可用的会员储值，提示把同行朋友合并到同一张结账单（只看不提交）
     await page.getByTestId('tag-A8062').click();

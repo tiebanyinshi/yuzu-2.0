@@ -13,7 +13,7 @@ import { CampaignsCard } from '../admin/CampaignsCard';
 import { BatchesCard } from '../admin/CouponsSection';
 import { useInvalidateCoupons } from './queries';
 
-export const COUPON_ISSUE_PATH = '/coupon-issue';
+export const COUPON_ISSUE_PATH = '/crm/coupon-issue';
 
 // 标识沿用后台原来那两个页签的（自动化用例按它们找）
 const TABS: readonly SubTab[] = [
@@ -27,14 +27,14 @@ const PENDING_TYPES = ['coupon_campaign', 'coupon_batch', 'coupon_issue'] as con
 export function CouponIssuePage() {
   const can = useCan();
   const invalidate = useInvalidateCoupons();
-  if (!can('coupon.manage')) return <Navigate to="/" replace />;
+  if (!can('coupon.manage')) return <Navigate to="/crm" replace />;
   return (
     <>
       <PageHeader
         dateMode="calendar"
         title={
           <span className="flex items-center gap-2.5">
-            <Link to="/" className="tap relative -ml-1 flex size-8 items-center justify-center rounded-md text-ink-3 hover:bg-paper-2 hover:text-ink" aria-label="返回会员工作台">
+            <Link to="/crm" className="tap relative -ml-1 flex size-8 items-center justify-center rounded-md text-ink-3 hover:bg-paper-2 hover:text-ink" aria-label="返回会员工作台">
               <ArrowLeft className="size-[18px]" />
             </Link>
             发券

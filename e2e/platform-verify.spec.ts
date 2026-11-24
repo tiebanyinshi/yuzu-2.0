@@ -34,7 +34,7 @@ test.describe('8.0.21 平台验券', () => {
     const cur = (await (await page.request.get('/api/shifts/current')).json()) as { shift: unknown };
     if (!cur.shift) expect((await page.request.post('/api/shifts', { data: { openingCash: 0 } })).ok()).toBe(true);
 
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     const free = page.locator('[data-testid^="tag-"][data-state="free"]').first();
     const tag = ((await free.getAttribute('data-testid')) ?? '').replace(/^tag-/, '');
     const checkin = await page.request.post('/api/frontdesk/checkins', { data: { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: tag.startsWith('B') ? 'female' : 'male' }] } });
@@ -70,7 +70,7 @@ test.describe('8.0.21 平台验券', () => {
     await expect(page.getByText('已撤销核销')).toBeVisible();
 
     // 验券对账
-    await page.goto('/platform');
+    await page.goto('/crm/platform');
     await page.getByRole('radio', { name: '验券对账' }).click();
     await page.getByTestId('voucher-recon-run').click();
     await expect(page.getByText(/对完了：\d+ 处差异/)).toBeVisible();
@@ -84,7 +84,7 @@ test.describe('8.0.21 平台验券', () => {
     test.skip(status.mode !== 'mock', '应用没有带 INTEGRATIONS_MOCK=true 启动（只在开发、测试实例）');
     const cur = (await (await page.request.get('/api/shifts/current')).json()) as { shift: unknown };
     if (!cur.shift) expect((await page.request.post('/api/shifts', { data: { openingCash: 0 } })).ok()).toBe(true);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     const free = page.locator('[data-testid^="tag-"][data-state="free"]').first();
     const tag = ((await free.getAttribute('data-testid')) ?? '').replace(/^tag-/, '');
     const checkin = await page.request.post('/api/frontdesk/checkins', { data: { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: tag.startsWith('B') ? 'female' : 'male' }] } });
@@ -92,7 +92,7 @@ test.describe('8.0.21 平台验券', () => {
     const code = `E2EV${stamp}3003`;
     // 8.1.15：结账在收银台，从待结账清单点这张手牌
     const openVerify = async () => {
-      await page.goto('/cashier');
+      await page.goto('/crm/cashier');
       await page.getByTestId(`queue-${tag}`).click();
       await page.getByTestId('bill-panel').getByTestId('action-checkout').click();
       await page.getByTestId('pay-add-coupon').click();
@@ -136,7 +136,7 @@ test.describe('8.0.21 平台验券', () => {
     await page.route('**/api/platform/verifications/open', (route) =>
       route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'UNAVAILABLE', message: '服务暂时不可用' } }) }),
     );
-    await page.goto('/cashier');
+    await page.goto('/crm/cashier');
     const failed = page.getByTestId('unused-vouchers-error');
     await expect(failed).toBeVisible({ timeout: 20_000 });
     await expect(failed).toContainText('验过没结账的团购券查不到');
@@ -153,7 +153,7 @@ test.describe('8.0.21 平台验券', () => {
     await page.route('**/api/platform/recon?*', (route) =>
       route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'UNAVAILABLE', message: '服务暂时不可用' } }) }),
     );
-    await page.goto('/platform');
+    await page.goto('/crm/platform');
     await page.getByRole('radio', { name: '验券对账' }).click();
     const failed = page.getByTestId('voucher-recon-error');
     await expect(failed).toBeVisible({ timeout: 20_000 });
@@ -169,7 +169,7 @@ test.describe('8.0.21 平台验券', () => {
     test.skip(status.mode !== 'mock', '应用没有带 INTEGRATIONS_MOCK=true 启动（只在开发、测试实例）');
     const cur = (await (await page.request.get('/api/shifts/current')).json()) as { shift: unknown };
     if (!cur.shift) expect((await page.request.post('/api/shifts', { data: { openingCash: 0 } })).ok()).toBe(true);
-    await page.goto('/frontdesk');
+    await page.goto('/crm/frontdesk');
     const free = page.locator('[data-testid^="tag-"][data-state="free"]').first();
     const tag = ((await free.getAttribute('data-testid')) ?? '').replace(/^tag-/, '');
     const checkin = await page.request.post('/api/frontdesk/checkins', { data: { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: tag.startsWith('B') ? 'female' : 'male' }] } });

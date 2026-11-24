@@ -31,7 +31,7 @@ export function OrderedPage() {
   const [state, setState] = useState<StateFilter>('open');
   const filters = { from: range.from, to: range.to, supplierId: supplierId || undefined, state };
   const list = useOrderedLines(filters, range.from <= range.to);
-  if (!can('inventory.read')) return <Navigate to="/" replace />;
+  if (!can('inventory.read')) return <Navigate to="/crm" replace />;
   const lines = list.data?.lines ?? [];
 
   return (

@@ -44,7 +44,7 @@ export function resolveTheme(choice: ThemeChoice, prefersDark: boolean): Theme {
 }
 
 /** 一律浅色的页面：对客的（平板电子菜单、导览大屏、扫码打开的页面）、要出纸的（打印）、工作台（画布要和对客看到的一样）、登录页 */
-const LIGHT_ONLY = ['/login', '/print', '/emenu', '/guide', '/studio', '/studio-preview', '/r', '/s'];
+const LIGHT_ONLY = ['/login', '/print', '/emenu', '/guide', '/crm/guide', '/studio', '/studio-preview', '/r', '/s'];
 
 export function themeLocked(pathname: string): boolean {
   return LIGHT_ONLY.some((p) => pathname === p || pathname.startsWith(`${p}/`));

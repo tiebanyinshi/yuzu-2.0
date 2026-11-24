@@ -82,7 +82,7 @@ test.describe('退储值：门店系统原路退回', () => {
       // ② 店员退储值：线上充值那一行默认「门店系统原路退回」，不用填退款单号
       await login(page, 'xiaozhou');
       await ensureShift(page);
-      await page.goto(`/?m=${member.id}`);
+      await page.goto(`/crm?m=${member.id}`);
       const card = page.getByTestId('member-account');
       await expect(card).toContainText('没有退过储值');
       await card.getByTestId('member-refund-open').click();

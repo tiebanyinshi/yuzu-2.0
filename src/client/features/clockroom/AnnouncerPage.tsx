@@ -52,8 +52,8 @@ export function AnnouncerPage() {
         .sort((a, b) => (a.busy?.status === 'waiting' ? 0 : 1) - (b.busy?.status === 'waiting' ? 0 : 1) || (a.position ?? 999) - (b.position ?? 999)),
     [d],
   );
-  if (!session.technicians) return <Navigate to="/" replace />;
-  if (!can('technician.announce') && !can('technician.dispatch')) return <Navigate to="/" replace />;
+  if (!session.technicians) return <Navigate to="/crm" replace />;
+  if (!can('technician.announce') && !can('technician.dispatch')) return <Navigate to="/crm" replace />;
 
   const call = async (t: BoardTechnician) => {
     setBusy(t.id);
@@ -156,7 +156,7 @@ export function AnnouncerPage() {
               {can('technician.dispatch') && (
                 <p className="text-[12.5px] text-ink-3">
                   派钟、上钟、下钟在{' '}
-                  <Link to="/clockroom" className="font-semibold text-lake hover:underline">
+                  <Link to="/crm/clockroom" className="font-semibold text-lake hover:underline">
                     钟房
                   </Link>
                   ；两边是同一份排位。
