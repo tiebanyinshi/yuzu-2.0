@@ -25,8 +25,7 @@ import {
   PATROL_VIAS,
   parsePatrolToken,
   patrolRoundAt,
-  patrolRoundMinutesOn,
-  patrolRoundsOf,
+  patrolDayRounds,
   type PatrolApp,
   type PatrolCheckinResult,
   type PatrolCheckinRow,
@@ -72,11 +71,11 @@ export async function patrolDateOf(db: Db, config: AppConfig, at: Date): Promise
 }
 
 /** 某个营业日的各轮（按这一天的巡场间隔，XC13） */
-async function roundsOn(db: Db, config: AppConfig, date: string, settings?: PatrolSettings): Promise<{ minutes: number; rounds: PatrolRoundSpan[] }> {
+async function roundsOn(db: Db, config: AppConfig, date: string, settings?: PatrolSettings): Promise<ReturnType<typeof patrolDayRounds>> {
   const s = settings ?? (await loadPatrolSettings(db));
   const { businessDayStartHour } = await loadSettings(db);
-  const minutes = patrolRoundMinutesOn(s.roundChanges, date);
-  return { minutes, rounds: patrolRoundsOf(date, config.timezone, businessDayStartHour, minutes) };
+  // 巡查起始时间（XC17、XC18）：这一天改过起始时间的，改之前的轮照旧、之后按新的排
+  return patrolDayRounds(s.roundChanges, date, config.timezone, businessDayStartHour);
 }
 
 // ───────────────────────── 设置（XC1、XC2） ─────────────────────────
@@ -86,11 +85,19 @@ const idList = (x: unknown) => (Array.isArray(x) ? [...new Set(x.filter((n): n i
 const validRoundMinutes = (n: unknown): n is number =>
   typeof n === 'number' && Number.isInteger(n) && n >= PATROL_ROUND_MIN_MINUTES && n <= PATROL_ROUND_MAX_MINUTES && n % PATROL_ROUND_STEP_MINUTES === 0;
 
+const validStartHour = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 23;
+
 const roundChangeList = (x: unknown): PatrolRoundChange[] =>
   (Array.isArray(x) ? x : [])
     .filter((c): c is PatrolRoundChange => !!c && typeof c === 'object' && typeof c.from === 'string' && ISO_DATE.test(c.from) && validRoundMinutes(c.minutes))
-    .map((c) => ({ from: c.from, minutes: c.minutes }))
-    .sort((a, b) => a.from.localeCompare(b.from));
+    .map((c) => ({
+      from: c.from,
+      minutes: c.minutes,
+      // 起始时间（XC17）、改起始时间的时刻（XC18）：旧记录没有这两项，照原来
+      ...(validStartHour(c.startHour) ? { startHour: c.startHour } : {}),
+      ...(typeof c.at === 'string' && !Number.isNaN(Date.parse(c.at)) ? { at: c.at } : {}),
+    }))
+    .sort((a, b) => a.from.localeCompare(b.from) || (a.at ?? '').localeCompare(b.at ?? ''));
 
 /** 最多留这么多条巡场间隔的改动（够看一年多以前的） */
 const MAX_ROUND_CHANGES = 400;
@@ -103,6 +110,7 @@ export async function loadPatrolSettings(db: Db): Promise<PatrolSettings> {
     departmentIds: idList(v.departmentIds),
     viewerIds: idList(v.viewerIds),
     roundMinutes: roundChanges.at(-1)?.minutes ?? PATROL_ROUND_DEFAULT_MINUTES,
+    startHour: roundChanges.at(-1)?.startHour ?? null,
     roundChanges,
     rev: typeof v.rev === 'number' ? v.rev : 0,
   };
@@ -119,6 +127,8 @@ const SettingsInput = z.object({
     .max(PATROL_ROUND_MAX_MINUTES, '巡场间隔最长 24 小时')
     .refine((n) => n % PATROL_ROUND_STEP_MINUTES === 0, '巡场间隔按半小时调')
     .optional(),
+  /** 巡查起始时间（XC17）：整点 0–23，null 是不设（照原来从营业日切换时间起）；不传就不改 */
+  startHour: z.number('巡查起始时间要是整点').int('巡查起始时间只能选整点').min(0, '巡查起始时间是 00:00–23:00 的整点').max(23, '巡查起始时间是 00:00–23:00 的整点').nullable().optional(),
   /** 打开时看到的版本：别人刚改过就拒绝，不把别人的修改盖掉 */
   rev: z.number('缺少版本号，请刷新').int().min(0),
 });
@@ -143,11 +153,28 @@ export async function savePatrolSettings(sql: Sql, config: AppConfig, raw: unkno
         if (rows.length !== viewerIds.length) throw badRequest('选的员工有不存在的，请刷新');
       }
       let roundChanges = before.roundChanges;
-      if (input.roundMinutes !== undefined && input.roundMinutes !== before.roundMinutes) {
+      const minutes = input.roundMinutes ?? before.roundMinutes;
+      const startHour = input.startHour === undefined ? before.startHour : input.startHour;
+      if (startHour !== before.startHour) {
+        // 改了起始时间（XC18）：只影响之后的轮——这一刻以前开始的轮照旧、正在巡的这一轮到新起点算出的下一个整点为止；同一天先前的改动都留着
+        const now = new Date();
+        const today = await patrolDateOf(tx, config, now);
+        const change: PatrolRoundChange = { from: today, minutes, ...(startHour !== null ? { startHour } : {}), at: now.toISOString() };
+        roundChanges = [...before.roundChanges, change].slice(-MAX_ROUND_CHANGES);
+      } else if (minutes !== before.roundMinutes) {
+        // 只改间隔：照原来，从今天（营业日）起整天按新的间隔分（XC15），起始时间带着
         const today = await patrolDateOf(tx, config, new Date());
-        roundChanges = [...before.roundChanges.filter((c) => c.from < today), { from: today, minutes: input.roundMinutes }].slice(-MAX_ROUND_CHANGES);
+        const change: PatrolRoundChange = { from: today, minutes, ...(startHour !== null ? { startHour } : {}) };
+        roundChanges = [...before.roundChanges.filter((c) => c.from < today), change].slice(-MAX_ROUND_CHANGES);
       }
-      return { departmentIds, viewerIds, roundMinutes: roundChanges.at(-1)?.minutes ?? PATROL_ROUND_DEFAULT_MINUTES, roundChanges, rev: before.rev + 1 };
+      return {
+        departmentIds,
+        viewerIds,
+        roundMinutes: roundChanges.at(-1)?.minutes ?? PATROL_ROUND_DEFAULT_MINUTES,
+        startHour: roundChanges.at(-1)?.startHour ?? null,
+        roundChanges,
+        rev: before.rev + 1,
+      };
     },
     ctx,
   );
@@ -162,7 +189,8 @@ export async function patrolSettingsAdmin(db: Db): Promise<PatrolSettingsAdmin> 
   const [count] = s.departmentIds.length ? await db<{ n: number }[]>`SELECT count(*)::int AS n FROM canteen_employees WHERE active AND department_id IN ${db(s.departmentIds)}` : [{ n: 0 }];
   const [meta] = await db<{ updatedAt: string | null; updatedBy: string | null }[]>`
     SELECT s.updated_at, st.display_name AS updated_by FROM settings s LEFT JOIN staff st ON st.id = s.updated_by WHERE s.key = 'patrol'`;
-  return { ...s, departments, employees, patrolStaffCount: count!.n, updatedAt: meta?.updatedAt ?? null, updatedBy: meta?.updatedBy ?? null };
+  const { businessDayStartHour } = await loadSettings(db);
+  return { ...s, departments, employees, patrolStaffCount: count!.n, businessDayStartHour, updatedAt: meta?.updatedAt ?? null, updatedBy: meta?.updatedBy ?? null };
 }
 
 // ───────────────────────── 谁能用（员工端） ─────────────────────────
@@ -411,7 +439,7 @@ export async function recordPatrolCheckin(deps: { sql: Sql; config: AppConfig },
   if (atMs < nowMs - PATROL_MAX_LATE_HOURS * 60 * MINUTE) throw unprocessable('SCAN_TOO_OLD', `这一笔是 ${PATROL_MAX_LATE_HOURS} 小时以前扫的，太久了，不能补交`);
   const settings = await loadPatrolSettings(sql);
   const date = await patrolDateOf(sql, config, new Date(atMs));
-  const { minutes, rounds } = await roundsOn(sql, config, date, settings);
+  const { rounds, minutesOf } = await roundsOn(sql, config, date, settings);
   const round = patrolRoundAt(rounds, new Date(atMs));
   if (!round) throw unprocessable('PATROL_ROUND_UNKNOWN', '算不出这一笔在第几轮，请刷新后再扫');
 
@@ -448,7 +476,7 @@ export async function recordPatrolCheckin(deps: { sql: Sql; config: AppConfig },
         await sp`
           INSERT INTO patrol_checkins (point_id, point_name, employee_id, emp_no, employee_name, department_name, business_date, scanned_at, via, client_key, round_start, round_minutes)
           VALUES (${p.id}, ${point.name}, ${e.id}, ${e.empNo}, ${e.name}, ${e.department}, ${date}, ${new Date(atMs)}, ${input.via}, ${input.clientKey},
-                  ${new Date(round.start)}, ${minutes})`;
+                  ${new Date(round.start)}, ${minutesOf(round)})`;
       });
     } catch (error) {
       // 同一轮的判断在锁里，这里只是兜底（巡场间隔刚好在这一刻改了）：请再扫一次，按新的间隔再判断

@@ -22,6 +22,9 @@ import {
   type PatrolPointsAdmin,
   type PatrolRecords,
   type PatrolRound,
+  PATROL_START_HOURS,
+  patrolRoundPreview,
+  patrolStartHourText,
   type PatrolScan,
   type PatrolSettingsAdmin,
 } from '@shared/patrol';
@@ -603,7 +606,7 @@ function SettingsTab() {
   const s = useQuery({ queryKey: [...KEY, 'settings'], queryFn: () => api.get<PatrolSettingsAdmin>('/api/erp/patrol/settings') });
   // 改动中的设置：第一次勾选时记下当时的两份名单与版本号，保存交的就是这个版本号——页面在后台重新取数（切回窗口时）
   // 不会把别人刚保存的版本号换进来，后保存的照样被拒，不会悄悄盖掉别人的修改（Codex 审查 41a2fbb，P1）
-  const [draft, setDraft] = useState<{ departmentIds: number[]; viewerIds: number[]; roundMinutes: number; rev: number } | null>(null);
+  const [draft, setDraft] = useState<{ departmentIds: number[]; viewerIds: number[]; roundMinutes: number; startHour: number | null; rev: number } | null>(null);
   const [stale, setStale] = useState(false);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
@@ -611,11 +614,12 @@ function SettingsTab() {
   const depIds = draft?.departmentIds ?? data?.departmentIds ?? [];
   const viewerIds = draft?.viewerIds ?? data?.viewerIds ?? [];
   const roundMinutes = draft?.roundMinutes ?? data?.roundMinutes ?? 180;
+  const startHour = draft ? draft.startHour : (data?.startHour ?? null);
   const dirty = draft !== null;
   const toggle = (list: number[], id: number) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
-  const edit = (patch: { departmentIds?: number[]; viewerIds?: number[]; roundMinutes?: number }) => {
+  const edit = (patch: { departmentIds?: number[]; viewerIds?: number[]; roundMinutes?: number; startHour?: number | null }) => {
     if (!data) return;
-    setDraft((d) => ({ ...(d ?? { departmentIds: data.departmentIds, viewerIds: data.viewerIds, roundMinutes: data.roundMinutes, rev: data.rev }), ...patch }));
+    setDraft((d) => ({ ...(d ?? { departmentIds: data.departmentIds, viewerIds: data.viewerIds, roundMinutes: data.roundMinutes, startHour: data.startHour, rev: data.rev }), ...patch }));
   };
   /** 巡场间隔的选项：半小时一档，30 分钟到 24 小时 */
   const intervalOptions = useMemo(() => {
@@ -623,7 +627,8 @@ function SettingsTab() {
     for (let m = PATROL_ROUND_MIN_MINUTES; m <= PATROL_ROUND_MAX_MINUTES; m += PATROL_ROUND_STEP_MINUTES) list.push(m);
     return list;
   }, []);
-  const roundsPerDay = Math.ceil(1440 / roundMinutes);
+  // 轮次时间表预览（XC17）：按选的起始整点与间隔，营业日切换整点起排一天
+  const preview = useMemo(() => (data ? patrolRoundPreview(data.businessDayStartHour, roundMinutes, startHour) : []), [data, roundMinutes, startHour]);
   const shownEmployees = (data?.employees ?? []).filter((e) => e.active || viewerIds.includes(e.id)).filter((e) => !search.trim() || `${e.name}${e.empNo}${e.department}`.includes(search.trim()));
 
   const save = async () => {
@@ -690,9 +695,45 @@ function SettingsTab() {
               </option>
             ))}
           </Select>
+          <Select
+            aria-label="巡查起始时间"
+            value={startHour === null ? '' : String(startHour)}
+            onChange={(e) => edit({ startHour: e.target.value === '' ? null : Number(e.target.value) })}
+            fullWidth={false}
+            className="w-56"
+            data-testid="patrol-start-hour"
+          >
+            <option value="">不设起始时间（从营业日切换 {patrolStartHourText(data.businessDayStartHour)} 起）</option>
+            {PATROL_START_HOURS.map((h) => (
+              <option key={h} value={h}>
+                从 {patrolStartHourText(h)} 起
+              </option>
+            ))}
+          </Select>
           <span className="text-[12.5px] text-ink-3">
-            一天 {roundsPerDay} 轮{1440 % roundMinutes ? '（除不尽，最后一轮短一些）' : ''}
+            一天 {preview.length} 轮{preview.some((r) => r.minutes !== roundMinutes) ? '（除不尽或起点不在切换时间，头尾的轮短一些）' : ''}
           </span>
+        </div>
+        <p className="mt-2 text-[12.5px] text-ink-3">
+          巡查起始时间只能选整点：第 N 轮 = 起始时间 + N × 间隔；营业日切换到第一个起点之间算第 1
+          轮，过了午夜照营业日排到下一次切换。改了起始时间只影响之后的轮——已经巡完的、正在巡的这一轮开始时间不变（正在巡的这一轮到新起点算出的下一个整点为止），以前的记录照当时的设置。
+        </p>
+        <div className="mt-3" data-testid="patrol-round-preview">
+          <p className="text-[12.5px] font-semibold text-ink-2">轮次时间表（预览）</p>
+          <ol className="mt-1.5 flex flex-wrap gap-1.5">
+            {preview.map((r) => (
+              <li
+                key={r.no}
+                className={cn(
+                  'rounded-md border px-2 py-0.5 text-[12.5px] num',
+                  startHour !== null && r.start === patrolStartHourText(startHour) ? 'border-pine bg-pine/10 text-pine' : 'border-line text-ink-2',
+                )}
+                data-testid={`patrol-preview-${r.no}`}
+              >
+                第 {r.no} 轮 {r.start}–{r.end}
+              </li>
+            ))}
+          </ol>
         </div>
       </Card>
       <Card className="p-5">
