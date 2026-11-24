@@ -26,6 +26,9 @@ import { badRequest, conflict, notFound } from '../../lib/errors';
 import { parse } from '../../lib/validate';
 import type { Deps } from '../../lib/context';
 import { setTxTimeouts } from './common';
+import { assertNotFenced } from '../../lib/fences';
+import { hashRequest } from '../../lib/idempotency';
+import { erpOpAbandoned } from '../erp-ops';
 import { currentStoreId } from '../../lib/store-context';
 
 export async function listTags(
@@ -151,6 +154,11 @@ export async function updateHandTag(deps: Deps, id: number, raw: unknown, ctx: O
       throw conflict('TAG_IN_USE', `手牌 ${tag.code} 上有在店客人，不能改牌号、分区、柜型或停用`);
     }
     if (code !== tag.code) {
+      // 发过的牌不能改号：结账单、换牌记录都按手牌现在的牌号显示，改了会把历史单据上的牌号一起改掉（Codex 审查 PR #189）
+      const [hist] = await tx<{ used: boolean }[]>`
+        SELECT EXISTS (SELECT 1 FROM visits WHERE tag_id = ${id})
+            OR EXISTS (SELECT 1 FROM visit_tag_changes WHERE from_tag_id = ${id} OR to_tag_id = ${id}) AS used`;
+      if (hist?.used) throw conflict('TAG_HAS_HISTORY', `手牌 ${tag.code} 发过，历史单据按牌号显示，不能改号；要换号请删除这张，再按新号添加`);
       const [taken] = await tx<{ deleted: boolean }[]>`SELECT deleted_at IS NOT NULL AS deleted FROM hand_tags WHERE store_id = ${currentStoreId()} AND code = ${code}`;
       if (taken) throw conflict('TAG_CODE_TAKEN', `牌号 ${code} 已经有了${taken.deleted ? '（是删除了的牌，在「建牌与导入」里按清单导入这个牌号可以恢复）' : ''}，换一个`);
     }
@@ -197,6 +205,8 @@ export const GenerateInput = z
     skipAnyDigits: z.array(z.number().int().min(0).max(9)).max(10).default([]),
     /** 只预览，不建 */
     preview: z.boolean().default(false),
+    /** 添加时要：操作编号（结果待确认时查回、原样重提返回第一次的结果，或确认作废；Codex 审查 PR #189） */
+    clientKey: z.uuid('操作编号格式不正确').optional(),
   })
   .refine(kindLevelOk, KIND_LEVEL_MESSAGE)
   .refine((v) => String(v.start).length <= v.width, '起始号码的位数超过了设定位数')
@@ -214,9 +224,19 @@ export async function generateTags(deps: Deps, raw: unknown, ctx: OpContext) {
     if (!p.codes.length) throw conflict('TAG_GENERATE_EMPTY', '按这个规则一张也生成不出来（号码用完了或都已存在），换起始号码、位数或前缀');
     return p;
   };
-  if (input.preview) return { ...(await plan(deps.sql)), created: 0 };
+  if (input.preview) return { ...(await plan(deps.sql)), created: 0, replayed: false };
+  if (!input.clientKey) throw badRequest('缺少有效的操作编号，请刷新页面后重试');
+  const key = input.clientKey;
+  const requestHash = hashRequest({ op: 'hand_tag_generate', ...input, clientKey: undefined, preview: undefined });
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
+    // 同一个编号排队、确认作废过的不再写入；原样重提返回第一次建的那些牌号，换了内容拒绝
+    await assertNotFenced(tx, key, 'hand_tag_generate', erpOpAbandoned);
+    const [seen] = await tx<{ requestHash: string; codes: string[] }[]>`SELECT request_hash, codes FROM hand_tag_generate_ops WHERE op_key = ${key}`;
+    if (seen) {
+      if (seen.requestHash !== requestHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次批量添加，请刷新页面后重新预览');
+      return { codes: seen.codes, skippedByRule: 0, skippedExisting: [], exhausted: false, created: seen.codes.length, replayed: true };
+    }
     await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`hand_tags_generate:${currentStoreId()}`}, 0))`;
     const p = await plan(tx);
     try {
@@ -226,6 +246,9 @@ export async function generateTags(deps: Deps, raw: unknown, ctx: OpContext) {
       if (isUniqueViolation(e)) throw conflict('TAG_CODE_TAKEN', '有牌号刚被别人建了，请重新预览后再生成');
       throw e;
     }
+    await tx`
+      INSERT INTO hand_tag_generate_ops (op_key, store_id, request_hash, codes, created_by)
+      VALUES (${key}, ${currentStoreId()}, ${requestHash}, ${p.codes}::text[], ${ctx.actor.id})`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'hand_tags_created',
@@ -241,7 +264,7 @@ export async function generateTags(deps: Deps, raw: unknown, ctx: OpContext) {
       },
       ip: ctx.ip,
     });
-    return { ...p, created: p.codes.length };
+    return { ...p, created: p.codes.length, replayed: false };
   });
 }
 
@@ -497,8 +520,8 @@ export async function setTagCard(deps: Deps, id: number, raw: unknown, ctx: OpCo
     return await deps.sql.begin(async (tx) => {
       await setTxTimeouts(tx);
       const [tag] = await tx<{ id: number; code: string; cardUid: string | null }[]>`
-        SELECT id, code, card_uid FROM hand_tags WHERE id = ${id} AND store_id = ${currentStoreId()} FOR UPDATE`;
-      if (!tag) throw notFound('手牌不存在');
+        SELECT id, code, card_uid FROM hand_tags WHERE id = ${id} AND store_id = ${currentStoreId()} AND deleted_at IS NULL FOR UPDATE`;
+      if (!tag) throw notFound('手牌不存在（可能刚被删除）');
       if (tag.cardUid === input.cardUid) return tag;
       if (input.cardUid !== null) {
         const [other] = await tx<{ code: string }[]>`

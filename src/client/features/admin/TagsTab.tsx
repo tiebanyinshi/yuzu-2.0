@@ -22,11 +22,13 @@ import { CARD_UID_PATTERN, normalizeCardUid, type FrontdeskRiskRules } from '@sh
 import { MAX_OVERTIME_HOURLY_CENTS } from '@shared/frontdesk-v8117';
 import { parseHandTagCsv, type HandTagCsvResult, type HandTagImportReport } from '@shared/hand-tag-import';
 import { formatYuan, parseYuan } from '@shared/money';
-import { api, errorMessage } from '../../lib/api';
+import { api, errorMessage, UncertainError } from '../../lib/api';
+import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { readImportFile } from '../../lib/import-file';
-import { useCan, useReasons } from '../../lib/session';
-import { cn } from '../../lib/utils';
+import { useCan, useReasons, useSession } from '../../lib/session';
+import { cn, uuid } from '../../lib/utils';
 import { Dialog } from '../../components/Overlay';
+import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, ConfirmCheck, Field, Input, MoneyInput, Notice, PendingBadge, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
 import { groupTags, tagKindText, TAG_SERVICE_STYLE, VipChip, ZoneChip, ZONE_STYLE } from '../frontdesk/parts';
@@ -82,6 +84,7 @@ export function TagsTab() {
         </SubPane>
       )}
       <SubPane tab="create" className="space-y-5">
+        <ErpPendingPanel types={['hand_tag_generate']} className="space-y-2" onFound={refresh} />
         <GenerateCard onCreated={refresh} />
         <ImportCard onImported={refresh} />
       </SubPane>
@@ -347,6 +350,8 @@ function DigitPicker({ value, onChange, label, testId }: { value: number[]; onCh
  */
 function GenerateCard({ onCreated }: { onCreated: () => void }) {
   const toast = useToast();
+  const session = useSession();
+  const blocked = useErpRecorded(['hand_tag_generate']).length > 0;
   const [zone, setZone] = useState<Zone>('male');
   const [kind, setKind] = useState<TagKind>('normal');
   const [vipLevel, setVipLevel] = useState(1);
@@ -380,19 +385,36 @@ function GenerateCard({ onCreated }: { onCreated: () => void }) {
   const current = plan?.key === key ? plan.result : null;
 
   const call = async (preview: boolean) => {
+    // 上一次批量添加的结果待确认：先在上方查回、原样重提或作废，免得原来那次晚到又多建一批
+    if (!preview && blocked) return setError('上一次批量添加的结果待确认：请先在上方查回、按原内容重新提交或作废，再添加');
     setBusy(true);
     setError(null);
     try {
-      const r = await api.post<GeneratePlan>('/api/frontdesk/tags/generate', { ...body, preview });
-      if (preview) setPlan({ key, result: r });
-      else {
-        setPlan(null);
-        toast({ tone: 'success', title: `已添加 ${r.created} 张${ZONE_LABELS[zone].title}牌`, body: `${r.codes[0]} – ${r.codes[r.codes.length - 1]}` });
-        onCreated();
+      if (preview) {
+        setPlan({ key, result: await api.post<GeneratePlan>('/api/frontdesk/tags/generate', { ...body, preview: true }) });
+        return;
       }
+      // 添加带操作编号：先记在本机再发，没收到结果时按原编号查回、原样重提（返回第一次的结果）或确认作废
+      const op = uuid();
+      const r = await sendErpOp<GeneratePlan>({
+        key: op,
+        type: 'hand_tag_generate',
+        url: '/api/frontdesk/tags/generate',
+        body: { ...body, clientKey: op },
+        summary: `手牌批量添加 · ${ZONE_LABELS[zone].title} ${current?.codes.length ?? c} 张（${current?.codes[0] ?? ''} 起）`,
+        staffName: session.staff.displayName,
+      });
+      setPlan(null);
+      toast({ tone: 'success', title: `已添加 ${r.created} 张${ZONE_LABELS[zone].title}牌`, body: `${r.codes[0]} – ${r.codes[r.codes.length - 1]}` });
+      onCreated();
     } catch (e) {
-      setError(errorMessage(e));
-      if (!preview) setPlan(null);
+      if (e instanceof UncertainError) {
+        setPlan(null);
+        toast({ tone: 'info', title: '批量添加结果待确认', body: '已记在本机：请在上方查回、按原内容重新提交或作废；确认前不要再添加。' });
+      } else {
+        setError(errorMessage(e));
+        if (!preview && !(e instanceof ErpPendingStoreError)) setPlan(null);
+      }
     } finally {
       setBusy(false);
     }
@@ -675,7 +697,7 @@ function TagDialog({ tag, onClose, onDone }: { tag: AdminTag; onClose: () => voi
             请改为男宾或女宾后保存，或选择停用。
           </Notice>
         )}
-        <Field label="牌号" hint={tag.inUse ? '在店的不能改牌号' : '0–2 个字母加 1–5 位数字，如 A023'}>
+        <Field label="牌号" hint={tag.inUse ? '在店的不能改牌号' : '只有没发过的牌能改号（历史单据按牌号显示）；0–2 个字母加 1–5 位数字'}>
           <Input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={7} disabled={tag.inUse} className="num w-40" data-testid="tag-code" />
         </Field>
         <Field label="分区">

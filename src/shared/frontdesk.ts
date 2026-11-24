@@ -137,12 +137,13 @@ export function planTagCodes(rule: TagGenerateRule, existing: ReadonlySet<string
   const max = 10 ** rule.width - 1;
   let n = rule.start;
   for (; n <= max && codes.length < rule.count; n++) {
-    const digits = String(n);
+    // 按补零以后的号码判断（「排除含有 0」时 001 也算含 0；Codex 审查 PR #189）
+    const digits = String(n).padStart(rule.width, '0');
     if (rule.skipEndDigits.includes(Number(digits.at(-1))) || rule.skipAnyDigits.some((d) => digits.includes(String(d)))) {
       skippedByRule += 1;
       continue;
     }
-    const code = `${rule.prefix}${digits.padStart(rule.width, '0')}`;
+    const code = `${rule.prefix}${digits}`;
     if (existing.has(code)) {
       skippedExisting.push(code);
       continue;

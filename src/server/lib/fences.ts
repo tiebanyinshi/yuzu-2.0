@@ -41,6 +41,8 @@ export const FENCED_OPS = [
   'supplier_recon_void',
   // 空间台账导入（v0.7.14）
   'space_import',
+  // 手牌按规则批量添加（迁移 261）：编号记在 hand_tag_generate_ops.op_key，不进 idempotency_keys
+  'hand_tag_generate',
   // 模拟刷卡（v0.7.17）：编号记在位置事件上（location_events.op_key），不进 idempotency_keys
   'location_report',
   // 派对房等的使用单（v0.7.19）：开单、结束、撤单
