@@ -1256,7 +1256,7 @@ export async function ruleCatalog(db: Db): Promise<RuleEntry[]> {
     key: 'patrol.round',
     group: 'workplace',
     label: '巡场间隔',
-    value: `每 ${patrol.roundMinutes} 分钟一轮`,
+    value: `每 ${patrol.roundMinutes} 分钟一轮${patrol.startHour === null ? '' : `，从 ${String(patrol.startHour).padStart(2, '0')}:00 起`}`,
     defaultValue: `每 ${PATROL_ROUND_DEFAULT_MINUTES} 分钟一轮`,
     pending: false,
     section: 'patrol',

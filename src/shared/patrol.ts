@@ -44,18 +44,48 @@ export function parsePatrolToken(text: string): string | null {
 
 // ── 巡场轮次（XC13–XC15） ──
 
-/** 巡场间隔从哪个营业日起是多少分钟（改间隔时记一条，从改的那个营业日起按新的分轮） */
+/**
+ * 巡场间隔从哪个营业日起是多少分钟（改间隔时记一条，从改的那个营业日起按新的分轮）。
+ * 安保巡场起始时间（店主 2026-11-24，XC17）：startHour 是巡查起始的整点（0–23），没有（null）就照原来从营业日切换时间起；
+ * at 是改起始时间的那一刻——那一天在这一刻以前的轮次照旧，正在巡的那一轮到新起点算出的下一个整点为止，之后按新的排（XC18）。
+ * 只改间隔的照原来：从这一天的营业日开始起整天按新的分（没有 at）。
+ */
 export interface PatrolRoundChange {
   from: string;
   minutes: number;
+  startHour?: number | null;
+  at?: string;
+}
+
+export const PATROL_START_HOURS = Array.from({ length: 24 }, (_, h) => h);
+/** 「09:00」 */
+export const patrolStartHourText = (h: number) => `${String(h).padStart(2, '0')}:00`;
+
+/** 某个营业日开始时用的巡场设置：最后一条早于这一天的，加上这一天里没有 at 的（照原来整天生效）；一条都没有用默认的 3 小时、不设起始时间 */
+function patrolConfigBefore(changes: readonly PatrolRoundChange[], date: string): { minutes: number; startHour: number | null } {
+  let cfg = { minutes: PATROL_ROUND_DEFAULT_MINUTES, startHour: null as number | null };
+  for (const c of sortedChanges(changes)) {
+    if (c.from > date || (c.from === date && c.at)) continue;
+    cfg = { minutes: c.minutes, startHour: c.startHour ?? null };
+  }
+  return cfg;
+}
+
+/** 按营业日、同一天按改的时刻排（没有 at 的排在这一天最前） */
+function sortedChanges(changes: readonly PatrolRoundChange[]): PatrolRoundChange[] {
+  return [...changes].sort((a, b) => a.from.localeCompare(b.from) || (a.at ?? '').localeCompare(b.at ?? ''));
 }
 
 /** 某个营业日用的巡场间隔：最后一条不晚于这一天的；一条都没有用默认的 3 小时 */
 export function patrolRoundMinutesOn(changes: readonly PatrolRoundChange[], date: string): number {
-  let minutes = PATROL_ROUND_DEFAULT_MINUTES;
-  let best = '';
-  for (const c of changes) if (c.from <= date && c.from >= best) [best, minutes] = [c.from, c.minutes];
-  return minutes;
+  return patrolSettingOn(changes, date).minutes;
+}
+
+/** 某个营业日最后用的巡场设置（间隔与起始时间；这一天当中改过的取改后的） */
+export function patrolSettingOn(changes: readonly PatrolRoundChange[], date: string): { minutes: number; startHour: number | null } {
+  let cfg = { minutes: PATROL_ROUND_DEFAULT_MINUTES, startHour: null as number | null };
+  for (const c of sortedChanges(changes)) if (c.from <= date) cfg = { minutes: c.minutes, startHour: c.startHour ?? null };
+  return cfg;
 }
 
 export interface PatrolRoundSpan {
@@ -65,20 +95,94 @@ export interface PatrolRoundSpan {
   end: string;
 }
 
+const plusOneDay = (date: string) => {
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+};
+
+/** 起始整点在这个营业日里的时刻：比营业日切换时间早的整点落在第二天（例如切换 06:00、起始 02:00 → 第二天 02:00） */
+function anchorOf(date: string, timeZone: string, dayStartHour: number, startHour: number | null): number {
+  if (startHour === null) return businessDayStart(date, timeZone, dayStartHour).getTime();
+  return businessDayStart(startHour < dayStartHour ? plusOneDay(date) : date, timeZone, startHour).getTime();
+}
+
+/** [from, end) 里按起点 anchor、每 step 一轮的分界：第一轮从 from 起，到 from 之后的第一个分界 */
+function spansFrom(from: number, end: number, anchor: number, step: number): [number, number][] {
+  const out: [number, number][] = [];
+  let b = anchor + Math.floor((from - anchor) / step) * step;
+  if (b <= from) b += step;
+  let t = from;
+  while (t < end) {
+    const next = Math.min(b, end);
+    out.push([t, next]);
+    t = next;
+    b += step;
+  }
+  return out;
+}
+
 /**
  * 一个营业日的各轮：从营业日切换时间起，每 minutes 分钟一轮；最后一轮到下一个营业日开始为止（间隔除不尽 24 小时时最后一轮短一些）。
+ * 设了起始整点（XC17）：分界按「起始时间 + N × 间隔」排，营业日开始到第一个分界是第 1 轮（可能短一些），跨午夜照营业日滚到下一个营业日开始。
  */
-export function patrolRoundsOf(date: string, timeZone: string, startHour: number, minutes: number): PatrolRoundSpan[] {
+export function patrolRoundsOf(date: string, timeZone: string, startHour: number, minutes: number, patrolStartHour: number | null = null): PatrolRoundSpan[] {
   const start = businessDayStart(date, timeZone, startHour).getTime();
-  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  const next = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
-  const end = businessDayStart(next, timeZone, startHour).getTime();
-  const step = minutes * 60_000;
-  const rounds: PatrolRoundSpan[] = [];
-  for (let t = start, no = 1; t < end; t += step, no += 1) {
-    rounds.push({ no, start: new Date(t).toISOString(), end: new Date(Math.min(t + step, end)).toISOString() });
+  const end = businessDayStart(plusOneDay(date), timeZone, startHour).getTime();
+  return spansFrom(start, end, anchorOf(date, timeZone, startHour, patrolStartHour), minutes * 60_000).map(([a, b], i) => ({
+    no: i + 1,
+    start: new Date(a).toISOString(),
+    end: new Date(b).toISOString(),
+  }));
+}
+
+/**
+ * 某个营业日的各轮（按改动记录，XC13–XC18）与每一轮按的巡场间隔（打卡记下它，同一个场所同一轮只记一次）。
+ * 这一天改过起始时间（有 at）的：at 以前开始的轮照旧；at 那一刻正在巡的那一轮到新设置的下一个分界为止；之后按新的排。
+ */
+export function patrolDayRounds(
+  changes: readonly PatrolRoundChange[],
+  date: string,
+  timeZone: string,
+  dayStartHour: number,
+): { rounds: PatrolRoundSpan[]; minutes: number; minutesOf: (round: PatrolRoundSpan) => number } {
+  const start = businessDayStart(date, timeZone, dayStartHour).getTime();
+  const end = businessDayStart(plusOneDay(date), timeZone, dayStartHour).getTime();
+  const base = patrolConfigBefore(changes, date);
+  let spans = spansFrom(start, end, anchorOf(date, timeZone, dayStartHour, base.startHour), base.minutes * 60_000).map(([a, b]) => ({ a, b, minutes: base.minutes }));
+  for (const c of sortedChanges(changes)) {
+    if (c.from !== date || !c.at) continue;
+    const at = Math.min(Math.max(Date.parse(c.at), start), end);
+    const step = c.minutes * 60_000;
+    const anchor = anchorOf(date, timeZone, dayStartHour, c.startHour ?? null);
+    const kept = spans.filter((s) => s.a < at);
+    let from = start;
+    const last = kept.at(-1);
+    if (last && last.b > at) {
+      // 正在巡的这一轮：开始照旧，到新设置在这一刻以后的第一个分界为止（已经结束的轮一点不动）
+      let b = anchor + Math.floor((at - anchor) / step) * step;
+      if (b <= at) b += step;
+      last.b = Math.min(b, end);
+      from = last.b;
+    } else if (last) {
+      from = last.b;
+    }
+    spans = [...kept, ...spansFrom(from, end, anchor, step).map(([a, b]) => ({ a, b, minutes: c.minutes }))];
   }
-  return rounds;
+  const rounds = spans.map((s, i) => ({ no: i + 1, start: new Date(s.a).toISOString(), end: new Date(s.b).toISOString() }));
+  const byStart = new Map(spans.map((s) => [new Date(s.a).toISOString(), s.minutes]));
+  const last = patrolSettingOn(changes, date);
+  return { rounds, minutes: last.minutes, minutesOf: (r) => byStart.get(r.start) ?? last.minutes };
+}
+
+/**
+ * 设置页的轮次时间表预览（XC17）：营业日切换整点起的一天，按起始整点与间隔排出每一轮的开始、结束（「09:00」，跨午夜照写钟点）。
+ * 与 patrolRoundsOf 同一个分法，只是按钟点算、不看日期与时区。
+ */
+export function patrolRoundPreview(dayStartHour: number, minutes: number, startHour: number | null): { no: number; start: string; end: string; minutes: number }[] {
+  const from = dayStartHour * 60;
+  const anchor = startHour === null ? from : (startHour < dayStartHour ? startHour + 24 : startHour) * 60;
+  const clock = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  return spansFrom(from, from + 1440, anchor, minutes).map(([a, b], i) => ({ no: i + 1, start: clock(a), end: clock(b), minutes: b - a }));
 }
 
 /** 某一刻在这一天的第几轮（不在这一天里返回 null） */
@@ -131,6 +235,8 @@ export interface PatrolSettings {
   viewerIds: number[];
   /** 现在（今天起）的巡场间隔，分钟（XC13） */
   roundMinutes: number;
+  /** 现在的巡查起始整点（0–23，XC17）；没设为 null，照原来从营业日切换时间起 */
+  startHour: number | null;
   /** 巡场间隔改过的记录：过去的营业日按当时的间隔分轮 */
   roundChanges: PatrolRoundChange[];
   /** 版本号：两个人同时改，后保存的拒绝 */
@@ -142,6 +248,8 @@ export interface PatrolSettingsAdmin extends PatrolSettings {
   employees: { id: number; empNo: string; name: string; department: string; active: boolean }[];
   /** 现在巡场部门里有几位启用的员工 */
   patrolStaffCount: number;
+  /** 营业日切换的整点（预览轮次时间表用，XC17） */
+  businessDayStartHour: number;
   updatedAt: string | null;
   updatedBy: string | null;
 }
