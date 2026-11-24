@@ -130,7 +130,8 @@ describe('二级页签', () => {
     expect(first('DiningSection.tsx')).toBe('rules');
     expect(first('RoomsSection.tsx')).toBe('rules');
     // 导入与工具排在最后
-    for (const f of ['CatalogTab.tsx', 'DevicesSection.tsx']) {
+    // （价目与套餐 8.1.34 起没有导入页签：价目从「全品类价目表」导入，docs/PRICE_V8134.md）
+    for (const f of ['DevicesSection.tsx']) {
       const keys = [...readFileSync(join(ADMIN_DIR, f), 'utf8').matchAll(/\{ key: '([^']+)', label: '[^']*' \}/g)].map((m) => m[1]);
       expect(keys.at(-1), f).toBe('import');
     }

@@ -62,6 +62,7 @@
 - [`FRONTDESK_TAGS_V8127.md`](FRONTDESK_TAGS_V8127.md)：手牌管理：批量规则、修改删除、暂停 / 维修（店主 2026-11-24）
 - [`FRONTDESK_V808.md`](FRONTDESK_V808.md)：8.0.8 前台整改（钟房、收银、派对房、预约、餐饮、客房）
 - [`FRONTDESK_V8117.md`](FRONTDESK_V8117.md)：8.1.17 · 前台、桌台、退菜、本店价、流水（BW-1、BW-2、BW-3 发卡台、BW-4、BW-11、BW-12）
+- [`FUTIAN_MIGRATION.md`](FUTIAN_MIGRATION.md)：福田店老数据迁移：核对、配置与导入步骤
 - [`GIFTS_V819.md`](GIFTS_V819.md)：8.1.9 · 全局签赠（签赠券、授权人、签赠台账）
 - [`HARDWARE.md`](HARDWARE.md)：硬件连接（飞书需求 RQ-001，v0.7.21，迁移 `038`）
 - [`INTEGRATIONS_V8021.md`](INTEGRATIONS_V8021.md)：8.0.21 设计 · 对外接口（支付直连、平台验券、OTA、开票与银企直连的适配器）
@@ -83,6 +84,7 @@
 - [`PORTAL.md`](PORTAL.md)：系统门户页（店主 2026-11-24）
 - [`POSITIONS_V8118.md`](POSITIONS_V8118.md)：组织架构与岗位（8.1.18）
 - [`PRICE_CATALOG.md`](PRICE_CATALOG.md)：价目表录入（汤崎宝安全品类价目表 1119）
+- [`PRICE_V8134.md`](PRICE_V8134.md)：8.1.34 价目重构：只认「全品类价目表」
 - [`PURCHASING_V801.md`](PURCHASING_V801.md)：采购组整改需求（8.0.1）
 - [`REQUISITIONS.md`](REQUISITIONS.md)：部门采购需求单、采购单的图片与规格（v0.7.8，飞书需求 RQ-005 第二步）
 - [`RESILIENCE_V813.md`](RESILIENCE_V813.md)：8.1.3 · 代码整洁与网络波动防护

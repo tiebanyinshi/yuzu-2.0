@@ -9,13 +9,13 @@
 
 测试服**不是正式账**：不记真实业务，不导入真实会员余额。正式服在门店 Mac mini 上，见 [Mac mini 部署手册](DEPLOY_MAC_MINI.md)；整体安排见 [ROADMAP](ROADMAP.md) 第 6 节。
 
-| 项 | 演练库 `~/yuzu-test` | 演示库 `~/yuzu-demo` |
-| --- | --- | --- |
-| `APP_ENV` | `production`（拒绝一切演示数据命令，行为与正式服一致） | `development` |
-| `YUZU_INSTANCE` | `test`：页面显示「测试服·不作数」 | `demo`：页面显示「演示·不作数」 |
-| 端口 | 8080 | 8082 |
-| 数据 | 真实柜号、价目表、票种；员工测试账号 | 四套演示数据（登录页显示演示账号密码） |
-| 更新 | 只在店主约定的窗口，演练中途不更新 | 随时，可跟随 `main` 的最新版本 |
+| 项              | 演练库 `~/yuzu-test`                                   | 演示库 `~/yuzu-demo`                   |
+| --------------- | ------------------------------------------------------ | -------------------------------------- |
+| `APP_ENV`       | `production`（拒绝一切演示数据命令，行为与正式服一致） | `development`                          |
+| `YUZU_INSTANCE` | `test`：页面显示「测试服·不作数」                      | `demo`：页面显示「演示·不作数」        |
+| 端口            | 8080                                                   | 8082                                   |
+| 数据            | 真实柜号、价目表、票种；员工测试账号                   | 四套演示数据（登录页显示演示账号密码） |
+| 更新            | 只在店主约定的窗口，演练中途不更新                     | 随时，可跟随 `main` 的最新版本         |
 
 **红线**：
 
@@ -161,8 +161,9 @@ docker compose ps            # app、db 显示 (healthy)，backup 显示 Up
 cd ~/yuzu-test
 docker compose exec app node dist/server/cli.js import-hand-tags --store-list
 docker compose exec app node dist/server/cli.js import-hand-tags --store-list --apply
-docker compose exec app node dist/server/cli.js import-price-list --tangqi
-docker compose exec app node dist/server/cli.js import-price-list --tangqi --apply
+# 价目（8.1.34 起）：老的 import-price-list 已删，价目在后台「价目与套餐 → 全品类价目表」导入《价目表 1119》并切换生效，
+# 再跑 price-audit 核对（docs/PRICE_V8134.md）
+docker compose exec app node dist/server/cli.js price-audit
 docker compose exec app node dist/server/cli.js check
 ```
 
@@ -208,17 +209,17 @@ docker compose start app backup
 
 ## 8. 日常更新
 
-| 场景 | 命令 |
-| --- | --- |
-| 更新演示库（随时） | `cd ~/yuzu-demo && ./scripts/update.sh <版本标签>` |
-| 更新演练库（只在店主约定的窗口） | `cd ~/yuzu-test && ./scripts/update.sh <版本标签>` |
-| 查看状态 / 日志 | `docker compose ps`、`docker compose logs -f app` |
-| 自检 | `docker compose exec app node dist/server/cli.js check` |
-| 每日对账包（v0.3.3 起，只读） | `./scripts/daily-recon.sh [营业日]`，写到 `recon/<营业日>/` |
-| 新版本有问题，回到上一版 | `./scripts/rollback.sh`（v0.3.3 起；加了迁移时同时恢复升级前的备份，见 Mac mini 手册第 5 节「回退」） |
-| 立即备份 / 核验最新备份 | `./scripts/backup.sh`；`./scripts/verify-backup.sh "$(ls -t ~/yuzu-backups/test/yuzu-*.dump \| head -n 1)"` |
-| 重置某个员工的密码 | `docker compose exec app node dist/server/cli.js reset-password <账号>` |
-| 门店备份的异地副本（v0.3.5 起，第 9 节） | `sudo ls -lt /srv/yuzu-offsite/backups \| head`；`df -h /srv` |
+| 场景                                     | 命令                                                                                                        |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 更新演示库（随时）                       | `cd ~/yuzu-demo && ./scripts/update.sh <版本标签>`                                                          |
+| 更新演练库（只在店主约定的窗口）         | `cd ~/yuzu-test && ./scripts/update.sh <版本标签>`                                                          |
+| 查看状态 / 日志                          | `docker compose ps`、`docker compose logs -f app`                                                           |
+| 自检                                     | `docker compose exec app node dist/server/cli.js check`                                                     |
+| 每日对账包（v0.3.3 起，只读）            | `./scripts/daily-recon.sh [营业日]`，写到 `recon/<营业日>/`                                                 |
+| 新版本有问题，回到上一版                 | `./scripts/rollback.sh`（v0.3.3 起；加了迁移时同时恢复升级前的备份，见 Mac mini 手册第 5 节「回退」）       |
+| 立即备份 / 核验最新备份                  | `./scripts/backup.sh`；`./scripts/verify-backup.sh "$(ls -t ~/yuzu-backups/test/yuzu-*.dump \| head -n 1)"` |
+| 重置某个员工的密码                       | `docker compose exec app node dist/server/cli.js reset-password <账号>`                                     |
+| 门店备份的异地副本（v0.3.5 起，第 9 节） | `sudo ls -lt /srv/yuzu-offsite/backups \| head`；`df -h /srv`                                               |
 
 `update.sh` 只接受 `main` 上的版本标签或完整 SHA，会先备份、再切换版本，并把版本号与 SHA 写进镜像，启动后自动跑 `check`。发布后，Codex 在对应 PR 留发布记录（SHA、迁移、check 结果）。
 

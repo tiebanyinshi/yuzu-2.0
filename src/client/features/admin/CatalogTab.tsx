@@ -58,7 +58,9 @@ export function CatalogTab() {
           >
             消费项目
           </SectionTitle>
-          <p className="mt-1 text-[12.5px] text-ink-3">价格以这里为准；同一项目可设标准 / 专业 / 优选多档价格。改价后，正在登记的消费会提示重新核对。</p>
+          <p className="mt-1 text-[12.5px] text-ink-3">
+            价目表里有的项目（带分类编码）名称、价格以「全品类价目表」为准，这里只改属性；价目表管不到的收银项目（如房费、开台费）在这里新增和改价。改价后，正在登记的消费会提示重新核对。
+          </p>
           <div className="mt-3 divide-y divide-line/70 rounded-lg border border-line" data-testid="catalog-items">
             {catalog.isPending ? (
               <Skeleton className="m-3 h-32" />
@@ -316,6 +318,8 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [last, setLast] = useState<Editing>(null);
+  /** 8.1.34：对接了「全品类价目表」的项目（带价目表分类）——名称、分类、价格、时长、适用宾客只在价目表里改 */
+  const fromCatalog = !!editing?.data?.catalogCategory;
 
   if (editing !== last) {
     setLast(editing);
@@ -407,40 +411,47 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
       }
     >
       <div className="grid gap-4">
-        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
-          <Field label="名称" htmlFor="c-name">
-            <Input id="c-name" value={name} maxLength={32} onChange={(e) => setName(e.target.value)} data-autofocus />
-          </Field>
-          <Field label="分类" htmlFor="c-cat" hint="如 全身按摩 / 理疗系列">
-            <Input id="c-cat" value={category} maxLength={16} onChange={(e) => setCategory(e.target.value)} />
-          </Field>
-        </div>
-        <Field label="价格" hint="某一档不提供时留空；不带档位的旧请求按标准 → 专业 → 优选中第一个提供的计价">
-          <div className="grid grid-cols-3 gap-2.5">
-            {PRICE_TIERS.map((t) => (
-              <label key={t} className="flex flex-col gap-1 text-[12px] font-semibold text-ink-3">
-                {PRICE_TIER_LABELS[t]}
-                <MoneyInput value={prices[t]} onChange={(e) => setPrices((p) => ({ ...p, [t]: e.target.value }))} aria-label={`${PRICE_TIER_LABELS[t]}价`} placeholder="不提供" />
-              </label>
-            ))}
+        {fromCatalog && (
+          <Notice tone="info" title="这一项由「全品类价目表」管" data-testid="item-from-catalog">
+            名称、分类、价格、时长与适用宾客在 价目与套餐 → 全品类价目表 里改，改完切换生效就同步过来；这里只改力道、精油、说明、排序、停用这些。
+          </Notice>
+        )}
+        <fieldset disabled={fromCatalog} className="grid min-w-0 gap-4 disabled:opacity-60">
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
+            <Field label="名称" htmlFor="c-name">
+              <Input id="c-name" value={name} maxLength={32} onChange={(e) => setName(e.target.value)} data-autofocus />
+            </Field>
+            <Field label="分类" htmlFor="c-cat" hint="如 全身按摩 / 理疗系列">
+              <Input id="c-cat" value={category} maxLength={16} onChange={(e) => setCategory(e.target.value)} />
+            </Field>
           </div>
-        </Field>
-        <div className="grid gap-4 sm:grid-cols-[140px_minmax(0,1fr)]">
-          <Field label="时长（分钟）" htmlFor="c-duration" hint="选填">
-            <Input id="c-duration" inputMode="numeric" value={duration} onChange={(e) => setDuration(e.target.value.replace(/[^\d]/g, ''))} className="num" />
+          <Field label="价格" hint="某一档不提供时留空；不带档位的旧请求按标准 → 专业 → 优选中第一个提供的计价">
+            <div className="grid grid-cols-3 gap-2.5">
+              {PRICE_TIERS.map((t) => (
+                <label key={t} className="flex flex-col gap-1 text-[12px] font-semibold text-ink-3">
+                  {PRICE_TIER_LABELS[t]}
+                  <MoneyInput value={prices[t]} onChange={(e) => setPrices((p) => ({ ...p, [t]: e.target.value }))} aria-label={`${PRICE_TIER_LABELS[t]}价`} placeholder="不提供" />
+                </label>
+              ))}
+            </div>
           </Field>
-          <Field label="适用宾客">
-            <Segmented
-              value={gender}
-              onChange={setGender}
-              options={[
-                { value: 'any', label: '不限' },
-                { value: 'male', label: '仅男宾' },
-                { value: 'female', label: '仅女宾' },
-              ]}
-            />
-          </Field>
-        </div>
+          <div className="grid gap-4 sm:grid-cols-[140px_minmax(0,1fr)]">
+            <Field label="时长（分钟）" htmlFor="c-duration" hint="选填">
+              <Input id="c-duration" inputMode="numeric" value={duration} onChange={(e) => setDuration(e.target.value.replace(/[^\d]/g, ''))} className="num" />
+            </Field>
+            <Field label="适用宾客">
+              <Segmented
+                value={gender}
+                onChange={setGender}
+                options={[
+                  { value: 'any', label: '不限' },
+                  { value: 'male', label: '仅男宾' },
+                  { value: 'female', label: '仅女宾' },
+                ]}
+              />
+            </Field>
+          </div>
+        </fieldset>
         <Field
           label="需要技师"
           hint={careDefault ? '名称或分类含「护理」，默认需要技师（交给钟房派钟）；不需要的点「不需要」' : '技师功能开启后，挂这个项目要选技师与点钟 / 轮钟；也可以在后台「技师」里按分类勾选'}
