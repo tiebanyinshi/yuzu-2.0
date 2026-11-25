@@ -74,9 +74,12 @@ export function TrainingViewer({ file, recordView = true }: { file: TrainingFile
   );
 }
 
+const PDF_BATCH = 20;
+
 /** PDF：一页页画成图；页数多的先画前几页，滚到再画后面的 */
 function PdfPages({ url }: { url: string }) {
   const [pages, setPages] = useState<number | null>(null);
+  const [limit, setLimit] = useState(PDF_BATCH);
   const [error, setError] = useState<string | null>(null);
   const docRef = useRef<import('pdfjs-dist').PDFDocumentProxy | null>(null);
   useEffect(() => {
@@ -93,6 +96,7 @@ function PdfPages({ url }: { url: string }) {
         if (cancelled) return void doc.cleanup();
         docRef.current = doc;
         setPages(doc.numPages);
+        setLimit(PDF_BATCH);
       } catch (e) {
         if (!cancelled) setError(errorMessage(e));
       }
@@ -110,11 +114,18 @@ function PdfPages({ url }: { url: string }) {
       </Notice>
     );
   if (pages === null) return <Skeleton className="h-[60dvh]" />;
+  // 一次只挂 PDF_BATCH 页，往下看再多挂（Codex 安全审查 4a6190c：页数来自上传的文件，十万页一次铺开会卡死浏览器）
+  const shown = Math.min(pages, limit);
   return (
     <div className="space-y-3" data-testid="training-pdf" data-pages={pages}>
-      {Array.from({ length: pages }, (_, i) => (
+      {Array.from({ length: shown }, (_, i) => (
         <PdfPage key={i} docRef={docRef} pageNo={i + 1} />
       ))}
+      {shown < pages && (
+        <Button variant="secondary" className="w-full" onClick={() => setLimit((n) => n + PDF_BATCH)} data-testid="training-pdf-more">
+          再显示 {Math.min(PDF_BATCH, pages - shown)} 页（共 {pages} 页，已显示 {shown} 页）
+        </Button>
+      )}
     </div>
   );
 }
