@@ -3,7 +3,7 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, Search, UserPlus } from 'lucide-react';
+import { Building2, QrCode as QrIcon, Search, UserPlus } from 'lucide-react';
 import { EMPLOYMENT_STATUS_LABELS, type EmployeeProfile, type OrgDepartmentNode, type OrgOverview, type StaffImportResult } from '@shared/oa';
 import { ORG_DEPARTMENTS, positionLabel } from '@shared/positions';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
@@ -14,6 +14,7 @@ import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Segmented, Select, Skeleton } from '../../components/ui';
 import { AdminPage } from '../admin/AdminShell';
+import { MobileEntryDialog } from './MobileEntryDialog';
 import { ResultDialog, StaffImportDialog } from './StaffImportDialog';
 
 const ORG_KEY = ['oa', 'org'] as const;
@@ -167,6 +168,7 @@ function EmployeeTable({ org }: { org: OrgOverview }) {
   const [leaving, setLeaving] = useState<EmployeeProfile | null>(null);
   const [rehiring, setRehiring] = useState<EmployeeProfile | null>(null);
   const [importing, setImporting] = useState(false);
+  const [entry, setEntry] = useState(false);
   const kw = keyword.trim().toLowerCase();
   const rows = org.employees.filter(
     (e) =>
@@ -226,6 +228,9 @@ function EmployeeTable({ org }: { org: OrgOverview }) {
     <Card className="p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="mr-auto text-[15px] font-semibold text-ink">员工档案</h2>
+        <Button size="sm" variant="secondary" icon={<QrIcon className="size-4" />} onClick={() => setEntry(true)} data-testid="org-mobile-entry">
+          手机端入口
+        </Button>
         <Button size="sm" variant="secondary" icon={<UserPlus className="size-4" />} onClick={() => setImporting(true)} data-testid="org-import">
           批量开通
         </Button>
@@ -258,6 +263,7 @@ function EmployeeTable({ org }: { org: OrgOverview }) {
       {leaving && <LeaveDialog emp={leaving} onClose={() => setLeaving(null)} />}
       {rehiring && <RehireDialog emp={rehiring} onClose={() => setRehiring(null)} />}
       {importing && <StaffImportDialog onClose={() => setImporting(false)} />}
+      {entry && <MobileEntryDialog onClose={() => setEntry(false)} />}
     </Card>
   );
 }

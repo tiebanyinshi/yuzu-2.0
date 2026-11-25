@@ -14,7 +14,7 @@
     "src/client/features/invoices": 2,
     "src/client/features/patrol": 6,
     "src/client/features/rooms": 14,
-    "src/client/features/studio": 55
+    "src/client/features/studio": 51
   },
   "fontSizes": [
     "9",
