@@ -50,18 +50,38 @@ export function AnnouncementsSection() {
   const [recallBusy, setRecallBusy] = useState(false);
 
   const togglePin = async (a: OaAnnouncement) => {
+    if (pending.length) {
+      toast({ tone: 'error', title: '上一次公告操作结果待确认，请先在页面上方处理' });
+      return;
+    }
     setBusyId(a.id);
+    const clientKey = uuid();
     try {
-      await api.put<OaAnnouncement>(`/api/admin/oa/announcements/${a.id}`, {
-        title: a.title,
-        body: a.body,
-        pinned: !a.pinned,
-        version: a.version,
+      await sendErpOp<OaAnnouncementSaved>({
+        key: clientKey,
+        type: 'oa_announcement',
+        url: `/api/admin/oa/announcements/${a.id}/update`,
+        body: {
+          clientKey,
+          title: a.title,
+          body: a.body,
+          pinned: !a.pinned,
+          version: a.version,
+        },
+        summary: `${a.pinned ? '取消置顶' : '置顶'}公告「${a.title}」`,
+        staffName: session.staff.displayName,
+        staffId: session.staff.id,
       });
       toast({ tone: 'success', title: a.pinned ? '已取消置顶' : '已置顶' });
       await qc.invalidateQueries({ queryKey: KEY });
     } catch (e) {
-      toast({ tone: 'error', title: errorMessage(e) });
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '置顶状态修改结果待确认', body: '已记在本机，请在页面上方查回、重提或作废。' });
+      } else if (e instanceof ErpPendingStoreError) {
+        toast({ tone: 'error', title: e.message });
+      } else {
+        toast({ tone: 'error', title: errorMessage(e) });
+      }
     } finally {
       setBusyId(null);
     }
@@ -113,7 +133,7 @@ export function AnnouncementsSection() {
       <ErpPendingPanel types={['oa_announcement']} className="mb-4 space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: KEY })} />
       {pending.length > 0 && (
         <Notice tone="warning" className="mb-4">
-          有公告操作结果待确认，请先在上方查回、原样重提或作废后再新建或撤回。
+          有公告操作结果待确认，请先在上方查回、原样重提或作废后再新建、修改或撤回。
         </Notice>
       )}
       {q.isPending ? (
@@ -165,10 +185,18 @@ export function AnnouncementsSection() {
                   </Button>
                   {a.status === 'published' && (
                     <>
-                      <Button size="sm" variant="ghost" icon={<Pin className="size-4" />} loading={busyId === a.id} onClick={() => void togglePin(a)} data-testid={`admin-ann-pin-${a.id}`}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<Pin className="size-4" />}
+                        loading={busyId === a.id}
+                        disabled={pending.length > 0}
+                        onClick={() => void togglePin(a)}
+                        data-testid={`admin-ann-pin-${a.id}`}
+                      >
                         {a.pinned ? '取消置顶' : '置顶'}
                       </Button>
-                      <Button size="sm" variant="secondary" icon={<Pencil className="size-4" />} onClick={() => setEditing(a)} data-testid={`admin-ann-edit-${a.id}`}>
+                      <Button size="sm" variant="secondary" icon={<Pencil className="size-4" />} disabled={pending.length > 0} onClick={() => setEditing(a)} data-testid={`admin-ann-edit-${a.id}`}>
                         编辑
                       </Button>
                       <Button size="sm" variant="ghost" icon={<Undo2 className="size-4" />} disabled={pending.length > 0} onClick={() => setRecalling(a)} data-testid={`admin-ann-recall-${a.id}`}>
@@ -375,6 +403,8 @@ function PublishDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 
 function EditDialog({ item, onClose, onSaved }: { item: OaAnnouncement; onClose: () => void; onSaved: () => void }) {
   const toast = useToast();
+  const session = useSession();
+  const pending = useErpRecorded(['oa_announcement']);
   const [title, setTitle] = useState(item.title);
   const [body, setBody] = useState(item.body);
   const [pinned, setPinned] = useState(item.pinned);
@@ -382,20 +412,38 @@ function EditDialog({ item, onClose, onSaved }: { item: OaAnnouncement; onClose:
   const [error, setError] = useState<string | null>(null);
 
   const save = async () => {
+    if (pending.length) return setError('上一次公告操作结果待确认，请先在页面上方处理');
     if (!title.trim() || !body.trim()) return setError('标题和正文不能为空');
     setBusy(true);
     setError(null);
+    const clientKey = uuid();
     try {
-      await api.put<OaAnnouncement>(`/api/admin/oa/announcements/${item.id}`, {
-        title: title.trim(),
-        body: body.trim(),
-        pinned,
-        version: item.version,
+      await sendErpOp<OaAnnouncementSaved>({
+        key: clientKey,
+        type: 'oa_announcement',
+        url: `/api/admin/oa/announcements/${item.id}/update`,
+        body: {
+          clientKey,
+          title: title.trim(),
+          body: body.trim(),
+          pinned,
+          version: item.version,
+        },
+        summary: `修改公告「${title.trim()}」`,
+        staffName: session.staff.displayName,
+        staffId: session.staff.id,
       });
       toast({ tone: 'success', title: '已保存修改' });
       onSaved();
     } catch (e) {
-      setError(errorMessage(e));
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '修改结果待确认', body: '已记在本机，请在页面上方查回、重提或作废。' });
+        onClose();
+      } else if (e instanceof ErpPendingStoreError) {
+        setError(e.message);
+      } else {
+        setError(errorMessage(e));
+      }
     } finally {
       setBusy(false);
     }

@@ -118,6 +118,7 @@ const PublishInput = z
   .refine((v) => v.scope === 'all' || v.targetDepts.length > 0, { message: '指定部门公告至少选一个部门', path: ['targetDepts'] });
 
 const UpdateInput = z.object({
+  clientKey: z.uuid('操作编号格式不正确'),
   title: z.string().trim().min(1, '请填写公告标题').max(ANNOUNCEMENT_TITLE_MAX, `标题最多 ${ANNOUNCEMENT_TITLE_MAX} 个字`),
   body: z.string().trim().min(1, '请填写公告正文').max(ANNOUNCEMENT_BODY_MAX, `正文最多 ${ANNOUNCEMENT_BODY_MAX} 个字`),
   pinned: z.boolean(),
@@ -423,12 +424,33 @@ export function registerOaAnnouncementRoutes(app: FastifyInstance, { sql }: Deps
     return { announcement, replayed: out.replayed };
   });
 
-  app.put('/api/admin/oa/announcements/:id', { preHandler: manage }, async (req): Promise<OaAnnouncement> => {
+  const updateAnnouncement = async (req: { params: unknown; body: unknown; actor: Actor; ip: string }): Promise<OaAnnouncementSaved> => {
     const { id } = parse(idParam, req.params);
     const input = parse(UpdateInput, req.body);
     const storeId = currentStoreId();
-    await sql.begin(async (tx) => {
+    const hash = hashRequest({
+      op: 'update',
+      storeId,
+      id,
+      title: input.title,
+      body: input.body,
+      pinned: input.pinned,
+      version: input.version,
+      staffId: req.actor.id,
+    });
+
+    const out = await sql.begin(async (tx): Promise<{ replayed: boolean }> => {
       await setTxTimeouts(tx);
+      await lockOpKey(tx, input.clientKey);
+      const [seen] = await tx<{ opType: string; requestHash: string; refId: number; staffId: number }[]>`
+        SELECT op_type, request_hash, ref_id, staff_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+      if (seen) {
+        if (seen.opType !== 'oa_announcement' || seen.requestHash !== hash || Number(seen.staffId) !== req.actor.id || Number(seen.refId) !== id) {
+          throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次公告操作，请刷新页面后重试');
+        }
+        return { replayed: true };
+      }
+      await assertNotFenced(tx, input.clientKey, 'oa_announcement', erpOpAbandoned);
       const [cur] = await tx<{ status: AnnouncementStatus; version: number; title: string; pinned: boolean }[]>`
         SELECT status, version, title, pinned FROM oa_announcements WHERE id = ${id} AND store_id = ${storeId} FOR UPDATE`;
       if (!cur) throw notFound('公告不存在');
@@ -438,6 +460,14 @@ export function registerOaAnnouncementRoutes(app: FastifyInstance, { sql }: Deps
         UPDATE oa_announcements
         SET title = ${input.title}, body = ${input.body}, pinned = ${input.pinned}, version = version + 1, updated_at = now()
         WHERE id = ${id}`;
+      // 同步更新站内通知中保存的标题与正文摘要，确保员工刷新通知列表看到的是修正后的内容
+      await tx`
+        UPDATE oa_notifications
+        SET title = ${`公告：${input.title}`.slice(0, 100)}, body = ${input.body.slice(0, 120)}
+        WHERE kind = 'announcement' AND ref_type = ${REF} AND ref_id = ${id}`;
+      await tx`
+        INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id)
+        VALUES (${input.clientKey}, 'oa_announcement', ${hash}, ${id}, ${req.actor.id})`;
       await writeAudit(tx, {
         staffId: req.actor.id,
         action: 'oa_announcement_updated',
@@ -446,9 +476,15 @@ export function registerOaAnnouncementRoutes(app: FastifyInstance, { sql }: Deps
         detail: { beforeTitle: cur.title, afterTitle: input.title, beforePinned: cur.pinned, afterPinned: input.pinned },
         ip: req.ip,
       });
+      return { replayed: false };
     });
-    return (await loadOne(sql, storeId, id, req.actor.id, true))!;
-  });
+
+    const announcement = (await loadOne(sql, storeId, id, req.actor.id, true))!;
+    return { announcement, replayed: out.replayed };
+  };
+
+  app.put('/api/admin/oa/announcements/:id', { preHandler: manage }, async (req): Promise<OaAnnouncementSaved> => updateAnnouncement(req));
+  app.post('/api/admin/oa/announcements/:id/update', { preHandler: manage }, async (req): Promise<OaAnnouncementSaved> => updateAnnouncement(req));
 
   app.post('/api/admin/oa/announcements/:id/recall', { preHandler: manage }, async (req): Promise<OaAnnouncementSaved> => {
     const { id } = parse(idParam, req.params);

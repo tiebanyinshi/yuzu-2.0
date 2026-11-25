@@ -172,18 +172,48 @@ describe('员工办公 v1.1 第 5 批：公司公告', () => {
     expect(opsNotif.body.items.some((n) => n.link === `/oa/announcements/${deptAnn.id}`)).toBe(false);
     expect(opsId).toBeGreaterThan(0);
 
-    // 编辑：正确 version 成功并自增，过期 version 409 VERSION_CONFLICT
-    const upd = await api<OaAnnouncement>(ctx.app, ctx.owner, 'PUT', `/api/admin/oa/announcements/${deptAnn.id}`, {
+    // 编辑：正确 version 成功并自增，带 clientKey 支持幂等重放、作废围栏，并同步更新站内通知预览
+    const editKey = randomUUID();
+    const editPayload = {
+      clientKey: editKey,
       title: '前厅部早班交接要求（更新）',
       body: '更新后的交接细则。',
       pinned: true,
       version: deptAnn.version,
-    });
+    };
+    const upd = await api<OaAnnouncementSaved>(ctx.app, ctx.owner, 'POST', `/api/admin/oa/announcements/${deptAnn.id}/update`, editPayload);
     expect(upd.status, JSON.stringify(upd.body)).toBe(200);
-    expect(upd.body.version).toBe(deptAnn.version + 1);
-    expect(upd.body.pinned).toBe(true);
+    expect(upd.body.replayed).toBe(false);
+    expect(upd.body.announcement.version).toBe(deptAnn.version + 1);
+    expect(upd.body.announcement.pinned).toBe(true);
 
+    // 原样重提编辑（即使版本号已自增）：按幂等键返回 replayed: true，不报 VERSION_CONFLICT
+    const updReplay = await api<OaAnnouncementSaved>(ctx.app, ctx.owner, 'POST', `/api/admin/oa/announcements/${deptAnn.id}/update`, editPayload);
+    expect(updReplay.status).toBe(200);
+    expect(updReplay.body.replayed).toBe(true);
+    expect(updReplay.body.announcement.version).toBe(deptAnn.version + 1);
+
+    // 同一编辑编号换内容：409 IDEMPOTENCY_CONFLICT
+    expect(code(await api(ctx.app, ctx.owner, 'PUT', `/api/admin/oa/announcements/${deptAnn.id}`, { ...editPayload, title: '换了内容' }))).toBe('IDEMPOTENCY_CONFLICT');
+
+    // 已作废的编辑操作编号：409 OP_ABANDONED
+    const fencedEditKey = randomUUID();
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${fencedEditKey}/abandon`, { type: 'oa_announcement', summary: '作废编辑' })).status).toBe(200);
+    expect(
+      code(
+        await api(ctx.app, ctx.owner, 'POST', `/api/admin/oa/announcements/${deptAnn.id}/update`, {
+          clientKey: fencedEditKey,
+          title: '不应生效',
+          body: '不应生效',
+          pinned: false,
+          version: upd.body.announcement.version,
+        }),
+      ),
+    ).toBe('OP_ABANDONED');
+
+    // 新操作编号带旧 version：409 VERSION_CONFLICT
     const stale = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/oa/announcements/${deptAnn.id}`, {
+      clientKey: randomUUID(),
       title: '旧版本覆盖',
       body: '不应成功',
       pinned: false,
@@ -192,9 +222,12 @@ describe('员工办公 v1.1 第 5 批：公司公告', () => {
     expect(stale.status).toBe(409);
     expect(code(stale)).toBe('VERSION_CONFLICT');
 
-    // 撤回前前厅员工有未读公告通知
+    // 编辑后，前厅员工通知列表中的标题与正文预览已同步更新为修正后的内容
     const beforeRecall = await api<NotificationPage>(ctx.app, frontCookie, 'GET', '/api/oa/notifications?status=unread');
-    expect(beforeRecall.body.items.some((n) => n.link === `/oa/announcements/${deptAnn.id}`)).toBe(true);
+    const updatedNotif = beforeRecall.body.items.find((n) => n.link === `/oa/announcements/${deptAnn.id}`);
+    expect(updatedNotif).toBeDefined();
+    expect(updatedNotif!.title).toBe('公告：前厅部早班交接要求（更新）');
+    expect(updatedNotif!.body).toBe('更新后的交接细则。');
 
     // 撤回（带幂等重放 + 必填原因）
     const recallKey = randomUUID();
@@ -217,6 +250,7 @@ describe('员工办公 v1.1 第 5 批：公司公告', () => {
 
     // 撤回后：不可再编辑；员工端不可见、不可读、不可下附件、站内通知也隐藏；管理员仍可查附件
     const editAfter = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/oa/announcements/${deptAnn.id}`, {
+      clientKey: randomUUID(),
       title: '再编辑',
       body: '不允许',
       pinned: false,
