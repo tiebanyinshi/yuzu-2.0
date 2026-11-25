@@ -158,7 +158,8 @@ export const CheckoutInput = z.object({
    * ——以前直接按已做完记账、照常收钱、算技师钟数，客人没做的项目也收了
    */
   // 不带时不补默认值：操作编号的摘要按解析后的请求算，补了空数组会让升级前发出、回复丢了的同一笔重提对不上（Codex 审查 f260ca3）
-  confirmUnstarted: z.array(z.string().trim().min(1).max(32)).max(50).optional(),
+  // 上限按合并结账的规模（一次最多 30 张手牌，每位客人挂几个钟也够）：不让合法的团体结账因为钟单多被拒（Codex 审查 7e7a584）
+  confirmUnstarted: z.array(z.string().trim().min(1).max(32)).max(600).optional(),
 });
 export type CheckoutInputData = z.input<typeof CheckoutInput>;
 
