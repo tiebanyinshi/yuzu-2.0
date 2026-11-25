@@ -41,8 +41,11 @@ describe('礼品卡批次', () => {
     expect((await api(ctx.app, ctx.owner, 'GET', '/api/gift-cards')).body.find((b: { id: number }) => b.id === r.body.batch.id)).toMatchObject({ bound: 1 });
     const csv = await ctx.app.inject({ method: 'GET', url: `/api/gift-cards/${r.body.batch.id}/cards.csv`, headers: { cookie: ctx.owner } });
     expect(csv.body).toContain(cards[1]!.memberNo);
-    // 店员没有建档权限的不能生成（店员有建档权限：这里只验接口要登录、有权限）
+    // 要登录；与「发券」页同一项权限（管券的）：前台有建档权限也不能生成、看卡号（合并前 Codex 审查 c79ca75）
     expect((await api(ctx.app, '', 'GET', '/api/gift-cards')).status).toBe(401);
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/gift-cards')).status).toBe(403);
+    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/gift-cards', { clientKey: randomUUID(), label: '前台', quantity: 1 })).status).toBe(403);
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/gift-cards/${r.body.batch.id}/cards`)).status).toBe(403);
   });
 
   it('没收到结果（Codex 审查 8a7023d）：按编号查回那一批；没生成的确认作废以后，迟到的原请求不再生成', async () => {

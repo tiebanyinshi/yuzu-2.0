@@ -647,7 +647,7 @@ describe('8.1.40 发券试算的上限（合并前 Codex 审查 8a7023d）', () 
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     return r.body.estimate as { perCoupon: number | null; uncappedWhy?: string };
   };
-  it('兑换项目按最贵的一档价算（结账时抵账单上单价最高的那一份）；兑换票种按 24 小时档；折扣券没设最多减写明原因', async () => {
+  it('兑换项目按最贵的一档价算（结账时抵账单上单价最高的那一份）；兑换门票没设最多抵不封顶；折扣券没设最多减写明原因', async () => {
     // 券果盘：默认档 ¥38，另加一档 ¥58
     await ctx.sql`INSERT INTO service_item_prices (item_id, tier, price) VALUES (${item['券果盘']!}, 'premium', 5800) ON CONFLICT (item_id, tier) DO UPDATE SET price = 5800`;
     const exchange = await template({ name: '果盘兑换券（试算）', kind: 'exchange', exchangeItemId: item['券果盘'] });
@@ -655,9 +655,12 @@ describe('8.1.40 发券试算的上限（合并前 Codex 审查 8a7023d）', () 
     const cappedEx = await template({ name: '果盘兑换券（最多抵）', kind: 'exchange', exchangeItemId: item['券果盘'], maxOff: 4000 });
     expect((await estimateOf(cappedEx.id)).perCoupon).toBe(4000);
 
-    const [tt] = await ctx.sql<{ id: number; price: number }[]>`SELECT id, price_24h AS price FROM ticket_types WHERE active ORDER BY price_24h DESC LIMIT 1`;
+    // 门票按在店时长累计（超过 24 小时还会加）：没设最多抵就不封顶，设了按最多抵（合并前 Codex 审查 c79ca75）
+    const [tt] = await ctx.sql<{ id: number }[]>`SELECT id FROM ticket_types WHERE active ORDER BY id LIMIT 1`;
     const ticket = await template({ name: '门票兑换券（试算）', kind: 'exchange', exchangeTicketTypeId: Number(tt!.id) });
-    expect((await estimateOf(ticket.id)).perCoupon).toBe(Number(tt!.price));
+    expect(await estimateOf(ticket.id)).toMatchObject({ perCoupon: null, uncappedWhy: '兑换门票按在店时长累计，没设「最多抵」' });
+    const ticketCapped = await template({ name: '门票兑换券（最多抵）', kind: 'exchange', exchangeTicketTypeId: Number(tt!.id), maxOff: 9900 });
+    expect((await estimateOf(ticketCapped.id)).perCoupon).toBe(9900);
 
     // 门店改过价的按门店价算（合并前 Codex 审查 1a89c41）；券限了门店的只看那几家
     const [st] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('CE2', '试算乙店', 1) RETURNING id`;

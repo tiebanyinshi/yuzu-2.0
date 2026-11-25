@@ -12,7 +12,8 @@ import { downloadUrl, formatDateTime, uuid } from '../../lib/utils';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
-import { Button, Card, Field, Input, Notice, SectionTitle } from '../../components/ui';
+import { LoadFailed } from '../../components/LoadFailed';
+import { Button, Card, Field, Input, Notice, SectionTitle, Skeleton } from '../../components/ui';
 
 // 挂在 ['coupons'] 下面：发券页「结果待确认」查回以后刷新券的那一次（useInvalidateCoupons）连带刷新这一页
 const key = ['coupons', 'gift-cards'] as const;
@@ -44,8 +45,15 @@ export function GiftCardsCard() {
       <p className="text-[12.5px] leading-relaxed text-ink-3">
         先出卡、后绑手机号：一张礼品卡就是一位匿名卡会员，会员号就是卡号。生成以后导出卡号去印卡；送出去以后在会员资料里「转实名」填客人的手机号；要预存金额的，按卡号照常充值。
       </p>
-      {q.error && <Notice tone="error" title={errorMessage(q.error)} />}
-      {(q.data ?? []).length === 0 ? (
+      {/* 取数中、取不到、真的没有分开写（合并前 Codex 审查 c79ca75）：没取到不说成「还没有生成过」 */}
+      {q.error && q.data && <Notice tone="error" title={`刷新没成功，下面是之前取到的：${errorMessage(q.error)}`} />}
+      {q.isPending ? (
+        <Skeleton className="h-16 w-full" />
+      ) : q.isError && !q.data ? (
+        <LoadFailed title="礼品卡批次没取到" onRetry={() => void q.refetch()} retrying={q.isFetching} testId="gift-cards-failed">
+          {errorMessage(q.error)}
+        </LoadFailed>
+      ) : (q.data ?? []).length === 0 ? (
         <p className="rounded-lg border border-dashed border-line-strong px-4 py-6 text-center text-[13px] text-ink-3">还没有生成过礼品卡</p>
       ) : (
         <ul className="divide-y divide-line/70 rounded-lg border border-line">

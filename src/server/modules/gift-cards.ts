@@ -3,6 +3,7 @@
 // 不另建一套卡：礼品卡就是匿名卡会员（不要手机号，会员号就是卡号），一批一次生成（最多 200 张），一个事务、一个操作编号。
 // 送出去以后在会员资料里「转实名」填手机号（转实名、改手机号的规矩照旧）；要预存金额的，按这张卡（会员号）照常充值，钱只在会员钱包里。
 // 批次列表写每一批几张、已经绑了手机号的几张、预存了多少（本金余额合计）；导出这一批的卡号（印卡用）。
+// 权限：管券的（coupon.manage）——与「发券」页同一项（合并前 Codex 审查 c79ca75：页面只给管券的进，接口也一样）。
 // 锁：作废登记（op_fences，按编号）→ 批次的操作编号（唯一约束兜底）→ 新会员行。不碰钱包。
 // 页面上与生成无记名券同一套「结果待确认」（迁移 322）：发出前本机存好编号与原请求，没收到结果时查回、原样重提或确认作废。
 
@@ -111,15 +112,15 @@ export async function giftCardsOf(db: Db, id: number) {
 }
 
 export function registerGiftCardRoutes(app: FastifyInstance, deps: Deps) {
-  app.get('/api/gift-cards', { preHandler: guard('member.write') }, async () => listGiftCardBatches(deps.sql));
-  app.post('/api/gift-cards', { preHandler: guard('member.write') }, async (req, reply) => {
+  app.get('/api/gift-cards', { preHandler: guard('coupon.manage') }, async () => listGiftCardBatches(deps.sql));
+  app.post('/api/gift-cards', { preHandler: guard('coupon.manage') }, async (req, reply) => {
     const r = await createGiftCardBatch(deps, req.body, ctxOf(req));
     reply.code(r.replayed ? 200 : 201);
     return r;
   });
-  app.get('/api/gift-cards/:id/cards', { preHandler: guard('member.write') }, async (req) => giftCardsOf(deps.sql, parse(idParam, req.params).id));
+  app.get('/api/gift-cards/:id/cards', { preHandler: guard('coupon.manage') }, async (req) => giftCardsOf(deps.sql, parse(idParam, req.params).id));
   // 导出卡号（印卡用）
-  app.get('/api/gift-cards/:id/cards.csv', { preHandler: guard('member.write') }, async (req, reply) => {
+  app.get('/api/gift-cards/:id/cards.csv', { preHandler: guard('coupon.manage') }, async (req, reply) => {
     const id = parse(idParam, req.params).id;
     const b = await getGiftCardBatch(deps.sql, id);
     const cards = await giftCardsOf(deps.sql, id);

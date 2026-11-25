@@ -118,7 +118,7 @@ export async function previewCampaign(deps: Pick<Deps, 'sql' | 'config'>, raw: u
 /**
  * 发券试算（8.1.40）：每张最多抵多少 × 张数；按这个券以前的核销率估成本（只读）。
  * 每张最多抵多少是上限（合并前 Codex 审查 8a7023d）：兑换、买一赠一按那个项目**最贵的一档**价（结账时抵的是账单上单价最高的那一份，
- * 不止默认档；门店改过价的也算进去，券限了门店的只看那几家）；兑换票种按那个票种 24 小时档的价；现场定价（时价、称重）的项目没有定价，没设「最多抵」就是不封顶。
+ * 不止默认档；门店改过价的也算进去，券限了门店的只看那几家）；兑换门票没设「最多抵」就不封顶（门票按在店时长累计）；现场定价（时价、称重）的项目没有定价，没设「最多抵」就是不封顶。
  */
 async function estimateOf(db: Db, t: LockedTemplate, coupons: number): Promise<NonNullable<CampaignPreview['estimate']>> {
   let perCoupon: number | null = null;
@@ -134,8 +134,8 @@ async function estimateOf(db: Db, t: LockedTemplate, coupons: number): Promise<N
     perCoupon = t.maxOff === null ? null : Number(t.maxOff);
     if (perCoupon === null) uncappedWhy = '折扣券没设「最多减」';
   } else if (t.kind === 'exchange' && t.exchangeItemId === null && t.exchangeTicketTypeId !== null) {
-    const [tt] = await db<{ price: number }[]>`SELECT price_24h AS price FROM ticket_types WHERE id = ${t.exchangeTicketTypeId}`;
-    perCoupon = capped(tt ? Number(tt.price) : null, '兑换的票种找不到');
+    // 门票按在店时长累计（12 小时一档往上加，超过 24 小时还会加），结账时整张门票是一份：没有「最多抵」就没有上限（合并前 Codex 审查 c79ca75）
+    perCoupon = capped(null, '兑换门票按在店时长累计，没设「最多抵」');
   } else {
     const itemId = t.exchangeItemId ?? t.buyItemId;
     const [p] = itemId

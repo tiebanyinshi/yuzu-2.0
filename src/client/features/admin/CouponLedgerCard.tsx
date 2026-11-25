@@ -95,7 +95,12 @@ export function CouponLedgerCard() {
       <DataTable<CouponLedgerRow>
         rows={ledger.data?.rows ?? []}
         rowKey={(r) => r.id}
-        loading={ledger.isLoading}
+        loading={ledger.isPending}
+        // 取不到时写取不到、给重试，不当成「没有发券」（合并前 Codex 审查 c79ca75）
+        failed={ledger.isError && !ledger.data}
+        onRetry={() => void ledger.refetch()}
+        retrying={ledger.isFetching}
+        failedTitle="发放台账没取到"
         empty="这段时间没有发券"
         columns={[
           { key: 'code', header: '券号', cell: (r) => <span className="num">{r.code}</span> },

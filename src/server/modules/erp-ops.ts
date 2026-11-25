@@ -78,8 +78,8 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   coupon_rule: ['coupon.manage'],
   coupon_batch: ['coupon.manage'],
   coupon_campaign: ['coupon.manage'],
-  // 生成礼品卡（8.1.40）：与生成接口一致
-  gift_card_batch: ['member.write'],
+  // 生成礼品卡（8.1.40）：与生成接口一致（管券的）
+  gift_card_batch: ['coupon.manage'],
   coupon_issue: ['coupon.issue'],
   // 硬件连接（v0.7.21）
   device_create: ['device.manage'],
@@ -194,7 +194,7 @@ const READ: Record<ErpOpType, Permission[]> = {
   coupon_rule: ['coupon.manage'],
   coupon_batch: ['coupon.manage'],
   coupon_campaign: ['coupon.manage'],
-  gift_card_batch: ['member.write'],
+  gift_card_batch: ['coupon.manage'],
   coupon_issue: ['coupon.issue'],
   device_create: ['device.manage'],
   device_job: ['device.test'],
