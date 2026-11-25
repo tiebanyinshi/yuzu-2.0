@@ -34,3 +34,6 @@ export function qrShape(text: string, ecc: 'L' | 'M' | 'Q' | 'H' = 'M'): QrShape
     ],
   };
 }
+
+/** 扫码要的是固定的深色码、白底（深色主题下也不跟着变）：Design 工作台的预览码、WCP 手机端入口码用 */
+export const QR_COLORS = { paper: '#fff', module: '#1c231f', eye: '#24493a' } as const;

@@ -10,7 +10,6 @@ import { useBlocker, useNavigate, useParams } from 'react-router';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, Clock, Ellipsis, Eye, History, Languages, LogOut, Maximize2, MessageSquare, Minus, Package, Plus, Redo2, Send, TriangleAlert, Undo2 } from 'lucide-react';
 import { formatWindow, periodWindow, type EmenuLayout, type EmenuMenu, type EmenuPeriodKey } from '@shared/emenu';
-import { qrShape } from '@shared/qr-svg';
 import {
   checkStudioDoc,
   defaultStudioDoc,
@@ -35,6 +34,7 @@ import {
   type StudioVersionView,
 } from '@shared/studio';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
+import { QrCode } from '../../components/QrCode';
 import { sendErpOp } from '../../lib/erpPending';
 import { useCan, useSession } from '../../lib/session';
 import { cn, uuid } from '../../lib/utils';
@@ -81,22 +81,6 @@ import { headerPage, pagesWithLayout, templatePage } from './templateModel';
 
 type SaveStatus = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict';
 const ZOOMS = [0.5, 0.75, 1, 1.25] as const;
-
-function QrCode({ text, className }: { text: string; className?: string }) {
-  const shape = useMemo(() => qrShape(text), [text]);
-  return (
-    <svg viewBox={`-2 -2 ${shape.size + 4} ${shape.size + 4}`} className={className} role="img" aria-label="二维码">
-      <rect x={-2} y={-2} width={shape.size + 4} height={shape.size + 4} fill="#fff" />
-      <path d={shape.modules} fill="#1c231f" />
-      {shape.eyes.map((e) => (
-        <g key={`${e.x}-${e.y}`}>
-          <rect x={e.x + 0.5} y={e.y + 0.5} width="6" height="6" rx="1.8" fill="none" stroke="#24493a" strokeWidth="1" />
-          <rect x={e.x + 2} y={e.y + 2} width="3" height="3" rx="0.9" fill="#24493a" />
-        </g>
-      ))}
-    </svg>
-  );
-}
 
 function ToolButton({ title, onClick, disabled, children, active, testId }: { title: string; onClick: () => void; disabled?: boolean; children: ReactNode; active?: boolean; testId?: string }) {
   return (

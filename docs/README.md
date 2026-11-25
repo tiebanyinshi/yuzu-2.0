@@ -78,6 +78,7 @@
 - [`MEMBERS_V8115.md`](MEMBERS_V8115.md)：8.1.16 会员中心：建档先选卡类型、表单字段补全
 - [`MULTISTORE_V8022.md`](MULTISTORE_V8022.md)：8.0.22 设计 · 多门店、多店多仓、多公司主体（MD-A、MD-B、MD-C）
 - [`OA.md`](OA.md)：OA 办公：考勤打卡、审批、即时通讯、工资条（店主 2026-11-22）
+- [`OA_MOBILE.md`](OA_MOBILE.md)：员工办公 v1.1（PC + 手机 H5）
 - [`ORDERS_V8015.md`](ORDERS_V8015.md)：订单查询与部门项目明细（8.0.15）
 - [`PATROL_V809.md`](PATROL_V809.md)：安保巡场与员工工作台（8.0.9）
 - [`PAYMENTS.md`](PAYMENTS.md)：付款流（v0.7.32）

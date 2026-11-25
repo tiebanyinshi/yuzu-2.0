@@ -1,21 +1,18 @@
 // OA 员工端（docs/OA.md 第 1、8 节）：「办公」首页与「我的排班」。OA-14 起首页多「消息」（ImPages.tsx，角标是未读合计），OA-16 起多「通讯录」（DirectoryPage.tsx）。登录就能用，只看本人的。
 // 入口在账号菜单「办公」（主导航那一列在小屏电脑上已经放不下新的一组；只用 ERP 的后勤也不因此多出门店主导航）。
-//   · 办公首页：常用的几样（打卡、我的排班、通知；审批等随后面的 PR 加进来），手机上一行两个。
+//   · 工作台（员工办公 v1.1 第 1 批，docs/OA_MOBILE.md）：顶上「今天」打卡卡片，下面功能宫格（手机一行四个小图标），顶栏搜索按名字筛。
 //   · 打卡：PunchPage.tsx（OA-06）。
 //   · 我的排班：月历，每天的班次与休息；跨天班写「至次日 06:00」，第二天 00:00 上班的在前一天写「今晚 24:00 上班」。
 
 import { useState } from 'react';
-import { Link, useLocation } from 'react-router';
+import { Link, useLocation, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { shiftDate } from '@shared/labels';
-import { MY_DAY_STATUS_LABELS, MY_DAY_STATUSES, type MyDayStatus, type MySchedule, type MyScheduleItem } from '@shared/oa';
+import { ChevronLeft, ChevronRight, FilePenLine, Fingerprint } from 'lucide-react';
+import type { MySchedule, PunchToday } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
 import { IM_LIST_POLL_MS, type ImSync } from '@shared/oa-im';
-import { clockText } from '@shared/technician-admin';
 import { api } from '../../lib/api';
 import { useLivePoll } from '../../lib/livePoll';
-import { cn } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Button, Card, Skeleton } from '../../components/ui';
@@ -28,7 +25,9 @@ import { MyAttendancePage } from './MyAttendancePage';
 import { MyLeavePage } from './MyLeavePage';
 import { MyPayslipPages } from './MyPayslipPages';
 import { PunchPage } from './PunchPage';
-import { useWcpNav } from './wcpNav';
+import { MePage } from './MePage';
+import { DayLegend, itemText, MonthGrid } from './MyScheduleCalendar';
+import { useWcpNav, type WcpNavItem } from './wcpNav';
 import { TrainingPages } from '../training/TrainingPages';
 
 /** /oa 下面的几页放在一个按需加载的文件里（首屏主包有体积上限，路由表里只占一行） */
@@ -41,6 +40,8 @@ export function OfficePage() {
     <ImPages />
   ) : path === '/oa/directory' ? (
     <DirectoryPage />
+  ) : path === '/oa/me' ? (
+    <MePage />
   ) : path === '/oa/schedule' ? (
     <MySchedulePage />
   ) : path === '/oa/notifications' ? (
@@ -62,6 +63,13 @@ export function OfficePage() {
   );
 }
 
+/** 工作台宫格里多出来的：补卡直接进补卡审批（店主 2026-11-25 v1.1 第二节「工作台」） */
+const MAKEUP_TILE: WcpNavItem = { to: '/oa/approvals/new/makeup', label: '补卡', hint: '忘打卡、缺卡的补一张，走审批', icon: FilePenLine, testId: 'oa-tile-makeup' };
+
+/**
+ * 工作台（WCP 首页）：顶上「今天」打卡卡片（今天的班次与上下班卡打了没有），下面是功能宫格。
+ * 手机上宫格一行四个小图标（参考钉钉），电脑上照旧是带说明的方块；顶栏搜索框按名字筛宫格（?q=）。
+ */
 function OfficeHomePage() {
   // 审批的角标：待我审批的张数
   const approvals = useQuery({ queryKey: ['oa', 'approvals', 'summary'], queryFn: () => api.get<ApprovalSummary>('/api/oa/approvals/summary') });
@@ -73,64 +81,101 @@ function OfficeHomePage() {
   useLivePoll(async () => void (await im.refetch()), [], { intervalMs: IM_LIST_POLL_MS });
   const unread = im.data?.unread ?? 0;
   // WCP 设置（店主 2026-11-24，docs/BOARDS.md 第 2 节）：有人员与行政任一分区的才显示，进第一个能进的
-  const tiles = useWcpNav();
+  const nav = useWcpNav();
+  const [params] = useSearchParams();
+  const q = (params.get('q') ?? '').trim();
+  const all = [...nav.slice(0, 3), MAKEUP_TILE, ...nav.slice(3)];
+  const tiles = q ? all.filter((t) => t.label.includes(q) || t.hint.includes(q)) : all;
+  const badge = (t: WcpNavItem) => (t.to === '/oa/im' && unread > 0 ? (unread > 99 ? '99+' : String(unread)) : t.to === '/oa/approvals' && todo > 0 ? String(todo) : null);
   return (
     <>
-      <PageHeader dateMode="calendar" title="WCP" subtitle="员工工作台：排班、打卡、审批、工资条等员工自己的事" />
-      <div className="mx-auto grid w-full max-w-3xl grid-cols-2 gap-3 p-4 md:grid-cols-3 md:p-7" data-testid="oa-home">
-        {tiles.map((t) => (
-          <Link key={t.to} to={t.to} data-testid={t.testId} className="tap relative rounded-lg border border-line bg-card p-4 shadow-card transition-colors hover:border-line-strong">
-            <t.icon className="size-6 text-pine" />
-            {t.to === '/oa/im' && unread > 0 && (
-              <span className="num absolute top-3 right-3 rounded-full bg-clay px-2 text-[12px] font-bold text-white" data-testid="oa-tile-im-badge">
-                {unread > 99 ? '99+' : unread}
-              </span>
-            )}
-            {t.to === '/oa/approvals' && todo > 0 && (
-              <span className="num absolute top-3 right-3 rounded-full bg-clay px-2 text-[12px] font-bold text-white" data-testid="oa-tile-approvals-badge">
-                {todo}
-              </span>
-            )}
-            <p className="mt-3 text-[15px] font-bold text-ink">{t.label}</p>
-            <p className="mt-0.5 text-[12.5px] text-ink-3">{t.hint}</p>
-          </Link>
-        ))}
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title="WCP" subtitle="员工工作台：排班、打卡、审批、工资条等员工自己的事" />
+      </div>
+      <div className="mx-auto w-full max-w-3xl space-y-3 p-3 md:p-7" data-testid="oa-home">
+        {!q && <TodayCard />}
+        {q && (
+          <p className="px-1 text-[13px] text-ink-3" data-testid="oa-home-search-result">
+            「{q}」{tiles.length ? `找到 ${tiles.length} 项` : '没有找到对应的功能'}
+          </p>
+        )}
+        <div className="grid grid-cols-4 gap-1 rounded-lg border border-line bg-card p-2 shadow-card md:grid-cols-3 md:gap-3 md:border-0 md:bg-transparent md:p-0 md:shadow-none">
+          {tiles.map((t) => {
+            const b = badge(t);
+            return (
+              <Link
+                key={t.to}
+                to={t.to}
+                data-testid={t.testId}
+                className="tap relative flex flex-col items-center rounded-lg px-1 py-2.5 text-center transition-colors md:items-start md:border md:border-line md:bg-card md:p-4 md:text-left md:shadow-card md:hover:border-line-strong"
+              >
+                <t.icon className="size-6 text-pine" />
+                {b && (
+                  <span className="num absolute top-1 right-1 rounded-full bg-clay px-1.5 text-[12px] font-bold text-white md:top-3 md:right-3 md:px-2" data-testid={`${t.testId}-badge`}>
+                    {b}
+                  </span>
+                )}
+                <p className="mt-1.5 text-[12.5px] font-semibold text-ink md:mt-3 md:text-[15px] md:font-bold">{t.label}</p>
+                <p className="mt-0.5 hidden text-[12.5px] text-ink-3 md:block">{t.hint}</p>
+              </Link>
+            );
+          })}
+        </div>
       </div>
     </>
   );
 }
 
-const WEEK = ['一', '二', '三', '四', '五', '六', '日'];
+const punchText = (p: { localTime: string } | null) => (p ? `已打 ${p.localTime}` : '未打');
+
+/** 工作台顶上的「今天」打卡卡片：今天的班次、上下班卡打了没有；该打哪张卡由打卡页按班次窗口判定（第 2 批接上「该打什么卡」） */
+function TodayCard() {
+  const q = useQuery({ queryKey: ['oa', 'punch-today'], queryFn: () => api.get<PunchToday>('/api/oa/attendance/today') });
+  const d = q.data;
+  const today = d ? d.slots.filter((x) => x.date === d.today) : [];
+  return (
+    <Card className="p-4" data-testid="oa-today-card">
+      <div className="flex items-center gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-pine-tint text-pine">
+          <Fingerprint className="size-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[15px] font-bold text-ink">今天{d ? ` · ${d.today.slice(5).replace('-', ' 月 ')} 日` : ''}</p>
+          <p className="truncate text-[12.5px] text-ink-3" data-testid="oa-today-group">
+            {q.isPending ? '正在取今天的排班…' : q.isError ? '今天的排班没有取回来' : d!.group ? d!.group.name : '还没加入考勤组，打卡前请找人力行政部'}
+          </p>
+        </div>
+        <Link to="/oa/punch" data-testid="oa-today-punch" className="tap relative inline-flex h-9 shrink-0 items-center rounded-full bg-pine px-4 text-[14px] font-semibold text-white">
+          去打卡
+        </Link>
+      </div>
+      {d && (
+        <div className="mt-3 space-y-1.5" data-testid="oa-today-slots">
+          {today.length === 0 ? (
+            <p className="rounded-md bg-paper-2 px-3 py-2 text-[13px] text-ink-2">今天没有排班</p>
+          ) : (
+            today.map((s) => (
+              <div key={s.shiftId} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-paper-2 px-3 py-2 text-[13px]">
+                <span className="font-bold text-ink">{s.name}</span>
+                <span className="num text-ink-3">{itemText(s)}</span>
+                <span className="ml-auto flex gap-3">
+                  <span className={s.in ? 'text-pine' : 'text-ink-3'}>上班 {punchText(s.in)}</span>
+                  <span className={s.out ? 'text-pine' : 'text-ink-3'}>下班 {punchText(s.out)}</span>
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function addMonths(month: string, n: number): string {
   const [y, m] = month.split('-').map(Number) as [number, number];
   const d = new Date(Date.UTC(y, m - 1 + n, 1));
   return d.toISOString().slice(0, 7);
 }
-
-/** 每天的底色（排班优化第 4 条）：系统现有的主题色，图例与格子同一张表 */
-const DAY_TONE: Record<MyDayStatus, { cell: string; swatch: string; text: string }> = {
-  work: { cell: 'bg-lake-soft border-lake/30', swatch: 'bg-lake-soft border-lake/40', text: 'text-lake' },
-  rest: { cell: 'bg-paper-2 border-line', swatch: 'bg-paper-2 border-line-strong', text: 'text-ink-3' },
-  leave: { cell: 'bg-yuzu-soft border-yuzu/40', swatch: 'bg-yuzu-soft border-yuzu/50', text: 'text-yuzu-deep' },
-  absent: { cell: 'bg-clay-soft border-clay/30', swatch: 'bg-clay-soft border-clay/40', text: 'text-clay' },
-};
-const LEAVE_PART: Record<'full' | 'am' | 'pm', string> = { full: '请假', am: '上午请假', pm: '下午请假' };
-
-function DayLegend() {
-  return (
-    <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1.5 text-[12.5px]" data-testid="my-schedule-legend">
-      {MY_DAY_STATUSES.map((s) => (
-        <span key={s} className="flex items-center gap-1.5 text-ink-2">
-          <span className={cn('size-4 rounded border', DAY_TONE[s].swatch)} aria-hidden />
-          {MY_DAY_STATUS_LABELS[s]}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-const itemText = (i: MyScheduleItem) => `${clockText(i.startMinute)}–${i.endMinute <= i.startMinute ? '次日 ' : ''}${clockText(i.endMinute)}`;
 
 function MySchedulePage() {
   const [month, setMonth] = useState<string | null>(null);
@@ -167,62 +212,5 @@ function MySchedulePage() {
         )}
       </div>
     </>
-  );
-}
-
-function MonthGrid({ data }: { data: MySchedule }) {
-  const first = data.days[0]!.date;
-  const [y, m, d] = first.split('-').map(Number) as [number, number, number];
-  const lead = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
-  // 下个月 1 号的也算上：00:00 上班的在这个月最后一天写「今晚 24:00 上班」
-  const byDate = new Map([...data.days, data.following].map((x) => [x.date, x.items]));
-  return (
-    <div className="grid grid-cols-7 gap-1 text-[12px]">
-      {WEEK.map((w) => (
-        <div key={w} className="py-1 text-center font-semibold text-ink-3">
-          {w}
-        </div>
-      ))}
-      {Array.from({ length: lead }, (_, i) => (
-        <div key={`pad-${i}`} />
-      ))}
-      {data.days.map((day) => {
-        // 第二天 00:00 上班的班次：今晚就要去，前一天写上
-        const tonight = (byDate.get(shiftDate(day.date, 1)) ?? []).filter((i) => i.startMinute === 0);
-        return (
-          <div
-            key={day.date}
-            data-testid={`my-day-${day.date}`}
-            data-status={day.status}
-            className={cn(
-              'min-h-14 min-w-0 rounded-md border px-1 py-1 sm:min-h-20 sm:px-1.5',
-              DAY_TONE[day.status].cell,
-              day.date === data.today && 'ring-2 ring-pine',
-              day.date < data.today && 'opacity-70',
-            )}
-          >
-            <p className="num font-semibold text-ink-2">{Number(day.date.slice(8))}</p>
-            {day.status === 'leave' && <p className={cn('font-bold', DAY_TONE.leave.text)}>{LEAVE_PART[day.leavePart ?? 'full']}</p>}
-            {day.status === 'absent' && <p className={cn('font-bold', DAY_TONE.absent.text)}>缺勤</p>}
-            {day.items.length === 0 && tonight.length === 0 && day.status === 'rest' && (
-              <p className="text-ink-3">
-                休<span className="max-sm:hidden">息</span>
-              </p>
-            )}
-            {day.items.map((i) => (
-              <p key={i.shiftId} className="mt-0.5 leading-tight">
-                <span className="block truncate font-bold text-ink">{i.name}</span>
-                <span className="num block text-[12px] text-ink-3">{itemText(i)}</span>
-              </p>
-            ))}
-            {tonight.map((i) => (
-              <p key={`t-${i.shiftId}`} className="mt-0.5 text-[12px] leading-tight font-semibold text-ember">
-                今晚 24:00 上班（{i.name}）
-              </p>
-            ))}
-          </div>
-        );
-      })}
-    </div>
   );
 }
