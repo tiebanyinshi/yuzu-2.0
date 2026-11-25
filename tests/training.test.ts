@@ -413,4 +413,28 @@ describe('员工培训', () => {
     // 在职员工照常能看
     expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${fileId}/content`)).status).toBe(200);
   });
+
+  it('「不传了」占的作废记录算进每天的次数，7 天后定时清掉（Codex 安全审查 04eb112）', async () => {
+    const base = { fileName: 'x.pdf', mime: 'application/pdf', sizeBytes: 100 };
+    const cancel = (clientKey: string) => api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads/cancel', { clientKey, ...base });
+    try {
+      const [d] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM training_uploads WHERE created_by = ${ctx.ownerId} AND created_at > now() - interval '24 hours'`;
+      setTrainingQuotaForTest({ dailyUploads: d!.n + 1 });
+      const first = randomUUID();
+      expect((await cancel(first)).body.status).toBe('cancelled');
+      // 服务端没见过的新编号：到了每天的上限，不再占新行
+      const over = await cancel(randomUUID());
+      expect(over.status).toBe(429);
+      expect(over.body.error.code).toBe('TRAINING_DAILY_LIMIT');
+      // 已经占住的编号原样重提照常回「已作废」（不算新的一次）
+      expect((await cancel(first)).body.status).toBe('cancelled');
+      // 7 天前的作废记录定时清掉，近的留着
+      await ctx.sql`UPDATE training_uploads SET finished_at = now() - interval '8 days' WHERE client_key = ${first}`;
+      await sweepTrainingUploads(ctx.sql, Date.now() + 30 * 60 * 60 * 1000);
+      const [left] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM training_uploads WHERE client_key = ${first}`;
+      expect(left!.n).toBe(0);
+    } finally {
+      setTrainingQuotaForTest(null);
+    }
+  });
 });

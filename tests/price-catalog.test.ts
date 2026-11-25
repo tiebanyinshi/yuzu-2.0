@@ -1035,6 +1035,11 @@ describe('价目表录入 第四批：对接收银项目', () => {
     expect(l1.status, JSON.stringify(l1.body)).toBe(200);
     expect(l1.body).toMatchObject({ linked: 1, unlinked: 1, synced: [{ itemId: snooker1, changed: true }] });
     expect(await tiers(snooker1)).toEqual({ standard: 9900 });
+    // 价目表新建的那个斯诺克被换下来、不再对接（Codex 审查）：接口说它没对接着，名称、分类照常能改，不再按「来源是价目表」锁着
+    const items = (await api(ctx.app, ctx.owner, 'GET', '/api/catalog')).body.items as { id: number; catalogManaged: boolean; catalogLinked: boolean }[];
+    expect(items.find((i) => i.id === managed)).toMatchObject({ catalogManaged: true, catalogLinked: false });
+    expect(items.find((i) => i.id === snooker1)).toMatchObject({ catalogManaged: false, catalogLinked: true });
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${managed}`, { name: '斯诺克（旧）', category: '娱乐', price: Number(mp.price) })).status).toBe(200);
     expect((await link({ entryKey: snookerKey, itemId: snooker2 })).body).toMatchObject({ linked: 1, unlinked: 1 });
     expect(await tiers(snooker2)).toEqual({ standard: 9900 });
     const taken = await link({ entryKey: snookerKey, itemId: yoga });

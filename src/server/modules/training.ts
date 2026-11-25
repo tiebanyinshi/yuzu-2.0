@@ -331,16 +331,23 @@ export function setTrainingQuotaForTest(limits: Partial<typeof QUOTA_DEFAULTS> |
  * 开始一次新上传前核对（Codex 安全审查 ec38502）：这个人没传完的个数与字节、24 小时内开始的次数。
  * 同一个人的上传排队核对（咨询锁），不会两个一起钻过上限
  */
-async function assertStagingQuota(tx: Tx, staffId: number, bytes: number) {
+/** 这个人的上传记录（拿按人的咨询锁以后数）：没传完的几个、多大，24 小时内新登记了几条（开始的、「不传了」占的都算） */
+async function stagingCounts(tx: Tx, staffId: number) {
   await tx`SELECT pg_advisory_xact_lock(hashtext(${`training_staging:${staffId}`}))`;
   const [r] = await tx<{ open: number; openBytes: string; day: number }[]>`
     SELECT count(*) FILTER (WHERE status = 'open')::int AS open,
            coalesce(sum(size_bytes) FILTER (WHERE status = 'open'), 0)::text AS open_bytes,
            count(*) FILTER (WHERE created_at > now() - interval '24 hours')::int AS day
     FROM training_uploads WHERE created_by = ${staffId}`;
-  if (r!.open + 1 > quota.openUploads) throw new AppError(429, 'TRAINING_UPLOAD_BUSY', `你还有 ${r!.open} 个没传完的上传，先传完或「不传了」再传新的`);
-  if (Number(r!.openBytes) + bytes > quota.openBytes) throw new AppError(413, 'TRAINING_UPLOAD_BUSY', '没传完的上传加起来太大了，先传完或「不传了」再传新的');
-  if (r!.day + 1 > quota.dailyUploads) throw new AppError(429, 'TRAINING_DAILY_LIMIT', `你 24 小时内已开始了 ${r!.day} 次上传，每人每天最多 ${quota.dailyUploads} 次，明天再传或找店主处理`);
+  return r!;
+}
+const dailyLimit = (day: number) => new AppError(429, 'TRAINING_DAILY_LIMIT', `你 24 小时内已开始了 ${day} 次上传，每人每天最多 ${quota.dailyUploads} 次，明天再传或找店主处理`);
+
+async function assertStagingQuota(tx: Tx, staffId: number, bytes: number) {
+  const r = await stagingCounts(tx, staffId);
+  if (r.open + 1 > quota.openUploads) throw new AppError(429, 'TRAINING_UPLOAD_BUSY', `你还有 ${r.open} 个没传完的上传，先传完或「不传了」再传新的`);
+  if (Number(r.openBytes) + bytes > quota.openBytes) throw new AppError(413, 'TRAINING_UPLOAD_BUSY', '没传完的上传加起来太大了，先传完或「不传了」再传新的');
+  if (r.day + 1 > quota.dailyUploads) throw dailyLimit(r.day);
 }
 
 /** 登记新内容前核对总量（全库一把咨询锁 training_quota，几次登记排队核对） */
@@ -353,12 +360,17 @@ async function assertStoreQuota(tx: Tx, bytes: number, newBlob: boolean) {
     throw new AppError(413, 'TRAINING_QUOTA', `培训文件已占 ${(Number(r!.used) / 1024 ** 3).toFixed(2)} GB，再存这份就超过 ${(quota.totalBytes / 1024 ** 3).toFixed(0)} GB 的上限，请找店主处理`);
 }
 
-/** 定时清理（jobs.ts 每分钟调，自己按小时节流）：24 小时还没传完的作废（连带传了一半的块） */
+/** 「不传了」的作废记录留几天（页面查回用） */
+const TRAINING_CANCELLED_KEEP_DAYS = 7;
+
+/** 定时清理（jobs.ts 每分钟调，自己按小时节流）：24 小时还没传完的作废（连带传了一半的块）；「不传了」的作废记录 7 天后清掉 */
 let lastSweep = 0;
 export async function sweepTrainingUploads(db: Db, now = Date.now()): Promise<number> {
   if (now - lastSweep < 60 * 60 * 1000) return 0;
   lastSweep = now;
   const rows = await db`DELETE FROM training_uploads WHERE status = 'open' AND created_at < now() - interval '24 hours' RETURNING id`;
+  // 「不传了」留下的作废记录只为查回用，过几天清掉（Codex 安全审查 04eb112：不让作废记录一直攒下去）
+  await db`DELETE FROM training_uploads WHERE status = 'cancelled' AND coalesce(finished_at, created_at) < now() - make_interval(days => ${TRAINING_CANCELLED_KEEP_DAYS})`;
   // 已作废、已登记的上传不该再有暂存的块（兜底：万一有，也清掉，不白占库）
   await db`DELETE FROM training_upload_chunks c USING training_uploads u WHERE u.id = c.upload_id AND u.status <> 'open'`;
   return rows.length;
@@ -422,7 +434,12 @@ async function cancelUpload(deps: Deps, raw: unknown, ctx: OpContext) {
   const requestHash = hashRequest({ op: 'training_upload', ...input, clientKey: undefined });
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
-    // 编号唯一：先占住（已有的不动），再锁那一行
+    // 编号唯一：先占住（已有的不动），再锁那一行。服务端没见过的编号要新占一行，算进这个人 24 小时内的登记次数（Codex 安全审查 04eb112）
+    const [seen] = await tx`SELECT 1 FROM training_uploads WHERE client_key = ${input.clientKey}`;
+    if (!seen) {
+      const r = await stagingCounts(tx, ctx.actor.id);
+      if (r.day + 1 > quota.dailyUploads) throw dailyLimit(r.day);
+    }
     await tx`
       INSERT INTO training_uploads (client_key, size_bytes, chunk_count, file_name, mime, request_hash, created_by, status, finished_at)
       VALUES (${input.clientKey}, ${input.sizeBytes}, ${chunkCount}, ${input.fileName}, ${input.mime}, ${requestHash}, ${ctx.actor.id}, 'cancelled', now())

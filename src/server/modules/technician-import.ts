@@ -19,6 +19,8 @@ export interface TechnicianImportReport {
   skippedByGroup: number;
   /** 会新建 / 已新建的分组 */
   groupsCreated: string[];
+  /** 表里用到、原来停用了的分组：导入时重新启用 */
+  groupsReactivated: string[];
   byGrade: Record<string, number>;
 }
 
@@ -30,39 +32,56 @@ export async function importTechnicians(sql: Sql, rows: TechnicianImportRow[], o
     const skip = new Set((opts.skipGroups ?? []).map((g) => g.trim()).filter(Boolean));
     const wanted = rows.filter((r) => !(r.group && skip.has(r.group)));
     const have = new Set((await tx<{ techNo: string }[]>`SELECT tech_no FROM technicians WHERE store_id = ${storeId}`).map((r) => r.techNo));
-    const existing = wanted.filter((r) => have.has(r.techNo)).map((r) => r.techNo);
+    const existingNos = wanted.filter((r) => have.has(r.techNo)).map((r) => r.techNo);
     const fresh = wanted.filter((r) => !have.has(r.techNo));
-    const groups = new Map((await tx<{ id: number; name: string }[]>`SELECT id, name FROM technician_groups WHERE store_id = ${storeId} AND active`).map((g) => [g.name.trim(), Number(g.id)]));
-    const needGroups = [...new Set(fresh.map((r) => r.group).filter((g): g is string => !!g && !groups.has(g)))];
+    // 与唯一索引 technician_groups_name_uq（store_id, lower(btrim(name))）同一个比法，停用的也算（Codex 审查：
+    // 只看在用的会把停用的同名组当成没有、去新建，撞唯一索引整批回滚）。表里的组别对上停用的组：导入时重新启用它
+    const gk = (name: string) => name.trim().toLowerCase();
+    const existing = await tx<{ id: number; name: string; active: boolean }[]>`SELECT id, name, active FROM technician_groups WHERE store_id = ${storeId}`;
+    const groups = new Map(existing.map((g) => [gk(g.name), Number(g.id)]));
+    const inactive = new Map(existing.filter((g) => !g.active).map((g) => [gk(g.name), g.name]));
+    const wantedGroups = [...new Map(fresh.filter((r) => r.group).map((r) => [gk(r.group!), r.group!])).entries()];
+    const needGroups = wantedGroups.filter(([k]) => !groups.has(k)).map(([, name]) => name);
+    const reactivate = wantedGroups.filter(([k]) => inactive.has(k)).map(([k]) => inactive.get(k)!);
     const byGrade: Record<string, number> = {};
     for (const r of fresh) byGrade[r.grade] = (byGrade[r.grade] ?? 0) + 1;
     const report: TechnicianImportReport = {
       total: rows.length,
       created: fresh.length,
-      existing,
+      existing: existingNos,
       skippedByGroup: rows.length - wanted.length,
       groupsCreated: needGroups,
+      groupsReactivated: reactivate,
       byGrade,
     };
     if (!opts.apply || fresh.length === 0) return report;
     const [top] = await tx<{ start: number }[]>`SELECT coalesce(max(sort_order), 0)::int AS start FROM technician_groups WHERE store_id = ${storeId}`;
     const start = top?.start ?? 0;
+    if (reactivate.length) {
+      await tx`UPDATE technician_groups SET active = true WHERE store_id = ${storeId} AND NOT active AND lower(btrim(name)) IN ${tx(reactivate.map(gk))}`;
+    }
     for (const [i, name] of needGroups.entries()) {
       const [g] = await tx<{ id: number }[]>`
         INSERT INTO technician_groups (store_id, name, sort_order, created_by) VALUES (${storeId}, ${name}, ${Math.min(9999, start + i + 1)}, ${opts.staffId}) RETURNING id`;
-      groups.set(name, Number(g!.id));
+      groups.set(gk(name), Number(g!.id));
     }
     for (const r of fresh) {
       await tx`
         INSERT INTO technicians (store_id, tech_no, name, gender, grade, skills, active, sort_order, note, created_by, nickname, kind, hired_on, group_id)
         VALUES (${storeId}, ${r.techNo}, ${r.name}, ${r.gender}, ${r.grade}, '{}'::text[], true, 0, '', ${opts.staffId}, ${r.nickname}, '', ${r.hiredOn},
-                ${r.group ? (groups.get(r.group) ?? null) : null})`;
+                ${r.group ? (groups.get(gk(r.group)) ?? null) : null})`;
     }
     await writeAudit(tx, {
       staffId: opts.staffId,
       action: 'technicians_imported',
       targetType: 'technician',
-      detail: { summary: `导入技师名册：新建 ${fresh.length} 位、分组 ${needGroups.length} 个，技师号已有跳过 ${existing.length} 位`, created: fresh.length, groups: needGroups, existing },
+      detail: {
+        summary: `导入技师名册：新建 ${fresh.length} 位、分组 ${needGroups.length} 个（重新启用 ${reactivate.length} 个），技师号已有跳过 ${existingNos.length} 位`,
+        created: fresh.length,
+        groups: needGroups,
+        reactivated: reactivate,
+        existing: existingNos,
+      },
     });
     return report;
   });

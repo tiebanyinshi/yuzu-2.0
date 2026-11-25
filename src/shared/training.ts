@@ -123,3 +123,16 @@ export const TRAINING_ACCEPT = Object.values(TRAINING_FORMATS)
 export interface TrainingSheetBook {
   sheets: { name: string; rows: string[][]; merges: { r1: number; c1: number; r2: number; c2: number }[]; truncated: boolean }[];
 }
+
+/** PDF 一页画成多大（Codex 安全审查 04eb112）：一页画布最多 800 万像素、一条边最多 8192 像素，超了等比缩小，不跟着 PDF 里写的页面比例无限放大 */
+export const TRAINING_PDF_MAX_PIXELS = 8_000_000;
+export const TRAINING_PDF_MAX_SIDE = 8192;
+/** 按页面原始宽高、显示宽度与屏幕像素比算出画 PDF 用的缩放倍数 */
+export function pdfRenderScale(pageWidth: number, pageHeight: number, displayWidth: number, pixelRatio: number): number {
+  if (!(pageWidth > 0) || !(pageHeight > 0)) return 0;
+  const want = (Math.max(displayWidth, 1) / pageWidth) * Math.min(Math.max(pixelRatio, 1), 2);
+  const w = pageWidth * want;
+  const h = pageHeight * want;
+  const shrink = Math.min(1, Math.sqrt(TRAINING_PDF_MAX_PIXELS / (w * h)), TRAINING_PDF_MAX_SIDE / w, TRAINING_PDF_MAX_SIDE / h);
+  return want * shrink;
+}
