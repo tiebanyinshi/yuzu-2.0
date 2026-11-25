@@ -61,9 +61,10 @@ import {
 } from '../coupons/queries';
 import { AdminPage } from './AdminShell';
 import { CouponUsageCard } from './CouponUsageCard';
+import { CouponLedgerCard } from './CouponLedgerCard';
 import { useActiveSubTab } from '../../components/SubNav';
 
-type Tab = 'templates' | 'rules' | 'stats' | 'usage';
+type Tab = 'templates' | 'rules' | 'stats' | 'usage' | 'ledger';
 // 二级页签（8.0.17）：写进地址（/admin/coupons/rules）；顺序与别的分区一样——规则在前，再是清单、统计。
 // 8.0.19（IA4）：批量发券、无记名券是当班会做的事，挪到门店会员工作台的「发券」（features/coupons/CouponIssuePage）；
 // 这里只留规则、模板、统计，旧地址 /admin/coupons/campaigns、/admin/coupons/batches 跳过去
@@ -73,6 +74,8 @@ const TABS: { value: Tab; label: string }[] = [
   { value: 'stats', label: '统计' },
   // 权益使用率看板（8.0.4 需求表 08）：按发放的一批券看领取率、核销率
   { value: 'usage', label: '使用率' },
+  // 8.1.40：一张一张券查（发放、核销、时长、充值发的）
+  { value: 'ledger', label: '发放台账' },
 ];
 
 /** 后台页面上方列出的「结果待确认」：后台的三种，另加发券给会员（店主在这里也能处理） */
@@ -127,7 +130,7 @@ export function CouponsSection() {
 /** 现在这个页签的那一块 */
 function CouponTabBody() {
   const tab = (useActiveSubTab() ?? TABS[0]!.value) as Tab;
-  return tab === 'templates' ? <TemplatesCard /> : tab === 'rules' ? <RulesCard /> : tab === 'stats' ? <StatsCard /> : <CouponUsageCard />;
+  return tab === 'templates' ? <TemplatesCard /> : tab === 'rules' ? <RulesCard /> : tab === 'stats' ? <StatsCard /> : tab === 'ledger' ? <CouponLedgerCard /> : <CouponUsageCard />;
 }
 
 // ───────────────────────── 共用 ─────────────────────────
