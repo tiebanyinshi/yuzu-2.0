@@ -16,7 +16,7 @@ import { resolveReadableDate } from '../ledger';
 import { refundShiftOptions } from '../shifts';
 import { checkout, findCoupon, getCheckout, listCheckouts, previewCheckout, voidCheckout, type CheckoutInputData } from './checkout';
 import { createRefund, getRefund, listRefunds, refundOptions, voidRefund, type RefundInputData } from './refunds';
-import { couponByCode, couponLines, withTicketLines } from '../coupon-checkout';
+import { couponByCode, couponMomentOf, couponLines, withTicketLines } from '../coupon-checkout';
 import { previewTableCheckout } from '../tables';
 import { listTicketTypes, saveTicketType, setVisitTicket, type TicketTypeInputData } from './tickets';
 import { frontdeskChecks } from './checks';
@@ -201,7 +201,8 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
       memberIds = pre.members.map((m) => m.id);
       lines = await couponLines(sql, billIds);
     }
-    const option = await couponByCode(sql, input.code, memberIds, lines, await businessDate(sql, deps, at));
+    const date = await businessDate(sql, deps, at);
+    const option = await couponByCode(sql, input.code, memberIds, lines, date, couponMomentOf(date, at, deps.config.timezone));
     return option ? { found: true, option } : { found: false };
   });
 
