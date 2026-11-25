@@ -19,6 +19,8 @@
 - [`CONVENTIONS.md`](CONVENTIONS.md)：开发约定（专题）
 - [`TESTING.md`](TESTING.md)：测试与 CI（飞书需求 RQ-008，v0.7.18 定稿；2026-11-20 改成按改动与风险挑选，见第 6 节）
 - [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
@@ -68,7 +70,7 @@
 - [`INTEGRATIONS_V8021.md`](INTEGRATIONS_V8021.md)：8.0.21 设计 · 对外接口（支付直连、平台验券、OTA、开票与银企直连的适配器）
 - [`LEDGER.md`](LEDGER.md)：采购台账、四个视图与 12 条账目自检（v0.7.9，飞书需求 RQ-005 第三步）
 - [`LEGACY_LEDGER.md`](LEGACY_LEDGER.md)：8–10 月旧账只读对照（v0.7.10，飞书需求 RQ-005 收尾）
-- [`LINGYU_AUDIT_V8136.md`](LINGYU_AUDIT_V8136.md)：8.1.36 对照「领浴」问题表：修缺陷、加防护
+- [`LINGYU_AUDIT_V8137.md`](LINGYU_AUDIT_V8137.md)：8.1.37 对照「领浴」问题表：修缺陷、加防护
 - [`MALL_V8131.md`](MALL_V8131.md)：采购商城 V1.1 对接（8.1.31，yuzu 侧）
 - [`MALL_V8132.md`](MALL_V8132.md)：采购商城并进柚子（8.1.32）
 - [`MASCOT.md`](MASCOT.md)：看板娘「柚子」（第二版：手绘动画，待店主确认）
@@ -99,6 +101,7 @@
 - [`TECHNICIANS_V8115.md`](TECHNICIANS_V8115.md)：8.1.16 技师：钟房搜索与筛选、排位播报、技师管理
 - [`TECH_RANKING.md`](TECH_RANKING.md)：技师榜单（店主 2026-11-24《技师榜单模块需求说明》）
 - [`TEST_AUDIT.md`](TEST_AUDIT.md)：用例体检（2026-11-18，工程治理三期）
+- [`TRAINING.md`](TRAINING.md)：员工培训（店主 2026-11-25，8.1.36）
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
 - [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面

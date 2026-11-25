@@ -1,4 +1,4 @@
-// 钟房的接口（8.1.36 从 clockroom.ts 拆出来：那个文件超过 1500 行）。业务都在 clockroom.ts，这里只登记路由。
+// 钟房的接口（8.1.37 从 clockroom.ts 拆出来：那个文件超过 1500 行）。业务都在 clockroom.ts，这里只登记路由。
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';

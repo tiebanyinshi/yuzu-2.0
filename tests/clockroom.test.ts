@@ -149,7 +149,7 @@ describe('派钟、上钟、加钟、下钟', () => {
     expect((await act(s1.id, 'finish')).status).toBe(200);
     expect((await act(s2.id, 'start')).status).toBe(200);
     expect((await act(s2.id, 'finish')).status).toBe(200);
-    // 前台加项目时选的技师也建钟单（待上钟）；8.1.36：前台选的轮钟也按排位——轮不到的拒绝，提示交给钟房或改点钟
+    // 前台加项目时选的技师也建钟单（待上钟）；8.1.37：前台选的轮钟也按排位——轮不到的拒绝，提示交给钟房或改点钟
     const v3 = await enter();
     const skip = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${v3}/charges`, {
       clientKey: randomUUID(),
@@ -231,7 +231,7 @@ describe('派钟、上钟、加钟、下钟', () => {
       ['01', 'serving'],
       ['04', 'waiting'],
     ]);
-    // 8.1.36：还没上钟的没勾确认拒绝（以前直接按已做完收钱）
+    // 8.1.37：还没上钟的没勾确认拒绝（以前直接按已做完收钱）
     const refused = await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkouts', {
       clientKey: randomUUID(),
       visitIds: [v],

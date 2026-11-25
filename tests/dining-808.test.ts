@@ -232,7 +232,7 @@ describe('餐饮台账（B06）', () => {
     expect(onlyActive.rows.every((r) => r.status === 'active')).toBe(true);
     // 导出
     const csv = await ctx.app.inject({ method: 'GET', url: `/api/dining/ledger/export?from=${today}&to=${today}&categories=${encodeURIComponent('饮品')}`, headers: { cookie: ctx.owner } });
-    // 8.1.36：餐饮台账按部门收窄——只会点单的店员看不到全店明细
+    // 8.1.37：餐饮台账按部门收窄——只会点单的店员看不到全店明细
     expect((await api(ctx.app, ctx.clerk, 'GET', `/api/dining/ledger?from=${today}&to=${today}`)).status).toBe(403);
     expect(csv.statusCode).toBe(200);
     const lines = csv.body.replace(/^﻿/, '').trim().split('\r\n');

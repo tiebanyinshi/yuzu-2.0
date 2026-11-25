@@ -14,7 +14,7 @@ const AuditQuery = z.object({
   /** 按自然日（门店时区）筛选 */
   date: dateSchema().optional(),
   /**
-   * 8.1.36：按动作筛——sensitive 为「敏感操作」一组（@shared/audit），也可以逗号分隔写几个动作名；不带为全部
+   * 8.1.37：按动作筛——sensitive 为「敏感操作」一组（@shared/audit），也可以逗号分隔写几个动作名；不带为全部
    */
   actions: z
     .string()
@@ -47,7 +47,7 @@ export function registerAuditRoutes(app: FastifyInstance, { sql, config }: Deps)
     return withReportScope(sql, req, () => query(date, actionsOf(actions), limit));
   });
 
-  // 8.1.36：导出 CSV（同样的筛选，最多一万条）；导出本身也记一条审计
+  // 8.1.37：导出 CSV（同样的筛选，最多一万条）；导出本身也记一条审计
   app.get('/api/audit.csv', { preHandler: guard('audit.read') }, async (req, reply) => {
     const { date, actions } = parse(AuditQuery, req.query);
     const rows = await withReportScope(sql, req, () => query(date, actionsOf(actions), AUDIT_EXPORT_MAX));

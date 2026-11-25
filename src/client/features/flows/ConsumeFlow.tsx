@@ -65,7 +65,7 @@ export function ConsumeFlow({ member, onClose, onSwitchToRecharge }: { member: M
   const available = balance.principal + balance.bonus;
   const split = total > 0 ? splitDeduction(total, balance, activeRule) : null;
   const confirmSplit = total > 0 ? splitDeduction(total, seenBalance, activeRule) : null;
-  // 8.1.36：店员（没有撤销会员消费权限）手动金额超过 500 元也要当场授权，与超过单笔上限同一张授权
+  // 8.1.37：店员（没有撤销会员消费权限）手动金额超过 500 元也要当场授权，与超过单笔上限同一张授权
   const manualOver = (customAmount ?? 0) > MANUAL_CONSUME_SELF_LIMIT_CENTS && !can('consume.reverse');
   const limit = total > session.rules.maxConsumeCents || !manualOver ? session.rules.maxConsumeCents : MANUAL_CONSUME_SELF_LIMIT_CENTS;
   const quota = member.spendQuota;

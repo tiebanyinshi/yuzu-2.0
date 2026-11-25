@@ -250,7 +250,7 @@ test.describe('8.1.7 餐饮分区与点菜单', () => {
       await page.getByTestId('limits-outlet-water').click();
       await expect(page.getByTestId('limits-group-水吧 · 调酒')).toContainText(MOJITO.name);
 
-      // ⑦ 台账：水吧 · 糖水只有甘露；导出带「价目分类」一列（8.1.36：台账按部门收窄，店员看不到，换店主看）
+      // ⑦ 台账：水吧 · 糖水只有甘露；导出带「价目分类」一列（8.1.37：台账按部门收窄，店员看不到，换店主看）
       await relogin(page, 'linlan');
       await page.goto('/crm/dining/ledger');
       const ledger = page.getByTestId('dining-ledger');

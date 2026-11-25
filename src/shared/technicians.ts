@@ -97,7 +97,7 @@ export interface FrontdeskTechnicians {
   rules: TechnicianRules;
   technicians: (Technician & {
     todayClocks: number;
-    /** 今天的排位（8.1.36）：上牌状态、在钟上或派了没上、在轮钟队列里排第几（在岗才有） */
+    /** 今天的排位（8.1.37）：上牌状态、在钟上或派了没上、在轮钟队列里排第几（在岗才有） */
     queue: { state: 'on' | 'rest' | 'off' | 'leave'; busy: boolean; position: number | null };
   })[];
 }

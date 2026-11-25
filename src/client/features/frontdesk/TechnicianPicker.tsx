@@ -24,7 +24,7 @@ export function TechnicianPicker({
   backfill = false,
 }: {
   item: ServiceItem;
-  /** 补录纸质单（8.1.36，Codex 审查 15cfaba）：服务早已做完，不看此刻的排位，按纸上的技师与上钟方式选 */
+  /** 补录纸质单（8.1.37，Codex 审查 15cfaba）：服务早已做完，不看此刻的排位，按纸上的技师与上钟方式选 */
   backfill?: boolean;
   /** 在项目卡片上点的价格档（价格不跟等级时按它计价） */
   tier: PriceTier;
@@ -92,7 +92,7 @@ export function TechnicianPicker({
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {shown.map((t) => {
-            // 8.1.36：轮钟按排位——没上牌、休息、休假、在钟上（或派了没上）的不能按轮钟选；轮不到的服务端会提示排在前面的是谁
+            // 8.1.37：轮钟按排位——没上牌、休息、休假、在钟上（或派了没上）的不能按轮钟选；轮不到的服务端会提示排在前面的是谁
             const q = t.queue;
             const rotationWhy =
               backfill || callType !== 'rotation' || !q

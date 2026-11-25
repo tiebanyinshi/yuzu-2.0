@@ -260,7 +260,7 @@ test.describe('8.0.8 前台整改', () => {
       await expect(page.getByTestId('dining-cart')).toContainText(JUICE.name);
 
       // ④ 退菜（8.1.15 起在台账里按「退菜」看）：两条，分别是「小额直接退」「当场授权（张经理）」
-      //    （8.1.36：台账按部门收窄，店员看不到，换店主看）
+      //    （8.1.37：台账按部门收窄，店员看不到，换店主看）
       await relogin(page, 'linlan');
       await page.goto('/crm/dining/ledger');
       await page.getByTestId('dining-ledger-type').getByRole('radio', { name: '退菜' }).click();

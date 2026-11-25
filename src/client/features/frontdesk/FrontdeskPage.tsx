@@ -37,7 +37,7 @@ import { JoinGroupDialog, SwapDialog } from './VisitDialogs';
 import { MoveLinesDialog } from './MoveLinesDialog';
 import { lazyPage } from '../../lib/lazyPage';
 
-// 改票种的对话框在结账那份代码里（很大）：发卡台首屏不用它，点到才下载（8.1.36：首屏主包超过上限）
+// 改票种的对话框在结账那份代码里（很大）：发卡台首屏不用它，点到才下载（8.1.37：首屏主包超过上限）
 const TicketDialog = lazyPage(() => import('./CheckoutDialog').then((m) => m.TicketDialog));
 
 /** 锁牌 / 解锁：用得少，按需加载（不进首屏主包） */

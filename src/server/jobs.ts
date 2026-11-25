@@ -29,6 +29,7 @@ import { sweepTableRestores } from './modules/tables-v8117';
 import { runAttendanceSettlement } from './modules/oa/attendance-daily';
 import { runAnnualLeaveGrant } from './modules/oa/leave';
 import { purgeStaleAttachments } from './modules/oa/attachments';
+import { sweepTrainingUploads } from './modules/training';
 
 export interface JobLog {
   info: (msg: string) => void;
@@ -80,6 +81,13 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
     if (n > 0) log.info(`清掉没用上的附件：${n} 个`);
   } catch (error) {
     log.error('清理没用上的附件失败，下一分钟重试', error);
+  }
+  // 员工培训（8.1.36，Codex 安全审查）：每小时把 24 小时还没传完的上传作废，连带传了一半的块
+  try {
+    const n = await sweepTrainingUploads(sql);
+    if (n > 0) log.info(`清掉没传完的培训上传：${n} 个`);
+  } catch (error) {
+    log.error('清理没传完的培训上传失败，一小时后重试', error);
   }
   // OA 考勤结算（OA-08）：每 10 分钟看最近 3 天下班窗口结束了的排班，还没结算的、结算后又有新打卡的重新结算
   try {

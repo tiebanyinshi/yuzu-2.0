@@ -61,7 +61,7 @@ interface Status {
 
 /**
  * 当天记下的上牌状态（不看休假单）；换了营业日没有重新上牌的按「未上牌」。
- * 只读当前门店的技师（8.1.36）：上牌状态表每位技师一行、不带门店，不按技师的门店筛的话，第二家店的排位会把别店在岗的人也排进来
+ * 只读当前门店的技师（8.1.37）：上牌状态表每位技师一行、不带门店，不按技师的门店筛的话，第二家店的排位会把别店在岗的人也排进来
  * ——排位号、叫号念的号偏大，轮钟「该派给谁」还会撞上查不到的技师。停用的技师也不进排位（停用时会改成未上牌，这里兜底）。
  */
 async function recordedStatusMap(db: Db, today: string): Promise<Map<number, Status>> {
@@ -118,7 +118,7 @@ async function activeSessions(db: Db) {
 }
 
 /**
- * 前台选技师用的排位快照（8.1.36）：每位技师今天的上牌状态、是不是在钟上或派了没上、在轮钟队列里排第几。
+ * 前台选技师用的排位快照（8.1.37）：每位技师今天的上牌状态、是不是在钟上或派了没上、在轮钟队列里排第几。
  * 只读、不取锁——真正挂账时按排位再核对一次
  */
 export async function queueSnapshot(db: Db, today: string): Promise<Map<number, { state: TechState; busy: boolean; position: number | null }>> {
@@ -247,7 +247,7 @@ export async function attachSessions(
   await lockQueue(tx);
   const space = options.dispatch?.spaceId !== undefined && options.extendId === undefined && !options.backfill ? await lockServiceSpace(tx, options.dispatch.spaceId) : null;
   if (space) {
-    // 8.1.36：在房态中心登记了房间的客人，派钟只能派进登记的那间（换房到房态中心「换房」），不然客人会同时出现在两间房
+    // 8.1.37：在房态中心登记了房间的客人，派钟只能派进登记的那间（换房到房态中心「换房」），不然客人会同时出现在两间房
     const [reg] = await tx<{ spaceId: number; code: string; displayName: string }[]>`
       SELECT r.space_id, sp.code, sp.display_name FROM room_registrations r JOIN spaces sp ON sp.id = r.space_id
       WHERE r.visit_id = ${args.visitId} AND r.status = 'open'`;
@@ -333,7 +333,7 @@ export async function attachSessions(
     // 叫号时念的排位号（8.1.15）：派钟之前在轮钟队列里排第几
     const calledPosition = status.state === 'on' ? queueOrder(statuses).indexOf(t.id) + 1 : null;
     let start = false;
-    // 8.1.36：前台挂账选了技师的轮钟也按排位核对（上牌、在岗、不在钟上、轮到他）——以前只有钟房派钟查，
+    // 8.1.37：前台挂账选了技师的轮钟也按排位核对（上牌、在岗、不在钟上、轮到他）——以前只有钟房派钟查，
     // 前台按轮钟能把同一位技师派给几张手牌、派给没上牌的人，排在前面的被跳过也没有记录。前台没有写跳过原因的地方：
     // 轮不到他的提示选排在前面的那位，或者交给钟房派钟（钟房能写原因跳过）
     const frontdeskRotation = !options.dispatch && l.callType === 'rotation';
@@ -720,7 +720,7 @@ export async function setSessionSpace(deps: Deps, id: number, raw: unknown, ctx:
   const input = parse(SessionSpaceInput, raw);
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
-    // 8.1.36：在房态中心登记了房间的客人，钟单的房间跟着登记走——钟房这里只改钟单会让客人同时出现在两间房（登记那间、钟单那间），
+    // 8.1.37：在房态中心登记了房间的客人，钟单的房间跟着登记走——钟房这里只改钟单会让客人同时出现在两间房（登记那间、钟单那间），
     // 要换到房态中心「换房」（客人、钟单一起挪，锁两间房的房态）
     const [reg] = await tx<{ spaceId: number; code: string; displayName: string }[]>`
       SELECT r.space_id, sp.code, sp.display_name FROM technician_sessions s
@@ -754,7 +754,7 @@ export async function setSessionSpaceTx(tx: Tx, deps: Deps, id: number, input: {
   const to = spaceId === null ? null : await lockServiceSpace(tx, spaceId);
   const [from] = s.spaceId === null ? [] : await tx<{ code: string; displayName: string }[]>`SELECT code, display_name FROM spaces WHERE id = ${s.spaceId}`;
   await tx`UPDATE technician_sessions SET space_id = ${spaceId}, space_version = space_version + 1 WHERE id = ${s.id}`;
-  // 8.1.36：换房间也进审计（以前只记在钟房日志里，审计查不到）
+  // 8.1.37：换房间也进审计（以前只记在钟房日志里，审计查不到）
   await writeAudit(tx, {
     staffId: ctx.actor.id,
     action: 'clock_session_room',
@@ -1210,7 +1210,7 @@ export async function syncLeaveToday(tx: Tx, deps: Deps, t: { id: number; label:
 }
 
 /**
- * 技师停用（离职）时收掉今天的上牌状态（8.1.36，技师管理调用；调用前已拿技师队列锁、锁好技师一行）。
+ * 技师停用（离职）时收掉今天的上牌状态（8.1.37，技师管理调用；调用前已拿技师队列锁、锁好技师一行）。
  * 在钟上、有派了没上的钟的拒绝（先下钟、转钟或取消派钟）；当天记着在岗、休息、休假的改成未上牌——不然看板不列他，
  * 他却还占着一个排位号，后面的人号码都往后推一位。在店的算离店，记一条下牌。
  */

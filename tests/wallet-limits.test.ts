@@ -61,7 +61,7 @@ describe('单笔上限默认 50 万元', () => {
     expect(over.body.error).toMatchObject({ code: 'OVER_LIMIT_AUTH_REQUIRED', details: { limit: 50 * WAN, amount: 50 * WAN + 1 } });
     expect(over.body.error.message).toContain('店主或店总当场授权');
     expect(await balanceOf(ctx, m.id)).toEqual({ principal: 50 * WAN, bonus: 0 });
-    // 消费同理（值班经理办：店员手动金额超过 500 元要另外授权，见下面 8.1.36 的用例）
+    // 消费同理（值班经理办：店员手动金额超过 500 元要另外授权，见下面 8.1.37 的用例）
     const c = await api(ctx.app, duty, 'POST', '/api/consumptions', consumeBody(m.id, 50 * WAN));
     expect(c.status).toBe(200);
     expect(c.body.consumption.overLimitApproverName).toBeNull();
@@ -294,7 +294,7 @@ describe('营业时间（只用于显示与提醒）与按项保存设置', () =
   });
 });
 
-describe('8.1.36：店员储值扣款手动金额超过 500 元要当场授权', () => {
+describe('8.1.37：店员储值扣款手动金额超过 500 元要当场授权', () => {
   it('店员手填 500 元以内照常扣；超过要店总、店主授权（授权带手动金额）；值班经理及以上不用；审计逐行记手动金额', async () => {
     const m = await createMember(ctx, '手动金额会员', '19900005099');
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/recharges', rechargeBody(m.id, 10 * WAN))).status).toBe(200);
@@ -324,7 +324,7 @@ describe('8.1.36：店员储值扣款手动金额超过 500 元要当场授权',
   });
 });
 
-describe('8.1.36：操作审计按「敏感操作」筛选、导出 CSV', () => {
+describe('8.1.37：操作审计按「敏感操作」筛选、导出 CSV', () => {
   it('sensitive 只列一组敏感动作；逗号写动作名也行；乱写拒绝；导出带表头并记一条导出；店员看不到', async () => {
     const all = await api(ctx.app, ctx.owner, 'GET', '/api/audit?limit=2000');
     expect(all.status).toBe(200);

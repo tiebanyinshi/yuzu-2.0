@@ -39,7 +39,7 @@ export async function assertTechnicianNotBooked(tx: Tx, a: { technicianId: numbe
 }
 
 /**
- * 这几位技师里，在 [from, to) 有还占着时段的预约的（8.1.36：轮钟「该派给谁」先把他们排除——真派给他会被上面拒绝，
+ * 这几位技师里，在 [from, to) 有还占着时段的预约的（8.1.37：轮钟「该派给谁」先把他们排除——真派给他会被上面拒绝，
  * 不排除的话排在他后面的人都得写原因跳过他，还给他记一条跳过）。只读，不取锁（调用方派钟时会取）
  */
 export async function bookedTechnicianIds(tx: Tx, a: { technicianIds: number[]; from: number; to: number; memberId: number | null }): Promise<Set<number>> {

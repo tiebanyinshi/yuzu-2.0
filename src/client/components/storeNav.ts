@@ -84,7 +84,7 @@ const STORE_NAV: StoreNavDomain[] = [
     label: '餐饮',
     icon: UtensilsCrossed,
     items: [
-      // 8.0.8：看日结的（导出流水、经营总览）也能进来看「台账」；8.1.36：只有「餐饮台账」的也能进（Codex 审查 f260ca3）
+      // 8.0.8：看日结的（导出流水、经营总览）也能进来看「台账」；8.1.37：只有「餐饮台账」的也能进（Codex 审查 f260ca3）
       {
         to: '/crm/dining',
         label: '餐饮',

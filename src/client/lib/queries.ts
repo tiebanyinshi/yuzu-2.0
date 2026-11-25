@@ -101,7 +101,7 @@ export const useStaff = (enabled = true) => useQuery({ queryKey: qk.staff, query
 
 export const useSettings = () => useQuery({ queryKey: qk.settings, queryFn: () => api.get<StoreRules & { storeName: string }>('/api/settings') });
 
-/** 操作审计；actions：sensitive 为「敏感操作」一组（8.1.36） */
+/** 操作审计；actions：sensitive 为「敏感操作」一组（8.1.37） */
 export const auditQuery = (date?: string, actions?: string, limit?: number) =>
   new URLSearchParams({ ...(date ? { date } : {}), ...(actions ? { actions } : {}), ...(limit ? { limit: String(limit) } : {}) }).toString();
 export const useAudit = (date?: string, actions?: string) =>

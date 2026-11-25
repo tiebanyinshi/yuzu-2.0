@@ -194,7 +194,7 @@ describe('挂账选技师', () => {
     const tuina = two.body.items.find((i: { name: string }) => i.name === '推拿').id;
     const noTier = await post(v, [{ itemId: tuina, quantity: 1, technicianId: wang, callType: 'designated' }], 18800);
     expect(noTier.body.error).toMatchObject({ code: 'TECHNICIAN_UNAVAILABLE', message: '12 号 小王：这个项目没有优选档价格，请换一位技师' });
-    // 停用的技师不能再选。8.1.36：手上还有派了没上的钟不能停用（不然停用了还占着排位）——先取消派钟再停用
+    // 停用的技师不能再选。8.1.37：手上还有派了没上的钟不能停用（不然停用了还占着排位）——先取消派钟再停用
     const busy = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/technicians/${wang}`, { name: '小王', gender: 'male', grade: 'premium', active: false });
     expect(busy.body.error).toMatchObject({ code: 'TECHNICIAN_BUSY' });
     const waiting = ((await api(ctx.app, ctx.clerk, 'GET', '/api/clockroom')).body.sessions as { id: number; technicianId: number }[]).filter((x) => x.technicianId === wang);
@@ -282,7 +282,7 @@ describe('技师业绩', () => {
     const li = await techId('08');
     const wang = await techId('12');
     const v = await enter();
-    // 8.1.36：前台选的轮钟按排位核对——先让小王上牌（在岗、排第一）
+    // 8.1.37：前台选的轮钟按排位核对——先让小王上牌（在岗、排第一）
     expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/technicians/${wang}/state`, { action: 'sign_in' })).status).toBe(200);
     await post(
       v,
@@ -300,7 +300,7 @@ describe('技师业绩', () => {
       visitIds: [v],
       expectedTotal: preview.totalAmount,
       payments: [{ method: 'cash', amount: preview.totalAmount }],
-      // 8.1.36：还没上钟的钟单要确认客人做完了
+      // 8.1.37：还没上钟的钟单要确认客人做完了
       confirmUnstarted: (preview.sessions as { sessionNo: string; status: string }[]).filter((x) => x.status === 'waiting').map((x) => x.sessionNo),
     });
     expect(pay.status, JSON.stringify(pay.body)).toBe(200);

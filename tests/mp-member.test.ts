@@ -429,7 +429,7 @@ describe('解绑', () => {
     expect((await staffApp.inject({ method: 'GET', url: `/api/mp-codes/${fresh}`, headers: { cookie: ctx.clerk } })).statusCode).toBe(200);
   });
 
-  it('8.1.36：员工改了会员手机号，原来绑的微信自动解绑（旧手机不能再看余额、出会员码）；客人用新号码重新绑定', async () => {
+  it('8.1.37：员工改了会员手机号，原来绑的微信自动解绑（旧手机不能再看余额、出会员码）；客人用新号码重新绑定', async () => {
     const m = await createMember(ctx, '演示·改号', phoneOf(31));
     const openid = newOpenid();
     expect((await bind(openid, phoneOf(31))).statusCode).toBe(200);

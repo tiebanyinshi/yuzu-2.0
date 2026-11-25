@@ -115,7 +115,7 @@ describe('主导航的业务域', () => {
   });
 });
 
-describe('8.1.36：只有「餐饮台账」也进得了餐饮（Codex 审查 f260ca3）', () => {
+describe('8.1.37：只有「餐饮台账」也进得了餐饮（Codex 审查 f260ca3）', () => {
   it('只给 dining.ledger：主导航有「餐饮」；什么都没有的没有', () => {
     const only = ['dining.ledger'] as Permission[];
     const nav = visibleStoreNav(canOf(only), session({ permissions: only }));

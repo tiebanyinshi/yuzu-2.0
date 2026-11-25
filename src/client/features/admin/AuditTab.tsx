@@ -144,7 +144,7 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   member_card_returned: { label: '退卡', tone: 'clay' },
   // 8.1.16 菜品维护结果待确认时确认作废
   dish_op_abandoned: { label: '作废菜品操作', tone: 'clay' },
-  // 8.1.36
+  // 8.1.37
   clock_session_room: { label: '钟单换房间', tone: 'neutral' },
   mp_unbind: { label: '解绑微信', tone: 'ember' },
   // 8.1.17 第二家店改本店价（BW-11）
@@ -179,7 +179,7 @@ function describe(detail: Record<string, unknown>): string {
   if (typeof detail.reason === 'string') parts.push(detail.reason);
   if (typeof detail.note === 'string' && detail.note) parts.push(detail.note);
   if (typeof detail.summary === 'string' && detail.summary) parts.push(detail.summary);
-  // 8.1.36：手动金额逐行
+  // 8.1.37：手动金额逐行
   if (Array.isArray(detail.manualLines)) parts.push(`手动金额 ${(detail.manualLines as { name: string; amount: number }[]).map((l) => `${l.name} ¥${(l.amount / 100).toFixed(2)}`).join('、')}`);
   if (detail.via === 'cli') parts.push('命令行');
   return parts.join(' · ');
@@ -189,7 +189,7 @@ function describe(detail: Record<string, unknown>): string {
 export function AuditTab() {
   const session = useSession();
   const [date, setDate] = useState(session.today);
-  // 8.1.36：全部 / 敏感操作（动钱、动余额、撤销、授权、改身份的一组）；可导出 CSV
+  // 8.1.37：全部 / 敏感操作（动钱、动余额、撤销、授权、改身份的一组）；可导出 CSV
   const [kind, setKind] = useState<'all' | 'sensitive'>('all');
   const actions = kind === 'sensitive' ? 'sensitive' : undefined;
   const audit = useAudit(date, actions);

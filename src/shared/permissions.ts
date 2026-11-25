@@ -288,6 +288,8 @@ export const PERMISSIONS = {
   'oa.all': { roles: ['owner'] },
   /** 工资条（OA-17 起）：模板、制表、发放、签收跟踪、薪资审计。默认给总裁与人力行政部负责人；只认后台核实过的岗位 */
   'payroll.manage': { roles: ['owner'] },
+  /** 员工培训管理（店主 2026-11-25，docs/TRAINING.md）：培训文件夹、上传与换版本、下架、看谁看过；有它的看得到全部文件夹。默认给总裁与人力行政部负责人 */
+  'training.manage': { roles: ['owner'] },
   'catalog.manage': { roles: ['owner', 'store_manager'] },
   /** 技师名册：新建、编辑、停用技师（v0.7.0，待确认：默认店主与店总） */
   'technician.manage': { roles: ['owner', 'store_manager'] },
@@ -302,7 +304,7 @@ export const PERMISSIONS = {
   'technician.board': { roles: ['owner', 'store_manager', 'duty_manager'] },
   /** 餐饮点单：按手牌给在店客人点菜（挂账）、催单、上菜（S5 第一步，待确认：前台岗位都能做；下单还要能挂账） */
   'dining.order': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'], duties: ['kangmei'] },
-  /** 8.1.36：餐饮台账（全店每道菜、金额、退菜）——以前点单的都能看、能导出，改成值班经理及以上与餐饮、康美、前厅负责人 */
+  /** 8.1.37：餐饮台账（全店每道菜、金额、退菜）——以前点单的都能看、能导出，改成值班经理及以上与餐饮、康美、前厅负责人 */
   'dining.ledger': { roles: ['owner', 'store_manager', 'duty_manager'] },
   /** 厨房出品屏：开始做、出餐、沽清（S5 第一步，待确认：前台岗位与后勤人员；厨房可以用后勤账号） */
   'dining.kitchen': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk', 'backoffice'] },
@@ -626,6 +628,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'oa.templates': '办公审批的模板设置：审批人、条件加签、抄送',
   'oa.all': '全部办公审批单：查询、催办、导出与看板',
   'payroll.manage': '工资条：模板、制表、发放、签收跟踪与薪资审计',
+  'training.manage': '员工培训：文件夹、上传与换版本、下架、查看谁看过（看得到全部文件夹）',
   'catalog.manage': '管理充值套餐与消费项目',
   'technician.manage': '维护技师名册',
   'technician.dispatch': '钟房派钟、上下钟、加钟、退钟、上牌',
@@ -796,7 +799,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
     ],
   },
   { title: '员工工作台', items: ['canteen.manage', 'patrol.read', 'patrol.manage'] },
-  { title: '人事与办公', items: ['hr.org', 'hr.attendance', 'hr.attendanceDept', 'oa.templates', 'oa.all', 'payroll.manage'] },
+  { title: '人事与办公', items: ['hr.org', 'hr.attendance', 'hr.attendanceDept', 'oa.templates', 'oa.all', 'payroll.manage', 'training.manage'] },
   { title: '当场授权', items: ['auth.overLimit', 'auth.vipOverride', 'auth.discount', 'auth.memberRefund', 'auth.memberPhone'] },
   { title: '数据看板', items: ['report.executive', 'report.members', 'report.technicians', 'report.commission', 'marketing.cost'] },
   { title: '管理后台', items: ['staff.manage', 'staff.dept', 'catalog.manage', 'emenu.manage', 'technician.manage', 'settings.manage', 'audit.read'] },

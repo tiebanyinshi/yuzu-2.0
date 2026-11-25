@@ -44,7 +44,7 @@ export function OpenUsageDialog({
   const [tag, setTag] = useState('');
   const [guests, setGuests] = useState(1);
   const [note, setNote] = useState('');
-  // 8.1.36：这间房一小时内有预订时服务端拒绝（SPACE_BOOKED）；确认要现场占用的勾上再提交
+  // 8.1.37：这间房一小时内有预订时服务端拒绝（SPACE_BOOKED）；确认要现场占用的勾上再提交
   const [useReserved, setUseReserved] = useState(false);
   const op = useFrontdeskOp<UsageDetail>({
     type: 'usage_open',

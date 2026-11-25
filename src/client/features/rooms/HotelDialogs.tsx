@@ -85,7 +85,7 @@ export function CheckinDialog({
   const [withDeposit, setWithDeposit] = useState(rules.defaultDeposit > 0);
   const [deposit, setDeposit] = useState<DepositDraft>({ method: 'cash', amount: rules.defaultDeposit > 0 ? centsToInput(rules.defaultDeposit) : '', ref: '' });
   const shiftReady = useShiftReady(withDeposit);
-  // 8.1.36：这个房型今天剩下的房都被预订时服务端拒绝（ROOM_TYPE_RESERVED）；确认要现场占用的勾上再提交
+  // 8.1.37：这个房型今天剩下的房都被预订时服务端拒绝（ROOM_TYPE_RESERVED）；确认要现场占用的勾上再提交
   const [useReserved, setUseReserved] = useState(false);
   const op = useFrontdeskOp<StayDetail>({
     type: 'room_checkin',

@@ -324,7 +324,7 @@ async function approveOverLimit(
   });
 }
 
-/** 手动金额超过本人上限（8.1.36）：用超限授权（同一个授权范围：会员、这一笔的金额），提示写明是手动金额 */
+/** 手动金额超过本人上限（8.1.37）：用超限授权（同一个授权范围：会员、这一笔的金额），提示写明是手动金额 */
 async function approveManualAmount(tx: Tx, grantId: string | undefined, ctx: OpContext, o: { memberId: number; amount: number; manual: number; key: string }) {
   if (!grantId) {
     throw unprocessable('OVER_LIMIT_AUTH_REQUIRED', `手动输入的金额 ${formatYuan(o.manual)} 超过 ${formatYuan(MANUAL_CONSUME_SELF_LIMIT_CENTS)}，需要店主或店总当场授权`, {
@@ -733,7 +733,7 @@ export async function consume(deps: Deps, raw: ConsumeInputData, ctx: OpContext)
     // 充值当日的储值消费比例（8.0.4 需求表 04，HY01–HY02）：超过剩余额度直接拒绝，不能当场授权放行
     assertWithinSpendQuota(await spendQuotaOf(tx, member.id, businessDate, settings.rechargeSpendPct), total, member.name);
     // 超过单笔上限：其余核对都通过后再核销授权
-    // 8.1.36：手动金额（不在项目列表里的「其他金额」）合计超过本人能扣的上限、本人又没有撤销会员消费权限的（店员），同样要当场授权
+    // 8.1.37：手动金额（不在项目列表里的「其他金额」）合计超过本人能扣的上限、本人又没有撤销会员消费权限的（店员），同样要当场授权
     const manual = input.customLines.reduce((sum, l) => sum + l.amount, 0);
     const manualOver = manual > MANUAL_CONSUME_SELF_LIMIT_CENTS && !can(ctx.actor, 'consume.reverse');
     const overLimit =
@@ -767,7 +767,7 @@ export async function consume(deps: Deps, raw: ConsumeInputData, ctx: OpContext)
         principal: split.principal,
         bonus: split.bonus,
         rule: settings.deductionRule,
-        // 8.1.36：手动金额逐行记名称与金额（以前只记合计，查不到手填了什么）
+        // 8.1.37：手动金额逐行记名称与金额（以前只记合计，查不到手填了什么）
         ...(input.customLines.length ? { manualLines: input.customLines.map((l) => ({ name: l.name, amount: l.amount })) } : {}),
         ...(overLimit ? { overLimitApprovedBy: overLimit.approverId, overLimitApproverName: overLimit.approverName } : {}),
       },

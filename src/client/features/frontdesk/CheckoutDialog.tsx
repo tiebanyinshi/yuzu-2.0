@@ -63,7 +63,7 @@ export function CheckoutDialog({
   const [showAll, setShowAll] = useState(false);
   const [ticketPick, setTicketPick] = useState<Record<number, number>>({});
   const [note, setNote] = useState('');
-  // 8.1.36：还没上钟的钟单要逐张确认「客人确实做完了」才能结（记下确认时的那一组钟单号，核对刷新、钟单变了要重新确认）
+  // 8.1.37：还没上钟的钟单要逐张确认「客人确实做完了」才能结（记下确认时的那一组钟单号，核对刷新、钟单变了要重新确认）
   const [unstartedOk, setUnstartedOk] = useState('');
   const [result, setResult] = useState<CheckoutDetail | null>(null);
   /** 次卡（v0.7.28）：每张卡这次抵几次 */

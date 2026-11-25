@@ -31,7 +31,7 @@ export interface OverLimitScope {
   kind: 'recharge' | 'consume';
   memberId: number;
   amount: number;
-  /** 8.1.36：为店员手动金额超过本人上限而授权时，这一笔里手动金额的合计 */
+  /** 8.1.37：为店员手动金额超过本人上限而授权时，这一笔里手动金额的合计 */
   manual?: number;
 }
 
@@ -131,7 +131,7 @@ export function overLimitGrantFits(grant: OverLimitGrant | null, scope: OverLimi
     grant.scope.kind === scope.kind &&
     grant.scope.memberId === scope.memberId &&
     grant.scope.amount === scope.amount &&
-    // 手动金额授权（8.1.36）：手动金额变了要重新授权
+    // 手动金额授权（8.1.37）：手动金额变了要重新授权
     (grant.scope.manual === undefined || grant.scope.manual === scope.manual) &&
     new Date(grant.expiresAt).getTime() > now
   );

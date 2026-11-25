@@ -327,7 +327,7 @@ export function OverLimitCard({
 }: {
   kind: OverLimitScope['kind'];
   limit: number;
-  /** 换掉默认的「超过单笔上限」标题（8.1.36：手动金额超过本人上限） */
+  /** 换掉默认的「超过单笔上限」标题（8.1.37：手动金额超过本人上限） */
   title?: string;
   scope: OverLimitScope;
   memberName: string;

@@ -38,7 +38,7 @@ describe('岗位职权数据（P04）', () => {
     const log = await ctx.sql<{ action: string; positionKey: string | null }[]>`SELECT action, position_key FROM position_config_log ORDER BY id`;
     expect(log.slice(0, 2).map((l) => l.action)).toEqual(['init', 'legacy_migrate']);
     const announce = rows.filter((r) => r.permission === 'technician.announce').map((r) => r.positionKey);
-    // 280（8.1.36 餐饮台账）给总经办与前厅、餐饮、康美负责人各记一条
+    // 280（8.1.37 餐饮台账）给总经办与前厅、餐饮、康美负责人各记一条
     const ledger = rows.filter((r) => r.permission === 'dining.ledger').map((r) => r.positionKey);
     expect([...ledger].sort()).toEqual(['dining.lead', 'front.lead', 'gmo', 'kangmei.lead']);
     expect(log.slice(2).map((l) => [l.action, l.positionKey])).toEqual([...[...announce].sort(), ...[...ledger].sort()].map((k) => ['suggestions', k]));

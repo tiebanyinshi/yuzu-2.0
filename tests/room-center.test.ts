@@ -393,7 +393,7 @@ describe('续钟、换房', () => {
     expect((await act('S305', 'move', { toSpaceId: spaceId.S301 })).body.error.code).toBe('ROOM_DIRTY');
     const log = await api(ctx.app, ctx.clerk, 'GET', '/api/clockroom/events');
     expect((log.body as { kind: string; text: string }[]).some((e) => e.kind === 'room' && e.text.includes('S305'))).toBe(true);
-    // 8.1.36：换房间进审计；在钟房直接改这张钟单的房间拒绝（客人登记在 S305，只改钟单会让他同时出现在两间房）
+    // 8.1.37：换房间进审计；在钟房直接改这张钟单的房间拒绝（客人登记在 S305，只改钟单会让他同时出现在两间房）
     const [audit] = await ctx.sql<{ detail: { from: string; to: string } }[]>`
       SELECT detail FROM audit_logs WHERE action = 'clock_session_room' AND target_id = ${s.id} ORDER BY id DESC LIMIT 1`;
     expect(audit!.detail.to).toContain('S305');

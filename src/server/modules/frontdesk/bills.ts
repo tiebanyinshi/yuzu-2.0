@@ -378,7 +378,7 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
       visitNo: visit.visitNo,
       total,
       lines: lines.map((l) => `${l.name}×${l.quantity}${l.techText ? `（${l.techText}）` : ''}${l.note ? `（${l.note}）` : ''}`),
-      // 8.1.36：手动金额逐行记金额（以前只有名称×数量和合计）
+      // 8.1.37：手动金额逐行记金额（以前只有名称×数量和合计）
       ...(input.customLines.length ? { manualLines: input.customLines.map((l) => ({ name: l.name, amount: l.amount })) } : {}),
       ...backfillDetail(backfill),
     },

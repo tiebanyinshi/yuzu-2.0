@@ -224,7 +224,7 @@ export const OpenUsageInput = z.object({
     .pipe(z.string().min(1, TAG_REQUIRED).regex(TAG_CODE_PATTERN, '牌号格式不正确（例如 A023、1088）')),
   guests: z.number('请填写人数').int('人数必须是整数').min(1, '至少 1 人').max(MAX_USAGE_GUESTS, `最多 ${MAX_USAGE_GUESTS} 人`).default(1),
   note: z.string().trim().max(MAX_USAGE_NOTE, `备注最多 ${MAX_USAGE_NOTE} 字`).default(''),
-  /** 8.1.36：这间房一小时内有预订、确认仍要现场开单（记进审计）；不带时与升级前的请求相同 */
+  /** 8.1.37：这间房一小时内有预订、确认仍要现场开单（记进审计）；不带时与升级前的请求相同 */
   useReserved: z.boolean().optional(),
 });
 
@@ -278,7 +278,7 @@ export async function openUsageTx(
     SELECT u.usage_no, h.code AS tag_code FROM space_usages u JOIN visits v ON v.id = u.visit_id JOIN hand_tags h ON h.id = v.tag_id
     WHERE u.space_id = ${space.id} AND u.status = 'open'`;
   if (busy) throw conflict('USAGE_TAKEN', `${space.code} 正在使用（${busy.usageNo}，手牌 ${busy.tagCode}），先结束这张再开单`);
-  // 8.1.36：现场开单（不是预约到店）让着已有的预订——这间房从现在起一小时内有还占着时段的预订，就提示；
+  // 8.1.37：现场开单（不是预约到店）让着已有的预订——这间房从现在起一小时内有还占着时段的预订，就提示；
   // 是预订的客人到了请从「预约」点到店开单，确认要占用的带 useReserved（记进审计）
   let reserved: { bookingNo: string; startsAt: Date } | undefined;
   if (options.guardBookings) {

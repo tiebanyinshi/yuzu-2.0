@@ -619,7 +619,7 @@ export function registerMemberRoutes(app: FastifyInstance, deps: Deps) {
             ip: req.ip,
             businessDate: date,
           });
-          // 8.1.36：换了手机号，原来绑的微信一起解绑——绑定时核对的是旧号码，不解绑的话旧手机上的微信还能看余额、出会员码。
+          // 8.1.37：换了手机号，原来绑的微信一起解绑——绑定时核对的是旧号码，不解绑的话旧手机上的微信还能看余额、出会员码。
           // 客人用新号码在小程序里重新绑定（绑定按会员一行共享锁核对手机号，与这里的改号串行）
           const unbound = await tx<{ id: number }[]>`
             UPDATE mp_bindings SET unbound_at = now(), unbound_by = ${req.actor.id}, unbind_reason = '会员改手机号，原来的微信自动解绑',

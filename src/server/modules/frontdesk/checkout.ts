@@ -154,7 +154,7 @@ export const CheckoutInput = z.object({
   /** 按实际时间补录纸质单（R1.9）：纸质单号与实际时间，门票按实际离店时间计算；平时不带 */
   backfill: BackfillInput,
   /**
-   * 还没上钟的钟单（8.1.36）：结账核对里列出来、收银员勾了「客人确实做完了」的钟单号。结账时还有没上钟的钟单、又不在这里的拒绝
+   * 还没上钟的钟单（8.1.37）：结账核对里列出来、收银员勾了「客人确实做完了」的钟单号。结账时还有没上钟的钟单、又不在这里的拒绝
    * ——以前直接按已做完记账、照常收钱、算技师钟数，客人没做的项目也收了
    */
   // 不带时不补默认值：操作编号的摘要按解析后的请求算，补了空数组会让升级前发出、回复丢了的同一笔重提对不上（Codex 审查 f260ca3）
@@ -604,7 +604,7 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
     // 补录：实际离店时间不能早于这几位客人的接待和已挂的明细；补录接待的客人，在店时段里手牌、会员不能已有别的来访
     if (backfill) await assertAfterVisits(tx, at, ids, 'checkout', deps.config.timezone);
     await assertNotReused(tx, at, ids, deps.config.timezone);
-    // 8.1.36：还没上钟的钟单要收银员逐张确认「客人确实做完了」才按已做完结；没确认的拒绝（客人没做的先到钟房取消派钟）
+    // 8.1.37：还没上钟的钟单要收银员逐张确认「客人确实做完了」才按已做完结；没确认的拒绝（客人没做的先到钟房取消派钟）
     // 先只看有没有（与下面的收尾同一个查法），有了再取钟单号、技师与手牌
     const waitingIds = (await tx<{ id: number }[]>`SELECT id FROM technician_sessions WHERE visit_id IN ${tx(ids)} AND status = 'waiting' ORDER BY id`).map((r) => r.id);
     const unstarted = waitingIds.length

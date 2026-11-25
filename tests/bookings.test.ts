@@ -392,7 +392,7 @@ describe('后台「预约」规则（N4）', () => {
   });
 });
 
-describe('8.1.36：现场开单、现场入住让着已有的预订（对照领浴问题表：客房预定与前厅同步）', () => {
+describe('8.1.37：现场开单、现场入住让着已有的预订（对照领浴问题表：客房预定与前厅同步）', () => {
   it('派对房一小时内有预订：现场开单拒绝（SPACE_BOOKED），确认占用的照开并记审计；客房房型今天的房都被预订了：现场入住拒绝（ROOM_TYPE_RESERVED），确认占用的照住', async () => {
     const today = (await api(ctx.app, ctx.clerk, 'GET', '/api/auth/me')).body.today as string;
     // 派对房：今天最早能约的时段（半小时一格，不会晚于一小时）

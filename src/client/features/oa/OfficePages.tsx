@@ -29,6 +29,7 @@ import { MyLeavePage } from './MyLeavePage';
 import { MyPayslipPages } from './MyPayslipPages';
 import { PunchPage } from './PunchPage';
 import { useWcpNav } from './wcpNav';
+import { TrainingPages } from '../training/TrainingPages';
 
 /** /oa 下面的几页放在一个按需加载的文件里（首屏主包有体积上限，路由表里只占一行） */
 export function OfficePage() {
@@ -54,6 +55,8 @@ export function OfficePage() {
     <MyLeavePage />
   ) : path.startsWith('/oa/payslips') ? (
     <MyPayslipPages />
+  ) : path.startsWith('/oa/training') ? (
+    <TrainingPages />
   ) : (
     <OfficeHomePage />
   );

@@ -70,7 +70,7 @@ export async function frontdeskTechnicians(db: Db, deps: Deps): Promise<Frontdes
            coalesce((SELECT sum(l.quantity) FROM bill_lines l
                      WHERE l.technician_id = t.id AND l.status = 'active' AND l.business_date = ${today}), 0)::int AS today_clocks
     FROM technicians t WHERE t.active AND t.store_id = ${currentStoreId()} ORDER BY ${ORDER(db)}`;
-  // 8.1.36：带上今天的排位，前台按轮钟选人时能看出谁没上牌、谁在钟上、轮到谁
+  // 8.1.37：带上今天的排位，前台按轮钟选人时能看出谁没上牌、谁在钟上、轮到谁
   const snap = await queueSnapshot(db, today);
   return { rules, technicians: technicians.map((t) => ({ ...t, queue: snap.get(t.id) ?? { state: 'off' as const, busy: false, position: null } })) };
 }
@@ -265,7 +265,7 @@ export function registerTechnicianRoutes(app: FastifyInstance, deps: Deps) {
     const { id } = parse(idParam, req.params);
     const t = parse(TechnicianInput, req.body);
     await sql.begin(async (tx) => {
-      // 8.1.36：停用要动今天的排位，先拿技师队列锁再锁技师一行（与休假单批准同一个顺序）
+      // 8.1.37：停用要动今天的排位，先拿技师队列锁再锁技师一行（与休假单批准同一个顺序）
       if (!t.active) await lockQueue(tx);
       const [before] = await tx<Technician[]>`SELECT ${TECH_COLUMNS(tx)} FROM technicians t WHERE t.id = ${id} AND t.store_id = ${currentStoreId()} FOR UPDATE`;
       if (!before) throw notFound('技师不存在');

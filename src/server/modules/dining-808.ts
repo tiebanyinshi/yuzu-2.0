@@ -345,7 +345,7 @@ export function dishVoidsCsv(rows: DishVoidRow[], timeZone: string): string {
 
 export function registerDining808Routes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
-  // 餐饮台账：看日结的、有「餐饮台账」权限的（8.1.36：以前点单的岗位都能看全店明细与金额，按部门收窄到负责人）能看、能导出
+  // 餐饮台账：看日结的、有「餐饮台账」权限的（8.1.37：以前点单的岗位都能看全店明细与金额，按部门收窄到负责人）能看、能导出
   const read = guardAny('dining.ledger', 'ledger.export', 'report.executive');
   app.get('/api/dining/ledger', { preHandler: read }, async (req) => diningLedger(sql, parse(LedgerQuery, req.query)));
   app.get('/api/dining/ledger/export', { preHandler: read }, async (req, reply) => {

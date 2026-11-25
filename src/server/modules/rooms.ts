@@ -667,7 +667,7 @@ export const CheckinInput = z.object({
   /** 员工确认时看到的房价；房型刚改了价就拒绝 */
   expectedRate: positiveCents('房价'),
   deposit: DepositInput.nullish().transform((v) => v ?? null),
-  /** 8.1.36：今天这个房型剩下的房都被预订了、确认仍要现场入住（记进审计）；不带时与升级前的请求相同 */
+  /** 8.1.37：今天这个房型剩下的房都被预订了、确认仍要现场入住（记进审计）；不带时与升级前的请求相同 */
   useReserved: z.boolean().optional(),
   /** 预约到店入住（8.0.8，A04）；不带时与升级前的请求完全相同（幂等摘要不变） */
   bookingId: z
@@ -769,7 +769,7 @@ export async function checkinRoom(deps: Deps, raw: unknown, ctx: OpContext): Pro
       );
     }
     const bookingId = await bookingForCheckin(tx, input.bookingId, visitId, room.roomTypeId);
-    // 8.1.36：现场入住（不是预约到店）让着当天的预订——这个房型能用的房扣掉当天占着名额的预订和在住的，已经没有空的，
+    // 8.1.37：现场入住（不是预约到店）让着当天的预订——这个房型能用的房扣掉当天占着名额的预订和在住的，已经没有空的，
     // 就是在占预订留的房：提示从预约入住，确认要占用的带 useReserved（记进审计）。锁房型一行，与新建、改预约（claimSlot）串行
     let usedReserved = false;
     if (bookingId === null) {
