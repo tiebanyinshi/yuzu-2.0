@@ -17,7 +17,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, PendingBadge, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
 import { AdminPage } from '../admin/AdminShell';
 import { trainingKeys, useTrainingFiles, useTrainingFolders } from './TrainingPages';
-import { checkPendingUpload, removePendingUpload, setUploadClaimed, uploadTrainingFile, usePendingUploads, type PendingUpload, type UploadTarget } from './upload';
+import { cancelPendingUpload, checkPendingUpload, setUploadClaimed, uploadTrainingFile, usePendingUploads, type PendingUpload, type UploadTarget } from './upload';
 import { DownloadButton, TrainingViewer } from './TrainingViewer';
 
 export function TrainingSection() {
@@ -114,11 +114,25 @@ function PendingUploadRow({ p }: { p: PendingUpload }) {
     try {
       const st = await checkPendingUpload(p);
       if (st === 'done') await done();
+      else if (st === 'cancelled') toast({ tone: 'info', title: `「${p.fileName}」已经确认不传了` });
       else setStatus('open');
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
+    }
+  };
+  const [cancelling, setCancelling] = useState(false);
+  // 不传了：服务端作废登记（与「完成」互斥）以后才删本机记录；其实已经登记好了的按登记好了算
+  const cancel = async () => {
+    setCancelling(true);
+    setError(null);
+    try {
+      if ((await cancelPendingUpload(p)) === 'done') await done();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setCancelling(false);
     }
   };
   const resume = async (file: File) => {
@@ -140,7 +154,7 @@ function PendingUploadRow({ p }: { p: PendingUpload }) {
         <b>{p.fileName}</b>
         {p.targetLabel && <span className="text-ink-3"> → {p.targetLabel}</span>}
         {progress !== null && <span className="num ml-2 text-ink-3">{Math.round(progress * 100)}%</span>}
-        {status === 'open' && progress === null && <span className="ml-2 text-ink-3">还没登记，可以选同一个文件接着传</span>}
+        {status === 'open' && progress === null && <span className="ml-2 text-ink-3">还没登记，可以选同一个文件接着传，或者不传了</span>}
         {error && <span className="ml-2 text-clay">{error}</span>}
       </span>
       <input
@@ -162,7 +176,7 @@ function PendingUploadRow({ p }: { p: PendingUpload }) {
           <Button size="sm" variant="secondary" disabled={progress !== null} onClick={() => input.current?.click()}>
             选同一个文件接着传
           </Button>
-          <Button size="sm" variant="ghost" disabled={progress !== null} onClick={() => removePendingUpload(p.key)}>
+          <Button size="sm" variant="ghost" loading={cancelling} disabled={progress !== null} onClick={() => void cancel()}>
             不传了
           </Button>
         </>

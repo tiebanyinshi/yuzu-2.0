@@ -23,6 +23,8 @@ export interface PendingUpload {
   fileName: string;
   mime: string;
   sizeBytes: number;
+  /** 整份文件的内容指纹：接着传时核对选的是不是原来那个文件 */
+  fingerprint: string;
   target: UploadTarget;
   /** 列表里显示：传到哪个文件夹 / 哪份文件 */
   targetLabel: string;
@@ -110,10 +112,49 @@ export function usePendingUploads(): PendingUpload[] {
   return useSyncExternalStore(subscribe, unclaimed, () => snap.list);
 }
 
+/**
+ * 整份文件的内容指纹（16 位十六进制）：两个独立的 32 位乘法散列一起算，按 3 MB 一段读。
+ * 内网 HTTP 下浏览器算不了 SHA-256；这个不防人故意造碰撞，只防选错了同名、同大小但内容改过的文件。
+ */
+export async function fileFingerprint(file: Blob): Promise<string> {
+  let h1 = 0x811c9dc5 ^ file.size;
+  let h2 = 0x9747b28c ^ Math.floor(file.size / 0x100000000);
+  for (let off = 0; off < file.size; off += TRAINING_CHUNK_BYTES) {
+    const bytes = new Uint8Array(await file.slice(off, off + TRAINING_CHUNK_BYTES).arrayBuffer());
+    for (let i = 0; i < bytes.length; i++) {
+      const b = bytes[i]!;
+      h1 = Math.imul(h1 ^ b, 0x01000193);
+      h2 = Math.imul(h2 ^ b, 0x5bd1e995);
+      h2 ^= h2 >>> 15;
+    }
+  }
+  const hex = (n: number) => (n >>> 0).toString(16).padStart(8, '0');
+  return hex(h1) + hex(h2);
+}
+
+const startBody = (p: Pick<PendingUpload, 'key' | 'fileName' | 'mime' | 'sizeBytes' | 'fingerprint'>) => ({
+  clientKey: p.key,
+  fileName: p.fileName,
+  mime: p.mime,
+  sizeBytes: p.sizeBytes,
+  fingerprint: p.fingerprint,
+});
+
+/**
+ * 不传了：先请服务端作废登记（与「完成」互斥），服务端回了 cancelled（作废了）或 done（其实已经登记好了）才删本机记录。
+ * 没收到回答就留着，下次再点（Codex 审查 57dd2f6）。
+ */
+export async function cancelPendingUpload(p: PendingUpload): Promise<'done' | 'cancelled'> {
+  const st = await api.post<UploadState>('/api/admin/training/uploads/cancel', startBody(p));
+  if (st.status === 'open') throw new Error('服务端还没作废这次上传，请再试一次');
+  removePendingUpload(p.key);
+  return st.status;
+}
+
 /** 查回一次没确认的上传（用原编号、原参数重新「开始」，服务端只回状态、不改东西）：登记好了就删掉本机记录 */
-export async function checkPendingUpload(p: PendingUpload): Promise<'done' | 'open'> {
-  const st = await api.post<UploadState>('/api/admin/training/uploads', { clientKey: p.key, fileName: p.fileName, mime: p.mime, sizeBytes: p.sizeBytes });
-  if (st.status === 'done') removePendingUpload(p.key);
+export async function checkPendingUpload(p: PendingUpload): Promise<UploadState['status']> {
+  const st = await api.post<UploadState>('/api/admin/training/uploads', startBody(p));
+  if (st.status !== 'open') removePendingUpload(p.key);
   return st.status;
 }
 
@@ -121,7 +162,7 @@ interface UploadState {
   uploadId: number;
   chunkCount: number;
   received: number[];
-  status: 'open' | 'done';
+  status: 'open' | 'done' | 'cancelled';
   fileId: number | null;
   versionId: number | null;
 }
@@ -135,10 +176,17 @@ export async function uploadTrainingFile(file: File, clientKey: string, target: 
   if (!mime) throw new Error(`「${file.name}」的格式不支持：只能传 PDF、图片、视频、音频、Excel、PPT、Word`);
   const saved = readAll().find((x) => x.key === clientKey);
   if (saved && (saved.fileName !== file.name || saved.sizeBytes !== file.size)) throw new Error(`选的不是原来那个文件：请选「${saved.fileName}」`);
+  // 整份文件的指纹：接着传时内容对不上的不用（服务端也把指纹算进原请求，对不上拒绝）
+  const fingerprint = await fileFingerprint(file);
+  if (saved && saved.fingerprint !== fingerprint) throw new Error(`「${file.name}」的内容和原来那个不一样（改过了？），不能接着传；请点「不传了」再重新上传`);
   if (saved) target = saved.target;
-  else if (!savePendingUpload({ key: clientKey, fileName: file.name, mime, sizeBytes: file.size, target, targetLabel, createdAt: new Date().toISOString() }))
+  else if (!savePendingUpload({ key: clientKey, fileName: file.name, mime, sizeBytes: file.size, fingerprint, target, targetLabel, createdAt: new Date().toISOString() }))
     throw new Error('本机浏览器保存不了上传记录（存储空间已满或被禁用），为防止重复登记，这份没有上传。请清理浏览器数据或换一台电脑。');
-  const start = await api.post<UploadState>('/api/admin/training/uploads', { clientKey, fileName: file.name, mime, sizeBytes: file.size });
+  const start = await api.post<UploadState>('/api/admin/training/uploads', startBody({ key: clientKey, fileName: file.name, mime, sizeBytes: file.size, fingerprint }));
+  if (start.status === 'cancelled') {
+    removePendingUpload(clientKey);
+    throw new Error('这次上传已经确认不传了，请重新选文件');
+  }
   if (start.status === 'done') {
     removePendingUpload(clientKey);
     progress(1);

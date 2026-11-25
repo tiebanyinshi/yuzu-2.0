@@ -278,6 +278,14 @@ const StartUploadInput = z
       .int()
       .min(1, '文件是空的')
       .max(TRAINING_MAX_BYTES, `一份文件最大 ${TRAINING_MAX_BYTES / 1024 / 1024} MB，视频请先压成 720p 的 MP4`),
+    /**
+     * 文件内容指纹（页面对整份文件算的，内网 HTTP 下算不了 SHA-256）：算进操作编号的原请求里，
+     * 接着传时选了同名、同大小但内容不同的文件会被拒绝，不会拿新文件的块拼在旧文件的块后面（Codex 审查 57dd2f6）
+     */
+    fingerprint: z
+      .string()
+      .regex(/^[0-9a-f]{16}$/, '文件指纹格式不正确')
+      .optional(),
   })
   .refine((v) => TRAINING_FORMATS[v.mime]!.ext.includes(v.fileName.toLowerCase().split('.').pop() ?? ''), '文件扩展名与类型对不上');
 
@@ -321,10 +329,40 @@ async function uploadState(db: Db, id: number) {
     chunkBytes: TRAINING_CHUNK_BYTES,
     /** 已经传到服务器的块（断了以后接着传，跳过这些） */
     received,
-    status: u.status as 'open' | 'done',
+    /** cancelled：管理员确认不传了，这个编号不能再传 */
+    status: u.status as 'open' | 'done' | 'cancelled',
     fileId: u.resultFileId === null ? null : Number(u.resultFileId),
     versionId: u.resultVersionId === null ? null : Number(u.resultVersionId),
   };
+}
+
+/**
+ * 不传了（服务端作废登记）：用原编号、原参数。锁住这次上传的行（与「完成」互斥）：
+ * 已经登记好的原样返回 done（不能作废）；还没完成的标 cancelled、丢掉传了一半的块；服务端还没见过这个编号的，登记一行 cancelled 占住编号，
+ * 之后原请求再到也开始不了、完成不了。返回作废以后的状态，页面见到 cancelled 或 done 才删本机记录（Codex 审查 57dd2f6）。
+ */
+async function cancelUpload(deps: Deps, raw: unknown, ctx: OpContext) {
+  const input = parse(StartUploadInput, raw);
+  const chunkCount = chunkCountOf(input.sizeBytes);
+  if (chunkCount > TRAINING_MAX_CHUNKS) throw badRequest('文件太大');
+  const requestHash = hashRequest({ op: 'training_upload', ...input, clientKey: undefined });
+  return deps.sql.begin(async (tx) => {
+    await setTxTimeouts(tx);
+    // 编号唯一：先占住（已有的不动），再锁那一行
+    await tx`
+      INSERT INTO training_uploads (client_key, size_bytes, chunk_count, file_name, mime, request_hash, created_by, status, finished_at)
+      VALUES (${input.clientKey}, ${input.sizeBytes}, ${chunkCount}, ${input.fileName}, ${input.mime}, ${requestHash}, ${ctx.actor.id}, 'cancelled', now())
+      ON CONFLICT (client_key) DO NOTHING`;
+    const [u] = await tx<{ id: number; requestHash: string; createdBy: number; status: string }[]>`
+      SELECT id, request_hash, created_by, status FROM training_uploads WHERE client_key = ${input.clientKey} FOR UPDATE`;
+    if (!u) throw notFound('上传记录不存在');
+    if (u.requestHash !== requestHash || Number(u.createdBy) !== ctx.actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次上传');
+    if (u.status === 'open') {
+      await tx`UPDATE training_uploads SET status = 'cancelled', finished_at = now() WHERE id = ${u.id}`;
+      await tx`DELETE FROM training_upload_chunks WHERE upload_id = ${u.id}`;
+    }
+    return uploadState(tx, Number(u.id));
+  });
 }
 
 async function ownUpload(db: Db, id: number, actor: Actor) {
@@ -356,6 +394,7 @@ async function putChunk(deps: Deps, params: unknown, raw: unknown, actor: Actor)
   const { data } = parse(ChunkInput, raw);
   const u = await ownUpload(deps.sql, id, actor);
   if (u.status === 'done') return { ok: true };
+  if (u.status === 'cancelled') throw conflict('TRAINING_UPLOAD_CANCELLED', '这次上传已经确认不传了，请重新选文件');
   if (seq >= u.chunkCount) throw badRequest('块号超出范围');
   const bytes = Buffer.from(data, 'base64');
   const expected = seq === u.chunkCount - 1 ? u.sizeBytes - TRAINING_CHUNK_BYTES * (u.chunkCount - 1) : TRAINING_CHUNK_BYTES;
@@ -397,6 +436,8 @@ function sniffOk(mime: string, head: Buffer): boolean {
   }
 }
 
+const ViewedInput = z.object({ versionId: z.number().int().positive().optional() });
+
 const CompleteInput = z
   .object({
     /** 新文件放哪个文件夹（与 fileId 二选一） */
@@ -417,6 +458,7 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
   const input = parse(CompleteInput, raw);
   const u = await ownUpload(deps.sql, id, ctx.actor);
   if (u.status === 'done') return finished(deps.sql, id);
+  if (u.status === 'cancelled') throw conflict('TRAINING_UPLOAD_CANCELLED', '这次上传已经确认不传了，请重新选文件');
   const seqs = (await deps.sql<{ seq: number }[]>`SELECT seq FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`).map((r) => r.seq);
   const missing = Array.from({ length: u.chunkCount }, (_, i) => i).filter((i) => !seqs.includes(i));
   if (missing.length) throw unprocessable('TRAINING_UPLOAD_INCOMPLETE', `还有 ${missing.length} 块没传完`, { missing });
@@ -434,6 +476,8 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
     const [lock] = await tx<{ status: string }[]>`SELECT status FROM training_uploads WHERE id = ${id} FOR UPDATE`;
     if (!lock) throw notFound('上传记录不存在，请重新选文件');
     if (lock.status === 'done') return finished(tx, id);
+    // 「不传了」与「完成」都先锁这一行：先作废的，完成就拒绝（Codex 审查 57dd2f6）
+    if (lock.status === 'cancelled') throw conflict('TRAINING_UPLOAD_CANCELLED', '这次上传已经确认不传了，请重新选文件');
     // 内容只存一份：别人刚好也传了同一个文件就沿用
     const [stored] = await tx<{ sha256: string }[]>`
       INSERT INTO training_blobs (sha256, size_bytes, chunk_count) VALUES (${sha256}, ${u.sizeBytes}, ${u.chunkCount})
@@ -656,7 +700,10 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
 
   app.post('/api/training/files/:id/viewed', { preHandler: loggedIn }, async (req) => {
     const { id } = parse(idParam, req.params);
+    const { versionId } = parse(ViewedInput, req.body ?? {});
     const f = await assertFileVisible(sql, req.actor, id);
+    // 记的是员工页面上打开的那一版：页面还停在旧版本（管理员刚换了新的）就不记，免得把没看过的新版本记成看过（Codex 审查 57dd2f6）
+    if (versionId !== undefined && versionId !== f.currentVersionId) throw conflict('TRAINING_VERSION_CHANGED', '这份文件刚换了新版本，请重新打开');
     await sql`
       INSERT INTO training_views (file_id, staff_id, last_version_id) VALUES (${id}, ${req.actor.id}, ${f.currentVersionId})
       ON CONFLICT (file_id, staff_id) DO UPDATE SET last_viewed_at = now(), view_count = training_views.view_count + 1, last_version_id = EXCLUDED.last_version_id`;
@@ -670,6 +717,7 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
   app.put('/api/admin/training/uploads/:id/chunks/:seq', { preHandler: manage, bodyLimit: Math.ceil((TRAINING_CHUNK_BYTES * 4) / 3) + 4096 }, async (req) =>
     putChunk(deps, req.params, req.body, req.actor),
   );
+  app.post('/api/admin/training/uploads/cancel', { preHandler: manage }, async (req) => cancelUpload(deps, req.body, ctxOf(req)));
   app.get('/api/admin/training/uploads/:id', { preHandler: manage }, async (req) => {
     const { id } = parse(idParam, req.params);
     await ownUpload(sql, id, req.actor);

@@ -107,6 +107,40 @@ describe('员工培训', () => {
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s.body.uploadId}/chunks/0`, { data: Buffer.from('xx').toString('base64') })).status).toBe(400);
   });
 
+  it('接着传核对内容指纹；不传了：服务端作废登记，与完成互斥（Codex 审查 57dd2f6）', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const big = PDF(TRAINING_CHUNK_BYTES + 10);
+    const base = { fileName: '视频说明.pdf', mime: 'application/pdf', sizeBytes: big.length };
+    // 同名、同大小但指纹不同（内容改过）：同一个编号不能接着传
+    const clientKey = randomUUID();
+    const s = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, ...base, fingerprint: 'aaaaaaaaaaaaaaaa' });
+    expect(s.status).toBe(200);
+    const other = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, ...base, fingerprint: 'bbbbbbbbbbbbbbbb' });
+    expect(other.body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    // 传了一块以后不传了：作废、丢掉块；之后传块、完成都拒绝，重新开始返回 cancelled
+    await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s.body.uploadId}/chunks/0`, { data: big.subarray(0, TRAINING_CHUNK_BYTES).toString('base64') });
+    const cancelled = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads/cancel', { clientKey, ...base, fingerprint: 'aaaaaaaaaaaaaaaa' });
+    expect(cancelled.body).toMatchObject({ status: 'cancelled', received: [] });
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s.body.uploadId}/chunks/1`, { data: big.subarray(TRAINING_CHUNK_BYTES).toString('base64') })).body.error.code).toBe(
+      'TRAINING_UPLOAD_CANCELLED',
+    );
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/training/uploads/${s.body.uploadId}/complete`, { folderId: pub.id })).body.error.code).toBe('TRAINING_UPLOAD_CANCELLED');
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, ...base, fingerprint: 'aaaaaaaaaaaaaaaa' })).body.status).toBe('cancelled');
+    // 服务端还没见过的编号也能作废：先占住，原请求后到也开始不了
+    const unseen = randomUUID();
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads/cancel', { clientKey: unseen, ...base })).body.status).toBe('cancelled');
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey: unseen, ...base })).body.status).toBe('cancelled');
+    // 已经登记好的不能作废，原样回 done
+    const done = await upload(PDF(400), '已传完.pdf', 'application/pdf', { folderId: pub.id });
+    const late = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads/cancel', {
+      clientKey: done.clientKey,
+      fileName: '已传完.pdf',
+      mime: 'application/pdf',
+      sizeBytes: PDF(400).length,
+    });
+    expect(late.body).toMatchObject({ status: 'done', fileId: done.done.body.fileId });
+  });
+
   it('换新版本只追加；读内容支持 Range；店员看得到「培训资料」与前厅部，看不到男宾部；看过记一次，后台看得到谁看过', async () => {
     const pub = await folderOf((f) => f.kind === 'public');
     const front = await folderOf((f) => f.departmentKey === 'front');
@@ -162,8 +196,10 @@ describe('员工培训', () => {
     const dl = await ctx.app.inject({ method: 'GET', url: `/api/training/files/${file!.id}/content?download=1`, headers: { cookie: ctx.clerk } });
     expect(String(dl.headers['content-disposition'])).toMatch(/^attachment/);
 
-    // 看过
-    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/training/files/${file!.id}/viewed`)).status).toBe(200);
+    // 看过：带了页面打开的版本，是旧版本的不记（Codex 审查 57dd2f6）
+    const staleView = await api(ctx.app, ctx.clerk, 'POST', `/api/training/files/${file!.id}/viewed`, { versionId: firstVersion.id });
+    expect(staleView.body.error.code).toBe('TRAINING_VERSION_CHANGED');
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/training/files/${file!.id}/viewed`, { versionId: detail.file.current.id })).status).toBe(200);
     expect((await api(ctx.app, ctx.clerk, 'POST', `/api/training/files/${file!.id}/viewed`)).status).toBe(200);
     const after = (await api(ctx.app, ctx.owner, 'GET', `/api/admin/training/files/${file!.id}`)).body as TrainingFileDetail;
     expect(after.viewers).toHaveLength(1);

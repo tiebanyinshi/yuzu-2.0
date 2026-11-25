@@ -44,10 +44,10 @@ export function TrainingViewer({ file, recordView = true }: { file: TrainingFile
     if (!recordView) return;
     // 记上「看过」以后刷新这个文件夹的清单（回去就是「已看」）；记不上不打扰员工
     void api
-      .post(`/api/training/files/${file.id}/viewed`)
+      .post(`/api/training/files/${file.id}/viewed`, { versionId: file.current.id })
       .then(() => qc.invalidateQueries({ queryKey: ['training', 'files', file.folderId] }))
       .catch(() => {});
-  }, [file.id, file.folderId, recordView, qc]);
+  }, [file.id, file.current.id, file.folderId, recordView, qc]);
   const v = file.current;
   // 内容地址都带上看的这一版：分段读（PDF、视频拖动）时管理员换了新版本，也不会拿到新版本的片段
   const url = contentUrl(file.id, { versionId: v.id });

@@ -81,7 +81,8 @@ CREATE TABLE training_uploads (
   file_name   text NOT NULL CHECK (char_length(file_name) BETWEEN 1 AND 200),
   mime        text NOT NULL CHECK (char_length(mime) BETWEEN 3 AND 120),
   request_hash text NOT NULL,
-  status      text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+  -- cancelled = 管理员确认不传了（服务端作废登记，与「完成」互斥；之后同一个编号不能再传、不能再完成）
+  status      text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'cancelled')),
   result_file_id    bigint REFERENCES training_files (id),
   result_version_id bigint REFERENCES training_file_versions (id),
   created_by  bigint NOT NULL REFERENCES staff (id),
