@@ -51,7 +51,7 @@ export async function loadClockroomRules(db: Db): Promise<ClockroomRules> {
 // 轮牌按门店各一条队列（8.0.22）：本店照旧用原来的键
 export const lockQueue = (tx: Tx) => tx`SELECT pg_advisory_xact_lock(hashtext(${currentStoreId() === DEFAULT_STORE_ID ? 'technician_queue' : `technician_queue:${currentStoreId()}`}))`;
 
-interface Status {
+export interface Status {
   state: TechState;
   queueKey: Date | null;
   rejectStreak: number;
@@ -81,7 +81,7 @@ async function recordedStatusMap(db: Db, today: string): Promise<Map<number, Sta
  * 今天的上牌状态。已批准的休假含今天的（8.1.15，技师管理的休假单），不管当天记的是什么都按休假：
  * 不进排位、不能派钟、「全部上牌」跳过；排位、派钟、看板都走这里，所以休假从今天开始的不用谁去点
  */
-async function statusMap(db: Db, today: string): Promise<Map<number, Status>> {
+export async function statusMap(db: Db, today: string): Promise<Map<number, Status>> {
   const map = await recordedStatusMap(db, today);
   for (const leave of await approvedLeavesOn(db, today)) {
     map.set(leave.technicianId, { ...(map.get(leave.technicianId) ?? offStatus), state: 'leave', approvedLeave: leave });
@@ -89,9 +89,9 @@ async function statusMap(db: Db, today: string): Promise<Map<number, Status>> {
   return map;
 }
 
-const offStatus: Status = { state: 'off', queueKey: null, rejectStreak: 0 };
+export const offStatus: Status = { state: 'off', queueKey: null, rejectStreak: 0 };
 
-async function writeStatus(tx: Tx, technicianId: number, today: string, s: Status, staffId: number, at: Date) {
+export async function writeStatus(tx: Tx, technicianId: number, today: string, s: Status, staffId: number, at: Date) {
   await tx`
     INSERT INTO technician_status (technician_id, business_date, state, queue_key, reject_streak, updated_at, updated_by)
     VALUES (${technicianId}, ${today}, ${s.state}, ${s.queueKey ?? at}, ${s.rejectStreak}, ${at}, ${staffId})
@@ -99,7 +99,7 @@ async function writeStatus(tx: Tx, technicianId: number, today: string, s: Statu
       reject_streak = EXCLUDED.reject_streak, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by`;
 }
 
-async function logEvent(
+export async function logEvent(
   tx: Tx,
   e: { technicianId: number | null; sessionId?: number | null; kind: ClockEventKind; detail?: Record<string, unknown>; staffId: number; businessDate: string; at: Date },
 ) {
@@ -146,8 +146,8 @@ function queueOrder(statuses: Map<number, Status>) {
  * 工种就是技师档案里的「类型」（technicians.kind）；同一工种的在岗技师排一队，排第几只在本工种里数，轮钟「该派给谁」也只看同工种的。
  * 没填类型的技师算一队（不分工种的店与以前一样只有一队）
  */
-const queueKindOf = (techs: Map<number, Pick<Technician, 'kind'>>, id: number) => techs.get(id)?.kind.trim() ?? '';
-function queueOrderOfKind(statuses: Map<number, Status>, techs: Map<number, Pick<Technician, 'kind'>>, kind: string) {
+export const queueKindOf = (techs: Map<number, Pick<Technician, 'kind'>>, id: number) => techs.get(id)?.kind.trim() ?? '';
+export function queueOrderOfKind(statuses: Map<number, Status>, techs: Map<number, Pick<Technician, 'kind'>>, kind: string) {
   return queueOrder(statuses).filter((id) => queueKindOf(techs, id) === kind);
 }
 /** 每位在岗技师在本工种队列里排第几 */
@@ -1403,6 +1403,8 @@ function eventText(kind: ClockEventKind, d: Record<string, unknown>): string {
       return `复牌${s('suspendedReason') ? `（停牌原因：${s('suspendedReason')}）` : ''}${s('reason') ? `：${s('reason')}` : ''}`;
     case 'room':
       return d.to ? `${d.from ? `房间 ${s('from')} → ` : '选房间 '}${s('to')}` : `清掉房间 ${s('from')}`;
+    case 'queue':
+      return d.before ? `调到 ${s('before')} 号前面${s('reason') ? `：${s('reason')}` : ''}` : s('reason');
     case 'skip':
       return `轮到时跳过，派给 ${s('to')}${s('reason') ? `：${s('reason')}` : ''}`;
     case 'extend':

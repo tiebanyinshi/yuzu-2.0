@@ -9,6 +9,8 @@ import { Link, useSearchParams } from 'react-router';
 import type { BookingDetail } from '@shared/bookings';
 import {
   ArrowDownToLine,
+  ArrowUpDown,
+  Layers,
   ArrowRightLeft,
   BadgeX,
   CalendarOff,
@@ -63,6 +65,8 @@ import { ClockFilters } from './ClockFilters';
 import { DispatchDialog, ExtendDialog, TransferDialog, type DispatchPrefill } from './DispatchDialog';
 import { RoomDialog } from './RoomPicker';
 import { TECH_STATE_DONE, TechStateDialog, type TechStateAction } from './TechStateDialog';
+import { BatchDispatchDialog } from './BatchDispatchDialog';
+import { MoveBeforeDialog } from './MoveBeforeDialog';
 import { useFrontdeskPending } from '../frontdesk/pending';
 
 export const clockKey = ['clockroom'] as const;
@@ -105,6 +109,9 @@ export function ClockroomPage() {
   const [voiding, setVoiding] = useState<BoardSession | null>(null);
   const [rooming, setRooming] = useState<BoardSession | null>(null);
   const [toEnd, setToEnd] = useState<BoardTechnician | null>(null);
+  // 8.1.40：排位调到某人前面、一次给多张手牌派钟
+  const [moving, setMoving] = useState<BoardTechnician | null>(null);
+  const [batching, setBatching] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   // 8.0.8：按状态筛选（B01）、待派钟补派（A01）、转钟（B05）、停牌（B01）、预约到店带入（A04）
@@ -259,6 +266,9 @@ export function ClockroomPage() {
             <Button variant="ghost" size="sm" icon={<ScrollText className="size-4" />} onClick={() => setShowLog(true)} data-testid="clock-log-open">
               钟房日志
             </Button>
+            <Button variant="secondary" icon={<Layers className="size-4" />} disabled={!d || !can('frontdesk.operate')} onClick={() => setBatching(true)} data-testid="clock-dispatch-batch">
+              一次派多张
+            </Button>
             <Button variant="primary" icon={<Plus className="size-4" />} disabled={!d || !can('frontdesk.operate')} onClick={() => setDispatching(true)} data-testid="clock-dispatch">
               派钟
             </Button>
@@ -321,6 +331,7 @@ export function ClockroomPage() {
                                 onRest={() => state(t, 'rest', `${t.techNo} 号暂离`)}
                                 onOff={() => state(t, 'sign_out', `${t.techNo} 号下牌`)}
                                 onToEnd={() => !blockedByPending(t) && setToEnd(t)}
+                                onMove={() => !blockedByPending(t) && setMoving(t)}
                                 onCall={() => void call(t)}
                               />
                             ))}
@@ -665,6 +676,30 @@ export function ClockroomPage() {
           setToEnd(null);
         }}
       />
+      {d && (
+        <MoveBeforeDialog
+          technician={moving}
+          board={d}
+          onClose={() => setMoving(null)}
+          onDone={(b, text) => {
+            setMoving(null);
+            qc.setQueryData(clockKey, b);
+            toast({ tone: 'success', title: text });
+          }}
+        />
+      )}
+      {d && (
+        <BatchDispatchDialog
+          open={batching}
+          board={d}
+          onClose={() => setBatching(false)}
+          onDone={() => {
+            setBatching(false);
+            toast({ tone: 'success', title: '已一次派完' });
+            void qc.invalidateQueries({ queryKey: clockKey });
+          }}
+        />
+      )}
       <ClockLog open={showLog} onClose={() => setShowLog(false)} />
     </>
   );
@@ -685,6 +720,7 @@ function QueueRow({
   onRest,
   onOff,
   onToEnd,
+  onMove,
   onCall,
 }: {
   t: BoardTechnician;
@@ -695,6 +731,7 @@ function QueueRow({
   onRest: () => void;
   onOff: () => void;
   onToEnd: () => void;
+  onMove: () => void;
   onCall: () => void;
 }) {
   const s = t.busy ? sessions.find((x) => x.id === t.busy!.sessionId) : undefined;
@@ -741,6 +778,15 @@ function QueueRow({
             disabled={busy !== null}
           >
             <ArrowDownToLine className="size-3" /> 排尾
+          </button>
+          <button
+            type="button"
+            className="tap relative inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 text-ink-3 hover:bg-paper-2 hover:text-ink"
+            onClick={onMove}
+            disabled={busy !== null}
+            data-testid={`clock-move-btn-${t.techNo}`}
+          >
+            <ArrowUpDown className="size-3" /> 调到…前面
           </button>
           <button
             type="button"
