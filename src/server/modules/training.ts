@@ -21,6 +21,7 @@ import {
   TRAINING_OPEN_UPLOADS_PER_STAFF,
   TRAINING_TOTAL_MAX_BYTES,
   TRAINING_TOTAL_MAX_VERSIONS,
+  trainingFileNameProblem,
   trainingViewKind,
   type TrainingFile,
   type TrainingFileDetail,
@@ -287,9 +288,10 @@ async function updateFolder(deps: Deps, id: number, raw: unknown, ctx: OpContext
 const FileName = z
   .string()
   .trim()
-  .min(1, '缺少文件名')
-  .max(200, '文件名最多 200 个字')
-  .refine((n) => !/[\\/\u0000-\u001f]/.test(n), '文件名不能带路径或控制字符');
+  .superRefine((n, c) => {
+    const problem = trainingFileNameProblem(n);
+    if (problem) c.addIssue({ code: 'custom', message: problem });
+  });
 
 const StartUploadInput = z
   .object({

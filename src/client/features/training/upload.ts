@@ -5,7 +5,7 @@
 // 有了结论（登记好了）才删。刷新、离开页面以后「WCP 设置 → 员工培训」顶上列出没确认的，用原编号、原目标查回或接着传（Codex 审查 e1d8be3）。
 
 import { useSyncExternalStore } from 'react';
-import { TRAINING_CHUNK_BYTES, TRAINING_MAX_BYTES, trainingMimeOf } from '@shared/training';
+import { TRAINING_CHUNK_BYTES, TRAINING_MAX_BYTES, trainingFileNameProblem, trainingMimeOf } from '@shared/training';
 import { api, ApiError, isRejected, UncertainError } from '../../lib/api';
 import { bytesToBase64 } from '../../lib/import-file';
 
@@ -176,6 +176,9 @@ export async function uploadTrainingFile(file: File, clientKey: string, target: 
   if (!mime) throw new Error(`「${file.name}」的格式不支持：只能传 PDF、图片、视频、音频、Excel、PPT、Word`);
   // 大小不对的不进「没确认的上传」（服务端开始、查回、作废都会拒绝，记下来就永远去不掉，Codex 审查 a3f5310）
   if (file.size <= 0) throw new Error(`「${file.name}」是空文件`);
+  // 文件名不合规的同样不进（服务端同一条规则，Codex 审查 9b1dd16）：改个短一点的名字再传
+  const nameProblem = trainingFileNameProblem(file.name);
+  if (nameProblem) throw new Error(`「${file.name.slice(0, 40)}${file.name.length > 40 ? '…' : ''}」${nameProblem}，请改个名字再传`);
   if (file.size > TRAINING_MAX_BYTES) throw new Error(`「${file.name}」超过 ${TRAINING_MAX_BYTES / 1024 / 1024} MB，视频请先压成 720p 的 MP4`);
   const saved = readAll().find((x) => x.key === clientKey);
   if (saved && (saved.fileName !== file.name || saved.sizeBytes !== file.size)) throw new Error(`选的不是原来那个文件：请选「${saved.fileName}」`);
