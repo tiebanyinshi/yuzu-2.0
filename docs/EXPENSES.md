@@ -6,6 +6,8 @@
 - **v0.7.8**（迁移 `027`）：部门采购需求单、采购单的图片与规格（`docs/REQUISITIONS.md`）；另修正 v0.7.7 合并时 Codex 审查的四条（本文件第 4、7、9 节，以及第 8 节的导出）。
 - **v0.7.9**（迁移 `028`，需要时）：采购台账、费用报销、需求单、下单物料四个视图与导出；12 条账目自检；8–10 月旧账只读对照。
 
+> **8.1.42 起只有一个备用金**（店主 2026-11-25，`docs/V8142_PETTY.md`）：8.1.9 的「零采备用金」并进这里的部门备用金——申用记在部门的备用金上（可用 = 余额 − 已占用），报销「钱从哪来」只有备用金、公司直付两项，权限多一项「备用金申用」（`petty.use`）。
+
 需求原文与已确认的决策在店主的飞书文档里：D9 11 月起新账、D10 权限按现有的岗位 + 职责、D13 单笔确认门槛 2000 元且可调、D14 备用金按部门。这里写落地做法；文档没定的先按常见做法定默认、标「待确认」，见 `PENDING_DECISIONS.md`「费用报销与备用金」。
 
 ## 1. 三种单据
@@ -103,6 +105,7 @@
 | 退回 / 补付 | `GET /api/erp/petty/settlements/by-key/:key`；`POST /api/erp/petty/settlements`；`POST /api/erp/petty/settlements/:id/void` |
 | 每日平账 | `GET /api/erp/petty/daily`（按日期、部门、经办人）；`GET /api/erp/petty/daily/export` |
 | 待报销、转报销（v0.7.29） | `GET /api/erp/expenses/to-claim`；`GET /api/erp/expenses/po/:id/prefill` |
+| 备用金申用（8.1.42，`docs/V8142_PETTY.md`） | `GET /api/erp/petty/uses?departmentId=`；`GET /api/erp/petty/uses/export`；`GET /api/erp/petty/uses/:id`、`/by-key/:key`；`POST /api/erp/petty/uses`；`POST /api/erp/petty/uses/:id/{submit,unsubmit,backfill,void}`；`GET /api/erp/petty/uses/po-options`；登记报销时可勾的 `GET /api/erp/expenses/petty-uses?departmentId=` |
 | 部门备用金台账（v0.7.29） | `GET /api/erp/petty/accounts`；`PUT /api/erp/petty/accounts/:id`（保管人、定额、备注，带版本号）；`GET /api/erp/petty/accounts/:id/journal?from=&to=`；`GET /api/erp/petty/accounts/:id/journal/export` |
 | 结果待确认（v0.7.8） | `GET /api/erp/ops/:key?type=expense_claim|petty_advance|petty_settlement` 查回；`POST /api/erp/ops/:key/abandon` 确认作废 |
 

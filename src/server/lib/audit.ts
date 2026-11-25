@@ -323,8 +323,8 @@ export type AuditAction =
   | 'design_asset_edit'
   | 'design_asset_archive'
   | 'design_slot_assign'
-  // 8.1.9 零采备用金：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）
-  | 'pool_use'
+  // 备用金申用（8.1.42；8.1.42 以前的记录是 pool_use）：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）
+  | 'petty_use'
   // 8.1.9 库管入库台账导入
   | 'receipt_import'
   // 8.1.20 出入库台账导入

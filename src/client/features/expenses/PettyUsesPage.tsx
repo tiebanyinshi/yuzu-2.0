@@ -1,6 +1,7 @@
-// 零采备用金（8.1.9，docs/ERP_V819.md 第 2 节）：ERP「供应链 → 零采备用金」。
-// 供应链零采专用：申用（登记即占用）→ 提交报销（未补单 / 已补单 + 采购单）→ 财务在「费用报销」登记报销单 → 确认后自动回补。
-// 顶部四个数：总额、已占用、剩余可用、待报销笔数；一条占用条；下面是申用台账（窄屏是卡片）。
+// 备用金申用（8.1.42，docs/V8142_PETTY.md）：ERP「费用与备用金 → 备用金申用」，原来 8.1.9 的「零采备用金」并进了部门备用金。
+// 在一个部门的备用金上申用（登记即占用）→ 提交报销（未补单 / 已补单 + 采购单）→ 财务在「费用报销」登记报销单（钱从备用金来、勾申用）
+// → 确认后不再占用；余额回到定额靠财务按「建议补足」打款。
+// 顶部四个数：余额（与定额）、已占用、可用、待报销笔数；一条占用条；下面是这个部门的申用台账（窄屏是卡片）。
 // 申用带操作编号，提交前先把编号与原请求存在本机（存不了就不发）：没收到结果时关掉弹窗、刷新以后，
 // 页面顶上的「结果待确认」里还能查回、按原内容重新提交（只记一次）或确认作废。
 
@@ -10,7 +11,16 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { Ban, Download, FilePen, HandCoins, Plus, Search, Send, Settings2, Undo2, Wallet } from 'lucide-react';
 import { CLAIM_STATUS_LABELS } from '@shared/expenses';
 import { formatYuan, parseYuan } from '@shared/money';
-import { POOL_BACKFILL_LABELS, POOL_USE_STATE_LABELS, type PoolBackfill, type PoolBoard, type PoolPoOption, type PoolUseDetail, type PoolUseRow, type PoolUseState } from '@shared/petty-pool';
+import {
+  PETTY_BACKFILL_LABELS,
+  PETTY_USE_STATE_LABELS,
+  type PettyBackfill,
+  type PettyUseBoard,
+  type PettyPoOption,
+  type PettyUseDetail,
+  type PettyUseRow,
+  type PettyUseState,
+} from '@shared/petty-uses';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { sendErpOp } from '../../lib/erpPending';
 import { useCan, useSession } from '../../lib/session';
@@ -24,18 +34,18 @@ import { Dialog } from '../../components/Overlay';
 import { ReasonDialog } from '../../components/ReasonDialog';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, MoneyInput, Notice, Select, Skeleton, Textarea } from '../../components/ui';
-import { erpSettingsPath } from '../erp/settingsTabs';
+import { ExpenseTabs } from './ExpenseTabs';
 
-const key = ['erp', 'pool'] as const;
+const key = ['erp', 'petty-uses'] as const;
 type Tone = Parameters<typeof Badge>[0]['tone'];
-const STATE_TONE: Record<PoolUseState, Tone> = { open: 'ember', submitted: 'yuzu', reviewing: 'lake', reimbursed: 'pine', voided: 'neutral' };
+const STATE_TONE: Record<PettyUseState, Tone> = { open: 'ember', submitted: 'yuzu', reviewing: 'lake', reimbursed: 'pine', voided: 'neutral' };
 /** 占用条三段的颜色（与状态徽标一个色系） */
 const SEGMENTS: { state: 'open' | 'submitted' | 'reviewing'; label: string; bar: string }[] = [
   { state: 'open', label: '待报销', bar: 'bg-ember' },
   { state: 'submitted', label: '已提交报销', bar: 'bg-yuzu-deep' },
   { state: 'reviewing', label: '报销审核中', bar: 'bg-lake' },
 ];
-const STATE_FILTERS: { value: '' | PoolUseState; label: string }[] = [
+const STATE_FILTERS: { value: '' | PettyUseState; label: string }[] = [
   { value: '', label: '全部' },
   { value: 'open', label: '待报销' },
   { value: 'submitted', label: '已提交报销' },
@@ -46,28 +56,38 @@ const STATE_FILTERS: { value: '' | PoolUseState; label: string }[] = [
 
 const qs = (params: Record<string, string>) => new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
 
-export function PettyPoolPage() {
+export function PettyUsesPage() {
   const can = useCan();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const filters = { state: params.get('state') ?? '', backfill: params.get('backfill') ?? '', applicantId: params.get('applicant') ?? '', from: params.get('from') ?? '', to: params.get('to') ?? '' };
-  const query = qs({ state: filters.state, backfill: filters.backfill, applicantId: filters.applicantId, from: filters.from, to: filters.to });
+  const filters = {
+    department: params.get('department') ?? '',
+    state: params.get('state') ?? '',
+    backfill: params.get('backfill') ?? '',
+    applicantId: params.get('applicant') ?? '',
+    from: params.get('from') ?? '',
+    to: params.get('to') ?? '',
+  };
+  const listParams = { departmentId: filters.department, state: filters.state, backfill: filters.backfill, applicantId: filters.applicantId, from: filters.from, to: filters.to };
+  const query = qs(listParams);
+  // 「没有符合条件的」按筛选算，不算选部门
+  const filtered = !!qs({ ...listParams, departmentId: '' });
   const board = useQuery({
     queryKey: [...key, query],
-    queryFn: () => api.get<PoolBoard>(`/api/erp/pool${query ? `?${query}` : ''}`),
+    queryFn: () => api.get<PettyUseBoard>(`/api/erp/petty/uses${query ? `?${query}` : ''}`),
     placeholderData: keepPreviousData,
-    enabled: can('pool.read'),
+    enabled: can('expense.read') || can('petty.use'),
   });
-  const manage = can('pool.manage');
-  const applicants = useQuery({ queryKey: [...key, 'applicants'], queryFn: () => api.get<{ id: number; name: string }[]>('/api/erp/pool/applicants'), enabled: manage, staleTime: 300_000 });
+  const manage = can('petty.use');
+  const applicants = useQuery({ queryKey: [...key, 'applicants'], queryFn: () => api.get<{ id: number; name: string }[]>('/api/erp/petty/uses/applicants'), enabled: manage, staleTime: 300_000 });
   const [creating, setCreating] = useState(false);
-  const [submitting, setSubmitting] = useState<{ use: PoolUseRow; mode: 'submit' | 'backfill' } | null>(null);
-  const [voiding, setVoiding] = useState<PoolUseRow | null>(null);
-  const [unsubmitting, setUnsubmitting] = useState<PoolUseRow | null>(null);
+  const [submitting, setSubmitting] = useState<{ use: PettyUseRow; mode: 'submit' | 'backfill' } | null>(null);
+  const [voiding, setVoiding] = useState<PettyUseRow | null>(null);
+  const [unsubmitting, setUnsubmitting] = useState<PettyUseRow | null>(null);
   const [opened, setOpened] = useState<number | null>(Number(params.get('use')) || null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
-  if (!can('pool.read')) return <Navigate to="/erp" replace />;
+  if (!can('expense.read') && !can('petty.use')) return <Navigate to="/erp" replace />;
   const refresh = () => qc.invalidateQueries({ queryKey: key });
   const setFilter = (k: string, v: string) => {
     const next = new URLSearchParams(params);
@@ -82,7 +102,7 @@ export function PettyPoolPage() {
     if (!voiding) return;
     setBusy(true);
     try {
-      await api.post(`/api/erp/pool/uses/${voiding.id}/void`, { version: voiding.version, reason });
+      await api.post(`/api/erp/petty/uses/${voiding.id}/void`, { version: voiding.version, reason });
       toast({ tone: 'success', title: '已作废', body: `${voiding.docNo} 不再占用额度` });
       setVoiding(null);
       await refresh();
@@ -96,7 +116,7 @@ export function PettyPoolPage() {
     if (!unsubmitting) return;
     setBusy(true);
     try {
-      await api.post(`/api/erp/pool/uses/${unsubmitting.id}/unsubmit`, { version: unsubmitting.version });
+      await api.post(`/api/erp/petty/uses/${unsubmitting.id}/unsubmit`, { version: unsubmitting.version });
       toast({ tone: 'success', title: '已撤回报销', body: unsubmitting.docNo });
       setUnsubmitting(null);
       await refresh();
@@ -107,21 +127,21 @@ export function PettyPoolPage() {
     }
   };
 
-  const actions = (u: PoolUseRow) =>
+  const actions = (u: PettyUseRow) =>
     manage && u.state !== 'voided' ? (
       <span className="flex flex-wrap justify-end gap-1.5">
         {u.state === 'open' && (
-          <Button size="sm" variant="primary" icon={<Send className="size-3.5" />} onClick={() => setSubmitting({ use: u, mode: 'submit' })} data-testid={`pool-submit-${u.id}`}>
+          <Button size="sm" variant="primary" icon={<Send className="size-3.5" />} onClick={() => setSubmitting({ use: u, mode: 'submit' })} data-testid={`pu-submit-${u.id}`}>
             报销
           </Button>
         )}
         {u.state !== 'open' && (
-          <Button size="sm" variant="secondary" icon={<FilePen className="size-3.5" />} onClick={() => setSubmitting({ use: u, mode: 'backfill' })} data-testid={`pool-backfill-${u.id}`}>
+          <Button size="sm" variant="secondary" icon={<FilePen className="size-3.5" />} onClick={() => setSubmitting({ use: u, mode: 'backfill' })} data-testid={`pu-backfill-${u.id}`}>
             更新补单
           </Button>
         )}
         {u.state === 'submitted' && (
-          <Button size="sm" variant="ghost" icon={<Undo2 className="size-3.5" />} onClick={() => setUnsubmitting(u)} data-testid={`pool-unsubmit-${u.id}`}>
+          <Button size="sm" variant="ghost" icon={<Undo2 className="size-3.5" />} onClick={() => setUnsubmitting(u)} data-testid={`pu-unsubmit-${u.id}`}>
             撤回报销
           </Button>
         )}
@@ -132,7 +152,7 @@ export function PettyPoolPage() {
             icon={<Ban className="size-3.5" />}
             onClick={() => setVoiding(u)}
             className="text-clay hover:bg-clay-soft/60 hover:text-clay"
-            data-testid={`pool-void-${u.id}`}
+            data-testid={`pu-void-${u.id}`}
           >
             作废
           </Button>
@@ -144,17 +164,17 @@ export function PettyPoolPage() {
     <>
       <PageHeader
         dateMode="calendar"
-        title="零采备用金"
-        subtitle="供应链零采专用：申用占用额度 → 提交报销（补单）→ 财务登记报销单 → 确认后自动回补"
+        title="备用金申用"
+        subtitle="在部门的备用金上申用、占用可用额度 → 提交报销（补单）→ 财务登记报销单 → 确认后不再占用"
         actions={
           <span className="flex flex-wrap gap-2">
-            <a href={`/api/erp/pool/export${query ? `?${query}` : ''}`} download>
+            <a href={`/api/erp/petty/uses/export?${qs({ ...listParams, departmentId: b?.department ? String(b.department.id) : listParams.departmentId })}`} download>
               <Button size="sm" variant="secondary" icon={<Download className="size-4" />}>
                 导出台账
               </Button>
             </a>
             {manage && (
-              <Button size="sm" variant="primary" icon={<Plus className="size-4" />} onClick={() => setCreating(true)} disabled={!b || b.settings.totalCents === null} data-testid="pool-new">
+              <Button size="sm" variant="primary" icon={<Plus className="size-4" />} onClick={() => setCreating(true)} disabled={!b?.department} data-testid="pu-new">
                 申用
               </Button>
             )}
@@ -162,35 +182,37 @@ export function PettyPoolPage() {
         }
       />
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[1180px] space-y-4 px-4 py-5 md:px-7" data-testid="pool-page">
-          {manage && <ErpPendingPanel types={['pool_use']} onFound={() => void refresh()} />}
+        <div className="mx-auto w-full max-w-[1180px] space-y-4 px-4 py-5 md:px-7" data-testid="pu-page">
+          <ExpenseTabs active="uses" />
+          {manage && <ErpPendingPanel types={['petty_use']} onFound={() => void refresh()} />}
           {board.isPending ? (
             <Skeleton className="h-64" />
           ) : board.isError && !b ? (
-            <LoadFailed title="零采备用金没取回来" onRetry={() => void board.refetch()} retrying={board.isFetching} testId="pool-load-failed">
+            <LoadFailed title="备用金申用没取回来" onRetry={() => void board.refetch()} retrying={board.isFetching} testId="pu-load-failed">
               {errorMessage(board.error)}
             </LoadFailed>
           ) : b ? (
             <>
-              {b.settings.totalCents === null && (
+              <DepartmentPicker board={b} value={b.department?.id ?? null} onChange={(id) => setFilter('department', String(id))} />
+              {!b.department && (
                 <Notice
                   tone="warning"
-                  title="还没配置零采备用金的总额"
+                  title="还没有部门备用金"
                   action={
-                    can('settings.manage') ? (
-                      <Link to={erpSettingsPath('expenses')}>
+                    can('petty.manage') ? (
+                      <Link to="/erp/petty/accounts">
                         <Button size="sm" variant="secondary" icon={<Settings2 className="size-4" />}>
-                          去「ERP 设置 → 报销与备用金」填
+                          去「部门备用金」设定额、登记打款
                         </Button>
                       </Link>
                     ) : undefined
                   }
-                  data-testid="pool-unconfigured"
+                  data-testid="pu-unconfigured"
                 >
-                  总额由店主在「ERP 设置 → 报销与备用金」里填；填好以前不能申用。
+                  申用记在部门的备用金上：财务先在「部门备用金」给部门设定额、登记打款，之后才能申用。
                 </Notice>
               )}
-              <Summary board={b} />
+              {b.summary && <Summary board={b} />}
               <Card className="p-4">
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                   <Wallet className="size-4 text-ink-3" />
@@ -201,8 +223,8 @@ export function PettyPoolPage() {
                 {b.uses.length === 0 ? (
                   <EmptyState
                     art="leaf"
-                    title={query ? '没有符合条件的申用' : '还没有申用'}
-                    description={manage && !query && b.settings.totalCents !== null ? '零采要先垫钱的，点右上角「申用」登记：申请人、用途、买什么、多少钱。' : undefined}
+                    title={filtered ? '没有符合条件的申用' : '还没有申用'}
+                    description={manage && !filtered && b.department ? '要先垫钱买东西的，点右上角「申用」登记：申请人、用途、买什么、多少钱。' : undefined}
                     className="py-8"
                   />
                 ) : (
@@ -210,13 +232,13 @@ export function PettyPoolPage() {
                     {/* 宽屏：表格 */}
                     <DataTable
                       variant="plain"
-                      testId="pool-table"
+                      testId="pu-table"
                       className="mt-3 hidden lg:block"
                       tableClassName="min-w-[880px]"
                       rows={b.uses}
                       rowKey={(u) => u.id}
                       rowClassName={(u) => cn('align-top', u.state === 'voided' && 'text-ink-3')}
-                      rowTestId={(u) => `pool-use-${u.id}`}
+                      rowTestId={(u) => `pu-use-${u.id}`}
                       columns={[
                         {
                           key: 'doc',
@@ -268,9 +290,9 @@ export function PettyPoolPage() {
                       ]}
                     />
                     {/* 窄屏（商米 V3、平板竖屏）：卡片 */}
-                    <ul className="mt-3 space-y-2.5 lg:hidden" data-testid="pool-cards">
+                    <ul className="mt-3 space-y-2.5 lg:hidden" data-testid="pu-cards">
                       {b.uses.map((u) => (
-                        <li key={u.id} className={cn('rounded-lg border border-line bg-card p-3', u.state === 'voided' && 'opacity-70')} data-testid={`pool-card-${u.id}`}>
+                        <li key={u.id} className={cn('rounded-lg border border-line bg-card p-3', u.state === 'voided' && 'opacity-70')} data-testid={`pu-card-${u.id}`}>
                           <div className="flex items-start gap-2">
                             <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setOpened(u.id)}>
                               <p className="font-semibold text-pine">{u.docNo}</p>
@@ -309,7 +331,7 @@ export function PettyPoolPage() {
         confirmLabel="作废"
         danger
         busy={busy}
-        testId="pool-void-dialog"
+        testId="pu-void-dialog"
         onClose={() => setVoiding(null)}
         onConfirm={(reason) => void doVoid(reason)}
       />
@@ -323,7 +345,7 @@ export function PettyPoolPage() {
             <Button variant="secondary" onClick={() => setUnsubmitting(null)} disabled={busy}>
               取消
             </Button>
-            <Button variant="primary" loading={busy} onClick={() => void doUnsubmit()} data-testid="pool-unsubmit-confirm">
+            <Button variant="primary" loading={busy} onClick={() => void doUnsubmit()} data-testid="pu-unsubmit-confirm">
               撤回报销
             </Button>
           </>
@@ -338,38 +360,60 @@ export function PettyPoolPage() {
 
 // ───────────────────────── 顶部的数 ─────────────────────────
 
-function Summary({ board }: { board: PoolBoard }) {
-  const s = board.summary;
-  const total = s.totalCents;
-  const over = s.remainingCents !== null && s.remainingCents < 0;
-  // 占用条：按总额（总额改小了按已占用）的比例画三段
-  const base = Math.max(total ?? 0, s.occupiedCents, 1);
+function DepartmentPicker({ board, value, onChange }: { board: PettyUseBoard; value: number | null; onChange: (id: number) => void }) {
+  if (board.departments.length <= 1) return null;
   return (
-    <Card className="p-4" data-testid="pool-summary">
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[13px] font-semibold text-ink-2">部门</span>
+      <Select value={value ?? ''} onChange={(e) => onChange(Number(e.target.value))} fullWidth={false} className="h-9 w-48" aria-label="哪个部门的备用金" data-testid="pu-department">
+        {board.departments.map((d) => (
+          <option key={d.id} value={d.id}>
+            {d.name}
+          </option>
+        ))}
+      </Select>
+    </div>
+  );
+}
+
+function Summary({ board }: { board: PettyUseBoard }) {
+  const s = board.summary!;
+  const over = s.availableCents < 0;
+  // 占用条：按余额（余额不到已占用的按已占用）的比例画三段
+  const base = Math.max(s.balanceCents, s.occupiedCents, 1);
+  return (
+    <Card className="p-4" data-testid="pu-summary">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="备用金总额" value={total === null ? '还没配置' : formatYuan(total)} hint={board.departmentName ? `归属：${board.departmentName}` : '店主在 ERP 设置里填'} testId="pool-total" />
-        <Stat label="已占用" value={formatYuan(s.occupiedCents)} hint={`${s.pendingCount} 笔还没报销完`} tone="ember" testId="pool-occupied" />
         <Stat
-          label="剩余可用"
-          value={s.remainingCents === null ? '—' : formatYuan(s.remainingCents)}
-          hint={over ? '超出总额：先报销再申用' : s.reimbursedThisMonth.count ? `本月已回补 ${s.reimbursedThisMonth.count} 笔 ${formatYuan(s.reimbursedThisMonth.cents)}` : '报销确认后自动回补'}
+          label={`${board.department?.name ?? ''}备用金余额`}
+          value={formatYuan(s.balanceCents)}
+          hint={s.limitCents === null ? '没设定额' : s.topUpCents ? `定额 ${formatYuan(s.limitCents)} · 建议补足 ${formatYuan(s.topUpCents)}` : `定额 ${formatYuan(s.limitCents)}`}
+          testId="pu-balance"
+        />
+        <Stat label="已占用" value={formatYuan(s.occupiedCents)} hint={`${s.pendingCount} 笔还没报销完`} tone="ember" testId="pu-occupied" />
+        <Stat
+          label="可用"
+          value={formatYuan(s.availableCents)}
+          hint={
+            over
+              ? '已占用超过余额：先报销、补足再申用'
+              : s.reimbursedThisMonth.count
+                ? `本月报销完 ${s.reimbursedThisMonth.count} 笔 ${formatYuan(s.reimbursedThisMonth.cents)}`
+                : '可用 = 余额 − 已占用'
+          }
           tone={over ? 'clay' : 'pine'}
-          testId="pool-remaining"
+          testId="pu-available"
         />
         <Stat
           label="待报销"
           value={`${s.pendingCount} 笔`}
           hint={`已提交 ${s.byState.submitted.count} · 审核中 ${s.byState.reviewing.count}`}
           tone={s.pendingCount ? 'yuzu' : undefined}
-          testId="pool-pending"
+          testId="pu-pending"
         />
       </div>
       <div className="mt-4">
-        <div
-          className="flex h-3 w-full overflow-hidden rounded-full bg-pine-soft"
-          role="img"
-          aria-label={`已占用 ${formatYuan(s.occupiedCents)}，剩余 ${s.remainingCents === null ? '未配置' : formatYuan(s.remainingCents)}`}
-        >
+        <div className="flex h-3 w-full overflow-hidden rounded-full bg-pine-soft" role="img" aria-label={`已占用 ${formatYuan(s.occupiedCents)}，可用 ${formatYuan(s.availableCents)}`}>
           {SEGMENTS.map((seg) => {
             const cents = s.byState[seg.state].cents;
             return cents > 0 ? <span key={seg.state} className={cn('h-full', seg.bar)} style={{ width: `${(cents / base) * 100}%` }} title={`${seg.label} ${formatYuan(cents)}`} /> : null;
@@ -384,7 +428,7 @@ function Summary({ board }: { board: PoolBoard }) {
           ))}
           <li className="flex items-center gap-1.5">
             <span className="size-2.5 rounded-full bg-pine-soft ring-1 ring-pine/30" />
-            剩余可用
+            可用
           </li>
         </ul>
       </div>
@@ -405,19 +449,19 @@ function Stat({ label, value, hint, tone, testId }: { label: string; value: stri
 
 // ───────────────────────── 台账的格子 ─────────────────────────
 
-function StateBadge({ u }: { u: PoolUseRow }) {
+function StateBadge({ u }: { u: PettyUseRow }) {
   return (
     <Badge tone={STATE_TONE[u.state]} className="whitespace-nowrap">
-      {POOL_USE_STATE_LABELS[u.state]}
+      {PETTY_USE_STATE_LABELS[u.state]}
     </Badge>
   );
 }
 
-function BackfillCell({ u }: { u: PoolUseRow }) {
+function BackfillCell({ u }: { u: PettyUseRow }) {
   if (!u.backfill) return u.state === 'open' || u.state === 'voided' ? null : <span className="block text-[12.5px] text-ink-3">补单未填</span>;
   return (
     <span className="block text-[12.5px] whitespace-nowrap">
-      <span className={u.backfill === 'done' ? 'font-semibold text-pine' : 'font-semibold text-ember'}>{POOL_BACKFILL_LABELS[u.backfill]}</span>
+      <span className={u.backfill === 'done' ? 'font-semibold text-pine' : 'font-semibold text-ember'}>{PETTY_BACKFILL_LABELS[u.backfill]}</span>
       {u.purchaseOrder && (
         <Link to={`/purchasing?po=${u.purchaseOrder.id}`} className="ml-1 text-ink-2 hover:underline">
           {u.purchaseOrder.docNo}
@@ -427,7 +471,7 @@ function BackfillCell({ u }: { u: PoolUseRow }) {
   );
 }
 
-function ClaimCell({ u }: { u: PoolUseRow }) {
+function ClaimCell({ u }: { u: PettyUseRow }) {
   const can = useCan();
   if (!u.claim) return u.state === 'submitted' ? <span className="block text-[12.5px] text-ink-3">等财务登记报销单</span> : null;
   const text = (
@@ -461,7 +505,7 @@ function Filters({ filters, setFilter, applicants }: { filters: Record<string, s
               'tap relative h-8 shrink-0 rounded-full border px-3 text-[12.5px] font-semibold whitespace-nowrap transition-colors',
               filters.state === o.value ? 'border-pine bg-pine text-white' : 'border-line bg-card text-ink-2 hover:border-pine/40',
             )}
-            data-testid={`pool-filter-${o.value || 'all'}`}
+            data-testid={`pu-filter-${o.value || 'all'}`}
           >
             {o.label}
           </button>
@@ -492,7 +536,7 @@ function Filters({ filters, setFilter, applicants }: { filters: Record<string, s
 
 // ───────────────────────── 申用 ─────────────────────────
 
-function UseDialog({ board, applicants, onClose, onDone }: { board: PoolBoard; applicants: { id: number; name: string }[]; onClose: () => void; onDone: () => Promise<unknown> }) {
+function UseDialog({ board, applicants, onClose, onDone }: { board: PettyUseBoard; applicants: { id: number; name: string }[]; onClose: () => void; onDone: () => Promise<unknown> }) {
   const session = useSession();
   const toast = useToast();
   // 这个弹窗开着的时候一直用同一个操作编号；编号与原请求提交前存在本机（sendErpOp）
@@ -507,7 +551,8 @@ function UseDialog({ board, applicants, onClose, onDone }: { board: PoolBoard; a
   const [error, setError] = useState<string | null>(null);
   const [uncertain, setUncertain] = useState(false);
   const cents = parseYuan(amount);
-  const remaining = board.summary.remainingCents ?? 0;
+  const dept = board.department!;
+  const remaining = board.summary?.availableCents ?? 0;
   const over = cents !== null && cents > remaining;
   const options = applicants.some((a) => a.id === session.staff.id) ? applicants : [{ id: session.staff.id, name: session.staff.displayName }, ...applicants];
 
@@ -516,16 +561,16 @@ function UseDialog({ board, applicants, onClose, onDone }: { board: PoolBoard; a
     if (!purpose.trim()) return setError('请写用途说明');
     if (!content.trim()) return setError('请写采购内容');
     if (cents === null || cents <= 0) return setError('申用金额要大于 0，写到分');
-    if (over) return setError(`剩余可用只有 ${formatYuan(remaining)}`);
+    if (over) return setError(`可用只有 ${formatYuan(remaining)}`);
     setSaving(true);
     try {
       const name = options.find((a) => a.id === applicantId)?.name ?? '';
       await sendErpOp({
         key: clientKey,
-        type: 'pool_use',
-        url: '/api/erp/pool/uses',
-        body: { clientKey, useDate, applicantId, purpose: purpose.trim(), content: content.trim(), amountCents: cents, note: note.trim() },
-        summary: `零采备用金申用 · ${name} · ${formatYuan(cents)} · ${content.trim().slice(0, 30)}`,
+        type: 'petty_use',
+        url: '/api/erp/petty/uses',
+        body: { clientKey, useDate, departmentId: dept.id, applicantId, purpose: purpose.trim(), content: content.trim(), amountCents: cents, note: note.trim() },
+        summary: `备用金申用 · ${dept.name} · ${name} · ${formatYuan(cents)} · ${content.trim().slice(0, 30)}`,
         staffName: session.staff.displayName,
       });
       toast({ tone: 'success', title: '已申用', body: `占用 ${formatYuan(cents)}` });
@@ -545,24 +590,24 @@ function UseDialog({ board, applicants, onClose, onDone }: { board: PoolBoard; a
     <Dialog
       open
       onClose={onClose}
-      title="申用零采备用金"
-      description="登记即占用额度；买完货、补了单以后在台账里点「报销」。"
+      title={`申用${dept.name}的备用金`}
+      description="登记即占用可用额度；买完货、补了单以后在台账里点「报销」。"
       width="max-w-lg"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={saving}>
             {uncertain ? '先关掉（在「结果待确认」里处理）' : '取消'}
           </Button>
-          <Button variant="primary" icon={<HandCoins className="size-4" />} loading={saving} onClick={() => void submit()} disabled={over} data-testid="pool-use-save">
+          <Button variant="primary" icon={<HandCoins className="size-4" />} loading={saving} onClick={() => void submit()} disabled={over} data-testid="pu-use-save">
             申用
           </Button>
         </>
       }
     >
-      <div className="space-y-3" data-testid="pool-use-dialog">
+      <div className="space-y-3" data-testid="pu-use-dialog">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="申请人" htmlFor="pool-applicant">
-            <Select id="pool-applicant" value={applicantId} disabled={uncertain} onChange={(e) => setApplicantId(Number(e.target.value))}>
+          <Field label="申请人" htmlFor="pu-applicant">
+            <Select id="pu-applicant" value={applicantId} disabled={uncertain} onChange={(e) => setApplicantId(Number(e.target.value))}>
               {options.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
@@ -570,26 +615,26 @@ function UseDialog({ board, applicants, onClose, onDone }: { board: PoolBoard; a
               ))}
             </Select>
           </Field>
-          <Field label="申用日期" htmlFor="pool-date">
-            <Input id="pool-date" type="date" value={useDate} max={session.calendarToday} disabled={uncertain} onChange={(e) => setUseDate(e.target.value)} />
+          <Field label="申用日期" htmlFor="pu-date">
+            <Input id="pu-date" type="date" value={useDate} max={session.calendarToday} disabled={uncertain} onChange={(e) => setUseDate(e.target.value)} />
           </Field>
         </div>
-        <Field label="用途说明" htmlFor="pool-purpose">
-          <Input id="pool-purpose" value={purpose} maxLength={100} disabled={uncertain} onChange={(e) => setPurpose(e.target.value)} placeholder="例如：前台客用品补货" />
+        <Field label="用途说明" htmlFor="pu-purpose">
+          <Input id="pu-purpose" value={purpose} maxLength={100} disabled={uncertain} onChange={(e) => setPurpose(e.target.value)} placeholder="例如：前台客用品补货" />
         </Field>
-        <Field label="采购内容" htmlFor="pool-content">
-          <Textarea id="pool-content" rows={2} value={content} maxLength={200} disabled={uncertain} onChange={(e) => setContent(e.target.value)} placeholder="买什么、在哪买：网购一次性拖鞋 2 箱" />
+        <Field label="采购内容" htmlFor="pu-content">
+          <Textarea id="pu-content" rows={2} value={content} maxLength={200} disabled={uncertain} onChange={(e) => setContent(e.target.value)} placeholder="买什么、在哪买：网购一次性拖鞋 2 箱" />
         </Field>
-        <Field label="申用金额" htmlFor="pool-amount" hint={`剩余可用 ${formatYuan(remaining)}`}>
-          <MoneyInput id="pool-amount" value={amount} invalid={over} disabled={uncertain} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" data-testid="pool-amount" />
+        <Field label="申用金额" htmlFor="pu-amount" hint={`可用 ${formatYuan(remaining)}`}>
+          <MoneyInput id="pu-amount" value={amount} invalid={over} disabled={uncertain} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" data-testid="pu-amount" />
         </Field>
         {over && (
-          <Notice tone="error" title={`超过剩余可用 ${formatYuan(remaining)}`}>
-            先报销已经用掉的，或请店主调高总额。
+          <Notice tone="error" title={`超过可用 ${formatYuan(remaining)}`}>
+            先报销已经用掉的，或请财务打款补足。
           </Notice>
         )}
-        <Field label="备注（选填）" htmlFor="pool-note">
-          <Input id="pool-note" value={note} maxLength={200} disabled={uncertain} onChange={(e) => setNote(e.target.value)} />
+        <Field label="备注（选填）" htmlFor="pu-note">
+          <Input id="pu-note" value={note} maxLength={200} disabled={uncertain} onChange={(e) => setNote(e.target.value)} />
         </Field>
         {error && <Notice tone={uncertain ? 'warning' : 'error'} title={error} />}
       </div>
@@ -599,9 +644,9 @@ function UseDialog({ board, applicants, onClose, onDone }: { board: PoolBoard; a
 
 // ───────────────────────── 报销 / 更新补单 ─────────────────────────
 
-function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: 'submit' | 'backfill'; onClose: () => void; onDone: () => Promise<unknown> }) {
+function SubmitDialog({ use, mode, onClose, onDone }: { use: PettyUseRow; mode: 'submit' | 'backfill'; onClose: () => void; onDone: () => Promise<unknown> }) {
   const toast = useToast();
-  const [backfill, setBackfill] = useState<PoolBackfill | null>(use.backfill);
+  const [backfill, setBackfill] = useState<PettyBackfill | null>(use.backfill);
   const [po, setPo] = useState<{ id: number; docNo: string; supplierName: string } | null>(use.purchaseOrder);
   const [q, setQ] = useState('');
   const [note, setNote] = useState(use.submitNote);
@@ -609,7 +654,7 @@ function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: '
   const [error, setError] = useState<string | null>(null);
   const options = useQuery({
     queryKey: [...key, 'po-options', q],
-    queryFn: () => api.get<PoolPoOption[]>(`/api/erp/pool/po-options?${qs({ q: q.trim() })}`),
+    queryFn: () => api.get<PettyPoOption[]>(`/api/erp/petty/uses/po-options?${qs({ q: q.trim() })}`),
     enabled: backfill === 'done',
     placeholderData: keepPreviousData,
   });
@@ -621,7 +666,7 @@ function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: '
     setSaving(true);
     try {
       const body = { version: use.version, backfill, purchaseOrderId: backfill === 'done' ? po!.id : null, ...(mode === 'submit' ? { note: note.trim() } : {}) };
-      await api.post(`/api/erp/pool/uses/${use.id}/${mode}`, body);
+      await api.post(`/api/erp/petty/uses/${use.id}/${mode}`, body);
       toast({ tone: 'success', title: mode === 'submit' ? '已提交报销' : '补单已更新', body: mode === 'submit' ? '财务登记报销单时就能勾这一笔' : use.docNo });
       await onDone();
       onClose();
@@ -639,7 +684,7 @@ function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: '
       title={mode === 'submit' ? `报销 ${use.docNo}` : `更新补单 ${use.docNo}`}
       description={
         mode === 'submit'
-          ? '勾补单情况（已补单要选对应的采购单）；提交以后由财务在「费用报销」登记报销单，确认后这笔自动回补。'
+          ? '勾补单情况（已补单要选对应的采购单）；提交以后由财务在「费用报销」登记报销单，确认后这笔不再占用。'
           : '补单只是记录：未补单的补了采购单以后改过来，已报销的也能改，不动钱。'
       }
       width="max-w-xl"
@@ -648,13 +693,13 @@ function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: '
           <Button variant="secondary" onClick={onClose} disabled={saving}>
             取消
           </Button>
-          <Button variant="primary" loading={saving} onClick={() => void save()} data-testid="pool-submit-save">
+          <Button variant="primary" loading={saving} onClick={() => void save()} data-testid="pu-submit-save">
             {mode === 'submit' ? '提交报销' : '保存补单'}
           </Button>
         </>
       }
     >
-      <div className="space-y-3" data-testid="pool-submit-dialog">
+      <div className="space-y-3" data-testid="pu-submit-dialog">
         <div className="rounded-lg bg-paper-2/60 px-3 py-2 text-[13px]">
           <p className="font-semibold">
             {use.purpose} · <span className="num">{formatYuan(use.amountCents)}</span>
@@ -672,8 +717,8 @@ function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: '
                   backfill === v ? 'border-pine bg-pine-tint text-pine' : 'border-line bg-card text-ink-2',
                 )}
               >
-                <input type="radio" name="pool-backfill" checked={backfill === v} onChange={() => setBackfill(v)} data-testid={`pool-backfill-${v}`} />
-                {POOL_BACKFILL_LABELS[v]}
+                <input type="radio" name="pu-backfill" checked={backfill === v} onChange={() => setBackfill(v)} data-testid={`pu-backfill-${v}`} />
+                {PETTY_BACKFILL_LABELS[v]}
               </label>
             ))}
           </div>
@@ -682,7 +727,7 @@ function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: '
         {backfill === 'done' && (
           <div className="space-y-2">
             {po && (
-              <p className="flex items-center gap-2 rounded-lg border border-pine/30 bg-pine-tint px-3 py-2 text-[13.5px]" data-testid="pool-po-chosen">
+              <p className="flex items-center gap-2 rounded-lg border border-pine/30 bg-pine-tint px-3 py-2 text-[13.5px]" data-testid="pu-po-chosen">
                 <span className="font-semibold text-pine">{po.docNo}</span>
                 <span className="min-w-0 flex-1 truncate text-ink-2">{po.supplierName}</span>
                 <Button size="sm" variant="ghost" onClick={() => setPo(null)}>
@@ -694,12 +739,12 @@ function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: '
               <>
                 <div className="relative">
                   <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" />
-                  <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="按采购单号、供应商找" className="pl-9" data-testid="pool-po-search" />
+                  <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="按采购单号、供应商找" className="pl-9" data-testid="pu-po-search" />
                 </div>
                 {options.isError && !options.data ? (
                   <LoadFailed title="采购单没取回来" onRetry={() => void options.refetch()} retrying={options.isFetching} />
                 ) : (
-                  <ul className="scroll-thin max-h-56 space-y-1 overflow-y-auto" data-testid="pool-po-options">
+                  <ul className="scroll-thin max-h-56 space-y-1 overflow-y-auto" data-testid="pu-po-options">
                     {options.isPending && <Skeleton className="h-10" />}
                     {options.data?.length === 0 && <li className="py-3 text-center text-[13px] text-ink-3">没有找到已确认的采购单</li>}
                     {options.data?.map((o) => (
@@ -708,7 +753,7 @@ function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: '
                           type="button"
                           onClick={() => setPo({ id: o.id, docNo: o.docNo, supplierName: o.supplierName })}
                           className="flex w-full items-center gap-2 rounded-md border border-line px-3 py-2 text-left text-[13px] hover:border-pine/40"
-                          data-testid={`pool-po-${o.id}`}
+                          data-testid={`pu-po-${o.id}`}
                         >
                           <span className="font-semibold">{o.docNo}</span>
                           {o.backfill && <Badge tone="lake">补单</Badge>}
@@ -725,8 +770,8 @@ function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: '
           </div>
         )}
         {mode === 'submit' && (
-          <Field label="说明（选填）" htmlFor="pool-submit-note" hint="给财务的话：发票随后补、实际花了多少……">
-            <Input id="pool-submit-note" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} />
+          <Field label="说明（选填）" htmlFor="pu-submit-note" hint="给财务的话：发票随后补、实际花了多少……">
+            <Input id="pu-submit-note" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} />
           </Field>
         )}
         {error && <Notice tone="error" title={error} />}
@@ -738,7 +783,7 @@ function SubmitDialog({ use, mode, onClose, onDone }: { use: PoolUseRow; mode: '
 // ───────────────────────── 详情 ─────────────────────────
 
 function DetailDialog({ useId, onClose }: { useId: number; onClose: () => void }) {
-  const detail = useQuery({ queryKey: [...key, 'use', useId], queryFn: () => api.get<PoolUseDetail>(`/api/erp/pool/uses/${useId}`) });
+  const detail = useQuery({ queryKey: [...key, 'use', useId], queryFn: () => api.get<PettyUseDetail>(`/api/erp/petty/uses/${useId}`) });
   const u = detail.data;
   const steps: { label: string; at: string | null; text: string; done: boolean }[] = u
     ? [
@@ -746,14 +791,14 @@ function DetailDialog({ useId, onClose }: { useId: number; onClose: () => void }
         {
           label: '提交报销',
           at: u.submittedAt,
-          text: u.submittedAt ? `${u.submittedByName ?? ''} 提交 · ${u.backfill ? POOL_BACKFILL_LABELS[u.backfill] : ''}${u.purchaseOrder ? ` ${u.purchaseOrder.docNo}` : ''}` : '还没提交',
+          text: u.submittedAt ? `${u.submittedByName ?? ''} 提交 · ${u.backfill ? PETTY_BACKFILL_LABELS[u.backfill] : ''}${u.purchaseOrder ? ` ${u.purchaseOrder.docNo}` : ''}` : '还没提交',
           done: !!u.submittedAt || !!u.claim,
         },
         { label: '财务登记报销单', at: null, text: u.claim ? `${u.claim.docNo} · ${CLAIM_STATUS_LABELS[u.claim.status]} · ${formatYuan(u.claim.amountCents)}` : '还没登记', done: !!u.claim },
         {
-          label: '确认回补',
+          label: '报销确认',
           at: u.state === 'reimbursed' ? (u.claim?.confirmedAt ?? null) : null,
-          text: u.state === 'reimbursed' ? `回补 ${formatYuan(u.amountCents)}` : '报销单确认后自动回补',
+          text: u.state === 'reimbursed' ? `不再占用 ${formatYuan(u.amountCents)}；余额回到定额请财务按「建议补足」打款` : '报销单确认后不再占用',
           done: u.state === 'reimbursed',
         },
       ]
@@ -767,7 +812,7 @@ function DetailDialog({ useId, onClose }: { useId: number; onClose: () => void }
           {errorMessage(detail.error)}
         </LoadFailed>
       ) : u ? (
-        <div className="space-y-4 text-[13.5px]" data-testid="pool-detail">
+        <div className="space-y-4 text-[13.5px]" data-testid="pu-detail">
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
             <div>
               <dt className="text-[12px] text-ink-3">状态</dt>
@@ -780,8 +825,10 @@ function DetailDialog({ useId, onClose }: { useId: number; onClose: () => void }
               <dd className="num font-bold">{formatYuan(u.amountCents)}</dd>
             </div>
             <div>
-              <dt className="text-[12px] text-ink-3">申请人</dt>
-              <dd>{u.applicant.name}</dd>
+              <dt className="text-[12px] text-ink-3">部门 · 申请人</dt>
+              <dd>
+                {u.department.name} · {u.applicant.name}
+              </dd>
             </div>
             <div>
               <dt className="text-[12px] text-ink-3">申用日期</dt>
@@ -817,7 +864,7 @@ function DetailDialog({ useId, onClose }: { useId: number; onClose: () => void }
             )}
           </dl>
           {u.state !== 'voided' && (
-            <ol className="space-y-2.5 border-l-2 border-line pl-4" data-testid="pool-timeline">
+            <ol className="space-y-2.5 border-l-2 border-line pl-4" data-testid="pu-timeline">
               {steps.map((s) => (
                 <li key={s.label} className="relative">
                   <span className={cn('absolute top-1 -left-[23px] size-3 rounded-full ring-2 ring-card', s.done ? 'bg-pine' : 'bg-line')} />
