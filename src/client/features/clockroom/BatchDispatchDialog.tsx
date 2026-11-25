@@ -16,6 +16,7 @@ import { useCatalog } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { cn } from '../../lib/utils';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
+import { LoadFailed } from '../../components/LoadFailed';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { Button, Input, Notice, Segmented, Select } from '../../components/ui';
@@ -116,7 +117,11 @@ export function BatchDispatchDialog({ open, board, onClose, onDone }: { open: bo
   const blockerText = blocker
     ? `手牌 ${blocker.tagCodes.filter((c) => rows.some((r) => r.tagText.trim().toLowerCase() === c.toLowerCase())).join('、') || blocker.tagCodes.join('、')} 还有一笔「${blocker.summary}」结果待确认，请先在前台顶上的「结果待确认」里处理好再派`
     : null;
-  const firstProblem = rows.length === 0 ? '请至少加一张手牌' : (problems.map((p, i) => (p ? `第 ${i + 1} 行：${p}` : null)).find(Boolean) ?? dupTech ?? blockerText);
+  // 在店手牌、价目还没取到或取不到：先说这个，不把每张手牌都说成「不是在店客人的手牌」（合并前 Codex 审查 1c79c00）
+  const tagsFailed = tags.isError && !tags.data;
+  const catalogFailed = catalog.isError && !catalog.data;
+  const loadProblem = tagsFailed || catalogFailed ? '在店手牌或价目没取到，请重试' : tags.isPending || catalog.isPending ? '正在取在店手牌与价目…' : null;
+  const firstProblem = loadProblem ?? (rows.length === 0 ? '请至少加一张手牌' : (problems.map((p, i) => (p ? `第 ${i + 1} 行：${p}` : null)).find(Boolean) ?? dupTech ?? blockerText));
   const anchor = stale?.visitId ?? (visitIds.length ? Math.min(...visitIds) : null);
   const op = useFrontdeskOp<true>({ type: 'bill_post', visitId: anchor, staffName: session.staff.displayName, pick: doneOnFound });
 
@@ -185,6 +190,15 @@ export function BatchDispatchDialog({ open, board, onClose, onDone }: { open: bo
         </>
       }
     >
+      {(tagsFailed || catalogFailed) && (
+        <LoadFailed
+          title={tagsFailed ? '在店手牌没取到' : '价目没取到'}
+          onRetry={() => void (tagsFailed ? tags.refetch() : catalog.refetch())}
+          retrying={tags.isFetching || catalog.isFetching}
+          className="mb-3"
+          testId="batch-dispatch-failed"
+        />
+      )}
       <PendingPanel op={op} onResolved={() => onDone()} />
       {waiting.length > 0 && (
         <div className="mb-3">

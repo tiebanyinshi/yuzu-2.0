@@ -10,6 +10,7 @@ import { sendErpOp, useErpPending } from '../../lib/erpPending';
 import { useSession } from '../../lib/session';
 import { downloadUrl, formatDateTime, uuid } from '../../lib/utils';
 import { Money } from '../../components/Money';
+import { QtyInput } from '../../components/QtyInput';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -85,11 +86,12 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
   const toast = useToast();
   const session = useSession();
   const [label, setLabel] = useState('礼品卡');
-  const [qty, setQty] = useState('10');
+  const [n, setQty] = useState(10);
+  /** 数量输入的提示（超过上限时夹到上限并说明，与别处的数量输入一样） */
+  const [qtyHint, setQtyHint] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const n = Number(qty);
   const ok = label.trim().length >= 1 && Number.isInteger(n) && n >= 1 && n <= MAX_GIFT_CARD_BATCH;
   const submit = async () => {
     setBusy(true);
@@ -144,8 +146,17 @@ function CreateDialog({ onClose }: { onClose: () => void }) {
         <Field label="名称" htmlFor="gift-label" hint="会员资料里的姓名先写这个，转实名时改成客人的名字">
           <Input id="gift-label" value={label} maxLength={16} onChange={(e) => setLabel(e.target.value)} data-autofocus />
         </Field>
-        <Field label="张数" htmlFor="gift-qty" hint={`一批最多 ${MAX_GIFT_CARD_BATCH} 张`}>
-          <Input id="gift-qty" type="number" inputMode="numeric" min={1} max={MAX_GIFT_CARD_BATCH} value={qty} onChange={(e) => setQty(e.target.value)} className="num" data-testid="gift-cards-qty" />
+        <Field label="张数" hint={qtyHint ?? `一批最多 ${MAX_GIFT_CARD_BATCH} 张`}>
+          {/* 共用的数量输入（docs/CONVENTIONS.md 第 4 节；合并前 Codex 审查 1c79c00）：超过上限夹到上限并提示 */}
+          <QtyInput
+            value={n}
+            max={MAX_GIFT_CARD_BATCH}
+            onChange={setQty}
+            onHint={setQtyHint}
+            label="张数"
+            className="h-11 w-full rounded-md border border-line-strong bg-card text-[15px]"
+            testId="gift-cards-qty"
+          />
         </Field>
         <Field label="备注" htmlFor="gift-note" className="sm:col-span-2">
           <Input id="gift-note" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder="例如 年会、合作单位采购" />

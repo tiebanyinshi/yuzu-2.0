@@ -87,4 +87,17 @@ describe('礼品卡批次', () => {
     expect((await ctx.app.inject({ method: 'GET', url: `/api/gift-cards/${otherId}/cards.csv`, headers: { cookie: ctx.owner } })).statusCode).toBe(404);
     expect(((await api(ctx.app, ctx.owner, 'GET', '/api/gift-cards')).body as { id: number }[]).some((x) => x.id === otherId)).toBe(false);
   });
+
+  it('开卡送券：有开卡规则时，一批里每张卡都和单个建档一样发（合并前 Codex 审查 1c79c00）', async () => {
+    const t = await api(ctx.app, ctx.owner, 'POST', '/api/coupons/templates', { clientKey: randomUUID(), name: '礼品卡开卡礼', kind: 'cash', faceValue: 500, validity: 'days', validDays: 30 });
+    expect(t.status, JSON.stringify(t.body)).toBe(200);
+    const rule = await api(ctx.app, ctx.owner, 'POST', '/api/coupons/rules', { clientKey: randomUUID(), kind: 'open_card', templateId: t.body.id, quantity: 1 });
+    expect(rule.status, JSON.stringify(rule.body)).toBe(200);
+    const r = await api(ctx.app, ctx.owner, 'POST', '/api/gift-cards', { clientKey: randomUUID(), label: '带开卡礼', quantity: 3 });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const got = await ctx.sql<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM coupons c JOIN members m ON m.id = c.member_id
+      WHERE m.gift_batch_id = ${r.body.batch.id} AND c.template_id = ${t.body.id}`;
+    expect(got[0]!.n).toBe(3);
+  });
 });

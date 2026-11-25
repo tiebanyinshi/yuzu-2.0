@@ -4,7 +4,7 @@
 // 送出去以后在会员资料里「转实名」填手机号（转实名、改手机号的规矩照旧）；要预存金额的，按这张卡（会员号）照常充值，钱只在会员钱包里。
 // 批次列表写每一批几张、已经绑了手机号的几张、预存了多少（本金余额合计）；导出这一批的卡号（印卡用）。
 // 权限：管券的（coupon.manage）——与「发券」页同一项（合并前 Codex 审查 c79ca75：页面只给管券的进，接口也一样）。
-// 锁：作废登记（op_fences，按编号）→ 批次的操作编号（唯一约束兜底）→ 新会员行。不碰钱包。
+// 锁：作废登记（op_fences，按编号）→ 批次的操作编号（唯一约束兜底）→ 新会员行 → 开卡送券（与单个建档一样）。不碰钱包。
 // 页面上与生成无记名券同一套「结果待确认」（迁移 322）：发出前本机存好编号与原请求，没收到结果时查回、原样重提或确认作废。
 
 import type { FastifyInstance } from 'fastify';
@@ -23,6 +23,7 @@ import { nextDocNo } from '../lib/tx';
 import { currentStoreId } from '../lib/store-context';
 import { assertNotFenced } from '../lib/fences';
 import { erpOpAbandoned } from './erp-ops';
+import { issueOpenCardCoupons } from './coupons';
 import { loadSettings } from './settings';
 
 const BatchInput = z.object({
@@ -57,10 +58,13 @@ export async function createGiftCardBatch(deps: Deps, raw: unknown, ctx: OpConte
         VALUES (${batchNo}, ${payload.label}, ${payload.quantity}, ${payload.note}, ${clientKey}, ${requestHash}, ${ctx.actor.id}, ${at})
         RETURNING id`;
       // 匿名卡会员：姓名先写礼品卡的名称，没有手机号；会员号（YZ 开头）就是卡号
-      await tx`
+      const made = await tx<{ id: number }[]>`
         INSERT INTO members (member_no, name, phone, card_type, note, created_by, gift_batch_id)
         SELECT 'YZ' || lpad(nextval('member_no_seq')::text, 5, '0'), ${payload.label}, NULL, 'anonymous', ${`礼品卡 ${batchNo}`}, ${ctx.actor.id}, ${b!.id}
-        FROM generate_series(1, ${payload.quantity})`;
+        FROM generate_series(1, ${payload.quantity})
+        RETURNING id`;
+      // 开卡送券：与单个建档同一套规则（合并前 Codex 审查 1c79c00：礼品卡也是新开的卡，不能漏掉开卡礼）
+      for (const m of made) await issueOpenCardCoupons(tx, deps, Number(m.id), ctx);
       await writeAudit(tx, {
         staffId: ctx.actor.id,
         action: 'gift_card_batch',
