@@ -68,4 +68,20 @@ describe('礼品卡批次', () => {
     expect(csv.body).toContain(`"'=HYPERLINK(""x"")"`);
     expect(csv.body).not.toMatch(/,=HYPERLINK/);
   });
+
+  it('别的店生成的批次：本店按编号看不到卡号、导不出（合并前 Codex 审查 1a89c41）', async () => {
+    const [b] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('GC2', '礼品卡乙店', 1) RETURNING id`;
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: b!.id })).status).toBe(200);
+    let otherId = 0;
+    try {
+      const r = await api(ctx.app, ctx.owner, 'POST', '/api/gift-cards', { clientKey: randomUUID(), label: '乙店礼品卡', quantity: 1 });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      otherId = r.body.batch.id;
+    } finally {
+      expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: 1 })).status).toBe(200);
+    }
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/gift-cards/${otherId}/cards`)).status).toBe(404);
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/gift-cards/${otherId}/cards.csv`, headers: { cookie: ctx.owner } })).statusCode).toBe(404);
+    expect(((await api(ctx.app, ctx.owner, 'GET', '/api/gift-cards')).body as { id: number }[]).some((x) => x.id === otherId)).toBe(false);
+  });
 });

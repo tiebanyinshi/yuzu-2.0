@@ -96,7 +96,8 @@ export async function listGiftCardBatches(db: Db): Promise<GiftCardBatch[]> {
 }
 
 export async function getGiftCardBatch(db: Db, id: number): Promise<GiftCardBatch> {
-  const [r] = await db<GiftCardBatch[]>`${BATCH_SELECT(db)} WHERE b.id = ${id} GROUP BY b.id, s.display_name`;
+  // 只认当前门店的批次（与列表同一口径；合并前 Codex 审查 1a89c41：改编号看不到别的店的卡号、导不出）
+  const [r] = await db<GiftCardBatch[]>`${BATCH_SELECT(db)} WHERE b.id = ${id} AND b.store_id = ${currentStoreId()} GROUP BY b.id, s.display_name`;
   if (!r) throw notFound('这批礼品卡不存在');
   return toBatch(r);
 }

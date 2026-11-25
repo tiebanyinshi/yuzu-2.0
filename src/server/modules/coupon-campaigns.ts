@@ -118,7 +118,7 @@ export async function previewCampaign(deps: Pick<Deps, 'sql' | 'config'>, raw: u
 /**
  * 发券试算（8.1.40）：每张最多抵多少 × 张数；按这个券以前的核销率估成本（只读）。
  * 每张最多抵多少是上限（合并前 Codex 审查 8a7023d）：兑换、买一赠一按那个项目**最贵的一档**价（结账时抵的是账单上单价最高的那一份，
- * 不止默认档）；兑换票种按那个票种 24 小时档的价；现场定价（时价、称重）的项目没有定价，没设「最多抵」就是不封顶。
+ * 不止默认档；门店改过价的也算进去，券限了门店的只看那几家）；兑换票种按那个票种 24 小时档的价；现场定价（时价、称重）的项目没有定价，没设「最多抵」就是不封顶。
  */
 async function estimateOf(db: Db, t: LockedTemplate, coupons: number): Promise<NonNullable<CampaignPreview['estimate']>> {
   let perCoupon: number | null = null;
@@ -140,7 +140,11 @@ async function estimateOf(db: Db, t: LockedTemplate, coupons: number): Promise<N
     const itemId = t.exchangeItemId ?? t.buyItemId;
     const [p] = itemId
       ? await db<{ price: number | null; onSite: boolean }[]>`
-          SELECT greatest(i.price, coalesce((SELECT max(sp.price) FROM service_item_prices sp WHERE sp.item_id = i.id), 0))::bigint AS price,
+          -- 公司价各档、各店自己的价（8.1.40 合并前 Codex 审查 1a89c41：门店改过价的按门店价抵）里最贵的；券限了门店的只看那几家
+          SELECT greatest(i.price,
+                          coalesce((SELECT max(sp.price) FROM service_item_prices sp WHERE sp.item_id = i.id), 0),
+                          coalesce((SELECT max(ssp.price) FROM service_item_store_prices ssp
+                                    WHERE ssp.item_id = i.id ${t.storeIds?.length ? db`AND ssp.store_id IN ${db(t.storeIds.map(Number))}` : db``}), 0))::bigint AS price,
                  i.price_mode <> 'fixed' AS on_site
           FROM service_items i WHERE i.id = ${itemId}`
       : [];
@@ -157,7 +161,7 @@ async function estimateOf(db: Db, t: LockedTemplate, coupons: number): Promise<N
 async function lockTemplateReadOnly(db: Db, id: number): Promise<LockedTemplate | null> {
   const [t] = await db<(LockedTemplate & { levels: number[] })[]>`
     SELECT id, name, kind, face_value, rate_percent, max_off, threshold, scope, scope_categories, scope_items, exchange_item_id, exchange_ticket_type_id,
-           buy_item_id, validity, valid_from, valid_to, valid_days, levels, active, gift
+           buy_item_id, validity, valid_from, valid_to, valid_days, levels, active, gift, store_ids
     FROM coupon_templates WHERE id = ${id}`;
   return t ? { ...t, levels: t.levels.map(Number) } : null;
 }
