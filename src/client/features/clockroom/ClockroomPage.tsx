@@ -694,9 +694,10 @@ export function ClockroomPage() {
           }}
         />
       )}
-      {d && (
+      {/* 只在打开时挂上（合并前 Codex 审查 1c79c00）：关着还挂着的话，它一直占着「结果待确认」那一笔，前台顶上的提醒与自动核对就看不到它 */}
+      {d && batching && (
         <BatchDispatchDialog
-          open={batching}
+          open
           board={d}
           onClose={() => setBatching(false)}
           onDone={() => {
