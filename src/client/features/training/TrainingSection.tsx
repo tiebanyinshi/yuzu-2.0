@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FolderOpen, FolderPlus, Pencil, Upload } from 'lucide-react';
 import { fileSizeText } from '@shared/floorplans';
 import { ORG_DEPARTMENTS } from '@shared/positions';
-import { TRAINING_ACCEPT, TRAINING_MAX_BYTES, trainingFormatLabel, type TrainingFile, type TrainingFileDetail, type TrainingFolder } from '@shared/training';
+import { newTrainingUploadKey, TRAINING_ACCEPT, TRAINING_MAX_BYTES, trainingFormatLabel, type TrainingFile, type TrainingFileDetail, type TrainingFolder } from '@shared/training';
 import { api, errorMessage } from '../../lib/api';
 import { cn, formatDateTime, uuid } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
@@ -164,6 +164,7 @@ function PendingUploadRow({ p }: { p: PendingUpload }) {
       const st = await checkPendingUpload(p);
       if (st === 'done') await done();
       else if (st === 'cancelled') toast({ tone: 'info', title: `「${p.fileName}」已经确认不传了` });
+      else if (st === 'expired') toast({ tone: 'info', title: `「${p.fileName}」上传已超过 7 天过期（未登记）`, body: '如需上传请重新选文件' });
       else setStatus('open');
     } catch (e) {
       setError(errorMessage(e));
@@ -177,7 +178,9 @@ function PendingUploadRow({ p }: { p: PendingUpload }) {
     setCancelling(true);
     setError(null);
     try {
-      if ((await cancelPendingUpload(p)) === 'done') await done();
+      const st = await cancelPendingUpload(p);
+      if (st === 'done') await done();
+      else if (st === 'expired') toast({ tone: 'info', title: `「${p.fileName}」上传已超过 7 天过期（未登记）` });
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -371,7 +374,7 @@ function FolderFiles({ folder, folders }: { folder: TrainingFolder; folders: Tra
         toast({ tone: 'error', title: `「${f.name}」超过 ${TRAINING_MAX_BYTES / 1024 / 1024} MB`, body: '视频请先压成 720p 的 MP4 再传' });
         continue;
       }
-      rows.push({ key: uuid(), file: f, target: { folderId: folder.id }, targetLabel: `文件夹「${folder.name}」`, progress: 0, error: null, done: false });
+      rows.push({ key: newTrainingUploadKey(), file: f, target: { folderId: folder.id }, targetLabel: `文件夹「${folder.name}」`, progress: 0, error: null, done: false });
     }
     setUploads((all) => [...all.filter((r) => !r.done), ...rows]);
     void run(rows);
@@ -637,7 +640,7 @@ function Versions({ detail, onUploaded }: { detail: TrainingFileDetail; onUpload
           onChange={(e) => {
             const f = e.target.files?.[0];
             e.target.value = '';
-            if (f) void run({ key: uuid(), file: f, target: { fileId: detail.file.id, note: note.trim() } });
+            if (f) void run({ key: newTrainingUploadKey(), file: f, target: { fileId: detail.file.id, note: note.trim() } });
           }}
           data-testid="training-version-input"
         />
