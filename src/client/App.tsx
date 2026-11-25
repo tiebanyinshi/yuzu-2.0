@@ -155,8 +155,10 @@ function AuthGate({ shell = 'app' }: { shell?: 'app' | 'admin' | 'erp' | 'wcp' |
     () =>
       onAuthError((error) => {
         if (error.status === 401) {
+          // 本来登录着、会话失效了才写「登录已过期」；没登录就打开的（员工扫码打开 /oa 等）只是去登录
+          const expired = !!qc.getQueryData(qk.session);
           qc.clear();
-          navigate('/login', { replace: true, state: { expired: true, from: hereRef.current } });
+          navigate('/login', { replace: true, state: { expired, from: hereRef.current } });
         } else {
           void qc.invalidateQueries({ queryKey: qk.session });
         }

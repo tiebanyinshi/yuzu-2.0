@@ -1,6 +1,23 @@
 // WCP（员工工作台，原「办公」）的入口清单：首页的方块与 WCP 外壳的侧栏用同一份（店主 2026-11-24，docs/BOARDS.md）。
 
-import { Bell, BookUser, CalendarCheck, CalendarDays, Fingerprint, GraduationCap, MessagesSquare, Palmtree, ReceiptText, ScanFace, SlidersHorizontal, Stamp, type LucideIcon } from 'lucide-react';
+import {
+  Bell,
+  BookOpen,
+  BookUser,
+  CalendarCheck,
+  CalendarDays,
+  Fingerprint,
+  GraduationCap,
+  MessagesSquare,
+  Palmtree,
+  ReceiptText,
+  ScanFace,
+  SlidersHorizontal,
+  Stamp,
+  UserRound,
+  LayoutGrid,
+  type LucideIcon,
+} from 'lucide-react';
 import { ADMIN_SECTIONS, visibleBoardSections } from '@shared/admin';
 import { useCan, useSession } from '../../lib/session';
 
@@ -38,4 +55,38 @@ export function useWcpNav(): WcpNavItem[] {
         { to: ADMIN_SECTIONS[wcp[0]!].path, label: 'WCP 设置', hint: '员工账号、组织架构、考勤、审批模板、工资条、员工培训、食堂与巡场', icon: SlidersHorizontal, testId: 'oa-tile-settings' },
       ]
     : [...WCP_TILES];
+}
+
+/**
+ * 手机端底部 4 个 Tab（店主 2026-11-25《员工办公系统建设需求文档 v1.1》第二节，参考钉钉排版；docs/OA_MOBILE.md）：
+ * 工作台、消息、知识库（员工培训，店主确认就是 WCP 知识模块）、我的。宽屏照旧是左边一列，不出这一排。
+ * 没列在别的 Tab 里的页面（打卡、审批、工资条……）都算工作台下面的。
+ */
+export interface WcpTab {
+  key: 'work' | 'messages' | 'knowledge' | 'me';
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  /** 这些地址开头的页面亮这个 Tab */
+  prefixes: readonly string[];
+}
+export const WCP_TABS: readonly WcpTab[] = [
+  { key: 'work', to: '/oa', label: '工作台', icon: LayoutGrid, prefixes: [] },
+  { key: 'messages', to: '/oa/im', label: '消息', icon: MessagesSquare, prefixes: ['/oa/im', '/oa/notifications'] },
+  { key: 'knowledge', to: '/oa/training', label: '知识库', icon: BookOpen, prefixes: ['/oa/training'] },
+  { key: 'me', to: '/oa/me', label: '我的', icon: UserRound, prefixes: ['/oa/me', '/oa/leave', '/oa/face'] },
+];
+
+const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
+
+/** 地址属于哪个 Tab */
+export function wcpTabOf(pathname: string): WcpTab {
+  const path = pathname.replace(/\/+$/, '') || '/oa';
+  return WCP_TABS.find((t) => t.prefixes.some((p) => under(path, p))) ?? WCP_TABS[0]!;
+}
+
+/** 是不是某个 Tab 的首页（手机顶栏上不出「返回」） */
+export function isWcpTabRoot(pathname: string): boolean {
+  const path = pathname.replace(/\/+$/, '') || '/oa';
+  return WCP_TABS.some((t) => t.to === path);
 }

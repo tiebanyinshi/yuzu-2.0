@@ -30,6 +30,9 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const state = location.state as { from?: string; expired?: boolean } | null;
+  // 员工从 WCP 来的（手机扫码打开 /oa 被送到登录页，店主 2026-11-25 v1.1，docs/OA_MOBILE.md）：写「员工登录」，品牌区压矮
+  const staffEntry = !!state?.from && (state.from === '/oa' || state.from.startsWith('/oa/'));
+  const env = loginEnv();
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -53,14 +56,14 @@ export function LoginPage() {
   return (
     <div className="grid min-h-dvh bg-paper lg:grid-cols-[minmax(0,1.08fr)_minmax(440px,1fr)]">
       {/* 品牌区 */}
-      <section className="relative h-[260px] overflow-hidden bg-[#f3ead8] sm:h-[320px] lg:h-auto">
+      <section className={`relative overflow-hidden bg-[#f3ead8] lg:h-auto ${staffEntry ? 'h-[150px] sm:h-[240px]' : 'h-[260px] sm:h-[320px]'}`}>
         <LandscapeIllustration className="absolute inset-0 h-full w-full" />
         <div className="relative flex h-full flex-col p-7 sm:p-10 lg:p-14">
           <div className="flex items-center gap-3">
             <LogoMark className="size-10" />
             <span className="text-[13px] font-bold tracking-[0.32em] text-pine">柚子 · YUZU</span>
           </div>
-          <div className="mt-6 max-w-md sm:mt-10 lg:mt-24">
+          <div className={`max-w-md sm:mt-10 lg:mt-24 ${staffEntry ? 'mt-3 max-sm:hidden' : 'mt-6'}`}>
             <p className="font-display text-[56px] leading-[0.9] tracking-tight text-ink italic sm:text-[76px] lg:text-[104px]">yuzu</p>
             <p className="mt-3 text-[15px] font-semibold tracking-[0.2em] text-ink-2 sm:text-[17px] lg:mt-5">城市里的山野汤泉</p>
           </div>
@@ -68,14 +71,22 @@ export function LoginPage() {
       </section>
 
       {/* 登录表单 */}
-      <section className="flex items-center justify-center px-6 py-10 sm:px-10">
+      <section className={`flex items-center justify-center px-6 sm:px-10 ${staffEntry ? 'py-6' : 'py-10'}`}>
         <div className="w-full max-w-[380px] animate-rise">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-[13px] font-semibold text-ink-3">{info.data?.storeName ?? '柚子 · 城市汤泉'}</p>
             {info.data && <InstanceBadge instance={info.data.instance} />}
           </div>
-          <h1 className="mt-1.5 text-[28px] font-bold tracking-tight text-ink">欢迎回来</h1>
-          <p className="mt-1.5 text-[14px] text-ink-3">登录门店工作台，开始今天的接待。</p>
+          <h1 className="mt-1.5 text-[28px] font-bold tracking-tight text-ink" data-testid="login-title">
+            {staffEntry ? '员工登录' : '欢迎回来'}
+          </h1>
+          <p className="mt-1.5 text-[14px] text-ink-3">{staffEntry ? '登录 WCP 员工工作台：打卡、排班、审批、工资条。' : '登录门店工作台，开始今天的接待。'}</p>
+
+          {staffEntry && env.insecure && (
+            <Notice tone="warning" className="mt-5" title="这个地址不是 https" data-testid="login-insecure">
+              {env.wechat ? '在微信里' : '在手机上'}用 http 地址打开时拿不到定位、开不了摄像头，打不了卡。请扫门店贴的二维码打开。
+            </Notice>
+          )}
 
           {state?.expired && (
             <Notice tone="info" className="mt-6" title="登录已过期">
@@ -89,7 +100,8 @@ export function LoginPage() {
                 <User className="pointer-events-none absolute top-1/2 left-3.5 size-[18px] -translate-y-1/2 text-ink-4" />
                 <Input
                   id="username"
-                  autoFocus
+                  // 手机（含微信）上不自动弹键盘挡住页面
+                  autoFocus={!env.touch}
                   autoComplete="username"
                   autoCapitalize="none"
                   spellCheck={false}
@@ -151,4 +163,12 @@ export function LoginPage() {
       </section>
     </div>
   );
+}
+
+/** 登录页所在的环境：微信内置浏览器、触屏、是不是 https（本机调试的 localhost 不算） */
+function loginEnv() {
+  const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+  const touch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+  const local = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  return { wechat: /MicroMessenger/i.test(ua), touch, insecure: window.location.protocol !== 'https:' && !local };
 }
