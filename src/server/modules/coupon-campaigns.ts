@@ -48,7 +48,12 @@ const AudienceInput = z.object({
   tagIds: z.array(z.number().int().positive()).max(50, '一次最多选 50 个标签').default([]),
   tagMode: z.enum(['any', 'all']).default('any'),
 });
-const PreviewInput = z.object({ templateId: z.number('请选择券').int().positive('请选择券'), audience: AudienceInput });
+const PreviewInput = z.object({
+  templateId: z.number('请选择券').int().positive('请选择券'),
+  audience: AudienceInput,
+  /** 每人几张（8.1.40 试算用）；不带按 1 张 */
+  quantity: z.number().int().min(1).max(MAX_MANUAL_COUPONS).optional(),
+});
 const CreateInput = z.object({
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   templateId: z.number('请选择券').int().positive('请选择券'),
@@ -106,7 +111,26 @@ export async function previewCampaign(deps: Pick<Deps, 'sql' | 'config'>, raw: u
     sample: sample.map((m) => ({ id: Number(m.id), memberNo: m.memberNo, name: m.name, gradeLabel: gradeLabel(rules, m.grade, m.tier) })),
     validTo: validRange(template, date)?.to ?? null,
     tooMany: members.length > (await loadSettings(sql)).campaignMaxMembers,
+    estimate: await estimateOf(sql, template, (members.length - members.filter((m) => !levelOk(template, m.grade)).length) * (input.quantity ?? 1)),
   };
+}
+
+/** 发券试算（8.1.40）：每张最多抵多少 × 张数；按这个券以前的核销率估成本（只读） */
+async function estimateOf(db: Db, t: LockedTemplate, coupons: number): Promise<NonNullable<CampaignPreview['estimate']>> {
+  let perCoupon: number | null = null;
+  if (t.kind === 'cash') perCoupon = t.faceValue === null ? null : Number(t.faceValue);
+  else if (t.kind === 'discount') perCoupon = t.maxOff === null ? null : Number(t.maxOff);
+  else {
+    const itemId = t.exchangeItemId ?? t.buyItemId;
+    const [p] = itemId ? await db<{ price: number }[]>`SELECT price FROM service_items WHERE id = ${itemId}` : [];
+    const price = p ? Number(p.price) : null;
+    perCoupon = price === null ? null : t.maxOff === null ? price : Math.min(price, Number(t.maxOff));
+  }
+  const [h] = await db<{ issued: number; used: number }[]>`
+    SELECT count(*)::int AS issued, count(*) FILTER (WHERE status = 'used')::int AS used FROM coupons WHERE template_id = ${t.id}`;
+  const useRate = h && h.issued > 0 ? Math.round((h.used / h.issued) * 1000) / 1000 : null;
+  const maxTotal = perCoupon === null ? null : perCoupon * coupons;
+  return { perCoupon, coupons, maxTotal, useRate, expectedCost: maxTotal === null || useRate === null ? null : Math.round(maxTotal * useRate) };
 }
 
 /** 只读读模板（预览用，不加锁） */

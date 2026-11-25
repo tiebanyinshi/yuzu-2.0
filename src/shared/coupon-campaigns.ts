@@ -29,6 +29,11 @@ export interface CampaignPreview {
   /** 发出去的券有效期到哪天（固定有效期的模板过期了为空） */
   validTo: string | null;
   tooMany: boolean;
+  /**
+   * 发券试算（8.1.40）：每张券最多抵多少（代金券是面额；折扣券有「最多减」才有、没有为空；兑换、买一赠一按那个项目现在的价，
+   * 不超过「最多抵」）；按圈到的、档级符合的人数 × 每人张数算一共最多抵多少；这个券以前发出去的核销率（没发过为空）、按它估的成本
+   */
+  estimate?: { perCoupon: number | null; coupons: number; maxTotal: number | null; useRate: number | null; expectedCost: number | null };
 }
 
 export type CampaignStatus = 'issuing' | 'done';
