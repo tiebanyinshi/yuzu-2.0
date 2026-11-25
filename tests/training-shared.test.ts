@@ -99,29 +99,78 @@ describe('PDF 内嵌图片尺寸流式检查（Codex 安全审查 bfc32cd）', (
     expect(checkPdfImageLimit(sample('<< /Subtype /Image /Width 99999 0 R /Height 99999 0 R >>'))).toBeNull();
   });
 
-  it('线性时间防护（Codex 审查 7a7016e）：1 MB 重复 >>stream\\n 与深嵌套不卡主线程，且字符串内伪造 >>stream\\n 绕不过限额', () => {
+  it('线性时间与零堆积防护（Codex 审查 7a7016e & 安全审查 26222e1）：3 MB 重复 <<、1 MB 重复 >>stream\\n 与深嵌套不卡主线程且不堆内存，字符串内伪造绕不过限额', () => {
+    const repeatedOpens = Buffer.from(`%PDF-1.4\n${'<<'.repeat(1_500_000)}`, 'latin1');
+    const tOpen = Date.now();
+    expect(checkPdfImageLimit(repeatedOpens)).toBeNull();
+    expect(Date.now() - tOpen).toBeLessThan(200);
+
     const repeated = Buffer.from(`%PDF-1.4\n${'>>stream\n'.repeat(120_000)}`, 'latin1');
     const t0 = Date.now();
     expect(checkPdfImageLimit(repeated)).toBeNull();
-    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(Date.now() - t0).toBeLessThan(500);
 
     const nested = Buffer.from(`%PDF-1.4\n${'<<'.repeat(10_000)}${' '.repeat(12_000)}${'>>stream\n'.repeat(10_000)}`, 'latin1');
     const t1 = Date.now();
     expect(checkPdfImageLimit(nested)).toBeNull();
-    expect(Date.now() - t1).toBeLessThan(1000);
+    expect(Date.now() - t1).toBeLessThan(500);
 
-    // 字典字符串里藏 >>stream\n 或 >> 也不能绕过外层超限图片检查
+    // 字典字符串里藏 >>stream\n、>><< >>stream\n 或 >> 都不能绕过外层超限图片检查（Codex 审查 79aca37）
     const sneaky = sample('<< /Comment (>>stream\n) /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>');
     expect(checkPdfImageLimit(sneaky)).toEqual({ width: 12000, height: 12000 });
+    const sneakyPaired = sample('<< /Comment (>><< >>stream\n) /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>');
+    expect(checkPdfImageLimit(sneakyPaired)).toEqual({ width: 12000, height: 12000 });
     const sneakyClose = sample('<< /Comment (foo >> bar) /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>');
     expect(checkPdfImageLimit(sneakyClose)).toEqual({ width: 12000, height: 12000 });
 
-    // 前一个二进制流里出现未闭合的 << 与 ( 不影响后一个超限图像对象检出
+    // 前一个非流对象字典里的键不串味到后一个普通流对象
+    const nonStreamThenNormal = Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<< /Subtype /Image /Width 12000 /Height 12000 >>\nendobj\n2 0 obj\n<< /Filter /FlateDecode /Length 4 >>\nstream\n0000\nendstream\nendobj\n',
+      'latin1',
+    );
+    expect(checkPdfImageLimit(nonStreamThenNormal)).toBeNull();
+
+    // 前一个二进制流里出现未闭合的 << 与 ( 不影响后一个超限图像对象检出（含 /Comment (>>)、转义括号与诱饵字符串，Codex 审查 e4611e1）
     const afterBinary = Buffer.from(
       '%PDF-1.4\n1 0 obj\n<< /Length 8 >>\nstream\n<<((raw!\nendstream\nendobj\n2 0 obj\n<< /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n',
       'latin1',
     );
     expect(checkPdfImageLimit(afterBinary)).toEqual({ width: 12000, height: 12000 });
+    const afterBinaryWithCommentClose = Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<< /Length 3 >>\nstream\n<<(\nendstream\nendobj\n2 0 obj\n<< /Comment (>>) /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n',
+      'latin1',
+    );
+    expect(checkPdfImageLimit(afterBinaryWithCommentClose)).toEqual({ width: 12000, height: 12000 });
+    const afterRawUnclosedNoEndstream = Buffer.from('%PDF-1.4\n<<((raw << /Comment (a \\) >> \\\\) /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\n', 'latin1');
+    expect(checkPdfImageLimit(afterRawUnclosedNoEndstream)).toEqual({ width: 12000, height: 12000 });
+    const afterBinaryWithDecoyStream = Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<< /Length 3 >>\nstream\n<<(\nendstream\nendobj\n2 0 obj\n<< /Subtype /Image /Comment (>><< >>stream\n) /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n',
+      'latin1',
+    );
+    expect(checkPdfImageLimit(afterBinaryWithDecoyStream)).toEqual({ width: 12000, height: 12000 });
+    // Codex 审查 9d2b261 & 7af7676：字面量里的 endstream、% 注释里的 >>、头注释 % <<( 以及 >> 与 stream 间超长空白都不能绕过检查
+    const afterBinaryWithEndstreamComment = Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<< /Length 3 >>\nstream\n<<(\nendstream\nendobj\n2 0 obj\n<< /Comment (endstream) % >>\n /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n',
+      'latin1',
+    );
+    expect(checkPdfImageLimit(afterBinaryWithEndstreamComment)).toEqual({ width: 12000, height: 12000 });
+    const headerCommentAndDictComment = Buffer.from('%PDF-1.4\n% <<(\n1 0 obj\n<< % >>\n /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n', 'latin1');
+    expect(checkPdfImageLimit(headerCommentAndDictComment)).toEqual({ width: 12000, height: 12000 });
+    const longWsBeforeStream = Buffer.from(`%PDF-1.4\n1 0 obj\n<< /Subtype /Image /Width 12000 /Height 12000 >>${' '.repeat(40_000)}stream\n0000\nendstream\nendobj\n`, 'latin1');
+    expect(checkPdfImageLimit(longWsBeforeStream)).toEqual({ width: 12000, height: 12000 });
+
+    // 同一字典里塞数百个 (>>stream\n) 诱饵也能单趟检出
+    const manyDecoys = sample(`<< ${'/C (>>stream\n) '.repeat(400)}/Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>`);
+    expect(checkPdfImageLimit(manyDecoys)).toEqual({ width: 12000, height: 12000 });
+
+    // 大量未闭合 <<(>>stream\n 之后紧跟超限图像，既不卡主线程又能由线性兜底检出
+    const floodThenOversize = Buffer.from(
+      `%PDF-1.4\n${'<<(>>stream\n'.repeat(20_000)}\n2 0 obj\n<< /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n`,
+      'latin1',
+    );
+    const t2 = Date.now();
+    expect(checkPdfImageLimit(floodThenOversize)).toEqual({ width: 12000, height: 12000 });
+    expect(Date.now() - t2).toBeLessThan(500);
 
     // 内层子字典正常配对后，外层超限图像字典仍能检出
     const withSubDict = sample('<< /Type /XObject /Subtype /Image /DecodeParms << /Predictor 15 >> /Width 12000 /Height 12000 >>');
