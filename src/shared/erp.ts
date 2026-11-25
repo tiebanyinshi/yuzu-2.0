@@ -497,6 +497,9 @@ export const ERP_OP_TYPES = [
   'oa_attendance_setup',
   // OA-05 排班保存（一批格子一个编号）
   'oa_schedule_save',
+  // 员工办公 v1.1 第 2 批：排班发布、排班授权
+  'oa_schedule_publish',
+  'oa_schedule_grant',
   // OA-06 打卡
   'oa_punch',
   // OA-07 提交人脸录入
@@ -595,6 +598,8 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   oa_staff_import: '批量开通员工账号',
   oa_attendance_setup: '新建班次 / 打卡点 / 考勤组',
   oa_schedule_save: '保存排班',
+  oa_schedule_publish: '发布排班',
+  oa_schedule_grant: '排班授权',
   oa_punch: '打卡',
   oa_face_enroll: '提交人脸录入',
   oa_face_review: '人脸审核',

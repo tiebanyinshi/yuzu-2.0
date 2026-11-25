@@ -8,7 +8,18 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Camera, Fingerprint, LocateFixed, MapPin, RefreshCw, ScanFace } from 'lucide-react';
 import { Link } from 'react-router';
 import { clockText } from '@shared/technician-admin';
-import { dateOfEpochMinute, distanceMeters, minuteOfEpochMinute, OUTWORK_REASON_MAX, PUNCH_KIND_LABELS, type OaPunch, type PunchResult, type PunchSlotView, type PunchToday } from '@shared/oa';
+import {
+  dateOfEpochMinute,
+  distanceMeters,
+  minuteOfEpochMinute,
+  nextPunchHint,
+  OUTWORK_REASON_MAX,
+  PUNCH_KIND_LABELS,
+  type OaPunch,
+  type PunchResult,
+  type PunchSlotView,
+  type PunchToday,
+} from '@shared/oa';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
 import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { useSession } from '../../lib/session';
@@ -62,7 +73,7 @@ function useLocation() {
 }
 
 /** 现在的钟点（门店所在地）：服务端给的「第几分钟」加上进页面以后过了多久，每 20 秒走一次 */
-function useClock(base: number | undefined) {
+export function useMinuteClock(base: number | undefined) {
   const started = useRef(Date.now());
   const [, tick] = useState(0);
   useEffect(() => {
@@ -95,7 +106,13 @@ export function PunchPage() {
   const session = useSession();
   const q = useQuery({ queryKey: TODAY_KEY, queryFn: () => api.get<PunchToday>('/api/oa/attendance/today') });
   const data = q.data;
-  const now = useClock(data?.now);
+  const now = useMinuteClock(data?.now);
+  const rolledOver = !!data && now !== undefined && dateOfEpochMinute(now) !== data.today;
+  const refetchToday = q.refetch;
+  useEffect(() => {
+    if (rolledOver) void refetchToday();
+  }, [rolledOver, refetchToday]);
+  const liveNext = data ? nextPunchHint(now ?? data.now, data.today, data.slots, data.group) : null;
   const { loc, locate } = useLocation();
   // 只看本人的：同一台电脑换人登录后，上一位没确认的打卡不挡这一位（上一位登录回来照样能处理）
   const mine = (op: { staffId?: number }) => op.staffId === session.staff.id;
@@ -255,6 +272,12 @@ export function PunchPage() {
                 </div>
               </div>
               {!needFix && <p className="mt-2 text-[12px] text-ink-3">这个考勤组不要求定位，取到了也会记下。</p>}
+              {liveNext && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-line bg-paper px-3 py-2 text-[13px]" data-testid="punch-next" data-action={liveNext.action}>
+                  <Badge tone={needFix && fix && !inRange ? 'ember' : liveNext.inWindow ? 'pine' : 'lake'}>{needFix && fix && !inRange ? '围栏外 · 可外勤' : liveNext.label}</Badge>
+                  <span className="min-w-0 flex-1 text-ink-2">{liveNext.detail}</span>
+                </div>
+              )}
               {error && (
                 <Notice tone="error" className="mt-3" data-testid="punch-error">
                   {error}
@@ -303,7 +326,7 @@ export function PunchPage() {
                 onClick={() => void send({})}
                 data-testid="punch-button"
               >
-                打卡
+                {liveNext?.inWindow ? liveNext.label : '打卡'}
               </Button>
               {needFix && !fix && loc.state !== 'locating' && <p className="mt-2 text-center text-[12px] text-ink-3">这个考勤组打卡要定位：取到位置以后才能打。</p>}
               {last && (

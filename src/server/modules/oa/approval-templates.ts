@@ -99,7 +99,7 @@ export const TEMPLATE_HOOKS: Record<string, ApprovalHooks> = {
       if (date < shiftDate(today, -MAKEUP_BACK_DAYS)) throw bad(`只能补 ${MAKEUP_BACK_DAYS} 天以内的卡`);
       const [s] = await tx<{ name: string }[]>`
         SELECT sh.name FROM oa_schedules o JOIN oa_shifts sh ON sh.id = o.shift_id
-        WHERE o.staff_id = ${applicant.id} AND o.work_date = ${date} AND o.shift_id = ${form.shiftId as number}`;
+        WHERE o.staff_id = ${applicant.id} AND o.work_date = ${date} AND o.shift_id = ${form.shiftId as number} AND o.status = 'published'`;
       if (!s) throw bad('那天没有排这个班，请重新选');
       await checkMakeup(tx, applicant.id, form, env);
       return { title: `补卡 · ${date} ${s.name}${form.kind as string}` };

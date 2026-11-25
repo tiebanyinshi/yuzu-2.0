@@ -14,8 +14,10 @@ import { can, type Permission } from '@shared/permissions';
 import type { Db } from '../db';
 import { guard } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
-import type { Deps } from '../lib/context';
+import type { Actor, Deps } from '../lib/context';
+import { todayIn } from '../lib/dates';
 import { conflict, forbidden } from '../lib/errors';
+import { resolveScheduleAccess } from './oa/schedule-grants';
 import {
   erpP2OpRef,
   isErpP2Op,
@@ -149,6 +151,8 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   // OA-04 考勤设置：与新建接口一致
   oa_attendance_setup: ['hr.attendance'],
   oa_schedule_save: ['hr.attendance'],
+  oa_schedule_publish: ['hr.attendance'],
+  oa_schedule_grant: ['hr.attendance'],
   // OA-06 打卡：登录就能打，只能查回、作废自己的（SELF_OPS）
   oa_punch: [],
   oa_face_enroll: [],
@@ -244,6 +248,8 @@ const READ: Record<ErpOpType, Permission[]> = {
   oa_staff_import: ['hr.org', 'staff.manage'],
   oa_attendance_setup: ['hr.attendance'],
   oa_schedule_save: ['hr.attendance'],
+  oa_schedule_publish: ['hr.attendance'],
+  oa_schedule_grant: ['hr.attendance'],
   // OA-06 打卡：登录就能打，只能查回、作废自己的（SELF_OPS）
   oa_punch: [],
   oa_face_enroll: [],
@@ -394,6 +400,18 @@ const AbandonInput = TypeQuery.extend({ summary: z.string().trim().max(200).defa
 
 /** 登录就能做、只能查回与作废自己那一笔的操作（OA-06 打卡、OA-07 提交人脸录入、OA-10 办公审批的提交与处理） */
 const SELF_OPS: ReadonlySet<ErpOpType> = new Set(['oa_punch', 'oa_face_enroll', 'oa_approval_submit', 'oa_approval_act', 'oa_im_group']);
+/** 排班与排班授权：考勤管理员全看全作废；部门经理与被授权人只能查回与作废自己那一笔 */
+const SCHEDULE_OPS: ReadonlySet<ErpOpType> = new Set(['oa_schedule_save', 'oa_schedule_publish', 'oa_schedule_grant']);
+
+async function scheduleOpScope(db: Db, key: string, type: ErpOpType, actor: Actor, tz: string, checkAccessIfAbsent: boolean) {
+  if (!SCHEDULE_OPS.has(type) || can(actor, 'hr.attendance')) return;
+  const owners = await db`SELECT staff_id FROM idempotency_keys WHERE key=${key}::uuid UNION SELECT staff_id FROM op_fences WHERE key=${key}::uuid AND op_type=${type}`;
+  if (owners.some((row) => Number(row.staffId) !== actor.id)) throw forbidden('只能查回或作废自己发起的排班或授权操作');
+  if (owners.length > 0 || !checkAccessIfAbsent) return;
+  const access = await resolveScheduleAccess(db, actor, todayIn(tz));
+  const ok = type === 'oa_schedule_save' ? access.summary.canEdit : type === 'oa_schedule_publish' ? access.summary.canPublish : access.summary.canGrant;
+  if (!ok) throw forbidden();
+}
 
 async function customerOpScope(db: Db, key: string, type: ErpOpType, actor: Parameters<typeof can>[0] & { id: number }) {
   if (SELF_OPS.has(type)) {
@@ -408,27 +426,38 @@ async function customerOpScope(db: Db, key: string, type: ErpOpType, actor: Para
 
 export function registerErpOpsRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
+  const tz = deps.config.timezone;
   const allowed = (actor: Parameters<typeof can>[0], perms: Permission[]) => perms.some((p) => can(actor, p));
 
   app.get('/api/erp/ops/:key', { preHandler: guard() }, async (req) => {
     const { key } = parse(KeyParam, req.params);
     const { type } = parse(TypeQuery, req.query ?? {});
-    if (!SELF_OPS.has(type) && !allowed(req.actor, READ[type])) throw forbidden();
+    if (SCHEDULE_OPS.has(type)) {
+      await scheduleOpScope(sql, key, type, req.actor, tz, true);
+    } else if (!SELF_OPS.has(type) && !allowed(req.actor, READ[type])) {
+      throw forbidden();
+    }
     await customerOpScope(sql, key, type, req.actor);
     const result = await lookupErpOp(sql, key, type);
     // A foreign submission may have committed between the first check and lookup.
     await customerOpScope(sql, key, type, req.actor);
+    await scheduleOpScope(sql, key, type, req.actor, tz, false);
     return result;
   });
 
   app.post('/api/erp/ops/:key/abandon', { preHandler: guard() }, async (req) => {
     const { key } = parse(KeyParam, req.params);
     const input = parse(AbandonInput, req.body ?? {});
-    if (!SELF_OPS.has(input.type) && !allowed(req.actor, WRITE[input.type])) throw forbidden();
+    if (SCHEDULE_OPS.has(input.type)) {
+      await scheduleOpScope(sql, key, input.type, req.actor, tz, true);
+    } else if (!SELF_OPS.has(input.type) && !allowed(req.actor, WRITE[input.type])) {
+      throw forbidden();
+    }
     const outcome = await sql.begin(async (tx) => {
       await setTxTimeouts(tx);
       const result = await fenceKey(tx, key, input.type, req.actor.id);
       await customerOpScope(tx, key, input.type, req.actor);
+      await scheduleOpScope(tx, key, input.type, req.actor, tz, false);
       if ('inserted' in result && result.inserted) {
         await writeAudit(tx, {
           staffId: req.actor.id,

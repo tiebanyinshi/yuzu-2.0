@@ -40,6 +40,14 @@ const schedule = async (who: Emp, date: string) => {
     cells: [{ staffId: who.id, date, shiftIds: [shiftId], consecutive: false, expected: { shiftIds: [], consecutive: false } }],
   });
   expect(r.status, JSON.stringify(r.body)).toBe(200);
+  const pub = await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/schedule/publish', {
+    clientKey: randomUUID(),
+    storeId: DEFAULT_STORE_ID,
+    groupId,
+    from: date,
+    to: date,
+  });
+  expect(pub.status, JSON.stringify(pub.body)).toBe(200);
 };
 const punch = async (who: Emp, date: string, hhmm: string) => {
   at(date, hhmm);

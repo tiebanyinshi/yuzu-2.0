@@ -171,6 +171,9 @@ export const FENCED_OPS = [
   'oa_attendance_setup',
   // OA-05 排班保存（迁移 214）：编号记在 idempotency_keys（ref_id 是考勤组）
   'oa_schedule_save',
+  // 员工办公 v1.1 第 2 批（迁移 291、292）：排班发布（ref_id 是发布批次或考勤组）、排班授权（ref_id 是授权行）
+  'oa_schedule_publish',
+  'oa_schedule_grant',
   // OA-06 打卡（迁移 215）：编号记在 idempotency_keys（ref_id 是那条 oa_punches）
   'oa_punch',
   // OA-07 提交人脸录入（迁移 216）：编号记在 idempotency_keys（ref_id 是那份 oa_face_enrollments）
