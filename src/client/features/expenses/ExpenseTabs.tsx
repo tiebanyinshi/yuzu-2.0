@@ -1,13 +1,16 @@
 // 费用与备用金的二级页签（8.0.18，docs/IA_V8017.md 第 3.3 节）：原来报销页右上角一排按钮各开一个子页，
 // 现在这几页顶上都是同一排页签，地址没变（/erp/petty、/erp/ledger……）。发票台账是单独的模块，不在这一排。
+// 8.1.42：原来的零采备用金并进备用金（docs/V8142_PETTY.md），多一个「备用金申用」页签；只有申用权限的（采购）只看得到这一个。
 
+import { useCan } from '../../lib/session';
 import { SubNav, type SubTab } from '../../components/SubNav';
 
-export type ExpenseTabKey = 'claims' | 'petty' | 'budgets' | 'ledger' | 'audit' | 'legacy';
+export type ExpenseTabKey = 'claims' | 'petty' | 'uses' | 'budgets' | 'ledger' | 'audit' | 'legacy';
 
 const TABS: readonly SubTab[] = [
   { key: 'claims', label: '报销', to: '/erp/expenses', testId: 'expenses-tab-claims' },
   { key: 'petty', label: '备用金与每日平账', to: '/erp/petty', testId: 'petty-link' },
+  { key: 'uses', label: '备用金申用', to: '/erp/petty/uses', testId: 'petty-uses-link' },
   { key: 'budgets', label: '费用预算', to: '/erp/expenses/budgets', testId: 'budgets-link' },
   { key: 'ledger', label: '采购台账', to: '/erp/ledger', testId: 'ledger-link' },
   { key: 'audit', label: '账目自检', to: '/erp/audit', testId: 'audit-link' },
@@ -15,5 +18,7 @@ const TABS: readonly SubTab[] = [
 ];
 
 export function ExpenseTabs({ active }: { active: ExpenseTabKey }) {
-  return <SubNav tabs={TABS} base="/erp/expenses" active={active} label="费用与备用金的页签" className="mb-5" />;
+  const can = useCan();
+  const tabs = can('expense.read') ? TABS : TABS.filter((t) => t.key === 'uses');
+  return <SubNav tabs={tabs} base="/erp/expenses" active={active} label="费用与备用金的页签" className="mb-5" />;
 }
