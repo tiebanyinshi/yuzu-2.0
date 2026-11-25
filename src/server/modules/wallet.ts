@@ -333,7 +333,7 @@ async function approveManualAmount(tx: Tx, grantId: string | undefined, ctx: OpC
       manual: true,
     });
   }
-  return consumeOverLimitGrant(tx, { grantId, actor: ctx.actor, scope: { kind: 'consume', memberId: o.memberId, amount: o.amount }, usedRef: `consume:${o.key}` });
+  return consumeOverLimitGrant(tx, { grantId, actor: ctx.actor, scope: { kind: 'consume', memberId: o.memberId, amount: o.amount, manual: o.manual }, usedRef: `consume:${o.key}` });
 }
 
 // ───────────────────────── 底层写入（会员消费、撤销与前台结账共用） ─────────────────────────

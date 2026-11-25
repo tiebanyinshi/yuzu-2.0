@@ -126,7 +126,15 @@ export function ticketGrantCovers(scope: TicketDiscountScope, needed: readonly T
 
 /** 超限授权是否仍可用于这笔业务（金额、会员、业务类型一致且未过期；服务端核销时再核对一次） */
 export function overLimitGrantFits(grant: OverLimitGrant | null, scope: OverLimitScope, now = Date.now()): grant is OverLimitGrant {
-  return !!grant && grant.scope.kind === scope.kind && grant.scope.memberId === scope.memberId && grant.scope.amount === scope.amount && new Date(grant.expiresAt).getTime() > now;
+  return (
+    !!grant &&
+    grant.scope.kind === scope.kind &&
+    grant.scope.memberId === scope.memberId &&
+    grant.scope.amount === scope.amount &&
+    // 手动金额授权（8.1.36）：手动金额变了要重新授权
+    (grant.scope.manual === undefined || grant.scope.manual === scope.manual) &&
+    new Date(grant.expiresAt).getTime() > now
+  );
 }
 
 /** 授权是否覆盖这些需要授权的柜（柜号与客人都要一致） */

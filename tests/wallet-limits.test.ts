@@ -311,6 +311,11 @@ describe('8.1.36：店员储值扣款手动金额超过 500 元要当场授权',
     const ok = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, 50_001, { overLimitGrantId: g.body.grantId }));
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(ok.body.consumption.overLimitApproverName).toBe('店总');
+    // 总额不变、手动金额变了：原授权不能用（Codex 审查 3b4fdc1）
+    const g2 = await authorize(ctx.clerk, 'boss', { kind: 'consume', memberId: m.id, amount: 60_000, manual: 50_001 } as never);
+    expect(g2.status, JSON.stringify(g2.body)).toBe(200);
+    const swapped = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, 60_000, { overLimitGrantId: g2.body.grantId }));
+    expect(swapped.body.error).toMatchObject({ code: 'GRANT_SCOPE' });
     // 值班经理（能撤销会员消费）直接扣
     expect((await api(ctx.app, duty, 'POST', '/api/consumptions', consumeBody(m.id, 60_000))).status).toBe(200);
     const [audit] = await ctx.sql<{ detail: { manualLines: { name: string; amount: number }[] } }[]>`

@@ -345,7 +345,8 @@ export async function consumeLineVoidGrant(
 export async function consumeOverLimitGrant(tx: Tx, opts: { grantId: string; actor: Actor; scope: OverLimitScope; usedRef: string }): Promise<{ approverId: number; approverName: string }> {
   const g = await lockGrant(tx, opts.grantId, 'over_limit', opts.actor);
   const s = g.scope as OverLimitScope;
-  if (s.kind !== opts.scope.kind || s.memberId !== opts.scope.memberId || s.amount !== opts.scope.amount) {
+  // 8.1.36（Codex 审查 3b4fdc1）：为手动金额授权的，这一笔的手动金额也要与授权时一致——总额不变、把项目换成手动金额不能沿用
+  if (s.kind !== opts.scope.kind || s.memberId !== opts.scope.memberId || s.amount !== opts.scope.amount || (s.manual !== undefined && s.manual !== opts.scope.manual)) {
     throw unprocessable(
       'GRANT_SCOPE',
       `授权的是${KIND_LABEL[s.kind]} ${formatYuan(s.amount)}，与这笔${KIND_LABEL[opts.scope.kind]} ${formatYuan(opts.scope.amount)}（或会员）不一致，请按当前内容重新授权`,
