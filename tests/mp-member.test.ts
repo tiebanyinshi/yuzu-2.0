@@ -428,6 +428,28 @@ describe('解绑', () => {
     const fresh = makeMemberCode(SECRET, m.id, await bindingOf(m.id));
     expect((await staffApp.inject({ method: 'GET', url: `/api/mp-codes/${fresh}`, headers: { cookie: ctx.clerk } })).statusCode).toBe(200);
   });
+
+  it('8.1.36：员工改了会员手机号，原来绑的微信自动解绑（旧手机不能再看余额、出会员码）；客人用新号码重新绑定', async () => {
+    const m = await createMember(ctx, '演示·改号', phoneOf(31));
+    const openid = newOpenid();
+    expect((await bind(openid, phoneOf(31))).statusCode).toBe(200);
+    const code = makeMemberCode(SECRET, m.id, await bindingOf(m.id));
+    // 只改名字不动手机号：绑定照旧
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/members/${m.id}`, { name: '演示·改号乙', phone: phoneOf(31) })).status).toBe(200);
+    expect(await activeBindings(m.id)).toBe(1);
+    const edit = await api(ctx.app, ctx.owner, 'PUT', `/api/members/${m.id}`, { name: '演示·改号乙', phone: phoneOf(32), phoneReason: '客人换了手机号' });
+    expect(edit.status).toBe(200);
+    expect(await activeBindings(m.id)).toBe(0);
+    expect((await call(mp, 'GET', '/api/mp/me', openid)).json().bound).toBe(false);
+    expect((await staffApp.inject({ method: 'GET', url: `/api/mp-codes/${code}`, headers: { cookie: ctx.clerk } })).json().error.code).toBe('CODE_EXPIRED');
+    const [audit] = await ctx.sql<{ detail: { reason: string } }[]>`
+      SELECT detail FROM audit_logs WHERE action = 'mp_unbind' AND target_id = ${String(m.id)} ORDER BY id DESC LIMIT 1`;
+    expect(audit!.detail.reason).toContain('改手机号');
+    // 旧号码绑不上了，新号码照常绑
+    expect((await bind(newOpenid(), phoneOf(31))).json().error.code).toBe('NOT_MEMBER');
+    expect((await bind(openid, phoneOf(32))).statusCode).toBe(200);
+    expect(await activeBindings(m.id)).toBe(1);
+  });
 });
 
 describe('绑定状态版本号：解绑之后，晚到的旧请求不再绑上（小程序线测试预检 #44 的 P1）', () => {

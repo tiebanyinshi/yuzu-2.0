@@ -63,6 +63,8 @@ export function CheckoutDialog({
   const [showAll, setShowAll] = useState(false);
   const [ticketPick, setTicketPick] = useState<Record<number, number>>({});
   const [note, setNote] = useState('');
+  // 8.1.36：还没上钟的钟单要逐张确认「客人确实做完了」才能结（记下确认时的那一组钟单号，核对刷新、钟单变了要重新确认）
+  const [unstartedOk, setUnstartedOk] = useState('');
   const [result, setResult] = useState<CheckoutDetail | null>(null);
   /** 次卡（v0.7.28）：每张卡这次抵几次 */
   const [cardUses, setCardUses] = useState<Record<number, number>>({});
@@ -192,7 +194,9 @@ export function CheckoutDialog({
   const roomsOpen = (preview.data?.rooms ?? []).length > 0;
   // 计费的派对房等（v0.7.28）：先「结束使用」把房费挂上再结账
   const usagesUncharged = (preview.data?.usages ?? []).some((u) => u.priced);
-  const ready = total !== null && remaining === 0 && pay.ok && !preview.isFetching && shiftReady.ready && !backfillBlocked && !roomsOpen && !usagesUncharged;
+  const waitingNos = (preview.data?.sessions ?? []).filter((x) => x.status === 'waiting').map((x) => x.sessionNo);
+  const unstartedConfirmed = waitingNos.length === 0 || unstartedOk === waitingNos.join(',');
+  const ready = total !== null && remaining === 0 && pay.ok && !preview.isFetching && shiftReady.ready && !backfillBlocked && !roomsOpen && !usagesUncharged && unstartedConfirmed;
 
   const submit = async () => {
     if (!ready || !p) return;
@@ -208,6 +212,7 @@ export function CheckoutDialog({
         expectedTotal: total!,
         payments,
         note: note.trim(),
+        ...(waitingNos.length ? { confirmUnstarted: waitingNos } : {}),
         ...backfillBody(backfill),
       },
       tagCodes,
@@ -337,7 +342,9 @@ export function CheckoutDialog({
         ) : (
           p && (
             <>
-              {(p.sessions ?? []).length > 0 && <SessionsNotice sessions={p.sessions} />}
+              {(p.sessions ?? []).length > 0 && (
+                <SessionsNotice sessions={p.sessions} confirmed={unstartedConfirmed} onConfirm={(on) => edit(() => setUnstartedOk(on ? waitingNos.join(',') : ''))} locked={locked} />
+              )}
               {(p.dishes ?? []).length > 0 && <DishesNotice dishes={p.dishes} />}
               {(p.rooms ?? []).length > 0 && <RoomsNotice rooms={p.rooms!} onClosed={() => void preview.refetch()} />}
               {(p.usages ?? []).length > 0 && <UsagesNotice usages={p.usages!} onEnded={() => void preview.refetch()} />}
@@ -390,7 +397,7 @@ export function CheckoutDialog({
 }
 
 /** 钟房里还没结束的钟（v0.7.1）：在钟上的结账时下钟；还没上钟的按已做完记，客人没做的先到钟房取消派钟 */
-function SessionsNotice({ sessions }: { sessions: CheckoutPreview['sessions'] }) {
+function SessionsNotice({ sessions, confirmed, onConfirm, locked }: { sessions: CheckoutPreview['sessions']; confirmed: boolean; onConfirm: (on: boolean) => void; locked: boolean }) {
   const waiting = sessions.some((s) => s.status === 'waiting');
   return (
     <div data-testid="checkout-sessions">
@@ -398,11 +405,16 @@ function SessionsNotice({ sessions }: { sessions: CheckoutPreview['sessions'] })
         <ul className="mt-1 space-y-0.5">
           {sessions.map((s) => (
             <li key={s.sessionNo}>
-              <span className="num font-semibold">{s.tagCode}</span> · {s.techNo} 号 {s.techName} · {s.itemName} × {s.clocks} ·{' '}
-              {s.status === 'waiting' ? '还没上钟（结账后按已做完记）' : '在钟上（结账时下钟）'}
+              <span className="num font-semibold">{s.tagCode}</span> · {s.techNo} 号 {s.techName} · {s.itemName} × {s.clocks} · {s.status === 'waiting' ? '还没上钟' : '在钟上（结账时下钟）'}
             </li>
           ))}
         </ul>
+        {waiting && (
+          <label className="mt-2 flex cursor-pointer items-center gap-2 text-[13px] font-semibold">
+            <input type="checkbox" className="size-4 accent-pine" checked={confirmed} disabled={locked} onChange={(e) => onConfirm(e.target.checked)} data-testid="checkout-sessions-confirm" />
+            没上钟的这几钟客人确实做完了，按已做完收费、记技师钟数
+          </label>
+        )}
       </Notice>
     </div>
   );

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { businessDateOf } from '@shared/business-date';
@@ -618,6 +619,22 @@ export function registerMemberRoutes(app: FastifyInstance, deps: Deps) {
             ip: req.ip,
             businessDate: date,
           });
+          // 8.1.36：换了手机号，原来绑的微信一起解绑——绑定时核对的是旧号码，不解绑的话旧手机上的微信还能看余额、出会员码。
+          // 客人用新号码在小程序里重新绑定（绑定按会员一行共享锁核对手机号，与这里的改号串行）
+          const unbound = await tx<{ id: number }[]>`
+            UPDATE mp_bindings SET unbound_at = now(), unbound_by = ${req.actor.id}, unbind_reason = '会员改手机号，原来的微信自动解绑',
+                   unbind_client_key = ${randomUUID()}
+            WHERE member_id = ${id} AND unbound_at IS NULL RETURNING id`;
+          for (const b of unbound) {
+            await writeAudit(tx, {
+              staffId: req.actor.id,
+              action: 'mp_unbind',
+              targetType: 'member',
+              targetId: id,
+              detail: { bindingId: b.id, reason: '会员改手机号，原来的微信自动解绑' },
+              ip: req.ip,
+            });
+          }
         }
         // 会员权益（v0.7.24）：补填、改了生日的当场看生日礼（Codex 自动审查 98806a3）
         if (input.birthday !== locked.birthday) await onMemberSaved(tx, deps, id, { actor: req.actor, ip: req.ip });

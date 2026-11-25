@@ -37,3 +37,17 @@ export async function assertTechnicianNotBooked(tx: Tx, a: { technicianId: numbe
     { bookingNo: b.bookingNo },
   );
 }
+
+/**
+ * 这几位技师里，在 [from, to) 有还占着时段的预约的（8.1.36：轮钟「该派给谁」先把他们排除——真派给他会被上面拒绝，
+ * 不排除的话排在他后面的人都得写原因跳过他，还给他记一条跳过）。只读，不取锁（调用方派钟时会取）
+ */
+export async function bookedTechnicianIds(tx: Tx, a: { technicianIds: number[]; from: number; to: number; memberId: number | null }): Promise<Set<number>> {
+  if (a.technicianIds.length === 0 || a.to <= a.from) return new Set();
+  const rows = await tx<{ technicianId: number }[]>`
+    SELECT DISTINCT b.technician_id FROM bookings b
+    WHERE b.technician_id IN ${tx(a.technicianIds)} AND b.status IN ${tx(ACTIVE_BOOKING_STATUSES)}
+      AND b.starts_at < ${new Date(a.to)} AND b.ends_at > ${new Date(a.from)}
+      AND (b.member_id IS NULL OR b.member_id IS DISTINCT FROM ${a.memberId})`;
+  return new Set(rows.map((r) => Number(r.technicianId)));
+}

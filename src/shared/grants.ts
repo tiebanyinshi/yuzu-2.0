@@ -31,6 +31,8 @@ export interface OverLimitScope {
   kind: 'recharge' | 'consume';
   memberId: number;
   amount: number;
+  /** 8.1.36：为店员手动金额超过本人上限而授权时，这一笔里手动金额的合计 */
+  manual?: number;
 }
 
 /** 优惠 / 免单的授权对象：一起结账的来访（升序）、优惠金额与原因（金额与客人必须与结账时完全一致）；

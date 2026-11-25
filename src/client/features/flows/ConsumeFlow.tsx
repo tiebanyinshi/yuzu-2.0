@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { spendQuotaText } from '@shared/spend-quota';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Minus, Plus, Trash2, Wallet } from 'lucide-react';
-import { splitDeduction, type DeductionRule, type WalletBalance } from '@shared/deduction';
+import { MANUAL_CONSUME_SELF_LIMIT_CENTS, splitDeduction, type DeductionRule, type WalletBalance } from '@shared/deduction';
 import { overLimitGrantFits, type OverLimitGrant } from '@shared/grants';
 import { DEDUCTION_RULE_LABELS } from '@shared/labels';
 import { formatYuan, parseYuan } from '@shared/money';
@@ -65,10 +65,12 @@ export function ConsumeFlow({ member, onClose, onSwitchToRecharge }: { member: M
   const available = balance.principal + balance.bonus;
   const split = total > 0 ? splitDeduction(total, balance, activeRule) : null;
   const confirmSplit = total > 0 ? splitDeduction(total, seenBalance, activeRule) : null;
-  const limit = session.rules.maxConsumeCents;
+  // 8.1.36：店员（没有撤销会员消费权限）手动金额超过 500 元也要当场授权，与超过单笔上限同一张授权
+  const manualOver = (customAmount ?? 0) > MANUAL_CONSUME_SELF_LIMIT_CENTS && !can('consume.reverse');
+  const limit = total > session.rules.maxConsumeCents || !manualOver ? session.rules.maxConsumeCents : MANUAL_CONSUME_SELF_LIMIT_CENTS;
   const quota = member.spendQuota;
-  const overLimit = total > limit;
-  const grantScope = { kind: 'consume' as const, memberId: member.id, amount: total };
+  const overLimit = total > session.rules.maxConsumeCents || manualOver;
+  const grantScope = { kind: 'consume' as const, memberId: member.id, amount: total, ...(manualOver && total <= session.rules.maxConsumeCents ? { manual: customAmount! } : {}) };
   const grantOk = !overLimit || overLimitGrantFits(grant, grantScope);
 
   const add = (key: string, delta: number) => {
@@ -302,6 +304,7 @@ export function ConsumeFlow({ member, onClose, onSwitchToRecharge }: { member: M
           <OverLimitCard
             kind="consume"
             limit={limit}
+            title={limit === MANUAL_CONSUME_SELF_LIMIT_CENTS && total <= session.rules.maxConsumeCents ? '手动输入的金额超过' : undefined}
             scope={grantScope}
             memberName={member.name}
             grant={grantOk ? grant : null}

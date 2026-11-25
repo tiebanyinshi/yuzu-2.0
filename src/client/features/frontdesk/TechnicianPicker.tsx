@@ -64,7 +64,7 @@ export function TechnicianPicker({
             { value: 'designated', label: CALL_TYPE_LABELS.designated },
           ]}
         />
-        <span className="text-[12px] text-ink-3">客人点名要的选「点钟」，按顺序排的选「轮钟」</span>
+        <span className="text-[12px] text-ink-3">客人点名要的选「点钟」，按顺序排的选「轮钟」（轮钟只能选在岗、轮到的技师，跳过要交给钟房）</span>
         {genders.size > 1 && (
           <Segmented
             size="sm"
@@ -89,7 +89,11 @@ export function TechnicianPicker({
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {shown.map((t) => {
-            const why = canServe(t, item, rules.tierByGrade);
+            // 8.1.36：轮钟按排位——没上牌、休息、休假、在钟上（或派了没上）的不能按轮钟选；轮不到的服务端会提示排在前面的是谁
+            const q = t.queue;
+            const rotationWhy =
+              callType !== 'rotation' || !q ? null : q.state === 'off' ? '今天还没上牌' : q.state === 'leave' ? '今天休假' : q.state === 'rest' ? '休息中' : q.busy ? '在钟上或已派钟' : null;
+            const why = canServe(t, item, rules.tierByGrade) ?? rotationWhy;
             const charged = tierFor(t, item, tier, rules.tierByGrade);
             const price = tierPrice(item.prices, charged);
             return (
@@ -111,7 +115,7 @@ export function TechnicianPicker({
                   {!why && price !== null && <Money cents={price} className="text-[12.5px] font-bold text-ink-2" />}
                 </span>
                 <span className={cn('mt-auto pt-0.5 text-[12px] font-semibold', why ? 'text-clay' : t.todayClocks === fewest ? 'text-pine' : 'text-ink-4')}>
-                  {why ?? `今日 ${t.todayClocks} 钟${t.todayClocks === fewest ? ' · 钟最少' : ''}`}
+                  {why ?? `${callType === 'rotation' && t.queue?.position ? `排第 ${t.queue.position} · ` : ''}今日 ${t.todayClocks} 钟${t.todayClocks === fewest ? ' · 钟最少' : ''}`}
                 </span>
               </button>
             );

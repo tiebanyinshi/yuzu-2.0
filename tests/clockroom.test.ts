@@ -33,13 +33,14 @@ const dispatch = (body: Record<string, unknown>, cookie = ctx.clerk) => api(ctx.
 const sessionOf = async (visitId: number) =>
   ((await board()).sessions as { id: number; visitId: number; status: string; clocks: number; minutes: number; techNo: string }[]).find((s) => s.visitId === visitId)!;
 const act = (id: number, what: 'start' | 'finish', cookie = ctx.clerk) => api(ctx.app, cookie, 'POST', `/api/clockroom/sessions/${id}/${what}`);
-const pay = async (visitId: number) => {
+const pay = async (visitId: number, confirmUnstarted: string[] = []) => {
   const preview = (await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/checkout-preview?ids=${visitId}`)).body;
   const r = await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkouts', {
     clientKey: randomUUID(),
     visitIds: [visitId],
     expectedTotal: preview.totalAmount,
     payments: [{ method: 'cash', amount: preview.totalAmount }],
+    confirmUnstarted,
   });
   expect(r.status).toBe(200);
   return r.body as { id: number; createdAt: string };
@@ -147,18 +148,38 @@ describe('派钟、上钟、加钟、下钟', () => {
     expect((await act(s1.id, 'finish')).status).toBe(200);
     expect((await act(s2.id, 'start')).status).toBe(200);
     expect((await act(s2.id, 'finish')).status).toBe(200);
-    // 前台加项目时选的技师也建钟单（待上钟）
+    // 前台加项目时选的技师也建钟单（待上钟）；8.1.36：前台选的轮钟也按排位——轮不到的拒绝，提示交给钟房或改点钟
     const v3 = await enter();
-    const post = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${v3}/charges`, {
+    const skip = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${v3}/charges`, {
       clientKey: randomUUID(),
       lines: [{ itemId: gua, quantity: 1, technicianId: tech['04'], callType: 'rotation' }],
       expectedTotal: 12800,
     });
+    expect(skip.status).toBe(422);
+    expect(skip.body.error).toMatchObject({ code: 'SKIP_REASON_REQUIRED' });
+    expect(skip.body.error.message).toContain('03 号');
+    expect(await sessionOf(v3)).toBeUndefined();
+    const post = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${v3}/charges`, {
+      clientKey: randomUUID(),
+      lines: [{ itemId: gua, quantity: 1, technicianId: tech['03'], callType: 'rotation' }],
+      expectedTotal: 12800,
+    });
     expect(post.status).toBe(200);
-    expect(await sessionOf(v3)).toMatchObject({ techNo: '04', status: 'waiting' });
-    expect(await queue()).toEqual(['03', '01', '02', '04']);
+    expect(await sessionOf(v3)).toMatchObject({ techNo: '03', status: 'waiting' });
+    expect(await queue()).toEqual(['01', '04', '02', '03']);
+    // 派了没上的技师算忙：前台再按轮钟选他拒绝（以前同一位技师能被前台派给几张手牌）
+    const v4 = await enter();
+    const busy = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${v4}/charges`, {
+      clientKey: randomUUID(),
+      lines: [{ itemId: gua, quantity: 1, technicianId: tech['03'], callType: 'rotation' }],
+      expectedTotal: 12800,
+    });
+    expect(busy.body.error).toMatchObject({ code: 'TECHNICIAN_BUSY' });
     expect((await act((await sessionOf(v3)).id, 'start')).status).toBe(200);
     expect((await act((await sessionOf(v3)).id, 'finish')).status).toBe(200);
+    // 排回下一条用例开头的顺序 03 01 02 04
+    for (const no of ['01', '04', '02', '04']) expect((await state(no, 'to_end', '排回用例的顺序')).status).toBe(200);
+    expect(await queue()).toEqual(['03', '01', '02', '04']);
   });
 
   it('退钟：作废这张钟单的明细，技师回到原位；连续被退 3 次排到队尾；取消派钟同样回原位', async () => {
@@ -209,8 +230,19 @@ describe('派钟、上钟、加钟、下钟', () => {
       ['01', 'serving'],
       ['04', 'waiting'],
     ]);
-    // 结账：在钟上的按结账时刻下钟，还没上钟的按已做完记（实际 0 分钟）；两位技师都空出来
-    const paid = await pay(v);
+    // 8.1.36：还没上钟的没勾确认拒绝（以前直接按已做完收钱）
+    const refused = await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkouts', {
+      clientKey: randomUUID(),
+      visitIds: [v],
+      expectedTotal: preview.totalAmount,
+      payments: [{ method: 'cash', amount: preview.totalAmount }],
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatchObject({ code: 'SESSIONS_NOT_STARTED', details: { sessionNos: [preview.sessions[1].sessionNo] } });
+    // 结账：在钟上的按结账时刻下钟，还没上钟的（收银员确认做完了）按已做完记（实际 0 分钟）；两位技师都空出来
+    const paid = await pay(v, [preview.sessions[1].sessionNo]);
+    const [audit] = await ctx.sql<{ detail: { unstartedSessions: string[] } }[]>`SELECT detail FROM audit_logs WHERE action = 'frontdesk_checkout' AND target_id = ${String(paid.id)}`;
+    expect(audit!.detail.unstartedSessions).toEqual([preview.sessions[1].sessionNo]);
     const rows = await ctx.sql<{ techNo: string; status: string; startedAt: string; endedAt: string }[]>`
       SELECT t.tech_no, s.status, s.started_at, s.ended_at FROM technician_sessions s JOIN technicians t ON t.id = s.technician_id
       WHERE s.visit_id = ${v} ORDER BY s.id`;

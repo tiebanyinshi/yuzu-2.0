@@ -323,9 +323,12 @@ export function OverLimitCard({
   grant,
   disabled,
   onGranted,
+  title,
 }: {
   kind: OverLimitScope['kind'];
   limit: number;
+  /** 换掉默认的「超过单笔上限」标题（8.1.36：手动金额超过本人上限） */
+  title?: string;
   scope: OverLimitScope;
   memberName: string;
   /** 仍然适用于当前金额的授权；没有时显示「请授权」 */
@@ -341,7 +344,7 @@ export function OverLimitCard({
         {grant ? <ShieldCheck className="mt-0.5 size-5 shrink-0 text-pine" /> : <ShieldAlert className="mt-0.5 size-5 shrink-0 text-yuzu-deep" />}
         <div className="min-w-0 flex-1">
           <p className="text-[13.5px] font-bold text-ink">
-            超过单笔{label}上限 <Money cents={limit} className="whitespace-nowrap" />
+            {title ?? `超过单笔${label}上限`} <Money cents={limit} className="whitespace-nowrap" />
           </p>
           <p className={cn('mt-0.5 text-[12.5px]', grant ? 'font-semibold text-pine' : 'text-ink-2')}>
             {grant ? `已由 ${grant.approverName} 当场授权，${GRANT_TTL_MINUTES} 分钟内有效，只能用于这一笔` : `需要店主或店总当场授权后才能确认${kind === 'recharge' ? '入账' : '扣款'}`}

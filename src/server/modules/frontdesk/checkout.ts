@@ -153,6 +153,11 @@ export const CheckoutInput = z.object({
   note: z.string().trim().max(200, '备注最多 200 字').default(''),
   /** 按实际时间补录纸质单（R1.9）：纸质单号与实际时间，门票按实际离店时间计算；平时不带 */
   backfill: BackfillInput,
+  /**
+   * 还没上钟的钟单（8.1.36）：结账核对里列出来、收银员勾了「客人确实做完了」的钟单号。结账时还有没上钟的钟单、又不在这里的拒绝
+   * ——以前直接按已做完记账、照常收钱、算技师钟数，客人没做的项目也收了
+   */
+  confirmUnstarted: z.array(z.string().trim().min(1).max(32)).max(50).default([]),
 });
 export type CheckoutInputData = z.input<typeof CheckoutInput>;
 
@@ -597,6 +602,19 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
     // 补录：实际离店时间不能早于这几位客人的接待和已挂的明细；补录接待的客人，在店时段里手牌、会员不能已有别的来访
     if (backfill) await assertAfterVisits(tx, at, ids, 'checkout', deps.config.timezone);
     await assertNotReused(tx, at, ids, deps.config.timezone);
+    // 8.1.36：还没上钟的钟单要收银员逐张确认「客人确实做完了」才按已做完结；没确认的拒绝（客人没做的先到钟房取消派钟）
+    const unstarted = await tx<{ sessionNo: string; techNo: string; techName: string; tagCode: string }[]>`
+      SELECT s.session_no, t.tech_no, t.name AS tech_name, h.code AS tag_code
+      FROM technician_sessions s JOIN technicians t ON t.id = s.technician_id JOIN visits v ON v.id = s.visit_id JOIN hand_tags h ON h.id = v.tag_id
+      WHERE s.visit_id IN ${tx(ids)} AND s.status = 'waiting' ORDER BY s.id`;
+    const unconfirmed = unstarted.filter((u) => !input.confirmUnstarted.includes(u.sessionNo));
+    if (unconfirmed.length) {
+      throw conflict(
+        'SESSIONS_NOT_STARTED',
+        `${unconfirmed.map((u) => `手牌 ${u.tagCode} 的 ${u.techNo} 号 ${u.techName}（${u.sessionNo}）`).join('、')}还没上钟：客人没做的请先到钟房取消派钟；确实做完了请在结账核对里勾选确认`,
+        { sessionNos: unconfirmed.map((u) => u.sessionNo) },
+      );
+    }
     // 钟房（v0.7.1，账单之后、会员之前加锁）：还没结束的钟单一起收尾，在钟上的按结账时刻下钟
     const endedSessions = await settleSessionsAtCheckout(tx, deps, ids, ctx.actor, at);
 
@@ -716,6 +734,7 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
         ...(discount ? { discount: { amount: discounts[0]!.amount, reason: discount.reason, approverId: discount.approverId, approverName: discount.approverName } } : {}),
         ...(memberDiscount ? { memberDiscount: { memberId: memberDiscount.memberId, benefitId: memberDiscount.benefitId, rate: memberDiscount.rate, amount: memberDiscount.amount } } : {}),
         ...(usages.length ? { usages } : {}),
+        ...(unstarted.length ? { unstartedSessions: unstarted.map((u) => u.sessionNo) } : {}),
         ...backfillDetail(backfill),
       },
       ip: ctx.ip,
