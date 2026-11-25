@@ -414,7 +414,8 @@ export interface TableSessionBrief {
 export interface TablesBoard {
   serverTime: string;
   businessDate: string;
-  tables: (DiningTable & TableStateInfo & { session: TableSessionBrief | null })[];
+  /** shared：拼台（8.1.39）——同一张桌上另外几拨客人的单（各点各的、各结各的）；没拼台的为空 */
+  tables: (DiningTable & TableStateInfo & { session: TableSessionBrief | null; shared?: { id: number; sessionNo: string; guests: number; guestLabel: string; amount: number }[] })[];
 }
 
 export interface TableSessionDetail {

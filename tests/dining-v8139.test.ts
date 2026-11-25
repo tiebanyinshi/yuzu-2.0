@@ -229,3 +229,25 @@ describe('消费转手牌（R11）', () => {
     expect(kitchen.filter((x) => x.name === '宫保鸡丁').map((x) => x.tagCode)).toContain(tagB);
   });
 });
+
+describe('拼台（R2）', () => {
+  it('用餐中的桌另开一张单：各点各的、各结各的；看板归在这张桌；空桌不用拼', async () => {
+    const t = (await api(ctx.app, boss, 'POST', '/api/admin/dining/tables', { name: 'B1', area: '大厅', seats: 8 })).body.tables.find((x: { name: string }) => x.name === 'B1').id as number;
+    const share = (body: Record<string, unknown> = {}) => api(ctx.app, ctx.clerk, 'POST', '/api/dining/tables/open', { clientKey: randomUUID(), tableId: t, guests: 2, share: true, ...body });
+    expect((await share()).body.error.code).toBe('TABLE_NOT_SHARED');
+    const main = await open(t);
+    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/dining/tables/open', { clientKey: randomUUID(), tableId: t, guests: 2 })).body.error.code).toBe('TABLE_TAKEN');
+    const r = await share({ guestLabel: '靠窗两位' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const second = r.body.id as number;
+    expect((await order(second, [{ itemId: item['宫保鸡丁'], quantity: 1 }], 4800)).status).toBe(200);
+    const board = (await api(ctx.app, ctx.clerk, 'GET', '/api/dining/tables')).body.tables.find((x: { id: number }) => x.id === t);
+    expect(board.session.id).toBe(main);
+    expect(board.shared).toMatchObject([{ id: second, guestLabel: '靠窗两位', amount: 4800 }]);
+    // 拼台的单单独结
+    expect((await pay([second], 4800)).status).toBe(200);
+    const after = (await api(ctx.app, ctx.clerk, 'GET', '/api/dining/tables')).body.tables.find((x: { id: number }) => x.id === t);
+    expect(after.session.id).toBe(main);
+    expect(after.shared).toEqual([]);
+  });
+});

@@ -116,9 +116,20 @@ export async function tablesBoard(db: Db, deps: Deps): Promise<TablesBoard> {
   const rows = await db<(TablesBoard['tables'][number] & { sessionId: number | null })[]>`
     SELECT t.id, t.name, t.area, t.seats, t.sort_order, t.active, s.id AS session_id,
            t.state, t.maintenance_reason, t.maintenance_until, t.state_since
-    FROM dining_tables t LEFT JOIN table_sessions s ON s.table_id = t.id AND s.status = 'open' AND s.parked_at IS NULL
+    FROM dining_tables t
+    -- 一张桌一个格子：没拼台的那一张（拼台的先开的主单结了以后，按先开的拼台单）；8.1.39 转挂账的不算
+    LEFT JOIN LATERAL (
+      SELECT x.id FROM table_sessions x WHERE x.table_id = t.id AND x.status = 'open' AND x.parked_at IS NULL ORDER BY x.shared, x.id LIMIT 1
+    ) s ON true
     WHERE (t.active OR s.id IS NOT NULL) AND t.store_id = ${currentStoreId()}
     ORDER BY t.sort_order, t.id`;
+  // 拼台（8.1.39）：同一张桌上另外几拨客人的单
+  const sharedRows = await db<{ tableId: number; id: number; sessionNo: string; guests: number; guestLabel: string; amount: number }[]>`
+    SELECT s.table_id, s.id, s.session_no, s.guests, s.guest_label, b.amount_cents AS amount
+    FROM table_sessions s JOIN bills b ON b.id = s.bill_id
+    WHERE s.status = 'open' AND s.parked_at IS NULL AND s.store_id = ${currentStoreId()}
+      AND s.id NOT IN (SELECT y.id FROM table_sessions y WHERE y.table_id = s.table_id AND y.status = 'open' AND y.parked_at IS NULL ORDER BY y.shared, y.id LIMIT 1)
+    ORDER BY s.id`;
   const ids = rows.flatMap((r) => (r.sessionId ? [r.sessionId] : []));
   const sessions = ids.length
     ? await db<NonNullable<TablesBoard['tables'][number]['session']>[]>`
@@ -137,6 +148,7 @@ export async function tablesBoard(db: Db, deps: Deps): Promise<TablesBoard> {
       maintenanceUntil: t.maintenanceUntil ? new Date(t.maintenanceUntil).toISOString() : null,
       stateSince: t.stateSince ? new Date(t.stateSince).toISOString() : null,
       session: sessions.find((s) => s.id === sessionId) ?? null,
+      shared: sharedRows.filter((x) => x.tableId === t.id).map(({ tableId: _t, amount, ...x }) => ({ ...x, amount: Number(amount) })),
     })),
   };
 }
@@ -238,6 +250,8 @@ export const OpenTableInput = z.object({
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   tableId: z.number('请选择桌台').int().positive('请选择桌台'),
   ...guestFields,
+  /** 拼台（8.1.39，R2）：桌上已经有客人，另一拨客人另开一张单；不带时与升级前的请求完全相同 */
+  share: z.literal(true).optional(),
 });
 
 async function assertMember(tx: Tx, memberId: number | undefined) {
@@ -259,9 +273,14 @@ export async function openTable(deps: Deps, raw: unknown, ctx: OpContext): Promi
       SELECT id, name, active, state, maintenance_reason FROM dining_tables WHERE id = ${input.tableId} AND store_id = ${currentStoreId()} FOR UPDATE`;
     if (!t) throw notFound('桌台不存在，请刷新后重试');
     if (!t.active) throw conflict('TABLE_INACTIVE', `桌台「${t.name}」已停用，请换一张桌`);
-    assertTableUsable(t, '开台');
     const [busy] = await tx<{ sessionNo: string }[]>`SELECT session_no FROM table_sessions WHERE table_id = ${t.id} AND status = 'open' AND parked_at IS NULL`;
-    if (busy) throw conflict('TABLE_TAKEN', `桌台「${t.name}」正在用餐（${busy.sessionNo}），请换一张空桌`);
+    // 拼台（8.1.39，R2）：这张桌正在用餐，另一拨客人坐过来另开一张单；桌是空的不用拼
+    if (input.share) {
+      if (!busy) throw conflict('TABLE_NOT_SHARED', `桌台「${t.name}」现在是空的，直接开台就行，不用拼台`);
+    } else {
+      assertTableUsable(t, '开台');
+      if (busy) throw conflict('TABLE_TAKEN', `桌台「${t.name}」正在用餐（${busy.sessionNo}），请换一张空桌，或者「拼台」`);
+    }
     await assertMember(tx, input.memberId);
     const date = await businessDate(tx, deps, at);
     const billNo = await nextDocNo(tx, 'bill', 'ZD', date);
@@ -269,8 +288,9 @@ export async function openTable(deps: Deps, raw: unknown, ctx: OpContext): Promi
       INSERT INTO bills (bill_no, kind, business_date, opened_at) VALUES (${billNo}, 'table', ${date}, ${at}) RETURNING id`;
     const sessionNo = await nextDocNo(tx, 'table_session', 'KT', date);
     const [s] = await tx<{ id: number }[]>`
-      INSERT INTO table_sessions (session_no, bill_id, table_id, guests, guest_label, member_id, business_date, opened_at, opened_by, open_key)
-      VALUES (${sessionNo}, ${bill!.id}, ${t.id}, ${input.guests}, ${input.guestLabel}, ${input.memberId ?? null}, ${date}, ${at}, ${ctx.actor.id}, ${key})
+      INSERT INTO table_sessions (session_no, bill_id, table_id, guests, guest_label, member_id, business_date, opened_at, opened_by, open_key, shared)
+      VALUES (${sessionNo}, ${bill!.id}, ${t.id}, ${input.guests}, ${input.guestLabel || (input.share ? '拼台' : '')}, ${input.memberId ?? null}, ${date}, ${at},
+              ${ctx.actor.id}, ${key}, ${input.share === true})
       RETURNING id`;
     await saveKey(tx, key, 'table_open', requestHash, s!.id, ctx.actor.id);
     await writeAudit(tx, {
@@ -278,7 +298,7 @@ export async function openTable(deps: Deps, raw: unknown, ctx: OpContext): Promi
       action: 'table_open',
       targetType: 'table_session',
       targetId: s!.id,
-      detail: { sessionNo, table: t.name, guests: input.guests, guestLabel: input.guestLabel, memberId: input.memberId ?? null },
+      detail: { sessionNo, table: t.name, guests: input.guests, guestLabel: input.guestLabel, memberId: input.memberId ?? null, ...(input.share ? { shared: true } : {}) },
       ip: ctx.ip,
       businessDate: date,
     });
