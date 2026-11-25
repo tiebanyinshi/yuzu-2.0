@@ -39,6 +39,7 @@ import { loadDiningRules } from './dining';
 import { loadSettings } from './settings';
 import { assertLineVoidPermission } from './dining-v8117';
 import { currentStoreId } from '../lib/store-context';
+import { loadDiningOutlets } from './dining-v8139';
 
 export type VoidApproval = { approval: 'small' | 'self' | 'manager' | 'grant'; approverName?: string; approverId?: number };
 
@@ -158,7 +159,7 @@ export async function diningLedger(db: Db, q: DiningLedgerQuery): Promise<Dining
       diningGroup: string | null;
       stationName: string | null;
       perk: 'gift' | 'discount' | null;
-      voidDetail: { approval?: string; approverName?: string; blame?: string } | null;
+      voidDetail: { approval?: string; approverName?: string; blame?: string; gift?: boolean } | null;
     })[]
   >`
     SELECT l.id, l.business_date::text AS business_date, l.posted_at, coalesce(h.code, '') AS tag_code, coalesce(dt.name, '') AS table_name,
@@ -194,10 +195,12 @@ export async function diningLedger(db: Db, q: DiningLedgerQuery): Promise<Dining
     FROM bill_lines l LEFT JOIN service_items si ON si.id = l.item_id JOIN bills bb ON bb.id = l.bill_id AND bb.store_id = ${currentStoreId()}
     WHERE l.source = 'dining' AND l.business_date BETWEEN ${q.from} AND ${q.to} ORDER BY 1`;
   // 点单分类（8.1.7）：按菜现在的分类算（后台没设的按默认归），再按入口、小分类筛
+  const outlets = await loadDiningOutlets(db);
   const base: DiningLedgerRow[] = rows
     .map(({ diningOutlet, diningGroup, stationName, perk, voidDetail, ...r }) => {
-      const slot = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category: r.category === '未分类' ? '' : r.category, stationName });
-      const kind: LedgerKind = r.status === 'voided' ? 'voided' : (perk ?? 'normal');
+      const slot = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category: r.category === '未分类' ? '' : r.category, stationName }, outlets);
+      // 8.1.39：退菜时选「赠送」的（菜照出、这一行不收钱）记赠送
+      const kind: LedgerKind = r.status === 'voided' ? (voidDetail?.gift ? 'gift' : 'voided') : (perk ?? 'normal');
       return {
         ...r,
         id: Number(r.id),
@@ -318,9 +321,10 @@ export async function dishVoids(db: Db, deps: Deps, q: { from: string; to: strin
     ) a ON true
     WHERE l.source = 'dining' AND l.status = 'voided' AND l.voided_at >= ${start} AND l.voided_at < ${end}
     ORDER BY l.voided_at DESC, l.id DESC`;
+  const outlets = await loadDiningOutlets(db);
   return rows
     .map(({ approval, approverName, category, diningOutlet, diningGroup, stationName, ...r }) => {
-      const slot = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category, stationName });
+      const slot = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category, stationName }, outlets);
       return {
         ...r,
         id: Number(r.id),

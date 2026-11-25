@@ -11,6 +11,7 @@ import { can } from '@shared/permissions';
 import type { Db } from '../db';
 import type { Actor } from '../lib/context';
 import { AppError, forbidden } from '../lib/errors';
+import { loadDiningOutlets } from './dining-v8139';
 
 /** 一条餐饮明细是哪个出品口的菜（与下单核对同一个判断）；不是餐饮的明细为 null */
 export async function lineOutletOf(db: Db, lineId: number): Promise<DiningOutlet | null> {
@@ -19,7 +20,7 @@ export async function lineOutletOf(db: Db, lineId: number): Promise<DiningOutlet
     FROM bill_lines l LEFT JOIN service_items si ON si.id = l.item_id LEFT JOIN kitchen_stations ks ON ks.id = si.station_id
     WHERE l.id = ${lineId}`;
   if (!r || r.source !== 'dining') return null;
-  return diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName }).outlet;
+  return diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName }, await loadDiningOutlets(db)).outlet;
 }
 
 /** 退明细的接口谁进得来：有「前台挂账」的，或有任一项「退菜：某出品口」的（康美部）；进来以后逐行核对 */

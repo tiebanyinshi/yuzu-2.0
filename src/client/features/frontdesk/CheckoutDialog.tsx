@@ -35,6 +35,7 @@ import { CheckoutReceipt, isTableCheckout } from './CheckoutReceipt';
 import { RefundPanel, RefundsList } from './RefundPanel';
 import { stayText, useCheckout, useCheckoutDaySummary, useCheckoutPreview, useCheckouts, useRefreshFrontdesk, useTicketTypes } from './queries';
 import { InvoiceRequestButton } from '../sales-invoices/InvoiceRequest';
+import { DiningOnlyPanel } from './DiningOnlyPanel';
 
 // 结账（S3）：勾选要一起结的手牌 → 核对门票与明细 → 登记收款（可组合）→ 确认结清。
 // 应收合计、储值扣款构成以服务端为准：门票刚好跳档、余额或扣款规则变化时服务端拒绝，页面刷新后重新核对。
@@ -349,6 +350,8 @@ export function CheckoutDialog({
               {(p.rooms ?? []).length > 0 && <RoomsNotice rooms={p.rooms!} onClosed={() => void preview.refetch()} />}
               {(p.usages ?? []).length > 0 && <UsagesNotice usages={p.usages!} onEnded={() => void preview.refetch()} />}
               <ReviewTable preview={p} amounts={amounts} ticketPick={ticketPick} onPick={(id, t) => edit(() => setTicketPick((x) => ({ ...x, [id]: t })))} />
+              {/* 8.1.39（R10）：同组几张手牌一起结，只看餐饮的明细与合计（只读） */}
+              <DiningOnlyPanel visitIds={p.visits.map((v) => v.visitId)} pricedAt={p.pricedAt} />
             </>
           )
         )}

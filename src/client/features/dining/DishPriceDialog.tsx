@@ -19,6 +19,7 @@ import { Dialog } from '../../components/Overlay';
 import { ReasonChips } from '../../components/ReasonChips';
 import { Badge, Button, Field, Input, MoneyInput, Notice, Select, Skeleton } from '../../components/ui';
 import { DishPendingNotice } from './DishPendingNotice';
+import { DishPriceModeSection } from './DishPriceMode';
 import { pendingOf, sendDishOp, useDishPending } from './dishPendingStore';
 import { useDishPriceChanges } from './dishQueries';
 
@@ -154,6 +155,8 @@ export function DishPriceDialog({
           <Input id="price-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={MAX_PRICE_REASON} placeholder="例如 食材涨价" data-testid="dish-price-reason" />
         </Field>
         {error ? <Notice tone="error" title={error} data-testid="dish-price-error" /> : problem && diff.length > 0 ? <p className="text-[13px] font-semibold text-clay">{problem}</p> : null}
+
+        <DishPriceModeSection dish={dish} onSaved={onSaved} />
 
         <section className="border-t border-line pt-3">
           <h3 className="mb-2 text-[14px] font-bold">这道菜的改价记录</h3>

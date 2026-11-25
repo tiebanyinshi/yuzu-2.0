@@ -412,6 +412,7 @@ const DISH_BOARD: DishesBoard = {
           ]
         : [{ tier: 'standard', price: d.price }],
     price: d.price,
+    priceMode: 'fixed' as const,
     active: i !== 6,
     remaining: d.remaining,
     imageId: null,

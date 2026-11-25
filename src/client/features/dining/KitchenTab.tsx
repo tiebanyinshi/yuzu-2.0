@@ -8,7 +8,18 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { BellRing, ChefHat, CircleCheckBig, Flame, Undo2 } from 'lucide-react';
-import { ALL_DINING_SLOTS, KITCHEN_STATUS_LABELS, kitchenElapsed, slotLabel, type DiningOutlet, type KitchenBoard, type KitchenItem, type KitchenPartItem, type MenuDish } from '@shared/dining';
+import {
+  allDiningSlots,
+  diningOutletsOf,
+  KITCHEN_STATUS_LABELS,
+  kitchenElapsed,
+  slotLabel,
+  type DiningOutlet,
+  type KitchenBoard,
+  type KitchenItem,
+  type KitchenPartItem,
+  type MenuDish,
+} from '@shared/dining';
 import { partsText } from '@shared/dishes';
 import { api, errorMessage } from '../../lib/api';
 import { useCan } from '../../lib/session';
@@ -381,7 +392,8 @@ export function LimitsTab() {
   };
 
   // 按点单分类分组（餐厅 → 餐饮、酒水；水吧 → 手作饮料、糖水、调酒；果吧），出品档口写在每道菜旁边（8.1.7，CF7）
-  const groups = ALL_DINING_SLOTS.filter((sl) => !outlet || sl.outlet === outlet)
+  const groups = allDiningSlots(diningOutletsOf(d.rules))
+    .filter((sl) => !outlet || sl.outlet === outlet)
     .map((sl) => [slotLabel(sl), d.dishes.filter((x) => x.outlet === sl.outlet && x.group === sl.group)] as [string, MenuDish[]])
     .filter(([, list]) => list.length > 0);
   const counts: Partial<Record<DiningOutlet | 'all', number>> = { all: d.dishes.length };

@@ -2,14 +2,16 @@
 // 挂了档口的菜在餐饮功能开启后才进厨房；没挂档口的项目照常挂账、不进厨房。需要技师的项目不进厨房。
 // 桌台（第二步）：不洗浴的客人在桌台上用餐、单独结账；停用不删除，正在用餐的桌不能停用。
 
+import { MAX_SERVICE_FEE_BP, serviceFeeText } from '@shared/table-charges';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { ADMIN_SECTIONS } from '@shared/admin';
 import {
-  ALL_DINING_SLOTS,
+  allDiningSlots,
   DEFAULT_DINING_RULES,
+  diningOutletsOf,
   MAX_STATION_NAME,
   MAX_VOID_FREE_CENTS,
   MAX_TABLE_AREA,
@@ -25,7 +27,7 @@ import {
   type TablesAdmin,
 } from '@shared/dining';
 import { MAX_DIRTY_ALERT_MINUTES } from '@shared/frontdesk-v8117';
-import { formatYuan, parseYuan } from '@shared/money';
+import { centsToInput, formatYuan, parseYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
 import { qk } from '../../lib/queries';
 import { useCan } from '../../lib/session';
@@ -37,6 +39,7 @@ import { Badge, Button, Card, Field, Input, MoneyInput, Notice, PendingBadge, Se
 import { AdminPage, PriceSheetLink } from './AdminShell';
 import { SubPane } from '../../components/SubNav';
 import { RoomOrderConfigCard } from './RoomOrderConfigCard';
+import { groupsProblem, OutletGroupsEditor } from './DiningGroupsEditor';
 
 const adminKey = ['admin', 'dining'] as const;
 const useDiningAdmin = () => useQuery({ queryKey: adminKey, queryFn: () => api.get<DiningAdmin>('/api/admin/dining') });
@@ -89,6 +92,8 @@ function RulesCard() {
   const freeCents = freeText === null ? draft.voidFreeCents : freeText.trim() === '' ? null : parseYuan(freeText);
   const freeOk = freeCents !== null && freeCents >= 0 && freeCents <= MAX_VOID_FREE_CENTS;
   const mapped = admin.data.items.filter((i) => i.stationId !== null && !i.technicianRequired).length;
+  // 8.1.39（R4）：菜单的小分类
+  const groupsBad = groupsProblem(draft.outletGroups);
 
   const save = async () => {
     setBusy(true);
@@ -232,6 +237,7 @@ function RulesCard() {
           </span>,
           true,
         )}
+        <OutletGroupsEditor value={draft.outletGroups} onChange={(outletGroups) => set({ outletGroups })} editable={editable} items={admin.data.items} saved={admin.data.rules.outletGroups} />
         {row(
           '小额退菜上限',
           '单条不超过这个金额的菜，服务员写原因就能直接退；超过的本人点的、规定时间内或经理照旧直接退，其余请值班经理及以上当场授权。填 0 不分级。退菜在「餐饮 → 台账」里按「退菜」看。',
@@ -255,6 +261,7 @@ function RulesCard() {
       {!minutesOk && <Notice tone="error" title="分钟数要在 1 到 180 之间" className="mt-3" />}
       {!dirtyOk && <Notice tone="error" title={`待清台的分钟数要在 1 到 ${MAX_DIRTY_ALERT_MINUTES} 之间`} className="mt-3" />}
       {!freeOk && <Notice tone="error" title={`小额退菜上限填 0 到 ${formatYuan(MAX_VOID_FREE_CENTS)} 之间的金额`} className="mt-3" />}
+      {groupsBad && <Notice tone="error" title={groupsBad} className="mt-3" />}
       {error && <Notice tone="error" title={error} className="mt-3" />}
       <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
         <span className="mr-auto text-[12px] text-ink-4">
@@ -272,7 +279,8 @@ function RulesCard() {
               size="sm"
               variant="ghost"
               onClick={() => {
-                setDraft({ ...DEFAULT_DINING_RULES, enabled: draft.enabled });
+                // 小分类不跟着恢复（还有菜在用的改不回去），在上面单独改
+                setDraft({ ...DEFAULT_DINING_RULES, enabled: draft.enabled, outletGroups: draft.outletGroups });
                 setFreeText(null);
               }}
             >
@@ -280,7 +288,7 @@ function RulesCard() {
             </Button>
           )}
         {editable && (
-          <Button variant="primary" loading={busy} disabled={!dirty || !minutesOk || !freeOk || !dirtyOk} onClick={save} data-testid="dining-rules-save">
+          <Button variant="primary" loading={busy} disabled={!dirty || !minutesOk || !freeOk || !dirtyOk || !!groupsBad} onClick={save} data-testid="dining-rules-save">
             保存餐饮规则
           </Button>
         )}
@@ -438,6 +446,9 @@ function ItemsCard() {
   const editable = can('catalog.manage');
   const stations = admin.data.stations;
   const items = admin.data.items.filter((i) => !i.technicianRequired);
+  // 8.1.39（R4）：点单分类按后台设的小分类
+  const outlets = diningOutletsOf(admin.data.rules);
+  const slotOptions = allDiningSlots(outlets);
   const value = (i: Item) => (draft.has(i.id) ? draft.get(i.id)! : i.stationId);
   const choose = (i: Item, stationId: number | null) => {
     const next = new Map(draft);
@@ -463,7 +474,7 @@ function ItemsCard() {
   const slotValue = (i: Item) => (slotDraft.has(i.id) ? slotDraft.get(i.id)! : storedSlot(i));
   const defaultSlot = (i: Item) => {
     const sid = value(i);
-    return diningSlotOf({ outlet: null, group: '', category: i.category, stationName: stations.find((s) => s.id === sid)?.name ?? null });
+    return diningSlotOf({ outlet: null, group: '', category: i.category, stationName: stations.find((s) => s.id === sid)?.name ?? null }, outlets);
   };
   const chooseSlot = (i: Item, v: string | null, into = new Map(slotDraft)) => {
     if (v === storedSlot(i)) into.delete(i.id);
@@ -540,7 +551,7 @@ function ItemsCard() {
                 data-testid={`${prefix}-slot-all-${cat}`}
               >
                 <option value="">点单分类设为…</option>
-                {ALL_DINING_SLOTS.map((sl) => (
+                {slotOptions.map((sl) => (
                   <option key={slotKey(sl)} value={slotKey(sl)}>
                     {slotLabel(sl)}
                   </option>
@@ -586,7 +597,7 @@ function ItemsCard() {
                         data-testid={`dining-item-slot-${i.name}`}
                       >
                         <option value="">默认（{slotLabel(defaultSlot(i))}）</option>
-                        {ALL_DINING_SLOTS.map((sl) => (
+                        {slotOptions.map((sl) => (
                           <option key={slotKey(sl)} value={slotKey(sl)}>
                             {slotLabel(sl)}
                           </option>
@@ -711,7 +722,8 @@ function TablesCard() {
             <li key={t.id} className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5', !t.active && 'bg-paper-2/50 opacity-70')} data-testid={`dining-table-${t.name}`}>
               <span className="num min-w-[72px] text-[14.5px] font-bold">{t.name}</span>
               <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-3">
-                {t.area || '不分区'} · {t.seats} 座
+                {t.area || '不分区'} · {t.seats} 座{t.minSpend ? ` · 低消 ${formatYuan(t.minSpend)}` : ''}
+                {t.serviceFeeBp ? ` · ${serviceFeeText(t.serviceFeeBp)}` : ''}
               </span>
               <span className="text-[12px] text-ink-4">开台 {t.sessionCount} 次</span>
               <span className="num text-[12px] text-ink-4">排序 {t.sortOrder}</span>
@@ -738,6 +750,9 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
   const [seats, setSeats] = useState('4');
   const [sortOrder, setSortOrder] = useState('0');
   const [active, setActive] = useState(true);
+  /** 8.1.39：低消（元）、服务费（%） */
+  const [minSpend, setMinSpend] = useState('');
+  const [feePct, setFeePct] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [opened, setOpened] = useState<typeof target>(null);
@@ -750,8 +765,13 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
     setSeats(String(t?.seats ?? 4));
     setSortOrder(String(t?.sortOrder ?? 0));
     setActive(t?.active ?? true);
+    setMinSpend(t?.minSpend ? centsToInput(t.minSpend) : '');
+    setFeePct(t?.serviceFeeBp ? String(t.serviceFeeBp / 100) : '');
     setError(null);
   }
+  const minSpendCents = minSpend.trim() ? parseYuan(minSpend) : 0;
+  const feeBp = feePct.trim() ? Math.round(Number(feePct) * 100) : 0;
+  const chargesOk = minSpendCents !== null && minSpendCents >= 0 && Number.isFinite(feeBp) && feeBp >= 0 && feeBp <= MAX_SERVICE_FEE_BP;
   const seatNum = Number(seats);
   const order = Number(sortOrder);
   const ok =
@@ -763,13 +783,14 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
     seatNum <= 99 &&
     Number.isInteger(order) &&
     order >= 0 &&
-    order <= 9999;
+    order <= 9999 &&
+    chargesOk;
 
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      const body = { name: name.trim(), area: area.trim(), seats: seatNum, sortOrder: order, active };
+      const body = { name: name.trim(), area: area.trim(), seats: seatNum, sortOrder: order, active, minSpend: minSpendCents ?? 0, serviceFeeBp: feeBp };
       const next = target === 'new' ? await api.post<TablesAdmin>('/api/admin/dining/tables', body) : await api.put<TablesAdmin>(`/api/admin/dining/tables/${target!.id}`, body);
       qc.setQueryData(tablesAdminKey, next);
       void qc.invalidateQueries({ queryKey: ['dining'] });
@@ -820,6 +841,15 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
           </Field>
           <Field label="排序" htmlFor="table-order" hint="小的排前面">
             <Input id="table-order" type="number" inputMode="numeric" min={0} max={9999} value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} className="num w-28" />
+          </Field>
+        </div>
+        {/* 8.1.39（docs/V8139.md 第 3 节）：包房的低消与服务费；空着为不设 */}
+        <div className="flex flex-wrap gap-4">
+          <Field label="低消（元）" htmlFor="table-min-spend" hint="菜钱不到低消不能直接结账：收银勾「补足低消」，或先转挂账；空着为不设">
+            <MoneyInput id="table-min-spend" value={minSpend} onChange={(e) => setMinSpend(e.target.value)} className="w-36" data-testid="dining-table-min-spend" />
+          </Field>
+          <Field label="服务费（%）" htmlFor="table-fee" hint="结账时按没赠送、没退的菜算；空着为不收，最多 30">
+            <Input id="table-fee" inputMode="decimal" value={feePct} onChange={(e) => setFeePct(e.target.value)} className="num w-28" data-testid="dining-table-fee" />
           </Field>
         </div>
         {target !== 'new' && (

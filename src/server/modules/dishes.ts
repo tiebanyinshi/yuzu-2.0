@@ -18,7 +18,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { defaultTier, PRICE_TIERS, sortTiers, tierPrice, type TierPrice } from '@shared/catalog';
-import { DINING_OUTLET_LABELS, diningSlotOf, parseSlotKey, slotLabel, slotOrder, type DiningOutlet, type DiningSlot } from '@shared/dining';
+import { DINING_OUTLET_LABELS, diningSlotOf, isDiningOutlet, parseSlotKey, slotLabel, slotOrder, splitSlotKey, type DiningOutlet, type DiningOutletDef, type DiningSlot } from '@shared/dining';
 import {
   DISH_EXPORT_EXTRA_COLUMNS,
   DISH_OP_LABELS,
@@ -70,7 +70,7 @@ import { guard, guardAny } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
 import { ctxOf, type Actor, type Deps, type OpContext } from '../lib/context';
 import { attachment } from '../lib/csv';
-import { conflict, forbidden, notFound, unprocessable } from '../lib/errors';
+import { AppError, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { lockOpKey } from '../lib/fences';
 import { hashRequest } from '../lib/idempotency';
 import { setTxTimeouts } from '../lib/tx';
@@ -81,6 +81,9 @@ import { emenuImage, saveEmenuImage } from './emenu/core';
 import { abandonedError, businessDate } from './frontdesk/common';
 import { pricesColumn } from './pricing';
 import { assertNotPriceLinked } from './price-catalog/linked';
+import { setDishPriceMode } from './dish-price-mode';
+import type { PriceMode } from '@shared/dish-price-mode';
+import { loadDiningOutlets, SaleWindowsInput, StationWindowsInput, stationWindowsOf, writeDishWindows } from './dining-v8139';
 
 /** 菜品的图片地址（图存在电子菜单的图片表里；这个地址给有菜品权限的人看） */
 const dishImageUrl = (id: number | null | undefined) => (id ? `/api/dining/dishes/images/${id}` : null);
@@ -109,8 +112,10 @@ interface DishBase {
   emenuImageId: number | null;
   dishSort: number | null;
   deletedAt: string | null;
+  priceMode: PriceMode;
   rev: string;
   updatedAt: string;
+  saleWindows: DishRow['saleWindows'] | null;
 }
 
 /** 全部菜品（或给定的几道）：挂了出品档口、不需要技师的价目项目，含下架的、档口停用的 */
@@ -120,7 +125,8 @@ async function loadDishRows(db: Db, today: string, onlyIds?: number[]): Promise<
     SELECT i.id, i.name, i.category, i.active, i.station_id, s.name AS station_name, s.active AS station_active, i.dining_outlet, i.dining_group,
            i.dish_image_id, ${pricesColumn(db, { base: true })} AS prices,
            (SELECT d.remaining FROM dish_limits d WHERE d.item_id = i.id AND d.business_date = ${today}) AS remaining,
-           ed.name AS emenu_name, ed.image_id AS emenu_image_id, ${REV(db)} AS rev, i.updated_at, i.dish_sort, i.dish_deleted_at AS deleted_at
+           ed.name AS emenu_name, ed.image_id AS emenu_image_id, ${REV(db)} AS rev, i.updated_at, i.dish_sort, i.dish_deleted_at AS deleted_at,
+           i.price_mode, i.sale_windows
     FROM service_items i JOIN kitchen_stations s ON s.id = i.station_id
     LEFT JOIN emenu_dish_specs sp ON sp.item_id = i.id LEFT JOIN emenu_dishes ed ON ed.id = sp.dish_id
     WHERE NOT i.technician_required ${onlyIds ? db`AND i.id IN ${db(onlyIds)}` : db``}
@@ -150,8 +156,11 @@ async function loadDishRows(db: Db, today: string, onlyIds?: number[]): Promise<
     FROM dish_combo_swaps w JOIN service_items i ON i.id = w.to_item_id JOIN service_items o ON o.id = w.combo_item_id
     LEFT JOIN kitchen_stations s ON s.id = i.station_id
     WHERE w.combo_item_id IN ${db(ids)} OR w.to_item_id IN ${db(ids)} ORDER BY w.combo_item_id, w.item_id, w.sort_no, w.to_item_id`;
+  // 8.1.39：小分类按后台设的名单；售卖时段、档口时段
+  const outlets = await loadDiningOutlets(db);
+  const stationWindows = await stationWindowsOf(db, ids);
   return rows.map((r) => {
-    const { assigned, ...slot } = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName });
+    const { assigned, ...slot } = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName }, outlets);
     const prices = sortTiers(r.prices);
     const imageId = r.dishImageId ?? r.emenuImageId;
     return {
@@ -166,6 +175,7 @@ async function loadDishRows(db: Db, today: string, onlyIds?: number[]): Promise<
       stationActive: r.stationActive,
       prices,
       price: defaultPrice(prices),
+      priceMode: r.priceMode,
       active: r.active,
       remaining: r.remaining,
       imageId: r.dishImageId,
@@ -193,6 +203,8 @@ async function loadDishRows(db: Db, today: string, onlyIds?: number[]): Promise<
         ...[...new Set(swaps.filter((w) => w.toItemId === r.id).map((w) => w.ownerName))].map((owner) => `套餐「${owner}」里可换成的菜`),
       ],
       sort: r.dishSort,
+      saleWindows: r.saleWindows ?? [],
+      stationWindows: stationWindows.get(r.id) ?? [],
       deleted: r.deletedAt !== null,
       rev: r.rev,
       updatedAt: new Date(r.updatedAt).toISOString(),
@@ -234,13 +246,12 @@ export interface ItemState {
   /** 删除了（8.1.17：下架并从菜品表隐藏） */
   deleted: boolean;
   rev: string;
+  /** 现在算在哪个点单分类（8.1.39：按后台设的小分类名单，读的时候算好） */
+  slot: DiningSlot;
 }
 
 export const isDishState = (s: ItemState) => s.stationId !== null && !s.technicianRequired;
-export const slotOfState = (s: ItemState): DiningSlot => {
-  const { assigned: _assigned, ...slot } = diningSlotOf({ outlet: s.diningOutlet, group: s.diningGroup, category: s.category, stationName: s.stationName });
-  return slot;
-};
+export const slotOfState = (s: ItemState): DiningSlot => s.slot;
 
 /**
  * 按 id 升序锁住这几个价目项目，返回锁住以后的样子（不存在的不在返回里）。
@@ -256,11 +267,17 @@ async function lockItems(tx: Tx, itemIds: number[]): Promise<Map<number, ItemSta
 
 export async function readItems(db: Db, ids: number[]): Promise<Map<number, ItemState>> {
   if (ids.length === 0) return new Map();
-  const rows = await db<ItemState[]>`
+  const rows = await db<Omit<ItemState, 'slot'>[]>`
     SELECT i.id, i.name, i.category, i.active, i.station_id, s.name AS station_name, i.technician_required, i.dining_outlet, i.dining_group,
            i.dish_image_id, ${pricesColumn(db, { base: true })} AS prices, ${REV(db)} AS rev, i.dish_deleted_at IS NOT NULL AS deleted
     FROM service_items i LEFT JOIN kitchen_stations s ON s.id = i.station_id WHERE i.id IN ${db(ids)}`;
-  return new Map(rows.map((r) => [r.id, { ...r, prices: sortTiers(r.prices) }]));
+  const outlets = await loadDiningOutlets(db);
+  return new Map(
+    rows.map((r) => {
+      const { assigned: _assigned, ...slot } = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName }, outlets);
+      return [r.id, { ...r, prices: sortTiers(r.prices), slot }];
+    }),
+  );
 }
 
 function assertOutlet(actor: Actor, outlet: DiningOutlet, what: string) {
@@ -322,7 +339,8 @@ const DishFields = z.object({
   slot: z
     .string('请选择出品口与小类')
     .max(40)
-    .refine((v) => parseSlotKey(v) !== null, '出品口与小类不对，请刷新后重试'),
+    // 8.1.39：小类按后台设的名单，在事务里核对（slotIn）；这里只看样子
+    .refine((v) => isDiningOutlet(splitSlotKey(v).outlet), '出品口与小类不对，请刷新后重试'),
   stationId: z.number('请选择出品档口').int().positive('请选择出品档口'),
   imageId: z.number().int().positive().nullable().default(null),
   methods: z
@@ -363,8 +381,18 @@ const DishFields = z.object({
     .max(MAX_COMBO_ITEMS, `一个套餐最多含 ${MAX_COMBO_ITEMS} 样`)
     .refine((list) => unique(list.map((c) => c.itemId)), '套餐里同一道菜写了两次')
     .default([]),
+  /** 8.1.39：售卖时段、档口时段（不带的不改：旧页面、导入） */
+  saleWindows: SaleWindowsInput,
+  stationWindows: StationWindowsInput,
 });
 export type DishFieldsData = z.output<typeof DishFields>;
+
+/** 交上来的出品口与小类：要在现在的小分类名单里（8.1.39 名单可以在后台改；与格式不对一样是 400） */
+function slotIn(key: string, outlets: readonly DiningOutletDef[], what = '出品口与小类'): DiningSlot {
+  const slot = parseSlotKey(key, outlets);
+  if (!slot) throw new AppError(400, 'DINING_SLOT_UNKNOWN', `${what}不对：「${splitSlotKey(key).group || key}」不在现在的小类名单里，请刷新后重试`);
+  return slot;
+}
 
 const CreateInput = DishFields.extend({
   clientKey,
@@ -597,7 +625,7 @@ const sameList = <T>(a: readonly T[], b: readonly T[]) => a.length === b.length 
  * 返回新菜的编号。
  */
 export async function createDishTx(tx: Tx, ctx: OpContext, f: DishFieldsData & { prices: TierPrice[]; active: boolean }, opts: { reason: string; source: DishPriceSource }): Promise<number> {
-  const slot = parseSlotKey(f.slot)!;
+  const slot = slotIn(f.slot, await loadDiningOutlets(tx));
   assertOutlet(ctx.actor, slot.outlet, '在这里新建菜品');
   if (!can(ctx.actor, DISH_PRICE_PERMISSION)) throw forbidden('新建菜品要定价，需要「菜品管理：定价与改价」的权限');
   const refs = await lockItems(tx, [...f.addons, ...f.combo.map((c) => c.itemId), ...swapTargetsOf(f)]);
@@ -616,6 +644,7 @@ export async function createDishTx(tx: Tx, ctx: OpContext, f: DishFieldsData & {
   await writeMethods(tx, id, methods, true);
   await writeAddons(tx, id, f.addons, true);
   await writeCombo(tx, id, resolveCombo(f.combo, [], refs), true);
+  await writeDishWindows(tx, id, f, { fresh: true });
   await recordPriceChanges(tx, { itemId: id, itemName: f.name, before: [], after: f.prices, reason: opts.reason, source: opts.source, staffId: ctx.actor.id });
   return id;
 }
@@ -629,8 +658,9 @@ export async function updateDishTx(tx: Tx, ctx: OpContext, id: number, f: DishFi
   const cur = locked.get(id);
   if (!cur || !isDishState(cur)) throw notDish();
   if (opts.rev !== undefined && opts.rev !== cur.rev) throw conflict('DISH_CHANGED', `「${cur.name}」刚刚被别人改过，请刷新后再改`);
+  const outlets = await loadDiningOutlets(tx);
   const from = slotOfState(cur);
-  const to = parseSlotKey(f.slot)!;
+  const to = slotIn(f.slot, outlets);
   assertOutlet(ctx.actor, from.outlet, `改「${cur.name}」`);
   if (to.outlet !== from.outlet) assertOutlet(ctx.actor, to.outlet, `把「${cur.name}」挪到${DINING_OUTLET_LABELS[to.outlet]}`);
   const station = await checkFields(tx, cur, f, locked);
@@ -646,7 +676,7 @@ export async function updateDishTx(tx: Tx, ctx: OpContext, id: number, f: DishFi
   if (slotChanged) changes.push({ label: '出品口与小类', before: slotLabel(from), after: slotLabel(to) });
   // 但按默认归的菜，默认归到哪是看分类与档口的：这次改了分类或档口，不写明的话保存以后会跟着跑到另一处——
   // 页面上选的是哪一处就写明哪一处（也免得没有另一处权限的人借换档口把菜挪过去）
-  const kept = diningSlotOf({ outlet: cur.diningOutlet, group: cur.diningGroup, category: f.category, stationName: station.name });
+  const kept = diningSlotOf({ outlet: cur.diningOutlet, group: cur.diningGroup, category: f.category, stationName: station.name }, outlets);
   const writeSlot = kept.outlet !== to.outlet || kept.group !== to.group;
   if (cur.stationId !== f.stationId) changes.push({ label: '档口', before: cur.stationName ?? '', after: station.name });
   if (cur.dishImageId !== f.imageId) changes.push({ label: '图片', before: cur.dishImageId ? '有' : '没有', after: f.imageId ? (cur.dishImageId ? '换了一张' : '有') : '没有' });
@@ -674,6 +704,8 @@ export async function updateDishTx(tx: Tx, ctx: OpContext, id: number, f: DishFi
       after: comboText(combo.map((c) => ({ ...c, name: nameOf(c.itemId), swaps: c.swaps.map((w) => ({ ...w, name: nameOf(w.itemId) })) }))),
     });
   }
+  // 8.1.39：售卖时段、档口时段（不带的不改）：有变化的直接写，下面跟别的改动一起改版本
+  changes.push(...(await writeDishWindows(tx, id, f)));
   if (changes.length === 0) return [];
 
   await tx`
@@ -793,7 +825,7 @@ async function createDish(deps: Deps, raw: unknown, ctx: OpContext): Promise<Dis
       action: 'dish_saved',
       targetType: 'item',
       targetId: id,
-      detail: { name: input.name, summary: `新建菜品「${input.name}」（${slotLabel(parseSlotKey(input.slot)!)}，${pricesText(input.prices)}）${input.active ? '' : '，先不上架'}` },
+      detail: { name: input.name, summary: `新建菜品「${input.name}」（${slotLabel(splitSlotKey(input.slot) as DiningSlot)}，${pricesText(input.prices)}）${input.active ? '' : '，先不上架'}` },
       ip: ctx.ip,
     });
     return { itemId: id, result: {} };
@@ -869,7 +901,7 @@ const SortInput = z.object({
   slot: z
     .string('请选点单小类')
     .max(40)
-    .refine((v) => parseSlotKey(v) !== null, '点单小类不对，请刷新后重试'),
+    .refine((v) => isDiningOutlet(splitSlotKey(v).outlet), '点单小类不对，请刷新后重试'),
   /** 这一小类里（没删除的）全部的菜，按排好的先后 */
   ids: idList,
 });
@@ -886,7 +918,8 @@ const KeyInput = z.object({ clientKey, rev: revInput });
  */
 async function sortDishes(deps: Deps, raw: unknown, ctx: OpContext): Promise<{ count: number; replayed: boolean }> {
   const { clientKey: key, slot, ids } = parse(SortInput, raw);
-  const target = parseSlotKey(slot)!;
+  const outlets = await loadDiningOutlets(deps.sql);
+  const target = slotIn(slot, outlets, '点单小类');
   const run = await runDishOp(deps, { key, opType: 'sort', requestHash: hashRequest({ slot, ids }), staffId: ctx.actor.id }, async (tx) => {
     assertOutlet(ctx.actor, target.outlet, `给「${slotLabel(target)}」排序`);
     const locked = await lockItems(tx, ids);
@@ -895,14 +928,14 @@ async function sortDishes(deps: Deps, raw: unknown, ctx: OpContext): Promise<{ c
       FROM service_items i JOIN kitchen_stations s ON s.id = i.station_id WHERE NOT i.technician_required AND i.dish_deleted_at IS NULL`;
     const inSlot = all
       .filter((r) => {
-        const at = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName });
+        const at = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName }, outlets);
         return at.outlet === target.outlet && at.group === target.group;
       })
       .map((r) => r.id);
     if (inSlot.length !== ids.length || inSlot.some((id) => !ids.includes(id))) {
       throw conflict('DISH_SORT_STALE', `「${slotLabel(target)}」的菜刚刚有变动（别人新增、挪走或删除了），请刷新后再排`);
     }
-    const base = slotOrder(target) * DISH_SORT_SLOT_SPAN;
+    const base = slotOrder(target, outlets) * DISH_SORT_SLOT_SPAN;
     await tx`
       UPDATE service_items i SET dish_sort = t.n
       FROM unnest(${ids}::bigint[], ${ids.map((_id, i) => base + i + 1)}::int[]) AS t(id, n) WHERE i.id = t.id`;
@@ -1128,6 +1161,8 @@ export function registerDishRoutes(app: FastifyInstance, deps: Deps) {
   app.put('/api/dining/dishes/:id', { preHandler: manage }, async (req) => updateDish(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.post('/api/dining/dishes/:id/active', { preHandler: manage }, async (req) => setDishActive(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.post('/api/dining/dishes/:id/price', { preHandler: guard(DISH_PRICE_PERMISSION) }, async (req) => changeDishPrice(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
+  // 8.1.39：计价方式（按价目 / 时价、杂项 / 称重），与改价同一项权限
+  app.post('/api/dining/dishes/:id/price-mode', { preHandler: guard(DISH_PRICE_PERMISSION) }, async (req) => setDishPriceMode(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   // 8.1.17（BW10）：排序、批量上下架、删除（下架并隐藏）与恢复
   app.post('/api/dining/dishes/sort', { preHandler: manage }, async (req) => sortDishes(deps, req.body, ctxOf(req)));
   app.post('/api/dining/dishes/active-bulk', { preHandler: manage }, async (req) => setDishesActive(deps, req.body, ctxOf(req)));
