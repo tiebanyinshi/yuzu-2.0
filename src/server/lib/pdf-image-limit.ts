@@ -244,19 +244,49 @@ function imageProblemOf(parsed: { isImage: boolean; width: number | null; height
   return null;
 }
 
-/** 在 [floor, endExclusive) 里从后往前找与最末尾 `>>` 配平的最近一个 `<<`（用于前一段二进制流含孤立 `<<(` 时的兜底） */
+/** 判断 buf[idx] 是否被前面连续奇数个反斜杠转义 */
+function isEscapedBack(buf: Buffer, idx: number, floor: number): boolean {
+  let slashes = 0;
+  let k = idx - 1;
+  while (k >= floor && buf[k] === 0x5c) {
+    slashes += 1;
+    k -= 1;
+  }
+  return (slashes & 1) === 1;
+}
+
+/**
+ * 在 [floor, endExclusive) 里从后往前找与最末尾 `>>` 配平的最近一个 `<<`（用于前一段二进制流含孤立 `<<(` 时的兜底）：
+ * 反向跳过 PDF 字面量字符串 `(...)`（含嵌套括号与 `\` 转义），避免 `/Comment (>>)` 里的 `>>` 被误计为字典闭合。
+ */
 function findInnerBalancedOpen(buf: Buffer, floor: number, endExclusive: number): number {
   let depth = 0;
-  let j = endExclusive - 2;
+  let parens = 0;
+  let j = endExclusive - 1;
   while (j >= floor) {
-    if (buf[j] === 0x3e && buf[j + 1] === 0x3e) {
+    const c = buf[j]!;
+    if (parens > 0) {
+      if (c === 0x29 && !isEscapedBack(buf, j, floor)) {
+        parens += 1;
+      } else if (c === 0x28 && !isEscapedBack(buf, j, floor)) {
+        parens -= 1;
+      }
+      j -= 1;
+      continue;
+    }
+    if (c === 0x29 && !isEscapedBack(buf, j, floor)) {
+      parens = 1;
+      j -= 1;
+      continue;
+    }
+    if (c === 0x3e && j - 1 >= floor && buf[j - 1] === 0x3e) {
       depth += 1;
       j -= 2;
       continue;
     }
-    if (buf[j] === 0x3c && buf[j + 1] === 0x3c) {
+    if (c === 0x3c && j - 1 >= floor && buf[j - 1] === 0x3c) {
       depth -= 1;
-      if (depth === 0) return j;
+      if (depth === 0) return j - 1;
       j -= 2;
       continue;
     }
@@ -437,6 +467,7 @@ function scanBuffer(buf: Buffer, maxPixels: number, maxSide: number): PdfImagePr
   let pos = 0;
   let noOpenBefore = 0;
   let lastInnerEnd = 0;
+  let lastEndstream = -1;
   const parsed = makeParsedSlot();
   const innerParsed = makeParsedSlot();
 
@@ -444,8 +475,11 @@ function scanBuffer(buf: Buffer, maxPixels: number, maxSide: number): PdfImagePr
     const idx = buf.indexOf(STREAM_NEEDLE, pos);
     if (idx === -1) break;
     pos = idx + STREAM_NEEDLE.length;
-    // 排除 endstream，且 stream 后面必须是 CR/LF（PDF 规范 §7.3.8.1）
-    if (idx >= 3 && buf[idx - 3] === 0x65 && buf[idx - 2] === 0x6e && buf[idx - 1] === 0x64) continue;
+    // 排除 endstream（顺便记录上一段流的结束位置），且 stream 后面必须是 CR/LF（PDF 规范 §7.3.8.1）
+    if (idx >= 3 && buf[idx - 3] === 0x65 && buf[idx - 2] === 0x6e && buf[idx - 1] === 0x64) {
+      lastEndstream = idx + STREAM_NEEDLE.length;
+      continue;
+    }
     const after = idx + STREAM_NEEDLE.length;
     if (after >= n || (buf[after] !== 0x0a && buf[after] !== 0x0d)) continue;
     // 跳过 stream 前面的空白，紧挨着的必须是 `>>`
@@ -481,7 +515,24 @@ function scanBuffer(buf: Buffer, maxPixels: number, maxSide: number): PdfImagePr
       continue;
     }
 
-    // 兜底：若前一个二进制流里出现孤立 `<<(` 造成外层未闭合，检查内层配平字典是否已是超限图像（按单调下界避免重复回扫）
+    // 兜底 1：若前一个二进制流里出现孤立 `<<(` 且其后有 `endstream`，从 `endstream` 后第一个 `<<` 正向重解析（保留字符串与 `%` 注释上下文）
+    if (lastEndstream > earliestOpen && lastEndstream < endExclusive) {
+      const afterEsOpen = buf.indexOf(OPEN_DICT_NEEDLE, lastEndstream);
+      if (afterEsOpen >= 0 && afterEsOpen < endExclusive) {
+        const esHardEnd = Math.min(n, Math.max(endExclusive, afterEsOpen + DICT_LOOKBACK * 2));
+        parseDictRange(buf, afterEsOpen, endExclusive, esHardEnd, innerParsed);
+        work += Math.max(1, innerParsed.endPos - afterEsOpen);
+        if (!innerParsed.crossedSoftEnd && innerParsed.unclosed === 'none') {
+          const esProblem = imageProblemOf(innerParsed, maxPixels, maxSide);
+          if (esProblem) return esProblem;
+        } else if (innerParsed.unclosed === 'none' && innerParsed.depth === 0 && isFollowedByStream(buf, innerParsed.endPos)) {
+          const esProblem = imageProblemOf(innerParsed, maxPixels, maxSide);
+          if (esProblem) return esProblem;
+        }
+      }
+    }
+
+    // 兜底 2：无 `endstream` 分隔时，按保留字面量字符串上下文的反向配平找内层字典核对（按单调下界避免重复回扫）
     const innerFloor = Math.max(earliestOpen + 2, lastInnerEnd);
     lastInnerEnd = Math.max(lastInnerEnd, endExclusive);
     const innerOpen = findInnerBalancedOpen(buf, innerFloor, endExclusive);

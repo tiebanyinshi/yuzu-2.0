@@ -130,12 +130,24 @@ describe('PDF 内嵌图片尺寸流式检查（Codex 安全审查 bfc32cd）', (
     );
     expect(checkPdfImageLimit(nonStreamThenNormal)).toBeNull();
 
-    // 前一个二进制流里出现未闭合的 << 与 ( 不影响后一个超限图像对象检出
+    // 前一个二进制流里出现未闭合的 << 与 ( 不影响后一个超限图像对象检出（含 /Comment (>>)、转义括号与诱饵字符串，Codex 审查 e4611e1）
     const afterBinary = Buffer.from(
       '%PDF-1.4\n1 0 obj\n<< /Length 8 >>\nstream\n<<((raw!\nendstream\nendobj\n2 0 obj\n<< /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n',
       'latin1',
     );
     expect(checkPdfImageLimit(afterBinary)).toEqual({ width: 12000, height: 12000 });
+    const afterBinaryWithCommentClose = Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<< /Length 3 >>\nstream\n<<(\nendstream\nendobj\n2 0 obj\n<< /Comment (>>) /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n',
+      'latin1',
+    );
+    expect(checkPdfImageLimit(afterBinaryWithCommentClose)).toEqual({ width: 12000, height: 12000 });
+    const afterRawUnclosedNoEndstream = Buffer.from('%PDF-1.4\n<<((raw << /Comment (a \\) >> \\\\) /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\n', 'latin1');
+    expect(checkPdfImageLimit(afterRawUnclosedNoEndstream)).toEqual({ width: 12000, height: 12000 });
+    const afterBinaryWithDecoyStream = Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<< /Length 3 >>\nstream\n<<(\nendstream\nendobj\n2 0 obj\n<< /Subtype /Image /Comment (>><< >>stream\n) /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n',
+      'latin1',
+    );
+    expect(checkPdfImageLimit(afterBinaryWithDecoyStream)).toEqual({ width: 12000, height: 12000 });
 
     // 同一字典里塞数百个 (>>stream\n) 诱饵也能单趟检出
     const manyDecoys = sample(`<< ${'/C (>>stream\n) '.repeat(400)}/Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>`);
