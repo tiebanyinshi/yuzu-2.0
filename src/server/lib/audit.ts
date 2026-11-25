@@ -357,6 +357,8 @@ export type AuditAction =
   | 'dish_active_set'
   | 'dish_price_changed'
   | 'dishes_imported'
+  // 8.1.39：菜品的计价方式（按价目 / 时价、杂项 / 称重）
+  | 'dish_price_mode'
   // 8.1.15 房态中心：服务房间的登记、续钟、换房、退房、并房 / 拆并，改房态（待清、清洁完成、维修、恢复），后台的房型
   | 'room_center_register'
   | 'room_center_extend'

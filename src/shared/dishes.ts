@@ -7,6 +7,7 @@
 //   · 改价记录：改前、改后、谁、几点、原因，只追加；以前的订单照下单时的价（明细上本来就留着当时的单价）。
 // 没写细的地方按默认做（docs/PENDING_DECISIONS.md「块 C：菜品管理」CP1–CP12，待确认）。
 
+import type { PriceMode } from './dish-price-mode';
 import { PRICE_TIER_LABELS, PRICE_TIERS, type PriceTier, type TierPrice } from './catalog';
 import { DINING_OUTLET_LABELS, isDiningOutlet, MAX_DISH_NOTE, outletDef, type DiningOutlet } from './dining';
 import { formatYuan } from './money';
@@ -262,6 +263,8 @@ export interface DishRow {
   /** 规格 = 价目里的档；price 是默认档的价（点单页卖的就是它，CP1） */
   prices: TierPrice[];
   price: number;
+  /** 计价方式（8.1.39）：按价目 / 时价、杂项 / 称重 */
+  priceMode: PriceMode;
   /** 上架 / 下架 */
   active: boolean;
   /** 今天的沽清：null 不限量，0 已沽清 */

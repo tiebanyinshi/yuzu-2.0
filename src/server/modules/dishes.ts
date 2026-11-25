@@ -81,6 +81,8 @@ import { emenuImage, saveEmenuImage } from './emenu/core';
 import { abandonedError, businessDate } from './frontdesk/common';
 import { pricesColumn } from './pricing';
 import { assertNotPriceLinked } from './price-catalog/linked';
+import { setDishPriceMode } from './dish-price-mode';
+import type { PriceMode } from '@shared/dish-price-mode';
 
 /** 菜品的图片地址（图存在电子菜单的图片表里；这个地址给有菜品权限的人看） */
 const dishImageUrl = (id: number | null | undefined) => (id ? `/api/dining/dishes/images/${id}` : null);
@@ -109,6 +111,7 @@ interface DishBase {
   emenuImageId: number | null;
   dishSort: number | null;
   deletedAt: string | null;
+  priceMode: PriceMode;
   rev: string;
   updatedAt: string;
 }
@@ -120,7 +123,8 @@ async function loadDishRows(db: Db, today: string, onlyIds?: number[]): Promise<
     SELECT i.id, i.name, i.category, i.active, i.station_id, s.name AS station_name, s.active AS station_active, i.dining_outlet, i.dining_group,
            i.dish_image_id, ${pricesColumn(db, { base: true })} AS prices,
            (SELECT d.remaining FROM dish_limits d WHERE d.item_id = i.id AND d.business_date = ${today}) AS remaining,
-           ed.name AS emenu_name, ed.image_id AS emenu_image_id, ${REV(db)} AS rev, i.updated_at, i.dish_sort, i.dish_deleted_at AS deleted_at
+           ed.name AS emenu_name, ed.image_id AS emenu_image_id, ${REV(db)} AS rev, i.updated_at, i.dish_sort, i.dish_deleted_at AS deleted_at,
+           i.price_mode
     FROM service_items i JOIN kitchen_stations s ON s.id = i.station_id
     LEFT JOIN emenu_dish_specs sp ON sp.item_id = i.id LEFT JOIN emenu_dishes ed ON ed.id = sp.dish_id
     WHERE NOT i.technician_required ${onlyIds ? db`AND i.id IN ${db(onlyIds)}` : db``}
@@ -166,6 +170,7 @@ async function loadDishRows(db: Db, today: string, onlyIds?: number[]): Promise<
       stationActive: r.stationActive,
       prices,
       price: defaultPrice(prices),
+      priceMode: r.priceMode,
       active: r.active,
       remaining: r.remaining,
       imageId: r.dishImageId,
@@ -1128,6 +1133,8 @@ export function registerDishRoutes(app: FastifyInstance, deps: Deps) {
   app.put('/api/dining/dishes/:id', { preHandler: manage }, async (req) => updateDish(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.post('/api/dining/dishes/:id/active', { preHandler: manage }, async (req) => setDishActive(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.post('/api/dining/dishes/:id/price', { preHandler: guard(DISH_PRICE_PERMISSION) }, async (req) => changeDishPrice(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
+  // 8.1.39：计价方式（按价目 / 时价、杂项 / 称重），与改价同一项权限
+  app.post('/api/dining/dishes/:id/price-mode', { preHandler: guard(DISH_PRICE_PERMISSION) }, async (req) => setDishPriceMode(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   // 8.1.17（BW10）：排序、批量上下架、删除（下架并隐藏）与恢复
   app.post('/api/dining/dishes/sort', { preHandler: manage }, async (req) => sortDishes(deps, req.body, ctxOf(req)));
   app.post('/api/dining/dishes/active-bulk', { preHandler: manage }, async (req) => setDishesActive(deps, req.body, ctxOf(req)));

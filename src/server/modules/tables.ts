@@ -47,6 +47,7 @@ import { currentStoreId } from '../lib/store-context';
 import { assertMergeGroupsComplete, assertNotMerged, assertSessionsStayed, assertTableUsable, lockTablesOfSessions, markTablesDirty, mergeInfoOf, withMergeGroups } from './tables-v8115';
 import { assertOrderOutlets, OrderNoteField, VoidBlameField } from './dining-order-v8115';
 import { DishLineFields, kitchenPartsOf, limitLinesOf, planDishLines } from './dish-lines';
+import { applyPriceMode, PriceModeFields } from './dish-price-mode';
 import { lockAddonLines, pendingAddonsColumn, voidAddonLines, WithAddonsField } from './dish-addon-void';
 import type { TableState } from '@shared/dining-v8115';
 
@@ -395,6 +396,8 @@ export const TablePostInput = z.object({
         /** 8.1.17（docs/DISHES_V8117.md）：规格（档）、做法、加料挂在哪一行主菜上；都不带时与升级前的请求完全相同（幂等摘要不变） */
         tier: z.enum(PRICE_TIERS, '规格不正确').optional(),
         ...DishLineFields,
+        /** 8.1.39：时价 / 杂项填的价、称重的斤数与每斤单价；不带时与升级前的请求完全相同 */
+        ...PriceModeFields,
       }),
     )
     .min(1, '请至少点一道菜')
@@ -432,19 +435,31 @@ export async function postTableCharges(deps: Deps, id: number, raw: unknown, ctx
       tx,
       input.lines.map((l) => l.itemId),
     );
+    const pricedOnSite: Record<string, unknown>[] = [];
     const priced = input.lines.map((l) => {
       const item = items.get(l.itemId);
       // 8.1.17（BW5）：按选的档计价（不带按默认档，与以前一样）
-      const line = priceLine(item, l.tier, l.quantity, '有菜已停用，请刷新后重新点');
+      const listed = priceLine(item, l.tier, l.quantity, '有菜已停用，请刷新后重新点');
       const stationId = stations.get(l.itemId) ?? null;
       if (stationId === null) throw unprocessable('DISH_NOT_KITCHEN', `「${item!.name}」不是点单的菜，桌台只能点进厨房的菜`);
-      return { ...line, stationId };
+      // 8.1.39：时价 / 杂项、称重按点的时候填的价、斤数计
+      const mode = applyPriceMode(item!.priceMode, listed, l, { channel: false });
+      if (mode.detail) pricedOnSite.push({ name: mode.line.name, ...mode.detail });
+      return { ...mode.line, stationId, priceNote: mode.note };
     });
     // 8.1.17：做法（分组、加价、必选）与加料，与手牌点单同一个核对（dish-lines.ts）；加价按份加进单价
     const plans = await planDishLines(tx, input.lines, { strict: true, isDish: () => true, nameOf: (id) => items.get(id)?.name ?? '这道菜' });
     const lines = priced.map((l, i) => {
       const unitPrice = l.unitPrice + plans[i]!.extra;
-      return { ...l, itemId: l.itemId!, unitPrice, amount: unitPrice * l.quantity, note: plans[i]!.note, addonOf: plans[i]!.addonOf, parts: plans[i]!.parts };
+      return {
+        ...l,
+        itemId: l.itemId!,
+        unitPrice,
+        amount: unitPrice * l.quantity,
+        note: [l.priceNote, plans[i]!.note].filter(Boolean).join('，'),
+        addonOf: plans[i]!.addonOf,
+        parts: plans[i]!.parts,
+      };
     });
     const total = lines.reduce((sum, l) => sum + l.amount, 0);
     if (total !== input.expectedTotal) {
@@ -478,7 +493,12 @@ export async function postTableCharges(deps: Deps, id: number, raw: unknown, ctx
       action: 'table_post',
       targetType: 'table_session',
       targetId: s.id,
-      detail: { sessionNo: s.sessionNo, total, lines: lines.map((l) => `${l.name}×${l.quantity}${l.note ? `（${l.note}）` : ''}`) },
+      detail: {
+        sessionNo: s.sessionNo,
+        total,
+        lines: lines.map((l) => `${l.name}×${l.quantity}${l.note ? `（${l.note}）` : ''}`),
+        ...(pricedOnSite.length ? { pricedOnSite } : {}),
+      },
       ip: ctx.ip,
       businessDate: date,
     });

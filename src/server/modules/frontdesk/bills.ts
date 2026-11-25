@@ -21,6 +21,7 @@ import { cancelKitchenItem, createKitchenItems, kitchenStationsOf, takeDishLimit
 import { authorizeLineVoid } from '../dining-808';
 import { assertOrderOutlets, DeliverRoomField, OrderNoteField, VoidBlameField } from '../dining-order-v8115';
 import { DishLineFields, kitchenPartsOf, limitLinesOf, planDishLines, type ComboPartPlan } from '../dish-lines';
+import { applyPriceMode, PriceModeFields } from '../dish-price-mode';
 import { lockAddonLines, voidAddonLines, WithAddonsField } from '../dish-addon-void';
 import { assertAfterVisits, backfillDetail, BackfillInput, recordBackfill, resolveBackfill, type Backfill } from './backfill';
 import { getVisit } from './visits';
@@ -58,6 +59,8 @@ export const PostInput = z
               .transform((v) => v || undefined),
             /** 8.1.17（docs/DISHES_V8117.md）：选的做法、加料挂在哪一行主菜上；不带时与升级前的请求完全相同（幂等摘要不变） */
             ...DishLineFields,
+            /** 8.1.39：时价 / 杂项填的价、称重的斤数与每斤单价（docs/V8139.md 第 2 节）；不带时与升级前的请求完全相同 */
+            ...PriceModeFields,
           })
           .refine((l) => (l.technicianId === undefined) === (l.callType === undefined), '选了技师时请同时选择点钟或轮钟'),
       )
@@ -215,6 +218,9 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
     parts: ComboPartPlan[] | null;
   };
   const lines: Line[] = [];
+  // 8.1.39：现场定价、称重的那几行（写进出品单备注与审计）
+  const priceNotes = new Map<number, string>();
+  const priceModeDetails: Record<string, unknown>[] = [];
   for (const l of input.lines) {
     const item = items.get(l.itemId);
     if (item?.gender && item.gender !== visit.zone) {
@@ -239,12 +245,17 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
     } else if (withTech && techRules.requireTechnician) {
       throw unprocessable('TECHNICIAN_REQUIRED', `「${item!.name}」需要选技师与点钟 / 轮钟`);
     }
-    const priced = priceLine(item, tier, l.quantity, '有项目已停用，请刷新后重新选择');
+    const listed = priceLine(item, tier, l.quantity, '有项目已停用，请刷新后重新选择');
     const stationId = withTech ? null : (stations.get(l.itemId) ?? null);
     if (options.dining?.onlyKitchen && stationId === null) {
       throw unprocessable('DISH_NOT_KITCHEN', `「${item!.name}」不是点单的菜，请到前台登记`);
     }
     if (l.note && stationId === null) throw unprocessable('DISH_NOTE_NOT_ALLOWED', `「${item!.name}」不进厨房，不用写口味备注`);
+    // 8.1.39：时价 / 杂项、称重的菜按点的时候填的价、斤数计（小程序扫码点餐、平板电子菜单点不了，请服务员点）
+    const mode = applyPriceMode(item!.priceMode, listed, l, { channel: !!channel || meta.deliverTo !== undefined });
+    const priced = mode.line;
+    if (mode.detail) priceModeDetails.push({ name: priced.name, ...mode.detail });
+    priceNotes.set(lines.length, mode.note);
     lines.push({
       ...priced,
       source: withTech ? 'therapist' : stationId !== null ? 'dining' : 'bath',
@@ -286,7 +297,7 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
     const line = lines[i]!;
     line.unitPrice += p.extra;
     line.amount = line.unitPrice * line.quantity;
-    line.note = p.note;
+    line.note = [priceNotes.get(i) ?? '', p.note].filter(Boolean).join('，');
     line.addonOf = p.addonOf;
     line.parts = p.parts;
   });
@@ -380,6 +391,8 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
       lines: lines.map((l) => `${l.name}×${l.quantity}${l.techText ? `（${l.techText}）` : ''}${l.note ? `（${l.note}）` : ''}`),
       // 8.1.37：手动金额逐行记金额（以前只有名称×数量和合计）
       ...(input.customLines.length ? { manualLines: input.customLines.map((l) => ({ name: l.name, amount: l.amount })) } : {}),
+      // 8.1.39：现场定价、称重的那几行（填的价、斤数、价目的价）
+      ...(priceModeDetails.length ? { pricedOnSite: priceModeDetails } : {}),
       ...backfillDetail(backfill),
     },
     ip: ctx.ip,

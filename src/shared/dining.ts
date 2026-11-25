@@ -8,6 +8,7 @@
 //   · 退菜就是作废这条明细（前台、点单页都可以），厨房屏上显示「已退」；
 //   · 下单多少分钟还没出餐标红提醒（默认 15 分钟）。
 
+import type { PriceMode } from './dish-price-mode';
 import type { CheckoutMember } from './checkout';
 import type { LedgerKind, LedgerVoidRate, TableStateInfo, VoidBlame } from './dining-v8115';
 import type { TierPrice } from './catalog';
@@ -290,6 +291,8 @@ export interface MenuDish {
   methodOptions?: DishMethodOption[];
   methodGroups?: DishMethodGroup[];
   prices?: TierPrice[];
+  /** 计价方式（8.1.39）：时价 / 杂项、称重的才带，点的时候填价、斤数；按价目的不带 */
+  priceMode?: Exclude<PriceMode, 'fixed'>;
 }
 
 export interface DiningMenu {

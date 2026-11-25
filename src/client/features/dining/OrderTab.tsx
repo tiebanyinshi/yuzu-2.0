@@ -37,6 +37,8 @@ import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Segmented, Ske
 import { PendingPanel, useFrontdeskOp, useFrontdeskPending } from '../frontdesk/pending';
 import { guestKey, menuKey, useDiningMenu, useTableSession, useTablesBoard } from './queries';
 import { DishOptionsDialog, methodOptionsOf, needsOptions, swappableOf, tierPriceOf, type PickedLine } from './DishOptionsDialog';
+import { PriceEntryDialog } from './DishPriceMode';
+import { weighedAmount, weightText } from '@shared/dish-price-mode';
 import { DishVoidDialog } from './DishVoid';
 import { ReceiptDialog, type ReceiptTarget } from './ReceiptDialog';
 import { GroupChips, OutletEntry, OutletFilter } from './slots';
@@ -58,10 +60,19 @@ interface CartLine {
   addonOf?: string;
   /** 套餐换菜（8.1.17 BW7） */
   swaps?: DishSwapChoice[];
+  /** 8.1.39 时价 / 杂项填的价、称重的每斤单价（称重不带按价目的价）；称重的斤数（0.01 斤） */
+  customPrice?: number;
+  weight?: number;
 }
 
 /** 一行的单价：选的档的价 + 做法加价 + 换菜差价（与服务端同样算；对不上服务端会拒绝，按新价重新确认） */
-const unitOf = (l: CartLine, dish: MenuDish | null) => (dish ? tierPriceOf(dish, l.tier) + methodsExtra(methodOptionsOf(dish), l.methods ?? []) + comboChoice(dish.combo ?? [], l.swaps).extra : 0);
+const unitOf = (l: CartLine, dish: MenuDish | null) => (dish ? basePriceOf(l, dish) + methodsExtra(methodOptionsOf(dish), l.methods ?? []) + comboChoice(dish.combo ?? [], l.swaps).extra : 0);
+/** 8.1.39：时价 / 杂项按填的价；称重按每斤单价 × 斤数（四舍五入到分，与服务端同样算） */
+function basePriceOf(l: CartLine, dish: MenuDish): number {
+  if (dish.priceMode === 'open' && l.customPrice) return l.customPrice;
+  if (dish.priceMode === 'weight' && l.weight) return weighedAmount(l.customPrice ?? tierPriceOf(dish, l.tier), l.weight);
+  return tierPriceOf(dish, l.tier);
+}
 const swapKey = (swaps: readonly DishSwapChoice[] | undefined) =>
   (swaps ?? [])
     .map((w) => `${w.from}>${w.to}`)
@@ -154,6 +165,8 @@ export function OrderTab() {
   const [voiding, setVoiding] = useState<{ dish: PendingDish; mode: 'void' | 'modify' } | null>(null);
   /** 正在选做法、加料的那道菜（8.1.15 菜品管理：有做法或加料的菜点了先弹出来选） */
   const [picking, setPicking] = useState<MenuDish | null>(null);
+  /** 8.1.39：正在填价 / 称重的那道菜 */
+  const [pricing, setPricing] = useState<MenuDish | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const op = useFrontdeskOp<DiningGuest | TableSessionDetail | true>({
     type: mode === 'table' ? 'table_post' : 'bill_post',
@@ -285,6 +298,8 @@ export function OrderTab() {
 
   const add = (d: MenuDish) => {
     if (d.remaining === 0) return;
+    // 8.1.39：时价 / 杂项、称重的菜先填价、斤数，每次另起一行
+    if (d.priceMode) return setPricing(d);
     // 多档、有做法或加料的菜：先选（DishOptionsDialog），选好了再加进已点
     if (needsOptions(d)) return setPicking(d);
     setCart((c) => {
@@ -366,6 +381,8 @@ export function OrderTab() {
       ...(l.addonOf ? { addonOf: cart.findIndex((m) => m.key === l.addonOf) } : {}),
       ...(l.swaps?.length ? { swaps: l.swaps } : {}),
       ...(l.note.trim() ? { note: l.note.trim() } : {}),
+      ...(l.customPrice ? { customPrice: l.customPrice } : {}),
+      ...(l.weight ? { weight: l.weight } : {}),
     }));
     const summary = `点单 ${named.map((n) => `${n.name}×${n.quantity}${n.note ? `（${n.note}）` : ''}`).join('、')}`.slice(0, 120);
     const ok = await op.submit((key) =>
@@ -697,7 +714,7 @@ export function OrderTab() {
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     {/* 窄屏（手机点单）上菜名单独一行，份数与金额换到下一行 */}
                     <span className={cn('min-w-0 flex-1 basis-32 truncate text-[14px] font-bold', !l.dish && 'text-clay line-through')}>
-                      {l.dish ? `${l.dish.name}${l.tier && l.dish.prices ? `（${PRICE_TIER_LABELS[l.tier]}）` : ''}` : '已下架'}
+                      {l.dish ? `${l.dish.name}${l.tier && l.dish.prices ? `（${PRICE_TIER_LABELS[l.tier]}）` : ''}${l.weight ? ` ${weightText(l.weight)}` : ''}` : '已下架'}
                     </span>
                     <span className="ml-auto flex items-center gap-2">
                       <button
@@ -932,6 +949,16 @@ export function OrderTab() {
 
       <ReceiptDialog target={receipt} onClose={() => setReceipt(null)} />
 
+      <PriceEntryDialog
+        dish={pricing}
+        onClose={() => setPricing(null)}
+        onAdd={(entry) => {
+          const d = pricing!;
+          setCart((c) => [...c, { key: uuid(), dishId: d.id, quantity: 1, note: '', ...entry }]);
+          setPricing(null);
+          op.clearError();
+        }}
+      />
       <DishOptionsDialog
         dish={picking}
         remainingOf={(id) => {

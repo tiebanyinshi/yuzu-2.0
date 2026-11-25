@@ -6,6 +6,7 @@
 // 并发：挂账、作废的加锁顺序是「来访 → 账单 → 明细 → （技师队列 → 钟单 → 技师状态）→ 沽清 → 出品单」；
 // 厨房屏的开始 / 出餐 / 上菜只锁出品单一行，设沽清只锁沽清一行，都不反向加锁。
 
+import type { PriceMode } from '@shared/dish-price-mode';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
@@ -263,17 +264,18 @@ export async function kitchenDishes(db: Db, today: string): Promise<MenuDish[]> 
       diningOutlet: string | null;
       diningGroup: string;
       catalogCategory: MenuDish['catalogCategory'];
+      priceMode: PriceMode;
     }[]
   >`
     SELECT i.id, i.name, i.category, i.station_id, s.name AS station_name, ${pricesColumn(db)} AS prices,
            (SELECT d.remaining FROM dish_limits d WHERE d.item_id = i.id AND d.business_date = ${today}) AS remaining,
-           i.dining_outlet, i.dining_group,
+           i.dining_outlet, i.dining_group, i.price_mode,
            CASE WHEN i.catalog_category_code IS NULL THEN NULL
                 ELSE json_build_object('code', i.catalog_category_code, 'name', i.catalog_category_name, 'group', coalesce(i.catalog_group, ''), 'sort', coalesce(i.catalog_sort, 0)) END AS catalog_category
     FROM service_items i JOIN kitchen_stations s ON s.id = i.station_id AND s.active
     WHERE i.active AND NOT i.technician_required ORDER BY i.dish_sort NULLS LAST, s.sort_order, s.id, i.sort_order, i.id`;
   // 8.1.17（BW10）：菜品表里排过的按排的先后（同一个小类挨在一起），没排过的在后面、照原来的顺序
-  return rows.map(({ prices, diningOutlet, diningGroup, catalogCategory, ...r }) => {
+  return rows.map(({ prices, diningOutlet, diningGroup, catalogCategory, priceMode, ...r }) => {
     const slot = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category: r.category, stationName: r.stationName });
     // 8.1.17（BW5）：多档的菜带上各档的价，点单时弹出来选；只有一档的不带。价目表来的菜带上「餐段 → 分类」（重做第三批）
     return {
@@ -283,6 +285,8 @@ export async function kitchenDishes(db: Db, today: string): Promise<MenuDish[]> 
       group: slot.group,
       ...(prices.length > 1 ? { prices: sortTiers(prices) } : {}),
       ...(catalogCategory ? { catalogCategory } : {}),
+      // 8.1.39：时价 / 杂项、称重的菜才带（点单页点的时候弹出来填价、斤数）
+      ...(priceMode !== 'fixed' ? { priceMode } : {}),
     };
   });
 }
