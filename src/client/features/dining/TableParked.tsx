@@ -21,7 +21,7 @@ interface Parked {
 export const parkedKey = ['dining', 'tables-parked'] as const;
 
 export function ParkedPanel({ canCheckout, onOpen, onCheckout }: { canCheckout: boolean; onOpen: (id: number) => void; onCheckout: (id: number) => void }) {
-  const q = useQuery({ queryKey: parkedKey, queryFn: () => api.get<{ parked: Parked[] }>('/api/dining/tables/parked'), refetchInterval: 30_000 });
+  const q = useQuery({ queryKey: parkedKey, queryFn: () => api.get<{ parked: Parked[] }>('/api/dining/tables/parked') });
   const list = q.data?.parked ?? [];
   if (list.length === 0) return null;
   return (
