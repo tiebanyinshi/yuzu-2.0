@@ -8,7 +8,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import { can } from '@shared/permissions';
 import {
@@ -31,6 +31,8 @@ import {
 } from '@shared/training';
 import type { Db, Tx } from '../db';
 import { guard } from '../auth/guard';
+import { NOT_EMPLOYEE_ROLES } from './oa/org';
+import { onDutyIds } from './oa/im';
 import { writeAudit } from '../lib/audit';
 import { ctxOf, type Actor, type Deps, type OpContext } from '../lib/context';
 import { AppError, badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
@@ -902,8 +904,13 @@ const contentSlots = createStreamSlots({
 
 export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
-  // 登录了就行（改完初始密码、选好岗位以后）；看得到哪些文件夹在接口里按岗位所在部门核对
-  const loggedIn = guard();
+  // 只有在职员工能看（Codex 安全审查 b638705）：平板（电子菜单）、他店、设计师等专用账号、系统账号、已离职的一律拒绝；
+  // 看得到哪些文件夹在接口里再按岗位所在部门核对
+  const signedIn = guard();
+  const loggedIn: preHandlerAsyncHookHandler = async function (req, reply) {
+    await signedIn.call(this, req, reply);
+    if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(req.actor.role) || !(await onDutyIds(sql, [req.actor.id])).length) throw forbidden('这个账号不能看员工培训');
+  };
   const manage = guard(MANAGE);
 
   app.get('/api/training/folders', { preHandler: loggedIn }, async (req) => listFolders(sql, req.actor));

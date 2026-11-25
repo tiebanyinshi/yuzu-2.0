@@ -6,7 +6,8 @@ import { TRAINING_CHUNK_BYTES, type TrainingFile, type TrainingFileDetail, type 
 import { buildWorkbook, buildXlsx, zip } from '../src/server/lib/xlsx';
 import { setTrainingQuotaForTest, sweepTrainingUploads } from '../src/server/modules/training';
 import { unzip } from '../src/server/lib/xlsx-read';
-import { api, setup, type TestContext } from './helpers';
+import { createStaff } from '../src/server/modules/staff';
+import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
 beforeAll(async () => {
@@ -393,5 +394,23 @@ describe('员工培训', () => {
     const ls = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${l.done.body.fileId}/sheet`);
     expect(ls.body.sheets[0].rows[1][0]).toHaveLength(2001);
     expect(ls.body.sheets[0].truncated).toBe(true);
+  });
+
+  it('专用账号（平板、他店、设计师）不能看员工培训（Codex 安全审查 b638705）', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const up = await upload(PDF(1000), 'special.pdf', 'application/pdf', { folderId: pub.id, title: '专用账号不能看' });
+    expect(up.done.status, JSON.stringify(up.done.body)).toBe(200);
+    const fileId = up.done.body.fileId;
+    for (const role of ['tablet', 'other_store', 'designer'] as const) {
+      const username = `train_${role}`;
+      await createStaff(ctx.sql, { username, displayName: username, role, password: PASSWORD, mustChangePassword: false });
+      const cookie = await login(ctx.app, username);
+      for (const url of ['/api/training/folders', `/api/training/folders/${pub.id}/files`, `/api/training/files/${fileId}/sheet`, `/api/training/files/${fileId}/content`]) {
+        expect((await api(ctx.app, cookie, 'GET', url)).status, `${role} ${url}`).toBe(403);
+      }
+      expect((await api(ctx.app, cookie, 'POST', `/api/training/files/${fileId}/viewed`, {})).status).toBe(403);
+    }
+    // 在职员工照常能看
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${fileId}/content`)).status).toBe(200);
   });
 });
