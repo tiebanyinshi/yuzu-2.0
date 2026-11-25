@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
 import { fileSizeText } from '@shared/floorplans';
-import { trainingFormatLabel, type TrainingFile, type TrainingSheetBook } from '@shared/training';
+import { pdfRenderScale, trainingFormatLabel, type TrainingFile, type TrainingSheetBook } from '@shared/training';
 import { api, errorMessage } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -152,8 +152,10 @@ function PdfPage({ docRef, pageNo }: { docRef: React.RefObject<import('pdfjs-dis
       const page = await doc.getPage(pageNo);
       const width = holder.current?.clientWidth || 800;
       const base = page.getViewport({ scale: 1 });
-      const ratio = Math.min(window.devicePixelRatio || 1, 2);
-      const viewport = page.getViewport({ scale: (width / base.width) * ratio });
+      // 画布大小有上限：PDF 里写的页面比例再怪，一页也只占有限的内存（Codex 安全审查 04eb112）
+      const scale = pdfRenderScale(base.width, base.height, width, window.devicePixelRatio || 1);
+      if (!scale || cancelled) return;
+      const viewport = page.getViewport({ scale });
       el.width = Math.round(viewport.width);
       el.height = Math.round(viewport.height);
       const g = el.getContext('2d');
