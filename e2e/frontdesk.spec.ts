@@ -292,7 +292,7 @@ test.describe('前台布局', () => {
     }
   });
 
-  test('结账对话框：储值只能用本次结账客人里的会员（不再搜索其他会员）；登记现金后无横向滚动', async ({ page }) => {
+  test('结账对话框：储值只能用本次结账客人里的会员（不再搜索其他会员）；买单时查会员；登记现金后无横向滚动', async ({ page }) => {
     await login(page, 'linlan');
     await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
@@ -305,6 +305,14 @@ test.describe('前台布局', () => {
     await expect(page.getByTestId('pay-row-wallet')).toContainText('本次结账的客人里没有会员');
     await expect(page.getByTestId('pay-row-wallet')).toContainText('同行朋友请合并到同一张结账单');
     await expect(page.getByLabel('查找付款会员')).toHaveCount(0);
+    // 8.1.44：买单时按手机号查会员——写余额与充没充过值，能记到这张散客牌上（只看不记，可重复执行）
+    const someone = ((await (await page.request.get('/api/members?q=1990&limit=5')).json()) as { phone: string; memberNo: string; status: string }[]).find((m) => m.status === 'active')!;
+    await page.getByTestId('checkout-member-q').fill(someone.phone);
+    await page.getByTestId('checkout-member-search').click();
+    const hit = page.getByTestId(`checkout-member-hit-${someone.memberNo}`);
+    await expect(hit).toContainText('余额');
+    await expect(hit).toContainText(/充过|没充过值|有余额/);
+    await expect(hit.getByTestId('checkout-member-bind').or(hit.getByTestId('checkout-member-merge'))).toBeVisible();
     await page.getByTestId('pay-add-cash').click();
     await page.getByLabel('客人实给现金').fill('1000');
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);

@@ -109,6 +109,7 @@
 - [`V8141.md`](V8141.md)：8.1.41 自定义轮班周期与成本卡
 - [`V8141_ROTA.md`](V8141_ROTA.md)：8.1.41（轮班）：自定义轮班周期
 - [`V8144_CASHIER.md`](V8144_CASHIER.md)：8.1.44（收银台）：《前台系统开发》里收银台的六条
+- [`V8144_FRONTDESK.md`](V8144_FRONTDESK.md)：8.1.44（前台 B）：已发券改条件、混合支付、同行组建与拆分、房态显示预约、买单时查会员
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
 - [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面

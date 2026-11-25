@@ -1,7 +1,8 @@
 // 券与会员权益（v0.7.20，飞书 RQ-006 后半；docs/COUPONS.md）浏览器验收：
 //   ① 店主在管理后台「券与会员权益」：新建代金券模板、加一条充值赠券规则、生成一批无记名券并导出券码、看统计；
 //   ② 会员详情「券」：发两张、作废一张（写原因）；
-//   ③ 充值页选套餐时显示「另赠」的券。
+//   ③ 充值页选套餐时显示「另赠」的券；
+//   ④ 8.1.44：发过券的模板只能改使用条件（门槛等），面额、有效期禁用。
 // 依赖 seed-demo（仅独立演示库）。账号：店主 linlan，密码 yuzu2026。每次新建自己的模板（名称带时间），结束时停用自己加的规则，可重复执行。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
@@ -157,6 +158,18 @@ test.describe('券与会员权益（v0.7.20）', () => {
       await expect(row).toContainText(name);
       await expect(row.locator('td').nth(1)).toHaveText('5');
       await expect(row.locator('td').nth(5)).toHaveText('1');
+
+      // ⑦ 8.1.44：发过券的模板，面额改不了，门槛（使用条件）能改、保存后马上生效
+      await page.goto('/admin/coupons/templates');
+      await page.getByTestId(`coupon-template-edit-${template.id}`).click();
+      const edit = page.getByTestId('coupon-template-dialog');
+      await expect(edit.getByTestId('coupon-template-face')).toBeDisabled();
+      await expect(edit.getByTestId('coupon-template-days')).toBeDisabled();
+      await expect(edit.getByTestId('coupon-template-threshold')).toBeEnabled();
+      await edit.getByTestId('coupon-template-threshold').fill('30');
+      await page.getByTestId('coupon-template-save').click();
+      await expect(page.getByText(`已保存「${name}」`)).toBeVisible();
+      expect((await getJson<Template[]>(page, '/api/coupons/templates')).find((t) => t.id === template.id)!.summary).toContain('满 ¥30.00 可用');
     } finally {
       for (const id of addedRules) await page.request.post(`/api/coupons/rules/${id}/deactivate`, { data: {} });
     }

@@ -1,5 +1,5 @@
 // 券与会员权益（v0.7.20，飞书 RQ-006 后半；docs/COUPONS.md）：
-//   · 券模板：三种券、条件校验、发过券后条件锁定（只能改名称、备注、停用）、版本号；
+//   · 券模板：三种券、条件校验、发过券后面额等锁定（名称、备注、停用与使用条件能改，8.1.44）、版本号；
 //   · 发券：手动（操作编号、限定等级、停用模板）、无记名批次（导出、按批作废）、开卡礼、升级礼、生日礼、充值赠券（去重）；
 //   · 结账用券：会员的券在结账核对里列出能抵多少；抵扣按适用明细分摊进部门快照；不与优惠同用、每单 1 张；
 //     金额对不上、别人的券、用过的券都拒绝；反结账退回；桌台结账输入无记名券码；
@@ -631,5 +631,52 @@ describe('8.1.40 券的使用限制、发放台账、结账单印券号', () => 
     const csv = await ctx.app.inject({ method: 'GET', url: `/api/coupons/ledger.csv?from=${today}&to=${today}`, headers: { cookie: ctx.owner } });
     expect(csv.statusCode).toBe(200);
     expect(csv.body).toContain(formatStoreCouponCode(code));
+  });
+});
+
+describe('已发券改使用条件（8.1.44，《前台系统开发》）', () => {
+  it('发过券以后门槛、范围、星期能改，马上对没用掉的券生效、记审计；面额、有效期仍锁着；数据库同样只拦面额', async () => {
+    const m = await createMember(ctx, '改条件会员', '19900008441');
+    const v = await enter([{ itemId: item['券搓澡']!, quantity: 1, price: 6800 }], m.id);
+    const total = (await preview(v)).totalAmount;
+    const t = await template({ name: '满百减十', kind: 'cash', faceValue: 1000, threshold: total + 10000 });
+    expect((await issue(m.id, t.id)).status).toBe(201);
+    const of = async () => (await preview(v)).storeCoupons.find((c) => c.templateName === '满百减十')!;
+    // 账单不到门槛：不能用
+    expect(await of()).toMatchObject({ usable: false });
+
+    const cur = (await api(ctx.app, ctx.owner, 'GET', '/api/coupons/templates')).body.find((x: CouponTemplate) => x.id === t.id) as CouponTemplate;
+    expect(cur.issued).toBe(1);
+    const base = { ...cur, expectedVersion: cur.version };
+    // 面额、有效期照旧不能改
+    const face = await api(ctx.app, ctx.owner, 'PUT', `/api/coupons/templates/${t.id}`, { ...base, faceValue: 2000 });
+    expect(face.body.error.code).toBe('TEMPLATE_LOCKED');
+    expect(face.body.error.details.fields).toEqual(['faceValue']);
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/coupons/templates/${t.id}`, { ...base, validDays: 60 })).body.error.code).toBe('TEMPLATE_LOCKED');
+    // 没有维护券的权限不能改
+    expect((await api(ctx.app, ctx.clerk, 'PUT', `/api/coupons/templates/${t.id}`, { ...base, threshold: 5000 })).status).toBe(403);
+    // 门槛改成 ¥50（账单够了）：同一张券马上能用
+    const lowered = await api(ctx.app, ctx.owner, 'PUT', `/api/coupons/templates/${t.id}`, { ...base, threshold: 5000 });
+    expect(lowered.status, JSON.stringify(lowered.body)).toBe(200);
+    expect(lowered.body.summary).toContain('满 ¥50.00 可用');
+    expect(await of()).toMatchObject({ usable: true, amount: 1000 });
+    // 改成只能在别的星期用：马上不能用
+    const weekday = ((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+    const other = weekday === 7 ? 1 : weekday + 1;
+    const limited = await api(ctx.app, ctx.owner, 'PUT', `/api/coupons/templates/${t.id}`, { ...lowered.body, expectedVersion: lowered.body.version, weekdays: [other] });
+    expect(limited.status, JSON.stringify(limited.body)).toBe(200);
+    expect(await of()).toMatchObject({ usable: false });
+
+    // 审计：改前、改后、已发几张
+    const audits = await ctx.sql<{ detail: { fields: string[]; before: Record<string, unknown>; after: Record<string, unknown>; issued: number } }[]>`
+      SELECT detail FROM audit_logs WHERE action = 'coupon_terms_changed' AND target_id = ${String(t.id)} ORDER BY id`;
+    expect(audits).toHaveLength(2);
+    expect(audits[0]!.detail).toMatchObject({ fields: ['threshold'], before: { threshold: total + 10000 }, after: { threshold: 5000 }, issued: 1 });
+    expect(audits[1]!.detail).toMatchObject({ fields: ['weekdays'], before: { weekdays: [] }, after: { weekdays: [other] } });
+
+    // 数据库兜底：门槛能改，面额不能改
+    await ctx.sql`UPDATE coupon_templates SET threshold = 0 WHERE id = ${t.id}`;
+    await expect(ctx.sql`UPDATE coupon_templates SET face_value = 5000 WHERE id = ${t.id}`).rejects.toThrow(/已经发过券/);
+    await checks();
   });
 });

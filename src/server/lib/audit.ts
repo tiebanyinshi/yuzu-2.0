@@ -93,6 +93,8 @@ export type AuditAction =
   | 'frontdesk_checkin'
   | 'frontdesk_swap'
   | 'frontdesk_group'
+  // 8.1.44：买单时把会员记到手牌上（现场建档或查到的老会员）
+  | 'frontdesk_bind_member'
   | 'frontdesk_cancel'
   | 'frontdesk_post'
   | 'frontdesk_void'
@@ -192,6 +194,8 @@ export type AuditAction =
   | 'checkout_refund'
   | 'checkout_refund_void'
   | 'coupon_template_saved'
+  // 8.1.44：发过券的模板改使用条件（改前、改后、已发几张）
+  | 'coupon_terms_changed'
   | 'coupon_rule_saved'
   | 'coupon_issued'
   | 'coupon_batch_created'
