@@ -40,13 +40,8 @@ export interface CouponLedger {
 
 export const COUPON_LEDGER_STATUS_LABELS: Record<CouponLedgerRow['status'], string> = { available: '未用', used: '已用', voided: '已作废' };
 
-const cell = (v: string | number | null) => {
-  const s = v === null ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-
-/** 导出 CSV：一张券一行 */
-export function couponLedgerCsv(rows: readonly CouponLedgerRow[]): string {
+/** 导出 CSV 的表头与各行（一张券一行）：转义与防公式交给服务端的 toCsv（合并前 Codex 审查 305508f：券名、会员名以 = + @ 开头时不能被表格当公式） */
+export function couponLedgerCsvRows(rows: readonly CouponLedgerRow[]): (string | number)[][] {
   const head = [
     '券号',
     '券',
@@ -87,9 +82,7 @@ export function couponLedgerCsv(rows: readonly CouponLedgerRow[]): string {
       r.hoursToUse,
       r.voidReason,
       r.reason,
-    ]
-      .map(cell)
-      .join(','),
+    ].map((v) => v ?? ''),
   );
-  return [head.join(','), ...body].join('\n');
+  return [head, ...body];
 }

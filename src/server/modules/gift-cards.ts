@@ -13,6 +13,7 @@ import { MAX_GIFT_CARD_BATCH, type GiftCardBatch } from '@shared/gift-cards';
 import { isUniqueViolation, type Db } from '../db';
 import { guard } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
+import { csvReply, toCsv } from '../lib/csv';
 import { ctxOf, type Deps, type OpContext } from '../lib/context';
 import { conflict, notFound } from '../lib/errors';
 import { hashRequest } from '../lib/idempotency';
@@ -121,7 +122,11 @@ export function registerGiftCardRoutes(app: FastifyInstance, deps: Deps) {
     const id = parse(idParam, req.params).id;
     const b = await getGiftCardBatch(deps.sql, id);
     const cards = await giftCardsOf(deps.sql, id);
-    reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="gift-cards-${b.batchNo}.csv"`);
-    return `﻿卡号,名称,已绑手机号,本金余额（元）\n${cards.map((c) => `${c.memberNo},${c.name.replace(/[",\n]/g, ' ')},${c.bound ? '是' : '否'},${(c.principalBalance / 100).toFixed(2)}`).join('\n')}`;
+    // 转义与防公式（名字以 = + @ 开头）交给 toCsv（合并前 Codex 审查 305508f）
+    return csvReply(
+      reply,
+      `gift-cards-${b.batchNo}.csv`,
+      toCsv([['卡号', '名称', '已绑手机号', '本金余额（元）'], ...cards.map((c) => [c.memberNo, c.name, c.bound ? '是' : '否', (c.principalBalance / 100).toFixed(2)])]),
+    );
   });
 }

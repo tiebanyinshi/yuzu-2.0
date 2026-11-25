@@ -631,6 +631,13 @@ describe('8.1.40 券的使用限制、发放台账、结账单印券号', () => 
     const csv = await ctx.app.inject({ method: 'GET', url: `/api/coupons/ledger.csv?from=${today}&to=${today}`, headers: { cookie: ctx.owner } });
     expect(csv.statusCode).toBe(200);
     expect(csv.body).toContain(formatStoreCouponCode(code));
+    // 券名以 = 开头：导出里当文本（合并前 Codex 审查 305508f）
+    const evil = await template({ name: '=SUM(1,2)', kind: 'cash', faceValue: 100 });
+    const member = (await ctx.sql<{ id: number }[]>`SELECT id FROM members ORDER BY id LIMIT 1`)[0]!;
+    expect((await issue(Number(member.id), evil.id, 1, ctx.owner)).status).toBe(201);
+    const csv2 = await ctx.app.inject({ method: 'GET', url: `/api/coupons/ledger.csv?from=${today}&to=${today}`, headers: { cookie: ctx.owner } });
+    expect(csv2.body).toContain(`"'=SUM(1,2)"`);
+    expect(csv2.body).not.toMatch(/,=SUM/);
   });
 });
 

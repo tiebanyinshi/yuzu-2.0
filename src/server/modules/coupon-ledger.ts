@@ -9,11 +9,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { COUPON_ISSUE_KINDS, COUPON_ISSUE_KIND_LABELS, formatStoreCouponCode, normalizeStoreCouponCode, type CouponIssueKind } from '@shared/coupons';
-import { COUPON_LEDGER_MAX, couponLedgerCsv, type CouponLedger, type CouponLedgerRow } from '@shared/coupon-ledger';
+import { COUPON_LEDGER_MAX, couponLedgerCsvRows, type CouponLedger, type CouponLedgerRow } from '@shared/coupon-ledger';
 import type { Db } from '../db';
 import { guard } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
 import { ctxOf, type Deps } from '../lib/context';
+import { csvReply, toCsv } from '../lib/csv';
 import { badRequest } from '../lib/errors';
 import { parse } from '../lib/validate';
 
@@ -91,7 +92,6 @@ export function registerCouponLedgerRoutes(app: FastifyInstance, deps: Deps) {
       detail: { query: req.query as Record<string, unknown>, rows: ledger.rows.length },
       ip: ctx.ip,
     });
-    reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="coupon-ledger.csv"`);
-    return `﻿${couponLedgerCsv(ledger.rows)}`;
+    return csvReply(reply, 'coupon-ledger.csv', toCsv(couponLedgerCsvRows(ledger.rows)));
   });
 }

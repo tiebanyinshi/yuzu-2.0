@@ -60,4 +60,12 @@ describe('礼品卡批次', () => {
     const [n] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM gift_card_batches WHERE client_key = ${lost}`;
     expect(n!.n).toBe(0);
   });
+
+  it('导出卡号：名字以 = + @ 开头的当文本，表格不会当公式执行（Codex 审查 305508f）', async () => {
+    const r = await api(ctx.app, ctx.owner, 'POST', '/api/gift-cards', { clientKey: randomUUID(), label: '=HYPERLINK("x")', quantity: 1 });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const csv = await ctx.app.inject({ method: 'GET', url: `/api/gift-cards/${r.body.batch.id}/cards.csv`, headers: { cookie: ctx.owner } });
+    expect(csv.body).toContain(`"'=HYPERLINK(""x"")"`);
+    expect(csv.body).not.toMatch(/,=HYPERLINK/);
+  });
 });
