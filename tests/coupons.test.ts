@@ -12,6 +12,7 @@ import { formatStoreCouponCode, type CouponRow, type CouponTemplate, type Member
 import { issueBirthdayCoupons } from '../src/server/modules/coupons';
 import { buildDailyRecon } from '../src/server/ops/recon';
 import { createStaff } from '../src/server/modules/staff';
+import { couponLedger } from '../src/server/modules/coupon-ledger';
 import { api, createMember, login, PASSWORD, rechargeBody, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -638,6 +639,12 @@ describe('8.1.40 券的使用限制、发放台账、结账单印券号', () => 
     const csv2 = await ctx.app.inject({ method: 'GET', url: `/api/coupons/ledger.csv?from=${today}&to=${today}`, headers: { cookie: ctx.owner } });
     expect(csv2.body).toContain(`"'=SUM(1,2)"`);
     expect(csv2.body).not.toMatch(/,=SUM/);
+    // 一共几张不受一次能看的张数限制；超过的标出截断（导出超过上限时服务端拒绝，不悄悄截掉；合并前 Codex 审查 bcd2901）
+    const all = (await api(ctx.app, ctx.owner, 'GET', `/api/coupons/ledger?from=${today}&to=${today}`)).body;
+    expect(all.total).toBe(all.rows.length);
+    const one = await couponLedger(ctx.sql, { from: today, to: today }, 1);
+    expect(one).toMatchObject({ truncated: true, total: all.total });
+    expect(one.rows).toHaveLength(1);
   });
 });
 

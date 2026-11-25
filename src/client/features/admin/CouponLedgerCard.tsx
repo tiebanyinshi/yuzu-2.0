@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
 import { COUPON_ISSUE_KIND_LABELS, COUPON_ISSUE_KINDS } from '@shared/coupons';
-import { COUPON_LEDGER_STATUS_LABELS, type CouponLedger, type CouponLedgerRow } from '@shared/coupon-ledger';
+import { COUPON_LEDGER_EXPORT_MAX, COUPON_LEDGER_STATUS_LABELS, type CouponLedger, type CouponLedgerRow } from '@shared/coupon-ledger';
 import { shiftDate } from '@shared/labels';
 import { api, errorMessage } from '../../lib/api';
 import { useSession } from '../../lib/session';
@@ -38,11 +38,21 @@ export function CouponLedgerCard() {
     placeholderData: keepPreviousData,
   });
   const s = ledger.data?.summary;
+  // 一次导不完的不让导（服务端也拒绝），写明一共几张、怎么缩小（合并前 Codex 审查 bcd2901）
+  const tooMany = (ledger.data?.total ?? 0) > COUPON_LEDGER_EXPORT_MAX;
   return (
     <Card className="space-y-4 p-4" data-testid="coupon-ledger">
       <SectionTitle
         aside={
-          <Button size="sm" variant="secondary" icon={<Download className="size-3.5" />} onClick={() => downloadUrl(`/api/coupons/ledger.csv?${queryOf(f)}`)} data-testid="coupon-ledger-export">
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<Download className="size-3.5" />}
+            onClick={() => downloadUrl(`/api/coupons/ledger.csv?${queryOf(f)}`)}
+            disabled={tooMany}
+            title={tooMany ? `一共 ${ledger.data!.total} 张，一次最多导 ${COUPON_LEDGER_EXPORT_MAX} 张：请缩短日期范围，或按券、发放方式、状态分开导出` : undefined}
+            data-testid="coupon-ledger-export"
+          >
             导出 CSV
           </Button>
         }
@@ -89,7 +99,12 @@ export function CouponLedgerCard() {
               · 用掉的平均发出后 <b className="num">{s.avgHoursToUse}</b> 小时
             </>
           )}
-          {ledger.data?.truncated && <span className="text-ember"> · 超过 2000 张，只列最近的；全部请导出</span>}
+          {ledger.data?.truncated && (
+            <span className="text-ember">
+              {' '}
+              · 一共 {ledger.data.total} 张，这里只列最近的 2000 张；{tooMany ? `一次最多导 ${COUPON_LEDGER_EXPORT_MAX} 张，请缩小范围再导出` : '全部请导出'}
+            </span>
+          )}
         </p>
       )}
       <DataTable<CouponLedgerRow>

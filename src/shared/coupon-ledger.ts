@@ -2,6 +2,8 @@
 
 /** 页面一次最多看几张券（导出最多一万张） */
 export const COUPON_LEDGER_MAX = 2000;
+/** 导出一次最多几张：多了拒绝、请缩小范围（不悄悄截掉） */
+export const COUPON_LEDGER_EXPORT_MAX = 10_000;
 
 export interface CouponLedgerRow {
   id: number;
@@ -35,6 +37,8 @@ export interface CouponLedger {
   rows: CouponLedgerRow[];
   /** 超过一次能看的张数：只列了最近的那些 */
   truncated: boolean;
+  /** 符合条件的一共几张（不受一次能看的张数限制） */
+  total: number;
   summary: { issued: number; used: number; usedAmount: number; voided: number; avgHoursToUse: number | null };
 }
 
