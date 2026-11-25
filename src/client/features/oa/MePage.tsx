@@ -12,6 +12,7 @@ import { ORG_DEPARTMENTS, positionLabel, positionOf } from '@shared/positions';
 import { api } from '../../lib/api';
 import { useSession } from '../../lib/session';
 import { PageHeader } from '../../components/AppShell';
+import { LoadFailed } from '../../components/LoadFailed';
 import { ThemeMenuRow } from '../../components/ThemeSwitch';
 import { Card, Skeleton } from '../../components/ui';
 import { DayLegend, MonthGrid } from './MyScheduleCalendar';
@@ -67,8 +68,8 @@ function LeaveCard() {
       <SectionTitle title="假期余额" to="/oa/leave" testId="oa-me-leave-more" />
       {q.isPending ? (
         <Skeleton className="h-12" />
-      ) : q.isError ? (
-        <p className="text-[13px] text-clay">假期余额没有取回来</p>
+      ) : q.isError && !q.data ? (
+        <LoadFailed title="假期余额没有取回来" onRetry={() => q.refetch()} retrying={q.isFetching} />
       ) : rows.length === 0 ? (
         <p className="text-[13px] text-ink-3">今年还没有发放的假期</p>
       ) : (
@@ -96,12 +97,12 @@ function ScheduleCard() {
       <SectionTitle title={q.data ? `我的排班 · ${Number(q.data.month.slice(5))} 月` : '我的排班'} to="/oa/schedule" testId="oa-me-schedule-more" />
       {q.isPending ? (
         <Skeleton className="h-64" />
-      ) : q.isError ? (
-        <p className="text-[13px] text-clay">排班没有取回来</p>
+      ) : q.isError && !q.data ? (
+        <LoadFailed title="排班没有取回来" onRetry={() => q.refetch()} retrying={q.isFetching} />
       ) : (
         <>
           <DayLegend />
-          <MonthGrid data={q.data} />
+          <MonthGrid data={q.data!} />
         </>
       )}
     </Card>

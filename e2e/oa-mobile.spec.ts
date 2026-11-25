@@ -42,8 +42,10 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
     await expect(page).toHaveURL(/\/oa\?q=/);
     await expect(page.getByTestId('oa-tile-payslips')).toBeVisible();
     await expect(page.getByTestId('oa-tile-punch')).toHaveCount(0);
-    await page.getByTestId('wcp-mobile-search').fill('');
+    // 点底部「工作台」清掉搜索：宫格恢复，框里也清空（Codex 审查 6c8e9e7）
+    await page.getByTestId('wcp-tab-work').click();
     await expect(page.getByTestId('oa-tile-punch')).toBeVisible();
+    await expect(page.getByTestId('wcp-mobile-search')).toHaveValue('');
 
     // 子页面：工作台亮着，顶栏左边「返回」回工作台
     await page.getByTestId('oa-tile-payslips').click();
@@ -68,6 +70,13 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
     await expect(page.getByTestId('oa-me-face-status')).not.toBeEmpty();
     await expect(page.getByTestId('oa-me-password')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    // 取不回来时用公共的「重试」，连上以后照常显示（Codex 审查 6c8e9e7）
+    await page.route('**/api/oa/me/leave', (route) => route.fulfill({ status: 503, json: { error: { code: 'BUSY', message: '系统忙' } } }));
+    await page.reload();
+    await expect(page.getByTestId('oa-me-leave').getByRole('button', { name: /重试/ })).toBeVisible({ timeout: 20_000 });
+    await page.unroute('**/api/oa/me/leave');
+    await page.getByTestId('oa-me-leave').getByRole('button', { name: /重试/ }).click();
+    await expect(page.getByTestId('oa-me-leave').getByRole('button', { name: /重试/ })).toHaveCount(0);
     await page.getByTestId('oa-me-logout').click();
     await page.waitForURL((u) => u.pathname === '/login');
     await context.close();

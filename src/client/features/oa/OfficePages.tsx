@@ -142,13 +142,14 @@ function TodayCard() {
         <div className="min-w-0 flex-1">
           <p className="text-[15px] font-bold text-ink">今天{d ? ` · ${d.today.slice(5).replace('-', ' 月 ')} 日` : ''}</p>
           <p className="truncate text-[12.5px] text-ink-3" data-testid="oa-today-group">
-            {q.isPending ? '正在取今天的排班…' : q.isError ? '今天的排班没有取回来' : d!.group ? d!.group.name : '还没加入考勤组，打卡前请找人力行政部'}
+            {q.isPending ? '正在取今天的排班…' : !d ? '今天的排班' : d.group ? d.group.name : '还没加入考勤组，打卡前请找人力行政部'}
           </p>
         </div>
         <Link to="/oa/punch" data-testid="oa-today-punch" className="tap relative inline-flex h-9 shrink-0 items-center rounded-full bg-pine px-4 text-[14px] font-semibold text-white">
           去打卡
         </Link>
       </div>
+      {q.isError && !d && <LoadFailed className="mt-3" title="今天的排班没有取回来" onRetry={() => q.refetch()} retrying={q.isFetching} />}
       {d && (
         <div className="mt-3 space-y-1.5" data-testid="oa-today-slots">
           {today.length === 0 ? (

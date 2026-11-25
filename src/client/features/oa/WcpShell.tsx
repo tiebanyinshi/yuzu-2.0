@@ -4,7 +4,7 @@
 // 窄屏（手机，768 以下，店主 2026-11-25《员工办公系统建设需求文档 v1.1》第二节，docs/OA_MOBILE.md）：顶部公司名 + 搜索框，
 // 底部 4 个 Tab（工作台 / 消息 / 知识库 / 我的），不是 Tab 首页的页面顶栏左边出「返回」。两种布局是同一个页面、同一套接口。
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { CalendarClock, ChevronLeft, Search, UserRound } from 'lucide-react';
 import { versionText } from '@shared/instance';
@@ -97,6 +97,12 @@ function MobileTopBar() {
   const q = onWork ? (params.get('q') ?? '') : '';
   // 搜索：先在工作台的功能入口里找（知识库的检索第 5 批再接上）
   const search = (text: string) => navigate(text ? `/oa?q=${encodeURIComponent(text)}` : '/oa', { replace: onWork });
+  // 工作台的搜索框跟着地址里的 q 走（点底部「工作台」清掉 q 时框里也清空，Codex 审查 6c8e9e7）；别的 Tab 上没提交的字留着
+  const [workText, setWorkText] = useState(q);
+  const [otherText, setOtherText] = useState('');
+  useEffect(() => {
+    if (onWork) setWorkText((t) => (t.trim() === q ? t : q));
+  }, [onWork, q]);
   return (
     <header data-surface="rail" className="shrink-0 bg-rail px-3 pt-[max(env(safe-area-inset-top),0.5rem)] pb-2 text-paper md:hidden" data-testid="wcp-mobile-top">
       <div className="flex h-10 items-center gap-2">
@@ -127,11 +133,14 @@ function MobileTopBar() {
         >
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-paper/50" />
           <input
-            key={onWork ? 'work' : 'other'}
             name="q"
             type="search"
-            defaultValue={q}
-            onChange={onWork ? (e) => search(e.target.value.trim()) : undefined}
+            value={onWork ? workText : otherText}
+            onChange={(e) => {
+              if (!onWork) return setOtherText(e.target.value);
+              setWorkText(e.target.value);
+              search(e.target.value.trim());
+            }}
             placeholder="搜索功能，如 打卡、工资条"
             aria-label="搜索"
             data-testid="wcp-mobile-search"
