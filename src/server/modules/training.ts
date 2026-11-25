@@ -731,7 +731,9 @@ const SHEET_MAX_COLS = 40;
 const SHEET_MAX_UNZIPPED = 8 * 1024 * 1024;
 const SHEET_MAX_SHEETS = 20;
 const SHEET_MAX_CELL_CHARS = 2000;
-const SHEET_MAX_TOTAL_CHARS = 2_000_000;
+/** 整份预览：所有表加起来最多 6 万格、50 万个字（Codex 安全审查 e9daa1c：40 万格的预览一份 3 MB） */
+const SHEET_MAX_TOTAL_CHARS = 500_000;
+const SHEET_MAX_TOTAL_CELLS = 60_000;
 
 async function readBlob(db: Db, sha256: string): Promise<Buffer> {
   const parts = await db<{ data: Buffer }[]>`SELECT data FROM training_blob_chunks WHERE sha256 = ${sha256} ORDER BY seq`;
@@ -740,12 +742,14 @@ async function readBlob(db: Db, sha256: string): Promise<Buffer> {
 
 /**
  * 读成表格的结果按内容摘要缓存（同一个文件只解析一次；解析不了的也记下，不反复解析）；
- * 真要解析时先拿解析占位（全店同时 2 份、每人 1 份，排队 20 秒），一个人连点也不会把服务挡住（Codex 安全审查 f2dbf5a）
+ * 每次读（解析和走缓存都算）先拿占位（全店同时 3 个、每人 1 个，排队 20 秒），一个人连点也不会把服务挡住（Codex 安全审查 f2dbf5a、e9daa1c）；
+ * 同一份文件同时来的几个请求等同一次解析（Codex 审查 e9daa1c）
  */
 const SHEET_CACHE_MAX = 12;
 const sheetCache = new Map<string, TrainingSheetBook | { error: string }>();
+const sheetParsing = new Map<string, Promise<TrainingSheetBook>>();
 const sheetParseSlots = createStreamSlots({
-  slots: 2,
+  slots: 3,
   perStaff: 1,
   waitMs: 20_000,
   queuePerStaff: 3,
@@ -762,6 +766,7 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number, bef
     SELECT mime, sha256, size_bytes FROM training_file_versions WHERE id = ${versionId ?? f.currentVersionId} AND file_id = ${id}`;
   if (!v || trainingViewKind(v.mime) !== 'sheet') throw unprocessable('TRAINING_NOT_SHEET', '这份文件不是 Excel（.xlsx）');
   if (Number(v.sizeBytes) > SHEET_MAX_BYTES) throw unprocessable('TRAINING_SHEET_TOO_BIG', '这份 Excel 太大，请下载后查看');
+  if (beforeParse) await beforeParse();
   const cached = sheetCache.get(v.sha256);
   if (cached) {
     sheetCache.delete(v.sha256);
@@ -769,7 +774,19 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number, bef
     if ('error' in cached) throw unprocessable('TRAINING_SHEET_INVALID', cached.error);
     return cached;
   }
-  if (beforeParse) await beforeParse();
+  const running = sheetParsing.get(v.sha256);
+  if (running) return running;
+  const job = parseSheetBook(db, v.sha256);
+  sheetParsing.set(v.sha256, job);
+  try {
+    return await job;
+  } finally {
+    sheetParsing.delete(v.sha256);
+  }
+}
+
+async function parseSheetBook(db: Db, sha256: string): Promise<TrainingSheetBook> {
+  const v = { sha256 };
   const remember = (value: TrainingSheetBook | { error: string }) => {
     sheetCache.set(v.sha256, value);
     while (sheetCache.size > SHEET_CACHE_MAX) sheetCache.delete(sheetCache.keys().next().value!);
@@ -831,6 +848,7 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number, bef
     }
     return out;
   };
+  let cellBudget = SHEET_MAX_TOTAL_CELLS;
   const cellText = (value: string) => {
     let t = value.length > SHEET_MAX_CELL_CHARS ? ((clipped = true), `${value.slice(0, SHEET_MAX_CELL_CHARS)}…`) : value;
     if (t.length > budget) {
@@ -843,10 +861,14 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number, bef
   const result: TrainingSheetBook = {
     sheets: sheetsShown.map((sh) => {
       const rowNos = [...sh.rows.keys()].sort((a, b) => a - b);
-      const maxRow = Math.min(rowNos.at(-1) ?? 0, SHEET_MAX_ROWS);
       let maxCol = 0;
       for (const cells of sh.rows.values()) for (const c of cells.keys()) maxCol = Math.max(maxCol, c + 1);
       const cols = Math.min(maxCol, SHEET_MAX_COLS);
+      // 格子数的预算：这张表能铺几行取决于前面的表用掉了多少
+      const rowsAllowed = cols > 0 ? Math.floor(cellBudget / cols) : SHEET_MAX_ROWS;
+      const maxRow = Math.min(rowNos.at(-1) ?? 0, SHEET_MAX_ROWS, rowsAllowed);
+      if (maxRow < Math.min(rowNos.at(-1) ?? 0, SHEET_MAX_ROWS)) clipped = true;
+      cellBudget -= maxRow * cols;
       const rows: string[][] = [];
       for (let r = 1; r <= maxRow; r++) {
         const cells = sh.rows.get(r);

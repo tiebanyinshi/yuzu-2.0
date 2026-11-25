@@ -355,6 +355,12 @@ describe('员工培训', () => {
     const sheet = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${m.done.body.fileId}/sheet?v=${m.done.body.versionId}`);
     expect(sheet.status, JSON.stringify(sheet.body)).toBe(200);
     expect(sheet.body.sheets[0].merges).toEqual([{ r1: 1, c1: 0, r2: 2, c2: 1 }]);
+    // 同一份文件两个人同时读：等同一次解析，结果一样（Codex 审查 e9daa1c）
+    const [a, b] = await Promise.all([
+      api(ctx.app, ctx.owner, 'GET', `/api/training/files/${m.done.body.fileId}/sheet`),
+      api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${m.done.body.fileId}/sheet`),
+    ]);
+    expect(a.body).toEqual(b.body);
     // 15 万个空行（Codex 安全审查 f2dbf5a 把上限降到 12 万）：压缩后几 KB，解析前按结构规模拒绝；第二次读走缓存，同样拒绝
     const empty = patchSheet(base, (x) => x.replace('</sheetData>', `${Array.from({ length: 150_000 }, (_, i) => `<row r="${i + 3}"/>`).join('')}</sheetData>`));
     expect(empty.length).toBeLessThan(2 * 1024 * 1024);
