@@ -590,6 +590,9 @@ function SessionDialog({
   const [voiding, setVoiding] = useState<{ lineId: number; name: string; quantity: number; amount: number; postedBy: number; postedAt: string; status: KitchenStatus | null } | null>(null);
   const [editing, setEditing] = useState(false);
   const [moving, setMoving] = useState(false);
+  /** 8.1.39：转挂账、拼台（同一张桌上另开一张单）的对话框 */
+  const [parking, setParking] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [showVoided, setShowVoided] = useState(false);
   /** 点菜单（8.1.7，CF8） */
@@ -635,9 +638,6 @@ function SessionDialog({
   const open = d.status === 'open';
   // 8.1.39：转挂账的单（桌台已经空出来了）只能结账、退菜
   const parked = !!d.parkedAt;
-  const [parking, setParking] = useState(false);
-  /** 8.1.39 拼台：同一张桌上另开一张单 */
-  const [sharing, setSharing] = useState(false);
   const tile = board.tables.find((t) => t.id === d.tableId);
   const sameTable = tile
     ? [
