@@ -84,8 +84,14 @@ const STORE_NAV: StoreNavDomain[] = [
     label: '餐饮',
     icon: UtensilsCrossed,
     items: [
-      // 8.0.8：看日结的（导出流水、经营总览）也能进来看「台账」
-      { to: '/crm/dining', label: '餐饮', icon: UtensilsCrossed, perm: ['dining.order', 'dining.kitchen', 'frontdesk.checkout', 'ledger.export', 'report.executive'], when: (s) => s.dining },
+      // 8.0.8：看日结的（导出流水、经营总览）也能进来看「台账」；8.1.36：只有「餐饮台账」的也能进（Codex 审查 f260ca3）
+      {
+        to: '/crm/dining',
+        label: '餐饮',
+        icon: UtensilsCrossed,
+        perm: ['dining.order', 'dining.kitchen', 'frontdesk.checkout', 'dining.ledger', 'ledger.export', 'report.executive'],
+        when: (s) => s.dining,
+      },
       // 菜品管理（8.1.15，docs/DISHES_V8115.md，CP7）：平时是「餐饮」里的一个页签；只有菜品权限、进不了餐饮的岗位（少见）才显示这个入口
       { to: '/crm/dishes', label: '菜品', icon: UtensilsCrossed, perm: [...DISH_PERMISSIONS], when: (s) => s.dining && !canEnter('/crm/dining', s.permissions) },
     ],
