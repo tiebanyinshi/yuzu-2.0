@@ -29,14 +29,15 @@ function decodePdfName(raw: string): string {
   return raw.replace(/#([0-9a-fA-F]{2})/g, (_, h: string) => String.fromCharCode(Number.parseInt(h, 16)));
 }
 
-/** 线性解析一个顶层 PDF 字典（不含嵌套子字典里的同名键），只取关心的标量键 */
-function parseTopDict(text: string): { isImage: boolean; width: number | null; height: number | null } {
+/** 线性解析一个顶层 PDF 字典（不含嵌套子字典里的同名键），只取关心的标量键，并标记结尾是否仍在未闭合字符串或注释里 */
+function parseTopDict(text: string): { isImage: boolean; width: number | null; height: number | null; unclosed: 'none' | 'string' | 'comment' } {
   let i = 0;
   const n = text.length;
   let depth = 0;
   let isImage = false;
   let width: number | null = null;
   let height: number | null = null;
+  let unclosed: 'none' | 'string' | 'comment' = 'none';
 
   const skipWsAndComments = () => {
     while (i < n) {
@@ -46,6 +47,7 @@ function parseTopDict(text: string): { isImage: boolean; width: number | null; h
       } else if (c === 0x25) {
         // % 注释到行尾
         while (i < n && text.charCodeAt(i) !== 0x0a && text.charCodeAt(i) !== 0x0d) i += 1;
+        if (i >= n) unclosed = 'comment';
       } else {
         break;
       }
@@ -82,6 +84,7 @@ function parseTopDict(text: string): { isImage: boolean; width: number | null; h
         i += 1;
       }
     }
+    if (parens > 0) unclosed = 'string';
   };
 
   const readPositiveIntIfDirect = (): number | null => {
@@ -161,170 +164,110 @@ function parseTopDict(text: string): { isImage: boolean; width: number | null; h
     readToken();
     if (i === before) i += 1;
   }
-  return { isImage, width, height };
+  return { isImage, width, height, unclosed };
 }
 
-/** 判断 `>>`（结束于 closeEnd）之后跳过空白是否紧跟 `stream` + CR/LF（PDF 规范 §7.3.8.1）；是则返回 `stream` 结束位置，否则 -1 */
-function streamAfterDictClose(buf: Buffer, closeEnd: number): number {
-  let i = closeEnd;
-  const n = buf.length;
-  while (i < n && isWs(buf[i]!)) i += 1;
-  if (
-    i + 6 < n &&
-    buf[i] === 0x73 && // s
-    buf[i + 1] === 0x74 && // t
-    buf[i + 2] === 0x72 && // r
-    buf[i + 3] === 0x65 && // e
-    buf[i + 4] === 0x61 && // a
-    buf[i + 5] === 0x6d && // m
-    (buf[i + 6] === 0x0a || buf[i + 6] === 0x0d)
-  ) {
-    return i + 7;
+const STREAM_NEEDLE = Buffer.from('stream', 'ascii');
+
+/** 从未闭合字符串或注释里向前跳过到闭合位置（不超过 limit），返回新的扫描位置 */
+function skipUnclosedForward(buf: Buffer, from: number, limit: number, mode: 'string' | 'comment'): number {
+  let i = from;
+  if (mode === 'comment') {
+    while (i < limit && buf[i] !== 0x0a && buf[i] !== 0x0d) i += 1;
+    return i;
   }
-  return -1;
-}
-
-/**
- * 单遍线性扫描一段字节里所有紧跟在 `>>` 后面的 `stream` 字典（O(buf.length)，不回扫）：
- *   · 顺序维护尚未配对的 `<<` 栈；遇到 `>>` 且后面不是 `stream` 时 O(1) 弹出内层字典起点。
- *   · 遇到 `>>` + 空白 + `stream` + CR/LF：若栈里没有 DICT_LOOKBACK 内的 `<<`，O(1) 跳过（防止重复 `>>stream\n` 触发 O(N·32KB) 回扫卡住主线程）。
- *   · 若当前 `>>stream` 落在字典字符串字面量 `(...)` 或 `%` 注释里，向前跳到该字符串/注释结尾并保留外层 `<<`（防构造 `/Comment (>>stream\n)` 绕过）；
- *     并限制整块的语法复查工作量上限，最坏情况下总扫描与解析工作量严格线性。
- *   · 确认是一条真实流字典后，解析一次并清空 `<<` 栈（流字典彼此不重叠，保证总解析字节数不超过 buf.length）。
- */
-function scanBuffer(buf: Buffer, maxPixels: number, maxSide: number): PdfImageProblem | null {
-  const n = buf.length;
-  const opens: number[] = [];
-  let openHead = 0;
-
-  // 单调复查光标：只检查 `>>stream` 是否落在当前候选字典的 `(...)` 字符串或 `%` 注释中
-  let synStart = -1;
-  let synPos = 0;
-  let synParens = 0;
-  let synComment = false;
-  let synWork = 0;
-  const maxSynWork = Math.max(DICT_LOOKBACK * 4, n * 2);
-
-  const resetSyntax = () => {
-    synStart = -1;
-    synPos = 0;
-    synParens = 0;
-    synComment = false;
-  };
-
-  /** 把 synPos 从当前位置推进到 target（不超过 target），返回 target 处是否仍在字符串或注释里 */
-  const inStringOrCommentAt = (start: number, target: number): boolean => {
-    if (synWork >= maxSynWork) return false;
-    if (synStart !== start || synPos > target) {
-      synStart = start;
-      synPos = start;
-      synParens = 0;
-      synComment = false;
-    }
-    while (synPos < target) {
-      synWork += 1;
-      const c = buf[synPos]!;
-      if (synComment) {
-        if (c === 0x0a || c === 0x0d) synComment = false;
-        synPos += 1;
-        continue;
-      }
-      if (synParens > 0) {
-        if (c === 0x5c) {
-          synPos += 2;
-          continue;
-        }
-        if (c === 0x28) synParens += 1;
-        else if (c === 0x29) synParens -= 1;
-        synPos += 1;
-        continue;
-      }
-      if (c === 0x25) {
-        synComment = true;
-      } else if (c === 0x28) {
-        synParens = 1;
-      }
-      synPos += 1;
-    }
-    return synParens > 0 || synComment;
-  };
-
-  /** 从当前位置向前跳出未闭合的 `(...)` 字符串或 `%` 注释（不超过 limit） */
-  const skipOutOfStringOrComment = (limit: number): number => {
-    while (synPos < limit && (synParens > 0 || synComment)) {
-      synWork += 1;
-      const c = buf[synPos]!;
-      if (synComment) {
-        if (c === 0x0a || c === 0x0d) synComment = false;
-        synPos += 1;
-        continue;
-      }
-      if (c === 0x5c) {
-        synPos += 2;
-        continue;
-      }
-      if (c === 0x28) synParens += 1;
-      else if (c === 0x29) synParens -= 1;
-      synPos += 1;
-    }
-    return synPos;
-  };
-
-  let i = 0;
-  while (i < n - 1) {
+  let parens = 1;
+  while (i < limit && parens > 0) {
     const c = buf[i]!;
-    if (c === 0x3c && buf[i + 1] === 0x3c) {
-      opens.push(i);
+    if (c === 0x5c) {
       i += 2;
       continue;
     }
-    if (c === 0x3e && buf[i + 1] === 0x3e) {
-      // 丢弃超过 DICT_LOOKBACK 的旧 `<<`（均摊 O(1)）
-      while (openHead < opens.length && i + 2 - opens[openHead]! > DICT_LOOKBACK) openHead += 1;
-      if (openHead >= opens.length) {
-        opens.length = 0;
-        openHead = 0;
-        resetSyntax();
-        const afterStream = streamAfterDictClose(buf, i + 2);
-        i = afterStream >= 0 ? afterStream : i + 2;
+    if (c === 0x28) parens += 1;
+    else if (c === 0x29) parens -= 1;
+    i += 1;
+  }
+  return i;
+}
+
+/**
+ * 零堆分配 + 线性工作量上界扫描一段字节里所有紧跟在 `>>` 后面的 `stream` 字典（Codex 代码与安全审查修复）：
+ *   · 先用原生 C++ `Buffer.indexOf('stream')` 跳过不含 `stream` 的全部字节（200 MB 重复 `<<` 仅约几十毫秒、零数组分配）。
+ *   · 找到 `>>` + 空白 + `stream` + CR/LF 后，往回最远只扫到 `max(0, end - DICT_LOOKBACK, noOpenBefore)`：
+ *     - 每段找不到 `<<` 或解析完真实流字典后立即把 `noOpenBefore` 推到 `end + 1`，重复 `>>stream\n` 每次只回扫几字节。
+ *     - 若 `>>stream` 落在未闭合的 `(...)` 字符串或 `%` 注释内，向前跳过该字符串/注释再继续（防 `/Comment (>>stream\n)` 绕过）；
+ *     - 整块累计回扫与解析字节数超过工作量上界后不再重复回溯，确保任何对抗输入都严格线性、不卡事件循环。
+ */
+function scanBuffer(buf: Buffer, maxPixels: number, maxSide: number): PdfImageProblem | null {
+  const n = buf.length;
+  const maxWork = Math.max(DICT_LOOKBACK * 4, n * 2);
+  let work = 0;
+  let pos = 0;
+  let noOpenBefore = 0;
+
+  while (pos < n) {
+    const idx = buf.indexOf(STREAM_NEEDLE, pos);
+    if (idx === -1) break;
+    pos = idx + STREAM_NEEDLE.length;
+    // 排除 endstream，且 stream 后面必须是 CR/LF（PDF 规范 §7.3.8.1）
+    if (idx >= 3 && buf[idx - 3] === 0x65 && buf[idx - 2] === 0x6e && buf[idx - 1] === 0x64) continue;
+    const after = idx + STREAM_NEEDLE.length;
+    if (after >= n || (buf[after] !== 0x0a && buf[after] !== 0x0d)) continue;
+    // 跳过 stream 前面的空白，紧挨着的必须是 `>>`
+    let end = idx - 1;
+    while (end >= 0 && isWs(buf[end]!)) end -= 1;
+    if (end < 1 || buf[end] !== 0x3e || buf[end - 1] !== 0x3e) continue;
+
+    const endExclusive = end + 1;
+    const floor = Math.max(0, endExclusive - DICT_LOOKBACK, noOpenBefore);
+    let depth = 0;
+    let exactStart = -1;
+    let outermostOpen = -1;
+    let j = endExclusive - 2;
+    while (j >= floor) {
+      work += 1;
+      if (buf[j] === 0x3e && buf[j + 1] === 0x3e) {
+        depth += 1;
+        j -= 2;
         continue;
       }
-      const start = opens[opens.length - 1]!;
-      if (inStringOrCommentAt(start, i)) {
-        const limit = Math.min(n, start + DICT_LOOKBACK);
-        const resumed = skipOutOfStringOrComment(limit);
-        if (synParens === 0 && !synComment) {
-          i = resumed;
-          continue;
+      if (buf[j] === 0x3c && buf[j + 1] === 0x3c) {
+        outermostOpen = j;
+        depth -= 1;
+        if (depth === 0) {
+          exactStart = j;
+          break;
         }
-        // 字符串/注释超长未闭合：放弃这个起点，避免卡死
-        opens.pop();
-        resetSyntax();
-        i += 2;
+        j -= 2;
         continue;
       }
-      const afterStream = streamAfterDictClose(buf, i + 2);
-      if (afterStream < 0) {
-        opens.pop();
-        resetSyntax();
-        i += 2;
-        continue;
-      }
-      // 真实流字典：只解析一次并清空栈，确保后续流字典不与本段重叠
-      opens.length = 0;
-      openHead = 0;
-      resetSyntax();
-      const dictText = buf.subarray(start, i + 2).toString('latin1');
-      const parsed = parseTopDict(dictText);
-      if (parsed.isImage && parsed.width !== null && parsed.height !== null) {
-        if (parsed.width > maxSide || parsed.height > maxSide || parsed.width * parsed.height > maxPixels) {
-          return { width: parsed.width, height: parsed.height };
-        }
-      }
-      i = afterStream;
+      j -= 1;
+    }
+
+    const start = exactStart >= 0 ? exactStart : outermostOpen;
+    if (start < 0) {
+      noOpenBefore = endExclusive;
       continue;
     }
-    i += 1;
+
+    const dictLen = endExclusive - start;
+    work += dictLen;
+    const parsed = parseTopDict(buf.subarray(start, endExclusive).toString('latin1'));
+    if (parsed.unclosed !== 'none' && work < maxWork) {
+      // `>>stream` 落在字典的 `(...)` 字符串或 `%` 注释中：向前跳过该字符串/注释并保留外层字典起点
+      const limit = Math.min(n, start + DICT_LOOKBACK);
+      const skipped = skipUnclosedForward(buf, pos, limit, parsed.unclosed);
+      work += Math.max(0, skipped - pos);
+      pos = skipped;
+      continue;
+    }
+
+    noOpenBefore = endExclusive;
+    if (parsed.isImage && parsed.width !== null && parsed.height !== null) {
+      if (parsed.width > maxSide || parsed.height > maxSide || parsed.width * parsed.height > maxPixels) {
+        return { width: parsed.width, height: parsed.height };
+      }
+    }
   }
   return null;
 }

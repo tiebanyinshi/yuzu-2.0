@@ -628,6 +628,13 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
   const seqs = (await deps.sql<{ seq: number }[]>`SELECT seq FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`).map((r) => r.seq);
   const missing = Array.from({ length: u.chunkCount }, (_, i) => i).filter((i) => !seqs.includes(i));
   if (missing.length) throw unprocessable('TRAINING_UPLOAD_INCOMPLETE', `还有 ${missing.length} 块没传完`, { missing });
+  // 在读块和扫描之前先核对目标文件夹 / 文件是否存在（Codex 安全审查 26222e1：防止用不存在的目标反复触发 200 MB 扫描释放认领）
+  if (input.fileId !== null) {
+    const [f] = await deps.sql<{ id: number }[]>`SELECT id FROM training_files WHERE id = ${input.fileId}`;
+    if (!f) throw notFound('要换新版本的培训文件不存在');
+  } else {
+    await loadFolder(deps.sql, input.folderId!);
+  }
   // 先认领再读块（Codex 安全审查 f2dbf5a）：同一次上传同时来几个「完成」，只有认领到的去读 200 MB、算摘要，
   // 别的回「正在登记」（页面隔几秒查回）；认领的进程中途退出，10 分钟后可以重新认领
   const token = randomUUID();
@@ -646,25 +653,29 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
   try {
     const hash = createHash('sha256');
     const pdfScanner = u.mime === 'application/pdf' ? createPdfImageScanner() : null;
-    let head: Buffer | null = null;
     for (let seq = 0; seq < u.chunkCount; seq++) {
       const [c] = await deps.sql<{ data: Buffer }[]>`SELECT data FROM training_upload_chunks WHERE upload_id = ${id} AND seq = ${seq}`;
       if (!c) throw unprocessable('TRAINING_UPLOAD_INCOMPLETE', `第 ${seq + 1} 块不见了，请重新传`);
-      // 第一块整块留着：核对文件头、读图片宽高（JPEG 的帧头可能在 EXIF 后面）
-      if (seq === 0) head = c.data;
+      // 第一块立刻核对文件头与图片尺寸，不对就不继续读后面的块
+      if (seq === 0) {
+        if (!sniffOk(u.mime, c.data)) throw unprocessable('TRAINING_UPLOAD_FORMAT', `文件内容不是 ${TRAINING_FORMATS[u.mime]!.label}，请确认选对了文件`);
+        assertImageSize(u.mime, c.data);
+      }
       hash.update(c.data);
-      pdfScanner?.push(c.data);
+      if (pdfScanner) {
+        pdfScanner.push(c.data);
+        const badPdfImg = pdfScanner.finish();
+        if (badPdfImg) {
+          throw unprocessable(
+            'TRAINING_PDF_IMAGE_TOO_LARGE',
+            `PDF 里有 ${badPdfImg.width} × ${badPdfImg.height} 像素的超大图片（单张最多 ${TRAINING_PDF_MAX_IMAGE_PIXELS / 1_000_000} 百万像素、一条边最多 ${TRAINING_PDF_MAX_IMAGE_SIDE}），请压缩图片后再导出 PDF 上传`,
+          );
+        }
+      }
+      // 每块之间让出事件循环，大文件上传不阻塞其他并发请求
+      if (seq + 1 < u.chunkCount) await new Promise<void>((r) => setImmediate(r));
     }
     sha256 = hash.digest('hex');
-    if (!sniffOk(u.mime, head!)) throw unprocessable('TRAINING_UPLOAD_FORMAT', `文件内容不是 ${TRAINING_FORMATS[u.mime]!.label}，请确认选对了文件`);
-    assertImageSize(u.mime, head!);
-    const badPdfImg = pdfScanner?.finish();
-    if (badPdfImg) {
-      throw unprocessable(
-        'TRAINING_PDF_IMAGE_TOO_LARGE',
-        `PDF 里有 ${badPdfImg.width} × ${badPdfImg.height} 像素的超大图片（单张最多 ${TRAINING_PDF_MAX_IMAGE_PIXELS / 1_000_000} 百万像素、一条边最多 ${TRAINING_PDF_MAX_IMAGE_SIDE}），请压缩图片后再导出 PDF 上传`,
-      );
-    }
   } catch (e) {
     await release();
     throw e;
