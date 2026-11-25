@@ -51,6 +51,11 @@ export interface BookingRules {
   defaultServiceMinutes: number;
   /** 客房电话预订：保留到预计到店后多少分钟，过了自动释放、记爽约（Q17） */
   roomHoldMinutes: number;
+  /**
+   * 技师预约开始前锁技师多少分钟（8.1.38，店主 2026-11-25「扩钟预约状态漏洞」）：这段时间里派钟、加钟、前台选技师都把他当作已约，
+   * 不会被别的客人挑走；预约开始以后到客人点到店（或记爽约）一直锁着。0 为不提前锁
+   */
+  technicianHoldMinutes: number;
 }
 
 export const DEFAULT_BOOKING_RULES: BookingRules = {
@@ -68,6 +73,7 @@ export const DEFAULT_BOOKING_RULES: BookingRules = {
   spaceDurations: [120, 180, 240],
   defaultServiceMinutes: 60,
   roomHoldMinutes: 60,
+  technicianHoldMinutes: 30,
 };
 
 export const MAX_BOOKING_NOTE = 100;

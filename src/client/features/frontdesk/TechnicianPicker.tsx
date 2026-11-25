@@ -6,7 +6,7 @@ import { ArrowLeft, UserRoundX } from 'lucide-react';
 import { PRICE_TIER_LABELS, tierPrice, type PriceTier } from '@shared/catalog';
 import { CALL_TYPE_LABELS, canServe, gradeLabel, tierFor, type CallType, type FrontdeskTechnicians } from '@shared/technicians';
 import type { ServiceItem } from '@shared/types';
-import { cn } from '../../lib/utils';
+import { cn, formatTime } from '../../lib/utils';
 import { Money } from '../../components/Money';
 import { Button, Notice, Segmented, Skeleton } from '../../components/ui';
 
@@ -102,10 +102,12 @@ export function TechnicianPicker({
                   : q.state === 'leave'
                     ? '今天休假'
                     : q.state === 'rest'
-                      ? '休息中'
+                      ? '暂离中'
                       : q.busy
                         ? '在钟上或已派钟'
-                        : null;
+                        : q.booking?.locked
+                          ? `${formatTime(q.booking.startsAt)} 有预约，已锁给预约的客人`
+                          : null;
             const why = canServe(t, item, rules.tierByGrade) ?? rotationWhy;
             const charged = tierFor(t, item, tier, rules.tierByGrade);
             const price = tierPrice(item.prices, charged);
@@ -128,7 +130,10 @@ export function TechnicianPicker({
                   {!why && price !== null && <Money cents={price} className="text-[12.5px] font-bold text-ink-2" />}
                 </span>
                 <span className={cn('mt-auto pt-0.5 text-[12px] font-semibold', why ? 'text-clay' : t.todayClocks === fewest ? 'text-pine' : 'text-ink-4')}>
-                  {why ?? `${callType === 'rotation' && !backfill && t.queue?.position ? `排第 ${t.queue.position} · ` : ''}今日 ${t.todayClocks} 钟${t.todayClocks === fewest ? ' · 钟最少' : ''}`}
+                  {why ??
+                    `${callType === 'rotation' && !backfill && t.queue?.position ? `排第 ${t.queue.position} · ` : ''}今日 ${t.todayClocks} 钟${t.todayClocks === fewest ? ' · 钟最少' : ''}${
+                      !backfill && t.queue?.booking ? ` · ${formatTime(t.queue.booking.startsAt)} 有预约` : ''
+                    }`}
                 </span>
               </button>
             );

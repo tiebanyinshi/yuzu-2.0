@@ -72,7 +72,7 @@ export async function frontdeskTechnicians(db: Db, deps: Deps): Promise<Frontdes
     FROM technicians t WHERE t.active AND t.store_id = ${currentStoreId()} ORDER BY ${ORDER(db)}`;
   // 8.1.37：带上今天的排位，前台按轮钟选人时能看出谁没上牌、谁在钟上、轮到谁
   const snap = await queueSnapshot(db, today);
-  return { rules, technicians: technicians.map((t) => ({ ...t, queue: snap.get(t.id) ?? { state: 'off' as const, busy: false, position: null } })) };
+  return { rules, technicians: technicians.map((t) => ({ ...t, queue: snap.get(t.id) ?? { state: 'off' as const, busy: false, position: null, booking: null } })) };
 }
 
 export async function technicianAdmin(db: Db): Promise<TechnicianAdmin> {
@@ -145,7 +145,7 @@ const RulesInput = z.object({
 
 const ClockroomRulesInput = z.object({
   afterRotation: z.enum(['dispatch', 'finish'], '轮钟排尾的时机不正确'),
-  afterDesignated: z.enum(['keep', 'passed', 'end'], '点钟后的排位规则不正确'),
+  afterDesignated: z.enum(['finish', 'keep', 'passed', 'end'], '点钟后的排位规则不正确'),
   rejectKeepsPlace: z.boolean(),
   rejectEndAfter: z.number().int().min(0, '次数不能为负').max(20, '次数最多 20'),
   backToEnd: z.boolean(),

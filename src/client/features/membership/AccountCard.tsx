@@ -211,6 +211,13 @@ function RefundDialog({ member, onClose, onDone }: { member: MemberDetail; onClo
     if (drawer === null && drawers.data?.suggested) setDrawer(drawers.data.suggested);
   }, [drawers.data, drawer]);
   const p = plan.data;
+  // 8.1.38：本店能退的比默认的全部本金少（有在别的店充的）——第一次核对后把金额改成本店能退的
+  const [fitted, setFitted] = useState(false);
+  useEffect(() => {
+    if (fitted || !p) return;
+    setFitted(true);
+    if (p.refundableHere > 0 && p.refundableHere < member.principalBalance && amount === member.principalBalance) setAmountText(centsToInput(p.refundableHere));
+  }, [p, fitted, amount, member.principalBalance]);
   // 金额、分配变了：授权作废（授权绑定金额）
   useEffect(() => setGrant(null), [p?.amount, member.id]);
   // 线上充值的那一行：原路退回开着时默认交给门店系统；没开（或刚关掉）的一律员工退、填退款单号
@@ -319,6 +326,11 @@ function RefundDialog({ member, onClose, onDone }: { member: MemberDetail; onClo
         {plan.isFetching && !p && <Skeleton className="h-16" />}
         {plan.error && <Notice tone="error" title={errorMessage(plan.error)} />}
         {p?.blocked && <Notice tone="warning" title={p.blocked} />}
+        {p && !p.blocked && p.elsewhere.length > 0 && (
+          <Notice tone="info" title={`另有在别的店充的本金：${p.elsewhere.map((e) => `${e.storeName} ${formatYuan(e.amount)}`).join('、')}`} data-testid="member-refund-elsewhere">
+            储值只在充值的那家店退；这里只退本店充的，最多 {formatYuan(p.refundableHere)}。
+          </Notice>
+        )}
         {p?.grade && (
           <Notice tone="warning" title={`退了以后会降档：${p.grade.from} → ${p.grade.to}`} data-testid="member-refund-grade">
             这一档是本会籍周期里靠充值升上来的，扣掉退回以后滚动累计充值够不上，当场降到 {p.grade.to}（会籍周期不变）。

@@ -1,21 +1,24 @@
 // 钟房（S6 第二步，v0.7.1）：上牌与轮钟队列、派钟、上钟 / 下钟计时、加钟、退钟，以及技师提成规则。
 // 规则按汤泉、足浴行业常见做法先定默认值（标「待确认」），店主在后台「技师」里改：
 //   · 轮钟按上牌先后排队，派轮钟时技师的牌排到所有待钟技师之后（「上钟后牌退到最后」）；
-//   · 点钟不动牌（点钟的技师回来仍在原位）；被客人退钟回原位，连续被退 3 次排到队尾；休息回岗排到队尾；
+//   · 点钟下钟后排到队尾（8.1.38，原来默认不动牌）；加钟记在原钟单上、排位不动；被客人退钟回原位，连续被退 3 次排到队尾；休息回岗排到队尾；
 //   · 轮钟不派给排在第一位的技师时要写原因（记进钟房日志）；
 //   · 加钟由原技师继续，记为点钟（客人选了继续让这位技师做）；
 //   · 提成按项目售价的比例（默认 40%），点钟每钟另加 ¥10；可以按项目改成每钟固定金额（按价格档）。
 
 import { PRICE_TIERS, type PriceTier } from './catalog';
-import type { CallType, Technician, TechnicianRules } from './technicians';
+import type { CallType, Technician, TechnicianBookingHint, TechnicianRules } from './technicians';
 import { normalizeQuery } from './pinyin-initials';
 import { matchesTechnician, servesCategory, type AnnouncerClaim, type ClockCall, type LeaveType, type TechShift } from './technician-admin';
 
 export interface ClockroomRules {
   /** 轮钟什么时候排到队尾：派钟时（默认）/ 下钟后 */
   afterRotation: 'dispatch' | 'finish';
-  /** 点钟之后的位置：不动牌（默认）/ 轮到时在上点钟就排到队尾 / 点钟也算一轮、排到队尾 */
-  afterDesignated: 'keep' | 'passed' | 'end';
+  /**
+   * 点钟之后的位置：下钟后排到队尾（默认，8.1.38 店主 2026-11-25「客人指定挑选的技师下钟后直接排至队列末尾」）/ 不动牌 /
+   * 轮到时在上点钟就排到队尾 / 派点钟时就排到队尾。加钟（技师给自己的客人扩钟）记在原钟单上，不算新的点钟，排位不动
+   */
+  afterDesignated: 'finish' | 'keep' | 'passed' | 'end';
   /** 被客人退钟、取消派钟后回到原来的位置（默认是） */
   rejectKeepsPlace: boolean;
   /** 连续被退钟几次排到队尾（默认 3，0 为不排） */
@@ -34,7 +37,7 @@ export interface ClockroomRules {
 
 export const DEFAULT_CLOCKROOM_RULES: ClockroomRules = {
   afterRotation: 'dispatch',
-  afterDesignated: 'keep',
+  afterDesignated: 'finish',
   rejectKeepsPlace: true,
   rejectEndAfter: 3,
   backToEnd: true,
@@ -49,9 +52,10 @@ export const AFTER_ROTATION_LABELS: Record<ClockroomRules['afterRotation'], stri
   finish: '下钟后排到队尾',
 };
 export const AFTER_DESIGNATED_LABELS: Record<ClockroomRules['afterDesignated'], string> = {
+  finish: '点钟下钟后排到队尾（不保留原位）',
   keep: '点钟不动牌（回来仍在原位）',
   passed: '点钟期间轮到了就排到队尾',
-  end: '点钟也算一轮，排到队尾',
+  end: '派点钟时就排到队尾',
 };
 
 /** 技师当天的状态：在岗（上牌）/ 休息 / 未上牌 / 休假（8.0.8，只管当天）。停牌另记在技师上（跨天，见 Technician.suspendedAt） */
@@ -81,7 +85,7 @@ export const EVENT_KINDS = [
 export type ClockEventKind = (typeof EVENT_KINDS)[number];
 export const EVENT_KIND_LABELS: Record<ClockEventKind, string> = {
   sign_in: '上牌',
-  rest: '休息',
+  rest: '暂离',
   back: '回牌',
   sign_out: '下牌',
   to_end: '排到队尾',
@@ -107,6 +111,8 @@ export interface BoardTechnician extends Technician {
   position: number | null;
   /** 在钟上（上钟中）或已派了钟（待上钟） */
   busy: { sessionId: number; status: 'waiting' | 'serving' } | null;
+  /** 今天接下来的预约（8.1.38）：到了开始前锁定的时候 locked，派钟时当作已约 */
+  booking: TechnicianBookingHint | null;
   /** 排在他后面、还在等他的点钟（等钟）数 */
   waiting: number;
   todayClocks: number;
@@ -192,7 +198,7 @@ export const TECH_FILTER_LABELS: Record<TechFilter, string> = {
   idle: '空闲待钟',
   serving: '上钟中',
   waiting: '已派待上',
-  rest: '休息',
+  rest: '暂离',
   leave: '休假',
   suspended: '停牌',
   off: '未上牌',

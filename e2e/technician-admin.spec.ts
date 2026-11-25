@@ -1,6 +1,6 @@
 // 8.1.16 浏览器验收：技师（《浴族系统需求汇总》技师 1–3，docs/TECHNICIANS_V8115.md）。
 //   ① 钟房：搜索（姓名、工号、花名、拼音首字母）、按类型与可做项目叠加筛选（写明现在生效的、能一项项去掉、一键清空）、按状态排；
-//   ② 排位播报（回测整改起是单独的页面）：另一台终端在播时本机不出声 → 由本机接管 → 音量、试音、静音（静音时写明、没念的条数）、取消静音以后手动叫号照常念、重播 →
+//   ② 上钟播报（回测整改起是单独的页面）：另一台终端在播时本机不出声 → 由本机接管 → 音量、试音、静音（静音时写明、没念的条数）、取消静音以后手动叫号照常念、重播 →
 //      不由本机播报。语音换成浏览器里记录调用的假实现（不真的出声）；
 //   ③ 技师管理四个页签：名册（拼音首字母搜索、按类型看、新建、编辑、类型清单）、组别（新建、组长）、
 //      班次（新建班次、下周排班、临时调班要写原因、改动记录）、休假（申请 → 批准含今天的 → 钟房里是休假、不进排位 → 销假回到未上牌）。
@@ -142,11 +142,11 @@ async function signOutMine(page: Page) {
   }
 }
 
-test.describe('8.1.16 技师：钟房搜索筛选、排位播报、技师管理', () => {
+test.describe('8.1.16 技师：钟房搜索筛选、上钟播报、技师管理', () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '会改技师与规则的流程只在门店电脑尺寸执行一次');
   test.setTimeout(240_000);
 
-  test('钟房：搜索与叠加筛选、按状态排；排位播报（接管、音量、试音、静音、手动叫号、重播）', async ({ page }) => {
+  test('钟房：搜索与叠加筛选、按状态排；上钟播报（接管、音量、试音、静音、手动叫号、重播）', async ({ page }) => {
     await fakeSpeech(page);
     await login(page, 'linlan');
     const before = await prepare(page);
@@ -155,7 +155,7 @@ test.describe('8.1.16 技师：钟房搜索筛选、排位播报、技师管理'
       await send(page, 'post', '/api/clockroom/announcer', { action: 'claim', clientId: 'e2e-other-terminal', label: 'E2E 另一台' });
       await page.goto('/crm');
       await clickNav(page, '钟房');
-      // 回测整改 P03：钟房里没有播报条了（在「技师 → 排位播报」），只有一条提示
+      // 回测整改 P03：钟房里没有播报条了（在「技师 → 上钟播报」），只有一条提示
       await expect(page.getByTestId('announcer-bar')).toHaveCount(0);
 
       // ① 搜索：拼音首字母、花名、工号、姓名；有条件时列技师卡片，写明现在生效的
@@ -210,8 +210,8 @@ test.describe('8.1.16 技师：钟房搜索筛选、排位播报、技师管理'
       await page.getByTestId('clock-active-sort').click();
       await expect(page.getByTestId('clockroom')).toBeVisible();
 
-      // ③ 排位播报页（回测整改 P03 起单独一页）：另一台在播时本机不出声；手动叫号记下叫号，本机不出声
-      await clickNav(page, '排位播报');
+      // ③ 上钟播报页（回测整改 P03 起单独一页）：另一台在播时本机不出声；手动叫号记下叫号，本机不出声
+      await clickNav(page, '上钟播报');
       const bar = page.getByTestId('announcer-bar');
       await expect(bar).toHaveAttribute('data-announcer', 'other');
       await expect(bar.getByTestId('announcer-other')).toContainText('E2E 另一台');
@@ -227,7 +227,7 @@ test.describe('8.1.16 技师：钟房搜索筛选、排位播报、技师管理'
       await expect.poll(async () => (await spoken(page)).map((s) => s.text)).toEqual(['本机开始播报叫号']);
       await bar.getByTestId('announcer-volume').fill('50');
       await bar.getByTestId('announcer-test').click();
-      await expect.poll(async () => (await spoken(page)).at(-1)).toEqual({ text: '排位播报试音', volume: 0.5 });
+      await expect.poll(async () => (await spoken(page)).at(-1)).toEqual({ text: '上钟播报试音', volume: 0.5 });
 
       // ⑤ 静音：整条写明「已静音」，叫号不出声，记着没念的条数
       await bar.getByTestId('announcer-mute').click();
@@ -243,7 +243,7 @@ test.describe('8.1.16 技师：钟房搜索筛选、排位播报、技师管理'
       await bar.getByTestId('announcer-mute').click();
       await expect(bar).toHaveAttribute('data-announcer', 'on');
       await page.getByTestId('announcer-call-T1').click();
-      await expect.poll(async () => (await spoken(page)).at(-1)?.text ?? '').toMatch(/^请 \d+ 号排位，T1 号 小雅，准备上钟$/);
+      await expect.poll(async () => (await spoken(page)).at(-1)?.text ?? '').toBe('请 T1 号 小雅，准备上钟');
       const said = (await spoken(page)).at(-1)!;
       expect(said.volume).toBe(0.5);
       const count = (await spoken(page)).length;

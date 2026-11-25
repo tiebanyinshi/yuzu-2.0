@@ -2,7 +2,7 @@
 //   · 名册的花名、类型、入职日期，类型的清单；组别（分组、组长、换组）；班次、排班表、临时调班与对调（逐条留痕）；
 //   · 休假：申请（同一编号重提不重复建）、日期重叠、批准 / 驳回 / 撤回 / 销假；批了的含今天的不进排位、不能派钟、
 //     不能在钟房上牌，销假以后照常；休假从以后开始的今天不受影响；到了日子不用谁去点就是休假（读的时候算）；
-//   · 排位播报：派钟自动记一条叫号（排位号、工号、花名、房间）、手动叫号、主播报终端的登记 / 接管 / 放下 / 报到；
+//   · 上钟播报：派钟自动记一条叫号（排位号、工号、花名、房间）、手动叫号、主播报终端的登记 / 接管 / 放下 / 报到；
 //   · 权限：钟房的岗位能看、能替技师申请与撤回休假，改名册、组别、班次、排班与审批要「维护技师名册」。
 // 全部是合成数据。
 
@@ -31,11 +31,11 @@ type Fail = { error: { code: string; message: string } };
 const view = async (cookie = ctx.owner) => (await api(ctx.app, cookie, 'GET', '/api/technician-admin')).body as TechnicianAdminView;
 const board = async () => (await api(ctx.app, ctx.clerk, 'GET', '/api/clockroom')).body as ClockroomBoard;
 const boardTech = async (no: string) => (await board()).technicians.find((t) => t.techNo === no)!;
-/** 轮钟队列里的工号，按排位 */
+/** 轮钟队列里的工号，按排位（8.1.38 起按工种分队、各队各排各的：先按工种，再按排位） */
 const queueOf = (b: ClockroomBoard) =>
   b.technicians
     .filter((t) => t.position !== null)
-    .sort((x, y) => x.position! - y.position!)
+    .sort((x, y) => x.kind.localeCompare(y.kind) || x.position! - y.position!)
     .map((t) => t.techNo);
 const state = (no: string, action: string, extra: Record<string, unknown> = {}) =>
   api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/technicians/${tech[no]}/state`, { action, ...(['leave', 'suspend', 'resume'].includes(action) ? { clientKey: randomUUID() } : {}), ...extra });
@@ -392,7 +392,7 @@ describe('休假：申请、审批，批了的不进排位', () => {
     // 轮钟派给他：拒绝；派给排在第一位的照常
     const v = await enter();
     expect((await dispatch({ visitId: v, technicianId: tech['13'] })).body.error.code).toBe('TECHNICIAN_ON_LEAVE');
-    const first = b.technicians.filter((t) => t.position !== null).sort((x, y) => x.position! - y.position!)[0]!;
+    const first = b.technicians.find((t) => t.techNo === queueOf(b)[0])!;
     expect((await dispatch({ visitId: v, technicianId: first.id })).status).toBe(200);
     // 钟房自己设的当天休假照旧能在钟房取消；休假单批的不行
     expect((await state('13', 'sign_out')).body.error.code).toBe('TECHNICIAN_LEAVE_APPROVED');
@@ -411,7 +411,7 @@ describe('休假：申请、审批，批了的不进排位', () => {
   });
 });
 
-describe('排位播报：叫号记录与主播报终端', () => {
+describe('上钟播报：叫号记录与主播报终端', () => {
   it('派钟自动记一条叫号：排位号、工号、花名（没有花名念名字）、房间；看板带最近的叫号', async () => {
     const b0 = await board();
     const queue = b0.technicians.filter((t) => t.position !== null && !t.busy).sort((x, y) => x.position! - y.position!);
@@ -422,13 +422,13 @@ describe('排位播报：叫号记录与主播报终端', () => {
     const b = r.body as ClockroomBoard;
     const call = b.calls.at(-1)!;
     expect(call).toMatchObject({ kind: 'dispatch', technicianId: t.id, staffName: '测试店员' });
-    expect(call.text).toBe(`请 ${t.position} 号排位，${t.techNo} 号 ${t.nickname || t.name}，到 F312 合成足浴间`);
+    expect(call.text).toBe(`请 ${t.techNo} 号 ${t.nickname || t.name}，到 F312 合成足浴间上钟`);
     expect(call.sessionId).toBe(b.sessions.find((s) => s.visitId === v)!.id);
     // 没选房间的念「准备上钟」；点钟给有花名的 11 号念花名
     const v2 = await enter();
     const d2 = await dispatch({ visitId: v2, technicianId: tech['11'], callType: 'designated', startNow: false });
     expect(d2.status, JSON.stringify(d2.body)).toBe(200);
-    expect((d2.body as ClockroomBoard).calls.at(-1)!.text).toMatch(/^请 \d+ 号排位，11 号 小雅，准备上钟$/);
+    expect((d2.body as ClockroomBoard).calls.at(-1)!.text).toBe('请 11 号 小雅，准备上钟');
     // 叫号记录只追加
     await expect(ctx.sql`DELETE FROM technician_calls`).rejects.toThrow();
   });
@@ -446,14 +446,14 @@ describe('排位播报：叫号记录与主播报终端', () => {
     // 空闲的技师也能叫（只念排位）
     const idle = b.technicians.find((t) => t.position !== null && !t.busy)!;
     const r2 = await api(ctx.app, ctx.clerk, 'POST', '/api/clockroom/calls', { technicianId: idle.id });
-    expect((r2.body as ClockroomBoard).calls.at(-1)!.text).toBe(`请 ${idle.position} 号排位，${idle.techNo} 号 ${idle.nickname || idle.name}，准备上钟`);
+    expect((r2.body as ClockroomBoard).calls.at(-1)!.text).toBe(`请 ${idle.techNo} 号 ${idle.nickname || idle.name}，准备上钟`);
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/clockroom/calls', { technicianId: s.technicianId, sessionId: 999_999 })).body.error.code).toBe('SESSION_CLOSED');
     expect((await state('14', 'sign_out')).status).toBe(200);
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/clockroom/calls', { technicianId: tech['14'] })).body.error.code).toBe('TECHNICIAN_NOT_ON');
     expect((await api(ctx.app, backoffice, 'POST', '/api/clockroom/calls', { technicianId: idle.id })).status).toBe(403);
   });
 
-  it('排位播报单独授权（回测整改 P03）：只有「排位播报」的账号看得到排位、能叫号、能登记播报终端，钟房的操作做不了', async () => {
+  it('上钟播报单独授权（回测整改 P03）：只有「上钟播报」的账号看得到排位、能叫号、能登记播报终端，钟房的操作做不了', async () => {
     const made = await api(ctx.app, ctx.owner, 'POST', '/api/staff', {
       username: 'paiwei',
       displayName: '排位员',

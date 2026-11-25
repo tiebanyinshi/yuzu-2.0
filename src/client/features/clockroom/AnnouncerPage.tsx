@@ -1,4 +1,4 @@
-// 排位播报（回测整改 P03，回测 4-1，docs/YUZU_REQ_V820.md 第 4 节）：从钟房里移出来的独立页面，「技师」组里与钟房同级。
+// 上钟播报（回测整改 P03，回测 4-1，docs/YUZU_REQ_V820.md 第 4 节）：从钟房里移出来的独立页面，「技师」组里与钟房同级。
 //   · 原有能力一样不少：自动叫号（派钟时记、本页念）、重播上一条、手动叫号、音量、一键静音、播报记录（播报条 Announcer.tsx 原样搬来）；
 //   · 与钟房共用同一份排位数据（/api/clockroom 看板，同一个查询缓存），钟房那边派钟、上下钟，这里马上看得到；
 //   · 权限单独授（technician.announce），排位员可以只有这一项；钟房的岗位照旧能进；
@@ -73,12 +73,12 @@ export function AnnouncerPage() {
 
   return (
     <>
-      <PageHeader title="排位播报" subtitle="自动叫号、重播、手动叫号、音量与静音；和钟房用同一份排位，钟房派钟这里马上念" />
+      <PageHeader title="上钟播报" subtitle="自动叫号、重播、手动叫号、音量与静音；和钟房用同一份排位，钟房派钟这里马上念" />
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto" data-testid="announcer-page">
         <div className="mx-auto max-w-[1280px] space-y-4 px-5 py-5 md:px-7">
           {moved && (
-            <Notice tone="info" title="排位播报换了地方" data-testid="announcer-moved">
-              排位播报从钟房里移到了「技师 → 排位播报」，就是这一页；以后从左边导航直接进。
+            <Notice tone="info" title="上钟播报换了地方" data-testid="announcer-moved">
+              上钟播报从钟房里移到了「技师 → 上钟播报」，就是这一页；以后从左边导航直接进。
               <button type="button" className="ml-2 font-bold text-lake hover:underline" onClick={() => setParams({}, { replace: true })}>
                 知道了
               </button>

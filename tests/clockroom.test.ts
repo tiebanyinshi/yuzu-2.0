@@ -133,9 +133,9 @@ describe('派钟、上钟、加钟、下钟', () => {
     expect(await queue()).toEqual(['03', '01', '04', '02']);
   });
 
-  it('点钟不动牌；在钟上的技师可以被点钟（等钟），下钟后再上钟', async () => {
+  it('点钟派钟时不动牌、下钟后排到队尾（8.1.38）；在钟上的技师可以被点钟（等钟），下钟后再上钟', async () => {
     const v = await enter();
-    // 点 01：不动牌
+    // 点 01：派钟时不动牌
     expect((await dispatch({ visitId: v, itemId: gua, technicianId: tech['01'], callType: 'designated', expectedTotal: 12800 })).status).toBe(200);
     expect(await queue()).toEqual(['03', '01', '04', '02']);
     const s1 = await sessionOf(v);
@@ -147,6 +147,8 @@ describe('派钟、上钟、加钟、下钟', () => {
     expect(s2.status).toBe('waiting');
     expect((await act(s2.id, 'start')).body.error.code).toBe('TECHNICIAN_BUSY');
     expect((await act(s1.id, 'finish')).status).toBe(200);
+    // 8.1.38：客人指定挑选的下钟后排到队尾（店主 2026-11-25）
+    expect(await queue()).toEqual(['03', '04', '02', '01']);
     expect((await act(s2.id, 'start')).status).toBe(200);
     expect((await act(s2.id, 'finish')).status).toBe(200);
     // 前台加项目时选的技师也建钟单（待上钟）；8.1.37：前台选的轮钟也按排位——轮不到的拒绝，提示交给钟房或改点钟
@@ -167,7 +169,7 @@ describe('派钟、上钟、加钟、下钟', () => {
     });
     expect(post.status).toBe(200);
     expect(await sessionOf(v3)).toMatchObject({ techNo: '03', status: 'waiting' });
-    expect(await queue()).toEqual(['01', '04', '02', '03']);
+    expect(await queue()).toEqual(['04', '02', '01', '03']);
     // 派了没上的技师算忙：前台再按轮钟选他拒绝（以前同一位技师能被前台派给几张手牌）
     const v4 = await enter();
     const busy = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${v4}/charges`, {
@@ -179,7 +181,7 @@ describe('派钟、上钟、加钟、下钟', () => {
     expect((await act((await sessionOf(v3)).id, 'start')).status).toBe(200);
     expect((await act((await sessionOf(v3)).id, 'finish')).status).toBe(200);
     // 排回下一条用例开头的顺序 03 01 02 04
-    for (const no of ['01', '04', '02', '04']) expect((await state(no, 'to_end', '排回用例的顺序')).status).toBe(200);
+    for (const no of ['03', '01', '02', '04']) expect((await state(no, 'to_end', '排回用例的顺序')).status).toBe(200);
     expect(await queue()).toEqual(['03', '01', '02', '04']);
   });
 
@@ -294,9 +296,39 @@ describe('钟房与轮钟规则', () => {
     await dispatch({ visitId: v2, itemId: gua, technicianId: tech[q1[0]!], callType: 'designated', expectedTotal: 12800 });
     expect(await queue()).toEqual([...q1.slice(1), q1[0]]);
     await act((await sessionOf(v2)).id, 'finish');
-    await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/clockroom-rules', { afterRotation: 'dispatch', afterDesignated: 'keep' });
+    await api(ctx.app, ctx.owner, 'PUT', '/api/admin/technicians/clockroom-rules', { afterRotation: 'dispatch', afterDesignated: 'finish' });
     const rules = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/rules')).body as { key: string; isDefault: boolean }[];
     expect(rules.find((x) => x.key === 'clockroom_rules.afterRotation')!.isDefault).toBe(true);
+  });
+
+  it('按工种分队（8.1.38）：排位只在本工种里数，轮钟只和同工种的比；看板与前台选技师的排位一致；叫号不念排位号', async () => {
+    const kinds = await api(ctx.app, ctx.owner, 'PUT', '/api/technician-admin/kinds', { kinds: ['足浴', '按摩', 'SPA', '中医', '采耳', '其他'] });
+    expect(kinds.status, JSON.stringify(kinds.body)).toBe(200);
+    const q0 = await queue();
+    // 把排在最前面的那位改成中医：自己一队排第 1；其余的另一队从 1 排起
+    const tcm = q0[0]!;
+    const me = ((await board()).technicians as { techNo: string; gender: string; grade: string }[]).find((t) => t.techNo === tcm)!;
+    const save = (kind: string) =>
+      api(ctx.app, ctx.owner, 'PUT', `/api/admin/technicians/${tech[tcm]}`, { name: `技师${tcm}`, gender: me.gender, grade: me.grade, skills: [], note: '', active: true, sortOrder: 0, kind });
+    const set = await save('中医');
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    const b = (await board()).technicians as { techNo: string; kind: string; position: number | null }[];
+    const others = q0.slice(1);
+    expect(b.find((t) => t.techNo === tcm)).toMatchObject({ kind: '中医', position: 1 });
+    expect(others.map((no) => b.find((t) => t.techNo === no)!.position)).toEqual(others.map((_, i) => i + 1));
+    const fd = (await api(ctx.app, ctx.clerk, 'GET', '/api/frontdesk/technicians')).body.technicians as { techNo: string; queue: { position: number | null } }[];
+    expect(fd.find((t) => t.techNo === tcm)!.queue.position).toBe(1);
+    expect(fd.find((t) => t.techNo === others[0])!.queue.position).toBe(1);
+    // 轮钟派给另一队的第一位：不用写原因（中医那位不算排在前面）
+    const v = await enter();
+    const r = await dispatch({ visitId: v, itemId: gua, technicianId: tech[others[0]!], callType: 'rotation', expectedTotal: 12800 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const calls = (await board()).calls as { text: string }[];
+    expect(calls.at(-1)!.text).not.toContain('排位');
+    expect(calls.at(-1)!.text).toMatch(/上钟$/);
+    await act((await sessionOf(v)).id, 'finish');
+    // 改回不分工种
+    expect((await save('')).status).toBe(200);
   });
 });
 

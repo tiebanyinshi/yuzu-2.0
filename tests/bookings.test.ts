@@ -338,7 +338,8 @@ describe('前台派钟、加钟与技师预约不重叠（测试会话 ded1958 �
     expect(refused.message).toContain(booked.body.bookingNo);
     const [n] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM technician_sessions WHERE visit_id = ${v1}`;
     expect(n!.n).toBe(0);
-    // 别的技师照常；03:00 派乙到 04:00 不重叠；加钟到 05:00 不重叠，再加一钟到 06:00 和预约重叠，拒绝
+    // 别的技师照常；03:00 派乙到 04:00 不重叠；8.1.38：预约开始前 30 分钟（04:30 起）技师就锁给预约的客人——
+    // 加钟到 05:00 撞上锁定的那半小时，拒绝；再加到 06:00 和预约本身重叠，同样拒绝
     await dispatchAt(v1, tech['B1']!, `${day}T04:30:00Z`);
     const v2 = await visitOf();
     await dispatchAt(v2, tech['B2']!, `${day}T03:00:00Z`);
@@ -351,8 +352,15 @@ describe('前台派钟、加钟与技师预约不重叠（测试会话 ded1958 �
         { actor: owner, at: new Date(at) },
         { session: { extendId: Number(s!.id) } },
       );
-    await extend(`${day}T03:50:00Z`);
+    const held = await errorOf(extend(`${day}T03:50:00Z`));
+    expect(held).toMatchObject({ code: 'TECHNICIAN_BOOKED' });
+    expect(held.message).toContain('预约开始前 30 分钟');
     expect(await errorOf(extend(`${day}T04:50:00Z`))).toMatchObject({ code: 'TECHNICIAN_BOOKED' });
+    // 提前锁定改成 0：加钟到 05:00 不重叠，照常
+    const rules = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/booking-rules')).body;
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/booking-rules', { ...rules, technicianHoldMinutes: 0 })).status).toBe(200);
+    await extend(`${day}T03:50:00Z`);
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/booking-rules', { ...rules, technicianHoldMinutes: 30 })).status).toBe(200);
     // 约了乙的会员本人：派给乙不拦
     const m = await member('约乙的会员');
     const mine = await create({ kind: 'technician', itemId, technicianId: tech['B2'], startsAt: `${day}T07:00:00.000Z`, memberId: m });
@@ -364,7 +372,8 @@ describe('前台派钟、加钟与技师预约不重叠（测试会话 ded1958 �
     const [t4] = await ctx.sql<{ code: string }[]>`SELECT h.code FROM visits v JOIN hand_tags h ON h.id = v.tag_id WHERE v.id = ${v4}`;
     const arrived = await change(booked.body.id, { action: 'arrive', tagCode: t4!.code });
     expect(arrived.status, JSON.stringify(arrived.body)).toBe(200);
-    await dispatchAt(v4, tech['B2']!, `${day}T04:58:00Z`);
+    // （乙手上还有 03:00 那一钟与会员 06:45 派的等钟，这一钟排在它们后面；8.1.38 起要在会员 07:00 那张预约的锁定期 06:30 之前做完）
+    await dispatchAt(v4, tech['B2']!, `${day}T04:20:00Z`);
     const [n4] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM technician_sessions WHERE visit_id = ${v4}`;
     expect(n4!.n).toBe(1);
   });

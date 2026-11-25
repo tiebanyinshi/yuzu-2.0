@@ -1,5 +1,5 @@
 // 回测整改 P09（回测 4-2，docs/YUZU_REQ_V820.md 第 10 节）：技师上钟轮播的数据——排钟顺序、在钟的项目与房间、房间所在区域、
-// 下一位排钟；不列休息以外不在岗的；只读，「技师上钟轮播」「钟房」「排位播报」任一项都能看，都没有的不行；新权限进了有「排位播报」的岗位的建议权限。
+// 下一位排钟；不列休息以外不在岗的；只读，「技师上钟轮播」「钟房」「上钟播报」任一项都能看，都没有的不行；新权限进了有「上钟播报」的岗位的建议权限。
 // 全部是合成数据。
 
 import { randomUUID } from 'node:crypto';
@@ -81,7 +81,7 @@ describe('技师上钟轮播（P09）', () => {
     expect(JSON.stringify(b)).not.toContain('B001');
   });
 
-  it('只读：钟房的岗位能看；都没有的看不到；新权限进了有「排位播报」的岗位的建议权限', async () => {
+  it('只读：钟房的岗位能看；都没有的看不到；新权限进了有「上钟播报」的岗位的建议权限', async () => {
     expect((await board(backoffice)).status).toBe(403);
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/tech-board', {})).status).toBe(404);
     const rows = await ctx.sql<{ positionKey: string }[]>`
