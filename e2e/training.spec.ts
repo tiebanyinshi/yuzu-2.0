@@ -1,10 +1,11 @@
 // 员工培训（店主 2026-11-25，docs/TRAINING.md）的浏览器验收：
-//   ① 后台「员工培训」：「培训资料」文件夹里上传一份 PDF、一份 Excel（分块上传，进度走到「已上传」）；
-//   ② 「办公 → 员工培训」：看到「培训资料」，点进去两份都是「未看」；打开 PDF 页面里画出第 1 页，打开 Excel 页面里显示成表格；回来标「已看」；
-//   ③ 后台点开这份 PDF：「看过」里有刚才这位。
+//   ① 「WCP 设置 → 员工培训」：「培训资料」文件夹里上传一份 PDF、一份 Excel（分块上传，进度走到「已上传」）；
+//   ② 「WCP → 员工培训」：看到「培训资料」，点进去两份都是「未看」；打开 PDF 页面里画出第 1 页，打开 Excel 页面里显示成表格；回来标「已看」；
+//   ③ WCP 设置里点开这份 PDF：「看过」里有刚才这位。
 // 依赖演示数据（店主 linlan，密码 yuzu2026）。每次传的文件标题带随机后缀，做完下架；只在门店电脑尺寸执行。
 import { expect, test, type Page } from '@playwright/test';
 import { buildXlsx } from '../src/server/lib/xlsx';
+import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 
@@ -13,7 +14,8 @@ async function login(page: Page, username: string) {
   await page.fill('#username', username);
   await page.fill('#password', PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
-  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
+  await passPortal(page);
+  await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 
 /** 一页的最小 PDF（pdf.js 能画） */
@@ -44,7 +46,7 @@ test.describe('员工培训', () => {
     test.skip(testInfo.project.name !== '门店电脑', '会上传文件，只在门店电脑尺寸执行一次');
   });
 
-  test('后台上传 PDF 与 Excel → 办公里看（PDF 画出来、Excel 成表格、标已看）→ 后台看到谁看过', async ({ page }) => {
+  test('WCP 设置上传 PDF 与 Excel → WCP 里看（PDF 画出来、Excel 成表格、标已看）→ WCP 设置看到谁看过', async ({ page }) => {
     await login(page, 'linlan');
     const tag = String(Date.now()).slice(-6);
     const pdfName = `安全手册${tag}.pdf`;
@@ -68,7 +70,7 @@ test.describe('员工培训', () => {
     await expect(files.getByText(`安全手册${tag}`, { exact: true })).toBeVisible();
     await expect(files.getByText(`应知应会${tag}`, { exact: true })).toBeVisible();
 
-    // ② 办公里看
+    // ② WCP 里看（左侧菜单「员工培训」在「人脸录入」与「通知」之间）
     await page.goto('/oa');
     await page.getByTestId('oa-tile-training').click();
     await page.getByTestId('training-folders').getByText('培训资料', { exact: true }).click();

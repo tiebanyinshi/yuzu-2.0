@@ -30,7 +30,7 @@ export function TrainingSection() {
     <AdminPage
       section="training"
       wide
-      description="培训文件按文件夹放：「培训资料」所有员工都看得到，部门文件夹只有这个部门的员工看得到（自己新建、不对应部门的所有人都看得到）。员工在「办公 → 员工培训」里看。"
+      description="培训文件按文件夹放：「培训资料」所有员工都看得到，部门文件夹只有这个部门的员工看得到（自己新建、不对应部门的所有人都看得到）。员工在「WCP → 员工培训」里看。"
     >
       <div className="grid gap-5 lg:grid-cols-[18rem_1fr]">
         <Card className="p-4" data-testid="training-admin-folders">
@@ -228,7 +228,7 @@ function FolderFiles({ folder, folders }: { folder: TrainingFolder; folders: Tra
       <p className="mt-1 text-[12.5px] text-ink-3">
         能传 PDF、图片、视频（MP4）、音频、Excel、PPT、Word，一份最多 {TRAINING_MAX_BYTES / 1024 / 1024} MB，可以一次选多个。PDF、图片、视频、Excel 员工在页面里直接看，PPT、Word
         员工下载看（想在页面里看，再传一份「另存为 PDF」的）。
-        <PendingBadge className="ml-1" title="谁能看、文件大小上限、Office 预览的做法待确认（docs/PENDING_DECISIONS.md PC33）" />
+        <PendingBadge className="ml-1" title="谁能看、文件大小上限、Office 预览的做法待确认（docs/PENDING_DECISIONS.md PC37）" />
       </p>
       {uploads.length > 0 && (
         <div className="mt-3 space-y-2" data-testid="training-uploads">

@@ -1,6 +1,6 @@
-// 员工培训（店主 2026-11-25，docs/TRAINING.md、PENDING_DECISIONS PC33）：文件夹、培训文件与版本、谁看过。
+// 员工培训（店主 2026-11-25，docs/TRAINING.md、PENDING_DECISIONS PC37）：文件夹、培训文件与版本、谁看过。
 
-/** 一份文件最大 200 MB（PC33 待确认） */
+/** 一份文件最大 200 MB（PC37 待确认） */
 export const TRAINING_MAX_BYTES = 200 * 1024 * 1024;
 /** 分块上传每块的大小（原始字节；base64 以后约 4 MB，接口的请求体上限按它定） */
 export const TRAINING_CHUNK_BYTES = 3 * 1024 * 1024;

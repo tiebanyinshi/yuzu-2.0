@@ -1,4 +1,4 @@
-// 员工培训 · 员工端（「办公 → 员工培训」，docs/TRAINING.md）：文件夹 → 文件 → 在页面里看。
+// 员工培训 · 员工端（「WCP → 员工培训」，docs/TRAINING.md）：文件夹 → 文件 → 在页面里看。
 //   /oa/training                     看得到的文件夹（「培训资料」在最前，自己部门的标「本部门」）
 //   /oa/training/<文件夹>            这个夹里的文件（看过的标「已看」）
 //   /oa/training/<文件夹>/<文件>     看这份文件（PDF、图片、视频、Excel 页面里看，PPT、Word 下载）
@@ -57,7 +57,7 @@ function FoldersPage() {
     <>
       <PageHeader title="员工培训" subtitle="公司的培训资料和本部门的培训文件，手机上也能看" />
       <div className="mx-auto w-full max-w-3xl space-y-3 p-4 md:p-7">
-        <Back to="/oa" label="办公" />
+        <Back to="/oa" label="WCP 首页" />
         {q.isPending ? (
           <Skeleton className="h-40" />
         ) : q.isError && !q.data ? (

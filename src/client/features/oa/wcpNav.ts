@@ -33,6 +33,9 @@ export function useWcpNav(): WcpNavItem[] {
   const session = useSession();
   const wcp = visibleBoardSections('wcp', can, session.erpModules);
   return wcp.length
-    ? [...WCP_TILES, { to: ADMIN_SECTIONS[wcp[0]!].path, label: 'WCP 设置', hint: '员工账号、组织架构、考勤、审批模板、工资条、员工培训、食堂与巡场', icon: SlidersHorizontal, testId: 'oa-tile-settings' }]
+    ? [
+        ...WCP_TILES,
+        { to: ADMIN_SECTIONS[wcp[0]!].path, label: 'WCP 设置', hint: '员工账号、组织架构、考勤、审批模板、工资条、员工培训、食堂与巡场', icon: SlidersHorizontal, testId: 'oa-tile-settings' },
+      ]
     : [...WCP_TILES];
 }

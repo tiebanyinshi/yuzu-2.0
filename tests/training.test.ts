@@ -1,4 +1,4 @@
-// 员工培训第一期（店主 2026-11-25，docs/TRAINING.md、PENDING_DECISIONS PC33）：文件夹、分块上传、版本、谁能看、读内容（Range）、谁看过。
+// 员工培训第一期（店主 2026-11-25，docs/TRAINING.md、PENDING_DECISIONS PC37）：文件夹、分块上传、版本、谁能看、读内容（Range）、谁看过。
 
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
