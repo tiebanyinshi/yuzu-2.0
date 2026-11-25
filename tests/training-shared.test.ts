@@ -1,6 +1,20 @@
-// 员工培训的纯函数（不要数据库）：PDF 一页画多大（Codex 安全审查 04eb112）、文件名规则（Codex 审查 9b1dd16）。
+// 员工培训的纯函数（不要数据库）：PDF 一页画多大（Codex 安全审查 04eb112）、文件名规则（Codex 审查 9b1dd16）、上传编号有效期与 PDF 内嵌图片检查（Codex 审查 bfc32cd）。
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { pdfRenderScale, TRAINING_FILE_NAME_MAX, TRAINING_PDF_MAX_PIXELS, TRAINING_PDF_MAX_SIDE, trainingFileNameProblem } from '../src/shared/training';
+import {
+  newTrainingUploadKey,
+  pdfRenderScale,
+  TRAINING_FILE_NAME_MAX,
+  TRAINING_PDF_MAX_IMAGE_PIXELS,
+  TRAINING_PDF_MAX_PIXELS,
+  TRAINING_PDF_MAX_SIDE,
+  TRAINING_UPLOAD_KEY_FUTURE_MS,
+  TRAINING_UPLOAD_KEY_TTL_DAYS,
+  trainingFileNameProblem,
+  trainingUploadKeyState,
+  trainingUploadKeyTime,
+} from '../src/shared/training';
+import { checkPdfImageLimit, createPdfImageScanner } from '../src/server/lib/pdf-image-limit';
 
 const canvas = (w: number, h: number, display: number, ratio: number) => {
   const s = pdfRenderScale(w, h, display, ratio);
@@ -39,5 +53,49 @@ describe('trainingFileNameProblem（页面先查与服务端同一条，Codex �
     expect(trainingFileNameProblem('   ')).toBe('缺少文件名');
     expect(trainingFileNameProblem('a/b.pdf')).toMatch(/路径/);
     expect(trainingFileNameProblem('a\u0001.pdf')).toMatch(/控制字符/);
+  });
+});
+
+describe('UUIDv7 上传操作编号有效期（Codex 审查 bfc32cd）', () => {
+  it('生成合法的 UUIDv7 并还原毫秒时间戳；区分有效、过期、超前与非 UUIDv7', () => {
+    const now = Date.UTC(2026, 10, 25, 12, 0, 0);
+    const key = newTrainingUploadKey(now);
+    expect(trainingUploadKeyTime(key)).toBe(now);
+    expect(trainingUploadKeyState(key, now)).toBe('valid');
+    expect(trainingUploadKeyState(key, now + TRAINING_UPLOAD_KEY_TTL_DAYS * 86_400_000)).toBe('valid');
+    expect(trainingUploadKeyState(key, now + TRAINING_UPLOAD_KEY_TTL_DAYS * 86_400_000 + 1)).toBe('expired');
+    // 允许客户端时钟略微超前（最多 24 小时），超过拒绝
+    expect(trainingUploadKeyState(newTrainingUploadKey(now + TRAINING_UPLOAD_KEY_FUTURE_MS), now)).toBe('valid');
+    expect(trainingUploadKeyState(newTrainingUploadKey(now + TRAINING_UPLOAD_KEY_FUTURE_MS + 1), now)).toBe('future');
+    // 普通 UUIDv4 认成 invalid（不能绕过过期）
+    expect(trainingUploadKeyTime(randomUUID())).toBeNull();
+    expect(trainingUploadKeyState(randomUUID(), now)).toBe('invalid');
+  });
+});
+
+describe('PDF 内嵌图片尺寸流式检查（Codex 安全审查 bfc32cd）', () => {
+  const sample = (dict: string) => Buffer.from(`%PDF-1.4\n1 0 obj\n${dict}\nstream\n0000\nendstream\nendobj\n`, 'latin1');
+
+  it('正常尺寸图片与非图片流放行', () => {
+    expect(checkPdfImageLimit(sample('<< /Type /XObject /Subtype /Image /Width 2480 /Height 3508 /BitsPerComponent 8 >>'))).toBeNull();
+    // 非图片流即使含 /Width /Height 也不误拦
+    expect(checkPdfImageLimit(sample('<< /Filter /FlateDecode /Length 4 /Width 20000 /Height 20000 >>'))).toBeNull();
+  });
+
+  it('12000×12000 图片、带十六进制转义的 /Subtype、缺少 /Subtype 但有 /BitsPerComponent 的 SMask、单边超限一律拦下', () => {
+    expect(checkPdfImageLimit(sample('<< /Type /XObject /Subtype /Image /Width 12000 /Height 12000 /Filter /FlateDecode >>'))).toEqual({ width: 12000, height: 12000 });
+    expect(checkPdfImageLimit(sample('<< /Sub#74ype /Image /W 5000 /H 5000 >>'))).toEqual({ width: 5000, height: 5000 });
+    expect(checkPdfImageLimit(sample('<< /ColorSpace /DeviceGray /BitsPerComponent 8 /Width 12000 /Height 12000 >>'))).toEqual({ width: 12000, height: 12000 });
+    expect(checkPdfImageLimit(sample('<< /Subtype /Image /Width 20000 /Height 10 >>'))).toEqual({ width: 20000, height: 10 });
+    expect(TRAINING_PDF_MAX_IMAGE_PIXELS).toBe(16_000_000);
+  });
+
+  it('图像字典跨两个分块也能检出；间接引用（10 0 R）不误读对象号', () => {
+    const pdf = sample('<< /Type /XObject /Subtype /Image /Width 6000 /Height 4000 /BitsPerComponent 8 >>');
+    const scanner = createPdfImageScanner();
+    scanner.push(pdf.subarray(0, 40));
+    scanner.push(pdf.subarray(40));
+    expect(scanner.finish()).toEqual({ width: 6000, height: 4000 });
+    expect(checkPdfImageLimit(sample('<< /Subtype /Image /Width 99999 0 R /Height 99999 0 R >>'))).toBeNull();
   });
 });

@@ -141,20 +141,20 @@ const startBody = (p: Pick<PendingUpload, 'key' | 'fileName' | 'mime' | 'sizeByt
 });
 
 /**
- * 不传了：先请服务端作废登记（与「完成」互斥），服务端回了 cancelled（作废了）或 done（其实已经登记好了）才删本机记录。
- * 没收到回答就留着，下次再点（Codex 审查 57dd2f6）。
+ * 不传了：先请服务端作废登记（与「完成」互斥），服务端回了 cancelled（作废了）、expired（编号已过期不可能再传）或 done（其实已经登记好了）才删本机记录。
+ * 没收到回答就留着，下次再点（Codex 审查 57dd2f6 / bfc32cd）。
  */
-export async function cancelPendingUpload(p: PendingUpload): Promise<'done' | 'cancelled'> {
+export async function cancelPendingUpload(p: PendingUpload): Promise<'done' | 'cancelled' | 'expired'> {
   const st = await api.post<UploadState>('/api/admin/training/uploads/cancel', startBody(p));
-  if (st.status === 'open') throw new Error('服务端还没作废这次上传，请再试一次');
+  if (st.status === 'open' || st.status === 'missing') throw new Error('服务端还没作废这次上传，请再试一次');
   removePendingUpload(p.key);
   return st.status;
 }
 
-/** 查回一次没确认的上传（用原编号、原参数重新「开始」，服务端只回状态、不改东西）：登记好了就删掉本机记录 */
+/** 只读查回一次没确认的上传（不新建 open 行）：登记好、已作废、已过期的删掉本机记录（Codex 审查 bfc32cd） */
 export async function checkPendingUpload(p: PendingUpload): Promise<UploadState['status']> {
-  const st = await api.post<UploadState>('/api/admin/training/uploads', startBody(p));
-  if (st.status !== 'open') removePendingUpload(p.key);
+  const st = await api.post<UploadState>('/api/admin/training/uploads/lookup', startBody(p));
+  if (st.status === 'done' || st.status === 'cancelled' || st.status === 'expired') removePendingUpload(p.key);
   return st.status;
 }
 
@@ -162,7 +162,7 @@ interface UploadState {
   uploadId: number;
   chunkCount: number;
   received: number[];
-  status: 'open' | 'done' | 'cancelled';
+  status: 'open' | 'done' | 'cancelled' | 'expired' | 'missing';
   fileId: number | null;
   versionId: number | null;
 }
@@ -188,10 +188,19 @@ export async function uploadTrainingFile(file: File, clientKey: string, target: 
   if (saved) target = saved.target;
   else if (!savePendingUpload({ key: clientKey, fileName: file.name, mime, sizeBytes: file.size, fingerprint, target, targetLabel, createdAt: new Date().toISOString() }))
     throw new Error('本机浏览器保存不了上传记录（存储空间已满或被禁用），为防止重复登记，这份没有上传。请清理浏览器数据或换一台电脑。');
-  const start = await api.post<UploadState>('/api/admin/training/uploads', startBody({ key: clientKey, fileName: file.name, mime, sizeBytes: file.size, fingerprint }));
-  if (start.status === 'cancelled') {
+  let start: UploadState;
+  try {
+    start = await api.post<UploadState>('/api/admin/training/uploads', startBody({ key: clientKey, fileName: file.name, mime, sizeBytes: file.size, fingerprint }));
+  } catch (e) {
+    // 服务端明确确认编号已过期 / 格式旧（done 永不清，所以一定未登记且不能再开），或首次提交时钟异常未落库：清掉本机记录
+    if (e instanceof ApiError && (e.code === 'TRAINING_UPLOAD_EXPIRED' || e.code === 'TRAINING_UPLOAD_KEY_INVALID' || (!saved && e.code === 'TRAINING_UPLOAD_KEY_CLOCK'))) {
+      removePendingUpload(clientKey);
+    }
+    throw e;
+  }
+  if (start.status === 'cancelled' || start.status === 'expired') {
     removePendingUpload(clientKey);
-    throw new Error('这次上传已经确认不传了，请重新选文件');
+    throw new Error(start.status === 'expired' ? '这次上传已超过 7 天过期，请重新选文件上传' : '这次上传已经确认不传了，请重新选文件');
   }
   if (start.status === 'done') {
     removePendingUpload(clientKey);

@@ -12,6 +12,7 @@ import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import { can } from '@shared/permissions';
 import {
+  TRAINING_CANCELLED_KEEP_DAYS,
   TRAINING_CHUNK_BYTES,
   TRAINING_FORMATS,
   TRAINING_IMAGE_MAX_PIXELS,
@@ -21,9 +22,13 @@ import {
   TRAINING_DAILY_UPLOADS_PER_STAFF,
   TRAINING_OPEN_BYTES_PER_STAFF,
   TRAINING_OPEN_UPLOADS_PER_STAFF,
+  TRAINING_PDF_MAX_IMAGE_PIXELS,
+  TRAINING_PDF_MAX_IMAGE_SIDE,
   TRAINING_TOTAL_MAX_BYTES,
   TRAINING_TOTAL_MAX_VERSIONS,
+  TRAINING_UPLOAD_KEY_TTL_DAYS,
   trainingFileNameProblem,
+  trainingUploadKeyState,
   trainingViewKind,
   type TrainingFile,
   type TrainingFileDetail,
@@ -41,6 +46,7 @@ import { ctxOf, type Actor, type Deps, type OpContext } from '../lib/context';
 import { AppError, badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { hashRequest } from '../lib/idempotency';
 import { imageSize } from '../lib/image-size';
+import { createPdfImageScanner } from '../lib/pdf-image-limit';
 import { createStreamSlots } from '../lib/stream-slots';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
@@ -365,23 +371,29 @@ async function assertStoreQuota(tx: Tx, bytes: number, newBlob: boolean) {
     throw new AppError(413, 'TRAINING_QUOTA', `培训文件已占 ${(Number(r!.used) / 1024 ** 3).toFixed(2)} GB，再存这份就超过 ${(quota.totalBytes / 1024 ** 3).toFixed(0)} GB 的上限，请找店主处理`);
 }
 
-/** 「不传了」的作废记录留几天（页面查回用） */
-const TRAINING_CANCELLED_KEEP_DAYS = 7;
+/** 取数据库当前时间（毫秒），与 sweepTrainingUploads 的 now() 保持同一时钟 */
+async function dbNowMs(db: Db): Promise<number> {
+  const [r] = await db<{ ms: string | number }[]>`SELECT (extract(epoch FROM now()) * 1000)::bigint AS ms`;
+  return Number(r!.ms);
+}
 
-/** 定时清理（jobs.ts 每分钟调，自己按小时节流）：24 小时还没传完的作废（连带传了一半的块）；「不传了」的作废记录 7 天后清掉 */
+/** 同一上传操作编号的事务级咨询锁：并发 startUpload / cancelUpload 串行，不撞唯一约束 */
+const lockUploadKey = (tx: Tx, key: string) => tx`SELECT pg_advisory_xact_lock(hashtextextended(${`training_upload:${key}`}, 0))`;
+
+/** 定时清理（jobs.ts 每分钟调，自己按小时节流）：24 小时还没传完的作废（连带传了一半的块）；「不传了」的作废记录 10 天后清掉（编号 7 天过期，清掉时早已不能重开） */
 let lastSweep = 0;
 export async function sweepTrainingUploads(db: Db, now = Date.now()): Promise<number> {
   if (now - lastSweep < 60 * 60 * 1000) return 0;
   lastSweep = now;
   const rows = await db`DELETE FROM training_uploads WHERE status = 'open' AND created_at < now() - interval '24 hours' RETURNING id`;
-  // 「不传了」留下的作废记录只为查回用，过几天清掉（Codex 安全审查 04eb112：不让作废记录一直攒下去）
+  // 「不传了」留下的作废记录保留 10 天（大于编号 7 天有效期 + 24 小时时钟容差），清掉后同一个 UUIDv7 已被 startUpload 永久拒绝（Codex 审查 04eb112 / bfc32cd）
   await db`DELETE FROM training_uploads WHERE status = 'cancelled' AND coalesce(finished_at, created_at) < now() - make_interval(days => ${TRAINING_CANCELLED_KEEP_DAYS})`;
   // 已作废、已登记的上传不该再有暂存的块（兜底：万一有，也清掉，不白占库）
   await db`DELETE FROM training_upload_chunks c USING training_uploads u WHERE u.id = c.upload_id AND u.status <> 'open'`;
   return rows.length;
 }
 
-/** 开始上传：同一个编号重提返回原来那一次（含已传了哪几块） */
+/** 开始上传：同一个编号重提返回原来那一次（含已传了哪几块）；已过期或非 UUIDv7 编号拒绝新开（不会把清理掉的作废编号重新打开） */
 async function startUpload(deps: Deps, raw: unknown, ctx: OpContext) {
   const input = parse(StartUploadInput, raw);
   const chunkCount = chunkCountOf(input.sizeBytes);
@@ -389,6 +401,7 @@ async function startUpload(deps: Deps, raw: unknown, ctx: OpContext) {
   const requestHash = hashRequest({ op: 'training_upload', ...input, clientKey: undefined });
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
+    await lockUploadKey(tx, input.clientKey);
     // 24 小时前开始、一直没传完的作废（连带传了一半的块）
     await tx`DELETE FROM training_uploads WHERE status = 'open' AND created_at < now() - interval '24 hours'`;
     const [seen] = await tx<{ id: number; requestHash: string; createdBy: number }[]>`
@@ -398,6 +411,10 @@ async function startUpload(deps: Deps, raw: unknown, ctx: OpContext) {
       if (seen.requestHash !== requestHash || Number(seen.createdBy) !== ctx.actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次上传，请刷新页面后重新选文件');
       id = Number(seen.id);
     } else {
+      const state = trainingUploadKeyState(input.clientKey, await dbNowMs(tx));
+      if (state === 'expired') throw conflict('TRAINING_UPLOAD_EXPIRED', `这次上传已超过 ${TRAINING_UPLOAD_KEY_TTL_DAYS} 天过期，不能再接着传，请重新选文件上传`);
+      if (state === 'future') throw new AppError(400, 'TRAINING_UPLOAD_KEY_CLOCK', '上传编号时间异常，请核对本机系统时间后再传');
+      if (state === 'invalid') throw new AppError(400, 'TRAINING_UPLOAD_KEY_INVALID', '上传编号格式已更新，请刷新页面后重新选文件上传');
       await assertStagingQuota(tx, ctx.actor.id, input.sizeBytes);
       const [row] = await tx<{ id: number }[]>`
         INSERT INTO training_uploads (client_key, size_bytes, chunk_count, file_name, mime, request_hash, created_by)
@@ -421,16 +438,40 @@ async function uploadState(db: Db, id: number) {
     /** 已经传到服务器的块（断了以后接着传，跳过这些） */
     received,
     /** cancelled：管理员确认不传了，这个编号不能再传 */
-    status: u.status as 'open' | 'done' | 'cancelled',
+    status: u.status as 'open' | 'done' | 'cancelled' | 'expired' | 'missing',
     fileId: u.resultFileId === null ? null : Number(u.resultFileId),
     versionId: u.resultVersionId === null ? null : Number(u.resultVersionId),
   };
 }
 
+/** 只读查回一次没确认的上传（不新建 open 行，Codex 审查 bfc32cd）：库里没查到且编号已过期的直接回 expired（done 记录永不清，所以一定没登记且永远不能再开） */
+async function lookupUpload(deps: Deps, raw: unknown, ctx: OpContext) {
+  const input = parse(StartUploadInput, raw);
+  const chunkCount = chunkCountOf(input.sizeBytes);
+  if (chunkCount > TRAINING_MAX_CHUNKS) throw badRequest('文件太大');
+  const requestHash = hashRequest({ op: 'training_upload', ...input, clientKey: undefined });
+  const [seen] = await deps.sql<{ id: number; requestHash: string; createdBy: number }[]>`
+    SELECT id, request_hash, created_by FROM training_uploads WHERE client_key = ${input.clientKey}`;
+  if (seen) {
+    if (seen.requestHash !== requestHash || Number(seen.createdBy) !== ctx.actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次上传，请刷新页面后重新选文件');
+    return uploadState(deps.sql, Number(seen.id));
+  }
+  const state = trainingUploadKeyState(input.clientKey, await dbNowMs(deps.sql));
+  return {
+    uploadId: 0,
+    chunkCount,
+    chunkBytes: TRAINING_CHUNK_BYTES,
+    received: [] as number[],
+    status: (state === 'expired' || state === 'invalid' ? 'expired' : 'missing') as 'expired' | 'missing',
+    fileId: null as number | null,
+    versionId: null as number | null,
+  };
+}
+
 /**
  * 不传了（服务端作废登记）：用原编号、原参数。锁住这次上传的行（与「完成」互斥）：
- * 已经登记好的原样返回 done（不能作废）；还没完成的标 cancelled、丢掉传了一半的块；服务端还没见过这个编号的，登记一行 cancelled 占住编号，
- * 之后原请求再到也开始不了、完成不了。返回作废以后的状态，页面见到 cancelled 或 done 才删本机记录（Codex 审查 57dd2f6）。
+ * 已经登记好的原样返回 done（不能作废）；还没完成的标 cancelled、丢掉传了一半的块；服务端还没见过这个编号的，有效期内登记一行 cancelled 占住编号，
+ * 已经过期的编号已被 startUpload 永久拒绝，直接回 expired、不再写墓碑行。页面见到 cancelled / done / expired 才删本机记录（Codex 审查 57dd2f6 / bfc32cd）。
  */
 async function cancelUpload(deps: Deps, raw: unknown, ctx: OpContext) {
   const input = parse(StartUploadInput, raw);
@@ -439,25 +480,30 @@ async function cancelUpload(deps: Deps, raw: unknown, ctx: OpContext) {
   const requestHash = hashRequest({ op: 'training_upload', ...input, clientKey: undefined });
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
-    // 编号唯一：先占住（已有的不动），再锁那一行。服务端没见过的编号要新占一行，算进这个人 24 小时内的登记次数（Codex 安全审查 04eb112）
-    const [seen] = await tx`SELECT 1 FROM training_uploads WHERE client_key = ${input.clientKey}`;
-    if (!seen) {
-      const r = await stagingCounts(tx, ctx.actor.id);
-      if (r.day + 1 > quota.dailyUploads) throw dailyLimit(r.day);
-    }
-    await tx`
-      INSERT INTO training_uploads (client_key, size_bytes, chunk_count, file_name, mime, request_hash, created_by, status, finished_at)
-      VALUES (${input.clientKey}, ${input.sizeBytes}, ${chunkCount}, ${input.fileName}, ${input.mime}, ${requestHash}, ${ctx.actor.id}, 'cancelled', now())
-      ON CONFLICT (client_key) DO NOTHING`;
+    await lockUploadKey(tx, input.clientKey);
     const [u] = await tx<{ id: number; requestHash: string; createdBy: number; status: string }[]>`
       SELECT id, request_hash, created_by, status FROM training_uploads WHERE client_key = ${input.clientKey} FOR UPDATE`;
-    if (!u) throw notFound('上传记录不存在');
-    if (u.requestHash !== requestHash || Number(u.createdBy) !== ctx.actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次上传');
-    if (u.status === 'open') {
-      await tx`UPDATE training_uploads SET status = 'cancelled', finished_at = now() WHERE id = ${u.id}`;
-      await tx`DELETE FROM training_upload_chunks WHERE upload_id = ${u.id}`;
+    if (u) {
+      if (u.requestHash !== requestHash || Number(u.createdBy) !== ctx.actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次上传');
+      if (u.status === 'open') {
+        await tx`UPDATE training_uploads SET status = 'cancelled', finished_at = now() WHERE id = ${u.id}`;
+        await tx`DELETE FROM training_upload_chunks WHERE upload_id = ${u.id}`;
+      }
+      return uploadState(tx, Number(u.id));
     }
-    return uploadState(tx, Number(u.id));
+    const state = trainingUploadKeyState(input.clientKey, await dbNowMs(tx));
+    if (state === 'expired' || state === 'invalid') {
+      return { uploadId: 0, chunkCount, chunkBytes: TRAINING_CHUNK_BYTES, received: [] as number[], status: 'expired' as const, fileId: null, versionId: null };
+    }
+    if (state === 'future') throw new AppError(400, 'TRAINING_UPLOAD_KEY_CLOCK', '上传编号时间异常，请核对本机系统时间后重试');
+    // 服务端没见过且在有效期内的编号要新占一行 cancelled，算进这个人 24 小时内的登记次数（Codex 安全审查 04eb112）
+    const r = await stagingCounts(tx, ctx.actor.id);
+    if (r.day + 1 > quota.dailyUploads) throw dailyLimit(r.day);
+    const [row] = await tx<{ id: number }[]>`
+      INSERT INTO training_uploads (client_key, size_bytes, chunk_count, file_name, mime, request_hash, created_by, status, finished_at)
+      VALUES (${input.clientKey}, ${input.sizeBytes}, ${chunkCount}, ${input.fileName}, ${input.mime}, ${requestHash}, ${ctx.actor.id}, 'cancelled', now())
+      RETURNING id`;
+    return uploadState(tx, Number(row!.id));
   });
 }
 
@@ -599,6 +645,7 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
   let sha256: string;
   try {
     const hash = createHash('sha256');
+    const pdfScanner = u.mime === 'application/pdf' ? createPdfImageScanner() : null;
     let head: Buffer | null = null;
     for (let seq = 0; seq < u.chunkCount; seq++) {
       const [c] = await deps.sql<{ data: Buffer }[]>`SELECT data FROM training_upload_chunks WHERE upload_id = ${id} AND seq = ${seq}`;
@@ -606,10 +653,18 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
       // 第一块整块留着：核对文件头、读图片宽高（JPEG 的帧头可能在 EXIF 后面）
       if (seq === 0) head = c.data;
       hash.update(c.data);
+      pdfScanner?.push(c.data);
     }
     sha256 = hash.digest('hex');
     if (!sniffOk(u.mime, head!)) throw unprocessable('TRAINING_UPLOAD_FORMAT', `文件内容不是 ${TRAINING_FORMATS[u.mime]!.label}，请确认选对了文件`);
     assertImageSize(u.mime, head!);
+    const badPdfImg = pdfScanner?.finish();
+    if (badPdfImg) {
+      throw unprocessable(
+        'TRAINING_PDF_IMAGE_TOO_LARGE',
+        `PDF 里有 ${badPdfImg.width} × ${badPdfImg.height} 像素的超大图片（单张最多 ${TRAINING_PDF_MAX_IMAGE_PIXELS / 1_000_000} 百万像素、一条边最多 ${TRAINING_PDF_MAX_IMAGE_SIDE}），请压缩图片后再导出 PDF 上传`,
+      );
+    }
   } catch (e) {
     await release();
     throw e;
@@ -1027,6 +1082,7 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/admin/training/folders', { preHandler: manage }, async (req, reply) => reply.code(201).send(await createFolder(deps, req.body, ctxOf(req))));
   app.put('/api/admin/training/folders/:id', { preHandler: manage }, async (req) => updateFolder(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.post('/api/admin/training/uploads', { preHandler: manage }, async (req) => startUpload(deps, req.body, ctxOf(req)));
+  app.post('/api/admin/training/uploads/lookup', { preHandler: manage }, async (req) => lookupUpload(deps, req.body, ctxOf(req)));
   // 传块：在读请求体以前（onRequest）先核对权限、拿传块占位（Codex 安全审查 ed6178f：同一块并发重放会占满请求预算与内存）
   app.put(
     '/api/admin/training/uploads/:id/chunks/:seq',
