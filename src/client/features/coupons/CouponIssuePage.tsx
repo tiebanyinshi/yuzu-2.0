@@ -12,6 +12,7 @@ import { SubPane, SubTabPage, type SubTab } from '../../components/SubNav';
 import { CampaignsCard } from '../admin/CampaignsCard';
 import { BatchesCard } from '../admin/CouponsSection';
 import { useInvalidateCoupons } from './queries';
+import { GiftCardsCard } from './GiftCardsCard';
 
 export const COUPON_ISSUE_PATH = '/crm/coupon-issue';
 
@@ -19,6 +20,8 @@ export const COUPON_ISSUE_PATH = '/crm/coupon-issue';
 const TABS: readonly SubTab[] = [
   { key: 'campaigns', label: '批量发券', testId: 'coupon-tab-campaigns' },
   { key: 'batches', label: '无记名券', testId: 'coupon-tab-batches' },
+  // 8.1.40：礼品卡先出卡、后绑手机号
+  { key: 'giftcards', label: '礼品卡', testId: 'coupon-tab-giftcards' },
 ];
 
 /** 这一页上会留下「结果待确认」的三种：批量发券、生成无记名券、发券给会员 */
@@ -63,6 +66,9 @@ export function CouponIssuePage() {
               </SubPane>
               <SubPane tab="batches" lazy>
                 <BatchesCard />
+              </SubPane>
+              <SubPane tab="giftcards" lazy>
+                <GiftCardsCard />
               </SubPane>
             </div>
           </SubTabPage>

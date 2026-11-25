@@ -360,8 +360,9 @@ export type AuditAction =
   // 8.1.39：菜品的计价方式（按价目 / 时价、杂项 / 称重）；包房转挂账
   | 'dish_price_mode'
   | 'table_park'
-  // 8.1.40：导出券的发放台账
+  // 8.1.40：导出券的发放台账；生成一批礼品卡
   | 'coupon_ledger_export'
+  | 'gift_card_batch'
   // 8.1.15 房态中心：服务房间的登记、续钟、换房、退房、并房 / 拆并，改房态（待清、清洁完成、维修、恢复），后台的房型
   | 'room_center_register'
   | 'room_center_extend'

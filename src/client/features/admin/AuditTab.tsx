@@ -120,6 +120,7 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   table_split: { label: '拆台', tone: 'lake' },
   table_park: { label: '包房转挂账', tone: 'ember' },
   coupon_ledger_export: { label: '导出券台账', tone: 'lake' },
+  gift_card_batch: { label: '生成礼品卡', tone: 'lake' },
   // 菜品管理（8.1.15，docs/DISHES_V8115.md）
   dish_saved: { label: '保存菜品', tone: 'neutral' },
   dish_active_set: { label: '菜品上下架', tone: 'neutral' },

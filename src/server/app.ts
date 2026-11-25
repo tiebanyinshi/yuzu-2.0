@@ -87,6 +87,7 @@ import { registerPaymentBatchRoutes } from './modules/payment-batches';
 import { registerMemberRecordRoutes } from './modules/member-records';
 import { registerCouponRoutes } from './modules/coupons';
 import { registerCouponLedgerRoutes } from './modules/coupon-ledger';
+import { registerGiftCardRoutes } from './modules/gift-cards';
 import { registerSignGiftRoutes } from './modules/gifts';
 import { registerCampaignRoutes } from './modules/coupon-campaigns';
 import { registerGiftOutRoutes } from './modules/gift-outs';
@@ -307,6 +308,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerMemberRecordRoutes(app, deps);
   registerCouponRoutes(app, deps);
   registerCouponLedgerRoutes(app, deps);
+  registerGiftCardRoutes(app, deps);
   // 8.1.9 签赠（docs/GIFTS_V819.md）
   registerSignGiftRoutes(app, deps);
   registerCampaignRoutes(app, deps);

@@ -568,9 +568,34 @@ describe('8.1.40 券的使用限制、发放台账、结账单印券号', () => 
     expect(anyDay.weekdays).toEqual([]);
     const otherStore = await template({ name: '限别的店', kind: 'cash', faceValue: 1000, storeIds: [1] });
     // 时段：起止相同拒绝
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/coupons/templates', { clientKey: randomUUID(), name: '坏时段', kind: 'cash', faceValue: 100, validity: 'days', validDays: 1, timeFrom: 600, timeTo: 600 })).status).toBe(400);
+    expect(
+      (
+        await api(ctx.app, ctx.owner, 'POST', '/api/coupons/templates', {
+          clientKey: randomUUID(),
+          name: '坏时段',
+          kind: 'cash',
+          faceValue: 100,
+          validity: 'days',
+          validDays: 1,
+          timeFrom: 600,
+          timeTo: 600,
+        })
+      ).status,
+    ).toBe(400);
     // 点钟券只能是代金券、折扣券
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/coupons/templates', { clientKey: randomUUID(), name: '坏点钟', kind: 'exchange', exchangeItemId: item['券搓澡'], validity: 'days', validDays: 1, designatedOnly: true })).status).toBe(400);
+    expect(
+      (
+        await api(ctx.app, ctx.owner, 'POST', '/api/coupons/templates', {
+          clientKey: randomUUID(),
+          name: '坏点钟',
+          kind: 'exchange',
+          exchangeItemId: item['券搓澡'],
+          validity: 'days',
+          validDays: 1,
+          designatedOnly: true,
+        })
+      ).status,
+    ).toBe(400);
     const designated = await template({ name: '点钟券', kind: 'cash', faceValue: 1000, designatedOnly: true });
     expect(designated.summary).toContain('限点钟');
     for (const t of [wrongDay, anyDay, otherStore, designated]) expect((await issue(m.id, t.id)).status).toBe(201);

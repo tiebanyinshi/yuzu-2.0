@@ -1,0 +1,118 @@
+// 礼品卡（8.1.40，docs/V8140.md 第 5 节）：先出卡、后绑手机号。一批礼品卡 = 一批匿名卡会员（会员号就是卡号），
+// 生成以后导出卡号去印卡；送出去的在会员资料里「转实名」填手机号；要预存金额的按卡号照常充值。
+
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Download, Plus } from 'lucide-react';
+import { MAX_GIFT_CARD_BATCH, type GiftCardBatch } from '@shared/gift-cards';
+import { api, errorMessage } from '../../lib/api';
+import { downloadUrl, formatDateTime, uuid } from '../../lib/utils';
+import { Money } from '../../components/Money';
+import { Dialog } from '../../components/Overlay';
+import { useToast } from '../../components/Toast';
+import { Button, Card, Field, Input, Notice, SectionTitle } from '../../components/ui';
+
+const key = ['gift-cards'] as const;
+
+export function GiftCardsCard() {
+  const q = useQuery({ queryKey: key, queryFn: () => api.get<GiftCardBatch[]>('/api/gift-cards') });
+  const [creating, setCreating] = useState(false);
+  return (
+    <Card className="space-y-3 p-4" data-testid="gift-cards">
+      <SectionTitle
+        aside={
+          <Button size="sm" variant="primary" icon={<Plus className="size-3.5" />} onClick={() => setCreating(true)} data-testid="gift-cards-new">
+            生成一批
+          </Button>
+        }
+      >
+        礼品卡
+      </SectionTitle>
+      <p className="text-[12.5px] leading-relaxed text-ink-3">
+        先出卡、后绑手机号：一张礼品卡就是一位匿名卡会员，会员号就是卡号。生成以后导出卡号去印卡；送出去以后在会员资料里「转实名」填客人的手机号；要预存金额的，按卡号照常充值。
+      </p>
+      {q.error && <Notice tone="error" title={errorMessage(q.error)} />}
+      {(q.data ?? []).length === 0 ? (
+        <p className="rounded-lg border border-dashed border-line-strong px-4 py-6 text-center text-[13px] text-ink-3">还没有生成过礼品卡</p>
+      ) : (
+        <ul className="divide-y divide-line/70 rounded-lg border border-line">
+          {q.data!.map((b) => (
+            <li key={b.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 text-[13px]" data-testid={`gift-card-batch-${b.batchNo}`}>
+              <span className="num font-bold">{b.batchNo}</span>
+              <span className="font-semibold">{b.label}</span>
+              <span className="text-ink-3">
+                {b.quantity} 张 · 已绑手机号 {b.bound} 张 · 预存 <Money cents={b.principal} />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-ink-4">
+                {formatDateTime(b.createdAt)} {b.createdByName}
+                {b.note ? ` · ${b.note}` : ''}
+              </span>
+              <Button size="sm" variant="ghost" icon={<Download className="size-3.5" />} onClick={() => downloadUrl(`/api/gift-cards/${b.id}/cards.csv`)}>
+                导出卡号
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {creating && <CreateDialog onClose={() => setCreating(false)} />}
+    </Card>
+  );
+}
+
+function CreateDialog({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [label, setLabel] = useState('礼品卡');
+  const [qty, setQty] = useState('10');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [clientKey] = useState(uuid);
+  const n = Number(qty);
+  const ok = label.trim().length >= 1 && Number.isInteger(n) && n >= 1 && n <= MAX_GIFT_CARD_BATCH;
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.post<{ batch: GiftCardBatch }>('/api/gift-cards', { clientKey, label: label.trim(), quantity: n, note: note.trim() });
+      void qc.invalidateQueries({ queryKey: key });
+      toast({ tone: 'success', title: `已生成 ${r.batch.quantity} 张礼品卡（${r.batch.batchNo}）`, body: '导出卡号去印卡；送出去以后在会员资料里转实名、填手机号' });
+      onClose();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      open
+      onClose={busy ? () => {} : onClose}
+      title="生成一批礼品卡"
+      description="不要手机号：一张卡就是一位匿名卡会员，会员号就是卡号。同一次提交断网重提只生成一批。"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button variant="primary" disabled={!ok} loading={busy} onClick={() => void submit()} data-testid="gift-cards-create">
+            生成
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="名称" htmlFor="gift-label" hint="会员资料里的姓名先写这个，转实名时改成客人的名字">
+          <Input id="gift-label" value={label} maxLength={16} onChange={(e) => setLabel(e.target.value)} data-autofocus />
+        </Field>
+        <Field label="张数" htmlFor="gift-qty" hint={`一批最多 ${MAX_GIFT_CARD_BATCH} 张`}>
+          <Input id="gift-qty" type="number" inputMode="numeric" min={1} max={MAX_GIFT_CARD_BATCH} value={qty} onChange={(e) => setQty(e.target.value)} className="num" data-testid="gift-cards-qty" />
+        </Field>
+        <Field label="备注" htmlFor="gift-note" className="sm:col-span-2">
+          <Input id="gift-note" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder="例如 年会、合作单位采购" />
+        </Field>
+      </div>
+      {error && <Notice tone="error" title={error} className="mt-3" />}
+    </Dialog>
+  );
+}
