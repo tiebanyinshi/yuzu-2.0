@@ -41,7 +41,7 @@ const kitchen = async () => (await api(ctx.app, ctx.clerk, 'GET', '/api/kitchen'
 const lineOf = async (visitId: number, name: string) =>
   ((await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/visits/${visitId}`)).body.lines as { id: number; name: string; status: string }[]).find((l) => l.name === name && l.status === 'active')!;
 const ledger = async (q = '') => {
-  const r = await api(ctx.app, ctx.clerk, 'GET', `/api/dining/ledger?from=${today}&to=${today}${q}`);
+  const r = await api(ctx.app, ctx.owner, 'GET', `/api/dining/ledger?from=${today}&to=${today}${q}`);
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   return r.body as DiningLedger;
 };
@@ -353,10 +353,10 @@ describe('台账合并退菜（B2）', () => {
     // 只看水吧：退菜率跟着分类筛
     const water = await ledger('&outlet=water');
     expect(water.voidRate.quantity).toBe(water.rows.reduce((n, r) => n + r.quantity, 0));
-    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/dining/ledger?from=${today}&to=${today}&type=refund`)).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/dining/ledger?from=${today}&to=${today}&type=refund`)).status).toBe(400);
 
     // 导出：跟着筛选；多三列（类型、审批、责任岗位）；合计一行写退菜率
-    const csv = await ctx.app.inject({ method: 'GET', url: `/api/dining/ledger/export?from=${today}&to=${today}&type=voided`, headers: { cookie: ctx.clerk } });
+    const csv = await ctx.app.inject({ method: 'GET', url: `/api/dining/ledger/export?from=${today}&to=${today}&type=voided`, headers: { cookie: ctx.owner } });
     expect(csv.statusCode).toBe(200);
     expect(decodeURIComponent(String(csv.headers['content-disposition']))).toContain(`餐饮台账-${today}至${today}-退菜.csv`);
     const rows = csv.body

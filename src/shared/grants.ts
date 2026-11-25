@@ -31,6 +31,8 @@ export interface OverLimitScope {
   kind: 'recharge' | 'consume';
   memberId: number;
   amount: number;
+  /** 8.1.37：为店员手动金额超过本人上限而授权时，这一笔里手动金额的合计 */
+  manual?: number;
 }
 
 /** 优惠 / 免单的授权对象：一起结账的来访（升序）、优惠金额与原因（金额与客人必须与结账时完全一致）；
@@ -124,7 +126,15 @@ export function ticketGrantCovers(scope: TicketDiscountScope, needed: readonly T
 
 /** 超限授权是否仍可用于这笔业务（金额、会员、业务类型一致且未过期；服务端核销时再核对一次） */
 export function overLimitGrantFits(grant: OverLimitGrant | null, scope: OverLimitScope, now = Date.now()): grant is OverLimitGrant {
-  return !!grant && grant.scope.kind === scope.kind && grant.scope.memberId === scope.memberId && grant.scope.amount === scope.amount && new Date(grant.expiresAt).getTime() > now;
+  return (
+    !!grant &&
+    grant.scope.kind === scope.kind &&
+    grant.scope.memberId === scope.memberId &&
+    grant.scope.amount === scope.amount &&
+    // 手动金额授权（8.1.37）：手动金额变了要重新授权
+    (grant.scope.manual === undefined || grant.scope.manual === scope.manual) &&
+    new Date(grant.expiresAt).getTime() > now
+  );
 }
 
 /** 授权是否覆盖这些需要授权的柜（柜号与客人都要一致） */

@@ -216,7 +216,7 @@ describe('当场授权只用于餐饮的菜（B02，Codex 审查 d034bc6）', ()
 
 describe('餐饮台账（B06）', () => {
   it('按起止日期、分类、状态筛选；合计与逐行一致；导出只含所选范围、最后一行是合计', async () => {
-    const all = (await api(ctx.app, ctx.clerk, 'GET', `/api/dining/ledger?from=${today}&to=${today}`)).body as {
+    const all = (await api(ctx.app, ctx.owner, 'GET', `/api/dining/ledger?from=${today}&to=${today}`)).body as {
       categories: string[];
       rows: { category: string; status: string; amount: number; quantity: number }[];
       totals: { lines: number; quantity: number; amount: number; voidedLines: number; voidedAmount: number };
@@ -225,19 +225,21 @@ describe('餐饮台账（B06）', () => {
     const active = all.rows.filter((r) => r.status === 'active');
     expect(all.totals.amount).toBe(active.reduce((n, r) => n + r.amount, 0));
     expect(all.totals.voidedLines).toBe(all.rows.filter((r) => r.status === 'voided').length);
-    const drinks = (await api(ctx.app, ctx.clerk, 'GET', `/api/dining/ledger?from=${today}&to=${today}&categories=${encodeURIComponent('饮品')}`)).body as typeof all;
+    const drinks = (await api(ctx.app, ctx.owner, 'GET', `/api/dining/ledger?from=${today}&to=${today}&categories=${encodeURIComponent('饮品')}`)).body as typeof all;
     expect(drinks.rows.length).toBeGreaterThan(0);
     expect(drinks.rows.every((r) => r.category === '饮品')).toBe(true);
-    const onlyActive = (await api(ctx.app, ctx.clerk, 'GET', `/api/dining/ledger?from=${today}&to=${today}&status=active`)).body as typeof all;
+    const onlyActive = (await api(ctx.app, ctx.owner, 'GET', `/api/dining/ledger?from=${today}&to=${today}&status=active`)).body as typeof all;
     expect(onlyActive.rows.every((r) => r.status === 'active')).toBe(true);
     // 导出
-    const csv = await ctx.app.inject({ method: 'GET', url: `/api/dining/ledger/export?from=${today}&to=${today}&categories=${encodeURIComponent('饮品')}`, headers: { cookie: ctx.clerk } });
+    const csv = await ctx.app.inject({ method: 'GET', url: `/api/dining/ledger/export?from=${today}&to=${today}&categories=${encodeURIComponent('饮品')}`, headers: { cookie: ctx.owner } });
+    // 8.1.37：餐饮台账按部门收窄——只会点单的店员看不到全店明细
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/dining/ledger?from=${today}&to=${today}`)).status).toBe(403);
     expect(csv.statusCode).toBe(200);
     const lines = csv.body.replace(/^﻿/, '').trim().split('\r\n');
     expect(lines.length).toBe(drinks.rows.length + 2);
     expect(lines.at(-1)!.startsWith('合计')).toBe(true);
     expect(lines.at(-1)).toContain((drinks.totals.amount / 100).toFixed(2));
     // 超过 92 天拒绝
-    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/dining/ledger?from=2026-01-01&to=2026-06-30`)).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/dining/ledger?from=2026-01-01&to=2026-06-30`)).status).toBe(400);
   });
 });

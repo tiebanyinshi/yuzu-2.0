@@ -13,7 +13,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { bonusExpiryAt, businessDateOf } from '@shared/business-date';
 import { PRICE_TIERS, type PriceTier } from '@shared/catalog';
-import { splitDeduction, type DeductionRule } from '@shared/deduction';
+import { MANUAL_CONSUME_SELF_LIMIT_CENTS, splitDeduction, type DeductionRule } from '@shared/deduction';
 import { describeHours, PAYMENT_METHODS } from '@shared/labels';
 import { gradeLabel } from '@shared/membership';
 import { formatYuan } from '@shared/money';
@@ -322,6 +322,18 @@ async function approveOverLimit(
     scope: { kind: o.kind, memberId: o.memberId, amount: o.amount },
     usedRef: `${o.kind}:${o.key}`,
   });
+}
+
+/** 手动金额超过本人上限（8.1.37）：用超限授权（同一个授权范围：会员、这一笔的金额），提示写明是手动金额 */
+async function approveManualAmount(tx: Tx, grantId: string | undefined, ctx: OpContext, o: { memberId: number; amount: number; manual: number; key: string }) {
+  if (!grantId) {
+    throw unprocessable('OVER_LIMIT_AUTH_REQUIRED', `手动输入的金额 ${formatYuan(o.manual)} 超过 ${formatYuan(MANUAL_CONSUME_SELF_LIMIT_CENTS)}，需要店主或店总当场授权`, {
+      limit: MANUAL_CONSUME_SELF_LIMIT_CENTS,
+      amount: o.amount,
+      manual: true,
+    });
+  }
+  return consumeOverLimitGrant(tx, { grantId, actor: ctx.actor, scope: { kind: 'consume', memberId: o.memberId, amount: o.amount, manual: o.manual }, usedRef: `consume:${o.key}` });
 }
 
 // ───────────────────────── 底层写入（会员消费、撤销与前台结账共用） ─────────────────────────
@@ -721,8 +733,15 @@ export async function consume(deps: Deps, raw: ConsumeInputData, ctx: OpContext)
     // 充值当日的储值消费比例（8.0.4 需求表 04，HY01–HY02）：超过剩余额度直接拒绝，不能当场授权放行
     assertWithinSpendQuota(await spendQuotaOf(tx, member.id, businessDate, settings.rechargeSpendPct), total, member.name);
     // 超过单笔上限：其余核对都通过后再核销授权
+    // 8.1.37：手动金额（不在项目列表里的「其他金额」）合计超过本人能扣的上限、本人又没有撤销会员消费权限的（店员），同样要当场授权
+    const manual = input.customLines.reduce((sum, l) => sum + l.amount, 0);
+    const manualOver = manual > MANUAL_CONSUME_SELF_LIMIT_CENTS && !can(ctx.actor, 'consume.reverse');
     const overLimit =
-      total > settings.maxConsumeCents ? await approveOverLimit(tx, input.overLimitGrantId, ctx, { kind: 'consume', memberId: member.id, amount: total, limit: settings.maxConsumeCents, key }) : null;
+      total > settings.maxConsumeCents
+        ? await approveOverLimit(tx, input.overLimitGrantId, ctx, { kind: 'consume', memberId: member.id, amount: total, limit: settings.maxConsumeCents, key })
+        : manualOver
+          ? await approveManualAmount(tx, input.overLimitGrantId, ctx, { memberId: member.id, amount: total, manual, key })
+          : null;
 
     const { id, docNo } = await insertConsumption(tx, member, {
       total,
@@ -748,6 +767,8 @@ export async function consume(deps: Deps, raw: ConsumeInputData, ctx: OpContext)
         principal: split.principal,
         bonus: split.bonus,
         rule: settings.deductionRule,
+        // 8.1.37：手动金额逐行记名称与金额（以前只记合计，查不到手填了什么）
+        ...(input.customLines.length ? { manualLines: input.customLines.map((l) => ({ name: l.name, amount: l.amount })) } : {}),
         ...(overLimit ? { overLimitApprovedBy: overLimit.approverId, overLimitApproverName: overLimit.approverName } : {}),
       },
       ip: ctx.ip,

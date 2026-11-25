@@ -260,7 +260,9 @@ test.describe('8.0.8 前台整改', () => {
       await expect(page.getByTestId('dining-cart')).toContainText(JUICE.name);
 
       // ④ 退菜（8.1.15 起在台账里按「退菜」看）：两条，分别是「小额直接退」「当场授权（张经理）」
-      await page.getByTestId('dining-tab-ledger').click();
+      //    （8.1.37：台账按部门收窄，店员看不到，换店主看）
+      await relogin(page, 'linlan');
+      await page.goto('/crm/dining/ledger');
       await page.getByTestId('dining-ledger-type').getByRole('radio', { name: '退菜' }).click();
       const voids = page.getByTestId('dining-ledger');
       await expect(voids.locator('tr').filter({ hasText: JUICE.name }).first()).toContainText('小额直接退');
@@ -268,7 +270,7 @@ test.describe('8.0.8 前台整改', () => {
       await expect(voids.locator('tr').filter({ hasText: SEAFOOD.name }).first()).toContainText('E2E 等太久不要了');
 
       // ⑤ 台账：只看果吧（8.1.7 起按点单分类筛），退了的标「已退」；导出与页面同样的条件、最后一行是合计
-      await page.getByTestId('dining-tab-ledger').click();
+      await page.goto('/crm/dining/ledger');
       const ledger = page.getByTestId('dining-ledger');
       await ledger.getByTestId('dining-ledger-outlet-fruit').click();
       await expect(ledger.locator('tbody tr').filter({ hasText: JUICE.name }).first()).toContainText('已退');

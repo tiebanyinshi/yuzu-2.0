@@ -173,33 +173,38 @@ describe('挂账选技师', () => {
     const li = await techId('08');
     const wang = await techId('12');
     // 页面按标准档提交，但李娜是专业技师
-    const tier = await post(v, [{ itemId: foot, quantity: 1, tier: 'standard', technicianId: li, callType: 'rotation' }], 19800);
+    const tier = await post(v, [{ itemId: foot, quantity: 1, tier: 'standard', technicianId: li, callType: 'designated' }], 19800);
     expect(tier.status).toBe(409);
     expect(tier.body.error.code).toBe('TECHNICIAN_TIER');
     expect(tier.body.error.message).toContain('专业档');
     // 合计按旧价格确认的：PRICE_CHANGED
-    expect((await post(v, [{ itemId: foot, quantity: 1, technicianId: li, callType: 'rotation' }], 19800)).body.error.code).toBe('PRICE_CHANGED');
+    expect((await post(v, [{ itemId: foot, quantity: 1, technicianId: li, callType: 'designated' }], 19800)).body.error.code).toBe('PRICE_CHANGED');
     // 李娜只做足疗
-    const skill = await post(v, [{ itemId: gua, quantity: 1, technicianId: li, callType: 'rotation' }], 12800);
+    const skill = await post(v, [{ itemId: gua, quantity: 1, technicianId: li, callType: 'designated' }], 12800);
     expect(skill.status).toBe(422);
     expect(skill.body.error).toMatchObject({ code: 'TECHNICIAN_UNAVAILABLE', message: '08 号 李娜：不做「理疗」，请换一位技师' });
     // 刮痧只有一档价格：优选技师也按这一档
-    const one = await post(v, [{ itemId: gua, quantity: 2, technicianId: wang, callType: 'rotation' }], 25600);
+    const one = await post(v, [{ itemId: gua, quantity: 2, technicianId: wang, callType: 'designated' }], 25600);
     expect(one.status).toBe(200);
     expect(one.body.lines.find((l: { itemId: number }) => l.itemId === gua)).toMatchObject({ name: '刮痧', tier: 'standard', quantity: 2, amount: 25600 });
     // 不需要技师的项目不能带技师
-    expect((await post(v, [{ itemId: scrub, quantity: 1, technicianId: wang, callType: 'rotation' }], 6800)).body.error.code).toBe('TECHNICIAN_NOT_NEEDED');
+    expect((await post(v, [{ itemId: scrub, quantity: 1, technicianId: wang, callType: 'designated' }], 6800)).body.error.code).toBe('TECHNICIAN_NOT_NEEDED');
     // 没有这一档价格：项目只有标准、专业两档时，优选技师做不了
     const two = await api(ctx.app, ctx.owner, 'POST', '/api/items', { name: '推拿', category: '足疗', prices: { standard: 15800, professional: 18800 }, technicianRequired: true });
     const tuina = two.body.items.find((i: { name: string }) => i.name === '推拿').id;
-    const noTier = await post(v, [{ itemId: tuina, quantity: 1, technicianId: wang, callType: 'rotation' }], 18800);
+    const noTier = await post(v, [{ itemId: tuina, quantity: 1, technicianId: wang, callType: 'designated' }], 18800);
     expect(noTier.body.error).toMatchObject({ code: 'TECHNICIAN_UNAVAILABLE', message: '12 号 小王：这个项目没有优选档价格，请换一位技师' });
-    // 停用的技师不能再选
-    await api(ctx.app, ctx.owner, 'PUT', `/api/admin/technicians/${wang}`, { name: '小王', gender: 'male', grade: 'premium', active: false });
-    expect((await post(v, [{ itemId: gua, quantity: 1, technicianId: wang, callType: 'rotation' }], 12800)).body.error.code).toBe('TECHNICIAN_UNAVAILABLE');
+    // 停用的技师不能再选。8.1.37：手上还有派了没上的钟不能停用（不然停用了还占着排位）——先取消派钟再停用
+    const busy = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/technicians/${wang}`, { name: '小王', gender: 'male', grade: 'premium', active: false });
+    expect(busy.body.error).toMatchObject({ code: 'TECHNICIAN_BUSY' });
+    const waiting = ((await api(ctx.app, ctx.clerk, 'GET', '/api/clockroom')).body.sessions as { id: number; technicianId: number }[]).filter((x) => x.technicianId === wang);
+    expect(waiting.length).toBe(1);
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${waiting[0]!.id}/void`, { reason: '客人不做了' })).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/admin/technicians/${wang}`, { name: '小王', gender: 'male', grade: 'premium', active: false })).status).toBe(200);
+    expect((await post(v, [{ itemId: gua, quantity: 1, technicianId: wang, callType: 'designated' }], 12800)).body.error.code).toBe('TECHNICIAN_UNAVAILABLE');
     expect((await api(ctx.app, ctx.clerk, 'GET', '/api/frontdesk/technicians')).body.technicians.map((t: { techNo: string }) => t.techNo)).toEqual(['08']);
     await api(ctx.app, ctx.owner, 'PUT', `/api/admin/technicians/${wang}`, { name: '小王', gender: 'male', grade: 'premium', active: true });
-    expect((await post(v, [{ itemId: gua, quantity: 1, technicianId: 999999, callType: 'rotation' }], 12800)).status).toBe(404);
+    expect((await post(v, [{ itemId: gua, quantity: 1, technicianId: 999999, callType: 'designated' }], 12800)).status).toBe(404);
   });
 
   it('价格不跟等级时按所选档；不要求必须选技师时可以暂不指定；关闭功能后与升级前一样', async () => {
@@ -209,7 +214,7 @@ describe('挂账选技师', () => {
     const r = await post(
       v,
       [
-        { itemId: foot, quantity: 1, tier: 'premium', technicianId: li, callType: 'rotation' },
+        { itemId: foot, quantity: 1, tier: 'premium', technicianId: li, callType: 'designated' },
         { itemId: foot, quantity: 1, tier: 'standard' },
       ],
       49600,
@@ -224,7 +229,7 @@ describe('挂账选技师', () => {
     const off = await post(v, [{ itemId: foot, quantity: 1 }], 19800);
     expect(off.status).toBe(200);
     expect(off.body.lines.at(-1)).toMatchObject({ source: 'bath', technician: null, tier: 'standard' });
-    expect((await post(v, [{ itemId: foot, quantity: 1, technicianId: li, callType: 'rotation' }], 23800)).body.error.code).toBe('TECHNICIAN_DISABLED');
+    expect((await post(v, [{ itemId: foot, quantity: 1, technicianId: li, callType: 'designated' }], 23800)).body.error.code).toBe('TECHNICIAN_DISABLED');
     await setRules({ enabled: true });
   });
 
@@ -232,13 +237,13 @@ describe('挂账选技师', () => {
     const v = await enter();
     const li = await techId('08');
     const key = randomUUID();
-    const body = [{ itemId: foot, quantity: 1, technicianId: li, callType: 'rotation' }];
+    const body = [{ itemId: foot, quantity: 1, technicianId: li, callType: 'designated' }];
     const a = await post(v, body, 23800, key);
     const b = await post(v, body, 23800, key);
     expect(a.status).toBe(200);
     expect(b.status).toBe(200);
     expect(b.body.lines.length).toBe(a.body.lines.length);
-    const c = await post(v, [{ ...body[0], callType: 'designated' }], 23800, key);
+    const c = await post(v, [{ ...body[0], callType: 'rotation' }], 23800, key);
     expect(c.status).toBe(409);
     expect(c.body.error.code).toBe('IDEMPOTENCY_CONFLICT');
     // 升级前的页面不带这两项；新页面不选技师时带 null：同一编号视为同一笔
@@ -277,6 +282,8 @@ describe('技师业绩', () => {
     const li = await techId('08');
     const wang = await techId('12');
     const v = await enter();
+    // 8.1.37：前台选的轮钟按排位核对——先让小王上牌（在岗、排第一）
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/technicians/${wang}/state`, { action: 'sign_in' })).status).toBe(200);
     await post(
       v,
       [
@@ -293,8 +300,10 @@ describe('技师业绩', () => {
       visitIds: [v],
       expectedTotal: preview.totalAmount,
       payments: [{ method: 'cash', amount: preview.totalAmount }],
+      // 8.1.37：还没上钟的钟单要确认客人做完了
+      confirmUnstarted: (preview.sessions as { sessionNo: string; status: string }[]).filter((x) => x.status === 'waiting').map((x) => x.sessionNo),
     });
-    expect(pay.status).toBe(200);
+    expect(pay.status, JSON.stringify(pay.body)).toBe(200);
     const after = (await report()).body;
     const row = (b: typeof after, no: string) => b.rows.find((r: { techNo: string }) => r.techNo === no);
     const before08 = row(base, '08') ?? { clocks: 0, designated: 0, rotation: 0, amount: 0 };

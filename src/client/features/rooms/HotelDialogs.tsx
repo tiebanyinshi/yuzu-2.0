@@ -85,6 +85,8 @@ export function CheckinDialog({
   const [withDeposit, setWithDeposit] = useState(rules.defaultDeposit > 0);
   const [deposit, setDeposit] = useState<DepositDraft>({ method: 'cash', amount: rules.defaultDeposit > 0 ? centsToInput(rules.defaultDeposit) : '', ref: '' });
   const shiftReady = useShiftReady(withDeposit);
+  // 8.1.37：这个房型今天剩下的房都被预订时服务端拒绝（ROOM_TYPE_RESERVED）；确认要现场占用的勾上再提交
+  const [useReserved, setUseReserved] = useState(false);
   const op = useFrontdeskOp<StayDetail>({
     type: 'room_checkin',
     visitId: null,
@@ -138,6 +140,7 @@ export function CheckinDialog({
         expectedRate: rate,
         deposit: dep,
         bookingId: booking?.id,
+        ...(useReserved ? { useReserved: true } : {}),
       },
       tagCodes: [`房 ${room.roomNo}`],
       summary: `入住 ${guests} 人（${who}）${dep ? `，${PAYMENT_METHOD_LABELS[dep.method]}押金` : ''}${booking ? `，预约 ${booking.bookingNo}` : ''}`,
@@ -173,6 +176,12 @@ export function CheckinDialog({
       }
     >
       <PendingPanel op={op} onResolved={finish} />
+      {(useReserved || (op.state.phase === 'error' && op.state.code === 'ROOM_TYPE_RESERVED')) && (
+        <label className="mb-3 flex cursor-pointer items-center gap-2 rounded-lg border border-yuzu-deep/30 bg-yuzu-tint px-3 py-2 text-[13px] font-semibold" data-testid="room-checkin-use-reserved">
+          <input type="checkbox" className="size-4 accent-pine" checked={useReserved} disabled={op.locked} onChange={(e) => setUseReserved(e.target.checked)} />
+          占用已预订的房（预订的客人到了请从「预约」点到店入住，不要勾）
+        </label>
+      )}
       <div className="space-y-4" data-testid="room-checkin">
         {quote.data && (quote.data.memberGrade !== null || quote.data.reason) && (
           <Notice

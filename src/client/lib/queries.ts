@@ -16,7 +16,7 @@ export const qk = {
   settlement: (date: string) => ['settlement', date] as const,
   staff: ['staff'] as const,
   settings: ['settings'] as const,
-  audit: (date?: string) => ['audit', date] as const,
+  audit: (date?: string, actions?: string) => ['audit', date, actions ?? ''] as const,
 };
 
 /** 当前会话：服务器一时出错、断网时重试两次（只有 401 才是会话失效，见 AuthGate） */
@@ -101,8 +101,11 @@ export const useStaff = (enabled = true) => useQuery({ queryKey: qk.staff, query
 
 export const useSettings = () => useQuery({ queryKey: qk.settings, queryFn: () => api.get<StoreRules & { storeName: string }>('/api/settings') });
 
-export const useAudit = (date?: string) =>
+/** 操作审计；actions：sensitive 为「敏感操作」一组（8.1.37） */
+export const auditQuery = (date?: string, actions?: string, limit?: number) =>
+  new URLSearchParams({ ...(date ? { date } : {}), ...(actions ? { actions } : {}), ...(limit ? { limit: String(limit) } : {}) }).toString();
+export const useAudit = (date?: string, actions?: string) =>
   useQuery({
-    queryKey: qk.audit(date),
-    queryFn: () => api.get<AuditRecord[]>(`/api/audit${date ? `?date=${date}` : ''}`),
+    queryKey: qk.audit(date, actions),
+    queryFn: () => api.get<AuditRecord[]>(`/api/audit?${auditQuery(date, actions, actions ? 2000 : undefined)}`),
   });

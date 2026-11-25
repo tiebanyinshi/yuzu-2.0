@@ -162,15 +162,15 @@ describe('P1-04 充值当日储值消费比例', () => {
     expect(over.body.error.details.remaining).toBe(yuan(70_000));
     expect(over.body.error.message).toContain('剩余额度 ¥70,000.00');
 
-    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, yuan(50_000)))).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', consumeBody(m.id, yuan(50_000)))).status).toBe(200);
     expect((await api(ctx.app, ctx.clerk, 'GET', `/api/members/${m.id}`)).body.spendQuota.remaining).toBe(yuan(20_000));
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, yuan(20_000) + 1))).body.error.code).toBe('RECHARGE_SPEND_CAP');
-    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, yuan(20_000)))).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', consumeBody(m.id, yuan(20_000)))).status).toBe(200);
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, 1))).body.error.details.remaining).toBe(0);
 
     // 不限（空）：照常用
     expect((await api(ctx.app, ctx.owner, 'PUT', '/api/settings', { rechargeSpendPct: null })).status).toBe(200);
-    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, yuan(1_000)))).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', consumeBody(m.id, yuan(1_000)))).status).toBe(200);
   });
 
   it('充值前用掉的原来的钱，充值后撤销了那笔消费：退回来的照样能用（8.0.5，8.0.4 独立验收 P2）', async () => {
@@ -233,7 +233,7 @@ describe('P1-04 充值当日储值消费比例', () => {
       expect([detail.principalBalance, detail.bonusBalance]).toEqual([yuan(600), 0]);
       // 回到卡里的原来的钱只有本金 ¥500：今天最多 ¥500 + ¥70。修之前作废的 ¥100 也算进去（¥670），新充的 ¥100 能全部用掉
       expect(detail.spendQuota).toMatchObject({ priorBalance: yuan(500), cap: yuan(570), remaining: yuan(570) });
-      expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, yuan(570)))).status).toBe(200);
+      expect((await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', consumeBody(m.id, yuan(570)))).status).toBe(200);
       expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, 1))).body.error.code).toBe('RECHARGE_SPEND_CAP');
     } finally {
       await api(ctx.app, ctx.owner, 'PUT', '/api/settings', { rechargeSpendPct: null });

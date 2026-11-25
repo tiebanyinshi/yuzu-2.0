@@ -554,7 +554,11 @@ describe('Codex 复审（PR #33）', () => {
     const cur = await current();
     expect(cur.people.some((p) => p.kind === 'technician' && p.id === tech['01'])).toBe(false);
     expect(cur.people.filter((p) => p.kind === 'technician').length).toBeLessThanOrEqual(cur.techniciansOnDuty);
+    // 8.1.37：停用同时下牌（不再占排位），位置也清掉；再启用要重新上牌，上牌后照常
     expect((await save(true)).status).toBe(200);
+    expect(await techAt(tech['01']!)).toBeUndefined();
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/technicians/${tech['01']}/state`, { action: 'sign_in' })).status).toBe(200);
+    expect((await report({ source: 'position', zoneId: Z('合成水吧区'), technicianNo: '01' })).status).toBe(200);
     expect(await techAt(tech['01']!)).toMatchObject({ zoneName: '合成水吧区' });
   });
 
