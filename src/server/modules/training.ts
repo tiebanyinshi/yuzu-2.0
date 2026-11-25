@@ -832,10 +832,12 @@ async function parseSheetBook(db: Db, sha256: string): Promise<TrainingSheetBook
     sheetCache.set(v.sha256, value);
     while (sheetCache.size > SHEET_CACHE_MAX) sheetCache.delete(sheetCache.keys().next().value!);
   };
+  // 读内容出错（数据库）不算文件坏了，不记下来，下次再试
+  const bytes = await readBlob(db, v.sha256);
   let book;
   try {
     // maxNodes 限住整份 XML 的结构规模（空行、无关属性也算），免得几 KB 的文件解析出几十万个节点（Codex 审查 e1d8be3，同工资表的读法）
-    book = readXlsx(await readBlob(db, v.sha256), {
+    book = readXlsx(bytes, {
       maxRow: 5000,
       maxCols: 200,
       maxCells: 200_000,
@@ -846,12 +848,11 @@ async function parseSheetBook(db: Db, sha256: string): Promise<TrainingSheetBook
       maxSheets: SHEET_MAX_SHEETS + 1,
     });
   } catch (e) {
-    if (e instanceof XlsxReadError) {
-      const error = `这份 Excel 在页面里打不开（${e.message}），请下载后查看`;
-      remember({ error });
-      throw unprocessable('TRAINING_SHEET_INVALID', error);
-    }
-    throw e;
+    // 同一份内容解析失败每次都一样：不管是读表的限制（XlsxReadError）还是解析里抛的别的错（RangeError 等），都记下来，
+    // 不让同一份坏文件被反复解析（Codex 安全审查 ed6178f）
+    const error = `这份 Excel 在页面里打不开（${e instanceof XlsxReadError ? e.message : '文件内容有问题'}），请下载后查看`;
+    remember({ error });
+    throw unprocessable('TRAINING_SHEET_INVALID', error);
   }
   const moreSheets = book.sheets.length > SHEET_MAX_SHEETS;
   const sheetsShown = book.sheets.slice(0, SHEET_MAX_SHEETS);
@@ -929,6 +930,17 @@ async function parseSheetBook(db: Db, sha256: string): Promise<TrainingSheetBook
 }
 
 /** 读内容的占位（Codex 安全审查 ec38502）：全店同时 24 个、每人 4 个，排队最多 20 秒，60 秒没往外写就断开 */
+/** 传块的占位（Codex 安全审查 ed6178f）：全店同时 6 块、每人 2 块（页面一份文件一块一块传），满了排队，最多等 20 秒 */
+const chunkSlots = createStreamSlots({
+  slots: 6,
+  perStaff: 2,
+  waitMs: 20_000,
+  queuePerStaff: 6,
+  idleMs: 60_000,
+  code: 'TRAINING_UPLOAD_BUSY',
+  message: '同时在传的文件太多，稍后再试',
+});
+
 const contentSlots = createStreamSlots({
   slots: 24,
   perStaff: 4,
@@ -1015,8 +1027,16 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/admin/training/folders', { preHandler: manage }, async (req, reply) => reply.code(201).send(await createFolder(deps, req.body, ctxOf(req))));
   app.put('/api/admin/training/folders/:id', { preHandler: manage }, async (req) => updateFolder(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.post('/api/admin/training/uploads', { preHandler: manage }, async (req) => startUpload(deps, req.body, ctxOf(req)));
-  app.put('/api/admin/training/uploads/:id/chunks/:seq', { preHandler: manage, bodyLimit: Math.ceil((TRAINING_CHUNK_BYTES * 4) / 3) + 4096 }, async (req) =>
-    putChunk(deps, req.params, req.body, req.actor),
+  // 传块：在读请求体以前（onRequest）先核对权限、拿传块占位（Codex 安全审查 ed6178f：同一块并发重放会占满请求预算与内存）
+  app.put(
+    '/api/admin/training/uploads/:id/chunks/:seq',
+    {
+      onRequest: [manage, async (req, reply) => chunkSlots.take(req, reply, req.actor.id)],
+      onResponse: async (req) => chunkSlots.release(req),
+      onRequestAbort: async (req) => chunkSlots.release(req),
+      bodyLimit: Math.ceil((TRAINING_CHUNK_BYTES * 4) / 3) + 4096,
+    },
+    async (req) => putChunk(deps, req.params, req.body, req.actor),
   );
   app.post('/api/admin/training/uploads/cancel', { preHandler: manage }, async (req) => cancelUpload(deps, req.body, ctxOf(req)));
   app.get('/api/admin/training/uploads/:id', { preHandler: manage }, async (req) => {

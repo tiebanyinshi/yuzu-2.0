@@ -460,4 +460,20 @@ describe('员工培训', () => {
       setTrainingQuotaForTest(null);
     }
   });
+
+  it('Excel 里超出 Unicode 范围的字符引用原样显示，不让解析出错（Codex 安全审查 ed6178f）', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const base = buildXlsx({ name: '表', columns: [{ header: '甲' }, { header: '乙' }], rows: [['1', '2']] });
+    const bad = patchSheet(base, (x) => x.replace('>1<', '>&#1114112;<'));
+    setTrainingQuotaForTest({ openUploads: 1000, openBytes: 1024 ** 4 });
+    try {
+      const r = await upload(bad, '怪字符.xlsx', XLSX_MIME, { folderId: pub.id });
+      expect(r.done.status, JSON.stringify(r.done.body)).toBe(200);
+      const sheet = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${r.done.body.fileId}/sheet`);
+      expect(sheet.status, JSON.stringify(sheet.body)).toBe(200);
+      expect(sheet.body.sheets[0].rows[1][0]).toBe('&#1114112;');
+    } finally {
+      setTrainingQuotaForTest(null);
+    }
+  });
 });
