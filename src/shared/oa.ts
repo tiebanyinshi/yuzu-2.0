@@ -120,7 +120,18 @@ export interface StaffImportResult {
 
 // ───────────── OA-03 站内通知与附件（docs/OA.md 第 6 节） ─────────────
 
-export const NOTIFICATION_KINDS = ['attendance_exception', 'makeup_result', 'approval_todo', 'approval_urge', 'approval_result', 'schedule_change', 'payslip', 'im_message', 'system'] as const;
+export const NOTIFICATION_KINDS = [
+  'attendance_exception',
+  'makeup_result',
+  'approval_todo',
+  'approval_urge',
+  'approval_result',
+  'schedule_change',
+  'payslip',
+  'im_message',
+  'announcement',
+  'system',
+] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
   attendance_exception: '打卡异常',
@@ -131,6 +142,7 @@ export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
   schedule_change: '排班变更',
   payslip: '工资条',
   im_message: '新消息',
+  announcement: '公告',
   system: '系统',
 };
 
@@ -1148,4 +1160,58 @@ export interface LeaveTypeSaved {
   types: LeaveType[];
   id: number;
   replayed: boolean;
+}
+
+// ───────────── 员工办公 v1.1 第 5 批：公司公告（docs/OA_MOBILE.md） ─────────────
+
+export type AnnouncementScope = 'all' | 'dept';
+export type AnnouncementStatus = 'published' | 'recalled';
+
+export const ANNOUNCEMENT_TITLE_MAX = 80;
+export const ANNOUNCEMENT_BODY_MAX = 5000;
+export const ANNOUNCEMENT_ATTACHMENTS_MAX = 9;
+
+export interface OaAnnouncement {
+  id: number;
+  title: string;
+  body: string;
+  scope: AnnouncementScope;
+  targetDepts: OrgDepartment[];
+  pinned: boolean;
+  status: AnnouncementStatus;
+  publishedById: number;
+  publishedByName: string;
+  publishedAt: string;
+  recalledByName: string | null;
+  recalledAt: string | null;
+  recallReason: string;
+  version: number;
+  attachments: OaAttachment[];
+  /** 员工端：当前账号何时读过（未读为 null） */
+  readAt: string | null;
+  /** 管理端：已读人数与目标范围总人数 */
+  readCount?: number;
+  targetCount?: number;
+}
+
+export interface OaAnnouncementList {
+  items: OaAnnouncement[];
+  unreadCount: number;
+}
+
+export interface OaAnnouncementSaved {
+  announcement: OaAnnouncement;
+  replayed: boolean;
+}
+
+export interface OaAnnouncementReader {
+  staffId: number;
+  name: string;
+  department: string | null;
+  readAt: string;
+}
+
+export interface OaAnnouncementReaders {
+  readers: OaAnnouncementReader[];
+  targetCount: number;
 }

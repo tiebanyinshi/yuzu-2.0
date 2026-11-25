@@ -171,6 +171,8 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   oa_approval_act: [],
   // OA-14 建群：登录就能建，只能查回、作废自己的（SELF_OPS）
   oa_im_group: [],
+  // 员工办公 v1.1 第 5 批：公司公告（发布 / 撤回）
+  oa_announcement: ['oa.announce'],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -268,6 +270,8 @@ const READ: Record<ErpOpType, Permission[]> = {
   oa_approval_act: [],
   // OA-14 建群：登录就能建，只能查回、作废自己的（SELF_OPS）
   oa_im_group: [],
+  // 员工办公 v1.1 第 5 批：公司公告
+  oa_announcement: ['oa.announce'],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {

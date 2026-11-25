@@ -404,6 +404,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '291_oa_schedule_publish.sql',
   '292_oa_schedule_grants.sql',
   '293_oa_seal_template.sql',
+  '294_oa_announcements_and_kb_search.sql',
   '300_refund_store.sql',
   '301_designated_to_end.sql',
   '310_dish_price_mode.sql',

@@ -7,7 +7,7 @@ import { Link, useLocation, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarCog, ChevronLeft, ChevronRight, FilePenLine, Fingerprint } from 'lucide-react';
 import { describeDate, shiftDate } from '@shared/labels';
-import { dateOfEpochMinute, MY_DAY_STATUS_LABELS, nextPunchHint, type MySchedule, type PunchToday, type ScheduleAccessSummary } from '@shared/oa';
+import { dateOfEpochMinute, MY_DAY_STATUS_LABELS, nextPunchHint, type MySchedule, type OaAnnouncementList, type PunchToday, type ScheduleAccessSummary } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
 import { can } from '@shared/permissions';
 import { clockText } from '@shared/technician-admin';
@@ -17,6 +17,7 @@ import { PageHeader } from '../../components/AppShell';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Badge, Button, Card, Skeleton } from '../../components/ui';
+import { AnnouncementsPage } from './AnnouncementsPage';
 import { ApprovalPages } from './ApprovalPages';
 import { DirectoryPage } from './DirectoryPage';
 import { ImPages } from './ImPages';
@@ -54,6 +55,8 @@ export function OfficePage() {
     <MySchedulePage />
   ) : path === '/oa/notifications' ? (
     <NotificationsPage />
+  ) : path.startsWith('/oa/announcements') ? (
+    <AnnouncementsPage />
   ) : path === '/oa/punch' ? (
     <PunchPage />
   ) : path === '/oa/face' ? (
@@ -78,7 +81,9 @@ const SCHEDULE_MANAGE_TILE: WcpNavItem = { to: '/oa/schedule/manage', label: 'æŽ
 
 function OfficeHomePage() {
   const approvals = useQuery({ queryKey: ['oa', 'approvals', 'summary'], queryFn: () => api.get<ApprovalSummary>('/api/oa/approvals/summary') });
+  const announcements = useQuery({ queryKey: ['oa', 'announcements'], queryFn: () => api.get<OaAnnouncementList>('/api/oa/announcements'), retry: false });
   const todo = approvals.data?.todo ?? 0;
+  const annUnread = announcements.data?.unreadCount ?? 0;
   const unread = useImUnread();
   const { systemUnread } = useNotificationUnread();
   const access = useQuery({ queryKey: ['oa', 'schedule-access'], queryFn: () => api.get<ScheduleAccessSummary>('/api/oa/attendance/schedule-access') });
@@ -89,7 +94,15 @@ function OfficeHomePage() {
   const all = [...nav.slice(0, 3), MAKEUP_TILE, ...nav.slice(3, 5), ...extra, ...nav.slice(5)];
   const tiles = q ? all.filter((t) => t.label.includes(q) || t.hint.includes(q)) : all;
   const badge = (t: WcpNavItem) =>
-    t.to === '/oa/im' && unread > 0 ? badgeText(unread) : t.to === '/oa/notifications' && systemUnread > 0 ? badgeText(systemUnread) : t.to === '/oa/approvals' && todo > 0 ? badgeText(todo) : null;
+    t.to === '/oa/im' && unread > 0
+      ? badgeText(unread)
+      : t.to === '/oa/notifications' && systemUnread > 0
+        ? badgeText(systemUnread)
+        : t.to === '/oa/announcements' && annUnread > 0
+          ? badgeText(annUnread)
+          : t.to === '/oa/approvals' && todo > 0
+            ? badgeText(todo)
+            : null;
   return (
     <>
       <div className="max-md:hidden">
