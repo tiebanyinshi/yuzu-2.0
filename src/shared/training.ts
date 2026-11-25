@@ -5,6 +5,15 @@ export const TRAINING_MAX_BYTES = 200 * 1024 * 1024;
 /** 分块上传每块的大小（原始字节；base64 以后约 4 MB，接口的请求体上限按它定） */
 export const TRAINING_CHUNK_BYTES = 3 * 1024 * 1024;
 export const TRAINING_MAX_CHUNKS = Math.ceil(TRAINING_MAX_BYTES / TRAINING_CHUNK_BYTES);
+/**
+ * 存储上限（Codex 安全审查 ec38502，PC37 待确认）：培训文件内容一共最多 20 GB、版本最多 5000 个；
+ * 每人同时最多 5 个没传完的上传、没传完的一共 1 GB；每人 24 小时内最多开始 100 次上传
+ */
+export const TRAINING_TOTAL_MAX_BYTES = 20 * 1024 * 1024 * 1024;
+export const TRAINING_TOTAL_MAX_VERSIONS = 5000;
+export const TRAINING_OPEN_UPLOADS_PER_STAFF = 5;
+export const TRAINING_OPEN_BYTES_PER_STAFF = 1024 * 1024 * 1024;
+export const TRAINING_DAILY_UPLOADS_PER_STAFF = 100;
 
 export type TrainingFolderKind = 'public' | 'department';
 

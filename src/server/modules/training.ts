@@ -16,6 +16,11 @@ import {
   TRAINING_FORMATS,
   TRAINING_MAX_BYTES,
   TRAINING_MAX_CHUNKS,
+  TRAINING_DAILY_UPLOADS_PER_STAFF,
+  TRAINING_OPEN_BYTES_PER_STAFF,
+  TRAINING_OPEN_UPLOADS_PER_STAFF,
+  TRAINING_TOTAL_MAX_BYTES,
+  TRAINING_TOTAL_MAX_VERSIONS,
   trainingViewKind,
   type TrainingFile,
   type TrainingFileDetail,
@@ -24,12 +29,13 @@ import {
   type TrainingFolderList,
   type TrainingSheetBook,
 } from '@shared/training';
-import type { Db } from '../db';
+import type { Db, Tx } from '../db';
 import { guard } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
 import { ctxOf, type Actor, type Deps, type OpContext } from '../lib/context';
-import { badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
+import { AppError, badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { hashRequest } from '../lib/idempotency';
+import { createStreamSlots } from '../lib/stream-slots';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
 import { readXlsx, XlsxReadError } from '../lib/xlsx-read';
@@ -306,6 +312,54 @@ const StartUploadInput = z
 
 const chunkCountOf = (size: number) => Math.ceil(size / TRAINING_CHUNK_BYTES);
 
+/** 只给用例：把上限调小，核对超限的拒绝（不用真的存 20GB） */
+const QUOTA_DEFAULTS = {
+  totalBytes: TRAINING_TOTAL_MAX_BYTES,
+  totalVersions: TRAINING_TOTAL_MAX_VERSIONS,
+  openUploads: TRAINING_OPEN_UPLOADS_PER_STAFF,
+  openBytes: TRAINING_OPEN_BYTES_PER_STAFF,
+  dailyUploads: TRAINING_DAILY_UPLOADS_PER_STAFF,
+};
+let quota = { ...QUOTA_DEFAULTS };
+export function setTrainingQuotaForTest(limits: Partial<typeof QUOTA_DEFAULTS> | null) {
+  quota = limits === null ? { ...QUOTA_DEFAULTS } : { ...QUOTA_DEFAULTS, ...limits };
+}
+
+/**
+ * 开始一次新上传前核对（Codex 安全审查 ec38502）：这个人没传完的个数与字节、24 小时内开始的次数。
+ * 同一个人的上传排队核对（咨询锁），不会两个一起钻过上限
+ */
+async function assertStagingQuota(tx: Tx, staffId: number, bytes: number) {
+  await tx`SELECT pg_advisory_xact_lock(hashtext(${`training_staging:${staffId}`}))`;
+  const [r] = await tx<{ open: number; openBytes: string; day: number }[]>`
+    SELECT count(*) FILTER (WHERE status = 'open')::int AS open,
+           coalesce(sum(size_bytes) FILTER (WHERE status = 'open'), 0)::text AS open_bytes,
+           count(*) FILTER (WHERE created_at > now() - interval '24 hours')::int AS day
+    FROM training_uploads WHERE created_by = ${staffId}`;
+  if (r!.open + 1 > quota.openUploads) throw new AppError(429, 'TRAINING_UPLOAD_BUSY', `你还有 ${r!.open} 个没传完的上传，先传完或「不传了」再传新的`);
+  if (Number(r!.openBytes) + bytes > quota.openBytes) throw new AppError(413, 'TRAINING_UPLOAD_BUSY', '没传完的上传加起来太大了，先传完或「不传了」再传新的');
+  if (r!.day + 1 > quota.dailyUploads) throw new AppError(429, 'TRAINING_DAILY_LIMIT', `你 24 小时内已开始了 ${r!.day} 次上传，每人每天最多 ${quota.dailyUploads} 次，明天再传或找店主处理`);
+}
+
+/** 登记新内容前核对总量（全库一把咨询锁 training_quota，几次登记排队核对） */
+async function assertStoreQuota(tx: Tx, bytes: number, newBlob: boolean) {
+  await tx`SELECT pg_advisory_xact_lock(hashtext('training_quota'))`;
+  const [r] = await tx<{ used: string; versions: number }[]>`
+    SELECT (SELECT coalesce(sum(size_bytes), 0) FROM training_blobs)::text AS used, (SELECT count(*) FROM training_file_versions)::int AS versions`;
+  if (r!.versions + 1 > quota.totalVersions) throw new AppError(413, 'TRAINING_QUOTA', `培训文件已有 ${r!.versions} 个版本，到了 ${quota.totalVersions} 个的上限，请找店主处理`);
+  if (newBlob && Number(r!.used) + bytes > quota.totalBytes)
+    throw new AppError(413, 'TRAINING_QUOTA', `培训文件已占 ${(Number(r!.used) / 1024 ** 3).toFixed(2)} GB，再存这份就超过 ${(quota.totalBytes / 1024 ** 3).toFixed(0)} GB 的上限，请找店主处理`);
+}
+
+/** 定时清理（jobs.ts 每分钟调，自己按小时节流）：24 小时还没传完的作废（连带传了一半的块） */
+let lastSweep = 0;
+export async function sweepTrainingUploads(db: Db, now = Date.now()): Promise<number> {
+  if (now - lastSweep < 60 * 60 * 1000) return 0;
+  lastSweep = now;
+  const rows = await db`DELETE FROM training_uploads WHERE status = 'open' AND created_at < now() - interval '24 hours' RETURNING id`;
+  return rows.length;
+}
+
 /** 开始上传：同一个编号重提返回原来那一次（含已传了哪几块） */
 async function startUpload(deps: Deps, raw: unknown, ctx: OpContext) {
   const input = parse(StartUploadInput, raw);
@@ -323,6 +377,7 @@ async function startUpload(deps: Deps, raw: unknown, ctx: OpContext) {
       if (seen.requestHash !== requestHash || Number(seen.createdBy) !== ctx.actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次上传，请刷新页面后重新选文件');
       id = Number(seen.id);
     } else {
+      await assertStagingQuota(tx, ctx.actor.id, input.sizeBytes);
       const [row] = await tx<{ id: number }[]>`
         INSERT INTO training_uploads (client_key, size_bytes, chunk_count, file_name, mime, request_hash, created_by)
         VALUES (${input.clientKey}, ${input.sizeBytes}, ${chunkCount}, ${input.fileName}, ${input.mime}, ${requestHash}, ${ctx.actor.id})
@@ -493,6 +548,8 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
     if (lock.status === 'done') return finished(tx, id);
     // 「不传了」与「完成」都先锁这一行：先作废的，完成就拒绝（Codex 审查 57dd2f6）
     if (lock.status === 'cancelled') throw conflict('TRAINING_UPLOAD_CANCELLED', '这次上传已经确认不传了，请重新选文件');
+    const [had] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM training_blobs WHERE sha256 = ${sha256}`;
+    await assertStoreQuota(tx, u.sizeBytes, !had!.n);
     // 内容只存一份：别人刚好也传了同一个文件就沿用
     const [stored] = await tx<{ sha256: string }[]>`
       INSERT INTO training_blobs (sha256, size_bytes, chunk_count) VALUES (${sha256}, ${u.sizeBytes}, ${u.chunkCount})
@@ -658,14 +715,49 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number): Pr
       maxCells: 200_000,
       maxNodes: 300_000,
       maxTotal: SHEET_MAX_UNZIPPED,
-      maxSheets: SHEET_MAX_SHEETS,
+      // 多读一张：读到了就知道后面还有表，标「表格太大」（Codex 审查 ec38502）
+      maxSheets: SHEET_MAX_SHEETS + 1,
     });
   } catch (e) {
     if (e instanceof XlsxReadError) throw unprocessable('TRAINING_SHEET_INVALID', `这份 Excel 在页面里打不开（${e.message}），请下载后查看`);
     throw e;
   }
+  const moreSheets = book.sheets.length > SHEET_MAX_SHEETS;
+  const sheetsShown = book.sheets.slice(0, SHEET_MAX_SHEETS);
   let budget = SHEET_MAX_TOTAL_CHARS;
-  let clipped = false;
+  let clipped = moreSheets;
+  // 合并单元格的总面积预算：所有合并区加起来不超过显示的格子数，互相重叠的、重复的不要（Codex 审查 ec38502：十万个重叠的合并区能卡死浏览器）
+  const keepMerges = (merges: { r1: number; c1: number; r2: number; c2: number }[], maxRow: number, cols: number) => {
+    const taken = new Uint8Array((maxRow + 1) * Math.max(cols, 1));
+    let area = 0;
+    const out: typeof merges = [];
+    for (const m0 of merges) {
+      if (out.length >= 2000) {
+        clipped = true;
+        break;
+      }
+      if (m0.r1 < 1 || m0.c1 < 0 || m0.r1 > maxRow || m0.c1 >= cols) continue;
+      const m = { r1: m0.r1, c1: m0.c1, r2: Math.min(m0.r2, maxRow), c2: Math.min(m0.c2, cols - 1) };
+      if (m.r2 <= m.r1 && m.c2 <= m.c1) continue;
+      const size = (m.r2 - m.r1 + 1) * (m.c2 - m.c1 + 1);
+      if (area + size > maxRow * cols) continue;
+      let overlap = false;
+      scan: for (let r = m.r1; r <= m.r2; r++) {
+        for (let c = m.c1; c <= m.c2; c++) {
+          if (taken[r * cols + c]) {
+            overlap = true;
+            break scan;
+          }
+        }
+      }
+      // 核对重叠时最多看 size 格，总共不超过 area 预算 + 被拒的这一次；被拒的计入预算，免得一直撞
+      area += size;
+      if (overlap) continue;
+      for (let r = m.r1; r <= m.r2; r++) for (let c = m.c1; c <= m.c2; c++) taken[r * cols + c] = 1;
+      out.push(m);
+    }
+    return out;
+  };
   const cellText = (value: string) => {
     let t = value.length > SHEET_MAX_CELL_CHARS ? ((clipped = true), `${value.slice(0, SHEET_MAX_CELL_CHARS)}…`) : value;
     if (t.length > budget) {
@@ -676,7 +768,7 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number): Pr
     return t;
   };
   return {
-    sheets: book.sheets.map((sh) => {
+    sheets: sheetsShown.map((sh) => {
       const rowNos = [...sh.rows.keys()].sort((a, b) => a - b);
       const maxRow = Math.min(rowNos.at(-1) ?? 0, SHEET_MAX_ROWS);
       let maxCol = 0;
@@ -691,15 +783,23 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number): Pr
         name: sh.name,
         rows,
         // 合并单元格裁到显示的范围里（右下角可以写到 XFD1048576，不裁的话页面要铺几十亿格，Codex 审查 e1d8be3）
-        merges: sh.merges
-          .filter((m) => m.r1 >= 1 && m.c1 >= 0 && m.r1 <= maxRow && m.c1 < cols)
-          .map((m) => ({ r1: m.r1, c1: m.c1, r2: Math.min(m.r2, maxRow), c2: Math.min(m.c2, cols - 1) }))
-          .filter((m) => m.r2 > m.r1 || m.c2 > m.c1),
+        merges: keepMerges(sh.merges, maxRow, cols),
         truncated: clipped || (rowNos.at(-1) ?? 0) > SHEET_MAX_ROWS || maxCol > SHEET_MAX_COLS,
       };
     }),
   };
 }
+
+/** 读内容的占位（Codex 安全审查 ec38502）：全店同时 24 个、每人 4 个，排队最多 20 秒，60 秒没往外写就断开 */
+const contentSlots = createStreamSlots({
+  slots: 24,
+  perStaff: 4,
+  waitMs: 20_000,
+  queuePerStaff: 30,
+  idleMs: 60_000,
+  code: 'TRAINING_DOWNLOAD_BUSY',
+  message: '正在读的培训文件太多，稍后再试',
+});
 
 // ───────────────────────── 路由 ─────────────────────────
 
@@ -717,32 +817,38 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
     return listFiles(sql, req.actor, id);
   });
 
-  app.get('/api/training/files/:id/content', { preHandler: loggedIn }, async (req, reply) => {
-    const { id } = parse(idParam, req.params);
-    const q = parse(ContentQuery, req.query ?? {});
-    const f = await assertFileVisible(sql, req.actor, id);
-    // 带了版本就只读那一版（同一次查看里分段读的都是同一份文件；看的时候换了新版本，不拿新版本的片段拼进来，Codex 审查 e1d8be3）。
-    // 旧版本只有管理权限看得到：员工带的不是当前版本就拒绝，页面重新打开
-    if (q.v && q.v !== f.currentVersionId && !can(req.actor, MANAGE)) throw conflict('TRAINING_VERSION_CHANGED', '这份文件刚换了新版本，请重新打开');
-    const versionId = q.v ?? f.currentVersionId;
-    const [v] = await sql<{ fileName: string; mime: string; sha256: string; sizeBytes: string | number }[]>`
+  app.get(
+    '/api/training/files/:id/content',
+    { preHandler: loggedIn, onResponse: async (req) => contentSlots.release(req), onRequestAbort: async (req) => contentSlots.release(req) },
+    async (req, reply) => {
+      const { id } = parse(idParam, req.params);
+      const q = parse(ContentQuery, req.query ?? {});
+      const f = await assertFileVisible(sql, req.actor, id);
+      // 带了版本就只读那一版（同一次查看里分段读的都是同一份文件；看的时候换了新版本，不拿新版本的片段拼进来，Codex 审查 e1d8be3）。
+      // 旧版本只有管理权限看得到：员工带的不是当前版本就拒绝，页面重新打开
+      if (q.v && q.v !== f.currentVersionId && !can(req.actor, MANAGE)) throw conflict('TRAINING_VERSION_CHANGED', '这份文件刚换了新版本，请重新打开');
+      const versionId = q.v ?? f.currentVersionId;
+      const [v] = await sql<{ fileName: string; mime: string; sha256: string; sizeBytes: string | number }[]>`
       SELECT file_name, mime, sha256, size_bytes FROM training_file_versions WHERE id = ${versionId} AND file_id = ${id}`;
-    if (!v) throw notFound('没有这个版本');
-    const size = Number(v.sizeBytes);
-    const range = parseRange(req.headers.range, size);
-    if (range === 'invalid') return reply.code(416).header('content-range', `bytes */${size}`).send();
-    const inline = !q.download && INLINE.has(v.mime);
-    reply
-      .header('content-type', v.mime)
-      .header('content-disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(v.fileName)}`)
-      .header('x-content-type-options', 'nosniff')
-      .header('cache-control', 'private, no-store')
-      .header('accept-ranges', 'bytes');
-    const { start, end } = range ?? { start: 0, end: size - 1 };
-    if (range) reply.code(206).header('content-range', `bytes ${start}-${end}/${size}`);
-    reply.header('content-length', String(end - start + 1));
-    return reply.send(streamBlob(sql, v.sha256, start, end));
-  });
+      if (!v) throw notFound('没有这个版本');
+      const size = Number(v.sizeBytes);
+      const range = parseRange(req.headers.range, size);
+      if (range === 'invalid') return reply.code(416).header('content-range', `bytes */${size}`).send();
+      // 真正往外送以前拿占位（核对了权限与版本才占，排队的不读内容）
+      await contentSlots.take(req, reply, req.actor.id);
+      const inline = !q.download && INLINE.has(v.mime);
+      reply
+        .header('content-type', v.mime)
+        .header('content-disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(v.fileName)}`)
+        .header('x-content-type-options', 'nosniff')
+        .header('cache-control', 'private, no-store')
+        .header('accept-ranges', 'bytes');
+      const { start, end } = range ?? { start: 0, end: size - 1 };
+      if (range) reply.code(206).header('content-range', `bytes ${start}-${end}/${size}`);
+      reply.header('content-length', String(end - start + 1));
+      return reply.send(streamBlob(sql, v.sha256, start, end));
+    },
+  );
 
   app.get('/api/training/files/:id/sheet', { preHandler: loggedIn }, async (req) => sheetOf(sql, req.actor, parse(idParam, req.params).id, parse(ContentQuery, req.query ?? {}).v));
 

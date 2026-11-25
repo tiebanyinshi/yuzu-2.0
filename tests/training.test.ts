@@ -3,7 +3,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TRAINING_CHUNK_BYTES, type TrainingFile, type TrainingFileDetail, type TrainingFolder, type TrainingFolderList } from '../src/shared/training';
-import { buildXlsx, zip } from '../src/server/lib/xlsx';
+import { buildWorkbook, buildXlsx, zip } from '../src/server/lib/xlsx';
+import { setTrainingQuotaForTest } from '../src/server/modules/training';
 import { unzip } from '../src/server/lib/xlsx-read';
 import { api, setup, type TestContext } from './helpers';
 
@@ -114,6 +115,28 @@ describe('员工培训', () => {
     expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/training/uploads/${s.body.uploadId}/complete`, { folderId: pub.id })).body.error.code).toBe('TRAINING_UPLOAD_INCOMPLETE');
     // 块大小不对拒绝
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s.body.uploadId}/chunks/0`, { data: Buffer.from('xx').toString('base64') })).status).toBe(400);
+  });
+
+  it('存储上限（Codex 安全审查 ec38502）：每人没传完的个数、24 小时开始次数、全库版本数', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const start = (name: string) => api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey: randomUUID(), fileName: name, mime: 'application/pdf', sizeBytes: 300 });
+    try {
+      // 前面的用例留了几个没传完的：上限设成「现有的 + 1」
+      const [o] = await ctx.sql<{ n: number; d: number }[]>`
+        SELECT count(*) FILTER (WHERE status = 'open')::int AS n, count(*)::int AS d FROM training_uploads WHERE created_by = ${ctx.ownerId}`;
+      setTrainingQuotaForTest({ openUploads: o!.n + 1 });
+      expect((await start('a.pdf')).status).toBe(200);
+      const busy = await start('b.pdf');
+      expect(busy.status).toBe(429);
+      expect(busy.body.error.code).toBe('TRAINING_UPLOAD_BUSY');
+      setTrainingQuotaForTest({ dailyUploads: o!.d + 1 });
+      expect((await start('c.pdf')).body.error.code).toBe('TRAINING_DAILY_LIMIT');
+      setTrainingQuotaForTest({ totalVersions: 0 });
+      const r = await upload(PDF(321), '超额.pdf', 'application/pdf', { folderId: pub.id });
+      expect(r.done.body.error.code).toBe('TRAINING_QUOTA');
+    } finally {
+      setTrainingQuotaForTest(null);
+    }
   });
 
   it('接着传核对内容指纹；不传了：服务端作废登记，与完成互斥（Codex 审查 57dd2f6）', async () => {
@@ -315,6 +338,18 @@ describe('员工培训', () => {
     const h = await upload(huge, '大格子.xlsx', XLSX_MIME, { folderId: pub.id });
     expect(h.done.status, JSON.stringify(h.done.body)).toBe(200);
     expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${h.done.body.fileId}/sheet`)).body.error?.code).toBe('TRAINING_SHEET_INVALID');
+    // 十万个重复 / 重叠的合并区：只留不重叠的、总面积不超过显示的格子数（Codex 审查 ec38502）
+    const manyMerges = patchSheet(base, (x) => x.replace('</sheetData>', `</sheetData><mergeCells count="100000">${'<mergeCell ref="A1:AN500"/>'.repeat(100_000)}</mergeCells>`));
+    const mm = await upload(manyMerges, '重叠合并.xlsx', XLSX_MIME, { folderId: pub.id });
+    const mms = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${mm.done.body.fileId}/sheet`);
+    expect(mms.status, JSON.stringify(mms.body).slice(0, 300)).toBe(200);
+    expect(mms.body.sheets[0].merges).toEqual([{ r1: 1, c1: 0, r2: 2, c2: 1 }]);
+    // 21 张表：只显示 20 张，标表格太大
+    const many = buildWorkbook(Array.from({ length: 21 }, (_, i) => ({ name: `表${i + 1}`, widths: [10], rows: [{ cells: [`第 ${i + 1} 张`] }] })));
+    const ms = await upload(many, '多表.xlsx', XLSX_MIME, { folderId: pub.id });
+    const mss = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${ms.done.body.fileId}/sheet`);
+    expect(mss.body.sheets).toHaveLength(20);
+    expect(mss.body.sheets[0].truncated).toBe(true);
     // 一格 5000 个字：页面里截到 2000 个字，标表格太大
     const long = patchSheet(base, (x) => x.replace('>1<', `>${'长'.repeat(5000)}<`));
     const l = await upload(long, '长格子.xlsx', XLSX_MIME, { folderId: pub.id });
