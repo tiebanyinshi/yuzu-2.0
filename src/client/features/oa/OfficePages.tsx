@@ -9,11 +9,9 @@ import { CalendarCog, ChevronLeft, ChevronRight, FilePenLine, Fingerprint } from
 import { describeDate, shiftDate } from '@shared/labels';
 import { dateOfEpochMinute, MY_DAY_STATUS_LABELS, nextPunchHint, type MySchedule, type PunchToday, type ScheduleAccessSummary } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
-import { IM_LIST_POLL_MS, type ImSync } from '@shared/oa-im';
 import { can } from '@shared/permissions';
 import { clockText } from '@shared/technician-admin';
 import { api } from '../../lib/api';
-import { useLivePoll } from '../../lib/livePoll';
 import { useSession } from '../../lib/session';
 import { PageHeader } from '../../components/AppShell';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
@@ -22,6 +20,7 @@ import { Badge, Button, Card, Skeleton } from '../../components/ui';
 import { ApprovalPages } from './ApprovalPages';
 import { DirectoryPage } from './DirectoryPage';
 import { ImPages } from './ImPages';
+import { badgeText, useImUnread, useNotificationUnread } from './MessagesBar';
 import { NotificationsPage } from './Notifications';
 import { FacePage } from './FacePage';
 import { MobileScheduleManagePage } from './MobileScheduleManagePage';
@@ -80,9 +79,8 @@ const SCHEDULE_MANAGE_TILE: WcpNavItem = { to: '/oa/schedule/manage', label: 'æŽ
 function OfficeHomePage() {
   const approvals = useQuery({ queryKey: ['oa', 'approvals', 'summary'], queryFn: () => api.get<ApprovalSummary>('/api/oa/approvals/summary') });
   const todo = approvals.data?.todo ?? 0;
-  const im = useQuery({ queryKey: ['oa', 'im', 'sync'], queryFn: () => api.get<ImSync>('/api/oa/im/sync') });
-  useLivePoll(async () => void (await im.refetch()), [], { intervalMs: IM_LIST_POLL_MS });
-  const unread = im.data?.unread ?? 0;
+  const unread = useImUnread();
+  const { systemUnread } = useNotificationUnread();
   const access = useQuery({ queryKey: ['oa', 'schedule-access'], queryFn: () => api.get<ScheduleAccessSummary>('/api/oa/attendance/schedule-access') });
   const nav = useWcpNav();
   const [params] = useSearchParams();
@@ -90,7 +88,8 @@ function OfficeHomePage() {
   const extra = access.data?.canView ? [SCHEDULE_MANAGE_TILE] : [];
   const all = [...nav.slice(0, 3), MAKEUP_TILE, ...nav.slice(3, 5), ...extra, ...nav.slice(5)];
   const tiles = q ? all.filter((t) => t.label.includes(q) || t.hint.includes(q)) : all;
-  const badge = (t: WcpNavItem) => (t.to === '/oa/im' && unread > 0 ? (unread > 99 ? '99+' : String(unread)) : t.to === '/oa/approvals' && todo > 0 ? String(todo) : null);
+  const badge = (t: WcpNavItem) =>
+    t.to === '/oa/im' && unread > 0 ? badgeText(unread) : t.to === '/oa/notifications' && systemUnread > 0 ? badgeText(systemUnread) : t.to === '/oa/approvals' && todo > 0 ? badgeText(todo) : null;
   return (
     <>
       <div className="max-md:hidden">

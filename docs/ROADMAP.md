@@ -273,6 +273,7 @@
 - **员工办公 v1.1（店主 2026-11-25《员工办公系统建设需求文档 v1.1》，设计与进度见 `docs/OA_MOBILE.md`）**：PC + 手机 H5（微信扫码，外网正式服 https `/oa`），底部 4 Tab（工作台 / 消息 / 知识库 / 我的）；分 6 批，每批一个 PR、不改版本号，每批等店主确认，6 批做完统一发版（版本号店主定）、一次交预览图。默认做法 EO1–EO6（店主 2026-11-25 全部同意）。迁移号预留 `291`–`299`（`290` 已由 8.1.37 使用）。第 1 批（框架与登录）**没有迁移**。
   - `291`（`291_oa_schedule_publish.sql`，第 2 批）：排班发布批次 `oa_schedule_publishes`、`oa_schedules` 加发布状态与草稿列（`status` / `pending_delete` / `draft_consecutive` / `published_at` / `published_by` / `publish_id`）；操作编号与确认作废的类型约束追加 `oa_schedule_publish`。回滚脚本 `docs/rollback/291_oa_schedule_publish.down.sql`。
   - `292`（`292_oa_schedule_grants.sql`，第 2 批）：排班授权 `oa_schedule_grants`（权限点仅限查看 / 编排 / 发布、不可转授、五类范围与部门经理范围上限、有效期、被授权人岗位快照以调岗失效、撤销）；操作编号与确认作废的类型约束追加 `oa_schedule_grant`。回滚脚本 `docs/rollback/292_oa_schedule_grants.down.sql`。
+  - `293`（`293_oa_seal_template.sql`，第 4 批）：办公审批模板新增「用章」（`seal`：印章类型、用章文件名称、份数、用章日期、事由、附件）。回滚脚本 `docs/rollback/293_oa_seal_template.down.sql`。
 - **对照「领浴」问题表 8.1.37（店主 2026-11-25，设计见 `docs/LINGYU_AUDIT_V8137.md`）**：排位按门店、钟房换房不让客人分身、前台轮钟按排位、改手机号解绑微信、结账时没上钟的钟单要确认；停用技师收牌、轮钟排除有预约的、店员手动扣储值超 500 元要授权、现场开单入住让着预订、审计按敏感操作筛与导出、餐饮台账按部门。
   - `290`（`290_dining_ledger.sql`）：新权限「餐饮台账」给按部门岗位里的总经办与前厅、餐饮、康美负责人加进建议权限（去掉了「餐饮点单」的不加），各记一条配置日志。回滚脚本 `docs/rollback/290_dining_ledger.down.sql`。
 - **店主 2026-11-25 的三份需求（《门店系统需求梳理与优化方案》《餐饮新店新系统功能需求文档》与 8.1.37 留下的新需求，设计见 `docs/V8138.md`）**：店主：「都做，但是会增加现在系统复杂性的要考虑如何适配……先看看是否有必要性」「先不允许 a 店钱 b 店退」。分四版，各预留十个迁移号：

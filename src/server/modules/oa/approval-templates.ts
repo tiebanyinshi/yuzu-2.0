@@ -104,4 +104,10 @@ export const TEMPLATE_HOOKS: Record<string, ApprovalHooks> = {
     },
     onApproved: onMakeupApproved,
   },
+  seal: {
+    async prepare(_tx, { form }) {
+      const title = `用章 · ${form.sealType as string} · ${form.docName as string}`;
+      return { title: title.slice(0, 100) };
+    },
+  },
 };

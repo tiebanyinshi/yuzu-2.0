@@ -44,6 +44,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Skeleton, Textarea } from '../../components/ui';
 import { uploadFile } from './oaImage';
 import { GroupSettingsDialog } from './ImGroupSettings';
+import { fetchNotificationUnread, IM_SYNC_KEY, MessagesTabBar, NOTIFICATION_UNREAD_KEY } from './MessagesBar';
 
 const EMOJI = ['😀', '😂', '😊', '😍', '🤔', '😅', '😭', '😡', '👍', '👌', '🙏', '👏', '💪', '🎉', '❤️', '🌹', '☕', '🍵', '✅', '❌', '⏰', '📌', '🔥', '🙂'];
 const LIST_KEY = ['oa', 'im', 'list'] as const;
@@ -76,6 +77,7 @@ function ImListPage() {
       const started = Date.now();
       const r = await api.get<ImSync>('/api/oa/im/sync');
       if (!isLive()) return;
+      qc.setQueryData(IM_SYNC_KEY, r);
       const sig = `${r.unread}:${r.lastMessageId}:${r.revokedAt ?? ''}`;
       // 第一次：列表可能是 5 秒内的旧缓存（staleTime），不是这次同步之后取的就重取一遍（Codex 审查 5c0dc60）
       const fresh = (qc.getQueryState([...LIST_KEY, q])?.dataUpdatedAt ?? 0) >= started;
@@ -88,21 +90,26 @@ function ImListPage() {
   const d = list.data;
   return (
     <>
-      <PageHeader dateMode="calendar" title="消息" subtitle="同事之间单聊、群聊；图片与文件只有会话里的人看得到" />
-      <div className="mx-auto w-full max-w-3xl p-4 md:p-7">
-        <ErpPendingPanel types={['oa_im_group']} filter={(op) => op.staffId === session.staff.id} className="mb-3 space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: LIST_KEY })} />
-        <Card className="p-4 md:p-5" data-testid="im-list">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <div className="relative min-w-0 basis-full sm:flex-1 sm:basis-auto">
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title="消息" subtitle="同事之间单聊、群聊；图片与文件只有会话里的人看得到" />
+      </div>
+      <div className="mx-auto w-full max-w-3xl space-y-3 p-3 md:p-7">
+        <MessagesTabBar active="im" />
+        <ErpPendingPanel types={['oa_im_group']} filter={(op) => op.staffId === session.staff.id} className="space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: LIST_KEY })} />
+        <Card className="p-3.5 md:p-5" data-testid="im-list">
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" />
               <Input value={q} onChange={(e) => setQ(e.target.value.slice(0, 30))} placeholder="搜群名、同事、聊天内容" className="pl-9" aria-label="搜索会话" data-testid="im-search" />
             </div>
-            <Button variant="secondary" icon={<MessageCirclePlus className="size-4" />} onClick={() => setDialog('direct')} data-testid="im-new-direct">
-              发起单聊
-            </Button>
-            <Button variant="secondary" icon={<Users className="size-4" />} onClick={() => setDialog('group')} data-testid="im-new-group">
-              建群
-            </Button>
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0">
+              <Button variant="secondary" icon={<MessageCirclePlus className="size-4" />} onClick={() => setDialog('direct')} data-testid="im-new-direct">
+                发起单聊
+              </Button>
+              <Button variant="secondary" icon={<Users className="size-4" />} onClick={() => setDialog('group')} data-testid="im-new-group">
+                建群
+              </Button>
+            </div>
           </div>
           {list.isPending ? (
             <Skeleton className="h-60" />
@@ -417,6 +424,13 @@ function ImChatPage({ id }: { id: number }) {
       await api.post(`/api/oa/im/conversations/${id}/read`, { upTo });
       acked.current = Math.max(acked.current, upTo);
       void qc.invalidateQueries({ queryKey: LIST_KEY });
+      void api
+        .get<ImSync>('/api/oa/im/sync')
+        .then((sync) => qc.setQueryData(IM_SYNC_KEY, sync))
+        .catch(() => undefined);
+      void fetchNotificationUnread()
+        .then((counts) => qc.setQueryData(NOTIFICATION_UNREAD_KEY, counts))
+        .catch(() => undefined);
     } catch {
       // 没报上：下一次取新消息时再报（Codex 审查 accf8fb）
     } finally {
@@ -523,17 +537,20 @@ function ImChatPage({ id }: { id: number }) {
 
   return (
     <>
-      <PageHeader dateMode="calendar" title={d?.title ?? '消息'} subtitle={d ? (d.kind === 'group' ? `群聊 · ${d.members.length} 人` : '单聊') : undefined} />
-      <div className="mx-auto w-full max-w-3xl p-3 md:p-6">
-        <Card className="flex h-[calc(100dvh-11rem)] flex-col p-0" data-testid="im-chat">
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title={d?.title ?? '消息'} subtitle={d ? (d.kind === 'group' ? `群聊 · ${d.members.length} 人` : '单聊') : undefined} />
+      </div>
+      <div className="mx-auto w-full max-w-3xl p-2 md:p-6">
+        <Card className="flex h-[calc(100dvh-9.5rem)] flex-col p-0 md:h-[calc(100dvh-11rem)]" data-testid="im-chat">
           <div className="flex items-center gap-2 border-b border-line px-3 py-2">
-            <Link to="/oa/im" className="tap relative flex items-center gap-1 text-[14px] text-ink-2" data-testid="im-back">
+            <Link to="/oa/im" className="tap relative flex shrink-0 items-center gap-1 text-[14px] text-ink-2" data-testid="im-back">
               <ArrowLeft className="size-4" />
-              会话列表
+              <span className="max-sm:hidden">会话列表</span>
             </Link>
-            {d?.kind === 'group' && <span className="ml-auto min-w-0 truncate text-[12px] text-ink-3">{d.members.map((m) => m.name).join('、')}</span>}
+            <span className="min-w-0 truncate text-[15px] font-bold text-ink md:hidden">{d?.title ?? '消息'}</span>
+            {d?.kind === 'group' && <span className="ml-auto hidden min-w-0 truncate text-[12px] text-ink-3 md:inline">{d.members.map((m) => m.name).join('、')}</span>}
             {d?.kind === 'group' && (
-              <Button size="sm" variant="ghost" icon={<Settings2 className="size-4" />} onClick={() => setSettings(true)} data-testid="im-settings">
+              <Button size="sm" variant="ghost" className="ml-auto shrink-0 md:ml-0" icon={<Settings2 className="size-4" />} onClick={() => setSettings(true)} data-testid="im-settings">
                 群设置
               </Button>
             )}
