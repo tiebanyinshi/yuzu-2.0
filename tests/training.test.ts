@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TRAINING_CHUNK_BYTES, type TrainingFile, type TrainingFileDetail, type TrainingFolder, type TrainingFolderList } from '../src/shared/training';
 import { buildWorkbook, buildXlsx, zip } from '../src/server/lib/xlsx';
-import { setTrainingQuotaForTest } from '../src/server/modules/training';
+import { setTrainingQuotaForTest, sweepTrainingUploads } from '../src/server/modules/training';
 import { unzip } from '../src/server/lib/xlsx-read';
 import { api, setup, type TestContext } from './helpers';
 
@@ -158,6 +158,11 @@ describe('员工培训', () => {
     );
     expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/training/uploads/${s.body.uploadId}/complete`, { folderId: pub.id })).body.error.code).toBe('TRAINING_UPLOAD_CANCELLED');
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, ...base, fingerprint: 'aaaaaaaaaaaaaaaa' })).body.status).toBe('cancelled');
+    // 万一有块赶在作废以后写进来（并发），定时清理也会清掉（Codex 安全审查 5cf662b）
+    await ctx.sql`INSERT INTO training_upload_chunks (upload_id, seq, data) VALUES (${s.body.uploadId}, 1, ${Buffer.from('x')})`;
+    await sweepTrainingUploads(ctx.sql, Date.now() + 10 * 60 * 60 * 1000);
+    const [left] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM training_upload_chunks WHERE upload_id = ${s.body.uploadId}`;
+    expect(left!.n).toBe(0);
     // 服务端还没见过的编号也能作废：先占住，原请求后到也开始不了
     const unseen = randomUUID();
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads/cancel', { clientKey: unseen, ...base })).body.status).toBe('cancelled');

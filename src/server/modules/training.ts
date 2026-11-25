@@ -357,6 +357,8 @@ export async function sweepTrainingUploads(db: Db, now = Date.now()): Promise<nu
   if (now - lastSweep < 60 * 60 * 1000) return 0;
   lastSweep = now;
   const rows = await db`DELETE FROM training_uploads WHERE status = 'open' AND created_at < now() - interval '24 hours' RETURNING id`;
+  // 已作废、已登记的上传不该再有暂存的块（兜底：万一有，也清掉，不白占库）
+  await db`DELETE FROM training_upload_chunks c USING training_uploads u WHERE u.id = c.upload_id AND u.status <> 'open'`;
   return rows.length;
 }
 
@@ -469,7 +471,16 @@ async function putChunk(deps: Deps, params: unknown, raw: unknown, actor: Actor)
   const bytes = Buffer.from(data, 'base64');
   const expected = seq === u.chunkCount - 1 ? u.sizeBytes - TRAINING_CHUNK_BYTES * (u.chunkCount - 1) : TRAINING_CHUNK_BYTES;
   if (bytes.length !== expected) throw badRequest(`第 ${seq + 1} 块大小不对（应为 ${expected} 字节，收到 ${bytes.length}）`);
-  await deps.sql`INSERT INTO training_upload_chunks (upload_id, seq, data) VALUES (${id}, ${seq}, ${bytes}) ON CONFLICT DO NOTHING`;
+  // 核对状态与写块在同一个事务里，先对这次上传的行加共享锁（Codex 安全审查 5cf662b）：
+  // 「不传了」「完成」要的是排他锁，所以作废以后不会再有块写进来；几块同时传互不挡
+  await deps.sql.begin(async (tx) => {
+    await setTxTimeouts(tx);
+    const [lock] = await tx<{ status: string }[]>`SELECT status FROM training_uploads WHERE id = ${id} FOR SHARE`;
+    if (!lock) throw notFound('上传记录不存在（超过 24 小时没传完的已作废），请重新选文件');
+    if (lock.status === 'cancelled') throw conflict('TRAINING_UPLOAD_CANCELLED', '这次上传已经确认不传了，请重新选文件');
+    if (lock.status === 'done') return;
+    await tx`INSERT INTO training_upload_chunks (upload_id, seq, data) VALUES (${id}, ${seq}, ${bytes}) ON CONFLICT DO NOTHING`;
+  });
   return { ok: true };
 }
 
