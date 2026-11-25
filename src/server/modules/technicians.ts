@@ -30,7 +30,7 @@ import { badRequest, conflict, notFound } from '../lib/errors';
 import { idParam, parse } from '../lib/validate';
 import { businessDate } from './frontdesk/common';
 import { settledTechnicianLines, withCommission } from './commission';
-import { loadClockroomRules } from './clockroom';
+import { loadClockroomRules, lockQueue, queueSnapshot, signOutOnDeactivate } from './clockroom';
 import { saveRuleSetting } from '../lib/rule-settings';
 import { settingRow } from '../lib/store-settings';
 import { currentStoreId, storeIn } from '../lib/store-context';
@@ -70,7 +70,9 @@ export async function frontdeskTechnicians(db: Db, deps: Deps): Promise<Frontdes
            coalesce((SELECT sum(l.quantity) FROM bill_lines l
                      WHERE l.technician_id = t.id AND l.status = 'active' AND l.business_date = ${today}), 0)::int AS today_clocks
     FROM technicians t WHERE t.active AND t.store_id = ${currentStoreId()} ORDER BY ${ORDER(db)}`;
-  return { rules, technicians };
+  // 8.1.37：带上今天的排位，前台按轮钟选人时能看出谁没上牌、谁在钟上、轮到谁
+  const snap = await queueSnapshot(db, today);
+  return { rules, technicians: technicians.map((t) => ({ ...t, queue: snap.get(t.id) ?? { state: 'off' as const, busy: false, position: null } })) };
 }
 
 export async function technicianAdmin(db: Db): Promise<TechnicianAdmin> {
@@ -263,8 +265,11 @@ export function registerTechnicianRoutes(app: FastifyInstance, deps: Deps) {
     const { id } = parse(idParam, req.params);
     const t = parse(TechnicianInput, req.body);
     await sql.begin(async (tx) => {
+      // 8.1.37：停用要动今天的排位，先拿技师队列锁再锁技师一行（与休假单批准同一个顺序）
+      if (!t.active) await lockQueue(tx);
       const [before] = await tx<Technician[]>`SELECT ${TECH_COLUMNS(tx)} FROM technicians t WHERE t.id = ${id} AND t.store_id = ${currentStoreId()} FOR UPDATE`;
       if (!before) throw notFound('技师不存在');
+      if (before.active && !t.active) await signOutOnDeactivate(tx, deps, { id, label: `${before.techNo} 号 ${before.name}` }, req.actor.id, new Date());
       await assertKind(tx, t.kind, before.kind);
       // 8.1.15：停用（离职）记下离职日期（没记过的记当前营业日），重新启用清掉；花名、类型、入职日期没带的不动
       const leftOn = t.active ? null : (before.leftOn ?? (await businessDate(tx, deps, new Date())));

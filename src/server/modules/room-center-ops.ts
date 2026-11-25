@@ -370,7 +370,7 @@ export async function openRoomUsage(deps: Deps, spaceId: number, raw: unknown, c
     const x = roomOf(await openRooms(tx, await businessDate(tx, deps, at), [spaceId]), spaceId);
     if (x.kind === 'hotel') throw unprocessable('ROOM_NOT_USAGE', HOTEL_ELSEWHERE);
     assertOpenable(x, false);
-    const usageId = await openUsageTx(tx, deps, payload, key, ctx);
+    const usageId = await openUsageTx(tx, deps, payload, key, ctx, { guardBookings: true });
     await bumpRoomVersion(tx, [spaceId], ctx.actor.id, at);
     await saveKey(tx, key, 'usage_open', requestHash, usageId, ctx.actor.id);
     return usageId;

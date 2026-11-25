@@ -26,7 +26,7 @@ const TABS = [
   { key: 'tables', label: '桌台', perms: ['dining.order', 'frontdesk.checkout'], subtitle: '不洗浴的客人在桌台上用餐：点空闲的桌开台，点用餐中的桌看明细、点单、结账' },
   { key: 'kitchen', label: '厨房出品', perms: ['dining.kitchen', 'dining.order'], subtitle: '待做 → 制作中 → 已出餐 → 上菜，5 秒刷新；点错了可以撤回一步' },
   { key: 'limits', label: '沽清', perms: ['dining.kitchen'], subtitle: '今天某道菜还剩几份；沽清（卖完）后点单页不能再点，退菜按原份数加回' },
-  { key: 'ledger', label: '台账', perms: ['dining.order', 'ledger.export', 'report.executive'], subtitle: '按营业日、分类、状态列出每道菜（手牌、桌台、小程序扫码点餐），合计只算有效的，可导出' },
+  { key: 'ledger', label: '台账', perms: ['dining.ledger', 'ledger.export', 'report.executive'], subtitle: '按营业日、分类、状态列出每道菜（手牌、桌台、小程序扫码点餐），合计只算有效的，可导出' },
   { key: 'dishes', label: '菜品管理', perms: DISH_PERMISSIONS, subtitle: '全部菜品在一张表里：新增、编辑、上下架、做法、加料、套餐、改价（留改价记录），Excel 导出与导入' },
 ] as const satisfies readonly { key: string; label: string; perms: readonly Permission[]; subtitle: string }[];
 

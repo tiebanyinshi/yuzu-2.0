@@ -283,7 +283,7 @@ export async function roomBookingsOverbooked(db: Db, bookingIds: number[], today
 }
 
 /** 某房型某营业日还剩几间：能用的房间 − 占着名额的预约 −（当天的）在住；渠道订单超订时是负数 */
-async function roomTypeBalance(db: Db, roomTypeId: number, date: string, today: string, excludeBookingId?: number): Promise<number> {
+export async function roomTypeBalance(db: Db, roomTypeId: number, date: string, today: string, excludeBookingId?: number): Promise<number> {
   const [r] = await db<{ rooms: number; booked: number; staying: number }[]>`
     SELECT (SELECT count(*)::int FROM rooms WHERE room_type_id = ${roomTypeId} AND active AND housekeeping <> 'maintenance') AS rooms,
            (SELECT count(*)::int FROM bookings bk WHERE bk.room_type_id = ${roomTypeId} AND bk.business_date = ${date} AND bk.id <> ${excludeBookingId ?? 0}

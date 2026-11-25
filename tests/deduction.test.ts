@@ -47,7 +47,7 @@ describe('接口：本金 + 赠金', () => {
       expect(r.status).toBe(200);
       expect(r.body.balanceAfter).toEqual({ principal: 50000, bonus: 5000 });
 
-      const cr = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(member.id, c.consume, { expectedSplit: c.expect }));
+      const cr = await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', consumeBody(member.id, c.consume, { expectedSplit: c.expect }));
       expect(cr.status).toBe(200);
       expect(cr.body.consumption.deductionRule).toBe(c.rule);
       expect({ principal: cr.body.consumption.principalAmount, bonus: cr.body.consumption.bonusAmount }).toEqual(c.expect);
@@ -91,7 +91,7 @@ describe('接口：本金 + 赠金', () => {
     const member = await createMember(ctx, '项目会员', '19900002002');
     await api(ctx.app, ctx.clerk, 'POST', '/api/recharges', rechargeBody(member.id, 100000));
     const [item] = await ctx.sql<{ id: number }[]>`INSERT INTO service_items (name, price) VALUES ('汤泉入场', 12800) RETURNING id`;
-    const ok = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', {
+    const ok = await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', {
       idempotencyKey: randomUUID(),
       memberId: member.id,
       lines: [{ itemId: item!.id, quantity: 2 }],
@@ -101,7 +101,7 @@ describe('接口：本金 + 赠金', () => {
     expect(ok.status).toBe(200);
     expect(ok.body.consumption.lines[0]).toMatchObject({ name: '汤泉入场', unitPrice: 12800, quantity: 2, amount: 25600 });
 
-    const stale = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', {
+    const stale = await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', {
       idempotencyKey: randomUUID(),
       memberId: member.id,
       lines: [{ itemId: item!.id, quantity: 1 }],
@@ -127,14 +127,14 @@ describe('确认后扣款规则被修改', () => {
       expectedBalance: { principal: 10000, bonus: 5000 },
       expectedSplit: { principal: 6000, bonus: 0 },
     });
-    const stale = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', body);
+    const stale = await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', body);
     expect(stale.status).toBe(409);
     expect(stale.body.error.code).toBe('SPLIT_CHANGED');
     expect(stale.body.error.details).toMatchObject({ rule: 'bonus_first', split: { principal: 1000, bonus: 5000 } });
     expect(await balanceOf(ctx, member.id)).toEqual({ principal: 10000, bonus: 5000 });
 
     // 按新构成重新确认（新的操作编号）
-    const ok = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', {
+    const ok = await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', {
       ...body,
       idempotencyKey: randomUUID(),
       expectedSplit: { principal: 1000, bonus: 5000 },
@@ -149,7 +149,7 @@ describe('确认后扣款规则被修改', () => {
     const member = await createMember(ctx, '缺少构成会员', '19900002102');
     await api(ctx.app, ctx.clerk, 'POST', '/api/recharges', rechargeBody(member.id, 10000));
     const { expectedSplit: _omit, ...body } = consumeBody(member.id, 1000);
-    const res = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', body);
+    const res = await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', body);
     expect(res.status).toBe(400);
     expect(res.body.error.message).toContain('扣款构成');
     expect(await balanceOf(ctx, member.id)).toEqual({ principal: 10000, bonus: 0 });

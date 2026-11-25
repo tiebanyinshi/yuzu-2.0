@@ -90,12 +90,13 @@ test.describe('收银完善（v0.7.20）', () => {
         ],
         expectedTotal: 8000,
       });
-      const preview = await getJson<{ totalAmount: number }>(page, `/api/frontdesk/checkout-preview?ids=${visitId}`);
+      const preview = await getJson<{ totalAmount: number; sessions?: { sessionNo: string; status: string }[] }>(page, `/api/frontdesk/checkout-preview?ids=${visitId}`);
       const paid = await postJson<{ id: number; checkoutNo: string }>(page, '/api/frontdesk/checkouts', {
         clientKey: randomUUID(),
         visitIds: [visitId],
         expectedTotal: preview.totalAmount,
         payments: [{ method: 'cash', amount: preview.totalAmount }],
+        confirmUnstarted: (preview.sessions ?? []).filter((x) => x.status === 'waiting').map((x) => x.sessionNo),
       });
       const shiftCash = async () => (await getJson<{ shift: { summary: { cash: { expected: number; refundSlip?: number } } } }>(page, '/api/shifts/current')).shift.summary.cash;
       const before = await shiftCash();

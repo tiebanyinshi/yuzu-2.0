@@ -98,6 +98,7 @@ export type AuditAction =
   | 'frontdesk_void'
   | 'clock_assign'
   | 'clock_transfer'
+  | 'clock_session_room'
   | 'frontdesk_move'
   | 'frontdesk_abandon'
   | 'frontdesk_ticket'

@@ -39,12 +39,13 @@ test.describe('8.0.21 开票申请', () => {
     const checkin = await json<{ visits: { id: number }[] }>(page, 'post', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: 'male' }] });
     const visitId = checkin.visits[0]!.id;
     await json(page, 'post', `/api/frontdesk/visits/${visitId}/charges`, { clientKey: randomUUID(), lines: [], customLines: [{ name: `E2E 开票按摩${stamp}`, amount: 6800 }], expectedTotal: 6800 });
-    const preview = await json<{ totalAmount: number }>(page, 'get', `/api/frontdesk/checkout-preview?ids=${visitId}`);
+    const preview = await json<{ totalAmount: number; sessions?: { sessionNo: string; status: string }[] }>(page, 'get', `/api/frontdesk/checkout-preview?ids=${visitId}`);
     const paid = await json<{ id: number; checkoutNo: string }>(page, 'post', '/api/frontdesk/checkouts', {
       clientKey: randomUUID(),
       visitIds: [visitId],
       expectedTotal: preview.totalAmount,
       payments: [{ method: 'cash', amount: preview.totalAmount }],
+      confirmUnstarted: (preview.sessions ?? []).filter((x) => x.status === 'waiting').map((x) => x.sessionNo),
     });
 
     await page.goto('/crm/cashier');

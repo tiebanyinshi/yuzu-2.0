@@ -117,7 +117,7 @@ describe('线上充值算进当天的充值', () => {
     const over = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(a.memberId, yuan(1190) + 1));
     expect(over.status).toBe(422);
     expect(over.body.error).toMatchObject({ code: 'RECHARGE_SPEND_CAP', details: { remaining: yuan(1190), recharged: yuan(1700) } });
-    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(a.memberId, yuan(1000)))).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', consumeBody(a.memberId, yuan(1000)))).status).toBe(200);
     expect(await quotaOf(a.memberId)).toMatchObject({ spent: yuan(1000), remaining: yuan(190) });
 
     // 用了储值以后再线上充：充值前的余额仍按当天第一笔之前（0），额度按新的合计算
@@ -160,6 +160,6 @@ describe('跨营业日晚到的入账', () => {
     expect(await spendQuotaOf(ctx.sql, b.memberId, today, 70)).toMatchObject({ recharged: yuan(1000), priorBalance: yuan(800), cap: yuan(1500), spent: 0 });
     expect(await quotaOf(b.memberId)).toMatchObject({ recharged: yuan(1000), priorBalance: yuan(800), cap: yuan(1500), remaining: yuan(1500) });
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(b.memberId, yuan(1500) + 1))).body.error.code).toBe('RECHARGE_SPEND_CAP');
-    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(b.memberId, yuan(1500)))).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', consumeBody(b.memberId, yuan(1500)))).status).toBe(200);
   });
 });

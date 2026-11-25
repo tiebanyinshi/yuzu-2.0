@@ -86,12 +86,13 @@ async function release(page: Page, visitId: number) {
   const v = await getJson<{ status: string }>(page, `/api/frontdesk/visits/${visitId}`);
   if (v.status !== 'open') return;
   const opened = (await page.request.post('/api/shifts', { data: { openingCash: 0 } })).status() === 200;
-  const preview = await getJson<{ totalAmount: number }>(page, `/api/frontdesk/checkout-preview?ids=${visitId}`);
+  const preview = await getJson<{ totalAmount: number; sessions?: { sessionNo: string; status: string }[] }>(page, `/api/frontdesk/checkout-preview?ids=${visitId}`);
   await send(page, 'post', '/api/frontdesk/checkouts', {
     clientKey: randomUUID(),
     visitIds: [visitId],
     expectedTotal: preview.totalAmount,
     payments: [{ method: 'cash', amount: preview.totalAmount }],
+    confirmUnstarted: (preview.sessions ?? []).filter((x) => x.status === 'waiting').map((x) => x.sessionNo),
   });
   if (opened) {
     const { shift } = await getJson<{ shift: { id: number; summary: { cash: { expected: number } } } }>(page, '/api/shifts/current');

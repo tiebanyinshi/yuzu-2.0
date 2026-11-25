@@ -17,6 +17,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { MANUAL_CONSUME_SELF_LIMIT_CENTS } from '@shared/deduction';
 import { normalizeTagCode, TAG_CODE_PATTERN } from '@shared/frontdesk';
 import {
   GRANT_PURPOSES,
@@ -74,6 +75,8 @@ const OverLimitScopeInput = z.object({
   kind: z.enum(['recharge', 'consume'], '请说明授权哪类业务'),
   memberId: z.number().int().positive('请说明授权哪位会员'),
   amount: positiveCents('授权金额'),
+  /** 8.1.37：店员储值扣款里手动输入的金额合计（只为它超过本人上限而授权时带） */
+  manual: positiveCents('手动金额').optional(),
 });
 
 const DiscountScopeInput = z
@@ -220,8 +223,17 @@ export function registerGrantRoutes(app: FastifyInstance, deps: Deps) {
       if (!can(req.actor, KIND_PERMISSION[s.kind])) throw forbidden();
       const settings = await loadSettings(sql);
       const limit = s.kind === 'recharge' ? settings.maxRechargeCents : settings.maxConsumeCents;
-      if (s.amount <= limit) throw conflict('GRANT_NOT_NEEDED', `金额没有超过单笔${KIND_LABEL[s.kind]}上限 ${formatYuan(limit)}，不需要授权`);
-      scope = { kind: s.kind, memberId: s.memberId, amount: s.amount };
+      // 8.1.37：店员储值扣款的手动金额超过本人上限，也走这张授权（金额没超过单笔上限时）
+      const manualNeeds = s.kind === 'consume' && s.manual !== undefined && s.manual <= s.amount && s.manual > MANUAL_CONSUME_SELF_LIMIT_CENTS && !can(req.actor, 'consume.reverse');
+      if (s.amount <= limit && !manualNeeds) {
+        throw conflict(
+          'GRANT_NOT_NEEDED',
+          s.manual !== undefined
+            ? `手动金额没有超过 ${formatYuan(MANUAL_CONSUME_SELF_LIMIT_CENTS)}（或你的岗位可以直接扣），不需要授权`
+            : `金额没有超过单笔${KIND_LABEL[s.kind]}上限 ${formatYuan(limit)}，不需要授权`,
+        );
+      }
+      scope = { kind: s.kind, memberId: s.memberId, amount: s.amount, ...(manualNeeds ? { manual: s.manual } : {}) };
     }
     checkLock(input.username, req.ip);
     const [approver] = await sql<{ id: number; displayName: string; role: Role; duties: Duty[] | null; position: unknown; permissionAdjust: unknown; active: boolean; passwordHash: string }[]>`
@@ -333,7 +345,8 @@ export async function consumeLineVoidGrant(
 export async function consumeOverLimitGrant(tx: Tx, opts: { grantId: string; actor: Actor; scope: OverLimitScope; usedRef: string }): Promise<{ approverId: number; approverName: string }> {
   const g = await lockGrant(tx, opts.grantId, 'over_limit', opts.actor);
   const s = g.scope as OverLimitScope;
-  if (s.kind !== opts.scope.kind || s.memberId !== opts.scope.memberId || s.amount !== opts.scope.amount) {
+  // 8.1.37（Codex 审查 3b4fdc1）：为手动金额授权的，这一笔的手动金额也要与授权时一致——总额不变、把项目换成手动金额不能沿用
+  if (s.kind !== opts.scope.kind || s.memberId !== opts.scope.memberId || s.amount !== opts.scope.amount || (s.manual !== undefined && s.manual !== opts.scope.manual)) {
     throw unprocessable(
       'GRANT_SCOPE',
       `授权的是${KIND_LABEL[s.kind]} ${formatYuan(s.amount)}，与这笔${KIND_LABEL[opts.scope.kind]} ${formatYuan(opts.scope.amount)}（或会员）不一致，请按当前内容重新授权`,

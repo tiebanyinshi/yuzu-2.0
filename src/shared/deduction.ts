@@ -40,3 +40,9 @@ export function splitDeduction(amount: Cents, balance: WalletBalance, rule: Dedu
     }
   }
 }
+
+/**
+ * 会员储值「其他金额」（手动输入、不在项目列表里的金额）本人能直接扣的上限（8.1.37）：没有「撤销会员消费」权限的岗位（店员），
+ * 一笔里手动金额合计超过它，要店主或店总当场授权（与超过单笔上限同一张授权）。项目列表里的项目不受影响
+ */
+export const MANUAL_CONSUME_SELF_LIMIT_CENTS = 50_000;

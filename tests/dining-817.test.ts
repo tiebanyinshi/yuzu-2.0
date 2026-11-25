@@ -266,7 +266,7 @@ describe('餐饮台账、退菜记录按点单分类筛（CF7）', () => {
     expect((await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/lines/${lineOf('柠檬茶')}/void`, { reason: '点错了' })).status).toBe(200);
 
     const ledger = async (q = '') => {
-      const r = await api(ctx.app, ctx.clerk, 'GET', `/api/dining/ledger?from=${today}&to=${today}${q}`);
+      const r = await api(ctx.app, ctx.owner, 'GET', `/api/dining/ledger?from=${today}&to=${today}${q}`);
       expect(r.status, JSON.stringify(r.body)).toBe(200);
       return r.body as DiningLedger;
     };
@@ -284,10 +284,10 @@ describe('餐饮台账、退菜记录按点单分类筛（CF7）', () => {
     expect(restaurant.rows.map((r) => [r.name, r.quantity])).toEqual([['青岛啤酒', 2]]);
     // 不带入口时小分类不起作用；入口写错拒绝
     expect(names(await ledger(`&groups=${encodeURIComponent('糖水')}`))).toEqual(names(all));
-    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/dining/ledger?from=${today}&to=${today}&outlet=bar`)).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/dining/ledger?from=${today}&to=${today}&outlet=bar`)).status).toBe(400);
 
     // 导出：与页面同一个查询；多一列「价目分类」；文件名写明筛的哪一处
-    const csv = await ctx.app.inject({ method: 'GET', url: `/api/dining/ledger/export?from=${today}&to=${today}&outlet=water`, headers: { cookie: ctx.clerk } });
+    const csv = await ctx.app.inject({ method: 'GET', url: `/api/dining/ledger/export?from=${today}&to=${today}&outlet=water`, headers: { cookie: ctx.owner } });
     expect(csv.statusCode).toBe(200);
     expect(decodeURIComponent(String(csv.headers['content-disposition']))).toContain(`餐饮台账-${today}至${today}-水吧.csv`);
     const rows = csv.body

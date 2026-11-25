@@ -83,7 +83,7 @@ const recharge = async (memberId: number, paid: number) => {
   expect(r.status, JSON.stringify(r.body)).toBe(200);
 };
 const spend = async (memberId: number, amount: number) => {
-  const r = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(memberId, amount));
+  const r = await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', consumeBody(memberId, amount));
   expect(r.status, JSON.stringify(r.body)).toBe(200);
 };
 let phoneNo = 0;

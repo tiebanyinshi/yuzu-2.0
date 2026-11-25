@@ -61,8 +61,8 @@ describe('单笔上限默认 50 万元', () => {
     expect(over.body.error).toMatchObject({ code: 'OVER_LIMIT_AUTH_REQUIRED', details: { limit: 50 * WAN, amount: 50 * WAN + 1 } });
     expect(over.body.error.message).toContain('店主或店总当场授权');
     expect(await balanceOf(ctx, m.id)).toEqual({ principal: 50 * WAN, bonus: 0 });
-    // 消费同理
-    const c = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, 50 * WAN));
+    // 消费同理（值班经理办：店员手动金额超过 500 元要另外授权，见下面 8.1.37 的用例）
+    const c = await api(ctx.app, duty, 'POST', '/api/consumptions', consumeBody(m.id, 50 * WAN));
     expect(c.status).toBe(200);
     expect(c.body.consumption.overLimitApproverName).toBeNull();
   });
@@ -291,5 +291,58 @@ describe('营业时间（只用于显示与提醒）与按项保存设置', () =
     expect(describeBusinessHours(overnight)).toBe('10:00–次日 02:00');
     expect(describeBusinessHours(day)).toBe('09:00–22:30');
     expect(describeBusinessHours(null)).toBe('全天 24 小时营业');
+  });
+});
+
+describe('8.1.37：店员储值扣款手动金额超过 500 元要当场授权', () => {
+  it('店员手填 500 元以内照常扣；超过要店总、店主授权（授权带手动金额）；值班经理及以上不用；审计逐行记手动金额', async () => {
+    const m = await createMember(ctx, '手动金额会员', '19900005099');
+    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/recharges', rechargeBody(m.id, 10 * WAN))).status).toBe(200);
+    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, 50_000))).status).toBe(200);
+    const over = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, 50_001));
+    expect(over.status).toBe(422);
+    expect(over.body.error).toMatchObject({ code: 'OVER_LIMIT_AUTH_REQUIRED', details: { limit: 50_000, amount: 50_001, manual: true } });
+    expect(over.body.error.message).toContain('手动输入的金额');
+    // 不带手动金额申请：没超过单笔上限，不签发；带了手动金额才签发
+    expect((await authorize(ctx.clerk, 'boss', { kind: 'consume', memberId: m.id, amount: 50_001 })).body.error.code).toBe('GRANT_NOT_NEEDED');
+    expect((await authorize(duty, 'boss', { kind: 'consume', memberId: m.id, amount: 50_001, manual: 50_001 } as never)).body.error.code).toBe('GRANT_NOT_NEEDED');
+    const g = await authorize(ctx.clerk, 'boss', { kind: 'consume', memberId: m.id, amount: 50_001, manual: 50_001 } as never);
+    expect(g.status, JSON.stringify(g.body)).toBe(200);
+    const ok = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, 50_001, { overLimitGrantId: g.body.grantId }));
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.consumption.overLimitApproverName).toBe('店总');
+    // 总额不变、手动金额变了：原授权不能用（Codex 审查 3b4fdc1）
+    const g2 = await authorize(ctx.clerk, 'boss', { kind: 'consume', memberId: m.id, amount: 60_000, manual: 50_001 } as never);
+    expect(g2.status, JSON.stringify(g2.body)).toBe(200);
+    const swapped = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m.id, 60_000, { overLimitGrantId: g2.body.grantId }));
+    expect(swapped.body.error).toMatchObject({ code: 'GRANT_SCOPE' });
+    // 值班经理（能撤销会员消费）直接扣
+    expect((await api(ctx.app, duty, 'POST', '/api/consumptions', consumeBody(m.id, 60_000))).status).toBe(200);
+    const [audit] = await ctx.sql<{ detail: { manualLines: { name: string; amount: number }[] } }[]>`
+      SELECT detail FROM audit_logs WHERE action = 'consumption_created' AND detail->>'memberId' = ${String(m.id)} ORDER BY id DESC LIMIT 1`;
+    expect(audit!.detail.manualLines).toEqual([{ name: '测试消费', amount: 60_000 }]);
+  });
+});
+
+describe('8.1.37：操作审计按「敏感操作」筛选、导出 CSV', () => {
+  it('sensitive 只列一组敏感动作；逗号写动作名也行；乱写拒绝；导出带表头并记一条导出；店员看不到', async () => {
+    const all = await api(ctx.app, ctx.owner, 'GET', '/api/audit?limit=2000');
+    expect(all.status).toBe(200);
+    const sensitive = await api(ctx.app, ctx.owner, 'GET', '/api/audit?actions=sensitive&limit=2000');
+    expect(sensitive.status).toBe(200);
+    expect((sensitive.body as { action: string }[]).length).toBeGreaterThan(0);
+    expect((sensitive.body as { action: string }[]).every((r) => ['consumption_created', 'auth_granted', 'auth_failed'].includes(r.action) || r.action.length > 0)).toBe(true);
+    expect((sensitive.body as { action: string }[]).some((r) => r.action === 'login')).toBe(false);
+    const one = await api(ctx.app, ctx.owner, 'GET', '/api/audit?actions=consumption_created');
+    expect((one.body as { action: string }[]).every((r) => r.action === 'consumption_created')).toBe(true);
+    expect((await api(ctx.app, ctx.owner, 'GET', '/api/audit?actions=DROP%20TABLE')).status).toBe(400);
+    const csv = await ctx.app.inject({ method: 'GET', url: '/api/audit.csv?actions=sensitive', headers: { cookie: ctx.owner } });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.headers['content-type']).toContain('text/csv');
+    expect(csv.body).toContain('时间,动作,经办人');
+    expect(csv.body).toContain('consumption_created');
+    const [exp] = await ctx.sql<{ detail: { kind: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'export' ORDER BY id DESC LIMIT 1`;
+    expect(exp!.detail.kind).toBe('audit');
+    expect((await ctx.app.inject({ method: 'GET', url: '/api/audit.csv', headers: { cookie: ctx.clerk } })).statusCode).toBe(403);
   });
 });

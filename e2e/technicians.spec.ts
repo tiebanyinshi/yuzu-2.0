@@ -127,11 +127,17 @@ test.describe('v0.7.0 技师', () => {
 
       // ④ 结账（现金），结账单写明技师
       const visit = (await getJson<{ tags: BoardTag[] }>(page, '/api/frontdesk/board')).tags.find((t) => t.code === tag)!.visit!;
-      const preview = await getJson<{ totalAmount: number }>(page, `/api/frontdesk/checkout-preview?ids=${visit.id}`);
+      const preview = await getJson<{ totalAmount: number; sessions?: { sessionNo: string; status: string }[] }>(page, `/api/frontdesk/checkout-preview?ids=${visit.id}`);
       // 收款前要先开班：本人没有当班班次时临时开一个，结完就按应有现金交掉
       const opened = (await page.request.post('/api/shifts', { data: { openingCash: 0 } })).status() === 200;
       const paid = await page.request.post('/api/frontdesk/checkouts', {
-        data: { clientKey: randomUUID(), visitIds: [visit.id], expectedTotal: preview.totalAmount, payments: [{ method: 'cash', amount: preview.totalAmount }] },
+        data: {
+          clientKey: randomUUID(),
+          visitIds: [visit.id],
+          expectedTotal: preview.totalAmount,
+          payments: [{ method: 'cash', amount: preview.totalAmount }],
+          confirmUnstarted: (preview.sessions ?? []).filter((x) => x.status === 'waiting').map((x) => x.sessionNo),
+        },
       });
       expect(paid.ok(), await paid.text()).toBe(true);
       if (opened) {
