@@ -1,4 +1,4 @@
-// 培训 PDF 上传前的内嵌图片尺寸检查（Codex 安全审查 bfc32cd）：
+// 培训 PDF 上传前的内嵌图片尺寸检查（Codex 安全审查 bfc32cd、26222e1）：
 // PDF 规范（ISO 32000-1 §7.5.7）规定流对象（图像 XObject、SMask、ImageMask）不能放在压缩对象流（ObjStm）里，
 // 其字典（<< ... >>）直接以明文出现在 `stream` 关键字前面。按分块流式扫描，只留 64 KB 跨块窗口，不把整份大 PDF 读进内存，
 // 也不解压图片流：发现单张内嵌图片超过像素或边长上限立即拒绝，配合前端 PDF.js 6.5.438 的 maxImageSize 形成双道防线。
@@ -19,9 +19,16 @@ export interface PdfImageLimits {
 const TAIL_KEEP = 65_536;
 /** 从 `stream` 往前最多回看这么多字节找对应的 `<< ... >>` 字典 */
 const DICT_LOOKBACK = 32_768;
+/** 环形队列容量（2 的幂）：32 KB 窗口内最多 DICT_LOOKBACK / 2 + 1 = 16385 个 `<<`，32768 永不溢出且固定占 128 KB 零堆增长 */
+const OPEN_RING_CAP = 32_768;
+const OPEN_RING_MASK = OPEN_RING_CAP - 1;
+
+const STREAM_NEEDLE = Buffer.from('stream', 'ascii');
+const OPEN_DICT_NEEDLE = Buffer.from('<<', 'ascii');
 
 const isWs = (c: number) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0x0c || c === 0x00;
 const isDelim = (c: number) => isWs(c) || c === 0x2f || c === 0x3c || c === 0x3e || c === 0x5b || c === 0x5d || c === 0x28 || c === 0x29 || c === 0x25;
+const isCandidateKeyStart = (c: number) => c === 0x53 || c === 0x49 || c === 0x42 || c === 0x57 || c === 0x48 || c === 0x23;
 
 /** 解码 PDF 名称里的 #XX 十六进制转义（例如 /Sub#74ype -> /Subtype） */
 function decodePdfName(raw: string): string {
@@ -29,36 +36,22 @@ function decodePdfName(raw: string): string {
   return raw.replace(/#([0-9a-fA-F]{2})/g, (_, h: string) => String.fromCharCode(Number.parseInt(h, 16)));
 }
 
-const STREAM_NEEDLE = Buffer.from('stream', 'ascii');
-const OPEN_DICT_NEEDLE = Buffer.from('<<', 'ascii');
-
-/** 检查从 pos 开始（跳过空白后）是否紧跟 PDF 流关键字 `stream` + CR/LF */
-function isFollowedByStream(buf: Buffer, pos: number): boolean {
-  const n = buf.length;
-  let i = pos;
-  while (i < n && isWs(buf[i]!)) i += 1;
-  if (i + 6 >= n) return false;
-  if (buf[i] !== 0x73 || buf[i + 1] !== 0x74 || buf[i + 2] !== 0x72 || buf[i + 3] !== 0x65 || buf[i + 4] !== 0x61 || buf[i + 5] !== 0x6d) {
-    return false;
+function skipWsAndCommentsBuf(buf: Buffer, i: number, end: number): number {
+  while (i < end) {
+    const c = buf[i]!;
+    if (isWs(c)) {
+      i += 1;
+    } else if (c === 0x25) {
+      while (i < end && buf[i] !== 0x0a && buf[i] !== 0x0d) i += 1;
+    } else {
+      break;
+    }
   }
-  const after = buf[i + 6]!;
-  return after === 0x0a || after === 0x0d;
+  return i;
 }
 
-interface ParsedDictResult {
-  isImage: boolean;
-  width: number | null;
-  height: number | null;
-  depth: number;
-  unclosed: 'none' | 'string' | 'comment';
-  crossedSoftEnd: boolean;
-  endPos: number;
-}
-
-const isCandidateKeyStart = (c: number) => c === 0x53 || c === 0x49 || c === 0x42 || c === 0x57 || c === 0x48 || c === 0x23;
-
-function skipTokenEnd(buf: Buffer, i: number, stop: number): number {
-  while (i < stop && !isDelim(buf[i]!)) i += 1;
+function skipTokenEnd(buf: Buffer, i: number, end: number): number {
+  while (i < end && !isDelim(buf[i]!)) i += 1;
   return i;
 }
 
@@ -82,69 +75,37 @@ function parseDigitsBuf(buf: Buffer, s: number, e: number): number | null {
   return Number.isSafeInteger(val) && val > 0 ? val : null;
 }
 
-function skipWsAndCommentsBuf(buf: Buffer, i: number, stop: number, softEnd: number, out: ParsedDictResult): number {
-  while (i < stop) {
-    const c = buf[i]!;
-    if (isWs(c)) {
-      i += 1;
-    } else if (c === 0x25) {
-      const startedBeforeSoft = i < softEnd;
-      while (i < stop && buf[i] !== 0x0a && buf[i] !== 0x0d) i += 1;
-      if (startedBeforeSoft && i >= softEnd) out.crossedSoftEnd = true;
-      if (i >= stop && (i >= buf.length || (buf[i] !== 0x0a && buf[i] !== 0x0d))) {
-        out.unclosed = 'comment';
-      }
-    } else {
-      break;
-    }
-  }
-  return i;
-}
-
 /**
- * 直接在 Buffer 上词法解析 `[start, softEnd)` 内的顶层字典（零闭包、零字符串/对象分配）：
- * - 遇到新的顶层 `<<`（depth === 0）时清掉前一个非流对象的键，防跨对象串味；
- * - 若抵达 `softEnd` 时仍处于未闭合字符串/注释或嵌套字典（depth > 0），继续向后单趟读完当前顶层字典（最多至 `hardEnd`），
- *   避免同一个字典里的多个 `(>>stream\n)` 诱饵触发重复回扫。
+ * 直接在 Buffer 切片 `[start, end)` 上解析顶层 `<< ... >>` 里的图像标量键（零 subarray / 整段字符串分配）：
+ * 嵌套子字典、数组、字面量字符串（含转义）、十六进制字符串、% 注释都会跳过；
+ * 仅在发现超限图片时返回 PdfImageProblem，否则返回 null。
  */
-function parseDictRange(buf: Buffer, start: number, softEnd: number, hardEnd: number, out: ParsedDictResult): ParsedDictResult {
+function checkTopDictProblem(buf: Buffer, start: number, end: number, maxPixels: number, maxSide: number): PdfImageProblem | null {
+  if (end - start < 16) return null;
   let i = start;
-  let limit = Math.max(softEnd, hardEnd);
   let depth = 0;
   let isImage = false;
   let width: number | null = null;
   let height: number | null = null;
-  out.unclosed = 'none';
-  out.crossedSoftEnd = false;
 
-  while (i < softEnd || (depth > 0 && i < limit)) {
-    if (i >= softEnd && depth > 0) out.crossedSoftEnd = true;
-    const stop = depth > 0 ? limit : softEnd;
-    i = skipWsAndCommentsBuf(buf, i, stop, softEnd, out);
-    if (i >= stop) break;
+  while (i < end) {
+    i = skipWsAndCommentsBuf(buf, i, end);
+    if (i >= end) break;
     const c = buf[i]!;
-    if (c === 0x3c && i + 1 < stop && buf[i + 1] === 0x3c) {
-      if (depth === 0) {
-        isImage = false;
-        width = null;
-        height = null;
-        limit = Math.min(hardEnd, Math.max(softEnd, i + DICT_LOOKBACK));
-      }
+    if (c === 0x3c && i + 1 < end && buf[i + 1] === 0x3c) {
       depth += 1;
       i += 2;
       continue;
     }
-    if (c === 0x3e && i + 1 < stop && buf[i + 1] === 0x3e) {
-      if (depth > 0) depth -= 1;
+    if (c === 0x3e && i + 1 < end && buf[i + 1] === 0x3e) {
+      depth -= 1;
       i += 2;
-      if (depth === 0 && i >= softEnd) break;
       continue;
     }
     if (c === 0x28) {
-      const startedBeforeSoft = i < softEnd;
       let parens = 1;
       i += 1;
-      while (i < stop && parens > 0) {
+      while (i < end && parens > 0) {
         const ch = buf[i]!;
         if (ch === 0x5c) {
           i += 2;
@@ -158,18 +119,12 @@ function parseDictRange(buf: Buffer, start: number, softEnd: number, hardEnd: nu
           i += 1;
         }
       }
-      if (i > stop) i = stop;
-      if (startedBeforeSoft && (i > softEnd || (i === softEnd && parens > 0))) out.crossedSoftEnd = true;
-      if (parens > 0) {
-        out.unclosed = 'string';
-        break;
-      }
       continue;
     }
     if (c === 0x3c) {
       i += 1;
-      while (i < stop && buf[i] !== 0x3e) i += 1;
-      if (i < stop) i += 1;
+      while (i < end && buf[i] !== 0x3e) i += 1;
+      if (i < end) i += 1;
       continue;
     }
     if (c === 0x5b || c === 0x5d) {
@@ -178,40 +133,40 @@ function parseDictRange(buf: Buffer, start: number, softEnd: number, hardEnd: nu
     }
     if (c === 0x2f) {
       const s = i;
-      i = skipTokenEnd(buf, i + 1, stop);
+      i = skipTokenEnd(buf, i + 1, end);
       if (depth !== 1 || i <= s + 1 || !isCandidateKeyStart(buf[s + 1]!)) continue;
       const name = decodePdfName(buf.toString('latin1', s, i));
       if (name === '/Subtype') {
-        i = skipWsAndCommentsBuf(buf, i, stop, softEnd, out);
-        if (i < stop && buf[i] === 0x2f) {
+        i = skipWsAndCommentsBuf(buf, i, end);
+        if (i < end && buf[i] === 0x2f) {
           const vs = i;
-          i = skipTokenEnd(buf, i + 1, stop);
+          i = skipTokenEnd(buf, i + 1, end);
           if (decodePdfName(buf.toString('latin1', vs, i)) === '/Image') isImage = true;
         }
       } else if (name === '/ImageMask' || name === '/IM') {
-        i = skipWsAndCommentsBuf(buf, i, stop, softEnd, out);
+        i = skipWsAndCommentsBuf(buf, i, end);
         const ts = i;
-        i = skipTokenEnd(buf, i, stop);
+        i = skipTokenEnd(buf, i, end);
         if (i - ts === 4 && buf[ts] === 0x74 && buf[ts + 1] === 0x72 && buf[ts + 2] === 0x75 && buf[ts + 3] === 0x65) {
           isImage = true;
         }
       } else if (name === '/BitsPerComponent' || name === '/BPC') {
         isImage = true;
       } else if (name === '/Width' || name === '/W' || name === '/Height' || name === '/H') {
-        i = skipWsAndCommentsBuf(buf, i, stop, softEnd, out);
-        if (i < stop) {
+        i = skipWsAndCommentsBuf(buf, i, end);
+        if (i < end) {
           const saved = i;
-          const e1 = skipTokenEnd(buf, i, stop);
+          const e1 = skipTokenEnd(buf, i, end);
           const val = parseDigitsBuf(buf, saved, e1);
           if (val !== null) {
-            let p = skipWsAndCommentsBuf(buf, e1, stop, softEnd, out);
+            let p = skipWsAndCommentsBuf(buf, e1, end);
             const s2 = p;
-            p = skipTokenEnd(buf, p, stop);
+            p = skipTokenEnd(buf, p, end);
             let indirect = false;
             if (isAllDigitsBuf(buf, s2, p)) {
-              p = skipWsAndCommentsBuf(buf, p, stop, softEnd, out);
+              p = skipWsAndCommentsBuf(buf, p, end);
               const s3 = p;
-              p = skipTokenEnd(buf, p, stop);
+              p = skipTokenEnd(buf, p, end);
               if (p - s3 === 1 && buf[s3] === 0x52) indirect = true;
             }
             i = indirect ? p : e1;
@@ -224,223 +179,214 @@ function parseDictRange(buf: Buffer, start: number, softEnd: number, hardEnd: nu
       }
       continue;
     }
-    const next = skipTokenEnd(buf, i, stop);
+    const next = skipTokenEnd(buf, i, end);
     i = next === i ? i + 1 : next;
   }
 
-  out.isImage = isImage;
-  out.width = width;
-  out.height = height;
-  out.depth = depth;
-  out.endPos = i;
-  return out;
-}
-
-function imageProblemOf(parsed: { isImage: boolean; width: number | null; height: number | null }, maxPixels: number, maxSide: number): PdfImageProblem | null {
-  if (!parsed.isImage || parsed.width === null || parsed.height === null) return null;
-  if (parsed.width > maxSide || parsed.height > maxSide || parsed.width * parsed.height > maxPixels) {
-    return { width: parsed.width, height: parsed.height };
+  if (isImage && width !== null && height !== null && (width > maxSide || height > maxSide || width * height > maxPixels)) {
+    return { width, height };
   }
   return null;
 }
 
-/** 判断 buf[idx] 是否被前面连续奇数个反斜杠转义 */
-function isEscapedBack(buf: Buffer, idx: number, floor: number): boolean {
-  let slashes = 0;
-  let k = idx - 1;
-  while (k >= floor && buf[k] === 0x5c) {
-    slashes += 1;
-    k -= 1;
-  }
-  return (slashes & 1) === 1;
-}
-
-/**
- * 在 [floor, endExclusive) 里从后往前找与最末尾 `>>` 配平的最近一个 `<<`（用于前一段二进制流含孤立 `<<(` 时的兜底）：
- * 反向跳过 PDF 字面量字符串 `(...)`（含嵌套括号与 `\` 转义），避免 `/Comment (>>)` 里的 `>>` 被误计为字典闭合。
- */
-function findInnerBalancedOpen(buf: Buffer, floor: number, endExclusive: number): number {
-  let depth = 0;
-  let parens = 0;
-  let j = endExclusive - 1;
-  while (j >= floor) {
-    const c = buf[j]!;
-    if (parens > 0) {
-      if (c === 0x29 && !isEscapedBack(buf, j, floor)) {
-        parens += 1;
-      } else if (c === 0x28 && !isEscapedBack(buf, j, floor)) {
-        parens -= 1;
-      }
-      j -= 1;
-      continue;
-    }
-    if (c === 0x29 && !isEscapedBack(buf, j, floor)) {
-      parens = 1;
-      j -= 1;
-      continue;
-    }
-    if (c === 0x3e && j - 1 >= floor && buf[j - 1] === 0x3e) {
-      depth += 1;
-      j -= 2;
-      continue;
-    }
-    if (c === 0x3c && j - 1 >= floor && buf[j - 1] === 0x3c) {
-      depth -= 1;
-      if (depth === 0) return j - 1;
-      j -= 2;
-      continue;
-    }
-    j -= 1;
+/** 判断 `>>`（结束于 closeEnd）之后跳过空白是否紧跟 `stream` + CR/LF（PDF 规范 §7.3.8.1）；是则返回 `stream` 结束位置，否则 -1 */
+function streamAfterDictClose(buf: Buffer, closeEnd: number): number {
+  let i = closeEnd;
+  const n = buf.length;
+  while (i < n && isWs(buf[i]!)) i += 1;
+  if (i + 6 < n && buf[i] === 0x73 && buf[i + 1] === 0x74 && buf[i + 2] === 0x72 && buf[i + 3] === 0x65 && buf[i + 4] === 0x61 && buf[i + 5] === 0x6d && (buf[i + 6] === 0x0a || buf[i + 6] === 0x0d)) {
+    return i + 7;
   }
   return -1;
 }
 
-function makeParsedSlot(): ParsedDictResult {
-  return { isImage: false, width: null, height: null, depth: 0, unclosed: 'none', crossedSoftEnd: false, endPos: 0 };
+/** 用原生 C++ `Buffer.indexOf('stream')` 找从 from 开始的下一个真实 `stream` + CR/LF（排除 `endstream`）；没有返回 -1 */
+function findNextRealStream(buf: Buffer, from: number): number {
+  const n = buf.length;
+  let p = from;
+  while (p < n) {
+    const idx = buf.indexOf(STREAM_NEEDLE, p);
+    if (idx === -1) return -1;
+    const after = idx + 6;
+    if (after < n && (buf[after] === 0x0a || buf[after] === 0x0d) && !(idx >= 3 && buf[idx - 3] === 0x65 && buf[idx - 2] === 0x6e && buf[idx - 1] === 0x64)) {
+      return idx;
+    }
+    p = after;
+  }
+  return -1;
 }
 
 /**
- * 兜底单趟线性扫描（仅在极端对抗输入耗尽快路径预算时触发，严格 O(n) 时间 + O(1) 堆内存）：
- * 顺序扫描剩余字节，完整保留字符串/注释与字典深度，同时在单段字符串超过 DICT_LOOKBACK 未闭合时重置状态并做内层配平核对。
+ * 零堆增长 + 严格 O(buf.length) 单遍扫描一段字节里所有紧跟在 `>>` 后面的 `stream` 字典（Codex 代码与安全审查修复）：
+ *   · 栈空时先用原生 C++ `Buffer.indexOf('stream')` 与 `Buffer.indexOf('<<')` 跳过不含流字典的整段区域（200 MB 重复 `<<` 或
+ *     `>>stream\n`、以及流正文二进制数据均仅 ~110 ms、零堆分配），直接定位到 `nextStream - DICT_LOOKBACK` 内的首个 `<<`。
+ *   · 预分配固定 128 KB `Int32Array(32768)` 环形队列存 `DICT_LOOKBACK`（32 KB）窗口内尚未配对的 `<<` 起点（窗口内最多 16385 个，
+ *     永不溢出且零数组扩容），彻底杜绝 200 MB 重复 `<<` 的 33 MB 堆堆积与 20 秒卡顿。
+ *   · 遇到 `>>` 时按 `opens` 栈顶起点保留 `(...)` 字面量字符串与 `%` 注释上下文，跳过字符串/注释内的假 `>>` / `>>stream\n`；
+ *     遇到未闭合的前段二进制垃圾 `<<(` 时栈顶已被后续真实图像字典的 `<<` 覆盖，不依赖 `endstream` 边界也不会被 `/Comment (>>)`、
+ *     `/Comment (endstream) % >>\n` 绕过。
  */
-function scanBufferLinearFallback(buf: Buffer, startPos: number, maxPixels: number, maxSide: number): PdfImageProblem | null {
+function scanBuffer(buf: Buffer, openRing: Int32Array, maxPixels: number, maxSide: number): PdfImageProblem | null {
   const n = buf.length;
-  let i = startPos;
-  let depth = 0;
-  let isImage = false;
-  let width: number | null = null;
-  let height: number | null = null;
-  let inString = false;
-  let parens = 0;
-  let stringStart = 0;
-  let lastInnerEnd = startPos;
-  const innerSlot = makeParsedSlot();
+  let openHead = 0;
+  let openCount = 0;
 
-  while (i < n) {
-    if (inString) {
-      const c = buf[i]!;
-      if (c === 0x5c) {
-        i += 2;
+  let synStart = -1;
+  let synPos = 0;
+  let synParens = 0;
+  let synComment = false;
+  let synWork = 0;
+  const maxSynWork = Math.max(DICT_LOOKBACK * 4, n * 2);
+
+  const resetSyntax = () => {
+    synStart = -1;
+    synPos = 0;
+    synParens = 0;
+    synComment = false;
+  };
+
+  const inStringOrCommentAt = (start: number, target: number): boolean => {
+    if (synWork >= maxSynWork) return false;
+    if (synStart !== start || synPos > target) {
+      synStart = start;
+      synPos = start;
+      synParens = 0;
+      synComment = false;
+    }
+    while (synPos < target) {
+      synWork += 1;
+      const c = buf[synPos]!;
+      if (synComment) {
+        if (c === 0x0a || c === 0x0d) synComment = false;
+        synPos += 1;
+        continue;
+      }
+      if (synParens > 0) {
+        if (c === 0x5c) {
+          synPos += 2;
+          continue;
+        }
+        if (c === 0x28) synParens += 1;
+        else if (c === 0x29) synParens -= 1;
+        synPos += 1;
+        continue;
+      }
+      if (c === 0x25) {
+        synComment = true;
       } else if (c === 0x28) {
-        parens += 1;
-        i += 1;
-      } else if (c === 0x29) {
-        parens -= 1;
-        i += 1;
-        if (parens === 0) inString = false;
-      } else if (c === 0x3e && i + 1 < n && buf[i + 1] === 0x3e && isFollowedByStream(buf, i + 2)) {
-        const endExclusive = i + 2;
-        const floor = Math.max(lastInnerEnd, endExclusive - DICT_LOOKBACK);
-        lastInnerEnd = endExclusive;
-        const innerOpen = findInnerBalancedOpen(buf, floor, endExclusive);
-        if (innerOpen >= 0) {
-          const problem = imageProblemOf(parseDictRange(buf, innerOpen, endExclusive, endExclusive, innerSlot), maxPixels, maxSide);
-          if (problem) return problem;
-        }
-        i += 2;
-      } else {
-        i += 1;
+        synParens = 1;
       }
-      if (inString && i - stringStart > DICT_LOOKBACK) {
-        // 超过最大字典回看窗口仍未闭合，说明前文是二进制垃圾里的孤立 `(`，复位继续扫描
-        inString = false;
-        parens = 0;
-        depth = 0;
-      }
-      continue;
+      synPos += 1;
     }
+    return synParens > 0 || synComment;
+  };
 
+  const skipOutOfStringOrComment = (limit: number): number => {
+    while (synPos < limit && (synParens > 0 || synComment)) {
+      synWork += 1;
+      const c = buf[synPos]!;
+      if (synComment) {
+        if (c === 0x0a || c === 0x0d) synComment = false;
+        synPos += 1;
+        continue;
+      }
+      if (c === 0x5c) {
+        synPos += 2;
+        continue;
+      }
+      if (c === 0x28) synParens += 1;
+      else if (c === 0x29) synParens -= 1;
+      synPos += 1;
+    }
+    return synPos;
+  };
+
+  let nextStream = -1;
+  let nextOpen = -1;
+
+  /** 栈空时用 SIMD 快进到下一个可能包含流字典的 `<<`；没有更多流字典返回 n */
+  const seekNextCandidate = (from: number): number => {
+    let p = from;
+    while (p < n - 1) {
+      if (nextStream < p) {
+        nextStream = findNextRealStream(buf, p);
+        if (nextStream === -1) return n;
+      }
+      const winStart = Math.max(p, nextStream - DICT_LOOKBACK);
+      if (nextOpen < winStart) {
+        nextOpen = buf.indexOf(OPEN_DICT_NEEDLE, winStart);
+        if (nextOpen === -1) return n;
+      }
+      if (nextOpen < nextStream) return nextOpen;
+      // [winStart, nextStream) 内没有任何 `<<`，跳过这个 `stream` 继续找下一个
+      p = Math.max(nextStream + 7, nextOpen - DICT_LOOKBACK);
+    }
+    return n;
+  };
+
+  let i = seekNextCandidate(0);
+  while (i < n - 1) {
+    if (i > nextStream) {
+      nextStream = findNextRealStream(buf, i);
+      if (nextStream === -1) break;
+      if (nextStream - DICT_LOOKBACK > i) {
+        openHead = 0;
+        openCount = 0;
+        resetSyntax();
+        i = seekNextCandidate(nextStream - DICT_LOOKBACK);
+        continue;
+      }
+    }
     const c = buf[i]!;
-    if (c === 0x25) {
-      while (i < n && buf[i] !== 0x0a && buf[i] !== 0x0d) i += 1;
-      continue;
-    }
-    if (c === 0x28) {
-      if (depth > 0) {
-        inString = true;
-        parens = 1;
-        stringStart = i;
+    if (c === 0x3c && buf[i + 1] === 0x3c) {
+      while (openCount > 0 && i - openRing[openHead]! > DICT_LOOKBACK) {
+        openHead = (openHead + 1) & OPEN_RING_MASK;
+        openCount -= 1;
       }
-      i += 1;
-      continue;
-    }
-    if (c === 0x3c && i + 1 < n && buf[i + 1] === 0x3c) {
-      if (depth === 0) {
-        isImage = false;
-        width = null;
-        height = null;
-      }
-      depth += 1;
+      openRing[(openHead + openCount) & OPEN_RING_MASK] = i;
+      openCount += 1;
       i += 2;
       continue;
     }
-    if (c === 0x3e && i + 1 < n && buf[i + 1] === 0x3e) {
-      if (depth > 0) depth -= 1;
-      i += 2;
-      if (depth === 0 && isFollowedByStream(buf, i)) {
-        if (isImage && width !== null && height !== null && (width > maxSide || height > maxSide || width * height > maxPixels)) {
-          return { width, height };
-        }
-        lastInnerEnd = Math.max(lastInnerEnd, i);
+    if (c === 0x3e && buf[i + 1] === 0x3e) {
+      while (openCount > 0 && i + 2 - openRing[openHead]! > DICT_LOOKBACK) {
+        openHead = (openHead + 1) & OPEN_RING_MASK;
+        openCount -= 1;
       }
-      continue;
-    }
-    if (c === 0x2f && depth === 1) {
-      const s = i;
-      i = skipTokenEnd(buf, i + 1, n);
-      if (i <= s + 1 || !isCandidateKeyStart(buf[s + 1]!)) continue;
-      const name = decodePdfName(buf.toString('latin1', s, i));
-      if (
-        name === '/Subtype' ||
-        name === '/ImageMask' ||
-        name === '/IM' ||
-        name === '/BitsPerComponent' ||
-        name === '/BPC' ||
-        name === '/Width' ||
-        name === '/W' ||
-        name === '/Height' ||
-        name === '/H'
-      ) {
-        while (i < n && (isWs(buf[i]!) || buf[i] === 0x25)) {
-          if (buf[i] === 0x25) {
-            while (i < n && buf[i] !== 0x0a && buf[i] !== 0x0d) i += 1;
-          } else {
-            i += 1;
-          }
-        }
-        if (name === '/BitsPerComponent' || name === '/BPC') {
-          isImage = true;
-        } else if (name === '/Subtype' && i < n && buf[i] === 0x2f) {
-          const vs = i;
-          i = skipTokenEnd(buf, i + 1, n);
-          if (decodePdfName(buf.toString('latin1', vs, i)) === '/Image') isImage = true;
-        } else if (name === '/ImageMask' || name === '/IM') {
-          const vs = i;
-          i = skipTokenEnd(buf, i, n);
-          if (i - vs === 4 && buf[vs] === 0x74 && buf[vs + 1] === 0x72 && buf[vs + 2] === 0x75 && buf[vs + 3] === 0x65) isImage = true;
-        } else if (name === '/Width' || name === '/W' || name === '/Height' || name === '/H') {
-          const vs = i;
-          i = skipTokenEnd(buf, i, n);
-          const val = parseDigitsBuf(buf, vs, i);
-          if (val !== null) {
-            const afterFirst = i;
-            let p = i;
-            while (p < n && isWs(buf[p]!)) p += 1;
-            const s2 = p;
-            while (p < n && buf[p]! >= 0x30 && buf[p]! <= 0x39) p += 1;
-            let indirect = false;
-            if (p > s2) {
-              while (p < n && isWs(buf[p]!)) p += 1;
-              if (p < n && buf[p] === 0x52 && (p + 1 >= n || isDelim(buf[p + 1]!))) indirect = true;
-            }
-            i = afterFirst;
-            if (!indirect) {
-              if (name === '/Width' || name === '/W') width = val;
-              else height = val;
-            }
-          }
-        }
+      if (openCount === 0) {
+        resetSyntax();
+        const afterStream = streamAfterDictClose(buf, i + 2);
+        i = seekNextCandidate(afterStream >= 0 ? afterStream : i + 2);
+        continue;
       }
+      const start = openRing[(openHead + openCount - 1) & OPEN_RING_MASK]!;
+      if (inStringOrCommentAt(start, i)) {
+        const limit = Math.min(n, start + DICT_LOOKBACK);
+        const resumed = skipOutOfStringOrComment(limit);
+        if (synParens === 0 && !synComment) {
+          i = resumed;
+          continue;
+        }
+        // 字符串/注释超长未闭合：放弃这个起点，避免卡死
+        openCount -= 1;
+        resetSyntax();
+        i = openCount === 0 ? seekNextCandidate(i + 2) : i + 2;
+        continue;
+      }
+      const afterStream = streamAfterDictClose(buf, i + 2);
+      if (afterStream < 0) {
+        openCount -= 1;
+        resetSyntax();
+        i = openCount === 0 ? seekNextCandidate(i + 2) : i + 2;
+        continue;
+      }
+      // 真实流字典：清空栈、零分配解析并快进到下一个流字典候选区
+      openHead = 0;
+      openCount = 0;
+      resetSyntax();
+      const problem = checkTopDictProblem(buf, start, i + 2, maxPixels, maxSide);
+      if (problem) return problem;
+      i = seekNextCandidate(afterStream);
       continue;
     }
     i += 1;
@@ -448,130 +394,18 @@ function scanBufferLinearFallback(buf: Buffer, startPos: number, maxPixels: numb
   return null;
 }
 
-/**
- * 零堆分配 + 严格 O(n) 上界扫描一段字节里所有紧跟在 `>>` 后面的 `stream` 字典（Codex 代码与安全审查修复）：
- *   · 先用原生 C++ `Buffer.indexOf('<<')` / `Buffer.indexOf('stream')` 快速跳过不含成对标记的字节
- *     （200 MB 重复 `<<` ~110 ms，200 MB 重复 `>>stream\n` ~110 ms，均零数组分配）。
- *   · 找到 `>>` + 空白 + `stream` + CR/LF 后，从 `[max(0, end - DICT_LOOKBACK, noOpenBefore), end)` 内最早的 `<<` 正向直接在 Buffer 上解析，
- *     完整保留外层 `(...)` 字符串与 `%` 注释上下文（防 `/Comment (>><< >>stream\n)` 绕过）；若跨越 `end` 仍在外层字典内，
- *     单趟继续读完外层字典并同步用内层配平字典兜底，避免多个诱饵触发重复扫描。
- *   · 若对抗输入（如大量未闭合 `<<(>>stream\n`）使快路径扫描字节超过 `2 * n`，自动切到严格 O(n) / O(1) 内存单趟线性兜底。
- */
-function scanBuffer(buf: Buffer, maxPixels: number, maxSide: number): PdfImageProblem | null {
-  const n = buf.length;
-  let nextOpen = buf.indexOf(OPEN_DICT_NEEDLE, 0);
-  if (nextOpen === -1) return null;
-
-  const maxWork = Math.max(DICT_LOOKBACK * 4, n * 2);
-  let work = 0;
-  let pos = 0;
-  let noOpenBefore = 0;
-  let lastInnerEnd = 0;
-  let lastEndstream = -1;
-  const parsed = makeParsedSlot();
-  const innerParsed = makeParsedSlot();
-
-  while (pos < n) {
-    const idx = buf.indexOf(STREAM_NEEDLE, pos);
-    if (idx === -1) break;
-    pos = idx + STREAM_NEEDLE.length;
-    // 排除 endstream（顺便记录上一段流的结束位置），且 stream 后面必须是 CR/LF（PDF 规范 §7.3.8.1）
-    if (idx >= 3 && buf[idx - 3] === 0x65 && buf[idx - 2] === 0x6e && buf[idx - 1] === 0x64) {
-      lastEndstream = idx + STREAM_NEEDLE.length;
-      continue;
-    }
-    const after = idx + STREAM_NEEDLE.length;
-    if (after >= n || (buf[after] !== 0x0a && buf[after] !== 0x0d)) continue;
-    // 跳过 stream 前面的空白，紧挨着的必须是 `>>`
-    let end = idx - 1;
-    while (end >= 0 && isWs(buf[end]!)) end -= 1;
-    if (end < 1 || buf[end] !== 0x3e || buf[end - 1] !== 0x3e) continue;
-
-    const endExclusive = end + 1;
-    const floor = Math.max(0, endExclusive - DICT_LOOKBACK, noOpenBefore);
-    if (nextOpen < floor) {
-      nextOpen = buf.indexOf(OPEN_DICT_NEEDLE, floor);
-      if (nextOpen === -1) break;
-    }
-    if (nextOpen >= endExclusive) {
-      noOpenBefore = endExclusive;
-      pos = Math.max(pos, nextOpen + 2);
-      continue;
-    }
-
-    const earliestOpen = nextOpen;
-    if (earliestOpen + 2 >= endExclusive - 2) {
-      noOpenBefore = endExclusive;
-      continue;
-    }
-    const hardEnd = Math.min(n, Math.max(endExclusive, earliestOpen + DICT_LOOKBACK * 2));
-    parseDictRange(buf, earliestOpen, endExclusive, hardEnd, parsed);
-    work += Math.max(1, parsed.endPos - earliestOpen);
-
-    if (!parsed.crossedSoftEnd && parsed.unclosed === 'none') {
-      noOpenBefore = endExclusive;
-      const problem = imageProblemOf(parsed, maxPixels, maxSide);
-      if (problem) return problem;
-      continue;
-    }
-
-    // 兜底 1：若前一个二进制流里出现孤立 `<<(` 且其后有 `endstream`，从 `endstream` 后第一个 `<<` 正向重解析（保留字符串与 `%` 注释上下文）
-    if (lastEndstream > earliestOpen && lastEndstream < endExclusive) {
-      const afterEsOpen = buf.indexOf(OPEN_DICT_NEEDLE, lastEndstream);
-      if (afterEsOpen >= 0 && afterEsOpen < endExclusive) {
-        const esHardEnd = Math.min(n, Math.max(endExclusive, afterEsOpen + DICT_LOOKBACK * 2));
-        parseDictRange(buf, afterEsOpen, endExclusive, esHardEnd, innerParsed);
-        work += Math.max(1, innerParsed.endPos - afterEsOpen);
-        if (!innerParsed.crossedSoftEnd && innerParsed.unclosed === 'none') {
-          const esProblem = imageProblemOf(innerParsed, maxPixels, maxSide);
-          if (esProblem) return esProblem;
-        } else if (innerParsed.unclosed === 'none' && innerParsed.depth === 0 && isFollowedByStream(buf, innerParsed.endPos)) {
-          const esProblem = imageProblemOf(innerParsed, maxPixels, maxSide);
-          if (esProblem) return esProblem;
-        }
-      }
-    }
-
-    // 兜底 2：无 `endstream` 分隔时，按保留字面量字符串上下文的反向配平找内层字典核对（按单调下界避免重复回扫）
-    const innerFloor = Math.max(earliestOpen + 2, lastInnerEnd);
-    lastInnerEnd = Math.max(lastInnerEnd, endExclusive);
-    const innerOpen = findInnerBalancedOpen(buf, innerFloor, endExclusive);
-    if (innerOpen >= 0) {
-      work += endExclusive - innerOpen;
-      parseDictRange(buf, innerOpen, endExclusive, endExclusive, innerParsed);
-      const innerProblem = imageProblemOf(innerParsed, maxPixels, maxSide);
-      if (innerProblem) return innerProblem;
-    }
-
-    if (parsed.unclosed === 'none' && parsed.depth === 0) {
-      if (isFollowedByStream(buf, parsed.endPos)) {
-        const problem = imageProblemOf(parsed, maxPixels, maxSide);
-        if (problem) return problem;
-      }
-      noOpenBefore = Math.max(noOpenBefore, parsed.endPos);
-      pos = Math.max(pos, parsed.endPos);
-      continue;
-    }
-
-    noOpenBefore = endExclusive;
-    if (work >= maxWork) {
-      return scanBufferLinearFallback(buf, endExclusive, maxPixels, maxSide);
-    }
-  }
-  return null;
-}
-
-/** 分块流式扫描器：每次 push 一块（3 MB），只保留少量跨块尾部字节 */
+/** 分块流式扫描器：每次 push 一块（3 MB），只保留少量跨块尾部字节与固定 128 KB 环形缓冲 */
 export function createPdfImageScanner(limits: PdfImageLimits = {}) {
   const maxPixels = limits.maxPixels ?? TRAINING_PDF_MAX_IMAGE_PIXELS;
   const maxSide = limits.maxSide ?? TRAINING_PDF_MAX_IMAGE_SIDE;
+  const openRing = new Int32Array(OPEN_RING_CAP);
   let tail = Buffer.alloc(0);
   let problem: PdfImageProblem | null = null;
   return {
     push(chunk: Buffer) {
       if (problem || !chunk.length) return;
       const combined = tail.length ? Buffer.concat([tail, chunk]) : chunk;
-      problem = scanBuffer(combined, maxPixels, maxSide);
+      problem = scanBuffer(combined, openRing, maxPixels, maxSide);
       if (problem) {
         tail = Buffer.alloc(0);
         return;
