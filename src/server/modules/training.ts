@@ -22,6 +22,7 @@ import {
   type TrainingFileVersion,
   type TrainingFolder,
   type TrainingFolderList,
+  type TrainingSheetBook,
 } from '@shared/training';
 import type { Db } from '../db';
 import { guard } from '../auth/guard';
@@ -31,6 +32,7 @@ import { badRequest, conflict, forbidden, notFound, unprocessable } from '../lib
 import { hashRequest } from '../lib/idempotency';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
+import { readXlsx, XlsxReadError } from '../lib/xlsx-read';
 
 const MANAGE = 'training.manage' as const;
 /** 时间列读出来是字符串（库的类型解析），统一成 ISO */
@@ -276,13 +278,12 @@ const StartUploadInput = z
       .int()
       .min(1, '文件是空的')
       .max(TRAINING_MAX_BYTES, `一份文件最大 ${TRAINING_MAX_BYTES / 1024 / 1024} MB，视频请先压成 720p 的 MP4`),
-    sha256: z.string().regex(/^[0-9a-f]{64}$/, '文件摘要不正确'),
   })
   .refine((v) => TRAINING_FORMATS[v.mime]!.ext.includes(v.fileName.toLowerCase().split('.').pop() ?? ''), '文件扩展名与类型对不上');
 
 const chunkCountOf = (size: number) => Math.ceil(size / TRAINING_CHUNK_BYTES);
 
-/** 开始上传：同一个编号重提返回原来那一次（含已传了哪几块）；内容已经有了的不用再传 */
+/** 开始上传：同一个编号重提返回原来那一次（含已传了哪几块） */
 async function startUpload(deps: Deps, raw: unknown, ctx: OpContext) {
   const input = parse(StartUploadInput, raw);
   const chunkCount = chunkCountOf(input.sizeBytes);
@@ -300,8 +301,8 @@ async function startUpload(deps: Deps, raw: unknown, ctx: OpContext) {
       id = Number(seen.id);
     } else {
       const [row] = await tx<{ id: number }[]>`
-        INSERT INTO training_uploads (client_key, sha256, size_bytes, chunk_count, file_name, mime, request_hash, created_by)
-        VALUES (${input.clientKey}, ${input.sha256}, ${input.sizeBytes}, ${chunkCount}, ${input.fileName}, ${input.mime}, ${requestHash}, ${ctx.actor.id})
+        INSERT INTO training_uploads (client_key, size_bytes, chunk_count, file_name, mime, request_hash, created_by)
+        VALUES (${input.clientKey}, ${input.sizeBytes}, ${chunkCount}, ${input.fileName}, ${input.mime}, ${requestHash}, ${ctx.actor.id})
         RETURNING id`;
       id = Number(row!.id);
     }
@@ -310,17 +311,15 @@ async function startUpload(deps: Deps, raw: unknown, ctx: OpContext) {
 }
 
 async function uploadState(db: Db, id: number) {
-  const [u] = await db<{ id: number; sha256: string; chunkCount: number; status: string; resultFileId: number | null; resultVersionId: number | null }[]>`
-    SELECT id, sha256, chunk_count, status, result_file_id, result_version_id FROM training_uploads WHERE id = ${id}`;
+  const [u] = await db<{ id: number; chunkCount: number; status: string; resultFileId: number | null; resultVersionId: number | null }[]>`
+    SELECT id, chunk_count, status, result_file_id, result_version_id FROM training_uploads WHERE id = ${id}`;
   if (!u) throw notFound('上传记录不存在（超过 24 小时没传完的已作废），请重新选文件');
-  const [blob] = await db`SELECT 1 FROM training_blobs WHERE sha256 = ${u.sha256}`;
-  const received = blob ? [] : (await db<{ seq: number }[]>`SELECT seq FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`).map((r) => r.seq);
+  const received = (await db<{ seq: number }[]>`SELECT seq FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`).map((r) => r.seq);
   return {
     uploadId: Number(u.id),
     chunkCount: u.chunkCount,
     chunkBytes: TRAINING_CHUNK_BYTES,
-    /** 内容已经有了（之前传过同样的文件）：不用传块，直接完成 */
-    alreadyStored: !!blob,
+    /** 已经传到服务器的块（断了以后接着传，跳过这些） */
     received,
     status: u.status as 'open' | 'done',
     fileId: u.resultFileId === null ? null : Number(u.resultFileId),
@@ -329,8 +328,8 @@ async function uploadState(db: Db, id: number) {
 }
 
 async function ownUpload(db: Db, id: number, actor: Actor) {
-  const [u] = await db<{ id: number; createdBy: number; status: string; chunkCount: number; sizeBytes: string | number; sha256: string; fileName: string; mime: string }[]>`
-    SELECT id, created_by, status, chunk_count, size_bytes, sha256, file_name, mime FROM training_uploads WHERE id = ${id}`;
+  const [u] = await db<{ id: number; createdBy: number; status: string; chunkCount: number; sizeBytes: string | number; fileName: string; mime: string }[]>`
+    SELECT id, created_by, status, chunk_count, size_bytes, file_name, mime FROM training_uploads WHERE id = ${id}`;
   if (!u) throw notFound('上传记录不存在（超过 24 小时没传完的已作废），请重新选文件');
   if (Number(u.createdBy) !== actor.id) throw forbidden('只能接着传自己开始的上传');
   return { ...u, sizeBytes: Number(u.sizeBytes) };
@@ -411,28 +410,25 @@ const CompleteInput = z
   .refine((v) => (v.folderId === null) !== (v.fileId === null), '选文件夹（新文件）或选文件（换新版本），二选一');
 
 /**
- * 完成：核对块齐不齐、摘要与文件头（在事务外读块算摘要，块写进去以后不会再变），再在事务里登记内容、文件与版本。
+ * 完成：核对块齐不齐与文件头、按块算摘要（在事务外读块算，块写进去以后不会再变），再在事务里登记内容（同样的内容只存一份）、文件与版本。
  * 原样重提：已完成的返回原来那份。
  */
 async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpContext) {
   const input = parse(CompleteInput, raw);
   const u = await ownUpload(deps.sql, id, ctx.actor);
   if (u.status === 'done') return finished(deps.sql, id);
-  const [blob] = await deps.sql`SELECT 1 FROM training_blobs WHERE sha256 = ${u.sha256}`;
-  if (!blob) {
-    const seqs = (await deps.sql<{ seq: number }[]>`SELECT seq FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`).map((r) => r.seq);
-    const missing = Array.from({ length: u.chunkCount }, (_, i) => i).filter((i) => !seqs.includes(i));
-    if (missing.length) throw unprocessable('TRAINING_UPLOAD_INCOMPLETE', `还有 ${missing.length} 块没传完`, { missing });
-    const hash = createHash('sha256');
-    let head: Buffer | null = null;
-    for (let seq = 0; seq < u.chunkCount; seq++) {
-      const [c] = await deps.sql<{ data: Buffer }[]>`SELECT data FROM training_upload_chunks WHERE upload_id = ${id} AND seq = ${seq}`;
-      if (seq === 0) head = c!.data.subarray(0, 16);
-      hash.update(c!.data);
-    }
-    if (hash.digest('hex') !== u.sha256) throw unprocessable('TRAINING_UPLOAD_CORRUPT', '传上来的内容与原文件对不上（可能网络出错），请重新上传');
-    if (!sniffOk(u.mime, head!)) throw unprocessable('TRAINING_UPLOAD_FORMAT', `文件内容不是 ${TRAINING_FORMATS[u.mime]!.label}，请确认选对了文件`);
+  const seqs = (await deps.sql<{ seq: number }[]>`SELECT seq FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`).map((r) => r.seq);
+  const missing = Array.from({ length: u.chunkCount }, (_, i) => i).filter((i) => !seqs.includes(i));
+  if (missing.length) throw unprocessable('TRAINING_UPLOAD_INCOMPLETE', `还有 ${missing.length} 块没传完`, { missing });
+  const hash = createHash('sha256');
+  let head: Buffer | null = null;
+  for (let seq = 0; seq < u.chunkCount; seq++) {
+    const [c] = await deps.sql<{ data: Buffer }[]>`SELECT data FROM training_upload_chunks WHERE upload_id = ${id} AND seq = ${seq}`;
+    if (seq === 0) head = c!.data.subarray(0, 16);
+    hash.update(c!.data);
   }
+  const sha256 = hash.digest('hex');
+  if (!sniffOk(u.mime, head!)) throw unprocessable('TRAINING_UPLOAD_FORMAT', `文件内容不是 ${TRAINING_FORMATS[u.mime]!.label}，请确认选对了文件`);
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const [lock] = await tx<{ status: string }[]>`SELECT status FROM training_uploads WHERE id = ${id} FOR UPDATE`;
@@ -440,10 +436,10 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
     if (lock.status === 'done') return finished(tx, id);
     // 内容只存一份：别人刚好也传了同一个文件就沿用
     const [stored] = await tx<{ sha256: string }[]>`
-      INSERT INTO training_blobs (sha256, size_bytes, chunk_count) VALUES (${u.sha256}, ${u.sizeBytes}, ${u.chunkCount})
+      INSERT INTO training_blobs (sha256, size_bytes, chunk_count) VALUES (${sha256}, ${u.sizeBytes}, ${u.chunkCount})
       ON CONFLICT (sha256) DO NOTHING RETURNING sha256`;
     if (stored) {
-      await tx`INSERT INTO training_blob_chunks (sha256, seq, data) SELECT ${u.sha256}, seq, data FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`;
+      await tx`INSERT INTO training_blob_chunks (sha256, seq, data) SELECT ${sha256}, seq, data FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`;
     }
     await tx`DELETE FROM training_upload_chunks WHERE upload_id = ${id}`;
     let fileId: number;
@@ -468,10 +464,10 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
     }
     const [v] = await tx<{ id: number }[]>`
       INSERT INTO training_file_versions (file_id, version_no, file_name, mime, sha256, size_bytes, note, uploaded_by)
-      VALUES (${fileId}, ${versionNo}, ${u.fileName}, ${u.mime}, ${u.sha256}, ${u.sizeBytes}, ${input.note}, ${ctx.actor.id}) RETURNING id`;
+      VALUES (${fileId}, ${versionNo}, ${u.fileName}, ${u.mime}, ${sha256}, ${u.sizeBytes}, ${input.note}, ${ctx.actor.id}) RETURNING id`;
     await tx`UPDATE training_files SET current_version_id = ${v!.id}, version = version + 1, updated_at = now() WHERE id = ${fileId}`;
     await tx`UPDATE training_uploads SET status = 'done', result_file_id = ${fileId}, result_version_id = ${v!.id}, finished_at = now() WHERE id = ${id}`;
-    await writeAudit(tx, { staffId: ctx.actor.id, action: 'training_file_saved', targetType: 'training_file', targetId: fileId, detail: { summary, versionNo, sha256: u.sha256 }, ip: ctx.ip });
+    await writeAudit(tx, { staffId: ctx.actor.id, action: 'training_file_saved', targetType: 'training_file', targetId: fileId, detail: { summary, versionNo, sha256: sha256 }, ip: ctx.ip });
     return finished(tx, id);
   });
 }
@@ -563,6 +559,51 @@ function streamBlob(db: Db, sha256: string, start: number, end: number): Readabl
   return Readable.from(chunks());
 }
 
+/** Excel 在页面里看：服务端读成表格（每张表最多 500 行、40 列；文件超过 20 MB 不在页面里显示，下载看） */
+const SHEET_MAX_BYTES = 20 * 1024 * 1024;
+const SHEET_MAX_ROWS = 500;
+const SHEET_MAX_COLS = 40;
+
+async function readBlob(db: Db, sha256: string): Promise<Buffer> {
+  const parts = await db<{ data: Buffer }[]>`SELECT data FROM training_blob_chunks WHERE sha256 = ${sha256} ORDER BY seq`;
+  return Buffer.concat(parts.map((p) => p.data));
+}
+
+async function sheetOf(db: Db, actor: Actor, id: number): Promise<TrainingSheetBook> {
+  const f = await assertFileVisible(db, actor, id);
+  const [v] = await db<{ mime: string; sha256: string; sizeBytes: string | number }[]>`
+    SELECT mime, sha256, size_bytes FROM training_file_versions WHERE id = ${f.currentVersionId}`;
+  if (!v || trainingViewKind(v.mime) !== 'sheet') throw unprocessable('TRAINING_NOT_SHEET', '这份文件不是 Excel（.xlsx）');
+  if (Number(v.sizeBytes) > SHEET_MAX_BYTES) throw unprocessable('TRAINING_SHEET_TOO_BIG', '这份 Excel 太大，请下载后查看');
+  let book;
+  try {
+    book = readXlsx(await readBlob(db, v.sha256), { maxRow: 5000, maxCols: 200, maxCells: 200_000 });
+  } catch (e) {
+    if (e instanceof XlsxReadError) throw unprocessable('TRAINING_SHEET_INVALID', `这份 Excel 在页面里打不开（${e.message}），请下载后查看`);
+    throw e;
+  }
+  return {
+    sheets: book.sheets.map((sh) => {
+      const rowNos = [...sh.rows.keys()].sort((a, b) => a - b);
+      const maxRow = Math.min(rowNos.at(-1) ?? 0, SHEET_MAX_ROWS);
+      let maxCol = 0;
+      for (const cells of sh.rows.values()) for (const c of cells.keys()) maxCol = Math.max(maxCol, c + 1);
+      const cols = Math.min(maxCol, SHEET_MAX_COLS);
+      const rows: string[][] = [];
+      for (let r = 1; r <= maxRow; r++) {
+        const cells = sh.rows.get(r);
+        rows.push(Array.from({ length: cols }, (_, c) => cells?.get(c)?.value ?? ''));
+      }
+      return {
+        name: sh.name,
+        rows,
+        merges: sh.merges.filter((m) => m.r1 <= maxRow && m.c1 < cols),
+        truncated: (rowNos.at(-1) ?? 0) > SHEET_MAX_ROWS || maxCol > SHEET_MAX_COLS,
+      };
+    }),
+  };
+}
+
 // ───────────────────────── 路由 ─────────────────────────
 
 export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
@@ -603,6 +644,8 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
     reply.header('content-length', String(end - start + 1));
     return reply.send(streamBlob(sql, v.sha256, start, end));
   });
+
+  app.get('/api/training/files/:id/sheet', { preHandler: loggedIn }, async (req) => sheetOf(sql, req.actor, parse(idParam, req.params).id));
 
   app.post('/api/training/files/:id/viewed', { preHandler: loggedIn }, async (req) => {
     const { id } = parse(idParam, req.params);

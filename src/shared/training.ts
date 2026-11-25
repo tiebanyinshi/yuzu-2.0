@@ -109,3 +109,8 @@ export const trainingFormatLabel = (mime: string): string => TRAINING_FORMATS[mi
 export const TRAINING_ACCEPT = Object.values(TRAINING_FORMATS)
   .flatMap((f) => f.ext.map((e) => `.${e}`))
   .join(',');
+
+/** Excel 在页面里看：每张表的单元格文字（行从第 1 行起），合并单元格（行从 1 起、列从 0 起） */
+export interface TrainingSheetBook {
+  sheets: { name: string; rows: string[][]; merges: { r1: number; c1: number; r2: number; c2: number }[]; truncated: boolean }[];
+}

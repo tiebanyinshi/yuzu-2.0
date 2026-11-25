@@ -3,6 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TRAINING_CHUNK_BYTES, type TrainingFile, type TrainingFileDetail, type TrainingFolder, type TrainingFolderList } from '../src/shared/training';
+import { buildXlsx } from '../src/server/lib/xlsx';
 import { api, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -23,15 +24,13 @@ const PDF = (n: number) => {
 async function upload(bytes: Buffer, fileName: string, mime: string, target: { folderId?: number; fileId?: number; title?: string }, cookie = ctx.owner) {
   const clientKey = randomUUID();
   const sha256 = createHash('sha256').update(bytes).digest('hex');
-  const start = await api(ctx.app, cookie, 'POST', '/api/admin/training/uploads', { clientKey, fileName, mime, sizeBytes: bytes.length, sha256 });
+  const start = await api(ctx.app, cookie, 'POST', '/api/admin/training/uploads', { clientKey, fileName, mime, sizeBytes: bytes.length });
   if (start.status !== 200) return { start, done: start };
-  const { uploadId, chunkCount, alreadyStored } = start.body;
-  if (!alreadyStored) {
-    for (let seq = 0; seq < chunkCount; seq++) {
-      const part = bytes.subarray(seq * TRAINING_CHUNK_BYTES, (seq + 1) * TRAINING_CHUNK_BYTES);
-      const r = await api(ctx.app, cookie, 'PUT', `/api/admin/training/uploads/${uploadId}/chunks/${seq}`, { data: part.toString('base64') });
-      expect(r.status, JSON.stringify(r.body)).toBe(200);
-    }
+  const { uploadId, chunkCount } = start.body;
+  for (let seq = 0; seq < chunkCount; seq++) {
+    const part = bytes.subarray(seq * TRAINING_CHUNK_BYTES, (seq + 1) * TRAINING_CHUNK_BYTES);
+    const r = await api(ctx.app, cookie, 'PUT', `/api/admin/training/uploads/${uploadId}/chunks/${seq}`, { data: part.toString('base64') });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
   }
   const done = await api(ctx.app, cookie, 'POST', `/api/admin/training/uploads/${uploadId}/complete`, {
     folderId: target.folderId ?? null,
@@ -79,9 +78,11 @@ describe('员工培训', () => {
     const files = (await api(ctx.app, ctx.owner, 'GET', `/api/training/folders/${pub.id}/files`)).body as TrainingFile[];
     expect(files).toHaveLength(1);
     expect(files[0]).toMatchObject({ title: '员工手册', viewKind: 'pdf', current: { versionNo: 1, fileName: '员工手册.pdf', sizeBytes: bytes.length } });
-    // 同样内容：已经存过，不用传块
+    // 同一编号重新开始：返回原来那一次，已传的块都在
+    const restart = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey: r.clientKey, fileName: '员工手册.pdf', mime: 'application/pdf', sizeBytes: bytes.length });
+    expect(restart.body).toMatchObject({ uploadId: r.uploadId, status: 'done' });
+    // 同样内容再传一份：内容只存一份
     const dup = await upload(bytes, '手册副本.pdf', 'application/pdf', { folderId: pub.id });
-    expect(dup.start.body.alreadyStored).toBe(true);
     expect(dup.done.status).toBe(200);
     const [blobs] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM training_blobs`;
     expect(blobs!.n).toBe(1);
@@ -92,13 +93,10 @@ describe('员工培训', () => {
     // 块没传完不能完成
     const clientKey = randomUUID();
     const big = PDF(TRAINING_CHUNK_BYTES + 10);
-    const s = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', {
-      clientKey,
-      fileName: 'c.pdf',
-      mime: 'application/pdf',
-      sizeBytes: big.length,
-      sha256: createHash('sha256').update(big).digest('hex'),
-    });
+    const s = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, fileName: 'c.pdf', mime: 'application/pdf', sizeBytes: big.length });
+    // 传了第 2 块：重新开始时告诉页面哪些块已经在了
+    await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s.body.uploadId}/chunks/1`, { data: big.subarray(TRAINING_CHUNK_BYTES).toString('base64') });
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/admin/training/uploads/${s.body.uploadId}`)).body.received).toEqual([1]);
     expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/training/uploads/${s.body.uploadId}/complete`, { folderId: pub.id })).body.error.code).toBe('TRAINING_UPLOAD_INCOMPLETE');
     // 块大小不对拒绝
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s.body.uploadId}/chunks/0`, { data: Buffer.from('xx').toString('base64') })).status).toBe(400);
@@ -198,5 +196,29 @@ describe('员工培训', () => {
     expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/folders/${front.id}/files`)).status).toBe(403);
     const audits = await ctx.sql<{ action: string }[]>`SELECT action FROM audit_logs WHERE action LIKE 'training_%'`;
     expect(new Set(audits.map((a) => a.action))).toEqual(new Set(['training_folder_saved', 'training_file_saved']));
+  });
+
+  it('Excel 在页面里看：读成表格（表名、表头、内容）；不是 Excel 的拒绝；店员看得到「培训资料」里的', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const xlsx = buildXlsx({
+      name: '应知应会',
+      columns: [{ header: '区域' }, { header: '介绍' }],
+      rows: [
+        ['前厅', '接待、发牌'],
+        ['男汤', '369 个衣柜'],
+      ],
+    });
+    const r = await upload(xlsx, '应知应会.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', { folderId: pub.id });
+    expect(r.done.status, JSON.stringify(r.done.body)).toBe(200);
+    const sheet = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${r.done.body.fileId}/sheet`);
+    expect(sheet.status, JSON.stringify(sheet.body)).toBe(200);
+    expect(sheet.body.sheets[0]).toMatchObject({ name: '应知应会', truncated: false });
+    expect(sheet.body.sheets[0].rows).toEqual([
+      ['区域', '介绍'],
+      ['前厅', '接待、发牌'],
+      ['男汤', '369 个衣柜'],
+    ]);
+    const pdf = await upload(PDF(300), '说明.pdf', 'application/pdf', { folderId: pub.id });
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${pdf.done.body.fileId}/sheet`)).body.error.code).toBe('TRAINING_NOT_SHEET');
   });
 });

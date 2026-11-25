@@ -88,6 +88,7 @@ const ICONS: Record<AdminSection, LucideIcon> = {
   attendance: Fingerprint,
   oaApprovals: Stamp,
   payroll: Wallet,
+  training: BookOpenText,
   permissions: ShieldCheck,
   canteen: Soup,
   patrol: Footprints,
