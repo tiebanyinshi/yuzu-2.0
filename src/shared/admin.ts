@@ -56,6 +56,8 @@ export const ADMIN_SECTIONS = {
   emenu: { path: '/admin/emenu', label: '电子菜单', perms: ['emenu.manage'] },
   // Design 首页（店主 2026-11-24，docs/BOARDS.md 第 3 节）：Design 板块的入口；有其中任一分区权限的进得去
   design: { path: '/admin/design', label: 'Design 首页', perms: ['studio.edit', 'settings.manage', 'catalog.manage', 'emenu.manage'] },
+  // 素材库（docs/BOARDS.md 第 4 节）：字体、图片、视频与用途切换；设计师、能改规则的店主店总
+  library: { path: '/admin/design/library', label: '素材库', perms: ['studio.edit', 'settings.manage'] },
   // UI 工作台（8.1.1，docs/WORKBENCH_V811.md；GZ4：工作台就在后台）：设计师改版面、发布、回滚；编辑器在 /studio/<界面>（整屏）
   studio: { path: '/admin/studio', label: '工作台', perms: ['studio.edit'] },
   rooms: { path: '/admin/rooms', label: '客房', perms: ['settings.manage', 'catalog.manage'] },
@@ -123,7 +125,7 @@ export const ADMIN_GROUPS: readonly { key: string; title: string; board: AdminBo
   { key: 'venue', title: '场地、设备与线上', board: 'crm', items: ['spaces', 'devices', 'mp'] },
   { key: 'erpSystem', title: '主体、接口与审计', board: 'erp', items: ['stores', 'integrations', 'opening', 'audit'] },
   { key: 'staff', title: '人员与行政', board: 'wcp', items: ['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'permissions', 'canteen', 'patrol'] },
-  { key: 'design', title: '品牌与设计', board: 'design', items: ['design', 'studio', 'guide'] },
+  { key: 'design', title: '品牌与设计', board: 'design', items: ['design', 'library', 'studio', 'guide'] },
 ];
 
 /** 分区归哪个板块 */
@@ -150,7 +152,7 @@ export const ADMIN_PERMISSIONS: readonly Permission[] = ADMIN_SECTIONS.home.perm
  * 不进后台首页也看得到的分区：数据看板（店主 2026-11-10），员工食堂、安保巡场（8.0.18，食堂负责人、安保主管原来只进 ERP）。
  * 只有这些分区的权限的岗位能进后台，但只看得到自己的这几个分区
  */
-export const ADMIN_STANDALONE_SECTIONS: readonly AdminSection[] = ['dashboard', 'canteen', 'patrol', 'design', 'studio', 'staff', 'org', 'attendance', 'oaApprovals', 'payroll'];
+export const ADMIN_STANDALONE_SECTIONS: readonly AdminSection[] = ['dashboard', 'canteen', 'patrol', 'design', 'library', 'studio', 'staff', 'org', 'attendance', 'oaApprovals', 'payroll'];
 /** 跟着 ERP 模块开关走的分区：模块关着时只有能改模块开关的人还看得到（页面上提示去开启） */
 export const ADMIN_SECTION_MODULES: Partial<Record<AdminSection, ErpModuleKey>> = { canteen: 'canteen', patrol: 'patrol' };
 /** 能进后台的权限（有其一即可）：后台首页的权限，加上不进首页也看得到的那几个分区的权限 */

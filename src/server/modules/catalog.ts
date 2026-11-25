@@ -7,18 +7,16 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { defaultTier, isCareItem, PRICE_TIERS, sortTiers, STRENGTHS, tierPrice, type PriceTier, type TierPrice } from '@shared/catalog';
-import { PRICE_LIST_MAX_ROWS, type BuiltinPriceList, type PriceListImportReport } from '@shared/price-list-import';
 import type { Catalog, RechargePlan, ServiceItem } from '@shared/types';
-import type { Db, Sql, Tx } from '../db';
+import type { Db, Tx } from '../db';
 import { guard } from '../auth/guard';
-import { TANGQI_PRICE_LIST_CSV, TANGQI_PRICE_LIST_TITLE } from '../demo/price-list-tangqi-2026-10-27';
 import { writeAudit } from '../lib/audit';
 import type { Deps } from '../lib/context';
 import { badRequest, conflict, notFound } from '../lib/errors';
 import { cents, idParam, parse, positiveCents } from '../lib/validate';
 import { pricesColumn } from './pricing';
 import { currentStoreId, DEFAULT_STORE_ID } from '../lib/store-context';
-import { dishIdsAmong, dishPriceState, recordPriceChanges, recordStorePriceChange } from './dish-prices';
+import { dishPriceState, recordPriceChanges, recordStorePriceChange } from './dish-prices';
 import { assertNotPriceLinked } from './price-catalog/linked';
 import { MAX_STORE_PRICE_REASON } from '@shared/frontdesk-v8117';
 import { formatYuan } from '@shared/money';
@@ -67,7 +65,8 @@ type ItemData = z.output<typeof ItemInput>;
 
 const ITEM_COLUMNS = (db: Db, base = false) => db`
   i.id, i.name, i.category, i.price, i.duration_minutes, i.gender, i.strength, i.essential_oil, i.heat_therapy, i.popular,
-  i.technician_required, i.note, i.active, i.sort_order, i.catalog_code, ${pricesColumn(db, { base })} AS prices,
+  i.technician_required, i.note, i.active, i.sort_order, i.catalog_code, i.catalog_managed,
+  EXISTS (SELECT 1 FROM price_catalog_links l WHERE l.item_id = i.id AND l.store_id = ${DEFAULT_STORE_ID}) AS catalog_linked, ${pricesColumn(db, { base })} AS prices,
   CASE WHEN i.catalog_category_code IS NULL THEN NULL
        ELSE json_build_object('code', i.catalog_category_code, 'name', i.catalog_category_name, 'group', coalesce(i.catalog_group, ''), 'sort', coalesce(i.catalog_sort, 0)) END AS catalog_category`;
 
@@ -114,180 +113,7 @@ async function writeItem(tx: Tx, id: number | null, i: Omit<ItemData, 'tiers'> &
   return itemId;
 }
 
-// ───────────────────────── 价目表导入 ─────────────────────────
-
-export const PriceListImportInput = z.object({
-  rows: z
-    .array(
-      z.object({
-        category: z.string().trim().max(16, '分类最多 16 个字'),
-        name: z.string().trim().min(1, '项目名称为空').max(32, '名称最多 32 个字'),
-        durationMinutes: durationInput,
-        gender: genderInput,
-        prices: z
-          .array(z.object({ tier: z.enum(PRICE_TIERS), price: positiveCents('价格') }))
-          .min(1, '每个项目至少要有一档价格')
-          .max(3)
-          .refine((p) => new Set(p.map((x) => x.tier)).size === p.length, '同一档价格重复'),
-        strength: z.enum(STRENGTHS).nullable().optional(),
-        essentialOil: z.boolean().optional(),
-        heatTherapy: z.boolean().optional(),
-        popular: z.boolean().optional(),
-        note: z.string().trim().max(100).optional(),
-      }),
-    )
-    .min(1, '清单里没有项目')
-    .max(PRICE_LIST_MAX_ROWS, `一次最多导入 ${PRICE_LIST_MAX_ROWS} 个项目`),
-  /** 同时停用不在清单里的项目 */
-  deactivateMissing: z.boolean().default(false),
-  /** 只预览，不写入 */
-  dryRun: z.boolean().default(true),
-});
-export type PriceListImportData = z.input<typeof PriceListImportInput>;
-
 const samePrices = (a: TierPrice[], b: TierPrice[]) => a.length === b.length && sortTiers(a).every((p, k) => p.tier === sortTiers(b)[k]!.tier && p.price === sortTiers(b)[k]!.price);
-
-/**
- * 按名称导入价目表：清单是项目与价格的准确描述。
- *   · 新名称 → 新建；已有名称 → 分类、时长、性别、各档价格、排序以清单为准，停用的恢复启用；
- *   · 属性（力道、精油、热疗、超人气、说明）清单里留空时保持现有设置；
- *   · 勾选 deactivateMissing 时停用清单外的项目；
- *   · 排序按清单顺序；同名项目不止一个时拒绝，请先在管理页改名或停用。
- */
-export async function importPriceList(sql: Sql, raw: PriceListImportData, audit: { staffId: number | null; ip?: string; via: 'web' | 'cli' }): Promise<PriceListImportReport> {
-  const input = parse(PriceListImportInput, raw);
-  const dupes = input.rows.map((r) => r.name).filter((n, i, all) => all.indexOf(n) !== i);
-  if (dupes.length) throw badRequest(`清单里项目重复：${[...new Set(dupes)].slice(0, 5).join('、')}`);
-  return sql.begin(async (tx) => {
-    // 先锁定全部项目（id 升序），与同时进行的项目编辑串行
-    const existing = await tx<{ id: number }[]>`SELECT id FROM service_items ORDER BY id ${input.dryRun ? tx`` : tx`FOR UPDATE`}`;
-    const items = existing.length ? await loadItems(tx, true, true) : [];
-    const byName = new Map<string, ServiceItem[]>();
-    for (const it of items) byName.set(it.name, [...(byName.get(it.name) ?? []), it]);
-
-    const create: { row: (typeof input.rows)[number]; sortOrder: number }[] = [];
-    const update: { item: ServiceItem; row: (typeof input.rows)[number]; sortOrder: number }[] = [];
-    let unchanged = 0;
-    input.rows.forEach((row, index) => {
-      const sortOrder = index + 1;
-      const matches = byName.get(row.name) ?? [];
-      const active = matches.filter((m) => m.active);
-      if (active.length > 1 || (active.length === 0 && matches.length > 1)) {
-        throw conflict('ITEM_AMBIGUOUS', `已有 ${matches.length} 个名为「${row.name}」的项目，请先在管理页改名或停用其中一个再导入`);
-      }
-      const item = active[0] ?? matches[0];
-      if (!item) {
-        create.push({ row, sortOrder });
-        return;
-      }
-      const same =
-        item.active &&
-        item.category === row.category &&
-        item.durationMinutes === row.durationMinutes &&
-        item.gender === row.gender &&
-        item.sortOrder === sortOrder &&
-        samePrices(item.prices, row.prices) &&
-        (row.strength === undefined || item.strength === row.strength) &&
-        (row.essentialOil === undefined || item.essentialOil === row.essentialOil) &&
-        (row.heatTherapy === undefined || item.heatTherapy === row.heatTherapy) &&
-        (row.popular === undefined || item.popular === row.popular) &&
-        (row.note === undefined || item.note === row.note);
-      if (same) unchanged += 1;
-      else update.push({ item, row, sortOrder });
-    });
-    const listed = new Set(input.rows.map((r) => r.name));
-    const deactivate = input.deactivateMissing ? items.filter((i) => i.active && !listed.has(i.name)) : [];
-    // 价目表第四批：对接了「全品类价目表」的项目，价格以价目表为准，清单改到它们的价格整份拒绝（预检同样报出来）
-    await assertNotPriceLinked(
-      tx,
-      update.filter((u) => !samePrices(u.item.prices, u.row.prices)).map((u) => u.item.id),
-    );
-
-    if (!input.dryRun) {
-      // 菜品的改价进改价记录（8.1.15 菜品管理，docs/DISHES_V8115.md 第 4 节）：按清单改到菜品价格的，每一档记一条
-      const dishes = await dishIdsAmong(
-        tx,
-        update.map((u) => u.item.id),
-      );
-      for (const { item, row } of update) {
-        if (!dishes.has(item.id)) continue;
-        await recordPriceChanges(tx, { itemId: item.id, itemName: item.name, before: item.prices, after: row.prices, reason: '按价目表导入', source: 'price_list', staffId: audit.staffId });
-      }
-      for (const { row, sortOrder } of create) {
-        await writeItem(tx, null, {
-          name: row.name,
-          category: row.category,
-          tiers: row.prices,
-          durationMinutes: row.durationMinutes,
-          gender: row.gender,
-          strength: row.strength ?? null,
-          essentialOil: row.essentialOil ?? false,
-          heatTherapy: row.heatTherapy ?? false,
-          popular: row.popular ?? false,
-          note: row.note ?? '',
-          active: true,
-          sortOrder,
-        });
-      }
-      for (const { item, row, sortOrder } of update) {
-        await writeItem(tx, item.id, {
-          name: row.name,
-          category: row.category,
-          tiers: row.prices,
-          durationMinutes: row.durationMinutes,
-          gender: row.gender,
-          strength: row.strength === undefined ? item.strength : row.strength,
-          essentialOil: row.essentialOil ?? item.essentialOil,
-          heatTherapy: row.heatTherapy ?? item.heatTherapy,
-          popular: row.popular ?? item.popular,
-          note: row.note ?? item.note,
-          active: true,
-          sortOrder,
-        });
-      }
-      if (deactivate.length) {
-        await tx`UPDATE service_items SET active = false, updated_at = now() WHERE id IN ${tx(deactivate.map((d) => d.id))}`;
-      }
-    }
-
-    const groups = new Map<string, number>();
-    for (const r of input.rows) groups.set(r.category || '其他', (groups.get(r.category || '其他') ?? 0) + 1);
-    const report: PriceListImportReport = {
-      dryRun: input.dryRun,
-      total: input.rows.length,
-      created: create.length,
-      updated: update.length,
-      unchanged,
-      deactivated: deactivate.length,
-      samples: {
-        created: create.slice(0, 20).map((c) => c.row.name),
-        updated: update.slice(0, 20).map((u) => u.row.name),
-        deactivated: deactivate.slice(0, 20).map((d) => d.name),
-      },
-      groups: [...groups].map(([category, count]) => ({ category, count })),
-    };
-    if (!input.dryRun) {
-      await writeAudit(tx, {
-        staffId: audit.staffId,
-        action: 'price_list_imported',
-        targetType: 'item',
-        detail: {
-          via: audit.via,
-          total: report.total,
-          created: report.created,
-          updated: report.updated,
-          unchanged: report.unchanged,
-          deactivated: report.deactivated,
-          deactivateMissing: input.deactivateMissing,
-        },
-        ip: audit.ip,
-      });
-    }
-    return report;
-  });
-}
-
-export const BUILTIN_PRICE_LISTS: BuiltinPriceList[] = [{ key: 'tangqi-2026-10-27', title: TANGQI_PRICE_LIST_TITLE, csv: TANGQI_PRICE_LIST_CSV }];
 
 export function registerCatalogRoutes(app: FastifyInstance, { sql }: Deps) {
   app.get('/api/catalog', { preHandler: guard('member.read') }, async (req) => {
@@ -332,8 +158,13 @@ export function registerCatalogRoutes(app: FastifyInstance, { sql }: Deps) {
     await sql.begin(async (tx) => {
       await tx`SELECT id FROM service_items WHERE id = ${id} FOR UPDATE`;
       // 价目表第四批：对接了「全品类价目表」的项目改价拒绝（别的字段照常能改）
-      const [cur] = await tx<{ prices: TierPrice[] }[]>`SELECT ${pricesColumn(tx, { base: true })} AS prices FROM service_items i WHERE i.id = ${id}`;
+      const [cur] = await tx<{ prices: TierPrice[]; name: string; category: string; durationMinutes: number | null; gender: string | null }[]>`
+        SELECT ${pricesColumn(tx, { base: true })} AS prices, i.name, i.category, i.duration_minutes, i.gender FROM service_items i WHERE i.id = ${id}`;
       if (cur && !samePrices(cur.prices, i.tiers)) await assertNotPriceLinked(tx, [id]);
+      // 8.1.34：对接了的项目，名称、分类、时长、性别限定也以价目表为准（力道、精油、说明、排序、停用照常能改）
+      if (cur && (cur.name !== i.name || cur.category !== i.category || cur.durationMinutes !== i.durationMinutes || cur.gender !== i.gender)) {
+        await assertNotPriceLinked(tx, [id], { what: '名称、分类、时长与性别限定', managedOnly: true });
+      }
       // 菜品的改价进改价记录（8.1.15 菜品管理）：这道是菜品、价格有变化的，每一档记一条
       const before = await dishPriceState(tx, id);
       await writeItem(tx, id, i);
@@ -413,9 +244,4 @@ export function registerCatalogRoutes(app: FastifyInstance, { sql }: Deps) {
       return { ok: true, changed: true };
     });
   });
-
-  // 价目表：内置清单（店主提供）与按清单导入（默认只预览）
-  app.get('/api/items/price-lists', { preHandler: guard('catalog.manage') }, async () => BUILTIN_PRICE_LISTS);
-
-  app.post('/api/items/import', { preHandler: guard('catalog.manage') }, async (req) => importPriceList(sql, req.body as PriceListImportData, { staffId: req.actor.id, ip: req.ip, via: 'web' }));
 }

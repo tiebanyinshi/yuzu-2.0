@@ -72,7 +72,7 @@ describe('后台的一级分组', () => {
     ]);
     expect(of('erp')).toEqual(['stores', 'integrations', 'opening', 'audit']);
     expect(of('wcp')).toEqual(['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'permissions', 'canteen', 'patrol']);
-    expect(of('design')).toEqual(['design', 'studio', 'guide']);
+    expect(of('design')).toEqual(['design', 'library', 'studio', 'guide']);
     expect(boardOfSection('guide')).toBe('design');
     expect(adminSectionOfPath('/admin')).toBe('home');
     expect(adminSectionOfPath('/admin/rules/shift')).toBe('rules');
@@ -130,7 +130,8 @@ describe('二级页签', () => {
     expect(first('DiningSection.tsx')).toBe('rules');
     expect(first('RoomsSection.tsx')).toBe('rules');
     // 导入与工具排在最后
-    for (const f of ['CatalogTab.tsx', 'DevicesSection.tsx']) {
+    // （价目与套餐 8.1.34 起没有导入页签：价目从「全品类价目表」导入，docs/PRICE_V8134.md）
+    for (const f of ['DevicesSection.tsx']) {
       const keys = [...readFileSync(join(ADMIN_DIR, f), 'utf8').matchAll(/\{ key: '([^']+)', label: '[^']*' \}/g)].map((m) => m[1]);
       expect(keys.at(-1), f).toBe('import');
     }

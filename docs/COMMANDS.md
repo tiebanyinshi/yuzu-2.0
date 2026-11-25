@@ -58,9 +58,11 @@ node dist/server/cli.js membership-daily               # 会员到期处理与�
 
 ## 4. 导入（真实业务数据：默认只预览，`--apply` 才写入，门店环境须店主同意）
 
+8.1.35 起 `import-technicians <技师导入模板.xlsx|csv> [--grade-map 一星=标准,…] [--skip-group 测试组] [--skip-invalid] [--apply]` 导技师名册（福田迁移）；它和 `import-hand-tags`、`import-opening`、`import-count-cards` 可以加 `--store <门店代码>`（如 `--store FT`）导到第二家店；不加是本店。别的命令不认 `--store`（`daily-recon` 照旧自己认）。福田的导入步骤见 `docs/FUTIAN_MIGRATION.md` 第 4 节。
+
 ```bash
 node dist/server/cli.js import-hand-tags --store-list   # 预览导入店主 747 个真实柜号；--apply 才写入（真实业务数据，门店环境须店主同意）
-node dist/server/cli.js import-price-list --tangqi      # 预览导入汤崎价目表（29 个项目、多档价格）；--apply 才写入（同上）
+node dist/server/cli.js price-audit                    # 8.1.34 价目核对：收银项目与全品类价目表对不上的地方（只读）；--apply 只停用门票项目、与已对接项目同名的两类（不删，docs/PRICE_V8134.md）。老的 import-price-list 已删，价目在后台「全品类价目表」导入
 node dist/server/cli.js import-legacy <原始.xlsx> --operator <店主账号>   # 预览导入 8–10 月旧账（四份原始 Excel 之一）的只读对照；--apply 才写入（真实业务数据，门店环境须店主同意；不进正式账）
 node dist/server/cli.js void-legacy-import <导入编号> --operator <店主账号> --reason <原因>   # 作废一次 8–10 月旧账只读导入（页面上不再显示，不删，v0.7.10）
 node dist/server/cli.js import-opening <余额.csv> --operator <店主账号> --control 人数,本金,赠金,累计充值 [--exclude <排除清单.csv>]

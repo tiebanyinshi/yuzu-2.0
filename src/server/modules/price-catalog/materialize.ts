@@ -14,8 +14,12 @@ import { priceCategoriesOf, priceNameKey, type PriceCatalogEntry, type PriceCate
 import type { Tx } from '../../db';
 import { currentStoreId, DEFAULT_STORE_ID } from '../../lib/store-context';
 
-/** 不落库的类型 */
-export const NOT_ITEMS = new Set<PriceCatalogEntry['kind']>(['service_fee', 'room_type', 'party_room', 'dining_room']);
+/**
+ * 不落库的类型。门票、夜间票（8.1.34，店主 2026-11-24 价目重构）也不建收银项目：门票费由前台结账按「门票」票种（ticket_types）按在店时长算，
+ * 再建一个能挂单的「入场」项目会重复收费；票价在「价目与套餐 → 门票」里照价目表填（docs/PRICE_V8134.md）。
+ * 以前建过的，下次切换生效时按「价目表新建的、这份里已经没有的」停用。餐票照旧建（单独卖的餐）。
+ */
+export const NOT_ITEMS = new Set<PriceCatalogEntry['kind']>(['service_fee', 'room_type', 'party_room', 'dining_room', 'ticket', 'night_ticket']);
 
 /** 收银项目上的类别（部门营业额、券、会员折扣按它算；PC21） */
 export function itemCategoryOf(e: Pick<PriceCatalogEntry, 'sheet' | 'kind' | 'section'>): string {
@@ -90,6 +94,9 @@ async function fitExisting(tx: Tx, id: number, e: PriceCatalogEntry, station: ()
 export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], opts: { keys?: string[]; staffId: number }): Promise<MaterializeResult> {
   const storeId = currentStoreId();
   const out: MaterializeResult = { created: 0, skipped: [], fitted: [] };
+  // 收银项目全公司一份，名称、分类、停用只跟本店（编号 1）的价目表走；第二家店的价目表只写本店价（syncLinkedPrices），
+  // 不碰收银项目这一行——否则第二家店切换生效时会按它那份把总店在售的项目停用、改名（测试会话 8.1.32 报告：分店启用后总店的「斯诺克」被停用）
+  if (storeId !== DEFAULT_STORE_ID) return out;
   const { byEntry } = priceCategoriesOf(entries);
   // 同名的在用项优先（与对比、对接同一个键）
   const byKey = new Map<string, { e: PriceCatalogEntry; c: PriceCategory }>();
@@ -137,11 +144,11 @@ export async function materializeCatalog(tx: Tx, entries: PriceCatalogEntry[], o
         UPDATE service_items SET name = ${e.name}, duration_minutes = ${minutesOf(e)}, gender = ${genderOf(e)}, technician_required = ${e.sheet === 'massage'},
           active = ${sellable(e)}, updated_at = clock_timestamp()
         WHERE id = ${itemId} AND catalog_managed AND dish_deleted_at IS NULL`;
-      if (storeId === DEFAULT_STORE_ID && sellable(e)) await fit(itemId, key, e);
+      if (sellable(e)) await fit(itemId, key, e);
       continue;
     }
-    // 第二家店不新建（收银项目全公司一份）；待定价的先不建（收银项目必须有价），补价后再建
-    if (storeId !== DEFAULT_STORE_ID || !sellable(e)) continue;
+    // 待定价的先不建（收银项目必须有价），补价后再建
+    if (!sellable(e)) continue;
     // 以前建过、后来取消了对接的：重新对上，不再建一个
     const [had] = await tx<{ id: number }[]>`SELECT id FROM service_items WHERE catalog_key = ${key} AND catalog_managed FOR NO KEY UPDATE`;
     let id = had ? Number(had.id) : null;

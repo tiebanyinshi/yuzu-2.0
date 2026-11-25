@@ -1364,6 +1364,7 @@ const CHANGE_ACTIONS = [
   'opening_imported',
   'opening_voided',
   'technician_saved',
+  'technicians_imported',
   'items_technician_updated',
   'kitchen_station_saved',
   'items_station_updated',
@@ -1451,6 +1452,8 @@ function describeChange(action: string, detail: Record<string, unknown>): string
       return '作废了期初余额';
     case 'technician_saved':
       return typeof detail.summary === 'string' ? detail.summary : `保存了技师${name ? `「${name}」` : ''}`;
+    case 'technicians_imported':
+      return typeof detail.summary === 'string' ? detail.summary : '导入了技师名册';
     case 'items_technician_updated':
       return '调整了需要技师的项目';
     case 'kitchen_station_saved':

@@ -1,13 +1,11 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { FileUp, ListChecks, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { isCareItem, itemTags, PRICE_TIER_LABELS, PRICE_TIERS, STRENGTH_LABELS, STRENGTHS, tierPrice, type PriceTier, type Strength } from '@shared/catalog';
 import { centsToInput, parseYuan } from '@shared/money';
-import { parsePriceListCsv, type BuiltinPriceList, type PriceListCsvResult, type PriceListImportReport } from '@shared/price-list-import';
 import type { TicketType } from '@shared/checkout';
 import type { Catalog, RechargePlan, ServiceItem } from '@shared/types';
 import { api, errorMessage } from '../../lib/api';
-import { readImportFile } from '../../lib/import-file';
 import { useCatalog } from '../../lib/queries';
 import { useTicketTypes } from '../frontdesk/queries';
 import { cn } from '../../lib/utils';
@@ -24,7 +22,7 @@ import { PriceCatalogPane } from './PriceCatalogPane';
 
 type Editing = { kind: 'plan'; data: RechargePlan | null } | { kind: 'item'; data: ServiceItem | null } | null;
 
-/** 本店价（8.0.22）：只在第二家店里打开时有；是清单，排在「导入价目表」前面 */
+/** 本店价（8.0.22）：只在第二家店里打开时有 */
 const STORE_PRICE_TAB = { key: 'store', label: '本店价' };
 /** 二级页签（8.0.17）：清单 → 导入与工具（价目没有规则类的设置） */
 const CATALOG_TABS = [
@@ -33,7 +31,6 @@ const CATALOG_TABS = [
   { key: 'full', label: '全品类价目表' },
   { key: 'tickets', label: '门票' },
   { key: 'plans', label: '充值套餐' },
-  { key: 'import', label: '导入价目表' },
 ];
 
 export function CatalogTab() {
@@ -61,7 +58,9 @@ export function CatalogTab() {
           >
             消费项目
           </SectionTitle>
-          <p className="mt-1 text-[12.5px] text-ink-3">价格以这里为准；同一项目可设标准 / 专业 / 优选多档价格。改价后，正在登记的消费会提示重新核对。</p>
+          <p className="mt-1 text-[12.5px] text-ink-3">
+            价目表里有的项目（带分类编码）名称、价格以「全品类价目表」为准，这里只改属性；价目表管不到的收银项目（如房费、开台费）在这里新增和改价。改价后，正在登记的消费会提示重新核对。
+          </p>
           <div className="mt-3 divide-y divide-line/70 rounded-lg border border-line" data-testid="catalog-items">
             {catalog.isPending ? (
               <Skeleton className="m-3 h-32" />
@@ -167,9 +166,6 @@ export function CatalogTab() {
             )}
           </div>
         </Card>
-      </SubPane>
-      <SubPane tab="import">
-        <PriceListCard />
       </SubPane>
 
       <PlanDialog editing={editing?.kind === 'plan' ? editing : null} onClose={() => setEditing(null)} />
@@ -322,6 +318,12 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [last, setLast] = useState<Editing>(null);
+  /** 8.1.34：对接了「全品类价目表」的项目（带价目表分类）——名称、分类、价格、时长、适用宾客只在价目表里改 */
+  // 价目表新建的项目：名称、分类、时长、性别限定随价目表同步，这里只读（门店原有、后来对接上的照常能改，Codex 审查）
+  // 按「现在还对接着」判断（Codex 审查）：取消对接以后价目表留下的分类与来源还在，但已经不归价目表管，照常能改
+  const fromCatalog = !!editing?.data?.catalogManaged && !!editing?.data?.catalogLinked;
+  // 对接了价目表的（不论是不是价目表新建的）：价格以价目表为准（服务端 PRICE_LINKED）
+  const linked = !!editing?.data?.catalogLinked;
 
   if (editing !== last) {
     setLast(editing);
@@ -413,40 +415,52 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
       }
     >
       <div className="grid gap-4">
-        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
-          <Field label="名称" htmlFor="c-name">
-            <Input id="c-name" value={name} maxLength={32} onChange={(e) => setName(e.target.value)} data-autofocus />
-          </Field>
-          <Field label="分类" htmlFor="c-cat" hint="如 全身按摩 / 理疗系列">
-            <Input id="c-cat" value={category} maxLength={16} onChange={(e) => setCategory(e.target.value)} />
-          </Field>
-        </div>
-        <Field label="价格" hint="某一档不提供时留空；不带档位的旧请求按标准 → 专业 → 优选中第一个提供的计价">
-          <div className="grid grid-cols-3 gap-2.5">
-            {PRICE_TIERS.map((t) => (
-              <label key={t} className="flex flex-col gap-1 text-[12px] font-semibold text-ink-3">
-                {PRICE_TIER_LABELS[t]}
-                <MoneyInput value={prices[t]} onChange={(e) => setPrices((p) => ({ ...p, [t]: e.target.value }))} aria-label={`${PRICE_TIER_LABELS[t]}价`} placeholder="不提供" />
-              </label>
-            ))}
+        {fromCatalog && (
+          <Notice tone="info" title="这一项由「全品类价目表」管" data-testid="item-from-catalog">
+            名称、分类、价格、时长与适用宾客在 价目与套餐 → 全品类价目表 里改，改完切换生效就同步过来；这里只改力道、精油、说明、排序、停用这些。
+          </Notice>
+        )}
+        {linked && !fromCatalog && (
+          <Notice tone="info" title="价格由「全品类价目表」管" data-testid="item-price-linked">
+            这一项对接了价目表：价格在 价目与套餐 → 全品类价目表 里改，切换生效就同步过来；名称、分类、时长等照常在这里改。
+          </Notice>
+        )}
+        <fieldset disabled={fromCatalog} className="grid min-w-0 gap-4 disabled:opacity-60">
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
+            <Field label="名称" htmlFor="c-name">
+              <Input id="c-name" value={name} maxLength={32} onChange={(e) => setName(e.target.value)} data-autofocus />
+            </Field>
+            <Field label="分类" htmlFor="c-cat" hint="如 全身按摩 / 理疗系列">
+              <Input id="c-cat" value={category} maxLength={16} onChange={(e) => setCategory(e.target.value)} />
+            </Field>
           </div>
-        </Field>
-        <div className="grid gap-4 sm:grid-cols-[140px_minmax(0,1fr)]">
-          <Field label="时长（分钟）" htmlFor="c-duration" hint="选填">
-            <Input id="c-duration" inputMode="numeric" value={duration} onChange={(e) => setDuration(e.target.value.replace(/[^\d]/g, ''))} className="num" />
+          <Field label="价格" hint="某一档不提供时留空；不带档位的旧请求按标准 → 专业 → 优选中第一个提供的计价">
+            <fieldset disabled={linked} className="grid grid-cols-3 gap-2.5 disabled:opacity-60">
+              {PRICE_TIERS.map((t) => (
+                <label key={t} className="flex flex-col gap-1 text-[12px] font-semibold text-ink-3">
+                  {PRICE_TIER_LABELS[t]}
+                  <MoneyInput value={prices[t]} onChange={(e) => setPrices((p) => ({ ...p, [t]: e.target.value }))} aria-label={`${PRICE_TIER_LABELS[t]}价`} placeholder="不提供" />
+                </label>
+              ))}
+            </fieldset>
           </Field>
-          <Field label="适用宾客">
-            <Segmented
-              value={gender}
-              onChange={setGender}
-              options={[
-                { value: 'any', label: '不限' },
-                { value: 'male', label: '仅男宾' },
-                { value: 'female', label: '仅女宾' },
-              ]}
-            />
-          </Field>
-        </div>
+          <div className="grid gap-4 sm:grid-cols-[140px_minmax(0,1fr)]">
+            <Field label="时长（分钟）" htmlFor="c-duration" hint="选填">
+              <Input id="c-duration" inputMode="numeric" value={duration} onChange={(e) => setDuration(e.target.value.replace(/[^\d]/g, ''))} className="num" />
+            </Field>
+            <Field label="适用宾客">
+              <Segmented
+                value={gender}
+                onChange={setGender}
+                options={[
+                  { value: 'any', label: '不限' },
+                  { value: 'male', label: '仅男宾' },
+                  { value: 'female', label: '仅女宾' },
+                ]}
+              />
+            </Field>
+          </div>
+        </fieldset>
         <Field
           label="需要技师"
           hint={careDefault ? '名称或分类含「护理」，默认需要技师（交给钟房派钟）；不需要的点「不需要」' : '技师功能开启后，挂这个项目要选技师与点钟 / 轮钟；也可以在后台「技师」里按分类勾选'}
@@ -499,153 +513,6 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
         {error && <Notice tone="error" title={error} />}
       </div>
     </Dialog>
-  );
-}
-
-/** 价目表导入：内置的店主价目表或 CSV 文件，先预览再导入 */
-function PriceListCard() {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [source, setSource] = useState('');
-  const [parsed, setParsed] = useState<PriceListCsvResult | null>(null);
-  const [deactivateMissing, setDeactivateMissing] = useState(false);
-  const [preview, setPreview] = useState<PriceListImportReport | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const run = async (dryRun: boolean, rows = parsed?.rows ?? [], deactivate = deactivateMissing) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const report = await api.post<PriceListImportReport>('/api/items/import', { rows, deactivateMissing: deactivate, dryRun });
-      if (dryRun) {
-        setPreview(report);
-      } else {
-        toast({
-          tone: 'success',
-          title: `已导入 ${report.total} 个项目`,
-          body: `新建 ${report.created} · 更新 ${report.updated} · 未变 ${report.unchanged}${report.deactivated ? ` · 停用 ${report.deactivated}` : ''}`,
-        });
-        setParsed(null);
-        setPreview(null);
-        setSource('');
-        void qc.invalidateQueries({ queryKey: ['catalog'] });
-      }
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const load = async (name: string, text: string) => {
-    setPreview(null);
-    setError(null);
-    setSource(name);
-    const result = parsePriceListCsv(text);
-    setParsed(result);
-    if (result.errors.length === 0) await run(true, result.rows, deactivateMissing);
-  };
-
-  const loadBuiltin = async () => {
-    try {
-      const lists = await api.get<BuiltinPriceList[]>('/api/items/price-lists');
-      const list = lists[0];
-      if (list) await load(list.title, list.csv);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  };
-
-  return (
-    <Card className="p-5 lg:col-span-2" data-testid="price-list-import">
-      <SectionTitle>
-        <span className="flex items-center gap-2">导入价目表</span>
-      </SectionTitle>
-      <p className="mt-1 text-[12.5px] text-ink-3">
-        按项目名称导入：新项目新建，已有项目的分类、时长、各档价格与排序以价目表为准；力道、精油、热疗、超人气在表里留空时保持现有设置。CSV 列为{' '}
-        <code className="num">category,name,duration_minutes,gender,standard,professional,premium,strength,essential_oil,heat_therapy,popular,note</code>
-        （价格单位为元，与 docs/data/price-list-tangqi-2026-10-27.csv 相同）。
-      </p>
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <Button variant="secondary" icon={<ListChecks className="size-4" />} onClick={() => void loadBuiltin()} loading={busy && !preview && !parsed} data-testid="price-list-builtin">
-          预览汤崎价目表（店主 2026-10-27）
-        </Button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".csv,text/csv"
-          className="hidden"
-          onChange={async (e) => {
-            const f = e.target.files?.[0];
-            if (f) {
-              try {
-                const loaded = await readImportFile(f);
-                await load(loaded.label, loaded.text);
-              } catch (err) {
-                setError(errorMessage(err));
-              }
-            }
-            e.target.value = '';
-          }}
-          data-testid="price-list-file"
-        />
-        <Button variant="ghost" icon={<FileUp className="size-4" />} onClick={() => fileRef.current?.click()}>
-          选择 CSV 文件
-        </Button>
-        {source && <span className="text-[13px] text-ink-2">{source}</span>}
-      </div>
-      <div className="mt-3">
-        <ConfirmCheck
-          checked={deactivateMissing}
-          onChange={(v) => {
-            setDeactivateMissing(v);
-            if (parsed && parsed.errors.length === 0) void run(true, parsed.rows, v);
-          }}
-        >
-          同时停用不在价目表里的项目
-          <span className="block text-[12.5px] font-normal text-ink-3">例如试用期间的示例项目；停用后历史单据不受影响</span>
-        </ConfirmCheck>
-      </div>
-
-      {parsed && parsed.errors.length > 0 && (
-        <Notice tone="error" title={`价目表有 ${parsed.errors.length} 处需要修改，未导入`} className="mt-3">
-          <ul className="mt-1 space-y-0.5 text-[12.5px]">
-            {parsed.errors.slice(0, 8).map((e) => (
-              <li key={`${e.line}-${e.message}`}>
-                第 {e.line} 行：{e.message}
-              </li>
-            ))}
-          </ul>
-        </Notice>
-      )}
-      {preview && (
-        <div className="mt-3 space-y-3" data-testid="price-list-preview">
-          <p className="text-[13.5px] text-ink-2">
-            价目表共 <b className="num">{preview.total}</b> 个项目：新建 <b className="num">{preview.created}</b> · 更新 <b className="num">{preview.updated}</b> · 未变{' '}
-            <b className="num">{preview.unchanged}</b>
-            {deactivateMissing && (
-              <>
-                {' '}
-                · 停用价目表外 <b className="num">{preview.deactivated}</b>
-              </>
-            )}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {preview.groups.map((g) => (
-              <span key={g.category} className="rounded-full border border-line bg-paper px-2.5 py-1 text-[12.5px] font-semibold">
-                {g.category} <span className="num text-ink-3">{g.count}</span>
-              </span>
-            ))}
-          </div>
-          <Button variant="primary" loading={busy} onClick={() => void run(false)} data-testid="price-list-confirm">
-            确认导入 {preview.total} 个项目
-          </Button>
-        </div>
-      )}
-      {error && <Notice tone="error" title={error} className="mt-3" />}
-    </Card>
   );
 }
 

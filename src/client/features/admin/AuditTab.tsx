@@ -96,6 +96,7 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   hand_tag_unlocked: { label: '解锁手牌', tone: 'neutral' },
   hand_tag_updated: { label: '修改手牌', tone: 'neutral' },
   technician_saved: { label: '保存技师', tone: 'neutral' },
+  technicians_imported: { label: '导入技师名册', tone: 'ember' },
   items_technician_updated: { label: '调整需要技师的项目', tone: 'neutral' },
   member_refund: { label: '退储值', tone: 'clay' },
   recharge_online: { label: '线上充值', tone: 'lake' },

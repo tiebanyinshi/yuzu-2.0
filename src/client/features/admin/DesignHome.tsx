@@ -2,7 +2,7 @@
 // （UI 工作台、对客导览）各一张卡片，加上平板菜单的品牌英文字体生效了没有。素材库、官网在后面两批加进来。
 
 import { Link } from 'react-router';
-import { ArrowRight, Map as MapIcon, PenTool, Type, type LucideIcon } from 'lucide-react';
+import { ArrowRight, Images, Map as MapIcon, PenTool, Type, type LucideIcon } from 'lucide-react';
 import { ADMIN_SECTIONS, boardSections, type AdminSection } from '@shared/admin';
 import { useCan } from '../../lib/session';
 import { Card, SectionTitle } from '../../components/ui';
@@ -10,6 +10,7 @@ import { BrandFontNotice } from '../emenu/BrandFontNotice';
 import { AdminPage, useAdminSections } from './AdminShell';
 
 const CARDS: Partial<Record<AdminSection, { icon: LucideIcon; hint: string }>> = {
+  library: { icon: Images, hint: '字体、图片、视频存在这里；每个用途（平板菜单字体、门户横幅、大屏视频……）选一份当前用的，一点就换、随时切回' },
   studio: { icon: PenTool, hint: '平板菜单、员工食堂手机端的版面：拖、点、改颜色与字体，预览、检查、发布、回滚' },
   guide: { icon: MapIcon, hint: '对客导览图的区域色块与设施图标、门店大屏轮播' },
 };
@@ -53,7 +54,9 @@ export function DesignHome() {
                 <Type className="size-4 text-pine" /> 品牌字体
               </span>
             </SectionTitle>
-            <p className="mt-1 mb-3 text-[12.5px] text-ink-3">平板菜单的英文标题用品牌字体 ABC Arizona Flare（授权文件放在门店服务器上，不进代码库）。下一步改成从素材库里选、一键切换。</p>
+            <p className="mt-1 mb-3 text-[12.5px] text-ink-3">
+              平板菜单的英文标题用品牌字体 ABC Arizona Flare（授权文件放在门店服务器上，不进代码库）。在「素材库 → 用途」里换成库里的字体；没设时读服务器上的授权文件。
+            </p>
             <BrandFontNotice />
           </Card>
         )}

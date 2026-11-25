@@ -986,17 +986,20 @@ describe('价目表录入 第四批：对接收银项目', () => {
     expect(again.body).toEqual(auto.body);
     expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${opKey}?type=price_link`)).body).toMatchObject({ found: true });
 
-    // 后台价目改对接了的项目的价被拒（别的字段照常能改）
+    // 后台价目改对接了的项目的价被拒；8.1.34 起名称、分类也以价目表为准（说明、排序、停用这些照常能改）
     const edit = await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '台 球', category: '娱乐', price: 3500 });
     expect(edit.status).toBe(409);
     expect(edit.body.error.code).toBe('PRICE_LINKED');
+    // 价目表新建的（斯诺克）：名称、分类随价目表同步，这里改名被拒
+    const managed = keyOf('斯诺克')!;
+    const [mp] = (await ctx.sql<{ price: number }[]>`SELECT price FROM service_item_prices WHERE item_id = ${managed} ORDER BY tier LIMIT 1`) as unknown as [{ price: number }];
+    const renameRefused = await api(ctx.app, ctx.owner, 'PUT', `/api/items/${managed}`, { name: '桌上斯诺克', category: '娱乐', price: Number(mp.price) });
+    expect(renameRefused.body.error?.code).toBe('PRICE_LINKED');
+    expect(renameRefused.body.error?.message).toContain('名称、分类');
+    // 门店原有、后来对接上的（台 球）：价目表不改它的名称、分类，这里照常能改（Codex 审查：不然两边都改不了）；改价照旧被拒
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '桌球', category: '娱乐', price: 3900 })).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '台 球', category: '娱乐', price: 3900 })).status).toBe(200);
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${pool}`, { name: '台 球', category: '娱乐', price: 3900, note: '按小时' })).status).toBe(200);
-    // 价目清单导入改到它的价也整份拒绝（预检就报出来）
-    const csv = await api(ctx.app, ctx.owner, 'POST', '/api/items/import', {
-      rows: [{ category: '按摩', name: '瑜伽泰式', durationMinutes: null, gender: null, prices: [{ tier: 'standard', price: 52000 }] }],
-      dryRun: true,
-    });
-    expect(csv.body.error?.code, JSON.stringify(csv.body)).toBe('PRICE_LINKED');
 
     // 前台挂账按收银项目取价 = 价目表的价
     await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'P', from: 1, to: 2, width: 3, zone: 'male' });
@@ -1032,6 +1035,11 @@ describe('价目表录入 第四批：对接收银项目', () => {
     expect(l1.status, JSON.stringify(l1.body)).toBe(200);
     expect(l1.body).toMatchObject({ linked: 1, unlinked: 1, synced: [{ itemId: snooker1, changed: true }] });
     expect(await tiers(snooker1)).toEqual({ standard: 9900 });
+    // 价目表新建的那个斯诺克被换下来、不再对接（Codex 审查）：接口说它没对接着，名称、分类照常能改，不再按「来源是价目表」锁着
+    const items = (await api(ctx.app, ctx.owner, 'GET', '/api/catalog')).body.items as { id: number; catalogManaged: boolean; catalogLinked: boolean }[];
+    expect(items.find((i) => i.id === managed)).toMatchObject({ catalogManaged: true, catalogLinked: false });
+    expect(items.find((i) => i.id === snooker1)).toMatchObject({ catalogManaged: false, catalogLinked: true });
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/items/${managed}`, { name: '斯诺克（旧）', category: '娱乐', price: Number(mp.price) })).status).toBe(200);
     expect((await link({ entryKey: snookerKey, itemId: snooker2 })).body).toMatchObject({ linked: 1, unlinked: 1 });
     expect(await tiers(snooker2)).toEqual({ standard: 9900 });
     const taken = await link({ entryKey: snookerKey, itemId: yoga });
@@ -1249,7 +1257,7 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     expect(priceCategoryOf(p.entries.find((e) => e.name === 'spa房')!).code).toBe(cat('spa房').code);
   });
 
-  it('切换生效后每一项都有收银项目（服务费、房型除外，待定价的不建）；前台按价目表的分类切换；停用跟着走；补价后建出来', async () => {
+  it('切换生效后每一项都有收银项目（服务费、房型、门票除外，待定价的不建）；前台按价目表的分类切换；停用跟着走；补价后建出来', async () => {
     // 从一家还没有收银项目的门店开始（前面的用例建过同名的）
     await ctx.sql`DELETE FROM price_catalog_links`;
     await ctx.sql`UPDATE service_items SET active = false, catalog_managed = false, catalog_key = NULL`;
@@ -1267,12 +1275,14 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
       SELECT id, name, category, active, catalog_category_code AS code, catalog_category_name AS cat_name, technician_required, duration_minutes, station_id
       FROM service_items WHERE catalog_managed ORDER BY catalog_sort, id`;
     const byName = (n: string) => managed.find((m) => m.name === n);
-    // 门票 4 + 夜间票 1 + 餐票 4 + 娱乐 8 + 菜品 4（2 楼零点两道待定价不建）+ 按摩 10；服务费、房间不建
-    expect(managed.filter((m) => m.active)).toHaveLength(4 + 1 + 4 + 8 + 4 + 10);
+    // 餐票 4 + 娱乐 8 + 菜品 4（2 楼零点两道待定价不建）+ 按摩 10；服务费、房间不建；
+    // 门票、夜间票 8.1.34 起也不建（门票费按「门票」票种结账，再建一个能挂单的项目会重复收费）
+    expect(managed.filter((m) => m.active)).toHaveLength(4 + 8 + 4 + 10);
     expect(byName('服务费')).toBeUndefined();
+    expect(byName('12H 不含餐')).toBeUndefined();
     expect(byName('spa房')).toBeUndefined();
     expect(byName('沙姜炒鸡')).toBeUndefined();
-    expect(byName('12H 不含餐')).toMatchObject({ code: 'store.ticket', catName: '门票', category: '入场', durationMinutes: 720 });
+    expect(byName('早餐')).toMatchObject({ code: 'store.meal', catName: '餐票', category: '餐饮' });
     expect(byName('古法中式')).toMatchObject({ code: 'massage.01', catName: '康疗', category: '康疗', technicianRequired: true, durationMinutes: 80 });
     expect(byName('生滚牛肉粥')!.stationId).not.toBeNull();
     const tiers = async (id: number) =>
@@ -1282,17 +1292,18 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
 
     // 前台取的收银项目带分类；分类切换按价目表的名称与顺序
     const catalog = (await api(ctx.app, ctx.clerk, 'GET', '/api/catalog')).body as Catalog;
-    const ticket = catalog.items.find((i) => i.name === '12H 不含餐')!;
-    expect(ticket.catalogCategory).toMatchObject({ code: 'store.ticket', name: '门票', group: '门店价格' });
+    const ticket = catalog.items.find((i) => i.name === '早餐')!;
+    expect(ticket.catalogCategory).toMatchObject({ code: 'store.meal', name: '餐票', group: '门店价格' });
     const tabs = itemCategoryTabs(catalog.items.filter((i) => i.catalogCategory));
-    expect(tabs.map((t) => t.label).slice(0, 4)).toEqual(['门票', '夜间票', '餐票', '畅玩卷']);
-    expect(tabs.find((t) => t.label === '门票')!.count).toBe(4);
+    expect(tabs.map((t) => t.label).slice(0, 2)).toEqual(['餐票', '畅玩卷']);
+    expect(tabs.find((t) => t.label === '门票')).toBeUndefined();
+    expect(tabs.find((t) => t.label === '餐票')!.count).toBe(4);
     expect(tabs.find((t) => t.label === '康疗')!.count).toBe(2);
-    expect(itemCategoryKey(ticket)).toBe('store.ticket');
+    expect(itemCategoryKey(ticket)).toBe('store.meal');
     // 第五批：点单搜项目——名称或价目表编号（不分大小写、不管空格）
     const gufa = catalog.items.find((i) => i.name === '古法中式')!;
     expect(gufa.catalogCode).toBe('1');
-    expect(matchesItemSearch(ticket, '12h不含')).toBe(true);
+    expect(matchesItemSearch(ticket, '早 餐')).toBe(true);
     expect(matchesItemSearch(gufa, '1')).toBe(true);
     expect(matchesItemSearch(gufa, '泰式')).toBe(false);
     // 第二批：房态中心登记（康美部）只列要技师的、房间 / 大堂做的板块，按表格顺序；助浴、护理在浴区，不在这里列（PC22）
@@ -1320,10 +1331,10 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     expect(itemCategoryKey(lunch)).not.toBe(itemCategoryKey(dinner));
     expect(itemCategoryTabs(fromCatalog).map((t) => t.label)).toEqual(['生滚粥', '午餐 · 中式零点', '晚餐 · 中式零点']);
 
-    // 前台挂一张门票：按价目表的价
+    // 前台挂一份早餐：按价目表的价
     await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'K', from: 1, to: 2, width: 3, zone: 'male' });
     const visit = (await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: 'K001', zone: 'male' }] })).body.visits[0].id as number;
-    const charge = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${visit}/charges`, { clientKey: randomUUID(), lines: [{ itemId: ticket.id, quantity: 1 }], expectedTotal: 49900 });
+    const charge = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${visit}/charges`, { clientKey: randomUUID(), lines: [{ itemId: ticket.id, quantity: 1 }], expectedTotal: 9900 });
     expect(charge.status, JSON.stringify(charge.body)).toBe(200);
 
     // 停用价目表的一项：收银项目跟着停用；启用回来
@@ -1344,7 +1355,8 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
     // 第四批：分类核对——能卖的与点单页上的逐个分类对得上；服务费、房间不落库；待定价的不算能卖
     const checks = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/price-catalog/category-checks')).body as PriceCategoryCheck[];
     const check = (name: string, group?: string) => checks.find((c) => c.name === name && (!group || c.group === group))!;
-    expect(check('门票')).toMatchObject({ code: 'store.ticket', entries: 4, sellable: 4, items: 4 });
+    // 门票不落库（8.1.34：按「门票」票种结账），和服务费、房间一样不算点单页上的项目
+    expect(check('门票')).toMatchObject({ code: 'store.ticket', entries: 4, sellable: 0, items: null });
     expect(check('服务费')).toMatchObject({ entries: 1, sellable: 0, items: null });
     expect(check('spa房')).toMatchObject({ items: null });
     expect(check('中式零点', '2楼零点')).toMatchObject({ entries: 2, sellable: 1, items: 1 });
@@ -1359,7 +1371,7 @@ describe('价目表重做 第一批：分类与落库到收银项目', () => {
 
     // 已开的单照旧显示原名称、原价
     const [line] = await ctx.sql<{ name: string; unitPrice: number }[]>`SELECT name, unit_price FROM bill_lines WHERE item_id = ${ticket.id}`;
-    expect(line).toMatchObject({ name: '12H 不含餐', unitPrice: 49900 });
+    expect(line).toMatchObject({ name: '早餐', unitPrice: 9900 });
   });
 
   it('PC28：门店原有的同名收银项目对上以后补齐设置（需要技师、时长、专业 / 优选两档、出品档口），房态中心登记与点单页看得到；别的门店定了本店价的档留着；没有档口时分类核对写明原因', async () => {

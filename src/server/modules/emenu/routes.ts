@@ -9,6 +9,7 @@ import { readSnapshot } from '../../db';
 import { ctxOf, type Deps } from '../../lib/context';
 import { csvReply } from '../../lib/csv';
 import { notFound } from '../../lib/errors';
+import { currentStoreId } from '../../lib/store-context';
 import { idParam, parse } from '../../lib/validate';
 import {
   createEmenuCategory,
@@ -25,6 +26,8 @@ import {
 import { abandonEmenuOrder, checkEmenuTable, emenuGuest, emenuImage, emenuMenu, emenuOpLookup, placeEmenuOrder, saveEmenuImage } from './core';
 import { clearOrderPin, orderPinStatus, resolveWaiter, setOrderPin } from './pins';
 import { brandFontStatus, readBrandFont } from './fonts';
+import type { BrandFontStatus } from '@shared/emenu-brand-font';
+import { slotVersion } from '../design';
 
 export function registerEmenuRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
@@ -57,7 +60,17 @@ export function registerEmenuRoutes(app: FastifyInstance, deps: Deps) {
   // 授权的品牌英文字体（8.1.5，PP4）：门店服务器的 brand-fonts 目录，只发给能打开菜单的账号；没放（或放的不能用）404，页面照旧用顶替的字体。
   // 2026-11-22（PD6）起 en.woff2、en.woff、en.otf、en.ttf 都认，地址改成不带格式的 /api/emenu/fonts/brand-en；旧地址 en.woff2 留着（还开着的旧页面照常取）。
   // 字体文件可能被换成新的：按文件名、修改时间与大小给 ETag，浏览器每次问一下、没变就 304
+  // 店主 2026-11-24（docs/BOARDS.md 第 4 节）：Design 素材库的用途「平板菜单 · 英文品牌字体」设了就用它，没设照旧读 brand-fonts 目录
+  // 素材库的字体（Codex 安全审查）：这里只按版本号给 ETag、没变 304，变了转到 /api/design/files/:id 取——
+  // 那里有下载占位（全店、每人同时几个）与 1MB 一段的分段读，这个地址不把整份字体读进内存
   const brandFont = async (req: FastifyRequest, reply: FastifyReply) => {
+    const slot = await slotVersion(deps.sql, 'emenu.font.en');
+    if (slot) {
+      const etag = `"design-${slot.versionId}"`;
+      reply.header('cache-control', 'private, no-cache').header('etag', etag);
+      if (req.headers['if-none-match'] === etag) return reply.code(304).send();
+      return reply.redirect(`/api/design/files/${slot.versionId}`, 302);
+    }
     const font = await readBrandFont(deps.config.brandFontPath);
     if (!font) throw notFound('门店服务器上还没有放能用的授权英文字体（brand-fonts/en.woff2 或 en.ttf 等），页面用顶替的字体');
     reply.header('cache-control', 'private, no-cache').header('etag', font.etag);
@@ -68,7 +81,13 @@ export function registerEmenuRoutes(app: FastifyInstance, deps: Deps) {
   app.get('/api/emenu/fonts/brand-en', { preHandler: fontGuard }, brandFont);
   app.get('/api/emenu/fonts/en.woff2', { preHandler: fontGuard }, brandFont);
   // 后台：品牌字体生效了没有（店主 2026-11-22：放没放对一眼看得到）
-  app.get('/api/admin/emenu/brand-font', { preHandler: guardAny('emenu.manage', 'studio.edit') }, async () => brandFontStatus(deps.config.brandFontPath));
+  app.get('/api/admin/emenu/brand-font', { preHandler: guardAny('emenu.manage', 'studio.edit') }, async (): Promise<BrandFontStatus> => {
+    const [slot] = await deps.sql<{ name: string; versionNo: number }[]>`
+      SELECT a.name, v.version_no FROM (SELECT version_id FROM design_slot_assignments WHERE store_id = ${currentStoreId()} AND slot = 'emenu.font.en' ORDER BY id DESC LIMIT 1) x
+      JOIN design_asset_versions v ON v.id = x.version_id JOIN design_assets a ON a.id = v.asset_id`;
+    if (slot) return { state: 'active', file: null, source: 'library', libraryName: `${slot.name}（第 ${slot.versionNo} 版）`, files: [] };
+    return brandFontStatus(deps.config.brandFontPath);
+  });
 
   // ── 后台「电子菜单」 ──
   app.get('/api/admin/emenu', { preHandler: manage }, async () => readSnapshot(sql, emenuAdmin));

@@ -142,7 +142,7 @@ export interface ProtectionStats {
 export interface Protection {
   /** 第一道（在读会话之前）：访问网段、过载保护，并记下同时在处理的请求数 */
   gate: (req: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply | undefined>;
-  /** 处理完（onResponse）或对方断开（onRequestAbort）：同时在处理的请求数减一（每个请求只减一次） */
+  /** 处理完（onResponse）或对方断开（onRequestAbort；连接关闭时 gate 里也挂了一次）：同时在处理的请求数减一（每个请求只减一次） */
   done: (req: FastifyRequest) => Promise<void>;
   /** 第二道（读完会话之后）：频率限制——登录了的按会话，没登录的按 IP */
   limit: (req: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply | undefined>;
@@ -208,6 +208,11 @@ export function createProtection(cfg: ProtectionConfig): Protection {
       }
       inFlight += 1;
       counted.add(req);
+      // 连接一断也减（Codex 安全审查）：边读边送的回应（素材文件、导出）在送到一半时被取消，onResponse 不触发、onRequestAbort 也不算
+      // （请求本身已经收完），只靠那两个钩子会漏减、攒多了所有接口都 503。每个请求只减一次（counted）
+      reply.raw.once('close', () => {
+        if (counted.delete(req)) inFlight -= 1;
+      });
       return undefined;
     },
 

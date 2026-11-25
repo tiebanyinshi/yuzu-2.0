@@ -4,7 +4,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { EmenuCategoryView } from '@shared/emenu';
 import { EMENU_HEADER_TEMPLATE, EMENU_TAG_W, slotDefault } from '@shared/studio';
-import { loadBrandFont } from './brandFont';
+import { onBrandFontChange } from './brandFont';
 import { namePair, useLang, useM, type Lang } from './i18n';
 import langEn from './assets/lang-en.png';
 import langZh from './assets/lang-zh.png';
@@ -70,9 +70,11 @@ function useFontsLoaded(): number {
     };
     fonts.addEventListener?.('loadingdone', again);
     void fonts.ready.then(again);
-    void loadBrandFont().then(again);
+    // 品牌英文字体由 useBrandFont 按素材库用途的版本取；取到、换了、拿掉都重新量（Codex 审查：换字体不用整页刷新）
+    const off = onBrandFontChange(again);
     return () => {
       live = false;
+      off();
       fonts.removeEventListener?.('loadingdone', again);
     };
   }, []);
