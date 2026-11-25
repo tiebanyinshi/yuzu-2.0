@@ -288,5 +288,17 @@ describe('员工培训', () => {
     expect(e.done.status, JSON.stringify(e.done.body)).toBe(200);
     const bad = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${e.done.body.fileId}/sheet`);
     expect(bad.body.error?.code, JSON.stringify(bad.body)).toBe('TRAINING_SHEET_INVALID');
+    // 一格 32 MB 的字（压缩后几十 KB）：解压超过 8 MB 就拒绝（Codex 安全审查 57dd2f6）
+    const huge = patchSheet(base, (x) => x.replace('>1<', `>${'字'.repeat(11 * 1024 * 1024)}<`));
+    expect(huge.length).toBeLessThan(2 * 1024 * 1024);
+    const h = await upload(huge, '大格子.xlsx', XLSX_MIME, { folderId: pub.id });
+    expect(h.done.status, JSON.stringify(h.done.body)).toBe(200);
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${h.done.body.fileId}/sheet`)).body.error?.code).toBe('TRAINING_SHEET_INVALID');
+    // 一格 5000 个字：页面里截到 2000 个字，标表格太大
+    const long = patchSheet(base, (x) => x.replace('>1<', `>${'长'.repeat(5000)}<`));
+    const l = await upload(long, '长格子.xlsx', XLSX_MIME, { folderId: pub.id });
+    const ls = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${l.done.body.fileId}/sheet`);
+    expect(ls.body.sheets[0].rows[1][0]).toHaveLength(2001);
+    expect(ls.body.sheets[0].truncated).toBe(true);
   });
 });

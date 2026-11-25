@@ -209,7 +209,7 @@ function SheetView({ fileId }: { fileId: number }) {
           )}
         </div>
       </div>
-      {sheet.truncated && <p className="text-[12.5px] text-ink-3">表格太大，页面里只显示前 500 行、40 列；完整的请下载查看。</p>}
+      {sheet.truncated && <p className="text-[12.5px] text-ink-3">表格太大，页面里只显示一部分（前 500 行、40 列，每格最多 2000 个字）；完整的请下载查看。</p>}
     </div>
   );
 }

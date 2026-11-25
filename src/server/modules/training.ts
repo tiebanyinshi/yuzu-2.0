@@ -607,6 +607,14 @@ function streamBlob(db: Db, sha256: string, start: number, end: number): Readabl
 const SHEET_MAX_BYTES = 20 * 1024 * 1024;
 const SHEET_MAX_ROWS = 500;
 const SHEET_MAX_COLS = 40;
+/**
+ * 防撑爆（Codex 安全审查 57dd2f6）：解压后整份最多 8 MB（工作表、共享字符串都算）、最多读 20 张表、
+ * 每格最多 2000 个字、整份预览最多 200 万个字（超了后面的格子留空、标「表格太大」）
+ */
+const SHEET_MAX_UNZIPPED = 8 * 1024 * 1024;
+const SHEET_MAX_SHEETS = 20;
+const SHEET_MAX_CELL_CHARS = 2000;
+const SHEET_MAX_TOTAL_CHARS = 2_000_000;
 
 async function readBlob(db: Db, sha256: string): Promise<Buffer> {
   const parts = await db<{ data: Buffer }[]>`SELECT data FROM training_blob_chunks WHERE sha256 = ${sha256} ORDER BY seq`;
@@ -622,11 +630,29 @@ async function sheetOf(db: Db, actor: Actor, id: number): Promise<TrainingSheetB
   let book;
   try {
     // maxNodes 限住整份 XML 的结构规模（空行、无关属性也算），免得几 KB 的文件解析出几十万个节点（Codex 审查 e1d8be3，同工资表的读法）
-    book = readXlsx(await readBlob(db, v.sha256), { maxRow: 5000, maxCols: 200, maxCells: 200_000, maxNodes: 300_000 });
+    book = readXlsx(await readBlob(db, v.sha256), {
+      maxRow: 5000,
+      maxCols: 200,
+      maxCells: 200_000,
+      maxNodes: 300_000,
+      maxTotal: SHEET_MAX_UNZIPPED,
+      maxSheets: SHEET_MAX_SHEETS,
+    });
   } catch (e) {
     if (e instanceof XlsxReadError) throw unprocessable('TRAINING_SHEET_INVALID', `这份 Excel 在页面里打不开（${e.message}），请下载后查看`);
     throw e;
   }
+  let budget = SHEET_MAX_TOTAL_CHARS;
+  let clipped = false;
+  const cellText = (value: string) => {
+    let t = value.length > SHEET_MAX_CELL_CHARS ? ((clipped = true), `${value.slice(0, SHEET_MAX_CELL_CHARS)}…`) : value;
+    if (t.length > budget) {
+      clipped = true;
+      t = '';
+    }
+    budget -= t.length;
+    return t;
+  };
   return {
     sheets: book.sheets.map((sh) => {
       const rowNos = [...sh.rows.keys()].sort((a, b) => a - b);
@@ -637,7 +663,7 @@ async function sheetOf(db: Db, actor: Actor, id: number): Promise<TrainingSheetB
       const rows: string[][] = [];
       for (let r = 1; r <= maxRow; r++) {
         const cells = sh.rows.get(r);
-        rows.push(Array.from({ length: cols }, (_, c) => cells?.get(c)?.value ?? ''));
+        rows.push(Array.from({ length: cols }, (_, c) => cellText(cells?.get(c)?.value ?? '')));
       }
       return {
         name: sh.name,
@@ -647,7 +673,7 @@ async function sheetOf(db: Db, actor: Actor, id: number): Promise<TrainingSheetB
           .filter((m) => m.r1 >= 1 && m.c1 >= 0 && m.r1 <= maxRow && m.c1 < cols)
           .map((m) => ({ r1: m.r1, c1: m.c1, r2: Math.min(m.r2, maxRow), c2: Math.min(m.c2, cols - 1) }))
           .filter((m) => m.r2 > m.r1 || m.c2 > m.c1),
-        truncated: (rowNos.at(-1) ?? 0) > SHEET_MAX_ROWS || maxCol > SHEET_MAX_COLS,
+        truncated: clipped || (rowNos.at(-1) ?? 0) > SHEET_MAX_ROWS || maxCol > SHEET_MAX_COLS,
       };
     }),
   };

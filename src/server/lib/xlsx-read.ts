@@ -44,8 +44,15 @@ export function unzip(buf: Buffer, maxTotal = MAX_TOTAL): Map<string, Buffer> {
     const body = buf.subarray(start, start + csize);
     let data: Buffer;
     if (method === 0) data = Buffer.from(body);
-    else if (method === 8) data = inflateRawSync(body, { maxOutputLength: MAX_ENTRY });
-    else throw new XlsxReadError(`不支持的压缩方式（${method}）`);
+    // 解压时就按剩下的额度封顶：额度小的（如培训的 Excel 预览）不会先解出 64 MB 再判太大（Codex 安全审查 57dd2f6）
+    else if (method === 8) {
+      try {
+        data = inflateRawSync(body, { maxOutputLength: Math.max(1, Math.min(MAX_ENTRY, maxTotal - total + 1)) });
+      } catch (e) {
+        if ((e as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE') throw new XlsxReadError('Excel 文件解压后太大');
+        throw e;
+      }
+    } else throw new XlsxReadError(`不支持的压缩方式（${method}）`);
     total += data.length;
     if (total > maxTotal) throw new XlsxReadError('Excel 文件解压后太大');
     out.set(name, data);
