@@ -49,7 +49,7 @@
 
 **复用（不改结构）**：`staff`、`staff_profiles`、`org_departments`、`oa_shifts`、`oa_attendance_groups`、`oa_group_members`、`oa_locations`、`oa_punches`、`oa_attendance_daily`、`oa_attendance_covers`、`oa_approval_*`、`oa_notifications`、`oa_im_*`、`oa_face_enrollments`、`oa_leave_*`、`oa_payslips`、`training_*`。
 
-**新建 / 加列**（迁移号先在 ROADMAP 第 7 节登记，预计 `290`–`299`）：
+**新建 / 加列**（迁移号先在 ROADMAP 第 7 节登记，预计 `291`–`299`）：
 
 | 批次 | 迁移 | 内容 |
 |---|---|---|
@@ -111,4 +111,14 @@
 - **登录**：从 `/oa` 被送到登录页的（扫码打开）写「员工登录」、品牌区压矮；手机上不自动弹键盘；不是 https 时提示「拿不到定位、开不了摄像头」；没登录就打开的不再写「登录已过期」（原来任何 401 都写，`src/client/App.tsx`）。登录后回到 `/oa`（原有的「回到原页面」）。
 - **扫码入口**：「WCP 设置 → 组织架构 → 手机端入口」生成指向 `<https 域名>/oa` 的二维码（默认取当前页面的 https 地址，否则 `https://sys.yuzusystem.xyz`），只认 https；在浏览器里画，不存服务器。`MobileEntryDialog.tsx`；二维码部件与 Design 工作台共用（`src/client/components/QrCode.tsx`）。
 - **没有迁移、没有新接口**。浏览器用例 `e2e/oa-mobile.spec.ts`（360 × 800 微信内置浏览器 + 门店电脑）。
+
+### 第 2 批：考勤打卡主线（2026-11-25）
+
+- **迁移**（预留 `291`–`299`，`290` 已由 8.1.37 使用）：`291_oa_schedule_publish.sql`（发布批次表 `oa_schedule_publishes`、`oa_schedules` 加发布状态与草稿列 `status` / `pending_delete` / `draft_consecutive` / `published_at` / `published_by` / `publish_id`，操作类型追加 `oa_schedule_publish`）；`292_oa_schedule_grants.sql`（排班授权表 `oa_schedule_grants`，操作类型追加 `oa_schedule_grant`）。回滚脚本见 `docs/rollback/291_*.down.sql`、`292_*.down.sql`。
+- **排班「发布」（EO5）**：单格与批量排班均先存草稿，不发通知、不影响员工打卡 / 每日结算 / 补卡请假 / 「我的排班」（发布前保留原已发布班次）；`POST /api/oa/attendance/schedule/publish`（带操作编号幂等与确认作废）按日期段发布，仅向排班有变动的员工推送「排班已发布」站内通知，并留发布历史与审计（`oa_schedule_published`）。PC 端「考勤设置 → 排班」展示待发布标记、发布按钮与确认对话框、最近发布记录。
+- **排班授权（需求 5.2）**：统一服务端鉴权 `resolveScheduleAccess`（`src/server/modules/oa/schedule-grants.ts`），所有排班读、写、批量、发布先过它；考勤管理员与经核实的部门经理（本部门及下级部门树）内置排班与授权权；`GET /api/oa/attendance/schedule-access`、`GET/POST/DELETE /api/oa/attendance/schedule-grants` 支持查看 / 编排 / 发布三项权限点（**不含授权权、不可转授**）、五类范围（考勤组 / 部门 / 部门及下级 / 指定员工 / 全公司，部门经理授出带 `scope_cap_depts` 上限防越权）、有效期（默认一年）、被授权人岗位快照（**调岗 / 离职即自动失效**）、撤销与全程审计（`oa_schedule_grant_created` / `oa_schedule_grant_revoked`）。PC 端「考勤设置 → 排班授权」提供授权管理页。
+- **手机排班查看与排班管理**：`/oa/schedule`「我的排班」月历支持点选某天在下方看完整班次、时间与跨天/次日 00:00 夜班提示，有排班权限的员工顶部直达 `/oa/schedule/manage`（工作台宫格同步出现「排班管理」）；手机排班管理页（`MobileScheduleManagePage.tsx`）与 PC 共用同一套排班和发布接口，提供「按人 / 按天」单列卡片视图、保存草稿与发布排班，360 × 800 零横向滚动。
+- **打卡卡片接上「该打什么卡」**：`GET /api/oa/attendance/today` 返回 `nextPunch`（`src/shared/oa.ts` `nextPunchHint`，与 `matchPunch` 同口径，支持跨天班、次日 00:00 夜班前一日 22:00 开窗、连班交接先下班后上班、早退重打更新与围栏外外勤提示），接入工作台顶部 `TodayCard` 与 `PunchPage`。
+- **回归用例**：新增 `tests/oa-schedule-grants.test.ts`（草稿/发布隔离、发布推送与幂等、五类范围授权、不可转授、调岗失效、跨部门防提权、撤销审计）、`tests/oa-three-shifts.test.ts`（24 小时三班倒早/晚/夜班窗口、跨午夜下班卡、连班交接、`nextPunch` 与日结归属回归），并扩展 `e2e/oa-schedule.spec.ts` 与 `e2e/oa-mobile.spec.ts`。
+
 

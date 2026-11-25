@@ -40,6 +40,7 @@ import { FaceReviewTab } from './FaceReviewTab';
 import { HolidayTab } from './HolidayTab';
 import { LeaveTab } from './LeaveTab';
 import { PunchRecordsTab } from './PunchRecordsTab';
+import { ScheduleGrantsTab } from './ScheduleGrantsTab';
 import { ScheduleTab } from './ScheduleTab';
 
 const SETUP_KEY = ['oa', 'attendance-setup'] as const;
@@ -48,6 +49,7 @@ const TABS = [
   { key: 'locations', label: <span data-testid="att-tab-locations">打卡点</span> },
   { key: 'groups', label: <span data-testid="att-tab-groups">考勤组</span> },
   { key: 'schedule', label: <span data-testid="att-tab-schedule">排班</span> },
+  { key: 'grants', label: <span data-testid="att-tab-grants">排班授权</span> },
   { key: 'punches', label: <span data-testid="att-tab-punches">打卡记录</span> },
   { key: 'results', label: <span data-testid="att-tab-results">考勤结果</span> },
   { key: 'monthly', label: <span data-testid="att-tab-monthly">考勤月报</span> },
@@ -55,9 +57,10 @@ const TABS = [
   { key: 'holidays', label: <span data-testid="att-tab-holidays">节假日</span> },
   { key: 'faces', label: <span data-testid="att-tab-faces">人脸审核</span> },
 ] as const;
-/** 只有「查看本部门的排班与考勤」的部门负责人：只有「排班」「打卡记录」两个页签，只看 */
+/** 部门负责人（hr.attendanceDept）：可编排/发布本部门及下级排班、管理排班授权；打卡记录、考勤结果与月报只看 */
 const DEPT_TABS = [
   { key: 'schedule', label: <span data-testid="att-tab-schedule">排班</span> },
+  { key: 'grants', label: <span data-testid="att-tab-grants">排班授权</span> },
   { key: 'punches', label: <span data-testid="att-tab-punches">打卡记录</span> },
   { key: 'results', label: <span data-testid="att-tab-results">考勤结果</span> },
   { key: 'monthly', label: <span data-testid="att-tab-monthly">考勤月报</span> },
@@ -65,6 +68,7 @@ const DEPT_TABS = [
 
 export function AttendanceSetupSection() {
   const manage = useCan()('hr.attendance');
+  const session = useSession();
   const qc = useQueryClient();
   return (
     <AdminPage
@@ -73,21 +77,21 @@ export function AttendanceSetupSection() {
       tabs={manage ? TABS : DEPT_TABS}
       description={
         manage
-          ? '班次（上下班时间、跨天班、打卡窗口）、打卡点（经纬度与有效半径）、考勤组（用哪几个打卡点、要不要 GPS / 人脸、成员）、排班、打卡记录、考勤结果、考勤月报、假种与假期余额、人脸审核。排班与打卡都按这里的设置；不删只停用。'
-          : '本部门员工的排班、打卡记录、考勤结果与考勤月报（只看）。'
+          ? '班次（上下班时间、跨天班、打卡窗口）、打卡点（经纬度与有效半径）、考勤组（用哪几个打卡点、要不要 GPS / 人脸、成员）、排班与发布、排班授权、打卡记录、考勤结果、考勤月报、假种与假期余额、人脸审核。排班发布后生效；不删只停用。'
+          : '本部门及下级员工的排班、发布与排班授权；打卡记录、考勤结果与考勤月报（只看）。'
       }
     >
-      {/* 新建班次、打卡点、考勤组与保存排班没收到结果的：查回、按原内容重新提交或确认作废 */}
-      {manage && (
-        <ErpPendingPanel
-          types={['oa_attendance_setup', 'oa_schedule_save']}
-          className="mb-4 space-y-2"
-          onFound={() => {
-            void qc.invalidateQueries({ queryKey: SETUP_KEY });
-            void qc.invalidateQueries({ queryKey: ['oa', 'schedule'] });
-          }}
-        />
-      )}
+      {/* 新建班次、打卡点、考勤组、排班保存/发布与排班授权没收到结果的：查回、按原内容重新提交或确认作废 */}
+      <ErpPendingPanel
+        types={manage ? ['oa_attendance_setup', 'oa_schedule_save', 'oa_schedule_publish', 'oa_schedule_grant'] : ['oa_schedule_save', 'oa_schedule_publish', 'oa_schedule_grant']}
+        filter={manage ? undefined : (op) => !op.staffId || op.staffId === session.staff.id}
+        className="mb-4 space-y-2"
+        onFound={() => {
+          void qc.invalidateQueries({ queryKey: SETUP_KEY });
+          void qc.invalidateQueries({ queryKey: ['oa', 'schedule'] });
+          void qc.invalidateQueries({ queryKey: ['oa', 'schedule-grants'] });
+        }}
+      />
       <SectionBody manage={manage} />
     </AdminPage>
   );
@@ -100,6 +104,7 @@ function SectionBody({ manage }: { manage: boolean }) {
     queryFn: () => api.get<AttendanceSetup>('/api/oa/attendance/setup'),
     enabled: manage && (tab === 'shifts' || tab === 'locations' || tab === 'groups'),
   });
+  if (tab === 'grants') return <ScheduleGrantsTab />;
   if (tab === 'punches') return <PunchRecordsTab />;
   if (tab === 'results') return <AttendanceResultsTab />;
   if (tab === 'monthly') return <AttendanceMonthlyTab />;

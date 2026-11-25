@@ -135,8 +135,13 @@ export function ScheduleBatchDialog({
         body: { ...body, clientKey: key, revision: p.revision },
         summary: `${group.name} 批量排班 · ${staffIds.length} 人 × ${dates.length} 天「${shift.name}」`,
         staffName: session.staff.displayName,
+        staffId: session.staff.id,
       });
-      toast({ tone: 'success', title: `批量排班已保存：改了 ${r.changed ?? 0} 格`, body: r.skipped.length ? `跳过 ${r.skipped.length} 格（请假、已过等），见预览里的明细` : undefined });
+      toast({
+        tone: 'success',
+        title: `批量排班已保存：改了 ${r.changed ?? 0} 格`,
+        body: `${r.skipped.length ? `跳过 ${r.skipped.length} 格（请假、已过等）；` : ''}草稿需点「发布排班」后才生效并通知员工`,
+      });
       onDone();
     } catch (e) {
       if (e instanceof UncertainError) {

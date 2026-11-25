@@ -87,7 +87,7 @@ type RequestOptions = { timeoutMs?: number; keepalive?: boolean };
  * 最多再发 3 次、总共 12 秒内；断网、超时、5xx 的写请求不自动重发（照旧「结果待确认」，由员工决定）。
  */
 export async function request<T>(
-  method: 'GET' | 'POST' | 'PUT',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   url: string,
   body?: unknown,
   /** keepalive：页面关掉、切走时发的请求也让浏览器发完（草稿自动保存用；请求体超过 64 KB 时浏览器会拒绝，当作没发出去） */
@@ -107,7 +107,7 @@ export async function request<T>(
   }
 }
 
-async function requestOnce<T>(method: 'GET' | 'POST' | 'PUT', url: string, body: unknown, options: RequestOptions): Promise<T> {
+async function requestOnce<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, body: unknown, options: RequestOptions): Promise<T> {
   // 已经判定连不上：当场再问一次，问不到就不发（明确告诉员工没发出去，不等满 15 秒）
   if (!(await ensureReachable())) throw new OfflineError();
   const controller = new AbortController();
@@ -173,6 +173,7 @@ export const api = {
   get: <T>(url: string) => request<T>('GET', url),
   post: <T>(url: string, body?: unknown, options?: { timeoutMs?: number }) => request<T>('POST', url, body ?? {}, options),
   put: <T>(url: string, body: unknown, options?: { timeoutMs?: number; keepalive?: boolean }) => request<T>('PUT', url, body, options),
+  delete: <T>(url: string, body?: unknown, options?: { timeoutMs?: number }) => request<T>('DELETE', url, body, options),
 };
 
 export function errorMessage(error: unknown): string {

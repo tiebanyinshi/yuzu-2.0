@@ -100,7 +100,7 @@ export async function login(app: FastifyInstance, username: string, password = P
   return `yuzu_sid=${cookie!.value}`;
 }
 
-export async function api<T = any>(app: FastifyInstance, cookie: string | null, method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown): Promise<{ status: number; body: T }> {
+export async function api<T = any>(app: FastifyInstance, cookie: string | null, method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, payload?: unknown): Promise<{ status: number; body: T }> {
   const res = await app.inject({
     method,
     url,
@@ -401,6 +401,8 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '271_mall_skus.sql',
   '280_training.sql',
   '290_dining_ledger.sql',
+  '291_oa_schedule_publish.sql',
+  '292_oa_schedule_grants.sql',
   '300_refund_store.sql',
   '301_designated_to_end.sql',
 ];

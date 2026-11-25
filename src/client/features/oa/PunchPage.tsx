@@ -255,6 +255,12 @@ export function PunchPage() {
                 </div>
               </div>
               {!needFix && <p className="mt-2 text-[12px] text-ink-3">这个考勤组不要求定位，取到了也会记下。</p>}
+              {data!.nextPunch && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-line bg-paper px-3 py-2 text-[13px]" data-testid="punch-next" data-action={data!.nextPunch.action}>
+                  <Badge tone={needFix && fix && !inRange ? 'ember' : data!.nextPunch.inWindow ? 'pine' : 'lake'}>{needFix && fix && !inRange ? '围栏外 · 可外勤' : data!.nextPunch.label}</Badge>
+                  <span className="min-w-0 flex-1 text-ink-2">{data!.nextPunch.detail}</span>
+                </div>
+              )}
               {error && (
                 <Notice tone="error" className="mt-3" data-testid="punch-error">
                   {error}
@@ -303,7 +309,7 @@ export function PunchPage() {
                 onClick={() => void send({})}
                 data-testid="punch-button"
               >
-                打卡
+                {data!.nextPunch?.inWindow ? data!.nextPunch.label : '打卡'}
               </Button>
               {needFix && !fix && loc.state !== 'locating' && <p className="mt-2 text-center text-[12px] text-ink-3">这个考勤组打卡要定位：取到位置以后才能打。</p>}
               {last && (
