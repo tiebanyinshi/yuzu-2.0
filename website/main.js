@@ -2,7 +2,7 @@
  * 柚子官网的动效（docs/WEBSITE.md）：
  *   · Lenis 平滑滚动，GSAP + ScrollTrigger 驱动滚动动画；
  *   · 首屏「柚子」两个字从水里浮上来；「店里的一天」宽屏时钉住、横着走过五个钟点；
- *   · 「钱按分记」逐字被照亮；四扇门跟着指针微微倾斜；主按钮有一点磁性；收尾的字条一直往左走。
+ *   · 「一行代码，人没写过」逐字被照亮；四扇门跟着指针微微倾斜；主按钮有一点磁性；收尾的字条一直往左走。
  * 脚本或库没加载到时，页面照常显示（藏起来的东西只在 html.js 下才藏，见 styles.css）。
  * 减少动效时：不钉住、不倾斜、不跑字条，水面只画一帧。
  */
@@ -215,7 +215,7 @@
       scrollTrigger: { trigger: '.doors-grid', start: 'top 80%' },
     });
 
-    // ── 钱按分记：逐字被照亮 ──
+    // ── 一行代码，人没写过：逐字被照亮（8.1.43 以前是「钱按分记」） ──
     var fillChars = splitChars(document.querySelector('[data-fill]'));
     if (fillChars.length) {
       gsap.fromTo(
