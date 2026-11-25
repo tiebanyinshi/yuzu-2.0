@@ -14,6 +14,8 @@ import { can } from '@shared/permissions';
 import {
   TRAINING_CHUNK_BYTES,
   TRAINING_FORMATS,
+  TRAINING_IMAGE_MAX_PIXELS,
+  TRAINING_IMAGE_MAX_SIDE,
   TRAINING_MAX_BYTES,
   TRAINING_MAX_CHUNKS,
   TRAINING_DAILY_UPLOADS_PER_STAFF,
@@ -38,6 +40,7 @@ import { writeAudit } from '../lib/audit';
 import { ctxOf, type Actor, type Deps, type OpContext } from '../lib/context';
 import { AppError, badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { hashRequest } from '../lib/idempotency';
+import { imageSize } from '../lib/image-size';
 import { createStreamSlots } from '../lib/stream-slots';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
@@ -506,6 +509,21 @@ async function putChunk(deps: Deps, params: unknown, raw: unknown, actor: Actor)
 }
 
 /** 文件头核对：与声明的类型对得上（Office 新格式是 zip，旧格式是复合文档；视频按 ftyp / EBML 认） */
+/**
+ * 图片在页面里直接显示，像素数要有上限（Codex 安全审查 9b1dd16）：一张最多 4000 万像素、一条边最多 16384 像素，
+ * 读不出宽高的也不收（几百 KB 的图片可以写成上万像素见方，浏览器一打开就要几百 MB 内存）
+ */
+function assertImageSize(mime: string, head: Buffer) {
+  if (trainingViewKind(mime) !== 'image') return;
+  const size = imageSize(mime, head);
+  if (!size) throw unprocessable('TRAINING_UPLOAD_FORMAT', '读不出这张图片的尺寸，请另存为常见的 JPG 或 PNG 再传');
+  if (size.width > TRAINING_IMAGE_MAX_SIDE || size.height > TRAINING_IMAGE_MAX_SIDE || size.width * size.height > TRAINING_IMAGE_MAX_PIXELS)
+    throw unprocessable(
+      'TRAINING_IMAGE_TOO_LARGE',
+      `图片 ${size.width} × ${size.height} 像素太大（最多 ${TRAINING_IMAGE_MAX_PIXELS / 1_000_000} 百万像素、一条边最多 ${TRAINING_IMAGE_MAX_SIDE}），请缩小后再传`,
+    );
+}
+
 function sniffOk(mime: string, head: Buffer): boolean {
   const ascii = (a: number, b: number) => head.subarray(a, b).toString('latin1');
   const zip = head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
@@ -585,11 +603,13 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
     for (let seq = 0; seq < u.chunkCount; seq++) {
       const [c] = await deps.sql<{ data: Buffer }[]>`SELECT data FROM training_upload_chunks WHERE upload_id = ${id} AND seq = ${seq}`;
       if (!c) throw unprocessable('TRAINING_UPLOAD_INCOMPLETE', `第 ${seq + 1} 块不见了，请重新传`);
-      if (seq === 0) head = c.data.subarray(0, 16);
+      // 第一块整块留着：核对文件头、读图片宽高（JPEG 的帧头可能在 EXIF 后面）
+      if (seq === 0) head = c.data;
       hash.update(c.data);
     }
     sha256 = hash.digest('hex');
     if (!sniffOk(u.mime, head!)) throw unprocessable('TRAINING_UPLOAD_FORMAT', `文件内容不是 ${TRAINING_FORMATS[u.mime]!.label}，请确认选对了文件`);
+    assertImageSize(u.mime, head!);
   } catch (e) {
     await release();
     throw e;

@@ -437,4 +437,27 @@ describe('员工培训', () => {
       setTrainingQuotaForTest(null);
     }
   });
+
+  it('图片像素数有上限：写成上万像素见方的小 PNG 登记不了，正常尺寸的照常（Codex 安全审查 9b1dd16）', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const png = (w: number, h: number) => {
+      const ihdr = Buffer.alloc(25);
+      ihdr.writeUInt32BE(13, 0);
+      ihdr.write('IHDR', 4, 'ascii');
+      ihdr.writeUInt32BE(w, 8);
+      ihdr.writeUInt32BE(h, 12);
+      return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), ihdr, Buffer.alloc(200)]);
+    };
+    // 前面的用例留下了没传完的上传，这里不受「同时没传完的」上限影响
+    setTrainingQuotaForTest({ openUploads: 1000, openBytes: 1024 ** 4 });
+    try {
+      const big = await upload(png(12000, 12000), '超大.png', 'image/png', { folderId: pub.id });
+      expect(big.done.status).toBe(422);
+      expect(big.done.body.error.code).toBe('TRAINING_IMAGE_TOO_LARGE');
+      const ok = await upload(png(800, 600), '正常.png', 'image/png', { folderId: pub.id });
+      expect(ok.done.status, JSON.stringify(ok.done.body)).toBe(200);
+    } finally {
+      setTrainingQuotaForTest(null);
+    }
+  });
 });

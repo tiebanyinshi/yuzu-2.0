@@ -147,3 +147,7 @@ export function trainingFileNameProblem(name: string): string | null {
   if (/[\\/\u0000-\u001f]/.test(n)) return '文件名不能带路径或控制字符';
   return null;
 }
+
+/** 培训图片在页面里直接显示：一张最多 4000 万像素、一条边最多 16384 像素（Codex 安全审查 9b1dd16） */
+export const TRAINING_IMAGE_MAX_PIXELS = 40_000_000;
+export const TRAINING_IMAGE_MAX_SIDE = 16384;
