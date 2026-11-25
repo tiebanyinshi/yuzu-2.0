@@ -200,26 +200,33 @@ function streamAfterDictClose(buf: Buffer, closeEnd: number): number {
   return -1;
 }
 
-/** 用原生 C++ `Buffer.indexOf('stream')` 找从 from 开始的下一个真实 `stream` + CR/LF（排除 `endstream`）；没有返回 -1 */
-function findNextRealStream(buf: Buffer, from: number): number {
+/** 用原生 C++ `Buffer.indexOf('stream')` 找从 from 开始下一个紧跟在 `>>` + 空白后的真实 `stream` + CR/LF（排除 `endstream`） */
+function findNextAnchoredStream(buf: Buffer, from: number): { streamIdx: number; closeEnd: number } | null {
   const n = buf.length;
   let p = from;
+  let wsFloor = from;
   while (p < n) {
     const idx = buf.indexOf(STREAM_NEEDLE, p);
-    if (idx === -1) return -1;
+    if (idx === -1) return null;
     const after = idx + 6;
     if (after < n && (buf[after] === 0x0a || buf[after] === 0x0d) && !(idx >= 3 && buf[idx - 3] === 0x65 && buf[idx - 2] === 0x6e && buf[idx - 1] === 0x64)) {
-      return idx;
+      let end = idx - 1;
+      while (end >= wsFloor && isWs(buf[end]!)) end -= 1;
+      if (end >= wsFloor + 1 && buf[end] === 0x3e && buf[end - 1] === 0x3e) {
+        return { streamIdx: idx, closeEnd: end + 1 };
+      }
+      wsFloor = after + 1;
     }
     p = after;
   }
-  return -1;
+  return null;
 }
 
 /**
  * 零堆增长 + 严格 O(buf.length) 单遍扫描一段字节里所有紧跟在 `>>` 后面的 `stream` 字典（Codex 代码与安全审查修复）：
  *   · 栈空时先用原生 C++ `Buffer.indexOf('stream')` 与 `Buffer.indexOf('<<')` 跳过不含流字典的整段区域（200 MB 重复 `<<` 或
- *     `>>stream\n`、以及流正文二进制数据均仅 ~110 ms、零堆分配），直接定位到 `nextStream - DICT_LOOKBACK` 内的首个 `<<`。
+ *     `>>stream\n`、以及流正文二进制数据均仅 ~110 ms、零堆分配），回看窗口锚定在 `stream` 前的 `>>`（跳过任意长度空白，
+ *     与 `streamAfterDictClose` 语义完全一致）。
  *   · 预分配固定 128 KB `Int32Array(32768)` 环形队列存 `DICT_LOOKBACK`（32 KB）窗口内尚未配对的 `<<` 起点（窗口内最多 16385 个，
  *     永不溢出且零数组扩容），彻底杜绝 200 MB 重复 `<<` 的 33 MB 堆堆积与 20 秒卡顿。
  *   · 遇到 `>>` 时按 `opens` 栈顶起点保留 `(...)` 字面量字符串与 `%` 注释上下文，跳过字符串/注释内的假 `>>` / `>>stream\n`；
@@ -302,24 +309,27 @@ function scanBuffer(buf: Buffer, openRing: Int32Array, maxPixels: number, maxSid
   };
 
   let nextStream = -1;
+  let nextCloseEnd = -1;
   let nextOpen = -1;
 
-  /** 栈空时用 SIMD 快进到下一个可能包含流字典的 `<<`；没有更多流字典返回 n */
+  /** 栈空时用 SIMD 快进到下一个可能包含流字典的 `<<`（回看窗口锚定在 `>>` 闭合处）；没有更多流字典返回 n */
   const seekNextCandidate = (from: number): number => {
     let p = from;
     while (p < n - 1) {
       if (nextStream < p) {
-        nextStream = findNextRealStream(buf, p);
-        if (nextStream === -1) return n;
+        const hit = findNextAnchoredStream(buf, p);
+        if (!hit) return n;
+        nextStream = hit.streamIdx;
+        nextCloseEnd = hit.closeEnd;
       }
-      const winStart = Math.max(p, nextStream - DICT_LOOKBACK);
+      const winStart = Math.max(p, nextCloseEnd - DICT_LOOKBACK);
       if (nextOpen < winStart) {
         nextOpen = buf.indexOf(OPEN_DICT_NEEDLE, winStart);
         if (nextOpen === -1) return n;
       }
-      if (nextOpen < nextStream) return nextOpen;
-      // [winStart, nextStream) 内没有任何 `<<`，跳过这个 `stream` 继续找下一个
-      p = Math.max(nextStream + 7, nextOpen - DICT_LOOKBACK);
+      if (nextOpen < nextCloseEnd) return nextOpen;
+      // [winStart, nextCloseEnd) 内没有任何 `<<`，且 `<<` 本身不是空白，因此 `nextOpen` 之前不可能再有含 `<<` 的 `>>` + 空白 + `stream`
+      p = Math.max(nextStream + 7, nextOpen);
     }
     return n;
   };
@@ -327,13 +337,15 @@ function scanBuffer(buf: Buffer, openRing: Int32Array, maxPixels: number, maxSid
   let i = seekNextCandidate(0);
   while (i < n - 1) {
     if (i > nextStream) {
-      nextStream = findNextRealStream(buf, i);
-      if (nextStream === -1) break;
-      if (nextStream - DICT_LOOKBACK > i) {
+      const hit = findNextAnchoredStream(buf, i);
+      if (!hit) break;
+      nextStream = hit.streamIdx;
+      nextCloseEnd = hit.closeEnd;
+      if (nextCloseEnd - DICT_LOOKBACK > i) {
         openHead = 0;
         openCount = 0;
         resetSyntax();
-        i = seekNextCandidate(nextStream - DICT_LOOKBACK);
+        i = seekNextCandidate(nextCloseEnd - DICT_LOOKBACK);
         continue;
       }
     }

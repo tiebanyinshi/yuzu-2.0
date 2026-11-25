@@ -148,12 +148,16 @@ describe('PDF 内嵌图片尺寸流式检查（Codex 安全审查 bfc32cd）', (
       'latin1',
     );
     expect(checkPdfImageLimit(afterBinaryWithDecoyStream)).toEqual({ width: 12000, height: 12000 });
-    // Codex 审查 9d2b261：字面量里的 endstream 与 % 注释里的 >> 都不能绕过检查
+    // Codex 审查 9d2b261 & 7af7676：字面量里的 endstream、% 注释里的 >>、头注释 % <<( 以及 >> 与 stream 间超长空白都不能绕过检查
     const afterBinaryWithEndstreamComment = Buffer.from(
       '%PDF-1.4\n1 0 obj\n<< /Length 3 >>\nstream\n<<(\nendstream\nendobj\n2 0 obj\n<< /Comment (endstream) % >>\n /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n',
       'latin1',
     );
     expect(checkPdfImageLimit(afterBinaryWithEndstreamComment)).toEqual({ width: 12000, height: 12000 });
+    const headerCommentAndDictComment = Buffer.from('%PDF-1.4\n% <<(\n1 0 obj\n<< % >>\n /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n', 'latin1');
+    expect(checkPdfImageLimit(headerCommentAndDictComment)).toEqual({ width: 12000, height: 12000 });
+    const longWsBeforeStream = Buffer.from(`%PDF-1.4\n1 0 obj\n<< /Subtype /Image /Width 12000 /Height 12000 >>${' '.repeat(40_000)}stream\n0000\nendstream\nendobj\n`, 'latin1');
+    expect(checkPdfImageLimit(longWsBeforeStream)).toEqual({ width: 12000, height: 12000 });
 
     // 同一字典里塞数百个 (>>stream\n) 诱饵也能单趟检出
     const manyDecoys = sample(`<< ${'/C (>>stream\n) '.repeat(400)}/Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>`);
