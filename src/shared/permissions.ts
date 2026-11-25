@@ -296,7 +296,7 @@ export const PERMISSIONS = {
   /** 钟房：上牌、派钟、上钟、下钟、加钟、退钟（v0.7.1，待确认：前台岗位都能做；派钟、加钟、退钟还要能挂账） */
   'technician.dispatch': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
   /**
-   * 排位播报（回测整改 P03，回测 4-1）：「技师 → 排位播报」页——看排位、手动叫号、由本机播报（音量、静音、重播、播报记录）。
+   * 上钟播报（回测整改 P03，回测 4-1）：「技师 → 上钟播报」页——看排位、手动叫号、由本机播报（音量、静音、重播、播报记录）。
    * 与钟房分开授：排位员可以只有这一项；默认有钟房的岗位都有
    */
   'technician.announce': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
@@ -632,7 +632,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'catalog.manage': '管理充值套餐与消费项目',
   'technician.manage': '维护技师名册',
   'technician.dispatch': '钟房派钟、上下钟、加钟、退钟、上牌',
-  'technician.announce': '排位播报：看排位、手动叫号、由本机播报',
+  'technician.announce': '上钟播报：看排位、手动叫号、由本机播报',
   'technician.board': '技师上钟轮播：只读大屏，看谁在上钟、上什么、排在哪',
   'dining.order': '餐饮点单、催单、上菜',
   'dining.ledger': '餐饮台账：全店每道菜的明细、金额、退菜，导出',

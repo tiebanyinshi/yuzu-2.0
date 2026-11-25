@@ -8,7 +8,7 @@ export const RANKING_STATUS_LABELS: Record<RankingStatus, string> = { idle: '空
 
 /** 状态下面的小字（钟房里的细分）：休息 / 待上钟 / 休假 / 停牌；没有为 null */
 export type RankingNote = 'rest' | 'waiting' | 'leave' | 'suspended' | null;
-export const RANKING_NOTE_LABELS: Record<Exclude<RankingNote, null>, string> = { rest: '休息', waiting: '待上钟', leave: '休假', suspended: '停牌' };
+export const RANKING_NOTE_LABELS: Record<Exclude<RankingNote, null>, string> = { rest: '暂离', waiting: '待上钟', leave: '休假', suspended: '停牌' };
 
 /** 综合榜 / 人气榜 */
 export const RANKING_BOARDS = ['overall', 'popular'] as const;

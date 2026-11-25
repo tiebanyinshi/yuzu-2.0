@@ -1,6 +1,6 @@
-// 钟房（v0.7.1）：左边轮钟队列（在岗技师按排位，第一位空闲的是「下一位」）、休息与未上牌；
+// 钟房（v0.7.1）：左边轮钟队列（在岗技师按排位，第一位空闲的是「下一位」）、暂离与未上牌；
 // 右边上钟中的钟（倒计时、快到钟、超时）与待上钟（已派、技师还没到）。派钟、加钟都是挂账，走前台同一套「结果待确认」。
-// 8.1.15（docs/TECHNICIANS_V8115.md）：顶上是搜索、筛选（ClockFilters.tsx；排位播报 回测整改起是单独的页面 AnnouncerPage.tsx）；有条件生效或按状态排时
+// 8.1.15（docs/TECHNICIANS_V8115.md）：顶上是搜索、筛选（ClockFilters.tsx；上钟播报 回测整改起是单独的页面 AnnouncerPage.tsx）；有条件生效或按状态排时
 // 下面列技师卡片，没有时是原来的看板。技师的花名、类型、组别、今天的班与休假单来自技师管理。
 
 import { useEffect, useMemo, useState } from 'react';
@@ -227,7 +227,12 @@ export function ClockroomPage() {
   // 有条件生效或按状态排：列技师卡片；都没有：原来的看板
   const listMode = techQueryActive(query) || sort !== 'queue';
   const listed = useMemo(() => sortBoardTechnicians(filterBoardTechnicians(d?.technicians ?? [], query), sort), [d, query, sort]);
-  const nextFree = queue.find((t) => !t.busy);
+  // 8.1.38：按工种（技师类型）分队，各队排第几、下一位各算各的；没填类型的算一队
+  const queues = useMemo(() => {
+    const m = new Map<string, BoardTechnician[]>();
+    for (const t of queue) m.set(t.kind.trim(), [...(m.get(t.kind.trim()) ?? []), t]);
+    return [...m.entries()].map(([kind, list]) => ({ kind, list, next: list.find((t) => !t.busy) }));
+  }, [queue]);
   const serving = (d?.sessions ?? []).filter((s) => s.status === 'serving');
   const waiting = (d?.sessions ?? []).filter((s) => s.status === 'waiting');
 
@@ -297,28 +302,37 @@ export function ClockroomPage() {
                     {queue.length === 0 ? (
                       <p className="mt-3 rounded-lg border border-dashed border-line-strong px-3 py-6 text-center text-[13px] text-ink-3">还没有技师上牌</p>
                     ) : (
-                      <ol className="mt-3 space-y-1.5">
-                        {queue.map((t) => (
-                          <QueueRow
-                            key={t.id}
-                            t={t}
-                            next={t.id === nextFree?.id}
-                            sessions={d.sessions}
-                            now={now}
-                            busy={busy}
-                            onRest={() => state(t, 'rest', `${t.techNo} 号休息`)}
-                            onOff={() => state(t, 'sign_out', `${t.techNo} 号下牌`)}
-                            onToEnd={() => !blockedByPending(t) && setToEnd(t)}
-                            onCall={() => void call(t)}
-                          />
-                        ))}
-                      </ol>
+                      queues.map((g) => (
+                        <div key={g.kind} data-testid={`clock-queue-kind-${g.kind || 'all'}`}>
+                          {queues.length > 1 && (
+                            <p className="mt-3 text-[12.5px] font-semibold text-ink-3">
+                              {g.kind || '未分工种'} · {g.list.length} 人
+                            </p>
+                          )}
+                          <ol className="mt-3 space-y-1.5">
+                            {g.list.map((t) => (
+                              <QueueRow
+                                key={t.id}
+                                t={t}
+                                next={t.id === g.next?.id}
+                                sessions={d.sessions}
+                                now={now}
+                                busy={busy}
+                                onRest={() => state(t, 'rest', `${t.techNo} 号暂离`)}
+                                onOff={() => state(t, 'sign_out', `${t.techNo} 号下牌`)}
+                                onToEnd={() => !blockedByPending(t) && setToEnd(t)}
+                                onCall={() => void call(t)}
+                              />
+                            ))}
+                          </ol>
+                        </div>
+                      ))
                     )}
-                    <p className="mt-3 text-[12px] leading-relaxed text-ink-4">轮钟按排位派给第一位空闲的技师；派了轮钟的排到队尾，点钟不动牌（规则在「后台 → 技师」）。</p>
+                    <p className="mt-3 text-[12px] leading-relaxed text-ink-4">按工种（技师类型）分队，轮钟按排位派给本工种第一位空闲的技师；派了轮钟的排到队尾，点钟按规则（在「后台 → 技师」）。</p>
                   </Card>
                   {resting.length > 0 && (
                     <Card className="p-4">
-                      <SectionTitle>休息中</SectionTitle>
+                      <SectionTitle aside={<span className="text-[12px] text-ink-3">吃饭、如厕等，不参与轮排；回牌排到队尾</span>}>暂离中</SectionTitle>
                       <ul className="mt-2 space-y-1.5">
                         {resting.map((t) => (
                           <li key={t.id} className="flex items-center gap-2 text-[13px]" data-testid={`clock-rest-${t.techNo}`}>
@@ -735,7 +749,7 @@ function QueueRow({
             disabled={busy !== null}
             data-testid={`clock-rest-btn-${t.techNo}`}
           >
-            <Coffee className="size-3" /> 休息
+            <Coffee className="size-3" /> 暂离
           </button>
           <button
             type="button"
@@ -941,7 +955,7 @@ function FilteredTechs({
                   {status === 'idle' && (
                     <>
                       {callButton}
-                      {act('rest', `${t.techNo} 号休息`, '休息', <Coffee className="size-3.5" />)}
+                      {act('rest', `${t.techNo} 号暂离`, '暂离', <Coffee className="size-3.5" />)}
                       <Button size="sm" variant="ghost" icon={<ArrowDownToLine className="size-3.5" />} disabled={busy !== null} onClick={() => onToEnd(t)}>
                         排尾
                       </Button>
@@ -1113,8 +1127,8 @@ function ClockLog({ open, onClose }: { open: boolean; onClose: () => void }) {
 const MOVED_KEY = 'yuzu.clock.announcerMoved';
 
 /**
- * 排位播报从钟房移走了（回测整改 P03）：钟房顶上一条提示，点「去排位播报」过去；点「知道了」以后这台设备不再提示。
- * 叫号照旧能在钟房点（记一条叫号），念要在开着「排位播报」页的那台终端上
+ * 上钟播报从钟房移走了（回测整改 P03）：钟房顶上一条提示，点「去上钟播报」过去；点「知道了」以后这台设备不再提示。
+ * 叫号照旧能在钟房点（记一条叫号），念要在开着「上钟播报」页的那台终端上
  */
 function AnnouncerMoved() {
   const [hidden, setHidden] = useState(() => {
@@ -1135,11 +1149,11 @@ function AnnouncerMoved() {
   };
   return (
     <div className="mx-auto max-w-[1280px] px-5 pt-5 md:px-7">
-      <Notice tone="info" title="排位播报移到了「技师 → 排位播报」" data-testid="clock-announcer-moved">
+      <Notice tone="info" title="上钟播报移到了「技师 → 上钟播报」" data-testid="clock-announcer-moved">
         自动叫号、重播、音量与静音、播报记录都在那一页；要出声的终端开着那一页。钟房里点「叫号」照旧记一条叫号。
         <span className="mt-1 flex gap-3">
           <Link to="/crm/announcer" className="font-bold text-lake hover:underline" data-testid="clock-go-announcer">
-            去排位播报
+            去上钟播报
           </Link>
           <button type="button" className="font-semibold text-ink-3 hover:text-ink" onClick={dismiss}>
             知道了

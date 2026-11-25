@@ -9,7 +9,7 @@
 // 空间台账停用空间、改业态时锁空间一行（排他）再查里面还没结束的钟单，不锁钟单，不会反向加锁。
 
 import { z } from 'zod';
-import { canServe, gradeLabel, technicianText, tierFor, type CallType } from '@shared/technicians';
+import { canServe, gradeLabel, technicianText, tierFor, type CallType, type Technician, type TechnicianBookingHint } from '@shared/technicians';
 import { PRICE_TIER_LABELS, type PriceTier } from '@shared/catalog';
 import { ZONE_LABELS } from '@shared/frontdesk';
 import {
@@ -36,7 +36,7 @@ import { loadPricedItems } from './pricing';
 import { loadTechnicianKinds, loadTechnicianRules, loadTechnicians } from './technicians';
 import { announcerClaim, recentCalls, recordCall, spokenRoom } from './clock-calls';
 import { approvedLeavesOn, groupNames, scheduleOn, type ApprovedLeave } from './technician-day';
-import { assertTechnicianNotBooked, bookedTechnicianIds } from './booking-guard';
+import { assertTechnicianNotBooked, bookedTechnicianIds, upcomingTechnicianBookings } from './booking-guard';
 import { locateSession, locateSessionEnd, locateSignIn, locateSignOut } from './locations';
 import { settingRow } from '../lib/store-settings';
 import { currentStoreId, DEFAULT_STORE_ID } from '../lib/store-context';
@@ -121,13 +121,15 @@ async function activeSessions(db: Db) {
  * 前台选技师用的排位快照（8.1.37）：每位技师今天的上牌状态、是不是在钟上或派了没上、在轮钟队列里排第几。
  * 只读、不取锁——真正挂账时按排位再核对一次
  */
-export async function queueSnapshot(db: Db, today: string): Promise<Map<number, { state: TechState; busy: boolean; position: number | null }>> {
+export async function queueSnapshot(db: Db, today: string, at = new Date()): Promise<Map<number, { state: TechState; busy: boolean; position: number | null; booking: TechnicianBookingHint | null }>> {
   const statuses = await statusMap(db, today);
   const busy = new Set((await activeSessions(db)).map((s) => s.technicianId));
-  const order = queueOrder(statuses);
-  const out = new Map<number, { state: TechState; busy: boolean; position: number | null }>();
-  for (const [id, st] of statuses) out.set(id, { state: st.state, busy: busy.has(id), position: st.state === 'on' ? order.indexOf(id) + 1 : null });
-  for (const id of busy) if (!out.has(id)) out.set(id, { state: 'off', busy: true, position: null });
+  const positions = queuePositions(statuses, await loadTechnicians(db));
+  const bookings = await upcomingTechnicianBookings(db, at);
+  const out = new Map<number, { state: TechState; busy: boolean; position: number | null; booking: TechnicianBookingHint | null }>();
+  for (const [id, st] of statuses) out.set(id, { state: st.state, busy: busy.has(id), position: st.state === 'on' ? (positions.get(id) ?? null) : null, booking: bookings.get(id) ?? null });
+  for (const id of busy) if (!out.has(id)) out.set(id, { state: 'off', busy: true, position: null, booking: bookings.get(id) ?? null });
+  for (const [id, b] of bookings) if (!out.has(id)) out.set(id, { state: 'off', busy: false, position: null, booking: b });
   return out;
 }
 
@@ -137,6 +139,28 @@ function queueOrder(statuses: Map<number, Status>) {
     .filter(([, s]) => s.state === 'on' && s.queueKey)
     .sort(([a, x], [b, y]) => x.queueKey!.getTime() - y.queueKey!.getTime() || a - b)
     .map(([id]) => id);
+}
+
+/**
+ * 按工种分开的排位（8.1.38，店主 2026-11-25「排位按 SPA、中医等工种分开陈列，各队列互不干扰」）：
+ * 工种就是技师档案里的「类型」（technicians.kind）；同一工种的在岗技师排一队，排第几只在本工种里数，轮钟「该派给谁」也只看同工种的。
+ * 没填类型的技师算一队（不分工种的店与以前一样只有一队）
+ */
+const queueKindOf = (techs: Map<number, Pick<Technician, 'kind'>>, id: number) => techs.get(id)?.kind.trim() ?? '';
+function queueOrderOfKind(statuses: Map<number, Status>, techs: Map<number, Pick<Technician, 'kind'>>, kind: string) {
+  return queueOrder(statuses).filter((id) => queueKindOf(techs, id) === kind);
+}
+/** 每位在岗技师在本工种队列里排第几 */
+function queuePositions(statuses: Map<number, Status>, techs: Map<number, Pick<Technician, 'kind'>>): Map<number, number> {
+  const out = new Map<number, number>();
+  const seen = new Map<string, number>();
+  for (const id of queueOrder(statuses)) {
+    const k = queueKindOf(techs, id);
+    const n = (seen.get(k) ?? 0) + 1;
+    seen.set(k, n);
+    out.set(id, n);
+  }
+  return out;
 }
 
 // ───────────────────────── 挂账时建钟单（frontdesk/bills.ts 调用） ─────────────────────────
@@ -331,7 +355,7 @@ export async function attachSessions(
     if (t.suspendedAt) throw unprocessable('TECHNICIAN_SUSPENDED', `${t.techNo} 号 ${t.name}停牌中（${t.suspendedReason ?? ''}），复牌后才能派钟`);
     if (status.state === 'leave') throw unprocessable('TECHNICIAN_ON_LEAVE', `${t.techNo} 号 ${t.name}今天休假，请换一位技师`);
     // 叫号时念的排位号（8.1.15）：派钟之前在轮钟队列里排第几
-    const calledPosition = status.state === 'on' ? queueOrder(statuses).indexOf(t.id) + 1 : null;
+    const calledPosition = status.state === 'on' ? (queuePositions(statuses, techs).get(t.id) ?? null) : null;
     let start = false;
     // 8.1.37：前台挂账选了技师的轮钟也按排位核对（上牌、在岗、不在钟上、轮到他）——以前只有钟房派钟查，
     // 前台按轮钟能把同一位技师派给几张手牌、派给没上牌的人，排在前面的被跳过也没有记录。前台没有写跳过原因的地方：
@@ -349,7 +373,8 @@ export async function attachSessions(
         const itemShape = { category: cat!.category, prices: prices.length ? prices : [{ tier: 'standard' as const }] };
         const fixed = check.fixedTier;
         const excluded = check.excludeId;
-        const candidates = queueOrder(statuses).filter((id) => techs.has(id));
+        // 8.1.38：只和同工种的比（中医的轮钟不会因为 SPA 队列里有人排在前面而要跳过）
+        const candidates = queueOrderOfKind(statuses, techs, queueKindOf(techs, t.id)).filter((id) => techs.has(id));
         const booked = await bookedTechnicianIds(tx, {
           technicianIds: candidates.filter((id) => id !== t.id),
           from: at.getTime(),
@@ -398,7 +423,7 @@ export async function attachSessions(
       if (toEnd) await writeStatus(tx, t.id, today, { ...status, queueKey: at }, actor.id, at);
       if (l.callType === 'rotation' && rules.afterDesignated === 'passed' && before) {
         const designatedBusy = new Set(active.filter((s) => s.callType === 'designated').map((s) => s.technicianId));
-        for (const id of queueOrder(statuses)) {
+        for (const id of queueOrderOfKind(statuses, techs, queueKindOf(techs, t.id))) {
           const s = statuses.get(id)!;
           if (id !== t.id && designatedBusy.has(id) && s.queueKey! < before) {
             const moved = { ...s, queueKey: new Date(at.getTime() + 1) };
@@ -611,7 +636,8 @@ async function finishLocked(tx: Tx, deps: Deps, s: SessionRow, actor: Actor, at:
   const rules = await loadClockroomRules(tx);
   const status = (await statusMap(tx, today)).get(s.technicianId) ?? offStatus;
   if (status.state !== 'off') {
-    const toEnd = s.callType === 'rotation' && rules.afterRotation === 'finish';
+    // 8.1.38：客人指定挑选（点钟）的下钟后排到队尾；加钟记在同一张钟单上，跟着这张钟单的叫法走，不另算
+    const toEnd = (s.callType === 'rotation' && rules.afterRotation === 'finish') || (s.callType === 'designated' && rules.afterDesignated === 'finish');
     await writeStatus(tx, s.technicianId, today, { ...status, queueKey: toEnd ? at : status.queueKey, rejectStreak: 0 }, actor.id, at);
   }
   // 实时位置（v0.7.17）：在钟上的下钟，技师回休息区（没设的离开那间房）；还没上钟的（结账时一起收尾）不动。
@@ -1258,7 +1284,7 @@ export async function callTechnician(deps: Deps, raw: unknown, ctx: OpContext) {
       technician: t,
       sessionId: session?.id ?? null,
       kind: 'manual',
-      position: s.state === 'on' ? queueOrder(statuses).indexOf(t.id) + 1 || null : null,
+      position: s.state === 'on' ? (queuePositions(statuses, await loadTechnicians(tx)).get(t.id) ?? null) : null,
       room: spokenRoom(session?.code ? { code: session.code, displayName: session.displayName } : null),
       businessDate: today,
       staffId: ctx.actor.id,
@@ -1277,8 +1303,9 @@ export async function clockroomBoard(db: Db, deps: Deps): Promise<ClockroomBoard
   const rules = await loadClockroomRules(db);
   const techRules = await loadTechnicianRules(db);
   const statuses = await statusMap(db, today);
-  const order = queueOrder(statuses);
   const techs = await loadTechnicians(db);
+  const positions = queuePositions(statuses, techs);
+  const bookingHints = await upcomingTechnicianBookings(db, at);
   const sessions = await db<
     (Omit<BoardSession, 'plannedEnd' | 'guest' | 'space'> & { memberName: string | null; guestLabel: string; spaceId: number | null; spaceCode: string | null; spaceName: string | null })[]
   >`
@@ -1320,7 +1347,8 @@ export async function clockroomBoard(db: Db, deps: Deps): Promise<ClockroomBoard
       return {
         ...t,
         state: st.state,
-        position: st.state === 'on' ? order.indexOf(t.id) + 1 : null,
+        position: st.state === 'on' ? (positions.get(t.id) ?? null) : null,
+        booking: bookingHints.get(t.id) ?? null,
         busy: first ? { sessionId: first.id, status: first.status } : null,
         waiting: mine.filter((s) => s.status === 'waiting').length,
         todayClocks: todayOf(t.id),

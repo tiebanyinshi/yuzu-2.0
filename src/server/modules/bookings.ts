@@ -81,6 +81,8 @@ const RulesInput = z.object({
     .max(8, '时长最多 8 个'),
   defaultServiceMinutes: minutesField('项目默认时长', 15, 480),
   roomHoldMinutes: minutesField('客房保留分钟', 0, 1440),
+  // 8.1.38：升级前存的预约规则没有这一项，读的时候按默认（loadBookingRules）
+  technicianHoldMinutes: minutesField('技师预约提前锁定分钟', 0, 120),
 });
 
 async function saveBookingRules(deps: Deps, raw: unknown, ctx: OpContext) {

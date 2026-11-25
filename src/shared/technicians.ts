@@ -98,7 +98,7 @@ export interface FrontdeskTechnicians {
   technicians: (Technician & {
     todayClocks: number;
     /** 今天的排位（8.1.37）：上牌状态、在钟上或派了没上、在轮钟队列里排第几（在岗才有） */
-    queue: { state: 'on' | 'rest' | 'off' | 'leave'; busy: boolean; position: number | null };
+    queue: { state: 'on' | 'rest' | 'off' | 'leave'; busy: boolean; position: number | null; booking?: TechnicianBookingHint | null };
   })[];
 }
 
@@ -139,4 +139,10 @@ export interface TechnicianReport {
   totals: { clocks: number; designated: number; rotation: number; amount: number; commission?: { base: number; bonus: number; total: number } };
   /** 需要技师、但挂账时没有指定技师的明细（规则不要求必须选技师时会有） */
   unassigned: { clocks: number; amount: number };
+}
+
+/** 技师接下来的预约（8.1.38）：几点开始；locked = 已到「开始前锁定」的时候，派钟、前台选技师都当作已约 */
+export interface TechnicianBookingHint {
+  startsAt: string;
+  locked: boolean;
 }

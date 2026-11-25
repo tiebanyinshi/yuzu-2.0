@@ -80,10 +80,10 @@ describe('搜索', () => {
 });
 
 describe('叫号念的那一句、班次的时间', () => {
-  it('排位号 + 工号 + 花名（没有花名念名字）+ 房间；不在队列里的不念排位号，不知道房间的念「准备上钟」', () => {
-    expect(announceText({ position: 3, techNo: '18', name: '张小雅', nickname: '小雅', room: '201 房' })).toBe('请 3 号排位，18 号 小雅，到 201 房');
-    expect(announceText({ position: null, techNo: '18', name: '张小雅', nickname: '', room: 'S301 SPA 一号' })).toBe('请 18 号 张小雅，到 S301 SPA 一号');
-    expect(announceText({ position: 1, techNo: '08', name: '小李', nickname: '', room: null })).toBe('请 1 号排位，08 号 小李，准备上钟');
+  it('工号 + 花名（没有花名念名字）+ 房间上钟；8.1.38 起不念排位号，不知道房间的念「准备上钟」', () => {
+    expect(announceText({ position: 3, techNo: '18', name: '张小雅', nickname: '小雅', room: '201 房' })).toBe('请 18 号 小雅，到 201 房上钟');
+    expect(announceText({ position: null, techNo: '18', name: '张小雅', nickname: '', room: 'S301 SPA 一号' })).toBe('请 18 号 张小雅，到 S301 SPA 一号上钟');
+    expect(announceText({ position: 1, techNo: '08', name: '小李', nickname: '', room: null })).toBe('请 08 号 小李，准备上钟');
   });
 
   it('交给朗读引擎的写法：三位以上的数字一位一位念，排位号、工号照常', () => {

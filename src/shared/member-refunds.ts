@@ -33,6 +33,9 @@ export interface RefundSourceRow {
   refunded: number;
   /** 按现在的本金余额，这一笔还剩多少（最近的先占） */
   remaining: number;
+  /** 在哪家店充的（期初余额：导入的那家店；合并转入：办合并的那家店）——只能在这家店退（8.1.38） */
+  storeId: number;
+  storeName: string;
 }
 
 /** 分到每一笔的一行（页面列出来，员工核对后提交；扫码、银行卡填退款单号，期初与合并转入选退款方式） */
@@ -59,6 +62,30 @@ export function attributeBalance<T extends Omit<RefundSourceRow, 'remaining'>>(s
     left -= take;
     return { ...s, remaining: take };
   });
+}
+
+/**
+ * 退储值只在充值的那家店办（8.1.38，店主 2026-11-25）：分好的各笔按门店拆成本店的与别的店的。
+ * 本店的照旧最近的先退；别的店的按店合计，页面提示到那家店退
+ */
+export function splitByStore<T extends RefundSourceRow>(sources: readonly T[], storeId: number): { here: T[]; elsewhere: { storeId: number; storeName: string; amount: number }[] } {
+  const here = sources.filter((s) => s.storeId === storeId);
+  const other = new Map<number, { storeId: number; storeName: string; amount: number }>();
+  for (const s of sources) {
+    if (s.storeId === storeId || s.remaining <= 0) continue;
+    const o = other.get(s.storeId) ?? { storeId: s.storeId, storeName: s.storeName, amount: 0 };
+    o.amount += s.remaining;
+    other.set(s.storeId, o);
+  }
+  return { here, elsewhere: [...other.values()].sort((a, b) => b.amount - a.amount) };
+}
+
+/** 本店不够退时的说法：本店最多退多少、其余在哪些店 */
+export function otherStoreReason(refundableHere: number, elsewhere: readonly { storeName: string; amount: number }[], fmt: (cents: number) => string): string {
+  const where = elsewhere.map((e) => `${e.storeName} ${fmt(e.amount)}`).join('、');
+  return refundableHere > 0
+    ? `本店充值的本金还剩 ${fmt(refundableHere)}，这次最多退这么多；其余是在别的店充的（${where}），要到充值的那家店退`
+    : `这位会员的储值是在别的店充的（${where}），要到充值的那家店退`;
 }
 
 /** 退 amount 的本金：从最近的一笔起，每一笔最多它还剩的（sources 是 attributeBalance 的结果，已按最近的在前） */
@@ -114,8 +141,12 @@ export interface MemberRefundPlan {
   sources: RefundSourceRow[];
   /** 退完会降档时：从哪一档降到哪一档（M73） */
   grade: { from: string; to: string } | null;
-  /** 不能退的原因（没有本金、被合并了） */
+  /** 不能退的原因（没有本金、被合并了、这家店没有可退的、超过本店能退的） */
   blocked: string | null;
+  /** 这家店能退的本金（本店充的那几笔还剩的合计；8.1.38 不在别的店退） */
+  refundableHere: number;
+  /** 在别的店充的、还剩的本金：要到那家店退 */
+  elsewhere: { storeId: number; storeName: string; amount: number }[];
   /** 线上充值的那一行此刻能不能交给门店系统原路退回（小程序线的原路退回接上并打开了；v0.7.27） */
   onlineRoute: boolean;
 }

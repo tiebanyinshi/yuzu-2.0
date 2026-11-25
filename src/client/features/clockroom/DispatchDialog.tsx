@@ -11,7 +11,7 @@ import type { ServiceItem } from '@shared/types';
 import { api } from '../../lib/api';
 import { useCatalog } from '../../lib/queries';
 import { useSession } from '../../lib/session';
-import { cn } from '../../lib/utils';
+import { cn, formatTime } from '../../lib/utils';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
@@ -112,7 +112,7 @@ export function DispatchDialog({
   // 轮钟：在岗、空闲、能做这个项目的技师按排位；第一位就是该派的
   const shape = item ? { category: item.category, prices: item.prices } : null;
   const eligible = board.technicians
-    .filter((t) => t.state === 'on' && !t.busy && !t.suspendedAt && shape && !canServe(t, shape, board.techRules.tierByGrade) && tierOk(t))
+    .filter((t) => t.state === 'on' && !t.busy && !t.booking?.locked && !t.suspendedAt && shape && !canServe(t, shape, board.techRules.tierByGrade) && tierOk(t))
     .sort((a, b) => a.position! - b.position!);
   const filtered = (list: BoardTechnician[]) => list.filter((t) => (gender === 'all' || t.gender === gender) && (listFilter === 'all' || listFilterOf(t) === listFilter));
   const rotationList = filtered(eligible);
@@ -410,7 +410,8 @@ export function DispatchDialog({
                         {gradeLabel(t.grade)} {price !== null && !cant && <Money cents={price} className="font-bold text-ink-2" />}
                       </span>
                       <span className={cn('text-[12px] font-semibold', cant ? 'text-clay' : t.busy ? 'text-yuzu-deep' : 'text-ink-4')}>
-                        {cant ?? (t.busy ? (t.busy.status === 'serving' ? '在钟上，派了要等钟' : '已有待上钟') : t.state === 'rest' ? '休息中' : `今日 ${t.todayClocks} 钟`)}
+                        {cant ?? (t.busy ? (t.busy.status === 'serving' ? '在钟上，派了要等钟' : '已有待上钟') : t.state === 'rest' ? '暂离中' : `今日 ${t.todayClocks} 钟`)}
+                        {t.booking && ` · ${formatTime(t.booking.startsAt)} 有预约${t.booking.locked ? '（已锁定）' : ''}`}
                       </span>
                     </button>
                   );
@@ -633,7 +634,7 @@ export function TransferDialog({ session: s, board, onClose, onDone }: { session
                     <span className="min-w-0 truncate font-bold">{t.name}</span>
                   </span>
                   <span className="text-[12px] text-ink-3">
-                    {gradeLabel(t.grade)} · {t.busy ? (t.busy.status === 'serving' ? '在钟上，要等钟' : '已有待上钟') : t.state === 'rest' ? '休息中' : `今日 ${t.todayClocks} 钟`}
+                    {gradeLabel(t.grade)} · {t.busy ? (t.busy.status === 'serving' ? '在钟上，要等钟' : '已有待上钟') : t.state === 'rest' ? '暂离中' : `今日 ${t.todayClocks} 钟`}
                   </span>
                 </button>
               ))}

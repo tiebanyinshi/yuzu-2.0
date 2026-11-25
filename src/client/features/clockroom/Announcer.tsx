@@ -1,4 +1,4 @@
-// 排位播报（8.1.15，docs/TECHNICIANS_V8115.md 第 3 节）：钟房顶上的一条。
+// 上钟播报（8.1.15，docs/TECHNICIANS_V8115.md 第 3 节）：钟房顶上的一条。
 //   · 叫号（派钟时自动记、手动叫号另记）在服务端各有一条记录，随看板一起取回来；只有登记成「主播报终端」的这一个浏览器念，
 //     别的终端看得到是哪一台在念、可以明确地接管——几台终端同时开着钟房不会重复念。
 //   · 这台终端的音量与静音记在本机；静音时这一条整条变红、写明「已静音」，期间没念的有几条也写着。
@@ -174,7 +174,7 @@ export function AnnouncerBar({ board, onBoard }: { board: ClockroomBoard; onBoar
           {muted ? <VolumeX className="size-5" /> : mine ? <Volume2 className="size-5" /> : <Radio className="size-5" />}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[12.5px] font-semibold text-ink-3">排位播报</p>
+          <p className="text-[12.5px] font-semibold text-ink-3">上钟播报</p>
           <p
             className={cn('text-[16px] font-bold', tone === 'clay' ? 'text-clay' : tone === 'pine' ? 'text-pine' : 'text-ember-deep')}
             role="status"
@@ -240,7 +240,7 @@ export function AnnouncerBar({ board, onBoard }: { board: ClockroomBoard; onBoar
             >
               重播上一条
             </Button>
-            <Button size="lg" variant="ghost" icon={<Play className="size-4" />} disabled={muted} onClick={() => speak('排位播报试音', pref.volume / 100)} data-testid="announcer-test">
+            <Button size="lg" variant="ghost" icon={<Play className="size-4" />} disabled={muted} onClick={() => speak('上钟播报试音', pref.volume / 100)} data-testid="announcer-test">
               试音
             </Button>
             <Button size="lg" variant="ghost" loading={busy} onClick={() => void send('release')} data-testid="announcer-release">

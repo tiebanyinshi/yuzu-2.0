@@ -211,11 +211,12 @@ export const CALL_WINDOW_MS = 10 * 60_000;
 export const CALL_SPEAK_WITHIN_MS = 90_000;
 
 /**
- * 念的那一句：「请 3 号排位，18 号 小雅，到 201 房」。
- * 排位号是这位技师在轮钟队列里的位置（不在队列里的不念）；有花名念花名，没有念名字；知道房间的念房间，不知道的念「准备上钟」。
+ * 念的那一句：「请 18 号 小雅，到 201 房上钟」。
+ * 8.1.38 起不念排位号（店主 2026-11-25：排位叫号对实际排班没有作用，取消排位播报，只保留上钟播报）；排位号照旧记在叫号记录里备查。
+ * 有花名念花名，没有念名字；知道房间的念「到某房上钟」，不知道的念「准备上钟」。
  */
 export function announceText(c: { position: number | null; techNo: string; name: string; nickname: string; room: string | null }): string {
-  return `请${c.position ? ` ${c.position} 号排位，` : ' '}${c.techNo} 号 ${techCallName(c)}，${c.room ? `到 ${c.room}` : '准备上钟'}`;
+  return `请 ${c.techNo} 号 ${techCallName(c)}，${c.room ? `到 ${c.room}上钟` : '准备上钟'}`;
 }
 
 const DIGITS = '零一二三四五六七八九';

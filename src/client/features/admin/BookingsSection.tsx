@@ -32,6 +32,7 @@ const NUMBER_FIELDS: { key: NumberKey; label: string; unit: string; hint?: strin
   [
     { key: 'defaultServiceMinutes', label: '技师项目没写时长时按', unit: '分钟' },
     { key: 'roomHoldMinutes', label: '客房电话预订保留到预计到店后', unit: '分钟', hint: '过了自动释放、记爽约' },
+    { key: 'technicianHoldMinutes', label: '技师预约开始前锁定技师', unit: '分钟', hint: '这段时间里派钟、加钟、前台选技师都把他当作已约；0 为不提前锁' },
   ],
 ];
 

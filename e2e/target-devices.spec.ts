@@ -539,6 +539,7 @@ const tech = (id: number, techNo: string, name: string, extra: Partial<BoardTech
   state: 'off',
   position: null,
   busy: null,
+  booking: null,
   waiting: 0,
   todayClocks: 0,
   rejectStreak: 0,
@@ -631,7 +632,7 @@ const CLOCK_BOARD: ClockroomBoard = {
   today: { clocks: 12, designated: 5, rotation: 7 },
   kinds: ['足浴', '按摩', 'SPA', '采耳', '其他'],
   categories: ['足疗', 'SPA 精油', '采耳', '头疗'],
-  calls: [{ id: 990_901, at: ago(3), kind: 'dispatch', technicianId: 990_201, sessionId: 990_301, text: '请 1 号排位，08 号 晓晓，到 A201 观澜 SPA 双人房', staffName: '小周' }],
+  calls: [{ id: 990_901, at: ago(3), kind: 'dispatch', technicianId: 990_201, sessionId: 990_301, text: '请 08 号 晓晓，到 A201 观澜 SPA 双人房上钟', staffName: '小周' }],
   announcer: { clientId: ANNOUNCER_CLIENT, label: '前台收银机（主播报）', claimedByName: '林岚', claimedAt: ago(60), seenAt: NOW },
 };
 const ROSTER: RosterTechnician[] = BOARD_TECHS.map(({ state: _s, position: _p, busy: _b, waiting: _w, todayClocks: _t, rejectStreak: _r, approvedLeave, ...t }) => ({
@@ -1336,7 +1337,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await expect(page.getByTestId('dish-options')).toHaveCount(0);
   },
   // 8.1.16 钟房：轮钟排队、在钟上与待上钟的钟单；展开类型、项目两排筛选；按状态排的技师卡片。
-  // 回测整改 P03：排位播报移到了单独的页面（这台是主播报终端，播报条上按钮最多），最后看那一页
+  // 回测整改 P03：上钟播报移到了单独的页面（这台是主播报终端，播报条上按钮最多），最后看那一页
   clockroom: async (page) => {
     await page.evaluate((id) => localStorage.setItem('yuzu.clock.announcer.client', id), ANNOUNCER_CLIENT);
     await page.goto('/crm/clockroom');

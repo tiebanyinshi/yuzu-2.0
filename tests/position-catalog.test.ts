@@ -34,7 +34,7 @@ describe('岗位职权数据（P04）', () => {
       expect(mine, p.key).toEqual([...positionDefaults(p.key, ALL_PERMISSIONS)].sort());
     }
     expect(rows.some((r) => r.positionKey === 'president')).toBe(false);
-    // 201 记初始化与旧岗位两条；203（技师上钟轮播）给有「排位播报」的岗位各记一条
+    // 201 记初始化与旧岗位两条；203（技师上钟轮播）给有「上钟播报」的岗位各记一条
     const log = await ctx.sql<{ action: string; positionKey: string | null }[]>`SELECT action, position_key FROM position_config_log ORDER BY id`;
     expect(log.slice(0, 2).map((l) => l.action)).toEqual(['init', 'legacy_migrate']);
     const announce = rows.filter((r) => r.permission === 'technician.announce').map((r) => r.positionKey);

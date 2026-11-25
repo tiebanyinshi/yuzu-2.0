@@ -21,10 +21,12 @@ import {
   allocateRefund,
   attributeBalance,
   onlineRoutable,
+  otherStoreReason,
   REFUND_ROUTES,
   REFUND_SOURCES,
   refundBonus,
   refundRefRequired,
+  splitByStore,
   type MemberRefundDetail,
   type MemberRefundPlan,
   type RefundPlanLine,
@@ -37,6 +39,7 @@ import { guard } from '../auth/guard';
 import { consumeMemberRefundGrant } from '../auth/grants';
 import { isUniqueViolation, type Db } from '../db';
 import { writeAudit } from '../lib/audit';
+import { currentStoreId } from '../lib/store-context';
 import { ctxOf, type Deps, type OpContext } from '../lib/context';
 import { badRequest, conflict, notFound, unprocessable } from '../lib/errors';
 import { assertNotFenced } from '../lib/fences';
@@ -120,20 +123,22 @@ export async function listOnlineRefundLines(db: Db, opts: { afterId?: number; li
 
 /** 这位会员进过本金的各笔（充值、有效的期初、合并转入）与已经退过多少；还没按余额分 */
 async function rawSources(db: Db, memberId: number): Promise<Omit<RefundSourceRow, 'remaining'>[]> {
-  const recharges = await db<{ id: number; docNo: string; date: string; at: Date; method: PaymentMethod; channel: 'counter' | 'mp'; amount: number; refunded: number }[]>`
+  const recharges = await db<
+    { id: number; docNo: string; date: string; at: Date; method: PaymentMethod; channel: 'counter' | 'mp'; amount: number; refunded: number; storeId: number; storeName: string }[]
+  >`
     SELECT r.id, r.doc_no, to_char(r.business_date, 'YYYY-MM-DD') AS date, r.created_at AS at, r.payment_method AS method, r.channel,
-           r.paid_amount AS amount,
+           r.paid_amount AS amount, r.store_id, st.name AS store_name,
            coalesce((SELECT sum(l.amount) FROM member_refund_lines l WHERE l.recharge_id = r.id), 0)::bigint AS refunded
-    FROM recharges r WHERE r.member_id = ${memberId}`;
-  const openings = await db<{ id: number; docNo: string; date: string; at: Date; amount: number; refunded: number }[]>`
-    SELECT b.id, b.doc_no, to_char(i.business_date, 'YYYY-MM-DD') AS date, i.created_at AS at, b.principal AS amount,
+    FROM recharges r JOIN stores st ON st.id = r.store_id WHERE r.member_id = ${memberId}`;
+  const openings = await db<{ id: number; docNo: string; date: string; at: Date; amount: number; refunded: number; storeId: number; storeName: string }[]>`
+    SELECT b.id, b.doc_no, to_char(i.business_date, 'YYYY-MM-DD') AS date, i.created_at AS at, b.principal AS amount, i.store_id, st.name AS store_name,
            coalesce((SELECT sum(l.amount) FROM member_refund_lines l WHERE l.opening_id = b.id), 0)::bigint AS refunded
-    FROM opening_balances b JOIN opening_imports i ON i.id = b.import_id
+    FROM opening_balances b JOIN opening_imports i ON i.id = b.import_id JOIN stores st ON st.id = i.store_id
     WHERE b.member_id = ${memberId} AND b.status = 'active' AND b.principal > 0`;
-  const merges = await db<{ id: number; docNo: string; date: string; at: Date; amount: number; refunded: number }[]>`
-    SELECT g.id, g.merge_no AS doc_no, to_char(g.business_date, 'YYYY-MM-DD') AS date, g.created_at AS at, g.principal AS amount,
+  const merges = await db<{ id: number; docNo: string; date: string; at: Date; amount: number; refunded: number; storeId: number; storeName: string }[]>`
+    SELECT g.id, g.merge_no AS doc_no, to_char(g.business_date, 'YYYY-MM-DD') AS date, g.created_at AS at, g.principal AS amount, g.store_id, st.name AS store_name,
            coalesce((SELECT sum(l.amount) FROM member_refund_lines l WHERE l.member_merge_id = g.id), 0)::bigint AS refunded
-    FROM member_merges g WHERE g.target_id = ${memberId} AND g.principal > 0`;
+    FROM member_merges g JOIN stores st ON st.id = g.store_id WHERE g.target_id = ${memberId} AND g.principal > 0`;
   const iso = (d: Date) => new Date(d).toISOString();
   return [
     ...recharges.map((r) => ({
@@ -146,6 +151,8 @@ async function rawSources(db: Db, memberId: number): Promise<Omit<RefundSourceRo
       channel: r.channel,
       amount: Number(r.amount),
       refunded: Number(r.refunded),
+      storeId: Number(r.storeId),
+      storeName: r.storeName,
     })),
     ...openings.map((o) => ({
       source: 'opening' as const,
@@ -157,6 +164,8 @@ async function rawSources(db: Db, memberId: number): Promise<Omit<RefundSourceRo
       channel: null,
       amount: Number(o.amount),
       refunded: Number(o.refunded),
+      storeId: Number(o.storeId),
+      storeName: o.storeName,
     })),
     ...merges.map((g) => ({
       source: 'merge' as const,
@@ -168,6 +177,8 @@ async function rawSources(db: Db, memberId: number): Promise<Omit<RefundSourceRo
       channel: null,
       amount: Number(g.amount),
       refunded: Number(g.refunded),
+      storeId: Number(g.storeId),
+      storeName: g.storeName,
     })),
   ];
 }
@@ -206,9 +217,13 @@ export async function memberRefundPlan(deps: Deps, memberId: number, amount: num
   const db = deps.sql;
   const m = await memberRow(db, memberId);
   const date = await today(db, deps.config.timezone, at);
-  const sources = attributeBalance(await rawSources(db, memberId), m.principalBalance).filter((s) => s.remaining > 0);
-  const blocked = blockedReason(m);
-  const want = blocked ? 0 : Math.min(amount ?? m.principalBalance, m.principalBalance);
+  const all = attributeBalance(await rawSources(db, memberId), m.principalBalance).filter((s) => s.remaining > 0);
+  // 8.1.38：只退本店充的；别的店充的列出来，到那家店退
+  const { here: sources, elsewhere } = splitByStore(all, currentStoreId());
+  const refundableHere = sources.reduce((t, s) => t + s.remaining, 0);
+  const asked = Math.min(amount ?? Math.min(m.principalBalance, refundableHere), m.principalBalance);
+  const blocked = blockedReason(m) ?? (asked > refundableHere || (refundableHere === 0 && elsewhere.length > 0) ? otherStoreReason(refundableHere, elsewhere, formatYuan) : null);
+  const want = blocked ? 0 : asked;
   const lines = blocked ? [] : allocateRefund(sources, want);
   return {
     memberId: m.id,
@@ -223,6 +238,8 @@ export async function memberRefundPlan(deps: Deps, memberId: number, amount: num
     sources,
     grade: blocked || want <= 0 ? null : await previewRefundGrade(db, memberId, refundedByRecharge(lines), date),
     blocked,
+    refundableHere,
+    elsewhere,
     onlineRoute: await onlineRouteAvailable(db),
   };
 }
@@ -321,7 +338,12 @@ export async function createMemberRefund(deps: Deps, memberId: number, raw: Memb
         });
       }
       // 按此刻的余额重新分配：与页面核对时的不一致就拒绝（中间有人充值、消费或退过）
-      const sources = attributeBalance(await rawSources(tx, memberId), locked.principalBalance);
+      const { here: sources, elsewhere } = splitByStore(attributeBalance(await rawSources(tx, memberId), locked.principalBalance), currentStoreId());
+      // 8.1.38：别的店充的不在这里退（页面核对时已拦；这里防绕过页面直接提交）
+      const refundableHere = sources.reduce((t, s) => t + s.remaining, 0);
+      if (input.amount > refundableHere) {
+        throw unprocessable('REFUND_OTHER_STORE', otherStoreReason(refundableHere, elsewhere, formatYuan), { refundableHere, elsewhere });
+      }
       const plan = allocateRefund(sources, input.amount);
       const changed = plan.length !== input.lines.length || plan.some((p, i) => !sameLine(p, input.lines[i]!) || (p.method !== null && p.method !== input.lines[i]!.method));
       if (changed) {

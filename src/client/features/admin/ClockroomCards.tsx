@@ -89,12 +89,12 @@ export function ClockroomRulesCard() {
         )}
         {row(
           '点钟后的排位',
-          '客人点名的钟会不会占技师的轮次。',
+          '客人点名（指定挑选）的钟会不会占技师的轮次。加钟记在原钟单上，不算新的点钟、排位不动。',
           <Segmented
             ariaLabel="点钟后的排位"
             value={draft.afterDesignated}
             onChange={(v) => set({ afterDesignated: v })}
-            options={(['keep', 'passed', 'end'] as const).map((v) => ({ value: v, label: AFTER_DESIGNATED_LABELS[v], disabled: !editable }))}
+            options={(['finish', 'keep', 'passed', 'end'] as const).map((v) => ({ value: v, label: AFTER_DESIGNATED_LABELS[v], disabled: !editable }))}
             className="flex-wrap"
           />,
         )}

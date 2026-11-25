@@ -48,9 +48,21 @@ describe('分配与赠金扣回（纯函数）', () => {
   it('剩下的本金算作最近的几笔：最近的先退；赠金按比例四舍五入，退到 0 全部扣回', () => {
     const sources = attributeBalance(
       [
-        { source: 'recharge', id: 1, docNo: 'CZ1', date: '2026-11-01', at: '2026-11-01T02:00:00.000Z', method: 'cash', channel: 'counter', amount: 10000, refunded: 0 },
-        { source: 'recharge', id: 2, docNo: 'CZ2', date: '2026-11-02', at: '2026-11-02T02:00:00.000Z', method: 'wechat', channel: 'counter', amount: 20000, refunded: 0 },
-        { source: 'opening', id: 7, docNo: 'QC1', date: '2026-10-31', at: '2026-10-31T02:00:00.000Z', method: null, channel: null, amount: 3000, refunded: 0 },
+        { source: 'recharge', id: 1, docNo: 'CZ1', date: '2026-11-01', at: '2026-11-01T02:00:00.000Z', method: 'cash', channel: 'counter', amount: 10000, refunded: 0, storeId: 1, storeName: '本店' },
+        {
+          source: 'recharge',
+          id: 2,
+          docNo: 'CZ2',
+          date: '2026-11-02',
+          at: '2026-11-02T02:00:00.000Z',
+          method: 'wechat',
+          channel: 'counter',
+          amount: 20000,
+          refunded: 0,
+          storeId: 1,
+          storeName: '本店',
+        },
+        { source: 'opening', id: 7, docNo: 'QC1', date: '2026-10-31', at: '2026-10-31T02:00:00.000Z', method: null, channel: null, amount: 3000, refunded: 0, storeId: 1, storeName: '本店' },
       ],
       25000,
     );
@@ -225,6 +237,49 @@ describe('退储值', () => {
     expect(late.status).toBe(409);
     expect(late.body.error.code).toBe('OP_ABANDONED');
     expect(await balanceOf(ctx, m)).toEqual({ principal: 8000, bonus: 0 });
+  });
+});
+
+describe('只在充值的那家店退（8.1.38）', () => {
+  it('别的店充的不在本店退：核对时列出在哪家店、本店最多退多少；超过的拒绝（防绕过页面）', async () => {
+    const id = (await createMember(ctx, '跨店会员', '19911110099')).id;
+    const here = await recharge(id, 10000, 0, 'cash');
+    const [b] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('RF2', '乙店', 1) RETURNING id`;
+    // 店主换到乙店充一笔，再换回本店
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: b!.id })).status).toBe(200);
+    const there = await recharge(id, 20000, 0, 'wechat');
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: 1 })).status).toBe(200);
+    expect((await ctx.sql<{ storeId: number }[]>`SELECT store_id FROM recharges WHERE id = ${there.id}`)[0]!.storeId).toBe(b!.id);
+
+    const full = await plan(id);
+    expect(full).toMatchObject({ principalBalance: 30000, refundableHere: 10000, elsewhere: [{ storeName: '乙店', amount: 20000 }] });
+    // 没指定金额时默认退本店能退的
+    expect(full).toMatchObject({ amount: 10000, blocked: null });
+    expect(full.lines.map((l) => [l.docNo, l.amount])).toEqual([[here.docNo, 10000]]);
+    expect(full.sources.map((s) => s.docNo)).toEqual([here.docNo]);
+
+    const over = await plan(id, 15000);
+    expect(over.blocked).toContain('乙店');
+    expect(over.lines).toEqual([]);
+
+    // 直接提交超过本店能退的：拒绝
+    const g = await grant(id, 15000);
+    const res = await refund(id, {
+      ...body(full, g.body.grantId),
+      amount: 15000,
+      expectedBonus: 0,
+      lines: [{ source: 'recharge', id: here.id, method: 'cash', amount: 15000, ref: '' }],
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('REFUND_OTHER_STORE');
+
+    // 本店的退完以后：剩下的全在乙店，本店不能退
+    const g2 = await grant(id, 10000);
+    const done = await refund(id, body(full, g2.body.grantId));
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    const none = await plan(id);
+    expect(none).toMatchObject({ principalBalance: 20000, refundableHere: 0, amount: 0 });
+    expect(none.blocked).toContain('要到充值的那家店退');
   });
 });
 
