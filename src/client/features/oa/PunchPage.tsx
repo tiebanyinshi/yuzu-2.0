@@ -230,8 +230,11 @@ export function PunchPage() {
 
   return (
     <>
-      <PageHeader dateMode="calendar" title="打卡" subtitle="按排班的上下班窗口算是哪一班的卡；上班卡取第一次、下班卡取最后一次" />
-      <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-7">
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title="打卡" subtitle="按排班的上下班窗口算是哪一班的卡；上班卡取第一次、下班卡取最后一次" />
+      </div>
+      <div className="mx-auto w-full max-w-3xl space-y-3 p-3 md:space-y-4 md:p-7">
+        <h1 className="text-[17px] font-bold text-ink md:hidden">打卡</h1>
         <ErpPendingPanel types={['oa_punch']} filter={mine} className="space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: TODAY_KEY })} />
         {q.isPending ? (
           <Skeleton className="h-72" />
@@ -241,7 +244,7 @@ export function PunchPage() {
           <EmptyState title="你还没进这家门店的考勤组" description="进了考勤组才能打卡，请找人事把你加进去。" testId="punch-no-group" />
         ) : (
           <>
-            <Card className="p-5" data-testid="punch-card">
+            <Card className="p-4 md:p-5" data-testid="punch-card">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <p className="text-[13px] text-ink-3">
@@ -251,7 +254,7 @@ export function PunchPage() {
                     {now === undefined ? '--:--' : clockText(minuteOfEpochMinute(now))}
                   </p>
                 </div>
-                <div className="text-right text-[13px]" data-testid="punch-location">
+                <div className="min-w-0 text-left text-[13px] sm:text-right" data-testid="punch-location">
                   {loc.state === 'locating' || loc.state === 'idle' ? (
                     <span className="text-ink-3">正在取位置…</span>
                   ) : loc.state === 'failed' ? (

@@ -898,6 +898,14 @@ export interface FaceEnrollSaved {
   enrollment: FaceEnrollment;
   replayed: boolean;
 }
+/** 人脸比对服务接入状态（员工办公 v1.1 第 6 批，EO3）：只读状态，由服务器运行环境决定 */
+export type FaceServiceMode = 'mock' | 'unconfigured' | 'live';
+export interface FaceServiceStatus {
+  mode: FaceServiceMode;
+  provider: string | null;
+  fallbackPolicy: 'manual_review';
+  note: string;
+}
 
 // ───────────────────────── OA-08 考勤结算（docs/OA.md 第 11 节） ─────────────────────────
 
