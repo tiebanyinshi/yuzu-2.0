@@ -1,7 +1,9 @@
 // OA-09 员工「办公 → 假期余额」（docs/OA.md 第 12 节）：本人今年各「管余额」假种的剩余、已用与明细；其他假种只列规则。
 // 请假在审批里提（OA-11），审批通过后扣余额（OA-13）。
 
+import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
+import { Plus } from 'lucide-react';
 import { halvesText, type MyLeave } from '@shared/oa';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/AppShell';
@@ -14,8 +16,21 @@ export function MyLeavePage() {
   const d = q.data;
   return (
     <>
-      <PageHeader dateMode="calendar" title="假期余额" subtitle="年假按入职日期每年自动发放；请假审批通过后扣减" />
-      <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-7">
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title="假期余额" subtitle="年假按入职日期每年自动发放；请假审批通过后扣减" />
+      </div>
+      <div className="mx-auto w-full max-w-3xl space-y-3 p-3 md:space-y-4 md:p-7">
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-[17px] font-bold text-ink md:hidden">假期余额</h1>
+          <Link
+            to="/oa/approvals/new/leave"
+            data-testid="my-leave-apply"
+            className="tap relative inline-flex h-8 shrink-0 items-center gap-1 rounded-md bg-pine px-3 text-[13px] font-semibold text-white md:ml-auto"
+          >
+            <Plus className="size-3.5" />
+            发起请假
+          </Link>
+        </div>
         {q.isPending ? (
           <Skeleton className="h-60" />
         ) : q.isError && !d ? (

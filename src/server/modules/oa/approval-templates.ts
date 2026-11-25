@@ -6,6 +6,7 @@
 //   · 补卡：今天及以前 30 天内、自己那天排了的班；那张卡的打卡窗口已经过了、还没有、没有审批中的同一张补卡单（OA-13）。
 
 import { shiftDate } from '@shared/labels';
+import { MAKEUP_BACK_DAYS } from '@shared/oa';
 import { formAttachmentIds, halfDayKey, type ApprovalField, type ApprovalForm, type HalfDay } from '@shared/oa-approval';
 import type { Tx } from '../../db';
 import type { Actor } from '../../lib/context';
@@ -13,9 +14,6 @@ import { unprocessable } from '../../lib/errors';
 import { formatYuan } from '@shared/money';
 import { checkMakeup, checkOvertimeKind, leaveDays, onLeaveApproved, onMakeupApproved, onTripApproved, type LinkEnv } from './attendance-link';
 import { lockBalance, lockLeaveType } from './leave';
-
-/** 补卡最多补几天以前的 */
-const MAKEUP_BACK_DAYS = 30;
 
 export interface PrepareContext {
   applicant: Actor;

@@ -121,4 +121,9 @@
 - **打卡卡片接上「该打什么卡」**：`GET /api/oa/attendance/today` 返回 `nextPunch`（`src/shared/oa.ts` `nextPunchHint`，与 `matchPunch` 同口径，支持跨天班、次日 00:00 夜班前一日 22:00 开窗、连班交接先下班后上班、早退重打更新与围栏外外勤提示），接入工作台顶部 `TodayCard` 与 `PunchPage`。
 - **回归用例**：新增 `tests/oa-schedule-grants.test.ts`（草稿/发布隔离、发布推送与幂等、五类范围授权、不可转授、调岗失效、跨部门防提权、撤销审计）、`tests/oa-three-shifts.test.ts`（24 小时三班倒早/晚/夜班窗口、跨午夜下班卡、连班交接、`nextPunch` 与日结归属回归），并扩展 `e2e/oa-schedule.spec.ts` 与 `e2e/oa-mobile.spec.ts`。
 
+### 第 3 批：月报与异常、补卡请假（2026-11-25）
 
+- **我的考勤月报与异常筛选（`MyAttendancePage.tsx`）**：手机 360 × 800 紧凑标题栏、8 项月度汇总卡片、`全部 / 异常` 分栏切换（支持 `?filter=abnormal`）、顶部快捷进「去请假」「去补卡」。
+- **从异常一键补卡（`MyAttendancePage.tsx`、`ApprovalForm.tsx`、`attendance-daily.ts`）**：`GET /api/oa/me/attendance` 新增门店所在地 `today` 与本月审批中补卡单 `pendingMakeups`；缺上班卡 / 缺下班卡 / 旷工行在 30 天（`MAKEUP_BACK_DAYS`）内直接提供「补上班卡 / 补下班卡」一键入口，跳转 `/oa/approvals/new/makeup?date=...&shiftId=...&kind=in|out` 自动带入日期、班次与补哪张卡（不串入其他日子的旧草稿事由；已有审批中补卡单的直达审批详情，超 30 天提示已超期）；请假 / 出差覆盖行直达关联审批单。
+- **请假与补卡发起、审批手机适配（`ApprovalForm.tsx`、`ApprovalPages.tsx`、`MyLeavePage.tsx`、`WcpShell.tsx`）**：发起审批页、模板表单（含半天选择器 `halfday` 与班次选择器）、审批列表页（4 个箱体 `Segmented` 横向防溢出）、审批详情页（3 列通过 / 驳回 / 转交按钮、评论栏、长内容换行）与假期余额页全面适配 360 × 800 零横向滚动，并补齐手机顶栏返回按钮的 `.tap relative`。
+- **没有迁移**；在 `tests/oa-attendance-link.test.ts` 与 `e2e/oa-mobile.spec.ts` 补齐 `pendingMakeups` 集成回归及 360 × 800 异常一键补卡、请假发起与审批浏览器用例。
