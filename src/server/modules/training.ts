@@ -14,6 +14,8 @@ import { can } from '@shared/permissions';
 import {
   TRAINING_CHUNK_BYTES,
   TRAINING_FORMATS,
+  TRAINING_IMAGE_MAX_PIXELS,
+  TRAINING_IMAGE_MAX_SIDE,
   TRAINING_MAX_BYTES,
   TRAINING_MAX_CHUNKS,
   TRAINING_DAILY_UPLOADS_PER_STAFF,
@@ -21,6 +23,7 @@ import {
   TRAINING_OPEN_UPLOADS_PER_STAFF,
   TRAINING_TOTAL_MAX_BYTES,
   TRAINING_TOTAL_MAX_VERSIONS,
+  trainingFileNameProblem,
   trainingViewKind,
   type TrainingFile,
   type TrainingFileDetail,
@@ -37,6 +40,7 @@ import { writeAudit } from '../lib/audit';
 import { ctxOf, type Actor, type Deps, type OpContext } from '../lib/context';
 import { AppError, badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { hashRequest } from '../lib/idempotency';
+import { imageSize } from '../lib/image-size';
 import { createStreamSlots } from '../lib/stream-slots';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
@@ -287,9 +291,10 @@ async function updateFolder(deps: Deps, id: number, raw: unknown, ctx: OpContext
 const FileName = z
   .string()
   .trim()
-  .min(1, '缺少文件名')
-  .max(200, '文件名最多 200 个字')
-  .refine((n) => !/[\\/\u0000-\u001f]/.test(n), '文件名不能带路径或控制字符');
+  .superRefine((n, c) => {
+    const problem = trainingFileNameProblem(n);
+    if (problem) c.addIssue({ code: 'custom', message: problem });
+  });
 
 const StartUploadInput = z
   .object({
@@ -504,6 +509,21 @@ async function putChunk(deps: Deps, params: unknown, raw: unknown, actor: Actor)
 }
 
 /** 文件头核对：与声明的类型对得上（Office 新格式是 zip，旧格式是复合文档；视频按 ftyp / EBML 认） */
+/**
+ * 图片在页面里直接显示，像素数要有上限（Codex 安全审查 9b1dd16）：一张最多 4000 万像素、一条边最多 16384 像素，
+ * 读不出宽高的也不收（几百 KB 的图片可以写成上万像素见方，浏览器一打开就要几百 MB 内存）
+ */
+function assertImageSize(mime: string, head: Buffer) {
+  if (trainingViewKind(mime) !== 'image') return;
+  const size = imageSize(mime, head);
+  if (!size) throw unprocessable('TRAINING_UPLOAD_FORMAT', '读不出这张图片的尺寸，请另存为常见的 JPG 或 PNG 再传');
+  if (size.width > TRAINING_IMAGE_MAX_SIDE || size.height > TRAINING_IMAGE_MAX_SIDE || size.width * size.height > TRAINING_IMAGE_MAX_PIXELS)
+    throw unprocessable(
+      'TRAINING_IMAGE_TOO_LARGE',
+      `图片 ${size.width} × ${size.height} 像素太大（最多 ${TRAINING_IMAGE_MAX_PIXELS / 1_000_000} 百万像素、一条边最多 ${TRAINING_IMAGE_MAX_SIDE}），请缩小后再传`,
+    );
+}
+
 function sniffOk(mime: string, head: Buffer): boolean {
   const ascii = (a: number, b: number) => head.subarray(a, b).toString('latin1');
   const zip = head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
@@ -583,11 +603,13 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
     for (let seq = 0; seq < u.chunkCount; seq++) {
       const [c] = await deps.sql<{ data: Buffer }[]>`SELECT data FROM training_upload_chunks WHERE upload_id = ${id} AND seq = ${seq}`;
       if (!c) throw unprocessable('TRAINING_UPLOAD_INCOMPLETE', `第 ${seq + 1} 块不见了，请重新传`);
-      if (seq === 0) head = c.data.subarray(0, 16);
+      // 第一块整块留着：核对文件头、读图片宽高（JPEG 的帧头可能在 EXIF 后面）
+      if (seq === 0) head = c.data;
       hash.update(c.data);
     }
     sha256 = hash.digest('hex');
     if (!sniffOk(u.mime, head!)) throw unprocessable('TRAINING_UPLOAD_FORMAT', `文件内容不是 ${TRAINING_FORMATS[u.mime]!.label}，请确认选对了文件`);
+    assertImageSize(u.mime, head!);
   } catch (e) {
     await release();
     throw e;
@@ -810,10 +832,12 @@ async function parseSheetBook(db: Db, sha256: string): Promise<TrainingSheetBook
     sheetCache.set(v.sha256, value);
     while (sheetCache.size > SHEET_CACHE_MAX) sheetCache.delete(sheetCache.keys().next().value!);
   };
+  // 读内容出错（数据库）不算文件坏了，不记下来，下次再试
+  const bytes = await readBlob(db, v.sha256);
   let book;
   try {
     // maxNodes 限住整份 XML 的结构规模（空行、无关属性也算），免得几 KB 的文件解析出几十万个节点（Codex 审查 e1d8be3，同工资表的读法）
-    book = readXlsx(await readBlob(db, v.sha256), {
+    book = readXlsx(bytes, {
       maxRow: 5000,
       maxCols: 200,
       maxCells: 200_000,
@@ -824,12 +848,11 @@ async function parseSheetBook(db: Db, sha256: string): Promise<TrainingSheetBook
       maxSheets: SHEET_MAX_SHEETS + 1,
     });
   } catch (e) {
-    if (e instanceof XlsxReadError) {
-      const error = `这份 Excel 在页面里打不开（${e.message}），请下载后查看`;
-      remember({ error });
-      throw unprocessable('TRAINING_SHEET_INVALID', error);
-    }
-    throw e;
+    // 同一份内容解析失败每次都一样：不管是读表的限制（XlsxReadError）还是解析里抛的别的错（RangeError 等），都记下来，
+    // 不让同一份坏文件被反复解析（Codex 安全审查 ed6178f）
+    const error = `这份 Excel 在页面里打不开（${e instanceof XlsxReadError ? e.message : '文件内容有问题'}），请下载后查看`;
+    remember({ error });
+    throw unprocessable('TRAINING_SHEET_INVALID', error);
   }
   const moreSheets = book.sheets.length > SHEET_MAX_SHEETS;
   const sheetsShown = book.sheets.slice(0, SHEET_MAX_SHEETS);
@@ -907,6 +930,17 @@ async function parseSheetBook(db: Db, sha256: string): Promise<TrainingSheetBook
 }
 
 /** 读内容的占位（Codex 安全审查 ec38502）：全店同时 24 个、每人 4 个，排队最多 20 秒，60 秒没往外写就断开 */
+/** 传块的占位（Codex 安全审查 ed6178f）：全店同时 6 块、每人 2 块（页面一份文件一块一块传），满了排队，最多等 20 秒 */
+const chunkSlots = createStreamSlots({
+  slots: 6,
+  perStaff: 2,
+  waitMs: 20_000,
+  queuePerStaff: 6,
+  idleMs: 60_000,
+  code: 'TRAINING_UPLOAD_BUSY',
+  message: '同时在传的文件太多，稍后再试',
+});
+
 const contentSlots = createStreamSlots({
   slots: 24,
   perStaff: 4,
@@ -993,8 +1027,16 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/admin/training/folders', { preHandler: manage }, async (req, reply) => reply.code(201).send(await createFolder(deps, req.body, ctxOf(req))));
   app.put('/api/admin/training/folders/:id', { preHandler: manage }, async (req) => updateFolder(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.post('/api/admin/training/uploads', { preHandler: manage }, async (req) => startUpload(deps, req.body, ctxOf(req)));
-  app.put('/api/admin/training/uploads/:id/chunks/:seq', { preHandler: manage, bodyLimit: Math.ceil((TRAINING_CHUNK_BYTES * 4) / 3) + 4096 }, async (req) =>
-    putChunk(deps, req.params, req.body, req.actor),
+  // 传块：在读请求体以前（onRequest）先核对权限、拿传块占位（Codex 安全审查 ed6178f：同一块并发重放会占满请求预算与内存）
+  app.put(
+    '/api/admin/training/uploads/:id/chunks/:seq',
+    {
+      onRequest: [manage, async (req, reply) => chunkSlots.take(req, reply, req.actor.id)],
+      onResponse: async (req) => chunkSlots.release(req),
+      onRequestAbort: async (req) => chunkSlots.release(req),
+      bodyLimit: Math.ceil((TRAINING_CHUNK_BYTES * 4) / 3) + 4096,
+    },
+    async (req) => putChunk(deps, req.params, req.body, req.actor),
   );
   app.post('/api/admin/training/uploads/cancel', { preHandler: manage }, async (req) => cancelUpload(deps, req.body, ctxOf(req)));
   app.get('/api/admin/training/uploads/:id', { preHandler: manage }, async (req) => {

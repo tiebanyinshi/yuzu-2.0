@@ -136,3 +136,18 @@ export function pdfRenderScale(pageWidth: number, pageHeight: number, displayWid
   const shrink = Math.min(1, Math.sqrt(TRAINING_PDF_MAX_PIXELS / (w * h)), TRAINING_PDF_MAX_SIDE / w, TRAINING_PDF_MAX_SIDE / h);
   return want * shrink;
 }
+
+/** 培训文件名最多几个字（服务端校验与页面先查同一条，Codex 审查 9b1dd16） */
+export const TRAINING_FILE_NAME_MAX = 200;
+/** 文件名哪里不行（去掉首尾空白以后看）；没问题返回 null */
+export function trainingFileNameProblem(name: string): string | null {
+  const n = name.trim();
+  if (!n) return '缺少文件名';
+  if (n.length > TRAINING_FILE_NAME_MAX) return `文件名最多 ${TRAINING_FILE_NAME_MAX} 个字`;
+  if (/[\\/\u0000-\u001f]/.test(n)) return '文件名不能带路径或控制字符';
+  return null;
+}
+
+/** 培训图片在页面里直接显示：一张最多 4000 万像素、一条边最多 16384 像素（Codex 安全审查 9b1dd16） */
+export const TRAINING_IMAGE_MAX_PIXELS = 40_000_000;
+export const TRAINING_IMAGE_MAX_SIDE = 16384;

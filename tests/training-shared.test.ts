@@ -1,6 +1,6 @@
-// 员工培训 PDF 一页画多大（Codex 安全审查 04eb112）：画布像素、边长都有上限，PDF 里写的页面比例再怪也不无限放大。
+// 员工培训的纯函数（不要数据库）：PDF 一页画多大（Codex 安全审查 04eb112）、文件名规则（Codex 审查 9b1dd16）。
 import { describe, expect, it } from 'vitest';
-import { pdfRenderScale, TRAINING_PDF_MAX_PIXELS, TRAINING_PDF_MAX_SIDE } from '../src/shared/training';
+import { pdfRenderScale, TRAINING_FILE_NAME_MAX, TRAINING_PDF_MAX_PIXELS, TRAINING_PDF_MAX_SIDE, trainingFileNameProblem } from '../src/shared/training';
 
 const canvas = (w: number, h: number, display: number, ratio: number) => {
   const s = pdfRenderScale(w, h, display, ratio);
@@ -26,5 +26,18 @@ describe('pdfRenderScale', () => {
   it('宽高不对（0、负数、NaN）不画', () => {
     expect(pdfRenderScale(0, 100, 800, 2)).toBe(0);
     expect(pdfRenderScale(100, Number.NaN, 800, 2)).toBe(0);
+  });
+});
+
+describe('trainingFileNameProblem（页面先查与服务端同一条，Codex 审查 9b1dd16）', () => {
+  it('正常的名字没问题；首尾空白不算', () => {
+    expect(trainingFileNameProblem('员工手册.pdf')).toBeNull();
+    expect(trainingFileNameProblem('  a.pdf ')).toBeNull();
+  });
+  it('超过 200 个字、空的、带路径或控制字符的都不行', () => {
+    expect(trainingFileNameProblem(`${'长'.repeat(TRAINING_FILE_NAME_MAX)}.pdf`)).toMatch(/最多/);
+    expect(trainingFileNameProblem('   ')).toBe('缺少文件名');
+    expect(trainingFileNameProblem('a/b.pdf')).toMatch(/路径/);
+    expect(trainingFileNameProblem('a\u0001.pdf')).toMatch(/控制字符/);
   });
 });
