@@ -210,7 +210,13 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
     await context.close();
 
     // 收尾：撤销授权、停用组与临时员工
-    expect((await page.request.delete(`/api/oa/attendance/schedule-grants/${grantId}`, { data: { reason: '演练收尾' } })).status()).toBe(200);
+    expect(
+      (
+        await page.request.post(`/api/oa/attendance/schedule-grants/${grantId}/revoke`, {
+          data: { clientKey: randomUUID(), storeId: me.store.id, reason: '演练收尾' },
+        })
+      ).status(),
+    ).toBe(200);
     expect((await page.request.put(`/api/oa/attendance/groups/${group.id}`, { data: { name: `手排${stamp}`, gpsRequired: false, active: false, version: group.version } })).status()).toBe(200);
     expect((await page.request.put(`/api/staff/${emp.id}`, { data: { displayName, position: 'front.staff', active: false } })).status()).toBe(200);
   });

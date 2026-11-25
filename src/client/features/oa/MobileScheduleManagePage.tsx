@@ -4,10 +4,11 @@
 //   · 保存草稿与发布排班均走 sendErpOp 幂等与「结果待确认」面板。
 
 import { useMemo, useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Send } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Send, ShieldCheck } from 'lucide-react';
 import { describeDate, shiftDate } from '@shared/labels';
-import type { OaShift, SchedulePublishResult, ScheduleWeek } from '@shared/oa';
+import type { OaShift, ScheduleAccessSummary, SchedulePublishResult, ScheduleWeek } from '@shared/oa';
 import { positionLabel } from '@shared/positions';
 import { shiftTimeText } from '@shared/technician-admin';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
@@ -112,6 +113,7 @@ export function MobileScheduleManagePage() {
   const pendingPublish = useErpRecorded(['oa_schedule_publish']).filter(mine);
 
   const q = useQuery({ queryKey: ['oa', 'schedule', groupId, monday], queryFn: () => api.get<ScheduleWeek>(scheduleWeekUrl(groupId, monday)) });
+  const access = useQuery({ queryKey: ['oa', 'schedule-access'], queryFn: () => api.get<ScheduleAccessSummary>('/api/oa/attendance/schedule-access') });
   const w = q.data;
 
   const from = monday ?? (w ? mondayOf(w.today) : null);
@@ -292,6 +294,16 @@ export function MobileScheduleManagePage() {
                     按天
                   </button>
                 </div>
+                {access.data?.canGrant && (
+                  <Link
+                    to="/oa/schedule/grants"
+                    data-testid="mobile-sch-grants-link"
+                    className="tap relative inline-flex h-8 items-center gap-1 rounded-md border border-pine/40 bg-pine-tint px-2.5 text-[12.5px] font-semibold text-pine"
+                  >
+                    <ShieldCheck className="size-3.5" />
+                    排班授权
+                  </Link>
+                )}
               </div>
 
               <div className="flex items-center justify-between gap-1">

@@ -12,8 +12,8 @@
 //       - 调岗失效：实时比对 grantee_position 与员工当前 staff.position 及在职状态，岗位变化或离职停用立即失效。
 //       - 全程记 audit_logs（oa_schedule_grant_created / oa_schedule_grant_revoked）。
 // 加锁顺序（docs/LOCKING.md「排班授权」）：
-//   新建授权：lockOpKey → staff（授权人与被授权人按 id 升序 FOR SHARE）→ 插入 oa_schedule_grants。
-//   撤销授权：oa_schedule_grants（FOR UPDATE）。
+//   新建授权：lockOpKey → staff（owner 优先、再按 id 升序 FOR SHARE，与 PUT /api/staff/:id 一致）→ 插入 oa_schedule_grants。
+//   撤销授权：lockOpKey → 经办人 staff（FOR SHARE）→ oa_schedule_grants（FOR UPDATE）。
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -426,6 +426,8 @@ const CreateGrantInput = z.object({
 });
 
 const RevokeInput = z.object({
+  clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
+  storeId: z.number().int().positive(),
   reason: z.string().trim().max(SCHEDULE_GRANT_NOTE_MAX, `撤销原因最多 ${SCHEDULE_GRANT_NOTE_MAX} 个字`).default(''),
 });
 
@@ -545,9 +547,9 @@ export function registerOaScheduleGrantRoutes(app: FastifyInstance, deps: Deps) 
       }
       await assertNotFenced(tx, input.clientKey, 'oa_schedule_grant', erpOpAbandoned);
 
-      // 按员工 id 升序锁授权人与被授权人（FOR SHARE），与调岗 / 离职串行且不成环
+      // 先锁 owner 再锁非 owner、同组按 id 升序（FOR SHARE），与 PUT /api/staff/:id、oa/org.ts、oa/attendance-setup.ts 一致，杜绝成环死锁
       const pair = [req.actor.id, input.granteeStaffId].sort((a, b) => a - b);
-      await tx`SELECT id FROM staff WHERE id IN ${tx(pair)} ORDER BY id FOR SHARE`;
+      await tx`SELECT id FROM staff WHERE id IN ${tx(pair)} ORDER BY (role = 'owner') DESC, id FOR SHARE`;
 
       const depts = await loadDepts(tx);
       const builtIn = await resolveBuiltIn(tx, req.actor, depts, false);
@@ -664,16 +666,30 @@ export function registerOaScheduleGrantRoutes(app: FastifyInstance, deps: Deps) 
     return { grant: grant!, replayed: out.replayed };
   });
 
-  // 撤销排班授权（考勤管理员可撤本店任意条，部门经理可撤自己授出的）
-  app.delete('/api/oa/attendance/schedule-grants/:id', { preHandler: guard() }, async (req): Promise<{ grant: ScheduleGrant }> => {
+  // 撤销排班授权（带操作编号幂等与确认作废围栏；考勤管理员可撤本店任意条，部门经理可撤自己授出的）
+  app.post('/api/oa/attendance/schedule-grants/:id/revoke', { preHandler: guard() }, async (req): Promise<ScheduleGrantSaved> => {
     const { id } = parse(idParam, req.params);
-    const { reason } = parse(RevokeInput, req.body ?? {});
+    const input = parse(RevokeInput, req.body ?? {});
     const store = currentStoreId();
+    if (input.storeId !== store) throw conflict('STORE_SWITCHED', '这次撤销是在别的门店页面发起的：请切回那家门店再试');
     const today = todayOf();
+    const hash = hashRequest({ op: 'revoke', staffId: req.actor.id, storeId: store, grantId: id, reason: input.reason });
 
-    const isHr = await sql.begin(async (tx): Promise<boolean> => {
+    const out = await sql.begin(async (tx): Promise<{ replayed: boolean; isHr: boolean }> => {
+      await lockOpKey(tx, input.clientKey);
+      const [seen] = await tx<{ opType: string; requestHash: string; refId: number; staffId: number }[]>`
+        SELECT op_type, request_hash, ref_id, staff_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+      if (seen) {
+        if (Number(seen.staffId) !== req.actor.id && !can(req.actor, 'hr.attendance')) throw forbidden('该操作编号属于他人，不能重提');
+        if (seen.opType !== 'oa_schedule_grant' || seen.requestHash !== hash) {
+          throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次操作，请刷新页面后重试');
+        }
+        return { replayed: true, isHr: can(req.actor, 'hr.attendance') };
+      }
+      await assertNotFenced(tx, input.clientKey, 'oa_schedule_grant', erpOpAbandoned);
+
       const depts = await loadDepts(tx);
-      const builtIn = await resolveBuiltIn(tx, req.actor, depts, false);
+      const builtIn = await resolveBuiltIn(tx, req.actor, depts, true);
       if (!builtIn.active || builtIn.role === 'none') {
         throw forbidden('只有考勤管理员或部门经理可以撤销排班授权');
       }
@@ -688,8 +704,11 @@ export function registerOaScheduleGrantRoutes(app: FastifyInstance, deps: Deps) 
       if (row.revokedAt) throw conflict('GRANT_ALREADY_REVOKED', '这条排班授权已经撤销过了');
       await tx`
         UPDATE oa_schedule_grants
-        SET revoked_at = now(), revoked_by = ${req.actor.id}, revoke_reason = ${reason || null}
+        SET revoked_at = now(), revoked_by = ${req.actor.id}, revoke_reason = ${input.reason || null}
         WHERE id = ${id}`;
+      await tx`
+        INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id)
+        VALUES (${input.clientKey}, 'oa_schedule_grant', ${hash}, ${id}, ${req.actor.id})`;
       const [grantee] = await tx<{ displayName: string }[]>`SELECT display_name FROM staff WHERE id = ${row.granteeStaffId}`;
       await writeAudit(tx, {
         staffId: req.actor.id,
@@ -700,15 +719,15 @@ export function registerOaScheduleGrantRoutes(app: FastifyInstance, deps: Deps) 
           grantId: id,
           granteeStaffId: Number(row.granteeStaffId),
           granteeName: grantee?.displayName ?? '',
-          reason,
-          summary: `撤销「${grantee?.displayName ?? `#${row.granteeStaffId}`}」的排班授权${reason ? `（${reason}）` : ''}`,
+          reason: input.reason,
+          summary: `撤销「${grantee?.displayName ?? `#${row.granteeStaffId}`}」的排班授权${input.reason ? `（${input.reason}）` : ''}`,
         },
         ip: req.ip,
       });
-      return hr;
+      return { replayed: false, isHr: hr };
     });
 
-    const [grant] = await hydrateGrants(sql, await queryGrantRows(sql, sql`g.id = ${id}`), today, req.actor.id, isHr);
-    return { grant: grant! };
+    const [grant] = await hydrateGrants(sql, await queryGrantRows(sql, sql`g.id = ${id}`), today, req.actor.id, out.isHr);
+    return { grant: grant!, replayed: out.replayed };
   });
 }

@@ -2,17 +2,21 @@
 //   · 工作台：顶上「今天」打卡卡片（接 nextPunch「该打什么卡」、支持跨天/夜班提示），下面功能宫格（手机一行四个小图标），顶栏搜索按名字筛。
 //   · 我的排班：月历，点选某天在下方展开完整班次、时间与状态；有排班权限的员工直接进「排班管理」（/oa/schedule/manage）。
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarCog, ChevronLeft, ChevronRight, FilePenLine, Fingerprint } from 'lucide-react';
 import { describeDate, shiftDate } from '@shared/labels';
-import { MY_DAY_STATUS_LABELS, type MySchedule, type PunchToday, type ScheduleAccessSummary } from '@shared/oa';
+import { dateOfEpochMinute, MY_DAY_STATUS_LABELS, nextPunchHint, type MySchedule, type PunchToday, type ScheduleAccessSummary } from '@shared/oa';
 import type { ApprovalSummary } from '@shared/oa-approval';
 import { IM_LIST_POLL_MS, type ImSync } from '@shared/oa-im';
+import { can } from '@shared/permissions';
+import { clockText } from '@shared/technician-admin';
 import { api } from '../../lib/api';
 import { useLivePoll } from '../../lib/livePoll';
+import { useSession } from '../../lib/session';
 import { PageHeader } from '../../components/AppShell';
+import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Badge, Button, Card, Skeleton } from '../../components/ui';
 import { ApprovalPages } from './ApprovalPages';
@@ -24,9 +28,10 @@ import { MobileScheduleManagePage } from './MobileScheduleManagePage';
 import { MyAttendancePage } from './MyAttendancePage';
 import { MyLeavePage } from './MyLeavePage';
 import { MyPayslipPages } from './MyPayslipPages';
-import { PunchPage } from './PunchPage';
+import { PunchPage, useMinuteClock } from './PunchPage';
 import { MePage } from './MePage';
 import { DayLegend, itemText, LEAVE_PART_LABELS, MonthGrid } from './MyScheduleCalendar';
+import { ScheduleGrantsTab } from './ScheduleGrantsTab';
 import { useWcpNav, type WcpNavItem } from './wcpNav';
 import { TrainingPages } from '../training/TrainingPages';
 
@@ -42,6 +47,8 @@ export function OfficePage() {
     <DirectoryPage />
   ) : path === '/oa/me' ? (
     <MePage />
+  ) : path === '/oa/schedule/grants' ? (
+    <MobileScheduleGrantsPage />
   ) : path === '/oa/schedule/manage' ? (
     <MobileScheduleManagePage />
   ) : path === '/oa/schedule' ? (
@@ -129,7 +136,13 @@ const punchText = (p: { localTime: string } | null) => (p ? `已打 ${p.localTim
 function TodayCard() {
   const q = useQuery({ queryKey: ['oa', 'punch-today'], queryFn: () => api.get<PunchToday>('/api/oa/attendance/today') });
   const d = q.data;
-  const next = d?.nextPunch;
+  const now = useMinuteClock(d?.now);
+  const rolledOver = !!d && now !== undefined && dateOfEpochMinute(now) !== d.today;
+  const refetchToday = q.refetch;
+  useEffect(() => {
+    if (rolledOver) void refetchToday();
+  }, [rolledOver, refetchToday]);
+  const next = d ? nextPunchHint(now ?? d.now, d.today, d.slots, d.group) : null;
   const visibleSlots = d ? d.slots.filter((x) => x.date === d.today || (next?.shiftId === x.shiftId && next?.businessDate === x.date)) : [];
   const btnLabel = next?.inWindow ? next.label : '去打卡';
   return (
@@ -272,15 +285,45 @@ function MySchedulePage() {
                     ))}
                   </div>
                 )}
-                {nextDayItems.map((i) => (
-                  <p key={`next-${i.shiftId}`} className="text-[13px] font-semibold text-ember">
-                    今晚 24:00 上班：{i.name}（{itemText(i)}，前一日 22:00 起可打上班卡）
-                  </p>
-                ))}
+                {nextDayItems.map((i) => {
+                  const openHint = i.inAdvanceMinutes > 0 ? `前一日 ${clockText(1440 - i.inAdvanceMinutes)} 起可打上班卡` : '次日 00:00 起可打上班卡';
+                  return (
+                    <p key={`next-${i.shiftId}`} className="text-[13px] font-semibold text-ember">
+                      今晚 24:00 上班：{i.name}（{itemText(i)}，{openHint}）
+                    </p>
+                  );
+                })}
               </Card>
             )}
           </>
         )}
+      </div>
+    </>
+  );
+}
+
+/** WCP 内排班授权页（/oa/schedule/grants）：经 org_departments.head_staff_id 指定且无后台权限的部门经理也能直接管理排班授权 */
+function MobileScheduleGrantsPage() {
+  const qc = useQueryClient();
+  const session = useSession();
+  const isHr = can(session.staff, 'hr.attendance');
+  const mine = (op: { staffId?: number }) => isHr || op.staffId === session.staff.id;
+  return (
+    <>
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title="排班授权" subtitle="把本范围的查看、编排或发布排班权限授给主管或指定员工（不可转授，调岗自动失效）" />
+      </div>
+      <div className="mx-auto w-full max-w-5xl space-y-3 p-3 md:p-7" data-testid="oa-schedule-grants-page">
+        <ErpPendingPanel
+          types={['oa_schedule_grant']}
+          filter={mine}
+          className="space-y-2"
+          onFound={() => {
+            void qc.invalidateQueries({ queryKey: ['oa', 'schedule-grants'] });
+            void qc.invalidateQueries({ queryKey: ['oa', 'schedule'] });
+          }}
+        />
+        <ScheduleGrantsTab />
       </div>
     </>
   );

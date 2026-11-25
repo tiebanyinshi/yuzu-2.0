@@ -66,13 +66,19 @@ export function MonthGrid({ data, selectedDate, onSelectDate }: { data: MySchedu
             {day.items.map((i) => (
               <p key={i.shiftId} className="mt-0.5 leading-tight">
                 <span className="block truncate font-bold text-ink">{i.name}</span>
-                <span className="num block text-[12px] text-ink-3 max-sm:hidden">{itemText(i)}</span>
+                <span className={cn('num block text-[12px] text-ink-3', onSelectDate && 'max-sm:hidden')}>{itemText(i)}</span>
               </p>
             ))}
             {tonight.map((i) => (
               <p key={`t-${i.shiftId}`} className="mt-0.5 text-[12px] leading-tight font-semibold text-ember">
-                <span className="sm:hidden">今晚夜</span>
-                <span className="max-sm:hidden">今晚 24:00 上班（{i.name}）</span>
+                {onSelectDate ? (
+                  <>
+                    <span className="sm:hidden">今晚夜</span>
+                    <span className="max-sm:hidden">今晚 24:00 上班（{i.name}）</span>
+                  </>
+                ) : (
+                  <span>今晚 24:00 上班（{i.name}）</span>
+                )}
               </p>
             ))}
           </>

@@ -100,7 +100,7 @@ export async function login(app: FastifyInstance, username: string, password = P
   return `yuzu_sid=${cookie!.value}`;
 }
 
-export async function api<T = any>(app: FastifyInstance, cookie: string | null, method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, payload?: unknown): Promise<{ status: number; body: T }> {
+export async function api<T = any>(app: FastifyInstance, cookie: string | null, method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown): Promise<{ status: number; body: T }> {
   const res = await app.inject({
     method,
     url,

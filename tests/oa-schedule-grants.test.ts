@@ -296,12 +296,62 @@ describe('员工办公 v1.1 第 2 批：排班发布与排班授权', () => {
     expect(audits[0]?.detail.viaGrantIds).toContain(gPub.body.grant.id);
 
     // 其他部门经理不能撤销 frontLead 授出的授权
-    expect((await api(ctx.app, engLead.cookie, 'DELETE', `/api/oa/attendance/schedule-grants/${gRes.body.grant.id}`, { reason: '越权' })).status).toBe(403);
-    // frontLead 撤销自己的两条授权，重复撤销报 409
-    const rev1 = await api(ctx.app, frontLead.cookie, 'DELETE', `/api/oa/attendance/schedule-grants/${gRes.body.grant.id}`, { reason: '分工调整' });
+    expect(
+      (
+        await api(ctx.app, engLead.cookie, 'POST', `/api/oa/attendance/schedule-grants/${gRes.body.grant.id}/revoke`, {
+          clientKey: randomUUID(),
+          storeId: DEFAULT_STORE_ID,
+          reason: '越权',
+        })
+      ).status,
+    ).toBe(403);
+    // 已作废的撤销编号必须被拦截（OP_ABANDONED），不会悄悄撤销
+    const fencedRevKey = randomUUID();
+    expect((await api(ctx.app, frontLead.cookie, 'POST', `/api/erp/ops/${fencedRevKey}/abandon`, { type: 'oa_schedule_grant', summary: '作废撤销' })).status).toBe(200);
+    expect(
+      code(
+        await api(ctx.app, frontLead.cookie, 'POST', `/api/oa/attendance/schedule-grants/${gRes.body.grant.id}/revoke`, {
+          clientKey: fencedRevKey,
+          storeId: DEFAULT_STORE_ID,
+          reason: '作废后重试',
+        }),
+      ),
+    ).toBe('OP_ABANDONED');
+    // frontLead 撤销自己的两条授权：同编号重提返回 replayed: true（不断网误报已撤销）；换新编号重复撤销报 GRANT_ALREADY_REVOKED
+    const rev1Key = randomUUID();
+    const rev1 = await api<ScheduleGrantSaved>(ctx.app, frontLead.cookie, 'POST', `/api/oa/attendance/schedule-grants/${gRes.body.grant.id}/revoke`, {
+      clientKey: rev1Key,
+      storeId: DEFAULT_STORE_ID,
+      reason: '分工调整',
+    });
     expect(rev1.status, JSON.stringify(rev1.body)).toBe(200);
-    expect(code(await api(ctx.app, frontLead.cookie, 'DELETE', `/api/oa/attendance/schedule-grants/${gRes.body.grant.id}`, {}))).toBe('GRANT_ALREADY_REVOKED');
-    expect((await api(ctx.app, frontLead.cookie, 'DELETE', `/api/oa/attendance/schedule-grants/${gPub.body.grant.id}`, { reason: '收回发布权' })).status).toBe(200);
+    expect(rev1.body.replayed).toBe(false);
+    expect(rev1.body.grant.status).toBe('revoked');
+    const rev1Replay = await api<ScheduleGrantSaved>(ctx.app, frontLead.cookie, 'POST', `/api/oa/attendance/schedule-grants/${gRes.body.grant.id}/revoke`, {
+      clientKey: rev1Key,
+      storeId: DEFAULT_STORE_ID,
+      reason: '分工调整',
+    });
+    expect(rev1Replay.status, JSON.stringify(rev1Replay.body)).toBe(200);
+    expect(rev1Replay.body.replayed).toBe(true);
+    expect(
+      code(
+        await api(ctx.app, frontLead.cookie, 'POST', `/api/oa/attendance/schedule-grants/${gRes.body.grant.id}/revoke`, {
+          clientKey: randomUUID(),
+          storeId: DEFAULT_STORE_ID,
+          reason: '',
+        }),
+      ),
+    ).toBe('GRANT_ALREADY_REVOKED');
+    expect(
+      (
+        await api(ctx.app, frontLead.cookie, 'POST', `/api/oa/attendance/schedule-grants/${gPub.body.grant.id}/revoke`, {
+          clientKey: randomUUID(),
+          storeId: DEFAULT_STORE_ID,
+          reason: '收回发布权',
+        })
+      ).status,
+    ).toBe(200);
     // 撤销后主管立刻失权，审计日志有建有撤
     expect((await api(ctx.app, frontSup.cookie, 'GET', `/api/oa/attendance/schedule?groupId=${mixedGroupId}`)).status).toBe(403);
     expect((await ctx.sql`SELECT 1 FROM audit_logs WHERE action = 'oa_schedule_grant_created'`).length).toBeGreaterThanOrEqual(2);
@@ -381,9 +431,21 @@ describe('员工办公 v1.1 第 2 批：排班发布与排班授权', () => {
     expect((await saveCells(frontSup.cookie, [{ staffId: diningStaff.id, date: d9, shiftIds: [earlyId], expected: EMPTY }])).status).toBe(200);
     expect((await saveCells(frontSup.cookie, [{ staffId: engStaff.id, date: d9, shiftIds: [earlyId], expected: EMPTY }])).status).toBe(403);
     // 清理
-    expect((await api(ctx.app, frontLead.cookie, 'DELETE', `/api/oa/attendance/schedule-grants/${treeGrant.body.grant.id}`, {})).status).toBe(200);
+    expect(
+      (
+        await api(ctx.app, frontLead.cookie, 'POST', `/api/oa/attendance/schedule-grants/${treeGrant.body.grant.id}/revoke`, {
+          clientKey: randomUUID(),
+          storeId: DEFAULT_STORE_ID,
+          reason: '',
+        })
+      ).status,
+    ).toBe(200);
     // 未发布草稿对员工今天接口不可见
     const tdy = (await api(ctx.app, diningStaff.cookie, 'GET', '/api/oa/attendance/today')).body as PunchToday;
     expect(tdy.slots.some((s) => s.date === d9)).toBe(false);
+    // 我的排班返回班次配置的 inAdvanceMinutes（供夜班开窗提示使用）
+    const meSch = (await api(ctx.app, frontStaff.cookie, 'GET', `/api/oa/me/schedule?month=${shiftDate(today, 5).slice(0, 7)}`)).body as MySchedule;
+    const anyItem = meSch.days.flatMap((d) => d.items)[0] ?? meSch.following.items[0];
+    expect(anyItem?.inAdvanceMinutes).toBeTypeOf('number');
   });
 });

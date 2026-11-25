@@ -459,6 +459,7 @@ export interface MyScheduleItem {
   name: string;
   startMinute: number;
   endMinute: number;
+  inAdvanceMinutes: number;
   consecutive: boolean;
 }
 /**

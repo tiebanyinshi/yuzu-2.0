@@ -205,7 +205,7 @@ describe('OA-05 排班', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const m = r.body as MySchedule;
     expect(m.days[0]!.date).toBe(`${tomorrow.slice(0, 7)}-01`);
-    expect(m.days.find((d) => d.date === tomorrow)!.items).toEqual([{ shiftId: early, name: '早班', startMinute: 480, endMinute: 960, consecutive: false }]);
+    expect(m.days.find((d) => d.date === tomorrow)!.items).toEqual([{ shiftId: early, name: '早班', startMinute: 480, endMinute: 960, inAdvanceMinutes: 120, consecutive: false }]);
     const mine = (await api(ctx.app, b.cookie, 'GET', `/api/oa/me/schedule?month=${tomorrow.slice(0, 7)}`)).body as MySchedule;
     expect(mine.days.find((d) => d.date === tomorrow)!.items).toEqual([]);
     expect((await api(ctx.app, a.cookie, 'GET', '/api/oa/me/schedule?month=2026-12')).body).toMatchObject({ month: '2026-12' });
@@ -213,7 +213,7 @@ describe('OA-05 排班', () => {
     // 下个月 1 号的也带上（00:00 上班的在这个月最后一天提醒）
     await ctx.sql`INSERT INTO oa_schedules (staff_id, work_date, shift_id) VALUES (${b.id}, '2027-01-01', ${night})`;
     const dec = (await api(ctx.app, b.cookie, 'GET', '/api/oa/me/schedule?month=2026-12')).body as MySchedule;
-    expect(dec.following).toEqual({ date: '2027-01-01', items: [{ shiftId: night, name: '夜班', startMinute: 0, endMinute: 480, consecutive: false }] });
+    expect(dec.following).toEqual({ date: '2027-01-01', items: [{ shiftId: night, name: '夜班', startMinute: 0, endMinute: 480, inAdvanceMinutes: 120, consecutive: false }] });
     expect(dec.days.some((d) => d.date === '2027-01-01')).toBe(false);
   });
 

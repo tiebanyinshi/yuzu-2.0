@@ -77,17 +77,38 @@ export function ScheduleGrantsTab() {
 
   const doRevoke = async () => {
     if (!revoking) return;
+    if (pending.length > 0) {
+      setRevokeError('上一次排班授权或撤销结果待确认：请先在页面上方查回、重提或作废');
+      return;
+    }
     setRevokeBusy(true);
     setRevokeError(null);
+    const key = uuid();
+    const target = revoking;
     try {
-      await api.delete(`/api/oa/attendance/schedule-grants/${revoking.id}`, { reason: revokeReason.trim() });
-      toast({ tone: 'success', title: `已撤销「${revoking.granteeName}」的排班授权` });
+      const res = await sendErpOp<ScheduleGrantSaved>({
+        key,
+        type: 'oa_schedule_grant',
+        url: `/api/oa/attendance/schedule-grants/${target.id}/revoke`,
+        body: { clientKey: key, storeId: session.store.id, reason: revokeReason.trim() },
+        summary: `撤销排班授权 · ${target.granteeName}`,
+        staffName: session.staff.displayName,
+        staffId: session.staff.id,
+      });
+      toast({ tone: 'success', title: res.replayed ? `「${target.granteeName}」的排班授权已撤销` : `已撤销「${target.granteeName}」的排班授权` });
       setRevoking(null);
       setRevokeReason('');
       void qc.invalidateQueries({ queryKey: GRANTS_KEY });
       void qc.invalidateQueries({ queryKey: ['oa', 'schedule'] });
     } catch (e) {
-      setRevokeError(errorMessage(e));
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '撤销结果待确认', body: '已记在本机：请在页面上方查回、按原内容重新提交或作废。' });
+        setRevoking(null);
+        setRevokeReason('');
+        void qc.invalidateQueries({ queryKey: GRANTS_KEY });
+        void qc.invalidateQueries({ queryKey: ['oa', 'schedule'] });
+      } else if (e instanceof ErpPendingStoreError) setRevokeError(e.message);
+      else setRevokeError(errorMessage(e));
     } finally {
       setRevokeBusy(false);
     }

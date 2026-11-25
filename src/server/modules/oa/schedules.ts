@@ -737,13 +737,22 @@ export function registerOaScheduleRoutes(app: FastifyInstance, deps: Deps) {
     const first = `${month}-01`;
     const [y, m] = month.split('-').map(Number) as [number, number];
     const end = shiftDate(m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`, -1);
-    const rows = await sql<{ workDate: string; shiftId: number; name: string; startMinute: number; endMinute: number; consecutive: boolean }[]>`
-      SELECT o.work_date::text AS work_date, o.shift_id, sh.name, sh.start_minute, sh.end_minute, o.consecutive
+    const rows = await sql<{ workDate: string; shiftId: number; name: string; startMinute: number; endMinute: number; inAdvanceMinutes: number; consecutive: boolean }[]>`
+      SELECT o.work_date::text AS work_date, o.shift_id, sh.name, sh.start_minute, sh.end_minute, sh.in_advance_minutes, o.consecutive
       FROM oa_schedules o JOIN oa_shifts sh ON sh.id = o.shift_id
       WHERE o.staff_id = ${req.actor.id} AND o.status = 'published' AND ${liveSchedule(sql)} AND o.work_date BETWEEN ${first} AND ${shiftDate(end, 1)}
       ORDER BY o.work_date, sh.start_minute`;
     const itemsOf = (d: string) =>
-      rows.filter((r) => r.workDate === d).map((r) => ({ shiftId: Number(r.shiftId), name: r.name, startMinute: r.startMinute, endMinute: r.endMinute, consecutive: r.consecutive }));
+      rows
+        .filter((r) => r.workDate === d)
+        .map((r) => ({
+          shiftId: Number(r.shiftId),
+          name: r.name,
+          startMinute: r.startMinute,
+          endMinute: r.endMinute,
+          inAdvanceMinutes: r.inAdvanceMinutes,
+          consecutive: r.consecutive,
+        }));
     // 每一天的状态（排班优化第 4 条）：请假（审批通过的覆盖）＞ 缺勤（有一班结算成旷工）＞ 上班 ＞ 休息；只是显示
     const leaves = await sql<{ workDate: string; part: 'full' | 'am' | 'pm' }[]>`
       SELECT work_date::text AS work_date, part FROM oa_attendance_covers
