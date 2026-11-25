@@ -190,6 +190,14 @@ describe('素材库', () => {
     expect((await upload(ctx.app, designer, 'kind=video&name=没有画面', Buffer.concat([box('ftyp', Buffer.from('isom', 'latin1')), box('moov', Buffer.alloc(4))]))).body.error.code).toBe(
       'DESIGN_TYPE',
     );
+    // 顶层盒子太多（几百万个 8 字节的 free 盒子那种）：不往下走，直接拒绝（Codex 安全审查）
+    const manyBoxes = Buffer.concat([
+      box('ftyp', Buffer.from('isom', 'latin1')),
+      ...Array.from({ length: 300 }, () => box('free', Buffer.alloc(0))),
+      box('moov', Buffer.alloc(4)),
+      box('mdat', Buffer.alloc(4)),
+    ]);
+    expect((await upload(ctx.app, designer, 'kind=video&name=盒子太多', manyBoxes)).body.error.code).toBe('DESIGN_TYPE');
     const badWebm = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x80, 0x00]);
     expect((await upload(ctx.app, designer, 'kind=video&name=坏webm', badWebm)).body.error.code).toBe('DESIGN_TYPE');
     const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x81, 0x00, 0x18, 0x53, 0x80, 0x67, 0x84]), Buffer.alloc(4, 9)]);

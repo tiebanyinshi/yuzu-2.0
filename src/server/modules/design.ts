@@ -94,15 +94,20 @@ function fontFamilyOf(b: Buffer): string | null {
 const isTrialFont = (b: Buffer) => b.includes(Buffer.from('Unlicensed Trial', 'latin1')) || b.includes(Buffer.from('Unlicensed Trial', 'utf16le').swap16());
 
 /** MP4：顶层盒子（4 字节长度 + 4 字节类型，长度 1 时后接 8 字节长度，0 表示到文件尾）首尾相接走到文件尾，第一个是 ftyp，有 moov 与 mdat */
+/** MP4 顶层最多认多少个盒子（正常的只有十几个：ftyp、moov、mdat、free、uuid……） */
+const MP4_MAX_BOXES = 256;
+
 function mp4Ok(b: Buffer): boolean {
-  const seen = new Set<string>();
+  // 顶层盒子最多走 MP4_MAX_BOXES 个，只记有没有 moov、mdat（Codex 安全审查：几百万个 8 字节的小盒子会让单进程卡住好几秒、
+  // 占几百 MB 内存；正常的 MP4 顶层只有十几个盒子）
+  let moov = false;
+  let mdat = false;
   let at = 0;
-  while (at < b.length) {
-    if (at + 8 > b.length) return false;
+  for (let n = 0; at < b.length; n += 1) {
+    if (n >= MP4_MAX_BOXES || at + 8 > b.length) return false;
     let size = b.readUInt32BE(at);
-    const type = b.toString('latin1', at + 4, at + 8);
-    if (!/^[\x20-\x7e]{4}$/.test(type)) return false;
-    if (at === 0 && type !== 'ftyp') return false;
+    for (let i = at + 4; i < at + 8; i += 1) if (b[i]! < 0x20 || b[i]! > 0x7e) return false;
+    if (at === 0 && b.toString('latin1', 4, 8) !== 'ftyp') return false;
     if (size === 1) {
       if (at + 16 > b.length) return false;
       size = Number(b.readBigUInt64BE(at + 8));
@@ -110,10 +115,13 @@ function mp4Ok(b: Buffer): boolean {
     } else if (size === 0) size = b.length - at;
     else if (size < 8) return false;
     if (at + size > b.length) return false;
-    seen.add(type);
+    const t = b.readUInt32BE(at + 4);
+    if (t === 0x6d6f6f76)
+      moov = true; // 'moov'
+    else if (t === 0x6d646174) mdat = true; // 'mdat'
     at += size;
   }
-  return seen.has('moov') && seen.has('mdat');
+  return moov && mdat;
 }
 
 /** EBML 的变长数字（长度）：第一个字节前面有几个 0 位就再读几个字节 */
