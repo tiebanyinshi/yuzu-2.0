@@ -38,6 +38,7 @@ import { QtyInput } from '../../components/QtyInput';
 import { swappableOf } from '../dining/DishOptionsDialog';
 import { PendingPanel, roomOrderUrl, useFrontdeskOp } from '../frontdesk/pending';
 import { roomCenterKey } from './queries';
+import { windowsText } from '@shared/dining-v8139';
 
 const ORDER_PERMS = { water: 'dining.orderWater', fruit: 'dining.orderFruit' } as const satisfies Record<RoomOrderOutlet, string>;
 
@@ -210,7 +211,7 @@ export function RoomOrderPanel({ room, onClose, onHistory }: { room: RoomCard; o
                   <ul className="scroll-thin max-h-[46vh] divide-y divide-line overflow-y-auto rounded-lg border border-line" data-testid="room-order-dishes">
                     {shown.map((d) => {
                       const line = cart[d.id];
-                      const blocked = d.remaining === 0 ? '已沽清' : needsChoice(d) ? '要选规格或做法，请到点单页点' : null;
+                      const blocked = d.offSale ? `不在售卖时段（${windowsText(d.saleWindows)}）` : d.remaining === 0 ? '已沽清' : needsChoice(d) ? '要选规格或做法，请到点单页点' : null;
                       return (
                         <li key={d.id} className="px-3 py-2" data-testid={`room-order-dish-${d.name}`}>
                           <div className="flex flex-wrap items-center gap-2">

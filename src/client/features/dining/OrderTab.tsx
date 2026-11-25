@@ -15,6 +15,7 @@ import {
   KITCHEN_STATUS_LABELS,
   MAX_DISH_NOTE,
   outletDef,
+  diningOutletsOf,
   type DiningGuest,
   type DiningOutlet,
   type KitchenStatus,
@@ -45,6 +46,7 @@ import { GroupChips, OutletEntry, OutletFilter } from './slots';
 import { ALL_CATEGORIES, CategoryTabs } from '../../components/CategoryTabs';
 import { guestParams, OrderNoteInput, orderExtras, outletProblem, useOrderOutlets } from './OrderExtras';
 import { MAX_DELIVER_ROOM, outletBlockedText } from '@shared/dining-v8115';
+import { windowsText } from '@shared/dining-v8139';
 import { voidBlockedText, voidOutletsOf } from '@shared/frontdesk-v8117';
 import { EmptyState } from '../../components/EmptyState';
 
@@ -110,6 +112,8 @@ export function OrderTab() {
   const qc = useQueryClient();
   const toast = useToast();
   const menu = useDiningMenu();
+  // 8.1.39（R4）：小分类按后台设的名单
+  const outletDefs = useMemo(() => diningOutletsOf(menu.data?.rules), [menu.data?.rules]);
   const [params, setParams] = useSearchParams();
   /** 点给谁：手牌客人，或用餐中的一桌（第二步） */
   const [mode, setMode] = useState<'tag' | 'table'>('tag');
@@ -249,6 +253,8 @@ export function OrderTab() {
     .map((l) => (l.dish && !l.addonOf ? methodChoiceProblem(l.dish.name, methodOptionsOf(l.dish), l.dish.methodGroups ?? [], l.methods ?? [], { requireAll: true }) : null))
     .find((x) => x !== null);
   const short = dishes.find((d) => d.remaining !== null && countOf(d.id) > d.remaining) ?? null;
+  // 8.1.39（R3）：菜篮里有到点停售的菜（菜单 10 秒取一次，跟着变）
+  const offSale = lines.find((l) => l.dish?.offSale)?.dish ?? null;
   const notAllowed = outletProblem(
     lines.map((l) => l.dish),
     outlets,
@@ -263,11 +269,13 @@ export function OrderTab() {
         ? '点了菜才能下单'
         : lines.some((l) => !l.dish)
           ? '有菜刚下架了，请从已点的菜里删掉'
-          : short
-            ? short.remaining === 0
-              ? `「${short.name}」今天已沽清，请删掉或换一道`
-              : `「${short.name}」今天只剩 ${short.remaining} 份`
-            : (notAllowed ?? (choiceProblem ? `${choiceProblem.message}：请删掉这一行重新点` : null));
+          : offSale
+            ? `「${offSale.name}」现在不在售卖时段（${windowsText(offSale.saleWindows)}），请删掉或换一道`
+            : short
+              ? short.remaining === 0
+                ? `「${short.name}」今天已沽清，请删掉或换一道`
+                : `「${short.name}」今天只剩 ${short.remaining} 份`
+              : (notAllowed ?? (choiceProblem ? `${choiceProblem.message}：请删掉这一行重新点` : null));
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['dining'] });
@@ -297,7 +305,7 @@ export function OrderTab() {
   };
 
   const add = (d: MenuDish) => {
-    if (d.remaining === 0) return;
+    if (d.remaining === 0 || d.offSale) return;
     // 8.1.39：时价 / 杂项、称重的菜先填价、斤数，每次另起一行
     if (d.priceMode) return setPricing(d);
     // 多档、有做法或加料的菜：先选（DishOptionsDialog），选好了再加进已点
@@ -594,7 +602,7 @@ export function OrderTab() {
                   <RotateCcw className="size-3.5" /> 重新选
                 </button>
               </div>
-              {outletDef(outlet).groups.length > 0 && (
+              {outletDef(outlet, outletDefs).groups.length > 0 && (
                 <div className="mt-2.5">
                   <GroupChips
                     outlet={outlet}
@@ -629,9 +637,9 @@ export function OrderTab() {
                   {DINING_OUTLET_LABELS[outlet]}
                   {groups.length ? `的「${groups.join('、')}」` : ''}还没有菜。店主在「后台 → 餐饮 → 出品档口与菜品」里给菜选点单分类。
                 </p>
-              ) : groups.length === 0 && !narrowed && outletDef(outlet).groups.length > 1 ? (
+              ) : groups.length === 0 && !narrowed && outletDef(outlet, outletDefs).groups.length > 1 ? (
                 // 「全部」：按小分类分段排
-                outletDef(outlet)
+                outletDef(outlet, outletDefs)
                   .groups.map((g) => ({ g, list: shown.filter((d) => d.group === g) }))
                   .filter((x) => x.list.length > 0)
                   .map(({ g, list }) => (
@@ -1021,28 +1029,36 @@ function DishGrid({ list, countOf, add, locked }: { list: MenuDish[]; countOf: (
       {list.map((d) => {
         const n = countOf(d.id);
         const out = d.remaining === 0;
+        // 8.1.39（R3）：不在售卖时段的灰掉，写着几点卖
+        const off = !!d.offSale;
         return (
           <button
             key={d.id}
             type="button"
             onClick={() => add(d)}
-            disabled={out || locked}
+            disabled={out || off || locked}
             className={cn(
               'relative flex min-h-[64px] flex-col items-start rounded-lg border px-3 py-2.5 text-left transition-colors min-[480px]:min-h-[76px]',
-              out ? 'cursor-not-allowed border-line bg-paper-2/60 opacity-60' : n ? 'border-pine bg-pine-tint' : 'border-line bg-card hover:border-pine',
+              out || off ? 'cursor-not-allowed border-line bg-paper-2/60 opacity-60' : n ? 'border-pine bg-pine-tint' : 'border-line bg-card hover:border-pine',
             )}
             data-testid={`dining-dish-${d.name}`}
           >
             <span className="pr-8 text-[14.5px] leading-snug font-bold">{d.name}</span>
             {/* 菜品管理（8.1.15）：套餐写出含哪几样；有做法、加料的点了先选 */}
             {d.combo && <span className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-ink-3">含 {partsText(d.combo)}</span>}
+            {d.saleWindows && (
+              <span className={cn('mt-0.5 text-[12px] leading-snug', off ? 'font-semibold text-clay' : 'text-ink-3')} data-testid={`dining-dish-hours-${d.name}`}>
+                {off ? '不在售卖时段 · ' : ''}
+                {windowsText(d.saleWindows)} 供应
+              </span>
+            )}
             {(d.methods || d.addons || swappableOf(d).length > 0) && (
               <span className="mt-0.5 text-[12px] font-semibold text-pine">可选{[d.methods && '做法', d.addons && '加料', swappableOf(d).length > 0 && '换菜'].filter(Boolean).join('、')}</span>
             )}
             <span className="mt-auto flex w-full items-center gap-1.5 pt-1">
               <Money cents={d.price} className="text-[13.5px] font-bold text-ink-2" />
               <span className="min-w-0 flex-1 truncate text-[12px] text-ink-4">{d.stationName}</span>
-              {out ? <Badge tone="clay">已沽清</Badge> : d.remaining !== null && <Badge tone="yuzu">剩 {d.remaining}</Badge>}
+              {off ? <Badge tone="clay">停售中</Badge> : out ? <Badge tone="clay">已沽清</Badge> : d.remaining !== null && <Badge tone="yuzu">剩 {d.remaining}</Badge>}
             </span>
             {n > 0 && <span className="num absolute top-2 right-2 flex h-6 min-w-6 items-center justify-center rounded-full bg-pine px-1.5 text-[12.5px] font-bold text-paper">{n}</span>}
           </button>

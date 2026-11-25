@@ -9,6 +9,7 @@
 
 import type { PriceMode } from './dish-price-mode';
 import { PRICE_TIER_LABELS, PRICE_TIERS, type PriceTier, type TierPrice } from './catalog';
+import type { DishStationWindow, DishWindow } from './dining-v8139';
 import { DINING_OUTLET_LABELS, isDiningOutlet, MAX_DISH_NOTE, outletDef, type DiningOutlet } from './dining';
 import { formatYuan } from './money';
 import type { Permission } from './permissions';
@@ -284,6 +285,9 @@ export interface DishRow {
   usedBy: string[];
   /** 8.1.17（BW10）：同一个点单小类里的先后（null 为没排过）；删除了（下架并从菜品表默认隐藏，能恢复） */
   sort: number | null;
+  /** 8.1.39：售卖时段（空为全天卖）、档口时段（空为一直在 stationId 出品；docs/V8139_DINING_B.md） */
+  saleWindows?: DishWindow[];
+  stationWindows?: DishStationWindow[];
   deleted: boolean;
   /** 版本：保存时带回来，别人先改过会被拒绝 */
   rev: string;
@@ -408,6 +412,9 @@ export interface DishBody {
   addons: number[];
   /** 套餐内容；swappable、swaps 不带的（8.1.15 的页面、导入）保留原来的可换设置（8.1.17） */
   combo: { itemId: number; quantity: number; swappable?: boolean; swaps?: { itemId: number; priceDiff: number }[] }[];
+  /** 8.1.39：售卖时段、档口时段；不带的不改 */
+  saleWindows?: DishWindow[];
+  stationWindows?: { start: number; end: number; stationId: number }[];
 }
 
 export interface DishSaveResult {

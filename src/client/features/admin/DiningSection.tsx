@@ -9,8 +9,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { ADMIN_SECTIONS } from '@shared/admin';
 import {
-  ALL_DINING_SLOTS,
+  allDiningSlots,
   DEFAULT_DINING_RULES,
+  diningOutletsOf,
   MAX_STATION_NAME,
   MAX_VOID_FREE_CENTS,
   MAX_TABLE_AREA,
@@ -38,6 +39,7 @@ import { Badge, Button, Card, Field, Input, MoneyInput, Notice, PendingBadge, Se
 import { AdminPage, PriceSheetLink } from './AdminShell';
 import { SubPane } from '../../components/SubNav';
 import { RoomOrderConfigCard } from './RoomOrderConfigCard';
+import { groupsProblem, OutletGroupsEditor } from './DiningGroupsEditor';
 
 const adminKey = ['admin', 'dining'] as const;
 const useDiningAdmin = () => useQuery({ queryKey: adminKey, queryFn: () => api.get<DiningAdmin>('/api/admin/dining') });
@@ -90,6 +92,8 @@ function RulesCard() {
   const freeCents = freeText === null ? draft.voidFreeCents : freeText.trim() === '' ? null : parseYuan(freeText);
   const freeOk = freeCents !== null && freeCents >= 0 && freeCents <= MAX_VOID_FREE_CENTS;
   const mapped = admin.data.items.filter((i) => i.stationId !== null && !i.technicianRequired).length;
+  // 8.1.39（R4）：菜单的小分类
+  const groupsBad = groupsProblem(draft.outletGroups);
 
   const save = async () => {
     setBusy(true);
@@ -233,6 +237,7 @@ function RulesCard() {
           </span>,
           true,
         )}
+        <OutletGroupsEditor value={draft.outletGroups} onChange={(outletGroups) => set({ outletGroups })} editable={editable} items={admin.data.items} saved={admin.data.rules.outletGroups} />
         {row(
           '小额退菜上限',
           '单条不超过这个金额的菜，服务员写原因就能直接退；超过的本人点的、规定时间内或经理照旧直接退，其余请值班经理及以上当场授权。填 0 不分级。退菜在「餐饮 → 台账」里按「退菜」看。',
@@ -256,6 +261,7 @@ function RulesCard() {
       {!minutesOk && <Notice tone="error" title="分钟数要在 1 到 180 之间" className="mt-3" />}
       {!dirtyOk && <Notice tone="error" title={`待清台的分钟数要在 1 到 ${MAX_DIRTY_ALERT_MINUTES} 之间`} className="mt-3" />}
       {!freeOk && <Notice tone="error" title={`小额退菜上限填 0 到 ${formatYuan(MAX_VOID_FREE_CENTS)} 之间的金额`} className="mt-3" />}
+      {groupsBad && <Notice tone="error" title={groupsBad} className="mt-3" />}
       {error && <Notice tone="error" title={error} className="mt-3" />}
       <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
         <span className="mr-auto text-[12px] text-ink-4">
@@ -273,7 +279,8 @@ function RulesCard() {
               size="sm"
               variant="ghost"
               onClick={() => {
-                setDraft({ ...DEFAULT_DINING_RULES, enabled: draft.enabled });
+                // 小分类不跟着恢复（还有菜在用的改不回去），在上面单独改
+                setDraft({ ...DEFAULT_DINING_RULES, enabled: draft.enabled, outletGroups: draft.outletGroups });
                 setFreeText(null);
               }}
             >
@@ -281,7 +288,7 @@ function RulesCard() {
             </Button>
           )}
         {editable && (
-          <Button variant="primary" loading={busy} disabled={!dirty || !minutesOk || !freeOk || !dirtyOk} onClick={save} data-testid="dining-rules-save">
+          <Button variant="primary" loading={busy} disabled={!dirty || !minutesOk || !freeOk || !dirtyOk || !!groupsBad} onClick={save} data-testid="dining-rules-save">
             保存餐饮规则
           </Button>
         )}
@@ -439,6 +446,9 @@ function ItemsCard() {
   const editable = can('catalog.manage');
   const stations = admin.data.stations;
   const items = admin.data.items.filter((i) => !i.technicianRequired);
+  // 8.1.39（R4）：点单分类按后台设的小分类
+  const outlets = diningOutletsOf(admin.data.rules);
+  const slotOptions = allDiningSlots(outlets);
   const value = (i: Item) => (draft.has(i.id) ? draft.get(i.id)! : i.stationId);
   const choose = (i: Item, stationId: number | null) => {
     const next = new Map(draft);
@@ -464,7 +474,7 @@ function ItemsCard() {
   const slotValue = (i: Item) => (slotDraft.has(i.id) ? slotDraft.get(i.id)! : storedSlot(i));
   const defaultSlot = (i: Item) => {
     const sid = value(i);
-    return diningSlotOf({ outlet: null, group: '', category: i.category, stationName: stations.find((s) => s.id === sid)?.name ?? null });
+    return diningSlotOf({ outlet: null, group: '', category: i.category, stationName: stations.find((s) => s.id === sid)?.name ?? null }, outlets);
   };
   const chooseSlot = (i: Item, v: string | null, into = new Map(slotDraft)) => {
     if (v === storedSlot(i)) into.delete(i.id);
@@ -541,7 +551,7 @@ function ItemsCard() {
                 data-testid={`${prefix}-slot-all-${cat}`}
               >
                 <option value="">点单分类设为…</option>
-                {ALL_DINING_SLOTS.map((sl) => (
+                {slotOptions.map((sl) => (
                   <option key={slotKey(sl)} value={slotKey(sl)}>
                     {slotLabel(sl)}
                   </option>
@@ -587,7 +597,7 @@ function ItemsCard() {
                         data-testid={`dining-item-slot-${i.name}`}
                       >
                         <option value="">默认（{slotLabel(defaultSlot(i))}）</option>
-                        {ALL_DINING_SLOTS.map((sl) => (
+                        {slotOptions.map((sl) => (
                           <option key={slotKey(sl)} value={slotKey(sl)}>
                             {slotLabel(sl)}
                           </option>

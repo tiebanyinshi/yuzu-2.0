@@ -165,7 +165,10 @@ function ReceiptPaper({ r, onlyWaiting, onToggle, refreshing }: { r: DiningRecei
                     {/* 手持点单机（商米 V3，窄屏）上状态章在上、份数与金额在下，菜名留得宽；平板、收银机上一行排开 */}
                     <div className="flex shrink-0 flex-col items-end gap-1 min-[420px]:flex-row min-[420px]:items-start min-[420px]:gap-2.5">
                       <span className="order-2 flex items-baseline gap-2 min-[420px]:order-1 min-[420px]:pt-0.5">
-                        <span className="num text-right text-[13.5px] font-semibold min-[420px]:w-9">×{l.quantity}</span>
+                        {/* 8.1.39（R12）：每一行标单价——「¥38 × 2」，后面是这一行的金额 */}
+                        <span className="num text-right text-[13px] text-ink-3 min-[420px]:min-w-[5.5rem]" data-testid={`dining-receipt-unit-${l.billLineId}`}>
+                          {formatYuan(l.unitPrice)} × {l.quantity}
+                        </span>
                         <span className={cn('num text-right text-[13.5px] font-semibold min-[420px]:w-[4.5rem]', l.state === 'voided' && 'text-ink-4 line-through')}>{formatYuan(l.amount)}</span>
                       </span>
                       <span

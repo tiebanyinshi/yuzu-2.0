@@ -25,6 +25,7 @@ import { useOrderOutlets } from '../dining/OrderExtras';
 import { outletBlockedText } from '@shared/dining-v8115';
 import { useFrontdeskTechnicians } from './queries';
 import { TechnicianPicker } from './TechnicianPicker';
+import { windowsText } from '@shared/dining-v8139';
 
 const isVisitDetail = (r: unknown): r is VisitDetail => !!r && typeof r === 'object' && 'tag' in r && 'lines' in r;
 
@@ -57,6 +58,11 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
   // 进厨房的菜按出品口的下单权限（8.1.17 BW-3）：不能下单的出品口的菜标「不能在水吧下单」、不能点；服务端照样逐行核对
   const orderOutlets = useOrderOutlets();
   const outletOf = useMemo(() => new Map((dining.data?.dishes ?? []).map((d) => [d.id, d.outlet])), [dining.data]);
+  // 8.1.39（R3）：到点停售的菜（补录纸质单不管时段）
+  const offSaleOf = useMemo(
+    () => new Map(backfill.state.active ? [] : (dining.data?.dishes ?? []).filter((d) => d.offSale).map((d) => [d.id, `${windowsText(d.saleWindows)} 供应`])),
+    [dining.data, backfill.state.active],
+  );
   const techRules = techs.data?.rules;
   const techOn = !!techRules?.enabled;
   const [picking, setPicking] = useState<{ item: ServiceItem; tier: PriceTier } | null>(null);
@@ -157,6 +163,7 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
     i.gender && i.gender !== visit.zone
       ? `仅限${ZONE_LABELS[i.gender].title}`
       : (outletBlockedText(outletOf.get(i.id), orderOutlets) ??
+        offSaleOf.get(i.id) ??
         (remainingOf.get(i.id) === 0 ? '已沽清' : i.technicianRequired && techs.isPending ? '正在加载技师…' : i.technicianRequired && !techs.data ? '技师名单没有加载出来' : null));
   const missingTech = techOn && !!techRules?.requireTechnician && lines.some((l) => l.item.technicianRequired && !l.technicianId);
   const staleTech = lines.some((l) => l.technicianId && !techById.has(l.technicianId));

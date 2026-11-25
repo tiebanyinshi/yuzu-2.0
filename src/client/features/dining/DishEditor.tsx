@@ -9,7 +9,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { CircleOff, ImagePlus, Plus, Trash2, X } from 'lucide-react';
 import { PRICE_TIER_LABELS, PRICE_TIERS, type PriceTier } from '@shared/catalog';
-import { ALL_DINING_SLOTS, slotKey, slotLabel, type DiningOutlet } from '@shared/dining';
+import { allDiningSlots, slotKey, slotLabel, type DiningOutlet, type DiningSlot } from '@shared/dining';
 import {
   MAX_COMBO_ITEMS,
   MAX_COMBO_SWAP_DIFF,
@@ -42,6 +42,8 @@ import { Button, Field, Input, MoneyInput, Notice, Select } from '../../componen
 import { StatusChip } from './DishChips';
 import { DishPendingNotice } from './DishPendingNotice';
 import { pendingOf, sendDishOp, useDishPending } from './dishPendingStore';
+import { DishTimeFields, saleDraftOf, stationDraftOf, windowsFromDraft, type StationWindowDraft, type WindowDraft } from './DishTimeFields';
+import { useDiningOutlets } from './queries';
 
 /** 常用的做法，点一下加进去 */
 const QUICK_METHODS = ['不辣', '微辣', '中辣', '特辣', '免葱', '免蒜', '免香菜', '去冰', '少冰', '热', '少糖', '无糖'];
@@ -62,12 +64,15 @@ interface Draft {
   addons: number[];
   /** 套餐内容（8.1.17：可换的、能换成哪几样，差价是输入框里的元） */
   combo: { itemId: number; quantity: number; swappable: boolean; swaps: { itemId: number; diff: string }[] }[];
+  /** 8.1.39：售卖时段、档口时段（输入框里的「11:00」） */
+  sale: WindowDraft[];
+  station: StationWindowDraft[];
 }
 
-const emptyDraft = (outlets: DiningOutlet[]): Draft => ({
+const emptyDraft = (outlets: DiningOutlet[], slots: readonly DiningSlot[]): Draft => ({
   name: '',
   category: '餐饮',
-  slot: slotKey(ALL_DINING_SLOTS.find((s) => outlets.includes(s.outlet)) ?? ALL_DINING_SLOTS[0]!),
+  slot: slotKey(slots.find((s) => outlets.includes(s.outlet)) ?? slots[0]!),
   stationId: null,
   imageId: null,
   imageUrl: null,
@@ -77,6 +82,8 @@ const emptyDraft = (outlets: DiningOutlet[]): Draft => ({
   groups: [],
   addons: [],
   combo: [],
+  sale: [],
+  station: [],
 });
 
 const draftOf = (d: DishRow): Draft => ({
@@ -97,6 +104,8 @@ const draftOf = (d: DishRow): Draft => ({
     swappable: c.swappable,
     swaps: c.swaps.map((w) => ({ itemId: w.itemId, diff: w.priceDiff ? centsToInput(w.priceDiff) : '' })),
   })),
+  sale: saleDraftOf(d.saleWindows),
+  station: stationDraftOf(d.stationWindows),
 });
 
 export function DishEditor({
@@ -120,7 +129,9 @@ export function DishEditor({
   onDelete?: (dish: DishRow) => void;
 }) {
   const dish = target && target !== 'new' ? target : null;
-  const [f, setF] = useState<Draft>(() => emptyDraft(outlets));
+  // 8.1.39（R4）：小类按后台设的名单
+  const allSlots = allDiningSlots(useDiningOutlets());
+  const [f, setF] = useState<Draft>(() => emptyDraft(outlets, allSlots));
   const [method, setMethod] = useState('');
   const [groupName, setGroupName] = useState('');
   const [busy, setBusy] = useState<'save' | 'image' | null>(null);
@@ -132,7 +143,7 @@ export function DishEditor({
   useResetOnOpen(
     target !== null,
     () => {
-      setF(dish ? draftOf(dish) : emptyDraft(outlets));
+      setF(dish ? draftOf(dish) : emptyDraft(outlets, allSlots));
       setMethod('');
       setGroupName('');
       setBusy(null);
@@ -215,7 +226,10 @@ export function DishEditor({
       }
       combo.push({ itemId: c.itemId, quantity: c.quantity, swappable: c.swappable, swaps });
     }
+    const windows = windowsFromDraft(f.sale, f.station);
+    if (typeof windows === 'string') return setError(windows);
     const body: DishBody = {
+      ...windows,
       name,
       category: f.category.trim(),
       slot: f.slot,
@@ -297,7 +311,7 @@ export function DishEditor({
           </Field>
           <Field label="出品口与小类" htmlFor="dish-slot" hint="点单页先选餐厅 / 水吧 / 果吧，再按小类点">
             <Select id="dish-slot" className="min-h-11" value={f.slot} onChange={(e) => set({ slot: e.target.value })} data-testid="dish-slot">
-              {ALL_DINING_SLOTS.map((s) => (
+              {allSlots.map((s) => (
                 <option key={slotKey(s)} value={slotKey(s)} disabled={!outlets.includes(s.outlet)}>
                   {slotLabel(s)}
                   {outlets.includes(s.outlet) ? '' : '（没有这一处的权限）'}
@@ -491,6 +505,10 @@ export function DishEditor({
               </button>
             ))}
           </div>
+        </Section>
+
+        <Section title="售卖时段与档口时段" hint="不设就是全天卖、一直在上面选的档口出品。">
+          <DishTimeFields sale={f.sale} station={f.station} stations={board.stations} onChange={(p) => set({ ...(p.sale ? { sale: p.sale } : {}), ...(p.station ? { station: p.station } : {}) })} />
         </Section>
 
         <Section title={`加料 ${f.addons.length ? f.addons.length : ''}`} hint="另外的菜（各有各的价、沽清、档口）。点单时另起一行，出品单上写「配 这道菜」。">
