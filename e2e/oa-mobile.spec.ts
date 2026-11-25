@@ -533,4 +533,52 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
     await expect(mp.getByTestId(`ann-item-${annId}`)).toHaveCount(0);
     await mobileCtx.close();
   });
+
+  test('第 6 批：PC 端人脸比对接入状态提示与手机 360×800 全量 /oa 页面零横向滚动回归', async ({ page, browser }) => {
+    // 1. PC 管理员登录，核对「考勤设置 → 人脸审核」接入状态横幅可见
+    await page.goto('/login');
+    expect((await page.request.post('/api/auth/login', { data: { username: 'linlan', password: PASSWORD } })).status()).toBe(200);
+    await page.goto('/admin/attendance/faces');
+    await expect(page.getByTestId('att-faces')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('face-service-status')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('face-service-status')).toContainText('人脸待人工核对');
+
+    // 2. 手机 360×800 微信 UA 员工遍历全部 /oa 页面，确认均正常渲染且零横向溢出
+    const mobileCtx = await browser.newContext({
+      viewport: { width: 360, height: 800 },
+      isMobile: true,
+      hasTouch: true,
+      userAgent: WECHAT_UA,
+      locale: 'zh-CN',
+      timezoneId: 'Asia/Shanghai',
+    });
+    const mp = await mobileCtx.newPage();
+    await mp.goto('/login');
+    expect((await mp.request.post('/api/auth/login', { data: { username: 'xiaozhou', password: PASSWORD } })).status()).toBe(200);
+
+    const routes: { path: string; readyTestId: string }[] = [
+      { path: '/oa', readyTestId: 'oa-home' },
+      { path: '/oa/punch', readyTestId: 'wcp-mobile-top' },
+      { path: '/oa/schedule', readyTestId: 'my-schedule' },
+      { path: '/oa/attendance', readyTestId: 'my-attendance' },
+      { path: '/oa/leave', readyTestId: 'my-leave-apply' },
+      { path: '/oa/approvals', readyTestId: 'oa-box-todo' },
+      { path: '/oa/approvals/new', readyTestId: 'oa-approval-templates' },
+      { path: '/oa/im', readyTestId: 'messages-tabbar' },
+      { path: '/oa/notifications', readyTestId: 'messages-tabbar' },
+      { path: '/oa/training', readyTestId: 'training-search-input' },
+      { path: '/oa/announcements', readyTestId: 'ann-tab-all' },
+      { path: '/oa/directory', readyTestId: 'dir' },
+      { path: '/oa/payslips', readyTestId: 'my-payslips' },
+      { path: '/oa/face', readyTestId: 'face-status' },
+      { path: '/oa/me', readyTestId: 'oa-me' },
+    ];
+    for (const r of routes) {
+      await mp.goto(r.path);
+      await expect(mp.getByTestId(r.readyTestId), `路由 ${r.path} 加载失败`).toBeVisible({ timeout: 20_000 });
+      const noOverflow = await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+      expect(noOverflow, `路由 ${r.path} 在 360×800 下出现横向滚动`).toBe(true);
+    }
+    await mobileCtx.close();
+  });
 });

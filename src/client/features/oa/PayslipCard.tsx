@@ -26,8 +26,8 @@ export function PayslipCard({ month, title, name, fields, values }: { month: str
           .filter((f) => f.key !== net?.key)
           .map((f) => (
             <div key={f.key} className="flex items-center justify-between gap-3 py-2">
-              <dt className="text-ink-2">{f.label}</dt>
-              <dd className={f.kind === 'text' ? 'text-right text-ink' : 'num text-ink'}>{formatPayslipValue(f, values[f.key])}</dd>
+              <dt className="shrink-0 text-ink-2">{f.label}</dt>
+              <dd className={f.kind === 'text' ? 'min-w-0 break-words text-right text-ink' : 'num shrink-0 text-ink'}>{formatPayslipValue(f, values[f.key])}</dd>
             </div>
           ))}
       </dl>

@@ -141,8 +141,11 @@ export function DirectoryPage() {
 
   return (
     <>
-      <PageHeader dateMode="calendar" title="通讯录" subtitle="全公司在职同事，按部门排；点一个人看资料、发消息" />
-      <div className="mx-auto w-full max-w-3xl p-4 md:p-7">
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title="通讯录" subtitle="全公司在职同事，按部门排；点一个人看资料、发消息" />
+      </div>
+      <div className="mx-auto w-full max-w-3xl space-y-3 p-3 md:p-7">
+        <h1 className="text-[17px] font-bold text-ink md:hidden">通讯录</h1>
         <Card className="p-4 md:p-5" data-testid="dir">
           <div className="relative mb-3">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" />

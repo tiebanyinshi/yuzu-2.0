@@ -142,3 +142,10 @@
   - 后端 `src/server/modules/oa/announcements.ts`：员工端 `GET /api/oa/announcements`、`GET /api/oa/announcements/:id`、`POST /api/oa/announcements/:id/read`（标已读并同步消除对应站内通知未读，`FOR SHARE` 与撤回串行）；管理端 `GET/POST /api/admin/oa/announcements`、`GET …/:id/readers`、`PUT …/:id`（乐观锁 `version`）、`POST …/:id/recall`（发布与撤回均带操作编号幂等 + 确认作废围栏 + 审计）；附件访问登记 `strict: true`、站内通知登记可见性过滤（撤回 / 离职 / 调离目标部门 / 跨门店自动隐藏并移出未读计数）。
   - 前端：员工端 `AnnouncementsPage.tsx`（`/oa/announcements` 全部 / 未读筛选、置顶标识、详情自动记已读并刷新红点，360 × 800 零横向滚动），工作台与侧栏新增「公告」入口及未读角标；PC 后台 `AnnouncementsSection.tsx`（`/admin/announcements` 发布、附件、置顶、编辑、已读名单、撤回与结果待确认恢复）。
 - **回归用例**：新增 `tests/oa-announcements.test.ts`（发布、范围隔离、附件严格鉴权、幂等与作废围栏、编辑乐观锁、撤回隐藏公告与通知、已读与名单），扩展 `tests/training.test.ts`（知识库检索权限 / 下架 / 通配符转义 / 非员工拒绝）与 `e2e/oa-mobile.spec.ts`（PC 端发公告与知识库检索 + 手机 360 × 800 知识库检索预览与公告阅读 / 撤回）。
+
+### 第 6 批：人脸接入就绪与双端全量收尾回归（2026-11-25）
+
+- **人脸比对服务接入状态就绪（EO3）**：在 `src/shared/oa.ts` 新增 `FaceServiceStatus`，在 `src/server/integrations/face.ts` 新增 `faceServiceStatus()`，并在 `src/server/modules/oa/faces.ts` 暴露只读接口 `GET /api/oa/face/status`（仅 `hr.attendance` 权限可读）；PC 后台「考勤设置 → 人脸审核」（`FaceReviewTab.tsx`）顶部常显接入状态横幅（模拟模式 / 未接入供应商人工核对兜底 / 正式服务已接入），便于店主选定腾讯云 / 阿里云 / 百度等供应商后无缝替换 `FaceVerifyService`，期间不阻断员工打卡。
+- **双端全量收尾与 360 × 800 手机适配收口**：统一补齐 `FacePage.tsx`、`DirectoryPage.tsx`、`MyPayslipPages.tsx`、`PunchPage.tsx`、`PayslipCard.tsx` 在 360 × 800 窄屏下的紧凑标题栏、返回入口、边距与长文本换行防护，全站 `/oa/*` 15 个核心页面在 360 × 800 微信内置浏览器下零横向滚动。
+- **没有迁移、不改版本号（EO6）**：全部 6 批已完成，等待店主确定人脸比对供应商（EO3）及统一发版版本号（EO6）。
+- **回归用例**：在 `tests/oa-faces.test.ts` 补 `faceServiceStatus` 与 `GET /api/oa/face/status` 权限和返回断言；在 `e2e/oa-mobile.spec.ts` 补 PC 端人脸状态横幅与手机 360 × 800 全部 15 个 `/oa/*` 路由零横向滚动巡检。
