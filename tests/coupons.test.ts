@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { shiftDate } from '../src/shared/labels';
-import type { CouponRow, CouponTemplate, MemberCoupons } from '../src/shared/coupons';
+import { formatStoreCouponCode, type CouponRow, type CouponTemplate, type MemberCoupons } from '../src/shared/coupons';
 import { issueBirthdayCoupons } from '../src/server/modules/coupons';
 import { buildDailyRecon } from '../src/server/ops/recon';
 import { createStaff } from '../src/server/modules/staff';
@@ -555,5 +555,56 @@ describe('作废与统计', () => {
     // 客户经理能看统计（会员总览的权限）
     expect((await api(ctx.app, am, 'GET', `/api/coupons/stats?from=${today}&to=${today}`)).status).toBe(200);
     await checks();
+  });
+});
+
+describe('8.1.40 券的使用限制、发放台账、结账单印券号', () => {
+  it('限星期、限门店的券此刻不能用写原因；限点钟的只抵点钟；台账查得到发放、核销与时长；结账单带券号', async () => {
+    const m = await createMember(ctx, '限制券会员', '19911140001');
+    const dow = ((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+    const other = (dow % 7) + 1;
+    const wrongDay = await template({ name: '限别的日子', kind: 'cash', faceValue: 1000, weekdays: [other] });
+    const anyDay = await template({ name: '每天能用', kind: 'cash', faceValue: 1000, weekdays: [1, 2, 3, 4, 5, 6, 7] });
+    expect(anyDay.weekdays).toEqual([]);
+    const otherStore = await template({ name: '限别的店', kind: 'cash', faceValue: 1000, storeIds: [1] });
+    // 时段：起止相同拒绝
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/coupons/templates', { clientKey: randomUUID(), name: '坏时段', kind: 'cash', faceValue: 100, validity: 'days', validDays: 1, timeFrom: 600, timeTo: 600 })).status).toBe(400);
+    // 点钟券只能是代金券、折扣券
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/coupons/templates', { clientKey: randomUUID(), name: '坏点钟', kind: 'exchange', exchangeItemId: item['券搓澡'], validity: 'days', validDays: 1, designatedOnly: true })).status).toBe(400);
+    const designated = await template({ name: '点钟券', kind: 'cash', faceValue: 1000, designatedOnly: true });
+    expect(designated.summary).toContain('限点钟');
+    for (const t of [wrongDay, anyDay, otherStore, designated]) expect((await issue(m.id, t.id)).status).toBe(201);
+
+    const v = await enter([{ itemId: item['券搓澡']!, quantity: 1, price: 6800 }], m.id);
+    const pre = await preview(v);
+    const of = (name: string) => pre.storeCoupons.find((c) => c.templateName === name)!;
+    expect(of('限别的日子')).toMatchObject({ usable: false });
+    expect(of('限别的日子').reason).toContain('只能在');
+    expect(of('每天能用')).toMatchObject({ usable: true, amount: 1000 });
+    expect(of('限别的店')).toMatchObject({ usable: true });
+    // 搓澡不是点钟的技师项目：点钟券不抵
+    expect(of('点钟券')).toMatchObject({ usable: false });
+    expect(of('点钟券').reason).toContain('点钟');
+
+    // 用「每天能用」结账：结账单的优惠带券号
+    const code = of('每天能用').code;
+    const paid = await pay(v, pre.totalAmount, [
+      { method: 'store_coupon', code, amount: 1000 },
+      { method: 'cash', amount: pre.totalAmount - 1000 },
+    ]);
+    expect(paid.status, JSON.stringify(paid.body)).toBe(200);
+    expect(paid.body.perks.find((p: { name: string }) => p.name === '每天能用').code).toBe(formatStoreCouponCode(code));
+
+    // 发放台账：这位会员手动发的四张（前面用例的开卡礼规则另发了一张，按「手动」筛掉）；用掉的那张带结账单、抵扣与时长
+    const ledger = (await api(ctx.app, ctx.owner, 'GET', `/api/coupons/ledger?from=${today}&to=${today}&kind=manual&q=${encodeURIComponent('限制券会员')}`)).body;
+    expect(ledger.rows).toHaveLength(4);
+    const used = ledger.rows.find((r: { templateName: string }) => r.templateName === '每天能用');
+    expect(used).toMatchObject({ status: 'used', checkoutNo: paid.body.checkoutNo, usedAmount: 1000, kind: 'manual', memberName: '限制券会员' });
+    expect(used.hoursToUse).toBeGreaterThanOrEqual(0);
+    expect(ledger.summary).toMatchObject({ issued: 4, used: 1, usedAmount: 1000 });
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/coupons/ledger?from=${today}&to=${today}`)).status).toBe(403);
+    const csv = await ctx.app.inject({ method: 'GET', url: `/api/coupons/ledger.csv?from=${today}&to=${today}`, headers: { cookie: ctx.owner } });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.body).toContain(formatStoreCouponCode(code));
   });
 });
