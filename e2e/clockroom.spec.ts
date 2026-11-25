@@ -194,13 +194,14 @@ test.describe('v0.7.1 钟房', () => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 
       // ⑧ 结账（现金）；收款前没开班时临时开一个，结完按应有现金交掉
-      const preview = await getJson<{ totalAmount: number }>(page, `/api/frontdesk/checkout-preview?ids=${visitId}`);
+      const preview = await getJson<{ totalAmount: number; sessions?: { sessionNo: string; status: string }[] }>(page, `/api/frontdesk/checkout-preview?ids=${visitId}`);
       const opened = (await page.request.post('/api/shifts', { data: { openingCash: 0 } })).status() === 200;
       const paid = await send(page, 'post', '/api/frontdesk/checkouts', {
         clientKey: randomUUID(),
         visitIds: [visitId],
         expectedTotal: preview.totalAmount,
         payments: [{ method: 'cash', amount: preview.totalAmount }],
+        confirmUnstarted: (preview.sessions ?? []).filter((x) => x.status === 'waiting').map((x) => x.sessionNo),
       });
       const checkoutNo = ((await paid.json()) as { checkoutNo: string }).checkoutNo;
       if (opened) {

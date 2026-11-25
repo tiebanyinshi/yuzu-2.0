@@ -96,12 +96,13 @@ async function release(page: Page, { wasEnabled, visitIds }: { wasEnabled: boole
   if (open.length) {
     const opened = (await page.request.post('/api/shifts', { data: { openingCash: 0 } })).status() === 200;
     for (const id of open) {
-      const preview = await getJson<{ totalAmount: number }>(page, `/api/frontdesk/checkout-preview?ids=${id}`);
+      const preview = await getJson<{ totalAmount: number; sessions?: { sessionNo: string; status: string }[] }>(page, `/api/frontdesk/checkout-preview?ids=${id}`);
       await send(page, 'post', '/api/frontdesk/checkouts', {
         clientKey: randomUUID(),
         visitIds: [id],
         expectedTotal: preview.totalAmount,
         payments: [{ method: 'cash', amount: preview.totalAmount }],
+        confirmUnstarted: (preview.sessions ?? []).filter((x) => x.status === 'waiting').map((x) => x.sessionNo),
       });
     }
     if (opened) {
