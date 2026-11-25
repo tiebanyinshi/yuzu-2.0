@@ -709,7 +709,23 @@ async function readBlob(db: Db, sha256: string): Promise<Buffer> {
   return Buffer.concat(parts.map((p) => p.data));
 }
 
-async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number): Promise<TrainingSheetBook> {
+/**
+ * 读成表格的结果按内容摘要缓存（同一个文件只解析一次；解析不了的也记下，不反复解析）；
+ * 真要解析时先拿解析占位（全店同时 2 份、每人 1 份，排队 20 秒），一个人连点也不会把服务挡住（Codex 安全审查 f2dbf5a）
+ */
+const SHEET_CACHE_MAX = 12;
+const sheetCache = new Map<string, TrainingSheetBook | { error: string }>();
+const sheetParseSlots = createStreamSlots({
+  slots: 2,
+  perStaff: 1,
+  waitMs: 20_000,
+  queuePerStaff: 3,
+  idleMs: 60_000,
+  code: 'TRAINING_SHEET_BUSY',
+  message: '正在打开的 Excel 太多，稍后再试',
+});
+
+async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number, beforeParse?: () => Promise<void>): Promise<TrainingSheetBook> {
   const f = await assertFileVisible(db, actor, id);
   // 同读内容：带了版本就读那一版，员工带的不是当前版本拒绝（Codex 审查 a3f5310）
   if (versionId && versionId !== f.currentVersionId && !can(actor, MANAGE)) throw conflict('TRAINING_VERSION_CHANGED', '这份文件刚换了新版本，请重新打开');
@@ -717,6 +733,18 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number): Pr
     SELECT mime, sha256, size_bytes FROM training_file_versions WHERE id = ${versionId ?? f.currentVersionId} AND file_id = ${id}`;
   if (!v || trainingViewKind(v.mime) !== 'sheet') throw unprocessable('TRAINING_NOT_SHEET', '这份文件不是 Excel（.xlsx）');
   if (Number(v.sizeBytes) > SHEET_MAX_BYTES) throw unprocessable('TRAINING_SHEET_TOO_BIG', '这份 Excel 太大，请下载后查看');
+  const cached = sheetCache.get(v.sha256);
+  if (cached) {
+    sheetCache.delete(v.sha256);
+    sheetCache.set(v.sha256, cached);
+    if ('error' in cached) throw unprocessable('TRAINING_SHEET_INVALID', cached.error);
+    return cached;
+  }
+  if (beforeParse) await beforeParse();
+  const remember = (value: TrainingSheetBook | { error: string }) => {
+    sheetCache.set(v.sha256, value);
+    while (sheetCache.size > SHEET_CACHE_MAX) sheetCache.delete(sheetCache.keys().next().value!);
+  };
   let book;
   try {
     // maxNodes 限住整份 XML 的结构规模（空行、无关属性也算），免得几 KB 的文件解析出几十万个节点（Codex 审查 e1d8be3，同工资表的读法）
@@ -724,13 +752,18 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number): Pr
       maxRow: 5000,
       maxCols: 200,
       maxCells: 200_000,
-      maxNodes: 300_000,
+      // 结构规模上限从 30 万降到 12 万（Codex 安全审查 f2dbf5a：29.5 万个空行解析一次要 280 毫秒、多占 130 MB）
+      maxNodes: 120_000,
       maxTotal: SHEET_MAX_UNZIPPED,
       // 多读一张：读到了就知道后面还有表，标「表格太大」（Codex 审查 ec38502）
       maxSheets: SHEET_MAX_SHEETS + 1,
     });
   } catch (e) {
-    if (e instanceof XlsxReadError) throw unprocessable('TRAINING_SHEET_INVALID', `这份 Excel 在页面里打不开（${e.message}），请下载后查看`);
+    if (e instanceof XlsxReadError) {
+      const error = `这份 Excel 在页面里打不开（${e.message}），请下载后查看`;
+      remember({ error });
+      throw unprocessable('TRAINING_SHEET_INVALID', error);
+    }
     throw e;
   }
   const moreSheets = book.sheets.length > SHEET_MAX_SHEETS;
@@ -778,7 +811,7 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number): Pr
     budget -= t.length;
     return t;
   };
-  return {
+  const result: TrainingSheetBook = {
     sheets: sheetsShown.map((sh) => {
       const rowNos = [...sh.rows.keys()].sort((a, b) => a - b);
       const maxRow = Math.min(rowNos.at(-1) ?? 0, SHEET_MAX_ROWS);
@@ -799,6 +832,8 @@ async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number): Pr
       };
     }),
   };
+  remember(result);
+  return result;
 }
 
 /** 读内容的占位（Codex 安全审查 ec38502）：全店同时 24 个、每人 4 个，排队最多 20 秒，60 秒没往外写就断开 */
@@ -861,7 +896,11 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
     },
   );
 
-  app.get('/api/training/files/:id/sheet', { preHandler: loggedIn }, async (req) => sheetOf(sql, req.actor, parse(idParam, req.params).id, parse(ContentQuery, req.query ?? {}).v));
+  app.get(
+    '/api/training/files/:id/sheet',
+    { preHandler: loggedIn, onResponse: async (req) => sheetParseSlots.release(req), onRequestAbort: async (req) => sheetParseSlots.release(req) },
+    async (req, reply) => sheetOf(sql, req.actor, parse(idParam, req.params).id, parse(ContentQuery, req.query ?? {}).v, () => sheetParseSlots.take(req, reply, req.actor.id)),
+  );
 
   app.post('/api/training/files/:id/viewed', { preHandler: loggedIn }, async (req) => {
     const { id } = parse(idParam, req.params);

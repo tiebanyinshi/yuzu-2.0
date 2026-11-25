@@ -330,21 +330,22 @@ describe('员工培训', () => {
     const sheet = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${m.done.body.fileId}/sheet?v=${m.done.body.versionId}`);
     expect(sheet.status, JSON.stringify(sheet.body)).toBe(200);
     expect(sheet.body.sheets[0].merges).toEqual([{ r1: 1, c1: 0, r2: 2, c2: 1 }]);
-    // 32 万个空行：压缩后几 KB，解析前按结构规模拒绝
-    const empty = patchSheet(base, (x) => x.replace('</sheetData>', `${Array.from({ length: 320_000 }, (_, i) => `<row r="${i + 3}"/>`).join('')}</sheetData>`));
+    // 15 万个空行（Codex 安全审查 f2dbf5a 把上限降到 12 万）：压缩后几 KB，解析前按结构规模拒绝；第二次读走缓存，同样拒绝
+    const empty = patchSheet(base, (x) => x.replace('</sheetData>', `${Array.from({ length: 150_000 }, (_, i) => `<row r="${i + 3}"/>`).join('')}</sheetData>`));
     expect(empty.length).toBeLessThan(2 * 1024 * 1024);
     const e = await upload(empty, '空行.xlsx', XLSX_MIME, { folderId: pub.id });
     expect(e.done.status, JSON.stringify(e.done.body)).toBe(200);
     const bad = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${e.done.body.fileId}/sheet`);
     expect(bad.body.error?.code, JSON.stringify(bad.body)).toBe('TRAINING_SHEET_INVALID');
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${e.done.body.fileId}/sheet`)).body.error?.code).toBe('TRAINING_SHEET_INVALID');
     // 一格 32 MB 的字（压缩后几十 KB）：解压超过 8 MB 就拒绝（Codex 安全审查 57dd2f6）
     const huge = patchSheet(base, (x) => x.replace('>1<', `>${'字'.repeat(11 * 1024 * 1024)}<`));
     expect(huge.length).toBeLessThan(2 * 1024 * 1024);
     const h = await upload(huge, '大格子.xlsx', XLSX_MIME, { folderId: pub.id });
     expect(h.done.status, JSON.stringify(h.done.body)).toBe(200);
     expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${h.done.body.fileId}/sheet`)).body.error?.code).toBe('TRAINING_SHEET_INVALID');
-    // 十万个重复 / 重叠的合并区：只留不重叠的、总面积不超过显示的格子数（Codex 审查 ec38502）
-    const manyMerges = patchSheet(base, (x) => x.replace('</sheetData>', `</sheetData><mergeCells count="100000">${'<mergeCell ref="A1:AN500"/>'.repeat(100_000)}</mergeCells>`));
+    // 五万个重复 / 重叠的合并区：只留不重叠的、总面积不超过显示的格子数（Codex 审查 ec38502）
+    const manyMerges = patchSheet(base, (x) => x.replace('</sheetData>', `</sheetData><mergeCells count="50000">${'<mergeCell ref="A1:AN500"/>'.repeat(50_000)}</mergeCells>`));
     const mm = await upload(manyMerges, '重叠合并.xlsx', XLSX_MIME, { folderId: pub.id });
     const mms = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${mm.done.body.fileId}/sheet`);
     expect(mms.status, JSON.stringify(mms.body).slice(0, 300)).toBe(200);
