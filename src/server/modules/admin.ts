@@ -1374,6 +1374,8 @@ const CHANGE_ACTIONS = [
   'space_saved',
   'space_zone_saved',
   'space_import',
+  'training_folder_saved',
+  'training_file_saved',
   'location_reader_saved',
   'items_zone_updated',
   // 8.1.15 菜品管理
@@ -1470,6 +1472,10 @@ function describeChange(action: string, detail: Record<string, unknown>): string
       return typeof detail.summary === 'string' ? detail.summary : '修改了空间台账';
     case 'space_zone_saved':
       return typeof detail.summary === 'string' ? detail.summary : '修改了楼层或区域';
+    case 'training_folder_saved':
+      return typeof detail.summary === 'string' ? detail.summary : '修改了培训文件夹';
+    case 'training_file_saved':
+      return typeof detail.summary === 'string' ? detail.summary : '修改了培训文件';
     case 'space_import':
       return typeof detail.summary === 'string' ? detail.summary : '导入了空间台账';
     case 'location_reader_saved':

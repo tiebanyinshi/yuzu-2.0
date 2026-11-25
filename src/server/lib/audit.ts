@@ -44,6 +44,9 @@ export type AuditAction =
   | 'oa_payroll_edited'
   | 'oa_payroll_batch_voided'
   | 'oa_payroll_published'
+  // 员工培训（2026-11-25）：文件夹的新建与修改；培训文件的上传、换版本、改标题、移动、上下架
+  | 'training_folder_saved'
+  | 'training_file_saved'
   | 'oa_payroll_reminded'
   | 'position_chosen'
   | 'member_created'

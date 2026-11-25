@@ -114,6 +114,7 @@ import { registerAiRoutes } from './modules/ai';
 import { registerSettlementRoutes } from './modules/settlement';
 import { registerStaffRoutes } from './modules/staff';
 import { registerOaOrgRoutes } from './modules/oa/org';
+import { registerTrainingRoutes } from './modules/training';
 import { registerOaStaffImportRoutes } from './modules/oa/staff-import';
 import { registerOaAttendanceSetupRoutes } from './modules/oa/attendance-setup';
 import { registerOaAttendanceDailyRoutes } from './modules/oa/attendance-daily';
@@ -335,6 +336,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerStaffRoutes(app, deps);
   // OA 办公（docs/OA.md）：OA-01 组织架构与员工档案
   registerOaOrgRoutes(app, deps);
+  registerTrainingRoutes(app, deps);
   registerOaStaffImportRoutes(app, deps);
   registerOaNotificationRoutes(app, deps);
   registerOaAttendanceSetupRoutes(app, deps);
