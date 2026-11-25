@@ -202,6 +202,8 @@ export interface ServiceItem {
   catalogCode: string | null;
   /** 价目表新建的（8.1.34）：名称、分类、时长、性别限定随价目表同步，后台只读；门店原有、后来对接上的为 false */
   catalogManaged?: boolean;
+  /** 现在对接着价目表（总店那份，8.1.35）：取消对接以后为 false，价目表留下的分类与来源不算对接 */
+  catalogLinked?: boolean;
 }
 
 /** 收银项目上的价目表分类：编码 + 名称（表格原文）+ 上一级（零点菜品是餐段，其余是工作表名）+ 排序 */

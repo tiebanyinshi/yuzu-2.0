@@ -77,3 +77,13 @@ export function readCsvTable(text: string, opts: { trim?: boolean } = {}): { hea
   const filled = records.filter((r) => r.cells.some((c) => c.trim() !== ''));
   return { header: filled[0] ?? null, rows: filled.slice(1), unclosedQuoteLine };
 }
+
+/**
+ * 读成「每行一组单元格」（表头在哪一行都行，交给调用方认）。引号没有配对时整份拒绝：
+ * 那一行以后都读不出来，只返回前半段会让导入少了后面的行还报成功（Codex 审查，8.1.35 技师名册导入）
+ */
+export function csvToTable(text: string): string[][] {
+  const t = readCsvTable(text);
+  if (t.unclosedQuoteLine !== null) throw new Error(`第 ${t.unclosedQuoteLine} 行的引号没有配对，后面的内容读不出来：请检查这一行再导入`);
+  return [...(t.header ? [t.header] : []), ...t.rows].map((r) => r.cells);
+}

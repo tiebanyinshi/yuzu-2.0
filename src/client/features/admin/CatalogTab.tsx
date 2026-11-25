@@ -320,9 +320,10 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
   const [last, setLast] = useState<Editing>(null);
   /** 8.1.34：对接了「全品类价目表」的项目（带价目表分类）——名称、分类、价格、时长、适用宾客只在价目表里改 */
   // 价目表新建的项目：名称、分类、时长、性别限定随价目表同步，这里只读（门店原有、后来对接上的照常能改，Codex 审查）
-  const fromCatalog = !!editing?.data?.catalogManaged;
+  // 按「现在还对接着」判断（Codex 审查）：取消对接以后价目表留下的分类与来源还在，但已经不归价目表管，照常能改
+  const fromCatalog = !!editing?.data?.catalogManaged && !!editing?.data?.catalogLinked;
   // 对接了价目表的（不论是不是价目表新建的）：价格以价目表为准（服务端 PRICE_LINKED）
-  const linked = !!editing?.data?.catalogCategory;
+  const linked = !!editing?.data?.catalogLinked;
 
   if (editing !== last) {
     setLast(editing);
