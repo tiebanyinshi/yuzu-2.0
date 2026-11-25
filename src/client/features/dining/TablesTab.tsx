@@ -894,9 +894,9 @@ function SessionDialog({
         url={voiding ? `/api/dining/tables/lines/${voiding.lineId}/void` : ''}
         allowGift
         onClose={() => setVoiding(null)}
-        onDone={(dish) => {
+        onDone={(dish, _result, gift) => {
           setVoiding(null);
-          toast({ tone: 'success', title: `${dish.name} 已处理` });
+          toast({ tone: 'success', title: `${dish.name} ${gift ? '已赠送' : '已退'}` });
           refresh();
         }}
       />
