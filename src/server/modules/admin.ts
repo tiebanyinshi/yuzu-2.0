@@ -1383,6 +1383,7 @@ const CHANGE_ACTIONS = [
   'dish_active_set',
   'dish_price_changed',
   'dishes_imported',
+  'dish_price_mode',
 ];
 
 const SETTING_LABELS: Record<string, string> = {
@@ -1491,6 +1492,8 @@ function describeChange(action: string, detail: Record<string, unknown>): string
       return typeof detail.summary === 'string' ? detail.summary : `菜品${name ? `「${name}」` : ''}改价`;
     case 'dishes_imported':
       return typeof detail.summary === 'string' ? detail.summary : '导入了菜品';
+    case 'dish_price_mode':
+      return typeof detail.summary === 'string' ? detail.summary : `菜品${name ? `「${name}」` : ''}改了计价方式`;
     default:
       return action;
   }

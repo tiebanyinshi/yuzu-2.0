@@ -108,4 +108,116 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
     await page.getByTestId('oa-mobile-origin').fill('https://staff.example.com/whatever');
     await expect(page.getByTestId('oa-mobile-url')).toHaveText('https://staff.example.com/oa');
   });
+
+  test('第 2 批手机（360×800）：打卡卡片「该打什么卡」、月历点选详情、获授排班权限后手机编排并发布', async ({ page, browser }) => {
+    const { randomUUID } = await import('node:crypto');
+    // 店主先建一位有岗位的演示员工、此刻在上班窗口内的班次与考勤组，发布排班并授其排班+发布权
+    await page.goto('/login');
+    await page.fill('#username', 'linlan');
+    await page.fill('#password', PASSWORD);
+    await page.getByRole('button', { name: '登录' }).click();
+    await page.waitForURL((u) => u.pathname === '/', { timeout: 30_000 });
+    const stamp = Date.now().toString(36).slice(-5);
+    const username = `oam2${stamp}`;
+    const displayName = `手排员${stamp}`;
+    const hired = await page.request.post('/api/staff', { data: { username, displayName, position: 'front.staff', password: PASSWORD } });
+    expect(hired.status(), await hired.text()).toBe(201);
+    const emp = (await hired.json()) as { id: number };
+    const me = (await (await page.request.get('/api/auth/me')).json()) as { store: { id: number } };
+    const tdy = (await (await page.request.get('/api/oa/attendance/today')).json()) as { now: number; today: string };
+    const startMinute = ((tdy.now % 1440) + 1440) % 1440;
+    const make = async (path: string, data: object) => {
+      const r = await page.request.post(`/api/oa/attendance/${path}`, { data: { clientKey: randomUUID(), storeId: me.store.id, ...data } });
+      expect(r.status(), await r.text()).toBe(201);
+      return (await r.json()) as { shifts: { id: number; name: string }[]; groups: { id: number; name: string; version: number }[] };
+    };
+    await make('shifts', { name: `手${stamp}`, startMinute, endMinute: (startMinute + 480) % 1440 });
+    const setup = await make('groups', { name: `手排${stamp}`, gpsRequired: false, memberIds: [emp.id] });
+    const group = setup.groups.find((g) => g.name === `手排${stamp}`)!;
+    const shiftId = setup.shifts.find((s) => s.name === `手${stamp}`)!.id;
+
+    // 排今天的班并发布
+    const sv = await page.request.post('/api/oa/attendance/schedule', {
+      data: {
+        clientKey: randomUUID(),
+        storeId: me.store.id,
+        groupId: group.id,
+        cells: [{ staffId: emp.id, date: tdy.today, shiftIds: [shiftId], consecutive: false, expected: { shiftIds: [], consecutive: false } }],
+      },
+    });
+    expect(sv.status(), await sv.text()).toBe(200);
+    const pb = await page.request.post('/api/oa/attendance/schedule/publish', {
+      data: { clientKey: randomUUID(), storeId: me.store.id, groupId: group.id, from: tdy.today, to: tdy.today },
+    });
+    expect(pb.status(), await pb.text()).toBe(200);
+
+    // 授该员工该考勤组的编排+发布权
+    const gr = await page.request.post('/api/oa/attendance/schedule-grants', {
+      data: {
+        clientKey: randomUUID(),
+        storeId: me.store.id,
+        granteeStaffId: emp.id,
+        permissions: ['view', 'edit', 'publish'],
+        scopeType: 'group',
+        scopeGroupId: group.id,
+        note: `手机排班${stamp}`,
+      },
+    });
+    expect(gr.status(), await gr.text()).toBe(201);
+    const grantId = ((await gr.json()) as { grant: { id: number } }).grant.id;
+
+    // 手机 360×800 登录该员工（首次登录需先改临时密码）
+    const context = await browser.newContext({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true, userAgent: WECHAT_UA, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' });
+    const mp = await context.newPage();
+    const signIn = await mp.request.post('/api/auth/login', { data: { username, password: PASSWORD } });
+    expect(signIn.status(), await signIn.text()).toBe(200);
+    const changed = await mp.request.post('/api/auth/change-password', { data: { currentPassword: PASSWORD, newPassword: `Mobile-${stamp}-2026` } });
+    expect(changed.status(), await changed.text()).toBe(200);
+    await mp.goto('/oa');
+    await mp.waitForURL((u) => u.pathname === '/oa', { timeout: 30_000 });
+
+    // 打卡卡片显示「打上班卡」，宫格出现「排班管理」，零横向滚动
+    await expect(mp.getByTestId('oa-today-next')).toHaveAttribute('data-action', 'in');
+    await expect(mp.getByTestId('oa-today-next')).toContainText('打上班卡');
+    await expect(mp.getByTestId('oa-today-punch')).toContainText('打上班卡');
+    await expect(mp.getByTestId('oa-tile-schedule-manage')).toBeVisible();
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    // 我的排班：点今天看详情，并从「排班管理」入口进手机排班页
+    await mp.getByTestId('oa-tile-schedule').click();
+    await expect(mp.getByTestId('my-schedule-detail')).toContainText(`手${stamp}`);
+    await mp.getByTestId('my-schedule-manage').click();
+    await expect(mp).toHaveURL(/\/oa\/schedule\/manage$/);
+    await expect(mp.getByTestId('mobile-schedule-manage')).toBeVisible();
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    // 手机排班管理：切到「按天」再切回「按人」，翻到下周一编辑草稿并发布
+    await mp.getByTestId('mobile-sch-mode-day').click();
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await mp.getByTestId('mobile-sch-mode-person').click();
+    await mp.getByTestId('mobile-sch-next').click();
+    const nextMonday = (await mp.getByTestId('mobile-sch-range').innerText()).trim().split(' ')[0]!;
+    await mp.getByTestId(`mobile-cell-${emp.id}-${nextMonday}`).click();
+    await mp.getByTestId(`att-cell-shift-手${stamp}`).click();
+    await mp.getByTestId('att-cell-done').click();
+    await mp.getByTestId('mobile-sch-save').click();
+    await expect(mp.getByTestId('mobile-sch-status')).toContainText('待发布');
+    await mp.getByTestId('mobile-sch-publish').click();
+    await mp.getByTestId('att-publish-confirm').click();
+    await expect(mp.getByTestId('mobile-sch-status')).toContainText('已发布');
+    await expect(mp.getByTestId('mobile-sch-last-publish')).toContainText(nextMonday);
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await context.close();
+
+    // 收尾：撤销授权、停用组与临时员工
+    expect(
+      (
+        await page.request.post(`/api/oa/attendance/schedule-grants/${grantId}/revoke`, {
+          data: { clientKey: randomUUID(), storeId: me.store.id, reason: '演练收尾' },
+        })
+      ).status(),
+    ).toBe(200);
+    expect((await page.request.put(`/api/oa/attendance/groups/${group.id}`, { data: { name: `手排${stamp}`, gpsRequired: false, active: false, version: group.version } })).status()).toBe(200);
+    expect((await page.request.put(`/api/staff/${emp.id}`, { data: { displayName, position: 'front.staff', active: false } })).status()).toBe(200);
+  });
 });

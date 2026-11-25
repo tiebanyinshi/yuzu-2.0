@@ -847,11 +847,13 @@ export async function voidCheckout(deps: Deps, checkoutId: number, raw: unknown,
     const tables = tableItems.length
       ? await tx<{ id: number; name: string }[]>`
           SELECT t.id, t.name FROM dining_tables t
-          WHERE t.id IN (SELECT table_id FROM table_sessions WHERE id IN ${tx(tableItems.map((i) => i.sessionId))}) ORDER BY t.id FOR UPDATE`
+          WHERE t.id IN (SELECT table_id FROM table_sessions WHERE id IN ${tx(tableItems.map((i) => i.sessionId))} AND parked_at IS NULL) ORDER BY t.id FOR UPDATE`
       : [];
+    // 8.1.39：转挂账的单（批房挂账）不占桌台——反结账恢复它不用看桌台空不空（上面只锁、只查没转挂账的那几桌）；桌台上转挂账的单也不算占着
     if (tables.length) {
       const taken = await tx<{ name: string }[]>`
-        SELECT t.name FROM table_sessions s JOIN dining_tables t ON t.id = s.table_id WHERE s.status = 'open' AND s.table_id IN ${tx(tables.map((t) => t.id))}`;
+        SELECT t.name FROM table_sessions s JOIN dining_tables t ON t.id = s.table_id
+        WHERE s.status = 'open' AND s.parked_at IS NULL AND s.table_id IN ${tx(tables.map((t) => t.id))}`;
       if (taken.length) throw conflict('TABLE_TAKEN', `桌台「${taken.map((t) => t.name).join('、')}」已开给别的客人，不能反结账；请先把那一桌转到别的桌台`);
       const sessions = await tx<{ id: number; sessionNo: string; status: string }[]>`
         SELECT id, session_no, status FROM table_sessions WHERE id IN ${tx(tableItems.map((i) => i.sessionId))} ORDER BY id FOR UPDATE`;

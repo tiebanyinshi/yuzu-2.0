@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import { DINING_OUTLET_LABELS, diningSlotOf, type DiningOutlet } from '@shared/dining';
+import { loadDiningOutlets } from './dining-v8139';
 import { MAX_DELIVER_ROOM, MAX_ORDER_NOTE, OUTLET_ORDER_PERMISSIONS, VOID_BLAMES } from '@shared/dining-v8115';
 import { ROOM_BUSINESS_TYPE } from '@shared/spaces';
 import { can } from '@shared/permissions';
@@ -78,8 +79,9 @@ export async function assertOrderOutlets(db: Db, actor: Actor, itemIds: number[]
     SELECT i.name, i.category, i.dining_outlet, i.dining_group, s.name AS station_name
     FROM service_items i JOIN kitchen_stations s ON s.id = i.station_id WHERE i.id IN ${db(ids)} ORDER BY i.id`;
   const denied: { name: string; outlet: DiningOutlet }[] = [];
+  const slots = await loadDiningOutlets(db);
   for (const r of rows) {
-    const { outlet } = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName });
+    const { outlet } = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName }, slots);
     if (!can(actor, OUTLET_ORDER_PERMISSIONS[outlet])) denied.push({ name: r.name, outlet });
   }
   if (denied.length) {

@@ -5,7 +5,7 @@
 
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
-import { diningSlotOf, receiptLineState, type DiningReceipt, type DiningReceiptLine, type DiningReceiptOrder, type KitchenStatus } from '@shared/dining';
+import { diningOutletsOf, diningSlotOf, receiptLineState, type DiningReceipt, type DiningReceiptLine, type DiningReceiptOrder, type KitchenStatus } from '@shared/dining';
 import type { DishPart } from '@shared/dishes';
 import type { Db } from '../db';
 import type { Deps } from '../lib/context';
@@ -89,7 +89,7 @@ export async function diningReceipt(db: Db, q: { session?: number; visit?: numbe
   const groups = new Map<string, { orderNo: string | null; postedAt: string; postedByName: string; lines: DiningReceiptLine[]; orderNote: string; deliverRoom: string }>();
   for (const r of rows) {
     const key = r.orderNo ? `o:${r.orderNo}` : r.postKey ? `k:${r.postKey}` : `l:${r.billLineId}`;
-    const slot = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName });
+    const slot = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName }, diningOutletsOf(rules));
     const line: DiningReceiptLine = {
       billLineId: Number(r.billLineId),
       name: r.name,

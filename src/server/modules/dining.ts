@@ -6,6 +6,7 @@
 // 并发：挂账、作废的加锁顺序是「来访 → 账单 → 明细 → （技师队列 → 钟单 → 技师状态）→ 沽清 → 出品单」；
 // 厨房屏的开始 / 出餐 / 上菜只锁出品单一行，设沽清只锁沽清一行，都不反向加锁。
 
+import type { PriceMode } from '@shared/dish-price-mode';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
@@ -13,8 +14,11 @@ import {
   KITCHEN_STATUSES,
   MAX_STATION_NAME,
   MAX_VOID_FREE_CENTS,
+  diningOutletsOf,
   diningSlotOf,
+  isDiningOutlet,
   parseSlotKey,
+  splitSlotKey,
   slotLabel,
   type DiningAdmin,
   type DiningGuest,
@@ -30,6 +34,9 @@ import {
   type MenuDish,
 } from '@shared/dining';
 import { MAX_DIRTY_ALERT_MINUTES } from '@shared/frontdesk-v8117';
+import { assertGroupsUnused, OutletGroupsInput, registerDiningV8139Routes, stationWindowsOf } from './dining-v8139';
+import { minuteOfDay } from '@shared/business-date';
+import { inWindow, notOnSaleText, onSaleAt, stationAt, type DishStationWindow, type DishWindow } from '@shared/dining-v8139';
 import { defaultTier, sortTiers, type TierPrice } from '@shared/catalog';
 import type { DishPart } from '@shared/dishes';
 import { can } from '@shared/permissions';
@@ -59,14 +66,31 @@ export async function loadDiningRules(db: Db): Promise<DiningRules> {
 
 // ───────────────────────── 挂账时建出品单（frontdesk/bills.ts 调用） ─────────────────────────
 
-/** 进厨房的菜品：餐饮功能开启、挂在启用的档口上的项目 → 档口（需要技师的项目不进厨房） */
-export async function kitchenStationsOf(db: Db, itemIds: number[]): Promise<Map<number, number>> {
+/** 下单的这一刻与门店时区（8.1.39）：售卖时段、档口时段都按它算「现在是一天里的第几分钟」 */
+export interface DiningClock {
+  at: Date;
+  timeZone: string;
+}
+
+/**
+ * 进厨房的菜品：餐饮功能开启、挂在启用的档口上的项目 → 档口（需要技师的项目不进厨房）。
+ * 8.1.39：设了档口时段的，这一刻落在哪一段就到那一段的档口（那个档口停用了的照菜品自己的档口）；出品单记的就是这里给的档口
+ */
+export async function kitchenStationsOf(db: Db, itemIds: number[], clock: DiningClock): Promise<Map<number, number>> {
   const unique = [...new Set(itemIds)];
   if (unique.length === 0 || !(await loadDiningRules(db)).enabled) return new Map();
   const rows = await db<{ id: number; stationId: number }[]>`
     SELECT i.id, i.station_id FROM service_items i JOIN kitchen_stations s ON s.id = i.station_id AND s.active
     WHERE i.id IN ${db(unique)} AND NOT i.technician_required`;
-  return new Map(rows.map((r) => [r.id, r.stationId]));
+  const windows = rows.length
+    ? await stationWindowsOf(
+        db,
+        rows.map((r) => r.id),
+        { activeOnly: true },
+      )
+    : new Map<number, DishStationWindow[]>();
+  const minute = minuteOfDay(clock.at, clock.timeZone);
+  return new Map(rows.map((r) => [r.id, stationAt(r.stationId, windows.get(r.id), minute)]));
 }
 
 export interface DishLine {
@@ -81,7 +105,7 @@ export interface DishLine {
  * 沽清：这几道菜今天还剩的份数够不够，够就扣掉（按项目 id 升序锁沽清行）。没有当天记录的不限量。
  * 返回扣过沽清的项目（退菜时按原份数加回）。套餐的子项（8.1.17）与单点的同一道菜合起来算
  */
-export async function takeDishLimits(tx: Tx, lines: DishLine[], date: string): Promise<Set<number>> {
+export async function takeDishLimits(tx: Tx, lines: DishLine[], date: string, clock: DiningClock): Promise<Set<number>> {
   const wanted = new Map<number, { label: string; quantity: number }>();
   for (const l of lines) {
     const cur = wanted.get(l.itemId);
@@ -90,6 +114,8 @@ export async function takeDishLimits(tx: Tx, lines: DishLine[], date: string): P
     wanted.set(l.itemId, { label, quantity: (cur?.quantity ?? 0) + l.quantity });
   }
   if (wanted.size === 0) return new Set();
+  // 8.1.39（R3）：售卖时段——不在时段里的菜整笔拒绝（手牌、桌台、电子菜单、小程序、房态点单都走这里；补录纸质单的不走）。只读、不加锁
+  await assertOnSale(tx, wanted, clock);
   const rows = await tx<{ itemId: number; remaining: number }[]>`
     SELECT item_id, remaining FROM dish_limits WHERE item_id IN ${tx([...wanted.keys()])} AND business_date = ${date}
     ORDER BY item_id FOR UPDATE`;
@@ -104,6 +130,15 @@ export async function takeDishLimits(tx: Tx, lines: DishLine[], date: string): P
     await tx`UPDATE dish_limits SET remaining = remaining - ${w.quantity} WHERE item_id = ${r.itemId}`;
   }
   return new Set(rows.map((r) => r.itemId));
+}
+
+/** 售卖时段（8.1.39 R3）：这几道菜（含套餐的子项）此刻都要在时段里，有一道不在整笔拒绝（409 DISH_NOT_ON_SALE） */
+async function assertOnSale(db: Db, wanted: Map<number, { label: string }>, clock: DiningClock) {
+  const rows = await db<{ id: number; saleWindows: DishWindow[] | null }[]>`
+    SELECT id, sale_windows FROM service_items WHERE id IN ${db([...wanted.keys()])} AND sale_windows IS NOT NULL ORDER BY id`;
+  const minute = minuteOfDay(clock.at, clock.timeZone);
+  const off = rows.find((r) => !onSaleAt(r.saleWindows, minute));
+  if (off) throw conflict('DISH_NOT_ON_SALE', notOnSaleText(wanted.get(off.id)!.label, off.saleWindows!), { itemId: off.id, saleWindows: off.saleWindows });
 }
 
 export interface KitchenLine {
@@ -249,8 +284,11 @@ async function stationsWithCount(db: Db): Promise<KitchenStation[]> {
     FROM kitchen_stations s ORDER BY s.sort_order, s.id`;
 }
 
-/** 进厨房的在售菜品、默认价格档的单价、今天的沽清与点单分类（8.1.7：后台没设的按默认归） */
-export async function kitchenDishes(db: Db, today: string): Promise<MenuDish[]> {
+/**
+ * 进厨房的在售菜品、默认价格档的单价、今天的沽清与点单分类（8.1.7：后台没设的按默认归；8.1.39 按后台设的小分类）。
+ * 带了 clock 的（点单页、厨房屏）：设了售卖时段的标出此刻卖不卖（offSale），设了档口时段的写此刻到哪个档口（8.1.39）
+ */
+export async function kitchenDishes(db: Db, today: string, clock?: DiningClock): Promise<MenuDish[]> {
   const rows = await db<
     {
       id: number;
@@ -263,26 +301,43 @@ export async function kitchenDishes(db: Db, today: string): Promise<MenuDish[]> 
       diningOutlet: string | null;
       diningGroup: string;
       catalogCategory: MenuDish['catalogCategory'];
+      priceMode: PriceMode;
+      saleWindows: DishWindow[] | null;
     }[]
   >`
-    SELECT i.id, i.name, i.category, i.station_id, s.name AS station_name, ${pricesColumn(db)} AS prices,
+    SELECT i.id, i.name, i.category, i.station_id, s.name AS station_name, ${pricesColumn(db)} AS prices, i.sale_windows,
            (SELECT d.remaining FROM dish_limits d WHERE d.item_id = i.id AND d.business_date = ${today}) AS remaining,
-           i.dining_outlet, i.dining_group,
+           i.dining_outlet, i.dining_group, i.price_mode,
            CASE WHEN i.catalog_category_code IS NULL THEN NULL
                 ELSE json_build_object('code', i.catalog_category_code, 'name', i.catalog_category_name, 'group', coalesce(i.catalog_group, ''), 'sort', coalesce(i.catalog_sort, 0)) END AS catalog_category
     FROM service_items i JOIN kitchen_stations s ON s.id = i.station_id AND s.active
     WHERE i.active AND NOT i.technician_required ORDER BY i.dish_sort NULLS LAST, s.sort_order, s.id, i.sort_order, i.id`;
+  const outlets = diningOutletsOf(await loadDiningRules(db));
+  const minute = clock ? minuteOfDay(clock.at, clock.timeZone) : null;
+  const windows = clock
+    ? await stationWindowsOf(
+        db,
+        rows.map((r) => r.id),
+        { activeOnly: true },
+      )
+    : new Map<number, DishStationWindow[]>();
   // 8.1.17（BW10）：菜品表里排过的按排的先后（同一个小类挨在一起），没排过的在后面、照原来的顺序
-  return rows.map(({ prices, diningOutlet, diningGroup, catalogCategory, ...r }) => {
-    const slot = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category: r.category, stationName: r.stationName });
+  return rows.map(({ prices, diningOutlet, diningGroup, catalogCategory, saleWindows, priceMode, ...r }) => {
+    const slot = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category: r.category, stationName: r.stationName }, outlets);
+    // 8.1.39：此刻落在哪一段档口时段的，写那个档口
+    const timed = minute === null ? undefined : windows.get(r.id)?.find((w) => inWindow(w, minute));
     // 8.1.17（BW5）：多档的菜带上各档的价，点单时弹出来选；只有一档的不带。价目表来的菜带上「餐段 → 分类」（重做第三批）
     return {
       ...r,
+      ...(timed ? { stationId: timed.stationId, stationName: timed.stationName ?? r.stationName } : {}),
+      ...(saleWindows && saleWindows.length ? { saleWindows, offSale: minute !== null && !onSaleAt(saleWindows, minute) } : {}),
       price: defaultPrice(prices),
       outlet: slot.outlet,
       group: slot.group,
       ...(prices.length > 1 ? { prices: sortTiers(prices) } : {}),
       ...(catalogCategory ? { catalogCategory } : {}),
+      // 8.1.39：时价 / 杂项、称重的菜才带（点单页点的时候弹出来填价、斤数）
+      ...(priceMode !== 'fixed' ? { priceMode } : {}),
     };
   });
 }
@@ -305,7 +360,7 @@ export async function kitchenBoard(db: Db, deps: Deps): Promise<KitchenBoard> {
   const now = new Date();
   const today = await businessDate(db as Tx, deps, now);
   const rules = await loadDiningRules(db);
-  const [stations, dishes] = await Promise.all([stationsWithCount(db), kitchenDishes(db, today)]);
+  const [stations, dishes] = await Promise.all([stationsWithCount(db), kitchenDishes(db, today, { at: now, timeZone: deps.config.timezone })]);
   // 今天还在做的、出了餐还没上的，以及最近上过 / 退过的 30 道（核对用）
   const open = await db<KitchenItem[]>`
     SELECT ${ITEM_COLUMNS(db)} FROM ${ITEM_FROM(db)}
@@ -353,10 +408,16 @@ export async function kitchenBoard(db: Db, deps: Deps): Promise<KitchenBoard> {
 }
 
 export async function diningMenu(db: Db, deps: Deps): Promise<DiningMenu> {
-  const today = await businessDate(db as Tx, deps, new Date());
+  const now = new Date();
+  const today = await businessDate(db as Tx, deps, now);
   const { selfVoidMinutes } = await loadFrontdeskRules(db);
   // 点单页的菜单带上做法、加料、套餐内容（8.1.15 菜品管理；厨房屏 5 秒取一次的沽清列表不带）
-  return { rules: await loadDiningRules(db), businessDate: today, dishes: await withDishOptions(db, await kitchenDishes(db, today), today), selfVoidMinutes };
+  return {
+    rules: await loadDiningRules(db),
+    businessDate: today,
+    dishes: await withDishOptions(db, await kitchenDishes(db, today, { at: now, timeZone: deps.config.timezone }), today),
+    selfVoidMinutes,
+  };
 }
 
 /** 点单页按手牌找在店客人：只给点单需要的信息（不含会员手机号、余额与账单） */
@@ -581,13 +642,15 @@ export async function diningAdmin(db: Db): Promise<DiningAdmin> {
            s.name AS station_name, i.dining_outlet, i.dining_group
     FROM service_items i LEFT JOIN kitchen_stations s ON s.id = i.station_id
     WHERE i.active ORDER BY i.sort_order, i.id`;
+  const rules = await loadDiningRules(db);
+  const outlets = diningOutletsOf(rules);
   return {
-    rules: await loadDiningRules(db),
+    rules,
     rulesUpdatedAt: meta?.updatedAt ? new Date(meta.updatedAt).toISOString() : null,
     rulesUpdatedBy: meta?.updatedBy ?? null,
     stations: await stationsWithCount(db),
     items: items.map(({ prices, stationName, diningOutlet, diningGroup, ...r }) => {
-      const { assigned, ...slot } = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category: r.category, stationName });
+      const { assigned, ...slot } = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category: r.category, stationName }, outlets);
       return { ...r, price: defaultPrice(prices), slot, slotAssigned: assigned };
     }),
   };
@@ -609,6 +672,8 @@ const RulesInput = z.object({
   // 8.1.17（BW-2）：维修到点自动恢复、待清台多久算久了
   autoRestore: z.boolean(),
   dirtyAlertMinutes: z.number('分钟数必须是整数').int('分钟数必须是整数').min(1, '至少 1 分钟').max(MAX_DIRTY_ALERT_MINUTES, `最多 ${MAX_DIRTY_ALERT_MINUTES} 分钟`),
+  // 8.1.39（R4）：餐厅、水吧的小分类
+  outletGroups: OutletGroupsInput,
 });
 const StationInput = z.object({
   name: z.string().trim().min(1, '请填写档口名称').max(MAX_STATION_NAME, `档口名称最多 ${MAX_STATION_NAME} 字`),
@@ -631,7 +696,8 @@ const ItemsInput = z.object({
             .max(40)
             .nullable()
             .optional()
-            .refine((v) => v === undefined || v === null || parseSlotKey(v) !== null, '点单分类不对，请刷新后重试'),
+            // 8.1.39：小分类按后台设的名单，在事务里核对（这里只看样子）
+            .refine((v) => v === undefined || v === null || isDiningOutlet(splitSlotKey(v).outlet), '点单分类不对，请刷新后重试'),
         })
         .refine((i) => i.stationId !== undefined || i.slot !== undefined, '没有要调整的内容'),
     )
@@ -641,12 +707,25 @@ const ItemsInput = z.object({
 
 export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
+  // 8.1.39（餐饮 B）：小分类名单、前台结账核对的只看餐饮
+  registerDiningV8139Routes(app, deps);
 
   // 后台「餐饮」：规则（只有店主）、出品档口与菜品的档口（能管理价目的岗位）
   app.get('/api/admin/dining', { preHandler: guardAny('settings.manage', 'catalog.manage') }, async () => diningAdmin(sql));
 
   app.put('/api/admin/dining/rules', { preHandler: guard('settings.manage') }, async (req) => {
-    await saveRuleSetting(sql, 'dining_rules', loadDiningRules, (before) => parse(RulesInput, { ...before, ...parse(RulesInput.partial(), req.body) }), ctxOf(req));
+    await saveRuleSetting(
+      sql,
+      'dining_rules',
+      loadDiningRules,
+      async (before, tx) => {
+        const after = parse(RulesInput, { ...before, ...parse(RulesInput.partial(), req.body) });
+        // 8.1.39（R4）：删掉、改名的小分类还有菜在用的不让存
+        await assertGroupsUnused(tx, before, after);
+        return after;
+      },
+      ctxOf(req),
+    );
     return diningAdmin(sql);
   });
 
@@ -698,6 +777,7 @@ export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
       const stations = stationIds.length ? await tx<{ id: number; name: string }[]>`SELECT id, name FROM kitchen_stations WHERE id IN ${tx(stationIds)}` : [];
       if (stations.length !== stationIds.length) throw notFound('有档口不存在，请刷新后重试');
       const byId = new Map(items.map((i) => [i.id, i]));
+      const outlets = diningOutletsOf(await loadDiningRules(tx));
 
       // 出品档口：带了而且变了的
       const wantStation = (r: (typeof rows)[number]) => byId.get(r.id)!.stationId;
@@ -722,7 +802,10 @@ export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
       // 点单分类（8.1.7）：带了而且变了的；null 为清掉、按默认归
       const wantSlot = (r: (typeof rows)[number]) => {
         const v = byId.get(r.id)!.slot;
-        return v === undefined ? undefined : v === null ? null : parseSlotKey(v)!;
+        if (v === undefined || v === null) return v;
+        const slot = parseSlotKey(v, outlets);
+        if (!slot) throw new AppError(400, 'DINING_SLOT_UNKNOWN', `点单分类不对：「${v}」不在现在的小分类名单里，请刷新后重试`);
+        return slot;
       };
       const slotChanged = rows.filter((r) => {
         const w = wantSlot(r);

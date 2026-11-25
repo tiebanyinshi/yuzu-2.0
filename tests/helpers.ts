@@ -401,8 +401,14 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '271_mall_skus.sql',
   '280_training.sql',
   '290_dining_ledger.sql',
+  '291_oa_schedule_publish.sql',
+  '292_oa_schedule_grants.sql',
   '300_refund_store.sql',
   '301_designated_to_end.sql',
+  '310_dish_price_mode.sql',
+  '311_table_min_spend.sql',
+  '312_kitchen_transfer.sql',
+  '315_dish_windows.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

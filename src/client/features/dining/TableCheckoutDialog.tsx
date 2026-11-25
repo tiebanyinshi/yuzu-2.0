@@ -4,6 +4,7 @@
 // 反结账在「结账记录」里，与手牌结账相同（桌台须仍空闲）。
 // 8.1.15（块 B1）：并台的一组一起结——核对时服务端把一组都带上（选了附台带上主台），这里跟着勾上，附台写明并入哪桌。
 
+import { serviceFeeText } from '@shared/table-charges';
 import { invalidateRevenue } from '../../lib/revenue';
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -58,6 +59,8 @@ export function TableCheckoutDialog({
   const [selected, setSelected] = useState<number[]>([sessionId]);
   const [showAll, setShowAll] = useState(false);
   const [note, setNote] = useState('');
+  /** 8.1.39：低消不够时收银确认补足（记一行低消补足） */
+  const [topUp, setTopUp] = useState(false);
   const [result, setResult] = useState<CheckoutDetail | null>(null);
   const shiftReady = useShiftReady(open);
   const preview = useTableCheckoutPreview(selected, open && !result);
@@ -73,6 +76,7 @@ export function TableCheckoutDialog({
     setSelected([sessionId]);
     setShowAll(false);
     setNote('');
+    setTopUp(false);
     setResult(null);
     op.clearError();
   });
@@ -104,7 +108,9 @@ export function TableCheckoutDialog({
     const ids = p.sessions.map((s) => s.sessionId).sort((a, b) => a - b);
     setSelected((cur) => (cur.length === ids.length && [...cur].sort((a, b) => a - b).every((x, i) => x === ids[i]) ? cur : ids));
   }, [p, locked, preview.isPlaceholderData]);
-  const total = p ? p.totalAmount : null;
+  // 8.1.39：合计含服务费；低消不够的要勾「补足低消」才能结（合计加上差额）
+  const short = p?.minSpendShortfall ?? 0;
+  const total = p ? p.totalAmount + (topUp ? short : 0) : null;
   const sessionIds = p ? p.sessions.map((s) => s.sessionId) : selected;
   const pay = usePayRows({
     open,
@@ -118,7 +124,7 @@ export function TableCheckoutDialog({
     coupons: p?.storeCoupons ?? null,
   });
   const { remaining, problems } = pay;
-  const ready = total !== null && remaining === 0 && pay.ok && !preview.isFetching && shiftReady.ready;
+  const ready = total !== null && remaining === 0 && pay.ok && !preview.isFetching && shiftReady.ready && (short === 0 || topUp);
   const names = (p?.sessions ?? []).map((s) => s.tableName);
 
   const toggle = (id: number) => {
@@ -133,7 +139,7 @@ export function TableCheckoutDialog({
     const tagCodes = p.sessions.map((s) => `桌 ${s.tableName}`);
     const detail = await op.submit((key) => ({
       url: '/api/dining/tables/checkout',
-      body: { clientKey: key, sessionIds: ids, expectedTotal: total!, payments: pay.payments(), note: note.trim() },
+      body: { clientKey: key, sessionIds: ids, expectedTotal: total!, payments: pay.payments(), note: note.trim(), ...(short > 0 && topUp ? { minSpendTopUp: true } : {}) },
       tagCodes,
       summary: `桌台结账 ${ids.length} 桌（${pay.methods.join(' + ') || '免收'}）`,
       amount: total!,
@@ -258,6 +264,18 @@ export function TableCheckoutDialog({
             <>
               {p.dishes.length > 0 && <TableDishesNotice dishes={p.dishes} />}
               <TableReview preview={p} />
+              {short > 0 && (
+                <label
+                  className={cn('flex min-h-11 cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5', topUp ? 'border-pine/40 bg-pine-tint' : 'border-clay/40 bg-clay-soft/40')}
+                  data-testid="table-checkout-topup"
+                >
+                  <input type="checkbox" className="mt-0.5 size-5 shrink-0" checked={topUp} disabled={locked} onChange={(e) => setTopUp(e.target.checked)} data-testid="table-checkout-topup-check" />
+                  <span className="min-w-0 flex-1 text-[13.5px]">
+                    <b>没到低消，差 {formatYuan(short)}</b>
+                    <span className="block text-ink-2">餐饮确认补足的勾上，记一行「低消补足」一起收；不补的先在桌台详情里「转挂账」，桌台空出来，之后再结。</span>
+                  </span>
+                </label>
+              )}
             </>
           )
         )}
@@ -325,7 +343,7 @@ function TableReview({ preview }: { preview: TableCheckoutPreview }) {
                 {s.guests} 人 · {s.memberName ?? (s.guestLabel || '散客')} · {formatTime(s.openedAt)} 开台
               </span>
               <span className="flex-1" />
-              <Money cents={s.amount} className="text-[15px] font-bold" />
+              <Money cents={s.amount + s.charge.serviceFee} className="text-[15px] font-bold" />
             </div>
             {s.lines.length === 0 ? (
               <p className="mt-1 text-[12.5px] text-ink-3">没有消费</p>
@@ -341,6 +359,24 @@ function TableReview({ preview }: { preview: TableCheckoutPreview }) {
                 ))}
               </ul>
             )}
+            {(s.charge.serviceFee > 0 || s.charge.minSpend > 0) && (
+              <ul className="mt-1 space-y-0.5 text-[12.5px] text-ink-2" data-testid={`table-checkout-charge-${s.tableName}`}>
+                {s.charge.serviceFee > 0 && (
+                  <li className="flex items-baseline gap-2">
+                    <span className="min-w-0 flex-1">{serviceFeeText(s.charge.serviceFeeBp)}（按没赠送、没退的菜算）</span>
+                    <Money cents={s.charge.serviceFee} className="text-ink-3" />
+                  </li>
+                )}
+                {s.charge.minSpend > 0 && (
+                  <li className={cn('flex items-baseline gap-2', s.charge.shortfall > 0 && 'font-semibold text-clay')}>
+                    <span className="min-w-0 flex-1">
+                      低消 {formatYuan(s.charge.minSpend)}
+                      {s.charge.shortfall > 0 ? `，还差 ${formatYuan(s.charge.shortfall)}` : '，已达到'}
+                    </span>
+                  </li>
+                )}
+              </ul>
+            )}
           </li>
         ))}
       </ul>
@@ -348,6 +384,7 @@ function TableReview({ preview }: { preview: TableCheckoutPreview }) {
         <span className="font-bold">应收合计</span>
         <span data-testid="table-checkout-total">
           <Money cents={preview.totalAmount} className="text-[20px] font-bold text-pine" />
+          {preview.minSpendShortfall > 0 && <span className="ml-1 text-[12px] text-ink-3">（不含低消补足）</span>}
         </span>
       </p>
     </div>

@@ -13,7 +13,7 @@ import { TableReminderMark, TablesTodoLine, useDirtyAlertMinutes } from './Table
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowRightLeft, BellRing, ClipboardList, History, Link2, Minus, Pencil, Plus, ReceiptText, Search, Undo2, Unlink, UserRound, Users, UtensilsCrossed, X } from 'lucide-react';
+import { ArrowRightLeft, BellRing, ClipboardList, Clock, History, Link2, Minus, Pencil, Plus, ReceiptText, Search, Undo2, Unlink, UserRound, Users, UtensilsCrossed, X } from 'lucide-react';
 import type { CheckoutDetail } from '@shared/checkout';
 import { KITCHEN_STATUS_LABELS, TABLE_ZONES, type KitchenStatus, type PendingDish, type TableSessionDetail, type TablesBoard } from '@shared/dining';
 import { formatYuan } from '@shared/money';
@@ -22,7 +22,7 @@ import type { MemberSummary } from '@shared/types';
 import { api, errorMessage } from '../../lib/api';
 import { memberCodeOf, useMembers } from '../../lib/queries';
 import { useCan, useSession } from '../../lib/session';
-import { cn, formatDateTime, formatTime } from '../../lib/utils';
+import { cn, formatDateTime, formatTime, uuid } from '../../lib/utils';
 import { EmptyState } from '../../components/EmptyState';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
@@ -33,6 +33,7 @@ import { CheckoutRecordsDialog } from '../frontdesk/CheckoutDialog';
 import { PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
 import { stayText } from '../frontdesk/queries';
 import { TableCheckoutDialog } from './TableCheckoutDialog';
+import { ParkedPanel, parkedKey } from './TableParked';
 import { ReceiptDialog } from './ReceiptDialog';
 import { tablesKey, useDiningMenu, useServerNow, useTableSession, useTablesBoard } from './queries';
 import { MergeDialog, TableActionStatus, TableHistoryDialog, TableStateDialog, TableStateLine, useTableAction } from './TableActions';
@@ -161,6 +162,7 @@ export function TablesTab() {
     setCheckoutFor(null);
     setSessionId(null);
     void qc.invalidateQueries({ queryKey: tablesKey });
+    void qc.invalidateQueries({ queryKey: parkedKey });
     toast({ tone: 'success', title: `已结清 ${detail.checkoutNo}`, body: '桌台已空出来；结账单在「结账记录」里，可以重打或反结账。' });
   };
 
@@ -174,6 +176,7 @@ export function TablesTab() {
           所有消费请挂手牌点单。还开着的桌照常看明细、结账、退菜、撤台；历史桌台单在「结账记录」里查。店主可在后台「餐饮」里重新打开桌台点单。
         </Notice>
       )}
+      <ParkedPanel canCheckout={can('frontdesk.checkout')} onOpen={setSessionId} onCheckout={setCheckoutFor} />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="text-[13.5px] text-ink-2">
           用餐中 <b className="num text-ink">{busy.length}</b> 桌 · <b className="num text-ink">{busy.reduce((n, t) => n + t.session!.guests, 0)}</b> 人 · 空闲{' '}
@@ -266,7 +269,9 @@ export function TablesTab() {
           }}
         />
       )}
-      {sessionId !== null && <SessionDialog id={sessionId} board={board.data!} onClose={() => setSessionId(null)} onCheckout={() => setCheckoutFor(sessionId)} />}
+      {sessionId !== null && (
+        <SessionDialog key={sessionId} id={sessionId} board={board.data!} onClose={() => setSessionId(null)} onCheckout={() => setCheckoutFor(sessionId)} onSwitch={setSessionId} />
+      )}
       {checkoutFor !== null && <TableCheckoutDialog open sessionId={checkoutFor} choices={choices} onClose={() => setCheckoutFor(null)} onDone={done} />}
       <CheckoutRecordsDialog open={records} onClose={() => setRecords(false)} />
     </div>
@@ -370,6 +375,11 @@ function TableTile({ t, now, onClick, tables, alertMinutes }: { t: Tile; now: nu
             <Money cents={s.amount} className="text-[14px] font-bold" />
             <span className="num text-[12px] text-ink-3">{stayText(s.openedAt, now)}</span>
             {s.pendingDishes > 0 && <Badge tone="yuzu">待上 {s.pendingDishes}</Badge>}
+            {(t.shared?.length ?? 0) > 0 && (
+              <Badge tone="lake" data-testid={`table-tile-shared-${t.name}`}>
+                拼台 +{t.shared!.length}
+              </Badge>
+            )}
             {!t.active && <Badge tone="clay">已停用</Badge>}
           </span>
           <TableStateLine t={t} mainName={mainName} subCount={subCount} />
@@ -555,7 +565,20 @@ export function MemberField({
 }
 
 /** 一桌的详情：明细与出品状态、催单、上菜、退菜；点单、改人数与会员、转台、撤台、结账 */
-function SessionDialog({ id, board, onClose, onCheckout }: { id: number; board: TablesBoard; onClose: () => void; onCheckout: () => void }) {
+function SessionDialog({
+  id,
+  board,
+  onClose,
+  onCheckout,
+  onSwitch,
+}: {
+  id: number;
+  board: TablesBoard;
+  onClose: () => void;
+  onCheckout: () => void;
+  /** 8.1.39 拼台：切到同一张桌上的另一张单 */
+  onSwitch?: (id: number) => void;
+}) {
   const can = useCan();
   const qc = useQueryClient();
   const toast = useToast();
@@ -567,6 +590,9 @@ function SessionDialog({ id, board, onClose, onCheckout }: { id: number; board: 
   const [voiding, setVoiding] = useState<{ lineId: number; name: string; quantity: number; amount: number; postedBy: number; postedAt: string; status: KitchenStatus | null } | null>(null);
   const [editing, setEditing] = useState(false);
   const [moving, setMoving] = useState(false);
+  /** 8.1.39：转挂账、拼台（同一张桌上另开一张单）的对话框 */
+  const [parking, setParking] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [showVoided, setShowVoided] = useState(false);
   /** 点菜单（8.1.7，CF8） */
@@ -610,6 +636,15 @@ function SessionDialog({ id, board, onClose, onCheckout }: { id: number; board: 
   }
 
   const open = d.status === 'open';
+  // 8.1.39：转挂账的单（桌台已经空出来了）只能结账、退菜
+  const parked = !!d.parkedAt;
+  const tile = board.tables.find((t) => t.id === d.tableId);
+  const sameTable = tile
+    ? [
+        ...(tile.session ? [{ id: tile.session.id, label: guestOf(tile.session), amount: tile.session.amount }] : []),
+        ...(tile.shared ?? []).map((x) => ({ id: x.id, label: x.guestLabel || x.sessionNo, amount: x.amount })),
+      ]
+    : [];
   const active = d.lines.filter((l) => l.status === 'active');
   const voided = d.lines.filter((l) => l.status === 'voided');
   const pendingOf = (lineId: number): PendingDish | undefined => d.pending.find((p) => p.billLineId === lineId);
@@ -638,7 +673,7 @@ function SessionDialog({ id, board, onClose, onCheckout }: { id: number; board: 
             <span className="mr-auto self-center text-[13px] text-ink-3">
               合计 <Money cents={d.amount} className="text-[18px] font-bold text-ink" />
             </span>
-            {can('dining.order') && tablesOn && (
+            {can('dining.order') && tablesOn && !parked && (
               <Button variant="secondary" size="lg" icon={<Plus className="size-4" />} onClick={() => navigate(`/crm/dining/order?table=${d.id}`)} data-testid="table-order">
                 点单
               </Button>
@@ -658,6 +693,22 @@ function SessionDialog({ id, board, onClose, onCheckout }: { id: number; board: 
     >
       <div className="space-y-4" data-testid="table-session">
         {d.status === 'cancelled' && <Notice tone="warning" title={`已撤台：${d.closeReason ?? ''}`} />}
+        {open && !parked && sameTable.length > 1 && (
+          <Notice tone="info" title={`这张桌拼台：${sameTable.length} 拨客人，各点各的、各结各的`} data-testid="table-shared-list">
+            <span className="flex flex-wrap gap-2 pt-1">
+              {sameTable.map((x) => (
+                <Button key={x.id} size="sm" variant={x.id === d.id ? 'primary' : 'secondary'} onClick={() => onSwitch?.(x.id)}>
+                  {x.label} · {formatYuan(x.amount)}
+                </Button>
+              ))}
+            </span>
+          </Notice>
+        )}
+        {open && parked && (
+          <Notice tone="warning" title={`已转挂账：${d.parkReason ?? ''}`} data-testid="table-parked">
+            {formatDateTime(d.parkedAt!)} 转的；桌台已经空出来给下一桌，这张单只能结账（退菜照常）。
+          </Notice>
+        )}
         {/* 并台（8.1.15）：附台在主台结账；主台结账时带着附台一起结 */}
         {open && d.mergedInto && (
           <Notice tone="info" title={`这桌并入了桌 ${d.mergedInto.tableName}`} data-testid="table-merged-into">
@@ -679,8 +730,18 @@ function SessionDialog({ id, board, onClose, onCheckout }: { id: number; board: 
           <Button size="sm" variant="ghost" icon={<History className="size-3.5" />} onClick={() => setHistory(true)} data-testid="table-history">
             历史
           </Button>
-          {open && (
+          {open && !parked && (
             <>
+              {canOrder && !d.mergedInto && d.merged.length === 0 && (
+                <Button size="sm" variant="ghost" icon={<Clock className="size-3.5" />} onClick={() => setParking(true)} data-testid="table-park">
+                  转挂账
+                </Button>
+              )}
+              {canOrder && tablesOn && (
+                <Button size="sm" variant="secondary" icon={<Users className="size-3.5" />} onClick={() => setSharing(true)} data-testid="table-share">
+                  拼台
+                </Button>
+              )}
               {canOrder && (
                 <Button size="sm" variant="secondary" icon={<Pencil className="size-3.5" />} onClick={() => setEditing(true)} data-testid="table-edit">
                   改人数、会员
@@ -831,10 +892,11 @@ function SessionDialog({ id, board, onClose, onCheckout }: { id: number; board: 
             : null
         }
         url={voiding ? `/api/dining/tables/lines/${voiding.lineId}/void` : ''}
+        allowGift
         onClose={() => setVoiding(null)}
-        onDone={(dish) => {
+        onDone={(dish, _result, gift) => {
           setVoiding(null);
-          toast({ tone: 'success', title: `${dish.name} 已退` });
+          toast({ tone: 'success', title: `${dish.name} ${gift ? '已赠送' : '已退'}` });
           refresh();
         }}
       />
@@ -850,6 +912,34 @@ function SessionDialog({ id, board, onClose, onCheckout }: { id: number; board: 
           void run('cancel', () => api.post(`/api/dining/tables/sessions/${d.id}/cancel`, { reason }), `桌 ${d.tableName} 已撤台`).then((ok) => {
             if (ok) {
               setCancelling(false);
+              onClose();
+            }
+          });
+        }}
+      />
+      {sharing && (
+        <ShareDialog
+          tableId={d.tableId}
+          tableName={d.tableName}
+          onClose={() => setSharing(false)}
+          onOpened={(id) => {
+            setSharing(false);
+            refresh();
+            onSwitch?.(id);
+          }}
+        />
+      )}
+      <ReasonDialog
+        open={parking}
+        title={`转挂账 · 桌 ${d.tableName}`}
+        description="低消没结清、客户经理之后跟进补费或签单的：账单先不结，桌台空出来给下一桌。挂账的单在桌台页上方「挂账中」里，之后选它结账。"
+        confirmLabel="确认转挂账"
+        busy={busy === 'park'}
+        onClose={() => setParking(false)}
+        onConfirm={(reason) => {
+          void run('park', () => api.post(`/api/dining/tables/sessions/${d.id}/park`, { reason }), `桌 ${d.tableName} 已转挂账`).then((ok) => {
+            if (ok) {
+              setParking(false);
               onClose();
             }
           });
@@ -995,6 +1085,56 @@ function MoveDialog({ detail, free, onClose, onMoved }: { detail: TableSessionDe
           data-testid="table-move-reason"
         />
         {error && <Notice tone="error" title={error} />}
+      </div>
+    </Dialog>
+  );
+}
+
+/** 拼台（8.1.39，R2）：这张桌上另一拨客人另开一张单（各点各的、各结各的），看板上归在这张桌一起显示 */
+function ShareDialog({ tableId, tableName, onClose, onOpened }: { tableId: number; tableName: string; onClose: () => void; onOpened: (id: number) => void }) {
+  const toast = useToast();
+  const [guests, setGuests] = useState('2');
+  const [label, setLabel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [key] = useState(uuid);
+  const n = Number(guests);
+  const ok = Number.isInteger(n) && n >= 1 && n <= 99 && label.trim().length <= 16;
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ id: number }>('/api/dining/tables/open', { clientKey: key, tableId, guests: n, guestLabel: label.trim(), share: true });
+      toast({ tone: 'success', title: `桌 ${tableName} 已拼台` });
+      onOpened(r.id);
+    } catch (e) {
+      toast({ tone: 'error', title: errorMessage(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      open
+      onClose={busy ? () => {} : onClose}
+      title={`拼台 · 桌 ${tableName}`}
+      description="另一拨客人坐到这张桌：另开一张单，各点各的、各结各的；出品单写桌号与这一拨的称呼，传菜时核对。"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button variant="primary" disabled={!ok} loading={busy} onClick={() => void submit()} data-testid="table-share-confirm">
+            拼台开单
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="人数" htmlFor="share-guests">
+          <Input id="share-guests" type="number" inputMode="numeric" min={1} max={99} value={guests} onChange={(e) => setGuests(e.target.value)} className="num" data-autofocus />
+        </Field>
+        <Field label="称呼" htmlFor="share-label" hint="例如「靠窗两位」；空着写「拼台」">
+          <Input id="share-label" value={label} maxLength={16} onChange={(e) => setLabel(e.target.value)} data-testid="table-share-label" />
+        </Field>
       </div>
     </Dialog>
   );

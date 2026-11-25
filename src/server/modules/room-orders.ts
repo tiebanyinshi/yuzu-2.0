@@ -12,6 +12,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { MAX_DISH_NOTE, diningSlotOf } from '@shared/dining';
+import { loadDiningOutlets } from './dining-v8139';
 import { MAX_ORDER_NOTE } from '@shared/dining-v8115';
 import {
   MAX_ROOM_ORDER_CATEGORIES,
@@ -201,12 +202,13 @@ async function assertRoomOrderItems(db: Db, outlet: RoomOrderOutlet, itemIds: nu
   const allowed = outlets[outlet].categories;
   const wrong: string[] = [];
   const blocked: string[] = [];
+  const slots = await loadDiningOutlets(db);
   for (const r of rows) {
     if (r.stationName === null) {
       wrong.push(r.name);
       continue;
     }
-    const slot = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName });
+    const slot = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName }, slots);
     if (slot.outlet !== outlet) wrong.push(r.name);
     else if (allowed !== null && !allowed.includes(roomOrderCategoryOf({ group: slot.group, category: r.category }))) blocked.push(r.name);
   }

@@ -357,6 +357,9 @@ export type AuditAction =
   | 'dish_active_set'
   | 'dish_price_changed'
   | 'dishes_imported'
+  // 8.1.39：菜品的计价方式（按价目 / 时价、杂项 / 称重）；包房转挂账
+  | 'dish_price_mode'
+  | 'table_park'
   // 8.1.15 房态中心：服务房间的登记、续钟、换房、退房、并房 / 拆并，改房态（待清、清洁完成、维修、恢复），后台的房型
   | 'room_center_register'
   | 'room_center_extend'
@@ -382,7 +385,11 @@ export type AuditAction =
   | 'dish_deleted'
   | 'dish_restored'
   // 8.1.16 菜品维护的「结果待确认」：确认作废一个操作编号（Codex 审查 d12390f 的 P1，docs/DISHES_V8115.md 第 9 节）
-  | 'dish_op_abandoned';
+  | 'dish_op_abandoned'
+  // 员工办公 v1.1 第 2 批（docs/OA_MOBILE.md）：排班发布、排班授权与撤销
+  | 'oa_schedule_published'
+  | 'oa_schedule_grant_created'
+  | 'oa_schedule_grant_revoked';
 
 export interface AuditEntry {
   staffId: number | null;

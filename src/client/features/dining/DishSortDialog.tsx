@@ -6,7 +6,8 @@
 
 import { useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { ArrowDown, ArrowUp, GripVertical } from 'lucide-react';
-import { ALL_DINING_SLOTS, slotKey, slotLabel, type DiningOutlet } from '@shared/dining';
+import { allDiningSlots, slotKey, slotLabel, type DiningOutlet } from '@shared/dining';
+import { useDiningOutlets } from './queries';
 import type { DishRow } from '@shared/dishes';
 import { ApiError, errorMessage, UncertainError } from '../../lib/api';
 import { useSession } from '../../lib/session';
@@ -43,7 +44,8 @@ export function DishSortDialog({
   onSaved: (label: string) => void;
   onRejected: () => void;
 }) {
-  const slots = useMemo(() => ALL_DINING_SLOTS.filter((s) => outlets.includes(s.outlet)), [outlets]);
+  const all = useDiningOutlets();
+  const slots = useMemo(() => allDiningSlots(all).filter((s) => outlets.includes(s.outlet)), [all, outlets]);
   const firstWithDishes = slots.find((s) => slotDishes(dishes, slotKey(s)).length > 1) ?? slots[0];
   const [slot, setSlot] = useState<string>('');
   const [order, setOrder] = useState<number[]>([]);

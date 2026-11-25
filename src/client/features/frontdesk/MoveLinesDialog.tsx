@@ -1,5 +1,6 @@
 // 转单（v0.7.6）：挂错手牌时，把这位客人账单上的明细转到另一位在店客人的手牌上。
-// 原明细作废（原因写明转到哪张手牌），目标手牌新增同样的明细（价格、档位、技师不变）；房费、餐饮的菜、钟房派的钟不能转。
+// 原明细作废（原因写明转到哪张手牌），目标手牌新增同样的明细（价格、档位、技师不变）；房费、钟房派的钟不能转。
+// 8.1.39（R11）：餐饮的菜也能转，出品单跟着到新手牌；加料跟着主菜一起转（选主菜时自动带上，加料不能单独选）。
 // 与挂账一样有「结果待确认」：断网后查回 / 原样重提 / 确认作废。
 
 import { useState } from 'react';
@@ -18,7 +19,7 @@ import { useServerNow } from './queries';
 /** 这条明细能不能转：不能转的写明原因（与服务端一致） */
 export function moveBlock(line: BillLine): string | null {
   if (line.source === 'room') return '房费随入住单走';
-  if (line.source === 'dining' || line.kitchen) return '餐饮的菜有出品单，请退菜后在正确的手牌上重点';
+  if (line.addonOf) return '加料跟着主菜一起转';
   if (line.sessionId !== null) return '钟房派的钟，请在钟房处理';
   return null;
 }
@@ -64,7 +65,8 @@ export function MoveLinesDialog({
   const canFix = (l: BillLine) => can('frontdesk.correct') || (l.postedById === session.staff.id && (now - new Date(l.postedAt).getTime()) / 60_000 <= selfMinutes);
   const active = visit.lines.filter((l) => l.status === 'active');
   const why = (l: BillLine) => moveBlock(l) ?? (canFix(l) ? null : `超过 ${selfMinutes} 分钟或不是你挂的，请店主或值班经理处理`);
-  const chosen = active.filter((l) => picked.includes(l.id));
+  // 8.1.39：选了主菜，它没退的加料跟着一起转
+  const chosen = active.filter((l) => picked.includes(l.id) || (!!l.addonOf && picked.includes(l.addonOf)));
   const total = chosen.reduce((t, l) => t + l.amount, 0);
 
   const c = normalizeTagCode(code);
@@ -109,7 +111,7 @@ export function MoveLinesDialog({
     >
       <PendingPanel op={op} onResolved={(v) => onDone(v, null)} />
       <div className="space-y-4" data-testid="move-lines">
-        <Field label="要转的明细" hint={`一次最多 ${MAX_MOVE_LINES} 项；房费、餐饮的菜、钟房派的钟不能转`}>
+        <Field label="要转的明细" hint={`一次最多 ${MAX_MOVE_LINES} 项；房费、钟房派的钟不能转；餐饮的菜转过去，出品单跟着走、加料跟着主菜`}>
           {active.length === 0 ? (
             <p className="text-[13px] text-ink-3">这张手牌上没有可转的明细。</p>
           ) : (

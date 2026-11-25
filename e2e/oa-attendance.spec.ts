@@ -43,6 +43,10 @@ test.describe('OA-08 考勤结算', () => {
       },
     });
     expect(sch.status(), await sch.text()).toBe(200);
+    const pub = await page.request.post('/api/oa/attendance/schedule/publish', {
+      data: { clientKey: randomUUID(), storeId: me.store.id, groupId: group.id, from: today.today, to: today.today },
+    });
+    expect(pub.status(), await pub.text()).toBe(200);
 
     // 后台：考勤结果 → 选今天 → 重新结算
     await page.goto('/admin/attendance/results');

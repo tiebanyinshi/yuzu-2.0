@@ -1,6 +1,7 @@
 // 项目计价：按所选价格档取服务端当前价格，生成随明细留存的快照。会员消费与前台挂账共用。
 // 页面提交的合计与这里算出的不一致时，由调用方拒绝（PRICE_CHANGED），员工按新价格重新确认。
 
+import type { PriceMode } from '@shared/dish-price-mode';
 import { defaultTier, lineName, PRICE_TIER_LABELS, sortTiers, tierPrice, type PriceTier, type TierPrice } from '@shared/catalog';
 import type { Db } from '../db';
 import { conflict } from '../lib/errors';
@@ -14,6 +15,8 @@ export interface PricedItem {
   gender: 'male' | 'female' | null;
   technicianRequired: boolean;
   prices: TierPrice[];
+  /** 菜品的计价方式（8.1.39）：按价目 / 时价、杂项 / 称重 */
+  priceMode: PriceMode;
 }
 
 /**
@@ -38,7 +41,7 @@ export async function loadPricedItems(db: Db, ids: number[]): Promise<Map<number
   const unique = [...new Set(ids)];
   if (unique.length === 0) return new Map();
   const rows = await db<PricedItem[]>`
-    SELECT i.id, i.name, i.category, i.active, i.gender, i.technician_required,
+    SELECT i.id, i.name, i.category, i.active, i.gender, i.technician_required, i.price_mode,
            ${pricesColumn(db)} AS prices
     FROM service_items i WHERE i.id IN ${db(unique)}`;
   return new Map(rows.map((r) => [r.id, { ...r, prices: sortTiers(r.prices) }]));

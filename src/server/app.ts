@@ -130,6 +130,7 @@ import { registerOaPayrollRoutes } from './modules/oa/payroll';
 import { registerOaFaceRoutes } from './modules/oa/faces';
 import { registerOaPunchRoutes } from './modules/oa/punches';
 import { registerOaScheduleRoutes } from './modules/oa/schedules';
+import { registerOaScheduleGrantRoutes } from './modules/oa/schedule-grants';
 import { registerOaGeoRoutes } from './modules/oa/geo';
 import { registerOaNotificationRoutes } from './modules/oa/notifications';
 import { registerOaAttachmentRoutes } from './modules/oa/attachments';
@@ -139,6 +140,7 @@ import { registerTechnicianRankingRoutes } from './modules/technician-ranking';
 import { registerClockroomRoutes } from './modules/clockroom-routes';
 import { registerDiningRoutes } from './modules/dining';
 import { registerTableRoutes } from './modules/tables';
+import { registerTableChargeRoutes } from './modules/table-charges';
 import { registerDining808Routes } from './modules/dining-808';
 import { registerDiningReceiptRoutes } from './modules/dining-receipt';
 import { registerEmenuRoutes } from './modules/emenu/routes';
@@ -341,6 +343,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerOaNotificationRoutes(app, deps);
   registerOaAttendanceSetupRoutes(app, deps);
   registerOaScheduleRoutes(app, deps);
+  registerOaScheduleGrantRoutes(app, deps);
   registerOaGeoRoutes(app, deps);
   registerOaPunchRoutes(app, deps);
   registerOaFaceRoutes(app, deps);
@@ -442,6 +445,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerClockroomRoutes(app, deps);
   registerDiningRoutes(app, deps);
   registerTableRoutes(app, deps);
+  registerTableChargeRoutes(app, deps);
   registerDining808Routes(app, deps);
   // 8.1.7 点菜单（小票可视化）
   registerDiningReceiptRoutes(app, deps);

@@ -245,7 +245,7 @@ export async function maintainTable(deps: Deps, tableId: number, raw: unknown, c
     const t = await lockTable(tx, tableId);
     if (!t.active) throw conflict('TABLE_INACTIVE', `桌台「${t.name}」已停用，不用维修`);
     if (t.state === 'maintenance') throw conflict('TABLE_MAINTENANCE', `桌台「${t.name}」已经在维修了`);
-    const [busy] = await tx<{ sessionNo: string }[]>`SELECT session_no FROM table_sessions WHERE table_id = ${t.id} AND status = 'open'`;
+    const [busy] = await tx<{ sessionNo: string }[]>`SELECT session_no FROM table_sessions WHERE table_id = ${t.id} AND status = 'open' AND parked_at IS NULL`;
     if (busy) throw conflict('TABLE_IN_USE', `桌台「${t.name}」正在用餐（${busy.sessionNo}），结账或换台后才能维修`);
     await tx`
       UPDATE dining_tables SET state = 'maintenance', maintenance_reason = ${input.reason}, maintenance_until = ${until}, state_since = ${at}, updated_at = now()
