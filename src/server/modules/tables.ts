@@ -428,9 +428,12 @@ export async function postTableCharges(deps: Deps, id: number, raw: unknown, ctx
       ctx.actor,
       input.lines.map((l) => l.itemId),
     );
+    // 8.1.39：售卖时段、档口时段按这一刻算
+    const clock = { at, timeZone: deps.config.timezone };
     const stations = await kitchenStationsOf(
       tx,
       input.lines.map((l) => l.itemId),
+      clock,
     );
     const priced = input.lines.map((l) => {
       const item = items.get(l.itemId);
@@ -452,7 +455,7 @@ export async function postTableCharges(deps: Deps, id: number, raw: unknown, ctx
     }
     const date = await businessDate(tx, deps, at);
     // 沽清（明细之前）：今天还剩的份数不够整笔拒绝；套餐的子项各扣各的（8.1.17 BW7）
-    const limited = await takeDishLimits(tx, limitLinesOf(lines), date);
+    const limited = await takeDishLimits(tx, limitLinesOf(lines), date, clock);
     const kitchen: KitchenLine[] = [];
     for (const l of lines) {
       const [row] = await tx<{ id: number }[]>`

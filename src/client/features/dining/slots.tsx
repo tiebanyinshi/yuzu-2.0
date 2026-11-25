@@ -7,7 +7,8 @@
 
 import type { ReactNode } from 'react';
 import { ChefHat, Citrus, CupSoda } from 'lucide-react';
-import { DINING_OUTLETS, outletDef, slotLabel, type DiningOutlet, type DiningSlot, type MenuDish } from '@shared/dining';
+import { outletDef, slotLabel, type DiningOutlet, type DiningSlot, type MenuDish } from '@shared/dining';
+import { useDiningOutlets } from './queries';
 import { Stagger } from '../../lib/motion';
 import { cn } from '../../lib/utils';
 
@@ -29,7 +30,7 @@ export const OUTLET_TONE: Record<DiningOutlet, { tile: string; icon: string; bad
  * 菜单区一进来、每次下单成功以后都先弹出这里，选了进对应的点单页
  */
 export function OutletEntry({ dishes, onPick, disabled, allowed }: { dishes: MenuDish[]; onPick: (o: DiningOutlet) => void; disabled?: boolean; allowed?: readonly DiningOutlet[] }) {
-  const outlets = DINING_OUTLETS.filter((o) => !allowed || allowed.includes(o.key));
+  const outlets = useDiningOutlets().filter((o) => !allowed || allowed.includes(o.key));
   return (
     <div className="mt-3 animate-dialog-in" data-testid="dining-outlets">
       <p className="text-[13px] font-semibold text-ink-2">这一单点哪里的？</p>
@@ -87,9 +88,10 @@ export function OutletFilter({
   /** 只列这几处（8.1.15 点单页：有下单权限的出品口） */
   allowed?: readonly DiningOutlet[];
 }) {
+  const all = useDiningOutlets();
   const options: { key: DiningOutlet | null; label: string }[] = [
     ...(withAll ? [{ key: null, label: '全部' }] : []),
-    ...DINING_OUTLETS.filter((o) => !allowed || allowed.includes(o.key)).map((o) => ({ key: o.key, label: o.label })),
+    ...all.filter((o) => !allowed || allowed.includes(o.key)).map((o) => ({ key: o.key, label: o.label })),
   ];
   return (
     <div className="grid w-full auto-cols-fr grid-flow-col items-center gap-1 rounded-lg bg-paper-2 p-1 sm:inline-flex sm:w-auto sm:flex-nowrap" role="tablist" aria-label="点单分类">
@@ -142,7 +144,7 @@ export function GroupChips({
   /** 「全部」那一个的字（台账、退菜记录里写「不限小类」，免得与上面那排的「全部」混） */
   allLabel?: string;
 }) {
-  const groups = outletDef(outlet).groups;
+  const groups = outletDef(outlet, useDiningOutlets()).groups;
   if (groups.length === 0) return null;
   const chip = (on: boolean) =>
     cn('h-8 shrink-0 rounded-full px-3.5 text-[13px] font-semibold whitespace-nowrap transition-colors', on ? 'bg-pine text-paper' : 'bg-paper-2 text-ink-2 hover:text-ink');

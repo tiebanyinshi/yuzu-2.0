@@ -189,10 +189,12 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
     tx,
     input.lines.flatMap((l) => (l.technicianId === undefined ? [] : [l.technicianId])),
   );
-  // 餐饮（S5 第一步）：功能开启时，挂在出品档口上的菜记在「餐饮」，同时建出品单进厨房
+  // 餐饮（S5 第一步）：功能开启时，挂在出品档口上的菜记在「餐饮」，同时建出品单进厨房（8.1.39：按这一刻的档口时段选档口）
+  const clock = { at, timeZone: deps.config.timezone };
   const stations = await kitchenStationsOf(
     tx,
     input.lines.map((l) => l.itemId),
+    clock,
   );
   // 发卡台「加项目」（8.1.17 BW-3）：这一单进厨房的菜按出品口的下单权限核对，有一道不行整单拒绝（403 OUTLET_FORBIDDEN）；只读、不加锁
   if (options.outlets) await assertOrderOutlets(tx, ctx.actor, [...stations.keys()]);
@@ -324,7 +326,7 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   // 沽清（技师队列之后、建出品单之前）：今天还剩的份数不够整笔拒绝；补录纸质单的菜早已上过，不扣沽清。
   // 套餐的子项各扣各的（8.1.17 BW7，与单点的同一道菜合起来按项目 id 升序锁）
   const dishLines = lines.filter((l) => l.stationId !== null);
-  const limited = dishLines.length > 0 && !backfill ? await takeDishLimits(tx, limitLinesOf(dishLines.map((l) => ({ ...l, itemId: l.itemId! }))), date) : new Set<number>();
+  const limited = dishLines.length > 0 && !backfill ? await takeDishLimits(tx, limitLinesOf(dishLines.map((l) => ({ ...l, itemId: l.itemId! }))), date, clock) : new Set<number>();
   const lineIds = new Map<Line, number>();
   for (const l of lines) {
     const [row] = await tx<{ id: number }[]>`

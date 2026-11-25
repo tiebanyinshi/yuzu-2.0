@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import type { DiningMenu, KitchenBoard, TableCheckoutPreview, TableSessionDetail, TablesBoard } from '@shared/dining';
+import { DINING_OUTLETS, type DiningMenu, type DiningOutletDef, type KitchenBoard, type TableCheckoutPreview, type TableSessionDetail, type TablesBoard } from '@shared/dining';
 import { api } from '../../lib/api';
 import { useServerNow as useServerNowAt } from '../../lib/serverClock';
 
@@ -41,3 +41,10 @@ export const useTableCheckoutPreview = (ids: number[], enabled: boolean) =>
 
 /** 以服务器时间为准的「现在」（终端时钟不准也不影响「等了几分钟」），默认 10 秒走一次 */
 export const useServerNow = (serverTime: string | undefined, step = 10_000) => useServerNowAt(serverTime, step);
+
+/** 三处与小分类（8.1.39 R4：小分类在后台「餐饮」里改）；还没取回来、取不回来时按默认名单 */
+export const outletsKey = ['dining', 'outlets'] as const;
+export function useDiningOutlets(): readonly DiningOutletDef[] {
+  const q = useQuery({ queryKey: outletsKey, queryFn: () => api.get<{ outlets: DiningOutletDef[] }>('/api/dining/outlets'), staleTime: 60_000 });
+  return q.data?.outlets ?? DINING_OUTLETS;
+}

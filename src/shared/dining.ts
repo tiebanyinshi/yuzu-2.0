@@ -13,6 +13,7 @@ import type { LedgerKind, LedgerVoidRate, TableStateInfo, VoidBlame } from './di
 import type { TierPrice } from './catalog';
 import type { ItemCatalogCategory } from './types';
 import type { ComboPartOption, DishAddonOption, DishMethodGroup, DishMethodOption, DishPart } from './dishes';
+import type { DishWindow } from './dining-v8139';
 
 export interface DiningRules {
   /** 餐饮功能：关闭时前台挂账与升级前完全一样，主导航没有「餐饮」（默认关闭） */
@@ -37,7 +38,22 @@ export interface DiningRules {
   autoRestore: boolean;
   /** 待清台超过多少分钟算久了（8.1.17 BW-2，默认 15）：格子上标出、进餐饮的待办数 */
   dirtyAlertMinutes: number;
+  /**
+   * 餐厅、水吧的小分类（8.1.39 餐饮 B，R4 菜单分类分界面）：后台「餐饮」里改，默认就是原来写死的那两份名单；
+   * 果吧不细分。还有菜用着的小分类不能删、不能改名（先把菜挪走）
+   */
+  outletGroups: DiningOutletGroups;
 }
+
+/** 能自己设小分类的两处（果吧不细分） */
+export const GROUPED_OUTLETS = ['restaurant', 'water'] as const;
+export type GroupedOutlet = (typeof GROUPED_OUTLETS)[number];
+export type DiningOutletGroups = Record<GroupedOutlet, string[]>;
+/** 默认的小分类（8.1.7 写死的名单，CF1） */
+export const DEFAULT_OUTLET_GROUPS: DiningOutletGroups = { restaurant: ['餐饮', '酒水'], water: ['手作饮料', '糖水', '调酒'] };
+/** 小分类最多 8 个字（181 迁移的约束）、一处最多 12 个 */
+export const MAX_DINING_GROUP_NAME = 8;
+export const MAX_DINING_GROUPS = 12;
 
 export const DEFAULT_DINING_RULES: DiningRules = {
   // 8.0.20：功能开关都默认开（店主 2026-11-14，docs/PENDING_DECISIONS.md KG1–KG4）；要关在设置页关
@@ -49,6 +65,7 @@ export const DEFAULT_DINING_RULES: DiningRules = {
   clearAfterCheckout: true,
   autoRestore: false,
   dirtyAlertMinutes: 15,
+  outletGroups: DEFAULT_OUTLET_GROUPS,
 };
 
 /** 小额退菜上限最多 ¥1,000 */
@@ -88,10 +105,24 @@ export interface DiningOutletDef {
 }
 
 export const DINING_OUTLETS: readonly DiningOutletDef[] = [
-  { key: 'restaurant', label: '餐厅', groups: ['餐饮', '酒水'] },
-  { key: 'water', label: '水吧', groups: ['手作饮料', '糖水', '调酒'] },
+  { key: 'restaurant', label: '餐厅', groups: DEFAULT_OUTLET_GROUPS.restaurant },
+  { key: 'water', label: '水吧', groups: DEFAULT_OUTLET_GROUPS.water },
   { key: 'fruit', label: '果吧', groups: [] },
 ];
+
+/**
+ * 按餐饮规则里设的小分类（8.1.39）给出三处的名单；没设（或旧规则里没有这一项）的照默认。
+ * 下面几个函数都带一个可选的 outlets（不带为默认名单）：服务端按 loadDiningRules 读出来的传，页面按 useDiningOutlets 传
+ */
+export function diningOutletsOf(rules?: { outletGroups?: Partial<DiningOutletGroups> | null } | null): readonly DiningOutletDef[] {
+  const g = rules?.outletGroups;
+  if (!g) return DINING_OUTLETS;
+  return DINING_OUTLETS.map((o) => {
+    if (o.key === 'fruit') return o;
+    const list = g[o.key];
+    return list && list.length > 0 ? { ...o, groups: list } : o;
+  });
+}
 
 export const DINING_OUTLET_LABELS: Record<DiningOutlet, string> = { restaurant: '餐厅', water: '水吧', fruit: '果吧' };
 
@@ -103,12 +134,12 @@ export interface DiningSlot {
 
 export const isDiningOutlet = (v: unknown): v is DiningOutlet => typeof v === 'string' && (DINING_OUTLET_KEYS as readonly string[]).includes(v);
 
-export const outletDef = (key: DiningOutlet): DiningOutletDef => DINING_OUTLETS.find((o) => o.key === key)!;
+export const outletDef = (key: DiningOutlet, outlets: readonly DiningOutletDef[] = DINING_OUTLETS): DiningOutletDef => outlets.find((o) => o.key === key)!;
 
 /** 入口与小分类配得上：果吧的小分类为空，餐厅、水吧必须是自己的小分类之一 */
-export const isValidSlot = (s: { outlet: string; group: string }): s is DiningSlot => {
+export const isValidSlot = (s: { outlet: string; group: string }, outlets: readonly DiningOutletDef[] = DINING_OUTLETS): s is DiningSlot => {
   if (!isDiningOutlet(s.outlet)) return false;
-  const def = outletDef(s.outlet);
+  const def = outletDef(s.outlet, outlets);
   return def.groups.length === 0 ? s.group === '' : def.groups.includes(s.group);
 };
 
@@ -118,39 +149,52 @@ export const slotLabel = (s: DiningSlot): string => (s.group ? `${DINING_OUTLET_
 /** 下拉、接口用的编码：restaurant:餐饮、fruit */
 export const slotKey = (s: DiningSlot): string => (s.group ? `${s.outlet}:${s.group}` : s.outlet);
 
-export const parseSlotKey = (key: string): DiningSlot | null => {
+/** 编码拆成入口与小分类（只看样子，不核对名单） */
+export const splitSlotKey = (key: string): { outlet: string; group: string } => {
   const i = key.indexOf(':');
-  const s = i < 0 ? { outlet: key, group: '' } : { outlet: key.slice(0, i), group: key.slice(i + 1) };
-  return isValidSlot(s) ? s : null;
+  return i < 0 ? { outlet: key, group: '' } : { outlet: key.slice(0, i), group: key.slice(i + 1) };
+};
+
+export const parseSlotKey = (key: string, outlets: readonly DiningOutletDef[] = DINING_OUTLETS): DiningSlot | null => {
+  const s = splitSlotKey(key);
+  return isValidSlot(s, outlets) ? s : null;
 };
 
 /** 全部点单分类（按入口、小分类的顺序），后台下拉用 */
-export const ALL_DINING_SLOTS: readonly DiningSlot[] = DINING_OUTLETS.flatMap((o) => (o.groups.length ? o.groups.map((group) => ({ outlet: o.key, group })) : [{ outlet: o.key, group: '' }]));
+export const allDiningSlots = (outlets: readonly DiningOutletDef[] = DINING_OUTLETS): DiningSlot[] =>
+  outlets.flatMap((o) => (o.groups.length ? o.groups.map((group) => ({ outlet: o.key, group })) : [{ outlet: o.key, group: '' }]));
+export const ALL_DINING_SLOTS: readonly DiningSlot[] = allDiningSlots();
 
 /** 排序用：入口、小分类在名单里的位置 */
-export const slotOrder = (s: DiningSlot): number => {
-  const i = ALL_DINING_SLOTS.findIndex((x) => x.outlet === s.outlet && x.group === s.group);
-  return i < 0 ? ALL_DINING_SLOTS.length : i;
+export const slotOrder = (s: DiningSlot, outlets: readonly DiningOutletDef[] = DINING_OUTLETS): number => {
+  const all = allDiningSlots(outlets);
+  const i = all.findIndex((x) => x.outlet === s.outlet && x.group === s.group);
+  return i < 0 ? all.length : i;
 };
 
 /**
  * 一道菜的点单分类（CF3）：后台设过的照设的（assigned）；没设的按默认归，从上往下第一条对上的——
- *   ① 价目分类正好是酒水、手作饮料、糖水、调酒 → 那一类（「餐饮」是店里菜品的统称，不算）；
+ *   ① 价目分类正好是某一处的小分类（「餐饮」是店里菜品的统称，不算）→ 那一类；
  *   ② 价目分类带「果吧」→ 果吧；带「调酒」「鸡尾酒」→ 水吧 · 调酒；带「糖水」→ 水吧 · 糖水；带「酒」→ 餐厅 · 酒水；
  *   ③ 出品档口名带「果吧」→ 果吧；带「水吧」→ 水吧 · 手作饮料；
  *   ④ 价目分类带「饮品」「饮料」（不在水吧做的多是瓶装的）→ 餐厅 · 酒水；
  *   ⑤ 其余 → 餐厅 · 餐饮
+ * 8.1.39：小分类可以在后台改（outlets）；默认要归的小分类名单里没有了（改过名单），归到那一处的第一个小分类
  */
-export function diningSlotOf(i: { outlet: string | null; group: string | null; category: string | null; stationName?: string | null }): DiningSlot & { assigned: boolean } {
+export function diningSlotOf(
+  i: { outlet: string | null; group: string | null; category: string | null; stationName?: string | null },
+  outlets: readonly DiningOutletDef[] = DINING_OUTLETS,
+): DiningSlot & { assigned: boolean } {
+  const first = (outlet: DiningOutlet) => outletDef(outlet, outlets).groups[0] ?? '';
   if (i.outlet && isDiningOutlet(i.outlet)) {
     const s = { outlet: i.outlet, group: i.group ?? '' };
-    if (isValidSlot(s)) return { ...s, assigned: true };
+    if (isValidSlot(s, outlets)) return { ...s, assigned: true };
     // 存的小分类配不上（以后改了小分类的名单）：归到这一处的第一个小分类
-    return { outlet: i.outlet, group: outletDef(i.outlet).groups[0] ?? '', assigned: true };
+    return { outlet: i.outlet, group: first(i.outlet), assigned: true };
   }
-  const at = (outlet: DiningOutlet, group: string) => ({ outlet, group, assigned: false });
+  const at = (outlet: DiningOutlet, group: string) => ({ outlet, group: outletDef(outlet, outlets).groups.includes(group) ? group : first(outlet), assigned: false });
   const cat = (i.category ?? '').trim();
-  if (cat !== '餐饮') for (const o of DINING_OUTLETS) if (o.groups.includes(cat)) return at(o.key, cat);
+  if (cat !== '餐饮') for (const o of outlets) if (o.groups.includes(cat)) return at(o.key, cat);
   if (cat.includes('果吧')) return at('fruit', '');
   if (cat.includes('调酒') || cat.includes('鸡尾酒')) return at('water', '调酒');
   if (cat.includes('糖水')) return at('water', '糖水');
@@ -290,6 +334,12 @@ export interface MenuDish {
   methodOptions?: DishMethodOption[];
   methodGroups?: DishMethodGroup[];
   prices?: TierPrice[];
+  /**
+   * 售卖时段（8.1.39 R3）：设了的才带；offSale 为真是现在不在时段里（点单页灰掉、写着几点卖，下单会被拒绝 DISH_NOT_ON_SALE）。
+   * 菜单 10 秒取一次，到点跟着变
+   */
+  saleWindows?: DishWindow[];
+  offSale?: boolean;
 }
 
 export interface DiningMenu {

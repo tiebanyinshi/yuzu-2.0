@@ -11,7 +11,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { PRICE_TIERS, type TierPrice } from '@shared/catalog';
-import { DINING_OUTLET_LABELS, outletDef, slotKey, slotLabel, type DiningSlot } from '@shared/dining';
+import { DINING_OUTLET_LABELS, outletDef, slotKey, slotLabel, type DiningOutlet, type DiningSlot } from '@shared/dining';
+import { loadDiningOutlets } from './dining-v8139';
 import {
   DISH_IMPORT_MAX_ROWS,
   DISH_OUTLET_PERMISSIONS,
@@ -125,6 +126,9 @@ async function runImport(tx: Tx, ctx: OpContext, sheet: Sheet, reason: string): 
   // 全部价目项目按 id 升序锁住（与价目表导入同一个顺序；这一步以后的单道核对不会再等锁）
   const allIds = (await tx<{ id: number }[]>`SELECT id FROM service_items ORDER BY id FOR NO KEY UPDATE`).map((r) => r.id);
   const items = await readItems(tx, allIds);
+  // 8.1.39：小类按后台设的名单
+  const outlets = await loadDiningOutlets(tx);
+  const groupsOf = (o: DiningOutlet) => outletDef(o, outlets).groups;
   const stations = await tx<{ id: number; name: string }[]>`SELECT id, name FROM kitchen_stations`;
   const stationByName = new Map(stations.map((s) => [norm(s.name), s]));
   const stationName = (id: number) => stations.find((s) => s.id === id)?.name ?? '';
@@ -212,8 +216,8 @@ async function runImport(tx: Tx, ctx: OpContext, sheet: Sheet, reason: string): 
         else p.slot = { outlet, group: '' };
       } else {
         const group = groupText || (current?.outlet === outlet ? current.group : '');
-        if (!group) bad(`${DINING_OUTLET_LABELS[outlet]}要写小类（${outletDef(outlet).groups.join('、')}）`);
-        else if (!outletDef(outlet).groups.includes(group)) bad(`${DINING_OUTLET_LABELS[outlet]}没有「${group}」这个小类（有 ${outletDef(outlet).groups.join('、')}）`);
+        if (!group) bad(`${DINING_OUTLET_LABELS[outlet]}要写小类（${groupsOf(outlet).join('、')}）`);
+        else if (!groupsOf(outlet).includes(group)) bad(`${DINING_OUTLET_LABELS[outlet]}没有「${group}」这个小类（有 ${groupsOf(outlet).join('、')}）`);
         else p.slot = { outlet, group };
       }
     } else if (isNew) bad('新菜要写出品口（餐厅、水吧或果吧）');
