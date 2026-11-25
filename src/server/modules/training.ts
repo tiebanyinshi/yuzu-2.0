@@ -577,7 +577,8 @@ async function sheetOf(db: Db, actor: Actor, id: number): Promise<TrainingSheetB
   if (Number(v.sizeBytes) > SHEET_MAX_BYTES) throw unprocessable('TRAINING_SHEET_TOO_BIG', '这份 Excel 太大，请下载后查看');
   let book;
   try {
-    book = readXlsx(await readBlob(db, v.sha256), { maxRow: 5000, maxCols: 200, maxCells: 200_000 });
+    // maxNodes 限住整份 XML 的结构规模（空行、无关属性也算），免得几 KB 的文件解析出几十万个节点（Codex 审查 e1d8be3，同工资表的读法）
+    book = readXlsx(await readBlob(db, v.sha256), { maxRow: 5000, maxCols: 200, maxCells: 200_000, maxNodes: 300_000 });
   } catch (e) {
     if (e instanceof XlsxReadError) throw unprocessable('TRAINING_SHEET_INVALID', `这份 Excel 在页面里打不开（${e.message}），请下载后查看`);
     throw e;
@@ -597,7 +598,11 @@ async function sheetOf(db: Db, actor: Actor, id: number): Promise<TrainingSheetB
       return {
         name: sh.name,
         rows,
-        merges: sh.merges.filter((m) => m.r1 <= maxRow && m.c1 < cols),
+        // 合并单元格裁到显示的范围里（右下角可以写到 XFD1048576，不裁的话页面要铺几十亿格，Codex 审查 e1d8be3）
+        merges: sh.merges
+          .filter((m) => m.r1 >= 1 && m.c1 >= 0 && m.r1 <= maxRow && m.c1 < cols)
+          .map((m) => ({ r1: m.r1, c1: m.c1, r2: Math.min(m.r2, maxRow), c2: Math.min(m.c2, cols - 1) }))
+          .filter((m) => m.r2 > m.r1 || m.c2 > m.c1),
         truncated: (rowNos.at(-1) ?? 0) > SHEET_MAX_ROWS || maxCol > SHEET_MAX_COLS,
       };
     }),
@@ -624,8 +629,10 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
     const { id } = parse(idParam, req.params);
     const q = parse(ContentQuery, req.query ?? {});
     const f = await assertFileVisible(sql, req.actor, id);
-    // 旧版本只有管理权限看得到
-    const versionId = q.v && can(req.actor, MANAGE) ? q.v : f.currentVersionId;
+    // 带了版本就只读那一版（同一次查看里分段读的都是同一份文件；看的时候换了新版本，不拿新版本的片段拼进来，Codex 审查 e1d8be3）。
+    // 旧版本只有管理权限看得到：员工带的不是当前版本就拒绝，页面重新打开
+    if (q.v && q.v !== f.currentVersionId && !can(req.actor, MANAGE)) throw conflict('TRAINING_VERSION_CHANGED', '这份文件刚换了新版本，请重新打开');
+    const versionId = q.v ?? f.currentVersionId;
     const [v] = await sql<{ fileName: string; mime: string; sha256: string; sizeBytes: string | number }[]>`
       SELECT file_name, mime, sha256, size_bytes FROM training_file_versions WHERE id = ${versionId} AND file_id = ${id}`;
     if (!v) throw notFound('没有这个版本');

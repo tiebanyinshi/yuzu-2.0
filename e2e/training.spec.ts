@@ -66,6 +66,8 @@ test.describe('员工培训', () => {
     ]);
     const uploads = page.getByTestId('training-uploads');
     await expect(uploads.getByText('已上传')).toHaveCount(2, { timeout: 30_000 });
+    // 传完登记好了，本机不再记着「没确认的上传」
+    await expect(page.getByTestId('training-pending-uploads')).toHaveCount(0);
     const files = page.getByTestId('training-admin-files');
     await expect(files.getByText(`安全手册${tag}`, { exact: true })).toBeVisible();
     await expect(files.getByText(`应知应会${tag}`, { exact: true })).toBeVisible();

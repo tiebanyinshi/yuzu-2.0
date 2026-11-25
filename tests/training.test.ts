@@ -3,7 +3,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TRAINING_CHUNK_BYTES, type TrainingFile, type TrainingFileDetail, type TrainingFolder, type TrainingFolderList } from '../src/shared/training';
-import { buildXlsx } from '../src/server/lib/xlsx';
+import { buildXlsx, zip } from '../src/server/lib/xlsx';
+import { unzip } from '../src/server/lib/xlsx-read';
 import { api, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -42,6 +43,10 @@ async function upload(bytes: Buffer, fileName: string, mime: string, target: { f
 
 const folders = async (cookie = ctx.owner) => (await api(ctx.app, cookie, 'GET', '/api/training/folders')).body as TrainingFolderList;
 const folderOf = async (pred: (f: TrainingFolder) => boolean) => (await folders()).folders.find(pred)!;
+/** 改一份 Excel 第一张表的 XML 再打包（造合并单元格、成片的空行） */
+const patchSheet = (xlsx: Buffer, edit: (xml: string) => string) =>
+  zip([...unzip(xlsx)].map(([name, data]) => ({ name, data: name === 'xl/worksheets/sheet1.xml' ? Buffer.from(edit(data.toString('utf8'))) : data })));
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 describe('员工培训', () => {
   it('迁移建好「培训资料」与现有 15 个部门各一个文件夹；新建、改名、停用；「培训资料」不能停用；店员不能管理', async () => {
@@ -127,6 +132,15 @@ describe('员工培训', () => {
     // 自己新建、不对应部门的文件夹所有人都看得到
     expect(mine.folders.some((f) => f.name === '安保')).toBe(true);
 
+    // 读内容带版本（Codex 审查 e1d8be3）：带当前版本照常读；店员带旧版本（看的时候换了新版本）拒绝，不拿别的版本的片段
+    const firstVersion = detail.versions.find((v) => v.versionNo === 1)!;
+    const pinned = await ctx.app.inject({ method: 'GET', url: `/api/training/files/${file!.id}/content?v=${detail.file.current.id}`, headers: { cookie: ctx.clerk, range: 'bytes=0-4' } });
+    expect(pinned.statusCode).toBe(206);
+    const stale = await ctx.app.inject({ method: 'GET', url: `/api/training/files/${file!.id}/content?v=${firstVersion.id}`, headers: { cookie: ctx.clerk, range: 'bytes=0-4' } });
+    expect(stale.statusCode).toBe(409);
+    expect(JSON.parse(stale.payload).error.code).toBe('TRAINING_VERSION_CHANGED');
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/training/files/${file!.id}/content?v=${firstVersion.id}`, headers: { cookie: ctx.owner } })).statusCode).toBe(200);
+
     // 读内容：整份、Range
     const full = await ctx.app.inject({ method: 'GET', url: `/api/training/files/${file!.id}/content`, headers: { cookie: ctx.clerk } });
     expect(full.statusCode).toBe(200);
@@ -138,10 +152,9 @@ describe('员工培训', () => {
     expect(part.rawPayload.toString('latin1')).toBe('%PDF-');
     expect(part.headers['content-range']).toBe(`bytes 0-4/${v2bytes.length}`);
     // 跨两块的 Range（第一版两块）：只有管理权限能读旧版本
-    const v1 = detail.versions.find((v) => v.versionNo === 1)!;
     const cross = await ctx.app.inject({
       method: 'GET',
-      url: `/api/training/files/${file!.id}/content?v=${v1.id}`,
+      url: `/api/training/files/${file!.id}/content?v=${firstVersion.id}`,
       headers: { cookie: ctx.owner, range: `bytes=${TRAINING_CHUNK_BYTES - 2}-${TRAINING_CHUNK_BYTES + 1}` },
     });
     expect(cross.statusCode).toBe(206);
@@ -220,5 +233,24 @@ describe('员工培训', () => {
     ]);
     const pdf = await upload(PDF(300), '说明.pdf', 'application/pdf', { folderId: pub.id });
     expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${pdf.done.body.fileId}/sheet`)).body.error.code).toBe('TRAINING_NOT_SHEET');
+  });
+
+  it('Excel 防撑爆（Codex 审查 e1d8be3）：合并单元格裁到显示范围；成片的空行在解析前就拒绝', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const base = buildXlsx({ name: '表', columns: [{ header: '甲' }, { header: '乙' }], rows: [['1', '2']] });
+    // 合并到 XFD1048576：页面只铺 2 行 2 列，合并范围裁成 A1:B2
+    const merged = patchSheet(base, (x) => x.replace('</sheetData>', '</sheetData><mergeCells count="1"><mergeCell ref="A1:XFD1048576"/></mergeCells>'));
+    const m = await upload(merged, '合并.xlsx', XLSX_MIME, { folderId: pub.id });
+    expect(m.done.status, JSON.stringify(m.done.body)).toBe(200);
+    const sheet = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${m.done.body.fileId}/sheet`);
+    expect(sheet.status, JSON.stringify(sheet.body)).toBe(200);
+    expect(sheet.body.sheets[0].merges).toEqual([{ r1: 1, c1: 0, r2: 2, c2: 1 }]);
+    // 32 万个空行：压缩后几 KB，解析前按结构规模拒绝
+    const empty = patchSheet(base, (x) => x.replace('</sheetData>', `${Array.from({ length: 320_000 }, (_, i) => `<row r="${i + 3}"/>`).join('')}</sheetData>`));
+    expect(empty.length).toBeLessThan(2 * 1024 * 1024);
+    const e = await upload(empty, '空行.xlsx', XLSX_MIME, { folderId: pub.id });
+    expect(e.done.status, JSON.stringify(e.done.body)).toBe(200);
+    const bad = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${e.done.body.fileId}/sheet`);
+    expect(bad.body.error?.code, JSON.stringify(bad.body)).toBe('TRAINING_SHEET_INVALID');
   });
 });

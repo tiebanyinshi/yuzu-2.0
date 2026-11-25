@@ -26,7 +26,7 @@ export const contentUrl = (fileId: number, opts: { download?: boolean; versionId
 export function DownloadButton({ file, versionId, label = '下载' }: { file: TrainingFile; versionId?: number; label?: string }) {
   return (
     <a
-      href={contentUrl(file.id, { download: true, versionId })}
+      href={contentUrl(file.id, { download: true, versionId: versionId ?? file.current.id })}
       download={file.current.fileName}
       className="tap relative inline-flex h-10 items-center gap-2 rounded-full border border-line bg-card px-4 text-[14px] font-semibold text-ink-2 hover:border-line-strong"
       data-testid="training-download"
@@ -49,6 +49,8 @@ export function TrainingViewer({ file, recordView = true }: { file: TrainingFile
       .catch(() => {});
   }, [file.id, file.folderId, recordView, qc]);
   const v = file.current;
+  // 内容地址都带上看的这一版：分段读（PDF、视频拖动）时管理员换了新版本，也不会拿到新版本的片段
+  const url = contentUrl(file.id, { versionId: v.id });
   return (
     <div className="space-y-3" data-testid="training-viewer" data-kind={file.viewKind}>
       <div className="flex flex-wrap items-center gap-3 text-[13px] text-ink-3">
@@ -58,10 +60,10 @@ export function TrainingViewer({ file, recordView = true }: { file: TrainingFile
         <span className="flex-1" />
         <DownloadButton file={file} />
       </div>
-      {file.viewKind === 'pdf' && <PdfPages url={contentUrl(file.id)} />}
-      {file.viewKind === 'image' && <img src={contentUrl(file.id)} alt={file.title} className="mx-auto max-h-[80dvh] max-w-full rounded-lg border border-line" />}
-      {file.viewKind === 'video' && <video src={contentUrl(file.id)} controls playsInline preload="metadata" className="max-h-[80dvh] w-full rounded-lg bg-black" data-testid="training-video" />}
-      {file.viewKind === 'audio' && <audio src={contentUrl(file.id)} controls className="w-full" />}
+      {file.viewKind === 'pdf' && <PdfPages url={url} />}
+      {file.viewKind === 'image' && <img src={url} alt={file.title} className="mx-auto max-h-[80dvh] max-w-full rounded-lg border border-line" />}
+      {file.viewKind === 'video' && <video src={url} controls playsInline preload="metadata" className="max-h-[80dvh] w-full rounded-lg bg-black" data-testid="training-video" />}
+      {file.viewKind === 'audio' && <audio src={url} controls className="w-full" />}
       {file.viewKind === 'sheet' && <SheetView fileId={file.id} />}
       {file.viewKind === 'download' && (
         <Notice tone="info" title={`${trainingFormatLabel(v.mime)} 文件请下载后查看`}>
