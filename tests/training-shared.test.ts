@@ -115,11 +115,20 @@ describe('PDF 内嵌图片尺寸流式检查（Codex 安全审查 bfc32cd）', (
     expect(checkPdfImageLimit(nested)).toBeNull();
     expect(Date.now() - t1).toBeLessThan(500);
 
-    // 字典字符串里藏 >>stream\n 或 >> 也不能绕过外层超限图片检查
+    // 字典字符串里藏 >>stream\n、>><< >>stream\n 或 >> 都不能绕过外层超限图片检查（Codex 审查 79aca37）
     const sneaky = sample('<< /Comment (>>stream\n) /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>');
     expect(checkPdfImageLimit(sneaky)).toEqual({ width: 12000, height: 12000 });
+    const sneakyPaired = sample('<< /Comment (>><< >>stream\n) /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>');
+    expect(checkPdfImageLimit(sneakyPaired)).toEqual({ width: 12000, height: 12000 });
     const sneakyClose = sample('<< /Comment (foo >> bar) /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>');
     expect(checkPdfImageLimit(sneakyClose)).toEqual({ width: 12000, height: 12000 });
+
+    // 前一个非流对象字典里的键不串味到后一个普通流对象
+    const nonStreamThenNormal = Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<< /Subtype /Image /Width 12000 /Height 12000 >>\nendobj\n2 0 obj\n<< /Filter /FlateDecode /Length 4 >>\nstream\n0000\nendstream\nendobj\n',
+      'latin1',
+    );
+    expect(checkPdfImageLimit(nonStreamThenNormal)).toBeNull();
 
     // 前一个二进制流里出现未闭合的 << 与 ( 不影响后一个超限图像对象检出
     const afterBinary = Buffer.from(
@@ -127,6 +136,19 @@ describe('PDF 内嵌图片尺寸流式检查（Codex 安全审查 bfc32cd）', (
       'latin1',
     );
     expect(checkPdfImageLimit(afterBinary)).toEqual({ width: 12000, height: 12000 });
+
+    // 同一字典里塞数百个 (>>stream\n) 诱饵也能单趟检出
+    const manyDecoys = sample(`<< ${'/C (>>stream\n) '.repeat(400)}/Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>`);
+    expect(checkPdfImageLimit(manyDecoys)).toEqual({ width: 12000, height: 12000 });
+
+    // 大量未闭合 <<(>>stream\n 之后紧跟超限图像，既不卡主线程又能由线性兜底检出
+    const floodThenOversize = Buffer.from(
+      `%PDF-1.4\n${'<<(>>stream\n'.repeat(20_000)}\n2 0 obj\n<< /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n`,
+      'latin1',
+    );
+    const t2 = Date.now();
+    expect(checkPdfImageLimit(floodThenOversize)).toEqual({ width: 12000, height: 12000 });
+    expect(Date.now() - t2).toBeLessThan(500);
 
     // 内层子字典正常配对后，外层超限图像字典仍能检出
     const withSubDict = sample('<< /Type /XObject /Subtype /Image /DecodeParms << /Predictor 15 >> /Width 12000 /Height 12000 >>');
