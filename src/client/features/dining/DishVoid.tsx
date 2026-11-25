@@ -51,7 +51,7 @@ export function DishVoidDialog({
   allowGift?: boolean;
   onClose: () => void;
   /** result 是退菜接口的返回（前台作废返回这位客人的账单） */
-  onDone: (dish: VoidableDish, result: unknown) => void;
+  onDone: (dish: VoidableDish, result: unknown, gift?: boolean) => void;
 }) {
   const session = useSession();
   const can = useCan();
@@ -110,7 +110,7 @@ export function DishVoidDialog({
         ...(together ? { withAddons: true } : {}),
         ...(gift ? { gift: true } : {}),
       });
-      onDone(dish, result);
+      onDone(dish, result, gift);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'VOID_NEEDS_GRANT') {
         setForceGrant(true);
