@@ -193,6 +193,8 @@ async function fileDetail(db: Db, actor: Actor, id: number): Promise<TrainingFil
 const FolderName = z.string().trim().min(1, '请填写文件夹名称').max(40, '文件夹名称最多 40 个字');
 
 const CreateFolderInput = z.object({
+  /** 操作编号：没收到结果原样重提返回原来那个 */
+  clientKey: z.uuid('操作编号格式不正确').optional(),
   name: FolderName,
   /** 对应的部门（org_departments 里的）；不选 = 自己新建的部门，所有员工都看得到 */
   departmentKey: z.string().trim().min(1).max(40).nullable().default(null),
@@ -213,6 +215,15 @@ async function createFolder(deps: Deps, raw: unknown, ctx: OpContext) {
   const input = parse(CreateFolderInput, raw);
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
+    if (input.clientKey) {
+      const [seen] = await tx<{ id: number; name: string; departmentKey: string | null; createdBy: number }[]>`
+        SELECT id, name, department_key, created_by FROM training_folders WHERE client_key = ${input.clientKey}`;
+      if (seen) {
+        if (Number(seen.createdBy) !== ctx.actor.id || seen.name !== input.name || seen.departmentKey !== input.departmentKey)
+          throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一次新建，请刷新页面后重新填写');
+        return loadFolder(tx, Number(seen.id));
+      }
+    }
     if (input.departmentKey) {
       const [d] = await tx`SELECT 1 FROM org_departments WHERE key = ${input.departmentKey}`;
       if (!d) throw unprocessable('TRAINING_DEPARTMENT', '没有这个部门');
@@ -222,8 +233,8 @@ async function createFolder(deps: Deps, raw: unknown, ctx: OpContext) {
     let id: number;
     try {
       const [row] = await tx<{ id: number }[]>`
-        INSERT INTO training_folders (name, kind, department_key, sort, created_by)
-        VALUES (${input.name}, 'department', ${input.departmentKey}, ${input.sort}, ${ctx.actor.id}) RETURNING id`;
+        INSERT INTO training_folders (name, kind, department_key, sort, created_by, client_key)
+        VALUES (${input.name}, 'department', ${input.departmentKey}, ${input.sort}, ${ctx.actor.id}, ${input.clientKey ?? null}) RETURNING id`;
       id = Number(row!.id);
     } catch (e) {
       throw nameTaken(e, input.name);
@@ -239,7 +250,11 @@ async function updateFolder(deps: Deps, id: number, raw: unknown, ctx: OpContext
     await setTxTimeouts(tx);
     const [f] = await tx<FolderRow[]>`SELECT id, name, kind, department_key, sort, active, version FROM training_folders WHERE id = ${id} FOR UPDATE`;
     if (!f) throw notFound('文件夹不存在');
-    if (f.version !== input.version) throw conflict('TRAINING_FOLDER_CHANGED', '这个文件夹刚被别人改过，请刷新后再改');
+    if (f.version !== input.version) {
+      // 原样重提（上一次其实已经改好了，只是没收到结果）：现在的内容就是这次要改成的，按改好了算（Codex 审查 a3f5310）
+      if (f.version > input.version && f.name === input.name && f.sort === input.sort && f.active === input.active) return loadFolder(tx, id);
+      throw conflict('TRAINING_FOLDER_CHANGED', '这个文件夹刚被别人改过，请刷新后再改');
+    }
     if (f.kind === 'public' && !input.active) throw unprocessable('TRAINING_FOLDER_PUBLIC', '「培训资料」是全员共用的文件夹，不能停用');
     try {
       await tx`UPDATE training_folders SET name = ${input.name}, sort = ${input.sort}, active = ${input.active}, version = version + 1, updated_at = now() WHERE id = ${id}`;
@@ -536,10 +551,15 @@ async function updateFile(deps: Deps, id: number, raw: unknown, ctx: OpContext) 
   const input = parse(UpdateFileInput, raw);
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
-    const [f] = await tx<{ title: string; folderId: number; active: boolean; version: number }[]>`
-      SELECT title, folder_id, active, version FROM training_files WHERE id = ${id} FOR UPDATE`;
+    const [f] = await tx<{ title: string; description: string; folderId: number; active: boolean; sort: number; version: number }[]>`
+      SELECT title, description, folder_id, active, sort, version FROM training_files WHERE id = ${id} FOR UPDATE`;
     if (!f) throw notFound('培训文件不存在');
-    if (f.version !== input.version) throw conflict('TRAINING_FILE_CHANGED', '这份文件刚被别人改过，请刷新后再改');
+    if (f.version !== input.version) {
+      // 原样重提：现在的内容就是这次要改成的，按改好了算（Codex 审查 a3f5310）
+      const same = f.title === input.title && f.description === input.description && Number(f.folderId) === input.folderId && f.active === input.active && f.sort === input.sort;
+      if (f.version > input.version && same) return;
+      throw conflict('TRAINING_FILE_CHANGED', '这份文件刚被别人改过，请刷新后再改');
+    }
     const folder = await loadFolder(tx, input.folderId);
     await tx`
       UPDATE training_files SET title = ${input.title}, description = ${input.description}, folder_id = ${input.folderId},
@@ -621,10 +641,12 @@ async function readBlob(db: Db, sha256: string): Promise<Buffer> {
   return Buffer.concat(parts.map((p) => p.data));
 }
 
-async function sheetOf(db: Db, actor: Actor, id: number): Promise<TrainingSheetBook> {
+async function sheetOf(db: Db, actor: Actor, id: number, versionId?: number): Promise<TrainingSheetBook> {
   const f = await assertFileVisible(db, actor, id);
+  // 同读内容：带了版本就读那一版，员工带的不是当前版本拒绝（Codex 审查 a3f5310）
+  if (versionId && versionId !== f.currentVersionId && !can(actor, MANAGE)) throw conflict('TRAINING_VERSION_CHANGED', '这份文件刚换了新版本，请重新打开');
   const [v] = await db<{ mime: string; sha256: string; sizeBytes: string | number }[]>`
-    SELECT mime, sha256, size_bytes FROM training_file_versions WHERE id = ${f.currentVersionId}`;
+    SELECT mime, sha256, size_bytes FROM training_file_versions WHERE id = ${versionId ?? f.currentVersionId} AND file_id = ${id}`;
   if (!v || trainingViewKind(v.mime) !== 'sheet') throw unprocessable('TRAINING_NOT_SHEET', '这份文件不是 Excel（.xlsx）');
   if (Number(v.sizeBytes) > SHEET_MAX_BYTES) throw unprocessable('TRAINING_SHEET_TOO_BIG', '这份 Excel 太大，请下载后查看');
   let book;
@@ -722,7 +744,7 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
     return reply.send(streamBlob(sql, v.sha256, start, end));
   });
 
-  app.get('/api/training/files/:id/sheet', { preHandler: loggedIn }, async (req) => sheetOf(sql, req.actor, parse(idParam, req.params).id));
+  app.get('/api/training/files/:id/sheet', { preHandler: loggedIn }, async (req) => sheetOf(sql, req.actor, parse(idParam, req.params).id, parse(ContentQuery, req.query ?? {}).v));
 
   app.post('/api/training/files/:id/viewed', { preHandler: loggedIn }, async (req) => {
     const { id } = parse(idParam, req.params);

@@ -13,6 +13,8 @@ CREATE TABLE training_folders (
   active         boolean NOT NULL DEFAULT true,
   version        integer NOT NULL DEFAULT 1,
   created_by     bigint REFERENCES staff (id),
+  -- 新建时页面带的操作编号：没收到结果原样重提返回原来那个文件夹，不报重名（Codex 审查 a3f5310）
+  client_key     uuid UNIQUE,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
   CHECK (kind = 'department' OR department_key IS NULL)

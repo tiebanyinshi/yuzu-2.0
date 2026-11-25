@@ -19,6 +19,7 @@ import { AdminPage } from '../admin/AdminShell';
 import { trainingKeys, useTrainingFiles, useTrainingFolders } from './TrainingPages';
 import { cancelPendingUpload, checkPendingUpload, setUploadClaimed, uploadTrainingFile, usePendingUploads, type PendingUpload, type UploadTarget } from './upload';
 import { DownloadButton, TrainingViewer } from './TrainingViewer';
+import { sendTrainingOp, useTrainingOps, type TrainingOp } from './ops';
 
 export function TrainingSection() {
   const folders = useTrainingFolders();
@@ -32,6 +33,7 @@ export function TrainingSection() {
       wide
       description="培训文件按文件夹放：「培训资料」所有员工都看得到，部门文件夹只有这个部门的员工看得到（自己新建、不对应部门的所有人都看得到）。员工在「WCP → 员工培训」里看。"
     >
+      <PendingOps />
       <PendingUploads />
       <div className="grid gap-5 lg:grid-cols-[18rem_1fr]">
         <Card className="p-4" data-testid="training-admin-folders">
@@ -74,6 +76,53 @@ export function TrainingSection() {
       </div>
       {editing && <FolderDialog folder={editing === 'new' ? null : editing} taken={list} onClose={() => setEditing(null)} onSaved={(f) => (setEditing(null), setSelected(f.id))} />}
     </AdminPage>
+  );
+}
+
+/** 没收到结果的「改资料」（新建 / 修改文件夹、修改文件信息）：原样重提，改好了或服务端明确拒绝才去掉 */
+function PendingOps() {
+  const list = useTrainingOps();
+  if (!list.length) return null;
+  return (
+    <Notice tone="warning" title={`有 ${list.length} 个修改没收到结果`} className="mb-4" data-testid="training-pending-ops">
+      <div className="mt-2 space-y-2">
+        {list.map((op) => (
+          <PendingOpRow key={op.key} op={op} />
+        ))}
+      </div>
+    </Notice>
+  );
+}
+
+function PendingOpRow({ op }: { op: TrainingOp }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const resend = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await sendTrainingOp(op);
+      toast({ tone: 'success', title: `${op.summary}：已保存` });
+      await qc.invalidateQueries({ queryKey: ['training'] });
+    } catch (e) {
+      setError(errorMessage(e));
+      await qc.invalidateQueries({ queryKey: ['training'] });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-[13px]" data-testid="training-pending-op">
+      <span className="min-w-0 flex-1 truncate">
+        <b>{op.summary}</b>
+        {error && <span className="ml-2 text-clay">{error}</span>}
+      </span>
+      <Button size="sm" variant="secondary" loading={busy} onClick={() => void resend()}>
+        原样重提
+      </Button>
+    </div>
   );
 }
 
@@ -200,8 +249,23 @@ function FolderDialog({ folder, taken, onClose, onSaved }: { folder: TrainingFol
     setError(null);
     try {
       const saved = folder
-        ? await api.put<TrainingFolder>(`/api/admin/training/folders/${folder.id}`, { name: name.trim(), sort: Number(sort) || 0, active, version: folder.version })
-        : await api.post<TrainingFolder>('/api/admin/training/folders', { name: name.trim(), departmentKey: dept || null, sort: Number(sort) || 0 });
+        ? await sendTrainingOp<TrainingFolder>({
+            key: uuid(),
+            method: 'PUT',
+            url: `/api/admin/training/folders/${folder.id}`,
+            body: { name: name.trim(), sort: Number(sort) || 0, active, version: folder.version },
+            summary: `修改文件夹「${folder.name}」`,
+          })
+        : await (() => {
+            const key = uuid();
+            return sendTrainingOp<TrainingFolder>({
+              key,
+              method: 'POST',
+              url: '/api/admin/training/folders',
+              body: { clientKey: key, name: name.trim(), departmentKey: dept || null, sort: Number(sort) || 0 },
+              summary: `新建文件夹「${name.trim()}」`,
+            });
+          })();
       await qc.invalidateQueries({ queryKey: trainingKeys.folders });
       toast({ tone: 'success', title: folder ? `文件夹「${saved.name}」已保存` : `已新建文件夹「${saved.name}」` });
       onSaved(saved);
@@ -479,7 +543,13 @@ function FileInfo({ detail, folders, onSaved }: { detail: TrainingFileDetail; fo
     setBusy(true);
     setError(null);
     try {
-      await api.put(`/api/admin/training/files/${f.id}`, { title: title.trim(), description: description.trim(), folderId, active, sort: Number(sort) || 0, version: base });
+      await sendTrainingOp({
+        key: uuid(),
+        method: 'PUT',
+        url: `/api/admin/training/files/${f.id}`,
+        body: { title: title.trim(), description: description.trim(), folderId, active, sort: Number(sort) || 0, version: base },
+        summary: `修改文件「${f.title}」的信息`,
+      });
       resync.current = true;
       await onSaved();
     } catch (e) {

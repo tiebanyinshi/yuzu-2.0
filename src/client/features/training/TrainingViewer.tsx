@@ -64,7 +64,7 @@ export function TrainingViewer({ file, recordView = true }: { file: TrainingFile
       {file.viewKind === 'image' && <img src={url} alt={file.title} className="mx-auto max-h-[80dvh] max-w-full rounded-lg border border-line" />}
       {file.viewKind === 'video' && <video src={url} controls playsInline preload="metadata" className="max-h-[80dvh] w-full rounded-lg bg-black" data-testid="training-video" />}
       {file.viewKind === 'audio' && <audio src={url} controls className="w-full" />}
-      {file.viewKind === 'sheet' && <SheetView fileId={file.id} />}
+      {file.viewKind === 'sheet' && <SheetView fileId={file.id} versionId={v.id} />}
       {file.viewKind === 'download' && (
         <Notice tone="info" title={`${trainingFormatLabel(v.mime)} 文件请下载后查看`}>
           点上面的「下载」，用手机或电脑自带的软件打开。想在页面里直接看，可以请管理员再传一份「另存为 PDF」的版本。
@@ -163,8 +163,9 @@ function PdfPage({ docRef, pageNo }: { docRef: React.RefObject<import('pdfjs-dis
 }
 
 /** Excel：服务端读成表格，按工作表切换 */
-function SheetView({ fileId }: { fileId: number }) {
-  const q = useQuery({ queryKey: ['training', 'sheet', fileId], queryFn: () => api.get<TrainingSheetBook>(`/api/training/files/${fileId}/sheet`) });
+function SheetView({ fileId, versionId }: { fileId: number; versionId: number }) {
+  // 带上看的这一版：换了新版本时换一份，不把旧表格挂在新版本名下（Codex 审查 a3f5310）
+  const q = useQuery({ queryKey: ['training', 'sheet', fileId, versionId], queryFn: () => api.get<TrainingSheetBook>(`/api/training/files/${fileId}/sheet?v=${versionId}`) });
   const [tab, setTab] = useState(0);
   if (q.isPending) return <Skeleton className="h-60" />;
   if (q.isError && !q.data) return <LoadFailed title={errorMessage(q.error)} onRetry={() => q.refetch()} retrying={q.isFetching} />;

@@ -69,6 +69,15 @@ describe('员工培训', () => {
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/folders/${made.body.id}`, { name: 'x', sort: 1, active: true, version: made.body.version })).body.error.code).toBe(
       'TRAINING_FOLDER_CHANGED',
     );
+    // 原样重提：改名那次其实改好了，按改好了算；新建带操作编号，原样重提返回原来那个，不报重名（Codex 审查 a3f5310）
+    const again = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/folders/${made.body.id}`, { name: '安保', sort: 200, active: true, version: made.body.version });
+    expect(again.body).toMatchObject({ id: made.body.id, name: '安保' });
+    const key = randomUUID();
+    const first = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/folders', { clientKey: key, name: '工程小组' });
+    expect(first.status).toBe(201);
+    const second = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/folders', { clientKey: key, name: '工程小组' });
+    expect(second.body).toMatchObject({ id: first.body.id });
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/folders', { clientKey: key, name: '别的' })).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/admin/training/folders', { name: '随便' })).status).toBe(403);
   });
 
@@ -224,6 +233,16 @@ describe('员工培训', () => {
       version: file!.version,
     });
     expect(off.status, JSON.stringify(off.body)).toBe(200);
+    // 原样重提（没收到结果）：现在的内容就是要改成的，按改好了算（Codex 审查 a3f5310）
+    const replay = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/files/${file!.id}`, {
+      title: file!.title,
+      description: '',
+      folderId: pub.id,
+      active: false,
+      sort: 100,
+      version: file!.version,
+    });
+    expect(replay.status, JSON.stringify(replay.body)).toBe(200);
     expect(((await api(ctx.app, ctx.clerk, 'GET', `/api/training/folders/${pub.id}/files`)).body as TrainingFile[]).some((f) => f.id === file!.id)).toBe(false);
     expect((await api(ctx.app, ctx.clerk, 'POST', `/api/training/files/${file!.id}/viewed`)).status).toBe(404);
     // 旧版本号再改：拒绝
@@ -278,7 +297,9 @@ describe('员工培训', () => {
     const merged = patchSheet(base, (x) => x.replace('</sheetData>', '</sheetData><mergeCells count="1"><mergeCell ref="A1:XFD1048576"/></mergeCells>'));
     const m = await upload(merged, '合并.xlsx', XLSX_MIME, { folderId: pub.id });
     expect(m.done.status, JSON.stringify(m.done.body)).toBe(200);
-    const sheet = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${m.done.body.fileId}/sheet`);
+    // 带了版本：员工带的不是这份文件的当前版本拒绝（Codex 审查 a3f5310）
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${m.done.body.fileId}/sheet?v=999999`)).body.error.code).toBe('TRAINING_VERSION_CHANGED');
+    const sheet = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${m.done.body.fileId}/sheet?v=${m.done.body.versionId}`);
     expect(sheet.status, JSON.stringify(sheet.body)).toBe(200);
     expect(sheet.body.sheets[0].merges).toEqual([{ r1: 1, c1: 0, r2: 2, c2: 1 }]);
     // 32 万个空行：压缩后几 KB，解析前按结构规模拒绝
