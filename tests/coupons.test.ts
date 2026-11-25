@@ -656,3 +656,26 @@ describe('8.1.40 发券试算的上限（合并前 Codex 审查 8a7023d）', () 
     expect(await estimateOf(open.id)).toMatchObject({ perCoupon: null, uncappedWhy: '折扣券没设「最多减」' });
   });
 });
+
+describe('8.1.40 已发的券说明里带使用限制（合并前 Codex 审查 fca1ba4）', () => {
+  it('无记名券、发出去的券：说明里照样写星期、时段、点钟', async () => {
+    const t = await template({
+      name: '周末点钟券',
+      kind: 'cash',
+      faceValue: 1500,
+      weekdays: [6, 7],
+      timeFrom: 660,
+      timeTo: 840,
+      designatedOnly: true,
+      validity: 'fixed',
+      validFrom: today,
+      validTo: '2099-12-31',
+    });
+    expect(t.summary).toContain('限点钟');
+    const b = await api(ctx.app, ctx.owner, 'POST', '/api/coupons/batches', { clientKey: randomUUID(), templateId: t.id, quantity: 2, note: '限制说明' });
+    expect(b.status, JSON.stringify(b.body)).toBe(201);
+    expect(b.body.summary).toBe('代金券 ¥15.00 · 周六、周日 · 11:00–14:00 · 限点钟');
+    const list = (await api(ctx.app, ctx.owner, 'GET', '/api/coupons/batches')).body as { id: number; summary: string }[];
+    expect(list.find((x) => x.id === b.body.id)!.summary).toBe(b.body.summary);
+  });
+});

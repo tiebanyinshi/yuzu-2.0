@@ -149,7 +149,8 @@ function CampaignDialog({ open, onClose, onDone }: { open: boolean; onClose: () 
   const choices = (templates.data ?? []).filter((t) => t.active && !templateExpired(t, session.today));
   const template = choices.find((t) => t.id === templateId) ?? null;
   const audience = { grades, tagIds, tagMode };
-  const inputKey = JSON.stringify({ templateId: template?.id ?? null, audience });
+  // 张数也算进去（合并前 Codex 审查 fca1ba4）：预览完改了每人几张，试算的张数、最多抵就过期了，要重新预览
+  const inputKey = JSON.stringify({ templateId: template?.id ?? null, audience, quantity });
   /** 只认按现在这组条件算出来的预览 */
   const preview = previewed && previewed.key === inputKey ? previewed : null;
   const n = Number(quantity);

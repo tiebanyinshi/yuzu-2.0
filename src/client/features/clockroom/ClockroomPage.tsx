@@ -162,6 +162,11 @@ export function ClockroomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booking.data, board.data, bookingParam]);
 
+  /** 打开这位技师那一笔待确认所在的对话框：调排位的（8.1.40）开调排位，别的开停牌 / 复牌 / 休假 */
+  const openPending = (t: BoardTechnician, p: (typeof techPending)[number]) => {
+    if (p.url.endsWith('/move-before')) setMoving(t);
+    else setTechState({ t, action: ((p.body as { action?: TechStateAction }).action ?? 'suspend') as TechStateAction });
+  };
   // 顶部「结果待确认」点「去处理」过来（?resume=technician_state&t=技师）：打开那位技师的对话框
   const resumeTech = params.get('resume') === 'technician_state' ? Number(params.get('t')) || null : null;
   useEffect(() => {
@@ -176,7 +181,7 @@ export function ClockroomPage() {
     );
     const t = board.data.technicians.find((x) => x.id === resumeTech);
     const p = techPending.find((x) => x.technicianIds?.includes(resumeTech));
-    if (t && p) setTechState({ t, action: ((p.body as { action?: TechStateAction }).action ?? 'suspend') as TechStateAction });
+    if (t && p) openPending(t, p);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumeTech, board.data]);
 
@@ -196,8 +201,8 @@ export function ClockroomPage() {
   const blockedByPending = (t: BoardTechnician) => {
     const p = techPending.find((x) => x.technicianIds?.includes(t.id));
     if (!p) return false;
-    toast({ tone: 'info', title: `${t.techNo} 号有一笔停牌 / 复牌 / 休假结果待确认`, body: '先查回或确认作废，再做别的操作' });
-    setTechState({ t, action: ((p.body as { action?: TechStateAction }).action ?? 'suspend') as TechStateAction });
+    toast({ tone: 'info', title: `${t.techNo} 号有一笔停牌 / 复牌 / 休假 / 调排位结果待确认`, body: '先查回或确认作废，再做别的操作' });
+    openPending(t, p);
     return true;
   };
   const state = (t: BoardTechnician, action: 'sign_in' | 'rest' | 'back' | 'sign_out' | 'leave' | 'resume', ok: string) => {
@@ -683,7 +688,8 @@ export function ClockroomPage() {
           onClose={() => setMoving(null)}
           onDone={(b, text) => {
             setMoving(null);
-            qc.setQueryData(clockKey, b);
+            if (b) qc.setQueryData(clockKey, b);
+            else void qc.invalidateQueries({ queryKey: clockKey });
             toast({ tone: 'success', title: text });
           }}
         />

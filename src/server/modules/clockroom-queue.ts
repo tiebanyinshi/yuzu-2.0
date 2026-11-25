@@ -5,17 +5,21 @@
 // B 前面那位与 B 之间挤不下（相差不到 2 毫秒、同一时刻）时，从 A 往前依次把挤着的人各提前 1 毫秒——只往前挪、相对顺序不变，
 // B 和 B 后面的人一个都不动。排位按工种分开（8.1.38），所以只能调到同工种的人前面。
 // 锁：与排到队尾相同，只拿技师队列锁再写技师状态（docs/LOCKING.md 第 1 节钟房）。
+// 带操作编号（与休假、停牌、复牌同一类 technician_state，合并前 Codex 审查 fca1ba4）：结果不明时页面留着原请求，查回、原样重提或确认作废；
+// 不然超时的那一笔迟到生效，会把之后另调的顺序盖掉。同一编号原样重提返回当前看板（已经调过的不再调），确认作废的编号迟到也不生效。
 
 import { z } from 'zod';
+import type { Tx } from '../db';
 import type { Deps, OpContext } from '../lib/context';
 import { conflict, notFound, unprocessable } from '../lib/errors';
 import { parse } from '../lib/validate';
 import { currentStoreId } from '../lib/store-context';
-import { businessDate, setTxTimeouts } from './frontdesk/common';
+import { businessDate, hashRequest, runIdempotent, saveKey, setTxTimeouts } from './frontdesk/common';
 import { loadTechnicians } from './technicians';
 import { clockroomBoard, lockQueue, logEvent, offStatus, queueKindOf, queueOrderOfKind, statusMap, writeStatus, type Status } from './clockroom';
 
 export const MoveBeforeInput = z.object({
+  clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   /** 调到这位技师的前面 */
   beforeId: z.number('请选调到哪位技师前面').int().positive('请选调到哪位技师前面'),
   reason: z.string().trim().max(100, '原因最多 100 字').optional(),
@@ -45,10 +49,18 @@ export function moveBeforeKeys(order: number[], keys: Map<number, number>, mover
 
 /** 把 technicianId 调到 beforeId 前面（同工种、两位都在岗）；原因必填，记进钟房日志「调整排位」 */
 export async function moveBefore(deps: Deps, technicianId: number, raw: unknown, ctx: OpContext) {
-  const { beforeId, reason = '' } = parse(MoveBeforeInput, raw);
+  const { clientKey, beforeId, reason = '' } = parse(MoveBeforeInput, raw);
   if (reason.length < 2) throw unprocessable('REASON_REQUIRED', '调位请写原因（至少 2 个字，例如：客人等着先叫他、补回刚才跳过的）');
   if (beforeId === technicianId) throw unprocessable('MOVE_SELF', '不能调到自己前面，请选另一位技师');
-  await deps.sql.begin(async (tx) => {
+  const requestHash = hashRequest({ technicianId, moveBefore: beforeId, reason });
+  await runIdempotent(deps, { key: clientKey, opType: 'technician_state', requestHash }, async (tx) => {
+    await apply(tx);
+    await saveKey(tx, clientKey, 'technician_state', requestHash, technicianId, ctx.actor.id);
+    return technicianId;
+  });
+  return clockroomBoard(deps.sql, deps);
+
+  async function apply(tx: Tx) {
     await setTxTimeouts(tx);
     const at = ctx.at ?? new Date();
     await lockQueue(tx);
@@ -81,6 +93,5 @@ export async function moveBefore(deps: Deps, technicianId: number, raw: unknown,
       await writeStatus(tx, id, today, { ...statuses.get(id)!, queueKey: new Date(key) }, ctx.actor.id, at);
     }
     await logEvent(tx, { technicianId: me.id, kind: 'queue', detail: { reason, before: target.techNo }, staffId: ctx.actor.id, businessDate: today, at });
-  });
-  return clockroomBoard(deps.sql, deps);
+  }
 }
