@@ -117,6 +117,31 @@ describe('员工培训', () => {
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s.body.uploadId}/chunks/0`, { data: Buffer.from('xx').toString('base64') })).status).toBe(400);
   });
 
+  it('完成先认领（Codex 安全审查 f2dbf5a）：别人认领着回「正在登记」；认领过期（10 分钟）可以接手登记', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const bytes = PDF(500);
+    const clientKey = randomUUID();
+    const s = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, fileName: '认领.pdf', mime: 'application/pdf', sizeBytes: bytes.length });
+    await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s.body.uploadId}/chunks/0`, { data: bytes.toString('base64') });
+    await ctx.sql`UPDATE training_uploads SET claim_token = ${randomUUID()}, claimed_at = now() WHERE id = ${s.body.uploadId}`;
+    const busy = await api(ctx.app, ctx.owner, 'POST', `/api/admin/training/uploads/${s.body.uploadId}/complete`, { folderId: pub.id });
+    expect(busy.status).toBe(409);
+    expect(busy.body.error.code).toBe('TRAINING_UPLOAD_COMPLETING');
+    await ctx.sql`UPDATE training_uploads SET claimed_at = now() - interval '11 minutes' WHERE id = ${s.body.uploadId}`;
+    const ok = await api(ctx.app, ctx.owner, 'POST', `/api/admin/training/uploads/${s.body.uploadId}/complete`, { folderId: pub.id });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    // 登记失败（格式不对）放掉认领，不会卡住
+    const bad = Buffer.from('not a pdf at all');
+    const k2 = randomUUID();
+    const s2 = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey: k2, fileName: '坏.pdf', mime: 'application/pdf', sizeBytes: bad.length });
+    await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s2.body.uploadId}/chunks/0`, { data: bad.toString('base64') });
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/training/uploads/${s2.body.uploadId}/complete`, { folderId: pub.id })).body.error.code).toBe('TRAINING_UPLOAD_FORMAT');
+    const [r] = await ctx.sql<{ claimToken: string | null }[]>`SELECT claim_token FROM training_uploads WHERE id = ${s2.body.uploadId}`;
+    expect(r!.claimToken).toBeNull();
+    // 收尾：不传了（每人没传完的有上限，别占着后面的用例）
+    await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads/cancel', { clientKey: k2, fileName: '坏.pdf', mime: 'application/pdf', sizeBytes: bad.length });
+  });
+
   it('存储上限（Codex 安全审查 ec38502）：每人没传完的个数、24 小时开始次数、全库版本数', async () => {
     const pub = await folderOf((f) => f.kind === 'public');
     const start = (name: string) => api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey: randomUUID(), fileName: name, mime: 'application/pdf', sizeBytes: 300 });

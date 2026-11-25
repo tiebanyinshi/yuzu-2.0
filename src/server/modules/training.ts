@@ -6,7 +6,7 @@
 //   · 内容按 SHA-256 只存一份（4 MB 一块存数据库），读的时候支持 Range（视频拖动、PDF 按需读）；
 //   · 版本只追加，换新版本不清「看过」；谁看过每人每份文件一行。
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -543,60 +543,89 @@ async function completeUpload(deps: Deps, id: number, raw: unknown, ctx: OpConte
   const seqs = (await deps.sql<{ seq: number }[]>`SELECT seq FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`).map((r) => r.seq);
   const missing = Array.from({ length: u.chunkCount }, (_, i) => i).filter((i) => !seqs.includes(i));
   if (missing.length) throw unprocessable('TRAINING_UPLOAD_INCOMPLETE', `还有 ${missing.length} 块没传完`, { missing });
-  const hash = createHash('sha256');
-  let head: Buffer | null = null;
-  for (let seq = 0; seq < u.chunkCount; seq++) {
-    const [c] = await deps.sql<{ data: Buffer }[]>`SELECT data FROM training_upload_chunks WHERE upload_id = ${id} AND seq = ${seq}`;
-    if (seq === 0) head = c!.data.subarray(0, 16);
-    hash.update(c!.data);
+  // 先认领再读块（Codex 安全审查 f2dbf5a）：同一次上传同时来几个「完成」，只有认领到的去读 200 MB、算摘要，
+  // 别的回「正在登记」（页面隔几秒查回）；认领的进程中途退出，10 分钟后可以重新认领
+  const token = randomUUID();
+  const [claimed] = await deps.sql`
+    UPDATE training_uploads SET claim_token = ${token}, claimed_at = now()
+    WHERE id = ${id} AND status = 'open' AND (claim_token IS NULL OR claimed_at < now() - interval '10 minutes')
+    RETURNING id`;
+  if (!claimed) {
+    const again = await ownUpload(deps.sql, id, ctx.actor);
+    if (again.status === 'done') return finished(deps.sql, id);
+    if (again.status === 'cancelled') throw conflict('TRAINING_UPLOAD_CANCELLED', '这次上传已经确认不传了，请重新选文件');
+    throw conflict('TRAINING_UPLOAD_COMPLETING', '这份文件正在登记，稍后查回');
   }
-  const sha256 = hash.digest('hex');
-  if (!sniffOk(u.mime, head!)) throw unprocessable('TRAINING_UPLOAD_FORMAT', `文件内容不是 ${TRAINING_FORMATS[u.mime]!.label}，请确认选对了文件`);
-  return deps.sql.begin(async (tx) => {
-    await setTxTimeouts(tx);
-    const [lock] = await tx<{ status: string }[]>`SELECT status FROM training_uploads WHERE id = ${id} FOR UPDATE`;
-    if (!lock) throw notFound('上传记录不存在，请重新选文件');
-    if (lock.status === 'done') return finished(tx, id);
-    // 「不传了」与「完成」都先锁这一行：先作废的，完成就拒绝（Codex 审查 57dd2f6）
-    if (lock.status === 'cancelled') throw conflict('TRAINING_UPLOAD_CANCELLED', '这次上传已经确认不传了，请重新选文件');
-    const [had] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM training_blobs WHERE sha256 = ${sha256}`;
-    await assertStoreQuota(tx, u.sizeBytes, !had!.n);
-    // 内容只存一份：别人刚好也传了同一个文件就沿用
-    const [stored] = await tx<{ sha256: string }[]>`
+  const release = () => deps.sql`UPDATE training_uploads SET claim_token = NULL, claimed_at = NULL WHERE id = ${id} AND claim_token = ${token}`;
+  let sha256: string;
+  try {
+    const hash = createHash('sha256');
+    let head: Buffer | null = null;
+    for (let seq = 0; seq < u.chunkCount; seq++) {
+      const [c] = await deps.sql<{ data: Buffer }[]>`SELECT data FROM training_upload_chunks WHERE upload_id = ${id} AND seq = ${seq}`;
+      if (!c) throw unprocessable('TRAINING_UPLOAD_INCOMPLETE', `第 ${seq + 1} 块不见了，请重新传`);
+      if (seq === 0) head = c.data.subarray(0, 16);
+      hash.update(c.data);
+    }
+    sha256 = hash.digest('hex');
+    if (!sniffOk(u.mime, head!)) throw unprocessable('TRAINING_UPLOAD_FORMAT', `文件内容不是 ${TRAINING_FORMATS[u.mime]!.label}，请确认选对了文件`);
+  } catch (e) {
+    await release();
+    throw e;
+  }
+  return deps.sql
+    .begin(async (tx) => {
+      await setTxTimeouts(tx);
+      const [lock] = await tx<{ status: string; claimToken: string | null }[]>`SELECT status, claim_token FROM training_uploads WHERE id = ${id} FOR UPDATE`;
+      if (!lock) throw notFound('上传记录不存在，请重新选文件');
+      if (lock.status === 'done') return finished(tx, id);
+      // 认领过期被别人接走了：交给那边登记
+      if (lock.status === 'open' && lock.claimToken !== token) throw conflict('TRAINING_UPLOAD_COMPLETING', '这份文件正在登记，稍后查回');
+      // 「不传了」与「完成」都先锁这一行：先作废的，完成就拒绝（Codex 审查 57dd2f6）
+      if (lock.status === 'cancelled') throw conflict('TRAINING_UPLOAD_CANCELLED', '这次上传已经确认不传了，请重新选文件');
+      const [had] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM training_blobs WHERE sha256 = ${sha256}`;
+      await assertStoreQuota(tx, u.sizeBytes, !had!.n);
+      // 内容只存一份：别人刚好也传了同一个文件就沿用
+      const [stored] = await tx<{ sha256: string }[]>`
       INSERT INTO training_blobs (sha256, size_bytes, chunk_count) VALUES (${sha256}, ${u.sizeBytes}, ${u.chunkCount})
       ON CONFLICT (sha256) DO NOTHING RETURNING sha256`;
-    if (stored) {
-      await tx`INSERT INTO training_blob_chunks (sha256, seq, data) SELECT ${sha256}, seq, data FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`;
-    }
-    await tx`DELETE FROM training_upload_chunks WHERE upload_id = ${id}`;
-    let fileId: number;
-    let versionNo: number;
-    let summary: string;
-    if (input.fileId !== null) {
-      const [f] = await tx<{ id: number; title: string }[]>`SELECT id, title FROM training_files WHERE id = ${input.fileId} FOR UPDATE`;
-      if (!f) throw notFound('要换新版本的培训文件不存在');
-      fileId = Number(f.id);
-      const [n] = await tx<{ n: number }[]>`SELECT COALESCE(max(version_no), 0)::int + 1 AS n FROM training_file_versions WHERE file_id = ${fileId}`;
-      versionNo = n!.n;
-      summary = `「${f.title}」换成第 ${versionNo} 版（${u.fileName}）`;
-    } else {
-      await loadFolder(tx, input.folderId!);
-      const title = input.title || u.fileName.replace(/\.[^.]+$/, '');
-      const [f] = await tx<{ id: number }[]>`
+      if (stored) {
+        await tx`INSERT INTO training_blob_chunks (sha256, seq, data) SELECT ${sha256}, seq, data FROM training_upload_chunks WHERE upload_id = ${id} ORDER BY seq`;
+      }
+      await tx`DELETE FROM training_upload_chunks WHERE upload_id = ${id}`;
+      let fileId: number;
+      let versionNo: number;
+      let summary: string;
+      if (input.fileId !== null) {
+        const [f] = await tx<{ id: number; title: string }[]>`SELECT id, title FROM training_files WHERE id = ${input.fileId} FOR UPDATE`;
+        if (!f) throw notFound('要换新版本的培训文件不存在');
+        fileId = Number(f.id);
+        const [n] = await tx<{ n: number }[]>`SELECT COALESCE(max(version_no), 0)::int + 1 AS n FROM training_file_versions WHERE file_id = ${fileId}`;
+        versionNo = n!.n;
+        summary = `「${f.title}」换成第 ${versionNo} 版（${u.fileName}）`;
+      } else {
+        await loadFolder(tx, input.folderId!);
+        const title = input.title || u.fileName.replace(/\.[^.]+$/, '');
+        const [f] = await tx<{ id: number }[]>`
         INSERT INTO training_files (folder_id, title, description, created_by)
         VALUES (${input.folderId}, ${title.slice(0, 80)}, ${input.description}, ${ctx.actor.id}) RETURNING id`;
-      fileId = Number(f!.id);
-      versionNo = 1;
-      summary = `上传了培训文件「${title}」`;
-    }
-    const [v] = await tx<{ id: number }[]>`
+        fileId = Number(f!.id);
+        versionNo = 1;
+        summary = `上传了培训文件「${title}」`;
+      }
+      const [v] = await tx<{ id: number }[]>`
       INSERT INTO training_file_versions (file_id, version_no, file_name, mime, sha256, size_bytes, note, uploaded_by)
       VALUES (${fileId}, ${versionNo}, ${u.fileName}, ${u.mime}, ${sha256}, ${u.sizeBytes}, ${input.note}, ${ctx.actor.id}) RETURNING id`;
-    await tx`UPDATE training_files SET current_version_id = ${v!.id}, version = version + 1, updated_at = now() WHERE id = ${fileId}`;
-    await tx`UPDATE training_uploads SET status = 'done', result_file_id = ${fileId}, result_version_id = ${v!.id}, finished_at = now() WHERE id = ${id}`;
-    await writeAudit(tx, { staffId: ctx.actor.id, action: 'training_file_saved', targetType: 'training_file', targetId: fileId, detail: { summary, versionNo, sha256: sha256 }, ip: ctx.ip });
-    return finished(tx, id);
-  });
+      await tx`UPDATE training_files SET current_version_id = ${v!.id}, version = version + 1, updated_at = now() WHERE id = ${fileId}`;
+      await tx`UPDATE training_uploads SET status = 'done', result_file_id = ${fileId}, result_version_id = ${v!.id}, finished_at = now() WHERE id = ${id}`;
+      await writeAudit(tx, { staffId: ctx.actor.id, action: 'training_file_saved', targetType: 'training_file', targetId: fileId, detail: { summary, versionNo, sha256: sha256 }, ip: ctx.ip });
+      return finished(tx, id);
+    })
+    .catch(async (e: unknown) => {
+      // 没登记成（超额、文件夹没了等）：放掉认领，改好以后可以再完成
+      await release();
+      throw e;
+    });
 }
 
 async function finished(db: Db, id: number) {

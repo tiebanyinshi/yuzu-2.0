@@ -6,7 +6,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { TRAINING_CHUNK_BYTES, TRAINING_MAX_BYTES, trainingMimeOf } from '@shared/training';
-import { api, isRejected, UncertainError } from '../../lib/api';
+import { api, ApiError, isRejected, UncertainError } from '../../lib/api';
 import { bytesToBase64 } from '../../lib/import-file';
 
 export interface UploadTarget {
@@ -219,6 +219,20 @@ export async function uploadTrainingFile(file: File, clientKey: string, target: 
     progress(1);
     return r;
   } catch (e) {
+    // 「正在登记」（同一次上传的另一个完成请求在算摘要）：隔几秒查回，最多等 3 分钟（Codex 安全审查 f2dbf5a）
+    if (e instanceof ApiError && e.code === 'TRAINING_UPLOAD_COMPLETING') {
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const st = await api.get<UploadState>(`/api/admin/training/uploads/${start.uploadId}`);
+        if (st.status === 'done') {
+          removePendingUpload(clientKey);
+          progress(1);
+          return { fileId: st.fileId!, versionId: st.versionId! };
+        }
+        if (st.status === 'cancelled') throw new Error('这次上传已经确认不传了，请重新选文件');
+      }
+      throw new Error('这份文件还在登记，稍后在页面顶上「查回」');
+    }
     if (!(e instanceof UncertainError)) throw e;
     // 没收到结果：查回这次上传，已经登记了就当成功
     const state = await api.get<UploadState>(`/api/admin/training/uploads/${start.uploadId}`);

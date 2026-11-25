@@ -88,6 +88,9 @@ CREATE TABLE training_uploads (
   result_file_id    bigint REFERENCES training_files (id),
   result_version_id bigint REFERENCES training_file_versions (id),
   created_by  bigint NOT NULL REFERENCES staff (id),
+  -- 「完成」的认领：同一次上传只有认领到的那个请求去读块、算摘要；10 分钟没登记完（进程退出）可以重新认领（Codex 安全审查 f2dbf5a）
+  claim_token uuid,
+  claimed_at  timestamptz,
   created_at  timestamptz NOT NULL DEFAULT now(),
   finished_at timestamptz,
   CHECK ((status = 'done') = (result_version_id IS NOT NULL))
