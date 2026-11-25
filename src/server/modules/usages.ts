@@ -13,6 +13,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { ACTIVE_BOOKING_STATUSES } from '@shared/bookings';
 import { normalizeTagCode, TAG_CODE_PATTERN } from '@shared/frontdesk';
 import type { UsagePricingView } from '@shared/floormap';
 import { isTechnicianBusinessType, ROOM_BUSINESS_TYPE } from '@shared/spaces';
@@ -223,6 +224,8 @@ export const OpenUsageInput = z.object({
     .pipe(z.string().min(1, TAG_REQUIRED).regex(TAG_CODE_PATTERN, '牌号格式不正确（例如 A023、1088）')),
   guests: z.number('请填写人数').int('人数必须是整数').min(1, '至少 1 人').max(MAX_USAGE_GUESTS, `最多 ${MAX_USAGE_GUESTS} 人`).default(1),
   note: z.string().trim().max(MAX_USAGE_NOTE, `备注最多 ${MAX_USAGE_NOTE} 字`).default(''),
+  /** 8.1.36：这间房一小时内有预订、确认仍要现场开单（记进审计）；不带时与升级前的请求相同 */
+  useReserved: z.boolean().optional(),
 });
 
 export async function openUsage(deps: Deps, raw: unknown, ctx: OpContext): Promise<UsageDetail> {
@@ -230,7 +233,7 @@ export async function openUsage(deps: Deps, raw: unknown, ctx: OpContext): Promi
   const { clientKey: key, ...payload } = input;
   const requestHash = hashRequest(payload);
   const run = await runIdempotent(deps, { key, opType: 'usage_open', requestHash }, async (tx) => {
-    const usageId = await openUsageTx(tx, deps, payload, key, ctx);
+    const usageId = await openUsageTx(tx, deps, payload, key, ctx, { guardBookings: true });
     await saveKey(tx, key, 'usage_open', requestHash, usageId, ctx.actor.id);
     return usageId;
   });
@@ -241,7 +244,14 @@ export async function openUsage(deps: Deps, raw: unknown, ctx: OpContext): Promi
  * 开单（调用方的事务里；前台开单经 openUsage 的幂等外壳，预约到店经 bookings.ts）：返回使用单编号。
  * 锁：来访（共享锁）→ 空间一行 → 当前位置
  */
-export async function openUsageTx(tx: Tx, deps: Deps, input: { spaceId: number; tagCode: string; guests: number; note: string }, key: string, ctx: OpContext): Promise<number> {
+export async function openUsageTx(
+  tx: Tx,
+  deps: Deps,
+  input: { spaceId: number; tagCode: string; guests: number; note: string; useReserved?: boolean },
+  key: string,
+  ctx: OpContext,
+  options: { guardBookings?: boolean } = {},
+): Promise<number> {
   const at = ctx.at ?? new Date();
   const rules = await loadUsageRules(tx);
   // ① 来访（共享锁：开单不改来访，但要挡住同时结账、撤销）
@@ -268,6 +278,21 @@ export async function openUsageTx(tx: Tx, deps: Deps, input: { spaceId: number; 
     SELECT u.usage_no, h.code AS tag_code FROM space_usages u JOIN visits v ON v.id = u.visit_id JOIN hand_tags h ON h.id = v.tag_id
     WHERE u.space_id = ${space.id} AND u.status = 'open'`;
   if (busy) throw conflict('USAGE_TAKEN', `${space.code} 正在使用（${busy.usageNo}，手牌 ${busy.tagCode}），先结束这张再开单`);
+  // 8.1.36：现场开单（不是预约到店）让着已有的预订——这间房从现在起一小时内有还占着时段的预订，就提示；
+  // 是预订的客人到了请从「预约」点到店开单，确认要占用的带 useReserved（记进审计）
+  let reserved: { bookingNo: string; startsAt: Date } | undefined;
+  if (options.guardBookings) {
+    [reserved] = await tx<{ bookingNo: string; startsAt: Date }[]>`
+      SELECT booking_no, starts_at FROM bookings
+      WHERE space_id = ${space.id} AND status IN ${tx(ACTIVE_BOOKING_STATUSES)}
+        AND starts_at < ${new Date(at.getTime() + 60 * 60_000)} AND ends_at > ${at}
+      ORDER BY starts_at LIMIT 1`;
+    if (reserved && !input.useReserved) {
+      throw conflict('SPACE_BOOKED', `${space.code} 一小时内有预订（${reserved.bookingNo}）：是预订的客人到了，请在「预约」里点到店开单；确认要现场占用请勾选「占用已预订的房间」`, {
+        bookingNo: reserved.bookingNo,
+      });
+    }
+  }
   const date = await businessDate(tx, deps, at);
   const usageNo = await nextDocNo(tx, 'space_usage', 'SY', date);
   const [row] = await tx<{ id: number }[]>`
@@ -282,7 +307,14 @@ export async function openUsageTx(tx: Tx, deps: Deps, input: { spaceId: number; 
     action: 'usage_open',
     targetType: 'space_usage',
     targetId: usageId,
-    detail: { usageNo, space: space.code, tagCode: input.tagCode, guests: input.guests, ...(input.note ? { note: input.note } : {}) },
+    detail: {
+      usageNo,
+      space: space.code,
+      tagCode: input.tagCode,
+      guests: input.guests,
+      ...(input.note ? { note: input.note } : {}),
+      ...(reserved ? { usedReserved: reserved.bookingNo } : {}),
+    },
     ip: ctx.ip,
     businessDate: date,
   });

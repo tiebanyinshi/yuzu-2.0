@@ -44,6 +44,8 @@ export function OpenUsageDialog({
   const [tag, setTag] = useState('');
   const [guests, setGuests] = useState(1);
   const [note, setNote] = useState('');
+  // 8.1.36：这间房一小时内有预订时服务端拒绝（SPACE_BOOKED）；确认要现场占用的勾上再提交
+  const [useReserved, setUseReserved] = useState(false);
   const op = useFrontdeskOp<UsageDetail>({
     type: 'usage_open',
     visitId: null,
@@ -64,7 +66,7 @@ export function OpenUsageDialog({
     if (!ok) return;
     const u = await op.submit((key) => ({
       url,
-      body: { clientKey: key, spaceId: space.id, tagCode, guests, note: note.trim() },
+      body: { clientKey: key, spaceId: space.id, tagCode, guests, note: note.trim(), ...(useReserved ? { useReserved: true } : {}) },
       tagCodes: [`房 ${space.code}`],
       summary: `开单 ${guests} 人（手牌 ${tagCode}）`,
       amount: null,
@@ -94,6 +96,12 @@ export function OpenUsageDialog({
       }
     >
       <PendingPanel op={op} onResolved={finish} />
+      {(useReserved || (op.state.phase === 'error' && op.state.code === 'SPACE_BOOKED')) && (
+        <label className="mb-3 flex cursor-pointer items-center gap-2 rounded-lg border border-yuzu-deep/30 bg-yuzu-tint px-3 py-2 text-[13px] font-semibold" data-testid="usage-open-use-reserved">
+          <input type="checkbox" className="size-4 accent-pine" checked={useReserved} disabled={op.locked} onChange={(e) => setUseReserved(e.target.checked)} />
+          占用已预订的房间（预订的客人到了请从「预约」点到店开单，不要勾）
+        </label>
+      )}
       {!priced && (
         <Notice tone="warning" title={`${space.businessType}还没有设定计费，结束时不收房费`} className="mb-3" data-testid="usage-open-unpriced">
           要按时长收房费，请店主在后台「客房 → 派对房等」给这个业态设计费项目；场次费也可以到前台另挂。

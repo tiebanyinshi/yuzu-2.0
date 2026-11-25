@@ -302,6 +302,8 @@ export const PERMISSIONS = {
   'technician.board': { roles: ['owner', 'store_manager', 'duty_manager'] },
   /** 餐饮点单：按手牌给在店客人点菜（挂账）、催单、上菜（S5 第一步，待确认：前台岗位都能做；下单还要能挂账） */
   'dining.order': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'], duties: ['kangmei'] },
+  /** 8.1.36：餐饮台账（全店每道菜、金额、退菜）——以前点单的都能看、能导出，改成值班经理及以上与餐饮、康美、前厅负责人 */
+  'dining.ledger': { roles: ['owner', 'store_manager', 'duty_manager'] },
   /** 厨房出品屏：开始做、出餐、沽清（S5 第一步，待确认：前台岗位与后勤人员；厨房可以用后勤账号） */
   'dining.kitchen': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk', 'backoffice'] },
   /**
@@ -630,6 +632,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'technician.announce': '排位播报：看排位、手动叫号、由本机播报',
   'technician.board': '技师上钟轮播：只读大屏，看谁在上钟、上什么、排在哪',
   'dining.order': '餐饮点单、催单、上菜',
+  'dining.ledger': '餐饮台账：全店每道菜的明细、金额、退菜，导出',
   'dining.kitchen': '厨房出品屏：开始做、出餐、沽清',
   'emenu.view': '打开平板点餐（电子菜单；下单要服务员输点单密码）',
   'emenu.manage': '维护电子菜单（分类、版面、菜品图文、设置）',
@@ -710,6 +713,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'technician.announce',
       'technician.board',
       'dining.order',
+      'dining.ledger',
       'dining.kitchen',
       'emenu.view',
       'room.operate',

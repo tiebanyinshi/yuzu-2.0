@@ -8,6 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import { roomTypeBalance } from './bookings';
 import { z } from 'zod';
 import { businessDateOf } from '@shared/business-date';
 import { normalizeTagCode, TAG_CODE_PATTERN } from '@shared/frontdesk';
@@ -666,6 +667,8 @@ export const CheckinInput = z.object({
   /** 员工确认时看到的房价；房型刚改了价就拒绝 */
   expectedRate: positiveCents('房价'),
   deposit: DepositInput.nullish().transform((v) => v ?? null),
+  /** 8.1.36：今天这个房型剩下的房都被预订了、确认仍要现场入住（记进审计）；不带时与升级前的请求相同 */
+  useReserved: z.boolean().optional(),
   /** 预约到店入住（8.0.8，A04）；不带时与升级前的请求完全相同（幂等摘要不变） */
   bookingId: z
     .number()
@@ -766,6 +769,18 @@ export async function checkinRoom(deps: Deps, raw: unknown, ctx: OpContext): Pro
       );
     }
     const bookingId = await bookingForCheckin(tx, input.bookingId, visitId, room.roomTypeId);
+    // 8.1.36：现场入住（不是预约到店）让着当天的预订——这个房型能用的房扣掉当天占着名额的预订和在住的，已经没有空的，
+    // 就是在占预订留的房：提示从预约入住，确认要占用的带 useReserved（记进审计）。锁房型一行，与新建、改预约（claimSlot）串行
+    let usedReserved = false;
+    if (bookingId === null) {
+      await tx`SELECT id FROM room_types WHERE id = ${room.roomTypeId} FOR NO KEY UPDATE`;
+      if ((await roomTypeBalance(tx, room.roomTypeId, date, date)) < 1) {
+        if (!input.useReserved) {
+          throw conflict('ROOM_TYPE_RESERVED', `房型「${type!.name}」今天剩下的房都被预订了：是预订的客人到了，请在「预约」里点到店再入住；确认要占用已预订的房请勾选「占用已预订的房」`);
+        }
+        usedReserved = true;
+      }
+    }
     const stayNo = await nextDocNo(tx, 'room_stay', 'RZ', date);
     const [stay] = await tx<{ id: number }[]>`
       INSERT INTO room_stays (stay_no, room_id, room_type_id, kind, rate, block_minutes, bill_id, visit_id, guest_label, guests,
@@ -799,6 +814,7 @@ export async function checkinRoom(deps: Deps, raw: unknown, ctx: OpContext): Pro
         guestLabel: input.guestLabel,
         guests: input.guests,
         ...(input.deposit ? { deposit: { method: input.deposit.method, amount: input.deposit.amount } } : {}),
+        ...(usedReserved ? { usedReserved: true } : {}),
         ...(bookingId !== null ? { bookingId } : {}),
       },
       ip: ctx.ip,

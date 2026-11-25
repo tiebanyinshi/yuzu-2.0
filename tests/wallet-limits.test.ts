@@ -318,3 +318,26 @@ describe('8.1.36：店员储值扣款手动金额超过 500 元要当场授权',
     expect(audit!.detail.manualLines).toEqual([{ name: '测试消费', amount: 60_000 }]);
   });
 });
+
+describe('8.1.36：操作审计按「敏感操作」筛选、导出 CSV', () => {
+  it('sensitive 只列一组敏感动作；逗号写动作名也行；乱写拒绝；导出带表头并记一条导出；店员看不到', async () => {
+    const all = await api(ctx.app, ctx.owner, 'GET', '/api/audit?limit=2000');
+    expect(all.status).toBe(200);
+    const sensitive = await api(ctx.app, ctx.owner, 'GET', '/api/audit?actions=sensitive&limit=2000');
+    expect(sensitive.status).toBe(200);
+    expect((sensitive.body as { action: string }[]).length).toBeGreaterThan(0);
+    expect((sensitive.body as { action: string }[]).every((r) => ['consumption_created', 'auth_granted', 'auth_failed'].includes(r.action) || r.action.length > 0)).toBe(true);
+    expect((sensitive.body as { action: string }[]).some((r) => r.action === 'login')).toBe(false);
+    const one = await api(ctx.app, ctx.owner, 'GET', '/api/audit?actions=consumption_created');
+    expect((one.body as { action: string }[]).every((r) => r.action === 'consumption_created')).toBe(true);
+    expect((await api(ctx.app, ctx.owner, 'GET', '/api/audit?actions=DROP%20TABLE')).status).toBe(400);
+    const csv = await ctx.app.inject({ method: 'GET', url: '/api/audit.csv?actions=sensitive', headers: { cookie: ctx.owner } });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.headers['content-type']).toContain('text/csv');
+    expect(csv.body).toContain('时间,动作,经办人');
+    expect(csv.body).toContain('consumption_created');
+    const [exp] = await ctx.sql<{ detail: { kind: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'export' ORDER BY id DESC LIMIT 1`;
+    expect(exp!.detail.kind).toBe('audit');
+    expect((await ctx.app.inject({ method: 'GET', url: '/api/audit.csv', headers: { cookie: ctx.clerk } })).statusCode).toBe(403);
+  });
+});

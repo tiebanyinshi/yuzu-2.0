@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { useAudit } from '../../lib/queries';
+import { Download } from 'lucide-react';
+import { auditQuery, useAudit } from '../../lib/queries';
 import { useSession } from '../../lib/session';
-import { formatDateTime } from '../../lib/utils';
+import { downloadUrl, formatDateTime } from '../../lib/utils';
 import { DateNav } from '../../components/DateNav';
 import { EmptyState } from '../../components/EmptyState';
-import { Badge, Card, Skeleton } from '../../components/ui';
+import { Badge, Button, Card, Segmented, Skeleton } from '../../components/ui';
 
 const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 'clay' | 'lake' | 'yuzu' | 'ember' }> = {
   login: { label: '登录', tone: 'neutral' },
@@ -143,6 +144,9 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   member_card_returned: { label: '退卡', tone: 'clay' },
   // 8.1.16 菜品维护结果待确认时确认作废
   dish_op_abandoned: { label: '作废菜品操作', tone: 'clay' },
+  // 8.1.36
+  clock_session_room: { label: '钟单换房间', tone: 'neutral' },
+  mp_unbind: { label: '解绑微信', tone: 'ember' },
   // 8.1.17 第二家店改本店价（BW-11）
   store_price_changed: { label: '改本店价', tone: 'ember' },
   dishes_sorted: { label: '菜品排序', tone: 'neutral' },
@@ -175,6 +179,8 @@ function describe(detail: Record<string, unknown>): string {
   if (typeof detail.reason === 'string') parts.push(detail.reason);
   if (typeof detail.note === 'string' && detail.note) parts.push(detail.note);
   if (typeof detail.summary === 'string' && detail.summary) parts.push(detail.summary);
+  // 8.1.36：手动金额逐行
+  if (Array.isArray(detail.manualLines)) parts.push(`手动金额 ${(detail.manualLines as { name: string; amount: number }[]).map((l) => `${l.name} ¥${(l.amount / 100).toFixed(2)}`).join('、')}`);
   if (detail.via === 'cli') parts.push('命令行');
   return parts.join(' · ');
 }
@@ -183,12 +189,30 @@ function describe(detail: Record<string, unknown>): string {
 export function AuditTab() {
   const session = useSession();
   const [date, setDate] = useState(session.today);
-  const audit = useAudit(date);
+  // 8.1.36：全部 / 敏感操作（动钱、动余额、撤销、授权、改身份的一组）；可导出 CSV
+  const [kind, setKind] = useState<'all' | 'sensitive'>('all');
+  const actions = kind === 'sensitive' ? 'sensitive' : undefined;
+  const audit = useAudit(date, actions);
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <DateNav value={date} today={session.today} onChange={setDate} />
-        <p className="text-[12.5px] text-ink-3">审计记录只追加、不可修改，按自然日显示最近 200 条。</p>
+        <Segmented
+          size="sm"
+          ariaLabel="看哪些操作"
+          value={kind}
+          onChange={setKind}
+          options={[
+            { value: 'all', label: '全部' },
+            { value: 'sensitive', label: '敏感操作' },
+          ]}
+        />
+        <Button size="sm" variant="secondary" icon={<Download className="size-3.5" />} onClick={() => downloadUrl(`/api/audit.csv?${auditQuery(date, actions)}`)} data-testid="audit-export">
+          导出
+        </Button>
+        <p className="text-[12.5px] text-ink-3">
+          审计记录只追加、不可修改，按自然日显示最近 {kind === 'sensitive' ? '2000' : '200'} 条。敏感操作：会员扣款与撤销、退储值、反结账、退款、作废、当场授权、改手机号、解绑微信等。
+        </p>
       </div>
       <Card>
         {audit.isPending ? (

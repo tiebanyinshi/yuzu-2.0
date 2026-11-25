@@ -135,7 +135,7 @@ import { registerOaAttachmentRoutes } from './modules/oa/attachments';
 import { registerTechnicianRoutes } from './modules/technicians';
 import { registerTechnicianAdminRoutes } from './modules/technician-admin';
 import { registerTechnicianRankingRoutes } from './modules/technician-ranking';
-import { registerClockroomRoutes } from './modules/clockroom';
+import { registerClockroomRoutes } from './modules/clockroom-routes';
 import { registerDiningRoutes } from './modules/dining';
 import { registerTableRoutes } from './modules/tables';
 import { registerDining808Routes } from './modules/dining-808';

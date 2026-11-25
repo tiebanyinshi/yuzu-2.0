@@ -391,3 +391,42 @@ describe('后台「预约」规则（N4）', () => {
     expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/booking-rules', before)).status).toBe(200);
   });
 });
+
+describe('8.1.36：现场开单、现场入住让着已有的预订（对照领浴问题表：客房预定与前厅同步）', () => {
+  it('派对房一小时内有预订：现场开单拒绝（SPACE_BOOKED），确认占用的照开并记审计；客房房型今天的房都被预订了：现场入住拒绝（ROOM_TYPE_RESERVED），确认占用的照住', async () => {
+    const today = (await api(ctx.app, ctx.clerk, 'GET', '/api/auth/me')).body.today as string;
+    // 派对房：今天最早能约的时段（半小时一格，不会晚于一小时）
+    const s = await slots({ kind: 'space', date: today, spaceId, durationMinutes: 60 });
+    const soon = s.find((x) => x.free > 0 && Date.parse(x.startsAt) - Date.now() < 55 * 60_000);
+    if (soon) {
+      const b = await create({ kind: 'space', spaceId, startsAt: soon.startsAt, durationMinutes: 60, guests: 4 });
+      expect(b.status, JSON.stringify(b.body)).toBe(200);
+      const tag = await checkIn();
+      const refused = await api(ctx.app, ctx.clerk, 'POST', '/api/usages', { clientKey: randomUUID(), spaceId, tagCode: tag, guests: 2 });
+      expect(refused.body.error).toMatchObject({ code: 'SPACE_BOOKED', details: { bookingNo: b.body.bookingNo } });
+      const forced = await api(ctx.app, ctx.clerk, 'POST', '/api/usages', { clientKey: randomUUID(), spaceId, tagCode: tag, guests: 2, useReserved: true });
+      expect(forced.status, JSON.stringify(forced.body)).toBe(200);
+      const [audit] = await ctx.sql<{ detail: { usedReserved: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'usage_open' ORDER BY id DESC LIMIT 1`;
+      expect(audit!.detail.usedReserved).toBe(b.body.bookingNo);
+    }
+    // 客房：两间房、今天两张预订 → 现场入住拒绝
+    const room = await slots({ kind: 'room', date: today, roomTypeId });
+    expect(room[0]!.free).toBe(2);
+    // 预计到店时间：此刻之后的下一个半点（今天的默认到店时间可能已经过了）
+    const arrive = new Date(Math.ceil((Date.now() + 60_000) / 1_800_000) * 1_800_000).toISOString();
+    for (let i = 0; i < 2; i += 1) {
+      const r = await create({ kind: 'room', roomTypeId, startsAt: arrive });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+    }
+    const rooms = (await api(ctx.app, ctx.clerk, 'GET', '/api/rooms')).body.rooms as { id: number; roomNo: string }[];
+    const y801 = rooms.find((r) => r.roomNo === 'Y801')!.id;
+    const tag = await checkIn();
+    const body = { clientKey: randomUUID(), roomId: y801, tagCode: tag, guests: 1, expectedRate: 26800 };
+    const refused = await api(ctx.app, ctx.clerk, 'POST', '/api/rooms/checkin', body);
+    expect(refused.body.error).toMatchObject({ code: 'ROOM_TYPE_RESERVED' });
+    const forced = await api(ctx.app, ctx.clerk, 'POST', '/api/rooms/checkin', { ...body, clientKey: randomUUID(), useReserved: true });
+    expect(forced.status, JSON.stringify(forced.body)).toBe(200);
+    const [audit] = await ctx.sql<{ detail: { usedReserved: boolean } }[]>`SELECT detail FROM audit_logs WHERE action = 'room_checkin' ORDER BY id DESC LIMIT 1`;
+    expect(audit!.detail.usedReserved).toBe(true);
+  });
+});
