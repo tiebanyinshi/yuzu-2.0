@@ -489,7 +489,8 @@ export const MoveLinesInput = z.object({
  * 转单（v0.7.6）：挂错手牌时，把在店客人账单上的一条或几条有效明细转到另一位在店客人的手牌上。
  * 原明细作废（原因写明转到哪张手牌），目标账单新增一条同样的明细（来源、项目、名称、档位、单价、数量、技师不变，
  * 挂账人记办理的人），并记下转单记录。权限与作废明细相同（自己挂的、规定分钟内；其他由有「前台更正」的岗位）。
- * 房费（随入住单走）、餐饮的菜（有出品单）、钟房派的钟（有钟单）、门票不能转。
+ * 房费（随入住单走）、钟房派的钟（有钟单）、门票不能转。餐饮的菜 8.1.39 起能转（R11）：出品单跟着改指向新手牌的明细与来访，
+ * 厨房照常出、送到新手牌的客人；主菜带着它没退的加料一起转（加料不能单独转）。
  * 加锁：两位客人的来访（id 升序）→ 账单（id 升序）→ 明细（id 升序）
  */
 export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
@@ -537,10 +538,11 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
         sessionId: number | null;
         ticketTypeId: number | null;
         gender: 'male' | 'female' | null;
+        addonOf: number | null;
       }[]
     >`
       SELECT l.id, l.bill_id, l.source, l.item_id, l.tier, l.name, l.unit_price, l.quantity, l.amount, l.status, l.posted_by, l.posted_at,
-             l.technician_id, l.call_type, l.session_id, l.ticket_type_id, si.gender
+             l.technician_id, l.call_type, l.session_id, l.ticket_type_id, si.gender, l.addon_of
       FROM bill_lines l LEFT JOIN service_items si ON si.id = l.item_id
       WHERE l.id IN ${tx(lineIds)} ORDER BY l.id FOR UPDATE OF l`;
     if (lines.length !== lineIds.length || lines.some((l) => l.billId !== from.billId)) throw notFound('有明细不存在，请刷新后重试');
@@ -548,7 +550,8 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
     for (const l of lines) {
       if (l.status !== 'active') throw conflict('ALREADY_VOIDED', `「${l.name}」已作废，不能再转`);
       if (l.source === 'room') throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是房费，随入住单走，不能转`);
-      if (l.source === 'dining') throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是餐饮的菜（有出品单），不能转；请退菜后在正确的手牌上重新点`);
+      // 8.1.39（R11）：餐饮的菜能转；加料跟着主菜走
+      if (l.addonOf !== null && !lineIds.includes(l.addonOf)) throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是加料，请连同它的主菜一起转`);
       if (l.sessionId !== null) throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是钟房派的钟（有钟单），不能转；请在钟房处理`);
       if (l.ticketTypeId !== null) throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是门票，不能转`);
       if (l.gender && l.gender !== to.zone) {
@@ -556,19 +559,30 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
       }
       assertCanFix(ctx.actor, l.postedBy, l.postedAt, rules, at, `「${l.name}」`);
     }
+    // 主菜转了、它没退的加料没选的：一起选上（不然加料留在原手牌、挂着已经转走的主菜）
+    const left = await tx<{ name: string }[]>`
+      SELECT name FROM bill_lines WHERE addon_of IN ${tx(lineIds)} AND status = 'active' AND NOT (id IN ${tx(lineIds)}) LIMIT 1`;
+    if (left.length) throw unprocessable('LINE_NOT_MOVABLE', `主菜的加料「${left[0]!.name}」也要一起转，请一起选上`);
     const date = await businessDate(tx, deps, at);
     const [fromTag] = await tx<{ code: string }[]>`SELECT code FROM hand_tags WHERE id = ${from.tagId}`;
     const voidReason = `转到手牌 ${input.toTagCode}：${input.reason}`;
+    // 出品单跟着走（迁移 312 只在这个事务里放开改指向）；主菜在前（id 升序），加料挂到转过去的主菜上
+    if (lines.some((l) => l.source === 'dining')) await tx`SELECT set_config('yuzu.kitchen_transfer', 'on', true)`;
+    const movedTo = new Map<number, number>();
     const total = lines.reduce((t, l) => t + l.amount, 0);
     for (const l of lines) {
       await tx`
         UPDATE bill_lines SET status = 'voided', void_reason = ${voidReason}, voided_by = ${ctx.actor.id}, voided_at = ${at} WHERE id = ${l.id}`;
       const [row] = await tx<{ id: number }[]>`
         INSERT INTO bill_lines (bill_id, source, item_id, tier, name, unit_price, quantity, amount, post_key, business_date, posted_by, posted_at,
-                                technician_id, call_type)
+                                technician_id, call_type, addon_of)
         VALUES (${to.billId}, ${l.source}, ${l.itemId}, ${l.tier}, ${l.name}, ${l.unitPrice}, ${l.quantity}, ${l.amount}, ${key}, ${date},
-                ${ctx.actor.id}, ${at}, ${l.technicianId}, ${l.callType})
+                ${ctx.actor.id}, ${at}, ${l.technicianId}, ${l.callType}, ${l.addonOf === null ? null : (movedTo.get(l.addonOf) ?? null)})
         RETURNING id`;
+      movedTo.set(l.id, row!.id);
+      if (l.source === 'dining') {
+        await tx`UPDATE kitchen_items SET bill_line_id = ${row!.id}, visit_id = ${to.id} WHERE bill_line_id = ${l.id}`;
+      }
       await tx`
         INSERT INTO bill_line_moves (op_key, from_line_id, to_line_id, from_visit_id, to_visit_id, reason, operator_id, business_date, created_at)
         VALUES (${key}, ${l.id}, ${row!.id}, ${from.id}, ${to.id}, ${input.reason}, ${ctx.actor.id}, ${date}, ${at})`;

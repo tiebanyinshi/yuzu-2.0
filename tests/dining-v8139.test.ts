@@ -203,3 +203,29 @@ describe('包房转挂账（R9）', () => {
     expect((await api(ctx.app, ctx.clerk, 'GET', '/api/dining/tables/parked')).body.parked.map((p: { id: number }) => p.id)).toEqual([s]);
   });
 });
+
+describe('消费转手牌（R11）', () => {
+  it('餐饮的菜转到另一张手牌：出品单跟着走；之后厨房屏写新手牌；加料不能单独转', async () => {
+    const a = await checkin();
+    const b = await checkin();
+    expect((await wristOrder(a, [{ itemId: item['宫保鸡丁'], quantity: 2 }], 9600)).status).toBe(200);
+    const visitA = (await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/visits/${a}`)).body;
+    const line = visitA.lines.find((l: { name: string; status: string }) => l.name === '宫保鸡丁' && l.status === 'active');
+    const tagB = (await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/visits/${b}`)).body.tag.code;
+    const moved = await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/lines/move', { clientKey: randomUUID(), lineIds: [line.id], toTagCode: tagB, reason: '挂错手牌了' });
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    const visitB = (await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/visits/${b}`)).body;
+    const newLine = visitB.lines.find((l: { name: string }) => l.name === '宫保鸡丁');
+    expect(newLine).toMatchObject({ amount: 9600, status: 'active' });
+    const [k] = await ctx.sql<{ billLineId: number; visitId: number; status: string }[]>`SELECT bill_line_id, visit_id, status FROM kitchen_items WHERE bill_line_id = ${newLine.id}`;
+    expect(k).toMatchObject({ visitId: b });
+    expect(k!.status).not.toBe('cancelled');
+    // 原手牌的那一行作废、写明转到哪
+    const after = (await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/visits/${a}`)).body.lines.find((l: { id: number }) => l.id === line.id);
+    expect(after.status).toBe('voided');
+    expect(after.voidReason).toContain(`转到手牌 ${tagB}`);
+    // 厨房屏：这道菜现在是 B 手牌的
+    const kitchen = (await api(ctx.app, ctx.clerk, 'GET', '/api/kitchen')).body.items as { billLineId?: number; tagCode: string | null; name: string }[];
+    expect(kitchen.filter((x) => x.name === '宫保鸡丁').map((x) => x.tagCode)).toContain(tagB);
+  });
+});
