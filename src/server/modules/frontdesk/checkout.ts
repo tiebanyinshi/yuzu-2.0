@@ -157,7 +157,8 @@ export const CheckoutInput = z.object({
    * 还没上钟的钟单（8.1.36）：结账核对里列出来、收银员勾了「客人确实做完了」的钟单号。结账时还有没上钟的钟单、又不在这里的拒绝
    * ——以前直接按已做完记账、照常收钱、算技师钟数，客人没做的项目也收了
    */
-  confirmUnstarted: z.array(z.string().trim().min(1).max(32)).max(50).default([]),
+  // 不带时不补默认值：操作编号的摘要按解析后的请求算，补了空数组会让升级前发出、回复丢了的同一笔重提对不上（Codex 审查 f260ca3）
+  confirmUnstarted: z.array(z.string().trim().min(1).max(32)).max(50).optional(),
 });
 export type CheckoutInputData = z.input<typeof CheckoutInput>;
 
@@ -611,7 +612,7 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
           FROM technician_sessions s JOIN technicians t ON t.id = s.technician_id JOIN visits v ON v.id = s.visit_id JOIN hand_tags h ON h.id = v.tag_id
           WHERE s.id IN ${tx(waitingIds)} ORDER BY s.id`
       : [];
-    const unconfirmed = unstarted.filter((u) => !input.confirmUnstarted.includes(u.sessionNo));
+    const unconfirmed = unstarted.filter((u) => !(input.confirmUnstarted ?? []).includes(u.sessionNo));
     if (unconfirmed.length) {
       throw conflict(
         'SESSIONS_NOT_STARTED',

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { settledTechnicianLines, withCommission } from '../src/server/modules/commission';
 import { createStaff } from '../src/server/modules/staff';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
+import { CheckoutInput } from '../src/server/modules/frontdesk/checkout';
 
 let ctx: TestContext;
 let boss: string;
@@ -238,6 +239,8 @@ describe('派钟、上钟、加钟、下钟', () => {
       payments: [{ method: 'cash', amount: preview.totalAmount }],
     });
     expect(refused.status).toBe(409);
+    // 不带确认的请求解析后也不带这一项：升级前发出、回复丢了的同一笔重提，操作编号的摘要照旧对得上（Codex 审查 f260ca3）
+    expect('confirmUnstarted' in CheckoutInput.parse({ clientKey: randomUUID(), visitIds: [v], expectedTotal: 0 })).toBe(false);
     expect(refused.body.error).toMatchObject({ code: 'SESSIONS_NOT_STARTED', details: { sessionNos: [preview.sessions[1].sessionNo] } });
     // 结账：在钟上的按结账时刻下钟，还没上钟的（收银员确认做完了）按已做完记（实际 0 分钟）；两位技师都空出来
     const paid = await pay(v, [preview.sessions[1].sessionNo]);
