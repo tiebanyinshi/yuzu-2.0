@@ -34,7 +34,7 @@ import {
   type CouponPlatform,
 } from '@shared/checkout';
 import { rateText } from '@shared/benefits';
-import { COUPON_ISSUE_KIND_LABELS, type CouponIssueKind } from '@shared/coupons';
+import { COUPON_ISSUE_KIND_LABELS, formatStoreCouponCode, type CouponIssueKind } from '@shared/coupons';
 import { describeHours, PAYMENT_METHODS } from '@shared/labels';
 import { formatYuan } from '@shared/money';
 import { can } from '@shared/permissions';
