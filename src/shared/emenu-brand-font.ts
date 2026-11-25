@@ -8,6 +8,9 @@ export interface BrandFontStatus {
   state: 'active' | 'missing' | 'trial' | 'invalid';
   /** 在用的那个文件 */
   file: string | null;
+  /** 从哪来（店主 2026-11-24）：Design 素材库的用途设了就是 library（libraryName 写素材名与第几版），不然读服务器 brand-fonts 目录 */
+  source?: 'library' | 'directory';
+  libraryName?: string;
   /** 目录里找到的候选文件 */
   files: { name: string; size: number; updatedAt: string; problem: 'invalid' | 'trial' | 'too_large' | null }[];
 }

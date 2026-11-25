@@ -72,7 +72,7 @@ describe('后台的一级分组', () => {
     ]);
     expect(of('erp')).toEqual(['stores', 'integrations', 'opening', 'audit']);
     expect(of('wcp')).toEqual(['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'permissions', 'canteen', 'patrol']);
-    expect(of('design')).toEqual(['design', 'studio', 'guide']);
+    expect(of('design')).toEqual(['design', 'library', 'studio', 'guide']);
     expect(boardOfSection('guide')).toBe('design');
     expect(adminSectionOfPath('/admin')).toBe('home');
     expect(adminSectionOfPath('/admin/rules/shift')).toBe('rules');

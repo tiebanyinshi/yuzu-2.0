@@ -4,6 +4,7 @@
 // 一个页面取到一次就记住；没取到的 10 分钟内不再取（页面开着时门店放上文件，刷新一下页面就用上）。
 
 import { useEffect, useState } from 'react';
+import { useDesignSlotVersion } from '../../lib/design';
 
 export const BRAND_EN_FAMILY = 'Tangqi Brand En';
 /**
@@ -20,41 +21,79 @@ const RETRY_MS = 10 * 60_000;
 let loaded = false;
 let pending: Promise<boolean> | null = null;
 let failedAt = 0;
+/**
+ * 现在加载的是哪一份（Design 素材库「平板菜单 · 英文品牌字体」用途的版本编号；没设时是 dir＝服务器 brand-fonts 目录）。
+ * 设计师在别的电脑换了或清掉用途（Codex 审查）：版本一变就把注册过的两个字体名拿掉、按新的一份重新取，平板不用整页刷新
+ */
+let currentKey = 'dir';
+let loadedKey: string | null = null;
+let faces: FontFace[] = [];
+const listeners = new Set<(ok: boolean) => void>();
 
-export function loadBrandFont(): Promise<boolean> {
-  if (loaded) return Promise.resolve(true);
-  if (pending) return pending;
+function unloadFaces() {
+  for (const f of faces) document.fonts.delete(f);
+  faces = [];
+  loaded = false;
+  loadedKey = null;
+}
+
+/** 取（或换成）key 那一份；不给 key 用最近一次定下来的 */
+export function loadBrandFont(key: string = currentKey): Promise<boolean> {
+  currentKey = key;
+  if (loaded && loadedKey === key) return Promise.resolve(true);
+  if (pending) return pending.then(() => (currentKey === key && loadedKey === key ? loaded : loadBrandFont(currentKey)));
+  if (loadedKey !== key && typeof document !== 'undefined' && document.fonts) {
+    if (faces.length) unloadFaces();
+    failedAt = 0;
+  }
   if (failedAt && Date.now() - failedAt < RETRY_MS) return Promise.resolve(false);
   if (typeof FontFace === 'undefined' || typeof document === 'undefined' || !document.fonts) return Promise.resolve(false);
   pending = (async () => {
+    // 地址带上版本：换了一份，浏览器不拿缓存里旧的那份
+    const source = key === 'dir' ? SOURCE : `url(/api/emenu/fonts/brand-en?v=${encodeURIComponent(key)})`;
     try {
-      const face = new FontFace(BRAND_EN_FAMILY, SOURCE, { display: 'swap' });
-      const latin = new FontFace(BRAND_LATIN_FAMILY, SOURCE, { display: 'swap', unicodeRange: LATIN_RANGE });
+      const face = new FontFace(BRAND_EN_FAMILY, source, { display: 'swap' });
+      const latin = new FontFace(BRAND_LATIN_FAMILY, source, { display: 'swap', unicodeRange: LATIN_RANGE });
       await Promise.all([face.load(), latin.load()]);
       document.fonts.add(face);
       document.fonts.add(latin);
+      faces = [face, latin];
       loaded = true;
+      loadedKey = key;
     } catch {
       failedAt = Date.now();
+      loadedKey = key;
     }
     pending = null;
+    for (const l of listeners) l(loaded);
     return loaded;
   })();
   return pending;
 }
 
-/** 这个页面用不用得上授权的英文字体（取到了才是 true） */
+/** 字体取到 / 换了 / 拿掉时叫一下（量字宽的地方重新量）；返回取消订阅 */
+export function onBrandFontChange(cb: (ok: boolean) => void): () => void {
+  listeners.add(cb);
+  return () => {
+    listeners.delete(cb);
+  };
+}
+
+/** 这个页面用不用得上授权的英文字体（取到了才是 true）；跟着素材库用途的版本换 */
 export function useBrandFont(): boolean {
+  const version = useDesignSlotVersion('emenu.font.en');
   const [ok, setOk] = useState(loaded);
+  useEffect(() => onBrandFontChange(setOk), []);
   useEffect(() => {
+    if (version === undefined) return; // 还没取到「现在用的」：等一下再定取哪一份
     let live = true;
-    void loadBrandFont().then((v) => {
+    void loadBrandFont(version === null ? 'dir' : String(version)).then((v) => {
       if (live) setOk(v);
     });
     return () => {
       live = false;
     };
-  }, []);
+  }, [version]);
   return ok;
 }
 

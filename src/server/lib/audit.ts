@@ -312,6 +312,11 @@ export type AuditAction =
   | 'studio_pack_import'
   // 采购商城（8.1.32）：SKU 的新建、修改、提交、审核、停用、改动（detail.action 写是哪一样）
   | 'mall_sku'
+  // Design 素材库（店主 2026-11-24，docs/BOARDS.md 第 4 节）
+  | 'design_asset_upload'
+  | 'design_asset_edit'
+  | 'design_asset_archive'
+  | 'design_slot_assign'
   // 8.1.9 零采备用金：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）
   | 'pool_use'
   // 8.1.9 库管入库台账导入

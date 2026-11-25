@@ -55,7 +55,7 @@ describe('挪到后台的三个模块', () => {
     expect(staff.items).toEqual(['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'permissions', 'canteen', 'patrol']);
     expect(ADMIN_SECTION_MODULES).toEqual({ canteen: 'canteen', patrol: 'patrol' });
     // 8.1.1：设计师只有「工作台：编辑 / 发布」，也要进得了后台的「工作台」；OA-01：只有「组织架构与员工档案」的（人力行政部负责人）也进得了「组织架构」；OA-12：只有办公审批两项权限的也进得了「办公审批」
-    expect(ADMIN_STANDALONE_SECTIONS).toEqual(['dashboard', 'canteen', 'patrol', 'design', 'studio', 'staff', 'org', 'attendance', 'oaApprovals', 'payroll']);
+    expect(ADMIN_STANDALONE_SECTIONS).toEqual(['dashboard', 'canteen', 'patrol', 'design', 'library', 'studio', 'staff', 'org', 'attendance', 'oaApprovals', 'payroll']);
     for (const p of ['canteen.manage', 'patrol.read', 'patrol.manage', 'erp.revenue', 'hr.org', 'hr.attendance', 'oa.templates', 'oa.all', 'payroll.manage'] as Permission[])
       expect(ADMIN_ENTRY_PERMISSIONS, p).toContain(p);
     // 权限没变：还是原来那几项

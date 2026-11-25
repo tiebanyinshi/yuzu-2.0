@@ -14,6 +14,7 @@ import { InstanceBadge } from '../../components/InstanceTag';
 import { StoreSwitcher } from '../../components/StoreSwitcher';
 import { UserMenu } from '../../components/UserMenu';
 import { useStoreNavItems } from '../../components/storeNav';
+import { useDesignSlot } from '../../lib/design';
 import { homeIsEmenu } from '../../lib/landing';
 import { useCan, useSession } from '../../lib/session';
 import { cn } from '../../lib/utils';
@@ -67,6 +68,7 @@ export function PortalPage() {
   const can = useCan();
   const boards = usePortalBoards();
   const { search, hash } = useLocation();
+  const banner = useDesignSlot('portal.banner');
   // 点餐平板账号（8.0.10）只开点餐页：不经过门户
   if (homeIsEmenu(can)) return <Navigate to="/emenu" replace />;
   // CRM 搬到 /crm 以前发出去的首页链接（/?m=会员、/?resume=……）：带着参数进 CRM 首页（店主 2026-11-24，docs/BOARDS.md 第 8 节）
@@ -76,6 +78,10 @@ export function PortalPage() {
     <div className="flex min-h-dvh flex-col bg-paper" data-testid="portal">
       <PortalTopBar />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8 sm:px-6 md:justify-center md:py-12">
+        {banner && (
+          // 素材库「门户页 · 顶部横幅」（Design → 素材库里切换）；没设时不显示
+          <img src={banner} alt="" className="mb-6 aspect-[4/1] w-full rounded-2xl object-cover shadow-card" data-testid="portal-banner" />
+        )}
         <section className="mb-7 md:mb-10" data-testid="portal-welcome">
           <p className="text-[13px] font-semibold tracking-wide text-yuzu-deep">{session.storeName}</p>
           <h1 className="mt-1 text-[24px] font-bold tracking-tight text-ink md:text-[30px]">

@@ -224,6 +224,8 @@ export async function priceLinks(db: Db | Tx): Promise<PriceLink[]> {
 
 /** 取消对接：门店原有的收银项目不再归到价目表的分类（价目表新建的照旧留着，以后重新对上它） */
 async function clearCatalogCategory(tx: Tx, itemId: number) {
+  // 收银项目上的分类是本店（编号 1）价目表写的：第二家店取消对接不动它（同 materializeCatalog）
+  if (currentStoreId() !== DEFAULT_STORE_ID) return;
   await tx`
     UPDATE service_items SET catalog_key = NULL, catalog_category_code = NULL, catalog_category_name = NULL, catalog_group = NULL, catalog_sort = NULL, catalog_code = NULL, updated_at = clock_timestamp()
     WHERE id = ${itemId} AND NOT catalog_managed`;

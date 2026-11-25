@@ -8,6 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowUpDown, Cigarette, ConciergeBell, DoorOpen, Footprints, Maximize2, MonitorPlay, Shirt, Toilet, UtensilsCrossed, X } from 'lucide-react';
 import { GUIDE_KIND_EN, GUIDE_KIND_LABELS, GUIDE_MARKER_LABELS, type GuideData, type GuideFloor, type GuideMarker, type GuideMarkerKind, type GuideZone } from '@shared/guide';
 import { api } from '../../lib/api';
+import { useDesignSlot } from '../../lib/design';
 import { cn } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { EmptyState } from '../../components/EmptyState';
@@ -188,6 +189,8 @@ export function GuideLegend({ zones, markers, big = false }: { zones: GuideZone[
 /** 大屏模式：全屏、隐藏导航与操作，按设定的秒数自动轮播楼层；Esc 退出，← → 手动换层 */
 export function GuideScreenPage() {
   const guide = useGuide();
+  // 素材库「门店大屏 · 待机视频」：还没有在用的底图时循环播放（静音）
+  const idleVideo = useDesignSlot('guide.screen.video');
   const navigate = useNavigate();
   const d = guide.data;
   const floors = useMemo(() => sortFloors(d?.floors ?? []), [d]);
@@ -255,7 +258,11 @@ export function GuideScreenPage() {
         {!d ? (
           <Skeleton className="h-full" />
         ) : !floor ? (
-          <div className="flex h-full items-center justify-center text-[22px] text-ink-3">还没有在用的底图</div>
+          idleVideo ? (
+            <video src={idleVideo} autoPlay muted loop playsInline className="h-full w-full rounded-2xl bg-black object-contain" data-testid="guide-screen-video" />
+          ) : (
+            <div className="flex h-full items-center justify-center text-[22px] text-ink-3">还没有在用的底图</div>
+          )
         ) : (
           <div className="h-full rounded-2xl bg-white p-3 shadow-card sm:p-6">
             <GuideMap key={floor.code} big floor={floor} zones={d.zones.filter((z) => z.floorCode === floor.code)} markers={d.markers.filter((m) => m.floorCode === floor.code)} />

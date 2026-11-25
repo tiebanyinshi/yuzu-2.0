@@ -1033,6 +1033,41 @@ test.describe('8.0.10 点餐系统 · 平板电子菜单', () => {
     expect(writes).toEqual([]);
   });
 
+  test('8.1.33 素材库换了平板英文字体：开着的菜单一分钟内换成新的一份；清掉用途就回到目录里的（没有就用顶替字体），不用整页刷新（合成菜单，只读）', async ({ page }, info) => {
+    test.skip(info.project.name !== '门店电脑', '与屏幕尺寸无关，只跑一次');
+    const writes = await mockEmenu(page, () => syntheticMenu());
+    await page.clock.install();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await loginStaff(page, 'linlan');
+    await clearEmenuStorage(page);
+    const woff2 = readFileSync(fileURLToPath(new URL('../node_modules/@fontsource/average-sans/files/average-sans-latin-400-normal.woff2', import.meta.url)));
+    let version: number | null = 9001;
+    await page.route('**/api/design/current', (route) => route.fulfill({ json: { 'emenu.font.en': version, 'portal.banner': null, 'guide.screen.video': null } }));
+    const asked: string[] = [];
+    // 两个字体名（英文、拉丁）用同一个地址，各取一次：按先后去掉相邻重复的再比
+    const order = () => asked.filter((v, i) => v !== asked[i - 1]);
+    await page.route('**/api/emenu/fonts/brand-en**', (route) => {
+      const v = new URL(route.request().url()).searchParams.get('v');
+      asked.push(v ?? 'dir');
+      // 目录里没放：404；素材库的：给字体
+      return v ? route.fulfill({ status: 200, contentType: 'font/woff2', body: woff2 }) : route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: '没放' } } });
+    });
+    await page.goto('/emenu');
+    await expect(page.getByTestId('emenu')).toHaveAttribute('data-brand-en', '');
+    expect(order()).toEqual(['9001']);
+    // 设计师在别处清掉用途：一分钟内回到目录里的（没放，用顶替字体）
+    version = null;
+    await page.clock.fastForward(61_000);
+    await expect(page.getByTestId('emenu')).not.toHaveAttribute('data-brand-en');
+    expect(await page.evaluate(() => document.fonts.check('16px "Tangqi Brand En"') && [...document.fonts].some((f) => f.family.includes('Tangqi Brand En')))).toBe(false);
+    // 又换上另一份：取新的一份
+    version = 9002;
+    await page.clock.fastForward(61_000);
+    await expect(page.getByTestId('emenu')).toHaveAttribute('data-brand-en', '');
+    expect(order()).toEqual(['9001', 'dir', '9002']);
+    expect(writes).toEqual([]);
+  });
+
   test('8.0.13 键盘与动效：正在输入时窗口变矮页面不缩放、结果列表在键盘上面；拖动翻页与回弹；关掉详情留一个退场的影子（合成菜单，只读）', async ({ page }, info) => {
     test.skip(info.project.name !== '门店电脑', '要改窗口大小、拖动鼠标，只在门店电脑这一组跑一次');
     const menu = syntheticMenu();

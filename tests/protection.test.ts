@@ -1,5 +1,6 @@
 // 8.1.3 服务端防护（docs/RESILIENCE_V813.md 第 3.5 节，WL8–WL11）：/api/ping、过载保护、频率限制、访问网段、
 // 死锁与串行化冲突当「系统忙」、页面报错接口。防护的拒绝都发生在处理之前，页面据此原样自动重发。
+import { Readable } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/server/app';
@@ -91,6 +92,34 @@ describe('过载保护（WL8）', () => {
     for (let i = 0; i < 10; i++) expect((await app.inject({ method: 'GET', url: '/api/test/boom', headers: { cookie: owner } })).statusCode).toBe(500);
     for (let i = 0; i < 5; i++) expect((await app.inject({ method: 'GET', url: '/api/members?q=x', headers: { cookie: 'yuzu_sid=bad' } })).statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/api/auth/me', headers: { cookie: owner } })).statusCode).toBe(200);
+  });
+
+  it('边读边送的回应送到一半被取消：名额照样放掉（Codex 安全审查；上限 2，取消 6 次以后照常能用）', async () => {
+    const app = await appWith({ maxInFlight: 2 });
+    // 送出第一段以后就不再送（像很大的视频）：只能由对方取消结束
+    app.get('/api/test/stream', async (_req, reply) => {
+      const body = new Readable({ read() {} });
+      body.push(Buffer.alloc(64 * 1024, 1));
+      return reply.header('content-type', 'application/octet-stream').send(body);
+    });
+    const owner = await login(app, 'owner');
+    const address = await app.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      for (let i = 0; i < 6; i += 1) {
+        const ctrl = new AbortController();
+        const res = await fetch(`${address}/api/test/stream`, { headers: { cookie: owner }, signal: ctrl.signal });
+        expect(res.status).toBe(200);
+        const reader = res.body!.getReader();
+        await reader.read();
+        ctrl.abort();
+        await reader.cancel().catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const after = await fetch(`${address}/api/auth/me`, { headers: { cookie: owner } });
+      expect(after.status).toBe(200);
+    } finally {
+      app.server.closeAllConnections();
+    }
   });
 });
 
