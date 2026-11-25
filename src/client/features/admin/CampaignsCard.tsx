@@ -382,10 +382,14 @@ function CampaignDialog({ open, onClose, onDone }: { open: boolean; onClose: () 
               <span className="mt-1 block" data-testid="campaign-preview-estimate">
                 试算：发 {preview.estimate.coupons} 张，
                 {preview.estimate.maxTotal === null
-                  ? `每张最多抵多少不封顶（${preview.estimate.uncappedWhy ?? '没有上限'}）`
+                  ? `每张最多抵多少不封顶（${preview.estimate.uncappedWhy ?? '没有上限'}）${
+                      preview.estimate.referencePerCoupon !== undefined
+                        ? `，按现在价目最贵的一份约 ${formatYuan(preview.estimate.referencePerCoupon)}、一共约 ${formatYuan(preview.estimate.referencePerCoupon * preview.estimate.coupons)}`
+                        : ''
+                    }`
                   : `每张最多抵 ${formatYuan(preview.estimate.perCoupon ?? 0)}，一共最多抵 ${formatYuan(preview.estimate.maxTotal)}`}
                 {preview.estimate.useRate !== null
-                  ? `；这个券以前的核销率 ${(preview.estimate.useRate * 100).toFixed(1)}%${preview.estimate.expectedCost !== null ? `，估计成本约 ${formatYuan(preview.estimate.expectedCost)}` : ''}`
+                  ? `；这个券以前的核销率 ${(preview.estimate.useRate * 100).toFixed(1)}%${preview.estimate.expectedCost !== null ? `，估计成本约 ${formatYuan(preview.estimate.expectedCost)}${preview.estimate.maxTotal === null ? '（按参考价）' : ''}` : ''}`
                   : '；这个券还没发过，没有核销率可参考'}
                 。
               </span>

@@ -117,30 +117,29 @@ export async function previewCampaign(deps: Pick<Deps, 'sql' | 'config'>, raw: u
 
 /**
  * 发券试算（8.1.40）：每张最多抵多少 × 张数；按这个券以前的核销率估成本（只读）。
- * 每张最多抵多少是上限（合并前 Codex 审查 8a7023d）：兑换、买一赠一按那个项目**最贵的一档**价（结账时抵的是账单上单价最高的那一份，
- * 不止默认档；门店改过价的也算进去，券限了门店的只看那几家）；兑换门票没设「最多抵」就不封顶（门票按在店时长累计）；现场定价（时价、称重）的项目没有定价，没设「最多抵」就是不封顶。
+ * 「每张最多抵」只写真的上限：代金券是面额，折扣券、兑换、买一赠一是「最多减 / 最多抵」。
+ * 兑换、买一赠一没设「最多抵」时没有上限——结账时抵的是账单上那一份的实际价，规格档、门店价、做法加价、套餐换菜、门票按时长累计都会让它比价目高
+ * （合并前 Codex 审查几轮里一样一样找出来的）；这时另给一个参考：按现在价目最贵的一份估（referencePerCoupon），页面写明「约」。
  */
 async function estimateOf(db: Db, t: LockedTemplate, coupons: number): Promise<NonNullable<CampaignPreview['estimate']>> {
   let perCoupon: number | null = null;
+  let referencePerCoupon: number | null = null;
   let uncappedWhy: string | undefined;
-  const capped = (price: number | null, why: string) => {
-    if (price !== null) return t.maxOff === null ? price : Math.min(price, Number(t.maxOff));
-    if (t.maxOff !== null) return Number(t.maxOff);
-    uncappedWhy = why;
-    return null;
-  };
   if (t.kind === 'cash') perCoupon = t.faceValue === null ? null : Number(t.faceValue);
   else if (t.kind === 'discount') {
     perCoupon = t.maxOff === null ? null : Number(t.maxOff);
     if (perCoupon === null) uncappedWhy = '折扣券没设「最多减」';
-  } else if (t.kind === 'exchange' && t.exchangeItemId === null && t.exchangeTicketTypeId !== null) {
-    // 门票按在店时长累计（12 小时一档往上加，超过 24 小时还会加），结账时整张门票是一份：没有「最多抵」就没有上限（合并前 Codex 审查 c79ca75）
-    perCoupon = capped(null, '兑换门票按在店时长累计，没设「最多抵」');
+  } else if (t.maxOff !== null) perCoupon = Number(t.maxOff);
+  else if (t.exchangeItemId === null && t.exchangeTicketTypeId !== null) {
+    uncappedWhy = '兑换门票按在店时长累计，没设「最多抵」';
+    const [tt] = await db<{ price: number }[]>`SELECT price_24h AS price FROM ticket_types WHERE id = ${t.exchangeTicketTypeId}`;
+    referencePerCoupon = tt ? Number(tt.price) : null;
   } else {
+    uncappedWhy = '兑换按账单上那一份的实际价（规格、门店价、做法加价都会让它更高），没设「最多抵」';
     const itemId = t.exchangeItemId ?? t.buyItemId;
+    // 参考：公司价各档、各店自己的价里最贵的（券限了门店的只看那几家）；现场定价（时价、称重）的没有参考价
     const [p] = itemId
-      ? await db<{ price: number | null; onSite: boolean }[]>`
-          -- 公司价各档、各店自己的价（8.1.40 合并前 Codex 审查 1a89c41：门店改过价的按门店价抵）里最贵的；券限了门店的只看那几家
+      ? await db<{ price: number; onSite: boolean }[]>`
           SELECT greatest(i.price,
                           coalesce((SELECT max(sp.price) FROM service_item_prices sp WHERE sp.item_id = i.id), 0),
                           coalesce((SELECT max(ssp.price) FROM service_item_store_prices ssp
@@ -148,13 +147,23 @@ async function estimateOf(db: Db, t: LockedTemplate, coupons: number): Promise<N
                  i.price_mode <> 'fixed' AS on_site
           FROM service_items i WHERE i.id = ${itemId}`
       : [];
-    perCoupon = capped(p && !p.onSite ? Number(p.price) : null, p?.onSite ? '兑换的项目是现场定价（时价、称重），没设「最多抵」' : '兑换的项目找不到');
+    referencePerCoupon = p && !p.onSite ? Number(p.price) : null;
   }
   const [h] = await db<{ issued: number; used: number }[]>`
     SELECT count(*)::int AS issued, count(*) FILTER (WHERE status = 'used')::int AS used FROM coupons WHERE template_id = ${t.id}`;
   const useRate = h && h.issued > 0 ? Math.round((h.used / h.issued) * 1000) / 1000 : null;
   const maxTotal = perCoupon === null ? null : perCoupon * coupons;
-  return { perCoupon, coupons, maxTotal, useRate, expectedCost: maxTotal === null || useRate === null ? null : Math.round(maxTotal * useRate), ...(uncappedWhy ? { uncappedWhy } : {}) };
+  // 估成本：有上限按上限，没有按参考价（页面写「约」）
+  const basis = maxTotal ?? (referencePerCoupon === null ? null : referencePerCoupon * coupons);
+  return {
+    perCoupon,
+    coupons,
+    maxTotal,
+    useRate,
+    expectedCost: basis === null || useRate === null ? null : Math.round(basis * useRate),
+    ...(uncappedWhy ? { uncappedWhy } : {}),
+    ...(referencePerCoupon !== null ? { referencePerCoupon } : {}),
+  };
 }
 
 /** 只读读模板（预览用，不加锁） */

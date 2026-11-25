@@ -3,7 +3,7 @@
 //   · 发放台账：每张券谁发的、几点、怎么发的（手动、批量、开卡、升级、生日、充值、权益、小程序领取、批量发券、签赠），充值发的带充值单号；
 //   · 核销情况：用了没有、几点用的、哪张结账单、抵了多少；作废的写原因；
 //   · 发放时长：从发出到用掉（或到现在）过了多久；
-//   · 按发放日期、模板、怎么发的、状态、券号 / 会员筛，最多一次 2000 条；能导出 CSV（导出记审计）。
+//   · 按发放的营业日、模板、怎么发的、状态、券号 / 会员筛，最多一次 2000 条；能导出 CSV（导出记审计）。
 // 只读，不加锁；只看当前门店能看的（券是全公司的，按发券的门店不分：与券的统计同一口径）。
 
 import type { FastifyInstance } from 'fastify';
@@ -44,7 +44,8 @@ export async function couponLedger(db: Db, raw: unknown, limit = COUPON_LEDGER_M
     LEFT JOIN recharges r ON r.id = ci.recharge_id LEFT JOIN checkouts ck ON ck.id = c.checkout_id
     LEFT JOIN LATERAL (SELECT e.at, e.amount FROM coupon_events e WHERE e.coupon_id = c.id AND e.kind = 'use' ORDER BY e.id DESC LIMIT 1) u ON c.status = 'used'
     LEFT JOIN LATERAL (SELECT e.at, e.reason FROM coupon_events e WHERE e.coupon_id = c.id AND e.kind = 'void' ORDER BY e.id DESC LIMIT 1) vo ON c.status = 'voided'
-    WHERE ci.issued_at >= ${q.from}::date AND ci.issued_at < ${q.to}::date + 1
+    -- 按发券的营业日筛（与券的统计、页面默认的「今天」同一口径；合并前 Codex 审查 28fdb50：凌晨营业日还没切时刚发的券要在今天里）
+    WHERE ci.business_date BETWEEN ${q.from}::date AND ${q.to}::date
       ${q.kind ? db`AND ci.kind = ${q.kind}` : db``}
       ${q.templateId ? db`AND c.template_id = ${q.templateId}` : db``}
       ${q.status ? db`AND c.status = ${q.status}` : db``}

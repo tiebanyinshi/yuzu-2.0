@@ -30,11 +30,19 @@ export interface CampaignPreview {
   validTo: string | null;
   tooMany: boolean;
   /**
-   * 发券试算（8.1.40）：每张券最多抵多少（代金券是面额；折扣券有「最多减」才有、没有为空；兑换、买一赠一按那个项目最贵一档的价、
-   * 兑换票种按 24 小时档的价，不超过「最多抵」）；按圈到的、档级符合的人数 × 每人张数算一共最多抵多少；这个券以前发出去的核销率（没发过为空）、按它估的成本。
+   * 发券试算（8.1.40）：每张券最多抵多少（代金券是面额；折扣券、兑换、买一赠一是「最多减 / 最多抵」，没设为空，兑换类另给参考价）；按圈到的、档级符合的人数 × 每人张数算一共最多抵多少；这个券以前发出去的核销率（没发过为空）、按它估的成本。
    * 每张没有上限时 uncappedWhy 写为什么（折扣券没设「最多减」、现场定价的项目……）
    */
-  estimate?: { perCoupon: number | null; coupons: number; maxTotal: number | null; useRate: number | null; expectedCost: number | null; uncappedWhy?: string };
+  estimate?: {
+    perCoupon: number | null;
+    coupons: number;
+    maxTotal: number | null;
+    useRate: number | null;
+    expectedCost: number | null;
+    uncappedWhy?: string;
+    /** 兑换、买一赠一没设「最多抵」：没有上限，按现在价目最贵的一份给个参考（不是上限） */
+    referencePerCoupon?: number;
+  };
 }
 
 export type CampaignStatus = 'issuing' | 'done';

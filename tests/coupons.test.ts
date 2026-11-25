@@ -641,34 +641,35 @@ describe('8.1.40 券的使用限制、发放台账、结账单印券号', () => 
   });
 });
 
-describe('8.1.40 发券试算的上限（合并前 Codex 审查 8a7023d）', () => {
+describe('8.1.40 发券试算的上限（合并前 Codex 审查 8a7023d 起几轮）', () => {
   const estimateOf = async (templateId: number) => {
     const r = await api(ctx.app, ctx.owner, 'POST', '/api/coupons/campaigns/preview', { templateId, audience: {} });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    return r.body.estimate as { perCoupon: number | null; uncappedWhy?: string };
+    return r.body.estimate as { perCoupon: number | null; uncappedWhy?: string; referencePerCoupon?: number };
   };
-  it('兑换项目按最贵的一档价算（结账时抵账单上单价最高的那一份）；兑换门票没设最多抵不封顶；折扣券没设最多减写明原因', async () => {
+  it('只写真的上限：兑换没设最多抵的不封顶，另给按价目最贵一份的参考（各档、门店价都算，券限门店的只看那几家）；门票、折扣券写明原因', async () => {
     // 券果盘：默认档 ¥38，另加一档 ¥58
     await ctx.sql`INSERT INTO service_item_prices (item_id, tier, price) VALUES (${item['券果盘']!}, 'premium', 5800) ON CONFLICT (item_id, tier) DO UPDATE SET price = 5800`;
     const exchange = await template({ name: '果盘兑换券（试算）', kind: 'exchange', exchangeItemId: item['券果盘'] });
-    expect((await estimateOf(exchange.id)).perCoupon).toBe(5800);
+    expect(await estimateOf(exchange.id)).toMatchObject({ perCoupon: null, referencePerCoupon: 5800 });
+    expect((await estimateOf(exchange.id)).uncappedWhy).toContain('没设「最多抵」');
     const cappedEx = await template({ name: '果盘兑换券（最多抵）', kind: 'exchange', exchangeItemId: item['券果盘'], maxOff: 4000 });
     expect((await estimateOf(cappedEx.id)).perCoupon).toBe(4000);
 
-    // 门票按在店时长累计（超过 24 小时还会加）：没设最多抵就不封顶，设了按最多抵（合并前 Codex 审查 c79ca75）
+    // 门票按在店时长累计：没设最多抵不封顶，设了按最多抵
     const [tt] = await ctx.sql<{ id: number }[]>`SELECT id FROM ticket_types WHERE active ORDER BY id LIMIT 1`;
     const ticket = await template({ name: '门票兑换券（试算）', kind: 'exchange', exchangeTicketTypeId: Number(tt!.id) });
     expect(await estimateOf(ticket.id)).toMatchObject({ perCoupon: null, uncappedWhy: '兑换门票按在店时长累计，没设「最多抵」' });
     const ticketCapped = await template({ name: '门票兑换券（最多抵）', kind: 'exchange', exchangeTicketTypeId: Number(tt!.id), maxOff: 9900 });
     expect((await estimateOf(ticketCapped.id)).perCoupon).toBe(9900);
 
-    // 门店改过价的按门店价算（合并前 Codex 审查 1a89c41）；券限了门店的只看那几家
+    // 参考价算上门店改过的价；券限了门店的只看那几家
     const [st] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('CE2', '试算乙店', 1) RETURNING id`;
     const [staffRow] = await ctx.sql<{ id: number }[]>`SELECT id FROM staff ORDER BY id LIMIT 1`;
     await ctx.sql`INSERT INTO service_item_store_prices (store_id, item_id, tier, price, updated_by) VALUES (${st!.id}, ${item['券果盘']!}, 'standard', 9800, ${staffRow!.id})`;
-    expect((await estimateOf(exchange.id)).perCoupon).toBe(9800);
+    expect((await estimateOf(exchange.id)).referencePerCoupon).toBe(9800);
     const hereOnly = await template({ name: '果盘兑换券（只限本店）', kind: 'exchange', exchangeItemId: item['券果盘'], storeIds: [1] });
-    expect((await estimateOf(hereOnly.id)).perCoupon).toBe(5800);
+    expect((await estimateOf(hereOnly.id)).referencePerCoupon).toBe(5800);
 
     const open = await template({ name: '八折不封顶（试算）', kind: 'discount', ratePercent: 80 });
     expect(await estimateOf(open.id)).toMatchObject({ perCoupon: null, uncappedWhy: '折扣券没设「最多减」' });
