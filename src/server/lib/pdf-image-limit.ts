@@ -164,53 +164,167 @@ function parseTopDict(text: string): { isImage: boolean; width: number | null; h
   return { isImage, width, height };
 }
 
-/** 从 `>>` 往前找到配对的顶层 `<<` 起点（只看 DICT_LOOKBACK 字节以内） */
-function findMatchingDictStart(buf: Buffer, endExclusive: number): number {
-  const minPos = Math.max(0, endExclusive - DICT_LOOKBACK);
-  let depth = 0;
-  let i = endExclusive - 2;
-  while (i >= minPos) {
-    if (buf[i] === 0x3e && buf[i + 1] === 0x3e) {
-      depth += 1;
-      i -= 2;
-      continue;
-    }
-    if (buf[i] === 0x3c && buf[i + 1] === 0x3c) {
-      depth -= 1;
-      if (depth === 0) return i;
-      i -= 2;
-      continue;
-    }
-    i -= 1;
+/** 判断 `>>`（结束于 closeEnd）之后跳过空白是否紧跟 `stream` + CR/LF（PDF 规范 §7.3.8.1）；是则返回 `stream` 结束位置，否则 -1 */
+function streamAfterDictClose(buf: Buffer, closeEnd: number): number {
+  let i = closeEnd;
+  const n = buf.length;
+  while (i < n && isWs(buf[i]!)) i += 1;
+  if (
+    i + 6 < n &&
+    buf[i] === 0x73 && // s
+    buf[i + 1] === 0x74 && // t
+    buf[i + 2] === 0x72 && // r
+    buf[i + 3] === 0x65 && // e
+    buf[i + 4] === 0x61 && // a
+    buf[i + 5] === 0x6d && // m
+    (buf[i + 6] === 0x0a || buf[i + 6] === 0x0d)
+  ) {
+    return i + 7;
   }
   return -1;
 }
 
-const STREAM_NEEDLE = Buffer.from('stream', 'ascii');
-
-/** 在一段字节里扫所有紧跟在 `>>` 后面的 `stream` 字典，查有没有超限的图片 */
+/**
+ * 单遍线性扫描一段字节里所有紧跟在 `>>` 后面的 `stream` 字典（O(buf.length)，不回扫）：
+ *   · 顺序维护尚未配对的 `<<` 栈；遇到 `>>` 且后面不是 `stream` 时 O(1) 弹出内层字典起点。
+ *   · 遇到 `>>` + 空白 + `stream` + CR/LF：若栈里没有 DICT_LOOKBACK 内的 `<<`，O(1) 跳过（防止重复 `>>stream\n` 触发 O(N·32KB) 回扫卡住主线程）。
+ *   · 若当前 `>>stream` 落在字典字符串字面量 `(...)` 或 `%` 注释里，向前跳到该字符串/注释结尾并保留外层 `<<`（防构造 `/Comment (>>stream\n)` 绕过）；
+ *     并限制整块的语法复查工作量上限，最坏情况下总扫描与解析工作量严格线性。
+ *   · 确认是一条真实流字典后，解析一次并清空 `<<` 栈（流字典彼此不重叠，保证总解析字节数不超过 buf.length）。
+ */
 function scanBuffer(buf: Buffer, maxPixels: number, maxSide: number): PdfImageProblem | null {
-  let pos = 0;
-  while (pos < buf.length) {
-    const idx = buf.indexOf(STREAM_NEEDLE, pos);
-    if (idx === -1) break;
-    pos = idx + STREAM_NEEDLE.length;
-    // 排除 endstream，且 stream 后面必须是 CR/LF（PDF 规范 §7.3.8.1）
-    if (idx >= 3 && buf[idx - 3] === 0x65 && buf[idx - 2] === 0x6e && buf[idx - 1] === 0x64) continue;
-    const after = idx + STREAM_NEEDLE.length;
-    if (after >= buf.length || (buf[after] !== 0x0a && buf[after] !== 0x0d)) continue;
-    // 跳过 stream 前面的空白，紧挨着的必须是 `>>`
-    let end = idx - 1;
-    while (end >= 0 && isWs(buf[end]!)) end -= 1;
-    if (end < 1 || buf[end] !== 0x3e || buf[end - 1] !== 0x3e) continue;
-    const start = findMatchingDictStart(buf, end + 1);
-    if (start < 0) continue;
-    const dictText = buf.subarray(start, end + 1).toString('latin1');
-    const parsed = parseTopDict(dictText);
-    if (!parsed.isImage || parsed.width === null || parsed.height === null) continue;
-    if (parsed.width > maxSide || parsed.height > maxSide || parsed.width * parsed.height > maxPixels) {
-      return { width: parsed.width, height: parsed.height };
+  const n = buf.length;
+  const opens: number[] = [];
+  let openHead = 0;
+
+  // 单调复查光标：只检查 `>>stream` 是否落在当前候选字典的 `(...)` 字符串或 `%` 注释中
+  let synStart = -1;
+  let synPos = 0;
+  let synParens = 0;
+  let synComment = false;
+  let synWork = 0;
+  const maxSynWork = Math.max(DICT_LOOKBACK * 4, n * 2);
+
+  const resetSyntax = () => {
+    synStart = -1;
+    synPos = 0;
+    synParens = 0;
+    synComment = false;
+  };
+
+  /** 把 synPos 从当前位置推进到 target（不超过 target），返回 target 处是否仍在字符串或注释里 */
+  const inStringOrCommentAt = (start: number, target: number): boolean => {
+    if (synWork >= maxSynWork) return false;
+    if (synStart !== start || synPos > target) {
+      synStart = start;
+      synPos = start;
+      synParens = 0;
+      synComment = false;
     }
+    while (synPos < target) {
+      synWork += 1;
+      const c = buf[synPos]!;
+      if (synComment) {
+        if (c === 0x0a || c === 0x0d) synComment = false;
+        synPos += 1;
+        continue;
+      }
+      if (synParens > 0) {
+        if (c === 0x5c) {
+          synPos += 2;
+          continue;
+        }
+        if (c === 0x28) synParens += 1;
+        else if (c === 0x29) synParens -= 1;
+        synPos += 1;
+        continue;
+      }
+      if (c === 0x25) {
+        synComment = true;
+      } else if (c === 0x28) {
+        synParens = 1;
+      }
+      synPos += 1;
+    }
+    return synParens > 0 || synComment;
+  };
+
+  /** 从当前位置向前跳出未闭合的 `(...)` 字符串或 `%` 注释（不超过 limit） */
+  const skipOutOfStringOrComment = (limit: number): number => {
+    while (synPos < limit && (synParens > 0 || synComment)) {
+      synWork += 1;
+      const c = buf[synPos]!;
+      if (synComment) {
+        if (c === 0x0a || c === 0x0d) synComment = false;
+        synPos += 1;
+        continue;
+      }
+      if (c === 0x5c) {
+        synPos += 2;
+        continue;
+      }
+      if (c === 0x28) synParens += 1;
+      else if (c === 0x29) synParens -= 1;
+      synPos += 1;
+    }
+    return synPos;
+  };
+
+  let i = 0;
+  while (i < n - 1) {
+    const c = buf[i]!;
+    if (c === 0x3c && buf[i + 1] === 0x3c) {
+      opens.push(i);
+      i += 2;
+      continue;
+    }
+    if (c === 0x3e && buf[i + 1] === 0x3e) {
+      // 丢弃超过 DICT_LOOKBACK 的旧 `<<`（均摊 O(1)）
+      while (openHead < opens.length && i + 2 - opens[openHead]! > DICT_LOOKBACK) openHead += 1;
+      if (openHead >= opens.length) {
+        opens.length = 0;
+        openHead = 0;
+        resetSyntax();
+        const afterStream = streamAfterDictClose(buf, i + 2);
+        i = afterStream >= 0 ? afterStream : i + 2;
+        continue;
+      }
+      const start = opens[opens.length - 1]!;
+      if (inStringOrCommentAt(start, i)) {
+        const limit = Math.min(n, start + DICT_LOOKBACK);
+        const resumed = skipOutOfStringOrComment(limit);
+        if (synParens === 0 && !synComment) {
+          i = resumed;
+          continue;
+        }
+        // 字符串/注释超长未闭合：放弃这个起点，避免卡死
+        opens.pop();
+        resetSyntax();
+        i += 2;
+        continue;
+      }
+      const afterStream = streamAfterDictClose(buf, i + 2);
+      if (afterStream < 0) {
+        opens.pop();
+        resetSyntax();
+        i += 2;
+        continue;
+      }
+      // 真实流字典：只解析一次并清空栈，确保后续流字典不与本段重叠
+      opens.length = 0;
+      openHead = 0;
+      resetSyntax();
+      const dictText = buf.subarray(start, i + 2).toString('latin1');
+      const parsed = parseTopDict(dictText);
+      if (parsed.isImage && parsed.width !== null && parsed.height !== null) {
+        if (parsed.width > maxSide || parsed.height > maxSide || parsed.width * parsed.height > maxPixels) {
+          return { width: parsed.width, height: parsed.height };
+        }
+      }
+      i = afterStream;
+      continue;
+    }
+    i += 1;
   }
   return null;
 }

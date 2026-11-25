@@ -98,4 +98,33 @@ describe('PDF 内嵌图片尺寸流式检查（Codex 安全审查 bfc32cd）', (
     expect(scanner.finish()).toEqual({ width: 6000, height: 4000 });
     expect(checkPdfImageLimit(sample('<< /Subtype /Image /Width 99999 0 R /Height 99999 0 R >>'))).toBeNull();
   });
+
+  it('线性时间防护（Codex 审查 7a7016e）：1 MB 重复 >>stream\\n 与深嵌套不卡主线程，且字符串内伪造 >>stream\\n 绕不过限额', () => {
+    const repeated = Buffer.from(`%PDF-1.4\n${'>>stream\n'.repeat(120_000)}`, 'latin1');
+    const t0 = Date.now();
+    expect(checkPdfImageLimit(repeated)).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(1000);
+
+    const nested = Buffer.from(`%PDF-1.4\n${'<<'.repeat(10_000)}${' '.repeat(12_000)}${'>>stream\n'.repeat(10_000)}`, 'latin1');
+    const t1 = Date.now();
+    expect(checkPdfImageLimit(nested)).toBeNull();
+    expect(Date.now() - t1).toBeLessThan(1000);
+
+    // 字典字符串里藏 >>stream\n 或 >> 也不能绕过外层超限图片检查
+    const sneaky = sample('<< /Comment (>>stream\n) /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>');
+    expect(checkPdfImageLimit(sneaky)).toEqual({ width: 12000, height: 12000 });
+    const sneakyClose = sample('<< /Comment (foo >> bar) /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>');
+    expect(checkPdfImageLimit(sneakyClose)).toEqual({ width: 12000, height: 12000 });
+
+    // 前一个二进制流里出现未闭合的 << 与 ( 不影响后一个超限图像对象检出
+    const afterBinary = Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<< /Length 8 >>\nstream\n<<((raw!\nendstream\nendobj\n2 0 obj\n<< /Type /XObject /Subtype /Image /Width 12000 /Height 12000 >>\nstream\n0000\nendstream\nendobj\n',
+      'latin1',
+    );
+    expect(checkPdfImageLimit(afterBinary)).toEqual({ width: 12000, height: 12000 });
+
+    // 内层子字典正常配对后，外层超限图像字典仍能检出
+    const withSubDict = sample('<< /Type /XObject /Subtype /Image /DecodeParms << /Predictor 15 >> /Width 12000 /Height 12000 >>');
+    expect(checkPdfImageLimit(withSubDict)).toEqual({ width: 12000, height: 12000 });
+  });
 });
