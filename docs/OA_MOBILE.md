@@ -127,3 +127,9 @@
 - **从异常一键补卡（`MyAttendancePage.tsx`、`ApprovalForm.tsx`、`attendance-daily.ts`）**：`GET /api/oa/me/attendance` 新增门店所在地 `today` 与本月审批中补卡单 `pendingMakeups`；缺上班卡 / 缺下班卡 / 旷工行在 30 天（`MAKEUP_BACK_DAYS`）内直接提供「补上班卡 / 补下班卡」一键入口，跳转 `/oa/approvals/new/makeup?date=...&shiftId=...&kind=in|out` 自动带入日期、班次与补哪张卡（不串入其他日子的旧草稿事由；已有审批中补卡单的直达审批详情，超 30 天提示已超期）；请假 / 出差覆盖行直达关联审批单。
 - **请假与补卡发起、审批手机适配（`ApprovalForm.tsx`、`ApprovalPages.tsx`、`MyLeavePage.tsx`、`WcpShell.tsx`）**：发起审批页、模板表单（含半天选择器 `halfday` 与班次选择器）、审批列表页（4 个箱体 `Segmented` 横向防溢出）、审批详情页（3 列通过 / 驳回 / 转交按钮、评论栏、长内容换行）与假期余额页全面适配 360 × 800 零横向滚动，并补齐手机顶栏返回按钮的 `.tap relative`。
 - **没有迁移**；在 `tests/oa-attendance-link.test.ts` 与 `e2e/oa-mobile.spec.ts` 补齐 `pendingMakeups` 集成回归及 360 × 800 异常一键补卡、请假发起与审批浏览器用例。
+
+### 第 4 批：审批扩展与消息（2026-11-25）
+
+- **迁移**：`293_oa_seal_template.sql` 新增办公审批模板「用章」（`seal`：印章类型、用章文件名称、份数、用章日期、事由、附件，默认一级本部门主管，回滚脚本 `docs/rollback/293_oa_seal_template.down.sql`）；`approval-templates.ts` 挂接 `seal` 标题生成（`用章 · <印章类型> · <文件名称>`）；`wcpNav.ts` 补充审批提示。
+- **「消息」Tab 分栏与未读红点去重**：`GET /api/oa/notifications/unread-count?breakdown=1` 返回 `{ unread, systemUnread }`（`systemUnread` 排除 `im_message`，保持不带参数的旧响应完全兼容）；新增 `MessagesBar.tsx` 统一维护 WCP 外壳的聊天同步与通知未读缓存，手机底部「消息」Tab（`wcp-tab-messages-badge`）展示「聊天未读 + 系统通知未读」合计数、不重复计 IM 提醒；`/oa/im` 与 `/oa/notifications` 顶部均提供「聊天 / 系统通知」分栏条与各自未读角标，并适配 360 × 800 零横向滚动（聊天页进会话上报已读后立即同步红点）。
+- **回归用例**：在 `tests/oa-approval-templates.test.ts` 补用章模板校验与提交、在 `tests/oa-notify-attach.test.ts` 补 `?breakdown=1` 系统未读拆分、在 `e2e/oa-mobile.spec.ts` 补第 4 批手机 360 × 800 用章发起 / 催办 / 转交审批及消息分栏与合并红点浏览器用例。

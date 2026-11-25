@@ -32,7 +32,7 @@ export interface WcpNavItem {
 export const WCP_TILES: readonly WcpNavItem[] = [
   { to: '/oa/im', label: '消息', hint: '同事单聊、群聊，发图片与文件', icon: MessagesSquare, testId: 'oa-tile-im' },
   { to: '/oa/directory', label: '通讯录', hint: '按部门找同事、看资料、发消息', icon: BookUser, testId: 'oa-tile-directory' },
-  { to: '/oa/approvals', label: '审批', hint: '请假、加班、出差、报销、补卡', icon: Stamp, testId: 'oa-tile-approvals' },
+  { to: '/oa/approvals', label: '审批', hint: '请假、加班、出差、报销、补卡、用章', icon: Stamp, testId: 'oa-tile-approvals' },
   { to: '/oa/punch', label: '打卡', hint: '按排班打上下班卡、外勤打卡', icon: Fingerprint, testId: 'oa-tile-punch' },
   { to: '/oa/schedule', label: '我的排班', hint: '这个月每天上什么班', icon: CalendarDays, testId: 'oa-tile-schedule' },
   { to: '/oa/attendance', label: '我的考勤', hint: '每天的考勤结果、迟到缺卡', icon: CalendarCheck, testId: 'oa-tile-attendance' },

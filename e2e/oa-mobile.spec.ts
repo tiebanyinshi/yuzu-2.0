@@ -351,4 +351,100 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
     expect((await page.request.put(`/api/oa/attendance/groups/${group.id}`, { data: { name: `补组${stamp}`, gpsRequired: false, active: false, version: group.version } })).status()).toBe(200);
     expect((await page.request.put(`/api/staff/${emp.id}`, { data: { displayName, position: 'front.staff', active: false } })).status()).toBe(200);
   });
+
+  test('第 4 批手机（360×800）：用章发起 / 催办 / 转交审批，以及「消息」分栏与聊天+系统通知合并红点', async ({ page, browser }) => {
+    await page.goto('/login');
+    await page.fill('#username', 'linlan');
+    await page.fill('#password', PASSWORD);
+    await page.getByRole('button', { name: '登录' }).click();
+    await page.waitForURL((u) => u.pathname === '/', { timeout: 30_000 });
+
+    const stamp = Date.now().toString(36).slice(-5);
+    const hire = async (username: string, displayName: string, position: string) => {
+      const r = await page.request.post('/api/staff', { data: { username, displayName, position, password: PASSWORD } });
+      expect(r.status(), await r.text()).toBe(201);
+      return ((await r.json()) as { id: number }).id;
+    };
+    const staffUser = `oam4a${stamp}`;
+    const transUser = `oam4b${stamp}`;
+    const staffId = await hire(staffUser, `用章员${stamp}`, 'front.staff');
+    const transId = await hire(transUser, `接手人${stamp}`, 'hr.lead');
+    const tdy = (await (await page.request.get('/api/oa/attendance/today')).json()) as { today: string };
+
+    // 1) 员工手机 360×800 发起「用章」审批并催办
+    const empCtx = await browser.newContext({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true, userAgent: WECHAT_UA, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' });
+    const empPage = await empCtx.newPage();
+    expect((await empPage.request.post('/api/auth/login', { data: { username: staffUser, password: PASSWORD } })).status()).toBe(200);
+    expect((await empPage.request.post('/api/auth/change-password', { data: { currentPassword: PASSWORD, newPassword: `Mobile4-${stamp}-2026` } })).status()).toBe(200);
+    await empPage.goto('/oa/approvals/new');
+    await expect(empPage.getByTestId('oa-approval-tpl-seal')).toBeVisible({ timeout: 20_000 });
+    expect(await empPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await empPage.getByTestId('oa-approval-tpl-seal').click();
+    await expect(empPage.getByTestId('oa-approval-form')).toBeVisible();
+    await empPage.getByTestId('oa-field-sealType').selectOption('合同专用章');
+    await empPage.getByTestId('oa-field-docName').fill(`测试协议${stamp}`);
+    await empPage.getByTestId('oa-field-copies').fill('2');
+    await empPage.getByTestId('oa-field-useDate').fill(tdy.today);
+    await empPage.getByTestId('oa-field-reason').fill('签署测试合同');
+    expect(await empPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await empPage.getByTestId('oa-approval-submit').click();
+    await expect(empPage.getByTestId('oa-approval-status')).toHaveText('审批中');
+    const approvalId = Number(new URL(empPage.url()).pathname.split('/').pop());
+    await empPage.getByTestId('oa-approval-urge').click();
+    await expect(empPage.getByTestId('oa-approval-events')).toContainText('催办');
+
+    // 2) 店主（linlan）手机 360×800 在待办里点进用章单并转交给接手人
+    const mgrCtx = await browser.newContext({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true, userAgent: WECHAT_UA, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' });
+    const mgrPage = await mgrCtx.newPage();
+    expect((await mgrPage.request.post('/api/auth/login', { data: { username: 'linlan', password: PASSWORD } })).status()).toBe(200);
+    await mgrPage.goto(`/oa/approvals/${approvalId}`);
+    await expect(mgrPage.getByTestId('oa-approval-transfer')).toBeVisible({ timeout: 20_000 });
+    await mgrPage.getByTestId('oa-approval-transfer').click();
+    await mgrPage.getByTestId('oa-transfer-to').selectOption(String(transId));
+    await mgrPage.getByTestId('oa-transfer-confirm').click();
+    await expect(mgrPage.getByTestId('oa-approval-events')).toContainText(`转交 给 接手人${stamp}`);
+    await mgrCtx.close();
+
+    // 3) 接手人同时收到 1 条审批待办系统通知 + 员工发来的 1 条单聊消息：核对「消息」Tab 合并红点 = 2（不重复计 IM 通知）与分栏切换
+    const direct = await empPage.request.post('/api/oa/im/direct', { data: { staffId: transId } });
+    expect(direct.status(), await direct.text()).toBe(200);
+    const convId = ((await direct.json()) as { id: number }).id;
+    const msg = await empPage.request.post(`/api/oa/im/conversations/${convId}/messages`, {
+      data: { clientKey: crypto.randomUUID(), kind: 'text', body: `请帮忙批一下用章单${stamp}` },
+    });
+    expect(msg.status(), await msg.text()).toBe(201);
+
+    const trCtx = await browser.newContext({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true, userAgent: WECHAT_UA, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' });
+    const trPage = await trCtx.newPage();
+    expect((await trPage.request.post('/api/auth/login', { data: { username: transUser, password: PASSWORD } })).status()).toBe(200);
+    expect((await trPage.request.post('/api/auth/change-password', { data: { currentPassword: PASSWORD, newPassword: `Mobile4b-${stamp}-2026` } })).status()).toBe(200);
+    await trPage.goto('/oa/im');
+    await expect(trPage.getByTestId('messages-tabbar')).toBeVisible({ timeout: 20_000 });
+    await expect(trPage.getByTestId('wcp-tab-messages-badge')).toHaveText('2');
+    await expect(trPage.getByTestId('messages-tab-im-badge')).toHaveText('1');
+    await expect(trPage.getByTestId('messages-tab-notifications-badge')).toHaveText('1');
+    expect(await trPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    // 点进聊天读完消息 -> 聊天未读清零，合并红点降为 1；切到「系统通知」分栏零横向滚动
+    await trPage.getByTestId(`im-conv-${convId}`).click();
+    await expect(trPage.getByTestId('im-messages')).toContainText(`请帮忙批一下用章单${stamp}`);
+    expect(await trPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await expect(trPage.getByTestId('wcp-tab-messages-badge')).toHaveText('1');
+    await trPage.getByTestId('im-back').click();
+    await trPage.getByTestId('messages-tab-notifications').click();
+    await expect(trPage).toHaveURL(/\/oa\/notifications$/);
+    await expect(trPage.getByTestId('notifications-list')).toContainText(`测试协议${stamp}`);
+    expect(await trPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    // 接手人通过用章单
+    await trPage.goto(`/oa/approvals/${approvalId}`);
+    await trPage.getByTestId('oa-approval-approve').click();
+    await expect(trPage.getByTestId('oa-approval-status')).toHaveText('已通过');
+    await trCtx.close();
+    await empCtx.close();
+
+    // 收尾：停用两个临时账号
+    expect((await page.request.put(`/api/staff/${staffId}`, { data: { displayName: `用章员${stamp}`, position: 'front.staff', active: false } })).status()).toBe(200);
+    expect((await page.request.put(`/api/staff/${transId}`, { data: { displayName: `接手人${stamp}`, position: 'hr.lead', active: false } })).status()).toBe(200);
+  });
 });
