@@ -229,7 +229,7 @@
         },
       );
     }
-    gsap.from('.ledger-notes p', {
+    gsap.from('.ledger-eyebrow, .ledger-lines li', {
       y: 30,
       opacity: 0,
       duration: 1,
