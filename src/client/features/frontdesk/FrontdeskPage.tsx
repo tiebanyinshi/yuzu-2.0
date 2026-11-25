@@ -29,7 +29,6 @@ import { BackfillBar, useBackfill } from './backfill';
 import { BillPanel, type PanelAction } from './BillPanel';
 import { CheckinDialog, type CheckinPrefill } from './CheckinDialog';
 import { IncidentDialog, IncidentTodoDialog } from './IncidentDialogs';
-import { TicketDialog } from './CheckoutDialog';
 import { MemberEntitlements } from './desk';
 import { groupTags, Stat, StatusChip, TagCard, TagChip, VipChip, ZoneChip } from './parts';
 import { useBoard, useFrontdeskChecks, useRefreshFrontdesk, useServerNow, useVisit } from './queries';
@@ -37,6 +36,9 @@ import { FindGuestDialog } from './ToolDialogs';
 import { JoinGroupDialog, SwapDialog } from './VisitDialogs';
 import { MoveLinesDialog } from './MoveLinesDialog';
 import { lazyPage } from '../../lib/lazyPage';
+
+// 改票种的对话框在结账那份代码里（很大）：发卡台首屏不用它，点到才下载（8.1.36：首屏主包超过上限）
+const TicketDialog = lazyPage(() => import('./CheckoutDialog').then((m) => m.TicketDialog));
 
 /** 锁牌 / 解锁：用得少，按需加载（不进首屏主包） */
 const TagLockDialog = lazyPage(() => import('./TagLockDialog').then((m) => m.TagLockDialog));
