@@ -944,11 +944,26 @@ export interface AttendanceDay {
   editable: boolean;
 }
 /** 员工「我的考勤」：本人一个月 */
+/** 补卡最多补几天以前的（与服务端审批提交校验同一口径） */
+export const MAKEUP_BACK_DAYS = 30;
+
+/** 本月审批中的补卡单（用于在「我的考勤」异常行提示审批中并直达详情） */
+export interface MyAttendancePendingMakeup {
+  date: string;
+  shiftId: number;
+  kind: 'in' | 'out';
+  approvalId: number;
+}
+
 export interface MyAttendance {
   month: string;
+  /** 门店所在地的今天（用于判断异常行是否仍在补卡期限内） */
+  today: string;
   rows: AttendanceDailyRow[];
   /** OA-09：本人这个月的汇总 */
   summary: AttendanceMonthStats;
+  /** 本月审批中的补卡单 */
+  pendingMakeups: MyAttendancePendingMakeup[];
 }
 
 // ───────────────────────── OA-09 考勤月报与假期余额（docs/OA.md 第 12 节） ─────────────────────────

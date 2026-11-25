@@ -220,4 +220,135 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
     expect((await page.request.put(`/api/oa/attendance/groups/${group.id}`, { data: { name: `手排${stamp}`, gpsRequired: false, active: false, version: group.version } })).status()).toBe(200);
     expect((await page.request.put(`/api/staff/${emp.id}`, { data: { displayName, position: 'front.staff', active: false } })).status()).toBe(200);
   });
+
+  test('第 3 批手机（360×800）：我的考勤异常筛选、一键预填补卡与请假发起审批', async ({ page, browser }) => {
+    const { randomUUID } = await import('node:crypto');
+    const shiftDay = (iso: string, delta: number) => {
+      const [y, m, d] = iso.split('-').map(Number) as [number, number, number];
+      return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
+    };
+    await page.goto('/login');
+    await page.fill('#username', 'linlan');
+    await page.fill('#password', PASSWORD);
+    await page.getByRole('button', { name: '登录' }).click();
+    await page.waitForURL((u) => u.pathname === '/', { timeout: 30_000 });
+
+    const stamp = Date.now().toString(36).slice(-5);
+    const username = `oam3${stamp}`;
+    const displayName = `补卡员${stamp}`;
+    const hired = await page.request.post('/api/staff', { data: { username, displayName, position: 'front.staff', password: PASSWORD } });
+    expect(hired.status(), await hired.text()).toBe(201);
+    const emp = (await hired.json()) as { id: number };
+    const me = (await (await page.request.get('/api/auth/me')).json()) as { store: { id: number } };
+    const tdy = (await (await page.request.get('/api/oa/attendance/today')).json()) as { now: number; today: string };
+    const minute = ((tdy.now % 1440) + 1440) % 1440;
+    test.skip(minute < 31, '门店所在地零点半以前：今天还没有已经结束的时段');
+    const targetDay = tdy.today;
+    const tomorrow = shiftDay(tdy.today, 1);
+
+    const make = async (path: string, data: object) => {
+      const r = await page.request.post(`/api/oa/attendance/${path}`, { data: { clientKey: randomUUID(), storeId: me.store.id, ...data } });
+      expect(r.status(), await r.text()).toBe(201);
+      return (await r.json()) as { shifts: { id: number; name: string }[]; groups: { id: number; name: string; version: number }[] };
+    };
+    // 今天已经结束的短班次（半小时前开始、二十分钟前结束，打卡窗口为 0），结算必成旷工（missingIn + missingOut）
+    const zero = { inAdvanceMinutes: 0, lateGraceMinutes: 0, inAfterMinutes: 0, outBeforeMinutes: 0, outDelayMinutes: 0 };
+    await make('shifts', { name: `补${stamp}`, startMinute: minute - 30, endMinute: minute - 20, ...zero });
+    const setup = await make('groups', { name: `补组${stamp}`, gpsRequired: false, memberIds: [emp.id] });
+    const group = setup.groups.find((g) => g.name === `补组${stamp}`)!;
+    const shiftId = setup.shifts.find((s) => s.name === `补${stamp}`)!.id;
+
+    // 排今日与明日并发布，随后结算今日产生异常
+    const sv = await page.request.post('/api/oa/attendance/schedule', {
+      data: {
+        clientKey: randomUUID(),
+        storeId: me.store.id,
+        groupId: group.id,
+        cells: [
+          { staffId: emp.id, date: targetDay, shiftIds: [shiftId], consecutive: false, expected: { shiftIds: [], consecutive: false } },
+          { staffId: emp.id, date: tomorrow, shiftIds: [shiftId], consecutive: false, expected: { shiftIds: [], consecutive: false } },
+        ],
+      },
+    });
+    expect(sv.status(), await sv.text()).toBe(200);
+    const pb = await page.request.post('/api/oa/attendance/schedule/publish', {
+      data: { clientKey: randomUUID(), storeId: me.store.id, groupId: group.id, from: targetDay, to: tomorrow },
+    });
+    expect(pb.status(), await pb.text()).toBe(200);
+    const settled = await page.request.post('/api/oa/attendance/daily/settle', { data: { date: targetDay, storeId: me.store.id } });
+    expect(settled.status(), await settled.text()).toBe(200);
+
+    // 手机 360×800 登录员工
+    const empCtx = await browser.newContext({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true, userAgent: WECHAT_UA, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' });
+    const mp = await empCtx.newPage();
+    expect((await mp.request.post('/api/auth/login', { data: { username, password: PASSWORD } })).status()).toBe(200);
+    expect((await mp.request.post('/api/auth/change-password', { data: { currentPassword: PASSWORD, newPassword: `Mobile3-${stamp}-2026` } })).status()).toBe(200);
+    await mp.goto('/oa/attendance');
+    await expect(mp.getByTestId('my-attendance-summary')).toBeVisible({ timeout: 20_000 });
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    // 切到「异常」标签，点「补上班卡」自动带入日期、班次与补哪张卡
+    await mp.getByTestId('my-att-tab-abnormal').click();
+    await expect(mp.getByTestId(`my-att-${targetDay}-${shiftId}`)).toContainText('旷工');
+    await mp.getByTestId(`my-att-makeup-${targetDay}-${shiftId}-in`).click();
+    await expect(mp).toHaveURL(new RegExp(`/oa/approvals/new/makeup\\?date=${targetDay}&shiftId=${shiftId}&kind=in`));
+    await expect(mp.getByTestId('oa-makeup-prefill-notice')).toBeVisible();
+    await expect(mp.getByTestId('oa-field-date')).toHaveValue(targetDay);
+    await expect(mp.getByTestId('oa-field-shiftId')).toHaveValue(String(shiftId));
+    await expect(mp.getByTestId('oa-field-kind')).toHaveValue('上班卡');
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await mp.getByTestId('oa-field-reason').fill('手机端忘打上班卡');
+    await mp.getByTestId('oa-approval-submit').click();
+    await expect(mp.getByTestId('oa-approval-status')).toHaveText('审批中');
+    const makeupId = Number(new URL(mp.url()).pathname.split('/').pop());
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    // 回「我的考勤」看到「补上班卡审批中」
+    await mp.goto('/oa/attendance');
+    await expect(mp.getByTestId(`my-att-makeup-pending-${targetDay}-${shiftId}-in`)).toBeVisible();
+
+    // 手机 360×800 发起请假审批（选事假，不依赖年假余额）
+    const leaveTypes = (await (await mp.request.get('/api/oa/leave/types')).json()) as { id: number; name: string; active: boolean; hasBalance: boolean; proofRequired: boolean }[];
+    const pickLeave = leaveTypes.find((t) => t.active && !t.hasBalance && !t.proofRequired) ?? leaveTypes.find((t) => t.active)!;
+    await mp.goto('/oa/approvals/new/leave');
+    await expect(mp.getByTestId('oa-approval-form')).toBeVisible();
+    await mp.getByTestId('oa-field-leaveTypeId').selectOption(String(pickLeave.id));
+    await mp.getByTestId('oa-field-start-date').fill(tomorrow);
+    await mp.getByTestId('oa-field-start-half').selectOption('am');
+    await mp.getByTestId('oa-field-end-date').fill(tomorrow);
+    await mp.getByTestId('oa-field-end-half').selectOption('am');
+    await mp.getByTestId('oa-field-reason').fill('家中有事请半天');
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await mp.getByTestId('oa-approval-submit').click();
+    await expect(mp.getByTestId('oa-approval-status')).toHaveText('审批中');
+    const leaveId = Number(new URL(mp.url()).pathname.split('/').pop());
+
+    // 审批人（linlan）手机 360×800 打开审批列表并逐个通过，零横向滚动
+    const mgrCtx = await browser.newContext({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true, userAgent: WECHAT_UA, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' });
+    const mgr = await mgrCtx.newPage();
+    expect((await mgr.request.post('/api/auth/login', { data: { username: 'linlan', password: PASSWORD } })).status()).toBe(200);
+    await mgr.goto('/oa/approvals?box=todo');
+    await expect(mgr.getByTestId(`oa-approval-${makeupId}`)).toBeVisible({ timeout: 20_000 });
+    expect(await mgr.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await mgr.getByTestId(`oa-approval-${makeupId}`).click();
+    expect(await mgr.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await mgr.getByTestId('oa-approval-approve').click();
+    await expect(mgr.getByTestId('oa-approval-status')).toHaveText('已通过');
+
+    await mgr.goto(`/oa/approvals/${leaveId}`);
+    await mgr.getByTestId('oa-approval-approve').click();
+    await expect(mgr.getByTestId('oa-approval-status')).toHaveText('已通过');
+    await mgrCtx.close();
+
+    // 员工刷新「我的考勤」：补上班卡已生效（仅剩补下班卡）
+    await mp.goto('/oa/attendance');
+    await expect(mp.getByTestId(`my-att-makeup-${targetDay}-${shiftId}-in`)).toHaveCount(0);
+    await expect(mp.getByTestId(`my-att-makeup-pending-${targetDay}-${shiftId}-in`)).toHaveCount(0);
+    await expect(mp.getByTestId(`my-att-makeup-${targetDay}-${shiftId}-out`)).toBeVisible();
+    await empCtx.close();
+
+    // 收尾：停用临时考勤组与员工
+    expect((await page.request.put(`/api/oa/attendance/groups/${group.id}`, { data: { name: `补组${stamp}`, gpsRequired: false, active: false, version: group.version } })).status()).toBe(200);
+    expect((await page.request.put(`/api/staff/${emp.id}`, { data: { displayName, position: 'front.staff', active: false } })).status()).toBe(200);
+  });
 });

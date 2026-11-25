@@ -107,7 +107,7 @@ function MobileTopBar() {
     <header data-surface="rail" className="shrink-0 bg-rail px-3 pt-[max(env(safe-area-inset-top),0.5rem)] pb-2 text-paper md:hidden" data-testid="wcp-mobile-top">
       <div className="flex h-10 items-center gap-2">
         {!root && (
-          <Link to={tab.to} aria-label={`返回${tab.label}`} data-testid="wcp-mobile-back" className="tap -ml-1 flex size-9 items-center justify-center rounded-full hover:bg-white/10">
+          <Link to={tab.to} aria-label={`返回${tab.label}`} data-testid="wcp-mobile-back" className="tap relative -ml-1 flex size-9 items-center justify-center rounded-full hover:bg-white/10">
             <ChevronLeft className="size-5" />
           </Link>
         )}

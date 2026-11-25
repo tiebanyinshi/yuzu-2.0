@@ -289,10 +289,26 @@ export function registerOaAttendanceDailyRoutes(app: FastifyInstance, deps: Deps
   // 员工「我的考勤」：本人一个月（各门店的都算）
   app.get('/api/oa/me/attendance', { preHandler: guard() }, async (req): Promise<MyAttendance> => {
     const q = parse(MonthQuery, req.query ?? {});
-    const month = q.month ?? localMinute(new Date(), tz).date.slice(0, 7);
+    const today = localMinute(new Date(), tz).date;
+    const month = q.month ?? today.slice(0, 7);
     const [y, m] = month.split('-').map(Number) as [number, number];
+    const from = `${month}-01`;
     const end = shiftDate(m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`, -1);
-    const rows = await loadRows(sql, tz, sql`d.staff_id = ${req.actor.id} AND d.business_date BETWEEN ${`${month}-01`} AND ${end}`);
-    return { month, rows, summary: await staffMonthStats(sql, req.actor.id, month) };
+    const rows = await loadRows(sql, tz, sql`d.staff_id = ${req.actor.id} AND d.business_date BETWEEN ${from} AND ${end}`);
+    const pendingRows = await sql<{ id: number; date: string; shiftId: string; kind: string }[]>`
+      SELECT id, form->>'date' AS date, form->>'shiftId' AS shift_id, form->>'kind' AS kind
+      FROM oa_approvals
+      WHERE applicant_id = ${req.actor.id} AND template_code = 'makeup' AND status = 'pending'
+        AND form->>'date' BETWEEN ${from} AND ${end}
+      ORDER BY id DESC`;
+    const pendingMakeups = pendingRows
+      .filter((r) => /^\d+$/.test(r.shiftId ?? '') && !!r.date)
+      .map((r) => ({
+        date: r.date,
+        shiftId: Number(r.shiftId),
+        kind: (r.kind === '下班卡' ? 'out' : 'in') as 'in' | 'out',
+        approvalId: Number(r.id),
+      }));
+    return { month, today, rows, summary: await staffMonthStats(sql, req.actor.id, month), pendingMakeups };
   });
 }

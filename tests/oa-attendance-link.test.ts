@@ -193,8 +193,14 @@ describe('OA-13 考勤与审批联动', () => {
     expect(code(await post(emp.makeup!, 'makeup', { date: D, shiftId, kind: '上班卡', reason: 'x' }))).toBe('MAKEUP_NOT_NEEDED');
     const a = await submit(emp.makeup!, 'makeup', { date: D, shiftId, kind: '下班卡', reason: '忘了打' });
     expect(code(await post(emp.makeup!, 'makeup', { date: D, shiftId, kind: '下班卡', reason: '再提一次' }))).toBe('MAKEUP_PENDING');
+    // 第 3 批：我的考勤返回门店今天与本月审批中补卡单，便于异常行直达进度而不重复发起
+    const during = (await api<MyAttendance>(ctx.app, emp.makeup!.cookie, 'GET', '/api/oa/me/attendance?month=2030-04')).body;
+    expect(during.today).toBe(D);
+    expect(during.pendingMakeups).toEqual([{ date: D, shiftId, kind: 'out', approvalId: a.id }]);
     await approved(a);
     expect(await rowOf(emp.makeup!)).toMatchObject({ status: 'normal', missingOut: false, earlyMinutes: 0, outAt: { date: D, time: '18:00' } });
+    const after = (await api<MyAttendance>(ctx.app, emp.makeup!.cookie, 'GET', '/api/oa/me/attendance?month=2030-04')).body;
+    expect(after.pendingMakeups).toEqual([]);
     const punches = (await api(ctx.app, ctx.owner, 'GET', `/api/oa/attendance/punches?date=${D}`)).body as PunchDay;
     const mine = punches.records.filter((p) => p.staffId === emp.makeup!.id);
     expect(mine.map((p) => [p.kind, p.localTime, p.makeup, p.effective])).toEqual([

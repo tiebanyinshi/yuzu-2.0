@@ -4,9 +4,9 @@
 //   · 提交带操作编号、先记在本机再发（sendErpOp）；没收到结果的在「审批」页上方查回、原样重提或作废，确认前不让再提交。
 
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { FileText, Paperclip, X } from 'lucide-react';
+import { ChevronLeft, FileText, Paperclip, X } from 'lucide-react';
 import { checkApprovalForm, type ApprovalDetail, type ApprovalField, type ApprovalForm as Form, type ApprovalPage, type ApprovalSaved, type ApprovalTemplate, type HalfDay } from '@shared/oa-approval';
 import type { LeaveType, MySchedule, OaAttachment } from '@shared/oa';
 import { api, errorMessage, UncertainError } from '../../lib/api';
@@ -40,6 +40,23 @@ function writeDraft(key: string, v: Values | null) {
   }
 }
 
+const DATE_PARAM_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** 从「我的考勤」异常一键补卡带过来的预填参数（?date=YYYY-MM-DD&shiftId=123&kind=in|out|上班卡|下班卡） */
+function makeupPrefillOf(template: ApprovalTemplate, params: URLSearchParams): Values | null {
+  if (template.code !== 'makeup') return null;
+  const out: Values = {};
+  const date = params.get('date') ?? '';
+  if (DATE_PARAM_RE.test(date)) out.date = date;
+  const shiftId = params.get('shiftId') ?? '';
+  if (/^\d+$/.test(shiftId) && Number(shiftId) > 0) out.shiftId = Number(shiftId);
+  const rawKind = params.get('kind') ?? '';
+  const mappedKind = rawKind === 'in' ? '上班卡' : rawKind === 'out' ? '下班卡' : rawKind;
+  const kindField = template.fields.find((f) => f.key === 'kind');
+  if (mappedKind && (!kindField?.options || kindField.options.includes(mappedKind))) out.kind = mappedKind;
+  return Object.keys(out).length ? out : null;
+}
+
 /** 页面上的值 → 提交的表单 */
 function toForm(fields: readonly ApprovalField[], v: Values): Form {
   const out: Form = {};
@@ -64,27 +81,37 @@ function fromForm(fields: readonly ApprovalField[], form: Form, attachments: OaA
 }
 
 export function NewApprovalPage({ code, fromId }: { code: string | null; fromId: number | null }) {
+  const { search } = useLocation();
   const templates = useQuery({ queryKey: ['oa', 'approval-templates'], queryFn: () => api.get<ApprovalTemplate[]>('/api/oa/approval/templates') });
   const template = templates.data?.find((t) => t.code === code) ?? null;
   return (
     <>
-      <PageHeader dateMode="calendar" title={template ? `发起审批 · ${template.name}` : '发起审批'} subtitle="提交以后按模板逐级审批；没提交的内容记在这台设备上，下次接着填" />
-      <div className="mx-auto w-full max-w-2xl space-y-4 p-4 md:p-7">
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title={template ? `发起审批 · ${template.name}` : '发起审批'} subtitle="提交以后按模板逐级审批；没提交的内容记在这台设备上，下次接着填" />
+      </div>
+      <div className="mx-auto w-full max-w-2xl space-y-3 p-3 md:space-y-4 md:p-7">
+        <div className="flex items-center justify-between gap-2 md:hidden">
+          <h1 className="min-w-0 truncate text-[17px] font-bold text-ink">{template ? `发起审批 · ${template.name}` : '发起审批'}</h1>
+          <Link to={code ? '/oa/approvals/new' : '/oa/approvals'} className="tap relative inline-flex shrink-0 items-center gap-0.5 text-[13px] font-semibold text-pine">
+            <ChevronLeft className="size-4" />
+            {code ? '换模板' : '审批列表'}
+          </Link>
+        </div>
         {templates.isPending ? (
           <Skeleton className="h-60" />
         ) : templates.isError && !templates.data ? (
           <LoadFailed title="审批模板没有取回来" onRetry={() => templates.refetch()} retrying={templates.isFetching} />
         ) : !code ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3" data-testid="oa-approval-templates">
+          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 md:gap-3" data-testid="oa-approval-templates">
             {templates.data!.map((t) => (
               <Link
                 key={t.id}
                 to={`/oa/approvals/new/${t.code}`}
-                className="tap relative rounded-lg border border-line bg-card p-4 shadow-card hover:border-line-strong"
+                className="tap relative rounded-lg border border-line bg-card p-3.5 shadow-card hover:border-line-strong md:p-4"
                 data-testid={`oa-approval-tpl-${t.code}`}
               >
                 <FileText className="size-6 text-pine" />
-                <p className="mt-3 text-[15px] font-bold text-ink">{t.name}</p>
+                <p className="mt-2.5 text-[15px] font-bold text-ink md:mt-3">{t.name}</p>
                 <p className="mt-0.5 text-[12.5px] text-ink-3">{t.description}</p>
               </Link>
             ))}
@@ -92,7 +119,7 @@ export function NewApprovalPage({ code, fromId }: { code: string | null; fromId:
         ) : !template ? (
           <Notice tone="warning" title="这个模板不存在或已停用" action={<Link to="/oa/approvals/new">换一个</Link>} />
         ) : (
-          <TemplateForm template={template} fromId={fromId} />
+          <TemplateForm key={`${template.code}:${fromId ?? ''}:${search}`} template={template} fromId={fromId} />
         )}
       </div>
     </>
@@ -105,18 +132,29 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
   const navigate = useNavigate();
   const key = draftKey(session.staff.id, template.code);
   const from = useQuery({ queryKey: ['oa', 'approval', fromId], queryFn: () => api.get<ApprovalDetail>(`/api/oa/approvals/${fromId}`), enabled: !!fromId });
-  // 从别的页带过来的预填（只认「工资条异议」的文字、多行文字字段）：工资条页「有异议」带上「工资条」那一栏（OA-18）
   const [params] = useSearchParams();
+  const makeupPrefill = !fromId ? makeupPrefillOf(template, params) : null;
+  // 从别的页带过来的预填：工资条异议（OA-18）与从考勤异常一键补卡（员工办公 v1.1 第 3 批）
   const [values, setValues] = useState<Values | null>(() => {
     if (fromId) return null;
-    if (template.code !== 'payslip_objection') return readDraft(key);
+    const draft = readDraft(key);
+    if (makeupPrefill) {
+      // 只有本机草稿刚好是同一天同一班同一张卡时才沿用已填事由，避免把别的日子的漏卡原因串进来
+      const sameSlot =
+        !!draft &&
+        (!makeupPrefill.date || draft.date === makeupPrefill.date) &&
+        (!makeupPrefill.shiftId || Number(draft.shiftId) === Number(makeupPrefill.shiftId)) &&
+        (!makeupPrefill.kind || draft.kind === makeupPrefill.kind);
+      return { ...(sameSlot ? draft : {}), ...makeupPrefill };
+    }
+    if (template.code !== 'payslip_objection') return draft;
     const prefill = Object.fromEntries(
       template.fields
         .filter((f) => f.type === 'text' || f.type === 'textarea')
         .map((f) => [f.key, params.get(`f.${f.key}`)?.slice(0, f.max ?? 200) ?? ''] as const)
         .filter(([, v]) => v),
     );
-    return { ...readDraft(key), ...prefill };
+    return { ...draft, ...prefill };
   });
   useEffect(() => {
     if (fromId && from.data && values === null) setValues(fromForm(template.fields, from.data.form, from.data.attachments));
@@ -133,7 +171,9 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
   // 按最新的状态合并（附件上传完成时调用的是上传开始那一刻的回调，不能拿那时的表单整个盖回去，Codex 审查 03e17aa）
   const set = (k: string, x: unknown) =>
     setValues((prev) => {
-      const next = { ...prev, [k]: x };
+      const next: Values = { ...prev, [k]: x };
+      // 补卡换了日期时清掉之前选的班次，避免提交旧日期的班次编号
+      if (template.code === 'makeup' && k === 'date' && prev?.date !== x) next.shiftId = '';
       if (!fromId) writeDraft(key, next);
       return next;
     });
@@ -177,8 +217,9 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
   };
 
   return (
-    <Card className="space-y-4 p-4 md:p-5" data-testid="oa-approval-form">
+    <Card className="space-y-4 p-3.5 md:p-5" data-testid="oa-approval-form">
       {fromId && <Notice tone="info" title="修改后重新提交：会生成新的一张，原来那张留着" />}
+      {makeupPrefill && <Notice tone="info" title="已带入考勤异常信息，请核对后填写漏卡原因" data-testid="oa-makeup-prefill-notice" />}
       {template.fields.map((f) => (
         <FieldInput key={f.key} field={f} value={v[f.key]} values={v} onChange={(x) => set(f.key, x)} onBusy={(d) => setUploading((n) => n + d)} />
       ))}
@@ -187,7 +228,7 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
           {error ?? problem}
         </p>
       )}
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
         {!fromId && Object.keys(v).length > 0 && uploading === 0 && (
           <Button
             variant="ghost"
@@ -199,7 +240,7 @@ function TemplateForm({ template, fromId }: { template: ApprovalTemplate; fromId
             清空
           </Button>
         )}
-        <Button variant="primary" size="lg" loading={saving} disabled={uploading > 0} onClick={() => void submit()} data-testid="oa-approval-submit">
+        <Button variant="primary" size="lg" loading={saving} disabled={uploading > 0} onClick={() => void submit()} className="min-w-28 max-sm:flex-1" data-testid="oa-approval-submit">
           {uploading > 0 ? '附件上传中…' : '提交'}
         </Button>
       </div>
@@ -267,8 +308,8 @@ function FieldInput({
       return (
         <Field label={label} hint={f.hint}>
           <div className="flex gap-2">
-            <Input type="date" value={h.date} onChange={(e) => onChange({ ...h, date: e.target.value })} data-testid={`${testId(f)}-date`} />
-            <Select value={h.half} onChange={(e) => onChange({ ...h, half: e.target.value })} fullWidth={false} className="w-28" data-testid={`${testId(f)}-half`}>
+            <Input type="date" value={h.date} onChange={(e) => onChange({ ...h, date: e.target.value })} className="min-w-0 flex-1" data-testid={`${testId(f)}-date`} />
+            <Select value={h.half} onChange={(e) => onChange({ ...h, half: e.target.value })} fullWidth={false} className="w-24 shrink-0 sm:w-28" data-testid={`${testId(f)}-half`}>
               <option value="am">上午</option>
               <option value="pm">下午</option>
             </Select>
@@ -325,9 +366,11 @@ function ShiftInput({ field: f, label, value, date, onChange }: { field: Approva
   const q = useQuery({ queryKey: ['oa', 'my-schedule', month], queryFn: () => api.get<MySchedule>(`/api/oa/me/schedule?month=${month}`), enabled: !!month });
   const items = q.data?.days.find((d) => d.date === date)?.items ?? [];
   if (q.isError && !q.data) return <OptionsFailed label={f.label} onRetry={() => q.refetch()} retrying={q.isFetching} />;
+  const missingSelected = !!value && !q.isPending && items.length > 0 && !items.some((s) => String(s.shiftId) === value);
+  const hint = !date ? '先选日期' : q.isPending ? '正在取那天的排班…' : !items.length ? '那天没有排班' : missingSelected ? '那天没有排原选班次，请重新选择' : f.hint;
   return (
-    <Field label={label} hint={!date ? '先选日期' : q.isPending ? '正在取那天的排班…' : !items.length ? '那天没有排班' : f.hint}>
-      <Select value={value} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : '')} disabled={!items.length} data-testid={testId(f)}>
+    <Field label={label} hint={hint}>
+      <Select value={missingSelected ? '' : value} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : '')} disabled={!items.length} data-testid={testId(f)}>
         <option value="">请选择</option>
         {items.map((s) => (
           <option key={s.shiftId} value={s.shiftId}>
