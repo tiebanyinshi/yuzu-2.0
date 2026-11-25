@@ -223,6 +223,7 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
         <div className="min-w-0">
           {picking ? (
             <TechnicianPicker
+              backfill={backfill.state.active}
               item={picking.item}
               tier={picking.tier}
               data={techs.data}

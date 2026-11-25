@@ -21,8 +21,11 @@ export function TechnicianPicker({
   onCallType,
   onPick,
   onCancel,
+  backfill = false,
 }: {
   item: ServiceItem;
+  /** 补录纸质单（8.1.36，Codex 审查 15cfaba）：服务早已做完，不看此刻的排位，按纸上的技师与上钟方式选 */
+  backfill?: boolean;
   /** 在项目卡片上点的价格档（价格不跟等级时按它计价） */
   tier: PriceTier;
   data: FrontdeskTechnicians | undefined;
@@ -92,7 +95,17 @@ export function TechnicianPicker({
             // 8.1.36：轮钟按排位——没上牌、休息、休假、在钟上（或派了没上）的不能按轮钟选；轮不到的服务端会提示排在前面的是谁
             const q = t.queue;
             const rotationWhy =
-              callType !== 'rotation' || !q ? null : q.state === 'off' ? '今天还没上牌' : q.state === 'leave' ? '今天休假' : q.state === 'rest' ? '休息中' : q.busy ? '在钟上或已派钟' : null;
+              backfill || callType !== 'rotation' || !q
+                ? null
+                : q.state === 'off'
+                  ? '今天还没上牌'
+                  : q.state === 'leave'
+                    ? '今天休假'
+                    : q.state === 'rest'
+                      ? '休息中'
+                      : q.busy
+                        ? '在钟上或已派钟'
+                        : null;
             const why = canServe(t, item, rules.tierByGrade) ?? rotationWhy;
             const charged = tierFor(t, item, tier, rules.tierByGrade);
             const price = tierPrice(item.prices, charged);
@@ -115,7 +128,7 @@ export function TechnicianPicker({
                   {!why && price !== null && <Money cents={price} className="text-[12.5px] font-bold text-ink-2" />}
                 </span>
                 <span className={cn('mt-auto pt-0.5 text-[12px] font-semibold', why ? 'text-clay' : t.todayClocks === fewest ? 'text-pine' : 'text-ink-4')}>
-                  {why ?? `${callType === 'rotation' && t.queue?.position ? `排第 ${t.queue.position} · ` : ''}今日 ${t.todayClocks} 钟${t.todayClocks === fewest ? ' · 钟最少' : ''}`}
+                  {why ?? `${callType === 'rotation' && !backfill && t.queue?.position ? `排第 ${t.queue.position} · ` : ''}今日 ${t.todayClocks} 钟${t.todayClocks === fewest ? ' · 钟最少' : ''}`}
                 </span>
               </button>
             );
