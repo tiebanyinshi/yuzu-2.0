@@ -19,7 +19,7 @@ export function BrandFontNotice({ compact }: { compact?: boolean }) {
     if (compact) return null;
     return (
       <p className="text-[12.5px] text-ink-3" data-testid="emenu-brand-font" data-state="active">
-        品牌英文字体 ABC Arizona Flare 已生效（服务器 brand-fonts/{d.file}）。
+        {d.source === 'library' ? `品牌英文字体已生效：Design 素材库「${d.libraryName ?? ''}」。` : `品牌英文字体 ABC Arizona Flare 已生效（服务器 brand-fonts/${d.file}）。`}
       </p>
     );
   }

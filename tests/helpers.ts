@@ -394,6 +394,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '260_hand_tag_manage.sql',
   '261_hand_tag_generate_ops.sql',
   '262_rename_yuzu.sql',
+  '265_design_assets.sql',
   '270_mall_integration.sql',
   '271_mall_skus.sql',
 ];

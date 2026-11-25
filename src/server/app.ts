@@ -40,6 +40,7 @@ import { registerLegacyRoutes } from './modules/legacy';
 import { registerRequestRoutes } from './modules/requests';
 import { authenticateMall, isMallPath, registerMallRoutes } from './modules/mall';
 import { registerShopRoutes } from './modules/shop';
+import { registerDesignRoutes } from './modules/design';
 import { registerRequestStockRoutes } from './modules/request-stock';
 import { registerRequestImportRoutes } from './modules/request-import';
 import { registerRequestDraftRoutes } from './modules/request-drafts';
@@ -424,6 +425,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerMallRoutes(app, deps);
   // 采购商城页面（8.1.32）
   registerShopRoutes(app, deps);
+  // Design 素材库（8.1.33）
+  registerDesignRoutes(app, deps);
   // 8.1.10 核库转领用：库管核库、部门答复替代
   registerRequestStockRoutes(app, deps);
   registerRequestImportRoutes(app, deps);
