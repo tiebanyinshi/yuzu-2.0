@@ -104,8 +104,9 @@ test.describe('v0.7.0 技师', () => {
         .reverse()[0]!;
       const checkin = await page.request.post('/api/frontdesk/checkins', { data: { clientKey: randomUUID(), guests: [{ tagCode: tag, zone: 'female', guestLabel: 'E2E 技师客人' }] } });
       expect(checkin.ok(), await checkin.text()).toBe(true);
-      await page.goto('/crm/frontdesk');
-      await page.getByTestId(`tag-${tag}`).click();
+      // 8.1.44 起加项目在收银台
+      await page.goto('/crm/cashier');
+      await page.getByTestId(`queue-${tag}`).click();
       const panel = page.getByTestId('bill-panel');
       await expect(panel.getByTestId('bill-tag')).toHaveText(tag);
       await panel.getByTestId('action-add').click();

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { HandHeart, Minus, Plus, Trash2 } from 'lucide-react';
 import { itemCategoryKey, itemCategoryTabs, matchesItemSearch, type PriceTier } from '@shared/catalog';
-import { ZONE_LABELS, type VisitDetail } from '@shared/frontdesk';
+import { ZONE_LABELS, type BuyCode, type VisitDetail } from '@shared/frontdesk';
 import { parseYuan } from '@shared/money';
 import { technicianText, type CallType } from '@shared/technicians';
 import type { ServiceItem } from '@shared/types';
@@ -26,6 +26,7 @@ import { outletBlockedText } from '@shared/dining-v8115';
 import { useFrontdeskTechnicians } from './queries';
 import { TechnicianPicker } from './TechnicianPicker';
 import { windowsText } from '@shared/dining-v8139';
+import { BuyCodeEntry } from './BuyCodeEntry';
 
 const isVisitDetail = (r: unknown): r is VisitDetail => !!r && typeof r === 'object' && 'tag' in r && 'lines' in r;
 
@@ -36,8 +37,23 @@ const techOfKey = (key: string): { technicianId: number; callType: CallType } | 
   return id ? { technicianId: Number(id), callType: callType as CallType } : null;
 };
 
-/** 挂账：点选项目（多档项目按档位点选）累加数量，确认后一次登记到手牌账单（只挂账，不收款）；需要技师的项目先选技师 */
-export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean; visit: VisitDetail; onClose: () => void; onDone: (v: VisitDetail) => void }) {
+/**
+ * 挂账：点选项目（多档项目按档位点选）累加数量，确认后一次登记到手牌账单（只挂账，不收款）；需要技师的项目先选技师。
+ * buyCodes（8.1.44 收银台「买角」）：带上时先敲数字代号，回车把对应的项目加进本次挂账；之后照常提交，与加项目同一个挂账
+ */
+export function AddItemsDialog({
+  open,
+  visit,
+  buyCodes,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  visit: VisitDetail;
+  buyCodes?: readonly BuyCode[];
+  onClose: () => void;
+  onDone: (v: VisitDetail) => void;
+}) {
   const can = useCan();
   const session = useSession();
   const catalog = useCatalog();
@@ -199,10 +215,10 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
       width="max-w-3xl"
       title={
         <span className="flex items-center gap-2">
-          加项目 · <span className="num">{visit.tag.code}</span> <ZoneChip zone={visit.zone} size="md" />
+          {buyCodes ? '买角' : '加项目'} · <span className="num">{visit.tag.code}</span> <ZoneChip zone={visit.zone} size="md" />
         </span>
       }
-      description="点项目累加数量；确认后挂到这张手牌的账单上，价格按当前价格留存。挂账不是收款。"
+      description={buyCodes ? '敲数字代号回车加一份，也可以点下面的项目；确认后挂到这张手牌的账单上。挂账不是收款。' : '点项目累加数量；确认后挂到这张手牌的账单上，价格按当前价格留存。挂账不是收款。'}
       footer={
         <>
           <span className="mr-auto self-center text-[13px] text-ink-3">
@@ -245,6 +261,19 @@ export function AddItemsDialog({ open, visit, onClose, onDone }: { open: boolean
             />
           ) : (
             <>
+              {buyCodes && (
+                <BuyCodeEntry
+                  codes={buyCodes}
+                  items={items}
+                  disabled={locked}
+                  unavailableFor={unavailableFor}
+                  onPick={(item, tier) => {
+                    if (!needsTech(item)) return add(cartKey(item.id, tier), 1);
+                    touch();
+                    setPicking({ item, tier });
+                  }}
+                />
+              )}
               <Input className="mb-2" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜项目名称或编号" aria-label="搜项目" data-testid="add-items-search" />
               {!search.trim() && <CategoryTabs tabs={tabs} value={category} onChange={setCategory} total={items.length} testId="add-items-categories" />}
               {catalog.isPending ? (

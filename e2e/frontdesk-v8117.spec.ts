@@ -259,8 +259,8 @@ test.describe('8.1.17 前台、桌台、退菜（会登记单据）', () => {
     await send(owner, 'put', '/api/admin/permissions', { roles: { clerk: clerk.filter((p) => p !== 'dining.orderWater' && p !== 'dining.voidWater') } });
     try {
       await login(page, 'xiaozhou');
-      // 发卡台「加项目」：水吧的菜标「不能在水吧下单」、不能点
-      await page.goto(`/crm/frontdesk?v=${visitId}`);
+      // 收银台「加项目」（8.1.44 起）：水吧的菜标「不能在水吧下单」、不能点
+      await page.goto(`/crm/cashier?v=${visitId}`);
       await expect(page.getByTestId('bill-tag')).toHaveText(code);
       await page.getByTestId('action-add').click();
       const card = page.getByTestId(`item-${water}`);

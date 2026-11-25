@@ -372,15 +372,15 @@ test.describe('视口冒烟', () => {
         expect(box.y + box.height, id).toBeLessThanOrEqual(viewport.height);
       }
     };
-    // 发卡台（8.1.15）：已挂合计、加项目、换牌、去收银台都在一屏之内，不用滚动
-    await inScreen(['bill-total', 'action-add', 'action-swap', 'go-cashier']);
+    // 发卡台（8.1.15）：已挂合计、换牌、去收银台都在一屏之内，不用滚动（8.1.44 起加项目在收银台）
+    await inScreen(['bill-total', 'action-swap', 'go-cashier']);
     await expectFits(page);
 
-    // 收银台：带着这张手牌过去；应收与结账按钮在一屏之内
+    // 收银台：带着这张手牌过去；应收、买单与加项目按钮在一屏之内
     await panel.getByTestId('go-cashier').click();
     await expect(page.getByTestId('cashier-queue')).toBeVisible();
     await expect(panel.getByTestId('bill-tag')).toHaveText('A8075');
-    await inScreen(['bill-total', 'action-preview', 'action-checkout']);
+    await inScreen(['bill-total', 'action-preview', 'action-checkout', 'action-add', 'action-buy']);
     await expectFits(page);
 
     await page.goto('/crm/shift');

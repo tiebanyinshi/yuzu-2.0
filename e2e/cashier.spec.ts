@@ -151,10 +151,12 @@ test.describe('完整收银', () => {
     await checkin.getByTestId('checkin-submit').click();
     await expect(page.getByText(`已发牌 ${memberTag}、${friendTag}`)).toBeVisible();
 
-    // ③ F4 挂账：会员加一个搓背
+    // ③ F4 挂账（8.1.44 起在收银台）：会员加一个搓背
     const panel = page.getByTestId('bill-panel');
     await expect(panel.getByTestId('bill-tag')).toHaveText(memberTag);
     await expect(panel.getByTestId('bill-group')).toContainText(friendTag);
+    await panel.getByTestId('go-cashier').click();
+    await expect(panel).toHaveAttribute('data-desk', 'cashier');
     await page.keyboard.press('F4');
     const add = page.getByRole('dialog').filter({ hasText: '加项目' });
     await add.getByTestId('item-搓背').click();
@@ -162,7 +164,6 @@ test.describe('完整收银', () => {
     await expect(panel.getByTestId('bill-total')).toContainText('58.00');
 
     // ④ 结账：同行两张牌一起结；门票不含餐 12 小时档 499 × 2 + 搓背 58 = 1,056；储值 300 + 美团券 499 + 现金 257
-    await panel.getByTestId('go-cashier').click();
     await panel.getByTestId('action-checkout').click();
     const review = page.getByTestId('checkout-review');
     await expect(review.getByTestId(`checkout-ticket-${memberTag}`)).toContainText('不含餐');

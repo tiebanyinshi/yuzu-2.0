@@ -36,7 +36,7 @@ import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { ReasonChips } from '../../components/ReasonChips';
-import { Badge, Button, Input, Notice, Segmented, Select } from '../../components/ui';
+import { Badge, Button, Input, Notice, Segmented } from '../../components/ui';
 import { AuthorizeDialog } from '../../components/AuthorizeDialog';
 import { GroupMark, VipChip, ZONE_STYLE } from './parts';
 import { BackfillNotice, backfillBody, backfillSummary, useBackfill } from './backfill';
@@ -559,22 +559,8 @@ export function CheckinDialog({
                     aria-label={`第 ${i + 1} 位称呼`}
                     className="h-10 min-w-0 flex-1 basis-28"
                   />
-                  {(ticketTypes.data?.length ?? 0) > 0 && (
-                    <Select
-                      fullWidth={false}
-                      value={String(r.ticketTypeId ?? defaultTicket ?? '')}
-                      onChange={(e) => update(r.id, { ticketTypeId: Number(e.target.value) })}
-                      aria-label={`第 ${i + 1} 位票种`}
-                      className="h-10 w-[150px] text-[13.5px]"
-                      data-testid={`guest-ticket-${i}`}
-                    >
-                      {ticketTypes.data!.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name} {t.price12h ? `¥${t.price12h / 100}` : '免票'}
-                        </option>
-                      ))}
-                    </Select>
-                  )}
+                  {/* 8.1.44（《前台系统开发》第 7 条）：接待发牌不再选套餐（票种），一律按默认票种发牌；
+                      儿童免票等改票种在收银台账单上「改票种」（照旧要当场授权），docs/V8144_CASHIER.md */}
                   {rows.length > 1 && (
                     <button
                       type="button"

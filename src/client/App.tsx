@@ -60,6 +60,7 @@ const AdminShell = lazyPage(() => import('./features/admin/AdminShell').then((m)
 const CheckoutPrintPage = lazyPage(() => import('./features/print/CheckoutPrintPage').then((m) => m.CheckoutPrintPage));
 const ContractPrintPage = lazyPage(() => import('./features/print/ContractPrintPage').then((m) => m.ContractPrintPage));
 const RefundPrintPage = lazyPage(() => import('./features/print/RefundPrintPage').then((m) => m.RefundPrintPage));
+const PrebillPrintPage = lazyPage(() => import('./features/print/PrebillPrintPage').then((m) => m.PrebillPrintPage));
 const SettlementPrintPage = lazyPage(() => import('./features/print/SettlementPrintPage').then((m) => m.SettlementPrintPage));
 const CanteenCardsPrintPage = lazyPage(() => import('./features/canteen/CardsPrintPage').then((m) => m.CanteenCardsPrintPage));
 const CanteenPosterPrintPage = lazyPage(() => import('./features/canteen/PosterPrintPage').then((m) => m.CanteenPosterPrintPage));
@@ -332,6 +333,8 @@ const router = createBrowserRouter([
     children: [
       { path: 'checkout/:id', element: <CheckoutPrintPage /> },
       { path: 'refund/:id', element: <RefundPrintPage /> },
+      // 收银台「打单」（8.1.44）：几张手牌的预结单
+      { path: 'prebill/:ids', element: <PrebillPrintPage /> },
       { path: 'shift/:id', element: <ShiftPrintPage /> },
       { path: 'settlement/:date', element: <SettlementPrintPage /> },
       // 员工食堂的开通卡片（A4）
