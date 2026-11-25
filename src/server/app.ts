@@ -169,6 +169,7 @@ import { registerCustomerRoutes } from './modules/customer/routes';
 import { registerPatrolAdminRoutes } from './modules/patrol/routes';
 import { registerTablesV8115Routes } from './modules/tables-v8115';
 import { registerDishRoutes } from './modules/dishes';
+import { registerDishCostRoutes } from './modules/dish-cost';
 import { registerDishImportRoutes } from './modules/dishes-import';
 import { registerRoomCenterRoutes } from './modules/room-center';
 
@@ -479,6 +480,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerTablesV8115Routes(app, deps);
   // 菜品管理（8.1.15，docs/DISHES_V8115.md）：菜品表、新增 / 编辑、上下架、改价与改价记录、Excel 导出与导入
   registerDishRoutes(app, deps);
+  registerDishCostRoutes(app, deps);
   registerDishImportRoutes(app, deps);
   // 房态中心（8.1.15，docs/ROOM_CENTER_V8115.md）：按房型看全店房间的五种状态，服务房间的登记、换房、续钟、并房、退房
   registerRoomCenterRoutes(app, deps);
