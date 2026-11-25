@@ -368,3 +368,20 @@ export function matchesRoomSearch(r: Pick<RoomCard, 'code' | 'name' | 'guests' |
   const hit = (s: string | null | undefined) => !!s && s.replace(/\s+/g, '').toLowerCase().includes(k);
   return hit(r.code) || hit(r.name) || hit(r.guestText) || r.guests.some((g) => hit(g.tagCode) || hit(g.guest)) || hit(r.hotel?.stay?.tagCode) || hit(r.hotel?.stay?.guestLabel);
 }
+
+/**
+ * 房态中心的排序与过夜筛选（8.1.40，docs/V8140_B.md 第 1、2 节）：只在页面上排、筛，接口不变。
+ * 「从小到大」就是原来的顺序（楼层、房号）；「从大到小」按房号倒排（数字按数值比，A102 在 A99 前面）。
+ */
+export type RoomOrder = 'asc' | 'desc';
+export const ROOM_ORDERS: readonly RoomOrder[] = ['asc', 'desc'];
+export const ROOM_ORDER_LABELS: Record<RoomOrder, string> = { asc: '房号从小到大', desc: '房号从大到小' };
+
+/** 这间房里有过夜的客人 */
+export const isOvernightRoom = (r: { guests: readonly { overnight: boolean }[] }): boolean => r.guests.some((g) => g.overnight);
+
+export function arrangeRooms<T extends { code: string; guests: readonly { overnight: boolean }[] }>(rooms: readonly T[], opts: { order: RoomOrder; overnightOnly: boolean }): T[] {
+  const list = opts.overnightOnly ? rooms.filter(isOvernightRoom) : [...rooms];
+  if (opts.order === 'desc') list.sort((a, b) => b.code.localeCompare(a.code, 'zh-Hans-CN', { numeric: true }));
+  return list;
+}
