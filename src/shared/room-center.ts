@@ -12,6 +12,7 @@ import type { RoomBoardRoom } from './rooms';
 import { isTechnicianBusinessType, ROOM_BUSINESS_TYPE } from './spaces';
 import type { UsageDetail } from './usages';
 import type { RoomOrderSummary } from './room-orders';
+import type { BookingKind, BookingSource, BookingStatus } from './bookings';
 
 export const ROOM_STATUSES = ['free', 'in_use', 'dirty', 'maintenance', 'booked'] as const;
 export type RoomStatus = (typeof ROOM_STATUSES)[number];
@@ -247,6 +248,29 @@ export interface RoomCenterBoard {
   /** 全部房型合起来的数量（总览用） */
   total: RoomCounts;
   rooms: RoomCard[];
+  /** 当天的预约单（8.1.44，《前台系统开发》「房态显示当天预约单」）：技师、派对房、客房三种，取消的不列；只为点单来看的为空 */
+  todayBookings: RoomCenterBooking[];
+}
+
+/** 房态页上的一张预约（只读；改、到店、取消在预约看板） */
+export interface RoomCenterBooking {
+  id: number;
+  bookingNo: string;
+  kind: BookingKind;
+  status: BookingStatus;
+  source: BookingSource;
+  startsAt: string;
+  endsAt: string;
+  /** 客房电话预订保留到几点；别的为 null */
+  holdUntil: string | null;
+  /** 客人：会员名或登记的称呼；看不到客人信息的岗位写「客人」 */
+  guest: string;
+  guests: number;
+  /** 约的什么：「足疗 · 8 号 小王」「P01 大包」「豪华大床房」 */
+  target: string;
+  /** 到店后的手牌、开的单（钟单、入住单、使用单）；还没有为 null */
+  arrivalTagCode: string | null;
+  serviceNo: string | null;
 }
 
 export const ROOM_EVENT_KINDS = ['register', 'move_out', 'move_in', 'checkout', 'extend', 'merge', 'unmerge', 'dirty', 'cleaned', 'maintenance', 'restore'] as const;

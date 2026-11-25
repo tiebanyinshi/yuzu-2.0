@@ -24,6 +24,7 @@ import { businessDate, FRONTDESK_OP_PERMISSIONS, FRONTDESK_OPS, loadFrontdeskRul
 import { batchCreate, deleteHandTag, generateTags, setTagService, importHandTags, listTags, lockHandTag, setTagCard, tagByCard, unlockHandTag, updateHandTag, type ImportInputData } from './tags';
 import { registerIncidentRoutes } from './incidents';
 import { registerRiskRoutes } from './risk';
+import { bindVisitMember, lookupCashierMembers, MemberLookupQuery } from './cashier-member';
 import { memberLockerGrades } from './vip';
 import {
   abandonFrontdeskOp,
@@ -112,10 +113,17 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
     return swapTag(deps, id, req.body as SwapInputData, ctxOf(req));
   });
 
-  app.post('/api/frontdesk/visits/:id/group', { preHandler: guard('frontdesk.operate') }, async (req) => {
+  // 8.1.44（《前台系统开发》同行人组建与拆分结算）：收银台买单时也能把分批到的客人组成同行、或把不一起结的拆出去，有结账权限就行
+  app.post('/api/frontdesk/visits/:id/group', { preHandler: guardAny('frontdesk.operate', 'frontdesk.checkout') }, async (req) => {
     const { id } = parse(idParam, req.params);
     return changeGroup(deps, id, req.body as GroupInputData, ctxOf(req));
   });
+
+  // 8.1.44：买单时查会员（余额、充没充过值）、把会员记到手牌上（现场建档走 POST /api/members）
+  app.get('/api/frontdesk/member-lookup', { preHandler: guard('member.read') }, async (req) => lookupCashierMembers(sql, parse(MemberLookupQuery, req.query).q));
+  app.post('/api/frontdesk/visits/:id/member', { preHandler: guardAny('frontdesk.operate', 'frontdesk.checkout') }, async (req) =>
+    bindVisitMember(deps, parse(idParam, req.params).id, req.body, ctxOf(req)),
+  );
 
   app.post('/api/frontdesk/visits/:id/cancel', { preHandler: guard('frontdesk.operate') }, async (req) => {
     const { id } = parse(idParam, req.params);

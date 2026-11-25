@@ -1038,6 +1038,39 @@ const RC_BOARD: RoomCenterBoard = {
   ],
   total: rcCounts(RC_ROOMS),
   rooms: RC_ROOMS,
+  // 8.1.44：当天的预约单（合成）
+  todayBookings: [
+    {
+      id: 990_801,
+      bookingNo: 'YY-SYN-8144-1',
+      kind: 'technician',
+      status: 'confirmed',
+      source: 'phone',
+      startsAt: ago(-60),
+      endsAt: ago(-150),
+      holdUntil: null,
+      guest: '合成电话客人',
+      guests: 2,
+      target: '足底按摩（经典 90 分钟） · 18 号 技师小林',
+      arrivalTagCode: null,
+      serviceNo: null,
+    },
+    {
+      id: 990_802,
+      bookingNo: 'YY-SYN-8144-2',
+      kind: 'room',
+      status: 'arrived',
+      source: 'front',
+      startsAt: ago(30),
+      endsAt: ago(-30),
+      holdUntil: ago(-60),
+      guest: '合成订房客人',
+      guests: 1,
+      target: '合成豪华大床房',
+      arrivalTagCode: 'A023',
+      serviceNo: 'KF20261125-0001',
+    },
+  ],
 };
 const RC_HISTORY: RoomHistory = {
   spaceId: 990_702,
@@ -1057,7 +1090,9 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     try {
       await page.goto('/crm/room-center');
       await expect(page.getByTestId('rc-stats')).toBeVisible();
+      await expect(page.getByTestId('rc-today-bookings')).toContainText('待到店 1 张');
       await expectFits(page);
+      await expectOnScreen(page, ['rc-booking-YY-SYN-8144-1', 'rc-booking-YY-SYN-8144-2']);
       await page.getByTestId(`rc-tab-${RC_CAT.spa}`).click();
       await expect(page.getByTestId('rc-room-S9905')).toHaveAttribute('data-status', 'booked');
       await expectFits(page);
