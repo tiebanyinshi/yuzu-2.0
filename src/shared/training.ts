@@ -85,6 +85,15 @@ export interface TrainingFileDetail {
   viewers: TrainingViewer[];
 }
 
+/** 知识库检索结果（员工办公 v1.1 第 5 批，docs/OA_MOBILE.md） */
+export interface TrainingSearchItem {
+  folderId: number;
+  folderName: string;
+  folderKind: TrainingFolderKind;
+  departmentKey: string | null;
+  file: TrainingFile;
+}
+
 /** 能上传的格式：类型 → 扩展名、页面里怎么看 */
 export const TRAINING_FORMATS: Record<string, { ext: string[]; view: TrainingViewKind; label: string }> = {
   'application/pdf': { ext: ['pdf'], view: 'pdf', label: 'PDF' },

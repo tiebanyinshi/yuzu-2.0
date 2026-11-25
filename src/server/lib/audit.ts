@@ -389,7 +389,11 @@ export type AuditAction =
   // 员工办公 v1.1 第 2 批（docs/OA_MOBILE.md）：排班发布、排班授权与撤销
   | 'oa_schedule_published'
   | 'oa_schedule_grant_created'
-  | 'oa_schedule_grant_revoked';
+  | 'oa_schedule_grant_revoked'
+  // 员工办公 v1.1 第 5 批（docs/OA_MOBILE.md）：公司公告发布、编辑与撤回
+  | 'oa_announcement_published'
+  | 'oa_announcement_updated'
+  | 'oa_announcement_recalled';
 
 export interface AuditEntry {
   staffId: number | null;

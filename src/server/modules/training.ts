@@ -35,6 +35,7 @@ import {
   type TrainingFileVersion,
   type TrainingFolder,
   type TrainingFolderList,
+  type TrainingSearchItem,
   type TrainingSheetBook,
 } from '@shared/training';
 import type { Db, Tx } from '../db';
@@ -1019,6 +1020,69 @@ const contentSlots = createStreamSlots({
 
 // ───────────────────────── 路由 ─────────────────────────
 
+const SearchQuery = z.object({ q: z.string().trim().max(60).default('') });
+
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
+
+/** 知识库检索（员工办公 v1.1 第 5 批）：按标题、说明、当前版本文件名搜索本人可见的培训文件 */
+async function searchFiles(db: Db, actor: Actor, rawQuery: string): Promise<TrainingSearchItem[]> {
+  const q = rawQuery.trim();
+  if (!q) return [];
+  const manage = can(actor, MANAGE);
+  const dept = manage ? null : await myDepartment(db, actor);
+  const pat = `%${escapeLike(q)}%`;
+  const rows = await db<
+    (VersionRow & {
+      fileId: number;
+      folderId: number;
+      folderName: string;
+      folderKind: 'public' | 'department';
+      departmentKey: string | null;
+      title: string;
+      description: string;
+      active: boolean;
+      sort: number;
+      fileVersion: number;
+      updatedAt: Date | string;
+      myLast: Date | string | null;
+      viewers: number;
+    })[]
+  >`
+    SELECT t.id AS file_id, t.folder_id, f.name AS folder_name, f.kind AS folder_kind, f.department_key,
+           t.title, t.description, t.active, t.sort, t.version AS file_version, t.updated_at,
+           ${VERSION_SELECT(db)},
+           (SELECT last_viewed_at FROM training_views w WHERE w.file_id = t.id AND w.staff_id = ${actor.id}) AS my_last,
+           (SELECT count(*)::int FROM training_views w WHERE w.file_id = t.id) AS viewers
+    FROM training_files t
+    JOIN training_folders f ON f.id = t.folder_id
+    JOIN training_file_versions v ON v.id = t.current_version_id
+    JOIN staff s ON s.id = v.uploaded_by
+    WHERE (t.title ILIKE ${pat} ESCAPE '\\' OR t.description ILIKE ${pat} ESCAPE '\\' OR v.file_name ILIKE ${pat} ESCAPE '\\')
+      ${manage ? db`` : db`AND f.active AND t.active AND (f.kind = 'public' OR f.department_key IS NULL ${dept ? db`OR f.department_key = ${dept}` : db``})`}
+    ORDER BY f.kind = 'public' DESC, f.sort, t.sort, t.id
+    LIMIT 50`;
+  return rows.map((r) => ({
+    folderId: Number(r.folderId),
+    folderName: r.folderName,
+    folderKind: r.folderKind,
+    departmentKey: r.departmentKey,
+    file: {
+      id: Number(r.fileId),
+      folderId: Number(r.folderId),
+      title: r.title,
+      description: r.description,
+      active: r.active,
+      sort: r.sort,
+      version: r.fileVersion,
+      current: toVersion(r),
+      viewKind: trainingViewKind(r.mime),
+      myLastViewedAt: r.myLast ? iso(r.myLast) : null,
+      ...(manage ? { viewerCount: Number(r.viewers) } : {}),
+      updatedAt: iso(r.updatedAt),
+    },
+  }));
+}
+
 export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
   // 只有在职员工能看（Codex 安全审查 b638705）：平板（电子菜单）、他店、设计师等专用账号、系统账号、已离职的一律拒绝；
@@ -1031,6 +1095,8 @@ export function registerTrainingRoutes(app: FastifyInstance, deps: Deps) {
   const manage = guard(MANAGE);
 
   app.get('/api/training/folders', { preHandler: loggedIn }, async (req) => listFolders(sql, req.actor));
+
+  app.get('/api/training/search', { preHandler: loggedIn }, async (req) => searchFiles(sql, req.actor, parse(SearchQuery, req.query ?? {}).q));
 
   app.get('/api/training/folders/:id/files', { preHandler: loggedIn }, async (req) => {
     const { id } = parse(idParam, req.params);

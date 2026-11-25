@@ -103,16 +103,26 @@ function MobileTopBar() {
   const [params] = useSearchParams();
   const tab = wcpTabOf(pathname);
   const root = isWcpTabRoot(pathname);
-  const onWork = (pathname.replace(/\/+$/, '') || '/oa') === '/oa';
-  const q = onWork ? (params.get('q') ?? '') : '';
-  // 搜索：先在工作台的功能入口里找（知识库的检索第 5 批再接上）
-  const search = (text: string) => navigate(text ? `/oa?q=${encodeURIComponent(text)}` : '/oa', { replace: onWork });
-  // 工作台的搜索框跟着地址里的 q 走（点底部「工作台」清掉 q 时框里也清空，Codex 审查 6c8e9e7）；别的 Tab 上没提交的字留着
-  const [workText, setWorkText] = useState(q);
+  const cleanPath = pathname.replace(/\/+$/, '') || '/oa';
+  const onWork = cleanPath === '/oa';
+  const onKnowledge = cleanPath === '/oa/training';
+  const q = onWork || onKnowledge ? (params.get('q') ?? '') : '';
+  // 工作台搜功能宫格，知识库搜文档（第 5 批）；其他 Tab 提交时回到工作台搜索
+  const search = (text: string) => {
+    if (onKnowledge) {
+      navigate(text ? `/oa/training?q=${encodeURIComponent(text)}` : '/oa/training', { replace: true });
+      return;
+    }
+    navigate(text ? `/oa?q=${encodeURIComponent(text)}` : '/oa', { replace: onWork });
+  };
+  // 工作台与知识库的搜索框跟着地址里的 q 走（清掉 q 时框里也清空，Codex 审查 6c8e9e7）；别的 Tab 上没提交的字留着
+  const [workText, setWorkText] = useState(onWork ? q : '');
+  const [kbText, setKbText] = useState(onKnowledge ? q : '');
   const [otherText, setOtherText] = useState('');
   useEffect(() => {
     if (onWork) setWorkText((t) => (t.trim() === q ? t : q));
-  }, [onWork, q]);
+    else if (onKnowledge) setKbText((t) => (t.trim() === q ? t : q));
+  }, [onWork, onKnowledge, q]);
   return (
     <header data-surface="rail" className="shrink-0 bg-rail px-3 pt-[max(env(safe-area-inset-top),0.5rem)] pb-2 text-paper md:hidden" data-testid="wcp-mobile-top">
       <div className="flex h-10 items-center gap-2">
@@ -145,14 +155,20 @@ function MobileTopBar() {
           <input
             name="q"
             type="search"
-            value={onWork ? workText : otherText}
+            value={onWork ? workText : onKnowledge ? kbText : otherText}
             onChange={(e) => {
-              if (!onWork) return setOtherText(e.target.value);
-              setWorkText(e.target.value);
-              search(e.target.value.trim());
+              if (onWork) {
+                setWorkText(e.target.value);
+                search(e.target.value.trim());
+              } else if (onKnowledge) {
+                setKbText(e.target.value);
+                if (!e.target.value.trim()) search('');
+              } else {
+                setOtherText(e.target.value);
+              }
             }}
-            placeholder="搜索功能，如 打卡、工资条"
-            aria-label="搜索"
+            placeholder={onKnowledge ? '搜索知识库文档，回车查看' : '搜索功能，如 打卡、工资条'}
+            aria-label={onKnowledge ? '搜索知识库' : '搜索'}
             data-testid="wcp-mobile-search"
             className="h-9 w-full rounded-full bg-white/12 pr-3 pl-9 text-[14px] text-paper placeholder:text-paper/50 focus:bg-white/18 focus:outline-none"
           />

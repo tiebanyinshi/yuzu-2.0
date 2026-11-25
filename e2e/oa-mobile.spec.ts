@@ -447,4 +447,90 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
     expect((await page.request.put(`/api/staff/${staffId}`, { data: { displayName: `用章员${stamp}`, position: 'front.staff', active: false } })).status()).toBe(200);
     expect((await page.request.put(`/api/staff/${transId}`, { data: { displayName: `接手人${stamp}`, position: 'hr.lead', active: false } })).status()).toBe(200);
   });
+
+  test('第 5 批：PC 端知识库检索与发布公告，手机 360×800 知识库检索预览、公告自动已读与撤回隐藏', async ({ page, browser }) => {
+    const stamp = Date.now().toString().slice(-6);
+    const pdfTitle = `手机安全须知${stamp}`;
+    const annTitle = `全店演练公告${stamp}`;
+
+    // 1. PC 管理员登录：上传一份测试 PDF 到全员「培训资料」，验证 PC 跨文件夹检索
+    await page.goto('/login');
+    expect((await page.request.post('/api/auth/login', { data: { username: 'linlan', password: PASSWORD } })).status()).toBe(200);
+    await page.goto('/admin/training');
+    await expect(page.getByTestId('training-admin-folders')).toBeVisible({ timeout: 20_000 });
+    const miniPdf = Buffer.from(
+      '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 200 200]/Parent 2 0 R>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
+    );
+    await page.getByTestId('training-upload-input').setInputFiles({ name: `${pdfTitle}.pdf`, mimeType: 'application/pdf', buffer: miniPdf });
+    await expect(page.getByTestId('training-admin-files')).toContainText(pdfTitle, { timeout: 20_000 });
+
+    await page.getByTestId('training-admin-search-input').fill(pdfTitle);
+    await page.getByTestId('training-admin-search-submit').click();
+    await expect(page.getByTestId('training-admin-search-results')).toContainText(pdfTitle, { timeout: 10_000 });
+
+    // 2. PC 管理员到「公司公告」发布置顶全员公告
+    await page.goto('/admin/announcements');
+    await page.getByTestId('admin-ann-new').click();
+    await page.getByTestId('admin-ann-title').fill(annTitle);
+    await page.getByTestId('admin-ann-body').fill(`请在周五 15:00 参加演练（批次 ${stamp}）。`);
+    await page.getByTestId('admin-ann-pinned').check();
+    await page.getByTestId('admin-ann-submit').click();
+    await expect(page.getByTestId('admin-ann-list')).toContainText(annTitle, { timeout: 15_000 });
+    const adminList = (await (await page.request.get('/api/admin/oa/announcements')).json()) as { id: number; title: string }[];
+    const annId = adminList.find((x) => x.title === annTitle)!.id;
+
+    // 3. 手机端（360×800 微信 UA）员工登录
+    const mobileCtx = await browser.newContext({
+      viewport: { width: 360, height: 800 },
+      isMobile: true,
+      hasTouch: true,
+      userAgent: WECHAT_UA,
+      locale: 'zh-CN',
+      timezoneId: 'Asia/Shanghai',
+    });
+    const mp = await mobileCtx.newPage();
+    await mp.goto('/login');
+    expect((await mp.request.post('/api/auth/login', { data: { username: 'xiaozhou', password: PASSWORD } })).status()).toBe(200);
+    await mp.goto('/oa');
+    await expect(mp.getByTestId('oa-tile-announcements-badge')).toBeVisible({ timeout: 15_000 });
+
+    // 知识库 Tab：顶栏搜索框检索刚上传的文档并打开预览，零横向滚动
+    await mp.getByTestId('wcp-tab-knowledge').click();
+    await expect(mp).toHaveURL(/\/oa\/training$/);
+    await mp.getByTestId('wcp-mobile-search').fill(pdfTitle);
+    await mp.getByTestId('wcp-mobile-search').press('Enter');
+    await expect(mp.getByTestId('training-search-results')).toContainText(pdfTitle, { timeout: 15_000 });
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await mp
+      .getByTestId('training-search-results')
+      .getByRole('link', { name: new RegExp(pdfTitle) })
+      .first()
+      .click();
+    await expect(mp).toHaveURL(/\/oa\/training\/\d+\/\d+$/);
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    // 公告列表 -> 点进详情自动标已读，零横向滚动
+    await mp.goto('/oa/announcements');
+    await expect(mp.getByTestId(`ann-item-${annId}`)).toContainText(annTitle, { timeout: 15_000 });
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await mp.getByTestId(`ann-item-${annId}`).click();
+    await expect(mp.getByTestId('ann-detail-title')).toHaveText(annTitle);
+    await expect(mp.getByTestId('ann-read-badge')).toBeVisible({ timeout: 15_000 });
+    expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    // 4. PC 管理员查看已读名单包含小周，再撤回公告
+    await page.reload();
+    await page.getByTestId(`admin-ann-readers-${annId}`).click();
+    await expect(page.getByTestId('admin-ann-readers-list')).toContainText('周小舟', { timeout: 10_000 });
+    await page.keyboard.press('Escape');
+    await page.getByTestId(`admin-ann-recall-${annId}`).click();
+    await page.getByTestId('admin-ann-recall-reason-reason').fill('测试演练已结束');
+    await page.getByTestId('admin-ann-recall-reason-confirm').click();
+    await expect(page.getByTestId(`admin-ann-${annId}`)).toContainText('已撤回', { timeout: 15_000 });
+
+    // 5. 手机端刷新公告列表，已撤回公告不再出现
+    await mp.goto('/oa/announcements');
+    await expect(mp.getByTestId(`ann-item-${annId}`)).toHaveCount(0);
+    await mobileCtx.close();
+  });
 });

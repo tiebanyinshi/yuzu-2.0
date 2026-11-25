@@ -520,4 +520,90 @@ describe('员工培训', () => {
       setTrainingQuotaForTest(null);
     }
   });
+
+  it('知识库检索（GET /api/training/search）：按标题/说明/文件名匹配、遵守部门权限与上下架隔离、转义 LIKE 通配符、拒绝非员工', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const front = await folderOf((f) => f.departmentKey === 'front');
+    const dining = await folderOf((f) => f.departmentKey === 'dining');
+
+    // 前厅普通员工（无 training.manage）
+    await createStaff(ctx.sql, { username: 'kb_front', displayName: '前厅检索员', role: 'clerk', position: 'front.staff', password: PASSWORD, mustChangePassword: false });
+    const frontCookie = await login(ctx.app, 'kb_front');
+    await createStaff(ctx.sql, { username: 'kb_tablet', displayName: '检索平板', role: 'tablet', password: PASSWORD, mustChangePassword: false });
+    const tabletCookie = await login(ctx.app, 'kb_tablet');
+
+    setTrainingQuotaForTest({ openUploads: 1000, openBytes: 1024 ** 4 });
+    try {
+      const fPub = await upload(PDF(600), 'fire_guide_100%.pdf', 'application/pdf', { folderId: pub.id, title: '消防安全100%达标手册' });
+      const fFront = await upload(PDF(600), 'front_sop.pdf', 'application/pdf', { folderId: front.id, title: '前厅接待SOP检索词ZZ99' });
+      const fDining = await upload(PDF(600), 'dining_secret.pdf', 'application/pdf', { folderId: dining.id, title: '餐饮内部方案检索词ZZ99' });
+      const fOff = await upload(PDF(600), 'hidden.pdf', 'application/pdf', { folderId: pub.id, title: '已下架资料检索词ZZ99' });
+      expect([fPub.done.status, fFront.done.status, fDining.done.status, fOff.done.status]).toEqual([200, 200, 200, 200]);
+
+      // 给 fPub 补写说明以测试按 description 检索
+      const detailPub = await api(ctx.app, ctx.owner, 'GET', `/api/admin/training/files/${fPub.done.body.fileId}`);
+      expect(
+        (
+          await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/files/${fPub.done.body.fileId}`, {
+            title: detailPub.body.file.title,
+            description: '全员必读检索词ZZ99',
+            folderId: pub.id,
+            active: true,
+            sort: detailPub.body.file.sort,
+            version: detailPub.body.file.version,
+          })
+        ).status,
+      ).toBe(200);
+
+      // 下架 fOff
+      const detailOff = await api(ctx.app, ctx.owner, 'GET', `/api/admin/training/files/${fOff.done.body.fileId}`);
+      expect(
+        (
+          await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/files/${fOff.done.body.fileId}`, {
+            title: detailOff.body.file.title,
+            description: detailOff.body.file.description,
+            folderId: pub.id,
+            active: false,
+            sort: detailOff.body.file.sort,
+            version: detailOff.body.file.version,
+          })
+        ).status,
+      ).toBe(200);
+
+      // 空查询返回空数组；非员工拒绝
+      expect((await api(ctx.app, frontCookie, 'GET', '/api/training/search?q=')).body).toEqual([]);
+      expect((await api(ctx.app, tabletCookie, 'GET', '/api/training/search?q=ZZ99')).status).toBe(403);
+
+      // 停用的部门文件夹（前面用例停用了前厅部）里即使有文件，普通员工也搜不到
+      const whileOff = await api(ctx.app, frontCookie, 'GET', `/api/training/search?q=${encodeURIComponent('检索词ZZ99')}`);
+      expect((whileOff.body as { file: { id: number } }[]).map((x) => x.file.id)).not.toContain(fFront.done.body.fileId);
+
+      // 重新启用前厅部文件夹
+      expect((await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/folders/${front.id}`, { name: front.name, sort: front.sort, active: true, version: front.version })).status).toBe(200);
+
+      // 前厅员工只搜到「全员（按说明命中）+ 前厅（按标题命中）」，搜不到餐饮部与已下架文档
+      const empRes = await api(ctx.app, frontCookie, 'GET', `/api/training/search?q=${encodeURIComponent('检索词ZZ99')}`);
+      expect(empRes.status, JSON.stringify(empRes.body)).toBe(200);
+      const empIds = (empRes.body as { file: { id: number } }[]).map((x) => x.file.id);
+      expect(empIds).toContain(fPub.done.body.fileId);
+      expect(empIds).toContain(fFront.done.body.fileId);
+      expect(empIds).not.toContain(fDining.done.body.fileId);
+      expect(empIds).not.toContain(fOff.done.body.fileId);
+
+      // 管理员（owner）搜全库，包含其他部门和已下架文档且带 viewerCount
+      const adminRes = await api(ctx.app, ctx.owner, 'GET', `/api/training/search?q=${encodeURIComponent('检索词ZZ99')}`);
+      expect(adminRes.status).toBe(200);
+      const adminIds = (adminRes.body as { file: { id: number; viewerCount?: number } }[]).map((x) => x.file.id);
+      expect(adminIds).toEqual(expect.arrayContaining([fPub.done.body.fileId, fFront.done.body.fileId, fDining.done.body.fileId, fOff.done.body.fileId]));
+      expect(typeof adminRes.body[0].file.viewerCount).toBe('number');
+
+      // LIKE 通配符 % 必须字面匹配，不能把所有文件都扫出来
+      const pctRes = await api(ctx.app, frontCookie, 'GET', `/api/training/search?q=${encodeURIComponent('100%')}`);
+      expect(pctRes.status).toBe(200);
+      const pctIds = (pctRes.body as { file: { id: number } }[]).map((x) => x.file.id);
+      expect(pctIds).toEqual([fPub.done.body.fileId]);
+    } finally {
+      setTrainingQuotaForTest(null);
+    }
+  });
 });
