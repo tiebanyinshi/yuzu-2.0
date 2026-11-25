@@ -51,6 +51,8 @@ const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
   // OA-10 办公审批的提交与处理：那一张审批单
   oa_approval_submit: 'approval',
   oa_approval_act: 'approval',
+  // 员工办公 v1.1 第 5 批：公司公告（发布、修改、撤回均返回 { announcement, replayed }）
+  oa_announcement: 'announcement',
   // 赠品登记（8.0.1）：返回那条登记
   gift_receipt: 'gift',
   // 回款登记（8.0.7）：返回那笔回款；资产建卡：返回建的第一张卡
