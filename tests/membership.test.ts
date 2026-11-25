@@ -46,7 +46,7 @@ const recharge = async (memberId: number, paid: number, opts: { cookie?: string;
   });
 };
 const spend = async (memberId: number, amount: number) => {
-  const r = await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(memberId, amount));
+  const r = await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', consumeBody(memberId, amount));
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   return r.body.consumption.id as number;
 };

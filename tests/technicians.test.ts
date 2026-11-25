@@ -300,8 +300,10 @@ describe('技师业绩', () => {
       visitIds: [v],
       expectedTotal: preview.totalAmount,
       payments: [{ method: 'cash', amount: preview.totalAmount }],
+      // 8.1.36：还没上钟的钟单要确认客人做完了
+      confirmUnstarted: (preview.sessions as { sessionNo: string; status: string }[]).filter((x) => x.status === 'waiting').map((x) => x.sessionNo),
     });
-    expect(pay.status).toBe(200);
+    expect(pay.status, JSON.stringify(pay.body)).toBe(200);
     const after = (await report()).body;
     const row = (b: typeof after, no: string) => b.rows.find((r: { techNo: string }) => r.techNo === no);
     const before08 = row(base, '08') ?? { clocks: 0, designated: 0, rotation: 0, amount: 0 };

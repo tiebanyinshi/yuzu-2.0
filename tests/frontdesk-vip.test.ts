@@ -97,7 +97,7 @@ describe('会员档级与 VIP 柜（会员体系 v2，v0.7.23）', () => {
 
   it('消费不降档（同一周期只升不降）', async () => {
     const m = await memberWith('消费会员', '19900007005', [5_000_000]);
-    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/consumptions', consumeBody(m, 1_000_000))).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/consumptions', consumeBody(m, 1_000_000))).status).toBe(200);
     expect(await gradeOf(m)).toMatchObject({ grade: 4, lockerLevel: 2 });
   });
 

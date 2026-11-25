@@ -603,10 +603,14 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
     if (backfill) await assertAfterVisits(tx, at, ids, 'checkout', deps.config.timezone);
     await assertNotReused(tx, at, ids, deps.config.timezone);
     // 8.1.36：还没上钟的钟单要收银员逐张确认「客人确实做完了」才按已做完结；没确认的拒绝（客人没做的先到钟房取消派钟）
-    const unstarted = await tx<{ sessionNo: string; techNo: string; techName: string; tagCode: string }[]>`
-      SELECT s.session_no, t.tech_no, t.name AS tech_name, h.code AS tag_code
-      FROM technician_sessions s JOIN technicians t ON t.id = s.technician_id JOIN visits v ON v.id = s.visit_id JOIN hand_tags h ON h.id = v.tag_id
-      WHERE s.visit_id IN ${tx(ids)} AND s.status = 'waiting' ORDER BY s.id`;
+    // 先只看有没有（与下面的收尾同一个查法），有了再取钟单号、技师与手牌
+    const waitingIds = (await tx<{ id: number }[]>`SELECT id FROM technician_sessions WHERE visit_id IN ${tx(ids)} AND status = 'waiting' ORDER BY id`).map((r) => r.id);
+    const unstarted = waitingIds.length
+      ? await tx<{ sessionNo: string; techNo: string; techName: string; tagCode: string }[]>`
+          SELECT s.session_no, t.tech_no, t.name AS tech_name, h.code AS tag_code
+          FROM technician_sessions s JOIN technicians t ON t.id = s.technician_id JOIN visits v ON v.id = s.visit_id JOIN hand_tags h ON h.id = v.tag_id
+          WHERE s.id IN ${tx(waitingIds)} ORDER BY s.id`
+      : [];
     const unconfirmed = unstarted.filter((u) => !input.confirmUnstarted.includes(u.sessionNo));
     if (unconfirmed.length) {
       throw conflict(
