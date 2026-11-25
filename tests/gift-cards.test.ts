@@ -44,4 +44,20 @@ describe('礼品卡批次', () => {
     // 店员没有建档权限的不能生成（店员有建档权限：这里只验接口要登录、有权限）
     expect((await api(ctx.app, '', 'GET', '/api/gift-cards')).status).toBe(401);
   });
+
+  it('没收到结果（Codex 审查 8a7023d）：按编号查回那一批；没生成的确认作废以后，迟到的原请求不再生成', async () => {
+    const key = randomUUID();
+    const made = await api(ctx.app, ctx.owner, 'POST', '/api/gift-cards', { clientKey: key, label: '查回礼品卡', quantity: 2 });
+    expect(made.status).toBe(201);
+    expect((await api(ctx.app, ctx.owner, 'GET', `/api/erp/ops/${key}?type=gift_card_batch`)).body).toMatchObject({ found: true, abandoned: false, refId: made.body.batch.id });
+    // 生成过的不能作废（照实回答已经生成）
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${key}/abandon`, { type: 'gift_card_batch' })).body).toMatchObject({ found: true, abandoned: false });
+
+    const lost = randomUUID();
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/erp/ops/${lost}/abandon`, { type: 'gift_card_batch', summary: '作废礼品卡 × 5 张' })).body).toMatchObject({ found: false, abandoned: true });
+    const late = await api(ctx.app, ctx.owner, 'POST', '/api/gift-cards', { clientKey: lost, label: '作废了的', quantity: 5 });
+    expect(late.body.error?.code).toBe('OP_ABANDONED');
+    const [n] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM gift_card_batches WHERE client_key = ${lost}`;
+    expect(n!.n).toBe(0);
+  });
 });

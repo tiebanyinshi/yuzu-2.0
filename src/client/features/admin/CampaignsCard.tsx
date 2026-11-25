@@ -381,7 +381,7 @@ function CampaignDialog({ open, onClose, onDone }: { open: boolean; onClose: () 
               <span className="mt-1 block" data-testid="campaign-preview-estimate">
                 试算：发 {preview.estimate.coupons} 张，
                 {preview.estimate.maxTotal === null
-                  ? '每张最多抵多少不封顶（折扣券没设「最多减」）'
+                  ? `每张最多抵多少不封顶（${preview.estimate.uncappedWhy ?? '没有上限'}）`
                   : `每张最多抵 ${formatYuan(preview.estimate.perCoupon ?? 0)}，一共最多抵 ${formatYuan(preview.estimate.maxTotal)}`}
                 {preview.estimate.useRate !== null
                   ? `；这个券以前的核销率 ${(preview.estimate.useRate * 100).toFixed(1)}%${preview.estimate.expectedCost !== null ? `，估计成本约 ${formatYuan(preview.estimate.expectedCost)}` : ''}`

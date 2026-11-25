@@ -115,22 +115,42 @@ export async function previewCampaign(deps: Pick<Deps, 'sql' | 'config'>, raw: u
   };
 }
 
-/** 发券试算（8.1.40）：每张最多抵多少 × 张数；按这个券以前的核销率估成本（只读） */
+/**
+ * 发券试算（8.1.40）：每张最多抵多少 × 张数；按这个券以前的核销率估成本（只读）。
+ * 每张最多抵多少是上限（合并前 Codex 审查 8a7023d）：兑换、买一赠一按那个项目**最贵的一档**价（结账时抵的是账单上单价最高的那一份，
+ * 不止默认档）；兑换票种按那个票种 24 小时档的价；现场定价（时价、称重）的项目没有定价，没设「最多抵」就是不封顶。
+ */
 async function estimateOf(db: Db, t: LockedTemplate, coupons: number): Promise<NonNullable<CampaignPreview['estimate']>> {
   let perCoupon: number | null = null;
+  let uncappedWhy: string | undefined;
+  const capped = (price: number | null, why: string) => {
+    if (price !== null) return t.maxOff === null ? price : Math.min(price, Number(t.maxOff));
+    if (t.maxOff !== null) return Number(t.maxOff);
+    uncappedWhy = why;
+    return null;
+  };
   if (t.kind === 'cash') perCoupon = t.faceValue === null ? null : Number(t.faceValue);
-  else if (t.kind === 'discount') perCoupon = t.maxOff === null ? null : Number(t.maxOff);
-  else {
+  else if (t.kind === 'discount') {
+    perCoupon = t.maxOff === null ? null : Number(t.maxOff);
+    if (perCoupon === null) uncappedWhy = '折扣券没设「最多减」';
+  } else if (t.kind === 'exchange' && t.exchangeItemId === null && t.exchangeTicketTypeId !== null) {
+    const [tt] = await db<{ price: number }[]>`SELECT price_24h AS price FROM ticket_types WHERE id = ${t.exchangeTicketTypeId}`;
+    perCoupon = capped(tt ? Number(tt.price) : null, '兑换的票种找不到');
+  } else {
     const itemId = t.exchangeItemId ?? t.buyItemId;
-    const [p] = itemId ? await db<{ price: number }[]>`SELECT price FROM service_items WHERE id = ${itemId}` : [];
-    const price = p ? Number(p.price) : null;
-    perCoupon = price === null ? null : t.maxOff === null ? price : Math.min(price, Number(t.maxOff));
+    const [p] = itemId
+      ? await db<{ price: number | null; onSite: boolean }[]>`
+          SELECT greatest(i.price, coalesce((SELECT max(sp.price) FROM service_item_prices sp WHERE sp.item_id = i.id), 0))::bigint AS price,
+                 i.price_mode <> 'fixed' AS on_site
+          FROM service_items i WHERE i.id = ${itemId}`
+      : [];
+    perCoupon = capped(p && !p.onSite ? Number(p.price) : null, p?.onSite ? '兑换的项目是现场定价（时价、称重），没设「最多抵」' : '兑换的项目找不到');
   }
   const [h] = await db<{ issued: number; used: number }[]>`
     SELECT count(*)::int AS issued, count(*) FILTER (WHERE status = 'used')::int AS used FROM coupons WHERE template_id = ${t.id}`;
   const useRate = h && h.issued > 0 ? Math.round((h.used / h.issued) * 1000) / 1000 : null;
   const maxTotal = perCoupon === null ? null : perCoupon * coupons;
-  return { perCoupon, coupons, maxTotal, useRate, expectedCost: maxTotal === null || useRate === null ? null : Math.round(maxTotal * useRate) };
+  return { perCoupon, coupons, maxTotal, useRate, expectedCost: maxTotal === null || useRate === null ? null : Math.round(maxTotal * useRate), ...(uncappedWhy ? { uncappedWhy } : {}) };
 }
 
 /** 只读读模板（预览用，不加锁） */

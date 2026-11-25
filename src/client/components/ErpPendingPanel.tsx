@@ -81,6 +81,8 @@ const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
   // 会员体系收尾（v0.7.26）：退储值返回那张退储值单，停用 / 启用返回那位会员，合并返回那张合并单
   member_refund: 'refund',
   member_merge: 'merge',
+  // 生成礼品卡（8.1.40）：返回那一批
+  gift_card_batch: 'batch',
   // 次卡（v0.7.28）：售卡、退卡都返回那张卡
   count_card_sale: 'card',
   count_card_refund: 'card',
