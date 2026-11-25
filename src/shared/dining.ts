@@ -9,6 +9,7 @@
 //   · 下单多少分钟还没出餐标红提醒（默认 15 分钟）。
 
 import type { PriceMode } from './dish-price-mode';
+import type { TableCharge } from './table-charges';
 import type { CheckoutMember } from './checkout';
 import type { LedgerKind, LedgerVoidRate, TableStateInfo, VoidBlame } from './dining-v8115';
 import type { TierPrice } from './catalog';
@@ -385,6 +386,9 @@ export interface DiningTable {
   seats: number;
   sortOrder: number;
   active: boolean;
+  /** 8.1.39：低消（分，0 为不设）、服务费比例（万分之几，0 为不收）；后台桌台带，看板不带 */
+  minSpend?: number;
+  serviceFeeBp?: number;
 }
 
 /** 桌台看板上的一桌（用餐中的开台） */
@@ -437,6 +441,9 @@ export interface TableSessionDetail {
   /** 并台（8.1.15 块 B1）：这桌并入了哪桌（附台）；并着哪几桌（主台），结账时一起结 */
   mergedInto: { sessionId: number; tableName: string } | null;
   merged: { sessionId: number; tableName: string; amount: number }[];
+  /** 转挂账（8.1.39）：几点、原因；没转的为空。转了的桌台已空出来，只能结账 */
+  parkedAt?: string | null;
+  parkReason?: string | null;
 }
 
 /** 桌台结账前核对（只读） */
@@ -452,11 +459,17 @@ export interface TableCheckoutPreview {
     memberName: string | null;
     openedAt: string;
     lines: { id: number; name: string; quantity: number; amount: number }[];
+    /** 菜钱（8.1.39 起不算结账时自动记的服务费、低消补足） */
     amount: number;
+    /** 8.1.39：低消与服务费（结账时按这个记） */
+    charge: TableCharge;
     /** 附台并入的那一次开台（8.1.15 块 B1）；结账时主台与附台一起结 */
     mergedInto: number | null;
   }[];
+  /** 应收合计：菜钱 + 服务费（低消补足另算：勾了「补足低消」再加 minSpendShortfall） */
   totalAmount: number;
+  /** 8.1.39：几桌一共差多少到低消（够了为 0） */
+  minSpendShortfall: number;
   /** 这几桌登记的会员（可用储值支付），附余额 */
   members: CheckoutMember[];
   /** 这些会员的券（v0.7.20）：能抵多少，不能用的写原因 */

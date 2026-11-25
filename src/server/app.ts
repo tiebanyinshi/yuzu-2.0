@@ -139,6 +139,7 @@ import { registerTechnicianRankingRoutes } from './modules/technician-ranking';
 import { registerClockroomRoutes } from './modules/clockroom-routes';
 import { registerDiningRoutes } from './modules/dining';
 import { registerTableRoutes } from './modules/tables';
+import { registerTableChargeRoutes } from './modules/table-charges';
 import { registerDining808Routes } from './modules/dining-808';
 import { registerDiningReceiptRoutes } from './modules/dining-receipt';
 import { registerEmenuRoutes } from './modules/emenu/routes';
@@ -442,6 +443,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerClockroomRoutes(app, deps);
   registerDiningRoutes(app, deps);
   registerTableRoutes(app, deps);
+  registerTableChargeRoutes(app, deps);
   registerDining808Routes(app, deps);
   // 8.1.7 点菜单（小票可视化）
   registerDiningReceiptRoutes(app, deps);

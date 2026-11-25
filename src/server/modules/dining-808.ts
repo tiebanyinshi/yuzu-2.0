@@ -158,7 +158,7 @@ export async function diningLedger(db: Db, q: DiningLedgerQuery): Promise<Dining
       diningGroup: string | null;
       stationName: string | null;
       perk: 'gift' | 'discount' | null;
-      voidDetail: { approval?: string; approverName?: string; blame?: string } | null;
+      voidDetail: { approval?: string; approverName?: string; blame?: string; gift?: boolean } | null;
     })[]
   >`
     SELECT l.id, l.business_date::text AS business_date, l.posted_at, coalesce(h.code, '') AS tag_code, coalesce(dt.name, '') AS table_name,
@@ -197,7 +197,8 @@ export async function diningLedger(db: Db, q: DiningLedgerQuery): Promise<Dining
   const base: DiningLedgerRow[] = rows
     .map(({ diningOutlet, diningGroup, stationName, perk, voidDetail, ...r }) => {
       const slot = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category: r.category === '未分类' ? '' : r.category, stationName });
-      const kind: LedgerKind = r.status === 'voided' ? 'voided' : (perk ?? 'normal');
+      // 8.1.39：退菜时选「赠送」的（菜照出、这一行不收钱）记赠送
+      const kind: LedgerKind = r.status === 'voided' ? (voidDetail?.gift ? 'gift' : 'voided') : (perk ?? 'normal');
       return {
         ...r,
         id: Number(r.id),

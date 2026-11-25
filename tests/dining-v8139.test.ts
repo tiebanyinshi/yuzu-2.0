@@ -66,7 +66,7 @@ describe('菜品的计价方式（R5、R15、R16）', () => {
     expect(menu.dishes.find((d) => d.id === item['清蒸石斑'])!.priceMode).toBe('weight');
     expect(menu.dishes.find((d) => d.id === item['开瓶费'])!.priceMode).toBe('open');
     expect(menu.dishes.find((d) => d.id === item['宫保鸡丁'])!.priceMode).toBeUndefined();
-    const [a] = await ctx.sql<{ detail: { from: string; to: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'dish_price_mode' AND target_id = ${item['清蒸石斑']}`;
+    const [a] = await ctx.sql<{ detail: { from: string; to: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'dish_price_mode' AND target_id = ${item['清蒸石斑']!}`;
     expect(a!.detail).toMatchObject({ from: 'fixed', to: 'weight' });
   });
 
@@ -108,5 +108,98 @@ describe('菜品的计价方式（R5、R15、R16）', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const lines = (await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/visits/${v}`)).body.lines as { name: string; amount: number }[];
     expect(lines.map((l) => [l.name, l.amount])).toEqual([['清蒸石斑 2斤', 33600]]);
+  });
+});
+
+const pay = (sessionIds: number[], expectedTotal: number, extra: Record<string, unknown> = {}) =>
+  api(ctx.app, ctx.clerk, 'POST', '/api/dining/tables/checkout', {
+    clientKey: randomUUID(),
+    sessionIds,
+    expectedTotal,
+    payments: expectedTotal ? [{ method: 'cash', amount: expectedTotal }] : [],
+    ...extra,
+  });
+const preview = async (ids: number[]) => (await api(ctx.app, ctx.clerk, 'GET', `/api/dining/tables/checkout-preview?ids=${ids.join(',')}`)).body;
+
+describe('包房的低消与服务费、赠送（R6、R14）', () => {
+  it('后台设低消、服务费；服务费按没赠送的菜算；低消不够的拒绝，勾补足记一行；反结账再结不重复收', async () => {
+    const t = (await api(ctx.app, boss, 'GET', '/api/admin/dining/tables')).body.tables.find((x: { name: string }) => x.name === '包1');
+    const set = await api(ctx.app, boss, 'PUT', `/api/admin/dining/tables/${table['包1']}`, { ...t, minSpend: 30000, serviceFeeBp: 1500 });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    expect(set.body.tables.find((x: { name: string }) => x.name === '包1')).toMatchObject({ minSpend: 30000, serviceFeeBp: 1500 });
+    // 不带这两项的保存不改它们
+    expect(
+      (await api(ctx.app, boss, 'PUT', `/api/admin/dining/tables/${table['包1']}`, { name: '包1', area: '包间', seats: 6 })).body.tables.find((x: { name: string }) => x.name === '包1'),
+    ).toMatchObject({ minSpend: 30000 });
+
+    const s = await open(table['包1']!);
+    expect((await order(s, [{ itemId: item['宫保鸡丁'], quantity: 4 }], 19200)).status).toBe(200);
+    // 赠送一份：菜照出，这一行不收钱
+    const gift = await order(s, [{ itemId: item['宫保鸡丁'], quantity: 1 }], 4800);
+    const giftLine = (await detail(s)).lines.filter((l) => l.status === 'active').at(-1)!;
+    expect(gift.status).toBe(200);
+    const g = await api(ctx.app, ctx.owner, 'POST', `/api/dining/tables/lines/${giftLine.id}/void`, { reason: '客户经理送的', gift: true });
+    expect(g.status, JSON.stringify(g.body)).toBe(200);
+    const [k] = await ctx.sql<{ status: string }[]>`SELECT status FROM kitchen_items WHERE bill_line_id = ${giftLine.id}`;
+    expect(k!.status).not.toBe('cancelled');
+
+    // 菜钱 ¥192，服务费 15% = ¥28.80；低消 ¥300 差 ¥108
+    const p = await preview([s]);
+    expect(p.sessions[0].charge).toMatchObject({ subtotal: 19200, serviceFee: 2880, minSpend: 30000, shortfall: 10800 });
+    expect(p).toMatchObject({ totalAmount: 22080, minSpendShortfall: 10800 });
+    const refused = await pay([s], 22080);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe('MIN_SPEND_SHORT');
+    expect(refused.body.error.message).toContain('差 ¥108.00');
+    const ok = await pay([s], 22080 + 10800, { minSpendTopUp: true });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const lines = await ctx.sql<{ name: string; amount: number; chargeKind: string | null; status: string }[]>`
+      SELECT l.name, l.amount, l.charge_kind, l.status FROM bill_lines l JOIN table_sessions ts ON ts.bill_id = l.bill_id WHERE ts.id = ${s} AND l.charge_kind IS NOT NULL ORDER BY l.id`;
+    expect(lines.map((l) => [l.name, Number(l.amount), l.status])).toEqual([
+      ['服务费 15%', 2880, 'active'],
+      ['低消补足', 10800, 'active'],
+    ]);
+    // 台账：赠送的那一行记「赠送」
+    const ledger = (await api(ctx.app, ctx.owner, 'GET', `/api/dining/ledger?from=${ok.body.businessDate}&to=${ok.body.businessDate}`)).body;
+    expect(ledger.rows.find((r: { name: string; kind: string; amount: number }) => r.kind === 'gift')).toMatchObject({ name: '宫保鸡丁' });
+
+    // 反结账再结：原来自动记的作废重算，不重复收
+    const v = await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/checkouts/${ok.body.id}/void`, { reason: '低消补错了' });
+    expect(v.status, JSON.stringify(v.body)).toBe(200);
+    const p2 = await preview([s]);
+    expect(p2).toMatchObject({ totalAmount: 22080, minSpendShortfall: 10800 });
+    expect((await pay([s], 22080 + 10800, { minSpendTopUp: true })).status).toBe(200);
+    const after = await ctx.sql<{ status: string }[]>`
+      SELECT l.status FROM bill_lines l JOIN table_sessions ts ON ts.bill_id = l.bill_id WHERE ts.id = ${s} AND l.charge_kind IS NOT NULL ORDER BY l.id`;
+    expect(after.map((l) => l.status)).toEqual(['voided', 'voided', 'active', 'active']);
+  });
+});
+
+describe('包房转挂账（R9）', () => {
+  it('转挂账：桌台空出来能开新台；挂账的单不能点菜、换台，能结账；记审计', async () => {
+    const board = async () => (await api(ctx.app, ctx.clerk, 'GET', '/api/dining/tables')).body.tables as { id: number; session: { id: number } | null }[];
+    // 包1 上一位结账以后待清台，先清台
+    await api(ctx.app, ctx.clerk, 'POST', `/api/dining/tables/${table['包1']}/clear`, { clientKey: randomUUID() });
+    const s = await open(table['包1']!);
+    expect((await order(s, [{ itemId: item['宫保鸡丁'], quantity: 1 }], 4800)).status).toBe(200);
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/dining/tables/sessions/${s}/park`, { reason: '' })).status).toBe(400);
+    const parked = await api(ctx.app, ctx.clerk, 'POST', `/api/dining/tables/sessions/${s}/park`, { reason: '低消没结清，客户经理跟进' });
+    expect(parked.status, JSON.stringify(parked.body)).toBe(200);
+    expect(parked.body.parked.map((p: { id: number; amount: number }) => [p.id, p.amount])).toEqual([[s, 4800]]);
+    expect((await board()).find((t) => t.id === table['包1'])!.session).toBeNull();
+    expect((await order(s, [{ itemId: item['宫保鸡丁'], quantity: 1 }], 4800)).body.error.code).toBe('TABLE_PARKED');
+    // 桌台空出来：下一桌照常开
+    const next = await open(table['包1']!);
+    expect((await board()).find((t) => t.id === table['包1'])!.session!.id).toBe(next);
+    // 挂账的单照常结（低消不够的同样要补足）
+    const p = await preview([s]);
+    const done = await pay([s], p.totalAmount + p.minSpendShortfall, p.minSpendShortfall ? { minSpendTopUp: true } : {});
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/dining/tables/parked')).body.parked).toEqual([]);
+    const [a] = await ctx.sql<{ detail: { reason: string } }[]>`SELECT detail FROM audit_logs WHERE action = 'table_park' AND target_id = ${s}`;
+    expect(a!.detail.reason).toBe('低消没结清，客户经理跟进');
+    // 反结账挂账的单：桌台被下一桌占着也能恢复（挂账的单不占桌台）
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/checkouts/${done.body.id}/void`, { reason: '金额不对' })).status).toBe(200);
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/dining/tables/parked')).body.parked.map((p: { id: number }) => p.id)).toEqual([s]);
   });
 });

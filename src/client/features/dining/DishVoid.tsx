@@ -38,6 +38,7 @@ export function DishVoidDialog({
   dish,
   url,
   mode = 'void',
+  allowGift = false,
   onClose,
   onDone,
 }: {
@@ -46,6 +47,8 @@ export function DishVoidDialog({
   url: string;
   /** void 退菜 / modify 改单（退掉后放回购物车） */
   mode?: 'void' | 'modify';
+  /** 8.1.39：能选「赠送」（桌台的菜：菜照出、这一行不收钱，服务费不算它） */
+  allowGift?: boolean;
   onClose: () => void;
   /** result 是退菜接口的返回（前台作废返回这位客人的账单） */
   onDone: (dish: VoidableDish, result: unknown) => void;
@@ -61,6 +64,8 @@ export function DishVoidDialog({
   const [authorizing, setAuthorizing] = useState(false);
   /** 加料一起退（默认勾上） */
   const [withAddons, setWithAddons] = useState(true);
+  /** 8.1.39：赠送（菜照出、不收钱） */
+  const [gift, setGift] = useState(false);
   useResetOnOpen(!!dish, () => {
     setReason(mode === 'modify' ? '改单' : '');
     setBlame(null);
@@ -68,6 +73,7 @@ export function DishVoidDialog({
     setForceGrant(false);
     setAuthorizing(false);
     setWithAddons(true);
+    setGift(false);
   });
   if (!dish) return null;
 
@@ -97,7 +103,13 @@ export function DishVoidDialog({
     setBusy(true);
     setError(null);
     try {
-      const result = await api.post<unknown>(url, { reason: reason.trim(), ...(blame ? { blame } : {}), ...(grantId ? { grantId } : {}), ...(together ? { withAddons: true } : {}) });
+      const result = await api.post<unknown>(url, {
+        reason: reason.trim(),
+        ...(blame ? { blame } : {}),
+        ...(grantId ? { grantId } : {}),
+        ...(together ? { withAddons: true } : {}),
+        ...(gift ? { gift: true } : {}),
+      });
       onDone(dish, result);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'VOID_NEEDS_GRANT') {
@@ -151,6 +163,18 @@ export function DishVoidDialog({
           </span>
           <span className="font-bold">{formatYuan(dish.amount)}</span>
         </div>
+        {allowGift && mode === 'void' && (
+          <label
+            className={cn('mb-3 flex min-h-11 cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5', gift ? 'border-pine/40 bg-pine-tint' : 'border-line bg-card')}
+            data-testid="dish-void-gift"
+          >
+            <input type="checkbox" className="mt-0.5 size-5 shrink-0" checked={gift} onChange={(e) => setGift(e.target.checked)} data-testid="dish-void-gift-check" />
+            <span className="min-w-0 flex-1 text-[13.5px]">
+              <b>赠送（客户经理送的）</b>
+              <span className="block text-ink-2">菜照出、出品单不撤，这一行不收钱；服务费不算它，台账记「赠送」。审批与退菜相同。</span>
+            </span>
+          </label>
+        )}
         {addons.length > 0 && (
           <label
             className={cn('mb-3 flex min-h-11 cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5', withAddons ? 'border-clay/40 bg-clay-soft/40' : 'border-line bg-card')}

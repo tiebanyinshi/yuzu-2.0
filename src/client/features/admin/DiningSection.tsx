@@ -2,6 +2,7 @@
 // 挂了档口的菜在餐饮功能开启后才进厨房；没挂档口的项目照常挂账、不进厨房。需要技师的项目不进厨房。
 // 桌台（第二步）：不洗浴的客人在桌台上用餐、单独结账；停用不删除，正在用餐的桌不能停用。
 
+import { MAX_SERVICE_FEE_BP, serviceFeeText } from '@shared/table-charges';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -25,7 +26,7 @@ import {
   type TablesAdmin,
 } from '@shared/dining';
 import { MAX_DIRTY_ALERT_MINUTES } from '@shared/frontdesk-v8117';
-import { formatYuan, parseYuan } from '@shared/money';
+import { centsToInput, formatYuan, parseYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
 import { qk } from '../../lib/queries';
 import { useCan } from '../../lib/session';
@@ -711,7 +712,8 @@ function TablesCard() {
             <li key={t.id} className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5', !t.active && 'bg-paper-2/50 opacity-70')} data-testid={`dining-table-${t.name}`}>
               <span className="num min-w-[72px] text-[14.5px] font-bold">{t.name}</span>
               <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-3">
-                {t.area || '不分区'} · {t.seats} 座
+                {t.area || '不分区'} · {t.seats} 座{t.minSpend ? ` · 低消 ${formatYuan(t.minSpend)}` : ''}
+                {t.serviceFeeBp ? ` · ${serviceFeeText(t.serviceFeeBp)}` : ''}
               </span>
               <span className="text-[12px] text-ink-4">开台 {t.sessionCount} 次</span>
               <span className="num text-[12px] text-ink-4">排序 {t.sortOrder}</span>
@@ -738,6 +740,9 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
   const [seats, setSeats] = useState('4');
   const [sortOrder, setSortOrder] = useState('0');
   const [active, setActive] = useState(true);
+  /** 8.1.39：低消（元）、服务费（%） */
+  const [minSpend, setMinSpend] = useState('');
+  const [feePct, setFeePct] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [opened, setOpened] = useState<typeof target>(null);
@@ -750,8 +755,13 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
     setSeats(String(t?.seats ?? 4));
     setSortOrder(String(t?.sortOrder ?? 0));
     setActive(t?.active ?? true);
+    setMinSpend(t?.minSpend ? centsToInput(t.minSpend) : '');
+    setFeePct(t?.serviceFeeBp ? String(t.serviceFeeBp / 100) : '');
     setError(null);
   }
+  const minSpendCents = minSpend.trim() ? parseYuan(minSpend) : 0;
+  const feeBp = feePct.trim() ? Math.round(Number(feePct) * 100) : 0;
+  const chargesOk = minSpendCents !== null && minSpendCents >= 0 && Number.isFinite(feeBp) && feeBp >= 0 && feeBp <= MAX_SERVICE_FEE_BP;
   const seatNum = Number(seats);
   const order = Number(sortOrder);
   const ok =
@@ -763,13 +773,14 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
     seatNum <= 99 &&
     Number.isInteger(order) &&
     order >= 0 &&
-    order <= 9999;
+    order <= 9999 &&
+    chargesOk;
 
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      const body = { name: name.trim(), area: area.trim(), seats: seatNum, sortOrder: order, active };
+      const body = { name: name.trim(), area: area.trim(), seats: seatNum, sortOrder: order, active, minSpend: minSpendCents ?? 0, serviceFeeBp: feeBp };
       const next = target === 'new' ? await api.post<TablesAdmin>('/api/admin/dining/tables', body) : await api.put<TablesAdmin>(`/api/admin/dining/tables/${target!.id}`, body);
       qc.setQueryData(tablesAdminKey, next);
       void qc.invalidateQueries({ queryKey: ['dining'] });
@@ -820,6 +831,15 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
           </Field>
           <Field label="排序" htmlFor="table-order" hint="小的排前面">
             <Input id="table-order" type="number" inputMode="numeric" min={0} max={9999} value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} className="num w-28" />
+          </Field>
+        </div>
+        {/* 8.1.39（docs/V8139.md 第 3 节）：包房的低消与服务费；空着为不设 */}
+        <div className="flex flex-wrap gap-4">
+          <Field label="低消（元）" htmlFor="table-min-spend" hint="菜钱不到低消不能直接结账：收银勾「补足低消」，或先转挂账；空着为不设">
+            <MoneyInput id="table-min-spend" value={minSpend} onChange={(e) => setMinSpend(e.target.value)} className="w-36" data-testid="dining-table-min-spend" />
+          </Field>
+          <Field label="服务费（%）" htmlFor="table-fee" hint="结账时按没赠送、没退的菜算；空着为不收，最多 30">
+            <Input id="table-fee" inputMode="decimal" value={feePct} onChange={(e) => setFeePct(e.target.value)} className="num w-28" data-testid="dining-table-fee" />
           </Field>
         </div>
         {target !== 'new' && (
