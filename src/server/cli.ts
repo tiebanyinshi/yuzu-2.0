@@ -99,7 +99,7 @@ import { LEGACY_SOURCE_LABELS, type LegacyAudit } from '@shared/legacy';
 import { priceAudit } from './modules/price-catalog/audit';
 import { importTechnicians } from './modules/technician-import';
 import { parseGradeMap, parseTechnicianTable } from '@shared/technician-import';
-import { readCsvTable } from '@shared/csv-read';
+import { csvToTable } from '@shared/csv-read';
 import { PRICE_TIER_LABELS, type PriceTier } from '@shared/catalog';
 import { readXlsx } from './lib/xlsx-read';
 import { STORE_HAND_TAGS_CSV } from './demo/hand-tags-2026-10-27';
@@ -154,8 +154,8 @@ async function readTableFile(file: string): Promise<string[][]> {
     }
     return out;
   }
-  const t = readCsvTable(await readImportFile(file));
-  return [...(t.header ? [t.header] : []), ...t.rows].map((r) => r.cells);
+  // 引号没有配对的整份拒绝（Codex 审查：不能只导前半段还报成功）
+  return csvToTable(await readImportFile(file));
 }
 
 async function readImportFile(file: string): Promise<string> {
@@ -562,6 +562,7 @@ async function main() {
             }），技师号已有跳过 ${r.existing.length} 位，按组别跳过 ${r.skippedByGroup} 位`,
           );
           if (r.groupsCreated.length) console.log(`新建分组 ${r.groupsCreated.length} 个：${r.groupsCreated.join('、')}`);
+          if (r.groupsReactivated.length) console.log(`重新启用停用了的分组 ${r.groupsReactivated.length} 个：${r.groupsReactivated.join('、')}`);
           console.log(apply ? '✓ 已导入，记了审计。' : '以上为预览，没有写入。确认无误后加 --apply（真实门店数据，门店环境须店主同意）。');
           break;
         }

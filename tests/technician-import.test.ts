@@ -4,6 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { legacyDate, parseGradeMap, parseTechnicianTable } from '../src/shared/technician-import';
+import { csvToTable } from '../src/shared/csv-read';
 import { importTechnicians } from '../src/server/modules/technician-import';
 import { runInStore } from '../src/server/lib/store-context';
 import { api, setup, type TestContext } from './helpers';
@@ -11,6 +12,14 @@ import { api, setup, type TestContext } from './helpers';
 const HEADER = ['技师号', '姓名', '性别', '手机号', '技师类型', '技师等级', '入职日期', '是否挂牌', '挂牌日期', '技师组别', '昵称'];
 
 describe('技师导入模板解析', () => {
+  it('CSV 引号没有配对：整份拒绝，不只导前半段（Codex 审查）', () => {
+    expect(() => csvToTable('技师号,姓名,性别\n1,甲,女\n2,"乙,女\n3,丙,男\n')).toThrow(/第 3 行的引号没有配对/);
+    expect(csvToTable('技师号,姓名,性别\n1,"甲,乙",女\n')).toEqual([
+      ['技师号', '姓名', '性别'],
+      ['1', '甲,乙', '女'],
+    ]);
+  });
+
   it('日期：Excel 序号、文字日期；认不出来的报出来', () => {
     expect(legacyDate('44965')).toBe('2023-02-08');
     expect(legacyDate('2021-05-06 00:00:00')).toBe('2021-05-06');
@@ -95,5 +104,19 @@ describe('技师名册导入（第二家店）', () => {
     expect((await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM technician_groups WHERE store_id = ${storeId}`)[0]!.n).toBe(2);
     const [audit] = await ctx.sql<{ detail: { created: number } }[]>`SELECT detail FROM audit_logs WHERE action = 'technicians_imported' ORDER BY id DESC LIMIT 1`;
     expect(audit!.detail.created).toBe(3);
+  });
+
+  it('表里的组别对上这家店停用了的组（大小写、首尾空格不同也算）：预览说重新启用，导入时启用它、技师挂上去，不撞唯一索引（Codex 审查）', async () => {
+    await ctx.sql`INSERT INTO technician_groups (store_id, name, sort_order, active) VALUES (${storeId}, 'Spa组', 50, false)`;
+    const parsed = parseTechnicianTable([HEADER, ['201', '丁', '女', '', '', '', '', '是', '', ' spa组 ', '']]);
+    expect(parsed.errors).toEqual([]);
+    const dry = await runInStore(storeId, () => importTechnicians(ctx.sql, parsed.rows, { apply: false, staffId: null }));
+    expect(dry).toMatchObject({ created: 1, groupsCreated: [], groupsReactivated: ['Spa组'] });
+    const done = await runInStore(storeId, () => importTechnicians(ctx.sql, parsed.rows, { apply: true, staffId: null }));
+    expect(done.created).toBe(1);
+    const [row] = await ctx.sql<{ groupName: string; groupActive: boolean }[]>`
+      SELECT g.name AS group_name, g.active AS group_active FROM technicians t JOIN technician_groups g ON g.id = t.group_id WHERE t.store_id = ${storeId} AND t.tech_no = '201'`;
+    expect(row).toEqual({ groupName: 'Spa组', groupActive: true });
+    expect((await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM technician_groups WHERE store_id = ${storeId} AND lower(btrim(name)) = 'spa组'`)[0]!.n).toBe(1);
   });
 });

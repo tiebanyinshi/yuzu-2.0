@@ -65,7 +65,8 @@ type ItemData = z.output<typeof ItemInput>;
 
 const ITEM_COLUMNS = (db: Db, base = false) => db`
   i.id, i.name, i.category, i.price, i.duration_minutes, i.gender, i.strength, i.essential_oil, i.heat_therapy, i.popular,
-  i.technician_required, i.note, i.active, i.sort_order, i.catalog_code, i.catalog_managed, ${pricesColumn(db, { base })} AS prices,
+  i.technician_required, i.note, i.active, i.sort_order, i.catalog_code, i.catalog_managed,
+  EXISTS (SELECT 1 FROM price_catalog_links l WHERE l.item_id = i.id AND l.store_id = ${DEFAULT_STORE_ID}) AS catalog_linked, ${pricesColumn(db, { base })} AS prices,
   CASE WHEN i.catalog_category_code IS NULL THEN NULL
        ELSE json_build_object('code', i.catalog_category_code, 'name', i.catalog_category_name, 'group', coalesce(i.catalog_group, ''), 'sort', coalesce(i.catalog_sort, 0)) END AS catalog_category`;
 
