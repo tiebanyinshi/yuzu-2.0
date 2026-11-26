@@ -59,6 +59,10 @@ test.describe('OA-06 打卡', () => {
       },
     });
     expect(sch.status(), await sch.text()).toBe(200);
+    const pub = await page.request.post('/api/oa/attendance/schedule/publish', {
+      data: { clientKey: randomUUID(), storeId: me.store.id, groupId: group.id, from: today.today, to: today.today },
+    });
+    expect(pub.status(), await pub.text()).toBe(200);
 
     // 员工：办公 → 打卡，定位在范围内
     const ctx = await browser.newContext({ baseURL: test.info().project.use.baseURL, geolocation: HERE, permissions: ['geolocation'] });

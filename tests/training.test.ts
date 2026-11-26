@@ -2,7 +2,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TRAINING_CHUNK_BYTES, type TrainingFile, type TrainingFileDetail, type TrainingFolder, type TrainingFolderList } from '../src/shared/training';
+import { newTrainingUploadKey, TRAINING_CHUNK_BYTES, type TrainingFile, type TrainingFileDetail, type TrainingFolder, type TrainingFolderList } from '../src/shared/training';
 import { buildWorkbook, buildXlsx, zip } from '../src/server/lib/xlsx';
 import { setTrainingQuotaForTest, sweepTrainingUploads } from '../src/server/modules/training';
 import { unzip } from '../src/server/lib/xlsx-read';
@@ -25,7 +25,7 @@ const PDF = (n: number) => {
 
 /** 整套上传：开始 → 分块 → 完成 */
 async function upload(bytes: Buffer, fileName: string, mime: string, target: { folderId?: number; fileId?: number; title?: string }, cookie = ctx.owner) {
-  const clientKey = randomUUID();
+  const clientKey = newTrainingUploadKey();
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const start = await api(ctx.app, cookie, 'POST', '/api/admin/training/uploads', { clientKey, fileName, mime, sizeBytes: bytes.length });
   if (start.status !== 200) return { start, done: start };
@@ -107,7 +107,7 @@ describe('员工培训', () => {
     const fake = await upload(Buffer.from('not a pdf at all'), 'b.pdf', 'application/pdf', { folderId: pub.id });
     expect(fake.done.body.error.code).toBe('TRAINING_UPLOAD_FORMAT');
     // 块没传完不能完成
-    const clientKey = randomUUID();
+    const clientKey = newTrainingUploadKey();
     const big = PDF(TRAINING_CHUNK_BYTES + 10);
     const s = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, fileName: 'c.pdf', mime: 'application/pdf', sizeBytes: big.length });
     // 传了第 2 块：重新开始时告诉页面哪些块已经在了
@@ -121,7 +121,7 @@ describe('员工培训', () => {
   it('完成先认领（Codex 安全审查 f2dbf5a）：别人认领着回「正在登记」；认领过期（10 分钟）可以接手登记', async () => {
     const pub = await folderOf((f) => f.kind === 'public');
     const bytes = PDF(500);
-    const clientKey = randomUUID();
+    const clientKey = newTrainingUploadKey();
     const s = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, fileName: '认领.pdf', mime: 'application/pdf', sizeBytes: bytes.length });
     await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s.body.uploadId}/chunks/0`, { data: bytes.toString('base64') });
     await ctx.sql`UPDATE training_uploads SET claim_token = ${randomUUID()}, claimed_at = now() WHERE id = ${s.body.uploadId}`;
@@ -133,7 +133,7 @@ describe('员工培训', () => {
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     // 登记失败（格式不对）放掉认领，不会卡住
     const bad = Buffer.from('not a pdf at all');
-    const k2 = randomUUID();
+    const k2 = newTrainingUploadKey();
     const s2 = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey: k2, fileName: '坏.pdf', mime: 'application/pdf', sizeBytes: bad.length });
     await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/uploads/${s2.body.uploadId}/chunks/0`, { data: bad.toString('base64') });
     expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/training/uploads/${s2.body.uploadId}/complete`, { folderId: pub.id })).body.error.code).toBe('TRAINING_UPLOAD_FORMAT');
@@ -145,7 +145,7 @@ describe('员工培训', () => {
 
   it('存储上限（Codex 安全审查 ec38502）：每人没传完的个数、24 小时开始次数、全库版本数', async () => {
     const pub = await folderOf((f) => f.kind === 'public');
-    const start = (name: string) => api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey: randomUUID(), fileName: name, mime: 'application/pdf', sizeBytes: 300 });
+    const start = (name: string) => api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey: newTrainingUploadKey(), fileName: name, mime: 'application/pdf', sizeBytes: 300 });
     try {
       // 前面的用例留了几个没传完的：上限设成「现有的 + 1」
       const [o] = await ctx.sql<{ n: number; d: number }[]>`
@@ -170,7 +170,7 @@ describe('员工培训', () => {
     const big = PDF(TRAINING_CHUNK_BYTES + 10);
     const base = { fileName: '视频说明.pdf', mime: 'application/pdf', sizeBytes: big.length };
     // 同名、同大小但指纹不同（内容改过）：同一个编号不能接着传
-    const clientKey = randomUUID();
+    const clientKey = newTrainingUploadKey();
     const s = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, ...base, fingerprint: 'aaaaaaaaaaaaaaaa' });
     expect(s.status).toBe(200);
     const other = await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, ...base, fingerprint: 'bbbbbbbbbbbbbbbb' });
@@ -190,7 +190,7 @@ describe('员工培训', () => {
     const [left] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM training_upload_chunks WHERE upload_id = ${s.body.uploadId}`;
     expect(left!.n).toBe(0);
     // 服务端还没见过的编号也能作废：先占住，原请求后到也开始不了
-    const unseen = randomUUID();
+    const unseen = newTrainingUploadKey();
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads/cancel', { clientKey: unseen, ...base })).body.status).toBe('cancelled');
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey: unseen, ...base })).body.status).toBe('cancelled');
     // 已经登记好的不能作废，原样回 done
@@ -414,25 +414,50 @@ describe('员工培训', () => {
     expect((await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${fileId}/content`)).status).toBe(200);
   });
 
-  it('「不传了」占的作废记录算进每天的次数，7 天后定时清掉（Codex 安全审查 04eb112）', async () => {
+  it('「不传了」占的作废记录算进每天的次数，10 天后定时清掉；清掉后过期编号不能重开，只读查回不新建上传（Codex 审查 04eb112 / bfc32cd）', async () => {
     const base = { fileName: 'x.pdf', mime: 'application/pdf', sizeBytes: 100 };
     const cancel = (clientKey: string) => api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads/cancel', { clientKey, ...base });
+    const lookup = (clientKey: string) => api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads/lookup', { clientKey, ...base });
+    const start = (clientKey: string) => api(ctx.app, ctx.owner, 'POST', '/api/admin/training/uploads', { clientKey, ...base });
     try {
       const [d] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM training_uploads WHERE created_by = ${ctx.ownerId} AND created_at > now() - interval '24 hours'`;
       setTrainingQuotaForTest({ dailyUploads: d!.n + 1 });
-      const first = randomUUID();
+      const first = newTrainingUploadKey();
       expect((await cancel(first)).body.status).toBe('cancelled');
       // 服务端没见过的新编号：到了每天的上限，不再占新行
-      const over = await cancel(randomUUID());
+      const over = await cancel(newTrainingUploadKey());
       expect(over.status).toBe(429);
       expect(over.body.error.code).toBe('TRAINING_DAILY_LIMIT');
       // 已经占住的编号原样重提照常回「已作废」（不算新的一次）
       expect((await cancel(first)).body.status).toBe('cancelled');
-      // 7 天前的作废记录定时清掉，近的留着
+      // 只读查回未见过的有效编号：回 missing，不新建 open 行
+      const fresh = newTrainingUploadKey();
+      expect((await lookup(fresh)).body.status).toBe('missing');
+      const [freshRows] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM training_uploads WHERE client_key = ${fresh}`;
+      expect(freshRows!.n).toBe(0);
+      // 8 天前（小于 10 天）的作废记录还在，超过 10 天才清掉
       await ctx.sql`UPDATE training_uploads SET finished_at = now() - interval '8 days' WHERE client_key = ${first}`;
       await sweepTrainingUploads(ctx.sql, Date.now() + 30 * 60 * 60 * 1000);
+      const [still] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM training_uploads WHERE client_key = ${first}`;
+      expect(still!.n).toBe(1);
+      await ctx.sql`UPDATE training_uploads SET finished_at = now() - interval '11 days' WHERE client_key = ${first}`;
+      await sweepTrainingUploads(ctx.sql, Date.now() + 40 * 60 * 60 * 1000);
       const [left] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM training_uploads WHERE client_key = ${first}`;
       expect(left!.n).toBe(0);
+      // 模拟超过 7 天的已作废编号在清理后再来查回 / 接着传 / 作废：绝不重建 open 行，也不再新写墓碑行
+      const expiredKey = newTrainingUploadKey(Date.now() - 8 * 86_400_000);
+      expect((await lookup(expiredKey)).body.status).toBe('expired');
+      const reopened = await start(expiredKey);
+      expect(reopened.status).toBe(409);
+      expect(reopened.body.error.code).toBe('TRAINING_UPLOAD_EXPIRED');
+      expect((await cancel(expiredKey)).body.status).toBe('expired');
+      const [tomb] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM training_uploads WHERE client_key = ${expiredKey}`;
+      expect(tomb!.n).toBe(0);
+      // 未来时间超过 24 小时的编号：开始与作废均拒绝；普通 UUIDv4 不能用于新开上传
+      const futureKey = newTrainingUploadKey(Date.now() + 3 * 86_400_000);
+      expect((await start(futureKey)).body.error.code).toBe('TRAINING_UPLOAD_KEY_CLOCK');
+      expect((await cancel(futureKey)).body.error.code).toBe('TRAINING_UPLOAD_KEY_CLOCK');
+      expect((await start(randomUUID())).body.error.code).toBe('TRAINING_UPLOAD_KEY_INVALID');
     } finally {
       setTrainingQuotaForTest(null);
     }
@@ -461,6 +486,25 @@ describe('员工培训', () => {
     }
   });
 
+  it('PDF 内嵌超大图片（12000×12000 灰度图）在上传完成时拒绝，正常 PDF 照常（Codex 安全审查 bfc32cd）', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const pdfWithImage = (w: number, h: number) =>
+      Buffer.from(
+        `%PDF-1.4\n1 0 obj\n<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Length 4 >>\nstream\n0000\nendstream\nendobj\n%%EOF\n`,
+        'latin1',
+      );
+    setTrainingQuotaForTest({ openUploads: 1000, openBytes: 1024 ** 4 });
+    try {
+      const bomb = await upload(pdfWithImage(12000, 12000), '超大内嵌图.pdf', 'application/pdf', { folderId: pub.id });
+      expect(bomb.done.status).toBe(422);
+      expect(bomb.done.body.error.code).toBe('TRAINING_PDF_IMAGE_TOO_LARGE');
+      const ok = await upload(pdfWithImage(1600, 1200), '正常内嵌图.pdf', 'application/pdf', { folderId: pub.id });
+      expect(ok.done.status, JSON.stringify(ok.done.body)).toBe(200);
+    } finally {
+      setTrainingQuotaForTest(null);
+    }
+  });
+
   it('Excel 里超出 Unicode 范围的字符引用原样显示，不让解析出错（Codex 安全审查 ed6178f）', async () => {
     const pub = await folderOf((f) => f.kind === 'public');
     const base = buildXlsx({ name: '表', columns: [{ header: '甲' }, { header: '乙' }], rows: [['1', '2']] });
@@ -472,6 +516,92 @@ describe('员工培训', () => {
       const sheet = await api(ctx.app, ctx.clerk, 'GET', `/api/training/files/${r.done.body.fileId}/sheet`);
       expect(sheet.status, JSON.stringify(sheet.body)).toBe(200);
       expect(sheet.body.sheets[0].rows[1][0]).toBe('&#1114112;');
+    } finally {
+      setTrainingQuotaForTest(null);
+    }
+  });
+
+  it('知识库检索（GET /api/training/search）：按标题/说明/文件名匹配、遵守部门权限与上下架隔离、转义 LIKE 通配符、拒绝非员工', async () => {
+    const pub = await folderOf((f) => f.kind === 'public');
+    const front = await folderOf((f) => f.departmentKey === 'front');
+    const dining = await folderOf((f) => f.departmentKey === 'dining');
+
+    // 前厅普通员工（无 training.manage）
+    await createStaff(ctx.sql, { username: 'kb_front', displayName: '前厅检索员', role: 'clerk', position: 'front.staff', password: PASSWORD, mustChangePassword: false });
+    const frontCookie = await login(ctx.app, 'kb_front');
+    await createStaff(ctx.sql, { username: 'kb_tablet', displayName: '检索平板', role: 'tablet', password: PASSWORD, mustChangePassword: false });
+    const tabletCookie = await login(ctx.app, 'kb_tablet');
+
+    setTrainingQuotaForTest({ openUploads: 1000, openBytes: 1024 ** 4 });
+    try {
+      const fPub = await upload(PDF(600), 'fire_guide_100%.pdf', 'application/pdf', { folderId: pub.id, title: '消防安全100%达标手册' });
+      const fFront = await upload(PDF(600), 'front_sop.pdf', 'application/pdf', { folderId: front.id, title: '前厅接待SOP检索词ZZ99' });
+      const fDining = await upload(PDF(600), 'dining_secret.pdf', 'application/pdf', { folderId: dining.id, title: '餐饮内部方案检索词ZZ99' });
+      const fOff = await upload(PDF(600), 'hidden.pdf', 'application/pdf', { folderId: pub.id, title: '已下架资料检索词ZZ99' });
+      expect([fPub.done.status, fFront.done.status, fDining.done.status, fOff.done.status]).toEqual([200, 200, 200, 200]);
+
+      // 给 fPub 补写说明以测试按 description 检索
+      const detailPub = await api(ctx.app, ctx.owner, 'GET', `/api/admin/training/files/${fPub.done.body.fileId}`);
+      expect(
+        (
+          await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/files/${fPub.done.body.fileId}`, {
+            title: detailPub.body.file.title,
+            description: '全员必读检索词ZZ99',
+            folderId: pub.id,
+            active: true,
+            sort: detailPub.body.file.sort,
+            version: detailPub.body.file.version,
+          })
+        ).status,
+      ).toBe(200);
+
+      // 下架 fOff
+      const detailOff = await api(ctx.app, ctx.owner, 'GET', `/api/admin/training/files/${fOff.done.body.fileId}`);
+      expect(
+        (
+          await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/files/${fOff.done.body.fileId}`, {
+            title: detailOff.body.file.title,
+            description: detailOff.body.file.description,
+            folderId: pub.id,
+            active: false,
+            sort: detailOff.body.file.sort,
+            version: detailOff.body.file.version,
+          })
+        ).status,
+      ).toBe(200);
+
+      // 空查询返回空数组；非员工拒绝
+      expect((await api(ctx.app, frontCookie, 'GET', '/api/training/search?q=')).body).toEqual([]);
+      expect((await api(ctx.app, tabletCookie, 'GET', '/api/training/search?q=ZZ99')).status).toBe(403);
+
+      // 停用的部门文件夹（前面用例停用了前厅部）里即使有文件，普通员工也搜不到
+      const whileOff = await api(ctx.app, frontCookie, 'GET', `/api/training/search?q=${encodeURIComponent('检索词ZZ99')}`);
+      expect((whileOff.body as { file: { id: number } }[]).map((x) => x.file.id)).not.toContain(fFront.done.body.fileId);
+
+      // 重新启用前厅部文件夹
+      expect((await api(ctx.app, ctx.owner, 'PUT', `/api/admin/training/folders/${front.id}`, { name: front.name, sort: front.sort, active: true, version: front.version })).status).toBe(200);
+
+      // 前厅员工只搜到「全员（按说明命中）+ 前厅（按标题命中）」，搜不到餐饮部与已下架文档
+      const empRes = await api(ctx.app, frontCookie, 'GET', `/api/training/search?q=${encodeURIComponent('检索词ZZ99')}`);
+      expect(empRes.status, JSON.stringify(empRes.body)).toBe(200);
+      const empIds = (empRes.body as { file: { id: number } }[]).map((x) => x.file.id);
+      expect(empIds).toContain(fPub.done.body.fileId);
+      expect(empIds).toContain(fFront.done.body.fileId);
+      expect(empIds).not.toContain(fDining.done.body.fileId);
+      expect(empIds).not.toContain(fOff.done.body.fileId);
+
+      // 管理员（owner）搜全库，包含其他部门和已下架文档且带 viewerCount
+      const adminRes = await api(ctx.app, ctx.owner, 'GET', `/api/training/search?q=${encodeURIComponent('检索词ZZ99')}`);
+      expect(adminRes.status).toBe(200);
+      const adminIds = (adminRes.body as { file: { id: number; viewerCount?: number } }[]).map((x) => x.file.id);
+      expect(adminIds).toEqual(expect.arrayContaining([fPub.done.body.fileId, fFront.done.body.fileId, fDining.done.body.fileId, fOff.done.body.fileId]));
+      expect(typeof adminRes.body[0].file.viewerCount).toBe('number');
+
+      // LIKE 通配符 % 必须字面匹配，不能把所有文件都扫出来
+      const pctRes = await api(ctx.app, frontCookie, 'GET', `/api/training/search?q=${encodeURIComponent('100%')}`);
+      expect(pctRes.status).toBe(200);
+      const pctIds = (pctRes.body as { file: { id: number } }[]).map((x) => x.file.id);
+      expect(pctIds).toEqual([fPub.done.body.fileId]);
     } finally {
       setTrainingQuotaForTest(null);
     }

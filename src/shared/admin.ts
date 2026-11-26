@@ -89,6 +89,8 @@ export const ADMIN_SECTIONS = {
   payroll: { path: '/admin/payroll', label: '工资条', perms: ['payroll.manage'] },
   // 员工培训（店主 2026-11-25，docs/TRAINING.md）：培训文件夹、上传与换版本、看谁看过；人力行政部负责人不进后台首页也看得到
   training: { path: '/admin/training', label: '员工培训', perms: ['training.manage'] },
+  // 公司公告（员工办公 v1.1 第 5 批，docs/OA_MOBILE.md）：发布、编辑、置顶、撤回公告与已读名单；人力行政部负责人不进后台首页也看得到
+  announcements: { path: '/admin/announcements', label: '公司公告', perms: ['oa.announce'] },
   // 8.0.18（IA1，店主 2026-11-13）：员工食堂、安保巡场从 ERP 挪到后台「人员与行政」。页面、权限、接口都没变；
   // 开没开仍然按 ERP 的模块开关（ADMIN_SECTION_MODULES），员工手机端的入口不变
   canteen: { path: '/admin/canteen', label: '员工食堂', perms: ['canteen.manage'] },
@@ -126,7 +128,7 @@ export const ADMIN_GROUPS: readonly { key: string; title: string; board: AdminBo
   { key: 'business', title: '营业项目', board: 'crm', items: ['catalog', 'tags', 'technicians', 'dining', 'emenu', 'rooms', 'bookings'] },
   { key: 'venue', title: '场地、设备与线上', board: 'crm', items: ['spaces', 'devices', 'mp'] },
   { key: 'erpSystem', title: '主体、接口与审计', board: 'erp', items: ['stores', 'integrations', 'opening', 'audit'] },
-  { key: 'staff', title: '人员与行政', board: 'wcp', items: ['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'permissions', 'canteen', 'patrol'] },
+  { key: 'staff', title: '人员与行政', board: 'wcp', items: ['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'announcements', 'permissions', 'canteen', 'patrol'] },
   { key: 'design', title: '品牌与设计', board: 'design', items: ['design', 'library', 'studio', 'guide'] },
 ];
 
@@ -154,7 +156,21 @@ export const ADMIN_PERMISSIONS: readonly Permission[] = ADMIN_SECTIONS.home.perm
  * 不进后台首页也看得到的分区：数据看板（店主 2026-11-10），员工食堂、安保巡场（8.0.18，食堂负责人、安保主管原来只进 ERP）。
  * 只有这些分区的权限的岗位能进后台，但只看得到自己的这几个分区
  */
-export const ADMIN_STANDALONE_SECTIONS: readonly AdminSection[] = ['dashboard', 'canteen', 'patrol', 'design', 'library', 'studio', 'staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training'];
+export const ADMIN_STANDALONE_SECTIONS: readonly AdminSection[] = [
+  'dashboard',
+  'canteen',
+  'patrol',
+  'design',
+  'library',
+  'studio',
+  'staff',
+  'org',
+  'attendance',
+  'oaApprovals',
+  'payroll',
+  'training',
+  'announcements',
+];
 /** 跟着 ERP 模块开关走的分区：模块关着时只有能改模块开关的人还看得到（页面上提示去开启） */
 export const ADMIN_SECTION_MODULES: Partial<Record<AdminSection, ErpModuleKey>> = { canteen: 'canteen', patrol: 'patrol' };
 /** 能进后台的权限（有其一即可）：后台首页的权限，加上不进首页也看得到的那几个分区的权限 */

@@ -72,32 +72,37 @@ function ApprovalListPage() {
   const s = summary.data;
   return (
     <>
-      <PageHeader
-        dateMode="calendar"
-        title="审批"
-        subtitle="请假、加班、出差、报销、补卡和其他事项"
-        actions={
-          <Link to="/oa/approvals/new" className="tap relative inline-flex h-9 items-center gap-1 rounded-md bg-pine px-3 text-[14px] font-semibold text-white" data-testid="oa-approval-new">
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title="审批" subtitle="请假、加班、出差、报销、补卡和其他事项" />
+      </div>
+      <div className="mx-auto w-full max-w-3xl space-y-3 p-3 md:p-7">
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-[17px] font-bold text-ink md:hidden">审批</h1>
+          <Link
+            to="/oa/approvals/new"
+            className="tap relative inline-flex h-9 shrink-0 items-center gap-1 rounded-md bg-pine px-3 text-[14px] font-semibold text-white md:ml-auto"
+            data-testid="oa-approval-new"
+          >
             <Plus className="size-4" />
             发起审批
           </Link>
-        }
-      />
-      <div className="mx-auto w-full max-w-3xl space-y-3 p-4 md:p-7">
+        </div>
         <ErpPendingPanel types={['oa_approval_submit', 'oa_approval_act']} filter={mine(session.staff.id)} className="space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: KEY })} />
         <div className="flex flex-wrap items-center gap-2">
-          <Segmented<ApprovalBox>
-            value={box}
-            onChange={(b) => setParams({ box: b }, { replace: true })}
-            ariaLabel="审批列表"
-            options={[
-              { value: 'todo', label: <span data-testid="oa-box-todo">待我审批{s?.todo ? ` ${s.todo}` : ''}</span> },
-              { value: 'mine', label: <span data-testid="oa-box-mine">我发起的</span> },
-              { value: 'cc', label: <span data-testid="oa-box-cc">抄送我的{s?.ccUnread ? ` ${s.ccUnread}` : ''}</span> },
-              { value: 'done', label: <span data-testid="oa-box-done">我处理过的</span> },
-            ]}
-          />
-          <Select value={status} onChange={(e) => setStatus(e.target.value)} fullWidth={false} className="ml-auto w-32" aria-label="状态">
+          <div className="scroll-thin max-w-full overflow-x-auto">
+            <Segmented<ApprovalBox>
+              value={box}
+              onChange={(b) => setParams({ box: b }, { replace: true })}
+              ariaLabel="审批列表"
+              options={[
+                { value: 'todo', label: <span data-testid="oa-box-todo">待我审批{s?.todo ? ` ${s.todo}` : ''}</span> },
+                { value: 'mine', label: <span data-testid="oa-box-mine">我发起的</span> },
+                { value: 'cc', label: <span data-testid="oa-box-cc">抄送我的{s?.ccUnread ? ` ${s.ccUnread}` : ''}</span> },
+                { value: 'done', label: <span data-testid="oa-box-done">我处理过的</span> },
+              ]}
+            />
+          </div>
+          <Select value={status} onChange={(e) => setStatus(e.target.value)} fullWidth={false} className="w-full sm:ml-auto sm:w-32" aria-label="状态">
             <option value="">全部状态</option>
             {(Object.keys(APPROVAL_STATUS_LABELS) as ApprovalStatus[]).map((k) => (
               <option key={k} value={k}>
@@ -265,8 +270,18 @@ function ApprovalDetailPage({ id }: { id: number }) {
 
   return (
     <>
-      <PageHeader dateMode="calendar" title={d?.title ?? '审批单'} subtitle={d ? `${d.templateName} · ${d.applicantName} · ${formatDateTime(d.submittedAt)}` : undefined} />
-      <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-7">
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title={d?.title ?? '审批单'} subtitle={d ? `${d.templateName} · ${d.applicantName} · ${formatDateTime(d.submittedAt)}` : undefined} />
+      </div>
+      <div className="mx-auto w-full max-w-3xl space-y-3 p-3 md:space-y-4 md:p-7">
+        <div className="md:hidden">
+          <h1 className="break-words text-[17px] font-bold text-ink">{d?.title ?? '审批单'}</h1>
+          {d && (
+            <p className="mt-0.5 text-[12.5px] text-ink-3">
+              {d.templateName} · {d.applicantName} · {formatDateTime(d.submittedAt)}
+            </p>
+          )}
+        </div>
         <ErpPendingPanel
           types={['oa_approval_act']}
           filter={(op) => op.staffId === session.staff.id && op.url === `/api/oa/approvals/${id}/act`}
@@ -279,19 +294,19 @@ function ApprovalDetailPage({ id }: { id: number }) {
           <LoadFailed title="审批单没有取回来" onRetry={() => q.refetch()} retrying={q.isFetching} />
         ) : (
           <>
-            <Card className="space-y-3 p-4 md:p-5" data-testid="oa-approval-detail">
+            <Card className="space-y-3 p-3.5 md:p-5" data-testid="oa-approval-detail">
               <div className="flex flex-wrap items-center gap-2">
                 <span data-testid="oa-approval-status">
                   <Badge tone={STATUS_TONE[d!.status]}>{APPROVAL_STATUS_LABELS[d!.status]}</Badge>
                 </span>
                 {d!.revision > 1 && <span className="text-[13px] text-ink-3">第 {d!.revision} 版</span>}
                 {d!.previousId && (
-                  <Link to={`/oa/approvals/${d!.previousId}`} className="text-[13px] text-pine">
+                  <Link to={`/oa/approvals/${d!.previousId}`} className="tap relative text-[13px] text-pine">
                     上一版
                   </Link>
                 )}
                 {d!.nextId && (
-                  <Link to={`/oa/approvals/${d!.nextId}`} className="text-[13px] text-pine">
+                  <Link to={`/oa/approvals/${d!.nextId}`} className="tap relative text-[13px] text-pine">
                     重新提交的那一版
                   </Link>
                 )}
@@ -302,7 +317,7 @@ function ApprovalDetailPage({ id }: { id: number }) {
                   .map((f) => (
                     <div key={f.key} className="contents">
                       <dt className="text-ink-3">{f.label}</dt>
-                      <dd className="whitespace-pre-wrap text-ink">{valueText(f, d!.form[f.key], leaveTypes.data)}</dd>
+                      <dd className="min-w-0 break-words whitespace-pre-wrap text-ink">{valueText(f, d!.form[f.key], leaveTypes.data)}</dd>
                     </div>
                   ))}
                 {derivedText(d!.templateCode, d!.form) && (
@@ -322,9 +337,9 @@ function ApprovalDetailPage({ id }: { id: number }) {
                       href={a.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-[13px] text-ink-2 hover:border-line-strong"
+                      className="tap relative flex max-w-full items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-[13px] text-ink-2 hover:border-line-strong"
                     >
-                      {a.thumbUrl ? <img src={a.thumbUrl} alt="" className="size-8 rounded object-cover" /> : <Paperclip className="size-4" />}
+                      {a.thumbUrl ? <img src={a.thumbUrl} alt="" className="size-8 shrink-0 rounded object-cover" /> : <Paperclip className="size-4 shrink-0" />}
                       <span className="max-w-40 truncate">{a.fileName}</span>
                     </a>
                   ))}
@@ -332,7 +347,7 @@ function ApprovalDetailPage({ id }: { id: number }) {
               )}
             </Card>
 
-            <Card className="p-4 md:p-5">
+            <Card className="p-3.5 md:p-5">
               <p className="mb-2 text-[13px] font-bold text-ink-2">审批链</p>
               <div data-testid="oa-approval-steps">
                 {d!.steps.length === 0 ? (
@@ -353,11 +368,11 @@ function ApprovalDetailPage({ id }: { id: number }) {
               onResubmit={() => navigate(`/oa/approvals/new/${d!.templateCode}?from=${d!.id}`)}
             />
 
-            <Card className="p-4 md:p-5">
+            <Card className="p-3.5 md:p-5">
               <p className="mb-2 text-[13px] font-bold text-ink-2">时间线</p>
               <ul className="space-y-2" data-testid="oa-approval-events">
                 {d!.events.map((e) => (
-                  <li key={e.id} className="text-[13.5px]">
+                  <li key={e.id} className="break-words text-[13.5px]">
                     <span className="num mr-2 text-[12px] text-ink-3">{formatDateTime(e.createdAt)}</span>
                     <span className="font-semibold text-ink">{e.actorName}</span> {APPROVAL_EVENT_LABELS[e.kind]}
                     {e.toName ? ` 给 ${e.toName}` : ''}
@@ -366,9 +381,17 @@ function ApprovalDetailPage({ id }: { id: number }) {
                 ))}
               </ul>
               <div className="mt-3 flex gap-2">
-                <Input value={comment} maxLength={500} onChange={(e) => setComment(e.target.value)} placeholder="写评论（相关的人都看得到）" data-testid="oa-approval-comment" />
+                <Input
+                  value={comment}
+                  maxLength={500}
+                  onChange={(e) => setComment(e.target.value)}
+                  placeholder="写评论（相关的人都看得到）"
+                  className="min-w-0 flex-1"
+                  data-testid="oa-approval-comment"
+                />
                 <Button
                   variant="secondary"
+                  className="shrink-0"
                   disabled={busy || !comment.trim()}
                   onClick={() => void act('comment', { comment: comment.trim() }, '已评论').then((ok) => ok && setComment(''))}
                   data-testid="oa-approval-comment-send"
@@ -437,13 +460,13 @@ function Actions({
   };
   if (!can.approve && !can.withdraw && !can.urge && !can.resubmit && !waiting.length) return null;
   return (
-    <Card className="space-y-3 p-4 md:p-5" data-testid="oa-approval-actions">
+    <Card className="space-y-3 p-3.5 md:p-5" data-testid="oa-approval-actions">
       {can.approve && (
         <>
           <Field label="审批意见（可不填）">
             <Input value={opinion} maxLength={500} onChange={(e) => setOpinion(e.target.value)} data-testid="oa-approval-opinion" />
           </Field>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
             <Button variant="primary" size="lg" loading={busy} onClick={() => void act('approve', { comment: opinion.trim() }, '已通过')} data-testid="oa-approval-approve">
               通过
             </Button>
@@ -456,28 +479,30 @@ function Actions({
           </div>
         </>
       )}
-      <div className="flex flex-wrap gap-2">
-        {can.urge && (
-          <Button variant="secondary" disabled={busy} onClick={() => void act('urge', {}, '已催办')} data-testid="oa-approval-urge">
-            催办
-          </Button>
-        )}
-        {waiting.map(([id, name]) => (
-          <Button key={id} variant="ghost" icon={<MessageCircle className="size-4" />} loading={chatting === id} onClick={() => void chat(id)} data-testid={`oa-approval-chat-${id}`}>
-            找{name}聊
-          </Button>
-        ))}
-        {can.withdraw && (
-          <Button variant="ghost" disabled={busy} onClick={() => void act('withdraw', {}, '已撤销')} data-testid="oa-approval-withdraw">
-            撤销
-          </Button>
-        )}
-        {can.resubmit && (
-          <Button variant="primary" onClick={onResubmit} data-testid="oa-approval-resubmit">
-            修改后重新提交
-          </Button>
-        )}
-      </div>
+      {(can.urge || waiting.length > 0 || can.withdraw || can.resubmit) && (
+        <div className="flex flex-wrap gap-2">
+          {can.urge && (
+            <Button variant="secondary" disabled={busy} onClick={() => void act('urge', {}, '已催办')} data-testid="oa-approval-urge">
+              催办
+            </Button>
+          )}
+          {waiting.map(([id, name]) => (
+            <Button key={id} variant="ghost" icon={<MessageCircle className="size-4" />} loading={chatting === id} onClick={() => void chat(id)} data-testid={`oa-approval-chat-${id}`}>
+              找{name}聊
+            </Button>
+          ))}
+          {can.withdraw && (
+            <Button variant="ghost" disabled={busy} onClick={() => void act('withdraw', {}, '已撤销')} data-testid="oa-approval-withdraw">
+              撤销
+            </Button>
+          )}
+          {can.resubmit && (
+            <Button variant="primary" onClick={onResubmit} data-testid="oa-approval-resubmit">
+              修改后重新提交
+            </Button>
+          )}
+        </div>
+      )}
     </Card>
   );
 }

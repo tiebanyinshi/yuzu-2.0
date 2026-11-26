@@ -78,15 +78,29 @@ function visible(db: Db, staffId: number): Fragment {
   return out;
 }
 
+const UnreadQuery = z.object({ breakdown: z.enum(['1', 'true']).optional() });
+
 async function unreadCount(db: Db, staffId: number): Promise<number> {
   const [row] = await db<{ n: number }[]>`
     SELECT count(*)::int AS n FROM oa_notifications WHERE staff_id = ${staffId} AND read_at IS NULL AND ${visible(db, staffId)}`;
   return row?.n ?? 0;
 }
 
+async function unreadBreakdown(db: Db, staffId: number): Promise<{ unread: number; systemUnread: number }> {
+  const [row] = await db<{ unread: number; systemUnread: number }[]>`
+    SELECT count(*)::int AS unread,
+           count(*) FILTER (WHERE kind <> 'im_message')::int AS system_unread
+    FROM oa_notifications
+    WHERE staff_id = ${staffId} AND read_at IS NULL AND ${visible(db, staffId)}`;
+  return { unread: row?.unread ?? 0, systemUnread: row?.systemUnread ?? 0 };
+}
+
 export function registerOaNotificationRoutes(app: FastifyInstance, { sql }: Deps) {
-  // 登录就能用：只看、只改自己的通知
-  app.get('/api/oa/notifications/unread-count', { preHandler: guard() }, async (req) => ({ unread: await unreadCount(sql, req.actor.id) }));
+  // 登录就能用：只看、只改自己的通知；?breakdown=1 时顺带给除 IM 以外的系统通知未读数（避免与聊天未读重复计数）
+  app.get('/api/oa/notifications/unread-count', { preHandler: guard() }, async (req) => {
+    const q = parse(UnreadQuery, req.query ?? {});
+    return q.breakdown ? unreadBreakdown(sql, req.actor.id) : { unread: await unreadCount(sql, req.actor.id) };
+  });
 
   app.get('/api/oa/notifications', { preHandler: guard() }, async (req): Promise<NotificationPage> => {
     const q = parse(ListQuery, req.query ?? {});

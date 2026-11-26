@@ -16,6 +16,7 @@ import { PortalBackButton } from '../../components/PortalBack';
 import { ThemeToggleButton } from '../../components/ThemeSwitch';
 import { UserMenu } from '../../components/UserMenu';
 import { NotificationBell } from './Notifications';
+import { badgeText, useImSyncPoll, useNotificationUnreadPoll } from './MessagesBar';
 import { isWcpTabRoot, useWcpNav, WCP_TABS, wcpTabOf } from './wcpNav';
 
 export function WcpShell({ children }: { children: ReactNode }) {
@@ -23,6 +24,10 @@ export function WcpShell({ children }: { children: ReactNode }) {
   const items = useWcpNav();
   const { pathname } = useLocation();
   const content = usePageEnter<HTMLDivElement>(pathname);
+  // 统一在 WCP 外壳维护通知与聊天未读计数：顶栏铃铛、侧栏、底部「消息」Tab 与分栏条共用同一份缓存，避免重复轮询
+  const imUnread = useImSyncPoll();
+  const { systemUnread } = useNotificationUnreadPoll();
+  const messagesUnread = imUnread + systemUnread;
   useEffect(() => {
     document.title = `WCP · ${session.storeName}`;
     return () => {
@@ -30,24 +35,29 @@ export function WcpShell({ children }: { children: ReactNode }) {
     };
   }, [session.storeName]);
   const side = [{ to: '/oa', label: '首页', icon: CalendarClock, testId: 'wcp-home' }, { to: '/oa/me', label: '我的', icon: UserRound, testId: 'wcp-me' }, ...items];
-  const link = (it: (typeof side)[number], compact: boolean) => (
-    <NavLink
-      key={it.to}
-      to={it.to}
-      end={it.to === '/oa'}
-      data-testid={compact ? `wcp-tab-${it.testId}` : `wcp-nav-${it.testId}`}
-      className={({ isActive }) =>
-        cn(
-          'tap relative flex shrink-0 items-center gap-2.5 font-semibold whitespace-nowrap transition-colors duration-100',
-          compact ? 'h-9 rounded-full px-3 text-[13px]' : 'h-10 rounded-lg px-3 text-[14px]',
-          isActive ? 'bg-pine text-paper' : 'text-ink-2 hover:bg-paper-2 hover:text-ink',
-        )
-      }
-    >
-      <it.icon className="size-4 shrink-0" />
-      {it.label}
-    </NavLink>
-  );
+  const sideBadge = (to: string) => (to === '/oa/im' && imUnread > 0 ? badgeText(imUnread) : to === '/oa/notifications' && systemUnread > 0 ? badgeText(systemUnread) : null);
+  const link = (it: (typeof side)[number], compact: boolean) => {
+    const b = sideBadge(it.to);
+    return (
+      <NavLink
+        key={it.to}
+        to={it.to}
+        end={it.to === '/oa'}
+        data-testid={compact ? `wcp-tab-${it.testId}` : `wcp-nav-${it.testId}`}
+        className={({ isActive }) =>
+          cn(
+            'tap relative flex shrink-0 items-center gap-2.5 font-semibold whitespace-nowrap transition-colors duration-100',
+            compact ? 'h-9 rounded-full px-3 text-[13px]' : 'h-10 rounded-lg px-3 text-[14px]',
+            isActive ? 'bg-pine text-paper' : 'text-ink-2 hover:bg-paper-2 hover:text-ink',
+          )
+        }
+      >
+        <it.icon className="size-4 shrink-0" />
+        <span>{it.label}</span>
+        {b && <span className="num ml-auto rounded-full bg-clay px-1.5 text-[12px] leading-5 font-bold text-paper">{b}</span>}
+      </NavLink>
+    );
+  };
   return (
     <div className="flex h-dvh min-h-0 flex-col bg-paper" data-testid="wcp-shell">
       <header data-surface="rail" className="hidden h-14 shrink-0 items-center gap-3 bg-rail px-5 text-paper md:flex">
@@ -62,7 +72,7 @@ export function WcpShell({ children }: { children: ReactNode }) {
             <span className="num truncate text-[12px] text-paper/60">{versionText(session.version, session.commit)}</span>
           </p>
         </div>
-        <NotificationBell placement="rail" />
+        <NotificationBell placement="rail" poll={false} />
         <ThemeToggleButton className="size-9" />
         <UserMenu placement="bar" />
         <PortalBackButton />
@@ -80,7 +90,7 @@ export function WcpShell({ children }: { children: ReactNode }) {
           {children}
         </div>
       </div>
-      <MobileTabBar />
+      <MobileTabBar messagesUnread={messagesUnread} />
     </div>
   );
 }
@@ -93,21 +103,31 @@ function MobileTopBar() {
   const [params] = useSearchParams();
   const tab = wcpTabOf(pathname);
   const root = isWcpTabRoot(pathname);
-  const onWork = (pathname.replace(/\/+$/, '') || '/oa') === '/oa';
-  const q = onWork ? (params.get('q') ?? '') : '';
-  // 搜索：先在工作台的功能入口里找（知识库的检索第 5 批再接上）
-  const search = (text: string) => navigate(text ? `/oa?q=${encodeURIComponent(text)}` : '/oa', { replace: onWork });
-  // 工作台的搜索框跟着地址里的 q 走（点底部「工作台」清掉 q 时框里也清空，Codex 审查 6c8e9e7）；别的 Tab 上没提交的字留着
-  const [workText, setWorkText] = useState(q);
+  const cleanPath = pathname.replace(/\/+$/, '') || '/oa';
+  const onWork = cleanPath === '/oa';
+  const onKnowledge = cleanPath === '/oa/training';
+  const q = onWork || onKnowledge ? (params.get('q') ?? '') : '';
+  // 工作台搜功能宫格，知识库搜文档（第 5 批）；其他 Tab 提交时回到工作台搜索
+  const search = (text: string) => {
+    if (onKnowledge) {
+      navigate(text ? `/oa/training?q=${encodeURIComponent(text)}` : '/oa/training', { replace: true });
+      return;
+    }
+    navigate(text ? `/oa?q=${encodeURIComponent(text)}` : '/oa', { replace: onWork });
+  };
+  // 工作台与知识库的搜索框跟着地址里的 q 走（清掉 q 时框里也清空，Codex 审查 6c8e9e7）；别的 Tab 上没提交的字留着
+  const [workText, setWorkText] = useState(onWork ? q : '');
+  const [kbText, setKbText] = useState(onKnowledge ? q : '');
   const [otherText, setOtherText] = useState('');
   useEffect(() => {
     if (onWork) setWorkText((t) => (t.trim() === q ? t : q));
-  }, [onWork, q]);
+    else if (onKnowledge) setKbText((t) => (t.trim() === q ? t : q));
+  }, [onWork, onKnowledge, q]);
   return (
     <header data-surface="rail" className="shrink-0 bg-rail px-3 pt-[max(env(safe-area-inset-top),0.5rem)] pb-2 text-paper md:hidden" data-testid="wcp-mobile-top">
       <div className="flex h-10 items-center gap-2">
         {!root && (
-          <Link to={tab.to} aria-label={`返回${tab.label}`} data-testid="wcp-mobile-back" className="tap -ml-1 flex size-9 items-center justify-center rounded-full hover:bg-white/10">
+          <Link to={tab.to} aria-label={`返回${tab.label}`} data-testid="wcp-mobile-back" className="tap relative -ml-1 flex size-9 items-center justify-center rounded-full hover:bg-white/10">
             <ChevronLeft className="size-5" />
           </Link>
         )}
@@ -120,7 +140,7 @@ function MobileTopBar() {
             <span className="num truncate text-[12px] text-paper/60">{versionText(session.version, session.commit)}</span>
           </p>
         </div>
-        <NotificationBell placement="rail" />
+        <NotificationBell placement="rail" poll={false} />
       </div>
       {root && (
         <form
@@ -135,14 +155,20 @@ function MobileTopBar() {
           <input
             name="q"
             type="search"
-            value={onWork ? workText : otherText}
+            value={onWork ? workText : onKnowledge ? kbText : otherText}
             onChange={(e) => {
-              if (!onWork) return setOtherText(e.target.value);
-              setWorkText(e.target.value);
-              search(e.target.value.trim());
+              if (onWork) {
+                setWorkText(e.target.value);
+                search(e.target.value.trim());
+              } else if (onKnowledge) {
+                setKbText(e.target.value);
+                if (!e.target.value.trim()) search('');
+              } else {
+                setOtherText(e.target.value);
+              }
             }}
-            placeholder="搜索功能，如 打卡、工资条"
-            aria-label="搜索"
+            placeholder={onKnowledge ? '搜索知识库文档，回车查看' : '搜索功能，如 打卡、工资条'}
+            aria-label={onKnowledge ? '搜索知识库' : '搜索'}
             data-testid="wcp-mobile-search"
             className="h-9 w-full rounded-full bg-white/12 pr-3 pl-9 text-[14px] text-paper placeholder:text-paper/50 focus:bg-white/18 focus:outline-none"
           />
@@ -153,13 +179,14 @@ function MobileTopBar() {
 }
 
 /** 手机底部 4 个 Tab */
-function MobileTabBar() {
+function MobileTabBar({ messagesUnread }: { messagesUnread: number }) {
   const { pathname } = useLocation();
   const current = wcpTabOf(pathname);
   return (
     <nav aria-label="手机底部标签" className="flex shrink-0 border-t border-line bg-card pb-[env(safe-area-inset-bottom)] md:hidden" data-testid="wcp-tabbar">
       {WCP_TABS.map((t) => {
         const active = t.key === current.key;
+        const count = t.key === 'messages' ? messagesUnread : 0;
         return (
           <Link
             key={t.key}
@@ -168,7 +195,17 @@ function MobileTabBar() {
             data-testid={`wcp-tab-${t.key}`}
             className={cn('tap relative flex h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[12px] font-semibold', active ? 'text-pine' : 'text-ink-3')}
           >
-            <t.icon className={cn('size-[22px]', active && 'stroke-[2.4]')} />
+            <span className="relative inline-flex">
+              <t.icon className={cn('size-[22px]', active && 'stroke-[2.4]')} />
+              {count > 0 && (
+                <span
+                  className="num absolute -top-1.5 -right-3 flex min-w-5 items-center justify-center rounded-full bg-clay px-1 text-[12px] leading-5 font-bold text-paper"
+                  data-testid="wcp-tab-messages-badge"
+                >
+                  {badgeText(count)}
+                </span>
+              )}
+            </span>
             {t.label}
           </Link>
         );

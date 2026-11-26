@@ -401,6 +401,10 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '271_mall_skus.sql',
   '280_training.sql',
   '290_dining_ledger.sql',
+  '291_oa_schedule_publish.sql',
+  '292_oa_schedule_grants.sql',
+  '293_oa_seal_template.sql',
+  '294_oa_announcements_and_kb_search.sql',
   '300_refund_store.sql',
   '301_designated_to_end.sql',
   '310_dish_price_mode.sql',
@@ -409,6 +413,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '315_dish_windows.sql',
   '320_coupon_limits.sql',
   '321_gift_cards.sql',
+  '322_gift_card_batch_ops.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

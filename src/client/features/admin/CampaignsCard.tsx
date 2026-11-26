@@ -149,7 +149,8 @@ function CampaignDialog({ open, onClose, onDone }: { open: boolean; onClose: () 
   const choices = (templates.data ?? []).filter((t) => t.active && !templateExpired(t, session.today));
   const template = choices.find((t) => t.id === templateId) ?? null;
   const audience = { grades, tagIds, tagMode };
-  const inputKey = JSON.stringify({ templateId: template?.id ?? null, audience });
+  // 张数也算进去（合并前 Codex 审查 fca1ba4）：预览完改了每人几张，试算的张数、最多抵就过期了，要重新预览
+  const inputKey = JSON.stringify({ templateId: template?.id ?? null, audience, quantity });
   /** 只认按现在这组条件算出来的预览 */
   const preview = previewed && previewed.key === inputKey ? previewed : null;
   const n = Number(quantity);
@@ -381,10 +382,14 @@ function CampaignDialog({ open, onClose, onDone }: { open: boolean; onClose: () 
               <span className="mt-1 block" data-testid="campaign-preview-estimate">
                 试算：发 {preview.estimate.coupons} 张，
                 {preview.estimate.maxTotal === null
-                  ? '每张最多抵多少不封顶（折扣券没设「最多减」）'
+                  ? `每张最多抵多少不封顶（${preview.estimate.uncappedWhy ?? '没有上限'}）${
+                      preview.estimate.referencePerCoupon !== undefined
+                        ? `，按现在价目最贵的一份约 ${formatYuan(preview.estimate.referencePerCoupon)}、一共约 ${formatYuan(preview.estimate.referencePerCoupon * preview.estimate.coupons)}`
+                        : ''
+                    }`
                   : `每张最多抵 ${formatYuan(preview.estimate.perCoupon ?? 0)}，一共最多抵 ${formatYuan(preview.estimate.maxTotal)}`}
                 {preview.estimate.useRate !== null
-                  ? `；这个券以前的核销率 ${(preview.estimate.useRate * 100).toFixed(1)}%${preview.estimate.expectedCost !== null ? `，估计成本约 ${formatYuan(preview.estimate.expectedCost)}` : ''}`
+                  ? `；这个券以前的核销率 ${(preview.estimate.useRate * 100).toFixed(1)}%${preview.estimate.expectedCost !== null ? `，估计成本约 ${formatYuan(preview.estimate.expectedCost)}${preview.estimate.maxTotal === null ? '（按参考价）' : ''}` : ''}`
                   : '；这个券还没发过，没有核销率可参考'}
                 。
               </span>

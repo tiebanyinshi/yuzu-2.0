@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
 import { fileSizeText } from '@shared/floorplans';
-import { pdfRenderScale, trainingFormatLabel, type TrainingFile, type TrainingSheetBook } from '@shared/training';
+import { pdfRenderScale, TRAINING_PDF_MAX_IMAGE_PIXELS, TRAINING_PDF_MAX_PIXELS, trainingFormatLabel, type TrainingFile, type TrainingSheetBook } from '@shared/training';
 import { api, errorMessage } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -91,7 +91,14 @@ function PdfPages({ url }: { url: string }) {
       try {
         const pdfjs = await import('pdfjs-dist');
         pdfjs.GlobalWorkerOptions.workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
-        task = pdfjs.getDocument({ url, withCredentials: true, disableAutoFetch: true });
+        // 限制内嵌源图与离屏画布像素上限（Codex 安全审查 bfc32cd）：超限图片在解码前直接拒绝，不把渲染进程撑爆
+        task = pdfjs.getDocument({
+          url,
+          withCredentials: true,
+          disableAutoFetch: true,
+          maxImageSize: TRAINING_PDF_MAX_IMAGE_PIXELS,
+          canvasMaxAreaInBytes: TRAINING_PDF_MAX_PIXELS * 4,
+        });
         const doc = await task.promise;
         if (cancelled) return void doc.cleanup();
         docRef.current = doc;
@@ -135,6 +142,7 @@ function PdfPage({ docRef, pageNo }: { docRef: React.RefObject<import('pdfjs-dis
   const canvas = useRef<HTMLCanvasElement>(null);
   const [shown, setShown] = useState(pageNo <= 2);
   const [drawn, setDrawn] = useState(false);
+  const [failed, setFailed] = useState(false);
   // 滚到附近才画
   useEffect(() => {
     if (shown || !holder.current) return;
@@ -143,33 +151,48 @@ function PdfPage({ docRef, pageNo }: { docRef: React.RefObject<import('pdfjs-dis
     return () => io.disconnect();
   }, [shown]);
   useEffect(() => {
-    if (!shown || drawn) return;
+    if (!shown || drawn || failed) return;
     let cancelled = false;
+    let renderTask: { cancel: () => void; promise: Promise<void> } | null = null;
     void (async () => {
-      const doc = docRef.current;
-      const el = canvas.current;
-      if (!doc || !el) return;
-      const page = await doc.getPage(pageNo);
-      const width = holder.current?.clientWidth || 800;
-      const base = page.getViewport({ scale: 1 });
-      // 画布大小有上限：PDF 里写的页面比例再怪，一页也只占有限的内存（Codex 安全审查 04eb112）
-      const scale = pdfRenderScale(base.width, base.height, width, window.devicePixelRatio || 1);
-      if (!scale || cancelled) return;
-      const viewport = page.getViewport({ scale });
-      el.width = Math.round(viewport.width);
-      el.height = Math.round(viewport.height);
-      const g = el.getContext('2d');
-      if (!g || cancelled) return;
-      await page.render({ canvas: el, canvasContext: g, viewport }).promise;
-      if (!cancelled) setDrawn(true);
+      try {
+        const doc = docRef.current;
+        const el = canvas.current;
+        if (!doc || !el) return;
+        const page = await doc.getPage(pageNo);
+        const width = holder.current?.clientWidth || 800;
+        const base = page.getViewport({ scale: 1 });
+        // 画布大小有上限：PDF 里写的页面比例再怪，一页也只占有限的内存（Codex 安全审查 04eb112）
+        const scale = pdfRenderScale(base.width, base.height, width, window.devicePixelRatio || 1);
+        if (!scale || cancelled) return;
+        const viewport = page.getViewport({ scale });
+        el.width = Math.round(viewport.width);
+        el.height = Math.round(viewport.height);
+        const g = el.getContext('2d');
+        if (!g || cancelled) return;
+        renderTask = page.render({ canvas: el, canvasContext: g, viewport });
+        await renderTask.promise;
+        if (!cancelled) setDrawn(true);
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
     })();
     return () => {
       cancelled = true;
+      renderTask?.cancel();
     };
-  }, [shown, drawn, docRef, pageNo]);
+  }, [shown, drawn, failed, docRef, pageNo]);
   return (
     <div ref={holder} className="relative overflow-hidden rounded-lg border border-line bg-white" data-testid={`training-pdf-page-${pageNo}`} data-drawn={drawn}>
-      <canvas ref={canvas} className={cn('block w-full', !drawn && 'h-[60dvh]')} aria-label={`第 ${pageNo} 页`} />
+      {failed ? (
+        <div className="p-4">
+          <Notice tone="info" title={`第 ${pageNo} 页图片过大或无法在页面里显示`}>
+            可以点上方「下载」用手机或电脑自带的软件查看。
+          </Notice>
+        </div>
+      ) : (
+        <canvas ref={canvas} className={cn('block w-full', !drawn && 'h-[60dvh]')} aria-label={`第 ${pageNo} 页`} />
+      )}
       <span className="absolute right-2 bottom-2 rounded bg-ink/60 px-1.5 text-[12px] text-paper">{pageNo}</span>
     </div>
   );

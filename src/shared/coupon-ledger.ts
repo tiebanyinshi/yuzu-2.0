@@ -2,6 +2,8 @@
 
 /** 页面一次最多看几张券（导出最多一万张） */
 export const COUPON_LEDGER_MAX = 2000;
+/** 导出一次最多几张：多了拒绝、请缩小范围（不悄悄截掉） */
+export const COUPON_LEDGER_EXPORT_MAX = 10_000;
 
 export interface CouponLedgerRow {
   id: number;
@@ -35,18 +37,15 @@ export interface CouponLedger {
   rows: CouponLedgerRow[];
   /** 超过一次能看的张数：只列了最近的那些 */
   truncated: boolean;
+  /** 符合条件的一共几张（不受一次能看的张数限制） */
+  total: number;
   summary: { issued: number; used: number; usedAmount: number; voided: number; avgHoursToUse: number | null };
 }
 
 export const COUPON_LEDGER_STATUS_LABELS: Record<CouponLedgerRow['status'], string> = { available: '未用', used: '已用', voided: '已作废' };
 
-const cell = (v: string | number | null) => {
-  const s = v === null ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-
-/** 导出 CSV：一张券一行 */
-export function couponLedgerCsv(rows: readonly CouponLedgerRow[]): string {
+/** 导出 CSV 的表头与各行（一张券一行）：转义与防公式交给服务端的 toCsv（合并前 Codex 审查 305508f：券名、会员名以 = + @ 开头时不能被表格当公式） */
+export function couponLedgerCsvRows(rows: readonly CouponLedgerRow[]): (string | number)[][] {
   const head = [
     '券号',
     '券',
@@ -87,9 +86,7 @@ export function couponLedgerCsv(rows: readonly CouponLedgerRow[]): string {
       r.hoursToUse,
       r.voidReason,
       r.reason,
-    ]
-      .map(cell)
-      .join(','),
+    ].map((v) => v ?? ''),
   );
-  return [head.join(','), ...body].join('\n');
+  return [head, ...body];
 }

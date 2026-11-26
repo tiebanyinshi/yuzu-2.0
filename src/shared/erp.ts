@@ -407,6 +407,8 @@ export const ERP_OP_TYPES = [
   'coupon_batch',
   // 批量发券（8.0.4 需求表 06）：圈一批会员发券，没收到结果时查回、原样重提或确认作废
   'coupon_campaign',
+  // 生成礼品卡（8.1.40，Codex 审查 8a7023d）：回复丢了查回、原样重提或确认作废，不会多生成一批
+  'gift_card_batch',
   'coupon_issue',
   // 硬件连接（v0.7.21）：登记设备、打印任务（断网后刷新也要能查回、重提或作废）
   'device_create',
@@ -497,6 +499,9 @@ export const ERP_OP_TYPES = [
   'oa_attendance_setup',
   // OA-05 排班保存（一批格子一个编号）
   'oa_schedule_save',
+  // 员工办公 v1.1 第 2 批：排班发布、排班授权
+  'oa_schedule_publish',
+  'oa_schedule_grant',
   // OA-06 打卡
   'oa_punch',
   // OA-07 提交人脸录入
@@ -518,6 +523,8 @@ export const ERP_OP_TYPES = [
   'oa_approval_act',
   // OA-14 建群
   'oa_im_group',
+  // 员工办公 v1.1 第 5 批：公司公告（发布 / 撤回）
+  'oa_announcement',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -543,6 +550,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   coupon_rule: '加发券规则',
   coupon_batch: '生成无记名券',
   coupon_campaign: '批量发券',
+  gift_card_batch: '生成礼品卡',
   coupon_issue: '发券给会员',
   device_create: '登记设备',
   device_job: '测试打印',
@@ -595,6 +603,8 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   oa_staff_import: '批量开通员工账号',
   oa_attendance_setup: '新建班次 / 打卡点 / 考勤组',
   oa_schedule_save: '保存排班',
+  oa_schedule_publish: '发布排班',
+  oa_schedule_grant: '排班授权',
   oa_punch: '打卡',
   oa_face_enroll: '提交人脸录入',
   oa_face_review: '人脸审核',
@@ -608,6 +618,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   oa_approval_submit: '提交审批',
   oa_approval_act: '处理审批',
   oa_im_group: '建群',
+  oa_announcement: '公司公告',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */

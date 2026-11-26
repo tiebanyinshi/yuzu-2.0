@@ -16,12 +16,14 @@ import {
   type FaceEnrollmentStatus,
   type FaceEnrollSaved,
   type FaceReviewSaved,
+  type FaceServiceStatus,
   type FaceStatus,
   type MyFace,
 } from '@shared/oa';
 import { can } from '@shared/permissions';
 import type { Db, Fragment } from '../../db';
 import { guard } from '../../auth/guard';
+import { faceServiceStatus } from '../../integrations/face';
 import { writeAudit } from '../../lib/audit';
 import type { Deps } from '../../lib/context';
 import { conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
@@ -112,7 +114,9 @@ registerAttachmentRef('oa_face', async (db, actor, refId) => {
   return !!ok;
 });
 
-export function registerOaFaceRoutes(app: FastifyInstance, { sql }: Deps) {
+export function registerOaFaceRoutes(app: FastifyInstance, { sql, config }: Deps) {
+  app.get('/api/oa/face/status', { preHandler: manage }, async (): Promise<FaceServiceStatus> => faceServiceStatus(config.integrations));
+
   app.get('/api/oa/face/me', { preHandler: guard() }, async (req): Promise<MyFace> => myFace(sql, req.actor.id));
 
   app.post('/api/oa/face/enroll', { preHandler: guard() }, async (req): Promise<FaceEnrollSaved> => {
