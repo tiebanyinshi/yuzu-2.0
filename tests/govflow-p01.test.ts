@@ -214,10 +214,15 @@ describe('知会', () => {
     expect(names).not.toContain('合成财总');
     expect(names).toContain('合成董事长');
     expect(x.body.cc.every((r: { urgent: boolean; notifiedAt: string | null }) => !r.urgent && r.notifiedAt === null)).toBe(true);
-    expect(await sendCcDigest(ctx.sql, 'Asia/Shanghai', new Date('2026-11-26T02:00:00Z'))).toBe(0);
-    const n = await sendCcDigest(ctx.sql, 'Asia/Shanghai', new Date(Date.now() + 36 * 3600_000));
+    // 上海时间明天 19 点（日报只在 18 点以后发；早上跑不发）
+    const evening = new Date();
+    evening.setUTCDate(evening.getUTCDate() + 1);
+    evening.setUTCHours(11, 0, 0, 0);
+    const morning = new Date(evening.getTime() - 9 * 3600_000);
+    expect(await sendCcDigest(ctx.sql, 'Asia/Shanghai', morning)).toBe(0);
+    const n = await sendCcDigest(ctx.sql, 'Asia/Shanghai', evening);
     expect(n).toBeGreaterThan(0);
-    expect(await sendCcDigest(ctx.sql, 'Asia/Shanghai', new Date(Date.now() + 36 * 3600_000))).toBe(0);
+    expect(await sendCcDigest(ctx.sql, 'Asia/Shanghai', evening)).toBe(0);
     const [note] = await ctx.sql`SELECT title FROM oa_notifications WHERE staff_id = ${p.ids.gf_chair!} AND ref_type = 'gf_digest'`;
     expect(String(note!.title)).toContain('业财法知会日报');
   });
