@@ -19,10 +19,10 @@ const NOT_VALID_ALLOWED = ['checkout_payments.checkout_payments_other_note_check
 /**
  * 以 _id 结尾、有意不挂外键的列（评估报告第 2.3 节逐类说明）：多态引用（ref_id、target_id、entity_id、owner_id、doc_id）、
  * 外部系统的编号（微信、前端设备）、位置遥测（035 有意不挂）、价目表操作记录（236 有意去掉）、库存用量事件（不碰库存锁）、
- * 冗余的「最后一次」指针、小程序线的表。新加的 _id 列要么挂外键，要么加到这里并在报告里写明为什么。归档表 archived_* 一律不挂外键，不列。
+ * 冗余的「最后一次」指针、小程序线的表、请求编号（audit_logs.request_id，490，不是库里的行）。新加的 _id 列要么挂外键，要么加到这里并在报告里写明为什么。归档表 archived_* 一律不挂外键，不列。
  */
 const ID_WITHOUT_FK_ALLOWED = new Set(
-  `approval_logs.doc_id approval_requests.doc_id audit_logs.target_id bank_matches.target_id canteen_likes.dish_id concierge_operations.request_id
+  `approval_logs.doc_id approval_requests.doc_id audit_logs.request_id audit_logs.target_id bank_matches.target_id canteen_likes.dish_id concierge_operations.request_id
   concierge_revisions.object_id current_locations.floor_id current_locations.space_id current_locations.technician_id current_locations.visit_id
   current_locations.zone_id custom_field_values.entity_id entry_claims.ref_id erp_drafts.last_save_id erp_drafts.ref_id gf_files.owner_id
   idempotency_keys.ref_id integration_calls.ref_id inv_doc_lines.book_move_id invoice_requests.source_id location_events.device_id
