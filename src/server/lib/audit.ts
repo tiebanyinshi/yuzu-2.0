@@ -47,6 +47,11 @@ export type AuditAction =
   // 员工培训（2026-11-25）：文件夹的新建与修改；培训文件的上传、换版本、改标题、移动、上下架
   | 'training_folder_saved'
   | 'training_file_saved'
+  // 业财法审批流（2026-11-26，docs/APPROVAL_V4.md）：角色映射、事项（新建 / 提交 / 撤回 / 执行）、审批动作、微信特批
+  | 'gf_role'
+  | 'gf_doc'
+  | 'gf_act'
+  | 'gf_special'
   | 'oa_payroll_reminded'
   | 'position_chosen'
   | 'member_created'

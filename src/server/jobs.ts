@@ -2,6 +2,7 @@
 // 各项互不影响：一项出错写日志、接着跑下一项，下一分钟再试。顺序有讲究：到期处理在权益发放、生日礼之前
 // （按新的档阶发，不按过期的档阶发，Codex 自动审查 43d53e9）。
 
+import { sendCcDigest } from './modules/govflow/engine';
 import type { AppConfig } from './config';
 import type { Sql } from './db';
 import { runBenefitsDaily, runVisitChallenges } from './modules/benefits';
@@ -102,6 +103,13 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
     if (n > 0) log.info(`年假发放：${n} 人次`);
   } catch (error) {
     log.error('年假发放失败，一小时后重试', error);
+  }
+  // 业财法知会日报（P01，docs/APPROVAL_V4.md）：每天 18 点以后把普通知会按人汇总成一条站内信（发过的不再发）
+  try {
+    const n = await sendCcDigest(sql, config.timezone, now);
+    if (n > 0) log.info(`业财法知会日报：${n} 条知会`);
+  } catch (error) {
+    log.error('业财法知会日报没发完，下一分钟接着发', error);
   }
   // 超时提醒（8.1.17 BW-1）：在店到了 12 / 24 / 72 小时的客人，在「异常待办」里记一条（每一级只记一次，经办人「系统」）
   try {
