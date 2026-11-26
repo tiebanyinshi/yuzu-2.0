@@ -402,6 +402,11 @@ describe('官网接素材库（8.1.46，docs/BOARDS.md 第 5 节）', () => {
     const v2 = (await upload(ctx.app, designer, 'kind=video&name=官网首屏二', mp4(500, 9))).body as { latest: { id: number } };
     expect((await assign(designer, 'website.hero.video', v2.latest.id, v.latest.id)).status).toBe(200);
     expect((await pub('hero-video', { 'if-none-match': etag })).statusCode).toBe(200);
+    // 续传带着上一版的 ETag：不按段给，回整份新的（不把两版拼在一起）
+    const resumed = await pub('hero-video', { range: 'bytes=10-20', 'if-range': etag });
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.headers.etag).toBe(`"dv-${v2.latest.id}"`);
+    expect((await pub('hero-video', { range: 'bytes=10-20', 'if-range': `"dv-${v2.latest.id}"` })).statusCode).toBe(206);
     const img = (await upload(ctx.app, designer, 'kind=image&name=分享图', solidPng(0x40, 0x80, 0x60))).body as { latest: { id: number } };
     expect((await assign(designer, 'website.hero.video', img.latest.id, v2.latest.id)).body.error.code).toBe('DESIGN_KIND_MISMATCH');
     expect((await assign(designer, 'website.share.image', img.latest.id, null)).status).toBe(200);

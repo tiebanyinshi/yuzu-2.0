@@ -296,6 +296,8 @@ a {
   height: 100%;
   object-fit: cover;
   opacity: 0;
+  /* 只是画面：没放起来时不挡柚子池的点按（Codex 审查） */
+  pointer-events: none;
   transition: opacity 0.8s var(--ease-out);
 }
 .hero-pool[data-video='on'] .hero-video {

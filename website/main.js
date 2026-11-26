@@ -61,8 +61,15 @@
   var heroVideo = document.querySelector('[data-hero-video]');
   var saveData = navigator.connection && navigator.connection.saveData;
   if (heroVideo && hero && !reduce && !saveData && heroVideo.dataset.src) {
+    var poolLabel = hero.getAttribute('aria-label');
+    // 放不了（没设、取不到、不让自动播）或者放到一半出错（后面某一段取不到、内容坏了）：拿掉视频、柚子池接着动（Codex 审查）
     var dropVideo = function () {
       if (heroVideo.parentNode) heroVideo.parentNode.removeChild(heroVideo);
+      if (hero.dataset.video === 'on') {
+        delete hero.dataset.video;
+        if (poolLabel) hero.setAttribute('aria-label', poolLabel);
+        if (pool && pool.resume) pool.resume();
+      }
     };
     heroVideo.addEventListener('error', dropVideo);
     heroVideo.addEventListener(
@@ -70,7 +77,7 @@
       function () {
         hero.dataset.video = 'on';
         hero.setAttribute('aria-label', '柚子的首屏视频');
-        if (pool && pool.stop) pool.stop();
+        if (pool && pool.suspend) pool.suspend();
       },
       { once: true },
     );

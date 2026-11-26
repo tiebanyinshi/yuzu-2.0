@@ -812,7 +812,9 @@ export function registerDesignRoutes(app: FastifyInstance, deps: Deps) {
     reply.header('accept-ranges', 'bytes');
     for (const [k, val] of Object.entries(assetHeaders(live.mime))) if (k.toLowerCase() !== 'cache-control') reply.header(k, val);
     if (req.headers['if-none-match'] === etag) return reply.code(304).send();
-    const range = parseRange(req.headers.range, size);
+    // If-Range（Codex 审查）：续传带的是上一版的 ETag（中间换了用途）就不按段给，回整份新的，免得两版拼在一起
+    const ifRange = req.headers['if-range'];
+    const range = ifRange && ifRange !== etag ? null : parseRange(req.headers.range, size);
     if (range === 'invalid') {
       reply.header('content-range', `bytes */${size}`);
       return reply.code(416).send();
