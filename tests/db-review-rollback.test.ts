@@ -1,7 +1,7 @@
 // 数据库评估的迁移 480–483 可回滚（docs/DB_REVIEW_V8147.md 第 7 节，照 GitLab / Rails 的「迁移 → 回滚 → 再迁移」检查）：
 // 全部迁移跑完 → 挪一条进归档 → 按 483、482、481、480 的顺序执行 docs/rollback 里的回滚 → 归档的记录回到原表、注释清空、补的索引与外键没了
 // → 再迁移一遍，表、列、索引、约束、触发器、注释与第一次完全一样。
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSql, type Sql } from '../src/server/db';
 import { migrate } from '../src/server/migrate';
@@ -11,6 +11,14 @@ import { resetPublicSchema } from './test-db';
 
 const ROLLBACK = new URL('../docs/rollback/', import.meta.url);
 const MINE = ['480_fk_indexes', '481_schema_comments', '482_store_fks', '483_archive_tables'];
+/** 480 以后的迁移（数据库评估这四份 + 之后新加的，如 8.1.48 的 490）：都要先回滚、再迁移，才回得到「480 以前」 */
+async function fromMine(): Promise<string[]> {
+  const files = await readdir(new URL('../src/server/migrations/', import.meta.url));
+  return files
+    .filter((f) => /^\d+_.*\.sql$/.test(f) && f >= '480')
+    .map((f) => f.replace(/\.sql$/, ''))
+    .sort();
+}
 let sql: Sql;
 
 beforeAll(() => {
@@ -56,7 +64,9 @@ describe('迁移 480–483 可回滚', () => {
     const run = await archiveOnce(sql, { locationDays: 180, integrationCallDays: 180, wecomPushDays: 365 });
     expect(run.integrationCalls).toBe(1);
 
-    for (const m of [...MINE].reverse()) await sql.unsafe(await readFile(new URL(`${m}.down.sql`, ROLLBACK), 'utf8'));
+    const later = await fromMine();
+    expect(later.slice(0, MINE.length)).toEqual(MINE);
+    for (const m of [...later].reverse()) await sql.unsafe(await readFile(new URL(`${m}.down.sql`, ROLLBACK), 'utf8'));
 
     const [back] = await sql<{ n: number; arch: string | null; comments: number; fkIdx: number; storeFk: number }[]>`
       SELECT (SELECT count(*)::int FROM integration_calls WHERE request_summary = '{"a":1}') AS n,
@@ -70,7 +80,7 @@ describe('迁移 480–483 可回滚', () => {
     // 回到 480 以前，只追加的保护照旧
     await expect(sql`DELETE FROM integration_calls`).rejects.toThrow(/只追加/);
 
-    expect(await migrate(sql)).toEqual(MINE.map((m) => `${m}.sql`));
+    expect(await migrate(sql)).toEqual(later.map((m) => `${m}.sql`));
     expect(await signature()).toEqual(first);
   });
 });

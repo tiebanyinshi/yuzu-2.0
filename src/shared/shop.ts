@@ -77,7 +77,7 @@ export interface ShopOffer {
 }
 
 export interface ShopItem {
-  /** imageIds：商品图（8.1.47，最多 6 张，第 1 张是封面；地址 shopImageUrl(id)，没有为空） */
+  /** imageIds：商品图（8.1.48，最多 6 张，第 1 张是封面；地址 shopImageUrl(id)，没有为空） */
   material: { id: number; code: string; name: string; category: string; specification: string; unit: string; note: string; imageIds: number[] };
   offers: ShopOffer[];
   /** 可采购的报价里最低的含税单价（没有可采购的为空） */
@@ -586,11 +586,11 @@ export interface ShopMaterialRow {
   activeSkuCount: number;
   supplierCount: number;
   lowestGrossCents: number | null;
-  /** 商品图（8.1.47）：第 1 张是封面 */
+  /** 商品图（8.1.48）：第 1 张是封面 */
   imageIds: number[];
 }
 
-/** 每样物料最多几张商品图（8.1.47，迁移 480） */
+/** 每样物料最多几张商品图（8.1.48，迁移 490） */
 export const SHOP_MAX_MATERIAL_IMAGES = 6;
 /** 商品图的地址：采购商城的人都能看（只给挂在物料上的图） */
 export const shopImageUrl = (imageId: number) => `/api/erp/shop/images/${imageId}`;

@@ -118,7 +118,7 @@ test.describe('采购商城', () => {
     for (const id of skuIds) await page.request.post(`/api/erp/shop/skus/${id}/disable`, { data: {} });
   });
 
-  test('商品图（8.1.47）：物料主档传一张图、保存 → 商城卡片与商品页都换上这张图', async ({ page }) => {
+  test('商品图（8.1.48）：物料主档传一张图、保存 → 商城卡片与商品页都换上这张图', async ({ page }) => {
     await login(page);
     const cat = (await (await page.request.get('/api/erp/shop/catalog')).json()) as { items: { material: { id: number; imageIds: number[] } }[] };
     const item = cat.items[0];
