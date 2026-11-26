@@ -117,4 +117,33 @@ test.describe('采购商城', () => {
     // 用完停掉，免得重复执行时清单里报价越来越多
     for (const id of skuIds) await page.request.post(`/api/erp/shop/skus/${id}/disable`, { data: {} });
   });
+
+  test('商品图（8.1.50）：物料主档传一张图、保存 → 商城卡片与商品页都换上这张图', async ({ page }) => {
+    await login(page);
+    const cat = (await (await page.request.get('/api/erp/shop/catalog')).json()) as { items: { material: { id: number; imageIds: number[] } }[] };
+    const item = cat.items[0];
+    expect(item, '前一条用例上架过报价，目录里应该有东西').toBeTruthy();
+    const id = item!.material.id;
+    // 先清空（重复跑时从没有图开始）
+    await page.request.put(`/api/erp/shop/materials/${id}/images`, { data: { imageIds: [], expectedImageIds: item!.material.imageIds, clientKey: crypto.randomUUID() } });
+    await page.goto('/erp/shop/materials');
+    await page.getByTestId(`shop-mat-open-${id}`).click();
+    const box = page.getByTestId('shop-mat-images');
+    await expect(box).toContainText('商品图');
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    await page.getByTestId('shop-mat-images-add-input').setInputFiles({ name: 'cover.png', mimeType: 'image/png', buffer: png });
+    await expect(box.locator('img')).toHaveCount(1);
+    await page.getByTestId('shop-mat-images-save').click();
+    await expect(page.getByText('商品图已保存')).toBeVisible();
+    // 商城：卡片的封面是这张图（不是占位）
+    await page.goto('/erp/shop');
+    const card = page.getByTestId(`shop-item-${id}`);
+    await expect(card.locator('img')).toHaveAttribute('src', /\/api\/erp\/shop\/images\/\d+$/);
+    await card.click();
+    await expect(page.getByTestId('shop-gallery').locator('img')).toHaveAttribute('src', /\/api\/erp\/shop\/images\/\d+$/);
+    // 收尾：清空，别影响别的用例
+    const now = (await (await page.request.get('/api/erp/shop/catalog')).json()) as { items: { material: { id: number; imageIds: number[] } }[] };
+    const cur = now.items.find((i) => i.material.id === id)!.material.imageIds;
+    expect((await page.request.put(`/api/erp/shop/materials/${id}/images`, { data: { imageIds: [], expectedImageIds: cur, clientKey: crypto.randomUUID() } })).ok()).toBe(true);
+  });
 });

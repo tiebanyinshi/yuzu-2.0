@@ -62,6 +62,7 @@ import { Badge, Button, Card, Field, Input, Notice, Select, Skeleton, Textarea }
 import { ErpPage } from '../erp/ErpHome';
 import { PriorityDot } from '../requests/parts';
 import { ShopCartView } from './ShopCartView';
+import { ProductGallery, ProductImage } from './ProductImage';
 import { SkuAdmin } from './SkuAdmin';
 
 const ShopComparePage = lazyPage(() => import('./ShopComparePage').then((m) => m.ShopComparePage));
@@ -168,7 +169,11 @@ export function ShopPage() {
   ];
   const active = (to: string) => (to === BASE ? path === '' || path.startsWith('item') || path.startsWith('compare') : `${BASE}/${path}`.startsWith(to));
   const nav = (
-    <nav aria-label="采购商城" className="mb-4 flex flex-wrap gap-1.5" data-testid="shop-tabs">
+    <nav
+      aria-label="采购商城"
+      className="scroll-thin mb-4 flex gap-1 overflow-x-auto rounded-full bg-card/70 p-1 ring-1 ring-line/60 shadow-[0_8px_24px_-18px_rgb(28_35_31/0.35)] backdrop-blur-xl"
+      data-testid="shop-tabs"
+    >
       {tabs
         .filter((t) => t.show)
         .map((t) => (
@@ -177,8 +182,8 @@ export function ShopPage() {
             to={t.to}
             data-testid={t.testId}
             className={cn(
-              'tap relative inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-semibold',
-              active(t.to) ? 'bg-pine text-paper' : 'bg-card text-ink-2 ring-1 ring-line hover:text-ink',
+              'tap relative inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-semibold whitespace-nowrap transition',
+              active(t.to) ? 'bg-ink text-paper shadow-[0_6px_16px_-8px_rgb(28_35_31/0.6)]' : 'text-ink-2 hover:bg-paper-2/70 hover:text-ink',
             )}
           >
             {t.icon}
@@ -236,6 +241,18 @@ export function ShopPage() {
       />
       <ErpPendingPanel types={['shop_master']} filter={(op) => op.staffId === session.staff.id} onFound={() => void qc.invalidateQueries({ queryKey: ['shop'] })} className="mb-4" />
       {body}
+      {/* 浮在右下角的清单（玻璃质感）：逛的时候随时看得到加了几样；提醒在页面上方，不挡它 */}
+      {count > 0 && (path === '' || path.startsWith('item/')) && (
+        <Link
+          to={`${BASE}/cart`}
+          className="tap fixed right-5 bottom-5 z-30 inline-flex h-12 items-center gap-2 rounded-full bg-ink/85 pr-5 pl-4 text-[14px] font-semibold text-paper shadow-[0_18px_40px_-14px_rgb(28_35_31/0.7)] ring-1 ring-white/15 backdrop-blur-xl hover:bg-ink"
+          data-testid="shop-fab-cart"
+        >
+          <ShoppingCart className="size-[18px]" />
+          采购清单
+          <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-yuzu px-1.5 text-[12.5px] leading-6 font-bold text-on-bright">{count}</span>
+        </Link>
+      )}
     </ErpPage>
   );
 }
@@ -351,30 +368,63 @@ function Home({ c, setStore, updatedAt }: { c: ShopCatalog; setStore: (id: numbe
           </button>
         </div>
       )}
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label="门店（业态）" htmlFor="shop-store">
-          <Select id="shop-store" value={c.storeId} onChange={(e) => setStore(Number(e.target.value))} fullWidth={false}>
-            {c.stores.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <div className="relative min-w-[220px] flex-1">
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-4" />
-          <Input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜索物料名称 / 规格 / 编码" className="pl-9" aria-label="搜索" data-testid="shop-search" />
+      {/* 首屏（8.1.50，店主：淘宝、得物那样逛高级电商的感觉）：深色渐变底 + 玻璃质感的搜索框与门店，数字说明这家店能买什么 */}
+      {/* 深色首屏：标记成 rail 面（Codex 审查），深色模式下 paper 换成浅色字，字照样看得清 */}
+      <section
+        data-surface="rail"
+        className="relative isolate overflow-hidden rounded-[28px] bg-rail px-5 py-6 text-paper shadow-[0_30px_80px_-40px_rgb(22_38_31/0.8)] sm:px-8 sm:py-8"
+        data-testid="shop-hero"
+      >
+        <div aria-hidden className="pointer-events-none absolute -top-24 -right-16 -z-10 size-[340px] rounded-full bg-yuzu/35 blur-3xl" />
+        <div aria-hidden className="pointer-events-none absolute -bottom-32 left-10 -z-10 size-[300px] rounded-full bg-lake/45 blur-3xl" />
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(120deg,rgb(255_255_255/0.06),transparent_40%)]" />
+        <p className="text-[12px] font-semibold tracking-[0.18em] text-paper/60 uppercase">Yuzu Supply · 采购商城</p>
+        <h2 className="mt-2 text-[26px] leading-tight font-bold tracking-tight sm:text-[32px]">挑好东西，比好价格。</h2>
+        <p className="mt-1.5 text-[13.5px] text-paper/70" data-testid="shop-hero-stats">
+          {c.items.length} 样在架 · {new Set(c.items.flatMap((i) => i.offers.map((o) => o.supplier.id))).size} 家供应商同台比价 · 提交即生成采购需求单
+        </p>
+        <div className="mt-5 flex flex-wrap items-end gap-2.5">
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="pointer-events-none absolute top-1/2 left-4 z-10 size-4 -translate-y-1/2 text-paper/70" />
+            <input
+              value={kw}
+              onChange={(e) => setKw(e.target.value)}
+              placeholder="搜索物料名称 / 规格 / 编码"
+              aria-label="搜索"
+              data-testid="shop-search"
+              className="h-12 w-full rounded-full bg-white/12 pr-4 pl-11 text-[14.5px] text-paper ring-1 ring-white/25 backdrop-blur-xl outline-none placeholder:text-paper/50 focus:bg-white/18 focus:ring-white/50"
+            />
+          </div>
+          <label className="flex h-12 items-center gap-2 rounded-full bg-white/12 pr-2 pl-4 ring-1 ring-white/25 backdrop-blur-xl" htmlFor="shop-store">
+            <span className="text-[12.5px] text-paper/65">门店（业态）</span>
+            <select
+              id="shop-store"
+              value={c.storeId}
+              onChange={(e) => setStore(Number(e.target.value))}
+              className="h-9 rounded-full bg-transparent pr-2 text-[13.5px] font-semibold text-paper outline-none [&>option]:text-ink"
+            >
+              {c.stores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
-      </div>
-      <div className="flex flex-wrap gap-1.5" data-testid="shop-categories">
-        <CatChip on={cat === null} onClick={() => setCat(null)}>
-          全部（{c.items.length}）
-        </CatChip>
-        {c.categories.map((x) => (
-          <CatChip key={x.name} on={cat === x.name} onClick={() => setCat(x.name)}>
-            {x.name}（{x.count}）
+      </section>
+
+      {/* 分类：玻璃质感的一条，往下翻时贴在上面 */}
+      <div className="sticky top-0 z-10 -mx-1 rounded-2xl bg-paper/70 px-1 py-2 ring-1 ring-line/50 backdrop-blur-xl" data-testid="shop-categories">
+        <div className="scroll-thin flex gap-1.5 overflow-x-auto px-1">
+          <CatChip on={cat === null} onClick={() => setCat(null)}>
+            全部（{c.items.length}）
           </CatChip>
-        ))}
+          {c.categories.map((x) => (
+            <CatChip key={x.name} on={cat === x.name} onClick={() => setCat(x.name)}>
+              {x.name}（{x.count}）
+            </CatChip>
+          ))}
+        </div>
       </div>
       {items.length === 0 ? (
         <Card className="p-6 text-center text-[13.5px] text-ink-3">
@@ -384,44 +434,51 @@ function Home({ c, setStore, updatedAt }: { c: ShopCatalog; setStore: (id: numbe
           </Link>
         </Card>
       ) : (
-        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="shop-items">
+        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 xl:grid-cols-4 2xl:grid-cols-5" data-testid="shop-items">
           {items.map((i) => {
             const meta = catalogCardSummary(i);
             return (
               <li key={i.material.id}>
-                <div className="mo-lift flex h-full min-h-[172px] flex-col rounded-xl border border-line bg-card p-4 shadow-card hover:border-pine/50">
+                <div className="group flex h-full flex-col overflow-hidden rounded-[22px] bg-card shadow-[0_1px_2px_rgb(28_35_31/0.06),0_12px_32px_-18px_rgb(28_35_31/0.28)] ring-1 ring-line/60 transition duration-300 hover:-translate-y-1 hover:shadow-[0_2px_4px_rgb(28_35_31/0.06),0_28px_48px_-22px_rgb(28_35_31/0.38)]">
                   <Link to={`${BASE}/item/${i.material.id}`} onClick={rememberPosition} className="flex flex-1 flex-col" data-testid={`shop-item-${i.material.id}`}>
-                    <span className="text-[12.5px] text-ink-3">
-                      {i.material.category || '未分类'} · {i.material.code}
-                    </span>
-                    <span className="mt-0.5 line-clamp-1 text-[15px] font-bold text-ink">{i.material.name}</span>
-                    <span className="mt-0.5 line-clamp-1 min-h-[19px] text-[12.5px] text-ink-3">{i.material.specification || `采购单位：${i.material.unit}`}</span>
-                    <div className="mt-3 flex items-baseline gap-1">
-                      {i.fromGrossCents !== null ? (
-                        <>
-                          <span className="text-[19px] leading-tight font-bold text-clay">{formatYuan(i.fromGrossCents)}</span>
-                          <span className="text-[12.5px] text-ink-3">/ {i.material.unit} 起</span>
-                        </>
-                      ) : (
-                        <span className="text-[13.5px] font-semibold text-ink-3">暂无可采购价</span>
-                      )}
+                    <div className="relative aspect-square overflow-hidden">
+                      <ProductImage
+                        imageIds={i.material.imageIds}
+                        name={i.material.name}
+                        category={i.material.category}
+                        rounded="rounded-none"
+                        className="size-full transition duration-500 ease-out group-hover:scale-[1.045]"
+                      />
+                      <span className="absolute top-2.5 left-2.5 rounded-full bg-white/70 px-2.5 py-1 text-[12px] font-semibold text-ink ring-1 ring-white/70 backdrop-blur-md">
+                        {i.purchasable} 家比价
+                      </span>
+                      {meta.hasFreeShipping && <span className="absolute top-2.5 right-2.5 rounded-full bg-pine/85 px-2.5 py-1 text-[12px] font-semibold text-paper backdrop-blur-md">包邮</span>}
                     </div>
-                    <div className="mt-1.5 flex min-h-[22px] flex-wrap items-center gap-1.5 text-[12.5px]" data-testid={`shop-card-meta-${i.material.id}`}>
-                      {meta.fastestLeadDays !== null ? (
-                        <>
-                          <span className="text-ink-2">最快 {meta.fastestLeadDays} 天到</span>
-                          {meta.hasFreeShipping && <Badge tone="pine">包邮</Badge>}
-                        </>
-                      ) : (
-                        <span className="text-ink-3">当前门店暂无可下单报价</span>
-                      )}
+                    <div className="flex flex-1 flex-col px-3.5 pt-3">
+                      <span className="line-clamp-2 min-h-[38px] text-[14px] leading-[19px] font-semibold text-ink">{i.material.name}</span>
+                      <span className="mt-0.5 line-clamp-1 text-[12px] text-ink-3">
+                        {i.material.specification || `采购单位：${i.material.unit}`} · {i.material.code}
+                      </span>
+                      <div className="mt-2 flex items-baseline gap-1">
+                        {i.fromGrossCents !== null ? (
+                          <>
+                            <Price cents={i.fromGrossCents} />
+                            <span className="text-[12px] text-ink-3">/ {i.material.unit} 起</span>
+                          </>
+                        ) : (
+                          <span className="text-[13px] font-semibold text-ink-3">暂无可采购价</span>
+                        )}
+                      </div>
+                      <div className="mt-1 flex min-h-[20px] flex-wrap items-center gap-1.5 text-[12px]" data-testid={`shop-card-meta-${i.material.id}`}>
+                        {meta.fastestLeadDays !== null ? <span className="text-ink-2">最快 {meta.fastestLeadDays} 天到</span> : <span className="text-ink-3">当前门店暂无可下单报价</span>}
+                      </div>
                     </div>
                   </Link>
-                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/70 pt-2.5">
+                  <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line/60 px-3.5 py-2.5">
                     <button
                       type="button"
                       onClick={() => setPreviewItem(i)}
-                      className="tap relative inline-flex items-center gap-1 text-[12.5px] text-ink-3 hover:text-ink"
+                      className="tap relative inline-flex items-center gap-1 text-[12px] text-ink-3 hover:text-ink"
                       aria-label={`快捷预览 ${i.material.name} 报价`}
                       data-testid={`shop-preview-btn-${i.material.id}`}
                     >
@@ -431,7 +488,7 @@ function Home({ c, setStore, updatedAt }: { c: ShopCatalog; setStore: (id: numbe
                     <Link
                       to={`${BASE}/compare/${i.material.id}?from=catalog&storeId=${c.storeId}`}
                       onClick={rememberPosition}
-                      className="tap relative inline-flex items-center text-[13px] font-semibold text-pine hover:underline"
+                      className="tap relative inline-flex items-center text-[12.5px] font-semibold text-pine hover:underline"
                       data-testid={`shop-compare-link-${i.material.id}`}
                     >
                       {i.purchasable} 家可选 →
@@ -511,10 +568,28 @@ function CatChip({ on, onClick, children }: { on: boolean; onClick: () => void; 
     <button
       type="button"
       onClick={onClick}
-      className={cn('tap relative h-8 rounded-full px-3 text-[12.5px] font-semibold', on ? 'bg-ink text-paper' : 'bg-card text-ink-2 ring-1 ring-line hover:text-ink')}
+      className={cn(
+        'tap relative h-9 shrink-0 rounded-full px-4 text-[13px] font-semibold whitespace-nowrap transition',
+        on ? 'bg-ink text-paper shadow-[0_6px_16px_-8px_rgb(28_35_31/0.6)]' : 'bg-card/80 text-ink-2 ring-1 ring-line/70 hover:bg-card hover:text-ink',
+      )}
     >
       {children}
     </button>
+  );
+}
+
+/** 价格：¥ 小一号、数字大（电商的写法）；读出来与 formatYuan 一样 */
+function Price({ cents, size = 'md' }: { cents: number; size?: 'md' | 'lg' }) {
+  const text = formatYuan(cents);
+  const neg = text.startsWith('-');
+  const body = text.replace(/^-?¥/, '');
+  const [int, dec] = body.split('.');
+  return (
+    <span className={cn('font-bold tracking-tight text-clay tabular-nums', size === 'lg' ? 'text-[30px] leading-none' : 'text-[20px] leading-tight')}>
+      <span className={size === 'lg' ? 'text-[17px]' : 'text-[13px]'}>{neg ? '-' : ''}¥</span>
+      {int}
+      {dec !== undefined && <span className={size === 'lg' ? 'text-[18px]' : 'text-[14px]'}>.{dec}</span>}
+    </span>
   );
 }
 
@@ -571,23 +646,54 @@ function ItemPage({ c, materialId, cart, setCart }: { c: ShopCatalog; materialId
           横向比价表 →
         </Link>
       </div>
-      <Card className="p-4">
-        <p className="text-[12.5px] text-ink-3">
-          {item.material.category} · {item.material.code}
-        </p>
-        <h2 className="text-[19px] font-bold text-ink">{item.material.name}</h2>
-        <p className="text-[13px] text-ink-2">
-          {item.material.specification} · 单位 {item.material.unit}
-        </p>
-        {item.material.note && <p className="mt-1 text-[12.5px] text-ink-3">{item.material.note}</p>}
-      </Card>
-      <p className="text-[13px] font-bold text-ink-2">
+      {/* 商品页（8.1.50）：左边大图、右边名字与最低价，下面是各家报价 */}
+      <section
+        className="grid gap-5 rounded-[28px] bg-card p-4 ring-1 ring-line/60 shadow-[0_20px_60px_-36px_rgb(28_35_31/0.4)] sm:p-6 md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]"
+        data-testid="shop-item-hero"
+      >
+        <ProductGallery imageIds={item.material.imageIds} name={item.material.name} category={item.material.category} />
+        <div className="flex min-w-0 flex-col">
+          <p className="text-[12.5px] font-semibold tracking-wide text-ink-3">
+            {item.material.category || '未分类'} · {item.material.code}
+          </p>
+          <h2 className="mt-1 text-[24px] leading-tight font-bold tracking-tight text-ink sm:text-[28px]">{item.material.name}</h2>
+          <p className="mt-1.5 text-[13.5px] text-ink-2">
+            {item.material.specification} · 单位 {item.material.unit}
+          </p>
+          {item.material.note && <p className="mt-1 text-[12.5px] text-ink-3">{item.material.note}</p>}
+          <div className="mt-5 rounded-2xl bg-gradient-to-br from-clay-soft/70 via-paper-2/60 to-yuzu-tint p-4 ring-1 ring-white/60">
+            <p className="text-[12px] text-ink-3">可采购最低含税价</p>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              {item.fromGrossCents !== null ? (
+                <>
+                  <Price cents={item.fromGrossCents} size="lg" />
+                  <span className="text-[13px] text-ink-3">/ {item.material.unit} 起</span>
+                </>
+              ) : (
+                <span className="text-[15px] font-semibold text-ink-3">暂无可采购价</span>
+              )}
+            </div>
+            <p className="mt-2 text-[12.5px] text-ink-2">
+              {item.offers.length} 条报价 · {item.purchasable} 家可选 · 门店 {c.stores.find((s) => s.id === c.storeId)?.name}
+            </p>
+          </div>
+          <div className="mt-auto flex flex-wrap gap-2 pt-5">
+            <Link to={`${BASE}/compare/${item.material.id}?from=catalog&storeId=${c.storeId}`}>
+              <Button variant="primary">横向比价、选供应商</Button>
+            </Link>
+            <a href="#shop-offers">
+              <Button variant="secondary">看各家报价</Button>
+            </a>
+          </div>
+        </div>
+      </section>
+      <p id="shop-offers" className="scroll-mt-20 text-[13px] font-bold text-ink-2">
         供应商比选：{item.offers.length} 条报价，{item.purchasable} 条可选（门店：{c.stores.find((s) => s.id === c.storeId)?.name}）
       </p>
       <ul className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         {item.offers.map((o) => (
           <li key={o.skuId}>
-            <Card className={cn('flex h-full flex-col gap-3 p-4', o.block && 'opacity-70')} data-testid={`shop-offer-${o.skuId}`}>
+            <Card className={cn('flex h-full flex-col gap-3 rounded-[20px] p-4 ring-1 ring-line/60', o.block && 'opacity-70')} data-testid={`shop-offer-${o.skuId}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-[14.5px] font-bold text-ink">{o.supplier.name}</p>
@@ -597,8 +703,8 @@ function ItemPage({ c, materialId, cart, setCart }: { c: ShopCatalog; materialId
                 </div>
                 <Badge tone={o.block ? (o.block === 'store' ? 'neutral' : 'ember') : 'pine'}>{o.block ? SHOP_BLOCK_LABELS[o.block] : '可采购'}</Badge>
               </div>
-              <p className="text-[20px] font-bold text-clay">
-                {formatYuan(o.grossCents)}
+              <p>
+                <Price cents={o.grossCents} />
                 <span className="text-[12.5px] font-normal text-ink-3"> / {item.material.unit}（含税）</span>
               </p>
               <OfferFacts o={o} unit={item.material.unit} />

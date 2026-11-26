@@ -313,7 +313,8 @@ export const ERP_MODULES: Record<ErpModuleKey, ErpModuleDef> = {
  */
 export const ERP_NAV_GROUPS: readonly { key: string; title: string; modules: readonly ErpModuleKey[] }[] = [
   { key: 'approvals', title: '审批', modules: ['approvals'] },
-  { key: 'supply', title: '供应链', modules: ['inventory', 'purchasing', 'requests', 'shop', 'deptStock', 'assets', 'linen'] },
+  // 采购商城排第一（店主 2026-11-26：「采购商城是目前进采购的第一项」，8.1.50）
+  { key: 'supply', title: '供应链', modules: ['shop', 'inventory', 'purchasing', 'requests', 'deptStock', 'assets', 'linen'] },
   { key: 'finance', title: '财务', modules: ['payments', 'payables', 'expenses', 'invoices', 'salesInvoices', 'receivables', 'bank'] },
   { key: 'contracts', title: '合同', modules: ['contracts'] },
   // 已经挪到后台的：页面不在 ERP 里。8.0.18 在 ERP 导航里各留了一条跳转，8.0.19 去掉；这一组留着是为了「每个模块都有归属」，

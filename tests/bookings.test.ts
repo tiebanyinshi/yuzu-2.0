@@ -421,8 +421,8 @@ describe('8.1.37：现场开单、现场入住让着已有的预订（对照领�
     // 客房：两间房、今天两张预订 → 现场入住拒绝
     const room = await slots({ kind: 'room', date: today, roomTypeId });
     expect(room[0]!.free).toBe(2);
-    // 预计到店时间：此刻之后的下一个半点（今天的默认到店时间可能已经过了）
-    const arrive = new Date(Math.ceil((Date.now() + 60_000) / 1_800_000) * 1_800_000).toISOString();
+    // 预计到店时间：此刻之后一分钟（今天的默认到店时间可能已经过了；不取下一个半点——营业日 6 点换日，5:30 以后的下一个半点就落到明天）
+    const arrive = new Date(Math.ceil((Date.now() + 60_000) / 60_000) * 60_000).toISOString();
     for (let i = 0; i < 2; i += 1) {
       const r = await create({ kind: 'room', roomTypeId, startsAt: arrive });
       expect(r.status, JSON.stringify(r.body)).toBe(200);
