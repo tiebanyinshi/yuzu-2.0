@@ -54,6 +54,7 @@ export type AuditAction =
   | 'gf_special'
   | 'gf_supply'
   | 'gf_petty'
+  | 'gf_contract'
   | 'oa_payroll_reminded'
   | 'position_chosen'
   | 'member_created'

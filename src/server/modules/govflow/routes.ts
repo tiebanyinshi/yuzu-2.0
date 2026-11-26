@@ -629,6 +629,8 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
       if (doc.createdBy !== req.actor.id && doc.performerId !== req.actor.id) throw forbidden('只有发起人或履约执行人能推进执行');
       const flow = await latestFlow(tx, id);
       if (flow?.status !== 'approved') throw conflict('GF_NOT_APPROVED', '审批通过以后才能执行');
+      await hooksOf(doc.docType).beforeExecute?.(tx, doc, step, req.actor);
+      if (step === 'archive') Object.assign(doc, await loadDoc(tx, id));
       if (step === 'start') {
         if (doc.execStartedAt) throw conflict('GF_STEP', '已经开始执行了');
         await tx`UPDATE gf_docs SET exec_started_at = now(), exec_started_by = ${req.actor.id} WHERE id = ${id}`;
