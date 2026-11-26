@@ -73,6 +73,7 @@
 - [`LINGYU_AUDIT_V8137.md`](LINGYU_AUDIT_V8137.md)：8.1.37 对照「领浴」问题表：修缺陷、加防护
 - [`MALL_V8131.md`](MALL_V8131.md)：采购商城 V1.1 对接（8.1.31，yuzu 侧）
 - [`MALL_V8132.md`](MALL_V8132.md)：采购商城并进柚子（8.1.32）
+- [`MALL_V8147.md`](MALL_V8147.md)：8.1.47 · 采购商城：逛电商的感觉、商品图、排到采购第一项
 - [`MASCOT.md`](MASCOT.md)：看板娘「柚子」（第二版：手绘动画，待店主确认）
 - [`MEMBERSHIP.md`](MEMBERSHIP.md)：会员体系 v2（设计稿；店主 2026-11-03 两次答复后修订；第一期 v0.7.23 已按本稿实现，见第 14 节）
 - [`MEMBERSHIP_FINISH.md`](MEMBERSHIP_FINISH.md)：会员体系收尾（v0.7.26）

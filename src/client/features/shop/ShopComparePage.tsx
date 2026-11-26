@@ -31,6 +31,7 @@ import { Dialog } from '../../components/Overlay';
 import { MilliQtyInput } from '../../components/QtyInput';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Notice, Segmented, Skeleton } from '../../components/ui';
+import { ProductImage } from './ProductImage';
 
 const BASE = '/erp/shop';
 const MAX_QTY_LABEL = formatQty(SHOP_MAX_QTY_MILLI);
@@ -407,18 +408,21 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
       )}
 
       {/* 物料信息头 */}
-      <Card className="p-4" data-testid="compare-material-header">
+      <Card className="rounded-[22px] p-4 ring-1 ring-line/60" data-testid="compare-material-header">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink-3">
-              <Badge tone="neutral">{category}</Badge>
-              <span>编码 {result.material.code}</span>
-              <span>· 采购单位 {unit}</span>
-              <span>· 当前门店 {result.storeName}</span>
+          <div className="flex min-w-0 items-start gap-4">
+            <ProductImage imageIds={result.material.imageIds} name={result.material.name} category={result.material.category} className="size-20 shrink-0 sm:size-24" />
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink-3">
+                <Badge tone="neutral">{category}</Badge>
+                <span>编码 {result.material.code}</span>
+                <span>· 采购单位 {unit}</span>
+                <span>· 当前门店 {result.storeName}</span>
+              </div>
+              <h2 className="text-[19px] font-bold text-ink">{result.material.name}</h2>
+              {result.material.specification && <p className="text-[13px] text-ink-2">规格：{result.material.specification}</p>}
+              {result.material.note && <p className="text-[12.5px] text-ink-3">{result.material.note}</p>}
             </div>
-            <h2 className="text-[19px] font-bold text-ink">{result.material.name}</h2>
-            {result.material.specification && <p className="text-[13px] text-ink-2">规格：{result.material.specification}</p>}
-            {result.material.note && <p className="text-[12.5px] text-ink-3">{result.material.note}</p>}
           </div>
           <p className="shrink-0 text-[12.5px] text-ink-3" data-testid="compare-updated-at">
             报价数据更新于 {formatDateTime(result.updatedAt)}

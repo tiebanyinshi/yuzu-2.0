@@ -18,6 +18,7 @@ import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, Select, Skeleton } from '../../components/ui';
+import { MaterialImagesEditor, ProductImage } from './ProductImage';
 
 const BASE = '/erp/shop';
 
@@ -531,12 +532,15 @@ export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
       header: '物料',
       className: 'min-w-[200px]',
       cell: (m) => (
-        <div>
-          <p className="text-[13.5px] font-bold text-ink">{m.name}</p>
-          <p className="text-[12.5px] text-ink-3">
-            {m.code}
-            {m.specification && ` · ${m.specification}`}
-          </p>
+        <div className="flex items-center gap-2.5">
+          <ProductImage imageIds={m.imageIds} name={m.name} category={m.category} className="size-10 shrink-0" rounded="rounded-lg" testId={`shop-mat-thumb-${m.id}`} />
+          <div>
+            <p className="text-[13.5px] font-bold text-ink">{m.name}</p>
+            <p className="text-[12.5px] text-ink-3">
+              {m.code}
+              {m.specification && ` · ${m.specification}`}
+            </p>
+          </div>
         </div>
       ),
     },
@@ -789,6 +793,7 @@ function MaterialEditDialog({ material, canEdit, onClose }: { material: ShopMate
             <Input id="sm-note" maxLength={200} disabled={!canEdit} value={note} onChange={(e) => setNote(e.target.value)} />
           </Field>
         </div>
+        <MaterialImagesEditor materialId={material.id} imageIds={material.imageIds} canEdit={canEdit} />
         <p className="text-[12.5px] text-ink-3">
           当前关联 {material.supplierCount} 家供应商、{material.activeSkuCount} 条在架 SKU（共 {material.skuCount} 条）。如需修改采购单位或换算，请前往 ERP 库存档案，改动后关联 SKU
           将按规则重新审核上架。

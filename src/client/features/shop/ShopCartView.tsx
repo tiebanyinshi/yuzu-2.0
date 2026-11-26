@@ -12,6 +12,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { Dialog } from '../../components/Overlay';
 import { MilliQtyInput } from '../../components/QtyInput';
 import { Badge, Button, Card, Notice } from '../../components/ui';
+import { ProductImage } from './ProductImage';
 
 const BASE = '/erp/shop';
 
@@ -141,6 +142,7 @@ export function ShopCartView({ c, cart, setCart }: { c: ShopCatalog; cart: ShopC
                 {g.rows.map((r) => (
                   <div key={r.line.skuId} className={cn('space-y-2.5 p-4 transition-colors', focusedSkuId === r.line.skuId && 'bg-yuzu-tint/40')} data-testid={`shop-cart-line-${r.line.skuId}`}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
+                      {r.item && <ProductImage imageIds={r.item.material.imageIds} name={r.item.material.name} category={r.item.material.category} className="size-16 shrink-0" rounded="rounded-xl" />}
                       <div className="min-w-0 flex-1 space-y-1">
                         <p className="truncate text-[14.5px] font-bold text-ink">{r.item?.material.name ?? `SKU ${r.line.skuId}`}</p>
                         {r.offer && (

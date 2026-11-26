@@ -336,6 +336,7 @@ export type AuditAction =
   // Design 素材库（店主 2026-11-24，docs/BOARDS.md 第 4 节）
   | 'design_asset_upload'
   | 'design_asset_edit'
+  | 'material_images'
   | 'design_asset_archive'
   | 'design_slot_assign'
   // 备用金申用（8.1.42；8.1.42 以前的记录是 pool_use）：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）

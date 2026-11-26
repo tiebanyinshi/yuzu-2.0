@@ -22,6 +22,7 @@ import {
   lineGoodsCents,
   lineGrossCents,
   SHOP_BLOCK_LABELS,
+  SHOP_MAX_MATERIAL_IMAGES,
   SHOP_MAX_QTY_MILLI,
   type ShopBlock,
   type ShopCatalog,
@@ -46,7 +47,7 @@ import { guardAny } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
 import { csvReply } from '../lib/csv';
-import { conflict, forbidden, notFound, unprocessable } from '../lib/errors';
+import { badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { clockIn, todayIn } from '../lib/dates';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
@@ -152,12 +153,13 @@ async function catalog(deps: Deps, actor: Actor, storeIdRaw: unknown): Promise<S
     list.push(offer);
     byMaterial.set(Number(k.materialId), list);
   }
+  const imagesOf = await materialImages(db);
   const items: ShopItem[] = materials
     .map((m) => {
       const offers = byMaterial.get(Number(m.id)) ?? [];
       const ok = offers.filter((o) => o.block === null);
       return {
-        material: { ...m, id: Number(m.id) },
+        material: { ...m, id: Number(m.id), imageIds: imagesOf.get(Number(m.id)) ?? [] },
         offers,
         fromGrossCents: ok.length ? Math.min(...ok.map((o) => o.grossCents)) : null,
         purchasable: ok.length,
@@ -270,7 +272,7 @@ async function compareOffers(deps: Deps, actor: Actor, raw: unknown): Promise<Sh
   const sorted = filterAndSortCompareOffers(offers, 'total', { freeShippingOnly: false, purchasableOnly: false, admittedOnly: false });
   const ok = sorted.filter((o) => o.purchasable);
   return {
-    material: { ...material, id: Number(material.id) },
+    material: { ...material, id: Number(material.id), imageIds: (await materialImages(db, [Number(material.id)])).get(Number(material.id)) ?? [] },
     storeId,
     storeName,
     today,
@@ -742,6 +744,7 @@ async function listShopMaterials(db: Db, today: string): Promise<ShopMaterialRow
     const cur = lowestByMat.get(mid);
     if (cur === undefined || g < cur) lowestByMat.set(mid, g);
   }
+  const imagesOf = await materialImages(db);
   return rows.map((m) => ({
     id: Number(m.id),
     code: m.code,
@@ -756,7 +759,53 @@ async function listShopMaterials(db: Db, today: string): Promise<ShopMaterialRow
     activeSkuCount: Number(m.activeSkuCount),
     supplierCount: Number(m.supplierCount),
     lowestGrossCents: lowestByMat.get(Number(m.id)) ?? null,
+    imageIds: imagesOf.get(Number(m.id)) ?? [],
   }));
+}
+
+// ───────────────────────── 商品图（8.1.47，迁移 480） ─────────────────────────
+
+/** 每样物料的商品图（按第几张排好；第 1 张是封面） */
+async function materialImages(db: Db, materialIds?: number[]): Promise<Map<number, number[]>> {
+  const rows = await db<{ materialId: number; imageId: number }[]>`
+    SELECT material_id, image_id FROM material_images
+    ${materialIds ? db`WHERE material_id IN ${db(materialIds.length ? materialIds : [0])}` : db``}
+    ORDER BY material_id, sort_no`;
+  const map = new Map<number, number[]>();
+  for (const r of rows) {
+    const list = map.get(Number(r.materialId)) ?? [];
+    list.push(Number(r.imageId));
+    map.set(Number(r.materialId), list);
+  }
+  return map;
+}
+
+const MaterialImagesInput = z.object({
+  imageIds: z.array(z.number().int().positive()).max(SHOP_MAX_MATERIAL_IMAGES, `每样物料最多 ${SHOP_MAX_MATERIAL_IMAGES} 张商品图`),
+  /** 页面看到的现在的那一组：别人先改过的拒绝（晚到的旧请求不盖掉之后的修改）；整组写，原样重提结果一样 */
+  expectedImageIds: z.array(z.number().int().positive()).max(SHOP_MAX_MATERIAL_IMAGES),
+});
+
+/** 整组换商品图：在物料行锁里核对「看到的」再删了重写；图片要是需求单那边能用的（erp_images 的 general） */
+async function setMaterialImages(db: Deps['sql'], materialId: number, raw: unknown, staffId: number, ip?: string): Promise<number[]> {
+  const input = parse(MaterialImagesInput, raw);
+  if (new Set(input.imageIds).size !== input.imageIds.length) throw badRequest('同一张图不能放两次');
+  return db.begin(async (tx) => {
+    await setTxTimeouts(tx);
+    const [m] = await tx<{ id: number }[]>`SELECT id FROM materials WHERE id = ${materialId} AND tracked FOR UPDATE`;
+    if (!m) throw notFound('物料不存在');
+    const now = (await materialImages(tx, [materialId])).get(materialId) ?? [];
+    if (now.join(',') === input.imageIds.join(',')) return now;
+    if (now.join(',') !== input.expectedImageIds.join(',')) throw conflict('IMAGES_CHANGED', '这样物料的商品图刚被别人改过，刷新后再改');
+    if (input.imageIds.length) {
+      const ok = await tx<{ id: number }[]>`SELECT id FROM erp_images WHERE id IN ${tx(input.imageIds)} AND scope = 'general'`;
+      if (ok.length !== input.imageIds.length) throw unprocessable('IMAGE_INVALID', '有的图片不存在，重新上传再试');
+    }
+    await tx`DELETE FROM material_images WHERE material_id = ${materialId}`;
+    for (const [i, imageId] of input.imageIds.entries()) await tx`INSERT INTO material_images (material_id, sort_no, image_id) VALUES (${materialId}, ${i + 1}, ${imageId})`;
+    await writeAudit(tx, { staffId, action: 'material_images', targetType: 'material', targetId: materialId, detail: { from: now, to: input.imageIds }, ip });
+    return input.imageIds;
+  });
 }
 
 // ───────────────────────── 审批路由预览与后台总览（FR-02 / FR-05 / FR-10） ─────────────────────────
@@ -1108,6 +1157,18 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     const list = await listShopMaterials(sql, todayIn(deps.config.timezone));
     return list.find((m) => m.id === materialId)!;
   };
+  // 商品图（8.1.47）：物料主档里整组换（要「物料档案」权限）；采购商城的人都能看，只给挂在物料上的图，别的图片按编号取不到
+  app.put(`${P}/materials/:id/images`, { preHandler: masterWrite }, async (req) => ({
+    imageIds: await setMaterialImages(sql, parse(idParam, req.params).id, req.body, req.actor.id, req.ip),
+  }));
+  app.get(`${P}/images/:id`, { preHandler: catalogRead }, async (req, reply) => {
+    const id = parse(idParam, req.params).id;
+    const [img] = await sql<{ mime: string; data: Buffer }[]>`
+      SELECT i.mime, i.data FROM erp_images i WHERE i.id = ${id} AND i.scope = 'general' AND EXISTS (SELECT 1 FROM material_images mi WHERE mi.image_id = i.id)`;
+    if (!img) throw notFound('图片不存在');
+    reply.header('content-type', img.mime).header('cache-control', 'private, max-age=31536000, immutable').header('x-content-type-options', 'nosniff');
+    return reply.send(img.data);
+  });
   app.patch(`${P}/materials/:id`, { preHandler: masterWrite }, patchMaterial);
   app.put(`${P}/materials/:id`, { preHandler: masterWrite }, patchMaterial);
   app.post(`${P}/materials/batch-category`, { preHandler: masterWrite }, async (req) => {

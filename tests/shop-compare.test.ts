@@ -54,7 +54,7 @@ const makeCatalog = (offers: ShopOffer[]): ShopCatalog => ({
   items: offers.length
     ? [
         {
-          material: { id: 16, code: 'M016', name: '加大浴巾', category: '布草', specification: '80×160cm', unit: '条', note: '' },
+          material: { id: 16, code: 'M016', name: '加大浴巾', category: '布草', specification: '80×160cm', unit: '条', note: '', imageIds: [] },
           offers,
           fromGrossCents: offers.some((o) => o.block === null) ? Math.min(...offers.filter((o) => o.block === null).map((o) => o.grossCents)) : null,
           purchasable: offers.filter((o) => o.block === null).length,
@@ -240,8 +240,8 @@ describe('清单按供应商分组、起订量进度与商品卡摘要（批次 
     const cat: ShopCatalog = {
       ...makeCatalog([]),
       items: [
-        { material: { id: 1, code: 'M1', name: '浴巾', category: '布草', specification: '', unit: '条', note: '' }, offers: [oA1, oB1], fromGrossCents: 1130, purchasable: 2 },
-        { material: { id: 2, code: 'M2', name: '毛巾', category: '布草', specification: '', unit: '条', note: '' }, offers: [oA2], fromGrossCents: 565, purchasable: 1 },
+        { material: { id: 1, code: 'M1', name: '浴巾', category: '布草', specification: '', unit: '条', note: '', imageIds: [] }, offers: [oA1, oB1], fromGrossCents: 1130, purchasable: 2 },
+        { material: { id: 2, code: 'M2', name: '毛巾', category: '布草', specification: '', unit: '条', note: '', imageIds: [] }, offers: [oA2], fromGrossCents: 565, purchasable: 1 },
       ],
     };
     const cart: ShopCart = {

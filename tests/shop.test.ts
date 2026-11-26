@@ -725,3 +725,53 @@ describe('SKU 的边界（Codex 审查）', () => {
     expect(p2.requests.map((r) => r.id)).toEqual([olderActiveId]);
   });
 });
+
+describe('商品图（8.1.47，迁移 480）', () => {
+  const png = (n: number) => {
+    // 1×1 PNG，末尾补几个字节让内容各不相同（按内容去重）
+    const base = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    return Buffer.concat([base, Buffer.alloc(n, 7)]).toString('base64');
+  };
+  const upload = async (cookie: string, n: number) => {
+    const r = await api(ctx.app, cookie, 'POST', '/api/erp/images', { mime: 'image/png', data: png(n) });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    return r.body.id as number;
+  };
+  const put = (cookie: string, imageIds: number[], expectedImageIds: number[]) => api(ctx.app, cookie, 'PUT', `/api/erp/shop/materials/${mat.id}/images`, { imageIds, expectedImageIds });
+
+  it('物料主档整组换商品图：目录、比价、主档都带上；部门申购能看；别人先改过拒绝；不是商品图的图片取不到', async () => {
+    const s = await sku();
+    await listed(s.id);
+    const a = await upload(boss, 1);
+    const b = await upload(boss, 2);
+    // 部门申购不能改主档
+    expect((await put(reqA, [a], [])).status).toBe(403);
+    const set = await put(boss, [a, b], []);
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    expect(set.body.imageIds).toEqual([a, b]);
+    // 原样重提：结果一样
+    expect((await put(boss, [a, b], [])).body.imageIds).toEqual([a, b]);
+    // 看到的已经过时：拒绝
+    expect((await put(boss, [b], [])).body.error.code).toBe('IMAGES_CHANGED');
+    // 目录、比价、主档
+    const item = ((await catalog(reqA)).items as { material: { id: number; imageIds: number[] } }[]).find((i) => i.material.id === mat.id)!;
+    expect(item.material.imageIds).toEqual([a, b]);
+    const cmp = await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=${mat.id}&storeId=${storeId}`);
+    expect(cmp.body.material.imageIds).toEqual([a, b]);
+    const master = (await api(ctx.app, boss, 'GET', '/api/erp/shop/materials')).body as { id: number; imageIds: number[] }[];
+    expect(master.find((m) => m.id === mat.id)!.imageIds).toEqual([a, b]);
+    // 部门申购（只能看自己传的需求单图片）照样能看商品图
+    const img = await ctx.app.inject({ method: 'GET', url: `/api/erp/shop/images/${a}`, headers: { cookie: reqB } });
+    expect(img.statusCode).toBe(200);
+    expect(img.headers['content-type']).toBe('image/png');
+    // 没挂在物料上的图片：这个地址取不到
+    const loose = await upload(reqA, 3);
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/erp/shop/images/${loose}`, headers: { cookie: reqB } })).statusCode).toBe(404);
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/erp/shop/images/${a}` })).statusCode).toBe(401);
+    // 换顺序（封面换成 b）、清空
+    expect((await put(boss, [b, a], [a, b])).body.imageIds).toEqual([b, a]);
+    expect((await put(boss, [a, a], [b, a])).status).toBe(400);
+    expect((await put(boss, [], [b, a])).body.imageIds).toEqual([]);
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/erp/shop/images/${a}`, headers: { cookie: reqB } })).statusCode).toBe(404);
+  });
+});
