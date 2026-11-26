@@ -407,6 +407,8 @@ export const ERP_OP_TYPES = [
   'coupon_batch',
   // 批量发券（8.0.4 需求表 06）：圈一批会员发券，没收到结果时查回、原样重提或确认作废
   'coupon_campaign',
+  // 生成礼品卡（8.1.40，Codex 审查 8a7023d）：回复丢了查回、原样重提或确认作废，不会多生成一批
+  'gift_card_batch',
   'coupon_issue',
   // 硬件连接（v0.7.21）：登记设备、打印任务（断网后刷新也要能查回、重提或作废）
   'device_create',
@@ -548,6 +550,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   coupon_rule: '加发券规则',
   coupon_batch: '生成无记名券',
   coupon_campaign: '批量发券',
+  gift_card_batch: '生成礼品卡',
   coupon_issue: '发券给会员',
   device_create: '登记设备',
   device_job: '测试打印',

@@ -8,10 +8,11 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { shiftDate } from '../src/shared/labels';
-import type { CouponRow, CouponTemplate, MemberCoupons } from '../src/shared/coupons';
+import { formatStoreCouponCode, type CouponRow, type CouponTemplate, type MemberCoupons } from '../src/shared/coupons';
 import { issueBirthdayCoupons } from '../src/server/modules/coupons';
 import { buildDailyRecon } from '../src/server/ops/recon';
 import { createStaff } from '../src/server/modules/staff';
+import { couponLedger } from '../src/server/modules/coupon-ledger';
 import { api, createMember, login, PASSWORD, rechargeBody, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -555,5 +556,152 @@ describe('作废与统计', () => {
     // 客户经理能看统计（会员总览的权限）
     expect((await api(ctx.app, am, 'GET', `/api/coupons/stats?from=${today}&to=${today}`)).status).toBe(200);
     await checks();
+  });
+});
+
+describe('8.1.40 券的使用限制、发放台账、结账单印券号', () => {
+  it('限星期、限门店的券此刻不能用写原因；限点钟的只抵点钟；台账查得到发放、核销与时长；结账单带券号', async () => {
+    const m = await createMember(ctx, '限制券会员', '19911140001');
+    const dow = ((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+    const other = (dow % 7) + 1;
+    const wrongDay = await template({ name: '限别的日子', kind: 'cash', faceValue: 1000, weekdays: [other] });
+    const anyDay = await template({ name: '每天能用', kind: 'cash', faceValue: 1000, weekdays: [1, 2, 3, 4, 5, 6, 7] });
+    expect(anyDay.weekdays).toEqual([]);
+    const otherStore = await template({ name: '限别的店', kind: 'cash', faceValue: 1000, storeIds: [1] });
+    // 时段：起止相同拒绝
+    expect(
+      (
+        await api(ctx.app, ctx.owner, 'POST', '/api/coupons/templates', {
+          clientKey: randomUUID(),
+          name: '坏时段',
+          kind: 'cash',
+          faceValue: 100,
+          validity: 'days',
+          validDays: 1,
+          timeFrom: 600,
+          timeTo: 600,
+        })
+      ).status,
+    ).toBe(400);
+    // 点钟券只能是代金券、折扣券
+    expect(
+      (
+        await api(ctx.app, ctx.owner, 'POST', '/api/coupons/templates', {
+          clientKey: randomUUID(),
+          name: '坏点钟',
+          kind: 'exchange',
+          exchangeItemId: item['券搓澡'],
+          validity: 'days',
+          validDays: 1,
+          designatedOnly: true,
+        })
+      ).status,
+    ).toBe(400);
+    const designated = await template({ name: '点钟券', kind: 'cash', faceValue: 1000, designatedOnly: true });
+    expect(designated.summary).toContain('限点钟');
+    for (const t of [wrongDay, anyDay, otherStore, designated]) expect((await issue(m.id, t.id)).status).toBe(201);
+
+    const v = await enter([{ itemId: item['券搓澡']!, quantity: 1, price: 6800 }], m.id);
+    const pre = await preview(v);
+    const of = (name: string) => pre.storeCoupons.find((c) => c.templateName === name)!;
+    expect(of('限别的日子')).toMatchObject({ usable: false });
+    expect(of('限别的日子').reason).toContain('只能在');
+    expect(of('每天能用')).toMatchObject({ usable: true, amount: 1000 });
+    expect(of('限别的店')).toMatchObject({ usable: true });
+    // 搓澡不是点钟的技师项目：点钟券不抵
+    expect(of('点钟券')).toMatchObject({ usable: false });
+    expect(of('点钟券').reason).toContain('点钟');
+
+    // 用「每天能用」结账：结账单的优惠带券号
+    const code = of('每天能用').code;
+    const paid = await pay(v, pre.totalAmount, [
+      { method: 'store_coupon', code, amount: 1000 },
+      { method: 'cash', amount: pre.totalAmount - 1000 },
+    ]);
+    expect(paid.status, JSON.stringify(paid.body)).toBe(200);
+    expect(paid.body.perks.find((p: { name: string }) => p.name === '每天能用').code).toBe(formatStoreCouponCode(code));
+
+    // 发放台账：这位会员手动发的四张（前面用例的开卡礼规则另发了一张，按「手动」筛掉）；用掉的那张带结账单、抵扣与时长
+    const ledger = (await api(ctx.app, ctx.owner, 'GET', `/api/coupons/ledger?from=${today}&to=${today}&kind=manual&q=${encodeURIComponent('限制券会员')}`)).body;
+    expect(ledger.rows).toHaveLength(4);
+    const used = ledger.rows.find((r: { templateName: string }) => r.templateName === '每天能用');
+    expect(used).toMatchObject({ status: 'used', checkoutNo: paid.body.checkoutNo, usedAmount: 1000, kind: 'manual', memberName: '限制券会员' });
+    expect(used.hoursToUse).toBeGreaterThanOrEqual(0);
+    expect(ledger.summary).toMatchObject({ issued: 4, used: 1, usedAmount: 1000 });
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/coupons/ledger?from=${today}&to=${today}`)).status).toBe(403);
+    const csv = await ctx.app.inject({ method: 'GET', url: `/api/coupons/ledger.csv?from=${today}&to=${today}`, headers: { cookie: ctx.owner } });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.body).toContain(formatStoreCouponCode(code));
+    // 券名以 = 开头：导出里当文本（合并前 Codex 审查 305508f）
+    const evil = await template({ name: '=SUM(1,2)', kind: 'cash', faceValue: 100 });
+    const member = (await ctx.sql<{ id: number }[]>`SELECT id FROM members ORDER BY id LIMIT 1`)[0]!;
+    expect((await issue(Number(member.id), evil.id, 1, ctx.owner)).status).toBe(201);
+    const csv2 = await ctx.app.inject({ method: 'GET', url: `/api/coupons/ledger.csv?from=${today}&to=${today}`, headers: { cookie: ctx.owner } });
+    expect(csv2.body).toContain(`"'=SUM(1,2)"`);
+    expect(csv2.body).not.toMatch(/,=SUM/);
+    // 一共几张不受一次能看的张数限制；超过的标出截断（导出超过上限时服务端拒绝，不悄悄截掉；合并前 Codex 审查 bcd2901）
+    const all = (await api(ctx.app, ctx.owner, 'GET', `/api/coupons/ledger?from=${today}&to=${today}`)).body;
+    expect(all.total).toBe(all.rows.length);
+    const one = await couponLedger(ctx.sql, { from: today, to: today }, 1);
+    expect(one).toMatchObject({ truncated: true, total: all.total });
+    expect(one.rows).toHaveLength(1);
+  });
+});
+
+describe('8.1.40 发券试算的上限（合并前 Codex 审查 8a7023d 起几轮）', () => {
+  const estimateOf = async (templateId: number) => {
+    const r = await api(ctx.app, ctx.owner, 'POST', '/api/coupons/campaigns/preview', { templateId, audience: {} });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    return r.body.estimate as { perCoupon: number | null; uncappedWhy?: string; referencePerCoupon?: number };
+  };
+  it('只写真的上限：兑换没设最多抵的不封顶，另给按价目最贵一份的参考（各档、门店价都算，券限门店的只看那几家）；门票、折扣券写明原因', async () => {
+    // 券果盘：默认档 ¥38，另加一档 ¥58
+    await ctx.sql`INSERT INTO service_item_prices (item_id, tier, price) VALUES (${item['券果盘']!}, 'premium', 5800) ON CONFLICT (item_id, tier) DO UPDATE SET price = 5800`;
+    const exchange = await template({ name: '果盘兑换券（试算）', kind: 'exchange', exchangeItemId: item['券果盘'] });
+    expect(await estimateOf(exchange.id)).toMatchObject({ perCoupon: null, referencePerCoupon: 5800 });
+    expect((await estimateOf(exchange.id)).uncappedWhy).toContain('没设「最多抵」');
+    const cappedEx = await template({ name: '果盘兑换券（最多抵）', kind: 'exchange', exchangeItemId: item['券果盘'], maxOff: 4000 });
+    expect((await estimateOf(cappedEx.id)).perCoupon).toBe(4000);
+
+    // 门票按在店时长累计：没设最多抵不封顶，设了按最多抵
+    const [tt] = await ctx.sql<{ id: number }[]>`SELECT id FROM ticket_types WHERE active ORDER BY id LIMIT 1`;
+    const ticket = await template({ name: '门票兑换券（试算）', kind: 'exchange', exchangeTicketTypeId: Number(tt!.id) });
+    expect(await estimateOf(ticket.id)).toMatchObject({ perCoupon: null, uncappedWhy: '兑换门票按在店时长累计，没设「最多抵」' });
+    const ticketCapped = await template({ name: '门票兑换券（最多抵）', kind: 'exchange', exchangeTicketTypeId: Number(tt!.id), maxOff: 9900 });
+    expect((await estimateOf(ticketCapped.id)).perCoupon).toBe(9900);
+
+    // 参考价算上门店改过的价；券限了门店的只看那几家
+    const [st] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('CE2', '试算乙店', 1) RETURNING id`;
+    const [staffRow] = await ctx.sql<{ id: number }[]>`SELECT id FROM staff ORDER BY id LIMIT 1`;
+    await ctx.sql`INSERT INTO service_item_store_prices (store_id, item_id, tier, price, updated_by) VALUES (${st!.id}, ${item['券果盘']!}, 'standard', 9800, ${staffRow!.id})`;
+    expect((await estimateOf(exchange.id)).referencePerCoupon).toBe(9800);
+    const hereOnly = await template({ name: '果盘兑换券（只限本店）', kind: 'exchange', exchangeItemId: item['券果盘'], storeIds: [1] });
+    expect((await estimateOf(hereOnly.id)).referencePerCoupon).toBe(5800);
+
+    const open = await template({ name: '八折不封顶（试算）', kind: 'discount', ratePercent: 80 });
+    expect(await estimateOf(open.id)).toMatchObject({ perCoupon: null, uncappedWhy: '折扣券没设「最多减」' });
+  });
+});
+
+describe('8.1.40 已发的券说明里带使用限制（合并前 Codex 审查 fca1ba4）', () => {
+  it('无记名券、发出去的券：说明里照样写星期、时段、点钟', async () => {
+    const t = await template({
+      name: '周末点钟券',
+      kind: 'cash',
+      faceValue: 1500,
+      weekdays: [6, 7],
+      timeFrom: 660,
+      timeTo: 840,
+      designatedOnly: true,
+      validity: 'fixed',
+      validFrom: today,
+      validTo: '2099-12-31',
+    });
+    expect(t.summary).toContain('限点钟');
+    const b = await api(ctx.app, ctx.owner, 'POST', '/api/coupons/batches', { clientKey: randomUUID(), templateId: t.id, quantity: 2, note: '限制说明' });
+    expect(b.status, JSON.stringify(b.body)).toBe(201);
+    expect(b.body.summary).toBe('代金券 ¥15.00 · 周六、周日 · 11:00–14:00 · 限点钟');
+    const list = (await api(ctx.app, ctx.owner, 'GET', '/api/coupons/batches')).body as { id: number; summary: string }[];
+    expect(list.find((x) => x.id === b.body.id)!.summary).toBe(b.body.summary);
   });
 });

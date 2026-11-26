@@ -29,6 +29,7 @@ import {
   type CouponScope,
   type CouponTemplate,
   type CouponValidity,
+  WEEKDAY_LABELS,
 } from '@shared/coupons';
 import { shiftDate } from '@shared/labels';
 import { centsToInput, formatYuan, parseYuan } from '@shared/money';
@@ -60,9 +61,10 @@ import {
 } from '../coupons/queries';
 import { AdminPage } from './AdminShell';
 import { CouponUsageCard } from './CouponUsageCard';
+import { CouponLedgerCard } from './CouponLedgerCard';
 import { useActiveSubTab } from '../../components/SubNav';
 
-type Tab = 'templates' | 'rules' | 'stats' | 'usage';
+type Tab = 'templates' | 'rules' | 'stats' | 'usage' | 'ledger';
 // 二级页签（8.0.17）：写进地址（/admin/coupons/rules）；顺序与别的分区一样——规则在前，再是清单、统计。
 // 8.0.19（IA4）：批量发券、无记名券是当班会做的事，挪到门店会员工作台的「发券」（features/coupons/CouponIssuePage）；
 // 这里只留规则、模板、统计，旧地址 /admin/coupons/campaigns、/admin/coupons/batches 跳过去
@@ -72,6 +74,8 @@ const TABS: { value: Tab; label: string }[] = [
   { value: 'stats', label: '统计' },
   // 权益使用率看板（8.0.4 需求表 08）：按发放的一批券看领取率、核销率
   { value: 'usage', label: '使用率' },
+  // 8.1.40：一张一张券查（发放、核销、时长、充值发的）
+  { value: 'ledger', label: '发放台账' },
 ];
 
 /** 后台页面上方列出的「结果待确认」：后台的三种，另加发券给会员（店主在这里也能处理） */
@@ -126,7 +130,7 @@ export function CouponsSection() {
 /** 现在这个页签的那一块 */
 function CouponTabBody() {
   const tab = (useActiveSubTab() ?? TABS[0]!.value) as Tab;
-  return tab === 'templates' ? <TemplatesCard /> : tab === 'rules' ? <RulesCard /> : tab === 'stats' ? <StatsCard /> : <CouponUsageCard />;
+  return tab === 'templates' ? <TemplatesCard /> : tab === 'rules' ? <RulesCard /> : tab === 'stats' ? <StatsCard /> : tab === 'ledger' ? <CouponLedgerCard /> : <CouponUsageCard />;
 }
 
 // ───────────────────────── 共用 ─────────────────────────
@@ -276,6 +280,12 @@ interface Draft {
   levels: number[];
   note: string;
   active: boolean;
+  /** 8.1.40 使用限制：哪几天（1–7）、几点到几点（HH:MM，都空为不限）、哪几家店、点钟券 */
+  weekdays: number[];
+  timeFrom: string;
+  timeTo: string;
+  storeIds: number[];
+  designatedOnly: boolean;
 }
 
 /** 提交的模板内容（与服务端的字段一致） */
@@ -303,6 +313,11 @@ type TemplateBody = Pick<
   | 'levels'
   | 'note'
   | 'active'
+  | 'weekdays'
+  | 'timeFrom'
+  | 'timeTo'
+  | 'storeIds'
+  | 'designatedOnly'
 >;
 
 const MAX_NAME = 24;
@@ -353,6 +368,11 @@ function draftOf(t: CouponTemplate | null, today: string, copy = false): Draft {
       levels: [],
       note: '',
       active: true,
+      weekdays: [],
+      timeFrom: '',
+      timeTo: '',
+      storeIds: [],
+      designatedOnly: false,
     };
   }
   return {
@@ -381,6 +401,11 @@ function draftOf(t: CouponTemplate | null, today: string, copy = false): Draft {
     levels: [...t.levels],
     note: t.note,
     active: copy ? true : t.active,
+    weekdays: [...(t.weekdays ?? [])],
+    timeFrom: t.timeFrom != null ? minuteText(t.timeFrom) : '',
+    timeTo: t.timeTo != null ? minuteText(t.timeTo) : '',
+    storeIds: [...(t.storeIds ?? [])],
+    designatedOnly: t.designatedOnly ?? false,
   };
 }
 
@@ -421,6 +446,11 @@ function buildBody(d: Draft): { body: TemplateBody; problem: string | null } {
     levels: d.levels,
     note: d.note.trim(),
     active: d.active,
+    weekdays: d.weekdays,
+    timeFrom: d.timeFrom ? textMinute(d.timeFrom) : null,
+    timeTo: d.timeTo ? textMinute(d.timeTo) : null,
+    storeIds: d.storeIds,
+    designatedOnly: (d.kind === 'cash' || d.kind === 'discount') && d.designatedOnly,
   };
   // 按顺序找第一个问题（都是比较，前面的不成立时后面的也不会出错）
   const checks: [boolean, string][] = [
@@ -474,7 +504,19 @@ const lockedBody = (t: CouponTemplate, d: Draft): TemplateBody => ({
   levels: t.levels,
   note: d.note.trim(),
   active: d.active,
+  weekdays: t.weekdays ?? [],
+  timeFrom: t.timeFrom ?? null,
+  timeTo: t.timeTo ?? null,
+  storeIds: t.storeIds ?? [],
+  designatedOnly: t.designatedOnly ?? false,
 });
+
+/** 8.1.40：分钟 ↔ 「HH:MM」 */
+const minuteText = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+const textMinute = (t: string) => {
+  const [h, m] = t.split(':').map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+};
 
 function TemplateDialog({
   target,
@@ -691,6 +733,51 @@ function TemplateDialog({
                 ))}
             </div>
           </Field>
+          {/* 8.1.40 使用限制：星期、时段、门店、点钟券（与面额一样，发过券以后不能改） */}
+          <Field label="哪几天能用" hint="不选 = 每天都能用；按营业日算">
+            <div className="flex flex-wrap gap-2">
+              {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+                <CheckChip
+                  key={d}
+                  checked={draft.weekdays.includes(d)}
+                  onChange={(on) => set({ weekdays: on ? [...draft.weekdays, d].sort((a, b) => a - b) : draft.weekdays.filter((x) => x !== d) })}
+                  testId={`coupon-template-weekday-${d}`}
+                >
+                  {WEEKDAY_LABELS[d]}
+                </CheckChip>
+              ))}
+            </div>
+          </Field>
+          <Field label="每天几点能用" hint="都空着 = 全天；结束不晚于开始表示到次日（例如 22:00–02:00）">
+            <div className="flex flex-wrap items-center gap-2">
+              <Input type="time" value={draft.timeFrom} onChange={(e) => set({ timeFrom: e.target.value })} className="w-[130px]" aria-label="开始时间" data-testid="coupon-template-time-from" />
+              <span className="text-ink-3">至</span>
+              <Input type="time" value={draft.timeTo} onChange={(e) => set({ timeTo: e.target.value })} className="w-[130px]" aria-label="结束时间" data-testid="coupon-template-time-to" />
+            </div>
+          </Field>
+          {session.stores.length > 1 && (
+            <Field label="哪几家店能用" hint="不选 = 全公司都能用">
+              <div className="flex flex-wrap gap-2">
+                {session.stores.map((st) => (
+                  <CheckChip
+                    key={st.id}
+                    checked={draft.storeIds.includes(st.id)}
+                    onChange={(on) => set({ storeIds: on ? [...draft.storeIds, st.id] : draft.storeIds.filter((x) => x !== st.id) })}
+                    testId={`coupon-template-store-${st.id}`}
+                  >
+                    {st.name}
+                  </CheckChip>
+                ))}
+              </div>
+            </Field>
+          )}
+          {(draft.kind === 'cash' || draft.kind === 'discount') && (
+            <Field label="点钟券" hint="勾上：只抵客人点名（点钟）的技师项目，轮钟、别的项目不抵">
+              <CheckChip checked={draft.designatedOnly} onChange={(on) => set({ designatedOnly: on })} testId="coupon-template-designated">
+                只抵点钟
+              </CheckChip>
+            </Field>
+          )}
         </fieldset>
         <Field label="备注" htmlFor="coupon-note" hint="选填，只在后台显示，最多 200 字">
           <Textarea id="coupon-note" value={draft.note} maxLength={200} onChange={(e) => set({ note: e.target.value })} disabled={busy} data-testid="coupon-template-note" />
