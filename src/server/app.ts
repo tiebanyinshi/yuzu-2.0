@@ -66,7 +66,7 @@ import { registerCompareRoutes } from './modules/inventory/compare';
 import { registerGiftRoutes } from './modules/inventory/gifts';
 import { registerTransferRoutes } from './modules/inventory/transfers';
 import { registerPettyAccountRoutes } from './modules/petty-accounts';
-import { registerPettyPoolRoutes } from './modules/petty-pool';
+import { registerPettyUseRoutes } from './modules/petty-uses';
 import { registerReplenishRoutes } from './modules/inventory/replenish';
 import { registerSourcingRoutes } from './modules/inventory/sourcing';
 import { registerPurchaseFlowRoutes } from './modules/purchase-flow';
@@ -86,6 +86,8 @@ import { registerBankRoutes } from './modules/bank';
 import { registerPaymentBatchRoutes } from './modules/payment-batches';
 import { registerMemberRecordRoutes } from './modules/member-records';
 import { registerCouponRoutes } from './modules/coupons';
+import { registerCouponLedgerRoutes } from './modules/coupon-ledger';
+import { registerGiftCardRoutes } from './modules/gift-cards';
 import { registerSignGiftRoutes } from './modules/gifts';
 import { registerCampaignRoutes } from './modules/coupon-campaigns';
 import { registerGiftOutRoutes } from './modules/gift-outs';
@@ -171,6 +173,7 @@ import { registerCustomerRoutes } from './modules/customer/routes';
 import { registerPatrolAdminRoutes } from './modules/patrol/routes';
 import { registerTablesV8115Routes } from './modules/tables-v8115';
 import { registerDishRoutes } from './modules/dishes';
+import { registerDishCostRoutes } from './modules/dish-cost';
 import { registerDishImportRoutes } from './modules/dishes-import';
 import { registerRoomCenterRoutes } from './modules/room-center';
 
@@ -309,6 +312,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerCustomFieldRoutes(app, deps);
   registerMemberRecordRoutes(app, deps);
   registerCouponRoutes(app, deps);
+  registerCouponLedgerRoutes(app, deps);
+  registerGiftCardRoutes(app, deps);
   // 8.1.9 签赠（docs/GIFTS_V819.md）
   registerSignGiftRoutes(app, deps);
   registerCampaignRoutes(app, deps);
@@ -420,8 +425,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerCycleRoutes(app, deps);
   registerImportRoutes(app, deps);
   registerExpenseRoutes(app, deps);
-  // 8.1.9 零采备用金（docs/ERP_V819.md 第 2 节）
-  registerPettyPoolRoutes(app, deps);
+  // 备用金的申用（8.1.42 起并进备用金，docs/V8142_PETTY.md；原来 8.1.9 的零采备用金）
+  registerPettyUseRoutes(app, deps);
   // 费用预算与进项发票台账（8.0.3）
   registerBudgetRoutes(app, deps);
   registerInvoiceRoutes(app, deps);
@@ -483,6 +488,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerTablesV8115Routes(app, deps);
   // 菜品管理（8.1.15，docs/DISHES_V8115.md）：菜品表、新增 / 编辑、上下架、改价与改价记录、Excel 导出与导入
   registerDishRoutes(app, deps);
+  registerDishCostRoutes(app, deps);
   registerDishImportRoutes(app, deps);
   // 房态中心（8.1.15，docs/ROOM_CENTER_V8115.md）：按房型看全店房间的五种状态，服务房间的登记、换房、续钟、并房、退房
   registerRoomCenterRoutes(app, deps);

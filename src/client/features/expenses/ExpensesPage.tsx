@@ -2,12 +2,12 @@
 
 import { ExpenseTabs } from './ExpenseTabs';
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, Navigate, useSearchParams } from 'react-router';
 import { Download, FileText, Plus, ReceiptText, X } from 'lucide-react';
 import { CLAIM_STATUS_LABELS, EXPENSE_CATEGORY_LABELS, PAY_SOURCE_LABELS, taxRateText, type ClaimStatus, type ExpenseClaim } from '@shared/expenses';
 import { budgetCheckText, budgetOver } from '@shared/budgets';
 import { CERT_STATUS_LABELS } from '@shared/invoices';
-import { POOL_BACKFILL_LABELS } from '@shared/petty-pool';
+import { PETTY_BACKFILL_LABELS } from '@shared/petty-uses';
 import { formatAmount } from '@shared/money';
 import { formatQty } from '@shared/quantity';
 import { channelText, RECEIVING_LABELS } from '@shared/purchasing';
@@ -36,7 +36,14 @@ const STATUS_TONE: Record<ClaimStatus, 'pine' | 'yuzu' | 'neutral' | 'clay'> = {
   voided: 'clay',
 };
 
+/** 只有「备用金申用」的岗位（采购）进「费用与备用金」时直接去申用那一页（8.1.42） */
 export function ExpensesPage() {
+  const can = useCan();
+  if (!can('expense.read') && can('petty.use')) return <Navigate to="/erp/petty/uses" replace />;
+  return <ClaimsPage />;
+}
+
+function ClaimsPage() {
   const can = useCan();
   const session = useSession();
   const [params, setParams] = useSearchParams();
@@ -272,25 +279,21 @@ function ClaimSheet({ id, onClose }: { id: number | null; onClose: () => void })
                 {PAY_SOURCE_LABELS[c.paySource]}
                 {c.advance && <span className="num ml-1.5 text-ink-2">打款 {c.advance.docNo}</span>}
               </dd>
-              {/* 零采备用金（8.1.9）：报的是哪几笔申用；报销单确认后这几笔自动回补 */}
-              {c.poolUses.length > 0 && (
+              {/* 备用金申用（8.1.42）：报的是哪几笔申用；报销单确认后这几笔不再占用 */}
+              {c.uses.length > 0 && (
                 <>
                   <dt className="text-ink-3">报的申用</dt>
-                  <dd data-testid="claim-pool-uses">
+                  <dd data-testid="claim-petty-uses">
                     <ul className="space-y-0.5">
-                      {c.poolUses.map((u) => (
+                      {c.uses.map((u) => (
                         <li key={u.id} className="text-[13px]">
-                          {session.erpModules.includes('pettyPool') && can('pool.read') ? (
-                            <Link to={`/erp/pool?use=${u.id}`} className="num font-semibold text-lake hover:underline">
-                              {u.docNo}
-                            </Link>
-                          ) : (
-                            <span className="num font-semibold">{u.docNo}</span>
-                          )}{' '}
+                          <Link to={`/erp/petty/uses?department=${c.department.id}&use=${u.id}`} className="num font-semibold text-lake hover:underline">
+                            {u.docNo}
+                          </Link>{' '}
                           · {u.applicantName} · <span className="num">¥{formatAmount(u.amountCents)}</span>
                           <span className="text-ink-3">
                             {' '}
-                            · {u.backfill ? POOL_BACKFILL_LABELS[u.backfill] : '补单未填'}
+                            · {u.backfill ? PETTY_BACKFILL_LABELS[u.backfill] : '补单未填'}
                             {u.poNo ? ` ${u.poNo}` : ''}
                           </span>
                         </li>

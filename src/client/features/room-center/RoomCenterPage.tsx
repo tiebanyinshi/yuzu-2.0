@@ -9,13 +9,27 @@
 //   · 排版优化（店主 2026-11-24《房态中心排版优化需求说明》，docs/ROOM_CENTER_V8115.md 第 12 节）：顶部五张统计卡 → 筛选条（区域页签、
 //     状态数量、搜索）→ 按区域分组的卡片网格（分组头写共几间与各状态几间，每行最多 5 张）→ 点卡片在右侧展开详情栏（手机是底部抽屉），
 //     原来点卡片做的那一下（登记、开单、入住……）是详情栏的主按钮。只改排版：颜色、功能、权限、接口都不变。
+//   · 当天的预约单（8.1.44，《前台系统开发》）：筛选条下面列今天的技师、派对房、客房预约（TodayBookings，只读）。
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { History, LayoutGrid, Map as MapIcon, MoonStar, Settings2 } from 'lucide-react';
 import type { BookingDetail } from '@shared/bookings';
-import { matchesRoomSearch, ROOM_STATUSES, ROOM_STATUS_LABELS, type RoomCard, type RoomCategoryView, type RoomCenterBoard, type RoomStatus } from '@shared/room-center';
+import {
+  arrangeRooms,
+  isOvernightRoom,
+  matchesRoomSearch,
+  ROOM_ORDER_LABELS,
+  ROOM_ORDERS,
+  ROOM_STATUSES,
+  ROOM_STATUS_LABELS,
+  type RoomCard,
+  type RoomCategoryView,
+  type RoomCenterBoard,
+  type RoomOrder,
+  type RoomStatus,
+} from '@shared/room-center';
 import { ROOM_BOARD_LABELS, type RoomBoard } from '@shared/rooms';
 import { api } from '../../lib/api';
 import { useServerNow } from '../../lib/serverClock';
@@ -40,12 +54,38 @@ import { RoomDialog, type RoomDialogAction } from './RoomDialog';
 import { RoomOrderPanel, RoomOrdersDialog, useRoomOrderOutlets } from './RoomOrders';
 import { RegisterDialog } from './RegisterDialog';
 import { RoomPanel, primaryLabel } from './RoomPanel';
+import { TodayBookings } from './TodayBookings';
 import { CountChips, GroupHead, StatCards } from './status';
 
 /** 「总览」页签的键（房型页签是 c<编号>、没归类的是 other；地址里 tab=hotel、tab=party 指第一个客房、派对房房型） */
 const OVERVIEW = 'all';
 /** 客房功能没开时平面图用的空看板（平面图只用它的房间） */
 const NO_HOTEL_ROOMS: Pick<RoomBoard, 'rooms'> = { rooms: [] };
+/** 房号排序记在这台设备上（8.1.40）：存不进、读不出时按默认（从小到大） */
+const ORDER_PREF = 'yuzu.roomCenter.order';
+const readOrder = (): RoomOrder => {
+  try {
+    return localStorage.getItem(ORDER_PREF) === 'desc' ? 'desc' : 'asc';
+  } catch {
+    return 'asc';
+  }
+};
+const saveOrder = (v: RoomOrder) => {
+  try {
+    if (v === 'asc') localStorage.removeItem(ORDER_PREF);
+    else localStorage.setItem(ORDER_PREF, v);
+  } catch {
+    /* 存不进只影响下次打开 */
+  }
+};
+/** 卡片按什么筛：状态（地址里的 status）与只看过夜（地址里的 overnight=1） */
+interface RoomPick {
+  status: RoomStatus | null;
+  overnight: boolean;
+}
+const picks = (p: RoomPick) => (r: RoomCard) => (!p.status || r.status === p.status) && (!p.overnight || isOvernightRoom(r));
+const picking = (p: RoomPick) => !!p.status || p.overnight;
+
 const STAY_RESUME: Record<string, StayAction> = { room_extend: 'extend', room_deposit: 'deposit', room_refund: 'refund', room_close: 'close' };
 
 export function RoomCenterPage() {
@@ -97,6 +137,12 @@ function RoomCenterBody() {
   // 房态点单（回测整改 P08）：点单面板、点单记录；记卡片的 key，看板刷新以后照样对得上
   const [ordering, setOrdering] = useState<{ key: string; view: 'order' | 'history' } | null>(null);
   const orderOutlets = useRoomOrderOutlets();
+  // 8.1.40：房号排序（记在这台设备上）
+  const [order, setOrderState] = useState<RoomOrder>(readOrder);
+  const setOrder = (v: RoomOrder) => {
+    setOrderState(v);
+    saveOrder(v);
+  };
 
   const setParam = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
@@ -153,6 +199,8 @@ function RoomCenterBody() {
   const tab = wanted && cats.some((c) => c.key === wanted) ? wanted : OVERVIEW;
   const statusParam = params.get('status');
   const filter = (ROOM_STATUSES as readonly string[]).includes(statusParam ?? '') ? (statusParam as RoomStatus) : null;
+  // 8.1.40：只看有过夜客人的房间
+  const pick: RoomPick = { status: filter, overnight: params.get('overnight') === '1' };
   const cat = cats.find((c) => c.key === tab) ?? null;
   const hotelTab = cat?.source === 'hotel';
 
@@ -205,7 +253,7 @@ function RoomCenterBody() {
   const grid = (list: RoomCard[]) => (
     <div className="@container">
       <div className="grid grid-cols-1 gap-2.5 @min-[420px]:grid-cols-2 @min-[640px]:grid-cols-3 @min-[860px]:grid-cols-4 @min-[1080px]:grid-cols-5" data-testid="rc-grid">
-        {list.map((r) => (
+        {arrangeRooms(list, { order, overnightOnly: false }).map((r) => (
           <RoomTile
             key={r.key}
             room={r}
@@ -276,6 +324,19 @@ function RoomCenterBody() {
               <div className="min-w-0 flex-1">
                 <CountChips counts={cat ? cat.counts : board.total} filter={filter} onFilter={(st) => setParam({ status: st })} testId="rc-counts" />
               </div>
+              <button
+                type="button"
+                aria-pressed={pick.overnight}
+                onClick={() => setParam({ overnight: pick.overnight ? null : '1' })}
+                className={cn(
+                  'tap relative inline-flex h-10 items-center gap-1 rounded-full border px-3 text-[13px] font-semibold',
+                  pick.overnight ? 'border-lake bg-lake-soft text-lake' : 'border-line-strong text-ink-2 hover:border-ink-4',
+                )}
+                data-testid="rc-overnight-filter"
+              >
+                <MoonStar className="size-3.5" /> 只看过夜 {board.rooms.filter((r) => (!cat || r.categoryKey === cat.key) && isOvernightRoom(r)).length}
+              </button>
+              <Segmented<RoomOrder> size="sm" ariaLabel="房号排序" value={order} onChange={setOrder} options={ROOM_ORDERS.map((o) => ({ value: o, label: ROOM_ORDER_LABELS[o] }))} />
               <Input
                 fullWidth={false}
                 className="h-10 w-full sm:w-64"
@@ -288,6 +349,8 @@ function RoomCenterBody() {
               />
             </div>
           </div>
+          {/* 8.1.44：当天的预约单（跟着看板一起取，只读） */}
+          {(board.todayBookings ?? []).length > 0 && <TodayBookings bookings={board.todayBookings} />}
           {cat?.hint && (
             <Notice tone="info" title={cat.hint} data-testid="rc-tab-hint">
               {hotelTab && '客房照旧走入住单：点卡片入住、看入住单、改房态。'}
@@ -325,11 +388,11 @@ function RoomCenterBody() {
           <div className={cn('grid gap-4', panelRoom && 'lg:grid-cols-[minmax(0,1fr)_340px]')}>
             <div className={cn('min-w-0', panelRoom && 'pb-[45vh] lg:pb-0')}>
               {search.trim() ? (
-                <SearchRooms board={board} q={search} filter={filter} grid={grid} onClear={() => setSearch('')} />
+                <SearchRooms board={board} q={search} pick={pick} grid={grid} onClear={() => setSearch('')} />
               ) : cat ? (
-                <CategoryRooms board={board} cat={cat} filter={filter} grid={grid} onAll={() => setParam({ status: null })} />
+                <CategoryRooms board={board} cat={cat} pick={pick} grid={grid} onAll={() => setParam({ status: null, overnight: null })} />
               ) : (
-                <Overview board={board} filter={filter} grid={grid} onAll={() => setParam({ status: null })} />
+                <Overview board={board} pick={pick} grid={grid} onAll={() => setParam({ status: null, overnight: null })} />
               )}
             </div>
             {panelRoom && (
@@ -489,8 +552,8 @@ function Tabs({ cats, total, active, onPick }: { cats: RoomCategoryView[]; total
 }
 
 /** 搜索结果：全部房型里房号、手牌号、客人姓名对得上的（再按状态筛） */
-function SearchRooms({ board, q, filter, grid, onClear }: { board: RoomCenterBoard; q: string; filter: RoomStatus | null; grid: (list: RoomCard[]) => ReactNode; onClear: () => void }) {
-  const list = board.rooms.filter((r) => matchesRoomSearch(r, q) && (!filter || r.status === filter));
+function SearchRooms({ board, q, pick, grid, onClear }: { board: RoomCenterBoard; q: string; pick: RoomPick; grid: (list: RoomCard[]) => ReactNode; onClear: () => void }) {
+  const list = board.rooms.filter((r) => matchesRoomSearch(r, q) && picks(pick)(r));
   if (list.length === 0) {
     return (
       <EmptyState
@@ -514,9 +577,9 @@ function SearchRooms({ board, q, filter, grid, onClear }: { board: RoomCenterBoa
 }
 
 /** 一个房型页签：卡片（按状态筛过的）；一间都没有、筛完没有的写明 */
-function CategoryRooms({ board, cat, filter, grid, onAll }: { board: RoomCenterBoard; cat: RoomCategoryView; filter: RoomStatus | null; grid: (list: RoomCard[]) => ReactNode; onAll: () => void }) {
+function CategoryRooms({ board, cat, pick, grid, onAll }: { board: RoomCenterBoard; cat: RoomCategoryView; pick: RoomPick; grid: (list: RoomCard[]) => ReactNode; onAll: () => void }) {
   const all = board.rooms.filter((r) => r.categoryKey === cat.key);
-  const list = filter ? all.filter((r) => r.status === filter) : all;
+  const list = all.filter(picks(pick));
   if (all.length === 0) {
     return (
       <EmptyState
@@ -530,7 +593,7 @@ function CategoryRooms({ board, cat, filter, grid, onAll }: { board: RoomCenterB
       />
     );
   }
-  if (list.length === 0) return <NoMatch filter={filter!} onAll={onAll} />;
+  if (list.length === 0) return <NoMatch pick={pick} onAll={onAll} />;
   return (
     <section aria-label={cat.name} data-testid={`rc-group-${cat.key}`}>
       <GroupHead name={cat.name} counts={cat.counts} testId={`rc-group-head-${cat.key}`} />
@@ -539,11 +602,11 @@ function CategoryRooms({ board, cat, filter, grid, onAll }: { board: RoomCenterB
   );
 }
 
-function NoMatch({ filter, onAll }: { filter: RoomStatus; onAll: () => void }) {
+function NoMatch({ pick, onAll }: { pick: RoomPick; onAll: () => void }) {
   return (
     <EmptyState
       art="calm"
-      title={`没有${ROOM_STATUS_LABELS[filter]}的房间`}
+      title={`没有${[pick.status ? ROOM_STATUS_LABELS[pick.status] : '', pick.overnight ? '有过夜客人' : ''].filter(Boolean).join('、')}的房间`}
       action={
         <Button variant="secondary" className="h-11" onClick={onAll}>
           看全部
@@ -554,15 +617,15 @@ function NoMatch({ filter, onAll }: { filter: RoomStatus; onAll: () => void }) {
 }
 
 /** 总览：按区域（房态中心的房型）分组列全部的房间（按状态筛过的），每组一个分组头：区域名、共几间、各状态几间（排版优化第二节 3） */
-function Overview({ board, filter, grid, onAll }: { board: RoomCenterBoard; filter: RoomStatus | null; grid: (list: RoomCard[]) => ReactNode; onAll: () => void }) {
+function Overview({ board, pick, grid, onAll }: { board: RoomCenterBoard; pick: RoomPick; grid: (list: RoomCard[]) => ReactNode; onAll: () => void }) {
   if (board.rooms.length === 0) {
     return <EmptyState art="calm" title="还没有房间" description="房间来自空间台账：店主在「后台 → 空间台账」导入或新建房间，在「房态中心房型」里把业态归到房型以后，这里按房型看房态。" />;
   }
-  const groups = board.categories.map((c) => [c, board.rooms.filter((r) => r.categoryKey === c.key && (!filter || r.status === filter))] as const).filter(([, list]) => list.length > 0);
+  const groups = board.categories.map((c) => [c, board.rooms.filter((r) => r.categoryKey === c.key && picks(pick)(r))] as const).filter(([, list]) => list.length > 0);
   return (
     <div className="space-y-6" data-testid="rc-overview">
-      {groups.length === 0 && filter ? (
-        <NoMatch filter={filter} onAll={onAll} />
+      {groups.length === 0 && picking(pick) ? (
+        <NoMatch pick={pick} onAll={onAll} />
       ) : (
         groups.map(([c, list]) => (
           <section key={c.key} aria-label={c.name} data-testid={`rc-group-${c.key}`}>

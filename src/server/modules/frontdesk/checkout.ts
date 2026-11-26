@@ -34,7 +34,7 @@ import {
   type CouponPlatform,
 } from '@shared/checkout';
 import { rateText } from '@shared/benefits';
-import { COUPON_ISSUE_KIND_LABELS, type CouponIssueKind } from '@shared/coupons';
+import { COUPON_ISSUE_KIND_LABELS, formatStoreCouponCode, type CouponIssueKind } from '@shared/coupons';
 import { describeHours, PAYMENT_METHODS } from '@shared/labels';
 import { formatYuan } from '@shared/money';
 import { can } from '@shared/permissions';
@@ -57,7 +57,7 @@ import { closeUsagesOfVisits, openUsagesOf } from '../usages';
 import { unservedDishesOf } from '../dining';
 import { applyVisitTicket, resolveTicketType } from './tickets';
 import { assertNoRefunds, listRefundsOf } from './refunds';
-import { CouponCodeInput, couponLines, memberCouponOptions, redeemCoupon, returnCheckoutCoupons, withTicketLines } from '../coupon-checkout';
+import { CouponCodeInput, couponLines, couponMomentOf, memberCouponOptions, redeemCoupon, returnCheckoutCoupons, withTicketLines } from '../coupon-checkout';
 import { memberDiscountPreview, settleMemberDiscount, type MemberDiscountEntry } from '../member-discounts';
 import { memberTicketExtensions } from '../ticket-extensions';
 import { countCardOptions, redeemCountCards, returnCheckoutCountCards } from '../count-cards';
@@ -286,7 +286,7 @@ export async function previewCheckout(deps: Deps, visitIds: number[], at = new D
       ),
       visits.flatMap((v) => (v.ticket ? [{ visitId: v.visitId, typeId: v.ticket.typeId, name: v.ticket.name, amount: v.ticket.amount }] : [])),
     );
-    const storeCoupons = await memberCouponOptions(tx, memberIds, couponBase, date);
+    const storeCoupons = await memberCouponOptions(tx, memberIds, couponBase, date, couponMomentOf(date, at, deps.config.timezone));
     // 次卡（v0.7.28）：与券同一套明细（已挂的明细 + 此刻的门票）
     const countCards = await countCardOptions(tx, memberIds, couponBase, date);
     // 会员折扣（v0.7.25）：按会员本人账单上的明细加上此刻的门票算，省得最多的在前（没选券、优惠时第一项要带上）
@@ -490,6 +490,7 @@ export async function recordCheckoutPayments(
       date: a.date,
       at: a.at,
       staffId: a.ctx.actor.id,
+      timeZone: deps.config.timezone,
     });
     await tx`
       INSERT INTO checkout_payments (checkout_id, method, amount, ref, store_coupon_id, coupon_lines)
@@ -993,9 +994,10 @@ async function checkoutPerks(db: Db, id: number): Promise<CheckoutPerk[]> {
       authorizedByName: string | null;
       benefitName: string | null;
       approvedByName: string | null;
+      couponCode: string | null;
     }[]
   >`
-    SELECT p.id AS payment_id, p.method, p.amount, p.ref, p.coupon_lines AS line_ids, p.discount_rate,
+    SELECT p.id AS payment_id, p.method, p.amount, p.ref, p.coupon_lines AS line_ids, p.discount_rate, k.code AS coupon_code,
            t.name AS template_name, t.gift, ci.kind AS issue_kind, ci.reason AS issue_reason, ci.gift_channel,
            isu.display_name AS issued_by_name, au.display_name AS authorized_by_name,
            b.name AS benefit_name, ap.display_name AS approved_by_name
@@ -1018,9 +1020,12 @@ async function checkoutPerks(db: Db, id: number): Promise<CheckoutPerk[]> {
       return { ...base, kind: 'member_discount', name: r.benefitName ?? '', detail: r.discountRate === null ? '' : `${rateText(r.discountRate)}，按会员档阶自动打`, channel: '', operators: [] };
     }
     const name = r.templateName ?? r.ref;
+    // 8.1.40：结账单上印券号
+    const code = r.couponCode ? formatStoreCouponCode(r.couponCode) : null;
     if (r.gift) {
       return {
         ...base,
+        code,
         kind: 'gift',
         name,
         detail: r.issueReason ?? '',
@@ -1032,6 +1037,7 @@ async function checkoutPerks(db: Db, id: number): Promise<CheckoutPerk[]> {
     const manual = r.issueKind === 'manual';
     return {
       ...base,
+      code,
       kind: 'coupon',
       name,
       detail: manual ? (r.issueReason ?? '') : r.issueKind ? COUPON_ISSUE_KIND_LABELS[r.issueKind] : '',

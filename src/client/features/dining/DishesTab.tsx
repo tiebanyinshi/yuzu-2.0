@@ -58,7 +58,9 @@ import { DishImportDialog } from './DishImportDialog';
 import { DishPendingNotice } from './DishPendingNotice';
 import { DishPriceDialog, PriceHistoryDialog } from './DishPriceDialog';
 import { sendDishOp, stateBlockerOf, useDishPending } from './dishPendingStore';
-import { useDishes, useRefreshDishes } from './dishQueries';
+import type { DishCostRow } from '@shared/dish-cost';
+import { useDishCosts, useDishes, useRefreshDishes } from './dishQueries';
+import { DishCostText, needsRecipe } from './DishCost';
 import { DishSortDialog } from './DishSortDialog';
 import { OutletFilter, SlotBadge } from './slots';
 
@@ -89,6 +91,9 @@ export function DishesTab() {
   const [sorting, setSorting] = useState(false);
   const [deleting, setDeleting] = useState<DishRow | null>(null);
   const pending = useDishPending();
+  /** 8.1.41：成本卡与毛利；「只看没有成本卡的」 */
+  const costs = useDishCosts();
+  const [noRecipeOnly, setNoRecipeOnly] = useState(false);
 
   const mine = DINING_OUTLET_KEYS.filter((o) => can(DISH_OUTLET_PERMISSIONS[o]));
   const canPrice = can(DISH_PRICE_PERMISSION);
@@ -97,7 +102,12 @@ export function DishesTab() {
   // 删除了的不算在表里（勾「显示已删除」才列出来）
   const all = useMemo(() => everything.filter((d) => !d.deleted), [everything]);
   const deletedCount = everything.length - all.length;
-  const shown = useMemo(() => filterDishes(everything, { q, outlet, status, showDeleted }), [everything, q, outlet, status, showDeleted]);
+  const costOf = useMemo(() => new Map((costs.data?.rows ?? []).map((r) => [r.itemId, r])), [costs.data]);
+  const noRecipeCount = costs.data ? all.filter((d) => needsRecipe(d, costOf.get(d.id))).length : 0;
+  const shown = useMemo(() => {
+    const list = filterDishes(everything, { q, outlet, status, showDeleted });
+    return noRecipeOnly ? list.filter((d) => needsRecipe(d, costOf.get(d.id))) : list;
+  }, [everything, q, outlet, status, showDeleted, noRecipeOnly, costOf]);
   const counts: Partial<Record<DiningOutlet | 'all', number>> = { all: all.length };
   for (const d of all) counts[d.outlet] = (counts[d.outlet] ?? 0) + 1;
   // 只勾得上能维护、没删除、还在表里的
@@ -303,6 +313,12 @@ export function DishesTab() {
           <div className="w-full max-w-full overflow-x-auto sm:w-auto">
             <Segmented value={status} onChange={setStatus} options={STATUS_OPTIONS} ariaLabel="状态" className="w-full sm:w-auto" />
           </div>
+          {(noRecipeCount > 0 || noRecipeOnly) && (
+            <label className="inline-flex min-h-11 items-center gap-2 text-[13.5px] font-semibold text-ink-2" data-testid="dishes-no-recipe">
+              <input type="checkbox" className="size-4" checked={noRecipeOnly} onChange={(e) => setNoRecipeOnly(e.target.checked)} />
+              只看没有成本卡的（{noRecipeCount}）
+            </label>
+          )}
           {deletedCount > 0 && (
             <label className="inline-flex min-h-11 items-center gap-2 text-[13.5px] font-semibold text-ink-2" data-testid="dishes-show-deleted">
               <input type="checkbox" className="size-4" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
@@ -397,6 +413,7 @@ export function DishesTab() {
               <DishLine
                 key={d.id}
                 d={d}
+                cost={costs.data ? { row: costOf.get(d.id), canSeeCost: costs.data.canSeeCost } : null}
                 editable={canEdit(d)}
                 priceable={canPrice && canEdit(d)}
                 busy={busy === d.id}
@@ -518,6 +535,7 @@ function Thumb({ d }: { d: DishRow }) {
 
 function DishLine({
   d,
+  cost,
   editable,
   priceable,
   busy,
@@ -530,6 +548,8 @@ function DishLine({
   onRestore,
 }: {
   d: DishRow;
+  /** 8.1.41：成本卡（还没取到为空） */
+  cost: { row: DishCostRow | undefined; canSeeCost: boolean } | null;
   editable: boolean;
   priceable: boolean;
   busy: boolean;
@@ -597,6 +617,7 @@ function DishLine({
       <span className="inline-flex flex-col items-end text-right xl:order-6" data-testid={`dish-price-text-${d.name}`}>
         <Money cents={d.price} className="text-[16px] font-bold" />
         {d.prices.length > 1 && <span className="text-[12px] text-ink-3">{d.prices.length} 档规格</span>}
+        {cost && <DishCostText d={d} row={cost.row} canSeeCost={cost.canSeeCost} />}
       </span>
       <div className="col-span-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink-2 xl:contents">
         <span className="xl:order-3 xl:truncate">{d.category || '—'}</span>

@@ -41,7 +41,11 @@ describe('岗位职权数据（P04）', () => {
     // 280（8.1.37 餐饮台账）给总经办与前厅、餐饮、康美负责人各记一条
     const ledger = rows.filter((r) => r.permission === 'dining.ledger').map((r) => r.positionKey);
     expect([...ledger].sort()).toEqual(['dining.lead', 'front.lead', 'gmo', 'kangmei.lead']);
-    expect(log.slice(2).map((l) => [l.action, l.positionKey])).toEqual([...[...announce].sort(), ...[...ledger].sort()].map((k) => ['suggestions', k]));
+    // 340（8.1.42 备用金合并）给原来有零采备用金两项的岗位各记一条（换成「备用金申用」）
+    const pettyUse = rows.filter((r) => r.permission === 'petty.use').map((r) => r.positionKey);
+    expect([...pettyUse].sort()).toEqual(['gmo', 'outreach.lead', 'outreach.staff']);
+    expect(rows.some((r) => r.permission.startsWith('pool.'))).toBe(false);
+    expect(log.slice(2).map((l) => [l.action, l.positionKey])).toEqual([...[...announce].sort(), ...[...ledger].sort(), ...[...pettyUse].sort()].map((k) => ['suggestions', k]));
     await expect(ctx.sql`DELETE FROM position_config_log`).rejects.toThrow();
   });
 

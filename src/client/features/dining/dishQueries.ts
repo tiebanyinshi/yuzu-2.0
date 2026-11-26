@@ -3,6 +3,7 @@
 // 没收到结果的进「结果待确认」（8.1.16，dishPendingStore.ts）。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { DishCosts } from '@shared/dish-cost';
 import type { DishPriceChange, DishesBoard } from '@shared/dishes';
 import type { PriceChangeStoreFilter } from '@shared/frontdesk-v8117';
 import { api } from '../../lib/api';
@@ -13,6 +14,9 @@ const priceChangesKey = (itemId: number | null, store: PriceChangeStoreFilter = 
 
 /** 全部菜品（搜索与筛选在页面上做，用的是与服务端同一个 filterDishes） */
 export const useDishes = () => useQuery({ queryKey: dishesKey, queryFn: () => api.get<DishesBoard>('/api/dining/dishes') });
+
+/** 8.1.41：每道菜有没有成本卡、一份成本（有「看成本」权限才有金额） */
+export const useDishCosts = () => useQuery({ queryKey: [...dishesKey, 'costs'] as const, queryFn: () => api.get<DishCosts>('/api/dining/dishes/costs') });
 
 /** 改价记录：给了菜品只看这一道，不给是全部（新的在前）；store 按门店筛（8.1.17 BW-11：hq 全公司的价目、数字是那家店的本店价） */
 export const useDishPriceChanges = (itemId: number | null, enabled = true, store: PriceChangeStoreFilter = 'all') =>

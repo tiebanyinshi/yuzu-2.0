@@ -43,13 +43,14 @@ export function NetworkBanner({ path, openNetwork }: { path: string; openNetwork
 
   if (conn.state === 'offline') {
     const since = conn.downSince ? hhmm(conn.downSince) : null;
+    // 8.1.42：右下角这一小条不接点击，下面的按钮照样点得到
     if (compact) {
       return (
         <div
           role="status"
           data-testid="network-banner"
           data-state="offline"
-          className="fixed right-3 bottom-3 z-[80] flex items-center gap-2 rounded-full bg-clay px-3.5 py-2 text-[13px] font-bold text-paper shadow-pop print:hidden"
+          className="pointer-events-none fixed right-3 bottom-3 z-[80] flex items-center gap-2 rounded-full bg-clay px-3.5 py-2 text-[13px] font-bold text-paper shadow-pop print:hidden"
         >
           <WifiOff className="size-4" />
           网络断了，正在重新连接

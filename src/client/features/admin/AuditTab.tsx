@@ -70,6 +70,7 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   frontdesk_checkin: { label: '接待发牌', tone: 'pine' },
   frontdesk_swap: { label: '换牌', tone: 'lake' },
   frontdesk_group: { label: '同行绑牌', tone: 'lake' },
+  frontdesk_bind_member: { label: '买单时记会员', tone: 'lake' },
   frontdesk_cancel: { label: '撤销来访', tone: 'clay' },
   frontdesk_post: { label: '手牌挂账', tone: 'yuzu' },
   emenu_order: { label: '平板点餐下单', tone: 'yuzu' },
@@ -112,6 +113,9 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   visit_incident: { label: '异常处置', tone: 'yuzu' },
   incident_assigned: { label: '异常待办指派', tone: 'lake' },
   incident_resolved: { label: '异常待办处理结果', tone: 'pine' },
+  // 8.1.44 前台备注
+  visit_remark: { label: '前台备注', tone: 'neutral' },
+  visit_remark_removed: { label: '撤下前台备注', tone: 'clay' },
   // 8.1.15 块 B（docs/DINING_V8115.md）：桌台动作
   table_clear: { label: '清台', tone: 'neutral' },
   table_maintenance: { label: '桌台维修', tone: 'clay' },
@@ -119,6 +123,9 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   table_merge: { label: '并台', tone: 'lake' },
   table_split: { label: '拆台', tone: 'lake' },
   table_park: { label: '包房转挂账', tone: 'ember' },
+  coupon_ledger_export: { label: '导出券台账', tone: 'lake' },
+  coupon_terms_changed: { label: '改已发券的使用条件', tone: 'clay' },
+  gift_card_batch: { label: '生成礼品卡', tone: 'lake' },
   // 菜品管理（8.1.15，docs/DISHES_V8115.md）
   dish_saved: { label: '保存菜品', tone: 'neutral' },
   dish_active_set: { label: '菜品上下架', tone: 'neutral' },

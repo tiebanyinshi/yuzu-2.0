@@ -99,6 +99,8 @@ export type AuditAction =
   | 'frontdesk_checkin'
   | 'frontdesk_swap'
   | 'frontdesk_group'
+  // 8.1.44：买单时把会员记到手牌上（现场建档或查到的老会员）
+  | 'frontdesk_bind_member'
   | 'frontdesk_cancel'
   | 'frontdesk_post'
   | 'frontdesk_void'
@@ -198,6 +200,8 @@ export type AuditAction =
   | 'checkout_refund'
   | 'checkout_refund_void'
   | 'coupon_template_saved'
+  // 8.1.44：发过券的模板改使用条件（改前、改后、已发几张）
+  | 'coupon_terms_changed'
   | 'coupon_rule_saved'
   | 'coupon_issued'
   | 'coupon_batch_created'
@@ -329,8 +333,8 @@ export type AuditAction =
   | 'design_asset_edit'
   | 'design_asset_archive'
   | 'design_slot_assign'
-  // 8.1.9 零采备用金：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）
-  | 'pool_use'
+  // 备用金申用（8.1.42；8.1.42 以前的记录是 pool_use）：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）
+  | 'petty_use'
   // 8.1.9 库管入库台账导入
   | 'receipt_import'
   // 8.1.20 出入库台账导入
@@ -366,6 +370,9 @@ export type AuditAction =
   // 8.1.39：菜品的计价方式（按价目 / 时价、杂项 / 称重）；包房转挂账
   | 'dish_price_mode'
   | 'table_park'
+  // 8.1.40：导出券的发放台账；生成一批礼品卡
+  | 'coupon_ledger_export'
+  | 'gift_card_batch'
   // 8.1.15 房态中心：服务房间的登记、续钟、换房、退房、并房 / 拆并，改房态（待清、清洁完成、维修、恢复），后台的房型
   | 'room_center_register'
   | 'room_center_extend'
@@ -392,6 +399,9 @@ export type AuditAction =
   | 'dish_restored'
   // 8.1.16 菜品维护的「结果待确认」：确认作废一个操作编号（Codex 审查 d12390f 的 P1，docs/DISHES_V8115.md 第 9 节）
   | 'dish_op_abandoned'
+  // 8.1.44 前台备注（docs/V8144_CASHIER.md）：写一条、撤下一条
+  | 'visit_remark'
+  | 'visit_remark_removed'
   // 员工办公 v1.1 第 2 批（docs/OA_MOBILE.md）：排班发布、排班授权与撤销
   | 'oa_schedule_published'
   | 'oa_schedule_grant_created'

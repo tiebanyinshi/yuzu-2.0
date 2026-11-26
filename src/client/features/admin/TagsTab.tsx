@@ -36,6 +36,7 @@ import { BlacklistPane } from '../frontdesk/blacklist';
 import { ReaderStatusLine, useCardReader, type CardMessage } from '../frontdesk/TagCardInput';
 import { SubPane } from '../../components/SubNav';
 import { AdminPage } from './AdminShell';
+import { BuyCodesCard } from './BuyCodesCard';
 
 type AdminTag = HandTag & { inUse: boolean; lockedByName: string | null; lockedAt: string | null; cardUid: string | null };
 
@@ -76,6 +77,14 @@ export function TagsTab() {
             }}
           />
           <RiskSwitchCard />
+          {/* 8.1.44 收银台买角：数字代号 → 项目（清单待业务提供） */}
+          <BuyCodesCard
+            rules={rules.data}
+            onSaved={() => {
+              refresh();
+              toast({ tone: 'success', title: '买角代号已保存' });
+            }}
+          />
         </SubPane>
       )}
       {can('frontdesk.blacklist') && (

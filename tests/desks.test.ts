@@ -160,6 +160,8 @@ describe('结账单的「优惠与赠送」与经办人', () => {
         kind: 'gift',
         name: '发卡搓澡券',
         amount: 6800,
+        // 8.1.40：结账单的优惠带券号（小票、打印页、回执上印）
+        code: expect.stringMatching(/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/),
         detail: '老客户生日',
         channel: '管家部',
         operators: [

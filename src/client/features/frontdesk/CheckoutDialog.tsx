@@ -36,6 +36,7 @@ import { RefundPanel, RefundsList } from './RefundPanel';
 import { stayText, useCheckout, useCheckoutDaySummary, useCheckoutPreview, useCheckouts, useRefreshFrontdesk, useTicketTypes } from './queries';
 import { InvoiceRequestButton } from '../sales-invoices/InvoiceRequest';
 import { DiningOnlyPanel } from './DiningOnlyPanel';
+import { CheckoutMemberLookup, CompanionTools } from './CheckoutCompanions';
 
 // 结账（S3）：勾选要一起结的手牌 → 核对门票与明细 → 登记收款（可组合）→ 确认结清。
 // 应收合计、储值扣款构成以服务端为准：门票刚好跳档、余额或扣款规则变化时服务端拒绝，页面刷新后重新核对。
@@ -229,6 +230,12 @@ export function CheckoutDialog({
   const choices = inStore.filter((t) => showAll || groupIds.has(t.visit!.id) || selected.includes(t.visit!.id));
   const toggle = (id: number) => edit(() => setSelected((s) => (s.includes(id) ? (s.length > 1 ? s.filter((x) => x !== id) : s) : [...s, id])));
   const busy = op.busy;
+  // 8.1.44：记了同行、记了会员以后重新核对、刷新手牌
+  const refreshFrontdesk = useRefreshFrontdesk();
+  const refreshAfter = (ids: number[]) => {
+    refreshFrontdesk(ids);
+    void preview.refetch();
+  };
 
   if (result) {
     return (
@@ -333,6 +340,7 @@ export function CheckoutDialog({
               + 合并其他在店手牌（共 {inStore.length} 张在店）
             </button>
           )}
+          <CompanionTools visit={visit} tags={tags} selected={selected} locked={locked} onChanged={() => refreshAfter(selected)} />
         </div>
 
         {/* 核对 */}
@@ -366,6 +374,11 @@ export function CheckoutDialog({
             locked={locked || pay.hasDiscount || pay.hasStoreCoupon}
             onChange={(cardId, n) => edit(() => setCardUses((x) => ({ ...x, [cardId]: n })))}
           />
+        )}
+
+        {/* 8.1.44：买单时查会员、现场建档（记到这次结账里没有会员的手牌上） */}
+        {p && !backfill.state.active && (
+          <CheckoutMemberLookup preview={p} locked={locked} onChanged={() => refreshAfter(selected)} onAddVisit={(id) => edit(() => setSelected((x) => (x.includes(id) ? x : [...x, id])))} />
         )}
 
         {/* 收款 */}
