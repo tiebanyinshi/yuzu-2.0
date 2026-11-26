@@ -8,7 +8,7 @@
 // 提交带操作编号：先在本机记下这一笔再发，结果不确定时可以原样重提、查回或确认作废（AGENTS.md「结果待确认」）。
 
 import { useMemo, useState, type ReactNode } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ClipboardList, PencilLine, Search, ShoppingCart, Store as StoreIcon, Warehouse } from 'lucide-react';
 import { formatYuan } from '@shared/money';
@@ -19,6 +19,7 @@ import { lineGrossCents, SHOP_BLOCK_LABELS, SHOP_CUSTOM_UNITS, type ShopCatalog,
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
+import { lazyPage } from '../../lib/lazyPage';
 import { useSession } from '../../lib/session';
 import { cn, formatDateTime, uuid } from '../../lib/utils';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -27,6 +28,8 @@ import { Badge, Button, Card, Field, Input, Notice, Select, Skeleton, Textarea }
 import { ErpPage } from '../erp/ErpHome';
 import { PriorityDot } from '../requests/parts';
 import { SkuAdmin } from './SkuAdmin';
+
+const ShopComparePage = lazyPage(() => import('./ShopComparePage').then((m) => m.ShopComparePage));
 
 const BASE = '/erp/shop';
 const SUBMIT_URL = '/api/erp/shop/requests';
@@ -86,11 +89,15 @@ function useCart() {
 
 export function ShopPage() {
   const params = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const session = useSession();
   const path = (params['*'] ?? '').replace(/\/+$/, '');
+  const rawUrlStore = searchParams.get('storeId');
+  const urlStoreId = rawUrlStore && /^[1-9]\d*$/.test(rawUrlStore) ? Number(rawUrlStore) : null;
   const [storeId, setStoreId] = useState<number | null>(null);
-  const q = useQuery({ queryKey: catalogKey(storeId), queryFn: () => api.get<ShopCatalog>(`/api/erp/shop/catalog${storeId ? `?storeId=${storeId}` : ''}`) });
+  const activeStoreId = storeId ?? urlStoreId;
+  const q = useQuery({ queryKey: catalogKey(activeStoreId), queryFn: () => api.get<ShopCatalog>(`/api/erp/shop/catalog${activeStoreId ? `?storeId=${activeStoreId}` : ''}`) });
   const { cart, setCart } = useCart();
   const count = cart.lines.length;
   const c = q.data;
@@ -102,7 +109,7 @@ export function ShopPage() {
     { to: `${BASE}/pool`, label: '需求池', icon: <Warehouse className="size-4" />, show: !!c?.me.canPool },
     { to: `${BASE}/skus`, label: 'SKU 维护', icon: <Warehouse className="size-4" />, show: !!c && (c.me.canManageSku || c.me.canApproveSku) },
   ];
-  const active = (to: string) => (to === BASE ? path === '' || path.startsWith('item') : `${BASE}/${path}`.startsWith(to));
+  const active = (to: string) => (to === BASE ? path === '' || path.startsWith('item') || path.startsWith('compare') : `${BASE}/${path}`.startsWith(to));
   const nav = (
     <nav aria-label="采购商城" className="mb-4 flex flex-wrap gap-1.5" data-testid="shop-tabs">
       {tabs
@@ -122,8 +129,13 @@ export function ShopPage() {
         ))}
     </nav>
   );
+  const compareSlug = path.startsWith('compare/') ? (path.slice(8).split('/')[0] ?? '') : '';
+  const compareMaterialId = /^[1-9]\d*$/.test(compareSlug) ? Number(compareSlug) : 0;
+  const updatedAt = q.dataUpdatedAt ? new Date(q.dataUpdatedAt).toISOString() : new Date().toISOString();
   let body: ReactNode;
-  if (q.isPending) body = <Skeleton className="h-80" />;
+  if (path.startsWith('compare/')) {
+    body = <ShopComparePage materialId={compareMaterialId} catalog={q.data} loading={q.isPending} error={q.error} retrying={q.isFetching} onRetry={() => void q.refetch()} updatedAt={updatedAt} />;
+  } else if (q.isPending) body = <Skeleton className="h-80" />;
   else if (q.error) body = <LoadFailed title="商城没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
   else if (path === '') body = <Home c={q.data} setStore={setStoreId} />;
   else if (path.startsWith('item/')) body = <ItemPage c={q.data} materialId={Number(path.slice(5))} cart={cart} setCart={setCart} />;
@@ -207,24 +219,28 @@ function Home({ c, setStore }: { c: ShopCatalog; setStore: (id: number) => void 
         <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="shop-items">
           {items.map((i) => (
             <li key={i.material.id}>
-              <Link
-                to={`${BASE}/item/${i.material.id}`}
-                className="tap mo-lift flex h-full flex-col rounded-xl border border-line bg-card p-4 shadow-card hover:border-pine/50"
-                data-testid={`shop-item-${i.material.id}`}
-              >
-                <span className="text-[12px] text-ink-3">{i.material.category || '未分类'}</span>
-                <span className="mt-0.5 text-[15px] font-bold text-ink">{i.material.name}</span>
-                <span className="text-[12px] text-ink-3">
-                  {i.material.code}
-                  {i.material.specification && ` · ${i.material.specification}`}
-                </span>
-                <span className="mt-auto flex items-end justify-between pt-3">
+              <div className="mo-lift flex h-full flex-col rounded-xl border border-line bg-card p-4 shadow-card hover:border-pine/50">
+                <Link to={`${BASE}/item/${i.material.id}`} className="flex flex-1 flex-col" data-testid={`shop-item-${i.material.id}`}>
+                  <span className="text-[12.5px] text-ink-3">{i.material.category || '未分类'}</span>
+                  <span className="mt-0.5 text-[15px] font-bold text-ink">{i.material.name}</span>
+                  <span className="text-[12.5px] text-ink-3">
+                    {i.material.code}
+                    {i.material.specification && ` · ${i.material.specification}`}
+                  </span>
+                </Link>
+                <div className="mt-auto flex items-end justify-between gap-2 pt-3">
                   <span className="text-[16px] font-bold text-clay">
                     {i.fromGrossCents !== null ? `${formatYuan(i.fromGrossCents)} 起` : <span className="text-[13px] font-normal text-ink-4">暂无可采购价</span>}
                   </span>
-                  <span className="text-[12px] text-ink-3">{i.purchasable} 家可选 →</span>
-                </span>
-              </Link>
+                  <Link
+                    to={`${BASE}/compare/${i.material.id}?from=catalog&storeId=${c.storeId}`}
+                    className="tap relative inline-flex items-center text-[12.5px] font-semibold text-pine hover:underline"
+                    data-testid={`shop-compare-link-${i.material.id}`}
+                  >
+                    {i.purchasable} 家可选 →
+                  </Link>
+                </div>
+              </div>
             </li>
           ))}
         </ul>
