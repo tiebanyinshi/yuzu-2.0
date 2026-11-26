@@ -4,6 +4,7 @@ import { resolve as resolvePath } from 'node:path';
 // 版本号只写在 package.json 一处（工程治理一期，docs/GOVERNANCE.md）：打包时带进来，发版只改 package.json 与锁文件
 import { version as PACKAGE_VERSION } from '../../package.json';
 import { SETTABLE_INSTANCES, type InstanceKind } from '@shared/instance';
+import { LOCKER_DRIVERS, type LockerDriverKind } from '@shared/lockers';
 import { loadIntegrationsConfig, type IntegrationsConfig } from './integrations/config';
 import { loadProtectionConfig, type ProtectionConfig } from './lib/protect';
 
@@ -58,6 +59,28 @@ export interface AppConfig {
   mallApiKey: string | null;
   /** 热表归档的保留天数（数据库评估，docs/DB_REVIEW_V8147.md 第 5 节）：超过的由每小时的归档任务挪进 archived_* 表 */
   archive: ArchiveConfig;
+  /** 智能柜锁（docs/LOCKERS_V8149.md）：控制器到货前是 none */
+  lockers: LockerConfig;
+}
+
+/** 智能柜锁控制器（LOCKER_DRIVER / LOCKER_BRIDGE_URL / LOCKER_BRIDGE_TOKEN） */
+export interface LockerConfig {
+  driver: LockerDriverKind;
+  /** http：本机柜锁桥的地址（只认 http(s)） */
+  bridgeUrl: string | null;
+  /** http：调柜锁桥时带的密钥（至少 32 个字符；只放 .env） */
+  bridgeToken: string | null;
+}
+
+export function loadLockerConfig(env: NodeJS.ProcessEnv): LockerConfig {
+  const driver = (env.LOCKER_DRIVER?.trim().toLowerCase() || 'none') as LockerDriverKind;
+  if (!(LOCKER_DRIVERS as readonly string[]).includes(driver)) throw new Error(`LOCKER_DRIVER 只能是 ${LOCKER_DRIVERS.join(' / ')}`);
+  if (driver !== 'http') return { driver, bridgeUrl: null, bridgeToken: null };
+  const url = env.LOCKER_BRIDGE_URL?.trim() ?? '';
+  if (!/^https?:\/\/[^\s]+$/.test(url)) throw new Error('LOCKER_DRIVER=http 时要设 LOCKER_BRIDGE_URL（柜锁桥的 http 地址）');
+  const token = env.LOCKER_BRIDGE_TOKEN?.trim() ?? '';
+  if (token.length < 32) throw new Error('LOCKER_BRIDGE_TOKEN 至少 32 个字符（可以用 openssl rand -hex 32 生成）');
+  return { driver, bridgeUrl: url.replace(/\/+$/, ''), bridgeToken: token };
 }
 
 /** 保留天数：0 = 不归档这一类 */
@@ -307,6 +330,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     geo: overrides.geo ?? loadGeoConfig(process.env, env),
     mallApiKey: loadMallApiKey(process.env),
     archive: overrides.archive ?? loadArchiveConfig(process.env),
+    lockers: overrides.lockers ?? loadLockerConfig(process.env),
     ...overrides,
   };
 }

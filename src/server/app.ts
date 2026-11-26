@@ -101,6 +101,7 @@ import { registerMarketingCostRoutes } from './modules/marketing-cost';
 import { registerMembershipRoutes } from './modules/membership';
 import { registerBenefitRoutes } from './modules/benefits';
 import { registerVipLockerRoutes } from './modules/vip-lockers';
+import { registerLockerRoutes } from './modules/lockers';
 import { registerBenefitTierRoutes } from './modules/benefit-tiers';
 import { registerTrialRoutes } from './modules/member-trials';
 import { registerDeviceRoutes } from './modules/devices';
@@ -447,6 +448,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerPurchaseLedgerRoutes(app, deps);
   registerLegacyRoutes(app, deps);
   registerFrontdeskRoutes(app, deps);
+  // 柜况与智能柜锁（8.1.49，docs/LOCKERS_V8149.md）
+  registerLockerRoutes(app, deps);
   registerTechnicianRoutes(app, deps);
   registerClockroomRoutes(app, deps);
   registerDiningRoutes(app, deps);

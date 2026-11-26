@@ -125,6 +125,7 @@ export type AuditAction =
   | 'hand_tags_created'
   | 'hand_tags_imported'
   | 'hand_tag_locked'
+  | 'locker_opened'
   | 'hand_tag_unlocked'
   | 'hand_tag_updated'
   | 'technician_saved'
