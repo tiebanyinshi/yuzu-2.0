@@ -11,16 +11,21 @@ import type { Db, Fragment, Tx } from '../db';
 
 export const DEFAULT_STORE_ID = 1;
 
-const als = new AsyncLocalStorage<{ storeId: number; storeSet?: number[] }>();
+const als = new AsyncLocalStorage<{ storeId: number; storeSet?: number[]; requestId?: string }>();
+
+/** 这次请求的编号（8.1.48，lib/http-kit.ts）：审计记录记上它，日志与审计能对上；自动任务里没有 */
+export function currentRequestId(): string | undefined {
+  return als.getStore()?.requestId;
+}
 
 /** 这次请求（或 runInStore 里）的当前门店；没有上下文时是本店 */
 export function currentStoreId(): number {
   return als.getStore()?.storeId ?? DEFAULT_STORE_ID;
 }
 
-/** 在某家店的上下文里执行（请求的门店、自动任务逐家处理时） */
-export function runInStore<T>(storeId: number, fn: () => T): T {
-  return als.run({ storeId }, fn);
+/** 在某家店的上下文里执行（请求的门店、自动任务逐家处理时）；请求编号不给就沿用外层的 */
+export function runInStore<T>(storeId: number, fn: () => T, requestId?: string): T {
+  return als.run({ storeId, requestId: requestId ?? currentRequestId() }, fn);
 }
 
 /** 报表、看板看哪几家店：默认当前门店；「合并看」时是 runWithStoreSet 给的那几家 */
@@ -31,7 +36,7 @@ export function reportStoreIds(): number[] {
 
 /** 「合并看」（MD18）：在这几家店的范围里出报表（当前门店不变，写入照旧记当前门店） */
 export function runWithStoreSet<T>(ids: number[], fn: () => T): T {
-  return als.run({ storeId: currentStoreId(), storeSet: ids }, fn);
+  return als.run({ storeId: currentStoreId(), storeSet: ids, requestId: currentRequestId() }, fn);
 }
 
 /** 报表的门店条件：列名 IN（这几家店）。col 形如 'c.store_id' */

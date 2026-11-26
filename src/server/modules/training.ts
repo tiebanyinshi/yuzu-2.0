@@ -6,6 +6,7 @@
 //   · 内容按 SHA-256 只存一份（4 MB 一块存数据库），读的时候支持 Range（视频拖动、PDF 按需读）；
 //   · 版本只追加，换新版本不清「看过」；谁看过每人每份文件一行。
 
+import { every } from '../lib/throttle';
 import { createHash, randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
@@ -382,10 +383,9 @@ async function dbNowMs(db: Db): Promise<number> {
 const lockUploadKey = (tx: Tx, key: string) => tx`SELECT pg_advisory_xact_lock(hashtextextended(${`training_upload:${key}`}, 0))`;
 
 /** 定时清理（jobs.ts 每分钟调，自己按小时节流）：24 小时还没传完的作废（连带传了一半的块）；「不传了」的作废记录 10 天后清掉（编号 7 天过期，清掉时早已不能重开） */
-let lastSweep = 0;
+const sweepDue = every(60 * 60 * 1000);
 export async function sweepTrainingUploads(db: Db, now = Date.now()): Promise<number> {
-  if (now - lastSweep < 60 * 60 * 1000) return 0;
-  lastSweep = now;
+  if (!sweepDue(now)) return 0;
   const rows = await db`DELETE FROM training_uploads WHERE status = 'open' AND created_at < now() - interval '24 hours' RETURNING id`;
   // 「不传了」留下的作废记录保留 10 天（大于编号 7 天有效期 + 24 小时时钟容差），清掉后同一个 UUIDv7 已被 startUpload 永久拒绝（Codex 审查 04eb112 / bfc32cd）
   await db`DELETE FROM training_uploads WHERE status = 'cancelled' AND coalesce(finished_at, created_at) < now() - make_interval(days => ${TRAINING_CANCELLED_KEEP_DAYS})`;

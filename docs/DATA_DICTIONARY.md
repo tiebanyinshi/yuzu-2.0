@@ -7,7 +7,7 @@
 「只追加」的表（账本、流水、审批动作、归档表）有触发器拒绝改删，改错走冲正或作废登记。
 列表里「键」：`PK` 主键；「引用」是外键指向的表。
 
-共 449 张表、5347 列。
+共 449 张表、5348 列。
 
 ## 目录
 
@@ -395,6 +395,7 @@ v0.7.30（主线）审批中心（docs/APPROVALS.md，默认 A1–A10 待确认�
 | business_date | date |  | 是 |  |  |  |
 | created_at | timestamp with time zone |  |  | now() |  |  |
 | store_id | bigint |  |  | yuzu_store() | stores |  |
+| request_id | text |  | 是 |  |  | 写这条审计的那次请求的编号（响应头 x-request-id、日志里的 reqId）；自动任务写的为空（迁移 490） |
 
 ### auth_grants
 
