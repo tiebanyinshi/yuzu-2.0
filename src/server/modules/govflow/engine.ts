@@ -106,6 +106,8 @@ export interface TypeHooks {
   ccRoles?: readonly GfRole[] | ((doc: DocRow) => readonly GfRole[]);
   /** 提交（含退回后再提交）前核对业务单据、把它改成审核中 */
   beforeSubmit?: (tx: Tx, doc: DocRow, actor: Actor) => Promise<void>;
+  /** 推进执行前（开始执行 / 完成 / 归档）：合同签署前核对类型确认与供应商入库，用印后定归档期限 */
+  beforeExecute?: (tx: Tx, doc: DocRow, step: 'start' | 'complete' | 'archive', actor: Actor) => Promise<void>;
 }
 const HOOKS = new Map<string, TypeHooks>();
 export function registerHooks(docType: string, hooks: TypeHooks) {
