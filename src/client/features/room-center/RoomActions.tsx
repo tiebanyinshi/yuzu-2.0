@@ -345,9 +345,8 @@ export function CheckoutRoomDialog({ room, onClose, onDone }: { room: RoomCard; 
   const [finishError, setFinishError] = useState<string | null>(null);
   const p = preview.data;
   const running = p?.guests.flatMap((g) => g.running) ?? [];
-  // 房费（FT-10 / FT-17）退房时记到手牌上，也算没结的
-  const fee = p?.roomFee?.amount ?? 0;
-  const unpaid = (p?.unpaidTotal ?? 0) + fee;
+  // 房费（FT-10 / FT-17）只在收银台结账时收（按退房这一刻截止），退房时不记
+  const unpaid = p?.unpaidTotal ?? 0;
   const ok = !!p && p.guests.length > 0 && running.length === 0 && (unpaid === 0 || inHouse);
   const finish = async (sessionId: number, waiting: boolean) => {
     setFinishing(sessionId);
@@ -473,7 +472,7 @@ export function CheckoutRoomDialog({ room, onClose, onDone }: { room: RoomCard; 
           {p.roomFee && (
             <Notice
               tone={p.roomFee.amount > 0 ? 'warning' : 'info'}
-              title={p.roomFee.amount > 0 ? `房费 ${formatYuan(p.roomFee.amount)}（退房时记到手牌 ${p.roomFee.tagCode} 上）` : '现在退房不收房费'}
+              title={p.roomFee.amount > 0 ? `房费约 ${formatYuan(p.roomFee.amount)}（手牌 ${p.roomFee.tagCode} 在收银台结账时收）` : '现在退房不收房费'}
               data-testid="rc-checkout-roomfee"
             >
               {p.roomFee.startsAt

@@ -289,6 +289,8 @@ export interface CheckoutPreview {
     extension: TicketExtension | null;
     /** 还没有选票种（Batch 3 之前开的牌） */
     needsTicket: boolean;
+    /** 房费（福田店：房间按时间计费的，只在收银台结账时收；结账时按那一刻重算）：哪间房、计了多少分钟、多少钱；没有为空 */
+    roomFees: { room: string; chargedMinutes: number; amount: number }[];
     amount: number;
   }[];
   totalAmount: number;

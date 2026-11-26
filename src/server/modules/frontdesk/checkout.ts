@@ -18,6 +18,7 @@
 // 加锁顺序：经办人的班次（共享锁）→ 手牌（反结账）→ 同行组 → 来访 → 账单 → 会员（id 升序）→ 赠金批次；
 // 交班只锁班次一行（排他）、不锁业务行，不会与这里成环。
 
+import { cashierRoomFees, chargeCashierRoomFeesTx } from '../room-center-fees';
 import { z } from 'zod';
 import {
   COUPON_CODE_PATTERN,
@@ -241,9 +242,13 @@ export async function previewCheckout(deps: Deps, visitIds: number[], at = new D
       rows.map((r) => r.memberId),
       date,
     );
+    // 房费（福田店：只在收银台收）：与结账时同一个算法，按此刻算
+    const roomFees = await cashierRoomFees(tx, ids, at);
     const visits = rows.map((r) => {
       const extension = r.memberId ? (extensions.get(Number(r.memberId)) ?? null) : null;
       const graceMinutes = rules.overtimeGraceMinutes + (extension?.minutes ?? 0);
+      const fees = roomFees.filter((f) => f.visitId === Number(r.id));
+      const feeAmount = fees.reduce((n, f) => n + f.quote.amount, 0);
       const t = r.ticketTypeId !== null ? priceTicket({ price12h: r.price12h!, price24h: r.price24h! }, r.checkedInAt, ticketEnd(r, at), graceMinutes) : null;
       return {
         visitId: r.id,
@@ -274,7 +279,8 @@ export async function previewCheckout(deps: Deps, visitIds: number[], at = new D
         graceMinutes,
         extension,
         needsTicket: r.ticketTypeId === null,
-        amount: r.linesAmount + (t?.amount ?? 0),
+        roomFees: fees.map((f) => ({ room: f.label, chargedMinutes: f.quote.chargedMinutes, amount: f.quote.amount })),
+        amount: r.linesAmount + (t?.amount ?? 0) + feeAmount,
       };
     });
     // 会员的券（v0.7.20）：按已挂的明细加上此刻的门票算能抵多少
@@ -655,6 +661,9 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
       const t = priceTicket({ price12h: r.price12h!, price24h: r.price24h! }, r.checkedInAt, ticketEnd(r, at), rules.overtimeGraceMinutes + (extension?.minutes ?? 0));
       return { ...r, ticket: t, extension, amount: r.linesAmount + t.amount };
     });
+    // 房费（福田店：只在收银台收）：钟已在上面收尾，按结账这一刻算（与预览同一个算法），算进各自的应收
+    const roomFees = await cashierRoomFees(tx, ids, at);
+    for (const r of priced) r.amount += roomFees.filter((f) => f.visitId === Number(r.id)).reduce((n, f) => n + f.quote.amount, 0);
     const total = priced.reduce((s, r) => s + r.amount, 0);
     if (total !== input.expectedTotal) {
       throw conflict('PRICE_CHANGED', `应收合计刚刚变为 ${formatYuan(total)}（门票可能刚刚跳档，或账单明细有变化），请核对后重新确认`, {
@@ -704,6 +713,10 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
       otherReduction: storeCoupons.length > 0 || discounts.length > 0 || countCards.length > 0,
       date,
     });
+    // 房费挂到账单上（在会员折扣之后：房费不打会员折扣，与预览一致），记哪张登记单收过、房间事件
+    if (roomFees.length) {
+      await chargeCashierRoomFeesTx(tx, roomFees, { billOf: (visitId) => priced.find((r) => Number(r.id) === visitId)!.billId, key, at, today: date, staffId: ctx.actor.id });
+    }
     await recordCheckoutPayments(tx, deps, { checkoutId, checkoutNo, payments: input.payments, discount, tagCodes, billIds, memberIds, date, at, ctx, memberDiscount });
     await snapshotCheckoutItems(tx, checkoutId);
     // 扣库存（8.0.20）：不进厨房的明细按用料记「该扣多少」，只插入、不碰库存的锁；每分钟的任务再开耗用单
@@ -741,6 +754,7 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
         ...(discount ? { discount: { amount: discounts[0]!.amount, reason: discount.reason, approverId: discount.approverId, approverName: discount.approverName } } : {}),
         ...(memberDiscount ? { memberDiscount: { memberId: memberDiscount.memberId, benefitId: memberDiscount.benefitId, rate: memberDiscount.rate, amount: memberDiscount.amount } } : {}),
         ...(usages.length ? { usages } : {}),
+        ...(roomFees.length ? { roomFees: roomFees.map((f) => ({ room: f.label, tagCode: f.quote.tagCode, amount: f.quote.amount, chargedMinutes: f.quote.chargedMinutes })) } : {}),
         ...(unstarted.length ? { unstartedSessions: unstarted.map((u) => u.sessionNo) } : {}),
         ...backfillDetail(backfill),
       },

@@ -331,47 +331,62 @@ describe('FT-11 换房只能换同类型', () => {
   });
 });
 
-describe('FT-10 下钟后免房费 + FT-17 按时间计费', () => {
-  it('没设计费的业态不收房费；设了以后：下钟 10 分钟内（默认免 15 分钟）不收，20 分钟按起步收；记在手牌上、房间历史有「房费」', async () => {
+describe('FT-10 下钟后免房费 + FT-17 按时间计费（房费只在收银台收，店主 2026-11-26）', () => {
+  const cashier = async (visitId: number) =>
+    (await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/checkout-preview?ids=${visitId}`)).body as {
+      totalAmount: number;
+      visits: { visitId: number; roomFees: { room: string; chargedMinutes: number; amount: number }[]; amount: number }[];
+    };
+
+  it('没设计费的不收；设了以后房态中心退房不记房费（只给看）；收银台结账时按截止退房那一刻算、挂到账单上，房间历史有「房费」，只收一次', async () => {
     const [g] = await enter();
     expect((await register('S301', { tagCode: g!.tagCode, technicianId: tech['01'] })).status).toBe(200);
     for (const s of (await room('S301')).guests[0]!.sessions) expect((await finish(s.id)).status).toBe(200);
     expect((await preview('S301')).roomFee).toBeNull();
     await rules({ roomFees: [{ businessType: 'SPA', enabled: true, feeItemId: feeItem, minMinutes: 60, stepMinutes: 30, capCents: 0 }] });
     await ageEnd('S301', 10);
-    let p = await preview('S301');
-    expect(p.roomFee).toMatchObject({ amount: 0, freeMinutes: 15, tagCode: g!.tagCode });
+    expect((await preview('S301')).roomFee).toMatchObject({ amount: 0, freeMinutes: 15, tagCode: g!.tagCode });
+    expect((await cashier(g!.visitId)).visits[0]!.roomFees).toEqual([]);
     await ageEnd('S301', 10); // 下钟 20 分钟：计费 5 分钟，按起步 60 分钟 = 60 元
-    p = await preview('S301');
+    const p = await preview('S301');
     expect(p.roomFee).toMatchObject({ amount: 6000, chargedMinutes: 60 });
-    const out = await act('S301', 'checkout', { seenUnpaid: p.unpaidTotal, inHouse: true });
-    expect(out.status, JSON.stringify(out.body)).toBe(200);
+    // 房态中心退房：不记房费，账单还是 198 元（不用为房费确认在店也照样要确认，账上本来就有没结的）
+    expect((await act('S301', 'checkout', { seenUnpaid: p.unpaidTotal, inHouse: true })).status).toBe(200);
+    expect((await bill(g!.visitId)).bill.amountCents).toBe(19800);
+    await act('S301', 'cleaned');
+    // 收银台：预览里有这一笔房费、算进应收
+    const cp = await cashier(g!.visitId);
+    expect(cp.visits[0]!.roomFees).toEqual([{ room: expect.stringContaining('S301'), chargedMinutes: 60, amount: 6000 }]);
+    await pay(g!.visitId);
     const b = await bill(g!.visitId);
-    expect(b.bill.amountCents).toBe(19800 + 6000);
-    expect(JSON.stringify(b.lines.filter((l) => l.status === 'active').map((l) => [l.name, l.amount]))).toContain('6000');
     expect(
       b.lines.some((l) => l.status === 'active' && l.name.includes('房费') && l.amount === 6000),
       JSON.stringify(b.lines),
     ).toBe(true);
+    const [c] = await ctx.sql<{ amount: number; chargedMinutes: number }[]>`
+      SELECT c.amount, c.charged_minutes FROM room_fee_charges c JOIN room_registrations r ON r.id = c.registration_id WHERE r.visit_id = ${g!.visitId}`;
+    expect(c).toEqual({ amount: 6000, chargedMinutes: 60 });
     expect((await history('S301')).rows.some((x) => x.kind === 'room_fee')).toBe(true);
-    await act('S301', 'cleaned');
   });
 
-  it('自定义免费 30 分钟：下钟 20 分钟不收，40 分钟收；客人带手牌在店的才让退（房费也算没结的）', async () => {
+  it('自定义免费 30 分钟：没退房直接到收银台——下钟 20 分钟不收，40 分钟收；同房后来加的客人不重复收', async () => {
     await rules({ freeAfterClockOffMinutes: 30 });
-    const [g] = await enter();
+    const [g, h] = await enter(2);
     expect((await register('S302', { tagCode: g!.tagCode, technicianId: tech['02'] })).status).toBe(200);
-    for (const s of (await room('S302')).guests[0]!.sessions) expect((await finish(s.id)).status).toBe(200);
+    expect((await register('S302', { tagCode: h!.tagCode, technicianId: tech['03'], join: true })).status).toBe(200);
+    for (const gg of (await room('S302')).guests) for (const s of gg.sessions) expect((await finish(s.id)).status).toBe(200);
     await ageEnd('S302', 20);
-    expect((await preview('S302')).roomFee).toMatchObject({ amount: 0, freeMinutes: 30 });
+    expect((await cashier(g!.visitId)).visits[0]!.roomFees).toEqual([]);
     await ageEnd('S302', 20);
-    const p = await preview('S302');
-    expect(p.roomFee!.amount).toBe(6000);
-    // 没勾「带手牌在店」拒绝
-    expect((await act('S302', 'checkout', { seenUnpaid: p.unpaidTotal, inHouse: false })).status).not.toBe(200);
-    expect((await act('S302', 'checkout', { seenUnpaid: p.unpaidTotal, inHouse: true })).status).toBe(200);
-    expect((await bill(g!.visitId)).bill.amountCents).toBe(19800 + 6000);
-    await act('S302', 'cleaned');
+    const cp = await cashier(g!.visitId);
+    expect(cp.visits[0]!.roomFees.map((f) => f.amount)).toEqual([6000]);
+    expect((await cashier(h!.visitId)).visits[0]!.roomFees).toEqual([]);
+    await pay(g!.visitId);
+    expect((await bill(g!.visitId)).bill.amountCents).toBe(cp.visits[0]!.amount);
+    await pay(h!.visitId);
+    expect((await bill(h!.visitId)).lines.some((l) => l.name.includes('房费'))).toBe(false);
+    // 两位都结账离店：房间转待清
+    if ((await room('S302')).status === 'dirty') await act('S302', 'cleaned');
     await rules({ freeAfterClockOffMinutes: 15, roomFees: [] });
   });
 });
