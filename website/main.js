@@ -56,6 +56,36 @@
     });
     if (!pool && hero) hero.dataset.touched = 'true';
   }
+  // ── 首屏视频（8.1.46，docs/BOARDS.md 第 5 节）：系统素材库里设了「官网 · 首屏视频」就换上，柚子池停掉；
+  // 没设（404）、正式服取不到、浏览器不让自动播、减少动效、省流量时什么都不做，照原来的柚子池
+  var heroVideo = document.querySelector('[data-hero-video]');
+  var saveData = navigator.connection && navigator.connection.saveData;
+  if (heroVideo && hero && !reduce && !saveData && heroVideo.dataset.src) {
+    var poolLabel = hero.getAttribute('aria-label');
+    // 放不了（没设、取不到、不让自动播）或者放到一半出错（后面某一段取不到、内容坏了）：拿掉视频、柚子池接着动（Codex 审查）
+    var dropVideo = function () {
+      if (heroVideo.parentNode) heroVideo.parentNode.removeChild(heroVideo);
+      if (hero.dataset.video === 'on') {
+        delete hero.dataset.video;
+        if (poolLabel) hero.setAttribute('aria-label', poolLabel);
+        if (pool && pool.resume) pool.resume();
+      }
+    };
+    heroVideo.addEventListener('error', dropVideo);
+    heroVideo.addEventListener(
+      'playing',
+      function () {
+        hero.dataset.video = 'on';
+        hero.setAttribute('aria-label', '柚子的首屏视频');
+        if (pool && pool.suspend) pool.suspend();
+      },
+      { once: true },
+    );
+    heroVideo.src = heroVideo.dataset.src;
+    var started = heroVideo.play();
+    if (started && started.catch) started.catch(dropVideo);
+  }
+
   var rippleCanvas = document.querySelector('[data-ripple]');
   if (rippleCanvas && window.YuzuPool) window.YuzuPool.mount(rippleCanvas, { mode: 'ledger' });
 

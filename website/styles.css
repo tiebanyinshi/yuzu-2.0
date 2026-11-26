@@ -288,6 +288,25 @@ a {
 .hero-pool[data-touched='true'] .pool-hint {
   opacity: 0;
 }
+/* 首屏视频（素材库设了才有）：开始播放以后盖住柚子池 */
+.hero-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  /* 只是画面：没放起来时不挡柚子池的点按（Codex 审查） */
+  pointer-events: none;
+  transition: opacity 0.8s var(--ease-out);
+}
+.hero-pool[data-video='on'] .hero-video {
+  opacity: 1;
+}
+.hero-pool[data-video='on'] .pool-canvas,
+.hero-pool[data-video='on'] .pool-hint {
+  visibility: hidden;
+}
 
 /* ── 小节通用 ── */
 .section-title {

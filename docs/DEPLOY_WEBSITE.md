@@ -54,7 +54,7 @@ yuzusystem.xyz {
     X-Content-Type-Options nosniff
     Referrer-Policy strict-origin-when-cross-origin
     # 官网只用自己的文件：脚本、字体、样式都在 website/ 里，不引外部 CDN
-    Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+    Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://sys.yuzusystem.xyz; media-src 'self' https://sys.yuzusystem.xyz; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'"
   }
   # 字体、第三方库换版本时文件名不变，只缓存一天；页面本身每次都核对
   @static path /fonts/* /vendor/*
@@ -70,6 +70,8 @@ www.yuzusystem.xyz {
 `script-src` 里的 `'unsafe-inline'` 是给 `index.html` 头上那一行（给 `<html>` 加 `js` 类，让没开脚本的浏览器照样看到全部内容）。`VERSION.txt` 不用挡：只写了版本号与 SHA，和系统登录页常显的一样。
 
 改完 `sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`（Caddy 跑在容器里的，照那台机器原来的重载方法）。
+
+**首屏视频与分享图（8.1.46）**：官网从正式服的 `https://sys.yuzusystem.xyz/api/public/website/hero-video`、`/share-image` 取（Design → 素材库 → 用途「官网 · 首屏视频 / 分享图」，`docs/BOARDS.md` 第 5 节），所以 CSP 的 `img-src`、`media-src` 要放行 `https://sys.yuzusystem.xyz`（上面已经写上）；系统换域名时这两处与 `website/index.html` 里的地址一起改。`sys.` 前面的 Caddy 如果按路径限制了公网能打开什么（Z5），放行 `/api/public/*`（供应商、对账链接本来就在这下面）。正式服没开、没设素材时官网照原来的柚子池，没有分享图。
 
 ## 3. 部署以后核对
 

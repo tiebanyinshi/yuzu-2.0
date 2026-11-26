@@ -18,6 +18,8 @@ import {
   DESIGN_STAFF_MAX_BYTES,
   DESIGN_TOTAL_MAX_BYTES,
   DESIGN_TOTAL_MAX_VERSIONS,
+  isCompanySlot,
+  WEBSITE_PUBLIC_SLOTS,
   type DesignAsset,
   type DesignAssetDetail,
   type DesignAssetKind,
@@ -32,7 +34,7 @@ import { writeAudit } from '../lib/audit';
 import type { Deps } from '../lib/context';
 import { can } from '@shared/permissions';
 import { AppError, badRequest, conflict, notFound, unprocessable } from '../lib/errors';
-import { currentStoreId } from '../lib/store-context';
+import { currentStoreId, DEFAULT_STORE_ID } from '../lib/store-context';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
 import { assetHeaders, parseStudioAsset } from './studio/assets';
@@ -201,13 +203,18 @@ const toVersion = (v: VersionRow): DesignVersion => ({
   createdByName: v.createdByName,
 });
 
+/** 用途记在哪家店上：全公司一份的（官网）记在总店，其余按当前门店 */
+const slotStoreId = (slot: string) => (isCompanySlot(slot) ? DEFAULT_STORE_ID : currentStoreId());
+/** 读用途时的范围：这家店的门店用途 + 总店的全公司用途 */
+const slotScope = (db: Db) => db`((slot NOT LIKE 'website.%' AND store_id = ${currentStoreId()}) OR (slot LIKE 'website.%' AND store_id = ${DEFAULT_STORE_ID}))`;
+
 /**
  * 每个用途现在用哪一版（这家门店的最新一行）。用途按门店分开设（Codex 安全审查：只挂在分店的设计师不能改总店的横幅、大屏、字体），
  * 与对客导览、UI 工作台一样按当前门店；素材库本身（素材与版本）全公司一份
  */
 export async function currentSlots(db: Db): Promise<DesignCurrent> {
   const rows = await db<{ slot: string; versionId: number | null }[]>`
-    SELECT DISTINCT ON (slot) slot, version_id FROM design_slot_assignments WHERE store_id = ${currentStoreId()} ORDER BY slot, id DESC`;
+    SELECT DISTINCT ON (slot) slot, version_id FROM design_slot_assignments WHERE ${slotScope(db)} ORDER BY slot, id DESC`;
   const map = Object.fromEntries(DESIGN_SLOT_KEYS.map((k) => [k, null])) as DesignCurrent;
   for (const r of rows) if (r.slot in map) map[r.slot as DesignSlot] = r.versionId === null ? null : Number(r.versionId);
   return map;
@@ -277,7 +284,7 @@ async function slotStates(db: Db): Promise<DesignSlotState[]> {
     }[]
   >`
     SELECT x.id, x.slot, x.version_id, v.asset_id, a.name AS asset_name, v.version_no, v.mime, x.reason, x.created_at AS at, s.display_name AS by_name
-    FROM (SELECT *, row_number() OVER (PARTITION BY slot ORDER BY id DESC) AS rn FROM design_slot_assignments WHERE store_id = ${currentStoreId()}) x
+    FROM (SELECT *, row_number() OVER (PARTITION BY slot ORDER BY id DESC) AS rn FROM design_slot_assignments WHERE ${slotScope(db)}) x
     JOIN staff s ON s.id = x.staff_id
     LEFT JOIN design_asset_versions v ON v.id = x.version_id LEFT JOIN design_assets a ON a.id = v.asset_id
     WHERE x.rn <= 10 ORDER BY x.slot, x.id DESC`;
@@ -318,12 +325,17 @@ async function slotStates(db: Db): Promise<DesignSlotState[]> {
 export async function slotVersion(db: Db, slot: DesignSlot): Promise<{ versionId: number; mime: string } | null> {
   const [row] = await db<{ versionId: number | null; mime: string | null }[]>`
     SELECT x.version_id, v.mime FROM design_slot_assignments x LEFT JOIN design_asset_versions v ON v.id = x.version_id
-    WHERE x.store_id = ${currentStoreId()} AND x.slot = ${slot} ORDER BY x.id DESC LIMIT 1`;
+    WHERE x.store_id = ${slotStoreId(slot)} AND x.slot = ${slot} ORDER BY x.id DESC LIMIT 1`;
   if (!row || row.versionId === null || !row.mime) return null;
   return { versionId: Number(row.versionId), mime: row.mime };
 }
 
 // ───────────────────────── 写 ─────────────────────────
+
+/** 全公司一份的用途（官网）只在总店换：分店的设计师改不了（与「只挂在分店的改不了总店的」一致） */
+function assertCompanySlotAtHq(slot: string) {
+  if (isCompanySlot(slot) && currentStoreId() !== DEFAULT_STORE_ID) throw unprocessable('DESIGN_SLOT_HQ_ONLY', '官网的素材全公司一份，切到总店再换');
+}
 
 /** 页面记下的发起门店与这次请求的当前门店对不上：拒绝（切回那家店再处理） */
 function assertSameStore(storeId: number | undefined) {
@@ -341,9 +353,11 @@ const DOWNLOAD_QUEUE_PER_STAFF = 60;
 const waiting: { reqId: string; staffId: number; ready: () => boolean; resolve: () => void; timer: ReturnType<typeof setTimeout> }[] = [];
 
 /** 按段读一份素材文件（版本只追加、内容不变，分几次读不会读到两样的） */
-async function* fileChunks(db: Db, id: number, size: number): AsyncGenerator<Buffer> {
-  for (let off = 0; off < size; off += DOWNLOAD_CHUNK) {
-    const [row] = await db<{ part: Buffer }[]>`SELECT substring(data FROM ${off + 1} FOR ${DOWNLOAD_CHUNK}) AS part FROM design_asset_versions WHERE id = ${id}`;
+async function* fileChunks(db: Db, id: number, size: number, start = 0): AsyncGenerator<Buffer> {
+  // 读 [start, size)：官网视频按段取（Range）时只读那一段
+  for (let off = start; off < size; off += DOWNLOAD_CHUNK) {
+    const len = Math.min(DOWNLOAD_CHUNK, size - off);
+    const [row] = await db<{ part: Buffer }[]>`SELECT substring(data FROM ${off + 1} FOR ${len}) AS part FROM design_asset_versions WHERE id = ${id}`;
     if (!row) return;
     yield row.part;
   }
@@ -514,6 +528,7 @@ async function assign(deps: Deps, slotRaw: string, raw: unknown, staffId: number
   const slot = slotRaw as DesignSlot;
   const input = parse(AssignInput, raw);
   assertSameStore(input.storeId);
+  assertCompanySlotAtHq(slot);
   let replayed = false;
   try {
     await deps.sql.begin(async (tx) => {
@@ -577,6 +592,41 @@ const ListQuery = z.object({
 function slotReadable(req: FastifyRequest, slot: DesignSlot): boolean {
   if (slot === 'emenu.font.en') return can(req.actor, 'emenu.view') || can(req.actor, 'emenu.manage');
   return true;
+}
+
+/** 官网取素材的占位：请求 id → 来源地址 */
+const PUBLIC_SLOTS = 8;
+const PUBLIC_PER_IP = 3;
+const publicDownloads = new Map<string, string>();
+async function takePublic(req: FastifyRequest, reply: FastifyReply) {
+  const mine = [...publicDownloads.values()].filter((ip) => ip === req.ip).length;
+  if (publicDownloads.size >= PUBLIC_SLOTS || mine >= PUBLIC_PER_IP) {
+    reply.header('retry-after', '5');
+    throw new AppError(503, 'WEBSITE_ASSET_BUSY', '取官网素材的人太多，稍后再试');
+  }
+  publicDownloads.set(req.id, req.ip);
+  reply.raw.once('close', () => void releasePublic(req));
+}
+async function releasePublic(req: FastifyRequest) {
+  publicDownloads.delete(req.id);
+}
+
+/** 只认一段（bytes=a-b、bytes=a-、bytes=-n）；多段、写错的当没带（回整份）；起点超出文件的 416 */
+export function parseRange(header: string | undefined, size: number): [number, number] | null | 'invalid' {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m || (m[1] === '' && m[2] === '')) return null;
+  if (size === 0) return 'invalid';
+  if (m[1] === '') {
+    const n = Number(m[2]);
+    if (n === 0) return 'invalid';
+    return [Math.max(0, size - n), size - 1];
+  }
+  const start = Number(m[1]);
+  const end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  if (start >= size) return 'invalid';
+  if (end < start) return null;
+  return [start, end];
 }
 
 export function registerDesignRoutes(app: FastifyInstance, deps: Deps) {
@@ -660,6 +710,7 @@ export function registerDesignRoutes(app: FastifyInstance, deps: Deps) {
     const { key } = parse(OpKeyParam, req.params);
     const { slot, storeId } = parse(z.object({ slot: z.enum(DESIGN_SLOT_KEYS as [DesignSlot, ...DesignSlot[]]), storeId: z.number().int().positive().optional() }), req.body);
     assertSameStore(storeId);
+    assertCompanySlotAtHq(slot);
     return sql.begin(async (tx) => {
       await setTxTimeouts(tx);
       await tx`SELECT pg_advisory_xact_lock(hashtext(${`design_slot:${currentStoreId()}:${slot}`}))`;
@@ -728,7 +779,7 @@ export function registerDesignRoutes(app: FastifyInstance, deps: Deps) {
     // 没上架的、归档的、别的版本按「文件不存在」回，不让按编号一个个试出来
     if (!can(req.actor, 'studio.edit') && !can(req.actor, 'settings.manage')) {
       const live = await sql<{ slot: DesignSlot }[]>`
-        SELECT slot FROM (SELECT DISTINCT ON (slot) slot, version_id FROM design_slot_assignments WHERE store_id = ${currentStoreId()} ORDER BY slot, id DESC) cur
+        SELECT slot FROM (SELECT DISTINCT ON (slot) slot, version_id FROM design_slot_assignments WHERE ${slotScope(sql)} ORDER BY slot, id DESC) cur
         WHERE version_id = ${id}`;
       if (!live.some((l) => slotReadable(req, l.slot))) throw notFound('文件不存在');
     }
@@ -737,5 +788,44 @@ export function registerDesignRoutes(app: FastifyInstance, deps: Deps) {
     for (const [k, val] of Object.entries(assetHeaders(v.mime))) reply.header(k, val);
     reply.header('content-length', String(v.size));
     return reply.send(Readable.from(fileChunks(sql, id, Number(v.size))));
+  });
+
+  // ───── 官网取素材（8.1.46，docs/BOARDS.md 第 5 节）：不要登录、只读 ─────
+  // 只开「官网 · 首屏视频 / 分享图」两个用途正在用的那一版（总店那一份），别的用途、别的版本、按编号取一律 404。
+  // 不经 /api/design/files（那里要登录、按员工排队）：这里按来源地址占位——全站同时 PUBLIC_SLOTS 个、同一地址 PUBLIC_PER_IP 个，
+  // 满了回 503（官网取不到就用自带的，不排队）；视频支持按段取（Safari 播视频要 Range），每段照样 1MB 一读、不整份进内存
+  app.get('/api/public/website/:name', { onRequest: takePublic, onResponse: releasePublic, onRequestAbort: releasePublic }, async (req, reply) => {
+    const { name } = parse(z.object({ name: z.string().max(40) }), req.params);
+    reply.header('cache-control', 'public, no-cache');
+    reply.header('cross-origin-resource-policy', 'cross-origin');
+    reply.header('access-control-allow-origin', '*');
+    const slot = (WEBSITE_PUBLIC_SLOTS as Record<string, DesignSlot>)[name];
+    if (!slot) throw notFound('没有这个素材');
+    const live = await slotVersion(sql, slot);
+    if (!live) throw notFound('官网这一项没有设素材');
+    const [v] = await sql<{ size: number }[]>`SELECT size_bytes AS size FROM design_asset_versions WHERE id = ${live.versionId}`;
+    if (!v) throw notFound('官网这一项没有设素材');
+    const size = Number(v.size);
+    // 版本只追加、内容不变：版本号就是 ETag；换了用途 ETag 跟着变，官网刷新就换上
+    const etag = `"dv-${live.versionId}"`;
+    reply.header('etag', etag);
+    reply.header('accept-ranges', 'bytes');
+    for (const [k, val] of Object.entries(assetHeaders(live.mime))) if (k.toLowerCase() !== 'cache-control') reply.header(k, val);
+    if (req.headers['if-none-match'] === etag) return reply.code(304).send();
+    // If-Range（Codex 审查）：续传带的是上一版的 ETag（中间换了用途）就不按段给，回整份新的，免得两版拼在一起
+    const ifRange = req.headers['if-range'];
+    const range = ifRange && ifRange !== etag ? null : parseRange(req.headers.range, size);
+    if (range === 'invalid') {
+      reply.header('content-range', `bytes */${size}`);
+      return reply.code(416).send();
+    }
+    const [start, end] = range ?? [0, size - 1];
+    if (range) {
+      reply.code(206);
+      reply.header('content-range', `bytes ${start}-${end}/${size}`);
+    }
+    reply.header('content-length', String(end - start + 1));
+    if (req.method === 'HEAD') return reply.send();
+    return reply.send(Readable.from(fileChunks(sql, live.versionId, end + 1, start)));
   });
 }

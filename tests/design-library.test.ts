@@ -363,3 +363,66 @@ describe('换用途要发布权限（Codex 安全审查）', () => {
     }
   });
 });
+
+describe('官网接素材库（8.1.46，docs/BOARDS.md 第 5 节）', () => {
+  const pub = (name: string, headers: Record<string, string> = {}) => ctx.app.inject({ method: 'GET', url: `/api/public/website/${name}`, headers });
+
+  it('不要登录：没设 404；设了给文件（ETag、按段取）；只开官网两个用途，别的用途、按编号取都不给', async () => {
+    expect((await pub('hero-video')).statusCode).toBe(404);
+    expect((await pub('share-image')).statusCode).toBe(404);
+    expect((await pub('portal-banner')).statusCode).toBe(404);
+
+    const video = mp4(4000, 7);
+    const v = (await upload(ctx.app, designer, 'kind=video&name=官网首屏', video)).body as { latest: { id: number } };
+    expect((await assign(designer, 'website.hero.video', v.latest.id, null)).status).toBe(200);
+    const full = await pub('hero-video');
+    expect(full.statusCode).toBe(200);
+    expect(full.headers['content-type']).toContain('video/mp4');
+    expect(full.headers['accept-ranges']).toBe('bytes');
+    expect(full.headers['cache-control']).toBe('public, no-cache');
+    expect(full.headers['cross-origin-resource-policy']).toBe('cross-origin');
+    expect(full.rawPayload.equals(video)).toBe(true);
+    const etag = full.headers.etag as string;
+    expect(etag).toBe(`"dv-${v.latest.id}"`);
+    expect((await pub('hero-video', { 'if-none-match': etag })).statusCode).toBe(304);
+
+    // 按段取（Safari 播视频要）：一段、开头到尾、最后 n 个；起点超出 416
+    const part = await pub('hero-video', { range: 'bytes=10-109' });
+    expect(part.statusCode).toBe(206);
+    expect(part.headers['content-range']).toBe(`bytes 10-109/${video.length}`);
+    expect(part.rawPayload.equals(video.subarray(10, 110))).toBe(true);
+    const tail = await pub('hero-video', { range: 'bytes=-16' });
+    expect(tail.rawPayload.equals(video.subarray(video.length - 16))).toBe(true);
+    expect((await pub('hero-video', { range: `bytes=${video.length}-` })).statusCode).toBe(416);
+
+    // 素材库里别的版本、门店用途的素材：这个地址拿不到；/api/design/files 照旧要登录
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/design/files/${v.latest.id}` })).statusCode).toBe(401);
+
+    // 换一版：ETag 跟着变，官网刷新就换上；种类不对拒绝；切回不用素材又是 404
+    const v2 = (await upload(ctx.app, designer, 'kind=video&name=官网首屏二', mp4(500, 9))).body as { latest: { id: number } };
+    expect((await assign(designer, 'website.hero.video', v2.latest.id, v.latest.id)).status).toBe(200);
+    expect((await pub('hero-video', { 'if-none-match': etag })).statusCode).toBe(200);
+    // 续传带着上一版的 ETag：不按段给，回整份新的（不把两版拼在一起）
+    const resumed = await pub('hero-video', { range: 'bytes=10-20', 'if-range': etag });
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.headers.etag).toBe(`"dv-${v2.latest.id}"`);
+    expect((await pub('hero-video', { range: 'bytes=10-20', 'if-range': `"dv-${v2.latest.id}"` })).statusCode).toBe(206);
+    const img = (await upload(ctx.app, designer, 'kind=image&name=分享图', solidPng(0x40, 0x80, 0x60))).body as { latest: { id: number } };
+    expect((await assign(designer, 'website.hero.video', img.latest.id, v2.latest.id)).body.error.code).toBe('DESIGN_KIND_MISMATCH');
+    expect((await assign(designer, 'website.share.image', img.latest.id, null)).status).toBe(200);
+    expect((await pub('share-image')).headers['content-type']).toContain('image/png');
+    expect((await assign(designer, 'website.hero.video', null, v2.latest.id)).status).toBe(200);
+    expect((await pub('hero-video')).statusCode).toBe(404);
+  });
+
+  it('全公司一份：只在总店换；分店看到的是总店那一份', async () => {
+    const branch = await login(ctx.app, 'dsart', 'dsart-2026x');
+    const states = (await api(ctx.app, branch, 'GET', '/api/design/slots')).body as { slot: string; current: { versionId: number } | null }[];
+    const share = states.find((s) => s.slot === 'website.share.image')!;
+    expect(share.current).not.toBeNull();
+    const refused = await assign(branch, 'website.share.image', null, share.current!.versionId);
+    expect(refused.body.error.code).toBe('DESIGN_SLOT_HQ_ONLY');
+    expect((await api(ctx.app, branch, 'POST', `/api/design/ops/${randomUUID()}/abandon`, { slot: 'website.share.image' })).body.error.code).toBe('DESIGN_SLOT_HQ_ONLY');
+    expect((await pub('share-image')).statusCode).toBe(200);
+  });
+});

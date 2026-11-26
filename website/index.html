@@ -6,6 +6,14 @@
     <title>柚子 yuzu · 汤泉门店的一套系统</title>
     <meta name="description" content="柚子是汤崎自己做的门店系统：发卡、收银、钟房、餐饮、房态、会员、ERP 与员工办公，从第一块手牌到最后一笔日结。" />
     <meta name="theme-color" content="#f6f2ea" />
+    <!-- 分享卡片：分享图从系统的素材库取（Design → 素材库 → 用途「官网 · 分享图」，docs/BOARDS.md 第 5 节）；没设时没有图 -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="柚子 yuzu" />
+    <meta property="og:title" content="柚子 yuzu · 汤泉门店的一套系统" />
+    <meta property="og:description" content="发卡、收银、钟房、餐饮、房态、会员、ERP 与员工办公，从第一块手牌到最后一笔日结。" />
+    <meta property="og:url" content="https://yuzusystem.xyz/" />
+    <meta property="og:image" content="https://sys.yuzusystem.xyz/api/public/website/share-image" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="preload" href="fonts/smiley-sans-subset.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="styles.css" />
@@ -39,6 +47,8 @@
         </div>
         <figure class="hero-pool" aria-label="一池柚子汤：几颗柚子浮在水面上，点一下水面会起涟漪">
           <canvas class="pool-canvas" data-pool aria-hidden="true"></canvas>
+          <!-- 首屏视频：素材库用途「官网 · 首屏视频」设了才有；取不到、放不了、减少动效时照原来的柚子池（main.js） -->
+          <video class="hero-video" data-hero-video data-src="https://sys.yuzusystem.xyz/api/public/website/hero-video" muted loop playsinline preload="none" aria-hidden="true"></video>
           <figcaption class="pool-hint">点一下水面</figcaption>
         </figure>
       </section>
@@ -141,7 +151,8 @@
         <a class="btn btn-primary btn-lg" href="https://sys.yuzusystem.xyz" data-magnetic>登录柚子系统</a>
         <div class="marquee" aria-hidden="true">
           <div class="marquee-row" data-marquee>
-            <span>发卡</span><span>收银</span><span>钟房</span><span>餐饮</span><span>房态</span><span>会员</span><span>储值</span><span>日结</span><span>ERP</span><span>WCP</span><span>Design</span><span>饭堂</span><span>巡场</span>
+            <span>发卡</span><span>收银</span><span>钟房</span><span>餐饮</span><span>房态</span><span>会员</span><span>储值</span><span>日结</span><span>ERP</span><span>WCP</span><span>Design</span
+            ><span>饭堂</span><span>巡场</span>
           </div>
         </div>
       </section>
