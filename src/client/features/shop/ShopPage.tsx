@@ -36,7 +36,6 @@ import {
   buildCompareOffers,
   catalogCardSummary,
   formatTaxRate,
-  lineGrossCents,
   resolveCompareQtyMilli,
   SHOP_BLOCK_LABELS,
   SHOP_COMPARE_BLOCK_LABELS,
@@ -69,6 +68,7 @@ const ShopComparePage = lazyPage(() => import('./ShopComparePage').then((m) => m
 const ShopSuppliersPage = lazyPage(() => import('./ShopMasterPages').then((m) => m.ShopSuppliersPage));
 const ShopMaterialsPage = lazyPage(() => import('./ShopMasterPages').then((m) => m.ShopMaterialsPage));
 const ShopOverviewPage = lazyPage(() => import('./ShopOverviewPage').then((m) => m.ShopOverviewPage));
+const ShopCheckoutView = lazyPage(() => import('./ShopCheckoutView').then((m) => m.ShopCheckoutView));
 
 const BASE = '/erp/shop';
 const SUBMIT_URL = '/api/erp/shop/requests';
@@ -180,7 +180,7 @@ export function ShopPage() {
             {t.label}
             {t.badge !== undefined && t.badge > 0 && (
               <span
-                className={cn('inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[12px] leading-5 font-bold', active(t.to) ? 'bg-paper text-pine' : 'bg-clay text-paper')}
+                className={cn('inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[12.5px] leading-5 font-bold', active(t.to) ? 'bg-paper text-pine' : 'bg-clay text-paper')}
                 data-testid="shop-todo-badge"
               >
                 {t.badge}
@@ -622,30 +622,6 @@ function ItemPage({ c, materialId, cart, setCart }: { c: ShopCatalog; materialId
 
 // ───────────────────────── 提交 ─────────────────────────
 
-interface CartRow {
-  line: CartLine;
-  item: ShopItem | null;
-  offer: ShopOffer | null;
-  problem: string | null;
-  gross: number;
-}
-function cartRows(c: ShopCatalog, cart: Cart): CartRow[] {
-  return cart.lines.map((line) => {
-    const item = c.items.find((i) => i.offers.some((o) => o.skuId === line.skuId)) ?? null;
-    const offer = item?.offers.find((o) => o.skuId === line.skuId) ?? null;
-    const problem = !offer
-      ? '这条报价已经没有了'
-      : offer.block
-        ? SHOP_BLOCK_LABELS[offer.block]
-        : offer.priceVersion !== line.priceVersion
-          ? '加清单以后改过价：请确认新价'
-          : line.qtyMilli < offer.moqMilli
-            ? `低于起订量 ${formatQty(offer.moqMilli)}`
-            : null;
-    return { line, item, offer, problem, gross: offer ? lineGrossCents(offer.priceCents, offer.taxRateBp, line.qtyMilli, offer.freightCents) : 0 };
-  });
-}
-
 interface HeaderForm {
   departmentId: string;
   entityId: string;
@@ -725,7 +701,7 @@ function HeaderFields({ c, f, set }: { c: ShopCatalog; f: HeaderForm; set: (f: H
           ))}
         </Select>
       </Field>
-      <Field label="紧急程度" hint="用于采购排序，不等于紧急特批">
+      <Field label="紧急程度" hint={PRIORITY_HINT[f.priority]} className="sm:col-span-2">
         <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="紧急程度">
           {REQUEST_PRIORITIES.map((p) => (
             <button
@@ -736,8 +712,8 @@ function HeaderFields({ c, f, set }: { c: ShopCatalog; f: HeaderForm; set: (f: H
               title={PRIORITY_HINT[p]}
               onClick={() => set({ ...f, priority: p })}
               className={cn(
-                'tap relative inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-[13px] font-semibold ring-1',
-                f.priority === p ? 'bg-ink text-paper ring-ink' : 'bg-card text-ink-2 ring-line',
+                'tap relative inline-flex h-10 items-center gap-2 rounded-lg border bg-card px-3.5 text-[13px] font-semibold transition-colors',
+                f.priority === p ? 'border-ink text-ink ring-2 ring-ink/15' : 'border-line text-ink-2 hover:border-ink-3 hover:text-ink',
               )}
               data-testid={`shop-priority-${p}`}
             >
@@ -951,8 +927,6 @@ function RoutePreviewCard({
 function Checkout({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (c: Cart) => void }) {
   const session = useSession();
   const navigate = useNavigate();
-  const [f, setF] = useState<HeaderForm>(() => emptyHeader(c));
-  const rows = cartRows(c, cart);
   // 提交成功先跳到这张单，再清清单：清单一空本页会跳回清单页，用 submitted 拦住，不跟跳转抢
   const [submitted, setSubmitted] = useState(false);
   const { send, busy, blocked } = useSubmit((r) => {
@@ -960,54 +934,18 @@ function Checkout({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (
     navigate(`${BASE}/mine/${r.id}`);
     setCart({ storeId: null, lines: [] });
   });
-  if (!cart.lines.length) return submitted ? null : <Navigate to={`${BASE}/cart`} replace />;
-  const bad = rows.some((r) => r.problem) || cart.storeId !== c.storeId;
-  const total = rows.reduce((s, r) => s + r.gross, 0);
   return (
-    <div className="space-y-4" data-testid="shop-checkout">
-      <Card className="p-4">
-        <p className="mb-3 text-[14px] font-bold">① 采购业务信息</p>
-        <HeaderFields c={c} f={f} set={setF} />
-      </Card>
-      <Card className="p-4">
-        <p className="mb-2 text-[14px] font-bold">② 采购商品</p>
-        <ul className="divide-y divide-line text-[13px]">
-          {rows.map((r) => (
-            <li key={r.line.skuId} className="flex flex-wrap justify-between gap-2 py-2">
-              <span>
-                {r.item?.material.name} · {r.offer?.supplier.name}（V{r.offer?.priceVersion}）
-              </span>
-              <span>
-                {formatQty(r.line.qtyMilli)} {r.item?.material.unit} · {formatYuan(r.gross)}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2 text-right text-[15px] font-bold">预计含税总额 {formatYuan(total)}</p>
-        {bad && (
-          <Notice tone="error" title="清单里有不能提交的行" className="mt-3">
-            回采购清单修改（已失效、门店不对、改过价或低于起订量）。
-          </Notice>
-        )}
-      </Card>
-      <RoutePreviewCard storeId={c.storeId} departmentId={f.departmentId} paymentIntent={f.paymentIntent} priority={f.priority} kind="catalog" lines={cart.lines} />
-      <div className="flex justify-end gap-2">
-        <Link to={`${BASE}/cart`}>
-          <Button variant="ghost">返回清单</Button>
-        </Link>
-        <Button
-          variant="primary"
-          loading={busy}
-          disabled={bad || blocked || headerMissing(f)}
-          onClick={() =>
-            void send({ ...headerBody(c, f, session.staff.displayName), kind: 'catalog', lines: cart.lines }, `${rows[0]?.item?.material.name ?? ''}${rows.length > 1 ? ` 等 ${rows.length} 行` : ''}`)
-          }
-          data-testid="shop-submit"
-        >
-          提交采购需求
-        </Button>
-      </div>
-    </div>
+    <ShopCheckoutView
+      c={c}
+      cart={cart}
+      staffId={session.staff.id}
+      staffDisplayName={session.staff.displayName}
+      busy={busy}
+      blocked={blocked}
+      submitted={submitted}
+      onSubmit={(body, summaryText) => void send(body, summaryText)}
+      renderRoutePreview={(f) => <RoutePreviewCard storeId={c.storeId} departmentId={f.departmentId} paymentIntent={f.paymentIntent} priority={f.priority} kind="catalog" lines={cart.lines} />}
+    />
   );
 }
 
