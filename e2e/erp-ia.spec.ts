@@ -33,7 +33,7 @@ test.describe('8.0.18 ERP 的信息架构', () => {
     const group = (title: string) => nav.locator('div', { has: page.locator('p', { hasText: new RegExp(`^${title}$`) }) }).getByRole('link');
     // 链接里可能带着待办的数字
     await expect(group('审批')).toHaveText([/^审批中心/]);
-    await expect(group('供应链')).toHaveText([/^库存/, /^采购(\d|$)/, /^采购需求单/, /^采购商城/, /^本部门小仓/, /^零采备用金/, /^资产与易耗/, /^布草洗涤/]); // 8.0.20 加了布草洗涤，8.1.9 加了零采备用金，8.1.32 加了采购商城
+    await expect(group('供应链')).toHaveText([/^库存/, /^采购(\d|$)/, /^采购需求单/, /^采购商城/, /^本部门小仓/, /^资产与易耗/, /^布草洗涤/]); // 8.0.20 加了布草洗涤，8.1.32 加了采购商城；8.1.9 加的零采备用金 8.1.42 并进了「费用与备用金」
     await expect(group('财务')).toHaveText([/^付款/, /应付货款/, /费用与备用金/, /发票台账/, /^开票/, /应收与挂账/, /银行流水/]);
     await expect(group('合同')).toHaveText([/合同/]);
     await expect(page.getByTestId('erp-nav-settings')).toHaveText('ERP 设置');
@@ -135,9 +135,11 @@ test.describe('8.0.18 ERP 的信息架构', () => {
     await expect(page).toHaveURL(/\/purchasing$/);
 
     await page.goto('/erp/expenses');
-    await expect(page.getByTestId('subnav').getByRole('link')).toHaveText(['报销', '备用金与每日平账', '费用预算', '采购台账', '账目自检', '旧账对照']);
+    await expect(page.getByTestId('subnav').getByRole('link')).toHaveText(['报销', '备用金与每日平账', '备用金申用', '费用预算', '采购台账', '账目自检', '旧账对照']);
     for (const [testId, url] of [
       ['petty-link', /\/erp\/petty$/],
+      // 8.1.42 备用金合并：零采的申用并进「备用金申用」
+      ['petty-uses-link', /\/erp\/petty\/uses$/],
       ['budgets-link', /\/erp\/expenses\/budgets$/],
       ['ledger-link', /\/erp\/ledger$/],
       ['audit-link', /\/erp\/audit$/],
@@ -147,7 +149,7 @@ test.describe('8.0.18 ERP 的信息架构', () => {
       await page.getByTestId(testId).click();
       await expect(page, testId).toHaveURL(url);
       await expect(page.getByTestId(testId), testId).toHaveAttribute('aria-current', 'page');
-      await expect(page.getByTestId('subnav').getByRole('link')).toHaveCount(6);
+      await expect(page.getByTestId('subnav').getByRole('link')).toHaveCount(7);
     }
   });
 

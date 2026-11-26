@@ -411,6 +411,12 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '311_table_min_spend.sql',
   '312_kitchen_transfer.sql',
   '315_dish_windows.sql',
+  '320_coupon_limits.sql',
+  '321_gift_cards.sql',
+  '322_gift_card_batch_ops.sql',
+  '340_petty_merge.sql',
+  '350_visit_remarks.sql',
+  '360_coupon_usage_terms.sql',
   '400_govflow_core.sql',
 ];
 

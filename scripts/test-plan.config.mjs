@@ -334,7 +334,8 @@ export const AREAS = [
       'tests/replenish-mode.test.ts',
       'tests/auto-replenish.test.ts',
       'tests/legacy.test.ts',
-      'tests/petty-pool.test.ts',
+      'tests/petty-uses.test.ts',
+      'tests/upgrade-petty-merge.test.ts',
     ],
     e2e: [
       'e2e/inventory.spec.ts',

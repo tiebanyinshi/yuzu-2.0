@@ -114,8 +114,9 @@ test.describe('本机存储写入失败时不提交', () => {
     };
     const sent = await countLostRequests(page, '**/api/frontdesk/visits/*/charges');
 
-    await page.goto('/crm/frontdesk');
-    await page.getByTestId(`tag-${code}`).click();
+    // 8.1.44 起加项目在收银台
+    await page.goto('/crm/cashier');
+    await page.getByTestId(`queue-${code}`).click();
     await expect(page.getByTestId('bill-tag')).toHaveText(code);
     await page.keyboard.press('F4');
     const add = page.getByRole('dialog').filter({ hasText: '加项目' });

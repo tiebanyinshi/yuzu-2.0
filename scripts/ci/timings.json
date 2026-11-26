@@ -165,7 +165,7 @@
   "tests/patrol.test.ts": 10.2,
   "tests/pay-terminal.test.ts": 10.2,
   "tests/payments.test.ts": 14.5,
-  "tests/petty-pool.test.ts": 9.9,
+  "tests/petty-uses.test.ts": 9.9,
   "tests/pinyin-initials.test.ts": 9,
   "tests/platform-redemptions.test.ts": 9.6,
   "tests/platform-verify.test.ts": 11.8,

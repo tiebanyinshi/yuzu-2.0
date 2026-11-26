@@ -30,6 +30,7 @@ import {
   type RoomCategory,
   type RoomCategoryView,
   type RoomCenterBoard,
+  type RoomCenterBooking,
   type RoomCounts,
   type RoomEventKind,
   type RoomGuestLookup,
@@ -51,7 +52,7 @@ import { ctxOf, type Actor, type Deps, type OpContext } from '../lib/context';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { currentStoreId, DEFAULT_STORE_ID } from '../lib/store-context';
 import { idParam, parse } from '../lib/validate';
-import { monthDayTime } from './bookings';
+import { monthDayTime, readBookings } from './bookings';
 import { businessDate, FRONTDESK_OP_PERMISSIONS, setTxTimeouts } from './frontdesk/common';
 import { memberGradeBadges } from './membership';
 import { guestName, loadRoomFacts, roomLabel, statusOfFacts, type GuestFact, type SessionFact } from './room-center-core';
@@ -434,7 +435,41 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       hint: '还没归到房型的房间：店主在「后台 → 空间台账 → 房态中心房型」里把它们的业态加进一个房型',
     });
   }
-  return { serverTime: at.toISOString(), businessDate: today, categories: views, total: count(rooms), rooms: ROOM_CENTER_READ.some((p) => can(actor, p)) ? rooms : rooms.map(orderOnlyCard) };
+  const fullRead = ROOM_CENTER_READ.some((p) => can(actor, p));
+  return {
+    serverTime: at.toISOString(),
+    businessDate: today,
+    categories: views,
+    total: count(rooms),
+    rooms: fullRead ? rooms : rooms.map(orderOnlyCard),
+    todayBookings: fullRead ? await todayBookings(db, today, showGuests) : [],
+  };
+}
+
+/** 当天的预约单（8.1.44）：与预约看板同一个读法，取消的不列；看不到客人信息的岗位不给名字 */
+async function todayBookings(db: Db, date: string, showGuests: boolean): Promise<RoomCenterBooking[]> {
+  return (await readBookings(db, { date }))
+    .filter((b) => b.status !== 'cancelled')
+    .map((b) => ({
+      id: b.id,
+      bookingNo: b.bookingNo,
+      kind: b.kind,
+      status: b.status,
+      source: b.source,
+      startsAt: b.startsAt,
+      endsAt: b.endsAt,
+      holdUntil: b.holdUntil,
+      guest: showGuests ? b.memberName || b.guestName || '客人' : '客人',
+      guests: b.guests,
+      target:
+        b.kind === 'technician'
+          ? [b.itemName, b.technicianText === '不指定' ? '不指定技师' : b.technicianText].filter(Boolean).join(' · ')
+          : b.kind === 'space'
+            ? `${b.spaceCode ?? ''} ${b.spaceName ?? ''}`.trim()
+            : (b.roomTypeName ?? '客房'),
+      arrivalTagCode: b.arrivalTagCode,
+      serviceNo: b.service?.no ?? null,
+    }));
 }
 
 // ───────────────────────── 房间历史 ─────────────────────────
