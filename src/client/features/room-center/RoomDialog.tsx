@@ -5,8 +5,19 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { ArrowRightLeft, CalendarClock, CircleCheck, DoorOpen, FilePlus2, History, Link2, Play, Plus, Shuffle, Sparkles, Square, Timer, Undo2, Unlink, UserPlus, Wrench } from 'lucide-react';
-import { elapsedText, isLobbyBusinessType, REGISTRATION_KIND_LABELS, ROOM_SOURCE_HINTS, ROOM_SOURCE_LABELS, type RoomCard, type RoomEventKind, type RoomSessionView } from '@shared/room-center';
+import { ArrowRightLeft, CalendarClock, Camera, CircleCheck, DoorOpen, FilePlus2, History, Link2, Play, Plus, Shuffle, Sparkles, Square, Timer, Undo2, Unlink, UserPlus, Wrench } from 'lucide-react';
+import {
+  elapsedText,
+  isLobbyBusinessType,
+  REGISTRATION_KIND_LABELS,
+  ROOM_SOURCE_HINTS,
+  ROOM_SOURCE_LABELS,
+  type RoomCard,
+  type RoomCenterBoard,
+  type RoomEventKind,
+  type RoomGuestView,
+  type RoomSessionView,
+} from '@shared/room-center';
 import { formatYuan } from '@shared/money';
 import { spaceLabel } from '@shared/spaces';
 import { usageEstimate } from '@shared/usages';
@@ -19,7 +30,8 @@ import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Notice, SectionTitle, Skeleton } from '../../components/ui';
-import { useRefreshRoomCenter, useRoomAction, useRoomHistory } from './queries';
+import { roomUrl, useRefreshRoomCenter, useRoomAction, useRoomHistory } from './queries';
+import { uploadPhoto } from '../oa/oaImage';
 import { RoomActionStatus } from './RoomActions';
 import { revokeLeft, swapLeft, type RoomLimits } from './RoomFutianDialogs';
 import { StatusChip } from './status';
@@ -157,9 +169,12 @@ export function RoomDialog({
   onOrders,
   onOrder,
   limits,
+  statusOnly = false,
 }: {
   room: RoomCard;
   now: number;
+  /** 康美部的账户（FT-13）：只看房态与客人的手牌号，没有动作与历史 */
+  statusOnly?: boolean;
   /** 后台设的时限（撤房、换技师；福田店 FT-06、FT-09） */
   limits: RoomLimits;
   onClose: () => void;
@@ -212,6 +227,41 @@ export function RoomDialog({
   const revokeMin = revokeLeft(room, limits, now);
   const canBackfill = canPost && can('frontdesk.backfill');
   const usageMinutes = room.usage ? Math.max(0, Math.floor((now - new Date(room.usage.openedAt).getTime()) / 60_000)) : 0;
+
+  if (statusOnly) {
+    return (
+      <Dialog
+        open
+        onClose={onClose}
+        width="max-w-md"
+        title={
+          <span className="flex flex-wrap items-center gap-2">
+            {label} <StatusChip status={room.status} />
+          </span>
+        }
+        description={room.businessType}
+      >
+        <div className="space-y-2" data-testid="rc-room-dialog" data-status={room.status} data-status-only>
+          {room.guests.length ? (
+            room.guests.map((g) => (
+              <p key={g.tagCode} className="num text-[16px] font-bold text-ink" data-testid={`rc-guest-${g.tagCode}`}>
+                手牌 {g.tagCode}
+              </p>
+            ))
+          ) : (
+            <p className="text-[13px] text-ink-3">{room.guestText ?? '没有客人'}</p>
+          )}
+          <p className="text-[12.5px] text-ink-3">康美部的账户在房态中心只看房态与客人的手牌号。</p>
+          {/* 康美部在房间里点水吧、果吧照旧（回测整改 P07） */}
+          {onOrder && (
+            <Button variant="primary" onClick={onOrder} data-testid="rc-room-order">
+              点单
+            </Button>
+          )}
+        </div>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog
@@ -279,6 +329,7 @@ export function RoomDialog({
         )}
         {room.status === 'dirty' && (
           <Notice tone="warning" icon={<Sparkles className="size-4" />} title={room.dirtySince ? `${formatDateTime(room.dirtySince)} 起待清` : '待清'} data-testid="rc-dirty-info">
+            {room.dirtyOvernight && <b className="text-lake">上次的客人留宿（过夜）。</b>}
             {room.dirtyNote ? `${room.dirtyNote}。` : ''}待清的房间不能登记、不能开单；打扫好了点「清洁完成」。
           </Notice>
         )}
@@ -317,6 +368,7 @@ export function RoomDialog({
               {g.overnight && ' · 过夜'}
               {g.note && ` · 备注：${g.note}`}
             </p>
+            {g.overnight && g.registrationId !== null && <OvernightPhotos room={room} guest={g} />}
             <ul className="mt-1 divide-y divide-line/70">
               {g.sessions.map((s) => (
                 <SessionRow
@@ -503,5 +555,65 @@ export function RoomDialog({
         </section>
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * 过夜客人的留宿确认单（福田店 FT-03）：选填，不挡开房，可以开房以后补传——写明「已上传 N 张」或「待补传」，点「拍照上传」传一张
+ * （照片在浏览器里压缩，经通用附件传上去，再挂到这位客人的登记单上）
+ */
+function OvernightPhotos({ room, guest: g }: { room: RoomCard; guest: RoomGuestView }) {
+  const can = useCan();
+  const toast = useToast();
+  const refresh = useRefreshRoomCenter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const allowed = can('technician.dispatch') || can('frontdesk.operate') || can('room.housekeep');
+  const upload = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const att = await uploadPhoto(file, `留宿确认单-${g.tagCode}.jpg`);
+      const board = await api.post<RoomCenterBoard>(roomUrl(room.spaceId!, 'overnight-photo'), { registrationId: g.registrationId, attachmentId: att.id });
+      refresh(board);
+      toast({ tone: 'success', title: `手牌 ${g.tagCode} 的留宿确认单已上传` });
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const n = g.overnightPhotos.length;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-paper-2 px-3 py-2 text-[13px]" data-testid={`rc-overnight-photos-${g.tagCode}`}>
+      <span className="font-semibold">留宿确认单：</span>
+      <span className={n ? 'font-bold text-pine' : 'font-bold text-clay'} data-testid="rc-overnight-photo-state">
+        {n ? `已上传 ${n} 张` : '待补传'}
+      </span>
+      {g.overnightPhotos.map((p) => (
+        <a key={p.id} href={p.url} target="_blank" rel="noreferrer" className="block size-10 overflow-hidden rounded border border-line" aria-label="看留宿确认单">
+          {p.thumbUrl ? <img src={p.thumbUrl} alt="留宿确认单" className="size-full object-cover" /> : <span className="text-[12px]">照片</span>}
+        </a>
+      ))}
+      <label
+        className={cn('ml-auto inline-flex h-9 cursor-pointer items-center gap-1 rounded-lg border border-line-strong px-3 font-semibold', (!allowed || busy) && 'pointer-events-none opacity-50')}
+      >
+        <Camera className="size-4" /> {busy ? '上传中…' : n ? '再传一张' : '拍照上传'}
+        <input
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="sr-only"
+          disabled={!allowed || busy}
+          onChange={(e) => {
+            void upload(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+          data-testid="rc-overnight-photo-input"
+        />
+      </label>
+      {error && <p className="w-full text-[12.5px] text-clay">{error}</p>}
+    </div>
   );
 }

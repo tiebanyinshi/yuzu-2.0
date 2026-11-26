@@ -191,11 +191,27 @@ export const RegisterInput = z
   .refine((v) => v.start !== 'at' || !!v.startedAt, '已经开始了的，请填写几点开始的')
   .refine((v) => !v.bracket || v.callType === 'designated', '括单是技师自己约的客人，上钟方式请选点钟（约他的那位技师）');
 
-/** 这位客人已经登记在别的房间：一位客人同时只登记在一间房 */
-async function assertNotRegistered(db: Db, visitId: number, tagCode: string) {
-  const [r] = await db<{ code: string; displayName: string }[]>`
-    SELECT sp.code, sp.display_name FROM room_registrations r JOIN spaces sp ON sp.id = r.space_id WHERE r.visit_id = ${visitId} AND r.status = 'open'`;
-  if (r) throw conflict('GUEST_REGISTERED', `手牌 ${tagCode} 的客人还登记在 ${roomLabel(r)}：先在那间房退房，或用「换房」换过来`);
+/** 休息大厅的床位上、钟都已结束的登记（福田店 FT-12：下钟即空出床位，登记单在客人另登记或结账时收尾）的条件 */
+export const finishedLobbyRegSql = (db: Db | Tx) => db`
+  NOT EXISTS (SELECT 1 FROM technician_sessions s WHERE s.visit_id = r.visit_id AND s.id >= r.session_id AND s.status IN ('waiting', 'serving'))`;
+
+/**
+ * 这位客人已经登记在别的房间：一位客人同时只登记在一间房。
+ * 休息大厅的床位上钟都下了的（FT-12）不算占着：在这里把那张登记单按退房收尾（锁那一行；不动那张床位的房态行），再登记新的
+ */
+async function assertNotRegistered(tx: Tx, visitId: number, tagCode: string, actorId: number, at: Date) {
+  const [r] = await tx<{ id: number; code: string; displayName: string; businessType: string; finished: boolean; billAmount: number }[]>`
+    SELECT r.id, sp.code, sp.display_name, sp.business_type, ${finishedLobbyRegSql(tx)} AS finished, b.amount_cents AS bill_amount
+    FROM room_registrations r JOIN spaces sp ON sp.id = r.space_id JOIN visits v ON v.id = r.visit_id JOIN bills b ON b.id = v.bill_id
+    WHERE r.visit_id = ${visitId} AND r.status = 'open' FOR UPDATE OF r`;
+  if (!r) return;
+  if (isLobbyBusinessType(r.businessType) && r.finished) {
+    await tx`
+      UPDATE room_registrations SET status = 'closed', closed_at = greatest(opened_at, ${at}), closed_by = ${actorId}, close_kind = 'checkout', unpaid_cents = ${Number(r.billAmount)}
+      WHERE id = ${r.id}`;
+    return;
+  }
+  throw conflict('GUEST_REGISTERED', `手牌 ${tagCode} 的客人还登记在 ${roomLabel(r)}：先在那间房退房，或用「换房」换过来`);
 }
 
 /**
@@ -230,7 +246,7 @@ export async function registerRoom(deps: Deps, spaceId: number, raw: unknown, ct
       WHERE t.code = ${input.tagCode} AND v.status = 'open' AND t.store_id = ${currentStoreId()}`;
     if (!guest) throw conflict('TAG_NOT_IN_STORE', `手牌 ${input.tagCode} 没有在店客人，请核对牌号；客人要先在发卡台接待、领手牌`);
     const visitId = Number(guest.id);
-    await assertNotRegistered(tx, visitId, input.tagCode);
+    await assertNotRegistered(tx, visitId, input.tagCode, ctx.actor.id, at);
     // 开始时间（补记的）：不用查库的几条先核对
     const startedAt = input.start === 'at' ? new Date(input.startedAt!) : null;
     if (startedAt) {
@@ -270,7 +286,7 @@ export async function registerRoom(deps: Deps, spaceId: number, raw: unknown, ct
       if (other) throw conflict('ROOM_IN_USE', `${x.label} 刚刚被钟房派进了手牌 ${other.tagCode} 的客人，请换一间，或用「同房加人」`);
     }
     // 来访已经锁住：再核对一次没登记在别的房间（部分唯一索引兜底）
-    await assertNotRegistered(tx, visitId, input.tagCode);
+    await assertNotRegistered(tx, visitId, input.tagCode, ctx.actor.id, at);
     if (startedAt) {
       if (s.status !== 'serving') throw conflict('START_NOT_SERVING', `${techLabel}还在别的钟上，这一钟要等钟，不能补记开始时间；请选「现在开始」或「稍后上钟」`);
       const [prev] = await tx<{ endedAt: string | null }[]>`

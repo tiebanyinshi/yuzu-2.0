@@ -15,10 +15,12 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { PRICE_TIERS } from '@shared/catalog';
 import { normalizeTagCode, TAG_CODE_PATTERN } from '@shared/frontdesk';
-import { MAX_ROOM_NOTE, MAX_SELLER_NO } from '@shared/room-center';
+import { can } from '@shared/permissions';
+import { isRoomStatusOnly, MAX_ROOM_NOTE, MAX_SELLER_NO, type RoomGuestView } from '@shared/room-center';
 import { HHMM } from '@shared/business-date';
 import { MAX_CLEAN_WINDOWS, MAX_ROOM_FEE_MIN_MINUTES, MAX_RULE_MINUTES, normalizeRoomCenterRules, ROOM_CENTER_RULES_KEY, ROOM_FEE_STEP_OPTIONS, type RoomCenterRules } from '@shared/room-center-rules';
 import { CALL_TYPES } from '@shared/technicians';
+import type { Db } from '../db';
 import { guard, guardAny } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../lib/context';
@@ -34,6 +36,7 @@ import { assertRoomVersion, bumpRoomVersion, loadRoomFacts, logRoomEvent, roomLa
 import { loadRoomCenterRules } from './room-center-fees';
 import { findSeller, HOTEL_ELSEWHERE, openRooms, roomOf, runRoomOp } from './room-center-ops';
 import { loadPricedItems } from './pricing';
+import { bindAttachments, registerAttachmentRef } from './oa/attachments';
 
 const clientKey = z.uuid('缺少有效的操作编号，请刷新页面后重试');
 const expectedVersion = z.number('缺少房态版本号，请刷新页面后重试').int().min(0);
@@ -310,6 +313,71 @@ export async function backfillRoom(deps: Deps, spaceId: number, raw: unknown, ct
     await logRoomEvent(tx, { spaceId, kind: 'backfill', registrationId: Number(reg!.id), detail, staffId: ctx.actor.id, at });
     await writeAudit(tx, { staffId: ctx.actor.id, action: 'room_center_backfill', targetType: 'space', targetId: spaceId, detail, ip: ctx.ip, businessDate: today });
     return visitId;
+  });
+}
+
+// ───────────────────────── FT-03 过夜的留宿确认单照片 ─────────────────────────
+
+const OVERNIGHT_PHOTO_REF = 'room_overnight';
+const MAX_OVERNIGHT_PHOTOS = 6;
+/** 开房以后多久以内能补传（小时） */
+const OVERNIGHT_PHOTO_HOURS = 72;
+
+export const OvernightPhotoInput = z.object({
+  registrationId: z.number('请指定是哪位客人的登记').int().positive(),
+  attachmentId: z.number('请先上传照片').int().positive(),
+});
+
+// 挂上以后谁能看：能看房态中心客人的（不是只看房态的康美部账户）
+registerAttachmentRef(
+  OVERNIGHT_PHOTO_REF,
+  async (_db, actor) => !isRoomStatusOnly(actor) && (['technician.dispatch', 'frontdesk.read', 'room.operate', 'room.housekeep'] as const).some((p) => can(actor, p)),
+);
+
+/** 这几张登记单上的留宿确认单照片 */
+export async function overnightPhotos(db: Db, registrationIds: number[]): Promise<Map<number, RoomGuestView['overnightPhotos']>> {
+  const out = new Map<number, RoomGuestView['overnightPhotos']>();
+  if (!registrationIds.length) return out;
+  const rows = await db<{ id: number; refId: number; hasThumb: boolean }[]>`
+    SELECT id, ref_id, thumb IS NOT NULL AS has_thumb FROM oa_attachments WHERE ref_type = ${OVERNIGHT_PHOTO_REF} AND ref_id IN ${db(registrationIds)} ORDER BY id`;
+  for (const r of rows) {
+    const id = Number(r.id);
+    const list = out.get(Number(r.refId)) ?? [];
+    list.push({ id, url: `/api/oa/attachments/${id}`, thumbUrl: r.hasThumb ? `/api/oa/attachments/${id}/thumb` : null });
+    out.set(Number(r.refId), list);
+  }
+  return out;
+}
+
+/**
+ * 给过夜客人的登记挂一张留宿确认单照片（选填，不挡开房；开房以后 72 小时内可以补传，退了房也能补）。
+ * 照片先经通用附件传上来（只能挂自己传的、还没挂过的图片）；同一张再挂一次（结果没收到重提）照样成功。锁：登记单 → 附件
+ */
+export async function attachOvernightPhoto(deps: Deps, spaceId: number, raw: unknown, ctx: OpContext): Promise<void> {
+  const input = parse(OvernightPhotoInput, raw);
+  await deps.sql.begin(async (tx) => {
+    const [reg] = await tx<{ id: number; spaceId: number; overnight: boolean; openedAt: string; tagCode: string }[]>`
+      SELECT r.id, r.space_id, r.overnight, r.opened_at, h.code AS tag_code
+      FROM room_registrations r JOIN visits v ON v.id = r.visit_id JOIN hand_tags h ON h.id = v.tag_id
+      WHERE r.id = ${input.registrationId} AND r.store_id = ${currentStoreId()} FOR UPDATE OF r`;
+    if (!reg || Number(reg.spaceId) !== spaceId) throw notFound('这间房里没有这张登记，请刷新');
+    if (!reg.overnight) throw unprocessable('NOT_OVERNIGHT', `手牌 ${reg.tagCode} 登记时没选过夜，不用传留宿确认单`);
+    if (Date.now() - new Date(reg.openedAt).getTime() > OVERNIGHT_PHOTO_HOURS * 3_600_000) throw unprocessable('PHOTO_TOO_LATE', `开房已经超过 ${OVERNIGHT_PHOTO_HOURS} 小时，不能再补传`);
+    const [att] = await tx<{ mime: string; refType: string | null; refId: number | null; uploadedBy: number }[]>`
+      SELECT mime, ref_type, ref_id, uploaded_by FROM oa_attachments WHERE id = ${input.attachmentId}`;
+    if (att && att.refType === OVERNIGHT_PHOTO_REF && Number(att.refId) === reg.id && Number(att.uploadedBy) === ctx.actor.id) return;
+    if (!att || !att.mime.startsWith('image/')) throw unprocessable('ATTACHMENT_INVALID', '留宿确认单要传照片');
+    const [n] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM oa_attachments WHERE ref_type = ${OVERNIGHT_PHOTO_REF} AND ref_id = ${reg.id}`;
+    if (n!.n >= MAX_OVERNIGHT_PHOTOS) throw unprocessable('PHOTO_LIMIT', `一位客人最多传 ${MAX_OVERNIGHT_PHOTOS} 张`);
+    await bindAttachments(tx, [input.attachmentId], ctx.actor, { type: OVERNIGHT_PHOTO_REF, id: Number(reg.id) });
+    await writeAudit(tx, {
+      staffId: ctx.actor.id,
+      action: 'room_center_overnight_photo',
+      targetType: 'space',
+      targetId: spaceId,
+      detail: { registrationId: Number(reg.id), tag: reg.tagCode, attachmentId: input.attachmentId },
+      ip: ctx.ip,
+    });
   });
 }
 

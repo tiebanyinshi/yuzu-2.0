@@ -930,6 +930,7 @@ const rcGuest = (visitId: number, tagCode: string, guest: string, techNo: string
   registrationId: visitId,
   visitId,
   kind: 'normal',
+  overnightPhotos: [],
   tagCode,
   guest,
   memberGradeLabel: 'L3 观澜',
@@ -981,6 +982,7 @@ const rcRoom = (spaceId: number, code: string, categoryKey: string, kind: RoomCa
   maintenance: null,
   dirtySince: null,
   dirtyNote: '',
+  dirtyOvernight: false,
   booking: null,
   merged: [],
   guestText: null,
@@ -1031,6 +1033,7 @@ const rcCounts = (list: RoomCard[]) => ({
 });
 const RC_BOARD: RoomCenterBoard = {
   limits: { swapTechMinutes: 15, revokeMinutes: 15, freeAfterClockOffMinutes: 15 },
+  statusOnly: false,
   serverTime: NOW,
   businessDate: NOW.slice(0, 10),
   categories: [

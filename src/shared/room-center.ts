@@ -169,6 +169,8 @@ export interface RoomGuestView {
   note: string;
   /** 客人过夜（重做第五批，PC25：按摩房、足浴房、SPA 房开单 / 续钟时选的） */
   overnight: boolean;
+  /** 过夜的留宿确认单照片（福田店 FT-03，选填、可以开房以后补传）；没有为空数组 */
+  overnightPhotos: { id: number; url: string; thumbUrl: string | null }[];
   /** 登记的时刻（没有登记单的是钟单建的时刻） */
   since: string;
   /** 登记单的种类：普通、括单（技师自己约的客人）；钟房直接派进来的是普通 */
@@ -226,6 +228,8 @@ export interface RoomCard {
   /** 从什么时候起待清；不是待清为 null */
   dirtySince: string | null;
   dirtyNote: string;
+  /** 待清的房间上次的客人有没有过夜（福田店 FT-04：查房的人可以先不查过夜客人的房间）；不是待清为 false */
+  dirtyOvernight: boolean;
   /** 今天订了这间、还没到店的预约（最早的一张） */
   booking: RoomBookingView | null;
   /** 并房：一起的几间（含自己；第一间是主房）；没并房为空 */
@@ -254,6 +258,8 @@ export interface RoomCenterBoard {
   todayBookings: RoomCenterBooking[];
   /** 福田店整改：后台设的三个时限（分钟）——换技师（FT-06）、撤房（FT-09）、下钟后免房费（FT-10） */
   limits: { swapTechMinutes: number; revokeMinutes: number; freeAfterClockOffMinutes: number };
+  /** 只看房态与手牌号（福田店 FT-13：康美部的账户）：卡片上没有项目、技师、金额、客人姓名，房间详情里没有历史与动作 */
+  statusOnly: boolean;
 }
 
 /** 房态页上的一张预约（只读；改、到店、取消在预约看板） */
@@ -413,6 +419,13 @@ export function elapsedText(sinceIso: string, nowMs: number): string {
 }
 
 /** 休息大厅一类（重做第五批，PC24）：不能同房加人、不能并房。按业态认：带「大厅」「大堂」「休息区」「休息厅」的 */
+/**
+ * 康美部的账户（福田店 FT-13）：岗位是康美部的、或带「康美部」职责的（店主、店总除外）。房态中心对他们只给房态与客人的手牌号，
+ * 项目、技师、金额、客人姓名、预约、房间历史都不给
+ */
+export const isRoomStatusOnly = (a: { role: string; position?: string | null; duties: readonly string[] }): boolean =>
+  a.role !== 'owner' && a.role !== 'store_manager' && (!!a.position?.startsWith('kangmei.') || a.duties.includes('kangmei'));
+
 export const isLobbyBusinessType = (businessType: string): boolean => /大厅|大堂|休息区|休息厅/.test(businessType);
 
 /** 登记时问「客人是否过夜」的房间（重做第五批，PC25）：技师服务的房间里按摩、足浴、SPA 这几类（休息大厅不问） */

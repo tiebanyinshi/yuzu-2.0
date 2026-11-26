@@ -8,7 +8,7 @@
 //          福田店整改（2026-11-26）：撤房（FT-09）作废的钟、补单（FT-19）补录的钟与它们的登记单不算用过（钟单记 room_neutral）。
 // 「维修」：房态行上记着。  「已预订」：今天有订这间房、还没到店的预约（派对房等按房间订；技师预约、客房预约不订具体房间）。
 
-import { roomStatusOf, type RegistrationKind, type RoomEventKind, type RoomStatus } from '@shared/room-center';
+import { isLobbyBusinessType, roomStatusOf, type RegistrationKind, type RoomEventKind, type RoomStatus } from '@shared/room-center';
 import { spaceLabel } from '@shared/spaces';
 import type { CallType } from '@shared/technicians';
 import type { Db, Tx } from '../db';
@@ -191,9 +191,13 @@ export async function loadRoomFacts(db: Db, today: string, spaceIds?: number[]):
     const id = Number(sp.id);
     const state = stateOf.get(id) ?? null;
     const mine = regs.filter((r) => Number(r.spaceId) === id);
+    // 休息大厅的床位（福田店 FT-12）：技师下钟就空出来——钟都结束了的客人不再占床位，也不让床位转待清（只有手动标的才待清）
+    const lobby = isLobbyBusinessType(sp.businessType);
     const guests: GuestFact[] = mine.flatMap((r) => {
       const visit = visits.get(Number(r.visitId));
-      return visit ? [{ registration: r, visit, sessions: sessions.filter((s) => Number(s.visitId) === Number(r.visitId) && Number(s.id) >= Number(r.sessionId)) }] : [];
+      const mineSessions = sessions.filter((s) => Number(s.visitId) === Number(r.visitId) && Number(s.id) >= Number(r.sessionId));
+      if (lobby && !mineSessions.some((s) => s.status !== 'done')) return [];
+      return visit ? [{ registration: r, visit, sessions: mineSessions }] : [];
     });
     // 钟房直接派进这间房、没有登记单的：一位客人一组，只算还没结束的钟
     const registered = new Set(mine.map((r) => Number(r.visitId)));
@@ -207,7 +211,7 @@ export async function loadRoomFacts(db: Db, today: string, spaceIds?: number[]):
       state,
       guests,
       usageOpen: usages.has(id),
-      lastUsedAt: later(used.get(id) ?? null, state?.dirtyAt ?? null),
+      lastUsedAt: lobby ? (state?.dirtyAt ?? null) : later(used.get(id) ?? null, state?.dirtyAt ?? null),
       booking: bookings.find((b) => Number(b.spaceId) === id) ?? null,
     });
   }

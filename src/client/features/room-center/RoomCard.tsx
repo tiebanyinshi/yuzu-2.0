@@ -116,7 +116,15 @@ function CardBody({ room, now, hint }: { room: Room; now: number; hint: string |
   if (room.status === 'dirty') {
     return (
       <>
-        <p className="text-[13px] font-semibold text-ink-2">{room.dirtySince ? `${formatTime(room.dirtySince)} 起待清` : '待打扫'}</p>
+        <p className="flex items-center gap-1.5 text-[13px] font-semibold text-ink-2">
+          {room.dirtySince ? `${formatTime(room.dirtySince)} 起待清` : '待打扫'}
+          {/* FT-04：上次的客人过夜，查房的可以先不查这间 */}
+          {room.dirtyOvernight && (
+            <span className="shrink-0 rounded bg-lake px-1.5 text-[12px] font-bold text-paper" data-testid="rc-dirty-overnight">
+              留宿
+            </span>
+          )}
+        </p>
         {room.dirtyNote && <p className="truncate text-[12.5px] text-ink-3">{room.dirtyNote}</p>}
       </>
     );

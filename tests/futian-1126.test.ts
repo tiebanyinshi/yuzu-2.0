@@ -11,7 +11,7 @@ import type { RoomCenterBoard, RoomCheckoutPreview, RoomHistory } from '../src/s
 import { DEFAULT_ROOM_CENTER_RULES, roomTimeFee, type RoomCenterRules } from '../src/shared/room-center-rules';
 import type { SpaceLedger } from '../src/shared/spaces';
 import type { TechnicianReport } from '../src/shared/technicians';
-import { api, setup, type TestContext } from './helpers';
+import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
 let foot = 0;
@@ -436,5 +436,93 @@ describe('CY-01 同组点单汇总', () => {
     const one = (await api(ctx.app, ctx.clerk, 'GET', `/api/dining/group?visit=${solo!.visitId}`)).body as DiningGroupSummary;
     expect(one.groupId).toBeNull();
     expect(one.members).toHaveLength(1);
+  });
+});
+
+// ───────────────────────── 批次 3 ─────────────────────────
+
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
+const upload = async (cookie: string) => {
+  const r = await api(ctx.app, cookie, 'POST', '/api/oa/attachments', { clientKey: randomUUID(), fileName: '留宿确认单.jpg', mime: 'image/jpeg', data: JPEG.toString('base64') });
+  expect(r.status, JSON.stringify(r.body)).toBe(201);
+  return r.body.id as number;
+};
+
+describe('FT-03 留宿确认单照片 + FT-04 待清房标留宿', () => {
+  it('过夜客人：不传照片照样开房（待补传）；补传以后详情里看得到（已上传）；没选过夜的不收；退房以后待清的卡片标「留宿」，清洁完成就没了', async () => {
+    const [g] = await enter();
+    const r = await register('S302', { tagCode: g!.tagCode, technicianId: tech['01'], overnight: true });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    let guest = (await room('S302')).guests[0]!;
+    expect(guest.overnight).toBe(true);
+    expect(guest.overnightPhotos).toEqual([]);
+    const att = await upload(ctx.clerk);
+    const body = { registrationId: guest.registrationId, attachmentId: att };
+    const ok = await api(ctx.app, ctx.clerk, 'POST', on('S302', 'overnight-photo'), body);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    // 重提同一张照样成功、不重复
+    expect((await api(ctx.app, ctx.clerk, 'POST', on('S302', 'overnight-photo'), body)).status).toBe(200);
+    guest = (await room('S302')).guests[0]!;
+    expect(guest.overnightPhotos).toHaveLength(1);
+    expect((await api(ctx.app, ctx.owner, 'GET', guest.overnightPhotos[0]!.url)).status).toBe(200);
+    // 挂到别的房间的登记上拒绝
+    expect((await api(ctx.app, ctx.clerk, 'POST', on('S303', 'overnight-photo'), { registrationId: guest.registrationId, attachmentId: await upload(ctx.clerk) })).status).toBe(404);
+    const [audit] = await ctx.sql`SELECT 1 FROM audit_logs WHERE action = 'room_center_overnight_photo'`;
+    expect(audit).toBeTruthy();
+    await release('S302'); // 退房 → 待清 → release 里清洁完成；这里分开看
+  });
+
+  it('待清的房间：上次的客人过夜标「留宿」，没过夜的不标；清洁完成以后不再标', async () => {
+    const [a] = await enter();
+    expect((await register('S303', { tagCode: a!.tagCode, technicianId: tech['01'], overnight: true })).status).toBe(200);
+    const [b] = await enter();
+    expect((await register('S304', { tagCode: b!.tagCode, technicianId: tech['02'] })).status).toBe(200);
+    // 不过夜的客人传留宿确认单拒绝
+    const reg = (await room('S304')).guests[0]!.registrationId;
+    expect((await api(ctx.app, ctx.clerk, 'POST', on('S304', 'overnight-photo'), { registrationId: reg, attachmentId: await upload(ctx.clerk) })).body.error.code).toBe('NOT_OVERNIGHT');
+    for (const code of ['S303', 'S304']) {
+      for (const s of (await room(code)).guests[0]!.sessions) expect((await finish(s.id)).status).toBe(200);
+      const p = await preview(code);
+      expect((await act(code, 'checkout', { seenUnpaid: p.unpaidTotal, inHouse: true })).status).toBe(200);
+    }
+    expect(await room('S303')).toMatchObject({ status: 'dirty', dirtyOvernight: true });
+    expect(await room('S304')).toMatchObject({ status: 'dirty', dirtyOvernight: false });
+    expect((await act('S303', 'cleaned')).status).toBe(200);
+    expect(await room('S303')).toMatchObject({ status: 'free', dirtyOvernight: false });
+    expect((await act('S304', 'cleaned')).status).toBe(200);
+  });
+});
+
+describe('FT-13 康美部只看房态与手牌号', () => {
+  it('康美部员工、康美部主管：卡片只有房态与手牌号，没有项目、技师、金额、客人姓名；历史、结账预览、查客人都拒绝；店主照常看全', async () => {
+    const hire = async (username: string, position: string) => {
+      const r = await api(ctx.app, ctx.owner, 'POST', '/api/staff', { username, displayName: username, position, password: PASSWORD });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      await ctx.sql`UPDATE staff SET must_change_password = false WHERE username = ${username}`;
+      return login(ctx.app, username);
+    };
+    const staff = await hire('km_staff', 'kangmei.staff');
+    const lead = await hire('km_lead', 'kangmei.lead');
+    const [g] = await enter();
+    expect((await register('S301', { tagCode: g!.tagCode, technicianId: tech['03'], note: '靠窗' })).status).toBe(200);
+    for (const cookie of [staff, lead]) {
+      const b = (await api(ctx.app, cookie, 'GET', '/api/room-center')).body as RoomCenterBoard;
+      expect(b.statusOnly).toBe(true);
+      const card = b.rooms.find((r) => r.code === 'S301')!;
+      expect(card.status).toBe('in_use');
+      expect(card.guests.map((x) => x.tagCode)).toEqual([g!.tagCode]);
+      expect(card.guestText).toBe(`手牌 ${g!.tagCode}`);
+      const text = JSON.stringify(card);
+      for (const secret of ['足疗', '技师03', '19800', '靠窗', 'clerk']) expect(text, secret).not.toContain(secret);
+      expect([card.amount, card.techText, card.orders]).toEqual([null, null, null]);
+      expect(b.todayBookings).toEqual([]);
+      expect((await api(ctx.app, cookie, 'GET', on('S301', 'history'))).status).toBe(403);
+      expect((await api(ctx.app, cookie, 'GET', `/api/room-center/guest?tag=${g!.tagCode}`)).status).toBe(403);
+    }
+    expect((await api(ctx.app, lead, 'GET', on('S301', 'checkout-preview'))).status).toBe(403);
+    const full = (await api(ctx.app, ctx.owner, 'GET', '/api/room-center')).body as RoomCenterBoard;
+    expect(full.statusOnly).toBe(false);
+    expect(JSON.stringify(full.rooms.find((r) => r.code === 'S301'))).toContain('足疗');
+    await release('S301');
   });
 });

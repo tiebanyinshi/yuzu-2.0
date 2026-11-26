@@ -3,8 +3,10 @@
 //           FT-05 筛选类别（区域页签）在房态选项（统计卡）上面；FT-08 右键设置房态（待清 → 空闲），房间历史里有记录。
 //   CY-02（已点菜品）在 e2e/dining.spec.ts 里核对（那条用例自己建档口与菜）。
 //   批次 2：FT-02 输编号即选、默认不平铺；FT-07 括单；FT-06 限时换技师；FT-09 限时撤房（回空闲）；FT-19 补单；后台房态中心规则；CY-01 同组汇总。
+//   批次 3：FT-03 过夜客人先开房、再在详情里拍照补传留宿确认单（待补传 → 已上传 1 张）；FT-04 退房后待清的卡片标「留宿」；
+//           FT-13 康美部员工登录只看房态与手牌号（没有项目、技师、金额，详情里没有历史与动作）。
 //           （时限超过以后拒绝、自定义时限、房费、同类型换房、业绩归属在 tests/futian-1126.test.ts 里按时刻核对）
-// 只在独立演示库跑，数据自己备、可以重复跑：空间台账里没有专用的两个空间（三层的 Q395、Q396）就导入。
+// 只在独立演示库跑，数据自己备、可以重复跑：空间台账里没有专用的两个空间（三层的 Q385、Q386）就导入。
 // 账号：店主 linlan，密码 yuzu2026。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
@@ -16,7 +18,7 @@ import type { SpaceLedger } from '../src/shared/spaces';
 import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
-const [R1, R2] = ['Q395', 'Q396'] as const;
+const [R1, R2] = ['Q385', 'Q386'] as const;
 const SPACES = [
   [R1, 'SPA', '1', 'E2E 福田 SPA 一号'],
   [R2, 'SPA', '1', 'E2E 福田 SPA 二号'],
@@ -338,5 +340,96 @@ test.describe('福田店整改 2026-11-26', () => {
     await expect(grp.getByTestId('dining-group-total')).toContainText(((d1.price * 3) / 100).toFixed(2));
     await page.keyboard.press('Escape');
     await send(page, 'put', '/api/admin/dining/rules', { enabled: false });
+  });
+
+  test('批次 3：FT-03 留宿确认单补传；FT-04 待清卡片标留宿；FT-13 康美部只看房态与手牌号', async ({ page }) => {
+    await login(page, 'linlan');
+    await ensureSpaces(page);
+    await ensureService(page);
+    for (const code of SPACES.map((s) => s[0])) await clearRoom(page, code);
+    const [g] = await checkin(page, ['E2E 福田过夜']);
+    const tech = (await getJson<{ technicians: { id: number; techNo: string }[] }>(page, '/api/clockroom')).technicians.find((t) => t.techNo === TECHS[0].techNo)!;
+    const item = (await getJson<{ items: { id: number; name: string }[] }>(page, '/api/catalog')).items.find((i) => i.name === ITEM.name)!;
+    const r2 = await cardOf(page, R2);
+    await send(page, 'post', `/api/room-center/rooms/${r2.spaceId}/register`, {
+      clientKey: randomUUID(),
+      tagCode: g!.tag,
+      itemId: item.id,
+      tier: 'standard',
+      quantity: 1,
+      technicianId: tech.id,
+      callType: 'designated',
+      sellerNo: 'linlan',
+      note: 'E2E 靠窗',
+      start: 'now',
+      overnight: true,
+      expectedTotal: ITEM.price,
+    });
+
+    // FT-03：开房时没传照片照样开了；详情里写「待补传」，拍照上传以后「已上传 1 张」、有缩略图
+    await page.goto('/room-center');
+    await page.getByTestId('rc-search').fill(R2);
+    await page.getByTestId(`rc-open-${R2}`).click();
+    const box = page.getByTestId(`rc-overnight-photos-${g!.tag}`);
+    await expect(box.getByTestId('rc-overnight-photo-state')).toHaveText('待补传');
+    // 一张 2×2 的 PNG（浏览器里压成 JPEG 再传）
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==', 'base64');
+    await box.getByTestId('rc-overnight-photo-input').setInputFiles({ name: '留宿确认单.png', mimeType: 'image/png', buffer: png });
+    await expect(box.getByTestId('rc-overnight-photo-state')).toHaveText('已上传 1 张');
+    await expect(box.getByRole('img', { name: '留宿确认单' })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    // FT-04：下钟、退房 → 待清的卡片上标「留宿」
+    let r = await cardOf(page, R2);
+    for (const s of r.guests.flatMap((x) => x.sessions)) if (s.status === 'serving') await send(page, 'post', `/api/clockroom/sessions/${s.id}/finish`);
+    const p = await getJson<RoomCheckoutPreview>(page, `/api/room-center/rooms/${r.spaceId}/checkout-preview`);
+    await send(page, 'post', `/api/room-center/rooms/${r.spaceId}/checkout`, { clientKey: randomUUID(), expectedVersion: p.version, seenUnpaid: p.unpaidTotal, inHouse: true });
+    const card = page.getByTestId(`rc-room-${R2}`);
+    await expect(card).toHaveAttribute('data-status', 'dirty');
+    await expect(card.getByTestId('rc-dirty-overnight')).toBeVisible();
+
+    // FT-13：康美部员工（新建账号、改好密码）只看房态与手牌号
+    const [h] = await checkin(page, ['E2E 福田康美看']);
+    r = await cardOf(page, R1);
+    await send(page, 'post', `/api/room-center/rooms/${r.spaceId}/register`, {
+      clientKey: randomUUID(),
+      tagCode: h!.tag,
+      itemId: item.id,
+      tier: 'standard',
+      quantity: 1,
+      technicianId: tech.id,
+      callType: 'designated',
+      sellerNo: 'linlan',
+      note: 'E2E 不该看到',
+      start: 'later',
+      expectedTotal: ITEM.price,
+    });
+    const username = `e2eftkm${String(Date.now()).slice(-7)}`;
+    const made = await page.request.post('/api/staff', { data: { username, displayName: 'E2E 福田康美', position: 'kangmei.staff' } });
+    expect(made.status(), await made.text()).toBe(201);
+    const temp = ((await made.json()) as { temporaryPassword: string }).temporaryPassword;
+    await page.request.post('/api/auth/logout');
+    expect((await page.request.post('/api/auth/login', { data: { username, password: temp } })).ok()).toBe(true);
+    expect((await page.request.post('/api/auth/change-password', { data: { currentPassword: temp, newPassword: `${temp}9` } })).ok()).toBe(true);
+    await page.goto('/room-center');
+    await expect(page.getByTestId('room-center')).toBeVisible({ timeout: 30_000 });
+    await page.getByTestId('rc-search').fill(R1);
+    const km = page.getByTestId(`rc-room-${R1}`);
+    await expect(km).toHaveAttribute('data-status', 'in_use');
+    await expect(km).toContainText(h!.tag);
+    for (const hidden of [ITEM.name, TECHS[0].name, '98.00', 'E2E 福田康美看']) await expect(km).not.toContainText(hidden);
+    await page.getByTestId(`rc-open-${R1}`).click();
+    const d = page.getByTestId('rc-room-dialog');
+    await expect(d).toHaveAttribute('data-status-only', 'true');
+    await expect(d).toContainText(`手牌 ${h!.tag}`);
+    await expect(d.getByTestId('rc-history')).toHaveCount(0);
+    await expect(d.getByTestId('rc-actions')).toHaveCount(0);
+    for (const hidden of [ITEM.name, TECHS[0].name, 'E2E 不该看到']) await expect(d).not.toContainText(hidden);
+    await page.keyboard.press('Escape');
+    // 收尾：店主取消派钟、退房
+    await page.request.post('/api/auth/logout');
+    await login(page, 'linlan');
+    await clearRoom(page, R1);
+    await clearRoom(page, R2);
   });
 });

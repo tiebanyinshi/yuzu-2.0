@@ -412,6 +412,7 @@ function RoomCenterBody() {
           room={detailRoom}
           now={now}
           limits={board.limits}
+          statusOnly={board.statusOnly}
           onClose={() => setDetail(null)}
           onOrder={orderOutlets.length && detailRoom.status === 'in_use' ? () => (setDetail(null), setOrdering({ key: detailRoom.key, view: 'order' })) : undefined}
           onOrders={() => {

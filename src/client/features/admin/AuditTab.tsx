@@ -140,6 +140,7 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   room_center_merge: { label: '房态中心 · 并房 / 拆并', tone: 'yuzu' },
   room_center_revoke: { label: '房态中心 · 撤房', tone: 'clay' },
   room_center_backfill: { label: '房态中心 · 补单', tone: 'yuzu' },
+  room_center_overnight_photo: { label: '房态中心 · 留宿确认单', tone: 'lake' },
   room_center_state: { label: '房态中心 · 改房态', tone: 'ember' },
   room_category: { label: '房态中心 · 房型', tone: 'pine' },
   // 8.1.15 技师管理
