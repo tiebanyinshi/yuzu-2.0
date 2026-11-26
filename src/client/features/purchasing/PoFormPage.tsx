@@ -230,7 +230,14 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
         ...line,
         qty: qty !== null ? formatQty(qty).replace(/,/g, '') : '',
         // 商城需求选定了成交方案（8.1.51）：按方案的含税单价；没有再按物料参考价、部门填的参考价
-        price: o.plan && o.unit === m.purchaseUnit ? centsToInput(o.plan.unitPriceCents) : line.price || (o.refPriceCents !== null && o.unit === m.purchaseUnit ? centsToInput(o.refPriceCents) : ''),
+        // 需求按库存单位提的（Codex 审查）：方案单价按采购单位换算（× 每采购单位折合的库存数）；单位对不上的空着让采购填，不拿物料参考价顶
+        price: o.plan
+          ? o.unit === m.purchaseUnit
+            ? centsToInput(o.plan.unitPriceCents)
+            : o.unit === m.inventoryUnit
+              ? centsToInput(Math.round((o.plan.unitPriceCents * m.purchaseFactorMilli) / 1000))
+              : ''
+          : line.price || (o.refPriceCents !== null && o.unit === m.purchaseUnit ? centsToInput(o.refPriceCents) : ''),
         spec: (o.details || m.specification).slice(0, 80),
         images: o.images.slice(0, MAX_LINE_IMAGES),
         requests: [asRequest(o)],

@@ -13,11 +13,14 @@ import type { Db } from '../db';
 import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
+import { assertNotFenced } from '../lib/fences';
+import { hashRequest } from '../lib/idempotency';
 import { setTxTimeouts } from '../lib/tx';
 import { parse } from '../lib/validate';
 import { docDateSchema, logApproval } from './inventory/common';
+import { erpOpAbandoned } from './erp-ops';
 import { clearStockDecisions, enterStockCheck, hasIssuedLines } from './request-stock';
-import { approvableOnFor, deptConfirmFor, isHeadOf, lockRequest, myContext, validateLines, writeLines, type LineWrite } from './requests';
+import { approvableOnFor, deptConfirmFor, isHeadOf, lockRequest, myContext, validateLines, type LineWrite } from './requests';
 
 const id = z.number().int().positive();
 
@@ -47,7 +50,10 @@ export function customDetails(details: string, spec: MallCustomSpec | null): str
     spec.budgetCents !== null && `预算约 ¥${(spec.budgetCents / 100).toFixed(2)}`,
   ].filter(Boolean);
   const head = `【定制】${parts.join('；')}`;
-  return (details ? `${head}\n${details}` : head).slice(0, 1000);
+  const all = details ? `${head}\n${details}` : head;
+  // 合起来超过 1000 字不截断（Codex 审查：截掉的验收要求就丢了），让部门删短一点
+  if (all.length > 1000) throw unprocessable('DETAILS_TOO_LONG', `定制要求与设计说明合起来最多 1000 个字（现在 ${all.length} 个），请把设计说明写短一点`);
+  return all;
 }
 
 /** 拆回部门写的说明（改单时回显用） */
@@ -159,9 +165,13 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
     });
     await validateLines(tx, lines, { mall: true });
     await clearStockDecisions(tx, requestId);
-    await tx`DELETE FROM purchase_request_line_images WHERE request_line_id IN (SELECT id FROM purchase_request_lines WHERE request_id = ${requestId})`;
-    await tx`DELETE FROM purchase_request_lines WHERE request_id = ${requestId}`;
-    await writeLines(tx, requestId, lines);
+    await rewriteLinesInPlace(
+      tx,
+      requestId,
+      stored,
+      input.lines.map((x) => x.id),
+      lines,
+    );
     const approvableOn = await approvableOnFor(tx, deps.config.timezone);
     const confirm = await deptConfirmFor(tx, r.departmentId, actor, lines, true);
     await tx`
@@ -184,6 +194,32 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
       ip,
     });
   });
+}
+
+/**
+ * 原单补资料写回明细（Codex 审查）：留下的行按原来的编号原地改（成交方案挂在行上，删了重写会撞外键），删掉的行连同它的方案一起删；
+ * 行号按页面的顺序重排。内容变了，原来选定的方案退回「待确认」，请部门重新确认
+ */
+async function rewriteLinesInPlace(tx: Db, requestId: number, stored: StoredLine[], keepIds: number[], lines: LineWrite[]) {
+  const gone = stored.map((l) => l.id).filter((x) => !keepIds.includes(x));
+  if (gone.length) {
+    await tx`DELETE FROM mall_request_quotes WHERE line_id IN ${tx(gone)}`;
+    await tx`DELETE FROM purchase_request_line_images WHERE request_line_id IN ${tx(gone)}`;
+    await tx`DELETE FROM purchase_request_lines WHERE id IN ${tx(gone)}`;
+  }
+  // 先挪开行号，免得重排时撞「一张单里行号不重复」
+  await tx`UPDATE purchase_request_lines SET line_no = line_no + 1000 WHERE request_id = ${requestId}`;
+  for (const [i, l] of lines.entries()) {
+    const lineId = keepIds[i]!;
+    await tx`
+      UPDATE purchase_request_lines SET line_no = ${i + 1}, name = ${l.name}, qty_milli = ${l.qtyMilli}, unit = ${l.unit}, link = ${l.link}, details = ${l.details},
+             brand_model = ${l.brandModel ?? ''}, expected_category = ${l.expectedCategory ?? ''}, reason_text = ${l.reasonText ?? ''},
+             custom_kind = ${l.customKind ?? null}, custom_spec = ${l.customSpec ? tx.json(l.customSpec as never) : null}
+      WHERE id = ${lineId} AND request_id = ${requestId}`;
+    await tx`DELETE FROM purchase_request_line_images WHERE request_line_id = ${lineId}`;
+    for (const [k, imageId] of l.imageIds.entries()) await tx`INSERT INTO purchase_request_line_images (request_line_id, sort_no, image_id) VALUES (${lineId}, ${k + 1}, ${imageId})`;
+  }
+  await tx`UPDATE mall_request_quotes SET status = 'proposed', selected_mode = NULL, selected_by = NULL, selected_at = NULL WHERE request_id = ${requestId} AND status = 'selected'`;
 }
 
 async function storedLines(db: Db, requestId: number): Promise<StoredLine[]> {
@@ -257,16 +293,22 @@ const QuoteInput = z.object({
   recommended: z.boolean().default(false),
 });
 
-/** 记一条方案：接单的人（或审核的人、店主）；需求单要在审核中或已通过；原样重提（同一个操作编号）返回第一次那条 */
+/**
+ * 记一条方案：接单的人（或审核的人、店主）；需求单要在审核中或已通过。
+ * 「结果待确认」与主数据同一套（shop_master 操作编号，Codex 审查）：页面本机先记下再发；同一个编号原样重提返回第一次那条，内容不同的拒绝；确认作废的编号晚到也不记
+ */
 export async function addQuote(deps: Deps, requestId: number, raw: unknown, actor: Actor, ip?: string): Promise<void> {
   const input = parse(QuoteInput, raw);
   if (!canSource(actor)) throw forbidden('只有采购（供应链 BP）能记成交方案');
+  const requestHash = hashRequest({ op: 'mall_quote', requestId, ...input, clientKey: undefined });
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const r = await lockRequest(tx, requestId);
-    const [dup] = await tx<{ requestId: number }[]>`SELECT request_id FROM mall_request_quotes WHERE client_key = ${input.clientKey}`;
-    if (dup) {
-      if (Number(dup.requestId) !== requestId) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一张单的方案');
+    await assertNotFenced(tx, input.clientKey, 'shop_master', erpOpAbandoned);
+    const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`
+      SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+    if (done) {
+      if (done.opType !== 'shop_master' || done.requestHash !== requestHash || Number(done.staffId) !== actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的方案');
       return;
     }
     if (r.source !== 'mall') throw conflict('NOT_MALL', '这张需求单不是采购商城提的');
@@ -282,7 +324,7 @@ export async function addQuote(deps: Deps, requestId: number, raw: unknown, acto
     }
     if (!supplierName) throw unprocessable('SUPPLIER_REQUIRED', '请选择供应商，或写上供应商名称（还没建档的）');
     if (input.imageIds.length) {
-      const ok = await tx<{ id: number }[]>`SELECT id FROM erp_images WHERE id IN ${tx(input.imageIds)} AND scope = 'general'`;
+      const ok = await tx<{ id: number }[]>`SELECT id FROM erp_images WHERE id IN ${tx(input.imageIds)} AND scope = 'quote'`;
       if (ok.length !== new Set(input.imageIds).size) throw unprocessable('IMAGE_INVALID', '有的截图不存在，重新上传再试');
     }
     if (input.recommended) await tx`UPDATE mall_request_quotes SET recommended = false WHERE line_id = ${input.lineId} AND status = 'proposed'`;
@@ -296,6 +338,7 @@ export async function addQuote(deps: Deps, requestId: number, raw: unknown, acto
     // 记了方案还没人接的：顺手算接单
     await tx`UPDATE purchase_requests SET sourcing_owner_id = coalesce(sourcing_owner_id, ${actor.id}), sourcing_claimed_at = coalesce(sourcing_claimed_at, now()) WHERE id = ${requestId}`;
     await writeAudit(tx, { staffId: actor.id, action: 'purchase_request', targetType: 'purchase_request', targetId: requestId, detail: { action: 'mall_quote', quoteId: q!.id, supplierName }, ip });
+    await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'shop_master', ${requestHash}, ${requestId}, ${actor.id})`;
   });
 }
 
@@ -305,12 +348,26 @@ async function assertSourcer(db: Db, requestId: number, actor: Actor) {
   if (owner !== null && owner !== actor.id && actor.role !== 'owner' && !can(actor, 'request.review')) throw forbidden('这张单是别的同事接的，请让接单的人记方案');
 }
 
+/** 能不能替部门确认方案：提单人、这个部门的人、主管（提交时记着的或现在的）、店主 */
+async function confirmsPlan(db: Db, actor: Actor, r: { requesterId: number; departmentId: number; deptHeadId: number | null }) {
+  if (r.requesterId === actor.id) return true;
+  const me = await myContext(db, actor);
+  return isHeadOf(me, actor, r) || me.departmentId === r.departmentId;
+}
+
+/** 详情页的「能确认方案」：与 selectQuote 同一个判断 */
+export async function canConfirmPlan(db: Db, actor: Actor, requestId: number): Promise<boolean> {
+  const [r] = await db<{ requesterId: number; departmentId: number; deptHeadId: number | null }[]>`
+    SELECT requester_id, department_id, dept_head_id FROM purchase_requests WHERE id = ${requestId}`;
+  return !!r && (await confirmsPlan(db, actor, { requesterId: Number(r.requesterId), departmentId: Number(r.departmentId), deptHeadId: r.deptHeadId === null ? null : Number(r.deptHeadId) }));
+}
+
 /** 撤下一条方案（选定以后、转了采购单的不能撤） */
 export async function withdrawQuote(deps: Deps, quoteId: number, actor: Actor, ip?: string): Promise<number> {
   if (!canSource(actor)) throw forbidden('只有采购（供应链 BP）能撤方案');
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
-    const q = await lockQuote(tx, quoteId);
+    const q = await lockQuoteAfterRequest(tx, quoteId);
     await assertSourcer(tx, q.requestId, actor);
     if (q.status === 'withdrawn') return q.requestId;
     if (q.status === 'selected' && (await lineOrdered(tx, q.lineId))) throw conflict('QUOTE_ORDERED', '这条方案已经转了采购单，不能撤');
@@ -331,14 +388,13 @@ export async function selectQuote(deps: Deps, quoteId: number, raw: unknown, act
   const input = parse(SelectInput, raw);
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
-    const q = await lockQuote(tx, quoteId);
+    const q = await lockQuoteAfterRequest(tx, quoteId);
     const r = await lockRequest(tx, q.requestId);
     if (q.status === 'withdrawn') throw conflict('QUOTE_WITHDRAWN', '这条方案已经撤下了');
     if (q.status === 'selected') return q.requestId;
     if (!['submitted', 'approved'].includes(r.status)) throw conflict('INVALID_STATE', '这张需求单已经结束，不能再选方案');
     if (input.mode === 'dept') {
-      const me = await myContext(tx, actor);
-      if (r.requesterId !== actor.id && !isHeadOf(me, actor, r) && me.departmentId !== r.departmentId) throw forbidden('只有提单的部门能确认方案');
+      if (!(await confirmsPlan(tx, actor, r))) throw forbidden('只有提单的部门能确认方案');
     } else {
       if (!canSource(actor)) throw forbidden('只有采购（供应链 BP）能记「已在微信确认」');
       await assertSourcer(tx, q.requestId, actor);
@@ -361,7 +417,11 @@ export async function selectQuote(deps: Deps, quoteId: number, raw: unknown, act
   });
 }
 
-async function lockQuote(tx: Db, quoteId: number) {
+/** 锁的顺序固定（Codex 审查，AGENTS.md）：先锁需求单、再锁方案——与记方案（先锁需求单、再改同一行的方案）一样，不会互相等 */
+async function lockQuoteAfterRequest(tx: Db, quoteId: number) {
+  const [peek] = await tx<{ requestId: number }[]>`SELECT request_id FROM mall_request_quotes WHERE id = ${quoteId}`;
+  if (!peek) throw notFound('方案不存在');
+  await lockRequest(tx, Number(peek.requestId));
   const [q] = await tx<{ requestId: number; lineId: number; status: MallQuote['status'] }[]>`
     SELECT request_id, line_id, status FROM mall_request_quotes WHERE id = ${quoteId} FOR UPDATE`;
   if (!q) throw notFound('方案不存在');

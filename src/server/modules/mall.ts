@@ -65,7 +65,7 @@ import { loadExpenseRules } from './expenses';
 import { docDateSchema, logApproval } from './inventory/common';
 import { loadPurchaseRules } from './inventory/purchase-rules';
 import { enterStockCheck } from './request-stock';
-import { canSeeDealPrices, CustomSpecInput, requestQuotes, sourcingOwner } from './mall-pilot';
+import { canConfirmPlan, canSeeDealPrices, CustomSpecInput, requestQuotes, sourcingOwner } from './mall-pilot';
 import {
   approvableOnFor,
   deptConfirmFor,
@@ -468,7 +468,8 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
       seePrices: canSeeDealPrices(actor),
       source: canSeeDealPrices(actor) && ['submitted', 'approved'].includes(r.status),
       resubmit: r.status === 'returned' && r.source === 'mall' && (r.requester.id === actor.id || actor.role === 'owner'),
-      confirmPlan: ['submitted', 'approved'].includes(r.status) && (r.requester.id === actor.id || actor.role === 'owner' || (await myContext(deps.sql, actor)).departmentId === r.department.id),
+      // 与 selectQuote 同一个判断（Codex 审查）：提单人、这个部门的人、提交时记着的主管或部门现在的主管（不在本部门的主管也算）、店主
+      confirmPlan: ['submitted', 'approved'].includes(r.status) && (await canConfirmPlan(deps.sql, actor, requestId)),
     },
     lines: r.lines.map((l) => ({
       id: l.id,

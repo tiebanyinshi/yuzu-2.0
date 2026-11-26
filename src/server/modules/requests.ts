@@ -786,7 +786,7 @@ function sniff(buf: Buffer): string | null {
 }
 
 /** 存一张图片（按内容去重）。scope：general 需求单、采购单的行；contract 合同扫描件（v0.7.31 迁移 079，两处各存一份、互不相通） */
-export async function saveImage(db: Db, raw: unknown, actor: Actor, scope: 'general' | 'contract' = 'general') {
+export async function saveImage(db: Db, raw: unknown, actor: Actor, scope: 'general' | 'contract' | 'quote' = 'general') {
   const input = parse(ImageInput, raw);
   const buf = Buffer.from(input.data, 'base64');
   if (buf.length === 0) throw badRequest('图片内容为空');

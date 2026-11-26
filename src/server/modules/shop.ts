@@ -62,7 +62,7 @@ import { allowedStores } from './stores';
 import { assertNotFenced } from '../lib/fences';
 import { hashRequest } from '../lib/idempotency';
 import { erpOpAbandoned } from './erp-ops';
-import { myContext } from './requests';
+import { myContext, saveImage } from './requests';
 
 const id = z.number().int().positive();
 
@@ -1261,6 +1261,23 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     await addQuote(deps, rid, req.body, req.actor, req.ip);
     reply.code(201);
     return mallRequest(deps, req.actor, rid);
+  });
+  // 报价截图（Codex 审查）：单独一类图片，只有采购（经办、审核）能传能看；看的时候要挂在某条方案上，或是自己刚传还没保存的
+  const sourcer = guardAny('purchase.manage', 'request.review');
+  app.post(`${P}/quote-images`, { preHandler: sourcer, bodyLimit: 1_600_000 }, async (req, reply) => {
+    const img = await saveImage(sql, req.body, req.actor, 'quote');
+    reply.code(201);
+    return { id: img.id, url: `${P}/quote-images/${img.id}` };
+  });
+  app.get(`${P}/quote-images/:id`, { preHandler: sourcer }, async (req, reply) => {
+    const imgId = parse(idParam, req.params).id;
+    const [img] = await sql<{ mime: string; data: Buffer }[]>`
+      SELECT i.mime, i.data FROM erp_images i
+      WHERE i.id = ${imgId} AND i.scope = 'quote'
+        AND (i.created_by = ${req.actor.id} OR EXISTS (SELECT 1 FROM mall_request_quotes q WHERE i.id = ANY (q.image_ids)))`;
+    if (!img) throw notFound('图片不存在');
+    reply.header('content-type', img.mime).header('cache-control', 'private, max-age=31536000, immutable').header('x-content-type-options', 'nosniff');
+    return reply.send(img.data);
   });
   app.post(`${P}/quotes/:id/withdraw`, { preHandler: guardAny('purchase.manage', 'request.review') }, async (req) =>
     mallRequest(deps, req.actor, await withdrawQuote(deps, parse(idParam, req.params).id, req.actor, req.ip)),

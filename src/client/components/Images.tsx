@@ -47,9 +47,9 @@ async function prepare(file: File): Promise<{ blob: Blob; mime: string; data: st
   return { blob, mime, data: await toBase64(blob) };
 }
 
-async function uploadCompressed(file: File): Promise<{ ref: ImageRef; blob: Blob }> {
+async function uploadCompressed(file: File, url = '/api/erp/images'): Promise<{ ref: ImageRef; blob: Blob }> {
   const { blob, mime, data } = await prepare(file);
-  return { ref: await api.post<ImageRef>('/api/erp/images', { mime, data }, { timeoutMs: 30_000 }), blob };
+  return { ref: await api.post<ImageRef>(url, { mime, data }, { timeoutMs: 30_000 }), blob };
 }
 
 /** 压缩好、转成上传用的 { mime, data }：走自己接口的图片用（合同扫描件，v0.7.31） */
@@ -93,6 +93,7 @@ export function ImagePicker({
   value,
   onChange,
   max = MAX_LINE_IMAGES,
+  uploadUrl,
   disabled,
   testId,
   onBusyChange,
@@ -100,6 +101,8 @@ export function ImagePicker({
   value: ImageRef[];
   onChange: (next: ImageRef[]) => void;
   max?: number;
+  /** 传到哪个接口（默认需求单、采购单的图片；报价截图另有接口，8.1.51） */
+  uploadUrl?: string;
   disabled?: boolean;
   testId?: string;
   onBusyChange?: (busy: boolean) => void;
@@ -128,7 +131,7 @@ export function ImagePicker({
     const next = [...value];
     try {
       for (const f of [...files].slice(0, max - value.length)) {
-        const { ref: img, blob } = await uploadCompressed(f);
+        const { ref: img, blob } = await uploadCompressed(f, uploadUrl);
         if (!local.current.has(img.id)) local.current.set(img.id, URL.createObjectURL(blob));
         if (!next.some((x) => x.id === img.id)) next.push(img);
       }

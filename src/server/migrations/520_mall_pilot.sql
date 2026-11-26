@@ -58,3 +58,9 @@ COMMENT ON COLUMN mall_request_quotes.selected_mode IS 'dept 部门在系统里�
 ALTER TABLE inv_doc_lines ADD COLUMN redeliver_milli bigint NOT NULL DEFAULT 0 CHECK (redeliver_milli >= 0);
 ALTER TABLE inv_doc_lines ADD CONSTRAINT inv_doc_lines_redeliver_le_rejected CHECK (redeliver_milli <= coalesce(rejected_milli, 0));
 COMMENT ON COLUMN inv_doc_lines.redeliver_milli IS '收货拒收里供应商要补发的数量（待补，库存单位千分；不超过拒收数，8.1.51）';
+
+-- 报价截图、样品照片单独一类（Codex 审查）：只经采购能看的接口给（/api/erp/shop/quote-images），
+-- 不走需求单图片那条（那里「查看库存」「查看报销」的账号能按编号看所有图）
+ALTER TABLE erp_images DROP CONSTRAINT erp_images_scope_check;
+ALTER TABLE erp_images ADD CONSTRAINT erp_images_scope_check CHECK (scope IN ('general', 'contract', 'concierge', 'quote'));
+

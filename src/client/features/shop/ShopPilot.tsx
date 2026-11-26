@@ -11,7 +11,9 @@ import { formatQty, parseQty } from '@shared/quantity';
 import { SHOP_CUSTOM_UNITS } from '@shared/shop';
 import { MALL_CUSTOM_KIND_LABELS, PRIORITY_LABELS, REQUEST_PRIORITIES, type ImageRef, type MallCustomKind, type MallCustomSpec, type RequestPriority } from '@shared/requests';
 import type { MallQuote, MallRequest, MallRequestLine } from '@shared/mall';
-import { api, errorMessage } from '../../lib/api';
+import { api, errorMessage, UncertainError } from '../../lib/api';
+import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
+import { useSession } from '../../lib/session';
 import { cn, uuid } from '../../lib/utils';
 import { ImagePicker, ImageThumbs } from '../../components/Images';
 import { Dialog } from '../../components/Overlay';
@@ -19,6 +21,9 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, Select, Textarea } from '../../components/ui';
 
 const imageRef = (id: number): ImageRef => ({ id, url: `/api/erp/images/${id}` });
+/** 报价截图单独一类（只有采购看得到，Codex 审查） */
+const QUOTE_IMAGES = '/api/erp/shop/quote-images';
+const quoteImageRef = (id: number): ImageRef => ({ id, url: `${QUOTE_IMAGES}/${id}` });
 
 // ───────────────────────── 自主申请：非定制 / 定制 ─────────────────────────
 
@@ -503,7 +508,7 @@ function QuoteCard({ q, line, r, onChange }: { q: MallQuote; line: MallRequestLi
       </div>
       {q.planNote && <p className="text-[13px] text-ink-2">{q.planNote}</p>}
       {r.can.seePrices && q.internalNote && <p className="text-[12.5px] text-ink-3">内部备注：{q.internalNote}</p>}
-      {r.can.seePrices && q.imageIds.length > 0 && <ImageThumbs images={q.imageIds.map(imageRef)} />}
+      {r.can.seePrices && q.imageIds.length > 0 && <ImageThumbs images={q.imageIds.map(quoteImageRef)} />}
       {selected && q.selectedNote && <p className="text-[12.5px] text-ink-3">确认说明：{q.selectedNote}</p>}
       {!selected && (
         <div className="flex flex-wrap justify-end gap-2">
@@ -568,6 +573,10 @@ interface QuoteForm {
 
 function QuoteDialog({ r, onClose, onDone }: { r: MallRequest; onClose: () => void; onDone: (next: MallRequest) => void }) {
   const toast = useToast();
+  const session = useSession();
+  const qc = useQueryClient();
+  // 本机还有一笔主数据（含方案）没确认结果：先处理那一笔，不另开新的
+  const pending = useErpRecorded(['shop_master']).filter((op) => op.staffId === session.staff.id).length > 0;
   const suppliers = useQuery({ queryKey: ['shop', 'pilot-suppliers'], queryFn: () => api.get<{ id: number; name: string; active: boolean }[]>('/api/inventory/suppliers') });
   const [key] = useState(() => uuid());
   const [busy, setBusy] = useState(false);
@@ -599,10 +608,11 @@ function QuoteDialog({ r, onClose, onDone }: { r: MallRequest; onClose: () => vo
           : !Number.isInteger(lead) || lead < 0 || lead > 365
             ? '交期写 0–365 天'
             : null;
+  // 与主数据同一套「结果待确认」（Codex 审查）：本机先记下编号与内容再发；回复丢了在页面顶部查回、原样重提或确认作废，不会记成两条
   const save = async () => {
     setBusy(true);
     try {
-      const next = await api.post<MallRequest>(`/api/erp/shop/requests/${r.id}/quotes`, {
+      const body = {
         clientKey: key,
         lineId: f.lineId,
         supplierId: f.supplierId ? Number(f.supplierId) : null,
@@ -616,12 +626,26 @@ function QuoteDialog({ r, onClose, onDone }: { r: MallRequest; onClose: () => vo
         internalNote: f.internalNote.trim(),
         imageIds: f.images.map((i) => i.id),
         recommended: f.recommended,
+      };
+      const next = await sendErpOp<MallRequest>({
+        key,
+        type: 'shop_master',
+        method: 'POST',
+        url: `/api/erp/shop/requests/${r.id}/quotes`,
+        body,
+        summary: `成交方案 · ${r.docNo} · ${f.supplierName.trim() || (suppliers.data ?? []).find((s) => String(s.id) === f.supplierId)?.name || '供应商'}`,
+        staffName: session.staff.displayName,
+        staffId: session.staff.id,
       });
       toast({ tone: 'success', title: '方案已记下', body: '部门在「我的采购需求」里看得到，可以直接确认' });
       onDone(next);
       onClose();
     } catch (e) {
-      toast({ tone: 'error', title: '方案没有记下', body: errorMessage(e) });
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '方案结果待确认', body: '回复没收到，记录留在本机：请在页面顶部查回、原样重提或确认作废，别另记一条' });
+        void qc.invalidateQueries({ queryKey: ['shop'] });
+        onClose();
+      } else toast({ tone: 'error', title: '方案没有记下', body: errorMessage(e) });
     } finally {
       setBusy(false);
     }
@@ -636,11 +660,11 @@ function QuoteDialog({ r, onClose, onDone }: { r: MallRequest; onClose: () => vo
       width="max-w-2xl"
       footer={
         <>
-          {problem && <span className="mr-auto text-[12.5px] text-clay">{problem}</span>}
+          {(pending ? '上一笔还没确认结果：先在页面顶部处理' : problem) && <span className="mr-auto text-[12.5px] text-clay">{pending ? '上一笔还没确认结果：先在页面顶部处理' : problem}</span>}
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button variant="primary" loading={busy} disabled={!!problem || uploading} onClick={() => void save()} data-testid="shop-quote-save">
+          <Button variant="primary" loading={busy} disabled={!!problem || uploading || pending} onClick={() => void save()} data-testid="shop-quote-save">
             记下方案
           </Button>
         </>
@@ -706,7 +730,7 @@ function QuoteDialog({ r, onClose, onDone }: { r: MallRequest; onClose: () => vo
         </Field>
         <div className="sm:col-span-2">
           <p className="mb-1.5 text-[13px] font-semibold text-ink-2">报价截图、样品照片（只有采购看得到，最多 9 张）</p>
-          <ImagePicker value={f.images} onChange={(images) => setF({ ...f, images })} max={9} onBusyChange={setUploading} testId="shop-quote-images" />
+          <ImagePicker value={f.images} onChange={(images) => setF({ ...f, images })} max={9} onBusyChange={setUploading} uploadUrl={QUOTE_IMAGES} testId="shop-quote-images" />
         </div>
       </div>
     </Dialog>

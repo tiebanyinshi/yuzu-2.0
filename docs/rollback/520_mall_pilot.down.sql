@@ -4,6 +4,7 @@ BEGIN;
 ALTER TABLE inv_doc_lines DROP CONSTRAINT inv_doc_lines_redeliver_le_rejected;
 ALTER TABLE inv_doc_lines DROP COLUMN redeliver_milli;
 DROP TABLE mall_request_quotes;
+-- 报价截图留在 erp_images 里（只追加、按内容去重，改不了也删不掉）：图片范围的约束照旧放行 quote，旧版本不读这一类，不影响
 ALTER TABLE purchase_requests DROP COLUMN sourcing_claimed_at;
 ALTER TABLE purchase_requests DROP COLUMN sourcing_owner_id;
 ALTER TABLE purchase_request_lines DROP COLUMN custom_spec;

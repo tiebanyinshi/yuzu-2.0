@@ -204,3 +204,52 @@ describe('接单、成交方案、转采购单、收货待补', () => {
     expect(Number(doc.lines[0]!.redeliverMilli)).toBe(q(2));
   });
 });
+
+describe('Codex 审查后的边界', () => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64').toString('base64');
+
+  it('定制说明合起来超过 1000 字：拒绝，不截断', async () => {
+    const long = customLine({ details: '要'.repeat(800), customSpec: { size: '尺'.repeat(120), craft: '工'.repeat(200), scene: '场'.repeat(200), sample: true, budgetCents: null } });
+    expect((await submit(brand, long)).body.error.code).toBe('DETAILS_TOO_LONG');
+  });
+
+  it('方案：同一个编号换了内容拒绝；报价截图单独一类，只有采购看得到；记了方案的单被退回也能在原单补资料', async () => {
+    const r = (await submit(brand, customLine({ name: '工服' }))).body.request as { id: number; lines: { id: number }[] };
+    const lineId = r.lines[0]!.id;
+    // 截图：采购传到报价截图接口；部门、只看库存的人都取不到
+    const shot = await api(ctx.app, buyer, 'POST', '/api/erp/shop/quote-images', { mime: 'image/png', data: png });
+    expect(shot.status, JSON.stringify(shot.body)).toBe(201);
+    const imgId = shot.body.id as number;
+    // 需求单图片那条不能用来挂方案截图
+    const general = (await api(ctx.app, buyer, 'POST', '/api/erp/images', { mime: 'image/png', data: png })).body.id as number;
+    const quote = (over: Record<string, unknown> = {}) => ({ clientKey: randomUUID(), lineId, supplierId: supId, unitPriceCents: 6800, taxRateBp: 600, leadDays: 10, ...over });
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ imageIds: [general] }))).body.error.code).toBe('IMAGE_INVALID');
+    const key = randomUUID();
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ clientKey: key, imageIds: [imgId] }))).status).toBe(201);
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ clientKey: key, imageIds: [imgId], unitPriceCents: 1 }))).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    const stock = await login(ctx.app, 'lixiao', 'yuzu2026'); // 物资经办：能看库存、看需求单图片
+    for (const cookie of [stock, brand]) {
+      expect((await ctx.app.inject({ method: 'GET', url: `/api/erp/images/${imgId}`, headers: { cookie } })).statusCode).toBe(404);
+      expect((await ctx.app.inject({ method: 'GET', url: `/api/erp/shop/quote-images/${imgId}`, headers: { cookie } })).statusCode).toBe(403);
+    }
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/erp/shop/quote-images/${imgId}`, headers: { cookie: buyer } })).statusCode).toBe(200);
+    // 部门确认了方案；之后采购退回 → 原单补资料（方案挂在行上，原地改行，不撞外键；选定的退回待确认）
+    const qt = ((await detail(brand, r.id)).quotes as { id: number }[])[0]!;
+    expect((await api(ctx.app, brand, 'POST', `/api/erp/shop/quotes/${qt.id}/select`, { mode: 'dept' })).status).toBe(200);
+    expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请写尺码' })).status).toBe(200);
+    const back = await detail(brand, r.id);
+    const ok = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, {
+      expectedUpdatedAt: back.updatedAt,
+      contactName: '品牌部小王',
+      budgetProject: '品牌物料',
+      needBy: shiftDate(today, 12),
+      deliveryAddress: '总店前台',
+      priority: 'normal',
+      remark: '补了尺码',
+      lines: [{ id: lineId, qtyMilli: q(20), customKind: 'custom', customSpec: { size: 'S 5 / M 10 / L 5', craft: '涤棉', scene: '前台', sample: false, budgetCents: null }, details: '' }],
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.lines[0]).toMatchObject({ id: lineId, qtyMilli: q(20) });
+    expect(ok.body.quotes[0]).toMatchObject({ id: qt.id, status: 'proposed' });
+  });
+});
