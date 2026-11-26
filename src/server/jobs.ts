@@ -91,7 +91,7 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
   } catch (error) {
     log.error('清理没传完的培训上传失败，一小时后重试', error);
   }
-  // 热表归档（8.1.47，docs/DB_REVIEW_V8147.md 第 5 节）：每小时把超过保留天数的位置事件与轨迹段、对外调用记录、企业微信推送记录挪进归档表
+  // 热表归档（数据库评估，docs/DB_REVIEW_V8147.md 第 5 节）：每小时把超过保留天数的位置事件与轨迹段、对外调用记录、企业微信推送记录挪进归档表
   try {
     const run = await runHotTableArchive(sql, config.archive);
     if (run && run.locationEvents + run.locationTracks + run.integrationCalls + run.wecomPushes > 0) {

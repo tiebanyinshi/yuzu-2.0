@@ -56,7 +56,7 @@ export interface AppConfig {
    * 至少 32 个字符；没配为空——商城接口一律回 503 MALL_NOT_CONFIGURED。只写在 .env，不进 Git
    */
   mallApiKey: string | null;
-  /** 热表归档的保留天数（8.1.47，docs/DB_REVIEW_V8147.md 第 5 节）：超过的由每小时的归档任务挪进 archived_* 表 */
+  /** 热表归档的保留天数（数据库评估，docs/DB_REVIEW_V8147.md 第 5 节）：超过的由每小时的归档任务挪进 archived_* 表 */
   archive: ArchiveConfig;
 }
 

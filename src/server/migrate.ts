@@ -15,7 +15,7 @@ export async function migrate(sql: Sql, log: (msg: string) => void = () => {}): 
   const applied: string[] = [];
   await sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(918273645)`;
-    // 数据库评估（8.1.47，docs/DB_REVIEW_V8147.md 第 7 节）：迁移改表结构要表锁，前面有长事务时排着等，后面所有读写这张表的请求又排在它后面，
+    // 数据库评估（docs/DB_REVIEW_V8147.md 第 7 节）：迁移改表结构要表锁，前面有长事务时排着等，后面所有读写这张表的请求又排在它后面，
     // 整店卡住。等锁超过这个时长就放弃（整份迁移回滚、应用启动失败，由容器重启重试），不无限排队。拿到咨询锁以后才设：
     // 几个进程同时启动时，后来的照常等先来的迁移完。MIGRATION_LOCK_TIMEOUT 可调（PostgreSQL 的时长写法，如 30s、2min；0 = 不限）。
     await tx`SELECT set_config('lock_timeout', ${migrationLockTimeout()}, true)`;
