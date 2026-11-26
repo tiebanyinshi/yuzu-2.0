@@ -293,6 +293,7 @@
     - `360`（`360_coupon_usage_terms.sql`，前台 B，设计见 `docs/V8144_FRONTDESK.md`）：发过券的模板门槛、适用范围也能改（数据库保护只留面额、折扣、兑换什么、有效期、档级）。回滚 `docs/rollback/360_coupon_usage_terms.down.sql`。
 - **业财法审批流 V4.0（店主 2026-11-26《业财法审批流开发批次拆分与执行说明-从零梳理版》，设计见 `docs/APPROVAL_V4.md`）**：P01–P07 七批，新建「业财法」模块（表前缀 `gf_`），不改现有审批中心。执行说明写「迁移号从 260 起」，但 260–339 已被占用，整体改用 `400`–`469`，每批十个号：P01 `400`–`409`、P02 `410`–`419`、P03 `420`–`429`、P04 `430`–`439`、P05 `440`–`449`、P06 `450`–`459`、P07 `460`–`469`。每批一个 PR，不改版本号（同 EO6，七批做完统一发版，版本号店主定）。
   - `400`（`400_govflow_core.sql`，P01）：角色映射 `gf_role_members`、事项 `gf_docs`、每轮审批 `gf_flows`、审批动作 `gf_flow_actions`（只追加）、知会 `gf_cc`、微信特批 `gf_specials`、补登文件 `gf_files`（只追加）。回滚 `docs/rollback/400_govflow_core.down.sql`。
+  - `410`（`410_gf_supply.sql`，P02）：集团物料 `gf_materials`、供应商库 `gf_suppliers`（统一社会信用代码唯一）、供应商版本快照 `gf_supplier_versions`（只追加）、SKU `gf_skus`、协议价版本 `gf_sku_prices`（只追加）；事项类型加入库、变更、SKU 提报、协议价变更。回滚 `docs/rollback/410_gf_supply.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

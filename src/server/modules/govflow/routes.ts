@@ -11,7 +11,6 @@ import { createHash } from 'node:crypto';
 import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import {
-  GF_DOC_TYPES,
   GF_FILE_MAX_BYTES,
   GF_FILE_MIMES,
   GF_FILE_PURPOSES,
@@ -36,7 +35,7 @@ import {
   type GfStage,
 } from '@shared/govflow';
 import { can } from '@shared/permissions';
-import type { Db, Tx } from '../../db';
+import type { Db, Fragment, Tx } from '../../db';
 import { isUniqueViolation } from '../../db';
 import { guard } from '../../auth/guard';
 import { writeAudit } from '../../lib/audit';
@@ -48,7 +47,7 @@ import { nextDocNo, setTxTimeouts } from '../../lib/tx';
 import { idParam, parse } from '../../lib/validate';
 import { NOT_EMPLOYEE_ROLES } from '../oa/org';
 import { notify } from '../oa/notifications';
-import { actFlow, addCc, docOf, latestFlow, loadDoc, loadMembers, rolesOf, seatContext, seatLabel, statusOf, submitFlow, waitingSeats, type DocRow, type FlowRow } from './engine';
+import { actFlow, addCc, docOf, hooksOf, insertDoc, latestFlow, loadDoc, loadMembers, rolesOf, seatContext, seatLabel, statusOf, submitFlow, waitingSeats, type DocRow, type FlowRow } from './engine';
 import { templateFor } from './types';
 
 const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOString());
@@ -97,7 +96,7 @@ const MemberInput = z.object({
 
 const DocInput = z.object({
   clientKey: uuid,
-  docType: z.enum(GF_DOC_TYPES, '请选事项类型'),
+  docType: z.literal('general', '这里只能发起通用事项；供应商、SKU 等在各自的页面发起'),
   title: z.string().trim().min(1, '请写事项名称').max(100, '事项名称最多 100 个字'),
   note: z.string().trim().max(1000, '说明最多 1000 个字').default(''),
   entityId: z.number().int().positive().nullable().default(null),
@@ -143,15 +142,9 @@ async function createDoc(deps: Deps, raw: unknown, actor: Actor, ip?: string): P
         if (!(members.performer ?? []).includes(input.performerId)) throw unprocessable('GF_PERFORMER_ROLE', '选的人不在「内部履约执行人」角色里，请店主先在角色映射里配上');
       }
       if (input.payload.contractLike && input.performerId === null) throw unprocessable('GF_NO_PERFORMER', '合同类事项要选内部履约执行人');
-      const today = todayIn(deps.config.timezone);
-      const bizNo = await nextDocNo(tx, 'gf_doc', 'YCF', today);
       const flags = [...new Set(input.flags)];
-      const [row] = await tx<{ id: number }[]>`
-        INSERT INTO gf_docs (biz_no, doc_type, title, note, entity_id, department_id, amount_cents, payload, flags, performer_id, subject_staff_id, client_key, request_hash, created_by)
-        VALUES (${bizNo}, ${input.docType}, ${input.title}, ${input.note}, ${input.entityId}, ${input.departmentId}, ${input.amountCents},
-                ${tx.json(input.payload as never)}, ${flags}, ${input.performerId}, ${input.subjectStaffId}, ${input.clientKey}, ${requestHash}, ${actor.id})
-        RETURNING id`;
-      const id = Number(row!.id);
+      const id = await insertDoc(tx, { ...input, flags, clientKey: input.clientKey, requestHash }, actor, todayIn(deps.config.timezone));
+      const bizNo = (await loadDoc(tx, id)).bizNo;
       await writeAudit(tx, { staffId: actor.id, action: 'gf_doc', targetType: 'gf_doc', targetId: id, detail: { op: 'create', bizNo, amountCents: input.amountCents, flags }, ip });
       if (input.submit) {
         const doc = await loadDoc(tx, id, true);
@@ -291,6 +284,7 @@ async function detail(deps: Deps, actor: Actor, id: number): Promise<GfDocDetail
   const approved = flow?.status === 'approved';
   return {
     ...card!,
+    payload: doc.payload,
     departmentId: doc.departmentId,
     entityId: doc.entityId,
     performerId: doc.performerId,
@@ -318,6 +312,8 @@ const ActInput = z.object({
   action: z.enum(['approve', 'return', 'reject'], '请选同意、退回或驳回'),
   level: z.number().int().positive(),
   comment: z.string().trim().max(500, '意见最多 500 个字').default(''),
+  /** 各类事项自己的逐行结论（例如董事长批 SKU 时逐个确认异常的） */
+  extra: z.unknown().optional(),
 });
 const VersionInput = z.object({ version: z.number().int().positive() });
 const ExecInput = VersionInput.extend({ step: z.enum(['start', 'complete', 'archive'], '请选开始执行、完成或归档') });
@@ -332,7 +328,7 @@ async function bump(tx: Tx, id: number, version: number) {
 
 // ───────────────────────── 微信特批 ─────────────────────────
 
-async function listSpecials(db: Db, where: ReturnType<Db>, timeZone: string): Promise<GfSpecialView[]> {
+async function listSpecials(db: Db, where: Fragment, timeZone: string): Promise<GfSpecialView[]> {
   const rows = await db<
     {
       id: number;
@@ -618,6 +614,7 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
       if (flow?.status === 'rejected') throw conflict('GF_REJECTED', '已经驳回的不用撤回');
       if (flow?.status === 'pending') await tx`UPDATE gf_flows SET status = 'cancelled', finished_at = now(), finished_by = ${req.actor.id} WHERE id = ${flow.id}`;
       await tx`UPDATE gf_docs SET withdrawn_at = now(), withdrawn_by = ${req.actor.id} WHERE id = ${id}`;
+      await hooksOf(doc.docType).ended?.(tx, doc, 'withdrawn', req.actor);
       await writeAudit(tx, { staffId: req.actor.id, action: 'gf_doc', targetType: 'gf_doc', targetId: id, detail: { op: 'withdraw' }, ip: req.ip });
     });
     return detail(deps, req.actor, id);

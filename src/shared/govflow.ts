@@ -305,9 +305,15 @@ export function addWorkdays(day: string, n: number, holidays: ReadonlyMap<string
 
 // ───────────────────────── 单据类型（各批往里加） ─────────────────────────
 
-export const GF_DOC_TYPES = ['general'] as const;
+export const GF_DOC_TYPES = ['general', 'supplier_admission', 'supplier_change', 'sku_batch', 'sku_price_change'] as const;
 export type GfDocType = (typeof GF_DOC_TYPES)[number];
-export const GF_DOC_TYPE_LABELS: Record<GfDocType, string> = { general: '通用事项' };
+export const GF_DOC_TYPE_LABELS: Record<GfDocType, string> = {
+  general: '通用事项',
+  supplier_admission: '供应商入库',
+  supplier_change: '供应商变更',
+  sku_batch: 'SKU 提报',
+  sku_price_change: 'SKU 协议价变更',
+};
 
 /** 金额（分）的整数比较边界：审批按「不含税」口径 */
 export const YUAN = 100;
@@ -426,6 +432,8 @@ export interface GfDocCard {
 }
 
 export interface GfDocDetail extends GfDocCard {
+  /** 业务单据的关联（供应商、SKU……），不放敏感信息 */
+  payload: Record<string, unknown>;
   departmentId: number | null;
   entityId: number | null;
   performerId: number | null;

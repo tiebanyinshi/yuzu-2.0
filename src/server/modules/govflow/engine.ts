@@ -22,6 +22,7 @@ import type { Db, Sql, Tx } from '../../db';
 import type { Actor } from '../../lib/context';
 import { dateIn, todayIn } from '../../lib/dates';
 import { conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
+import { nextDocNo } from '../../lib/tx';
 import { notify } from '../oa/notifications';
 
 export interface DocRow {
@@ -88,6 +89,30 @@ export async function latestFlow(db: Db, docId: number, lock = false): Promise<F
   return rows[0] ? flowOf(rows[0]) : null;
 }
 
+// ───────────────────────── 各类事项的钩子（P02 起） ─────────────────────────
+
+/**
+ * 业务单据挂在事项上，审批走到某一步时各自处理（供应商入库、SKU 建码、价格版本……）。都在同一个事务里调。
+ *   · beforeApprove：同意前核对（例如董事长批 SKU 要逐个确认异常的那几个，extra 是页面带来的逐行结论）；
+ *   · approved：整轮通过；ended：退回、驳回、撤回（业务单据回到可改 / 作废）；
+ *   · ccRoles：通过后知会谁（不给就是董事长、业态总经理、财总、CFO）。
+ */
+export interface TypeHooks {
+  /** 审批链模板（各类事项自己定） */
+  template?: (doc: DocRow) => GfNode[];
+  beforeApprove?: (tx: Tx, doc: DocRow, flow: FlowRow, ctx: { level: number; final: boolean; actor: Actor; extra: unknown }) => Promise<void>;
+  approved?: (tx: Tx, doc: DocRow, actor: Actor) => Promise<void>;
+  ended?: (tx: Tx, doc: DocRow, outcome: 'returned' | 'rejected' | 'withdrawn', actor: Actor) => Promise<void>;
+  ccRoles?: readonly GfRole[] | ((doc: DocRow) => readonly GfRole[]);
+  /** 提交（含退回后再提交）前核对业务单据、把它改成审核中 */
+  beforeSubmit?: (tx: Tx, doc: DocRow, actor: Actor) => Promise<void>;
+}
+const HOOKS = new Map<string, TypeHooks>();
+export function registerHooks(docType: string, hooks: TypeHooks) {
+  HOOKS.set(docType, hooks);
+}
+export const hooksOf = (docType: string): TypeHooks => HOOKS.get(docType) ?? {};
+
 // ───────────────────────── 角色与部门负责人 ─────────────────────────
 
 /** 各角色现在映射的在用账号；entityId 有值时只要「所有经营主体」与这个经营主体的 */
@@ -121,6 +146,38 @@ export async function seatContext(db: Db, doc: DocRow, flow: FlowRow): Promise<S
     submittedBy: flow.submittedBy,
     subjectStaffId: doc.subjectStaffId,
   };
+}
+
+// ───────────────────────── 新建事项 ─────────────────────────
+
+export interface NewDoc {
+  docType: string;
+  title: string;
+  note?: string;
+  entityId?: number | null;
+  departmentId?: number | null;
+  amountCents?: number | null;
+  payload?: Record<string, unknown>;
+  flags?: readonly string[];
+  performerId?: number | null;
+  subjectStaffId?: number | null;
+  relatedDocId?: number | null;
+  clientKey: string;
+  requestHash: string;
+  dueOn?: string | null;
+}
+
+/** 写一行事项（业务编号 YCF…，各类事项共用）；调用方已核对过操作编号没用过 */
+export async function insertDoc(tx: Tx, input: NewDoc, actor: Actor, today: string): Promise<number> {
+  const bizNo = await nextDocNo(tx, 'gf_doc', 'YCF', today);
+  const [row] = await tx<{ id: number }[]>`
+    INSERT INTO gf_docs (biz_no, doc_type, title, note, entity_id, department_id, amount_cents, payload, flags, performer_id, subject_staff_id,
+                         related_doc_id, client_key, request_hash, created_by, due_on)
+    VALUES (${bizNo}, ${input.docType}, ${input.title}, ${input.note ?? ''}, ${input.entityId ?? null}, ${input.departmentId ?? null}, ${input.amountCents ?? null},
+            ${tx.json((input.payload ?? {}) as never)}, ${[...new Set(input.flags ?? [])]}, ${input.performerId ?? null}, ${input.subjectStaffId ?? null},
+            ${input.relatedDocId ?? null}, ${input.clientKey}, ${input.requestHash}, ${actor.id}, ${input.dueOn ?? null})
+    RETURNING id`;
+  return Number(row!.id);
 }
 
 // ───────────────────────── 提交 ─────────────────────────
@@ -206,6 +263,7 @@ export async function submitFlow(tx: Tx, doc: DocRow, template: GfNode[], actor:
   if (last?.status === 'pending') throw conflict('GF_PENDING', '这个事项正在审批，不用重复提交');
   if (last?.status === 'approved') throw conflict('GF_APPROVED', '这个事项已经审批通过');
   if (last?.status === 'rejected') throw conflict('GF_REJECTED', '这个事项已被驳回（不通过），要重新发起一个事项');
+  await hooksOf(doc.docType).beforeSubmit?.(tx, doc, actor);
   const members = await loadMembers(tx, doc.entityId);
   const deptHeadId = await deptHeadOf(tx, doc.departmentId);
   if (template.some((n) => n.kind === 'dept_head') && deptHeadId === null) {
@@ -240,7 +298,7 @@ export async function submitFlow(tx: Tx, doc: DocRow, template: GfNode[], actor:
     RETURNING *`;
   const flow = flowOf(row!);
   const r = await advance(tx, doc, flow, ctx, actor.id);
-  if (r === 'approved') await onApproved(tx, doc, flow, actor.id);
+  if (r === 'approved') await onApproved(tx, doc, flow, actor);
   else await notifyTodo(tx, doc, flow, ctx);
   return flow;
 }
@@ -253,7 +311,7 @@ export type ActKind = 'approve' | 'return' | 'reject';
  * 审当前这一级。approve：坐上自己能坐、还空着的一席（会签里一个人只坐一席），席位都齐了进下一级；
  * return：退回提交人改了再交；reject：驳回（不通过，会签任一人不同意即不通过）。调用方已锁住事项一行。
  */
-export async function actFlow(tx: Tx, doc: DocRow, actor: Actor, input: { action: ActKind; level: number; comment: string; clientKey: string }) {
+export async function actFlow(tx: Tx, doc: DocRow, actor: Actor, input: { action: ActKind; level: number; comment: string; clientKey: string; extra?: unknown }) {
   const [done] = await tx<{ flowId: number }[]>`SELECT flow_id FROM gf_flow_actions WHERE client_key = ${input.clientKey}`;
   if (done) return { replayed: true };
   const flow = await latestFlow(tx, doc.id, true);
@@ -271,6 +329,7 @@ export async function actFlow(tx: Tx, doc: DocRow, actor: Actor, input: { action
     if (people.has(actor.id)) throw conflict('GF_ALREADY', '你已经在这一级同意过了；共同审批要另一位同意');
     const seat = mine.find((s) => !seats.has(s));
     if (!seat) throw conflict('GF_ALREADY', '这一级你能审的那一席已经有人同意了');
+    await hooksOf(doc.docType).beforeApprove?.(tx, doc, flow, { level: flow.currentLevel, final: flow.currentLevel === flow.nodes.length, actor, extra: input.extra });
     await tx`
       INSERT INTO gf_flow_actions (flow_id, level, action, seat, actor_id, comment, client_key)
       VALUES (${flow.id}, ${flow.currentLevel}, 'approve', ${seat}, ${actor.id}, ${input.comment}, ${input.clientKey})`;
@@ -278,7 +337,7 @@ export async function actFlow(tx: Tx, doc: DocRow, actor: Actor, input: { action
     if (!seatsOf(node).every((s) => seats.has(s))) return { replayed: false, outcome: 'partial' as const };
     const r = await advance(tx, doc, flow, ctx, actor.id, flow.currentLevel + 1);
     if (r === 'approved') {
-      await onApproved(tx, doc, flow, actor.id);
+      await onApproved(tx, doc, flow, actor);
       return { replayed: false, outcome: 'approved' as const };
     }
     await notifyTodo(tx, doc, flow, ctx);
@@ -291,6 +350,7 @@ export async function actFlow(tx: Tx, doc: DocRow, actor: Actor, input: { action
     VALUES (${flow.id}, ${flow.currentLevel}, ${input.action}, ${seat}, ${actor.id}, ${input.comment}, ${input.clientKey})`;
   const status = input.action === 'return' ? 'returned' : 'rejected';
   await tx`UPDATE gf_flows SET status = ${status}, finished_at = now(), finished_by = ${actor.id} WHERE id = ${flow.id}`;
+  await hooksOf(doc.docType).ended?.(tx, doc, status, actor);
   await notify(tx, [flow.submittedBy], {
     kind: 'approval_result',
     title: `业财法${input.action === 'return' ? '退回' : '驳回'}：${doc.title}`,
@@ -304,7 +364,9 @@ export async function actFlow(tx: Tx, doc: DocRow, actor: Actor, input: { action
 // ───────────────────────── 知会 ─────────────────────────
 
 /** 审批通过以后知会董事长、业态总经理、财总、CFO（已在审批链里出过结论的、提交人不重复知会） */
-async function onApproved(tx: Tx, doc: DocRow, flow: FlowRow, actorId: number) {
+async function onApproved(tx: Tx, doc: DocRow, flow: FlowRow, actor: Actor) {
+  const hooks = hooksOf(doc.docType);
+  await hooks.approved?.(tx, doc, actor);
   await notify(tx, [flow.submittedBy], {
     kind: 'approval_result',
     title: `业财法通过：${doc.title}`,
@@ -312,7 +374,8 @@ async function onApproved(tx: Tx, doc: DocRow, flow: FlowRow, actorId: number) {
     link: `/oa/gov/${doc.id}`,
     ref: { type: 'gf_doc', id: doc.id },
   });
-  await addCc(tx, doc, { reason: '审批通过', special: false, actorId });
+  const roles = typeof hooks.ccRoles === 'function' ? hooks.ccRoles(doc) : hooks.ccRoles;
+  await addCc(tx, doc, { reason: '审批通过', special: false, actorId: actor.id, roles });
 }
 
 /** 写知会（同一事项同一人只一次）；即时的马上发站内信，其他的等日报 */
