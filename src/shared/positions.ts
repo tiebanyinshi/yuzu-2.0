@@ -233,6 +233,8 @@ export const PERMISSION_COLUMN: Record<Permission, PermissionColumn> = {
   'training.manage': 'account',
   // 公司公告（员工办公 v1.1 第 5 批）：全公司与部门公告，与员工培训同一列
   'oa.announce': 'account',
+  // 业财法审批的角色映射（2026-11-26）：谁是财总、CFO、董事长，算「账号与权限配置」
+  'gf.roles': 'account',
 };
 
 export interface PositionDef {
