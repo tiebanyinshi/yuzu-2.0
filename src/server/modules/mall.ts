@@ -12,13 +12,16 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { formatAmount } from '@shared/money';
 import { can } from '@shared/permissions';
 import {
   MALL_BATCH_LIMIT,
   MALL_DISPLAY_LABELS,
+  MALL_GROUP_STATUSES,
   MALL_KEY_HEADER,
   MALL_LIST_LIMIT,
   MALL_PREFIX,
+  MALL_REQUEST_GROUPS,
   MALL_STAFF_HEADER,
   MALL_STORE_HEADER,
   type MallCreateResult,
@@ -26,8 +29,19 @@ import {
   type MallIdentity,
   type MallRequest,
   type MallRequestBrief,
+  type MallRequestGroup,
+  type MallTimelineNode,
 } from '@shared/mall';
-import { MAX_LINE_IMAGES, REQUEST_PRIORITIES, REQUEST_STATUS_LABELS, type PurchaseRequest, type PurchaseRequestSummary, type RequestLineProgress, type RequestStatus } from '@shared/requests';
+import {
+  MAX_LINE_IMAGES,
+  PRIORITY_LABELS,
+  REQUEST_PRIORITIES,
+  REQUEST_STATUS_LABELS,
+  type PurchaseRequest,
+  type PurchaseRequestSummary,
+  type RequestLineProgress,
+  type RequestStatus,
+} from '@shared/requests';
 import { isUniqueViolation, type Db, type Sql } from '../db';
 import { guard, guardAny } from '../auth/guard';
 import { checkLock, clearFailures, recordFailure } from '../auth/lockout';
@@ -36,7 +50,8 @@ import { resolveStaffActor } from '../auth/session';
 import type { AppConfig } from '../config';
 import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
-import { AppError, conflict, forbidden, notFound, unauthorized, unprocessable } from '../lib/errors';
+import { toCsv } from '../lib/csv';
+import { AppError, badRequest, conflict, forbidden, notFound, unauthorized, unprocessable } from '../lib/errors';
 import { assertNotFenced, fenceKey, lockOpKey } from '../lib/fences';
 import { hashRequest } from '../lib/idempotency';
 import { decodedPath } from '../lib/paths';
@@ -335,12 +350,88 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
       storeName: string | null;
       entityId: number | null;
       entityName: string | null;
+      deptConfirmedAt: string | null;
+      deptConfirmedByName: string | null;
     }[]
   >`
-    SELECT r.contact_name, r.budget_project, r.delivery_address, r.payment_intent, r.store_id, st.name AS store_name, r.entity_id, le.name AS entity_name
-    FROM purchase_requests r LEFT JOIN stores st ON st.id = r.store_id LEFT JOIN legal_entities le ON le.id = r.entity_id WHERE r.id = ${requestId}`;
+    SELECT r.contact_name, r.budget_project, r.delivery_address, r.payment_intent, r.store_id, st.name AS store_name, r.entity_id, le.name AS entity_name,
+           r.dept_confirmed_at, dcb.display_name AS dept_confirmed_by_name
+    FROM purchase_requests r
+    LEFT JOIN stores st ON st.id = r.store_id
+    LEFT JOIN legal_entities le ON le.id = r.entity_id
+    LEFT JOIN staff dcb ON dcb.id = r.dept_confirmed_by
+    WHERE r.id = ${requestId}`;
+  const [[poStep], [recvStep]] = await Promise.all([
+    deps.sql<{ at: string; actorName: string | null }[]>`
+      SELECT po.created_at AS at, st.display_name AS actor_name
+      FROM purchase_request_lines l
+      JOIN purchase_order_line_requests x ON x.request_line_id = l.id
+      JOIN purchase_order_lines pl ON pl.id = x.po_line_id
+      JOIN purchase_orders po ON po.id = pl.po_id
+      LEFT JOIN staff st ON st.id = po.created_by
+      WHERE l.request_id = ${requestId} AND po.status <> 'cancelled'
+      ORDER BY po.created_at ASC LIMIT 1`,
+    deps.sql<{ at: string; actorName: string | null }[]>`
+      SELECT x.at, x.actor_name FROM (
+        SELECT d.created_at AS at, st.display_name AS actor_name
+        FROM purchase_request_lines l
+        JOIN purchase_order_line_requests polr ON polr.request_line_id = l.id
+        JOIN inv_doc_lines il ON il.po_line_id = polr.po_line_id
+        JOIN inv_docs d ON d.id = il.doc_id
+        LEFT JOIN staff st ON st.id = d.created_by
+        WHERE l.request_id = ${requestId} AND d.status = 'approved'
+        UNION ALL
+        SELECT d.created_at AS at, st.display_name AS actor_name
+        FROM request_line_stock s
+        JOIN inv_docs d ON d.id = s.inv_doc_id
+        LEFT JOIN staff st ON st.id = d.created_by
+        WHERE s.request_id = ${requestId} AND d.status = 'approved'
+      ) x ORDER BY x.at DESC LIMIT 1`,
+  ]);
   const at = (await progressTimes(deps.sql, [requestId])).get(requestId) ?? r.updatedAt;
   const display = displayOf(r);
+  const ended = ['returned', 'rejected', 'cancelled'].includes(display);
+  const revApprovals = [...r.approvals].reverse();
+  const submitLog = revApprovals.find((a) => a.action === 'submit');
+  const deptLog = revApprovals.find((a) => a.action === 'approve' && a.reason === '部门主管确认');
+  const reviewLog = revApprovals.find((a) => a.action === 'approve' && a.reason !== '部门主管确认') ?? revApprovals.find((a) => a.action === 'stock');
+  const timeline: MallTimelineNode[] = [
+    {
+      key: 'submit',
+      label: '提交',
+      done: true,
+      at: submitLog?.createdAt ?? r.submittedAt ?? r.createdAt,
+      actorName: submitLog?.actorName ?? r.requester.name,
+    },
+    {
+      key: 'dept_confirm',
+      label: '主管确认',
+      done: !ended && display !== 'dept_pending',
+      at: deptLog?.createdAt ?? extra?.deptConfirmedAt ?? null,
+      actorName: deptLog?.actorName ?? extra?.deptConfirmedByName ?? null,
+    },
+    {
+      key: 'review',
+      label: '核库与采购审核',
+      done: !ended && ['approved', 'sourcing', 'ordered', 'partial', 'received', 'closed', 'issued'].includes(display),
+      at: reviewLog?.createdAt ?? null,
+      actorName: reviewLog?.actorName ?? null,
+    },
+    {
+      key: 'order',
+      label: '下单',
+      done: !ended && ['ordered', 'partial', 'received', 'closed'].includes(display),
+      at: poStep?.at ?? null,
+      actorName: poStep?.actorName ?? null,
+    },
+    {
+      key: 'receive',
+      label: '到货',
+      done: !ended && ['received', 'issued'].includes(display),
+      at: recvStep?.at ?? null,
+      actorName: recvStep?.actorName ?? null,
+    },
+  ];
   return {
     id: r.id,
     docNo: r.docNo,
@@ -368,6 +459,7 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
     paymentIntent: extra!.paymentIntent,
     note: r.note,
     approvals: r.approvals.map((a) => ({ action: a.action, actorName: a.actorName, reason: a.reason, createdAt: a.createdAt })),
+    timeline,
     lines: r.lines.map((l) => ({
       id: l.id,
       lineNo: l.lineNo,
@@ -497,34 +589,137 @@ export async function listMall(deps: Deps, actor: Actor, raw: unknown, opts: { m
   return { requests, nextCursor: page.length === q.limit ? { updatedSince: new Date(last.at).toISOString(), afterId: Number(last.id) } : null };
 }
 
+const emptyToUndef = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
+
 const PagedQuery = z.object({
-  priority: z.enum(REQUEST_PRIORITIES).optional(),
+  priority: z.preprocess(emptyToUndef, z.enum(REQUEST_PRIORITIES).optional()),
+  group: z.preprocess(emptyToUndef, z.enum(MALL_REQUEST_GROUPS).optional()),
+  q: z.preprocess(emptyToUndef, z.string().trim().max(80).optional()),
+  from: z.preprocess(emptyToUndef, docDateSchema.optional()),
+  to: z.preprocess(emptyToUndef, docDateSchema.optional()),
   /** 接着上一页取：编号比它小的 */
-  beforeId: z.coerce.number().int().positive().optional(),
+  beforeId: z.preprocess(emptyToUndef, z.coerce.number().int().positive().optional()),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+function escapeLike(s: string): string {
+  return s.replace(/[\\_%]/g, '\\$&');
+}
+
+function groupSqlPreFilter(db: Db, group: MallRequestGroup | undefined) {
+  if (!group) return db``;
+  if (group === 'ended') return db`AND r.status IN ('returned', 'rejected', 'cancelled')`;
+  if (group === 'todo') return db`AND (r.status = 'returned' OR (r.status = 'submitted' AND (r.dept_confirm = 'pending' OR r.stock_check = 'confirming')))`;
+  if (group === 'done') return db`AND r.status IN ('issued', 'approved')`;
+  return db`AND r.status IN ('submitted', 'approved')`;
+}
+
+async function queryPagedMall(
+  deps: Deps,
+  actor: Actor,
+  q: Omit<z.infer<typeof PagedQuery>, 'limit'> & { limit: number },
+  opts: { mineOnly: boolean },
+): Promise<{ requests: MallRequestBrief[]; nextBeforeId: number | null }> {
+  if (q.from && q.to && q.from > q.to) throw badRequest('开始日期不能晚于结束日期');
+  const db = deps.sql;
+  const tz = deps.config.timezone;
+  const me = await myContext(db, actor);
+  const scope = (me.canReview || me.canStock) && !opts.mineOnly ? undefined : { staffId: actor.id, departmentId: me.departmentId };
+  const pattern = q.q ? `%${escapeLike(q.q)}%` : null;
+  const allowedDisplay = q.group ? new Set(MALL_GROUP_STATUSES[q.group]) : null;
+  const chunkSize = Math.min(200, Math.max(q.limit + 1, 50));
+
+  const matched: MallRequestBrief[] = [];
+  let cursor = q.beforeId;
+  // 按块向后翻找，确保按 13 态分组后分页不跳行、不重行、且只有真正还有下一页时才返回 nextBeforeId
+  for (let round = 0; round < 40 && matched.length <= q.limit; round += 1) {
+    const page = await db<{ id: number }[]>`
+      SELECT r.id FROM purchase_requests r
+      WHERE r.source = 'mall'
+        ${q.priority ? db`AND r.priority = ${q.priority}` : db``}
+        ${groupSqlPreFilter(db, q.group)}
+        ${q.from ? db`AND (r.created_at AT TIME ZONE ${tz})::date >= ${q.from}` : db``}
+        ${q.to ? db`AND (r.created_at AT TIME ZONE ${tz})::date <= ${q.to}` : db``}
+        ${
+          pattern
+            ? db`AND (r.doc_no ILIKE ${pattern} ESCAPE '\\' OR r.budget_project ILIKE ${pattern} ESCAPE '\\'
+                 OR EXISTS (SELECT 1 FROM purchase_request_lines l WHERE l.request_id = r.id AND l.name ILIKE ${pattern} ESCAPE '\\'))`
+            : db``
+        }
+        ${cursor ? db`AND r.id < ${cursor}` : db``}
+        ${scope ? db`AND ${REQUESTER_OR_DEPT(db, scope)}` : db``}
+      ORDER BY r.id DESC LIMIT ${chunkSize}`;
+    if (!page.length) break;
+    const ids = page.map((r) => Number(r.id));
+    const byId = new Map((await briefs(db, await summaries(db, { ids, timezone: tz }))).map((b) => [b.id, b]));
+    for (const idVal of ids) {
+      const brief = byId.get(idVal);
+      if (!brief) continue;
+      if (allowedDisplay && !allowedDisplay.has(brief.displayStatus)) continue;
+      matched.push(brief);
+      if (matched.length > q.limit) break;
+    }
+    if (page.length < chunkSize) break;
+    cursor = ids[ids.length - 1]!;
+  }
+
+  const hasMore = matched.length > q.limit;
+  const requests = hasMore ? matched.slice(0, q.limit) : matched;
+  return { requests, nextBeforeId: hasMore && requests.length ? requests[requests.length - 1]!.id : null };
+}
+
 /**
- * 柚子里的商城页面「我的采购需求」「需求池」（Codex 审查）：来源是商城的单，按编号从新到旧一页页取，紧急程度在库里先筛再截，
- * 老的单翻页也找得到。mineOnly：审核、核库的人也只看本部门、自己提的、自己当主管的
+ * 柚子里的商城页面「我的采购需求」「需求池」（Codex 审查 + FR-08）：来源是商城的单，按编号从新到旧一页页取，
+ * 紧急程度、状态分组、关键词、日期范围都在服务端筛选再分页，老的单翻页也找得到。
  */
 export async function pagedMall(deps: Deps, actor: Actor, raw: unknown, opts: { mineOnly: boolean }): Promise<{ requests: MallRequestBrief[]; nextBeforeId: number | null }> {
   const q = parse(PagedQuery, raw ?? {});
-  const db = deps.sql;
-  const me = await myContext(db, actor);
-  const scope = (me.canReview || me.canStock) && !opts.mineOnly ? undefined : { staffId: actor.id, departmentId: me.departmentId };
-  const page = await db<{ id: number }[]>`
-    SELECT r.id FROM purchase_requests r
-    WHERE r.source = 'mall'
-      ${q.priority ? db`AND r.priority = ${q.priority}` : db``}
-      ${q.beforeId ? db`AND r.id < ${q.beforeId}` : db``}
-      ${scope ? db`AND ${REQUESTER_OR_DEPT(db, scope)}` : db``}
-    ORDER BY r.id DESC LIMIT ${q.limit}`;
-  if (!page.length) return { requests: [], nextBeforeId: null };
-  const ids = page.map((r) => Number(r.id));
-  const byId = new Map((await briefs(db, await summaries(db, { ids, timezone: deps.config.timezone }))).map((b) => [b.id, b]));
-  const requests = ids.map((i) => byId.get(i)).filter((b): b is MallRequestBrief => !!b);
-  return { requests, nextBeforeId: page.length === q.limit ? ids[ids.length - 1]! : null };
+  return queryPagedMall(deps, actor, q, opts);
+}
+
+const MALL_EXPORT_LIMIT = 5000;
+
+/** 商城侧「我的采购需求 / 需求池」当前筛选结果导出（FR-11）：与页面可见范围、筛选条件完全一致，金额按元保留两位小数 */
+export async function exportMallCsv(deps: Deps, actor: Actor, raw: unknown, opts: { mineOnly: boolean; ip?: string }): Promise<{ fileName: string; csv: string; count: number }> {
+  const parsed = parse(PagedQuery.omit({ beforeId: true, limit: true }), raw ?? {});
+  const { requests } = await queryPagedMall(deps, actor, { ...parsed, beforeId: undefined, limit: MALL_EXPORT_LIMIT }, { mineOnly: opts.mineOnly });
+  const ids = requests.map((r) => r.id);
+  const metaRows = ids.length
+    ? await deps.sql<{ id: number; storeName: string | null; estimateCents: string | null; hasPrice: boolean }[]>`
+        SELECT r.id, st.name AS store_name,
+               sum(round((l.qty_milli::numeric * l.ref_price_cents) / 1000))::bigint::text AS estimate_cents,
+               bool_or(l.ref_price_cents IS NOT NULL) AS has_price
+        FROM purchase_requests r
+        LEFT JOIN stores st ON st.id = r.store_id
+        LEFT JOIN purchase_request_lines l ON l.request_id = r.id
+        WHERE r.id IN ${deps.sql(ids)}
+        GROUP BY r.id, st.name`
+    : [];
+  const metaById = new Map(metaRows.map((m) => [Number(m.id), m]));
+  const tz = deps.config.timezone;
+  const fmtAt = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString('sv-SE', { timeZone: tz }).slice(0, 16);
+  };
+  const header = ['需求单号', '门店', '部门', '预估金额（元）', '状态', '紧急程度', '更新时间', '摘要'];
+  const rows: (string | number)[][] = [
+    header,
+    ...requests.map((r) => {
+      const m = metaById.get(r.id);
+      const yuan = m?.hasPrice && m.estimateCents !== null ? formatAmount(Number(m.estimateCents)).replace(/,/g, '') : '';
+      return [r.docNo, m?.storeName ?? '', r.department.name, yuan, r.displayLabel, PRIORITY_LABELS[r.priority], fmtAt(r.progressUpdatedAt), r.summary];
+    }),
+  ];
+  await writeAudit(deps.sql, {
+    staffId: actor.id,
+    action: 'export',
+    targetType: 'purchase_requests',
+    detail: { source: 'shop', scope: opts.mineOnly ? 'mine' : 'pool', ...parsed, count: requests.length },
+    ip: opts.ip,
+  });
+  const stamp = todayIn(tz);
+  return { fileName: `采购商城需求_${opts.mineOnly ? '我的' : '需求池'}_${stamp}.csv`, csv: toCsv(rows), count: requests.length };
 }
 
 const BatchInput = z

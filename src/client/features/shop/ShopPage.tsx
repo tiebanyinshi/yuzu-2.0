@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronUp,
   ClipboardList,
+  Download,
   Eye,
   GitBranch,
   LayoutDashboard,
@@ -29,7 +30,7 @@ import {
 } from 'lucide-react';
 import { formatYuan } from '@shared/money';
 import { formatQty, parseQty } from '@shared/quantity';
-import { MALL_DISPLAY_LABELS, type MallDisplayStatus, type MallRequest, type MallRequestBrief } from '@shared/mall';
+import { MALL_DISPLAY_LABELS, MALL_GROUP_LABELS, MALL_REQUEST_GROUPS, type MallDisplayStatus, type MallRequest, type MallRequestBrief, type MallRequestGroup } from '@shared/mall';
 import { PAYMENT_INTENT_LABELS, PRIORITY_LABELS, REQUEST_PRIORITIES, type MallPaymentIntent, type RequestPriority } from '@shared/requests';
 import {
   buildCompareOffers,
@@ -54,6 +55,7 @@ import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { lazyPage } from '../../lib/lazyPage';
 import { useSession } from '../../lib/session';
 import { cn, formatDateTime, uuid } from '../../lib/utils';
+import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
@@ -1105,23 +1107,81 @@ const DISPLAY_TONE: Partial<Record<MallDisplayStatus, 'pine' | 'ember' | 'clay' 
 
 function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
   const [priority, setPriority] = useState<RequestPriority | ''>('');
-  // 一页 50 张，从新到旧；紧急程度在服务端先筛再分页（老的单翻页也找得到，Codex 审查）
+  const [group, setGroup] = useState<MallRequestGroup | ''>('');
+  const [kw, setKw] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+
+  const filterParams = useMemo(() => {
+    const qs = new URLSearchParams({ scope });
+    if (priority) qs.set('priority', priority);
+    if (group) qs.set('group', group);
+    if (kw.trim()) qs.set('q', kw.trim());
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    return qs.toString();
+  }, [scope, priority, group, kw, from, to]);
+
+  const dateBad = !!from && !!to && from > to;
+
+  // 一页 50 张，从新到旧；状态分组、紧急程度、关键词与日期范围均在服务端先筛再分页（FR-08）
   const q = useInfiniteQuery({
-    queryKey: ['shop', 'requests', scope, priority],
+    queryKey: ['shop', 'requests', filterParams],
     initialPageParam: null as number | null,
-    queryFn: ({ pageParam }) =>
-      api.get<{ requests: MallRequestBrief[]; nextBeforeId: number | null }>(
-        `/api/erp/shop/requests?scope=${scope}${priority ? `&priority=${priority}` : ''}${pageParam ? `&beforeId=${pageParam}` : ''}`,
-      ),
+    enabled: !dateBad,
+    queryFn: ({ pageParam }) => api.get<{ requests: MallRequestBrief[]; nextBeforeId: number | null }>(`/api/erp/shop/requests?${filterParams}${pageParam ? `&beforeId=${pageParam}` : ''}`),
     getNextPageParam: (last) => last.nextBeforeId,
   });
-  if (q.isPending) return <Skeleton className="h-64" />;
-  if (q.error) return <LoadFailed title="需求没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
-  const list = q.data.pages.flatMap((p) => p.requests);
+
+  const exportHref = `/api/erp/shop/requests/export?${filterParams}`;
+  const list = q.data?.pages.flatMap((p) => p.requests) ?? [];
+  const hasFilter = !!(priority || group || kw.trim() || from || to);
+
   return (
     <div className="space-y-3" data-testid={`shop-${scope}`}>
+      {/* 状态分组筛选（FR-08：把现有 13 态归成 4 组，不自造状态） */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5" data-testid="shop-req-groups">
+          <CatChip on={group === ''} onClick={() => setGroup('')}>
+            全部状态
+          </CatChip>
+          {MALL_REQUEST_GROUPS.map((g) => (
+            <button
+              key={g}
+              type="button"
+              onClick={() => setGroup(g)}
+              data-testid={`shop-req-group-${g}`}
+              className={cn('tap relative h-8 rounded-full px-3 text-[12.5px] font-semibold', group === g ? 'bg-ink text-paper' : 'bg-card text-ink-2 ring-1 ring-line hover:text-ink')}
+            >
+              {MALL_GROUP_LABELS[g]}
+            </button>
+          ))}
+        </div>
+        <a
+          href={dateBad ? undefined : exportHref}
+          download
+          aria-disabled={dateBad}
+          onClick={(e) => {
+            if (dateBad) e.preventDefault();
+          }}
+          className={cn(
+            'tap relative inline-flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3 text-[13px] font-semibold text-ink hover:bg-paper',
+            dateBad && 'pointer-events-none opacity-50',
+          )}
+          data-testid="shop-req-export"
+        >
+          <Download className="size-4" />
+          导出表格
+        </a>
+      </div>
+
+      {/* 关键词、日期范围与紧急程度 */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select aria-label="紧急程度" value={priority} onChange={(e) => setPriority(e.target.value as RequestPriority | '')} fullWidth={false}>
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-4" />
+          <Input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜索单号 / 品名 / 预算项目" className="h-9 pl-9" aria-label="搜索需求单" data-testid="shop-req-search" />
+        </div>
+        <Select aria-label="紧急程度" value={priority} onChange={(e) => setPriority(e.target.value as RequestPriority | '')} fullWidth={false} className="h-9">
           <option value="">全部紧急程度</option>
           {REQUEST_PRIORITIES.map((p) => (
             <option key={p} value={p}>
@@ -1129,10 +1189,72 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
             </option>
           ))}
         </Select>
-        <span className="text-[12.5px] text-ink-3">{scope === 'pool' ? '商城来的全部需求单；审核、退回、转采购单在 ERP「采购需求单」里办' : '本部门、自己提的、自己当主管的'}</span>
+        <div className="flex flex-wrap items-center gap-1.5 text-[12.5px] text-ink-3">
+          <Input type="date" aria-label="开始日期" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-36" data-testid="shop-req-from" />
+          <span>至</span>
+          <Input type="date" aria-label="结束日期" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-36" data-testid="shop-req-to" />
+        </div>
+        {hasFilter && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setPriority('');
+              setGroup('');
+              setKw('');
+              setFrom('');
+              setTo('');
+            }}
+            data-testid="shop-req-reset"
+          >
+            重置筛选
+          </Button>
+        )}
       </div>
-      {list.length === 0 ? (
-        <Card className="p-8 text-center text-[13.5px] text-ink-3">还没有。</Card>
+
+      <p className="text-[12.5px] text-ink-3">{scope === 'pool' ? '商城来的全部需求单；审核、退回、转采购单在 ERP「采购需求单」里办' : '本部门、自己提的、自己当主管的'}</p>
+
+      {dateBad ? (
+        <Notice tone="warning" title="开始日期不能晚于结束日期" />
+      ) : q.isPending ? (
+        <div className="space-y-2.5" data-testid="shop-req-skeleton">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-16 w-full" />
+          ))}
+        </div>
+      ) : q.error ? (
+        <LoadFailed title="需求没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />
+      ) : list.length === 0 ? (
+        <Card className="p-4">
+          <EmptyState
+            art="search"
+            title={hasFilter ? '当前筛选条件下没有采购需求' : '还没有采购需求单'}
+            description={hasFilter ? '放宽状态、日期或关键词条件再看看。' : '去商城选购商品或发起自主申请。'}
+            action={
+              hasFilter ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setPriority('');
+                    setGroup('');
+                    setKw('');
+                    setFrom('');
+                    setTo('');
+                  }}
+                >
+                  清空筛选
+                </Button>
+              ) : (
+                <Link to={BASE}>
+                  <Button size="sm" variant="primary">
+                    去选购 →
+                  </Button>
+                </Link>
+              )
+            }
+          />
+        </Card>
       ) : (
         <Card className="divide-y divide-line">
           {list.map((r) => (
@@ -1140,7 +1262,7 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
               <PriorityDot priority={r.priority} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13.5px] font-semibold text-ink">{r.summary || '—'}</span>
-                <span className="text-[12px] text-ink-3">
+                <span className="text-[12.5px] text-ink-3">
                   {r.docNo} · {r.department.name} · {formatDateTime(r.createdAt)}
                 </span>
               </span>
@@ -1160,19 +1282,19 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
   );
 }
 
-const STEPS: { label: string; done: (s: MallDisplayStatus) => boolean }[] = [
-  { label: '提交', done: () => true },
-  { label: '主管确认', done: (s) => s !== 'dept_pending' },
-  { label: '核库与采购审核', done: (s) => ['approved', 'sourcing', 'ordered', 'partial', 'received', 'closed', 'issued'].includes(s) },
-  { label: '下单', done: (s) => ['ordered', 'partial', 'received', 'closed'].includes(s) },
-  { label: '到货', done: (s) => ['received', 'issued'].includes(s) },
-];
-
 function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCart: (c: Cart) => void; c: ShopCatalog }) {
   const toast = useToast();
   const navigate = useNavigate();
   const q = useQuery({ queryKey: ['shop', 'request', id], queryFn: () => api.get<MallRequest>(`/api/erp/shop/requests/${id}`) });
-  if (q.isPending) return <Skeleton className="h-64" />;
+  if (q.isPending) {
+    return (
+      <div className="space-y-3">
+        {[0, 1, 2].map((i) => (
+          <Skeleton key={i} className="h-24 w-full" />
+        ))}
+      </div>
+    );
+  }
   if (q.error) return <LoadFailed title="需求单没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
   const r = q.data;
   const ended = ['returned', 'rejected', 'cancelled'].includes(r.displayStatus);
@@ -1198,22 +1320,36 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
       <Link to={`${BASE}/mine`} className="inline-flex items-center gap-1 text-[13px] font-semibold text-ink-2 hover:text-ink">
         <ArrowLeft className="size-4" /> 返回我的采购需求
       </Link>
+
+      {/* FR-08：退回 / 不采购 / 撤回原因置顶展示 */}
+      {r.reason && ended && <Notice tone={r.displayStatus === 'returned' ? 'warning' : 'info'} title={`${MALL_DISPLAY_LABELS[r.displayStatus]}：${r.reason}`} data-testid="shop-request-reason" />}
+
       <Card className="space-y-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[17px] font-bold">{r.docNo}</span>
           <Badge tone={DISPLAY_TONE[r.displayStatus] ?? 'neutral'}>{MALL_DISPLAY_LABELS[r.displayStatus]}</Badge>
           <PriorityDot priority={r.priority} />
-          <span className="text-[12.5px] text-ink-3">{PRIORITY_LABELS[r.priority]}</span>
-          <span className="ml-auto text-[12px] text-ink-3">进度更新于 {formatDateTime(r.progressUpdatedAt)}</span>
+          <span className="text-[12.5px] text-ink-2">{PRIORITY_LABELS[r.priority]}</span>
+          <span className="ml-auto text-[12.5px] text-ink-3">进度更新于 {formatDateTime(r.progressUpdatedAt)}</span>
         </div>
-        <ol className="flex flex-wrap gap-2 text-[12.5px]" aria-label="进度">
-          {STEPS.map((s, i) => (
-            <li key={s.label} className={cn('rounded-full px-2.5 py-1', !ended && s.done(r.displayStatus) ? 'bg-pine text-paper' : 'bg-paper-2 text-ink-3')}>
-              {i + 1}. {s.label}
+
+        {/* FR-08：每节点真实时间与操作人（均来自服务端 timeline，不前端推算） */}
+        <ol className="grid gap-2 sm:grid-cols-5" aria-label="进度" data-testid="shop-request-timeline">
+          {r.timeline.map((step, i) => (
+            <li
+              key={step.key}
+              data-testid={`shop-timeline-${step.key}`}
+              className={cn('rounded-lg border px-2.5 py-2 text-[12.5px]', step.done ? 'border-pine/40 bg-pine-soft/40 text-ink' : 'border-line bg-paper-2/50 text-ink-3')}
+            >
+              <p className="font-bold">
+                {i + 1}. {step.label}
+              </p>
+              <p className="mt-0.5 truncate text-ink-2">{step.actorName ?? (step.done ? '已完成' : '待处理')}</p>
+              <p className="text-ink-3">{step.at ? formatDateTime(step.at) : '—'}</p>
             </li>
           ))}
         </ol>
-        {r.reason && ended && <Notice tone={r.displayStatus === 'returned' ? 'warning' : 'info'} title={`${MALL_DISPLAY_LABELS[r.displayStatus]}：${r.reason}`} data-testid="shop-request-reason" />}
+
         <dl className="grid gap-x-4 gap-y-1 text-[13px] sm:grid-cols-3">
           <Info k="部门" v={r.department.name} />
           <Info k="经办人" v={r.contactName || r.requester.name} />
@@ -1236,7 +1372,7 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
                 {l.refPriceCents !== null && ` · 预估 ${formatYuan(l.refPriceCents)} / ${l.unit}`}
               </span>
             </p>
-            <p className="text-[12px] text-ink-3">
+            <p className="text-[12.5px] text-ink-3">
               {[
                 l.supplier && `意向供应商：${l.supplier.name}`,
                 l.skuCode && `${l.skuCode}（${l.priceVersion}）`,
@@ -1248,11 +1384,11 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
                 .join(' · ')}
             </p>
             {l.link && (
-              <a href={l.link} target="_blank" rel="noreferrer noopener" className="text-[12px] font-semibold text-lake hover:underline">
+              <a href={l.link} target="_blank" rel="noreferrer noopener" className="text-[12.5px] font-semibold text-lake hover:underline">
                 打开参考链接 ↗
               </a>
             )}
-            <p className="text-[12px] text-ink-2">
+            <p className="text-[12.5px] text-ink-2">
               进度：{MALL_LINE_LABELS[l.progress.state]}
               {l.progress.poNo && ` · 采购单 ${l.progress.poNo}（${l.progress.supplierName}）`}
               {l.progress.receivedMilli > 0 && ` · 已到 ${formatQty(l.progress.receivedMilli)}`}
@@ -1270,7 +1406,7 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
           <Button variant="ghost">在 ERP 里看这张需求单</Button>
         </Link>
       </div>
-      {!ended && r.displayStatus !== 'received' && <p className="text-right text-[12px] text-ink-3">要撤回或补充请在 ERP「采购需求单」里打开这张单；退回的撤回后在这里按原单再提。</p>}
+      {!ended && r.displayStatus !== 'received' && <p className="text-right text-[12.5px] text-ink-3">要撤回或补充请在 ERP「采购需求单」里打开这张单；退回的撤回后在这里按原单再提。</p>}
     </div>
   );
 }

@@ -71,6 +71,31 @@ export const MALL_DISPLAY_LABELS: Record<MallDisplayStatus, string> = {
   closed: '已关闭',
 };
 
+/** FR-08 我的采购需求状态筛选分组（把现有状态归成 4 组，不自造新状态） */
+export const MALL_REQUEST_GROUPS = ['active', 'todo', 'done', 'ended'] as const;
+export type MallRequestGroup = (typeof MALL_REQUEST_GROUPS)[number];
+export const MALL_GROUP_LABELS: Record<MallRequestGroup, string> = {
+  active: '进行中',
+  todo: '待我处理',
+  done: '已完成',
+  ended: '已终止',
+};
+export const MALL_GROUP_STATUSES: Record<MallRequestGroup, readonly MallDisplayStatus[]> = {
+  active: ['dept_pending', 'stock_check', 'stock_confirming', 'reviewing', 'approved', 'sourcing', 'ordered', 'partial'],
+  todo: ['dept_pending', 'stock_confirming', 'returned'],
+  done: ['received', 'issued', 'closed'],
+  ended: ['returned', 'rejected', 'cancelled'],
+};
+
+/** 详情页 5 步进度条的真实节点时刻与操作人（FR-08：全部由服务端读取审批/单据记录返回，前端不推算） */
+export interface MallTimelineNode {
+  key: 'submit' | 'dept_confirm' | 'review' | 'order' | 'receive';
+  label: string;
+  done: boolean;
+  at: string | null;
+  actorName: string | null;
+}
+
 export type MallLineState = 'none' | 'sourcing' | 'ordered' | 'partial' | 'received' | 'closed' | 'issued';
 
 export interface MallRequestLine {
@@ -136,6 +161,7 @@ export interface MallRequest {
   paymentIntent: MallPaymentIntent | null;
   note: string;
   approvals: { action: string; actorName: string; reason: string; createdAt: string }[];
+  timeline: MallTimelineNode[];
   lines: MallRequestLine[];
 }
 

@@ -539,4 +539,57 @@ describe('SKU 的边界（Codex 审查）', () => {
     expect(counts.pendingSkus).toBeGreaterThanOrEqual(1);
     expect(counts.totalTodos).toBe(counts.pendingSkus + counts.pendingSkuChanges + counts.pendingSuppliers);
   });
+
+  it('我的需求增强与导出（FR-08 & FR-11）：状态分组/关键词/日期筛选分页准确、导出 CSV 条数与金额单位一致、详情带服务端节点时间与操作人', async () => {
+    const tag = `EXPORT-${randomUUID().slice(0, 6)}`;
+    const line = { name: `${tag} 专用定制件`, expectedCategory: '', qtyMilli: q(2), unit: '套', details: '规格要求', brandModel: '', link: '', reasonText: 'FR-08测试', imageIds: [] };
+    const created = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ budgetProject: tag }), kind: 'custom', line });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const reqId = created.body.request.id as number;
+    const docNo = created.body.request.docNo as string;
+
+    // 1) 关键词 + 日期 + 状态分组（进行中）筛选命中且分页准确
+    const activeHit = await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests?scope=mine&group=active&q=${encodeURIComponent(tag)}&from=${today}&to=${today}`);
+    expect(activeHit.status, JSON.stringify(activeHit.body)).toBe(200);
+    expect((activeHit.body.requests as { id: number }[]).map((r) => r.id)).toEqual([reqId]);
+    expect(activeHit.body.nextBeforeId).toBeNull();
+
+    // 另一状态分组（已终止）不包含该单
+    const endedMiss = await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests?scope=mine&group=ended&q=${encodeURIComponent(tag)}`);
+    expect(endedMiss.status).toBe(200);
+    expect(endedMiss.body.requests).toHaveLength(0);
+
+    // 开始日期晚于结束日期 400
+    expect((await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests?scope=mine&from=${shiftDate(today, 2)}&to=${today}`)).status).toBe(400);
+
+    // 2) FR-11 导出当前筛选结果：条数与列表一致，包含单号与表头；需求池权限隔离
+    const expRes = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/erp/shop/requests/export?scope=mine&group=active&q=${encodeURIComponent(tag)}`,
+      headers: { cookie: reqA },
+    });
+    expect(expRes.statusCode).toBe(200);
+    expect(expRes.headers['content-type']).toContain('text/csv');
+    const lines = expRes.body
+      .replace(/^\uFEFF/, '')
+      .trim()
+      .split(/\r?\n/);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('需求单号,门店,部门,预估金额（元）,状态,紧急程度,更新时间,摘要');
+    expect(lines[1]).toContain(docNo);
+    // 普通申购人无权导出需求池
+    expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/requests/export?scope=pool')).status).toBe(403);
+
+    // 3) 采购审核通过后，详情页 timeline 带真实服务端时间戳与操作人
+    const approved = await api(ctx.app, buyer, 'POST', `/api/erp/requests/${reqId}/approve`, {});
+    expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+    const det = await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests/${reqId}`);
+    expect(det.status).toBe(200);
+    const timeline = det.body.timeline as { key: string; done: boolean; at: string | null; actorName: string | null }[];
+    expect(timeline.find((n) => n.key === 'submit')).toMatchObject({ done: true, actorName: '运营部申购' });
+    expect(timeline.find((n) => n.key === 'submit')!.at).toBeTruthy();
+    expect(timeline.find((n) => n.key === 'review')).toMatchObject({ done: true });
+    expect(timeline.find((n) => n.key === 'review')!.at).toBeTruthy();
+    expect(timeline.find((n) => n.key === 'review')!.actorName).toBeTruthy();
+  });
 });

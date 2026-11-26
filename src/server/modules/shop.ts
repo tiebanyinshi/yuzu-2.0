@@ -45,6 +45,7 @@ import type { Db } from '../db';
 import { guardAny } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
+import { csvReply } from '../lib/csv';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { clockIn, todayIn } from '../lib/dates';
 import { setTxTimeouts } from '../lib/tx';
@@ -53,7 +54,7 @@ import { loadExpenseRules } from './expenses';
 import { supplierLicenses } from './inventory/admission';
 import { docDateSchema } from './inventory/common';
 import { loadPurchaseRules } from './inventory/purchase-rules';
-import { createMallRequest, mallRequest, pagedMall } from './mall';
+import { createMallRequest, exportMallCsv, mallRequest, pagedMall } from './mall';
 import { pettyBalances, pettyOccupied } from './petty-uses';
 import { allowedStores } from './stores';
 import { hashRequest } from '../lib/idempotency';
@@ -1114,6 +1115,14 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     if (pool && !can(req.actor, 'request.review') && !can(req.actor, 'request.stock')) throw forbidden('需求池只给采购、库管看');
     const { scope: _scope, ...rest } = q;
     return pagedMall(deps, req.actor, rest, { mineOnly: !pool });
+  });
+  app.get(`${P}/requests/export`, { preHandler: shopper }, async (req, reply) => {
+    const q = (req.query ?? {}) as Record<string, unknown>;
+    const pool = q.scope === 'pool';
+    if (pool && !can(req.actor, 'request.review') && !can(req.actor, 'request.stock')) throw forbidden('需求池只给采购、库管看');
+    const { scope: _scope, ...rest } = q;
+    const { fileName, csv } = await exportMallCsv(deps, req.actor, rest, { mineOnly: !pool, ip: req.ip });
+    return csvReply(reply, fileName, csv);
   });
   app.get(`${P}/requests/:id`, { preHandler: shopper }, async (req) => mallRequest(deps, req.actor, parse(idParam, req.params).id));
 
