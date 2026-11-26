@@ -89,14 +89,23 @@ function useCart() {
 
 export function ShopPage() {
   const params = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const session = useSession();
   const path = (params['*'] ?? '').replace(/\/+$/, '');
   const rawUrlStore = searchParams.get('storeId');
   const urlStoreId = rawUrlStore && /^[1-9]\d*$/.test(rawUrlStore) ? Number(rawUrlStore) : null;
   const [storeId, setStoreId] = useState<number | null>(null);
-  const activeStoreId = storeId ?? urlStoreId;
+  // URL 显式指定了 storeId（比价页分享/浏览器后退）时以 URL 为准，避免被此前目录页切换的本地状态覆盖
+  const activeStoreId = urlStoreId ?? storeId;
+  const pickStore = (next: number) => {
+    setStoreId(next);
+    if (searchParams.has('storeId')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set('storeId', String(next));
+      setSearchParams(nextParams, { replace: true });
+    }
+  };
   const q = useQuery({ queryKey: catalogKey(activeStoreId), queryFn: () => api.get<ShopCatalog>(`/api/erp/shop/catalog${activeStoreId ? `?storeId=${activeStoreId}` : ''}`) });
   const { cart, setCart } = useCart();
   const count = cart.lines.length;
@@ -137,7 +146,7 @@ export function ShopPage() {
     body = <ShopComparePage materialId={compareMaterialId} catalog={q.data} loading={q.isPending} error={q.error} retrying={q.isFetching} onRetry={() => void q.refetch()} updatedAt={updatedAt} />;
   } else if (q.isPending) body = <Skeleton className="h-80" />;
   else if (q.error) body = <LoadFailed title="商城没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
-  else if (path === '') body = <Home c={q.data} setStore={setStoreId} />;
+  else if (path === '') body = <Home c={q.data} setStore={pickStore} />;
   else if (path.startsWith('item/')) body = <ItemPage c={q.data} materialId={Number(path.slice(5))} cart={cart} setCart={setCart} />;
   else if (path === 'cart') body = <CartPage c={q.data} cart={cart} setCart={setCart} />;
   else if (path === 'checkout') body = <Checkout c={q.data} cart={cart} setCart={setCart} />;
