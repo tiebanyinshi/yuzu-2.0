@@ -107,11 +107,23 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
   });
 
   const result = q.data;
+  const pricingStale =
+    q.isPlaceholderData ||
+    !result ||
+    (customQtyMilli !== null && result.qtyMilli !== customQtyMilli) ||
+    (storeId !== null && result.storeId !== storeId) ||
+    (result.material !== null && result.material.id !== materialId);
   const resolvedStoreId = result?.storeId ?? null;
-  // 服务端核验通过的比价门店同步回商城持久门店状态，离开比价页进入清单/结算/目录时不会回退到旧门店
+  // 服务端核验通过且非占位旧数据的比价门店同步回商城持久门店状态，离开比价页进入清单/结算/目录时不会回退到旧门店
   useEffect(() => {
-    if (resolvedStoreId !== null) onSyncStore(resolvedStoreId);
-  }, [resolvedStoreId, onSyncStore]);
+    if (!pricingStale && resolvedStoreId !== null) onSyncStore(resolvedStoreId);
+  }, [pricingStale, resolvedStoreId, onSyncStore]);
+  useEffect(() => {
+    if (pricingStale) {
+      setReplaceTarget(null);
+      setCrossStoreTarget(null);
+    }
+  }, [pricingStale]);
   const activeQtyMilli = customQtyMilli ?? result?.qtyMilli ?? 1000;
   const materialSkuIds = useMemo(() => (result?.offers ?? []).map((o) => o.skuId), [result?.offers]);
   const currentCartLine = useMemo(() => (result ? findMaterialCartLine(cart, result.storeId, materialSkuIds) : null), [cart, result, materialSkuIds]);
@@ -159,8 +171,9 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
   };
 
   const commitPick = (offer: ShopCompareOffer, allowResetOtherStore: boolean) => {
-    if (!result || !result.material) return;
-    const applied = applyCompareCartSelection(cart, offer, materialSkuIds, activeQtyMilli, result.storeId, allowResetOtherStore);
+    if (!result || !result.material || pricingStale) return;
+    const pricedQtyMilli = result.qtyMilli;
+    const applied = applyCompareCartSelection(cart, offer, materialSkuIds, pricedQtyMilli, result.storeId, allowResetOtherStore);
     if (applied.kind === 'cross_store') {
       setCrossStoreTarget(offer);
       return;
@@ -169,19 +182,19 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
     setCart(applied.cart);
     setMobilePickedSkuId(offer.skuId);
     const unitLabel = result.material.unit;
-    const summary = `${offer.supplierName} · ${formatQty(activeQtyMilli)} ${unitLabel}（${formatYuan(offer.totalCents)}）`;
+    const summary = `${offer.supplierName} · ${formatQty(pricedQtyMilli)} ${unitLabel}（${formatYuan(offer.totalCents)}）`;
     setLastPickedText(summary);
     if (applied.kind === 'replaced') {
       toast({ tone: 'success', title: `已替换为 ${offer.supplierName}`, body: `清单保留 1 行，含税总成本 ${formatYuan(offer.totalCents)}` });
     } else if (applied.kind === 'updated') {
-      toast({ tone: 'success', title: `已更新采购数量（${formatQty(activeQtyMilli)} ${unitLabel}）`, body: `含税总成本 ${formatYuan(offer.totalCents)}` });
+      toast({ tone: 'success', title: `已更新采购数量（${formatQty(pricedQtyMilli)} ${unitLabel}）`, body: `含税总成本 ${formatYuan(offer.totalCents)}` });
     } else {
-      toast({ tone: 'success', title: `已加入采购清单（${formatQty(activeQtyMilli)} ${unitLabel}）`, body: `清单共 ${applied.cart.lines.length} 行，可点顶部「查看清单」去结算` });
+      toast({ tone: 'success', title: `已加入采购清单（${formatQty(pricedQtyMilli)} ${unitLabel}）`, body: `清单共 ${applied.cart.lines.length} 行，可点顶部「查看清单」去结算` });
     }
   };
 
   const handleChoose = (offer: ShopCompareOffer) => {
-    if (!result || !offer.purchasable) return;
+    if (!result || !offer.purchasable || pricingStale) return;
     const otherStore = cart.lines.length > 0 && cart.storeId !== null && cart.storeId !== result.storeId;
     if (otherStore) {
       setCrossStoreTarget(offer);
@@ -283,8 +296,8 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
           const isCur = currentCartLine?.skuId === o.skuId;
           const isReplacing = !!currentCartLine && !isCur;
           return (
-            <Button size="sm" variant={isCur ? 'secondary' : 'primary'} onClick={() => handleChoose(o)} data-testid={`compare-pick-${o.skuId}`}>
-              {isCur ? '更新数量' : isReplacing ? '换这家' : '选这家'}
+            <Button size="sm" variant={isCur ? 'secondary' : 'primary'} disabled={pricingStale} onClick={() => handleChoose(o)} data-testid={`compare-pick-${o.skuId}`}>
+              {pricingStale ? '重算中…' : isCur ? '更新数量' : isReplacing ? '换这家' : '选这家'}
             </Button>
           );
         }
@@ -378,7 +391,7 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
   }
 
   const purchasableCount = result.offers.filter((o) => o.purchasable).length;
-  const oldTotalForReplace = currentOffer ? lineGrossCents(currentOffer.priceCents, currentOffer.taxRateBp, activeQtyMilli, currentOffer.freightCents) : null;
+  const oldTotalForReplace = currentOffer ? lineGrossCents(currentOffer.priceCents, currentOffer.taxRateBp, result.qtyMilli, currentOffer.freightCents) : null;
 
   return (
     <div className="space-y-4 pb-24 md:pb-0" data-testid="shop-compare-page">
@@ -449,6 +462,11 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
             {qtyHint && (
               <p className="text-[12.5px] font-medium text-clay" role="alert" data-testid="compare-qty-error">
                 {qtyHint}
+              </p>
+            )}
+            {pricingStale && (
+              <p className="text-[12.5px] text-ink-3" aria-live="polite" data-testid="compare-repricing">
+                正在按新数量重算各家含税总成本与起订量…
               </p>
             )}
           </div>
@@ -567,11 +585,12 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
                       <Button
                         variant={isPicked ? 'primary' : 'secondary'}
                         className="w-full"
+                        disabled={pricingStale}
                         onClick={() => setMobilePickedSkuId(o.skuId)}
                         icon={isPicked ? <Check className="size-4" /> : undefined}
                         data-testid={`compare-card-select-${o.skuId}`}
                       >
-                        {isPicked ? '已选中该供应商' : '选中此报价'}
+                        {pricingStale ? '报价重算中…' : isPicked ? '已选中该供应商' : '选中此报价'}
                       </Button>
                     ) : (
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
@@ -602,7 +621,9 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-card/95 px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur md:hidden" data-testid="compare-mobile-bar">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            {mobileSelectedOffer ? (
+            {pricingStale ? (
+              <p className="text-[13px] text-ink-3">正在按新数量重算报价…</p>
+            ) : mobileSelectedOffer ? (
               <>
                 <p className="truncate text-[13px] font-bold text-ink">{mobileSelectedOffer.supplierName}</p>
                 <p className="text-[13.5px] font-bold text-clay">{formatYuan(mobileSelectedOffer.totalCents)}</p>
@@ -614,11 +635,12 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
           <Button
             variant="primary"
             className="min-h-11 px-5"
-            disabled={!mobileSelectedOffer}
+            loading={pricingStale}
+            disabled={!mobileSelectedOffer || pricingStale}
             onClick={() => mobileSelectedOffer && handleChoose(mobileSelectedOffer)}
             data-testid="compare-mobile-submit"
           >
-            {currentCartLine && mobileSelectedOffer && currentCartLine.skuId !== mobileSelectedOffer.skuId ? '换这家' : '选这家'}
+            {pricingStale ? '重算中' : currentCartLine && mobileSelectedOffer && currentCartLine.skuId !== mobileSelectedOffer.skuId ? '换这家' : '选这家'}
           </Button>
         </div>
       </div>
@@ -636,8 +658,9 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
             </Button>
             <Button
               variant="primary"
+              disabled={pricingStale}
               onClick={() => {
-                if (replaceTarget) {
+                if (replaceTarget && !pricingStale) {
                   const target = replaceTarget;
                   setReplaceTarget(null);
                   commitPick(target, false);
@@ -678,7 +701,7 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
                   {oldTotalForReplace !== null && (
                     <div className="flex justify-between gap-2 border-t border-line pt-2 font-bold">
                       <span className="text-ink">
-                        按 {formatQty(activeQtyMilli)} {unit} 含税总成本
+                        按 {formatQty(result.qtyMilli)} {unit} 含税总成本
                       </span>
                       <span className="text-clay">
                         {formatYuan(oldTotalForReplace)} → {formatYuan(replaceTarget.totalCents)}
@@ -706,8 +729,9 @@ export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStor
             </Button>
             <Button
               variant="danger"
+              disabled={pricingStale}
               onClick={() => {
-                if (crossStoreTarget) {
+                if (crossStoreTarget && !pricingStale) {
                   const target = crossStoreTarget;
                   setCrossStoreTarget(null);
                   commitPick(target, true);
