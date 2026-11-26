@@ -348,7 +348,12 @@ function DocBody({ doc, onClose }: { doc: InvDoc; onClose: () => void }) {
                     </Mini>
                     <Mini label="拒收">{l.rejectedMilli ? <Qty milli={l.rejectedMilli} unit={l.inventoryUnit} className="font-bold text-clay" /> : '—'}</Mini>
                     <Mini label={`单价/${l.purchaseUnit}`}>{l.priceCents !== null ? <Money cents={l.priceCents} /> : '—'}</Mini>
-                    {l.rejectReason && <p className="col-span-full text-clay">拒收原因：{l.rejectReason}（不入库、不计货款）</p>}
+                    {l.rejectReason && (
+                      <p className="col-span-full text-clay">
+                        拒收原因：{l.rejectReason}（不入库、不计货款）
+                        {Number(l.redeliverMilli) > 0 && `；其中供应商待补 ${formatQty(Number(l.redeliverMilli))} ${l.inventoryUnit}`}
+                      </p>
+                    )}
                     {(l.batchNo || l.expiresOn) && (
                       <p className="col-span-full text-ink-3">
                         {l.batchNo ? `批号 ${l.batchNo}` : ''}

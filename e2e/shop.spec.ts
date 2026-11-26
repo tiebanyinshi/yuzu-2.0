@@ -146,4 +146,56 @@ test.describe('采购商城', () => {
     const cur = now.items.find((i) => i.material.id === id)!.material.imageIds;
     expect((await page.request.put(`/api/erp/shop/materials/${id}/images`, { data: { imageIds: [], expectedImageIds: cur } })).ok()).toBe(true);
   });
+
+  test('试点（8.1.49）：定制申请 → 退回 → 在原单补资料重提 → 采购接单、记成交方案 → 部门确认方案', async ({ page }) => {
+    await login(page);
+    const stamp = Date.now().toString(36);
+    const today = ((await (await page.request.get('/api/auth/me')).json()) as { calendarToday: string }).calendarToday;
+    await page.goto('/erp/shop/custom');
+    await page.getByTestId('sc-kind-custom').click();
+    await page.locator('#sc-name').fill(`E2E 易拉宝 ${stamp}`);
+    await page.locator('#sc-size').fill('80×200cm');
+    await page.locator('#sc-craft').fill('PP 合成纸');
+    await page.getByTestId('sc-sample').check();
+    await page.locator('#sc-reason').fill('店庆活动');
+    await page.locator('#shop-budget').fill('E2E 品牌物料');
+    await page.locator('#shop-needby').fill(today);
+    await page.locator('#shop-address').fill('总店前台');
+    await page.locator('#shop-dept').selectOption({ index: 1 });
+    if (!(await page.locator('#shop-entity').inputValue())) await page.locator('#shop-entity').selectOption({ index: 1 });
+    await expect(page.getByTestId('shop-custom-submit')).toHaveText('提交定制申请');
+    await page.getByTestId('shop-custom-submit').click();
+    const detail = page.getByTestId('shop-request-detail');
+    await expect(detail).toContainText(`E2E 易拉宝 ${stamp}`, { timeout: 20_000 });
+    await expect(detail).toContainText('80×200cm');
+    await expect(detail).toContainText('需要先打样');
+    const id = Number(/\/erp\/shop\/mine\/(\d+)/.exec(page.url())![1]);
+
+    // 采购退回：部门在原单上补资料、重新提交（单号不变）
+    expect((await page.request.post(`/api/erp/requests/${id}/return`, { data: { reason: '请补设计稿说明' } })).ok()).toBe(true);
+    await page.reload();
+    await expect(page.getByTestId('shop-resubmit-notice')).toContainText('请补设计稿说明');
+    await page.getByTestId('shop-resubmit-open').click();
+    const panel = page.getByTestId('shop-resubmit');
+    await panel.locator('[id$="-details"]').first().fill('画面按品牌部 11 月版');
+    await page.getByTestId('shop-resubmit-remark').fill('补了设计说明');
+    await page.getByTestId('shop-resubmit-send').click();
+    await expect(page.getByText('已补好资料、重新提交')).toBeVisible();
+    await expect(page.getByTestId('shop-resubmit-notice')).toHaveCount(0);
+    await expect(detail).toContainText('画面按品牌部 11 月版');
+
+    // 采购接单、记成交方案；部门（这里店主替部门）确认
+    await page.getByTestId('shop-claim').click();
+    await expect(page.getByTestId('shop-sourcing-owner')).toContainText('在跟进');
+    await page.getByTestId('shop-quote-add').click();
+    await page.locator('#qf-sup').selectOption({ index: 1 });
+    await page.locator('#qf-price').fill('120');
+    await page.locator('#qf-lead').fill('5');
+    await page.locator('#qf-plan').fill('PP 合成纸 + 铝合金架，先出一张样');
+    await page.getByTestId('shop-quote-save').click();
+    const quote = page.locator('li[data-testid^="shop-quote-"]').filter({ hasText: '先出一张样' }).first();
+    await expect(quote).toContainText('交期约 5 天');
+    await quote.locator('[data-testid^="shop-quote-confirm-"]').click();
+    await expect(quote).toContainText('部门已确认');
+  });
 });

@@ -7,7 +7,7 @@
 「只追加」的表（账本、流水、审批动作、归档表）有触发器拒绝改删，改错走冲正或作废登记。
 列表里「键」：`PK` 主键；「引用」是外键指向的表。
 
-共 450 张表、5350 列。
+共 451 张表、5377 列。
 
 ## 目录
 
@@ -19,7 +19,7 @@
 - **客户关系（concierge_）**（9）：[concierge_balance_evidence](#concierge_balance_evidence) · [concierge_members](#concierge_members) · [concierge_operations](#concierge_operations) · [concierge_praise](#concierge_praise) · [concierge_praise_evidence](#concierge_praise_evidence) · [concierge_records](#concierge_records) · [concierge_revisions](#concierge_revisions) · [concierge_sync](#concierge_sync) · [concierge_uploads](#concierge_uploads)
 - **价目表（price_catalog_）**（7）：[price_catalog_changes](#price_catalog_changes) · [price_catalog_entries](#price_catalog_entries) · [price_catalog_import_ops](#price_catalog_import_ops) · [price_catalog_link_ops](#price_catalog_link_ops) · [price_catalog_links](#price_catalog_links) · [price_catalog_set_ops](#price_catalog_set_ops) · [price_catalog_sets](#price_catalog_sets)
 - **员工培训（training_）**（8）：[training_blob_chunks](#training_blob_chunks) · [training_blobs](#training_blobs) · [training_file_versions](#training_file_versions) · [training_files](#training_files) · [training_folders](#training_folders) · [training_upload_chunks](#training_upload_chunks) · [training_uploads](#training_uploads) · [training_views](#training_views)
-- **采购商城（mall_）**（2）：[mall_sku_changes](#mall_sku_changes) · [mall_skus](#mall_skus)
+- **采购商城（mall_）**（3）：[mall_request_quotes](#mall_request_quotes) · [mall_sku_changes](#mall_sku_changes) · [mall_skus](#mall_skus)
 - **旧系统导入（legacy_）**（7）：[legacy_brand_requests](#legacy_brand_requests) · [legacy_images](#legacy_images) · [legacy_imports](#legacy_imports) · [legacy_ledger_lines](#legacy_ledger_lines) · [legacy_material_lines](#legacy_material_lines) · [legacy_ordered_lines](#legacy_ordered_lines) · [legacy_payment_days](#legacy_payment_days)
 - **归档（archived_）**（4）：[archived_integration_calls](#archived_integration_calls) · [archived_location_events](#archived_location_events) · [archived_location_tracks](#archived_location_tracks) · [archived_wecom_pushes](#archived_wecom_pushes)
 
@@ -2555,6 +2555,7 @@ v0.7.15 · 飞书需求 RQ-004 第二段（docs/FLOORPLAN.md）：底图转换�
 | batch_no | text |  | 是 |  |  |  |
 | produced_on | date |  | 是 |  |  |  |
 | expires_on | date |  | 是 |  |  |  |
+| redeliver_milli | bigint |  |  | 0 |  | 收货拒收里供应商要补发的数量（待补，库存单位千分；不超过拒收数，8.1.49） |
 
 ### inv_docs
 
@@ -4227,6 +4228,8 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | reason_text | text |  |  | ''::text |  |  |
 | freight_cents | bigint |  | 是 |  |  | 单位：分 |
 | tax_rate_bp | integer |  | 是 |  |  |  |
+| custom_kind | text |  | 是 |  |  | 商城自主申请：standard 非定制（现成品）/ custom 定制；选品的行为空（8.1.49） |
+| custom_spec | jsonb |  | 是 |  |  | 定制的结构化要求：size 尺寸规格、craft 材质工艺、scene 使用场景、sample 是否打样、budgetCents 预算（8.1.49） |
 
 ### purchase_request_progress_marks
 
@@ -4278,6 +4281,8 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | budget_project | text |  |  | ''::text |  |  |
 | delivery_address | text |  |  | ''::text |  |  |
 | payment_intent | text |  | 是 |  |  |  |
+| sourcing_owner_id | bigint |  | 是 |  | staff | 接单跟进的供应链 BP（商城需求池「接单」，8.1.49） |
+| sourcing_claimed_at | timestamp with time zone |  | 是 |  |  | 接单时间 |
 
 ### receipt_imports
 
@@ -8247,6 +8252,35 @@ OA-02 账号与批量开通（docs/OA.md 第 5 节）：后台「组织架构 �
 | last_version_id | bigint |  | 是 |  | training_file_versions |  |
 
 ## 采购商城（mall_）
+
+### mall_request_quotes
+
+商城需求的成交方案（8.1.49）：供应链 BP 记下的供应商、含税单价、运费、交期与报价截图；部门确认或 BP 记已在微信确认后为 selected，转采购单时带上
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('mall_request_quotes_id_seq'::regclass) |  |  |
+| request_id | bigint |  |  |  | purchase_requests |  |
+| line_id | bigint |  |  |  | purchase_request_lines |  |
+| client_key | uuid |  |  |  |  |  |
+| supplier_id | bigint |  | 是 |  | suppliers |  |
+| supplier_name | text |  |  |  |  |  |
+| unit_price_cents | integer |  |  |  |  | 含税单价（分，每个需求单位）；部门看不到 |
+| tax_rate_bp | integer |  |  |  |  |  |
+| freight_cents | integer |  |  | 0 |  |  |
+| lead_days | integer |  |  |  |  |  |
+| valid_until | date |  | 是 |  |  |  |
+| plan_note | text |  |  | ''::text |  | 给部门看的方案说明（规格、材质、样品情况等） |
+| internal_note | text |  |  | ''::text |  | 只给采购看的备注（谈价过程等） |
+| image_ids | bigint[] |  |  | '{}'::bigint[] |  | 报价截图、样品照片（erp_images；只给采购看） |
+| recommended | boolean |  |  | false |  |  |
+| status | text |  |  | 'proposed'::text |  |  |
+| selected_mode | text |  | 是 |  |  | dept 部门在系统里确认；wechat BP 记已在微信上确认 |
+| selected_by | bigint |  | 是 |  | staff |  |
+| selected_at | timestamp with time zone |  | 是 |  |  |  |
+| selected_note | text |  |  | ''::text |  |  |
+| created_by | bigint |  |  |  | staff |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
 
 ### mall_sku_changes
 

@@ -17,7 +17,7 @@ import {
   type WarehouseStockRow,
 } from '@shared/inventory';
 import { centsToInput, parseYuan } from '@shared/money';
-import { formatQty, lineAmountCents } from '@shared/quantity';
+import { formatQty, lineAmountCents, parseQty } from '@shared/quantity';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
 import { useCan, useReasons, useSession } from '../../lib/session';
 import { ReasonChips } from '../../components/ReasonChips';
@@ -49,6 +49,8 @@ interface LineDraft {
   /** 合格实收是否手动改过（否则跟随送达数量） */
   acceptedTouched: boolean;
   rejectReason: string;
+  /** 拒收里供应商要补发的（待补，8.1.49；库存单位，空 = 0） */
+  redeliver: string;
   /** 批次与效期（8.0.7 3.3）：管效期的物料收货时填 */
   batchNo?: string;
   producedOn?: string;
@@ -92,6 +94,7 @@ const blankLine = (materialId: number, over: Partial<LineDraft> = {}): LineDraft
   accepted: emptyQty('pack'),
   acceptedTouched: false,
   rejectReason: '',
+  redeliver: '',
   price: '',
   sourceLineId: null,
   poLineId: null,
@@ -284,6 +287,7 @@ function formFromDoc(doc: InvDoc, materials: Map<number, Material>): FormState {
         accepted: qtyEntryFromMilli(l.qtyMilli, m, 'pack'),
         acceptedTouched: true,
         rejectReason: l.rejectReason,
+        redeliver: l.redeliverMilli ? formatQty(Number(l.redeliverMilli)).replace(/,/g, '') : '',
         batchNo: l.batchNo ?? '',
         producedOn: l.producedOn ?? '',
         expiresOn: l.expiresOn ?? '',
@@ -662,6 +666,7 @@ function DocForm({
           rejected = delivered.milli - accepted.milli;
           if (rejected < 0) errorText = '合格实收不能多于送达';
           else if (rejected > 0 && !l.rejectReason.trim()) errorText = errorText ?? '请填写拒收原因';
+          else if (l.redeliver.trim() && (parseQty(l.redeliver) === null || parseQty(l.redeliver)! > rejected)) errorText = errorText ?? '待补不能多于拒收数量';
           // 管效期的物料（8.0.7 3.3）：到期日必填，填了生产日期、有保质期的可以不填
           else if (m.expiryTracked && !l.expiresOn && !(l.producedOn && m.shelfLifeDays)) errorText = errorText ?? `「${m.name}」管效期，请填到期日`;
           after = m.stockMilli + accepted.milli;
@@ -825,6 +830,7 @@ function DocForm({
             deliveredMilli: r.delivered!.milli,
             acceptedMilli: r.accepted!.milli,
             rejectReason: r.rejected && r.rejected > 0 ? r.line.rejectReason.trim() : '',
+            redeliverMilli: r.rejected && r.rejected > 0 && r.line.redeliver.trim() ? (parseQty(r.line.redeliver) ?? 0) : 0,
             priceCents: r.price,
             batchNo: r.line.batchNo?.trim() || null,
             producedOn: r.line.producedOn || null,
@@ -1625,6 +1631,16 @@ function ReceiptCells({
               maxLength={100}
               invalid={!line.rejectReason.trim()}
               className="mt-1 h-9 text-[13px]"
+            />
+            <Input
+              value={line.redeliver}
+              disabled={locked}
+              inputMode="decimal"
+              onChange={(e) => onPatch({ redeliver: e.target.value })}
+              placeholder={`其中待补（${m.inventoryUnit}，选填）`}
+              aria-label="其中供应商待补的数量"
+              className="mt-1 h-9 text-[13px]"
+              data-testid="receipt-redeliver"
             />
           </>
         ) : (

@@ -1,0 +1,206 @@
+// 采购商城试点（8.1.49，docs/MALL_V8149.md）：自主申请分非定制 / 定制；退回后在原单补资料重提；需求池接单；
+// 成交方案（部门看不到价格）、部门确认或 BP 记已在微信确认、转采购单带上方案；收货的待补数量。
+
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { todayIn } from '../src/server/modules/inventory/common';
+import { createStaff } from '../src/server/modules/staff';
+import { seedInventoryDemo } from '../src/server/seed-inventory';
+import { shiftDate } from '../src/shared/labels';
+import { api, login, PASSWORD, setup, type TestContext } from './helpers';
+
+let ctx: TestContext;
+let boss: string;
+let buyer: string;
+let brand: string; // 品牌部申购
+let other: string; // 别的部门申购
+let storeId: number;
+let entityId: number;
+let supId: number;
+let today: string;
+const q = (n: number) => Math.round(n * 1000);
+
+const header = (over: Record<string, unknown> = {}) => ({
+  clientKey: randomUUID(),
+  storeId,
+  entityId,
+  contactName: '品牌部小王',
+  budgetProject: '品牌物料',
+  needBy: shiftDate(today, 10),
+  deliveryAddress: '总店前台',
+  paymentIntent: 'company_direct',
+  priority: 'normal',
+  note: '',
+  ...over,
+});
+const customLine = (over: Record<string, unknown> = {}) => ({
+  name: '店庆易拉宝',
+  qtyMilli: q(4),
+  unit: '个',
+  details: '画面见附件',
+  reasonText: '店庆活动',
+  customKind: 'custom',
+  customSpec: { size: '80×200cm', craft: 'PP 合成纸、铝合金架', scene: '大堂入口', sample: true, budgetCents: 80000 },
+  ...over,
+});
+const submit = (cookie: string, line: Record<string, unknown>, over: Record<string, unknown> = {}) => api(ctx.app, cookie, 'POST', '/api/erp/shop/requests', { ...header(over), kind: 'custom', line });
+const detail = async (cookie: string, id: number) => (await api(ctx.app, cookie, 'GET', `/api/erp/shop/requests/${id}`)).body;
+
+beforeAll(async () => {
+  ctx = await setup();
+  today = todayIn(ctx.config.timezone);
+  expect((await seedInventoryDemo(ctx.sql, ctx.config)).skipped).toBe(false);
+  boss = await login(ctx.app, 'linlan', 'yuzu2026');
+  buyer = await login(ctx.app, 'zhouyi', 'yuzu2026');
+  const mk = async (name: string) => {
+    await api(ctx.app, boss, 'POST', '/api/inventory/departments', { name });
+    return ((await api(ctx.app, boss, 'GET', '/api/inventory/departments?all=1')).body as { id: number; name: string }[]).find((d) => d.name === name)!.id;
+  };
+  const brandDept = await mk('品牌部');
+  const linenDept = await mk('客房部');
+  await createStaff(ctx.sql, { username: 'pilot_brand', displayName: '品牌部申购', role: 'backoffice', duties: ['request'], departmentId: brandDept, password: PASSWORD, mustChangePassword: false });
+  await createStaff(ctx.sql, { username: 'pilot_linen', displayName: '客房部申购', role: 'backoffice', duties: ['request'], departmentId: linenDept, password: PASSWORD, mustChangePassword: false });
+  brand = await login(ctx.app, 'pilot_brand');
+  other = await login(ctx.app, 'pilot_linen');
+  storeId = Number((await ctx.sql<{ id: number }[]>`SELECT id FROM stores ORDER BY id LIMIT 1`)[0]!.id);
+  entityId = Number((await ctx.sql<{ id: number }[]>`SELECT id FROM legal_entities ORDER BY id LIMIT 1`)[0]!.id);
+  supId = Number((await ctx.sql<{ id: number }[]>`SELECT id FROM suppliers WHERE active ORDER BY id LIMIT 1`)[0]!.id);
+}, 120_000);
+afterAll(async () => ctx.close());
+
+describe('自主申请分非定制 / 定制', () => {
+  it('定制：结构化要求存下来，ERP 的「规格与技术要求」写成一段话；非定制要写规格型号', async () => {
+    const r = await submit(brand, customLine());
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const line = r.body.request.lines[0];
+    expect(line.customKind).toBe('custom');
+    expect(line.customSpec).toMatchObject({ size: '80×200cm', sample: true, budgetCents: 80000 });
+    expect(line.details).toContain('【定制】尺寸规格：80×200cm');
+    expect(line.details).toContain('需要先打样确认');
+    expect(line.details).toContain('画面见附件');
+    expect((await submit(brand, { name: '订书机', qtyMilli: q(2), unit: '个', details: '', reasonText: '办公', customKind: 'standard' })).body.error.code).toBe('DETAILS_REQUIRED');
+    const std = await submit(brand, { name: '订书机', qtyMilli: q(2), unit: '个', details: '得力 0414', reasonText: '办公', customKind: 'standard' });
+    expect(std.body.request.lines[0]).toMatchObject({ customKind: 'standard', customSpec: null, details: '得力 0414' });
+  });
+});
+
+describe('退回后在原单补资料', () => {
+  it('只有提单人、只有退回的、看到的要是最新的；补完回到待审核，单号不变，记下补了什么', async () => {
+    const r = (await submit(brand, customLine({ name: '工牌挂绳' }))).body.request as { id: number; docNo: string; updatedAt: string; lines: { id: number }[] };
+    const body = (over: Record<string, unknown> = {}) => ({
+      expectedUpdatedAt: r.updatedAt,
+      contactName: '品牌部小王',
+      budgetProject: '品牌物料',
+      needBy: shiftDate(today, 12),
+      deliveryAddress: '总店前台',
+      priority: 'high',
+      note: '',
+      remark: '补了尺寸与工艺',
+      lines: [
+        { id: r.lines[0]!.id, qtyMilli: q(100), customKind: 'custom', customSpec: { size: '90cm', craft: '涤纶热转印', scene: '员工', sample: false, budgetCents: null }, details: 'logo 见附件' },
+      ],
+      ...over,
+    });
+    // 还没退回：不能补
+    expect((await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body())).body.error.code).toBe('INVALID_STATE');
+    const ret = await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请补尺寸与工艺' });
+    expect(ret.status, JSON.stringify(ret.body)).toBe(200);
+    const returned = await detail(brand, r.id);
+    expect(returned.status).toBe('returned');
+    expect(returned.can.resubmit).toBe(true);
+    // 别人不能补；看到的过时了拒绝
+    expect((await api(ctx.app, other, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body({ expectedUpdatedAt: returned.updatedAt }))).status).toBe(403);
+    expect((await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body())).body.error.code).toBe('REQUEST_CHANGED');
+    const ok = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body({ expectedUpdatedAt: returned.updatedAt }));
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body).toMatchObject({ id: r.id, docNo: r.docNo, status: 'submitted', reason: null, priority: 'high' });
+    expect(ok.body.lines[0]).toMatchObject({ qtyMilli: q(100), customSpec: { size: '90cm' } });
+    expect(ok.body.lines[0].details).toContain('涤纶热转印');
+    const actions = (ok.body.approvals as { action: string; reason: string }[]).map((a) => `${a.action}:${a.reason}`);
+    expect(actions).toContain('return:请补尺寸与工艺');
+    expect(actions).toContain('revise:补资料：补了尺寸与工艺');
+    // 已经重提了，再提一次（原样重提）：不是退回状态，拒绝，不会重复
+    expect((await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body({ expectedUpdatedAt: returned.updatedAt }))).body.error.code).toBe('INVALID_STATE');
+  });
+});
+
+describe('接单、成交方案、转采购单、收货待补', () => {
+  it('BP 接单记方案；部门看不到价格，确认方案；BP 代记微信确认要写一句；转采购单带上方案；收货待补不超过拒收', async () => {
+    const r = (await submit(brand, customLine({ name: '定制纸杯', qtyMilli: q(1000), unit: '个', customSpec: { size: '9 盎司', craft: '单层淋膜', scene: '前台', sample: true, budgetCents: 50000 } })))
+      .body.request as { id: number; lines: { id: number }[] };
+    const lineId = r.lines[0]!.id;
+    // 部门申购不能接单
+    expect((await api(ctx.app, brand, 'POST', `/api/erp/shop/requests/${r.id}/claim`, {})).status).toBe(403);
+    const claimed = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/claim`, {});
+    expect(claimed.status, JSON.stringify(claimed.body)).toBe(200);
+    expect(claimed.body.sourcingOwner.name).toBeTruthy();
+    // 需求池列表带接单人
+    const pool = (await api(ctx.app, buyer, 'GET', '/api/erp/shop/requests?scope=pool')).body.requests as { id: number; sourcingOwner: { name: string } | null }[];
+    expect(pool.find((x) => x.id === r.id)?.sourcingOwner).not.toBeNull();
+    const quote = (over: Record<string, unknown> = {}) => ({
+      clientKey: randomUUID(),
+      lineId,
+      supplierId: supId,
+      unitPriceCents: 45,
+      taxRateBp: 1300,
+      freightCents: 2000,
+      leadDays: 7,
+      planNote: '9 盎司单层，先寄 10 个样品',
+      internalNote: '老板答应再降 2 分',
+      recommended: true,
+      ...over,
+    });
+    const key = randomUUID();
+    const added = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ clientKey: key }));
+    expect(added.status, JSON.stringify(added.body)).toBe(201);
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ clientKey: key }))).body.quotes).toHaveLength(1);
+    const second = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ supplierId: null, supplierName: '还没建档的印刷厂', unitPriceCents: 52, recommended: false }));
+    expect(second.body.quotes).toHaveLength(2);
+    // 采购看得到价格；部门只看到供应商、交期、方案说明
+    expect(second.body.quotes[0]).toMatchObject({ unitPriceCents: 45, internalNote: '老板答应再降 2 分', recommended: true });
+    const seen = await detail(brand, r.id);
+    expect(seen.can.seePrices).toBe(false);
+    expect(seen.quotes[0]).toMatchObject({ supplierName: expect.any(String), leadDays: 7, planNote: '9 盎司单层，先寄 10 个样品', unitPriceCents: null, internalNote: null, imageIds: [] });
+    // 别的部门不能确认；BP 代记要写一句
+    const [qa, qb] = seen.quotes as { id: number }[];
+    expect((await api(ctx.app, other, 'POST', `/api/erp/shop/quotes/${qa!.id}/select`, { mode: 'dept' })).status).toBeGreaterThanOrEqual(403);
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/quotes/${qb!.id}/select`, { mode: 'wechat' })).body.error.code).toBe('NOTE_REQUIRED');
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/quotes/${qb!.id}/select`, { mode: 'wechat', note: '王经理 11-27 上午微信确认' })).status).toBe(200);
+    // 部门改选第一个：原来选定的换掉
+    const sel = await api(ctx.app, brand, 'POST', `/api/erp/shop/quotes/${qa!.id}/select`, { mode: 'dept' });
+    expect(sel.status, JSON.stringify(sel.body)).toBe(200);
+    const states = (sel.body.quotes as { id: number; status: string; selectedMode: string | null }[]).map((x) => [x.id, x.status, x.selectedMode]);
+    expect(states).toEqual([
+      [qa!.id, 'selected', 'dept'],
+      [qb!.id, 'proposed', null],
+    ]);
+    // 主管确认（没设主管的不用）、审核通过 → 待转采购单的行带着方案
+    const head = await detail(boss, r.id);
+    if (head.deptConfirm.state === 'pending') expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/dept-confirm`, {})).status).toBe(200);
+    const ap = await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/approve`, {});
+    expect(ap.status, JSON.stringify(ap.body)).toBe(200);
+    const open = (await api(ctx.app, buyer, 'GET', `/api/erp/requests/open-lines?ids=${lineId}`)).body as {
+      id: number;
+      plan: { supplierId: number; unitPriceCents: number; leadDays: number } | null;
+    }[];
+    expect(open[0]?.plan).toMatchObject({ supplierId: supId, unitPriceCents: 45, leadDays: 7 });
+    // 撤下选定的（还没转采购单）可以；撤下后不再带
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/quotes/${qa!.id}/withdraw`, {})).status).toBe(200);
+    expect(((await api(ctx.app, buyer, 'GET', `/api/erp/requests/open-lines?ids=${lineId}`)).body as { plan: unknown }[])[0]?.plan).toBeNull();
+  });
+
+  it('收货：待补不能多于拒收；记下的待补留在收货单上', async () => {
+    const mat = (await ctx.sql<{ id: number; purchaseUnit: string }[]>`SELECT id, purchase_unit FROM materials WHERE active AND tracked ORDER BY id LIMIT 1`)[0]!;
+    const dept = Number((await ctx.sql<{ id: number }[]>`SELECT id FROM departments WHERE name = '客房部'`)[0]!.id);
+    const base = { docType: 'receipt', docDate: today, urgent: true, departmentId: dept, supplierId: supId };
+    const line = (over: Record<string, unknown>) => ({ materialId: Number(mat.id), deliveredMilli: q(10), acceptedMilli: q(8), rejectReason: '破损', priceCents: 100, ...over });
+    const bad = await api(ctx.app, buyer, 'POST', '/api/inventory/docs', { ...base, clientKey: randomUUID(), lines: [line({ redeliverMilli: q(3) })] });
+    expect(bad.status).toBe(400);
+    expect(JSON.stringify(bad.body)).toContain('待补不能多于拒收数量');
+    const good = await api(ctx.app, buyer, 'POST', '/api/inventory/docs', { ...base, clientKey: randomUUID(), lines: [line({ redeliverMilli: q(2) })] });
+    expect(good.status, JSON.stringify(good.body)).toBe(201);
+    const doc = (await api(ctx.app, buyer, 'GET', `/api/inventory/docs/${good.body.doc.id}`)).body as { lines: { rejectedMilli: number; redeliverMilli: number }[] };
+    expect(Number(doc.lines[0]!.rejectedMilli)).toBe(q(2));
+    expect(Number(doc.lines[0]!.redeliverMilli)).toBe(q(2));
+  });
+});

@@ -109,6 +109,9 @@ export interface RequestLineProgress {
   receivedMilli: number;
   /** 已生效的退供应商数量 */
   returnedMilli: number;
+  /** 收货时拒收的数量与其中供应商要补发的（待补，8.1.49） */
+  rejectedMilli: number;
+  redeliverMilli: number;
   inventoryUnit: string | null;
   /** 这一行采购单合并了几行需求（1 就是只有这一行）；合并时下单、到货数量是整行的 */
   mergedLines: number;
@@ -168,6 +171,22 @@ export interface RequestLineMallInfo {
   freightCents: number | null;
   /** 税率（基点，1300 = 13%） */
   taxRateBp: number | null;
+  /** 自主申请（8.1.49）：standard 非定制 / custom 定制；选品的行为空 */
+  customKind: MallCustomKind | null;
+  /** 定制的结构化要求（8.1.49） */
+  customSpec: MallCustomSpec | null;
+}
+
+/** 商城自主申请分两种（店主 2026-11-26）：非定制（商城里没有的现成品）、定制（按要求做的：印刷品、工服、物料定做……） */
+export type MallCustomKind = 'standard' | 'custom';
+export const MALL_CUSTOM_KIND_LABELS: Record<MallCustomKind, string> = { standard: '非定制', custom: '定制' };
+/** 定制的要求：尺寸规格、材质工艺、使用场景、要不要先打样、预算（含税总价，分；不知道的空着） */
+export interface MallCustomSpec {
+  size: string;
+  craft: string;
+  scene: string;
+  sample: boolean;
+  budgetCents: number | null;
 }
 
 /**
@@ -280,6 +299,8 @@ export interface OpenRequestLine {
   supplier: { id: number; name: string } | null;
   /** 已经从库存领用的数量（这一行的单位，8.1.10）：转采购单时默认买剩下的 */
   issuedQtyMilli: number;
+  /** 商城需求选定的成交方案（8.1.49）：供应商（没建档的只有名字）、含税单价、交期；没选定的为空 */
+  plan: { supplierId: number | null; supplierName: string; unitPriceCents: number; taxRateBp: number; leadDays: number } | null;
 }
 
 /** 提需求单要用的选项：用途、部门、可选的物料（部门申购没有库存查看权限，也能从这里选物料） */
