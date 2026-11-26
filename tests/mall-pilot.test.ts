@@ -150,8 +150,8 @@ describe('接单、成交方案、转采购单、收货待补', () => {
       .body.request as { id: number; lines: { id: number }[] };
     const lineId = r.lines[0]!.id;
     // 部门申购不能接单
-    expect((await api(ctx.app, brand, 'POST', `/api/erp/shop/requests/${r.id}/claim`, {})).status).toBe(403);
-    const claimed = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/claim`, {});
+    expect((await api(ctx.app, brand, 'POST', `/api/erp/shop/requests/${r.id}/claim`, { clientKey: randomUUID() })).status).toBe(403);
+    const claimed = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/claim`, { clientKey: randomUUID() });
     expect(claimed.status, JSON.stringify(claimed.body)).toBe(200);
     expect(claimed.body.sourcingOwner.name).toBeTruthy();
     // 需求池列表带接单人
@@ -213,11 +213,16 @@ describe('接单、成交方案、转采购单、收货待补', () => {
     }[];
     expect(open[0]?.plan).toMatchObject({ supplierId: supId, unitPriceCents: 45, leadDays: 7 });
     // 审核通过以后需求单整行不能改（Codex 审查）：接单记在另一张表，放回、再接、在没人接的单上记方案照样能做
-    const released = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/claim`, { release: true });
+    const released = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/claim`, { clientKey: randomUUID(), release: true });
     expect(released.status, JSON.stringify(released.body)).toBe(200);
     expect(released.body.sourcingOwner).toBeNull();
     const extra = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ unitPriceCents: 50 }));
     expect(extra.status, JSON.stringify(extra.body)).toBe(201);
+    expect((await detail(buyer, r.id)).sourcingOwner).not.toBeNull();
+    // 放回需求池的回复丢了、确认作废（Codex 审查）：晚到的放回不会删掉之后的接单
+    const lateRelease = randomUUID();
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/ops/${lateRelease}/abandon`, { type: 'mall_quote_act', summary: '作废放回' })).status).toBe(200);
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/claim`, { clientKey: lateRelease, release: true })).body.error.code).toBe('OP_ABANDONED');
     expect((await detail(buyer, r.id)).sourcingOwner).not.toBeNull();
     // 撤下选定的（还没转采购单）可以；撤下后不再带
     expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/quotes/${qa!.id}/withdraw`, { clientKey: randomUUID() })).status).toBe(200);

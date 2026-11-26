@@ -135,7 +135,8 @@ export function CustomItemFields({
   idPrefix = 'sc',
 }: {
   s: CustomItemState;
-  set: (s: CustomItemState) => void;
+  /** 也收更新函数：传图要等压缩、上传，回来时按那一刻最新的内容改（Codex 审查），不拿开始传时的旧内容盖掉中间的修改 */
+  set: (s: CustomItemState | ((prev: CustomItemState) => CustomItemState)) => void;
   categories: string[];
   onUploading?: (busy: boolean) => void;
   idPrefix?: string;
@@ -249,7 +250,7 @@ export function CustomItemFields({
         </Field>
         <div className="sm:col-span-2">
           <p className="mb-1.5 text-[13px] font-semibold text-ink-2">{s.kind === 'custom' ? '设计稿 / 参考图' : '照片 / 截图'}（选填，最多 9 张）</p>
-          <ImagePicker value={s.images} onChange={(images) => set({ ...s, images })} max={9} onBusyChange={onUploading} testId={id('images')} />
+          <ImagePicker value={s.images} onChange={(images) => set((cur) => ({ ...cur, images }))} max={9} onBusyChange={onUploading} testId={id('images')} />
         </div>
       </div>
     </div>
@@ -418,7 +419,7 @@ export function ResubmitPanel({ r, categories, onDone }: { r: MallRequest; categ
                 (x.custom ? (
                   <CustomItemFields
                     s={x.custom}
-                    set={(c) => setItems(items.map((y, j) => (j === i ? { ...y, custom: c } : y)))}
+                    set={(c) => setItems((prev) => prev.map((y, j) => (j === i && y.custom ? { ...y, custom: typeof c === 'function' ? c(y.custom) : c } : y)))}
                     categories={categories}
                     idPrefix={`rs${x.line.id}`}
                     onUploading={(b) => setUploading((n) => Math.max(0, n + (b ? 1 : -1)))}
@@ -773,7 +774,7 @@ function QuoteDialog({ r, onClose, onDone }: { r: MallRequest; onClose: () => vo
         </Field>
         <div className="sm:col-span-2">
           <p className="mb-1.5 text-[13px] font-semibold text-ink-2">报价截图、样品照片（只有采购看得到，最多 9 张）</p>
-          <ImagePicker value={f.images} onChange={(images) => setF({ ...f, images })} max={9} onBusyChange={setUploading} uploadUrl={QUOTE_IMAGES} testId="shop-quote-images" />
+          <ImagePicker value={f.images} onChange={(images) => setF((cur) => ({ ...cur, images }))} max={9} onBusyChange={setUploading} uploadUrl={QUOTE_IMAGES} testId="shop-quote-images" />
         </div>
       </div>
     </Dialog>
@@ -783,17 +784,39 @@ function QuoteDialog({ r, onClose, onDone }: { r: MallRequest; onClose: () => vo
 /** 详情页的「接单与成交方案」：采购接单、记方案；部门确认方案 */
 export function SourcingPanel({ r, onChange }: { r: MallRequest; onChange: (next: MallRequest) => void }) {
   const toast = useToast();
+  const session = useSession();
+  const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 接单、放回走「结果待确认」（Codex 审查）：本机还有没确认的一笔时先处理那一笔
+  const pending = useErpRecorded(['mall_quote_act']).some((op) => op.staffId === session.staff.id);
   const show = r.can.source || r.quotes.length > 0 || r.sourcingOwner !== null;
   if (!show) return null;
   const claim = async (body: Record<string, boolean>, ok: string) => {
+    if (pending) {
+      toast({ tone: 'info', title: '上一笔操作还没确认结果', body: '请先在页面顶部查回、原样重提或确认作废' });
+      return;
+    }
     setBusy(true);
+    const key = uuid();
     try {
-      onChange(await api.post<MallRequest>(`/api/erp/shop/requests/${r.id}/claim`, body));
+      const next = await sendErpOp<MallRequest>({
+        key,
+        type: 'mall_quote_act',
+        method: 'POST',
+        url: `/api/erp/shop/requests/${r.id}/claim`,
+        body: { ...body, clientKey: key },
+        summary: `${ok.replace(/^已/, '')} · ${r.docNo}`,
+        staffName: session.staff.displayName,
+        staffId: session.staff.id,
+      });
+      onChange(next);
       toast({ tone: 'success', title: ok });
     } catch (e) {
-      toast({ tone: 'error', title: '没有成功', body: errorMessage(e) });
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '结果待确认', body: '回复没收到，可能已经生效：记录留在本机，请在页面顶部查回、原样重提或确认作废' });
+        void qc.invalidateQueries({ queryKey: ['shop'] });
+      } else toast({ tone: 'error', title: '没有成功', body: errorMessage(e) });
     } finally {
       setBusy(false);
     }

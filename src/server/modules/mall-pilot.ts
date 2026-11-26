@@ -270,22 +270,25 @@ async function storedLines(db: Db, requestId: number): Promise<StoredLine[]> {
 
 /** 接单 / 放回：没人接的谁都能接（要能记方案的）；接了的只有接单的人能放回，审核的人可以改派给自己（take: true） */
 export async function claimMallRequest(deps: Deps, requestId: number, raw: unknown, actor: Actor, ip?: string): Promise<void> {
-  const { release, take } = parse(z.object({ release: z.boolean().default(false), take: z.boolean().default(false) }), raw ?? {});
+  const { clientKey, release, take } = parse(QuoteActKey.extend({ release: z.boolean().default(false), take: z.boolean().default(false) }), raw ?? {});
   if (!canSource(actor)) throw forbidden('只有采购（供应链 BP）能接单');
+  // 接单、放回也走「结果待确认」（Codex 审查，与选定 / 撤下方案同一类 mall_quote_act）：确认作废的晚到不会删掉之后别人接的单
+  const requestHash = hashRequest({ op: 'mall_claim', requestId, release, take });
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const r = await lockRequest(tx, requestId);
+    if (await quoteActDone(tx, clientKey, requestHash, actor)) return;
     if (r.source !== 'mall') throw conflict('NOT_MALL', '这张需求单不是采购商城提的');
     if (!['submitted', 'approved'].includes(r.status)) throw conflict('INVALID_STATE', '只有审核中、已通过的需求单能接单');
     // 接单记在 mall_request_sourcing（Codex 审查：需求单通过后整行不能改）；需求单一行已经锁着，同一张单的接单、放回串行
     const [cur] = await tx<{ ownerId: number | null }[]>`SELECT owner_id FROM mall_request_sourcing WHERE request_id = ${requestId}`;
     const owner = cur?.ownerId === null || cur?.ownerId === undefined ? null : Number(cur.ownerId);
     if (release) {
-      if (owner === null) return;
+      if (owner === null) return quoteActRecord(tx, clientKey, requestHash, requestId, actor);
       if (owner !== actor.id && actor.role !== 'owner' && !can(actor, 'request.review')) throw forbidden('只有接单的人能放回需求池');
       await tx`DELETE FROM mall_request_sourcing WHERE request_id = ${requestId}`;
     } else {
-      if (owner === actor.id) return;
+      if (owner === actor.id) return quoteActRecord(tx, clientKey, requestHash, requestId, actor);
       if (owner !== null && !(take && (actor.role === 'owner' || can(actor, 'request.review')))) throw conflict('ALREADY_CLAIMED', '这张单已经有人接了');
       await tx`
         INSERT INTO mall_request_sourcing (request_id, owner_id) VALUES (${requestId}, ${actor.id})
@@ -299,6 +302,7 @@ export async function claimMallRequest(deps: Deps, requestId: number, raw: unkno
       detail: { action: release ? 'mall_release' : 'mall_claim', from: owner },
       ip,
     });
+    await quoteActRecord(tx, clientKey, requestHash, requestId, actor);
   });
 }
 

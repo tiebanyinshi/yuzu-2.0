@@ -1152,8 +1152,11 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
   });
 
   const exportHref = `/api/erp/shop/requests/export?${filterParams}`;
-  const list = (q.data?.pages.flatMap((p) => p.requests) ?? []).filter((r) => (owner === 'none' ? !r.sourcingOwner : owner === 'mine' ? r.sourcingOwner?.id === session.staff.id : true));
-  const hasFilter = !!(priority || group || kw.trim() || from || to);
+  // 接单筛选只在需求池里用（Codex 审查）：两个页签是同一个组件，切到「我的采购需求」时不带着池里的筛选
+  const list = (q.data?.pages.flatMap((p) => p.requests) ?? []).filter((r) =>
+    scope !== 'pool' ? true : owner === 'none' ? !r.sourcingOwner : owner === 'mine' ? r.sourcingOwner?.id === session.staff.id : true,
+  );
+  const hasFilter = !!(priority || group || kw.trim() || from || to || (scope === 'pool' && owner));
 
   return (
     <div className="space-y-3" data-testid={`shop-${scope}`}>
@@ -1280,6 +1283,7 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
                     setKw('');
                     setFrom('');
                     setTo('');
+                    setOwner('');
                   }}
                 >
                   清空筛选
