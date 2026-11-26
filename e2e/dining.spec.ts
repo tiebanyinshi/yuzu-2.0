@@ -187,6 +187,10 @@ test.describe('S5 餐饮', () => {
       const pending = page.getByTestId('dining-pending');
       await expect(pending.getByTestId(`dining-pending-${HOT.name}`)).toContainText('少辣');
       await expect(pending.getByTestId(`dining-pending-${TEA.name}`)).toContainText('待做');
+      // 福田店 CY-02：右侧「已点菜品」下单后马上有这两道（名称、数量、状态）
+      const ordered = page.getByTestId('dining-ordered');
+      await expect(ordered.getByTestId(`dining-ordered-${HOT.name}`)).toContainText('×1');
+      await expect(ordered.getByTestId(`dining-ordered-${TEA.name}`)).toContainText('未上');
       // 下单成功回到三个入口
       await expect(page.getByTestId('dining-outlets')).toBeVisible();
       await openOutlet(page, TEA);
@@ -220,6 +224,8 @@ test.describe('S5 餐饮', () => {
       await expect(pending.getByTestId(`dining-pending-${HOT.name}`)).toContainText('已出餐', { timeout: 20_000 });
       await pending.getByTestId(`dining-serve-${hotId}`).click();
       await expect(pending.getByTestId(`dining-pending-${HOT.name}`)).toHaveCount(0);
+      // CY-02：上了菜从「还没上的菜」里拿掉，「已点菜品」里照样列着、写已上
+      await expect(ordered.getByTestId(`dining-ordered-${HOT.name}`)).toContainText('已上');
       await pending.getByTestId(`dining-pending-${TEA.name}`).getByRole('button', { name: '退菜' }).click();
       await page.getByRole('dialog').locator('#reason-text').fill('E2E：客人不要了');
       // 8.1.15（块 B2）：退菜时选责任岗位
@@ -227,6 +233,7 @@ test.describe('S5 餐饮', () => {
       await page.getByRole('dialog').getByRole('button', { name: '确认退菜' }).click();
       await expect(page.getByText(`${TEA.name} 已退`)).toBeVisible();
       await expect(pending.getByTestId(`dining-pending-${TEA.name}`)).toHaveCount(0);
+      await expect(ordered.getByTestId(`dining-ordered-${TEA.name}`)).toContainText('已退');
       await openOutlet(page, TEA);
       await expect(page.getByTestId(`dining-dish-${TEA.name}`)).toContainText('剩 2');
       const kb = await getJson<KitchenBoard>(page, '/api/kitchen');
