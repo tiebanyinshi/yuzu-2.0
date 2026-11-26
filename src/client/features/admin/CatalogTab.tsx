@@ -78,7 +78,10 @@ export function CatalogTab() {
                   >
                     <span className="w-20 shrink-0 truncate text-[12px] font-semibold text-ink-3">{i.category || '其他'}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[14px] font-semibold">{i.name}</span>
+                      <span className="block truncate text-[14px] font-semibold">
+                        {i.catalogCode && <span className="num mr-1.5 text-[12px] font-bold text-ink-3">{i.catalogCode}</span>}
+                        {i.name}
+                      </span>
                       {(i.durationMinutes || tags.length > 0 || i.gender || i.technicianRequired) && (
                         <span className="block truncate text-[12px] text-ink-3">
                           {[i.durationMinutes ? `${i.durationMinutes} 分钟` : '', i.gender ? `仅${i.gender === 'female' ? '女宾' : '男宾'}` : '', i.technicianRequired ? '需要技师' : '', ...tags]
@@ -313,6 +316,8 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
   /** null：新建项目、还没手动选过，按名称或分类含「护理」默认需要技师（8.0.8，A01）；手动选过或编辑已有项目时是选定的值 */
   const [technicianRequired, setTechnicianRequired] = useState<boolean | null>(null);
   const [note, setNote] = useState('');
+  /** 项目编号（福田店 FT-02）：前台开单输编号直接带出 */
+  const [code, setCode] = useState('');
   const [active, setActive] = useState(true);
   const [sort, setSort] = useState('0');
   const [error, setError] = useState<string | null>(null);
@@ -343,6 +348,7 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
     setPopular(i?.popular ?? false);
     setTechnicianRequired(i ? i.technicianRequired : null);
     setNote(i?.note ?? '');
+    setCode(i?.catalogCode ?? '');
     setActive(i?.active ?? true);
     setSort(String(i?.sortOrder ?? 0));
     setError(null);
@@ -381,6 +387,8 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
         heatTherapy,
         popular,
         technicianRequired: needsTechnician,
+        // 对接了价目表的编号以价目表为准，不带（保持原值）
+        ...(fromCatalog ? {} : { code: code.trim() }),
         note,
         active,
         sortOrder: Number(sort) || 0,
@@ -426,12 +434,23 @@ function ItemDialog({ editing, onClose }: { editing: Extract<Editing, { kind: 'i
           </Notice>
         )}
         <fieldset disabled={fromCatalog} className="grid min-w-0 gap-4 disabled:opacity-60">
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_150px_120px]">
             <Field label="名称" htmlFor="c-name">
               <Input id="c-name" value={name} maxLength={32} onChange={(e) => setName(e.target.value)} data-autofocus />
             </Field>
             <Field label="分类" htmlFor="c-cat" hint="如 全身按摩 / 理疗系列">
               <Input id="c-cat" value={category} maxLength={16} onChange={(e) => setCategory(e.target.value)} />
+            </Field>
+            <Field label="编号" htmlFor="c-code" hint="选填，开单输编号带出">
+              <Input
+                id="c-code"
+                value={code}
+                maxLength={12}
+                onChange={(e) => setCode(e.target.value.replace(/[^0-9A-Za-z-]/g, '').toUpperCase())}
+                className="num"
+                placeholder="如 A01"
+                data-testid="item-code"
+              />
             </Field>
           </div>
           <Field label="价格" hint="某一档不提供时留空；不带档位的旧请求按标准 → 专业 → 优选中第一个提供的计价">

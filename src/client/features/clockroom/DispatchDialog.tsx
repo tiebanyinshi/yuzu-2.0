@@ -498,7 +498,20 @@ export function ExtendDialog({ session: s, onClose, onDone }: { session: BoardSe
  * 转钟（8.0.8，B05）：待上钟、上钟中的钟单转给另一位技师——原明细作废、给新技师挂同项目同价格档同钟数的明细（金额不变）、
  * 建新钟单（在钟上的转过去马上上钟，房间照旧），原技师按退钟 / 取消派钟的规则回到原位。带操作编号，走「结果待确认」。
  */
-export function TransferDialog({ session: s, board, onClose, onDone }: { session: BoardSession; board: ClockroomBoard; onClose: () => void; onDone: () => void }) {
+export function TransferDialog({
+  session: s,
+  board,
+  onClose,
+  onDone,
+  room,
+}: {
+  session: BoardSession;
+  board: ClockroomBoard;
+  onClose: () => void;
+  onDone: () => void;
+  /** 从房态中心「换技师」打开（福田店 FT-06）：走房间的接口（服务端核对限时），标题叫换技师；limitText 写还剩几分钟 */
+  room?: { spaceId: number; code: string; limitText: string };
+}) {
   const me = useSession();
   const catalog = useCatalog();
   const [callType, setCallType] = useState<CallType>(s.callType);
@@ -547,10 +560,10 @@ export function TransferDialog({ session: s, board, onClose, onDone }: { session
   const submit = async () => {
     if (problem || !tech) return;
     const ok = await op.submit((key) => ({
-      url: `/api/clockroom/sessions/${s.id}/transfer`,
-      body: { clientKey: key, technicianId: tech.id, callType, reason: reason.trim(), skipReason: skipping ? skipReason.trim() : undefined },
+      url: room ? `/api/room-center/rooms/${room.spaceId}/swap-tech` : `/api/clockroom/sessions/${s.id}/transfer`,
+      body: { clientKey: key, ...(room ? { sessionId: s.id } : {}), technicianId: tech.id, callType, reason: reason.trim(), skipReason: skipping ? skipReason.trim() : undefined },
       tagCodes: [s.tagCode],
-      summary: `转钟 ${s.itemName} × ${s.clocks}：${s.techNo} 号 ${s.techName} → ${tech.techNo} 号 ${tech.name}（${CALL_TYPE_LABELS[callType]}）`,
+      summary: `${room ? `换技师（${room.code}）` : '转钟'} ${s.itemName} × ${s.clocks}：${s.techNo} 号 ${s.techName} → ${tech.techNo} 号 ${tech.name}（${CALL_TYPE_LABELS[callType]}）`,
       amount,
     }));
     if (ok) onDone();
@@ -560,8 +573,8 @@ export function TransferDialog({ session: s, board, onClose, onDone }: { session
       open
       onClose={op.busy ? () => {} : onClose}
       width="max-w-2xl"
-      title={`转钟 · ${s.techNo} 号 ${s.techName}`}
-      description={`${s.tagCode} ${s.guest} · ${s.itemName} × ${s.clocks}。转给另一位技师：原明细作废、给新技师挂同样的明细，金额不变；${s.status === 'serving' ? '在钟上的转过去马上上钟，原技师按退钟算' : '还没上钟，原技师按取消派钟算'}，房间照旧。`}
+      title={`${room ? '换技师' : '转钟'} · ${s.techNo} 号 ${s.techName}`}
+      description={`${room ? `${room.limitText}。` : ''}${s.tagCode} ${s.guest} · ${s.itemName} × ${s.clocks}。转给另一位技师：原明细作废、给新技师挂同样的明细，金额不变；${s.status === 'serving' ? '在钟上的转过去马上上钟，原技师按退钟算' : '还没上钟，原技师按取消派钟算'}，房间照旧。`}
       footer={
         <>
           <span className="mr-auto self-center text-[13px] text-ink-3">
@@ -577,7 +590,7 @@ export function TransferDialog({ session: s, board, onClose, onDone }: { session
             取消
           </Button>
           <Button variant="primary" disabled={!!problem || op.locked} loading={op.busy} onClick={() => void submit()} data-testid="transfer-submit">
-            确认转钟
+            {room ? '确认换技师' : '确认转钟'}
           </Button>
         </>
       }
@@ -641,7 +654,7 @@ export function TransferDialog({ session: s, board, onClose, onDone }: { session
             </div>
           )}
         </Field>
-        <Field label="转钟原因" htmlFor="transfer-reason" hint="记进钟房日志与作废原因">
+        <Field label={room ? '换技师原因' : '转钟原因'} htmlFor="transfer-reason" hint="记进钟房日志与作废原因">
           <Input
             id="transfer-reason"
             value={reason}

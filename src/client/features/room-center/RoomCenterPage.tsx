@@ -14,10 +14,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { History, LayoutGrid, Map as MapIcon, MoonStar, Settings2 } from 'lucide-react';
+import { BedDouble, History, LayoutGrid, Map as MapIcon, MoonStar, Settings2 } from 'lucide-react';
 import type { BookingDetail } from '@shared/bookings';
 import {
   arrangeRooms,
+  isLobbyBusinessType,
   isOvernightRoom,
   matchesRoomSearch,
   ROOM_ORDER_LABELS,
@@ -49,11 +50,14 @@ import { StayDialog, type StayAction } from '../rooms/StayDialog';
 import { CloseUsageDialog, CloseUsageFor, EndUsageById, OpenUsageDialog } from '../rooms/UsageDialogs';
 import { roomUrl, useRefreshRoomCenter, useRoomCenter } from './queries';
 import { CheckoutRoomDialog, ExtendRoomDialog, MaintenanceDialog, MergeRoomDialog, MoveRoomDialog, NoteActionDialog } from './RoomActions';
+import { BackfillRoomDialog, RevokeRoomDialog, SwapTechDialog } from './RoomFutianDialogs';
+import { AddItemDialog, GoodsDialog, WormholeDialog } from './RoomExtrasDialogs';
+import { HallOrderDialog } from './HallOrderDialog';
 import { RoomCard as RoomTile } from './RoomCard';
 import { RoomDialog, type RoomDialogAction } from './RoomDialog';
 import { RoomOrderPanel, RoomOrdersDialog, useRoomOrderOutlets } from './RoomOrders';
 import { RegisterDialog } from './RegisterDialog';
-import { RoomPanel, primaryLabel } from './RoomPanel';
+import { RoomStateMenu, type MenuAt } from './RoomStateMenu';
 import { TodayBookings } from './TodayBookings';
 import { CountChips, GroupHead, StatCards } from './status';
 
@@ -112,7 +116,6 @@ function RoomCenterBody() {
   const view = params.get('view') === 'map' ? 'map' : 'cards';
   const canOperate = can('room.operate');
   const canHousekeep = can('room.housekeep');
-  const canPost = can('technician.dispatch') && can('frontdesk.operate');
   // 客房的房态看板（入住、入住单、夜审要它的规则与房间；平面图上客房的颜色也按它）：客房功能开着、看得了客房的才取
   const hotelQ = useRoomBoard(session.rooms && (canOperate || canHousekeep || can('frontdesk.checkout')), view === 'map' ? FLOOR_MAP_REFRESH_MS : 15_000);
   const hotel = hotelQ.data ?? null;
@@ -120,8 +123,9 @@ function RoomCenterBody() {
   const now = useServerNow(q.data?.serverTime, 30_000);
 
   const [detail, setDetail] = useState<number | null>(null);
-  // 右侧详情栏开着的那一间（卡片的 key，看板刷新以后照样对得上）；再点同一张收起
-  const [panelKey, setPanelKey] = useState<string | null>(null);
+  // FT-08（福田店 2026-11-26）：右键菜单开在哪一间、鼠标在哪
+  const [menu, setMenu] = useState<MenuAt | null>(null);
+  const [hall, setHall] = useState(false);
   // 搜索（重做第五批）：房号、手牌号、客人姓名，命中的跨房型列出来
   const [search, setSearch] = useState('');
   const [action, setAction] = useState<Action | null>(null);
@@ -232,14 +236,11 @@ function RoomCenterBody() {
     else if (canHousekeep) setHousekeepRoomId(h.id);
     else toast({ tone: 'info', title: `${h.roomNo} ${ROOM_BOARD_LABELS[h.status]}`, body: '入住要有「客房入住、退房」权限，改房态要有「客房打扫、维修」权限' });
   };
-  /** 原来点卡片做的那一下（现在是详情栏的主按钮）：空闲（或已预订）的技师服务房间登记、派对房开单；别的打开房间详情 */
-  const open = (room: RoomCard) => {
-    if (room.kind === 'hotel') return openHotel(room);
-    const vacant = room.status === 'free' || room.status === 'booked';
-    if (vacant && room.kind === 'service' && canPost) return setAction({ spaceId: room.spaceId!, a: { kind: 'register', join: false } });
-    if (vacant && room.kind === 'party' && canOperate) return setAction({ spaceId: room.spaceId!, a: { kind: 'usage_open' } });
-    setDetail(room.spaceId);
-  };
+  /**
+   * FT-01（福田店 2026-11-26）：点房间直接弹出「详情与动作」——房态、客人信息与操作按钮（登记 / 开单、换房、撤房、退房、设置房态……）一步到位，
+   * 去掉了右侧详情栏；客房照旧打开客房自己的对话框（入住、入住单、改房态）
+   */
+  const open = (room: RoomCard) => (room.kind === 'hotel' ? openHotel(room) : setDetail(room.spaceId));
   const openDetail = (room: RoomCard) => (room.kind === 'hotel' ? setHotelDetail(room.hotel?.id ?? 0) : setDetail(room.spaceId));
   const mapAction = (a: MapAction) => {
     if (a.kind === 'checkin') setCheckinRoomId(a.roomId);
@@ -260,9 +261,9 @@ function RoomCenterBody() {
             now={now}
             hint={null}
             area={areaOf(r)}
-            selected={panelKey === r.key}
             highlight={highlighted(r)}
-            onOpen={() => setPanelKey((k) => (k === r.key ? null : r.key))}
+            onOpen={() => open(r)}
+            onMenu={(x, y) => setMenu({ room: r, x, y })}
             onDetail={() => openDetail(r)}
             onOrder={orderOutlets.length ? () => setOrdering({ key: r.key, view: 'order' }) : undefined}
           />
@@ -270,7 +271,6 @@ function RoomCenterBody() {
       </div>
     </div>
   );
-  const panelRoom = panelKey ? (board.rooms.find((r) => r.key === panelKey) ?? null) : null;
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-4 px-4 py-4 md:px-7 md:py-5" data-testid="room-center" data-tab={tab}>
@@ -302,6 +302,12 @@ function RoomCenterBody() {
           ]}
         />
         <span className="flex-1" />
+        {/* 休息大厅开单（FT-16）：有空着的大厅床位、能登记的岗位 */}
+        {can('technician.dispatch') && can('frontdesk.operate') && board.rooms.some((r) => r.kind === 'hall' && isLobbyBusinessType(r.businessType)) && (
+          <Button variant="secondary" className="h-11" icon={<BedDouble className="size-4" />} onClick={() => setHall(true)} data-testid="rc-hall-open">
+            大厅开单
+          </Button>
+        )}
         {(can('settings.manage') || can('catalog.manage')) && (
           <Link
             to="/admin/spaces/room-categories"
@@ -317,9 +323,12 @@ function RoomCenterBody() {
         <FloorMapView board={hotel ?? NO_HOTEL_ROOMS} onAction={mapAction} />
       ) : (
         <>
+          {/* FT-05（福田店 2026-11-26）：筛选类别（区域页签）挪到房态选项（统计卡与状态数量）上面 */}
+          <div className="rounded-xl border border-line bg-card p-3" data-testid="rc-category-filter">
+            <Tabs cats={cats} total={board.total.total} active={tab} onPick={(key) => setParam({ tab: key === OVERVIEW ? null : key, status: null })} />
+          </div>
           <StatCards counts={cat ? cat.counts : board.total} filter={filter} onFilter={(st) => setParam({ status: st })} />
           <div className="space-y-2.5 rounded-xl border border-line bg-card p-3" data-testid="rc-filters">
-            <Tabs cats={cats} total={board.total.total} active={tab} onPick={(key) => setParam({ tab: key === OVERVIEW ? null : key, status: null })} />
             <div className="flex flex-wrap items-center gap-2">
               <div className="min-w-0 flex-1">
                 <CountChips counts={cat ? cat.counts : board.total} filter={filter} onFilter={(st) => setParam({ status: st })} testId="rc-counts" />
@@ -385,8 +394,8 @@ function RoomCenterBody() {
               )}
             </div>
           )}
-          <div className={cn('grid gap-4', panelRoom && 'lg:grid-cols-[minmax(0,1fr)_340px]')}>
-            <div className={cn('min-w-0', panelRoom && 'pb-[45vh] lg:pb-0')}>
+          <div className="grid gap-4">
+            <div className="min-w-0">
               {search.trim() ? (
                 <SearchRooms board={board} q={search} pick={pick} grid={grid} onClear={() => setSearch('')} />
               ) : cat ? (
@@ -395,25 +404,6 @@ function RoomCenterBody() {
                 <Overview board={board} pick={pick} grid={grid} onAll={() => setParam({ status: null, overnight: null })} />
               )}
             </div>
-            {panelRoom && (
-              <RoomPanel
-                room={panelRoom}
-                area={areaOf(panelRoom)}
-                now={now}
-                label={primaryLabel(panelRoom, { canPost, canOperate, canHousekeep })}
-                onClose={() => setPanelKey(null)}
-                // 打开对话框时收起详情栏（对话框接手；之后再点卡片重新展开）
-                onGo={() => {
-                  setPanelKey(null);
-                  open(panelRoom);
-                }}
-                onDetail={() => {
-                  setPanelKey(null);
-                  openDetail(panelRoom);
-                }}
-                onOrder={orderOutlets.length && panelRoom.status === 'in_use' ? () => setOrdering({ key: panelRoom.key, view: 'order' }) : undefined}
-              />
-            )}
           </div>
         </>
       )}
@@ -426,11 +416,15 @@ function RoomCenterBody() {
           onOrder={orderOutlets.length && orderingRoom.status === 'in_use' ? () => setOrdering({ key: orderingRoom.key, view: 'order' }) : undefined}
         />
       )}
+      {menu && <RoomStateMenu at={menu} onClose={() => setMenu(null)} onMaintenance={(room) => room.spaceId !== null && setAction({ spaceId: room.spaceId, a: { kind: 'maintenance' } })} />}
       {detailRoom && (
         <RoomDialog
           room={detailRoom}
           now={now}
+          limits={board.limits}
+          statusOnly={board.statusOnly}
           onClose={() => setDetail(null)}
+          onOrder={orderOutlets.length && detailRoom.status === 'in_use' ? () => (setDetail(null), setOrdering({ key: detailRoom.key, view: 'order' })) : undefined}
           onOrders={() => {
             setDetail(null);
             setOrdering({ key: detailRoom.key, view: 'history' });
@@ -441,11 +435,23 @@ function RoomCenterBody() {
           }}
         />
       )}
+      {hall && board && (
+        <HallOrderDialog
+          board={board}
+          onClose={() => setHall(false)}
+          onDone={(next) => {
+            setHall(false);
+            refresh(next);
+            toast({ tone: 'success', title: '大厅开单都提交了', body: '各自成单，技师下钟床位就空出来' });
+          }}
+        />
+      )}
       {actionRoom && action && (
         <ActionDialog
           room={actionRoom}
           a={action.a}
           rooms={board.rooms}
+          board={board}
           onClose={closeAction}
           onDetail={() => {
             closeAction();
@@ -639,11 +645,12 @@ function Overview({ board, pick, grid, onAll }: { board: RoomCenterBoard; pick: 
 }
 
 /** 房间详情里点的动作：登记、开单、结束 / 撤单、续钟、换房、并房、退房、维修、标待清、恢复 */
-function ActionDialog({ room, a, rooms, onClose, onDetail }: { room: RoomCard; a: RoomDialogAction; rooms: RoomCard[]; onClose: () => void; onDetail: () => void }) {
+function ActionDialog({ room, a, rooms, board, onClose, onDetail }: { room: RoomCard; a: RoomDialogAction; rooms: RoomCard[]; board: RoomCenterBoard; onClose: () => void; onDetail: () => void }) {
   const toast = useToast();
   const refresh = useRefreshRoomCenter();
-  const done = (board?: RoomCenterBoard | null) => {
-    refresh(board ?? null);
+  const limits = board.limits;
+  const done = (next?: RoomCenterBoard | null) => {
+    refresh(next ?? null);
     onClose();
   };
   switch (a.kind) {
@@ -685,5 +692,66 @@ function ActionDialog({ room, a, rooms, onClose, onDetail }: { room: RoomCard; a
     case 'dirty':
     case 'restore':
       return <NoteActionDialog room={room} action={a.kind} onClose={onClose} onDone={onClose} />;
+    case 'revoke':
+      return <RevokeRoomDialog room={room} limits={limits} onClose={onClose} onDone={onClose} />;
+    case 'swap':
+      return (
+        <SwapTechDialog
+          room={room}
+          session={a.session}
+          limits={limits}
+          onClose={onClose}
+          onDone={() => {
+            toast({ tone: 'success', title: `${room.code} 已换技师` });
+            done();
+          }}
+        />
+      );
+    case 'add_item':
+      return (
+        <AddItemDialog
+          room={room}
+          onClose={onClose}
+          onDone={(next) => {
+            toast({ tone: 'success', title: `${room.code} 已加项目`, body: '另一位技师同时做，各自计费与业绩' });
+            done(next);
+          }}
+        />
+      );
+    case 'goods':
+      return (
+        <GoodsDialog
+          room={room}
+          categories={board.goodsCategories}
+          onClose={onClose}
+          onDone={(next) => {
+            toast({ tone: 'success', title: `已挂到手牌上` });
+            done(next);
+          }}
+        />
+      );
+    case 'wormhole':
+      return (
+        <WormholeDialog
+          room={room}
+          fee={board.wormholeFee}
+          onClose={onClose}
+          onDone={(next) => {
+            toast({ tone: 'success', title: `${room.code} 已下单` });
+            done(next);
+          }}
+        />
+      );
+    case 'backfill':
+      return (
+        <BackfillRoomDialog
+          room={room}
+          onClose={onClose}
+          onDone={(board) => {
+            toast({ tone: 'success', title: `${room.code} 已补单`, body: '挂在客人的手牌账单上，记「补单」' });
+            done(board);
+          }}
+        />
+      );
   }
 }

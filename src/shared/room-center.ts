@@ -169,8 +169,12 @@ export interface RoomGuestView {
   note: string;
   /** 客人过夜（重做第五批，PC25：按摩房、足浴房、SPA 房开单 / 续钟时选的） */
   overnight: boolean;
+  /** 过夜的留宿确认单照片（福田店 FT-03，选填、可以开房以后补传）；没有为空数组 */
+  overnightPhotos: { id: number; url: string; thumbUrl: string | null }[];
   /** 登记的时刻（没有登记单的是钟单建的时刻） */
   since: string;
+  /** 登记单的种类：普通、括单（技师自己约的客人）；钟房直接派进来的是普通 */
+  kind: RegistrationKind;
   sessions: RoomSessionView[];
   /** 这次登记里几张钟单的金额合计 */
   amount: number;
@@ -224,8 +228,14 @@ export interface RoomCard {
   /** 从什么时候起待清；不是待清为 null */
   dirtySince: string | null;
   dirtyNote: string;
+  /** 待清的房间上次的客人有没有过夜（福田店 FT-04：查房的人可以先不查过夜客人的房间）；不是待清为 false */
+  dirtyOvernight: boolean;
   /** 今天订了这间、还没到店的预约（最早的一张） */
   booking: RoomBookingView | null;
+  /** 休息大厅的分区（福田店 FT-15）；不是床位或没分区的为 null */
+  hallZone: { id: number; name: string } | null;
+  /** 虫洞位（福田店 FT-18）：这个空间是不是虫洞位；在用的那一张使用单 */
+  wormhole: { stay: { id: number; tagCode: string; gender: 'male' | 'female'; fee: number; openedAt: string } | null } | null;
   /** 并房：一起的几间（含自己；第一间是主房）；没并房为空 */
   merged: { spaceId: number; code: string }[];
   /** 卡片上的四样：客人、技师、从什么时候起算已用时长、金额（没人用为 null） */
@@ -250,6 +260,16 @@ export interface RoomCenterBoard {
   rooms: RoomCard[];
   /** 当天的预约单（8.1.44，《前台系统开发》「房态显示当天预约单」）：技师、派对房、客房三种，取消的不列；只为点单来看的为空 */
   todayBookings: RoomCenterBooking[];
+  /** 福田店整改：后台设的三个时限（分钟）——换技师（FT-06）、撤房（FT-09）、下钟后免房费（FT-10） */
+  limits: { swapTechMinutes: number; revokeMinutes: number; freeAfterClockOffMinutes: number };
+  /** 休息大厅的分区（FT-15，后台设的；开单选床位按分区列） */
+  hallZones: { id: number; name: string }[];
+  /** 虫洞的费用项目（FT-18，后台「房态中心规则」里设的）；没设的为 null（不收费） */
+  wormholeFee: { itemId: number; name: string; price: number } | null;
+  /** 零售与杂项能挂的分类（FT-17，后台「房态中心规则」里设的） */
+  goodsCategories: string[];
+  /** 只看房态与手牌号（福田店 FT-13：康美部的账户）：卡片上没有项目、技师、金额、客人姓名，房间详情里没有历史与动作 */
+  statusOnly: boolean;
 }
 
 /** 房态页上的一张预约（只读；改、到店、取消在预约看板） */
@@ -273,7 +293,28 @@ export interface RoomCenterBooking {
   serviceNo: string | null;
 }
 
-export const ROOM_EVENT_KINDS = ['register', 'move_out', 'move_in', 'checkout', 'extend', 'merge', 'unmerge', 'dirty', 'cleaned', 'maintenance', 'restore'] as const;
+export const ROOM_EVENT_KINDS = [
+  'register',
+  'move_out',
+  'move_in',
+  'checkout',
+  'extend',
+  'merge',
+  'unmerge',
+  'dirty',
+  'cleaned',
+  'maintenance',
+  'restore',
+  // 福田店整改（2026-11-26，迁移 470）
+  'revoke',
+  'backfill',
+  'room_fee',
+  // 福田店整改批次 4（迁移 471）
+  'add_item',
+  'goods',
+  'wormhole_in',
+  'wormhole_out',
+] as const;
 export type RoomEventKind = (typeof ROOM_EVENT_KINDS)[number];
 export const ROOM_EVENT_LABELS: Record<RoomEventKind, string> = {
   register: '登记',
@@ -287,7 +328,19 @@ export const ROOM_EVENT_LABELS: Record<RoomEventKind, string> = {
   cleaned: '清洁完成',
   maintenance: '维修',
   restore: '恢复',
+  revoke: '撤房',
+  backfill: '补单',
+  room_fee: '房费',
+  add_item: '加项目',
+  goods: '零售 / 杂项',
+  wormhole_in: '虫洞入住',
+  wormhole_out: '虫洞离开',
 };
+
+/** 登记单的种类（福田店整改 FT-07 括单、FT-19 补单） */
+export const REGISTRATION_KINDS = ['normal', 'bracket', 'backfill'] as const;
+export type RegistrationKind = (typeof REGISTRATION_KINDS)[number];
+export const REGISTRATION_KIND_LABELS: Record<RegistrationKind, string> = { normal: '普通', bracket: '括单', backfill: '补单' };
 
 /**
  * 房间动作（换房、退房、并房、拆并、维修、恢复、标待清、清洁完成）带的操作编号记下的那一条房间事件（8.1.16）：
@@ -358,6 +411,11 @@ export interface RoomCheckoutPreview {
   }[];
   /** 几位客人手牌账单的合计（退房时带回来核对：看过预览以后账又变了要重新看） */
   unpaidTotal: number;
+  /**
+   * 房费（福田店 FT-10 / FT-17）：这间房按时间计费时，按现在退房要收多少（退房时按那一刻重算，记在先登记的那位客人的手牌上）；
+   * 这个业态没设计费为 null
+   */
+  roomFee: { amount: number; minutes: number; chargedMinutes: number; startsAt: string | null; freeMinutes: number; capped: boolean; tagCode: string } | null;
 }
 
 export const MAX_ROOM_NOTE = 100;
@@ -380,6 +438,13 @@ export function elapsedText(sinceIso: string, nowMs: number): string {
 }
 
 /** 休息大厅一类（重做第五批，PC24）：不能同房加人、不能并房。按业态认：带「大厅」「大堂」「休息区」「休息厅」的 */
+/**
+ * 康美部的账户（福田店 FT-13）：岗位是康美部的、或带「康美部」职责的（店主、店总除外）。房态中心对他们只给房态与客人的手牌号，
+ * 项目、技师、金额、客人姓名、预约、房间历史都不给
+ */
+export const isRoomStatusOnly = (a: { role: string; position?: string | null; duties: readonly string[] }): boolean =>
+  a.role !== 'owner' && a.role !== 'store_manager' && (!!a.position?.startsWith('kangmei.') || a.duties.includes('kangmei'));
+
 export const isLobbyBusinessType = (businessType: string): boolean => /大厅|大堂|休息区|休息厅/.test(businessType);
 
 /** 登记时问「客人是否过夜」的房间（重做第五批，PC25）：技师服务的房间里按摩、足浴、SPA 这几类（休息大厅不问） */
@@ -408,4 +473,11 @@ export function arrangeRooms<T extends { code: string; guests: readonly { overni
   const list = opts.overnightOnly ? rooms.filter(isOvernightRoom) : [...rooms];
   if (opts.order === 'desc') list.sort((a, b) => b.code.localeCompare(a.code, 'zh-Hans-CN', { numeric: true }));
   return list;
+}
+
+/** 后台的休息大厅分区与床位（福田店 FT-15） */
+export interface HallZonesAdmin {
+  zones: { id: number; name: string; sortOrder: number; active: boolean; beds: number }[];
+  /** 休息大厅一类的空间（床位）与它在哪个分区 */
+  beds: { spaceId: number; code: string; name: string; businessType: string; active: boolean; zoneId: number | null }[];
 }

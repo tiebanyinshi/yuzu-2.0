@@ -63,6 +63,7 @@
 - [`FRONTDESK_TAGS_V8127.md`](FRONTDESK_TAGS_V8127.md)：手牌管理：批量规则、修改删除、暂停 / 维修（店主 2026-11-24）
 - [`FRONTDESK_V808.md`](FRONTDESK_V808.md)：8.0.8 前台整改（钟房、收银、派对房、预约、餐饮、客房）
 - [`FRONTDESK_V8117.md`](FRONTDESK_V8117.md)：8.1.17 · 前台、桌台、退菜、本店价、流水（BW-1、BW-2、BW-3 发卡台、BW-4、BW-11、BW-12）
+- [`FUTIAN_1126.md`](FUTIAN_1126.md)：福田店餐饮与房态中心整改（2026-11-26）
 - [`FUTIAN_MIGRATION.md`](FUTIAN_MIGRATION.md)：福田店老数据迁移：核对、配置与导入步骤
 - [`GIFTS_V819.md`](GIFTS_V819.md)：8.1.9 · 全局签赠（签赠券、授权人、签赠台账）
 - [`HARDWARE.md`](HARDWARE.md)：硬件连接（飞书需求 RQ-001，v0.7.21，迁移 `038`）

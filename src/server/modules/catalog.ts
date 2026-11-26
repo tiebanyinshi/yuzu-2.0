@@ -52,6 +52,14 @@ const ItemInput = z
     popular: z.boolean().default(false),
     /** 需要技师（v0.7.0）；不带时新建为否、编辑时保持原值（旧页面不带这一项） */
     technicianRequired: z.boolean().optional(),
+    /** 项目编号（福田店 FT-02）：开单时输入编号直接带出项目；空串清掉；不带时保持原值（旧页面不带这一项）；对接了价目表的以价目表为准 */
+    code: z
+      .string()
+      .trim()
+      .max(12, '编号最多 12 个字符')
+      .regex(/^[0-9A-Za-z-]*$/, '编号只能用字母、数字与「-」')
+      .transform((v) => v.toUpperCase() || null)
+      .optional(),
     note: z.string().trim().max(100, '说明最多 100 字').default(''),
     active: z.boolean().default(true),
     sortOrder: z.number().int().default(0),
@@ -92,9 +100,9 @@ async function writeItem(tx: Tx, id: number | null, i: Omit<ItemData, 'tiers'> &
   if (itemId === null) {
     const [row] = await tx<{ id: number }[]>`
       INSERT INTO service_items (name, category, price, duration_minutes, gender, strength, essential_oil, heat_therapy, popular,
-                                 technician_required, note, active, sort_order)
+                                 technician_required, note, active, sort_order, catalog_code)
       VALUES (${i.name}, ${i.category}, ${price}, ${i.durationMinutes}, ${i.gender}, ${i.strength}, ${i.essentialOil},
-              ${i.heatTherapy}, ${i.popular}, ${i.technicianRequired ?? isCareItem(i.category, i.name)}, ${i.note}, ${i.active}, ${i.sortOrder})
+              ${i.heatTherapy}, ${i.popular}, ${i.technicianRequired ?? isCareItem(i.category, i.name)}, ${i.note}, ${i.active}, ${i.sortOrder}, ${i.code ?? null})
       RETURNING id`;
     itemId = row!.id;
   } else {
@@ -102,6 +110,7 @@ async function writeItem(tx: Tx, id: number | null, i: Omit<ItemData, 'tiers'> &
       UPDATE service_items SET name = ${i.name}, category = ${i.category}, price = ${price}, duration_minutes = ${i.durationMinutes},
              gender = ${i.gender}, strength = ${i.strength}, essential_oil = ${i.essentialOil}, heat_therapy = ${i.heatTherapy},
              popular = ${i.popular}, ${i.technicianRequired === undefined ? tx`` : tx`technician_required = ${i.technicianRequired},`}
+             ${i.code === undefined ? tx`` : tx`catalog_code = ${i.code},`}
              note = ${i.note}, active = ${i.active}, sort_order = ${i.sortOrder}, updated_at = now()
       WHERE id = ${itemId} RETURNING id`;
     if (rows.length === 0) throw notFound('项目不存在');
@@ -111,6 +120,17 @@ async function writeItem(tx: Tx, id: number | null, i: Omit<ItemData, 'tiers'> &
     INSERT INTO service_item_prices (item_id, tier, price)
     SELECT ${itemId}, unnest(${i.tiers.map((t) => t.tier)}::text[]), unnest(${i.tiers.map((t) => t.price)}::bigint[])`;
   return itemId;
+}
+
+/**
+ * 编号不能与别的在用项目重复（FT-02：输入编号要能唯一带出一个项目）；停用的不算。
+ * 并发两个人同时设同一个编号的极少，这里不加锁（重复了前台搜编号会列出两个，照样能点选）
+ */
+async function assertCodeFree(tx: Tx, code: string | null | undefined, selfId: number | null, active: boolean) {
+  if (!code || !active) return;
+  const [dup] = await tx<{ name: string }[]>`
+    SELECT name FROM service_items WHERE active AND upper(catalog_code) = ${code} ${selfId === null ? tx`` : tx`AND id <> ${selfId}`} LIMIT 1`;
+  if (dup) throw conflict('ITEM_CODE_TAKEN', `编号 ${code} 已经给了「${dup.name}」，换一个编号`);
 }
 
 const samePrices = (a: TierPrice[], b: TierPrice[]) => a.length === b.length && sortTiers(a).every((p, k) => p.tier === sortTiers(b)[k]!.tier && p.price === sortTiers(b)[k]!.price);
@@ -146,6 +166,7 @@ export function registerCatalogRoutes(app: FastifyInstance, { sql }: Deps) {
   app.post('/api/items', { preHandler: guard('catalog.manage') }, async (req) => {
     const i = parse(ItemInput, req.body);
     await sql.begin(async (tx) => {
+      await assertCodeFree(tx, i.code, null, i.active);
       const id = await writeItem(tx, null, i);
       await writeAudit(tx, { staffId: req.actor.id, action: 'item_saved', targetType: 'item', targetId: id, detail: i, ip: req.ip });
     });
@@ -158,8 +179,13 @@ export function registerCatalogRoutes(app: FastifyInstance, { sql }: Deps) {
     await sql.begin(async (tx) => {
       await tx`SELECT id FROM service_items WHERE id = ${id} FOR UPDATE`;
       // 价目表第四批：对接了「全品类价目表」的项目改价拒绝（别的字段照常能改）
-      const [cur] = await tx<{ prices: TierPrice[]; name: string; category: string; durationMinutes: number | null; gender: string | null }[]>`
-        SELECT ${pricesColumn(tx, { base: true })} AS prices, i.name, i.category, i.duration_minutes, i.gender FROM service_items i WHERE i.id = ${id}`;
+      const [cur] = await tx<{ prices: TierPrice[]; name: string; category: string; durationMinutes: number | null; gender: string | null; catalogCode: string | null }[]>`
+        SELECT ${pricesColumn(tx, { base: true })} AS prices, i.name, i.category, i.duration_minutes, i.gender, i.catalog_code FROM service_items i WHERE i.id = ${id}`;
+      // FT-02：编号对接了价目表的以价目表为准
+      if (cur && i.code !== undefined && (i.code ?? null) !== (cur.catalogCode ?? null)) {
+        await assertNotPriceLinked(tx, [id], { what: '编号', managedOnly: true });
+      }
+      await assertCodeFree(tx, i.code === undefined ? cur?.catalogCode : i.code, id, i.active);
       if (cur && !samePrices(cur.prices, i.tiers)) await assertNotPriceLinked(tx, [id]);
       // 8.1.34：对接了的项目，名称、分类、时长、性别限定也以价目表为准（力道、精油、说明、排序、停用照常能改）
       if (cur && (cur.name !== i.name || cur.category !== i.category || cur.durationMinutes !== i.durationMinutes || cur.gender !== i.gender)) {

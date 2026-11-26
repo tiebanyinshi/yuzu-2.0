@@ -41,7 +41,8 @@ const place = (roomNo: string, outlet: 'water' | 'fruit', lines: Line[], extra: 
     expectedTotal: lines.reduce((s, l) => s + price[l.name]! * (l.quantity ?? 1), 0),
     ...extra,
   });
-const card = async (roomNo: string, cookie = km) => ((await api(ctx.app, cookie, 'GET', '/api/room-center')).body as RoomCenterBoard).rooms.find((r) => r.code === roomNo)!;
+// 卡片上的单数与金额用店主看（福田店 FT-13 起康美部的账户在房态中心只看房态与手牌号，卡片上不给金额）
+const card = async (roomNo: string, cookie = ctx.owner) => ((await api(ctx.app, cookie, 'GET', '/api/room-center')).body as RoomCenterBoard).rooms.find((r) => r.code === roomNo)!;
 const history = async (roomNo: string) => (await api(ctx.app, km, 'GET', `/api/room-center/rooms/r${room[roomNo]}/orders`)).body as RoomOrderHistory;
 const billLines = async (visitId: number) => {
   const [r] = await ctx.sql<{ n: number; amount: number }[]>`
@@ -116,6 +117,7 @@ describe('房态点单（P07）', () => {
     expect(kitchen[0]!.note).toBe('少冰');
     expect(await billLines(g.visitId)).toEqual({ n: base.n + 2, amount: base.amount + 5800 });
     expect((await card('H601')).orders).toEqual({ count: 1, amount: 5800 });
+    expect((await card('H601', km)).orders).toBeNull();
     // 同一编号原样重提：返回第一次那一单，不再挂账
     const again = await place('H601', 'water', [{ name: '柠檬茶', quantity: 2, note: '少冰' }, { name: '椰子水' }], { orderNote: '客人在泡池' }, km, key);
     expect(again.status).toBe(200);

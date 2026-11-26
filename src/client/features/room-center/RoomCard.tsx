@@ -2,8 +2,8 @@
 // 点卡片：空闲的技师服务房间直接登记、空闲的派对房直接开单、客房打开入住或入住单；别的打开房间详情。右上角的「详情」什么时候都能点。
 // 客房的卡片多两行客房原来的内容：手牌、几号入住（预离）或钟点房已住多久、押金（8.1.16，原来的「客房」页并进来）。
 // 回测整改 P08：「在用」的房间多一个「点单」（只有能在水吧或果吧下单的账号看得到），卡片上写房里现在的客人从房态点了几单、多少钱。
-// 排版优化（店主 2026-11-24）：房号 + 右上角状态标签、区域与房型小字；空闲写「可排房」；维修的斜纹底；点卡片在右侧展开详情栏（选中的描边），
-// 原来点卡片做的那一下挪到详情栏的主按钮上；右上角的「详情」照旧。
+// 排版优化（店主 2026-11-24）：房号 + 右上角状态标签、区域与房型小字；空闲写「可排房」；维修的斜纹底。
+// 福田店整改（2026-11-26）：FT-01 点卡片直接弹出「详情与动作」（去掉右侧详情栏）；FT-08 右键（触屏长按）设置房态。
 
 import { ChevronRight, CupSoda, Link2, Users } from 'lucide-react';
 import { elapsedText, type RoomCard as Room } from '@shared/room-center';
@@ -70,6 +70,12 @@ function CardBody({ room, now, hint }: { room: Room; now: number; hint: string |
               过夜
             </span>
           )}
+          {/* 括单（福田店 FT-07）：技师自己带来的客人 */}
+          {room.guests.some((g) => g.kind === 'bracket') && (
+            <span className="shrink-0 rounded bg-yuzu-soft px-1.5 text-[12px] font-semibold text-yuzu-deep" data-testid="rc-bracket">
+              括单
+            </span>
+          )}
         </p>
         {room.techText && (
           <p className="truncate text-[13px] text-ink-2" data-testid="rc-tech">
@@ -110,7 +116,15 @@ function CardBody({ room, now, hint }: { room: Room; now: number; hint: string |
   if (room.status === 'dirty') {
     return (
       <>
-        <p className="text-[13px] font-semibold text-ink-2">{room.dirtySince ? `${formatTime(room.dirtySince)} 起待清` : '待打扫'}</p>
+        <p className="flex items-center gap-1.5 text-[13px] font-semibold text-ink-2">
+          {room.dirtySince ? `${formatTime(room.dirtySince)} 起待清` : '待打扫'}
+          {/* FT-04：上次的客人过夜，查房的可以先不查这间 */}
+          {room.dirtyOvernight && (
+            <span className="shrink-0 rounded bg-lake px-1.5 text-[12px] font-bold text-paper" data-testid="rc-dirty-overnight">
+              留宿
+            </span>
+          )}
+        </p>
         {room.dirtyNote && <p className="truncate text-[12.5px] text-ink-3">{room.dirtyNote}</p>}
       </>
     );
@@ -139,6 +153,7 @@ export function RoomCard({
   onOpen,
   onDetail,
   onOrder,
+  onMenu,
 }: {
   room: Room;
   now: number;
@@ -153,6 +168,8 @@ export function RoomCard({
   onDetail: () => void;
   /** 房态点单（回测整改 P08）：只有「在用」的房间、账号能在水吧或果吧下单时给 */
   onOrder?: () => void;
+  /** FT-08（福田店 2026-11-26）：右键（触屏长按）打开设置房态的菜单，给鼠标的位置 */
+  onMenu?: (x: number, y: number) => void;
 }) {
   const order = room.status === 'in_use' ? onOrder : undefined;
   return (
@@ -167,6 +184,14 @@ export function RoomCard({
         selected && 'ring-2 ring-ink-2 ring-offset-1',
       )}
       data-testid={`rc-room-${room.code}`}
+      onContextMenu={
+        onMenu
+          ? (e) => {
+              e.preventDefault();
+              onMenu(e.clientX, e.clientY);
+            }
+          : undefined
+      }
       data-status={room.status}
       data-selected={selected ? 'true' : undefined}
       data-highlight={highlight ? 'booking' : undefined}
@@ -184,6 +209,7 @@ export function RoomCard({
         </span>
         <span className="truncate text-[12px] text-ink-3">
           {area ? `${area} · ` : ''}
+          {room.hallZone ? `${room.hallZone.name} · ` : ''}
           {room.name}
           {room.floor ? ` · ${room.floor}` : ''}
           {room.capacity ? ` · ${room.capacity} 人` : ''}

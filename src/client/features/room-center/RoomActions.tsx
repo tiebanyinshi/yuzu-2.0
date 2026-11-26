@@ -10,7 +10,7 @@ import { PRICE_TIER_LABELS, tierPrice, type PriceTier } from '@shared/catalog';
 import type { ClockroomBoard } from '@shared/clockroom';
 import { formatYuan } from '@shared/money';
 import { ROOM_SERVICE_EXCLUDED_CATEGORIES } from '@shared/price-catalog';
-import { asksOvernight, MAX_MAINTENANCE_REASON, MAX_ROOM_NOTE, ROOM_STATUS_LABELS, type RoomCard, type RoomCenterBoard, type RoomSessionView } from '@shared/room-center';
+import { asksOvernight, OTHER_CATEGORY_KEY, MAX_MAINTENANCE_REASON, MAX_ROOM_NOTE, ROOM_STATUS_LABELS, type RoomCard, type RoomCenterBoard, type RoomSessionView } from '@shared/room-center';
 import { spaceLabel } from '@shared/spaces';
 import { canServe, gradeLabel, tierFor } from '@shared/technicians';
 import { api, errorMessage } from '../../lib/api';
@@ -241,7 +241,9 @@ export function MoveRoomDialog({ room, rooms, onClose, onDone }: { room: RoomCar
   const act = useRoomAction(room, 'space_dispatch');
   const [to, setTo] = useState<number | null>(null);
   const [note, setNote] = useState('');
-  const targets = rooms.filter((r) => r.kind === 'service' && r.spaceId !== room.spaceId && (r.status === 'free' || r.status === 'booked'));
+  // 只能换同类型的房间（福田店 FT-11）：同一个房态中心房型；没归房型的按同一种业态
+  const sameType = (r: RoomCard) => r.categoryKey === room.categoryKey && (r.categoryKey !== OTHER_CATEGORY_KEY || r.businessType === room.businessType);
+  const targets = rooms.filter((r) => r.kind === 'service' && r.spaceId !== room.spaceId && (r.status === 'free' || r.status === 'booked') && sameType(r));
   const target = targets.find((r) => r.spaceId === to) ?? null;
   const submit = async () => {
     if (!target) return;
@@ -275,8 +277,8 @@ export function MoveRoomDialog({ room, rooms, onClose, onDone }: { room: RoomCar
     >
       <div className="space-y-4" data-testid="rc-move">
         <RoomActionStatus action={act} room={room} onResolved={onDone} />
-        <Field label="换到哪一间（空闲的技师服务房间）">
-          <RoomPicker rooms={targets} value={to} onChange={setTo} disabled={act.locked} empty="现在没有空闲的技师服务房间（待清的先点清洁完成）" testId="rc-move-to" />
+        <Field label="换到哪一间（同类型、空闲的房间）" hint="换房只能换同类型的房间">
+          <RoomPicker rooms={targets} value={to} onChange={setTo} disabled={act.locked} empty="现在没有同类型的空闲房间（待清的先点清洁完成）" testId="rc-move-to" />
         </Field>
         <Field label="说明" htmlFor="rc-move-note" hint="选填，例如 空调不凉、客人要安静的">
           <Input id="rc-move-note" value={note} maxLength={MAX_ROOM_NOTE} disabled={act.locked} onChange={(e) => setNote(e.target.value)} data-testid="rc-move-note" />
@@ -343,7 +345,9 @@ export function CheckoutRoomDialog({ room, onClose, onDone }: { room: RoomCard; 
   const [finishError, setFinishError] = useState<string | null>(null);
   const p = preview.data;
   const running = p?.guests.flatMap((g) => g.running) ?? [];
-  const unpaid = p?.unpaidTotal ?? 0;
+  // 房费（FT-10 / FT-17）退房时记到手牌上，也算没结的
+  const fee = p?.roomFee?.amount ?? 0;
+  const unpaid = (p?.unpaidTotal ?? 0) + fee;
   const ok = !!p && p.guests.length > 0 && running.length === 0 && (unpaid === 0 || inHouse);
   const finish = async (sessionId: number, waiting: boolean) => {
     setFinishing(sessionId);
@@ -466,6 +470,17 @@ export function CheckoutRoomDialog({ room, onClose, onDone }: { room: RoomCard; 
               </p>
             </section>
           ))}
+          {p.roomFee && (
+            <Notice
+              tone={p.roomFee.amount > 0 ? 'warning' : 'info'}
+              title={p.roomFee.amount > 0 ? `房费 ${formatYuan(p.roomFee.amount)}（退房时记到手牌 ${p.roomFee.tagCode} 上）` : '现在退房不收房费'}
+              data-testid="rc-checkout-roomfee"
+            >
+              {p.roomFee.startsAt
+                ? `技师下钟后 ${p.roomFee.freeMinutes} 分钟内不收房费，${formatDateTime(p.roomFee.startsAt)} 起计费；已计 ${p.roomFee.minutes} 分钟${p.roomFee.amount > 0 ? `，按 ${p.roomFee.chargedMinutes} 分钟收` : ''}${p.roomFee.capped ? '（已到封顶）' : ''}。`
+                : '还有钟没下（或一个钟都没做完），不算房费。'}
+            </Notice>
+          )}
           {finishError && <Notice tone="error" title={finishError} />}
           {unpaid > 0 ? (
             <ConfirmCheck checked={inHouse} onChange={setInHouse}>

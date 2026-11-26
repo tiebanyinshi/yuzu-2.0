@@ -5,7 +5,7 @@
 
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
-import { diningOutletsOf, diningSlotOf, receiptLineState, type DiningReceipt, type DiningReceiptLine, type DiningReceiptOrder, type KitchenStatus } from '@shared/dining';
+import { diningOutletsOf, diningSlotOf, receiptLineState, type DiningGroupSummary, type DiningReceipt, type DiningReceiptLine, type DiningReceiptOrder, type KitchenStatus } from '@shared/dining';
 import type { DishPart } from '@shared/dishes';
 import type { Db } from '../db';
 import type { Deps } from '../lib/context';
@@ -142,7 +142,43 @@ export async function diningReceipt(db: Db, q: { session?: number; visit?: numbe
   };
 }
 
+/**
+ * 同组客人的点单汇总（福田店 CY-01）：这位客人所在的同行组里每位客人（撤销的来访不算）的点菜单，退掉的不算，一屏看全组的单价、份数与合计。
+ * 只读、不加锁；用的就是点菜单的读法（每位客人一份），合计按有效的明细算
+ */
+export async function diningGroupSummary(db: Db, visitId: number): Promise<DiningGroupSummary> {
+  const [v] = await db<{ groupId: number | null }[]>`SELECT group_id FROM visits WHERE id = ${visitId} AND store_id = ${currentStoreId()}`;
+  if (!v) throw notFound('这位客人的来访记录不存在');
+  const ids = v.groupId
+    ? (await db<{ id: number }[]>`SELECT id FROM visits WHERE group_id = ${v.groupId} AND status <> 'cancelled' AND store_id = ${currentStoreId()} ORDER BY id`).map((r) => Number(r.id))
+    : [visitId];
+  const members: DiningGroupSummary['members'] = [];
+  for (const id of ids) {
+    const r = await diningReceipt(db, { visit: id });
+    const lines = r.orders.flatMap((o) => o.lines).filter((l) => l.state !== 'voided');
+    members.push({
+      visitId: id,
+      tagCode: r.title,
+      guest: r.guest,
+      closed: r.closed,
+      lines: lines.map((l) => ({ billLineId: l.billLineId, name: l.name, unitPrice: l.unitPrice, quantity: l.quantity, amount: l.amount, state: l.state })),
+      quantity: lines.reduce((n, l) => n + l.quantity, 0),
+      amount: lines.reduce((n, l) => n + l.amount, 0),
+    });
+  }
+  return {
+    groupId: v.groupId === null ? null : Number(v.groupId),
+    members,
+    quantity: members.reduce((n, m) => n + m.quantity, 0),
+    amount: members.reduce((n, m) => n + m.amount, 0),
+  };
+}
+
 export function registerDiningReceiptRoutes(app: FastifyInstance, deps: Deps) {
   // 与桌台详情、点单相同的岗位：点单的、结账的
   app.get('/api/dining/receipt', { preHandler: guardAny('dining.order', 'frontdesk.checkout') }, async (req) => diningReceipt(deps.sql, parse(ReceiptQuery, req.query)));
+  // 同组客人的点单汇总（福田店 CY-01）：与点菜单同一批岗位
+  app.get('/api/dining/group', { preHandler: guardAny('dining.order', 'frontdesk.checkout') }, async (req) =>
+    diningGroupSummary(deps.sql, parse(z.object({ visit: z.coerce.number().int().positive('请指定一位手牌客人') }), req.query).visit),
+  );
 }

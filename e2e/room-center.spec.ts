@@ -190,7 +190,7 @@ test.describe('8.1.16 房态中心', () => {
 
       // ② 点空闲的 SPA 房卡片登记：键盘式读卡器刷手牌带出客人；项目、点钟指定技师、出单员（默认自己的登录名）；必填的没填不能提交
       await page.getByTestId(`rc-open-${SPA1}`).click();
-      await page.getByTestId('rc-panel-go').click();
+      await page.getByTestId('rc-act-register').click();
       const reg = page.getByRole('dialog').filter({ hasText: `登记 · ${SPA1}` });
       await expect(reg.getByTestId('rc-register')).toBeVisible();
       await expect(reg.getByTestId('rc-register-submit')).toBeDisabled();
@@ -198,6 +198,9 @@ test.describe('8.1.16 房态中心', () => {
       await swipe(page, card.uid.toLowerCase());
       await expect(reg.getByTestId('rc-register-tag')).toHaveValue(g1.tag);
       await expect(reg.getByTestId('rc-register-guest')).toContainText('E2E 房态一');
+      // FT-02：默认不平铺项目，点「全部」才列出来
+      await expect(reg.getByTestId(`rc-register-item-${ITEM.name}`)).toHaveCount(0);
+      await reg.getByTestId('rc-register-categories').getByRole('button', { name: /^全部/ }).click();
       await reg.getByTestId(`rc-register-item-${ITEM.name}`).click();
       await reg.getByRole('radiogroup', { name: '上钟方式' }).getByRole('radio', { name: /点钟/ }).click();
       await reg.getByTestId(`rc-register-tech-${TECH.techNo}`).click();
@@ -287,7 +290,6 @@ test.describe('8.1.16 房态中心', () => {
       await expect(room1).toHaveAttribute('data-status', 'maintenance');
       await expect(room1).toContainText('E2E 空调漏水');
       await page.getByTestId(`rc-open-${SPA1}`).click();
-      await page.getByTestId('rc-panel-go').click();
       await page.getByTestId('rc-room-dialog').getByTestId('rc-act-restore').click();
       await page
         .getByRole('dialog')
@@ -302,7 +304,7 @@ test.describe('8.1.16 房态中心', () => {
       const party = page.getByTestId(`rc-room-${PARTY}`);
       await expect(party).toHaveAttribute('data-status', 'free');
       await page.getByTestId(`rc-open-${PARTY}`).click();
-      await page.getByTestId('rc-panel-go').click();
+      await page.getByTestId('rc-act-usage-open').click();
       const open = page.getByRole('dialog').filter({ hasText: `开单 · ${PARTY}` });
       await open.getByTestId('usage-open-tag').fill(g2.tag);
       await open.getByTestId('usage-open-submit').click();
@@ -397,7 +399,7 @@ test.describe('8.1.16 房态中心', () => {
       // 登记对话框（空闲的 SPA 房；不提交）
       if ((await cardOf(page, SPA2)).status === 'free') {
         await page.getByTestId(`rc-open-${SPA2}`).click();
-        await page.getByTestId('rc-panel-go').click();
+        await page.getByTestId('rc-act-register').click();
         await expect(page.getByTestId('rc-register')).toBeVisible();
         await expectFits(page);
         await expect(page.getByTestId('rc-register-submit')).toBeInViewport();

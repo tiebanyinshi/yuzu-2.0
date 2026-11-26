@@ -22,6 +22,8 @@ import {
   OTHER_CATEGORY_NAME,
   ROOM_COUNT_KEY,
   ROOM_EVENT_LABELS,
+  isLobbyBusinessType,
+  isRoomStatusOnly,
   ROOM_SOURCES,
   ROOM_START_LABELS,
   roomKindOf,
@@ -60,6 +62,7 @@ import {
   checkoutRoom,
   extendRoom,
   findSeller,
+  finishedLobbyRegSql,
   markCleaned,
   markDirty,
   mergeRooms,
@@ -75,6 +78,10 @@ import { loadRoomRules, roomsBoard } from './rooms';
 import { loadUsageRules, usageBoard } from './usages';
 import type { RoomOrderSummary } from '@shared/room-orders';
 import { roomOrderSums } from './room-orders';
+import { addRoomItem, leaveWormhole, loadHallZones, openWormhole, openWormholeStays, postRoomGoods, registerHallZoneRoutes, wormholeStatus } from './room-center-hall';
+import { attachOvernightPhoto, backfillRoom, overnightPhotos, registerRoomCenterRulesRoutes, revokeRoom, swapTechnician } from './room-center-futian';
+import { loadRoomCenterRules } from './room-center-fees';
+import { isWormholeType } from '@shared/room-center-rules';
 
 // ───────────────────────── 房型（后台） ─────────────────────────
 
@@ -234,6 +241,7 @@ function orderOnlyCard(r: RoomCard): RoomCard {
     maintenance: null,
     dirtySince: null,
     dirtyNote: '',
+    dirtyOvernight: false,
     booking: null,
     merged: [],
     guestText: null,
@@ -242,6 +250,38 @@ function orderOnlyCard(r: RoomCard): RoomCard {
     amount: null,
     phase: null,
     plannedEnd: null,
+    wormhole: r.wormhole ? { stay: null } : null,
+  };
+}
+
+/**
+ * 康美部的账户（福田店 FT-13）：只留房态与客人的手牌号——没有项目、技师、钟、金额、客人姓名、出单员、备注、预约、维修与打扫的说明、点单
+ */
+function statusOnlyCard(r: RoomCard): RoomCard {
+  const tags = [...r.guests.map((g) => g.tagCode), ...(r.usage ? [r.usage.tagCode] : []), ...(r.hotel?.stay ? [r.hotel.stay.tagCode] : [])];
+  return {
+    ...orderOnlyCard(r),
+    status: r.status,
+    guests: r.guests.map((g) => ({
+      registrationId: null,
+      visitId: 0,
+      tagCode: g.tagCode,
+      guest: `手牌 ${g.tagCode}`,
+      memberGradeLabel: null,
+      sellerNo: '',
+      sellerName: '',
+      note: '',
+      overnight: false,
+      overnightPhotos: [],
+      kind: 'normal',
+      since: '',
+      sessions: [],
+      amount: 0,
+      billAmount: 0,
+    })),
+    guestText: tags.length ? tags.map((t) => `手牌 ${t}`).join('、') : r.wormhole?.stay ? `手牌 ${r.wormhole.stay.tagCode}` : null,
+    orders: null,
+    wormhole: r.wormhole ? { stay: r.wormhole.stay ? { ...r.wormhole.stay, fee: 0 } : null } : null,
   };
 }
 
@@ -256,11 +296,38 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
   const usages = await usageBoard(db);
   const usageOf = new Map(usages.spaces.map((s) => [Number(s.id), s]));
   const facts = await loadRoomFacts(db, today);
+  const rules = await loadRoomCenterRules(db);
   const hotelOn = (await loadRoomRules(db)).enabled;
   const hotel = hotelOn ? await roomsBoard(deps) : null;
   const showGuests = seesGuests(actor);
   const memberIds = [...facts.values()].flatMap((f) => f.guests.flatMap((g) => (g.visit.memberId === null ? [] : [Number(g.visit.memberId)])));
   const grades = showGuests ? await memberGradeBadges(db, memberIds, today) : new Map();
+
+  // 休息大厅分区（FT-15）、虫洞（FT-18）
+  const hallZones = await loadHallZones(db);
+  const zoneName = new Map(hallZones.map((z) => [z.id, z.name]));
+  const zoneOf = new Map(
+    (await db<{ id: number; hallZoneId: number }[]>`SELECT id, hall_zone_id FROM spaces WHERE store_id = ${currentStoreId()} AND hall_zone_id IS NOT NULL`).map((r) => [
+      Number(r.id),
+      Number(r.hallZoneId),
+    ]),
+  );
+  const stays = await openWormholeStays(db);
+  const [feeItem] = rules.wormhole.feeItemId
+    ? await db<{ id: number; name: string; price: number }[]>`SELECT id, name, price FROM service_items WHERE id = ${rules.wormhole.feeItemId} AND active`
+    : [];
+  // 过夜的留宿确认单照片（FT-03）：挂在登记单上的附件
+  const regIds = [...facts.values()].flatMap((f) => f.guests.flatMap((g) => (g.registration ? [Number(g.registration.id)] : [])));
+  const photos = await overnightPhotos(db, regIds);
+  // 待清的房间上次的客人过没过夜（FT-04）：上次清洁完成以后结束的登记单里有过夜的（撤房、补单、撤销来访的不算）
+  const dirtyOvernight = new Set(
+    (
+      await db<{ spaceId: number }[]>`
+        SELECT DISTINCT r.space_id FROM room_registrations r JOIN space_room_states st ON st.space_id = r.space_id
+        WHERE r.store_id = ${currentStoreId()} AND r.status = 'closed' AND r.overnight AND r.closed_at > st.cleaned_at
+          AND r.close_kind NOT IN ('visit_cancel', 'revoked', 'backfill')`
+    ).map((r) => Number(r.spaceId)),
+  );
 
   const categoryKeyOf = (businessType: string) => {
     const c = categories.find((x) => x.businessTypes.includes(businessType));
@@ -279,6 +346,8 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       sellerName: showGuests ? (g.registration?.sellerName ?? '') : '',
       note: showGuests ? (g.registration?.note ?? '') : '',
       overnight: g.registration?.overnight ?? false,
+      overnightPhotos: g.registration ? (photos.get(Number(g.registration.id)) ?? []) : [],
+      kind: g.registration?.kind ?? 'normal',
       since: g.registration?.openedAt ?? g.sessions[0]?.createdAt ?? at.toISOString(),
       sessions,
       amount: sessions.reduce((n, s) => n + s.amount, 0),
@@ -320,7 +389,14 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
     const sp = f.space;
     // 「客房」业态的空间不在这里出卡片：客房按房间（rooms）出，见下
     if (sp.businessType === ROOM_BUSINESS_TYPE) continue;
-    const st = statusOfFacts(f);
+    const st0 = statusOfFacts(f);
+    // 虫洞位（FT-18）：有人在用 / 清洁时段或手动标的待清 / 空闲，用过不自动转待清
+    const wormholeSpace = isWormholeType(rules, sp.businessType);
+    const stay = wormholeSpace ? stays.get(id) : undefined;
+    const manualDirty = !!f.state?.dirtyAt && new Date(f.state.dirtyAt).getTime() > new Date(f.state.cleanedAt).getTime();
+    const st = wormholeSpace
+      ? { ...st0, status: wormholeStatus(st0.status, stay, manualDirty, rules, at, deps.config.timezone), inUse: !!stay, dirtySince: manualDirty ? f.state!.dirtyAt : null }
+      : st0;
     // 停用、不可售的空间不营业，不出卡片；还有人用着的照样显示到用完
     if (!(sp.active && sp.sellable) && !st.inUse) continue;
     const kind = roomKindOf(sp.businessType, usages.businessTypes);
@@ -350,6 +426,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
         : null,
       dirtySince: st.dirtySince,
       dirtyNote: st.status === 'dirty' ? (f.state?.dirtyNote ?? '') : '',
+      dirtyOvernight: st.status === 'dirty' && dirtyOvernight.has(id),
       booking: f.booking
         ? {
             id: Number(f.booking.id),
@@ -361,7 +438,11 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
           }
         : null,
       merged: (groupOf.get(id) ?? []).map((m) => ({ spaceId: m, code: facts.get(m)!.space.code })),
-      guestText: guests.length ? guests.map((g) => g.guest).join('、') : usage ? `手牌 ${usage.tagCode} · ${usage.guests} 人` : null,
+      guestText: guests.length ? guests.map((g) => g.guest).join('、') : usage ? `手牌 ${usage.tagCode} · ${usage.guests} 人` : stay ? `手牌 ${stay.tagCode}` : null,
+      hallZone: zoneOf.has(id) && zoneName.has(zoneOf.get(id)!) ? { id: zoneOf.get(id)!, name: zoneName.get(zoneOf.get(id)!)! } : null,
+      wormhole: wormholeSpace
+        ? { stay: stay ? { id: stay.id, tagCode: stay.tagCode, gender: stay.gender, fee: showGuests ? stay.feeCents : 0, openedAt: new Date(stay.openedAt).toISOString() } : null }
+        : null,
       techText: techs.length ? techs.join('、') : null,
       since: guests.length ? earliest(all.map((s) => s.startedAt)) : (usage?.openedAt ?? null),
       amount: guests.length ? guests.reduce((n, g) => n + g.amount, 0) : null,
@@ -390,9 +471,12 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       maintenance: null,
       dirtySince: null,
       dirtyNote: '',
+      dirtyOvernight: false,
       booking: null,
       merged: [],
       guestText: r.stay ? (showGuests ? (r.stay.memberName ?? (r.stay.guestLabel || `手牌 ${r.stay.tagCode}`)) : `手牌 ${r.stay.tagCode}`) : null,
+      hallZone: null,
+      wormhole: null,
       techText: null,
       since: r.stay?.checkedInAt ?? null,
       amount: r.stay ? r.stay.chargedAmount : null,
@@ -436,13 +520,19 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
     });
   }
   const fullRead = ROOM_CENTER_READ.some((p) => can(actor, p));
+  const statusOnly = isRoomStatusOnly(actor);
   return {
     serverTime: at.toISOString(),
     businessDate: today,
     categories: views,
     total: count(rooms),
-    rooms: fullRead ? rooms : rooms.map(orderOnlyCard),
-    todayBookings: fullRead ? await todayBookings(db, today, showGuests) : [],
+    rooms: statusOnly ? rooms.map(statusOnlyCard) : fullRead ? rooms : rooms.map(orderOnlyCard),
+    todayBookings: fullRead && !statusOnly ? await todayBookings(db, today, showGuests) : [],
+    limits: { swapTechMinutes: rules.swapTechMinutes, revokeMinutes: rules.revokeMinutes, freeAfterClockOffMinutes: rules.freeAfterClockOffMinutes },
+    statusOnly,
+    hallZones,
+    wormholeFee: feeItem ? { itemId: Number(feeItem.id), name: feeItem.name, price: Number(feeItem.price) } : null,
+    goodsCategories: rules.goodsCategories,
   };
 }
 
@@ -519,6 +609,29 @@ function eventText(kind: RoomEventKind, d: Record<string, unknown>, tz: string):
       return parts([d.update ? '改维修信息' : '', s('reason'), typeof d.expectedAt === 'string' ? `预计 ${monthDayTime(new Date(d.expectedAt), tz)} 完成` : '']);
     case 'restore':
       return parts([`维修结束${s('reason') ? `（${s('reason')}）` : ''}`, s('note')]);
+    // 福田店整改（2026-11-26）
+    case 'revoke':
+      return parts([`手牌 ${s('tag')} 撤房，不收费`, n('voided') > 0 ? `作废 ${formatYuan(n('voided'))}` : '', `原因：${s('reason')}`]);
+    case 'backfill':
+      return parts([
+        `补单 · 手牌 ${s('tag')}`,
+        s('item'),
+        typeof d.startedAt === 'string' ? `${monthDayTime(new Date(d.startedAt), tz)}–${typeof d.endedAt === 'string' ? monthDayTime(new Date(d.endedAt), tz) : ''}` : '',
+        formatYuan(n('amount')),
+        `出单员 ${s('seller')}`,
+        s('slipNo') && s('slipNo') !== '补单' ? `手工单 ${s('slipNo')}` : '',
+        s('note'),
+      ]);
+    case 'room_fee':
+      return parts([`手牌 ${s('tag')} 房费 ${formatYuan(n('amount'))}`, `下钟后 ${n('freeMinutes')} 分钟内不计，计 ${n('chargedMinutes')} 分钟${d.capped ? '（封顶）' : ''}`]);
+    case 'add_item':
+      return parts([`手牌 ${s('tag')} 加项目 ${s('item')}`, s('technician'), formatYuan(n('amount'))]);
+    case 'goods':
+      return parts([`手牌 ${s('tag')} ${Array.isArray(d.items) ? (d.items as string[]).join('、') : ''}`, formatYuan(n('amount'))]);
+    case 'wormhole_in':
+      return parts([`手牌 ${s('tag')} 入住（${d.gender === 'female' ? '女' : '男'}）`, n('fee') ? `费用 ${formatYuan(n('fee'))}` : '不收费']);
+    case 'wormhole_out':
+      return parts([`手牌 ${s('tag')} 离开`]);
   }
 }
 
@@ -637,8 +750,11 @@ export async function lookupGuest(deps: Deps, raw: unknown): Promise<RoomGuestLo
   if (!v) throw conflict('TAG_NOT_IN_STORE', `手牌 ${tag} 没有在店客人，请核对牌号；客人要先在发卡台接待、领手牌`);
   const today = await businessDate(db, deps, new Date());
   const badge = v.memberId === null ? undefined : (await memberGradeBadges(db, [Number(v.memberId)], today)).get(Number(v.memberId));
-  const [reg] = await db<{ code: string; displayName: string }[]>`
-    SELECT sp.code, sp.display_name FROM room_registrations r JOIN spaces sp ON sp.id = r.space_id WHERE r.visit_id = ${v.id} AND r.status = 'open'`;
+  const [found] = await db<{ code: string; displayName: string; businessType: string; finished: boolean }[]>`
+    SELECT sp.code, sp.display_name, sp.business_type, ${finishedLobbyRegSql(db)} AS finished
+    FROM room_registrations r JOIN spaces sp ON sp.id = r.space_id WHERE r.visit_id = ${v.id} AND r.status = 'open'`;
+  // 休息大厅的床位上钟都下了的（FT-12）不算还登记着：再登记时那张自动收尾
+  const reg = found && !(isLobbyBusinessType(found.businessType) && found.finished) ? found : undefined;
   return {
     visitId: Number(v.id),
     tagCode: tag,
@@ -677,9 +793,36 @@ export function registerRoomCenterRoutes(app: FastifyInstance, deps: Deps) {
   };
 
   app.get('/api/room-center', { preHandler: boardRead }, async (req) => board(req));
-  app.get('/api/room-center/rooms/:id/history', { preHandler: read }, async (req) => roomHistory(deps, await space(req)));
-  app.get('/api/room-center/rooms/:id/checkout-preview', { preHandler: dispatch }, async (req) => roomCheckoutPreview(deps, await space(req)));
-  app.get('/api/room-center/guest', { preHandler: dispatch }, async (req) => lookupGuest(deps, req.query));
+  // 康美部的账户（FT-13）只看房态与手牌号：房间历史、结账预览、手牌上的客人（都带项目、技师、金额）一律不给
+  const notStatusOnly = async (req: { actor: Actor }) => {
+    if (isRoomStatusOnly(req.actor)) throw forbidden('康美部的账户在房态中心只看房态与客人的手牌号');
+  };
+  app.get('/api/room-center/rooms/:id/history', { preHandler: [read, notStatusOnly] }, async (req) => roomHistory(deps, await space(req)));
+  app.get('/api/room-center/rooms/:id/checkout-preview', { preHandler: [dispatch, notStatusOnly] }, async (req) => roomCheckoutPreview(deps, await space(req)));
+  app.get('/api/room-center/guest', { preHandler: [dispatch, notStatusOnly] }, async (req) => lookupGuest(deps, req.query));
+  // 福田店批次 4：同一工位加项目（FT-14）、零售与杂项（FT-17）、虫洞下单与离开（FT-18）
+  app.post('/api/room-center/rooms/:id/add-item', { preHandler: post }, async (req) => {
+    await addRoomItem(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  app.post('/api/room-center/rooms/:id/goods', { preHandler: guard('frontdesk.operate') }, async (req) => {
+    await postRoomGoods(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  app.post('/api/room-center/rooms/:id/wormhole', { preHandler: guard('frontdesk.operate') }, async (req) => {
+    await openWormhole(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  app.post('/api/room-center/rooms/:id/wormhole-leave', { preHandler: guardAny('frontdesk.operate', 'technician.dispatch') }, async (req) => {
+    await leaveWormhole(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  registerHallZoneRoutes(app, deps);
+  // 过夜的留宿确认单照片（FT-03）：先传附件（/api/oa/attachments），再挂到这间房的登记单上；可以开房以后补传
+  app.post('/api/room-center/rooms/:id/overnight-photo', { preHandler: [guardAny('technician.dispatch', 'frontdesk.operate', 'room.housekeep'), notStatusOnly] }, async (req) => {
+    await attachOvernightPhoto(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
   app.get('/api/room-center/seller', { preHandler: dispatch }, async (req) =>
     findSeller(sql, parse(z.object({ no: z.string('请填写出单员的工号').trim().min(1, '请填写出单员的工号').max(32) }), req.query).no),
   );
@@ -725,6 +868,19 @@ export function registerRoomCenterRoutes(app: FastifyInstance, deps: Deps) {
     await markCleaned(deps, await space(req), req.body, ctxOf(req));
     return board(req);
   });
+  // 福田店整改（2026-11-26，docs/FUTIAN_1126.md）：撤房（FT-09，调度那一类）、换技师（FT-06，就是转钟：挂账那一类）、补单（FT-19，补录纸质单的权限）
+  app.post('/api/room-center/rooms/:id/revoke', { preHandler: dispatch }, async (req) => {
+    await revokeRoom(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  app.post('/api/room-center/rooms/:id/swap-tech', { preHandler: post }, async (req) => {
+    await swapTechnician(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  app.post('/api/room-center/rooms/:id/backfill', { preHandler: guard('technician.dispatch', 'frontdesk.operate', 'frontdesk.backfill') }, async (req) => {
+    await backfillRoom(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
 
   // 「结果待确认」（8.1.16）：房间动作按编号只读查回（GET）、确认作废（POST abandon；之后原请求即使到达也整笔不做）。
   // 只认房态中心的两类，按原业务的权限（改房态要「客房打扫、维修」，换房、退房、并房要「钟房派钟」）——只管打扫的后勤没有前台权限，
@@ -755,4 +911,5 @@ export function registerRoomCenterRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/admin/room-categories', { preHandler: admin }, async (req) => saveCategory(deps, null, req.body, ctxOf(req)));
   app.put('/api/admin/room-categories/:id', { preHandler: admin }, async (req) => saveCategory(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.post('/api/admin/room-categories/defaults', { preHandler: admin }, async (req) => createDefaultCategories(deps, ctxOf(req)));
+  registerRoomCenterRulesRoutes(app, deps);
 }

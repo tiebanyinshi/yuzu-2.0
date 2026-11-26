@@ -66,15 +66,10 @@ async function send<T = unknown>(page: Page, method: 'post' | 'put', url: string
 }
 
 const tileOf = async (page: Page, roomNo: string) => (await getJson<RoomBoard>(page, '/api/rooms')).rooms.find((r) => r.roomNo === roomNo)!;
-/** 房态中心里的客房卡片（8.1.16）：data-status 是 free / in_use / dirty / maintenance；点卡片展开右侧详情栏（排版优化 2026-11-24），主按钮做原来点卡片做的 */
+/** 房态中心里的客房卡片（8.1.16）：data-status 是 free / in_use / dirty / maintenance；点卡片直接打开客房的对话框（福田店 FT-01 去掉了右侧详情栏） */
 const card = (page: Page, roomNo: string) => page.getByTestId(`rc-room-${roomNo}`);
 const openCard = async (page: Page, roomNo: string) => {
   await page.getByTestId(`rc-open-${roomNo}`).click();
-  await page
-    .getByTestId('rc-panel')
-    .filter({ has: page.getByTestId('rc-panel-code').getByText(roomNo, { exact: true }) })
-    .getByTestId('rc-panel-go')
-    .click();
 };
 /** 房态中心的「客房」页签（原来的「客房」页） */
 async function hotelTab(page: Page) {
