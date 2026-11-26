@@ -3,8 +3,8 @@
 // 打卡（考勤组要人脸）：没自拍、没通过录入、比对不通过都拒绝，通过记「人脸通过」并挂上自拍；比对服务不可用记「待人工核对」。
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { AttendanceSetup, FaceEnrollmentPage, FaceEnrollSaved, MyFace, NotificationPage, PunchResult, PunchToday } from '../src/shared/oa';
-import { faceVerifier, verifyFace } from '../src/server/integrations/face';
+import type { AttendanceSetup, FaceEnrollmentPage, FaceEnrollSaved, FaceServiceStatus, MyFace, NotificationPage, PunchResult, PunchToday } from '../src/shared/oa';
+import { faceServiceStatus, faceVerifier, verifyFace } from '../src/server/integrations/face';
 import { DEFAULT_STORE_ID } from '../src/server/lib/store-context';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
@@ -53,7 +53,7 @@ beforeAll(async () => {
 afterAll(async () => ctx.close());
 
 describe('OA-07 人脸录入与审核', () => {
-  it('比对服务：模拟按文件名判；没配置、出错、超时都当 unavailable', async () => {
+  it('比对服务：模拟按文件名判；没配置、出错、超时都当 unavailable；接入状态接口仅管考勤可读', async () => {
     const photo = { fileName: 'x.jpg', mime: 'image/jpeg', data: JPEG };
     expect((await verifyFace(faceVerifier({ mock: true }), { enrolled: [photo], probe: photo })).result).toBe('pass');
     expect((await verifyFace(faceVerifier({ mock: true }), { enrolled: [photo], probe: { ...photo, fileName: 'mismatch.jpg' } })).result).toBe('fail');
@@ -62,6 +62,13 @@ describe('OA-07 人脸录入与审核', () => {
     expect((await verifyFace(broken, { enrolled: [photo], probe: photo })).result).toBe('unavailable');
     const slow = { verify: () => new Promise<never>(() => undefined) };
     expect((await verifyFace(slow, { enrolled: [photo], probe: photo }, 20)).result).toBe('unavailable');
+
+    expect(faceServiceStatus({ mock: true })).toMatchObject({ mode: 'mock', provider: 'mock', fallbackPolicy: 'manual_review' });
+    expect(faceServiceStatus({ mock: false })).toMatchObject({ mode: 'unconfigured', provider: null, fallbackPolicy: 'manual_review' });
+    expect((await api(ctx.app, a.cookie, 'GET', '/api/oa/face/status')).status).toBe(403);
+    const st = await api<FaceServiceStatus>(ctx.app, ctx.owner, 'GET', '/api/oa/face/status');
+    expect(st.status).toBe(200);
+    expect(st.body).toMatchObject({ mode: 'mock', provider: 'mock', fallbackPolicy: 'manual_review' });
   });
 
   it('提交：3 张、待审核；同一人同时只有一份待审核；原样重提返回原来那份；别人重提不了', async () => {

@@ -78,8 +78,11 @@ export function FacePage() {
   const canSubmit = data && data.latest?.status !== 'pending';
   return (
     <>
-      <PageHeader dateMode="calendar" title="人脸录入" subtitle="考勤组要人脸的，人脸录入通过审核以后才能打卡" />
-      <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-7">
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title="人脸录入" subtitle="考勤组要人脸的，人脸录入通过审核以后才能打卡" />
+      </div>
+      <div className="mx-auto w-full max-w-3xl space-y-3 p-3 md:space-y-4 md:p-7">
+        <h1 className="text-[17px] font-bold text-ink md:hidden">人脸录入</h1>
         <ErpPendingPanel types={['oa_face_enroll']} filter={mine} className="space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: FACE_KEY })} />
         {q.isPending ? (
           <Skeleton className="h-60" />

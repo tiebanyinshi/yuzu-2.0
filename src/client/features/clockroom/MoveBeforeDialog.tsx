@@ -1,15 +1,18 @@
 // 排位调到某人前面（8.1.40，docs/V8140_B.md 第 3 节）：在同工种的在岗队列里选一位，把这位技师直接调到他前面；原因必填，记进钟房日志。
-// 不是收款、不跨天，与「排尾」一样不带操作编号：结果不明时刷新看板看排位就知道调没调。
+// 带操作编号（与休假、停牌、复牌同一类「结果待确认」，合并前 Codex 审查 fca1ba4）：没收到结果时留着原请求，
+// 在这里查回、原样重提或确认作废，处理好之前这位技师不能再调——不然超时的那一笔迟到生效，会把之后另调的顺序盖掉。
 
 import { useState } from 'react';
 import type { BoardTechnician, ClockroomBoard } from '@shared/clockroom';
-import { api, errorMessage } from '../../lib/api';
-import { useReasons } from '../../lib/session';
+import { useReasons, useSession } from '../../lib/session';
 import { cn } from '../../lib/utils';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { Dialog } from '../../components/Overlay';
 import { ReasonChips } from '../../components/ReasonChips';
 import { Button, Field, Input, Notice } from '../../components/ui';
+import { PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
+
+const doneOnFound = () => true as const;
 
 export function MoveBeforeDialog({
   technician,
@@ -20,18 +23,25 @@ export function MoveBeforeDialog({
   technician: BoardTechnician | null;
   board: ClockroomBoard;
   onClose: () => void;
-  onDone: (board: ClockroomBoard, text: string) => void;
+  /** 生效了：新看板；查回、作废以后为 null（按最新的看板刷新） */
+  onDone: (board: ClockroomBoard | null, text: string) => void;
 }) {
   const reasons = useReasons('queueMoveReasons');
+  const session = useSession();
   const [beforeId, setBeforeId] = useState<number | null>(null);
   const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   useResetOnOpen(!!technician, () => {
     setBeforeId(null);
     setReason('');
-    setError(null);
   });
+  const op = useFrontdeskOp<ClockroomBoard | true>({
+    type: 'technician_state',
+    visitId: null,
+    technicianId: technician?.id ?? null,
+    staffName: session.staff.displayName,
+    pick: doneOnFound,
+  });
+  const busy = op.busy;
   if (!technician) return null;
   const kind = technician.kind.trim();
   // 同工种在岗的，按排位；自己和紧挨在自己后面的那位（调过去也不变）不列
@@ -45,16 +55,14 @@ export function MoveBeforeDialog({
 
   const submit = async () => {
     if (problem || !target) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const next = await api.post<ClockroomBoard>(`/api/clockroom/technicians/${technician.id}/move-before`, { beforeId: target.id, reason: trimmed });
-      onDone(next, `${technician.techNo} 号调到 ${target.techNo} 号前面`);
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
+    const result = await op.submit((key) => ({
+      url: `/api/clockroom/technicians/${technician.id}/move-before`,
+      body: { clientKey: key, beforeId: target.id, reason: trimmed },
+      tagCodes: [label],
+      summary: `调到 ${target.techNo} 号前面：${trimmed}`,
+      amount: null,
+    }));
+    if (result) onDone(result === true ? null : result, `${technician.techNo} 号调到 ${target.techNo} 号前面`);
   };
 
   return (
@@ -67,14 +75,15 @@ export function MoveBeforeDialog({
         <>
           <span className="mr-auto self-center text-[13px] text-clay">{problem}</span>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
-            取消
+            {op.pending ? '先关掉' : '取消'}
           </Button>
-          <Button variant="primary" disabled={!!problem} loading={busy} onClick={() => void submit()} data-testid="move-before-confirm">
+          <Button variant="primary" disabled={!!problem || op.locked} loading={busy} onClick={() => void submit()} data-testid="move-before-confirm">
             {target ? `调到 ${target.techNo} 号前面` : '调排位'}
           </Button>
         </>
       }
     >
+      <PendingPanel op={op} onResolved={(r) => onDone(r === true ? null : r, '调排位那一笔已处理')} />
       <Field label="调到谁前面">
         {options.length === 0 ? (
           <p className="rounded-lg border border-dashed border-line-strong px-3 py-4 text-center text-[13px] text-ink-3">同工种没有别的在岗技师可以调</p>
@@ -104,7 +113,7 @@ export function MoveBeforeDialog({
         <ReasonChips reasons={reasons} value={reason} onPick={setReason} disabled={busy} />
         <Input id="move-before-reason" value={reason} maxLength={100} placeholder="例如：补回刚才跳过的" onChange={(e) => setReason(e.target.value)} data-testid="move-before-reason" />
       </Field>
-      {error && <Notice tone="error" title={error} className="mt-4" />}
+      {op.state.phase === 'error' && <Notice tone="error" title={op.state.message} className="mt-4" />}
     </Dialog>
   );
 }

@@ -85,6 +85,15 @@ export interface TrainingFileDetail {
   viewers: TrainingViewer[];
 }
 
+/** 知识库检索结果（员工办公 v1.1 第 5 批，docs/OA_MOBILE.md） */
+export interface TrainingSearchItem {
+  folderId: number;
+  folderName: string;
+  folderKind: TrainingFolderKind;
+  departmentKey: string | null;
+  file: TrainingFile;
+}
+
 /** 能上传的格式：类型 → 扩展名、页面里怎么看 */
 export const TRAINING_FORMATS: Record<string, { ext: string[]; view: TrainingViewKind; label: string }> = {
   'application/pdf': { ext: ['pdf'], view: 'pdf', label: 'PDF' },
@@ -151,3 +160,59 @@ export function trainingFileNameProblem(name: string): string | null {
 /** 培训图片在页面里直接显示：一张最多 4000 万像素、一条边最多 16384 像素（Codex 安全审查 9b1dd16） */
 export const TRAINING_IMAGE_MAX_PIXELS = 40_000_000;
 export const TRAINING_IMAGE_MAX_SIDE = 16384;
+
+/** PDF 内嵌图片像素上限（Codex 安全审查 bfc32cd）：前端 PDF.js 预览与服务端上传完成共用，单张最多 1600 万像素（约 400 DPI A4）、一条边最多 16384 */
+export const TRAINING_PDF_MAX_IMAGE_PIXELS = 16_000_000;
+export const TRAINING_PDF_MAX_IMAGE_SIDE = 16384;
+
+/**
+ * 分块上传操作编号（UUIDv7，内嵌毫秒时间戳；Codex 审查 bfc32cd）：
+ *   · 编号有效期 7 天（允许客户端时钟最多超前 24 小时）；
+ *   · 「不传了」的作废记录保留 10 天（大于 7 天 + 24 小时），定时清理删掉作废记录时，对应的编号早已过期，永远不能重新打开为 open。
+ */
+export const TRAINING_UPLOAD_KEY_TTL_DAYS = 7;
+export const TRAINING_UPLOAD_KEY_FUTURE_MS = 24 * 60 * 60 * 1000;
+export const TRAINING_CANCELLED_KEEP_DAYS = 10;
+
+const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** 生成带时间戳的上传操作编号（RFC 9562 UUIDv7；内网 HTTP 浏览器也能用） */
+export function newTrainingUploadKey(nowMs = Date.now()): string {
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === 'function') globalThis.crypto.getRandomValues(bytes);
+  else for (let i = 0; i < 16; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  const t = Math.max(0, Math.floor(nowMs));
+  // 前 48 位：大端毫秒时间戳（避免 32 位位运算溢出，用除法取高 16 位）
+  const hi = Math.floor(t / 0x100000000);
+  const lo = t >>> 0;
+  bytes[0] = (hi >>> 8) & 0xff;
+  bytes[1] = hi & 0xff;
+  bytes[2] = (lo >>> 24) & 0xff;
+  bytes[3] = (lo >>> 16) & 0xff;
+  bytes[4] = (lo >>> 8) & 0xff;
+  bytes[5] = lo & 0xff;
+  // version = 7 (0111), variant = RFC 4122/9562 (10xx)
+  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** 从 UUIDv7 上传编号里取出毫秒时间戳；不是合法 UUIDv7 返回 null */
+export function trainingUploadKeyTime(key: string): number | null {
+  if (!UUID_V7_RE.test(key)) return null;
+  const hex = key.slice(0, 8) + key.slice(9, 13);
+  const ms = Number.parseInt(hex, 16);
+  return Number.isSafeInteger(ms) ? ms : null;
+}
+
+export type TrainingUploadKeyState = 'valid' | 'expired' | 'future' | 'invalid';
+
+/** 判断一个上传操作编号在 nowMs 时刻的状态 */
+export function trainingUploadKeyState(key: string, nowMs: number): TrainingUploadKeyState {
+  const t = trainingUploadKeyTime(key);
+  if (t === null) return 'invalid';
+  if (nowMs - t > TRAINING_UPLOAD_KEY_TTL_DAYS * 86_400_000) return 'expired';
+  if (t - nowMs > TRAINING_UPLOAD_KEY_FUTURE_MS) return 'future';
+  return 'valid';
+}

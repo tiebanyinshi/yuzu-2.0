@@ -20,8 +20,8 @@ const queue = async (kind?: string) =>
     .sort((a, b) => a.position! - b.position!)
     .map((t) => t.techNo);
 const state = (techNo: string, action: string, reason?: string) => api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/technicians/${tech[techNo]}/state`, { action, ...(reason ? { reason } : {}) });
-const move = (techNo: string, before: string, reason = '客人等着，先叫他', cookie = ctx.clerk) =>
-  api(ctx.app, cookie, 'POST', `/api/clockroom/technicians/${tech[techNo]}/move-before`, { beforeId: tech[before], reason });
+const move = (techNo: string, before: string, reason = '客人等着，先叫他', cookie = ctx.clerk, clientKey: string = randomUUID()) =>
+  api(ctx.app, cookie, 'POST', `/api/clockroom/technicians/${tech[techNo]}/move-before`, { clientKey, beforeId: tech[before], reason });
 const enter = async () => {
   tagNo += 1;
   const code = `B${String(tagNo).padStart(3, '0')}`;
@@ -125,7 +125,7 @@ describe('排位调到某人前面', () => {
     await lineUp(['01', '02', '03', '04']);
     expect(await queue()).toEqual(['01', '02', '03', '04']);
     // 原因必填
-    const bad = await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/technicians/${tech['04']}/move-before`, { beforeId: tech['02'], reason: '叫' });
+    const bad = await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/technicians/${tech['04']}/move-before`, { clientKey: randomUUID(), beforeId: tech['02'], reason: '叫' });
     expect(bad.body.error).toMatchObject({ code: 'REASON_REQUIRED' });
     const r = await move('04', '02');
     expect(r.status, JSON.stringify(r.body)).toBe(200);
@@ -299,5 +299,33 @@ describe('一次给多张手牌派钟', () => {
         })
       ).status,
     ).toBe(403);
+  });
+
+  it('调排位带操作编号（合并前 Codex 审查 fca1ba4）：同一编号重提不再调一次；确认作废以后迟到的原请求不生效、之后另调的顺序不会被盖掉', async () => {
+    for (const no of ['01', '02', '03', '04']) {
+      const s0 = await state(no, 'sign_in');
+      expect(s0.status).toBe(200);
+    }
+    await lineUp(['01', '02', '03', '04']);
+    // 前面几条用例留下的别的技师（05……）可能还在岗：只看这四位的相对顺序
+    const q4 = async () => (await queue()).filter((n) => ['01', '02', '03', '04'].includes(n));
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/technicians/${tech['04']}/move-before`, { beforeId: tech['02'], reason: '没有编号' })).status).toBe(400);
+
+    const key = randomUUID();
+    expect((await move('04', '01', '客人等着，先叫他', ctx.clerk, key)).status).toBe(200);
+    expect(await q4()).toEqual(['04', '01', '02', '03']);
+    // 之后另调：01 调到 04 前面；原来那一笔原样重提不会把 04 再调回去
+    expect((await move('01', '04')).status).toBe(200);
+    expect(await q4()).toEqual(['01', '04', '02', '03']);
+    expect((await move('04', '01', '客人等着，先叫他', ctx.clerk, key)).status).toBe(200);
+    expect(await q4()).toEqual(['01', '04', '02', '03']);
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/ops/${key}?type=technician_state`)).body).toMatchObject({ found: true, technicianId: tech['04'] });
+
+    // 没收到结果、确认作废：迟到的原请求拒绝，顺序不变
+    const lost = randomUUID();
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/ops/${lost}/abandon`, { type: 'technician_state' })).status).toBe(200);
+    const late = await move('03', '01', '迟到的那一笔', ctx.clerk, lost);
+    expect(late.body.error?.code).toBe('OP_ABANDONED');
+    expect(await q4()).toEqual(['01', '04', '02', '03']);
   });
 });

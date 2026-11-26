@@ -327,8 +327,8 @@ export type AuditAction =
   | 'design_asset_edit'
   | 'design_asset_archive'
   | 'design_slot_assign'
-  // 8.1.9 零采备用金：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）
-  | 'pool_use'
+  // 备用金申用（8.1.42；8.1.42 以前的记录是 pool_use）：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）
+  | 'petty_use'
   // 8.1.9 库管入库台账导入
   | 'receipt_import'
   // 8.1.20 出入库台账导入
@@ -395,7 +395,15 @@ export type AuditAction =
   | 'dish_op_abandoned'
   // 8.1.44 前台备注（docs/V8144_CASHIER.md）：写一条、撤下一条
   | 'visit_remark'
-  | 'visit_remark_removed';
+  | 'visit_remark_removed'
+  // 员工办公 v1.1 第 2 批（docs/OA_MOBILE.md）：排班发布、排班授权与撤销
+  | 'oa_schedule_published'
+  | 'oa_schedule_grant_created'
+  | 'oa_schedule_grant_revoked'
+  // 员工办公 v1.1 第 5 批（docs/OA_MOBILE.md）：公司公告发布、编辑与撤回
+  | 'oa_announcement_published'
+  | 'oa_announcement_updated'
+  | 'oa_announcement_recalled';
 
 export interface AuditEntry {
   staffId: number | null;

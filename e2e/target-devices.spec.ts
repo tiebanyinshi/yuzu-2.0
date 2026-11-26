@@ -44,8 +44,8 @@ type PageKey =
   | 'dining-ledger'
   | 'dining-voids'
   | 'admin-dining'
-  // 8.1.9：零采备用金、库管入库、签赠（后台知识库、管家部与客户部的签赠台账）
-  | 'pool'
+  // 8.1.9：库管入库、签赠（后台知识库、管家部与客户部的签赠台账）；8.1.42 备用金申用（原来 8.1.9 的零采备用金）
+  | 'petty-uses'
   | 'direct-receipt'
   | 'admin-gifts'
   | 'gift-ledger-concierge'
@@ -80,7 +80,7 @@ const DEVICES: Device[] = [
       'dining-ledger',
       'dining-voids',
       'admin-dining',
-      'pool',
+      'petty-uses',
       'direct-receipt',
       'admin-gifts',
       'gift-ledger-customer',
@@ -105,7 +105,7 @@ const DEVICES: Device[] = [
       'dining-receipt',
       'dining-tables',
       'dining-ledger',
-      'pool',
+      'petty-uses',
       'gift-ledger-concierge',
       'requests-stock',
       'dining-dishes',
@@ -1146,10 +1146,10 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await expect(page.getByTestId('urgent-contract-due').or(page.getByText('没有要补合同的急采'))).toBeVisible();
     await expectFits(page);
   },
-  // 8.1.9 零采备用金（总额没配置时顶上有提示，照样不横向滚动）
-  pool: async (page) => {
-    await page.goto('/erp/pool');
-    await expect(page.getByTestId('pool-page')).toBeVisible();
+  // 8.1.42 备用金申用（原来 8.1.9 的零采备用金；部门还没有备用金时顶上有提示，照样不横向滚动）
+  'petty-uses': async (page) => {
+    await page.goto('/erp/petty/uses');
+    await expect(page.getByTestId('pu-page')).toBeVisible();
     await expectFits(page);
   },
   // 8.1.9 库管入库：不选采购单的收货表单

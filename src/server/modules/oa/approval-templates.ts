@@ -6,6 +6,7 @@
 //   · 补卡：今天及以前 30 天内、自己那天排了的班；那张卡的打卡窗口已经过了、还没有、没有审批中的同一张补卡单（OA-13）。
 
 import { shiftDate } from '@shared/labels';
+import { MAKEUP_BACK_DAYS } from '@shared/oa';
 import { formAttachmentIds, halfDayKey, type ApprovalField, type ApprovalForm, type HalfDay } from '@shared/oa-approval';
 import type { Tx } from '../../db';
 import type { Actor } from '../../lib/context';
@@ -13,9 +14,6 @@ import { unprocessable } from '../../lib/errors';
 import { formatYuan } from '@shared/money';
 import { checkMakeup, checkOvertimeKind, leaveDays, onLeaveApproved, onMakeupApproved, onTripApproved, type LinkEnv } from './attendance-link';
 import { lockBalance, lockLeaveType } from './leave';
-
-/** 补卡最多补几天以前的 */
-const MAKEUP_BACK_DAYS = 30;
 
 export interface PrepareContext {
   applicant: Actor;
@@ -99,11 +97,17 @@ export const TEMPLATE_HOOKS: Record<string, ApprovalHooks> = {
       if (date < shiftDate(today, -MAKEUP_BACK_DAYS)) throw bad(`只能补 ${MAKEUP_BACK_DAYS} 天以内的卡`);
       const [s] = await tx<{ name: string }[]>`
         SELECT sh.name FROM oa_schedules o JOIN oa_shifts sh ON sh.id = o.shift_id
-        WHERE o.staff_id = ${applicant.id} AND o.work_date = ${date} AND o.shift_id = ${form.shiftId as number}`;
+        WHERE o.staff_id = ${applicant.id} AND o.work_date = ${date} AND o.shift_id = ${form.shiftId as number} AND o.status = 'published'`;
       if (!s) throw bad('那天没有排这个班，请重新选');
       await checkMakeup(tx, applicant.id, form, env);
       return { title: `补卡 · ${date} ${s.name}${form.kind as string}` };
     },
     onApproved: onMakeupApproved,
+  },
+  seal: {
+    async prepare(_tx, { form }) {
+      const title = `用章 · ${form.sealType as string} · ${form.docName as string}`;
+      return { title: title.slice(0, 100) };
+    },
   },
 };

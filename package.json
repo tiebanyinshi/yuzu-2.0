@@ -1,6 +1,6 @@
 {
   "name": "yuzu",
-  "version": "8.1.41",
+  "version": "8.1.43",
   "private": true,
   "description": "柚子 yuzu · 汤泉门店经营系统（会员充值、消费、撤销、流水与日结）",
   "type": "module",
@@ -43,7 +43,7 @@
     "@fontsource/playfair-display": "5.3.0",
     "@mlightcad/libredwg-web": "0.8.1",
     "fastify": "^5.12.7",
-    "pdfjs-dist": "6.4.299",
+    "pdfjs-dist": "6.5.438",
     "postgres": "^3.4.9",
     "zod": "^4.6.7"
   },

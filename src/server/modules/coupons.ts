@@ -1115,6 +1115,8 @@ const COUPON_SELECT = (db: Db) => db`
   SELECT c.id, c.code, c.template_id, t.name AS template_name, t.kind, t.face_value, t.rate_percent, t.max_off, t.threshold, t.scope,
          t.scope_categories, t.scope_items, t.exchange_item_id, t.exchange_ticket_type_id, xi.name AS exchange_item_name, xt.name AS exchange_ticket_name,
          t.buy_item_id, bi.name AS buy_item_name,
+         -- 8.1.40 券的使用限制：已发的券、无记名券、小程序领到的券说明里也要写（合并前 Codex 审查 fca1ba4）
+         t.weekdays, t.time_from, t.time_to, t.store_ids, t.designated_only,
          c.member_id, m.name AS member_name, c.valid_from, c.valid_to, c.status, i.issue_no, i.kind AS issue_kind, i.issued_at,
          s.display_name AS issued_by_name, ck.checkout_no,
          (SELECT e.amount FROM coupon_events e WHERE e.coupon_id = c.id AND e.kind = 'use' AND e.checkout_id = c.checkout_id ORDER BY e.id DESC LIMIT 1) AS used_amount,
@@ -1175,7 +1177,7 @@ export async function memberCoupons(db: Db, memberId: number, today: string): Pr
 const BATCH_SELECT = (db: Db) => db`
   SELECT i.id, i.issue_no, i.template_id, t.name AS template_name, t.kind, t.face_value, t.rate_percent, t.max_off, t.threshold, t.scope,
          t.scope_categories, t.scope_items, t.exchange_item_id, t.exchange_ticket_type_id, xi.name AS exchange_item_name, xt.name AS exchange_ticket_name,
-         t.buy_item_id, bi.name AS buy_item_name,
+         t.buy_item_id, bi.name AS buy_item_name, t.weekdays, t.time_from, t.time_to, t.store_ids, t.designated_only,
          i.quantity, i.reason AS note, i.issued_at, s.display_name AS issued_by_name,
          (SELECT min(valid_from) FROM coupons WHERE issue_id = i.id) AS valid_from, (SELECT max(valid_to) FROM coupons WHERE issue_id = i.id) AS valid_to,
          (SELECT json_agg(json_build_object('status', status, 'validFrom', valid_from, 'validTo', valid_to)) FROM coupons WHERE issue_id = i.id) AS coupons

@@ -197,17 +197,12 @@ export function registerOaAttendanceSetupRoutes(app: FastifyInstance, { sql, con
             const today = todayIn(config.timezone);
             const used = await tx<{ staffId: number; last: string }[]>`
               SELECT staff_id, max(work_date)::text AS last FROM oa_schedules WHERE shift_id = ${shiftId} AND work_date >= ${today} GROUP BY staff_id`;
-            const problem = used.length
-              ? await overlapProblem(
-                  tx,
-                  used.map((u) => Number(u.staffId)),
-                  today,
-                  used
-                    .map((u) => u.last)
-                    .sort()
-                    .at(-1)!,
-                )
-              : null;
+            const last = used
+              .map((u) => u.last)
+              .sort()
+              .at(-1)!;
+            const usedIds = used.map((u) => Number(u.staffId));
+            const problem = used.length ? ((await overlapProblem(tx, usedIds, today, last, 'intended')) ?? (await overlapProblem(tx, usedIds, today, last, 'published'))) : null;
             if (problem) throw unprocessable('SCHEDULE_OVERLAP', `改了以后已排的班会重叠：${problem}。先到「排班」里调开或勾「连班」再改`);
           }
         }

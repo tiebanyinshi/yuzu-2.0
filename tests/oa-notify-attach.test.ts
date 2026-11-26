@@ -59,6 +59,17 @@ describe('OA-03 站内通知', () => {
     r = await api(ctx.app, ctx.clerk, 'POST', '/api/oa/notifications/read', { all: true });
     expect(r.body).toEqual({ unread: 0 });
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/oa/notifications/read', { ids: [] })).status).toBe(400);
+
+    // 员工办公 v1.1 第 4 批：?breakdown=1 把系统通知未读（排除 im_message）单独拆出，防止「消息」Tab 与聊天未读重复计数
+    await notify(ctx.sql, [clerkId], { kind: 'approval_todo', title: '有审批待办', link: '/oa/approvals' });
+    const conv = await api<{ id: number }>(ctx.app, ctx.owner, 'POST', '/api/oa/im/direct', { staffId: clerkId });
+    expect(conv.status, JSON.stringify(conv.body)).toBe(200);
+    const sentMsg = await api(ctx.app, ctx.owner, 'POST', `/api/oa/im/conversations/${conv.body.id}/messages`, { clientKey: randomUUID(), kind: 'text', body: '测试合并红点' });
+    expect(sentMsg.status, JSON.stringify(sentMsg.body)).toBe(201);
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/oa/notifications/unread-count')).body).toEqual({ unread: 2 });
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/oa/notifications/unread-count?breakdown=1')).body).toEqual({ unread: 2, systemUnread: 1 });
+    await api(ctx.app, ctx.clerk, 'POST', '/api/oa/notifications/read', { all: true });
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/oa/notifications/unread-count?breakdown=1')).body).toEqual({ unread: 0, systemUnread: 0 });
   });
 });
 

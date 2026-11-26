@@ -4,6 +4,8 @@
 //   · 正式环境还没接供应商：返回 unavailable，打卡照常、记「人脸待人工核对」（不因为服务没接上就打不了卡）。
 //   · 在事务外调用（不在事务里等外部服务，8.1.3）。照片按原样交给比对服务，不在这里落盘、不记日志。
 
+import type { FaceServiceStatus } from '@shared/oa';
+
 export interface FacePhoto {
   fileName: string;
   mime: string;
@@ -32,6 +34,24 @@ const unconfigured: FaceVerifyService = {
 /** 按运行环境选比对服务：模拟模式用模拟，其余还没有供应商（返回 unavailable） */
 export function faceVerifier(cfg: { mock: boolean }): FaceVerifyService {
   return cfg.mock ? mockVerifier : unconfigured;
+}
+
+/** 供后台「考勤设置 → 人脸审核」展示当前人脸比对的接入状态（EO3） */
+export function faceServiceStatus(cfg: { mock: boolean }): FaceServiceStatus {
+  if (cfg.mock) {
+    return {
+      mode: 'mock',
+      provider: 'mock',
+      fallbackPolicy: 'manual_review',
+      note: '当前为开发/测试模拟模式（自拍文件名含 mismatch 记为不通过，其余通过）；正式环境未配置第三方供应商前，打卡照常并记为「人脸待人工核对」。',
+    };
+  }
+  return {
+    mode: 'unconfigured',
+    provider: null,
+    fallbackPolicy: 'manual_review',
+    note: '尚未接入第三方人脸比对供应商（待店主选定腾讯云 / 阿里云 / 百度等）；期间开启人脸打卡的考勤组仍可正常提交，系统会标记为「人脸待人工核对」，不会阻断打卡。',
+  };
 }
 
 /** 调比对服务：出错、超时一律当 unavailable（不让比对服务的故障挡住打卡） */

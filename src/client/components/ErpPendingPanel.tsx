@@ -51,6 +51,8 @@ const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
   // OA-10 办公审批的提交与处理：那一张审批单
   oa_approval_submit: 'approval',
   oa_approval_act: 'approval',
+  // 员工办公 v1.1 第 5 批：公司公告（发布、修改、撤回均返回 { announcement, replayed }）
+  oa_announcement: 'announcement',
   // 赠品登记（8.0.1）：返回那条登记
   gift_receipt: 'gift',
   // 回款登记（8.0.7）：返回那笔回款；资产建卡：返回建的第一张卡
@@ -71,9 +73,9 @@ const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
   // 供应商付款、期初未付登记（v0.7.22）
   payment: 'payment',
   opening_payable: 'opening',
-  // 登记会员权益使用（v0.7.24）：返回那条登记；零采备用金的申用（8.1.9）：返回那笔申用
+  // 登记会员权益使用（v0.7.24）：返回那条登记；备用金申用（8.1.42）：返回那笔申用
   benefit_use: 'use',
-  pool_use: 'use',
+  petty_use: 'use',
   // 邀请体验、赠送会籍（v0.7.25）：返回那条临时身份
   member_trial: 'trial',
   // 会员实体卡（v0.7.28）：发卡、补卡返回那张卡
@@ -81,6 +83,8 @@ const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
   // 会员体系收尾（v0.7.26）：退储值返回那张退储值单，停用 / 启用返回那位会员，合并返回那张合并单
   member_refund: 'refund',
   member_merge: 'merge',
+  // 生成礼品卡（8.1.40）：返回那一批
+  gift_card_batch: 'batch',
   // 次卡（v0.7.28）：售卡、退卡都返回那张卡
   count_card_sale: 'card',
   count_card_refund: 'card',

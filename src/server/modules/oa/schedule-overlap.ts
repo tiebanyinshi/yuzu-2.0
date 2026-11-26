@@ -23,17 +23,23 @@ export const liveSchedule = (db: Db) => db`
 
 /**
  * 这几位员工在 from ～ to 之间的排班，与前后几天的排班打卡时段重叠：返回说明（标了连班的那一对不算）。
- * 只报至少有一条落在 from ～ to 里的那一对（范围外的老排班之间不算到这一次头上）
+ * 只报至少有一条落在 from ～ to 里的那一对（范围外的老排班之间不算到这一次头上）。
+ * mode = 'intended'（默认）按草稿生效后的最终样子核对（忽略 pending_delete，取 draft_consecutive）；
+ * mode = 'published' 按当前已发布的生效排班核对（发布子范围时防止与范围外未发布的草稿状态错位造成线上重叠）。
  */
-export async function overlapProblem(tx: Tx, staffIds: number[], from: string, to: string): Promise<string | null> {
+export async function overlapProblem(tx: Tx, staffIds: number[], from: string, to: string, mode: 'intended' | 'published' = 'intended'): Promise<string | null> {
   if (!staffIds.length) return null;
   const rows = await tx<
     { staffId: number; workDate: string; consecutive: boolean; name: string; staffName: string; startMinute: number; endMinute: number; inAdvanceMinutes: number; outDelayMinutes: number }[]
   >`
-    SELECT o.staff_id, o.work_date::text AS work_date, o.consecutive, sh.name, s.display_name AS staff_name,
+    SELECT o.staff_id, o.work_date::text AS work_date,
+           ${mode === 'intended' ? tx`coalesce(o.draft_consecutive, o.consecutive)` : tx`o.consecutive`} AS consecutive,
+           sh.name, s.display_name AS staff_name,
            sh.start_minute, sh.end_minute, sh.in_advance_minutes, sh.out_delay_minutes
     FROM oa_schedules o JOIN oa_shifts sh ON sh.id = o.shift_id JOIN staff s ON s.id = o.staff_id
-    WHERE o.staff_id IN ${tx(staffIds)} AND ${liveSchedule(tx)} AND o.work_date BETWEEN ${shiftDate(from, -OVERLAP_LOOKAROUND_DAYS)} AND ${shiftDate(to, OVERLAP_LOOKAROUND_DAYS)}
+    WHERE o.staff_id IN ${tx(staffIds)} AND ${liveSchedule(tx)}
+      AND ${mode === 'intended' ? tx`NOT o.pending_delete` : tx`o.status = 'published'`}
+      AND o.work_date BETWEEN ${shiftDate(from, -OVERLAP_LOOKAROUND_DAYS)} AND ${shiftDate(to, OVERLAP_LOOKAROUND_DAYS)}
     ORDER BY o.staff_id, o.work_date, sh.start_minute`;
   // 按员工分开、按打卡时段开始排序，往后比到开始时间已经不早于这一条的结束为止（不两两全比：几千人 × 几十天的排班也不卡住）
   const byStaff = new Map<number, ((typeof rows)[number] & { from: number; to: number; inRange: boolean })[]>();

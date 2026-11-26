@@ -4,9 +4,9 @@
 // 列表每页 50 份、可按姓名或登录名找（已通过的会越来越多，不能只看最近的）。
 
 import { useState } from 'react';
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Undo2, X } from 'lucide-react';
-import { FACE_PHOTO_LABELS, type FaceEnrollment, type FaceEnrollmentPage, type FaceReviewSaved } from '@shared/oa';
+import { FACE_PHOTO_LABELS, type FaceEnrollment, type FaceEnrollmentPage, type FaceReviewSaved, type FaceServiceStatus } from '@shared/oa';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { ErpPendingStoreError, sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { useReasons, useSession } from '../../lib/session';
@@ -21,11 +21,18 @@ import { Button, Card, Input, Notice, Segmented, Skeleton } from '../../componen
 type Tab = 'pending' | 'approved';
 type Decision = 'approve' | 'reject' | 'revoke';
 
+const FACE_MODE_TITLE: Record<FaceServiceStatus['mode'], string> = {
+  mock: '人脸比对：开发/测试模拟模式',
+  unconfigured: '人脸比对：未接入第三方供应商（兜底人工核对）',
+  live: '人脸比对：已接入正式服务',
+};
+
 export function FaceReviewTab() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>('pending');
   const [search, setSearch] = useState('');
   const [term, setTerm] = useState('');
+  const statusQ = useQuery({ queryKey: ['oa', 'face-service-status'], queryFn: () => api.get<FaceServiceStatus>('/api/oa/face/status') });
   const q = useInfiniteQuery({
     queryKey: ['oa', 'face-enrollments', tab, term],
     queryFn: ({ pageParam }) => api.get<FaceEnrollmentPage>(`/api/oa/face/enrollments?status=${tab}${term ? `&q=${encodeURIComponent(term)}` : ''}${pageParam ? `&before=${pageParam}` : ''}`),
@@ -37,8 +44,14 @@ export function FaceReviewTab() {
   const { busy, decide, blocked } = useDecide();
   const rejectReasons = useReasons('faceRejectReasons');
   const revokeReasons = useReasons('faceRevokeReasons');
+  const svc = statusQ.data;
   return (
     <Card className="p-5" data-testid="att-faces">
+      {svc && (
+        <Notice tone={svc.mode === 'live' ? 'success' : 'info'} title={FACE_MODE_TITLE[svc.mode]} className="mb-4" data-testid="face-service-status">
+          {svc.note}
+        </Notice>
+      )}
       <ErpPendingPanel types={['oa_face_review']} className="mb-4 space-y-2" onFound={() => void qc.invalidateQueries({ queryKey: ['oa', 'face-enrollments'] })} />
       <div className="flex flex-wrap items-center gap-2">
         <Segmented<Tab>

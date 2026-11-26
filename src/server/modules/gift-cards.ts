@@ -3,7 +3,9 @@
 // 不另建一套卡：礼品卡就是匿名卡会员（不要手机号，会员号就是卡号），一批一次生成（最多 200 张），一个事务、一个操作编号。
 // 送出去以后在会员资料里「转实名」填手机号（转实名、改手机号的规矩照旧）；要预存金额的，按这张卡（会员号）照常充值，钱只在会员钱包里。
 // 批次列表写每一批几张、已经绑了手机号的几张、预存了多少（本金余额合计）；导出这一批的卡号（印卡用）。
-// 锁：批次的操作编号（唯一约束兜底）→ 新会员行。不碰钱包。
+// 权限：管券的（coupon.manage）——与「发券」页同一项（合并前 Codex 审查 c79ca75：页面只给管券的进，接口也一样）。
+// 锁：作废登记（op_fences，按编号）→ 批次的操作编号（唯一约束兜底）→ 新会员行 → 开卡送券（与单个建档一样）。不碰钱包。
+// 页面上与生成无记名券同一套「结果待确认」（迁移 322）：发出前本机存好编号与原请求，没收到结果时查回、原样重提或确认作废。
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -12,12 +14,16 @@ import { MAX_GIFT_CARD_BATCH, type GiftCardBatch } from '@shared/gift-cards';
 import { isUniqueViolation, type Db } from '../db';
 import { guard } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
+import { csvReply, toCsv } from '../lib/csv';
 import { ctxOf, type Deps, type OpContext } from '../lib/context';
 import { conflict, notFound } from '../lib/errors';
 import { hashRequest } from '../lib/idempotency';
 import { idParam, parse } from '../lib/validate';
 import { nextDocNo } from '../lib/tx';
 import { currentStoreId } from '../lib/store-context';
+import { assertNotFenced } from '../lib/fences';
+import { erpOpAbandoned } from './erp-ops';
+import { issueOpenCardCoupons } from './coupons';
 import { loadSettings } from './settings';
 
 const BatchInput = z.object({
@@ -42,6 +48,8 @@ export async function createGiftCardBatch(deps: Deps, raw: unknown, ctx: OpConte
   if (prior) return prior;
   try {
     const id = await deps.sql.begin(async (tx) => {
+      // 页面确认作废过的编号（「结果待确认」里点了作废）：迟到的原请求不再生成（Codex 审查 8a7023d）
+      await assertNotFenced(tx, clientKey, 'gift_card_batch', erpOpAbandoned);
       const at = ctx.at ?? new Date();
       const date = businessDateOf(at, deps.config.timezone, (await loadSettings(tx)).businessDayStartHour);
       const batchNo = await nextDocNo(tx, 'gift_card_batch', 'LP', date);
@@ -50,10 +58,13 @@ export async function createGiftCardBatch(deps: Deps, raw: unknown, ctx: OpConte
         VALUES (${batchNo}, ${payload.label}, ${payload.quantity}, ${payload.note}, ${clientKey}, ${requestHash}, ${ctx.actor.id}, ${at})
         RETURNING id`;
       // 匿名卡会员：姓名先写礼品卡的名称，没有手机号；会员号（YZ 开头）就是卡号
-      await tx`
+      const made = await tx<{ id: number }[]>`
         INSERT INTO members (member_no, name, phone, card_type, note, created_by, gift_batch_id)
         SELECT 'YZ' || lpad(nextval('member_no_seq')::text, 5, '0'), ${payload.label}, NULL, 'anonymous', ${`礼品卡 ${batchNo}`}, ${ctx.actor.id}, ${b!.id}
-        FROM generate_series(1, ${payload.quantity})`;
+        FROM generate_series(1, ${payload.quantity})
+        RETURNING id`;
+      // 开卡送券：与单个建档同一套规则（合并前 Codex 审查 1c79c00：礼品卡也是新开的卡，不能漏掉开卡礼）
+      for (const m of made) await issueOpenCardCoupons(tx, deps, Number(m.id), ctx);
       await writeAudit(tx, {
         staffId: ctx.actor.id,
         action: 'gift_card_batch',
@@ -90,7 +101,8 @@ export async function listGiftCardBatches(db: Db): Promise<GiftCardBatch[]> {
 }
 
 export async function getGiftCardBatch(db: Db, id: number): Promise<GiftCardBatch> {
-  const [r] = await db<GiftCardBatch[]>`${BATCH_SELECT(db)} WHERE b.id = ${id} GROUP BY b.id, s.display_name`;
+  // 只认当前门店的批次（与列表同一口径；合并前 Codex 审查 1a89c41：改编号看不到别的店的卡号、导不出）
+  const [r] = await db<GiftCardBatch[]>`${BATCH_SELECT(db)} WHERE b.id = ${id} AND b.store_id = ${currentStoreId()} GROUP BY b.id, s.display_name`;
   if (!r) throw notFound('这批礼品卡不存在');
   return toBatch(r);
 }
@@ -104,19 +116,23 @@ export async function giftCardsOf(db: Db, id: number) {
 }
 
 export function registerGiftCardRoutes(app: FastifyInstance, deps: Deps) {
-  app.get('/api/gift-cards', { preHandler: guard('member.write') }, async () => listGiftCardBatches(deps.sql));
-  app.post('/api/gift-cards', { preHandler: guard('member.write') }, async (req, reply) => {
+  app.get('/api/gift-cards', { preHandler: guard('coupon.manage') }, async () => listGiftCardBatches(deps.sql));
+  app.post('/api/gift-cards', { preHandler: guard('coupon.manage') }, async (req, reply) => {
     const r = await createGiftCardBatch(deps, req.body, ctxOf(req));
     reply.code(r.replayed ? 200 : 201);
     return r;
   });
-  app.get('/api/gift-cards/:id/cards', { preHandler: guard('member.write') }, async (req) => giftCardsOf(deps.sql, parse(idParam, req.params).id));
+  app.get('/api/gift-cards/:id/cards', { preHandler: guard('coupon.manage') }, async (req) => giftCardsOf(deps.sql, parse(idParam, req.params).id));
   // 导出卡号（印卡用）
-  app.get('/api/gift-cards/:id/cards.csv', { preHandler: guard('member.write') }, async (req, reply) => {
+  app.get('/api/gift-cards/:id/cards.csv', { preHandler: guard('coupon.manage') }, async (req, reply) => {
     const id = parse(idParam, req.params).id;
     const b = await getGiftCardBatch(deps.sql, id);
     const cards = await giftCardsOf(deps.sql, id);
-    reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="gift-cards-${b.batchNo}.csv"`);
-    return `﻿卡号,名称,已绑手机号,本金余额（元）\n${cards.map((c) => `${c.memberNo},${c.name.replace(/[",\n]/g, ' ')},${c.bound ? '是' : '否'},${(c.principalBalance / 100).toFixed(2)}`).join('\n')}`;
+    // 转义与防公式（名字以 = + @ 开头）交给 toCsv（合并前 Codex 审查 305508f）
+    return csvReply(
+      reply,
+      `gift-cards-${b.batchNo}.csv`,
+      toCsv([['卡号', '名称', '已绑手机号', '本金余额（元）'], ...cards.map((c) => [c.memberNo, c.name, c.bound ? '是' : '否', (c.principalBalance / 100).toFixed(2)])]),
+    );
   });
 }

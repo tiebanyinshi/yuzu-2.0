@@ -208,6 +208,11 @@ export const PERMISSIONS = {
   'expense.manage': { roles: ['owner'], duties: ['cost'] },
   /** 登记备用金打款、退回、补付 */
   'petty.manage': { roles: ['owner'], duties: ['payable', 'cost'] },
+  /**
+   * 备用金申用：在部门的备用金上申用（登记即占用）、提交 / 撤回报销、更新补单、作废申用（8.1.42，docs/V8142_PETTY.md）。
+   * 原来 8.1.9 零采备用金的「看」「办」两项（pool.read / pool.manage，BJ1：店主与采购）并成这一项，迁移 340 把岗位与个人的设置一起改过来
+   */
+  'petty.use': { roles: ['owner'], duties: ['purchase'] },
   /** 确认超门槛的报销（v0.7.11 起冲销归「finance.void」） */
   'expense.approve': { roles: ['owner'], duties: ['approve'] },
   /** 导出报销明细与每日平账 */
@@ -252,9 +257,6 @@ export const PERMISSIONS = {
   // 8.0.20 布草洗涤（docs/ERP_V8020.md 第 4 节）
   'linen.read': { roles: ['owner', 'store_manager'], duties: ['stock', 'cost', 'payable', 'approve'] },
   'linen.manage': { roles: ['owner', 'store_manager'], duties: ['stock'] },
-  // 8.1.9 零采备用金（docs/ERP_V819.md 第 2.4 节，BJ1）：供应链（采购）专用；财务登记报销时只看得到已提交报销的申用，看不到面板
-  'pool.read': { roles: ['owner'], duties: ['purchase'] },
-  'pool.manage': { roles: ['owner'], duties: ['purchase'] },
   // 8.1.9 签赠（docs/GIFTS_V819.md 第 2.5 节，SZ2–SZ4）：台账、发放、能被选作授权人、维护知识库与配置
   'gift.read': { roles: ['owner', 'store_manager', 'account_manager'], duties: ['concierge', 'concierge_manager'] },
   'gift.issue': { roles: ['owner', 'store_manager', 'duty_manager', 'account_manager'], duties: ['concierge', 'concierge_manager'] },
@@ -290,6 +292,8 @@ export const PERMISSIONS = {
   'payroll.manage': { roles: ['owner'] },
   /** 员工培训管理（店主 2026-11-25，docs/TRAINING.md）：培训文件夹、上传与换版本、下架、看谁看过；有它的看得到全部文件夹。默认给总裁与人力行政部负责人 */
   'training.manage': { roles: ['owner'] },
+  /** 公司公告管理（员工办公 v1.1 第 5 批，docs/OA_MOBILE.md）：发布、编辑、置顶、撤回公司与部门公告、查看已读名单。默认给总裁与人力行政部负责人 */
+  'oa.announce': { roles: ['owner'] },
   'catalog.manage': { roles: ['owner', 'store_manager'] },
   /** 技师名册：新建、编辑、停用技师（v0.7.0，待确认：默认店主与店总） */
   'technician.manage': { roles: ['owner', 'store_manager'] },
@@ -590,6 +594,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'expense.read': '查看费用报销、备用金与每日平账',
   'expense.manage': '登记费用报销（发票、税点、科目）',
   'petty.manage': '登记备用金打款、退回、补付',
+  'petty.use': '备用金申用：申用（占用部门备用金的可用额度）、提交 / 撤回报销、更新补单、作废申用',
   'expense.approve': '确认超门槛的报销',
   'expense.export': '导出报销明细与每日平账',
   'request.create': '提部门采购需求单（只限本部门）',
@@ -608,8 +613,6 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'asset.read': '资产与易耗：看资产卡片与盘点',
   'linen.read': '布草洗涤：看布草数量、单据与洗涤费对账',
   'linen.manage': '布草洗涤：维护品类，开送洗、收回、新增、报废单',
-  'pool.read': '零采备用金：看面板与申用台账、导出',
-  'pool.manage': '零采备用金：申用、提交 / 撤回报销、更新补单、作废申用',
   'gift.read': '签赠：看签赠台账（明细、按授权人、按个人、占比）',
   'gift.issue': '签赠：给会员发放签赠券（要选授权人）',
   'gift.authorize': '签赠：能被选作签赠的授权人',
@@ -629,6 +632,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'oa.all': '全部办公审批单：查询、催办、导出与看板',
   'payroll.manage': '工资条：模板、制表、发放、签收跟踪与薪资审计',
   'training.manage': '员工培训：文件夹、上传与换版本、下架、查看谁看过（看得到全部文件夹）',
+  'oa.announce': '公司公告：发布、编辑、置顶、撤回公司与部门公告，查看已读名单',
   'catalog.manage': '管理充值套餐与消费项目',
   'technician.manage': '维护技师名册',
   'technician.dispatch': '钟房派钟、上下钟、加钟、退钟、上牌',
@@ -773,6 +777,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'expense.read',
       'expense.manage',
       'petty.manage',
+      'petty.use',
       'expense.approve',
       'finance.void',
       'expense.export',
@@ -794,12 +799,10 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'asset.manage',
       'linen.read',
       'linen.manage',
-      'pool.read',
-      'pool.manage',
     ],
   },
   { title: '员工工作台', items: ['canteen.manage', 'patrol.read', 'patrol.manage'] },
-  { title: '人事与办公', items: ['hr.org', 'hr.attendance', 'hr.attendanceDept', 'oa.templates', 'oa.all', 'payroll.manage', 'training.manage'] },
+  { title: '人事与办公', items: ['hr.org', 'hr.attendance', 'hr.attendanceDept', 'oa.templates', 'oa.all', 'payroll.manage', 'training.manage', 'oa.announce'] },
   { title: '当场授权', items: ['auth.overLimit', 'auth.vipOverride', 'auth.discount', 'auth.memberRefund', 'auth.memberPhone'] },
   { title: '数据看板', items: ['report.executive', 'report.members', 'report.technicians', 'report.commission', 'marketing.cost'] },
   { title: '管理后台', items: ['staff.manage', 'staff.dept', 'catalog.manage', 'emenu.manage', 'technician.manage', 'settings.manage', 'audit.read'] },
