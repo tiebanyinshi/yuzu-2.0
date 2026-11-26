@@ -33,8 +33,15 @@ import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Segmented, Select, Skeleton, Textarea } from '../../components/ui';
+import { yuanToCents } from './money';
+import { SkuBatchReviewPanel, SupplierDetailPage, SupplierList } from './SupplyPages';
+import { PettyActions, PettyPanel } from './PettyPages';
+import { ContractPanel, ContractsPanel } from './ContractPages';
+import { PaymentPanel, PaymentsPanel } from './PaymentPages';
+import { ExpensePanel } from './ExpensePages';
+import { HrBatchPanel, HrPanel } from './HrPages';
 
-type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'roles';
+type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'expense' | 'hr' | 'roles';
 const STATUS_TONE: Record<GfStatus, 'neutral' | 'pine' | 'moss' | 'yuzu' | 'ember' | 'clay' | 'lake' | 'ink'> = {
   draft: 'neutral',
   reviewing: 'lake',
@@ -51,16 +58,10 @@ const STATUS_TONE: Record<GfStatus, 'neutral' | 'pine' | 'moss' | 'yuzu' | 'embe
 
 const useMeta = () => useQuery({ queryKey: ['gf', 'meta'], queryFn: () => api.get<GfMeta>('/api/gf/meta') });
 
-/** 元 → 分（最多两位小数） */
-export function yuanToCents(text: string): number | null {
-  const t = text.trim();
-  if (!/^\d{1,9}(\.\d{1,2})?$/.test(t)) return null;
-  const [int, frac = ''] = t.split('.');
-  return Number(int) * 100 + Number(frac.padEnd(2, '0'));
-}
-
 export function GovFlowPages() {
   const { pathname } = useLocation();
+  const sup = pathname.match(/^\/oa\/gov\/suppliers\/(\d+)/);
+  if (sup) return <SupplierDetailPage key={sup[1]} id={Number(sup[1])} />;
   const m = pathname.match(/^\/oa\/gov\/(\d+)/);
   return m ? <DocDetailPage key={m[1]} id={Number(m[1])} /> : <GovHome />;
 }
@@ -78,6 +79,12 @@ function GovHome() {
     { value: 'cc', label: '知会我的' },
     ...(seesAll ? [{ value: 'all' as const, label: '全部' }] : []),
     { value: 'specials', label: '微信特批' },
+    { value: 'suppliers', label: '供应商库' },
+    { value: 'petty', label: '零星采购' },
+    { value: 'contracts', label: '合同' },
+    { value: 'payments', label: '付款' },
+    { value: 'expense', label: '报销出差用印' },
+    { value: 'hr', label: 'HR 付款与分摊' },
     ...(meta.data?.canManageRoles ? [{ value: 'roles' as const, label: '角色映射' }] : []),
   ];
   return (
@@ -100,7 +107,35 @@ function GovHome() {
             </Button>
           </div>
         </div>
-        {box === 'roles' ? <RolesPanel /> : box === 'specials' ? <SpecialsPanel /> : <DocList box={box} />}
+        {box === 'roles' ? (
+          <RolesPanel />
+        ) : box === 'specials' ? (
+          <SpecialsPanel />
+        ) : box === 'suppliers' ? (
+          <SupplierList />
+        ) : box === 'hr' ? (
+          meta.data ? (
+            <HrPanel meta={meta.data} />
+          ) : null
+        ) : box === 'expense' ? (
+          meta.data ? (
+            <ExpensePanel meta={meta.data} />
+          ) : null
+        ) : box === 'payments' ? (
+          meta.data ? (
+            <PaymentsPanel meta={meta.data} />
+          ) : null
+        ) : box === 'contracts' ? (
+          meta.data ? (
+            <ContractsPanel meta={meta.data} />
+          ) : null
+        ) : box === 'petty' ? (
+          meta.data ? (
+            <PettyPanel meta={meta.data} />
+          ) : null
+        ) : (
+          <DocList box={box} />
+        )}
       </div>
       {creating && meta.data && <NewDocDialog meta={meta.data} onClose={() => setCreating(false)} />}
       {registering && meta.data && <SpecialDialog meta={meta.data} docId={null} onClose={() => setRegistering(false)} />}
@@ -263,6 +298,7 @@ function NewDocDialog({ meta, onClose }: { meta: GfMeta; onClose: () => void }) 
 function DocDetailPage({ id }: { id: number }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const navigate = useNavigate();
   const [special, setSpecial] = useState(false);
   const meta = useMeta();
   const q = useQuery({ queryKey: ['gf', 'doc', id], queryFn: () => api.get<GfDocDetail>(`/api/gf/docs/${id}`) });
@@ -272,8 +308,10 @@ function DocDetailPage({ id }: { id: number }) {
   };
   const onError = (e: unknown) => toast({ tone: 'error', title: '没有办成', body: errorMessage(e) });
   const [comment, setComment] = useState('');
+  const [decisions, setDecisions] = useState<{ skuId: number; decision: 'approve' | 'reject' }[] | null>(null);
   const act = useMutation({
-    mutationFn: (action: 'approve' | 'return' | 'reject') => api.post<GfDocDetail>(`/api/gf/docs/${id}/act`, { clientKey: uuid(), action, level: q.data!.currentLevel, comment }),
+    mutationFn: (action: 'approve' | 'return' | 'reject') =>
+      api.post<GfDocDetail>(`/api/gf/docs/${id}/act`, { clientKey: uuid(), action, level: q.data!.currentLevel, comment, extra: decisions ? { decisions } : undefined }),
     onSuccess: (d) => {
       setComment('');
       done(d);
@@ -321,6 +359,16 @@ function DocDetailPage({ id }: { id: number }) {
         {d.note && <p className="text-[14px] whitespace-pre-wrap text-ink-2">{d.note}</p>}
       </Card>
 
+      {d.docType === 'sku_batch' && <SkuBatchReviewPanel doc={d} onDecisions={setDecisions} />}
+      {d.docType === 'petty_purchase' && <PettyActions doc={d} onDone={() => q.refetch()} />}
+      {d.docType === 'hr_batch' && <HrBatchPanel doc={d} meta={meta.data} onDone={() => q.refetch()} />}
+      {d.docType === 'payment' && <PaymentPanel doc={d} meta={meta.data} onDone={() => q.refetch()} />}
+      {d.docType === 'contract' && <ContractPanel doc={d} meta={meta.data} onDone={(next) => (next ? navigate(`/oa/gov/${next}`) : q.refetch())} />}
+      {typeof d.payload.supplierId === 'number' && (
+        <Link to={`/oa/gov/suppliers/${d.payload.supplierId}`} className="block text-[14px] font-semibold text-pine">
+          查看供应商档案
+        </Link>
+      )}
       <Card className="p-4" data-testid="gf-chain">
         <h2 className="mb-2 text-[15px] font-bold text-ink">审批链{d.round > 1 ? `（第 ${d.round} 轮）` : ''}</h2>
         {d.notes.length > 0 && (
@@ -519,10 +567,21 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
   const [reason, setReason] = useState('');
   const [a, setA] = useState<number | ''>('');
   const [b, setB] = useState<number | ''>('');
+  const [payeeAccount, setPayeeAccount] = useState('');
   const [at, setAt] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16));
   const cents = yuanToCents(amount);
   const m = useMutation({
-    mutationFn: () => api.post<GfSpecialView>('/api/gf/specials', { clientKey, docId, title, amountCents: cents, reason, confirmerIds: [a, b], confirmedAt: new Date(at).toISOString() }),
+    mutationFn: () =>
+      api.post<GfSpecialView>('/api/gf/specials', {
+        clientKey,
+        docId,
+        title,
+        amountCents: cents,
+        reason,
+        confirmerIds: [a, b],
+        confirmedAt: new Date(at).toISOString(),
+        payeeAccount: payeeAccount || null,
+      }),
     onSuccess: (s) => {
       qc.invalidateQueries({ queryKey: ['gf'] });
       toast({ tone: 'success', title: '已登记微信特批', body: `${s.specialNo}，请在 ${s.dueOn} 前补登` });
@@ -571,6 +630,9 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
         </Field>
         {people(a, setA, '确认人一')}
         {people(b, setB, '确认人二')}
+        <Field label="收款账号（紧急付款用，换账户要重新特批）">
+          <Input className="num" value={payeeAccount} onChange={(e) => setPayeeAccount(e.target.value.replace(/\D/g, ''))} />
+        </Field>
         <Field label="紧急原因" className="sm:col-span-2">
           <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
         </Field>
