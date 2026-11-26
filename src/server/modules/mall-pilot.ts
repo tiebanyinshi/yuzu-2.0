@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { can } from '@shared/permissions';
 import { REQUEST_PRIORITIES, type MallCustomSpec } from '@shared/requests';
 import type { MallQuote } from '@shared/mall';
-import type { Db } from '../db';
+import type { Db, Tx } from '../db';
 import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
@@ -277,16 +277,19 @@ export async function claimMallRequest(deps: Deps, requestId: number, raw: unkno
     const r = await lockRequest(tx, requestId);
     if (r.source !== 'mall') throw conflict('NOT_MALL', '这张需求单不是采购商城提的');
     if (!['submitted', 'approved'].includes(r.status)) throw conflict('INVALID_STATE', '只有审核中、已通过的需求单能接单');
-    const [cur] = await tx<{ ownerId: number | null }[]>`SELECT sourcing_owner_id AS owner_id FROM purchase_requests WHERE id = ${requestId}`;
+    // 接单记在 mall_request_sourcing（Codex 审查：需求单通过后整行不能改）；需求单一行已经锁着，同一张单的接单、放回串行
+    const [cur] = await tx<{ ownerId: number | null }[]>`SELECT owner_id FROM mall_request_sourcing WHERE request_id = ${requestId}`;
     const owner = cur?.ownerId === null || cur?.ownerId === undefined ? null : Number(cur.ownerId);
     if (release) {
       if (owner === null) return;
       if (owner !== actor.id && actor.role !== 'owner' && !can(actor, 'request.review')) throw forbidden('只有接单的人能放回需求池');
-      await tx`UPDATE purchase_requests SET sourcing_owner_id = NULL, sourcing_claimed_at = NULL WHERE id = ${requestId}`;
+      await tx`DELETE FROM mall_request_sourcing WHERE request_id = ${requestId}`;
     } else {
       if (owner === actor.id) return;
       if (owner !== null && !(take && (actor.role === 'owner' || can(actor, 'request.review')))) throw conflict('ALREADY_CLAIMED', '这张单已经有人接了');
-      await tx`UPDATE purchase_requests SET sourcing_owner_id = ${actor.id}, sourcing_claimed_at = now() WHERE id = ${requestId}`;
+      await tx`
+        INSERT INTO mall_request_sourcing (request_id, owner_id) VALUES (${requestId}, ${actor.id})
+        ON CONFLICT (request_id) DO UPDATE SET owner_id = EXCLUDED.owner_id, claimed_at = now()`;
     }
     await writeAudit(tx, {
       staffId: actor.id,
@@ -360,14 +363,14 @@ export async function addQuote(deps: Deps, requestId: number, raw: unknown, acto
               ${input.recommended}, ${actor.id})
       RETURNING id`;
     // 记了方案还没人接的：顺手算接单
-    await tx`UPDATE purchase_requests SET sourcing_owner_id = coalesce(sourcing_owner_id, ${actor.id}), sourcing_claimed_at = coalesce(sourcing_claimed_at, now()) WHERE id = ${requestId}`;
+    await tx`INSERT INTO mall_request_sourcing (request_id, owner_id) VALUES (${requestId}, ${actor.id}) ON CONFLICT (request_id) DO NOTHING`;
     await writeAudit(tx, { staffId: actor.id, action: 'purchase_request', targetType: 'purchase_request', targetId: requestId, detail: { action: 'mall_quote', quoteId: q!.id, supplierName }, ip });
     await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'mall_quote', ${requestHash}, ${requestId}, ${actor.id})`;
   });
 }
 
 async function assertSourcer(db: Db, requestId: number, actor: Actor) {
-  const [o] = await db<{ ownerId: number | null }[]>`SELECT sourcing_owner_id AS owner_id FROM purchase_requests WHERE id = ${requestId}`;
+  const [o] = await db<{ ownerId: number | null }[]>`SELECT owner_id FROM mall_request_sourcing WHERE request_id = ${requestId}`;
   const owner = o?.ownerId === null || o?.ownerId === undefined ? null : Number(o.ownerId);
   if (owner !== null && owner !== actor.id && actor.role !== 'owner' && !can(actor, 'request.review')) throw forbidden('这张单是别的同事接的，请让接单的人记方案');
 }
@@ -387,21 +390,44 @@ export async function canConfirmPlan(db: Db, actor: Actor, requestId: number): P
 }
 
 /** 撤下一条方案（选定以后、转了采购单的不能撤） */
-export async function withdrawQuote(deps: Deps, quoteId: number, actor: Actor, ip?: string): Promise<number> {
+export async function withdrawQuote(deps: Deps, quoteId: number, raw: unknown, actor: Actor, ip?: string): Promise<number> {
+  const { clientKey } = parse(QuoteActKey, raw ?? {});
   if (!canSource(actor)) throw forbidden('只有采购（供应链 BP）能撤方案');
+  const requestHash = hashRequest({ op: 'mall_quote_withdraw', quoteId });
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const q = await lockQuoteAfterRequest(tx, quoteId);
+    if (await quoteActDone(tx, clientKey, requestHash, actor)) return q.requestId;
     await assertSourcer(tx, q.requestId, actor);
-    if (q.status === 'withdrawn') return q.requestId;
+    if (q.status === 'withdrawn') {
+      await quoteActRecord(tx, clientKey, requestHash, q.requestId, actor);
+      return q.requestId;
+    }
     if (q.status === 'selected' && (await lineOrdered(tx, q.lineId))) throw conflict('QUOTE_ORDERED', '这条方案已经转了采购单，不能撤');
     await tx`UPDATE mall_request_quotes SET status = 'withdrawn', recommended = false, selected_mode = NULL, selected_by = NULL, selected_at = NULL WHERE id = ${quoteId}`;
     await writeAudit(tx, { staffId: actor.id, action: 'purchase_request', targetType: 'purchase_request', targetId: q.requestId, detail: { action: 'mall_quote_withdraw', quoteId }, ip });
+    await quoteActRecord(tx, clientKey, requestHash, q.requestId, actor);
     return q.requestId;
   });
 }
 
-const SelectInput = z.object({
+/**
+ * 选定、撤下方案的「结果待确认」（Codex 审查）：操作编号 mall_quote_act，只能查回、作废自己的。
+ * 先锁需求单与方案、再认编号：同编号原样重提不再写；确认作废的编号晚到也不改（不会在部门改选了 B 以后又把晚到的 A 换回去）
+ */
+const QuoteActKey = z.object({ clientKey: z.uuid('缺少操作编号，请刷新页面后重试') });
+async function quoteActDone(tx: Tx, key: string, requestHash: string, actor: Actor): Promise<boolean> {
+  await assertNotFenced(tx, key, 'mall_quote_act', erpOpAbandoned);
+  const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${key}`;
+  if (!done) return false;
+  if (done.opType !== 'mall_quote_act' || done.requestHash !== requestHash || Number(done.staffId) !== actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的方案操作');
+  return true;
+}
+async function quoteActRecord(tx: Tx, key: string, requestHash: string, requestId: number, actor: Actor) {
+  await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${key}, 'mall_quote_act', ${requestHash}, ${requestId}, ${actor.id})`;
+}
+
+const SelectInput = QuoteActKey.extend({
   /** dept：部门在系统里确认；wechat：BP 记「部门已在微信上确认」（要写一句，比如谁、几点确认的） */
   mode: z.enum(['dept', 'wechat']),
   note: z.string().trim().max(200).default(''),
@@ -410,12 +436,17 @@ const SelectInput = z.object({
 /** 选定方案：部门（提单人、这个部门的主管）确认，或 BP 代记已在微信确认；同一行原来选定的换掉（还没转采购单时） */
 export async function selectQuote(deps: Deps, quoteId: number, raw: unknown, actor: Actor, ip?: string): Promise<number> {
   const input = parse(SelectInput, raw);
+  const requestHash = hashRequest({ op: 'mall_quote_select', quoteId, mode: input.mode, note: input.note });
   return deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const q = await lockQuoteAfterRequest(tx, quoteId);
     const r = await lockRequest(tx, q.requestId);
+    if (await quoteActDone(tx, input.clientKey, requestHash, actor)) return q.requestId;
     if (q.status === 'withdrawn') throw conflict('QUOTE_WITHDRAWN', '这条方案已经撤下了');
-    if (q.status === 'selected') return q.requestId;
+    if (q.status === 'selected') {
+      await quoteActRecord(tx, input.clientKey, requestHash, q.requestId, actor);
+      return q.requestId;
+    }
     if (!['submitted', 'approved'].includes(r.status)) throw conflict('INVALID_STATE', '这张需求单已经结束，不能再选方案');
     if (input.mode === 'dept') {
       if (!(await confirmsPlan(tx, actor, r))) throw forbidden('只有提单的部门能确认方案');
@@ -437,6 +468,7 @@ export async function selectQuote(deps: Deps, quoteId: number, raw: unknown, act
       detail: { action: 'mall_quote_select', quoteId, mode: input.mode },
       ip,
     });
+    await quoteActRecord(tx, input.clientKey, requestHash, q.requestId, actor);
     return q.requestId;
   });
 }
@@ -520,7 +552,7 @@ export async function requestQuotes(db: Db, requestId: number, actor: Actor): Pr
 /** 这张单的接单人 */
 export async function sourcingOwner(db: Db, requestId: number): Promise<{ id: number; name: string; claimedAt: string } | null> {
   const [o] = await db<{ id: number | null; name: string | null; claimedAt: string | null }[]>`
-    SELECT r.sourcing_owner_id AS id, s.display_name AS name, r.sourcing_claimed_at AS claimed_at
-    FROM purchase_requests r LEFT JOIN staff s ON s.id = r.sourcing_owner_id WHERE r.id = ${requestId}`;
+    SELECT ms.owner_id AS id, s.display_name AS name, ms.claimed_at
+    FROM mall_request_sourcing ms JOIN staff s ON s.id = ms.owner_id WHERE ms.request_id = ${requestId}`;
   return o?.id ? { id: Number(o.id), name: o.name ?? '', claimedAt: o.claimedAt ?? '' } : null;
 }

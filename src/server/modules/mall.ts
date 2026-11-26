@@ -542,8 +542,8 @@ async function briefs(db: Db, rows: readonly SummaryRow[]): Promise<MallRequestB
     ? new Map(
         (
           await db<{ id: number; reason: string | null; ownerId: number | null; ownerName: string | null }[]>`
-            SELECT r.id, r.reason, r.sourcing_owner_id AS owner_id, s.display_name AS owner_name
-            FROM purchase_requests r LEFT JOIN staff s ON s.id = r.sourcing_owner_id WHERE r.id IN ${db(ids)}`
+            SELECT r.id, r.reason, ms.owner_id, s.display_name AS owner_name
+            FROM purchase_requests r LEFT JOIN mall_request_sourcing ms ON ms.request_id = r.id LEFT JOIN staff s ON s.id = ms.owner_id WHERE r.id IN ${db(ids)}`
         ).map((x) => [Number(x.id), x]),
       )
     : new Map<number, { reason: string | null; ownerId: number | null; ownerName: string | null }>();

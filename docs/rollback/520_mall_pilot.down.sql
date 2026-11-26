@@ -2,19 +2,18 @@
 -- 会丢掉：成交方案、接单人、定制的结构化要求（ERP「规格与技术要求」里那段话还在）、收货的待补数。
 BEGIN;
 -- 记方案、补资料重提的操作编号与作废（只追加的表：维护性删除时临时关掉触发器，删完马上恢复）；
--- 操作类型的约束照旧放行 mall_quote、mall_resubmit（旧版本不写这两类，不影响）
+-- 操作类型的约束照旧放行 mall_quote、mall_resubmit、mall_quote_act（旧版本不写这两类，不影响）
 ALTER TABLE idempotency_keys DISABLE TRIGGER idempotency_keys_append_only;
-DELETE FROM idempotency_keys WHERE op_type IN ('mall_quote', 'mall_resubmit');
+DELETE FROM idempotency_keys WHERE op_type IN ('mall_quote', 'mall_resubmit', 'mall_quote_act');
 ALTER TABLE idempotency_keys ENABLE TRIGGER idempotency_keys_append_only;
 ALTER TABLE op_fences DISABLE TRIGGER op_fences_append_only;
-DELETE FROM op_fences WHERE op_type IN ('mall_quote', 'mall_resubmit');
+DELETE FROM op_fences WHERE op_type IN ('mall_quote', 'mall_resubmit', 'mall_quote_act');
 ALTER TABLE op_fences ENABLE TRIGGER op_fences_append_only;
 ALTER TABLE inv_doc_lines DROP CONSTRAINT inv_doc_lines_redeliver_le_rejected;
 ALTER TABLE inv_doc_lines DROP COLUMN redeliver_milli;
 DROP TABLE mall_request_quotes;
 -- 报价截图留在 erp_images 里（只追加、按内容去重，改不了也删不掉）：图片范围的约束照旧放行 quote，旧版本不读这一类，不影响
-ALTER TABLE purchase_requests DROP COLUMN sourcing_claimed_at;
-ALTER TABLE purchase_requests DROP COLUMN sourcing_owner_id;
+DROP TABLE mall_request_sourcing;
 ALTER TABLE purchase_request_lines DROP COLUMN custom_spec;
 ALTER TABLE purchase_request_lines DROP COLUMN custom_kind;
 DELETE FROM schema_migrations WHERE version = '520_mall_pilot.sql';

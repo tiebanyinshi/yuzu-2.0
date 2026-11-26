@@ -9,11 +9,18 @@ ALTER TABLE purchase_request_lines ADD COLUMN custom_spec jsonb CHECK (custom_sp
 COMMENT ON COLUMN purchase_request_lines.custom_kind IS '商城自主申请：standard 非定制（现成品）/ custom 定制；选品的行为空（8.1.51）';
 COMMENT ON COLUMN purchase_request_lines.custom_spec IS '定制的结构化要求：size 尺寸规格、craft 材质工艺、scene 使用场景、sample 是否打样、budgetCents 预算（8.1.51）';
 
--- 需求池接单：哪位供应链 BP 在跟这张单
-ALTER TABLE purchase_requests ADD COLUMN sourcing_owner_id bigint REFERENCES staff (id);
-ALTER TABLE purchase_requests ADD COLUMN sourcing_claimed_at timestamptz;
-COMMENT ON COLUMN purchase_requests.sourcing_owner_id IS '接单跟进的供应链 BP（商城需求池「接单」，8.1.51）';
-COMMENT ON COLUMN purchase_requests.sourcing_claimed_at IS '接单时间';
+-- 需求池接单：哪位供应链 BP 在跟这张单。单独一张表（Codex 审查）：需求单审核通过以后整行不能再改（yuzu_request_guard），
+-- 接单、放回、改派在通过以后也要能做；放回就是删掉这一行
+CREATE TABLE mall_request_sourcing (
+  request_id  bigint PRIMARY KEY REFERENCES purchase_requests (id),
+  owner_id    bigint NOT NULL REFERENCES staff (id),
+  claimed_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX mall_request_sourcing_owner_id_fk_idx ON mall_request_sourcing (owner_id);
+COMMENT ON TABLE mall_request_sourcing IS '商城需求池接单（8.1.51）：哪位供应链 BP 在跟这张需求单；放回需求池时删掉这一行';
+COMMENT ON COLUMN mall_request_sourcing.request_id IS '需求单（商城来源）';
+COMMENT ON COLUMN mall_request_sourcing.owner_id IS '接单跟进的供应链 BP';
+COMMENT ON COLUMN mall_request_sourcing.claimed_at IS '接单时间';
 
 -- 成交方案：BP 在微信上跟供应商谈好的，回到系统记下供应商、含税单价、运费、交期、报价截图；部门在系统里确认（或 BP 记「已在微信确认」）。
 -- 部门看得到方案说明、供应商、交期，看不到价格与报价截图（店主 2026-11-24：成交价不给商城）。转采购单时带上选定方案的供应商与单价
@@ -65,7 +72,7 @@ ALTER TABLE erp_images DROP CONSTRAINT erp_images_scope_check;
 ALTER TABLE erp_images ADD CONSTRAINT erp_images_scope_check CHECK (scope IN ('general', 'contract', 'concierge', 'quote'));
 
 
--- 记成交方案、原单补资料重提的「结果待确认」（Codex 审查）：各用自己的操作类型（mall_quote 按采购权限查回、作废；mall_resubmit 只能查回、作废自己的），
+-- 记成交方案、原单补资料重提的「结果待确认」（Codex 审查）：各用自己的操作类型（mall_quote 按采购权限查回、作废；mall_resubmit、选定 / 撤下方案的 mall_quote_act 只能查回、作废自己的），
 -- 不借主数据的 shop_master（那个要「物料主数据维护」权限）。在当时的约束上追加类型（与 370 同一写法，不照旧名单重建）
 DO $$
 DECLARE
@@ -81,7 +88,7 @@ BEGIN
     END IF;
     EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', t, t || '_op_type_check');
     EXECUTE format(
-      'ALTER TABLE %I ADD CONSTRAINT %I CHECK ((%s) OR op_type IN (''mall_quote'', ''mall_resubmit''))',
+      'ALTER TABLE %I ADD CONSTRAINT %I CHECK ((%s) OR op_type IN (''mall_quote'', ''mall_resubmit'', ''mall_quote_act''))',
       t,
       t || '_op_type_check',
       expression

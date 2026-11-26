@@ -7,7 +7,7 @@
 「只追加」的表（账本、流水、审批动作、归档表）有触发器拒绝改删，改错走冲正或作废登记。
 列表里「键」：`PK` 主键；「引用」是外键指向的表。
 
-共 451 张表、5378 列。
+共 452 张表、5379 列。
 
 ## 目录
 
@@ -19,7 +19,7 @@
 - **客户关系（concierge_）**（9）：[concierge_balance_evidence](#concierge_balance_evidence) · [concierge_members](#concierge_members) · [concierge_operations](#concierge_operations) · [concierge_praise](#concierge_praise) · [concierge_praise_evidence](#concierge_praise_evidence) · [concierge_records](#concierge_records) · [concierge_revisions](#concierge_revisions) · [concierge_sync](#concierge_sync) · [concierge_uploads](#concierge_uploads)
 - **价目表（price_catalog_）**（7）：[price_catalog_changes](#price_catalog_changes) · [price_catalog_entries](#price_catalog_entries) · [price_catalog_import_ops](#price_catalog_import_ops) · [price_catalog_link_ops](#price_catalog_link_ops) · [price_catalog_links](#price_catalog_links) · [price_catalog_set_ops](#price_catalog_set_ops) · [price_catalog_sets](#price_catalog_sets)
 - **员工培训（training_）**（8）：[training_blob_chunks](#training_blob_chunks) · [training_blobs](#training_blobs) · [training_file_versions](#training_file_versions) · [training_files](#training_files) · [training_folders](#training_folders) · [training_upload_chunks](#training_upload_chunks) · [training_uploads](#training_uploads) · [training_views](#training_views)
-- **采购商城（mall_）**（3）：[mall_request_quotes](#mall_request_quotes) · [mall_sku_changes](#mall_sku_changes) · [mall_skus](#mall_skus)
+- **采购商城（mall_）**（4）：[mall_request_quotes](#mall_request_quotes) · [mall_request_sourcing](#mall_request_sourcing) · [mall_sku_changes](#mall_sku_changes) · [mall_skus](#mall_skus)
 - **旧系统导入（legacy_）**（7）：[legacy_brand_requests](#legacy_brand_requests) · [legacy_images](#legacy_images) · [legacy_imports](#legacy_imports) · [legacy_ledger_lines](#legacy_ledger_lines) · [legacy_material_lines](#legacy_material_lines) · [legacy_ordered_lines](#legacy_ordered_lines) · [legacy_payment_days](#legacy_payment_days)
 - **归档（archived_）**（4）：[archived_integration_calls](#archived_integration_calls) · [archived_location_events](#archived_location_events) · [archived_location_tracks](#archived_location_tracks) · [archived_wecom_pushes](#archived_wecom_pushes)
 
@@ -4282,8 +4282,6 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | budget_project | text |  |  | ''::text |  |  |
 | delivery_address | text |  |  | ''::text |  |  |
 | payment_intent | text |  | 是 |  |  |  |
-| sourcing_owner_id | bigint |  | 是 |  | staff | 接单跟进的供应链 BP（商城需求池「接单」，8.1.51） |
-| sourcing_claimed_at | timestamp with time zone |  | 是 |  |  | 接单时间 |
 
 ### receipt_imports
 
@@ -8282,6 +8280,16 @@ OA-02 账号与批量开通（docs/OA.md 第 5 节）：后台「组织架构 �
 | selected_note | text |  |  | ''::text |  |  |
 | created_by | bigint |  |  |  | staff |  |
 | created_at | timestamp with time zone |  |  | now() |  |  |
+
+### mall_request_sourcing
+
+商城需求池接单（8.1.51）：哪位供应链 BP 在跟这张需求单；放回需求池时删掉这一行
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| request_id | bigint | PK |  |  | purchase_requests | 需求单（商城来源） |
+| owner_id | bigint |  |  |  | staff | 接单跟进的供应链 BP |
+| claimed_at | timestamp with time zone |  |  | now() |  | 接单时间 |
 
 ### mall_sku_changes
 

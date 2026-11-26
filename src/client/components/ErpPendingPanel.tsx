@@ -157,6 +157,7 @@ const REF_NUMBER: Partial<Record<ErpOpType, string>> = {
   // 8.1.51 商城试点：记方案、补资料重提都返回那张需求单
   mall_quote: 'id',
   mall_resubmit: 'id',
+  mall_quote_act: 'id',
 };
 
 function refOfResponse(type: ErpOpType, data: unknown): ErpOpRef | null {

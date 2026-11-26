@@ -292,7 +292,7 @@
     - `350`（`350_visit_remarks.sql`，收银台，设计见 `docs/V8144_CASHIER.md`）：前台备注（同组 / 单人，记经办人与时间，可带标签）与撤下记录，两张表都只追加；「备注记经办人与同组 / 单人」与收银台备注板块是同一份数据，一起放在这一号。回滚脚本 `docs/rollback/350_visit_remarks.down.sql`。
     - `360`（`360_coupon_usage_terms.sql`，前台 B，设计见 `docs/V8144_FRONTDESK.md`）：发过券的模板门槛、适用范围也能改（数据库保护只留面额、折扣、兑换什么、有效期、档级）。回滚 `docs/rollback/360_coupon_usage_terms.down.sql`。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
-  - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；需求单 `sourcing_owner_id`、`sourcing_claimed_at`；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。
+  - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。
 - **8.1.50（`510`–`519`）**：采购商城做成逛电商的感觉（玻璃质感、大图卡片、商品页大图）、排到 ERP 供应链第一项（店主 2026-11-26，设计见 `docs/MALL_V8150.md`；8.1.47–8.1.49 与 `480`–`499` 已给别的开发线）。
   - `510`（`510_material_images.sql`）：物料商品图 `material_images`（每样最多 6 张、第 1 张是封面，图片存在 `erp_images`）。回滚 `docs/rollback/510_material_images.down.sql`。
 - **8.1.46（没有迁移）**：官网接素材库（Design 四板块第三批，`docs/BOARDS.md` 第 5 节）——「官网 · 首屏视频 / 分享图」两个用途（全公司一份、只在总店换），官网经不要登录的 `/api/public/website/…` 取，取不到用自带的；Design 首页加「官网」卡片。

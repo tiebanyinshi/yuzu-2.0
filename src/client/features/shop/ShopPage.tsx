@@ -241,7 +241,7 @@ export function ShopPage() {
         className="mb-4"
       />
       <ErpPendingPanel
-        types={['shop_master', 'mall_quote', 'mall_resubmit']}
+        types={['shop_master', 'mall_quote', 'mall_resubmit', 'mall_quote_act']}
         filter={(op) => op.staffId === session.staff.id}
         onFound={() => void qc.invalidateQueries({ queryKey: ['shop'] })}
         className="mb-4"

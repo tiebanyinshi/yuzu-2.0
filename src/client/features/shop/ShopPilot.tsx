@@ -478,16 +478,38 @@ const TAX_OPTIONS = [1300, 900, 600, 300, 100, 0];
 /** 方案卡片：部门看供应商、交期、说明；采购另看价格、截图、内部备注 */
 function QuoteCard({ q, line, r, onChange }: { q: MallQuote; line: MallRequestLine | undefined; r: MallRequest; onChange: (next: MallRequest) => void }) {
   const toast = useToast();
+  const session = useSession();
+  const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [wechat, setWechat] = useState<string | null>(null);
-  const act = async (url: string, body: unknown, ok: string) => {
+  // 本机还有一笔选定 / 撤下没确认结果（Codex 审查）：先在页面顶部查回、原样重提或确认作废，不另发新的（晚到的旧确认不会盖掉之后的改选）
+  const pending = useErpRecorded(['mall_quote_act']).some((op) => op.staffId === session.staff.id);
+  const act = async (url: string, body: Record<string, unknown>, ok: string) => {
+    if (pending) {
+      toast({ tone: 'info', title: '上一笔方案操作还没确认结果', body: '请先在页面顶部查回、原样重提或确认作废' });
+      return;
+    }
     setBusy(true);
+    const key = uuid();
     try {
-      onChange(await api.post<MallRequest>(url, body));
+      const next = await sendErpOp<MallRequest>({
+        key,
+        type: 'mall_quote_act',
+        method: 'POST',
+        url,
+        body: { ...body, clientKey: key },
+        summary: `${ok.replace(/^已/, '')} · ${r.docNo} · ${q.supplierName}`,
+        staffName: session.staff.displayName,
+        staffId: session.staff.id,
+      });
+      onChange(next);
       toast({ tone: 'success', title: ok });
       setWechat(null);
     } catch (e) {
-      toast({ tone: 'error', title: '没有成功', body: errorMessage(e) });
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '结果待确认', body: '回复没收到，可能已经生效：记录留在本机，请在页面顶部查回、原样重提或确认作废' });
+        void qc.invalidateQueries({ queryKey: ['shop'] });
+      } else toast({ tone: 'error', title: '没有成功', body: errorMessage(e) });
     } finally {
       setBusy(false);
     }

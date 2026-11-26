@@ -1280,7 +1280,7 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     return reply.send(img.data);
   });
   app.post(`${P}/quotes/:id/withdraw`, { preHandler: guardAny('purchase.manage', 'request.review') }, async (req) =>
-    mallRequest(deps, req.actor, await withdrawQuote(deps, parse(idParam, req.params).id, req.actor, req.ip)),
+    mallRequest(deps, req.actor, await withdrawQuote(deps, parse(idParam, req.params).id, req.body, req.actor, req.ip)),
   );
   app.post(`${P}/quotes/:id/select`, { preHandler: shopper }, async (req) => mallRequest(deps, req.actor, await selectQuote(deps, parse(idParam, req.params).id, req.body, req.actor, req.ip)));
 

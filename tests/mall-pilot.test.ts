@@ -183,12 +183,20 @@ describe('接单、成交方案、转采购单、收货待补', () => {
     expect(seen.quotes[0]).toMatchObject({ supplierName: expect.any(String), leadDays: 7, planNote: '9 盎司单层，先寄 10 个样品', unitPriceCents: null, internalNote: null, imageIds: [] });
     // 别的部门不能确认；BP 代记要写一句
     const [qa, qb] = seen.quotes as { id: number }[];
-    expect((await api(ctx.app, other, 'POST', `/api/erp/shop/quotes/${qa!.id}/select`, { mode: 'dept' })).status).toBeGreaterThanOrEqual(403);
-    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/quotes/${qb!.id}/select`, { mode: 'wechat' })).body.error.code).toBe('NOTE_REQUIRED');
-    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/quotes/${qb!.id}/select`, { mode: 'wechat', note: '王经理 11-27 上午微信确认' })).status).toBe(200);
+    expect((await api(ctx.app, other, 'POST', `/api/erp/shop/quotes/${qa!.id}/select`, { clientKey: randomUUID(), mode: 'dept' })).status).toBeGreaterThanOrEqual(403);
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/quotes/${qb!.id}/select`, { clientKey: randomUUID(), mode: 'wechat' })).body.error.code).toBe('NOTE_REQUIRED');
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/quotes/${qb!.id}/select`, { clientKey: randomUUID(), mode: 'wechat', note: '王经理 11-27 上午微信确认' })).status).toBe(200);
     // 部门改选第一个：原来选定的换掉
-    const sel = await api(ctx.app, brand, 'POST', `/api/erp/shop/quotes/${qa!.id}/select`, { mode: 'dept' });
+    const selBody = { clientKey: randomUUID(), mode: 'dept' };
+    const sel = await api(ctx.app, brand, 'POST', `/api/erp/shop/quotes/${qa!.id}/select`, selBody);
     expect(sel.status, JSON.stringify(sel.body)).toBe(200);
+    // 选定的结果待确认（Codex 审查）：同一个编号原样重提不再写；查回只有自己能查；确认作废的编号晚到不改（不会把之后的改选换回去）
+    expect((await api(ctx.app, brand, 'POST', `/api/erp/shop/quotes/${qa!.id}/select`, selBody)).status).toBe(200);
+    expect((await api(ctx.app, brand, 'GET', `/api/erp/ops/${selBody.clientKey}?type=mall_quote_act`)).body).toMatchObject({ found: true, refId: r.id });
+    expect((await api(ctx.app, other, 'GET', `/api/erp/ops/${selBody.clientKey}?type=mall_quote_act`)).status).toBe(403);
+    const lateKey = randomUUID();
+    expect((await api(ctx.app, brand, 'POST', `/api/erp/ops/${lateKey}/abandon`, { type: 'mall_quote_act', summary: '作废确认' })).status).toBe(200);
+    expect((await api(ctx.app, brand, 'POST', `/api/erp/shop/quotes/${qb!.id}/select`, { clientKey: lateKey, mode: 'dept' })).body.error.code).toBe('OP_ABANDONED');
     const states = (sel.body.quotes as { id: number; status: string; selectedMode: string | null }[]).map((x) => [x.id, x.status, x.selectedMode]);
     expect(states).toEqual([
       [qa!.id, 'selected', 'dept'],
@@ -204,8 +212,15 @@ describe('接单、成交方案、转采购单、收货待补', () => {
       plan: { supplierId: number; unitPriceCents: number; leadDays: number } | null;
     }[];
     expect(open[0]?.plan).toMatchObject({ supplierId: supId, unitPriceCents: 45, leadDays: 7 });
+    // 审核通过以后需求单整行不能改（Codex 审查）：接单记在另一张表，放回、再接、在没人接的单上记方案照样能做
+    const released = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/claim`, { release: true });
+    expect(released.status, JSON.stringify(released.body)).toBe(200);
+    expect(released.body.sourcingOwner).toBeNull();
+    const extra = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ unitPriceCents: 50 }));
+    expect(extra.status, JSON.stringify(extra.body)).toBe(201);
+    expect((await detail(buyer, r.id)).sourcingOwner).not.toBeNull();
     // 撤下选定的（还没转采购单）可以；撤下后不再带
-    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/quotes/${qa!.id}/withdraw`, {})).status).toBe(200);
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/quotes/${qa!.id}/withdraw`, { clientKey: randomUUID() })).status).toBe(200);
     expect(((await api(ctx.app, buyer, 'GET', `/api/erp/requests/open-lines?ids=${lineId}`)).body as { plan: unknown }[])[0]?.plan).toBeNull();
   });
 
@@ -263,7 +278,7 @@ describe('Codex 审查后的边界', () => {
     expect((await ctx.app.inject({ method: 'GET', url: `/api/erp/shop/quote-images/${imgId}`, headers: { cookie: buyer } })).statusCode).toBe(200);
     // 部门确认了方案；之后采购退回 → 原单补资料（方案挂在行上，原地改行，不撞外键；选定的退回待确认）
     const qt = ((await detail(brand, r.id)).quotes as { id: number }[])[0]!;
-    expect((await api(ctx.app, brand, 'POST', `/api/erp/shop/quotes/${qt.id}/select`, { mode: 'dept' })).status).toBe(200);
+    expect((await api(ctx.app, brand, 'POST', `/api/erp/shop/quotes/${qt.id}/select`, { clientKey: randomUUID(), mode: 'dept' })).status).toBe(200);
     expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请写尺码' })).status).toBe(200);
     const back = await detail(brand, r.id);
     const ok = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, {

@@ -251,7 +251,9 @@ function readDraft(type: InvDocType, scope: FormScope): FormState | null {
     if (!raw) return null;
     // v0.7.11 以前存下的草稿没有「一起验收的采购」
     const draft = JSON.parse(raw) as Partial<FormState>;
-    return { ...draft, coAcceptorId: draft.coAcceptorId ?? null, usePurpose: draft.usePurpose ?? '', useHandlerId: draft.useHandlerId ?? null } as FormState;
+    // 8.1.51 以前存下的草稿，收货行没有「其中待补」（Codex 审查）：补成空的，不然页面渲染时读不了
+    const lines = Array.isArray(draft.lines) ? draft.lines.map((l) => ({ ...l, redeliver: l.redeliver ?? '' })) : draft.lines;
+    return { ...draft, lines, coAcceptorId: draft.coAcceptorId ?? null, usePurpose: draft.usePurpose ?? '', useHandlerId: draft.useHandlerId ?? null } as FormState;
   } catch {
     return null;
   }
