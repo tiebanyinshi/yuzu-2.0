@@ -135,9 +135,11 @@ test.describe('8.0.18 ERP 的信息架构', () => {
     await expect(page).toHaveURL(/\/purchasing$/);
 
     await page.goto('/erp/expenses');
-    await expect(page.getByTestId('subnav').getByRole('link')).toHaveText(['报销', '备用金与每日平账', '费用预算', '采购台账', '账目自检', '旧账对照']);
+    await expect(page.getByTestId('subnav').getByRole('link')).toHaveText(['报销', '备用金与每日平账', '备用金申用', '费用预算', '采购台账', '账目自检', '旧账对照']);
     for (const [testId, url] of [
       ['petty-link', /\/erp\/petty$/],
+      // 8.1.42 备用金合并：零采的申用并进「备用金申用」
+      ['petty-uses-link', /\/erp\/petty\/uses$/],
       ['budgets-link', /\/erp\/expenses\/budgets$/],
       ['ledger-link', /\/erp\/ledger$/],
       ['audit-link', /\/erp\/audit$/],
@@ -147,7 +149,7 @@ test.describe('8.0.18 ERP 的信息架构', () => {
       await page.getByTestId(testId).click();
       await expect(page, testId).toHaveURL(url);
       await expect(page.getByTestId(testId), testId).toHaveAttribute('aria-current', 'page');
-      await expect(page.getByTestId('subnav').getByRole('link')).toHaveCount(6);
+      await expect(page.getByTestId('subnav').getByRole('link')).toHaveCount(7);
     }
   });
 
