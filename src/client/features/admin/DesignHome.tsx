@@ -1,9 +1,12 @@
 // Design 首页（店主 2026-11-24，docs/BOARDS.md 第 3 节）：门户的 Design 板块进到这里——品牌与设计有关的分区
-// （UI 工作台、对客导览）各一张卡片，加上平板菜单的品牌英文字体生效了没有。素材库、官网在后面两批加进来。
+// （UI 工作台、对客导览）各一张卡片，加上平板菜单的品牌英文字体生效了没有。素材库（第二批）；官网（8.1.46 第三批）：首屏视频、分享图现在用的哪一份。
 
 import { Link } from 'react-router';
-import { ArrowRight, Images, Map as MapIcon, PenTool, Type, type LucideIcon } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowRight, ExternalLink, Globe, Images, Map as MapIcon, PenTool, Type, type LucideIcon } from 'lucide-react';
 import { ADMIN_SECTIONS, boardSections, type AdminSection } from '@shared/admin';
+import { isCompanySlot, type DesignSlotState } from '@shared/design';
+import { api } from '../../lib/api';
 import { useCan } from '../../lib/session';
 import { Card, SectionTitle } from '../../components/ui';
 import { BrandFontNotice } from '../emenu/BrandFontNotice';
@@ -20,6 +23,7 @@ export function DesignHome() {
   const sections = useAdminSections();
   const items = boardSections('design').filter((k) => k !== 'design' && sections.includes(k));
   const fonts = can('emenu.manage') || can('studio.edit');
+  const website = can('studio.edit') || can('settings.manage');
   return (
     <AdminPage section="design" description="品牌与设计：对客的界面长什么样、用什么字体与图片，都在这里改。">
       <div className="space-y-5" data-testid="design-home">
@@ -47,6 +51,7 @@ export function DesignHome() {
             );
           })}
         </ul>
+        {website && <WebsiteCard />}
         {fonts && (
           <Card className="p-5" data-testid="design-fonts">
             <SectionTitle>
@@ -62,5 +67,50 @@ export function DesignHome() {
         )}
       </div>
     </AdminPage>
+  );
+}
+
+/** 官网的网址（docs/DEPLOY_WEBSITE.md）；官网是 website/ 里的静态文件，随 main 上的版本标签部署 */
+const WEBSITE_ORIGIN = 'https://yuzusystem.xyz';
+
+/** 官网（第三批）：首屏视频、分享图现在用的哪一份；在素材库「用途」里换，全公司一份、只在总店换 */
+function WebsiteCard() {
+  const q = useQuery({ queryKey: ['design', 'slots'], queryFn: () => api.get<DesignSlotState[]>('/api/design/slots') });
+  const slots = (q.data ?? []).filter((s) => isCompanySlot(s.slot));
+  return (
+    <Card className="p-5" data-testid="design-website">
+      <SectionTitle
+        aside={
+          <a href={WEBSITE_ORIGIN} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[13px] font-semibold text-pine hover:underline">
+            打开官网 <ExternalLink className="size-3.5" />
+          </a>
+        }
+      >
+        <span className="flex items-center gap-2">
+          <Globe className="size-4 text-pine" /> 官网
+        </span>
+      </SectionTitle>
+      <p className="mt-1 mb-3 text-[12.5px] text-ink-3">
+        官网 {WEBSITE_ORIGIN.replace('https://', '')} 的首屏视频与分享图从素材库取：在「素材库 →
+        用途」里换，官网刷新后就换上；全公司一份，只在总店换。正式服取不到时官网照原来的样子。官网的文字与版面随系统版本发布。
+      </p>
+      {q.isPending ? (
+        <p className="text-[13px] text-ink-4">正在取…</p>
+      ) : q.error ? (
+        <p className="text-[13px] text-ink-4">没有取回来，刷新再试</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {slots.map((s) => (
+            <li key={s.slot} className="flex flex-wrap items-baseline gap-x-2 text-[13px]" data-testid={`design-website-${s.slot}`}>
+              <span className="font-semibold text-ink">{s.label.replace('官网 · ', '')}</span>
+              <span className="text-ink-2">{s.current ? `${s.current.assetName}（第 ${s.current.versionNo} 版）` : '没设：用官网自带的'}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Link to={ADMIN_SECTIONS.library.path} className="mt-3 inline-flex items-center gap-1 text-[13px] font-semibold text-pine hover:underline" data-testid="design-website-switch">
+        去素材库换 <ArrowRight className="size-3.5" />
+      </Link>
+    </Card>
   );
 }

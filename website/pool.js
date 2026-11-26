@@ -307,6 +307,8 @@
     var visible = true;
     var last = 0;
     var rafId = 0;
+    // 换成首屏视频以后整个停掉（main.js），切回标签页、滚回来也不再画
+    var off = false;
     function frame() {
       rafId = 0;
       if (!running) return;
@@ -318,7 +320,7 @@
       rafId = requestAnimationFrame(frame);
     }
     function play() {
-      if (running || reduce || !visible || document.hidden) return;
+      if (off || running || reduce || !visible || document.hidden) return;
       running = true;
       last = now();
       if (!rafId) rafId = requestAnimationFrame(frame);
@@ -347,7 +349,14 @@
 
     draw(reduce ? 6 : 0);
     play();
-    return { pause: pause, play: play };
+    return {
+      pause: pause,
+      play: play,
+      stop: function () {
+        off = true;
+        pause();
+      },
+    };
   }
 
   window.YuzuPool = { mount: mount };

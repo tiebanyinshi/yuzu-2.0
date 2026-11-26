@@ -30,9 +30,18 @@ export const DESIGN_SLOTS = {
   'emenu.font.en': { kind: 'font', label: '平板菜单 · 英文品牌字体', where: '餐桌平板电子菜单的英文标题；没设时读服务器 brand-fonts 目录，再没有用顶替字体' },
   'portal.banner': { kind: 'image', label: '门户页 · 顶部横幅', where: '登录后门户页欢迎语上方的一张横幅图（建议 2400 × 600）；没设时不显示' },
   'guide.screen.video': { kind: 'video', label: '门店大屏 · 待机视频', where: '对客导览大屏还没有楼层图时循环播放（静音）；没设时显示「对客导览」' },
+  // 8.1.46 官网接素材库（docs/BOARDS.md 第 5 节）：全公司一份、只在总店换；官网经不要登录的 /api/public/website/… 取
+  'website.hero.video': { kind: 'video', label: '官网 · 首屏视频', where: '官网首屏右边那一池柚子的位置换成这段视频（静音循环）；全公司一份，只在总店换；没设、取不到时照原来的柚子池' },
+  'website.share.image': { kind: 'image', label: '官网 · 分享图', where: '官网链接发到微信等处时显示的图（建议 1200 × 630）；全公司一份，只在总店换；没设时没有分享图' },
 } as const satisfies Record<string, { kind: DesignAssetKind; label: string; where: string }>;
 export type DesignSlot = keyof typeof DESIGN_SLOTS;
 export const DESIGN_SLOT_KEYS = Object.keys(DESIGN_SLOTS) as DesignSlot[];
+
+/** 全公司一份的用途（官网）：只记在总店上、只在总店换，哪家店看到的都是总店那一份 */
+export const isCompanySlot = (slot: string) => slot.startsWith('website.');
+
+/** 官网不要登录就能取的素材：地址里的名字 → 用途；只开这两个，别的用途、别的素材一律 404 */
+export const WEBSITE_PUBLIC_SLOTS = { 'hero-video': 'website.hero.video', 'share-image': 'website.share.image' } as const satisfies Record<string, DesignSlot>;
 
 export interface DesignVersion {
   id: number;

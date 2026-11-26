@@ -56,6 +56,29 @@
     });
     if (!pool && hero) hero.dataset.touched = 'true';
   }
+  // ── 首屏视频（8.1.46，docs/BOARDS.md 第 5 节）：系统素材库里设了「官网 · 首屏视频」就换上，柚子池停掉；
+  // 没设（404）、正式服取不到、浏览器不让自动播、减少动效、省流量时什么都不做，照原来的柚子池
+  var heroVideo = document.querySelector('[data-hero-video]');
+  var saveData = navigator.connection && navigator.connection.saveData;
+  if (heroVideo && hero && !reduce && !saveData && heroVideo.dataset.src) {
+    var dropVideo = function () {
+      if (heroVideo.parentNode) heroVideo.parentNode.removeChild(heroVideo);
+    };
+    heroVideo.addEventListener('error', dropVideo);
+    heroVideo.addEventListener(
+      'playing',
+      function () {
+        hero.dataset.video = 'on';
+        hero.setAttribute('aria-label', '柚子的首屏视频');
+        if (pool && pool.stop) pool.stop();
+      },
+      { once: true },
+    );
+    heroVideo.src = heroVideo.dataset.src;
+    var started = heroVideo.play();
+    if (started && started.catch) started.catch(dropVideo);
+  }
+
   var rippleCanvas = document.querySelector('[data-ripple]');
   if (rippleCanvas && window.YuzuPool) window.YuzuPool.mount(rippleCanvas, { mode: 'ledger' });
 

@@ -37,7 +37,12 @@ test.describe('系统门户页', () => {
     await go('crm', /\/crm$/, () => expect(page.getByRole('heading', { name: '会员工作台' })).toBeVisible());
     await go('erp', /\/erp/, () => expect(page.getByTestId('erp-shell')).toBeVisible());
     await go('wcp', /\/oa/, async () => {});
-    await go('design', /\/admin\/design$/, () => expect(page.getByTestId('design-home')).toBeVisible());
+    await go('design', /\/admin\/design$/, async () => {
+      await expect(page.getByTestId('design-home')).toBeVisible();
+      // 官网（8.1.46）：首屏视频、分享图现在用哪一份，去素材库换
+      await expect(page.getByTestId('design-website-website.hero.video')).toBeVisible();
+      await expect(page.getByTestId('design-website-website.share.image')).toBeVisible();
+    });
 
     // 头像菜单：退出登录回到登录页
     await page.goto('/');
