@@ -288,6 +288,7 @@
   - `410`（`410_gf_supply.sql`，P02）：集团物料 `gf_materials`、供应商库 `gf_suppliers`（统一社会信用代码唯一）、供应商版本快照 `gf_supplier_versions`（只追加）、SKU `gf_skus`、协议价版本 `gf_sku_prices`（只追加）；事项类型加入库、变更、SKU 提报、协议价变更。回滚 `docs/rollback/410_gf_supply.down.sql`。
   - `420`（`420_gf_petty.sql`，P03）：业财法设置 `gf_settings`（采购部门）、部门额度 `gf_dept_quotas`（核定次月生效）、额度台账 `gf_quota_ledger`（冻结 / 解冻 / 占用 / 冲正，只追加、操作编号幂等）、超额合并特批 `gf_quota_specials`（唯一特批编号）、逾期复核 `gf_overdue_reviews`（只追加）；事项类型加零星采购、月度额度核定。回滚 `docs/rollback/420_gf_petty.down.sql`。
   - `430`（`430_gf_contract.sql`，P04）：事项类型加合同；合同版本 `gf_contract_versions`（初版 / 减金额保留原审批 / 核心变更重新路由，只追加）。回滚 `docs/rollback/430_gf_contract.down.sql`。
+  - `440`（`440_gf_payment.sql`，P05）：事项类型加付款申请；出纳付款记录 `gf_payouts`（银行流水号唯一，只追加）；微信特批加确认时的收款账号 `payee_account`。回滚 `docs/rollback/440_gf_payment.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
