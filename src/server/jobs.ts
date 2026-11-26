@@ -2,6 +2,7 @@
 // 各项互不影响：一项出错写日志、接着跑下一项，下一分钟再试。顺序有讲究：到期处理在权益发放、生日礼之前
 // （按新的档阶发，不按过期的档阶发，Codex 自动审查 43d53e9）。
 
+import { runHotTableArchive } from './modules/archive';
 import { sendCcDigest } from './modules/govflow/engine';
 import type { AppConfig } from './config';
 import type { Sql } from './db';
@@ -89,6 +90,15 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
     if (n > 0) log.info(`清掉没传完的培训上传：${n} 个`);
   } catch (error) {
     log.error('清理没传完的培训上传失败，一小时后重试', error);
+  }
+  // 热表归档（8.1.47，docs/DB_REVIEW_V8147.md 第 5 节）：每小时把超过保留天数的位置事件与轨迹段、对外调用记录、企业微信推送记录挪进归档表
+  try {
+    const run = await runHotTableArchive(sql, config.archive);
+    if (run && run.locationEvents + run.locationTracks + run.integrationCalls + run.wecomPushes > 0) {
+      log.info(`热表归档：位置事件 ${run.locationEvents}、轨迹段 ${run.locationTracks}、对外调用 ${run.integrationCalls}、企业微信推送 ${run.wecomPushes} 条`);
+    }
+  } catch (error) {
+    log.error('热表归档失败，一小时后重试', error);
   }
   // OA 考勤结算（OA-08）：每 10 分钟看最近 3 天下班窗口结束了的排班，还没结算的、结算后又有新打卡的重新结算
   try {
