@@ -208,6 +208,11 @@ export const PERMISSIONS = {
   'expense.manage': { roles: ['owner'], duties: ['cost'] },
   /** 登记备用金打款、退回、补付 */
   'petty.manage': { roles: ['owner'], duties: ['payable', 'cost'] },
+  /**
+   * 备用金申用：在部门的备用金上申用（登记即占用）、提交 / 撤回报销、更新补单、作废申用（8.1.42，docs/V8142_PETTY.md）。
+   * 原来 8.1.9 零采备用金的「看」「办」两项（pool.read / pool.manage，BJ1：店主与采购）并成这一项，迁移 340 把岗位与个人的设置一起改过来
+   */
+  'petty.use': { roles: ['owner'], duties: ['purchase'] },
   /** 确认超门槛的报销（v0.7.11 起冲销归「finance.void」） */
   'expense.approve': { roles: ['owner'], duties: ['approve'] },
   /** 导出报销明细与每日平账 */
@@ -252,9 +257,6 @@ export const PERMISSIONS = {
   // 8.0.20 布草洗涤（docs/ERP_V8020.md 第 4 节）
   'linen.read': { roles: ['owner', 'store_manager'], duties: ['stock', 'cost', 'payable', 'approve'] },
   'linen.manage': { roles: ['owner', 'store_manager'], duties: ['stock'] },
-  // 8.1.9 零采备用金（docs/ERP_V819.md 第 2.4 节，BJ1）：供应链（采购）专用；财务登记报销时只看得到已提交报销的申用，看不到面板
-  'pool.read': { roles: ['owner'], duties: ['purchase'] },
-  'pool.manage': { roles: ['owner'], duties: ['purchase'] },
   // 8.1.9 签赠（docs/GIFTS_V819.md 第 2.5 节，SZ2–SZ4）：台账、发放、能被选作授权人、维护知识库与配置
   'gift.read': { roles: ['owner', 'store_manager', 'account_manager'], duties: ['concierge', 'concierge_manager'] },
   'gift.issue': { roles: ['owner', 'store_manager', 'duty_manager', 'account_manager'], duties: ['concierge', 'concierge_manager'] },
@@ -594,6 +596,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'expense.read': '查看费用报销、备用金与每日平账',
   'expense.manage': '登记费用报销（发票、税点、科目）',
   'petty.manage': '登记备用金打款、退回、补付',
+  'petty.use': '备用金申用：申用（占用部门备用金的可用额度）、提交 / 撤回报销、更新补单、作废申用',
   'expense.approve': '确认超门槛的报销',
   'expense.export': '导出报销明细与每日平账',
   'request.create': '提部门采购需求单（只限本部门）',
@@ -612,8 +615,6 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'asset.read': '资产与易耗：看资产卡片与盘点',
   'linen.read': '布草洗涤：看布草数量、单据与洗涤费对账',
   'linen.manage': '布草洗涤：维护品类，开送洗、收回、新增、报废单',
-  'pool.read': '零采备用金：看面板与申用台账、导出',
-  'pool.manage': '零采备用金：申用、提交 / 撤回报销、更新补单、作废申用',
   'gift.read': '签赠：看签赠台账（明细、按授权人、按个人、占比）',
   'gift.issue': '签赠：给会员发放签赠券（要选授权人）',
   'gift.authorize': '签赠：能被选作签赠的授权人',
@@ -779,6 +780,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'expense.read',
       'expense.manage',
       'petty.manage',
+      'petty.use',
       'expense.approve',
       'finance.void',
       'expense.export',
@@ -800,8 +802,6 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'asset.manage',
       'linen.read',
       'linen.manage',
-      'pool.read',
-      'pool.manage',
     ],
   },
   { title: '员工工作台', items: ['canteen.manage', 'patrol.read', 'patrol.manage'] },

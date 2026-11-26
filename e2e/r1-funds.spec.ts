@@ -126,27 +126,32 @@ test.describe('R1.2 收银', () => {
     await expect(page.getByTestId('bill-panel')).toContainText('儿童免票');
   });
 
-  test('接待时直接选儿童免票：同一次接待请值班经理授权一次后才能发牌', async ({ page }) => {
+  test('接待发牌不再选票种（8.1.44 去掉「选择套餐」）：按默认票种发牌；儿童免票到收银台改票种，照旧要值班经理授权', async ({ page }) => {
     await login(page, 'chenyin');
     const tags = ((await (await page.request.get('/api/frontdesk/board')).json()) as { tags: BoardTag[] }).tags;
     const code = tags.find((t) => t.zone === 'male' && t.kind === 'normal' && t.active && !t.locked && !t.visit)!.code;
-    const types = (await (await page.request.get('/api/frontdesk/ticket-types')).json()) as { id: number; name: string }[];
-    const child = types.find((t) => t.name.startsWith('儿童免票'))!;
     await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
     await page.keyboard.press('F2');
     const dialog = page.getByRole('dialog', { name: '接待发牌' });
     await dialog.getByLabel('第 1 位牌号').fill(code);
     await expect(dialog.getByTestId('guest-row-0')).toContainText('空闲可发');
-    await dialog.getByTestId('guest-ticket-0').selectOption(String(child.id));
-    const grant = dialog.getByTestId('free-ticket-grant');
-    await expect(grant).toContainText(`手牌 ${code} 选了免票`);
-    await expect(dialog.getByTestId('checkin-submit')).toBeDisabled();
-    await grant.getByTestId('request-ticket-authorize').click();
-    await authorize(page);
-    await expect(dialog).toContainText('免票已由张经理当场授权');
+    await expect(dialog.getByTestId('guest-ticket-0')).toHaveCount(0);
+    await expect(dialog.getByLabel('第 1 位票种')).toHaveCount(0);
     await dialog.getByTestId('checkin-submit').click();
     await expect(page.getByText(`已发牌 ${code}`)).toBeVisible();
-    await expect(page.getByTestId('bill-panel')).toContainText('儿童免票');
+    const panel = page.getByTestId('bill-panel');
+    await expect(panel.getByTestId('bill-ticket')).toContainText('不含餐');
+    // 收银台改成儿童免票：要值班经理当场授权并填原因
+    await panel.getByTestId('go-cashier').click();
+    await expect(panel).toHaveAttribute('data-desk', 'cashier');
+    await panel.getByTestId('bill-ticket-change').click();
+    const ticket = page.getByRole('dialog').filter({ has: page.getByTestId('ticket-confirm') });
+    await ticket.getByRole('radio', { name: /儿童免票/ }).click();
+    await ticket.getByLabel('降档原因').fill('1 米以下儿童');
+    await ticket.getByTestId('ticket-authorize').click();
+    await authorize(page);
+    await ticket.getByTestId('ticket-confirm').click();
+    await expect(panel).toContainText('儿童免票');
   });
 });

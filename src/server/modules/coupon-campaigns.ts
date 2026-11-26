@@ -48,7 +48,12 @@ const AudienceInput = z.object({
   tagIds: z.array(z.number().int().positive()).max(50, '一次最多选 50 个标签').default([]),
   tagMode: z.enum(['any', 'all']).default('any'),
 });
-const PreviewInput = z.object({ templateId: z.number('请选择券').int().positive('请选择券'), audience: AudienceInput });
+const PreviewInput = z.object({
+  templateId: z.number('请选择券').int().positive('请选择券'),
+  audience: AudienceInput,
+  /** 每人几张（8.1.40 试算用）；不带按 1 张 */
+  quantity: z.number().int().min(1).max(MAX_MANUAL_COUPONS).optional(),
+});
 const CreateInput = z.object({
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   templateId: z.number('请选择券').int().positive('请选择券'),
@@ -106,6 +111,58 @@ export async function previewCampaign(deps: Pick<Deps, 'sql' | 'config'>, raw: u
     sample: sample.map((m) => ({ id: Number(m.id), memberNo: m.memberNo, name: m.name, gradeLabel: gradeLabel(rules, m.grade, m.tier) })),
     validTo: validRange(template, date)?.to ?? null,
     tooMany: members.length > (await loadSettings(sql)).campaignMaxMembers,
+    estimate: await estimateOf(sql, template, (members.length - members.filter((m) => !levelOk(template, m.grade)).length) * (input.quantity ?? 1)),
+  };
+}
+
+/**
+ * 发券试算（8.1.40）：每张最多抵多少 × 张数；按这个券以前的核销率估成本（只读）。
+ * 「每张最多抵」只写真的上限：代金券是面额，折扣券、兑换、买一赠一是「最多减 / 最多抵」。
+ * 兑换、买一赠一没设「最多抵」时没有上限——结账时抵的是账单上那一份的实际价，规格档、门店价、做法加价、套餐换菜、门票按时长累计都会让它比价目高
+ * （合并前 Codex 审查几轮里一样一样找出来的）；这时另给一个参考：按现在价目最贵的一份估（referencePerCoupon），页面写明「约」。
+ */
+async function estimateOf(db: Db, t: LockedTemplate, coupons: number): Promise<NonNullable<CampaignPreview['estimate']>> {
+  let perCoupon: number | null = null;
+  let referencePerCoupon: number | null = null;
+  let uncappedWhy: string | undefined;
+  if (t.kind === 'cash') perCoupon = t.faceValue === null ? null : Number(t.faceValue);
+  else if (t.kind === 'discount') {
+    perCoupon = t.maxOff === null ? null : Number(t.maxOff);
+    if (perCoupon === null) uncappedWhy = '折扣券没设「最多减」';
+  } else if (t.maxOff !== null) perCoupon = Number(t.maxOff);
+  else if (t.exchangeItemId === null && t.exchangeTicketTypeId !== null) {
+    uncappedWhy = '兑换门票按在店时长累计，没设「最多抵」';
+    const [tt] = await db<{ price: number }[]>`SELECT price_24h AS price FROM ticket_types WHERE id = ${t.exchangeTicketTypeId}`;
+    referencePerCoupon = tt ? Number(tt.price) : null;
+  } else {
+    uncappedWhy = '兑换按账单上那一份的实际价（规格、门店价、做法加价都会让它更高），没设「最多抵」';
+    const itemId = t.exchangeItemId ?? t.buyItemId;
+    // 参考：公司价各档、各店自己的价里最贵的（券限了门店的只看那几家）；现场定价（时价、称重）的没有参考价
+    const [p] = itemId
+      ? await db<{ price: number; onSite: boolean }[]>`
+          SELECT greatest(i.price,
+                          coalesce((SELECT max(sp.price) FROM service_item_prices sp WHERE sp.item_id = i.id), 0),
+                          coalesce((SELECT max(ssp.price) FROM service_item_store_prices ssp
+                                    WHERE ssp.item_id = i.id ${t.storeIds?.length ? db`AND ssp.store_id IN ${db(t.storeIds.map(Number))}` : db``}), 0))::bigint AS price,
+                 i.price_mode <> 'fixed' AS on_site
+          FROM service_items i WHERE i.id = ${itemId}`
+      : [];
+    referencePerCoupon = p && !p.onSite ? Number(p.price) : null;
+  }
+  const [h] = await db<{ issued: number; used: number }[]>`
+    SELECT count(*)::int AS issued, count(*) FILTER (WHERE status = 'used')::int AS used FROM coupons WHERE template_id = ${t.id}`;
+  const useRate = h && h.issued > 0 ? Math.round((h.used / h.issued) * 1000) / 1000 : null;
+  const maxTotal = perCoupon === null ? null : perCoupon * coupons;
+  // 估成本：有上限按上限，没有按参考价（页面写「约」）
+  const basis = maxTotal ?? (referencePerCoupon === null ? null : referencePerCoupon * coupons);
+  return {
+    perCoupon,
+    coupons,
+    maxTotal,
+    useRate,
+    expectedCost: basis === null || useRate === null ? null : Math.round(basis * useRate),
+    ...(uncappedWhy ? { uncappedWhy } : {}),
+    ...(referencePerCoupon !== null ? { referencePerCoupon } : {}),
   };
 }
 
@@ -113,7 +170,7 @@ export async function previewCampaign(deps: Pick<Deps, 'sql' | 'config'>, raw: u
 async function lockTemplateReadOnly(db: Db, id: number): Promise<LockedTemplate | null> {
   const [t] = await db<(LockedTemplate & { levels: number[] })[]>`
     SELECT id, name, kind, face_value, rate_percent, max_off, threshold, scope, scope_categories, scope_items, exchange_item_id, exchange_ticket_type_id,
-           buy_item_id, validity, valid_from, valid_to, valid_days, levels, active, gift
+           buy_item_id, validity, valid_from, valid_to, valid_days, levels, active, gift, store_ids
     FROM coupon_templates WHERE id = ${id}`;
   return t ? { ...t, levels: t.levels.map(Number) } : null;
 }

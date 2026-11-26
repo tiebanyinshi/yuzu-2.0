@@ -1,7 +1,8 @@
 // 券与会员权益（v0.7.20，飞书 RQ-006 后半；docs/COUPONS.md）：券模板、发券规则、发券（手动、无记名批次、开卡礼、升级礼、生日礼、
 // 充值赠券）、作废、会员的券、统计。结账用券与反结账退回在 coupon-checkout.ts。
 //
-//   · 模板发过券后，面额、折扣、门槛、范围、有效期、限定等级不能改（数据库触发器兜底）；发券在同一事务里对模板加共享锁，
+//   · 模板发过券后，面额、折扣、兑换的项目、有效期、限定等级不能改（数据库触发器兜底）；门槛、范围、星期、时段、门店、点钟这些使用条件
+//     8.1.44 起可以改、马上对没用掉的券生效（结账按模板此刻的条件核对），改动记审计；发券在同一事务里对模板加共享锁，
 //     改模板加排他锁，两边不会交错（改模板时看得到刚发的券）；
 //   · 有效期按营业日算好写在券上：固定起止日期，或发券当天起 N 天；模板的固定有效期已过不能再发；
 //   · 自动发券按「规则 + 会员 + 年份 / 充值单」去重（coupon_issues.dedupe_key 唯一），几个进程同时跑也只发一次；
@@ -86,6 +87,12 @@ const TemplateFields = z.object({
     .default([]),
   note: z.string().trim().max(200, '备注最多 200 字').default(''),
   active: z.boolean().default(true),
+  // 8.1.40 使用限制（迁移 320）：哪几天（1 = 周一 … 7 = 周日）、每天几点到几点（分钟）、哪几家店；点钟券
+  weekdays: z.array(z.number().int().min(1, '星期是 1–7').max(7, '星期是 1–7')).max(7).default([]),
+  timeFrom: z.number().int().min(0).max(1439).nullable().default(null),
+  timeTo: z.number().int().min(0).max(1439).nullable().default(null),
+  storeIds: z.array(z.number().int().positive()).max(50, '最多选 50 家店').default([]),
+  designatedOnly: z.boolean().default(false),
 });
 const TemplateInput = TemplateFields.superRefine((t, c) => {
   const issue = (message: string, path: string) => c.addIssue({ code: 'custom', message, path: [path] });
@@ -102,6 +109,9 @@ const TemplateInput = TemplateFields.superRefine((t, c) => {
   if (t.validity === 'fixed' && (!t.validFrom || !t.validTo)) issue('请填写起止日期', 'validFrom');
   if (t.validity === 'fixed' && t.validFrom && t.validTo && t.validFrom > t.validTo) issue('结束日期不能早于开始日期', 'validTo');
   if (t.validity === 'days' && t.validDays === null) issue('请填写有效天数', 'validDays');
+  if ((t.timeFrom === null) !== (t.timeTo === null)) issue('使用时段要填起止两个时间（都不填为不限）', 'timeFrom');
+  if (t.timeFrom !== null && t.timeFrom === t.timeTo) issue('使用时段的起止不能相同', 'timeTo');
+  if (t.designatedOnly && (t.kind === 'exchange' || t.kind === 'bogo')) issue('点钟券只能是代金券或折扣券', 'designatedOnly');
 });
 const TemplateUpdate = TemplateFields.extend({ expectedVersion: z.number().int().positive('缺少版本号，请刷新后重试') });
 
@@ -136,11 +146,21 @@ function normalizeTerms(t: z.infer<typeof TemplateFields>) {
     levels: [...new Set(t.levels)].sort((a, b) => a - b),
     note: t.note,
     active: t.active,
+    // 8.1.40：七天都选了等于不限
+    weekdays: t.weekdays.length >= 7 ? [] : [...new Set(t.weekdays)].sort((a, b) => a - b),
+    timeFrom: t.timeFrom,
+    timeTo: t.timeTo,
+    storeIds: [...new Set(t.storeIds)].sort((a, b) => a - b),
+    designatedOnly: !itemBound && t.designatedOnly,
   };
 }
 type Normalized = ReturnType<typeof normalizeTerms>;
 
 async function assertRefs(db: Db, t: Normalized) {
+  if (t.storeIds.length) {
+    const found = await db<{ id: number }[]>`SELECT id FROM stores WHERE id IN ${db(t.storeIds)}`;
+    if (found.length !== t.storeIds.length) throw badRequest('有选中的门店不存在，请刷新后重选', { field: 'storeIds' });
+  }
   if (t.scopeItems.length) {
     const found = await db<{ id: number }[]>`SELECT id FROM service_items WHERE id IN ${db(t.scopeItems)}`;
     if (found.length !== t.scopeItems.length) throw badRequest('有选中的项目不存在，请刷新后重选', { field: 'scopeItems' });
@@ -171,7 +191,8 @@ const TEMPLATE_SELECT = (db: Db) => db`
               THEN coalesce((SELECT value #>> '{}' FROM settings WHERE key = 'inventory_scope_name'), '后勤总库')
               ELSE gd.name || '小仓' END AS gift_warehouse_name,
          (SELECT count(*) FROM coupons c WHERE c.template_id = t.id)::int AS issued,
-         t.gift, t.gift_segment, t.gift_content, t.gift_rules
+         t.gift, t.gift_segment, t.gift_content, t.gift_rules,
+         t.weekdays, t.time_from, t.time_to, t.store_ids, t.designated_only
   FROM coupon_templates t JOIN staff s ON s.id = t.created_by
   LEFT JOIN service_items xi ON xi.id = t.exchange_item_id LEFT JOIN ticket_types xt ON xt.id = t.exchange_ticket_type_id
   LEFT JOIN service_items bi ON bi.id = t.buy_item_id
@@ -199,6 +220,11 @@ const termsOf = (t: CouponTerms): CouponTerms => ({
   exchangeItemId: t.exchangeItemId === null ? null : Number(t.exchangeItemId),
   exchangeTicketTypeId: t.exchangeTicketTypeId === null ? null : Number(t.exchangeTicketTypeId),
   buyItemId: t.buyItemId === null || t.buyItemId === undefined ? null : Number(t.buyItemId),
+  weekdays: (t.weekdays ?? []).map(Number),
+  timeFrom: t.timeFrom ?? null,
+  timeTo: t.timeTo ?? null,
+  storeIds: (t.storeIds ?? []).map(Number),
+  designatedOnly: t.designatedOnly ?? false,
 });
 const summaryOf = (t: CouponTerms & { exchangeItemName?: string | null; exchangeTicketName?: string | null; buyItemName?: string | null }) =>
   couponTermsText(termsOf(t), {
@@ -272,11 +298,12 @@ export async function createTemplate(deps: Deps, raw: unknown, ctx: OpContext, g
         INSERT INTO coupon_templates (name, kind, face_value, rate_percent, max_off, threshold, scope, scope_categories, scope_items,
                                       exchange_item_id, exchange_ticket_type_id, buy_item_id, gift_material_id, gift_qty_milli, gift_warehouse_id,
                                       validity, valid_from, valid_to, valid_days, levels, note, active, created_by, client_key,
-                                      gift, gift_segment, gift_content, gift_rules)
+                                      gift, gift_segment, gift_content, gift_rules, weekdays, time_from, time_to, store_ids, designated_only)
         VALUES (${t.name}, ${t.kind}, ${t.faceValue}, ${t.ratePercent}, ${t.maxOff}, ${t.threshold}, ${t.scope}, ${t.scopeCategories}::text[],
                 ${t.scopeItems}::bigint[], ${t.exchangeItemId}, ${t.exchangeTicketTypeId}, ${t.buyItemId}, ${t.giftMaterialId}, ${t.giftQtyMilli}, ${t.giftWarehouseId},
                 ${t.validity}, ${t.validFrom}, ${t.validTo}, ${t.validDays}, ${t.levels}::smallint[], ${t.note}, ${t.active}, ${ctx.actor.id}, ${clientKey},
-                ${!!gift}, ${gift?.segment ?? ''}, ${gift?.content ?? ''}, ${gift?.rules ?? ''})
+                ${!!gift}, ${gift?.segment ?? ''}, ${gift?.content ?? ''}, ${gift?.rules ?? ''},
+                ${t.weekdays}::smallint[], ${t.timeFrom}, ${t.timeTo}, ${t.storeIds}::bigint[], ${t.designatedOnly})
         RETURNING id`;
       await writeAudit(tx, {
         staffId: ctx.actor.id,
@@ -299,27 +326,16 @@ export async function createTemplate(deps: Deps, raw: unknown, ctx: OpContext, g
   }
 }
 
-const TERM_KEYS = [
-  'kind',
-  'faceValue',
-  'ratePercent',
-  'maxOff',
-  'threshold',
-  'scope',
-  'scopeCategories',
-  'scopeItems',
-  'exchangeItemId',
-  'exchangeTicketTypeId',
-  'buyItemId',
-  'validity',
-  'validFrom',
-  'validTo',
-  'validDays',
-  'levels',
-] as const;
+/** 发过券以后仍然锁着的条件：已经许给客人的钱和东西（面额、几折、兑换什么、有效期）与发给谁（档级） */
+const LOCKED_KEYS = ['kind', 'faceValue', 'ratePercent', 'maxOff', 'exchangeItemId', 'exchangeTicketTypeId', 'buyItemId', 'validity', 'validFrom', 'validTo', 'validDays', 'levels'] as const;
+/**
+ * 使用条件（8.1.44，《前台系统开发》）：发过券以后也能改、马上生效——结账核对按模板此刻的条件算，没用掉的券都跟着变；
+ * 改了的写进审计（改前、改后、已发几张）
+ */
+const USAGE_KEYS = ['threshold', 'scope', 'scopeCategories', 'scopeItems', 'weekdays', 'timeFrom', 'timeTo', 'storeIds', 'designatedOnly'] as const;
 
 /**
- * 改模板：带版本号（对不上拒绝）；发过券的只能改名称、备注、停用。
+ * 改模板：带版本号（对不上拒绝）；发过券的只能改名称、备注、停用与使用条件（8.1.44：门槛、范围、星期、时段、门店、点钟）。
  * 签赠券类型（8.1.9）只经签赠模块改（gift 给板块、权益内容、规则说明），券模板的接口改不了它；反过来签赠模块也改不了普通券模板
  */
 export async function updateTemplate(deps: Deps, id: number, raw: unknown, ctx: OpContext, gift: GiftInfo | null = null): Promise<CouponTemplate> {
@@ -337,10 +353,13 @@ export async function updateTemplate(deps: Deps, id: number, raw: unknown, ctx: 
     const [counted] = await tx<{ issued: number }[]>`SELECT count(*)::int AS issued FROM coupons WHERE template_id = ${id}`;
     const issued = counted!.issued;
     const before = { ...termsOf(cur), validity: cur.validity, validFrom: cur.validFrom, validTo: cur.validTo, validDays: cur.validDays, levels: cur.levels.map(Number) };
-    const changed = TERM_KEYS.filter((k) => JSON.stringify(before[k]) !== JSON.stringify(t[k]));
-    if (issued > 0 && changed.length) {
-      throw conflict('TEMPLATE_LOCKED', `这个模板已经发过 ${issued} 张券，面额、折扣、门槛、范围、有效期、等级都不能改，只能改名称、备注或停用；要改请另建模板`, {
-        fields: changed,
+    const differs = (k: (typeof LOCKED_KEYS)[number] | (typeof USAGE_KEYS)[number]) => JSON.stringify(before[k]) !== JSON.stringify(t[k]);
+    const lockedChanged = LOCKED_KEYS.filter(differs);
+    const usageChanged = USAGE_KEYS.filter(differs);
+    const changed = [...lockedChanged, ...usageChanged];
+    if (issued > 0 && lockedChanged.length) {
+      throw conflict('TEMPLATE_LOCKED', `这个模板已经发过 ${issued} 张券，面额、折扣、兑换的项目、有效期、等级都不能改（使用条件可以改）；要改请另建模板`, {
+        fields: lockedChanged,
       });
     }
     await assertRefs(tx, t);
@@ -350,7 +369,9 @@ export async function updateTemplate(deps: Deps, id: number, raw: unknown, ctx: 
              exchange_item_id = ${t.exchangeItemId}, exchange_ticket_type_id = ${t.exchangeTicketTypeId}, buy_item_id = ${t.buyItemId},
              gift_material_id = ${t.giftMaterialId}, gift_qty_milli = ${t.giftQtyMilli}, gift_warehouse_id = ${t.giftWarehouseId}, validity = ${t.validity},
              valid_from = ${t.validFrom}, valid_to = ${t.validTo}, valid_days = ${t.validDays}, levels = ${t.levels}::smallint[], note = ${t.note},
-             active = ${t.active}, version = version + 1, updated_at = now()
+             active = ${t.active}, version = version + 1, updated_at = now(),
+             weekdays = ${t.weekdays}::smallint[], time_from = ${t.timeFrom}, time_to = ${t.timeTo}, store_ids = ${t.storeIds}::bigint[],
+             designated_only = ${t.designatedOnly}
              ${gift ? tx`, gift_segment = ${gift.segment}, gift_content = ${gift.content}, gift_rules = ${gift.rules}` : tx``}
       WHERE id = ${id}`;
     await writeAudit(tx, {
@@ -368,6 +389,23 @@ export async function updateTemplate(deps: Deps, id: number, raw: unknown, ctx: 
       },
       ip: ctx.ip,
     });
+    // 已发的券跟着新条件走：改前、改后都记下来，事后能查是谁、什么时候、把哪几项从什么改成什么
+    if (issued > 0 && usageChanged.length) {
+      await writeAudit(tx, {
+        staffId: ctx.actor.id,
+        action: 'coupon_terms_changed',
+        targetType: 'coupon_template',
+        targetId: id,
+        detail: {
+          name: t.name,
+          issued,
+          fields: usageChanged,
+          before: Object.fromEntries(usageChanged.map((k) => [k, before[k]])),
+          after: Object.fromEntries(usageChanged.map((k) => [k, t[k]])),
+        },
+        ip: ctx.ip,
+      });
+    }
   });
   return getTemplate(deps.sql, id);
 }
@@ -1077,6 +1115,8 @@ const COUPON_SELECT = (db: Db) => db`
   SELECT c.id, c.code, c.template_id, t.name AS template_name, t.kind, t.face_value, t.rate_percent, t.max_off, t.threshold, t.scope,
          t.scope_categories, t.scope_items, t.exchange_item_id, t.exchange_ticket_type_id, xi.name AS exchange_item_name, xt.name AS exchange_ticket_name,
          t.buy_item_id, bi.name AS buy_item_name,
+         -- 8.1.40 券的使用限制：已发的券、无记名券、小程序领到的券说明里也要写（合并前 Codex 审查 fca1ba4）
+         t.weekdays, t.time_from, t.time_to, t.store_ids, t.designated_only,
          c.member_id, m.name AS member_name, c.valid_from, c.valid_to, c.status, i.issue_no, i.kind AS issue_kind, i.issued_at,
          s.display_name AS issued_by_name, ck.checkout_no,
          (SELECT e.amount FROM coupon_events e WHERE e.coupon_id = c.id AND e.kind = 'use' AND e.checkout_id = c.checkout_id ORDER BY e.id DESC LIMIT 1) AS used_amount,
@@ -1137,7 +1177,7 @@ export async function memberCoupons(db: Db, memberId: number, today: string): Pr
 const BATCH_SELECT = (db: Db) => db`
   SELECT i.id, i.issue_no, i.template_id, t.name AS template_name, t.kind, t.face_value, t.rate_percent, t.max_off, t.threshold, t.scope,
          t.scope_categories, t.scope_items, t.exchange_item_id, t.exchange_ticket_type_id, xi.name AS exchange_item_name, xt.name AS exchange_ticket_name,
-         t.buy_item_id, bi.name AS buy_item_name,
+         t.buy_item_id, bi.name AS buy_item_name, t.weekdays, t.time_from, t.time_to, t.store_ids, t.designated_only,
          i.quantity, i.reason AS note, i.issued_at, s.display_name AS issued_by_name,
          (SELECT min(valid_from) FROM coupons WHERE issue_id = i.id) AS valid_from, (SELECT max(valid_to) FROM coupons WHERE issue_id = i.id) AS valid_to,
          (SELECT json_agg(json_build_object('status', status, 'validFrom', valid_from, 'validTo', valid_to)) FROM coupons WHERE issue_id = i.id) AS coupons

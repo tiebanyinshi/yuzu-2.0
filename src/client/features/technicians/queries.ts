@@ -4,6 +4,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { LeaveStatus, ScheduleView, TechLeave, TechnicianAdminView } from '@shared/technician-admin';
 import type { TechnicianRankingView } from '@shared/technician-ranking';
+import type { TechRota } from '@shared/technician-rota';
 import { api } from '../../lib/api';
 import { useLivePoll } from '../../lib/livePoll';
 
@@ -30,6 +31,10 @@ export function useTechAdmin(live = false) {
 export const scheduleUrl = (from: string, days: number) => `/api/technician-admin/schedule?from=${from}&days=${days}`;
 
 export const useSchedule = (from: string, days: number) => useQuery({ queryKey: scheduleKey(from, days), queryFn: () => api.get<ScheduleView>(scheduleUrl(from, days)) });
+
+/** 轮班周期（8.1.41）：门店自定的轮班清单 */
+export const rotasKey = [...techAdminKey, 'rotas'] as const;
+export const useRotas = () => useQuery({ queryKey: rotasKey, queryFn: () => api.get<{ rotas: TechRota[] }>('/api/technician-admin/rotas') });
 
 export const useLeaves = (status: LeaveStatus | 'all') =>
   useQuery({ queryKey: leavesKey(status), queryFn: () => api.get<TechLeave[]>(`/api/technician-admin/leaves${status === 'all' ? '' : `?status=${status}`}`) });

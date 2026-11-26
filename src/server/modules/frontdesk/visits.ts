@@ -63,6 +63,7 @@ import { loadVipLockerRules } from '../vip-lockers';
 import { assertVipAllowed, consumeVipShortfalls, memberLockerGrades, vipShortfalls } from './vip';
 import { currentStoreId } from '../../lib/store-context';
 import { incidentText, openTodoCount, openTodoWhere, visitIncidentEvents, visitIncidents } from './incident-read';
+import { remarkTagsSql, visitRemarks } from './remark-read';
 import { arriveBookingsTx, blacklistedError, blacklistHits, loadRiskRules, lockArrivableBookings, unsettledDebts, visitsToday, type LockedRiskBooking } from './risk';
 
 const clientKey = z.uuid('缺少有效的操作编号，请刷新页面后重试');
@@ -698,6 +699,7 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
       lineCount: number | null;
       awaySince: string | null;
       openTodos: number | null;
+      remarkTags: string[] | null;
     })[]
   >`
     SELECT t.id, t.code, t.zone, t.kind, t.vip_level, t.locked, t.lock_reason, t.active, t.is_synthetic, t.service_status, t.service_note,
@@ -707,7 +709,9 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
            CASE WHEN v.group_id IS NULL THEN 0 ELSE count(v.id) OVER (PARTITION BY v.group_id) END AS group_open_count,
            b.amount_cents, b.line_count, v.away_since,
            -- 这次来访上没处理完的异常待办（上报、未结离店；8.1.17 起还有超时提醒）几条（8.1.15）
-           (SELECT count(*)::int FROM visit_incidents i WHERE i.visit_id = v.id AND ${openTodoWhere(db)}) AS open_todos
+           (SELECT count(*)::int FROM visit_incidents i WHERE i.visit_id = v.id AND ${openTodoWhere(db)}) AS open_todos,
+           -- 前台备注的标签（8.1.44）：收银台清单上标「客诉」等
+           CASE WHEN v.id IS NULL THEN NULL ELSE ${remarkTagsSql(db)} END AS remark_tags
     FROM hand_tags t
     LEFT JOIN visits v ON v.tag_id = t.id AND v.status = 'open'
     LEFT JOIN members m ON m.id = v.member_id
@@ -749,6 +753,7 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
           gifts: 0,
           awaySince: r.awaySince,
           openTodos: r.openTodos ?? 0,
+          remarkTags: r.remarkTags ?? [],
         }
       : null,
   }));
@@ -988,6 +993,7 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
     awaySince: v.awaySince,
     riskApproval: v.riskApprovedByName && v.riskApprovedAt ? { byName: v.riskApprovedByName, at: v.riskApprovedAt, reason: v.riskReason ?? '' } : null,
     incidents,
+    remarks: await visitRemarks(db, v.id, v.groupId),
     ticket: await visitTicket(db, v.id, v.closedAt ? new Date(v.closedAt) : new Date(now!.now), today),
     checkout: lastCheckout ? { id: lastCheckout.id, checkoutNo: lastCheckout.checkoutNo, status: lastCheckout.status } : null,
     bill: { id: v.billId, billNo: v.billNo, status: v.billStatus, amountCents: v.amountCents, lineCount: v.lineCount },

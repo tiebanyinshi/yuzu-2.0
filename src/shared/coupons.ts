@@ -79,6 +79,48 @@ export interface CouponTerms {
   exchangeTicketTypeId: number | null;
   /** 买一赠一券：买的项目（8.0.4） */
   buyItemId: number | null;
+  /**
+   * 使用限制（8.1.40，迁移 320）：哪几天（1 = 周一 … 7 = 周日，按营业日）、每天几点到几点（分钟，to 不晚于 from 表示到次日）、
+   * 哪几家店；空 / 不带为不限。designatedOnly：点钟券——只抵客人点名（点钟）的技师项目
+   */
+  weekdays?: number[];
+  timeFrom?: number | null;
+  timeTo?: number | null;
+  storeIds?: number[];
+  designatedOnly?: boolean;
+}
+
+/** 结账那一刻：营业日是星期几（1–7）、几点（分钟）、哪家店 */
+export interface CouponMoment {
+  weekday: number;
+  minute: number;
+  storeId: number;
+}
+
+const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+export const WEEKDAY_LABELS = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
+
+/** 这张券此刻能不能用（星期、时段、门店）；能用返回 null。门店名字给不出时写「这家店」 */
+export function couponLimitProblem(t: CouponTerms, at: CouponMoment, storeNames: Record<number, string> = {}): string | null {
+  if (t.weekdays?.length && !t.weekdays.includes(at.weekday)) return `这张券只能在${t.weekdays.map((d) => WEEKDAY_LABELS[d]).join('、')}用`;
+  if (t.timeFrom != null && t.timeTo != null) {
+    const inside = t.timeFrom < t.timeTo ? at.minute >= t.timeFrom && at.minute < t.timeTo : at.minute >= t.timeFrom || at.minute < t.timeTo;
+    if (!inside) return `这张券每天 ${hhmm(t.timeFrom)}–${hhmm(t.timeTo)} 才能用`;
+  }
+  if (t.storeIds?.length && !t.storeIds.includes(at.storeId)) {
+    return `这张券只能在${t.storeIds.map((id) => storeNames[id] ?? '指定的店').join('、')}用`;
+  }
+  return null;
+}
+
+/** 限制的说明：「周一至周五 · 11:00–14:00 · 限点钟」 */
+export function couponLimitText(t: CouponTerms, storeNames: Record<number, string> = {}): string {
+  const parts: string[] = [];
+  if (t.weekdays?.length && t.weekdays.length < 7) parts.push(t.weekdays.map((d) => WEEKDAY_LABELS[d]).join('、'));
+  if (t.timeFrom != null && t.timeTo != null) parts.push(`${hhmm(t.timeFrom)}–${hhmm(t.timeTo)}`);
+  if (t.storeIds?.length) parts.push(`限${t.storeIds.map((id) => storeNames[id] ?? '指定门店').join('、')}`);
+  if (t.designatedOnly) parts.push('限点钟');
+  return parts.join(' · ');
 }
 
 /** 结账时的一条明细（含刚算出的门票），部门与部门营业额快照同一口径 */
@@ -95,11 +137,16 @@ export interface CouponLine {
   partyRoomDay?: boolean;
   /** 派对房等的使用单费用（v0.7.28）：房费 fee、开台费 open_fee；不是使用单的费用为 null */
   usageCharge?: 'fee' | 'open_fee' | null;
+  /** 技师项目是点钟还是轮钟（8.1.40 点钟券用）；别的明细为空 */
+  callType?: 'designated' | 'rotation' | null;
 }
 
 export type CouponEvaluation = { usable: true; amount: number; lineIds: number[]; base: number } | { usable: false; reason: string; base: number };
 
-const inScope = (t: CouponTerms, l: CouponLine) => t.scope === 'all' || (t.scope === 'categories' ? t.scopeCategories.includes(l.category) : l.itemId !== null && t.scopeItems.includes(l.itemId));
+const inScope = (t: CouponTerms, l: CouponLine) =>
+  // 点钟券（8.1.40）：只认客人点名的技师项目
+  (!t.designatedOnly || l.callType === 'designated') &&
+  (t.scope === 'all' || (t.scope === 'categories' ? t.scopeCategories.includes(l.category) : l.itemId !== null && t.scopeItems.includes(l.itemId)));
 
 /**
  * 这张券在这些明细上能抵多少（不找零）：
@@ -120,7 +167,7 @@ export function evaluateCoupon(t: CouponTerms, lines: readonly CouponLine[]): Co
   }
   const applicable = lines.filter((l) => l.amount > 0 && inScope(t, l));
   const base = applicable.reduce((s, l) => s + l.amount, 0);
-  if (base <= 0) return { usable: false, reason: '账单上没有这张券适用的项目', base };
+  if (base <= 0) return { usable: false, reason: t.designatedOnly ? '这是点钟券，账单上没有点钟的技师项目' : '账单上没有这张券适用的项目', base };
   if (base < t.threshold) return { usable: false, reason: `适用的项目满 ${formatYuan(t.threshold)} 才能用（现在 ${formatYuan(base)}）`, base };
   let amount = t.kind === 'cash' ? Math.min(t.faceValue ?? 0, base) : Math.floor((base * (100 - (t.ratePercent ?? 100))) / 100);
   if (t.kind === 'discount' && t.maxOff !== null) amount = Math.min(amount, t.maxOff);
@@ -169,6 +216,8 @@ export function couponTermsText(t: CouponTerms, names: { items?: Record<number, 
   if (t.maxOff !== null) parts.push(`${itemBound ? '最多抵' : '最多减'} ${formatYuan(t.maxOff)}`);
   if (!itemBound && t.scope === 'categories') parts.push(`限${t.scopeCategories.join('、')}`);
   if (!itemBound && t.scope === 'items') parts.push(`限 ${t.scopeItems.length} 个项目`);
+  const limits = couponLimitText(t);
+  if (limits) parts.push(limits);
   return parts.join(' · ');
 }
 

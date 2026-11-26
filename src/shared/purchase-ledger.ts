@@ -34,12 +34,10 @@ export interface LedgerEntry {
 
 export interface LedgerTotals {
   advanceCents: number;
-  /** 用备用金付的支出（已确认的报销） */
+  /** 用备用金付的支出（已确认的报销；8.1.42 起原来「零采备用金」付的也在这里，docs/V8142_PETTY.md） */
   pettySpentCents: number;
   /** 公司直付的支出 */
   companySpentCents: number;
-  /** 零采备用金付的支出（8.1.9，已确认的报销；Codex 审查 785ca18：原来只算进了每天的小计、没进区间合计） */
-  poolSpentCents: number;
   returnedCents: number;
   toppedUpCents: number;
 }

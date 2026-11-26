@@ -58,6 +58,8 @@ export const FENCED_OPS = [
   'coupon_issue',
   // 批量发券（8.0.4，迁移 094）：编号记在发券单上（coupon_campaigns.client_key）
   'coupon_campaign',
+  // 生成礼品卡（8.1.40，迁移 322）：编号记在批次上（gift_card_batches.client_key）
+  'gift_card_batch',
   // 硬件连接（v0.7.21）：编号记在设备、打印任务上（client_key）
   'device_create',
   'device_job',
@@ -138,8 +140,8 @@ export const FENCED_OPS = [
   'stock_transfer',
   // 8.1.1 UI 工作台：发布、回滚（迁移 164；编号记在 studio_versions.client_key）
   'studio_publish',
-  // 8.1.9 零采备用金的申用（迁移 182；编号记在 idempotency_keys，ref_id 是那笔申用，也记在 petty_pool_uses.client_key）
-  'pool_use',
+  // 备用金申用（8.1.42 迁移 340；原来 8.1.9 零采备用金的 pool_use。编号记在 idempotency_keys，ref_id 是那笔申用，也记在 petty_uses.client_key）
+  'petty_use',
   // 8.1.9 库管入库台账导入（迁移 183；编号记在 idempotency_keys，ref_id 是那次导入，也记在 receipt_imports.client_key）
   'receipt_import',
   // 8.1.20 出入库台账导入（迁移 200；编号记在 idempotency_keys，ref_id 是那次导入，也记在 ledger_imports.client_key）
@@ -261,7 +263,7 @@ export async function fenceKey(tx: Tx, key: string, opType: FencedOp, staffId: n
   return { inserted: rows.length > 0 };
 }
 
-const COUPON_OPS = ['coupon_template', 'coupon_rule', 'coupon_batch', 'coupon_issue', 'coupon_campaign', 'gift_type', 'gift_issue'] as const;
+const COUPON_OPS = ['coupon_template', 'coupon_rule', 'coupon_batch', 'coupon_issue', 'coupon_campaign', 'gift_type', 'gift_issue', 'gift_card_batch'] as const;
 type CouponOp = (typeof COUPON_OPS)[number];
 export const isCouponOp = (op: string): op is CouponOp => (COUPON_OPS as readonly string[]).includes(op);
 
@@ -274,9 +276,11 @@ export async function couponOpRef(db: Db, key: string, opType: CouponOp): Promis
         ? await db<{ id: number }[]>`SELECT id FROM coupon_rules WHERE client_key = ${key}`
         : opType === 'coupon_campaign'
           ? await db<{ id: number }[]>`SELECT id FROM coupon_campaigns WHERE client_key = ${key}`
-          : opType === 'gift_issue'
-            ? await db<{ id: number }[]>`SELECT id FROM coupon_issues WHERE client_key = ${key} AND authorized_by IS NOT NULL`
-            : await db<{ id: number }[]>`SELECT id FROM coupon_issues WHERE client_key = ${key} AND kind = ${opType === 'coupon_batch' ? 'batch' : 'manual'} AND authorized_by IS NULL`;
+          : opType === 'gift_card_batch'
+            ? await db<{ id: number }[]>`SELECT id FROM gift_card_batches WHERE client_key = ${key}`
+            : opType === 'gift_issue'
+              ? await db<{ id: number }[]>`SELECT id FROM coupon_issues WHERE client_key = ${key} AND authorized_by IS NOT NULL`
+              : await db<{ id: number }[]>`SELECT id FROM coupon_issues WHERE client_key = ${key} AND kind = ${opType === 'coupon_batch' ? 'batch' : 'manual'} AND authorized_by IS NULL`;
   return rows[0] ? Number(rows[0].id) : null;
 }
 

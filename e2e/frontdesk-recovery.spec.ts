@@ -38,14 +38,14 @@ async function board(page: Page) {
   return ((await (await page.request.get('/api/frontdesk/board')).json()) as { tags: BoardTag[] }).tags;
 }
 
-/** 开一张新牌并打开它的小票 */
+/** 开一张新牌并在收银台打开它的账单（8.1.44 起加项目在收银台） */
 async function openFreshVisit(page: Page): Promise<string> {
   const free = (await board(page)).filter((t) => freeNormal(t, 'male')).reverse();
   const code = free[0]!.code;
   const res = await page.request.post('/api/frontdesk/checkins', { data: { clientKey: crypto.randomUUID(), guests: [{ tagCode: code, zone: 'male' }] } });
   expect(res.status()).toBe(201);
-  await page.goto('/crm/frontdesk');
-  await page.getByTestId(`tag-${code}`).click();
+  const visitId = ((await res.json()) as { visits: { id: number }[] }).visits[0]!.id;
+  await page.goto(`/crm/cashier?v=${visitId}`);
   await expect(page.getByTestId('bill-tag')).toHaveText(code);
   return code;
 }
