@@ -32,6 +32,8 @@ import {
   type RequestStatus,
   type StockCheckState,
   stockCheckOpen,
+  type MallCustomKind,
+  type MallCustomSpec,
 } from '@shared/requests';
 import { isUniqueViolation, readSnapshot, type Db } from '../db';
 import { guard, guardAny } from '../auth/guard';
@@ -98,7 +100,11 @@ const PROGRESS_SQL = (db: Db) => db`
                                        WHERE il.po_line_id = pl.id AND d.doc_type = 'receipt' AND d.status = 'confirmed'), 0),
             'returnedMilli', coalesce((SELECT sum(rl.qty_milli) FROM inv_doc_lines rl JOIN inv_docs rd ON rd.id = rl.doc_id
                                        JOIN inv_doc_lines src ON src.id = rl.source_line_id
-                                       WHERE src.po_line_id = pl.id AND rd.doc_type = 'supplier_return' AND rd.status = 'confirmed'), 0))
+                                       WHERE src.po_line_id = pl.id AND rd.doc_type = 'supplier_return' AND rd.status = 'confirmed'), 0),
+            'rejectedMilli', coalesce((SELECT sum(il.rejected_milli) FROM inv_doc_lines il JOIN inv_docs d ON d.id = il.doc_id
+                                       WHERE il.po_line_id = pl.id AND d.doc_type = 'receipt' AND d.status = 'confirmed'), 0),
+            'redeliverMilli', coalesce((SELECT sum(il.redeliver_milli) FROM inv_doc_lines il JOIN inv_docs d ON d.id = il.doc_id
+                                       WHERE il.po_line_id = pl.id AND d.doc_type = 'receipt' AND d.status = 'confirmed'), 0))
      FROM purchase_order_line_requests x JOIN purchase_order_lines pl ON pl.id = x.po_line_id
      JOIN purchase_orders po ON po.id = pl.po_id JOIN suppliers s ON s.id = po.supplier_id
      WHERE x.request_line_id = l.id AND po.status <> 'cancelled'
@@ -129,11 +135,14 @@ interface RawProgress {
   mergedLines: number;
   receivedMilli: number;
   returnedMilli: number;
+  rejectedMilli: number;
+  redeliverMilli: number;
 }
 
 function progressOf(p: RawProgress | null, s: { id: number; docNo: string } | null = null): RequestLineProgress {
   const sourcing = s ? { id: Number(s.id), docNo: s.docNo } : null;
-  if (!p) return { po: null, orderedMilli: 0, receivedMilli: 0, returnedMilli: 0, inventoryUnit: null, mergedLines: 0, sourcing, state: sourcing ? 'sourcing' : 'none' };
+  if (!p)
+    return { po: null, orderedMilli: 0, receivedMilli: 0, returnedMilli: 0, rejectedMilli: 0, redeliverMilli: 0, inventoryUnit: null, mergedLines: 0, sourcing, state: sourcing ? 'sourcing' : 'none' };
   const received = Number(p.receivedMilli);
   const ordered = Number(p.orderedMilli);
   return {
@@ -142,6 +151,8 @@ function progressOf(p: RawProgress | null, s: { id: number; docNo: string } | nu
     orderedMilli: ordered,
     receivedMilli: received,
     returnedMilli: Number(p.returnedMilli),
+    rejectedMilli: Number(p.rejectedMilli ?? 0),
+    redeliverMilli: Number(p.redeliverMilli ?? 0),
     inventoryUnit: p.inventoryUnit,
     mergedLines: Number(p.mergedLines),
     // 采购单关闭后没到齐的不再到：不再挂在「已下单 / 部分到货」（测试服回归报告，店主确认）
@@ -293,7 +304,7 @@ export const toSummary = (r: Awaited<ReturnType<typeof summaries>>[number]): Pur
 };
 
 /** 能不能替这张单做主管确认 / 主管退回：店主、提交时记着的主管、这个部门现在的主管 */
-const isHeadOf = (me: Awaited<ReturnType<typeof myContext>>, actor: Actor, r: { departmentId: number; deptHeadId: number | null }) =>
+export const isHeadOf = (me: Awaited<ReturnType<typeof myContext>>, actor: Actor, r: { departmentId: number; deptHeadId: number | null }) =>
   actor.role === 'owner' || (r.deptHeadId != null && Number(r.deptHeadId) === actor.id) || me.headOf.includes(r.departmentId);
 
 export async function listRequests(db: Db, actor: Actor, f: { status?: RequestStatus; stock?: boolean; departmentId?: number; from?: string; to?: string; timezone?: string }): Promise<RequestsList> {
@@ -343,7 +354,8 @@ export async function getRequest(db: Db, actor: Actor, requestId: number, timezo
            l.ref_price_cents, l.note, l.applicant, l.channel,
            CASE WHEN r.source = 'mall' THEN json_build_object(
              'skuCode', l.mall_sku_code, 'priceVersion', l.price_version, 'brandModel', l.brand_model, 'expectedCategory', l.expected_category,
-             'reasonText', l.reason_text, 'freightCents', l.freight_cents, 'taxRateBp', l.tax_rate_bp) END AS mall,
+             'reasonText', l.reason_text, 'freightCents', l.freight_cents, 'taxRateBp', l.tax_rate_bp,
+             'customKind', l.custom_kind, 'customSpec', l.custom_spec) END AS mall,
            CASE WHEN l.supplier_id IS NULL THEN NULL ELSE json_build_object('id', sp.id, 'name', sp.name) END AS supplier,
            coalesce((SELECT json_agg(json_build_object('id', i.image_id, 'url', '/api/erp/images/' || i.image_id) ORDER BY i.sort_no)
                      FROM purchase_request_line_images i WHERE i.request_line_id = l.id), '[]'::json) AS images,
@@ -383,7 +395,11 @@ export async function openLines(db: Db, ids?: number[]): Promise<OpenRequestLine
            CASE WHEN l.supplier_id IS NULL THEN NULL ELSE json_build_object('id', sp.id, 'name', sp.name) END AS supplier,
            coalesce((SELECT json_agg(json_build_object('id', i.image_id, 'url', '/api/erp/images/' || i.image_id) ORDER BY i.sort_no)
                      FROM purchase_request_line_images i WHERE i.request_line_id = l.id), '[]'::json) AS images,
-           coalesce(ls.issued_qty_milli, 0) AS issued_qty_milli
+           coalesce(ls.issued_qty_milli, 0) AS issued_qty_milli,
+           -- 商城需求选定的成交方案（8.1.51）：转采购单时带上供应商与含税单价
+           (SELECT json_build_object('supplierId', q.supplier_id, 'supplierName', q.supplier_name, 'unitPriceCents', q.unit_price_cents,
+                                     'taxRateBp', q.tax_rate_bp, 'leadDays', q.lead_days)
+              FROM mall_request_quotes q WHERE q.line_id = l.id AND q.status = 'selected') AS plan
     FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
     -- 从库存领用了的数量（8.1.10）：领料单冲销了的不算
     LEFT JOIN request_line_stock ls ON ls.request_line_id = l.id AND ls.inv_doc_id IS NOT NULL
@@ -451,6 +467,8 @@ export interface MallLineExtra {
   reasonText: string;
   freightCents: number | null;
   taxRateBp: number | null;
+  customKind: MallCustomKind | null;
+  customSpec: MallCustomSpec | null;
 }
 export type LineWrite = z.infer<typeof LineInput> & Partial<MallLineExtra>;
 
@@ -493,10 +511,11 @@ export async function writeLines(tx: Db, requestId: number, lines: LineWrite[]) 
     lineNo += 1;
     const [row] = await tx<{ id: number }[]>`
       INSERT INTO purchase_request_lines (request_id, line_no, material_id, name, purpose, qty_milli, unit, link, details, ref_price_cents, note,
-                                          supplier_id, mall_sku_code, price_version, brand_model, expected_category, reason_text, freight_cents, tax_rate_bp)
+                                          supplier_id, mall_sku_code, price_version, brand_model, expected_category, reason_text, freight_cents, tax_rate_bp,
+                                          custom_kind, custom_spec)
       VALUES (${requestId}, ${lineNo}, ${l.materialId}, ${l.name}, ${l.purpose}, ${l.qtyMilli}, ${l.unit}, ${l.link}, ${l.details}, ${l.refPriceCents}, ${l.note},
               ${l.supplierId ?? null}, ${l.mallSkuCode ?? ''}, ${l.priceVersion ?? ''}, ${l.brandModel ?? ''}, ${l.expectedCategory ?? ''}, ${l.reasonText ?? ''},
-              ${l.freightCents ?? null}, ${l.taxRateBp ?? null})
+              ${l.freightCents ?? null}, ${l.taxRateBp ?? null}, ${l.customKind ?? null}, ${l.customSpec ? tx.json(l.customSpec as never) : null})
       RETURNING id`;
     let sort = 0;
     for (const imageId of l.imageIds) {
@@ -610,7 +629,7 @@ export async function createRequest(deps: Deps, raw: unknown, actor: Actor, ip?:
   return { request: await getRequest(deps.sql, actor, requestId, deps.config.timezone), replayed };
 }
 
-async function lockRequest(tx: Db, requestId: number) {
+export async function lockRequest(tx: Db, requestId: number) {
   const [r] = await tx<
     {
       id: number;
@@ -767,7 +786,7 @@ function sniff(buf: Buffer): string | null {
 }
 
 /** 存一张图片（按内容去重）。scope：general 需求单、采购单的行；contract 合同扫描件（v0.7.31 迁移 079，两处各存一份、互不相通） */
-export async function saveImage(db: Db, raw: unknown, actor: Actor, scope: 'general' | 'contract' = 'general') {
+export async function saveImage(db: Db, raw: unknown, actor: Actor, scope: 'general' | 'contract' | 'quote' = 'general') {
   const input = parse(ImageInput, raw);
   const buf = Buffer.from(input.data, 'base64');
   if (buf.length === 0) throw badRequest('图片内容为空');

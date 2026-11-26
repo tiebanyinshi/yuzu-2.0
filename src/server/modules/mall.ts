@@ -65,6 +65,7 @@ import { loadExpenseRules } from './expenses';
 import { docDateSchema, logApproval } from './inventory/common';
 import { loadPurchaseRules } from './inventory/purchase-rules';
 import { enterStockCheck } from './request-stock';
+import { canConfirmPlan, canSeeDealPrices, CustomSpecInput, requestQuotes, sourcingOwner } from './mall-pilot';
 import {
   approvableOnFor,
   deptConfirmFor,
@@ -180,6 +181,9 @@ const MallLineInput = z.object({
   reasonText: text(1000, '采购理由'),
   note: text(500, '行备注'),
   imageIds: z.array(id).max(MAX_LINE_IMAGES, `每一行最多 ${MAX_LINE_IMAGES} 张图片`).default([]),
+  /** 自主申请（8.1.51）：非定制 / 定制与定制的要求 */
+  customKind: z.enum(['standard', 'custom']).nullable().default(null),
+  customSpec: CustomSpecInput.nullable().default(null),
 });
 
 const MallCreateInput = z.object({
@@ -386,6 +390,7 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
       ) x ORDER BY x.at DESC LIMIT 1`,
   ]);
   const at = (await progressTimes(deps.sql, [requestId])).get(requestId) ?? r.updatedAt;
+  const pilot = { owner: await sourcingOwner(deps.sql, requestId), quotes: await requestQuotes(deps.sql, requestId, actor) };
   const display = displayOf(r);
   const ended = ['returned', 'rejected', 'cancelled'].includes(display);
   const revApprovals = [...r.approvals].reverse();
@@ -457,6 +462,15 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
     note: r.note,
     approvals: r.approvals.map((a) => ({ action: a.action, actorName: a.actorName, reason: a.reason, createdAt: a.createdAt })),
     timeline,
+    sourcingOwner: pilot.owner,
+    quotes: pilot.quotes,
+    can: {
+      seePrices: canSeeDealPrices(actor),
+      source: canSeeDealPrices(actor) && ['submitted', 'approved'].includes(r.status),
+      resubmit: r.status === 'returned' && r.source === 'mall' && (r.requester.id === actor.id || actor.role === 'owner'),
+      // 与 selectQuote 同一个判断（Codex 审查）：提单人、这个部门的人、提交时记着的主管或部门现在的主管（不在本部门的主管也算）、店主
+      confirmPlan: ['submitted', 'approved'].includes(r.status) && (await canConfirmPlan(deps.sql, actor, requestId)),
+    },
     lines: r.lines.map((l) => ({
       id: l.id,
       lineNo: l.lineNo,
@@ -476,6 +490,8 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
       expectedCategory: l.mall?.expectedCategory ?? '',
       reasonText: l.mall?.reasonText ?? '',
       imageIds: l.images.map((i) => Number(i.id)),
+      customKind: l.mall?.customKind ?? null,
+      customSpec: l.mall?.customSpec ?? null,
       progress: {
         state: l.progress.state,
         poNo: l.progress.po?.docNo ?? null,
@@ -484,13 +500,15 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
         orderedMilli: Number(l.progress.orderedMilli),
         receivedMilli: Number(l.progress.receivedMilli),
         returnedMilli: Number(l.progress.returnedMilli),
+        rejectedMilli: Number(l.progress.rejectedMilli),
+        redeliverMilli: Number(l.progress.redeliverMilli),
         inventoryUnit: l.progress.inventoryUnit,
       },
     })),
   };
 }
 
-function briefOf(r: PurchaseRequestSummary & { reason: string | null }, at: string, states: readonly RequestLineProgress['state'][]): MallRequestBrief {
+function briefOf(r: PurchaseRequestSummary & { reason: string | null }, at: string, states: readonly RequestLineProgress['state'][]): Omit<MallRequestBrief, 'sourcingOwner'> {
   const display = briefDisplayOf(r, states);
   return {
     id: r.id,
@@ -520,12 +538,22 @@ async function briefs(db: Db, rows: readonly SummaryRow[]): Promise<MallRequestB
   const ids = rows.map((r) => Number(r.id));
   const times = await progressTimes(db, ids);
   const states = await lineStates(db, ids);
-  const reasons = ids.length
-    ? new Map((await db<{ id: number; reason: string | null }[]>`SELECT id, reason FROM purchase_requests WHERE id IN ${db(ids)}`).map((x) => [Number(x.id), x.reason]))
-    : new Map<number, string | null>();
+  const extra = ids.length
+    ? new Map(
+        (
+          await db<{ id: number; reason: string | null; ownerId: number | null; ownerName: string | null }[]>`
+            SELECT r.id, r.reason, ms.owner_id, s.display_name AS owner_name
+            FROM purchase_requests r LEFT JOIN mall_request_sourcing ms ON ms.request_id = r.id LEFT JOIN staff s ON s.id = ms.owner_id WHERE r.id IN ${db(ids)}`
+        ).map((x) => [Number(x.id), x]),
+      )
+    : new Map<number, { reason: string | null; ownerId: number | null; ownerName: string | null }>();
   return rows.map((row) => {
     const s = toSummary(row);
-    return briefOf({ ...s, reason: reasons.get(s.id) ?? null }, times.get(s.id) ?? s.updatedAt, states.get(s.id) ?? []);
+    const x = extra.get(s.id);
+    return {
+      ...briefOf({ ...s, reason: x?.reason ?? null }, times.get(s.id) ?? s.updatedAt, states.get(s.id) ?? []),
+      sourcingOwner: x?.ownerId ? { id: Number(x.ownerId), name: x.ownerName ?? '' } : null,
+    };
   });
 }
 

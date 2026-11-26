@@ -516,6 +516,11 @@ export const ERP_OP_TYPES = [
   'oa_announcement',
   // 采购商城 V1.1：主数据维护（供应商编辑 / 启停、物料编辑 / 启停、批量改分类）
   'shop_master',
+  // 8.1.51 商城试点（Codex 审查）：供应链 BP 记成交方案（按采购权限查回、作废）、提单人原单补资料重提（只能查回、作废自己的）
+  'mall_quote',
+  'mall_resubmit',
+  // 接单 / 放回、选定 / 撤下方案（部门确认、BP 代记微信确认、BP 撤下）：只能查回、作废自己的
+  'mall_quote_act',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -611,6 +616,9 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   oa_im_group: '建群',
   oa_announcement: '公司公告',
   shop_master: '商城主数据维护',
+  mall_quote: '商城需求记成交方案',
+  mall_resubmit: '商城需求补资料重提',
+  mall_quote_act: '商城需求接单 / 选定、撤下方案',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */

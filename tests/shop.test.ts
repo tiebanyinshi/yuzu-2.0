@@ -783,3 +783,29 @@ describe('商品图（8.1.50，迁移 510）', () => {
     expect((await put(boss, [a], [], lost)).body.imageIds).toEqual([]);
   });
 });
+
+describe('原单补资料（8.1.51，Codex 审查）', () => {
+  it('选品的行改了数量：按 SKU 的起订量再核一遍（BELOW_MOQ），够了才能重提', async () => {
+    const s = await listed((await sku()).id);
+    const r = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'catalog', lines: [{ skuId: s.id, priceVersion: 1, qtyMilli: q(120) }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const req = r.body.request as { id: number; lines: { id: number }[] };
+    expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${req.id}/return`, { reason: '数量再核一下' })).status).toBe(200);
+    const back = (await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests/${req.id}`)).body as { updatedAt: string };
+    const body = (qtyMilli: number) => ({
+      clientKey: randomUUID(),
+      expectedUpdatedAt: back.updatedAt,
+      contactName: '王小明',
+      budgetProject: '布草消耗预算',
+      needBy: shiftDate(today, 3),
+      deliveryAddress: '本店布草仓',
+      priority: 'high',
+      remark: '改了数量',
+      lines: [{ id: req.lines[0]!.id, qtyMilli }],
+    });
+    expect((await api(ctx.app, reqA, 'PUT', `/api/erp/shop/requests/${req.id}/resubmit`, body(q(10)))).body.error.code).toBe('BELOW_MOQ');
+    const ok = await api(ctx.app, reqA, 'PUT', `/api/erp/shop/requests/${req.id}/resubmit`, body(q(100)));
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.lines[0]).toMatchObject({ qtyMilli: q(100) });
+  });
+});

@@ -1,7 +1,7 @@
 // 采购商城 V1.1 对接（8.1.31，docs/MALL_V8131.md）：商城后端调 yuzu 的 /api/erp/mall/* 时双方用的格式。
 // 金额一律整数分，数量千分之一单位（与需求单一样）。
 
-import type { MallPaymentIntent, RequestPriority, RequestStatus, StockCheckState } from './requests';
+import type { MallCustomKind, MallCustomSpec, MallPaymentIntent, RequestPriority, RequestStatus, StockCheckState } from './requests';
 
 /** 商城的接口前缀与请求头 */
 export const MALL_PREFIX = '/api/erp/mall';
@@ -119,6 +119,9 @@ export interface MallRequestLine {
   expectedCategory: string;
   reasonText: string;
   imageIds: number[];
+  /** 自主申请（8.1.51）：standard 非定制 / custom 定制；选品的行为空 */
+  customKind: MallCustomKind | null;
+  customSpec: MallCustomSpec | null;
   progress: {
     state: MallLineState;
     /** 采购单号与供应商（没下单的为空） */
@@ -128,8 +131,41 @@ export interface MallRequestLine {
     orderedMilli: number;
     receivedMilli: number;
     returnedMilli: number;
+    /** 收货拒收的、其中供应商要补发的（待补，8.1.51；库存单位） */
+    rejectedMilli: number;
+    redeliverMilli: number;
     inventoryUnit: string | null;
   };
+}
+
+/**
+ * 成交方案（8.1.51）：供应链 BP 在微信上谈好，回到系统记下的供应商、单价、交期与报价截图。
+ * 部门看得到供应商、交期、方案说明；价格、截图、内部备注只有采购看得到（看不到的为空）
+ */
+export interface MallQuote {
+  id: number;
+  lineId: number;
+  supplierId: number | null;
+  supplierName: string;
+  leadDays: number;
+  validUntil: string | null;
+  planNote: string;
+  recommended: boolean;
+  /** proposed 待确认；selected 已选定（转采购单时带上） */
+  status: 'proposed' | 'selected' | 'withdrawn';
+  /** dept 部门在系统里确认；wechat BP 记已在微信确认 */
+  selectedMode: 'dept' | 'wechat' | null;
+  selectedAt: string | null;
+  selectedByName: string | null;
+  selectedNote: string;
+  createdAt: string;
+  createdByName: string;
+  /** 含税单价（分，每个需求单位） */
+  unitPriceCents: number | null;
+  taxRateBp: number | null;
+  freightCents: number | null;
+  internalNote: string | null;
+  imageIds: number[];
 }
 
 export interface MallRequest {
@@ -163,6 +199,12 @@ export interface MallRequest {
   approvals: { action: string; actorName: string; reason: string; createdAt: string }[];
   timeline: MallTimelineNode[];
   lines: MallRequestLine[];
+  /** 接单跟进的供应链 BP（8.1.51） */
+  sourcingOwner: { id: number; name: string; claimedAt: string } | null;
+  /** 成交方案（8.1.51） */
+  quotes: MallQuote[];
+  /** 这个账号：能不能看价格、能不能接单记方案、能不能在原单补资料、能不能确认方案 */
+  can: { seePrices: boolean; source: boolean; resubmit: boolean; confirmPlan: boolean };
 }
 
 /** 列表、批量查状态的一行（不带明细） */
@@ -185,6 +227,8 @@ export interface MallRequestBrief {
   orderedLines: number;
   receivedLines: number;
   summary: string;
+  /** 接单跟进的供应链 BP（8.1.51；没人接的为空） */
+  sourcingOwner: { id: number; name: string } | null;
 }
 
 export interface MallCreateResult {

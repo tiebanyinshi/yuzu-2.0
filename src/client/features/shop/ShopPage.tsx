@@ -31,7 +31,7 @@ import {
 import { formatYuan } from '@shared/money';
 import { formatQty, parseQty } from '@shared/quantity';
 import { MALL_DISPLAY_LABELS, MALL_GROUP_LABELS, MALL_REQUEST_GROUPS, type MallDisplayStatus, type MallRequest, type MallRequestBrief, type MallRequestGroup } from '@shared/mall';
-import { PAYMENT_INTENT_LABELS, PRIORITY_LABELS, REQUEST_PRIORITIES, type MallPaymentIntent, type RequestPriority } from '@shared/requests';
+import { MALL_CUSTOM_KIND_LABELS, PAYMENT_INTENT_LABELS, PRIORITY_LABELS, REQUEST_PRIORITIES, type MallPaymentIntent, type RequestPriority } from '@shared/requests';
 import {
   buildCompareOffers,
   catalogCardSummary,
@@ -39,7 +39,6 @@ import {
   resolveCompareQtyMilli,
   SHOP_BLOCK_LABELS,
   SHOP_COMPARE_BLOCK_LABELS,
-  SHOP_CUSTOM_UNITS,
   type ShopCart,
   type ShopCartLine,
   type ShopCatalog,
@@ -63,6 +62,8 @@ import { ErpPage } from '../erp/ErpHome';
 import { PriorityDot } from '../requests/parts';
 import { ShopCartView } from './ShopCartView';
 import { ProductGallery, ProductImage } from './ProductImage';
+import { CustomItemFields, customItemBody, customItemProblem, CustomSpecView, emptyCustomItem, lineDetailsText, ResubmitPanel, SourcingPanel, type CustomItemState } from './ShopPilot';
+import { ImageThumbs } from '../../components/Images';
 import { SkuAdmin } from './SkuAdmin';
 
 const ShopComparePage = lazyPage(() => import('./ShopComparePage').then((m) => m.ShopComparePage));
@@ -239,7 +240,12 @@ export function ShopPage() {
         }}
         className="mb-4"
       />
-      <ErpPendingPanel types={['shop_master']} filter={(op) => op.staffId === session.staff.id} onFound={() => void qc.invalidateQueries({ queryKey: ['shop'] })} className="mb-4" />
+      <ErpPendingPanel
+        types={['shop_master', 'mall_quote', 'mall_resubmit', 'mall_quote_act']}
+        filter={(op) => op.staffId === session.staff.id}
+        onFound={() => void qc.invalidateQueries({ queryKey: ['shop'] })}
+        className="mb-4"
+      />
       {body}
       {/* 浮在右下角的清单（玻璃质感）：逛的时候随时看得到加了几样；提醒在页面上方，不挡它 */}
       {count > 0 && (path === '' || path.startsWith('item/')) && (
@@ -1065,76 +1071,35 @@ function CustomForm({ c }: { c: ShopCatalog }) {
   const session = useSession();
   const navigate = useNavigate();
   const [f, setF] = useState<HeaderForm>(() => emptyHeader(c));
-  const [line, setLine] = useState({ name: '', expectedCategory: '', qty: '1', unit: '个', details: '', brandModel: '', link: '', reasonText: '' });
+  // 8.1.51：先选非定制还是定制，两种要填的不一样（ShopPilot.tsx）
+  const [item, setItem] = useState<CustomItemState>(emptyCustomItem);
+  const [uploading, setUploading] = useState(false);
   const { send, busy, blocked } = useSubmit((r) => navigate(`${BASE}/mine/${r.id}`));
-  const qtyMilli = parseQty(line.qty);
-  const linkBad = !!line.link && !/^https?:\/\/\S+$/i.test(line.link);
-  const missing = !line.name.trim() || !line.details.trim() || !line.reasonText.trim() || !qtyMilli || linkBad || blocked || headerMissing(f);
+  const problem = customItemProblem(item);
+  const missing = !!problem || blocked || uploading || headerMissing(f);
   return (
     <div className="space-y-4" data-testid="shop-custom">
       <Card className="p-4">
-        <p className="mb-3 text-[14px] font-bold">① 申请采购的商品</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="物品名称" htmlFor="sc-name">
-            <Input id="sc-name" maxLength={100} value={line.name} onChange={(e) => setLine({ ...line, name: e.target.value })} />
-          </Field>
-          <Field label="预期分类" htmlFor="sc-cat">
-            <Select id="sc-cat" value={line.expectedCategory} onChange={(e) => setLine({ ...line, expectedCategory: e.target.value })}>
-              <option value="">不确定，由采购确认</option>
-              {c.categories.map((x) => (
-                <option key={x.name} value={x.name}>
-                  {x.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="采购数量" htmlFor="sc-qty">
-            <Input id="sc-qty" inputMode="decimal" value={line.qty} onChange={(e) => setLine({ ...line, qty: e.target.value })} invalid={!qtyMilli} />
-          </Field>
-          <Field label="单位" htmlFor="sc-unit">
-            <Select id="sc-unit" value={line.unit} onChange={(e) => setLine({ ...line, unit: e.target.value })}>
-              {SHOP_CUSTOM_UNITS.map((u) => (
-                <option key={u}>{u}</option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="规格与技术要求" htmlFor="sc-details" className="sm:col-span-2" hint="写清验收要求">
-            <Textarea id="sc-details" rows={3} maxLength={1000} value={line.details} onChange={(e) => setLine({ ...line, details: e.target.value })} />
-          </Field>
-          <Field label="品牌 / 型号（如有）" htmlFor="sc-model">
-            <Input id="sc-model" maxLength={150} value={line.brandModel} onChange={(e) => setLine({ ...line, brandModel: e.target.value })} />
-          </Field>
-          <Field label="参考链接（如有）" htmlFor="sc-link" hint={linkBad ? '要以 http:// 或 https:// 开头' : undefined}>
-            <Input id="sc-link" maxLength={1000} value={line.link} invalid={linkBad} onChange={(e) => setLine({ ...line, link: e.target.value })} />
-          </Field>
-          <Field label="采购理由 / 使用场景" htmlFor="sc-reason" className="sm:col-span-2" hint="为什么要买、用在哪、为什么商城里的不行">
-            <Textarea id="sc-reason" rows={3} maxLength={1000} value={line.reasonText} onChange={(e) => setLine({ ...line, reasonText: e.target.value })} />
-          </Field>
-        </div>
+        <p className="mb-3 text-[14px] font-bold">① 要采购什么</p>
+        <CustomItemFields s={item} set={setItem} categories={c.categories.map((x) => x.name)} onUploading={setUploading} />
       </Card>
       <Card className="p-4">
         <p className="mb-3 text-[14px] font-bold">② 部门与交付</p>
         <HeaderFields c={c} f={f} set={setF} />
       </Card>
       <RoutePreviewCard storeId={c.storeId} departmentId={f.departmentId} paymentIntent={f.paymentIntent} priority={f.priority} kind="custom" lines={[]} />
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-3">
+        {problem && <span className="text-[12.5px] text-ink-3">{problem}</span>}
         <Button
           variant="primary"
           loading={busy}
           disabled={missing}
           onClick={() =>
-            void send(
-              {
-                ...headerBody(c, f, session.staff.displayName),
-                kind: 'custom',
-                line: { ...line, name: line.name.trim(), qtyMilli, details: line.details.trim(), reasonText: line.reasonText.trim(), imageIds: [] },
-              },
-              `自主申请 · ${line.name.trim()}`,
-            )
+            void send({ ...headerBody(c, f, session.staff.displayName), kind: 'custom', line: customItemBody(item) }, `自主申请（${MALL_CUSTOM_KIND_LABELS[item.kind]}）· ${item.name.trim()}`)
           }
           data-testid="shop-custom-submit"
         >
-          提交自主申请
+          提交{MALL_CUSTOM_KIND_LABELS[item.kind]}申请
         </Button>
       </div>
     </div>
@@ -1156,6 +1121,9 @@ const DISPLAY_TONE: Partial<Record<MallDisplayStatus, 'pine' | 'ember' | 'clay' 
 };
 
 function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
+  const session = useSession();
+  // 需求池按接单人筛（8.1.51）：全部 / 待接单 / 我接的（在已取回的里筛）
+  const [owner, setOwner] = useState<'' | 'none' | 'mine'>('');
   const [priority, setPriority] = useState<RequestPriority | ''>('');
   const [group, setGroup] = useState<MallRequestGroup | ''>('');
   const [kw, setKw] = useState('');
@@ -1184,8 +1152,11 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
   });
 
   const exportHref = `/api/erp/shop/requests/export?${filterParams}`;
-  const list = q.data?.pages.flatMap((p) => p.requests) ?? [];
-  const hasFilter = !!(priority || group || kw.trim() || from || to);
+  // 接单筛选只在需求池里用（Codex 审查）：两个页签是同一个组件，切到「我的采购需求」时不带着池里的筛选
+  const list = (q.data?.pages.flatMap((p) => p.requests) ?? []).filter((r) =>
+    scope !== 'pool' ? true : owner === 'none' ? !r.sourcingOwner : owner === 'mine' ? r.sourcingOwner?.id === session.staff.id : true,
+  );
+  const hasFilter = !!(priority || group || kw.trim() || from || to || (scope === 'pool' && owner));
 
   return (
     <div className="space-y-3" data-testid={`shop-${scope}`}>
@@ -1262,7 +1233,24 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
         )}
       </div>
 
-      <p className="text-[12.5px] text-ink-3">{scope === 'pool' ? '商城来的全部需求单；审核、退回、转采购单在 ERP「采购需求单」里办' : '本部门、自己提的、自己当主管的'}</p>
+      {scope === 'pool' && (
+        <div className="flex flex-wrap gap-1.5" data-testid="shop-pool-owner">
+          {(
+            [
+              ['', '全部'],
+              ['none', '待接单'],
+              ['mine', '我接的'],
+            ] as const
+          ).map(([k, label]) => (
+            <CatChip key={k} on={owner === k} onClick={() => setOwner(k)}>
+              {label}
+            </CatChip>
+          ))}
+        </div>
+      )}
+      <p className="text-[12.5px] text-ink-3">
+        {scope === 'pool' ? '商城来的全部需求单：点进去接单、记成交方案（微信上谈好的供应商、价格、交期）；审核、退回、转采购单在 ERP「采购需求单」里办' : '本部门、自己提的、自己当主管的'}
+      </p>
 
       {dateBad ? (
         <Notice tone="warning" title="开始日期不能晚于结束日期" />
@@ -1295,6 +1283,7 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
                     setKw('');
                     setFrom('');
                     setTo('');
+                    setOwner('');
                   }}
                 >
                   清空筛选
@@ -1320,6 +1309,11 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
                   {r.docNo} · {r.department.name} · {formatDateTime(r.createdAt)}
                 </span>
               </span>
+              {scope === 'pool' && (
+                <span className={cn('text-[12px]', r.sourcingOwner ? 'text-ink-2' : 'font-semibold text-ember-deep')} data-testid={`shop-req-owner-${r.id}`}>
+                  {r.sourcingOwner ? `${r.sourcingOwner.name} 跟进` : '待接单'}
+                </span>
+              )}
               <Badge tone={DISPLAY_TONE[r.displayStatus] ?? 'neutral'}>{r.displayLabel}</Badge>
             </Link>
           ))}
@@ -1339,6 +1333,12 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
 function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCart: (c: Cart) => void; c: ShopCatalog }) {
   const toast = useToast();
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  // 接单、记方案、确认方案、补资料以后：用服务端返回的整张单换掉缓存，列表一起刷新
+  const replace = (next: MallRequest) => {
+    qc.setQueryData(['shop', 'request', id], next);
+    void qc.invalidateQueries({ queryKey: ['shop', 'requests'] });
+  };
   const q = useQuery({ queryKey: ['shop', 'request', id], queryFn: () => api.get<MallRequest>(`/api/erp/shop/requests/${id}`) });
   if (q.isPending) {
     return (
@@ -1376,7 +1376,11 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
       </Link>
 
       {/* FR-08：退回 / 不采购 / 撤回原因置顶展示 */}
-      {r.reason && ended && <Notice tone={r.displayStatus === 'returned' ? 'warning' : 'info'} title={`${MALL_DISPLAY_LABELS[r.displayStatus]}：${r.reason}`} data-testid="shop-request-reason" />}
+      {r.reason && ended && !r.can.resubmit && (
+        <Notice tone={r.displayStatus === 'returned' ? 'warning' : 'info'} title={`${MALL_DISPLAY_LABELS[r.displayStatus]}：${r.reason}`} data-testid="shop-request-reason" />
+      )}
+      {/* 退回的（8.1.51）：在原单上补资料、重新提交 */}
+      {r.can.resubmit && <ResubmitPanel r={r} categories={c.categories.map((x) => x.name)} onDone={replace} />}
 
       <Card className="space-y-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -1431,12 +1435,14 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
                 l.supplier && `意向供应商：${l.supplier.name}`,
                 l.skuCode && `${l.skuCode}（${l.priceVersion}）`,
                 l.brandModel && `型号：${l.brandModel}`,
-                l.details,
+                lineDetailsText(l),
                 l.reasonText && `理由：${l.reasonText}`,
               ]
                 .filter(Boolean)
                 .join(' · ')}
             </p>
+            <CustomSpecView l={l} />
+            {l.imageIds.length > 0 && <ImageThumbs images={l.imageIds.map((i) => ({ id: i, url: `/api/erp/images/${i}` }))} className="mt-1.5" />}
             {l.link && (
               <a href={l.link} target="_blank" rel="noreferrer noopener" className="text-[12.5px] font-semibold text-lake hover:underline">
                 打开参考链接 ↗
@@ -1445,11 +1451,16 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
             <p className="text-[12.5px] text-ink-2">
               进度：{MALL_LINE_LABELS[l.progress.state]}
               {l.progress.poNo && ` · 采购单 ${l.progress.poNo}（${l.progress.supplierName}）`}
-              {l.progress.receivedMilli > 0 && ` · 已到 ${formatQty(l.progress.receivedMilli)}`}
+              {l.progress.receivedMilli > 0 && ` · 合格入库 ${formatQty(l.progress.receivedMilli)}`}
+              {l.progress.rejectedMilli > 0 && ` · 拒收 ${formatQty(l.progress.rejectedMilli)}`}
+              {l.progress.redeliverMilli > 0 && `（其中待补 ${formatQty(l.progress.redeliverMilli)}）`}
+              {l.progress.inventoryUnit && (l.progress.receivedMilli > 0 || l.progress.rejectedMilli > 0) && ` ${l.progress.inventoryUnit}`}
             </p>
           </div>
         ))}
       </Card>
+      {/* 接单与成交方案（8.1.51） */}
+      <SourcingPanel r={r} onChange={replace} />
       <div className="flex flex-wrap justify-end gap-2">
         {ended && r.lines.some((l) => l.skuCode) && (
           <Button variant="primary" onClick={reorder} data-testid="shop-reorder">
@@ -1460,7 +1471,7 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
           <Button variant="ghost">在 ERP 里看这张需求单</Button>
         </Link>
       </div>
-      {!ended && r.displayStatus !== 'received' && <p className="text-right text-[12.5px] text-ink-3">要撤回或补充请在 ERP「采购需求单」里打开这张单；退回的撤回后在这里按原单再提。</p>}
+      {!ended && r.displayStatus !== 'received' && <p className="text-right text-[12.5px] text-ink-3">要撤回请在 ERP「采购需求单」里打开这张单；被退回的在这里「在原单补资料」。</p>}
     </div>
   );
 }

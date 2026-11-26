@@ -56,12 +56,13 @@ import { supplierLicenses } from './inventory/admission';
 import { docDateSchema } from './inventory/common';
 import { loadPurchaseRules } from './inventory/purchase-rules';
 import { createMallRequest, exportMallCsv, mallRequest, pagedMall } from './mall';
+import { addQuote, claimMallRequest, CustomSpecInput, customDetails, resubmitMallRequest, selectQuote, withdrawQuote } from './mall-pilot';
 import { pettyBalances, pettyOccupied } from './petty-uses';
 import { allowedStores } from './stores';
 import { assertNotFenced } from '../lib/fences';
 import { hashRequest } from '../lib/idempotency';
 import { erpOpAbandoned } from './erp-ops';
-import { myContext } from './requests';
+import { myContext, saveImage } from './requests';
 
 const id = z.number().int().positive();
 
@@ -317,7 +318,10 @@ const CustomSubmit = Header.extend({
     expectedCategory: z.string().trim().max(32).default(''),
     qtyMilli: z.number().int().positive().max(1_000_000_000),
     unit: z.string().trim().min(1).max(8),
-    details: z.string().trim().min(1, '请填写规格与技术要求').max(1000),
+    details: z.string().trim().max(1000).default(''),
+    /** 8.1.51：非定制（现成品）/ 定制；定制写尺寸、材质工艺、使用场景、打样、预算 */
+    customKind: z.enum(['standard', 'custom']).default('standard'),
+    customSpec: CustomSpecInput.nullable().default(null),
     brandModel: z.string().trim().max(150).default(''),
     link: z.string().trim().max(1000).default(''),
     reasonText: z.string().trim().min(1, '请填写采购理由 / 使用场景').max(1000),
@@ -355,6 +359,9 @@ async function submit(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
   if (input.kind === 'custom') {
     const l = input.line;
     if (l.link && !/^https?:\/\/\S+$/i.test(l.link)) throw unprocessable('LINK_INVALID', '参考链接要以 http:// 或 https:// 开头');
+    const spec = l.customKind === 'custom' ? (l.customSpec ?? { size: '', craft: '', scene: '', sample: false, budgetCents: null }) : null;
+    if (l.customKind === 'standard' && !l.details) throw unprocessable('DETAILS_REQUIRED', '请填写规格型号');
+    if (spec && !spec.size && !spec.craft && !l.details) throw unprocessable('DETAILS_REQUIRED', '定制请至少写清尺寸规格、材质工艺或设计要求中的一项');
     return createMallRequest(
       deps,
       {
@@ -366,8 +373,10 @@ async function submit(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
             purpose: input.purpose,
             qtyMilli: l.qtyMilli,
             unit: l.unit,
-            details: l.details,
+            details: customDetails(l.details, spec),
             brandModel: l.brandModel,
+            customKind: l.customKind,
+            customSpec: spec,
             expectedCategory: l.expectedCategory,
             link: l.link,
             reasonText: l.reasonText,
@@ -1236,6 +1245,44 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     return csvReply(reply, fileName, csv);
   });
   app.get(`${P}/requests/:id`, { preHandler: shopper }, async (req) => mallRequest(deps, req.actor, parse(idParam, req.params).id));
+  // 8.1.51 试点：退回后在原单补资料重提（提单人）；需求池接单（采购）；成交方案（采购记、部门确认或采购代记已在微信确认）
+  app.put(`${P}/requests/:id/resubmit`, { preHandler: guardAny('request.create') }, async (req) => {
+    const rid = parse(idParam, req.params).id;
+    await resubmitMallRequest(deps, rid, req.body, req.actor, req.ip);
+    return mallRequest(deps, req.actor, rid);
+  });
+  app.post(`${P}/requests/:id/claim`, { preHandler: guardAny('purchase.manage', 'request.review') }, async (req) => {
+    const rid = parse(idParam, req.params).id;
+    await claimMallRequest(deps, rid, req.body, req.actor, req.ip);
+    return mallRequest(deps, req.actor, rid);
+  });
+  app.post(`${P}/requests/:id/quotes`, { preHandler: guardAny('purchase.manage', 'request.review') }, async (req, reply) => {
+    const rid = parse(idParam, req.params).id;
+    await addQuote(deps, rid, req.body, req.actor, req.ip);
+    reply.code(201);
+    return mallRequest(deps, req.actor, rid);
+  });
+  // 报价截图（Codex 审查）：单独一类图片，只有采购（经办、审核）能传能看；看的时候要挂在某条方案上，或是自己刚传还没保存的
+  const sourcer = guardAny('purchase.manage', 'request.review');
+  app.post(`${P}/quote-images`, { preHandler: sourcer, bodyLimit: 1_600_000 }, async (req, reply) => {
+    const img = await saveImage(sql, req.body, req.actor, 'quote');
+    reply.code(201);
+    return { id: img.id, url: `${P}/quote-images/${img.id}` };
+  });
+  app.get(`${P}/quote-images/:id`, { preHandler: sourcer }, async (req, reply) => {
+    const imgId = parse(idParam, req.params).id;
+    const [img] = await sql<{ mime: string; data: Buffer }[]>`
+      SELECT i.mime, i.data FROM erp_images i
+      WHERE i.id = ${imgId} AND i.scope = 'quote'
+        AND (i.created_by = ${req.actor.id} OR EXISTS (SELECT 1 FROM mall_request_quotes q WHERE i.id = ANY (q.image_ids)))`;
+    if (!img) throw notFound('图片不存在');
+    reply.header('content-type', img.mime).header('cache-control', 'private, max-age=31536000, immutable').header('x-content-type-options', 'nosniff');
+    return reply.send(img.data);
+  });
+  app.post(`${P}/quotes/:id/withdraw`, { preHandler: guardAny('purchase.manage', 'request.review') }, async (req) =>
+    mallRequest(deps, req.actor, await withdrawQuote(deps, parse(idParam, req.params).id, req.body, req.actor, req.ip)),
+  );
+  app.post(`${P}/quotes/:id/select`, { preHandler: shopper }, async (req) => mallRequest(deps, req.actor, await selectQuote(deps, parse(idParam, req.params).id, req.body, req.actor, req.ip)));
 
   app.get(`${P}/skus`, { preHandler: skuRead }, async () => listSkus(sql));
   // 维护 SKU 选物料、供应商用（Codex 审查）：只有「采购管理」没有「库存查看」的人也要能选；只给在用的、选得着的几项
