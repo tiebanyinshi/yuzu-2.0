@@ -117,6 +117,7 @@ import { registerOaOrgRoutes } from './modules/oa/org';
 import { registerTrainingRoutes } from './modules/training';
 import { registerGovflowRoutes } from './modules/govflow/routes';
 import { registerSupplyRoutes } from './modules/govflow/supply';
+import { registerPettyRoutes } from './modules/govflow/petty';
 import { registerOaStaffImportRoutes } from './modules/oa/staff-import';
 import { registerOaAttendanceSetupRoutes } from './modules/oa/attendance-setup';
 import { registerOaAttendanceDailyRoutes } from './modules/oa/attendance-daily';
@@ -344,6 +345,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerTrainingRoutes(app, deps);
   registerGovflowRoutes(app, deps);
   registerSupplyRoutes(app, deps);
+  registerPettyRoutes(app, deps);
   registerOaStaffImportRoutes(app, deps);
   registerOaNotificationRoutes(app, deps);
   registerOaAnnouncementRoutes(app, deps);

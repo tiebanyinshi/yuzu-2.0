@@ -35,8 +35,9 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Segmented, Select, Skeleton, Textarea } from '../../components/ui';
 import { yuanToCents } from './money';
 import { SkuBatchReviewPanel, SupplierDetailPage, SupplierList } from './SupplyPages';
+import { PettyActions, PettyPanel } from './PettyPages';
 
-type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'roles';
+type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'roles';
 const STATUS_TONE: Record<GfStatus, 'neutral' | 'pine' | 'moss' | 'yuzu' | 'ember' | 'clay' | 'lake' | 'ink'> = {
   draft: 'neutral',
   reviewing: 'lake',
@@ -75,6 +76,7 @@ function GovHome() {
     ...(seesAll ? [{ value: 'all' as const, label: '全部' }] : []),
     { value: 'specials', label: '微信特批' },
     { value: 'suppliers', label: '供应商库' },
+    { value: 'petty', label: '零星采购' },
     ...(meta.data?.canManageRoles ? [{ value: 'roles' as const, label: '角色映射' }] : []),
   ];
   return (
@@ -97,7 +99,19 @@ function GovHome() {
             </Button>
           </div>
         </div>
-        {box === 'roles' ? <RolesPanel /> : box === 'specials' ? <SpecialsPanel /> : box === 'suppliers' ? <SupplierList /> : <DocList box={box} />}
+        {box === 'roles' ? (
+          <RolesPanel />
+        ) : box === 'specials' ? (
+          <SpecialsPanel />
+        ) : box === 'suppliers' ? (
+          <SupplierList />
+        ) : box === 'petty' ? (
+          meta.data ? (
+            <PettyPanel meta={meta.data} />
+          ) : null
+        ) : (
+          <DocList box={box} />
+        )}
       </div>
       {creating && meta.data && <NewDocDialog meta={meta.data} onClose={() => setCreating(false)} />}
       {registering && meta.data && <SpecialDialog meta={meta.data} docId={null} onClose={() => setRegistering(false)} />}
@@ -321,6 +335,7 @@ function DocDetailPage({ id }: { id: number }) {
       </Card>
 
       {d.docType === 'sku_batch' && <SkuBatchReviewPanel doc={d} onDecisions={setDecisions} />}
+      {d.docType === 'petty_purchase' && <PettyActions doc={d} onDone={() => q.refetch()} />}
       {typeof d.payload.supplierId === 'number' && (
         <Link to={`/oa/gov/suppliers/${d.payload.supplierId}`} className="block text-[14px] font-semibold text-pine">
           查看供应商档案

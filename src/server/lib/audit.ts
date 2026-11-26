@@ -53,6 +53,7 @@ export type AuditAction =
   | 'gf_act'
   | 'gf_special'
   | 'gf_supply'
+  | 'gf_petty'
   | 'oa_payroll_reminded'
   | 'position_chosen'
   | 'member_created'
