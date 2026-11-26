@@ -104,6 +104,9 @@ export const DICTIONARY_KEYS = [
   'faceRevokeReasons',
   // 8.1.40 钟房排位调到某人前面
   'queueMoveReasons',
+  // 8.1.44 前台备注的标签（客诉、特殊标签；待业务确认）与撤下备注的原因
+  'remarkTags',
+  'remarkRemoveReasons',
 ] as const;
 export type DictionaryKey = (typeof DICTIONARY_KEYS)[number];
 export type Dictionaries = Record<DictionaryKey, string[]>;
@@ -126,6 +129,8 @@ export const DICTIONARY_LABELS: Record<DictionaryKey, { title: string; where: st
   faceRejectReasons: { title: '退回人脸录入的原因', where: '后台「考勤设置 → 人脸审核」退回' },
   faceRevokeReasons: { title: '停用人脸录入的原因', where: '后台「考勤设置 → 人脸审核」停用已通过的' },
   queueMoveReasons: { title: '调排位的原因', where: '钟房排位「调到…前面」' },
+  remarkTags: { title: '前台备注的标签', where: '收银台「备注」板块、发卡台客人卡写备注时选（待业务确认）' },
+  remarkRemoveReasons: { title: '撤下备注的原因', where: '收银台、发卡台撤下一条写错的备注' },
 };
 
 /** 默认值：原来写死的照搬；原来是纯手填的给几条常见的（仍然可以手填） */
@@ -147,6 +152,9 @@ export const DEFAULT_DICTIONARIES: Dictionaries = {
   faceRejectReasons: ['照片太暗', '照片模糊', '没拍到正脸', '戴了帽子或口罩', '不是本人'],
   faceRevokeReasons: ['换了人', '照片和本人不像', '员工离职'],
   queueMoveReasons: ['补回刚才跳过的', '客人等着先叫他', '排错了改回来', '经理安排'],
+  // 待确认（docs/PENDING_DECISIONS.md FD44-2）：业务侧还没给清单，先放两类最稳妥的；不选标签也能写
+  remarkTags: ['客诉', '特殊关照'],
+  remarkRemoveReasons: ['写错客人', '内容写错', '重复记录', '事情已处理'],
 };
 
 export const MAX_DICTIONARY_ITEMS = 30;

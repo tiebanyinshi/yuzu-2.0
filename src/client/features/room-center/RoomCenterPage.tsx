@@ -9,6 +9,7 @@
 //   · 排版优化（店主 2026-11-24《房态中心排版优化需求说明》，docs/ROOM_CENTER_V8115.md 第 12 节）：顶部五张统计卡 → 筛选条（区域页签、
 //     状态数量、搜索）→ 按区域分组的卡片网格（分组头写共几间与各状态几间，每行最多 5 张）→ 点卡片在右侧展开详情栏（手机是底部抽屉），
 //     原来点卡片做的那一下（登记、开单、入住……）是详情栏的主按钮。只改排版：颜色、功能、权限、接口都不变。
+//   · 当天的预约单（8.1.44，《前台系统开发》）：筛选条下面列今天的技师、派对房、客房预约（TodayBookings，只读）。
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
@@ -53,6 +54,7 @@ import { RoomDialog, type RoomDialogAction } from './RoomDialog';
 import { RoomOrderPanel, RoomOrdersDialog, useRoomOrderOutlets } from './RoomOrders';
 import { RegisterDialog } from './RegisterDialog';
 import { RoomPanel, primaryLabel } from './RoomPanel';
+import { TodayBookings } from './TodayBookings';
 import { CountChips, GroupHead, StatCards } from './status';
 
 /** 「总览」页签的键（房型页签是 c<编号>、没归类的是 other；地址里 tab=hotel、tab=party 指第一个客房、派对房房型） */
@@ -347,6 +349,8 @@ function RoomCenterBody() {
               />
             </div>
           </div>
+          {/* 8.1.44：当天的预约单（跟着看板一起取，只读） */}
+          {(board.todayBookings ?? []).length > 0 && <TodayBookings bookings={board.todayBookings} />}
           {cat?.hint && (
             <Notice tone="info" title={cat.hint} data-testid="rc-tab-hint">
               {hotelTab && '客房照旧走入住单：点卡片入住、看入住单、改房态。'}

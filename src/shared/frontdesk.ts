@@ -68,7 +68,21 @@ export interface FrontdeskRules {
    * 只用来在客人卡上点「加收」时把金额先填好，照旧要人确认、照旧的权限与授权，不自动收钱
    */
   overtimeSurchargeHourlyCents: number;
+  /**
+   * 买角（8.1.44《前台系统开发》第 9 条）：收银台敲数字代号挂项目——代号 → 价目项目与价格档。编码规则与清单待业务提供，
+   * 默认一条都没有（收银台「买角」写明还没配置）；在后台「手牌与前台」维护
+   */
+  buyCodes: BuyCode[];
 }
+
+/** 买角的一条数字代号：1–4 位数字 → 价目项目（与价格档）；价格照挂账时项目的当前价 */
+export interface BuyCode {
+  code: string;
+  itemId: number;
+  tier: import('./catalog').PriceTier;
+}
+export const BUY_CODE_PATTERN = /^[0-9]{1,4}$/;
+export const MAX_BUY_CODES = 200;
 
 /**
  * 前台看板带给页面的规则：前台规则加上 VIP 柜的当场授权开关（8.0.4 起这个开关存在「会员权益 → VIP 柜」，
@@ -83,6 +97,7 @@ export const DEFAULT_FRONTDESK_RULES: FrontdeskRules = {
   lostTagFeeCents: 20000,
   overtimeGraceMinutes: 15,
   overtimeSurchargeHourlyCents: 0,
+  buyCodes: [],
 };
 
 /** 牌号：0–2 位大写字母前缀 + 1–5 位数字 */
@@ -264,6 +279,8 @@ export interface BoardVisit {
   awaySince: string | null;
   /** 这次来访上没处理完的异常待办（上报、未结离店）几条 */
   openTodos: number;
+  /** 前台备注（8.1.44）：这位客人与他所在同行组上没撤下的备注带的标签（去重，如「客诉」），收银台清单上标出来 */
+  remarkTags: string[];
 }
 
 export interface FrontdeskBoard {
@@ -375,6 +392,8 @@ export interface VisitDetail {
   riskApproval: { byName: string; at: string; reason: string } | null;
   /** 这次来访上登记的异常（提醒、加收、上报、外出、返回、未结离店），按时间先后 */
   incidents: VisitIncident[];
+  /** 前台备注（8.1.44）：这位客人的单人备注与所在同行组的同组备注（含撤下的），按时间先后 */
+  remarks: import('./frontdesk-remarks').VisitRemark[];
   /** 票种与按当前时刻计算的门票（Batch 3 之前开的牌没有票种，结账时补选） */
   ticket: {
     typeId: number;

@@ -1,7 +1,8 @@
 // 券与会员权益（v0.7.20，飞书 RQ-006 后半；docs/COUPONS.md）：券模板、发券规则、发券（手动、无记名批次、开卡礼、升级礼、生日礼、
 // 充值赠券）、作废、会员的券、统计。结账用券与反结账退回在 coupon-checkout.ts。
 //
-//   · 模板发过券后，面额、折扣、门槛、范围、有效期、限定等级不能改（数据库触发器兜底）；发券在同一事务里对模板加共享锁，
+//   · 模板发过券后，面额、折扣、兑换的项目、有效期、限定等级不能改（数据库触发器兜底）；门槛、范围、星期、时段、门店、点钟这些使用条件
+//     8.1.44 起可以改、马上对没用掉的券生效（结账按模板此刻的条件核对），改动记审计；发券在同一事务里对模板加共享锁，
 //     改模板加排他锁，两边不会交错（改模板时看得到刚发的券）；
 //   · 有效期按营业日算好写在券上：固定起止日期，或发券当天起 N 天；模板的固定有效期已过不能再发；
 //   · 自动发券按「规则 + 会员 + 年份 / 充值单」去重（coupon_issues.dedupe_key 唯一），几个进程同时跑也只发一次；
@@ -325,32 +326,16 @@ export async function createTemplate(deps: Deps, raw: unknown, ctx: OpContext, g
   }
 }
 
-const TERM_KEYS = [
-  'kind',
-  'faceValue',
-  'ratePercent',
-  'maxOff',
-  'threshold',
-  'scope',
-  'scopeCategories',
-  'scopeItems',
-  'exchangeItemId',
-  'exchangeTicketTypeId',
-  'buyItemId',
-  'validity',
-  'validFrom',
-  'validTo',
-  'validDays',
-  'levels',
-  'weekdays',
-  'timeFrom',
-  'timeTo',
-  'storeIds',
-  'designatedOnly',
-] as const;
+/** 发过券以后仍然锁着的条件：已经许给客人的钱和东西（面额、几折、兑换什么、有效期）与发给谁（档级） */
+const LOCKED_KEYS = ['kind', 'faceValue', 'ratePercent', 'maxOff', 'exchangeItemId', 'exchangeTicketTypeId', 'buyItemId', 'validity', 'validFrom', 'validTo', 'validDays', 'levels'] as const;
+/**
+ * 使用条件（8.1.44，《前台系统开发》）：发过券以后也能改、马上生效——结账核对按模板此刻的条件算，没用掉的券都跟着变；
+ * 改了的写进审计（改前、改后、已发几张）
+ */
+const USAGE_KEYS = ['threshold', 'scope', 'scopeCategories', 'scopeItems', 'weekdays', 'timeFrom', 'timeTo', 'storeIds', 'designatedOnly'] as const;
 
 /**
- * 改模板：带版本号（对不上拒绝）；发过券的只能改名称、备注、停用。
+ * 改模板：带版本号（对不上拒绝）；发过券的只能改名称、备注、停用与使用条件（8.1.44：门槛、范围、星期、时段、门店、点钟）。
  * 签赠券类型（8.1.9）只经签赠模块改（gift 给板块、权益内容、规则说明），券模板的接口改不了它；反过来签赠模块也改不了普通券模板
  */
 export async function updateTemplate(deps: Deps, id: number, raw: unknown, ctx: OpContext, gift: GiftInfo | null = null): Promise<CouponTemplate> {
@@ -368,10 +353,13 @@ export async function updateTemplate(deps: Deps, id: number, raw: unknown, ctx: 
     const [counted] = await tx<{ issued: number }[]>`SELECT count(*)::int AS issued FROM coupons WHERE template_id = ${id}`;
     const issued = counted!.issued;
     const before = { ...termsOf(cur), validity: cur.validity, validFrom: cur.validFrom, validTo: cur.validTo, validDays: cur.validDays, levels: cur.levels.map(Number) };
-    const changed = TERM_KEYS.filter((k) => JSON.stringify(before[k]) !== JSON.stringify(t[k]));
-    if (issued > 0 && changed.length) {
-      throw conflict('TEMPLATE_LOCKED', `这个模板已经发过 ${issued} 张券，面额、折扣、门槛、范围、有效期、等级都不能改，只能改名称、备注或停用；要改请另建模板`, {
-        fields: changed,
+    const differs = (k: (typeof LOCKED_KEYS)[number] | (typeof USAGE_KEYS)[number]) => JSON.stringify(before[k]) !== JSON.stringify(t[k]);
+    const lockedChanged = LOCKED_KEYS.filter(differs);
+    const usageChanged = USAGE_KEYS.filter(differs);
+    const changed = [...lockedChanged, ...usageChanged];
+    if (issued > 0 && lockedChanged.length) {
+      throw conflict('TEMPLATE_LOCKED', `这个模板已经发过 ${issued} 张券，面额、折扣、兑换的项目、有效期、等级都不能改（使用条件可以改）；要改请另建模板`, {
+        fields: lockedChanged,
       });
     }
     await assertRefs(tx, t);
@@ -401,6 +389,23 @@ export async function updateTemplate(deps: Deps, id: number, raw: unknown, ctx: 
       },
       ip: ctx.ip,
     });
+    // 已发的券跟着新条件走：改前、改后都记下来，事后能查是谁、什么时候、把哪几项从什么改成什么
+    if (issued > 0 && usageChanged.length) {
+      await writeAudit(tx, {
+        staffId: ctx.actor.id,
+        action: 'coupon_terms_changed',
+        targetType: 'coupon_template',
+        targetId: id,
+        detail: {
+          name: t.name,
+          issued,
+          fields: usageChanged,
+          before: Object.fromEntries(usageChanged.map((k) => [k, before[k]])),
+          after: Object.fromEntries(usageChanged.map((k) => [k, t[k]])),
+        },
+        ip: ctx.ip,
+      });
+    }
   });
   return getTemplate(deps.sql, id);
 }

@@ -532,20 +532,58 @@ a {
 .ledger-title .line {
   display: block;
 }
+/* 8.1.43：左边一个小标签，右边四句话一句一行、字放大、行间留白，句子之间一条细线；最后一句用柚子黄 */
 .ledger-notes {
   margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid oklch(100% 0 0 / 0.16);
   display: grid;
   gap: var(--space-3);
-  max-width: 62rem;
 }
-.ledger-notes p {
-  max-width: 34ch;
-  color: oklch(90% 0.02 85);
+.ledger-eyebrow {
+  font-size: 0.9375rem;
+  letter-spacing: 0.14em;
+  color: oklch(82% 0.03 85);
 }
-@media (min-width: 760px) {
+.ledger-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.ledger-lines li {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+  align-items: baseline;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid oklch(100% 0 0 / 0.09);
+  font-size: clamp(1.25rem, 0.85rem + 1.4vw, 2.25rem);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: oklch(95% 0.015 85);
+  text-wrap: pretty;
+}
+.ledger-lines li:first-child {
+  padding-top: 0;
+}
+.ledger-lines li:last-child {
+  border-bottom: 0;
+  color: var(--yuzu);
+}
+.ln-no {
+  font-family: var(--font-latin);
+  font-size: 0.875rem;
+  letter-spacing: 0.08em;
+  color: var(--yuzu);
+  opacity: 0.85;
+}
+@media (min-width: 900px) {
   .ledger-notes {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    margin-left: auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2.4fr);
+    gap: var(--space-5);
+  }
+  .ledger-eyebrow {
+    padding-top: 0.6em;
   }
 }
 

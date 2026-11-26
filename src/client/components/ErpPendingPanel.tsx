@@ -73,9 +73,9 @@ const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
   // 供应商付款、期初未付登记（v0.7.22）
   payment: 'payment',
   opening_payable: 'opening',
-  // 登记会员权益使用（v0.7.24）：返回那条登记；零采备用金的申用（8.1.9）：返回那笔申用
+  // 登记会员权益使用（v0.7.24）：返回那条登记；备用金申用（8.1.42）：返回那笔申用
   benefit_use: 'use',
-  pool_use: 'use',
+  petty_use: 'use',
   // 邀请体验、赠送会籍（v0.7.25）：返回那条临时身份
   member_trial: 'trial',
   // 会员实体卡（v0.7.28）：发卡、补卡返回那张卡

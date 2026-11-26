@@ -1024,8 +1024,8 @@ function UsagePart({
             撤单
           </Button>
           {canPost && (
-            <Link to={`/crm/frontdesk?v=${u.visitId}`} className="inline-flex h-8 items-center px-2 text-[13px] font-semibold text-pine hover:underline" data-testid="floormap-usage-post">
-              去发卡台挂账 →
+            <Link to={`/crm/cashier?v=${u.visitId}`} className="inline-flex h-8 items-center px-2 text-[13px] font-semibold text-pine hover:underline" data-testid="floormap-usage-post">
+              去收银台挂账 →
             </Link>
           )}
         </div>

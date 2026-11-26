@@ -414,6 +414,9 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '320_coupon_limits.sql',
   '321_gift_cards.sql',
   '322_gift_card_batch_ops.sql',
+  '340_petty_merge.sql',
+  '350_visit_remarks.sql',
+  '360_coupon_usage_terms.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

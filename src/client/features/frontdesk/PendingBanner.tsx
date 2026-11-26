@@ -5,7 +5,7 @@ import { ArrowRight, Hourglass } from 'lucide-react';
 import { formatDateTime } from '../../lib/utils';
 import { Money } from '../../components/Money';
 import { useToast } from '../../components/Toast';
-import { FRONTDESK_OP_LABELS, isBookingOp, isRoomOp, isSpaceOp, isTableOp, isTechOp, isUsageOp, reconcilePending, useFrontdeskPendingForBanner, type FrontdeskPendingOp } from './pending';
+import { CASHIER_OPS, FRONTDESK_OP_LABELS, isBookingOp, isRoomOp, isSpaceOp, isTableOp, isTechOp, isUsageOp, reconcilePending, useFrontdeskPendingForBanner, type FrontdeskPendingOp } from './pending';
 import { onReconnect } from '../../lib/connection';
 
 /**
@@ -116,8 +116,8 @@ export function FrontdeskPendingBanner() {
     // 退款单（v0.7.20）回到前台「结账记录」里的原结账单
     if (op.type === 'checkout_refund' && op.checkoutIds?.[0]) params.set('c', String(op.checkoutIds[0]));
     if (op.visitId) params.set('v', String(op.visitId));
-    // 8.1.15：结账、退款单在收银台处理，发牌、挂账、换牌、转明细在发卡台
-    navigate(`${op.type === 'checkout' || op.type === 'checkout_refund' ? '/crm/cashier' : '/crm/frontdesk'}?${params}`);
+    // 8.1.15：结账、退款单在收银台处理，发牌、换牌、转明细在发卡台；8.1.44 起挂账（加项目）也在收银台
+    navigate(`${CASHIER_OPS.includes(op.type) ? '/crm/cashier' : '/crm/frontdesk'}?${params}`);
   };
   const anyTable = ops.some((op) => isTableOp(op.type));
   const anyRoom = ops.some((op) => isRoomOp(op.type) || isUsageOp(op.type) || isSpaceOp(op.type) || op.type === 'room_order');

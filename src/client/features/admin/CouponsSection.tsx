@@ -1,6 +1,7 @@
 // 后台「券」（v0.7.20，飞书 RQ-006 后半，见 docs/COUPONS.md 第 1、2、5、6 节）：
 //   · 券模板：代金券、折扣券、兑换券；门槛、适用范围（整单 / 指定部门 / 指定项目）、有效期（发券后 N 天 / 固定日期，按营业日）、
-//     限定发放档级（会员体系 v2 的 L0–L6）。发过券的模板只能改名称、备注、停用（带版本号；服务端 TEMPLATE_LOCKED / TEMPLATE_STALE 兜底），要改条件另建；
+//     限定发放档级（会员体系 v2 的 L0–L6）。发过券的模板只能改名称、备注、停用与使用条件（8.1.44：门槛、范围、星期、时段、门店、点钟，马上生效；
+//     带版本号；服务端 TEMPLATE_LOCKED / TEMPLATE_STALE 兜底），要改面额等另建；
 //   · 发券规则：开卡礼、升级礼（按档级）、生日礼（按档级）、充值赠券（按充值套餐）。规则不能改，只能停用后另加；
 //   · 无记名券：按模板生成一批券码（带操作编号，没收到结果时按原内容再提交不会多生成）、导出券码交印刷、按批次作废没用的；
 //   · 统计：按模板列发券、用券（张数、抵扣金额）、过期、作废。
@@ -480,17 +481,16 @@ function buildBody(d: Draft): { body: TemplateBody; problem: string | null } {
   return { body, problem };
 }
 
-/** 发过券的模板：条件原样带回（服务端比对，一项不同就拒绝），只改名称、备注、停用 */
-const lockedBody = (t: CouponTemplate, d: Draft): TemplateBody => ({
-  name: d.name.trim(),
+/**
+ * 发过券的模板：钱和兑换什么、有效期、档级原样带回（服务端比对，一项不同就拒绝）；
+ * 名称、备注、停用与使用条件（门槛、范围、星期、时段、门店、点钟，8.1.44）按页面上填的
+ */
+const lockedBody = (t: CouponTemplate, built: TemplateBody): TemplateBody => ({
+  ...built,
   kind: t.kind,
   faceValue: t.faceValue,
   ratePercent: t.ratePercent,
   maxOff: t.maxOff,
-  threshold: t.threshold,
-  scope: t.scope,
-  scopeCategories: t.scopeCategories,
-  scopeItems: t.scopeItems,
   exchangeItemId: t.exchangeItemId,
   exchangeTicketTypeId: t.exchangeTicketTypeId,
   buyItemId: t.buyItemId,
@@ -502,13 +502,6 @@ const lockedBody = (t: CouponTemplate, d: Draft): TemplateBody => ({
   validTo: t.validTo,
   validDays: t.validDays,
   levels: t.levels,
-  note: d.note.trim(),
-  active: d.active,
-  weekdays: t.weekdays ?? [],
-  timeFrom: t.timeFrom ?? null,
-  timeTo: t.timeTo ?? null,
-  storeIds: t.storeIds ?? [],
-  designatedOnly: t.designatedOnly ?? false,
 });
 
 /** 8.1.40：分钟 ↔ 「HH:MM」 */
@@ -554,7 +547,8 @@ function TemplateDialog({
   const fresh = editing ? templates.find((x) => x.id === base.id) : undefined;
   const nowLocked = editing && !!fresh && base.issued === 0 && fresh.issued > 0;
   const outdated = editing && !!fresh && (fresh.version !== base.version || nowLocked);
-  const { body, problem } = locked ? { body: lockedBody(base, draft), problem: draft.name.trim() ? null : '请填写券的名称' } : buildBody(draft);
+  const built = buildBody(draft);
+  const { body, problem } = locked ? { body: lockedBody(base, built.body), problem: built.problem } : built;
   const fixedPassed = !locked && draft.validity === 'fixed' && ISO_DATE.test(draft.validTo) && draft.validTo < session.today;
 
   const save = async () => {
@@ -623,7 +617,7 @@ function TemplateDialog({
         {outdated && fresh && (
           <Notice
             tone="warning"
-            title={nowLocked ? '这个模板刚刚发出了券，条件不能再改' : '这个模板刚刚被别人改过'}
+            title={nowLocked ? '这个模板刚刚发出了券，面额、折扣、有效期不能再改' : '这个模板刚刚被别人改过'}
             action={
               <Button
                 size="sm"
@@ -645,22 +639,24 @@ function TemplateDialog({
         {locked && base && (
           <Notice
             tone="info"
-            title={`已经发过 ${base.issued} 张券：只能改名称、备注、停用`}
+            title={`已经发过 ${base.issued} 张券：面额、折扣、有效期、档级不能改`}
             action={
               <Button size="sm" variant="secondary" icon={<CopyPlus className="size-4" />} onClick={() => onCopy(base)} data-testid="coupon-template-copy">
                 按这个模板另建一个
               </Button>
             }
           >
-            面额、折扣、门槛、范围、有效期、限定档级都不能改：已发的券始终按发券时的条件算。要改条件请另建模板，再把这个停用。
+            使用条件（门槛、适用范围、哪几天、几点、哪几家店、点钟）可以改，保存后没用掉的券马上按新条件用，改动记审计；面额、折扣、兑换什么、有效期、限定档级是已经许给客人的，要改请另建模板，再把这个停用。
           </Notice>
         )}
         <Field label="名称" htmlFor="coupon-name" hint={`最多 ${MAX_NAME} 字，会员详情和结账时都显示，例如「洗浴代金券」「生日八八折」`}>
           <Input id="coupon-name" value={draft.name} maxLength={MAX_NAME} onChange={(e) => set({ name: e.target.value })} disabled={busy} data-autofocus data-testid="coupon-template-name" />
         </Field>
-        {/* 发过券的模板：条件整块禁用（fieldset 默认最小宽度是内容宽度，手机上会撑出横向滚动，所以 min-w-0） */}
+        {/* 发过券的模板：钱、有效期、档级禁用，使用条件照常能改（fieldset 默认最小宽度是内容宽度，手机上会撑出横向滚动，所以 min-w-0） */}
+        <fieldset disabled={busy} className="min-w-0">
+          <TermsFields draft={draft} set={set} meta={meta} locked={locked} />
+        </fieldset>
         <fieldset disabled={locked || busy} className="min-w-0 space-y-5">
-          <TermsFields draft={draft} set={set} meta={meta} />
           <Field label="有效期" hint="按营业日算，过了最后一天自动失效">
             <Segmented<CouponValidity>
               ariaLabel="有效期"
@@ -733,7 +729,9 @@ function TemplateDialog({
                 ))}
             </div>
           </Field>
-          {/* 8.1.40 使用限制：星期、时段、门店、点钟券（与面额一样，发过券以后不能改） */}
+        </fieldset>
+        {/* 8.1.40 使用限制：星期、时段、门店、点钟券（8.1.44 起发过券以后也能改，马上生效） */}
+        <fieldset disabled={busy} className="min-w-0 space-y-5">
           <Field label="哪几天能用" hint="不选 = 每天都能用；按营业日算">
             <div className="flex flex-wrap gap-2">
               {[1, 2, 3, 4, 5, 6, 7].map((d) => (
@@ -801,8 +799,8 @@ function TemplateDialog({
   );
 }
 
-/** 种类与条件：面额 / 几折 / 兑换什么，门槛，最多减（抵），适用范围 */
-function TermsFields({ draft, set, meta }: { draft: Draft; set: (patch: Partial<Draft>) => void; meta: CouponMeta }) {
+/** 种类与条件：面额 / 几折 / 兑换什么，门槛，最多减（抵），适用范围；发过券的（locked）只有门槛与适用范围能改 */
+function TermsFields({ draft, set, meta, locked }: { draft: Draft; set: (patch: Partial<Draft>) => void; meta: CouponMeta; locked: boolean }) {
   const itemGroups = useMemo(() => {
     const map = new Map<string, CouponMeta['items']>();
     for (const i of meta.items) map.set(i.category, [...(map.get(i.category) ?? []), i]);
@@ -839,178 +837,181 @@ function TermsFields({ draft, set, meta }: { draft: Draft; set: (patch: Partial<
   );
   const giftMaterial = meta.materials.find((m) => m.id === draft.giftMaterialId);
   return (
-    <>
-      <Field label="种类">
-        <Segmented<CouponKind>
-          ariaLabel="券的种类"
-          value={draft.kind}
-          onChange={(k) => set({ kind: k })}
-          options={COUPON_KINDS.map((k) => ({ value: k, label: <span data-testid={`coupon-template-kind-${k}`}>{COUPON_KIND_LABELS[k]}</span> }))}
-        />
-      </Field>
-      {draft.kind === 'cash' && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="面额" htmlFor="coupon-face" hint="抵扣 = 面额与适用金额取小的，不找零">
-            <MoneyInput id="coupon-face" value={draft.faceValue} onChange={(e) => set({ faceValue: e.target.value })} placeholder="0.00" data-testid="coupon-template-face" />
-          </Field>
-          {threshold}
-        </div>
-      )}
-      {draft.kind === 'discount' && (
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="几折" htmlFor="coupon-rate" hint="1 到 9.9，例如 8.8">
-            <div className="relative">
-              <Input
-                id="coupon-rate"
-                inputMode="decimal"
-                autoComplete="off"
-                value={draft.rate}
-                onChange={(e) => set({ rate: e.target.value })}
-                placeholder="8.8"
-                className="num pr-10 font-semibold"
-                data-testid="coupon-template-rate"
-              />
-              <span className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[14px] font-semibold text-ink-3">折</span>
-            </div>
-          </Field>
-          {maxOff}
-          {threshold}
-        </div>
-      )}
-      {draft.kind === 'exchange' && (
-        <>
-          <Field label="兑换什么" hint="抵账单上这个项目（票种）单价最高的那一份；门票抵一位客人的门票金额（含跳档）">
-            <Segmented
-              ariaLabel="兑换价目项目还是门票"
-              value={draft.exchangeTarget}
-              onChange={(v) => set({ exchangeTarget: v })}
-              options={[
-                { value: 'item', label: <span data-testid="coupon-template-exchange-item-mode">价目项目</span> },
-                { value: 'ticket', label: <span data-testid="coupon-template-exchange-ticket-mode">门票票种</span> },
-              ]}
-            />
-          </Field>
+    <div className="space-y-5">
+      <fieldset disabled={locked} className="min-w-0 space-y-5">
+        <Field label="种类">
+          <Segmented<CouponKind>
+            ariaLabel="券的种类"
+            value={draft.kind}
+            onChange={(k) => set({ kind: k })}
+            options={COUPON_KINDS.map((k) => ({ value: k, label: <span data-testid={`coupon-template-kind-${k}`}>{COUPON_KIND_LABELS[k]}</span> }))}
+          />
+        </Field>
+        {draft.kind === 'cash' && (
           <div className="grid gap-4 sm:grid-cols-2">
-            {draft.exchangeTarget === 'item' ? (
-              <Field label="项目" htmlFor="coupon-exchange-item">
-                <Select
-                  id="coupon-exchange-item"
-                  value={draft.exchangeItemId ?? ''}
-                  onChange={(e) => set({ exchangeItemId: e.target.value ? Number(e.target.value) : null })}
-                  className="h-11"
-                  data-testid="coupon-template-exchange-item"
-                >
-                  <option value="">选择项目</option>
-                  {itemGroups.map(([category, items]) => (
-                    <optgroup key={category} label={category}>
-                      {items.map((i) => (
-                        <option key={i.id} value={i.id} disabled={!i.active && i.id !== draft.exchangeItemId}>
-                          {i.name}
-                          {i.active ? '' : '（已停用）'}
+            <Field label="面额" htmlFor="coupon-face" hint="抵扣 = 面额与适用金额取小的，不找零">
+              <MoneyInput id="coupon-face" value={draft.faceValue} onChange={(e) => set({ faceValue: e.target.value })} placeholder="0.00" data-testid="coupon-template-face" />
+            </Field>
+            {!locked && threshold}
+          </div>
+        )}
+        {draft.kind === 'discount' && (
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="几折" htmlFor="coupon-rate" hint="1 到 9.9，例如 8.8">
+              <div className="relative">
+                <Input
+                  id="coupon-rate"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={draft.rate}
+                  onChange={(e) => set({ rate: e.target.value })}
+                  placeholder="8.8"
+                  className="num pr-10 font-semibold"
+                  data-testid="coupon-template-rate"
+                />
+                <span className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[14px] font-semibold text-ink-3">折</span>
+              </div>
+            </Field>
+            {maxOff}
+            {!locked && threshold}
+          </div>
+        )}
+        {draft.kind === 'exchange' && (
+          <>
+            <Field label="兑换什么" hint="抵账单上这个项目（票种）单价最高的那一份；门票抵一位客人的门票金额（含跳档）">
+              <Segmented
+                ariaLabel="兑换价目项目还是门票"
+                value={draft.exchangeTarget}
+                onChange={(v) => set({ exchangeTarget: v })}
+                options={[
+                  { value: 'item', label: <span data-testid="coupon-template-exchange-item-mode">价目项目</span> },
+                  { value: 'ticket', label: <span data-testid="coupon-template-exchange-ticket-mode">门票票种</span> },
+                ]}
+              />
+            </Field>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {draft.exchangeTarget === 'item' ? (
+                <Field label="项目" htmlFor="coupon-exchange-item">
+                  <Select
+                    id="coupon-exchange-item"
+                    value={draft.exchangeItemId ?? ''}
+                    onChange={(e) => set({ exchangeItemId: e.target.value ? Number(e.target.value) : null })}
+                    className="h-11"
+                    data-testid="coupon-template-exchange-item"
+                  >
+                    <option value="">选择项目</option>
+                    {itemGroups.map(([category, items]) => (
+                      <optgroup key={category} label={category}>
+                        {items.map((i) => (
+                          <option key={i.id} value={i.id} disabled={!i.active && i.id !== draft.exchangeItemId}>
+                            {i.name}
+                            {i.active ? '' : '（已停用）'}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </Select>
+                </Field>
+              ) : (
+                <Field label="票种" htmlFor="coupon-exchange-ticket">
+                  <Select
+                    id="coupon-exchange-ticket"
+                    value={draft.exchangeTicketTypeId ?? ''}
+                    onChange={(e) => set({ exchangeTicketTypeId: e.target.value ? Number(e.target.value) : null })}
+                    className="h-11"
+                    data-testid="coupon-template-exchange-ticket"
+                  >
+                    <option value="">选择票种</option>
+                    {meta.ticketTypes.map((t) => (
+                      <option key={t.id} value={t.id} disabled={!t.active && t.id !== draft.exchangeTicketTypeId}>
+                        {t.name}
+                        {t.active ? '' : '（已停用）'}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              {maxOff}
+            </div>
+          </>
+        )}
+        {draft.kind === 'bogo' && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="买的项目" htmlFor="coupon-buy-item" hint="账单上有这个项目才能用">
+                {itemSelect('coupon-buy-item', draft.buyItemId, (v) => set({ buyItemId: v }), '选择项目', 'coupon-template-buy-item')}
+              </Field>
+              <Field label="赠的项目" htmlFor="coupon-gift-item" hint="同一个项目时账单上要有 2 份">
+                {itemSelect('coupon-gift-item', draft.exchangeItemId, (v) => set({ exchangeItemId: v }), '同买的项目（买一送一）', 'coupon-template-gift-item')}
+              </Field>
+              {maxOff}
+            </div>
+            <div className="space-y-3 rounded-lg bg-paper-2/60 px-4 py-3">
+              <label className="flex cursor-pointer items-center gap-2 text-[13.5px] font-semibold text-ink">
+                <input type="checkbox" className="size-4 accent-pine" checked={draft.giftOut} onChange={(e) => set({ giftOut: e.target.checked })} data-testid="coupon-template-gift-out" />
+                核销后赠品自动出库（库存记账）
+              </label>
+              <p className="text-[12.5px] text-ink-3">
+                结账用了这张券，系统账号「赠品出库」在选的仓开一张直接耗用单；库存不够不挡结账，记「出库失败」，补完库存后在「数据看板 → 营销成本」重试；反结账自动冲销当月的单。
+              </p>
+              {draft.giftOut && (
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <Field label="物料" htmlFor="coupon-gift-material">
+                    <Select
+                      id="coupon-gift-material"
+                      value={draft.giftMaterialId ?? ''}
+                      onChange={(e) => set({ giftMaterialId: e.target.value ? Number(e.target.value) : null })}
+                      className="h-11"
+                      data-testid="coupon-template-gift-material"
+                    >
+                      <option value="">选择物料</option>
+                      {meta.materials.map((m) => (
+                        <option key={m.id} value={m.id} disabled={!m.active && m.id !== draft.giftMaterialId}>
+                          {m.name}
+                          {m.active ? '' : '（已停用）'}
                         </option>
                       ))}
-                    </optgroup>
-                  ))}
-                </Select>
-              </Field>
-            ) : (
-              <Field label="票种" htmlFor="coupon-exchange-ticket">
-                <Select
-                  id="coupon-exchange-ticket"
-                  value={draft.exchangeTicketTypeId ?? ''}
-                  onChange={(e) => set({ exchangeTicketTypeId: e.target.value ? Number(e.target.value) : null })}
-                  className="h-11"
-                  data-testid="coupon-template-exchange-ticket"
-                >
-                  <option value="">选择票种</option>
-                  {meta.ticketTypes.map((t) => (
-                    <option key={t.id} value={t.id} disabled={!t.active && t.id !== draft.exchangeTicketTypeId}>
-                      {t.name}
-                      {t.active ? '' : '（已停用）'}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            )}
-            {maxOff}
-          </div>
-        </>
-      )}
-      {draft.kind === 'bogo' && (
-        <>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="买的项目" htmlFor="coupon-buy-item" hint="账单上有这个项目才能用">
-              {itemSelect('coupon-buy-item', draft.buyItemId, (v) => set({ buyItemId: v }), '选择项目', 'coupon-template-buy-item')}
-            </Field>
-            <Field label="赠的项目" htmlFor="coupon-gift-item" hint="同一个项目时账单上要有 2 份">
-              {itemSelect('coupon-gift-item', draft.exchangeItemId, (v) => set({ exchangeItemId: v }), '同买的项目（买一送一）', 'coupon-template-gift-item')}
-            </Field>
-            {maxOff}
-          </div>
-          <div className="space-y-3 rounded-lg bg-paper-2/60 px-4 py-3">
-            <label className="flex cursor-pointer items-center gap-2 text-[13.5px] font-semibold text-ink">
-              <input type="checkbox" className="size-4 accent-pine" checked={draft.giftOut} onChange={(e) => set({ giftOut: e.target.checked })} data-testid="coupon-template-gift-out" />
-              核销后赠品自动出库（库存记账）
-            </label>
-            <p className="text-[12.5px] text-ink-3">
-              结账用了这张券，系统账号「赠品出库」在选的仓开一张直接耗用单；库存不够不挡结账，记「出库失败」，补完库存后在「数据看板 → 营销成本」重试；反结账自动冲销当月的单。
-            </p>
-            {draft.giftOut && (
-              <div className="grid gap-4 sm:grid-cols-3">
-                <Field label="物料" htmlFor="coupon-gift-material">
-                  <Select
-                    id="coupon-gift-material"
-                    value={draft.giftMaterialId ?? ''}
-                    onChange={(e) => set({ giftMaterialId: e.target.value ? Number(e.target.value) : null })}
-                    className="h-11"
-                    data-testid="coupon-template-gift-material"
-                  >
-                    <option value="">选择物料</option>
-                    {meta.materials.map((m) => (
-                      <option key={m.id} value={m.id} disabled={!m.active && m.id !== draft.giftMaterialId}>
-                        {m.name}
-                        {m.active ? '' : '（已停用）'}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="每份出库" htmlFor="coupon-gift-qty" hint="按库存单位，最多三位小数">
-                  <div className="relative">
-                    <Input
-                      id="coupon-gift-qty"
-                      inputMode="decimal"
-                      autoComplete="off"
-                      value={draft.giftQty}
-                      onChange={(e) => set({ giftQty: e.target.value })}
-                      placeholder="1"
-                      className="num pr-12 font-semibold"
-                      data-testid="coupon-template-gift-qty"
-                    />
-                    <span className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[13px] font-semibold text-ink-3">{giftMaterial?.unit ?? ''}</span>
-                  </div>
-                </Field>
-                <Field label="从哪个仓出" htmlFor="coupon-gift-warehouse">
-                  <Select
-                    id="coupon-gift-warehouse"
-                    value={draft.giftWarehouseId ?? ''}
-                    onChange={(e) => set({ giftWarehouseId: e.target.value ? Number(e.target.value) : null })}
-                    className="h-11"
-                    data-testid="coupon-template-gift-warehouse"
-                  >
-                    <option value="">选择仓</option>
-                    {meta.warehouses.map((w) => (
-                      <option key={w.id} value={w.id} disabled={!w.active && w.id !== draft.giftWarehouseId}>
-                        {w.name}
-                        {w.active ? '' : '（已停用）'}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </div>
-            )}
-          </div>
-        </>
-      )}
+                    </Select>
+                  </Field>
+                  <Field label="每份出库" htmlFor="coupon-gift-qty" hint="按库存单位，最多三位小数">
+                    <div className="relative">
+                      <Input
+                        id="coupon-gift-qty"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        value={draft.giftQty}
+                        onChange={(e) => set({ giftQty: e.target.value })}
+                        placeholder="1"
+                        className="num pr-12 font-semibold"
+                        data-testid="coupon-template-gift-qty"
+                      />
+                      <span className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[13px] font-semibold text-ink-3">{giftMaterial?.unit ?? ''}</span>
+                    </div>
+                  </Field>
+                  <Field label="从哪个仓出" htmlFor="coupon-gift-warehouse">
+                    <Select
+                      id="coupon-gift-warehouse"
+                      value={draft.giftWarehouseId ?? ''}
+                      onChange={(e) => set({ giftWarehouseId: e.target.value ? Number(e.target.value) : null })}
+                      className="h-11"
+                      data-testid="coupon-template-gift-warehouse"
+                    >
+                      <option value="">选择仓</option>
+                      {meta.warehouses.map((w) => (
+                        <option key={w.id} value={w.id} disabled={!w.active && w.id !== draft.giftWarehouseId}>
+                          {w.name}
+                          {w.active ? '' : '（已停用）'}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </fieldset>
+      {locked && (draft.kind === 'cash' || draft.kind === 'discount') && <div className="sm:w-1/2">{threshold}</div>}
       {draft.kind !== 'exchange' && draft.kind !== 'bogo' && (
         <>
           <Field label="适用范围" hint="门槛与抵扣都只按适用的明细算；储值充值、押金不是账单明细，用不了券">
@@ -1038,7 +1039,7 @@ function TermsFields({ draft, set, meta }: { draft: Draft; set: (patch: Partial<
           {draft.scope === 'items' && <ItemPicker items={meta.items} value={draft.scopeItems} onChange={(v) => set({ scopeItems: v })} />}
         </>
       )}
-    </>
+    </div>
   );
 }
 

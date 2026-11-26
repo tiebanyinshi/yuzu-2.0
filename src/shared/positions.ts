@@ -101,11 +101,11 @@ export const PERMISSION_COLUMN: Record<Permission, PermissionColumn> = {
   'invoice.manage': 'entry',
   'invoice.issue': 'entry',
   'ar.manage': 'entry',
-  // 布草、零采备用金的页面与列表接口都要「看」这一项，开单、申用离不开它：跟着录入走（Codex 审查 036b336）
+  // 布草的页面与列表接口都要「看」这一项，开单离不开它：跟着录入走（Codex 审查 036b336）
   'linen.read': 'entry',
   'linen.manage': 'entry',
-  'pool.read': 'entry',
-  'pool.manage': 'entry',
+  // 备用金申用（8.1.42，原来零采备用金的看与办两项并成一项）
+  'petty.use': 'entry',
   'asset.manage': 'entry',
   'technician.dispatch': 'entry',
   'technician.announce': 'entry',
@@ -495,7 +495,6 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
     'payable.read',
     'linen.read',
     'asset.read',
-    'pool.read',
     'contract.read',
     'expense.read',
     'inventory.cost',
@@ -506,7 +505,7 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
     'supplierReturn.answer',
     'request.stock',
     'linen.manage',
-    'pool.manage',
+    'petty.use',
     'asset.manage',
     'contract.manage',
     'payment.request',
@@ -524,8 +523,7 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
     'request.stock',
     'linen.read',
     'linen.manage',
-    'pool.read',
-    'pool.manage',
+    'petty.use',
     'payment.request',
   ],
   'vip.lead': [
