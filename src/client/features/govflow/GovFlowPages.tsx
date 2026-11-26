@@ -38,8 +38,9 @@ import { SkuBatchReviewPanel, SupplierDetailPage, SupplierList } from './SupplyP
 import { PettyActions, PettyPanel } from './PettyPages';
 import { ContractPanel, ContractsPanel } from './ContractPages';
 import { PaymentPanel, PaymentsPanel } from './PaymentPages';
+import { ExpensePanel } from './ExpensePages';
 
-type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'roles';
+type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'expense' | 'roles';
 const STATUS_TONE: Record<GfStatus, 'neutral' | 'pine' | 'moss' | 'yuzu' | 'ember' | 'clay' | 'lake' | 'ink'> = {
   draft: 'neutral',
   reviewing: 'lake',
@@ -81,6 +82,7 @@ function GovHome() {
     { value: 'petty', label: '零星采购' },
     { value: 'contracts', label: '合同' },
     { value: 'payments', label: '付款' },
+    { value: 'expense', label: '报销出差用印' },
     ...(meta.data?.canManageRoles ? [{ value: 'roles' as const, label: '角色映射' }] : []),
   ];
   return (
@@ -109,6 +111,10 @@ function GovHome() {
           <SpecialsPanel />
         ) : box === 'suppliers' ? (
           <SupplierList />
+        ) : box === 'expense' ? (
+          meta.data ? (
+            <ExpensePanel meta={meta.data} />
+          ) : null
         ) : box === 'payments' ? (
           meta.data ? (
             <PaymentsPanel meta={meta.data} />

@@ -303,7 +303,7 @@ async function detail(deps: Deps, actor: Actor, id: number): Promise<GfDocDetail
     mySeats,
     canWithdraw: owner && !doc.withdrawnAt && !approved && flow?.status !== 'rejected',
     canSubmit: owner && !doc.withdrawnAt && (flow === null || flow.status === 'returned' || flow.status === 'cancelled'),
-    canExecute: approved && !doc.archivedAt && (owner || doc.performerId === actor.id),
+    canExecute: approved && !doc.archivedAt && (hooksOf(doc.docType).executor === 'seal_keeper' ? (await rolesOf(db, actor.id)).includes('seal_keeper') : owner || doc.performerId === actor.id),
   };
 }
 
@@ -633,7 +633,9 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
     await sql.begin(async (tx) => {
       await setTxTimeouts(tx);
       const doc = await bump(tx, id, version);
-      if (doc.createdBy !== req.actor.id && doc.performerId !== req.actor.id) throw forbidden('只有发起人或履约执行人能推进执行');
+      if (hooksOf(doc.docType).executor === 'seal_keeper') {
+        if (!(await rolesOf(tx, req.actor.id)).includes('seal_keeper')) throw forbidden('用印、证照借还由章证管理员操作');
+      } else if (doc.createdBy !== req.actor.id && doc.performerId !== req.actor.id) throw forbidden('只有发起人或履约执行人能推进执行');
       const flow = await latestFlow(tx, id);
       if (flow?.status !== 'approved') throw conflict('GF_NOT_APPROVED', '审批通过以后才能执行');
       await hooksOf(doc.docType).beforeExecute?.(tx, doc, step, req.actor);

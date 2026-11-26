@@ -305,7 +305,21 @@ export function addWorkdays(day: string, n: number, holidays: ReadonlyMap<string
 
 // ───────────────────────── 单据类型（各批往里加） ─────────────────────────
 
-export const GF_DOC_TYPES = ['general', 'supplier_admission', 'supplier_change', 'sku_batch', 'sku_price_change', 'petty_purchase', 'quota_adjust', 'contract', 'payment'] as const;
+export const GF_DOC_TYPES = [
+  'general',
+  'supplier_admission',
+  'supplier_change',
+  'sku_batch',
+  'sku_price_change',
+  'petty_purchase',
+  'quota_adjust',
+  'contract',
+  'payment',
+  'expense',
+  'travel',
+  'entertain',
+  'seal_use',
+] as const;
 export type GfDocType = (typeof GF_DOC_TYPES)[number];
 export const GF_DOC_TYPE_LABELS: Record<GfDocType, string> = {
   general: '通用事项',
@@ -317,6 +331,10 @@ export const GF_DOC_TYPE_LABELS: Record<GfDocType, string> = {
   quota_adjust: '月度额度核定',
   contract: '合同',
   payment: '付款申请',
+  expense: '报销',
+  travel: '出差申请',
+  entertain: '商务招待',
+  seal_use: '用印证照',
 };
 
 /** 金额（分）的整数比较边界：审批按「不含税」口径 */
