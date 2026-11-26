@@ -27,6 +27,11 @@ const SPACES_CSV = [
   'L3,S,S303,SPA,1,合成SPA 三号,,合成 S303,',
   'L3,S,S304,SPA,1,合成SPA 四号,,合成 S304,',
   'L3,F,F311,足浴,2,合成足浴一号,,合成 F311,',
+  'L2,H,H201,休息大厅,1,合成大厅床位一,,合成 H201,',
+  'L2,H,H202,休息大厅,1,合成大厅床位二,,合成 H202,',
+  'L2,H,H203,休息大厅,1,合成大厅床位三,,合成 H203,',
+  'L2,W,W201,虫洞,1,合成虫洞一号,,合成 W201,',
+  'L2,W,W202,虫洞,1,合成虫洞二号,,合成 W202,',
 ].join('\r\n');
 
 const board = async () => (await api(ctx.app, ctx.clerk, 'GET', '/api/room-center')).body as RoomCenterBoard;
@@ -524,5 +529,184 @@ describe('FT-13 康美部只看房态与手牌号', () => {
     expect(full.statusOnly).toBe(false);
     expect(JSON.stringify(full.rooms.find((r) => r.code === 'S301'))).toContain('足疗');
     await release('S301');
+  });
+});
+
+// ───────────────────────── 批次 4 ─────────────────────────
+
+describe('FT-14 同一工位同时做多个项目', () => {
+  it('登记以后再加一个项目（另一位技师）：两张钟单同时在钟、各自计费；分别下钟；结账后业绩各算各的', async () => {
+    const [g] = await enter();
+    expect((await register('S303', { tagCode: g!.tagCode, technicianId: tech['01'] })).status).toBe(200);
+    const before = await report();
+    const add = await api(ctx.app, ctx.clerk, 'POST', on('S303', 'add-item'), {
+      clientKey: randomUUID(),
+      visitId: g!.visitId,
+      itemId: foot,
+      tier: 'standard',
+      technicianId: tech['02'],
+      callType: 'designated',
+      expectedTotal: 19800,
+    });
+    expect(add.status, JSON.stringify(add.body)).toBe(200);
+    const r = await room('S303');
+    expect(r.guests).toHaveLength(1);
+    const ss = r.guests[0]!.sessions;
+    expect(ss.map((x) => [x.techNo, x.status])).toEqual([
+      ['01', 'serving'],
+      ['02', 'serving'],
+    ]);
+    expect((await bill(g!.visitId)).bill.amountCents).toBe(39600);
+    expect((await history('S303')).rows.some((x) => x.kind === 'add_item')).toBe(true);
+    // 不在这间房的客人不能加
+    const [other] = await enter();
+    expect(
+      (
+        await api(ctx.app, ctx.clerk, 'POST', on('S303', 'add-item'), {
+          clientKey: randomUUID(),
+          visitId: other!.visitId,
+          itemId: foot,
+          technicianId: tech['03'],
+          callType: 'designated',
+          expectedTotal: 19800,
+        })
+      ).body.error.code,
+    ).toBe('GUEST_NOT_IN_ROOM');
+    expect((await finish(ss[0]!.id)).status).toBe(200);
+    expect((await room('S303')).guests[0]!.sessions.find((x) => x.techNo === '02')!.status).toBe('serving');
+    await release('S303');
+    await pay(g!.visitId);
+    const after = await report();
+    const diff = (no: string) => (after.rows.find((x) => x.technicianId === tech[no])?.amount ?? 0) - (before.rows.find((x) => x.technicianId === tech[no])?.amount ?? 0);
+    expect([diff('01'), diff('02')]).toEqual([19800, 19800]);
+  });
+});
+
+describe('FT-15 休息大厅分区 + FT-16 大厅开单 + FT-12 下钟即空', () => {
+  it('后台建分区、把床位归进去；看板卡片带分区；重名拒绝；停用分区床位挪出来', async () => {
+    const z1 = await api(ctx.app, ctx.owner, 'POST', '/api/admin/hall-zones', { name: 'A 区', sortOrder: 1 });
+    expect(z1.status, JSON.stringify(z1.body)).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/hall-zones', { name: 'a 区' })).status).toBe(409);
+    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/admin/hall-zones', { name: 'C 区' })).status).toBe(403);
+    const z2 = await api(ctx.app, ctx.owner, 'POST', '/api/admin/hall-zones', { name: '第二排', sortOrder: 2 });
+    const zones = z2.body.zones as { id: number; name: string }[];
+    const [a, b] = [zones.find((z) => z.name === 'A 区')!.id, zones.find((z) => z.name === '第二排')!.id];
+    expect((z2.body.beds as { code: string }[]).map((x) => x.code)).toEqual(['H201', 'H202', 'H203']);
+    // 不是床位的不能分区
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/hall-zones/beds', { beds: [{ spaceId: spaceId.S301, zoneId: a }] })).status).toBe(422);
+    const saved = await api(ctx.app, ctx.owner, 'PUT', '/api/admin/hall-zones/beds', {
+      beds: [
+        { spaceId: spaceId.H201, zoneId: a },
+        { spaceId: spaceId.H202, zoneId: a },
+        { spaceId: spaceId.H203, zoneId: b },
+      ],
+    });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const bd = await board();
+    expect(bd.hallZones.map((z) => z.name)).toEqual(['A 区', '第二排']);
+    expect(bd.rooms.find((r) => r.code === 'H203')!.hallZone).toEqual({ id: b, name: '第二排' });
+    // 停用第二排：H203 挪出来
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/admin/hall-zones/${b}`, { name: '第二排', sortOrder: 2, active: false })).status).toBe(200);
+    expect((await room('H203')).hallZone).toBeNull();
+  });
+
+  it('大厅床位能登记（选床位、项目、技师）；技师下钟床位马上空闲（不转待清）；这位客人再去别的床位登记，原来那张自动收尾', async () => {
+    const [g] = await enter();
+    const r = await register('H201', { tagCode: g!.tagCode, technicianId: tech['03'] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const bed = await room('H201');
+    expect(bed.status).toBe('in_use');
+    for (const s of bed.guests[0]!.sessions) expect((await finish(s.id)).status).toBe(200);
+    expect(await room('H201')).toMatchObject({ status: 'free', guests: [] });
+    // 这位客人还能马上登记别的床位（原来那张登记单自动按退房收尾）
+    const look = await api(ctx.app, ctx.clerk, 'GET', `/api/room-center/guest?tag=${g!.tagCode}`);
+    expect(look.body.registeredIn).toBeNull();
+    expect((await register('H202', { tagCode: g!.tagCode, technicianId: tech['04'] })).status).toBe(200);
+    const [old] = await ctx.sql<{ status: string; closeKind: string }[]>`
+      SELECT status, close_kind FROM room_registrations WHERE visit_id = ${g!.visitId} AND space_id = ${spaceId.H201!}`;
+    expect(old).toEqual({ status: 'closed', closeKind: 'checkout' });
+    for (const s of (await room('H202')).guests[0]!.sessions) expect((await finish(s.id)).status).toBe(200);
+    expect((await room('H202')).status).toBe('free');
+    // 技师房间照旧：下钟以后不退房还是在用，退了才待清
+    const [k] = await enter();
+    expect((await register('S304', { tagCode: k!.tagCode, technicianId: tech['01'] })).status).toBe(200);
+    for (const s of (await room('S304')).guests[0]!.sessions) expect((await finish(s.id)).status).toBe(200);
+    expect((await room('S304')).status).toBe('in_use');
+    await release('S304');
+  });
+});
+
+describe('FT-17 零售与杂项', () => {
+  it('后台设的分类里的项目能挂到房里客人的手牌上；别的分类、要技师的拒绝；手动金额要权限；房间历史有记录', async () => {
+    const mk = async (name: string, category: string, price: number) =>
+      ((await api(ctx.app, ctx.owner, 'POST', '/api/items', { name, category, price })).body.items as { id: number; name: string }[]).find((i) => i.name === name)!.id;
+    const cig = await mk('合成香烟', '零售', 3500);
+    const clean = await mk('合成清洁费', '杂项', 5000);
+    const tea = await mk('合成茶位', '茶位', 1000);
+    const [g] = await enter();
+    expect((await register('S301', { tagCode: g!.tagCode, technicianId: tech['02'] })).status).toBe(200);
+    const goods = (body: Record<string, unknown>, cookie = ctx.clerk) => api(ctx.app, cookie, 'POST', on('S301', 'goods'), { clientKey: randomUUID(), visitId: g!.visitId, ...body });
+    const ok = await goods({
+      lines: [
+        { itemId: cig, quantity: 2 },
+        { itemId: clean, quantity: 1 },
+      ],
+      expectedTotal: 12000,
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect((await bill(g!.visitId)).bill.amountCents).toBe(19800 + 12000);
+    expect((await goods({ lines: [{ itemId: tea, quantity: 1 }], expectedTotal: 1000 })).body.error.code).toBe('GOODS_NOT_ALLOWED');
+    expect((await goods({ lines: [{ itemId: foot, quantity: 1 }], expectedTotal: 19800 })).body.error.code).toBe('GOODS_NOT_ALLOWED');
+    // 手动金额：前台有权限
+    expect((await goods({ customLines: [{ name: '损坏赔偿', amount: 2000 }], expectedTotal: 2000 })).status).toBe(200);
+    expect((await history('S301')).rows.filter((x) => x.kind === 'goods')).toHaveLength(2);
+    // 后台改了分类：茶位也能挂
+    await rules({ goodsCategories: ['零售', '杂项', '茶位'] });
+    expect((await goods({ lines: [{ itemId: tea, quantity: 1 }], expectedTotal: 1000 })).status).toBe(200);
+    await rules({ goodsCategories: ['零售', '杂项'] });
+    await release('S301');
+  });
+});
+
+describe('FT-18 虫洞位', () => {
+  it('下单三步（手牌、性别、虫洞号）收后台设的费用；同一个虫洞、同一位客人同时一张；离开以后空闲；清洁时段里没人的是待清、不能下单', async () => {
+    const fee = ((await api(ctx.app, ctx.owner, 'POST', '/api/items', { name: '合成虫洞费', category: '虫洞', price: 3800 })).body.items as { id: number; name: string }[]).find(
+      (i) => i.name === '合成虫洞费',
+    )!.id;
+    const cur = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/room-center-rules')).body as RoomCenterRules;
+    await rules({ wormhole: { ...cur.wormhole, feeItemId: fee, cleanWindows: [] } });
+    const bd = await board();
+    expect(bd.wormholeFee).toMatchObject({ itemId: fee, price: 3800 });
+    expect(bd.rooms.find((r) => r.code === 'W201')).toMatchObject({ status: 'free', wormhole: { stay: null } });
+    const [g, h] = await enter(2);
+    const open = (code: string, body: Record<string, unknown>) => api(ctx.app, ctx.clerk, 'POST', on(code, 'wormhole'), { clientKey: randomUUID(), gender: 'female', expectedFee: 3800, ...body });
+    expect((await open('S302', { tagCode: g!.tagCode })).body.error.code).toBe('NOT_WORMHOLE');
+    expect((await open('W201', { tagCode: g!.tagCode, expectedFee: 1000 })).status).toBe(409);
+    const ok = await open('W201', { tagCode: g!.tagCode });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const w = await room('W201');
+    expect(w).toMatchObject({ status: 'in_use', guestText: `手牌 ${g!.tagCode}`, wormhole: { stay: { tagCode: g!.tagCode, gender: 'female', fee: 3800 } } });
+    expect((await bill(g!.visitId)).bill.amountCents).toBe(3800);
+    expect((await open('W201', { tagCode: h!.tagCode })).body.error.code).toBe('ROOM_IN_USE');
+    expect((await open('W202', { tagCode: g!.tagCode })).body.error.code).toBe('GUEST_REGISTERED');
+    const leave = await api(ctx.app, ctx.clerk, 'POST', on('W201', 'wormhole-leave'), { clientKey: randomUUID(), expectedVersion: w.version });
+    expect(leave.status, JSON.stringify(leave.body)).toBe(200);
+    expect((await room('W201')).status).toBe('free');
+    expect((await history('W201')).rows.map((x) => x.kind).slice(0, 2)).toEqual(['wormhole_out', 'wormhole_in']);
+    // 清洁时段（覆盖现在）：没人的虫洞是待清，不能下单；有人的照样在用
+    expect((await open('W202', { tagCode: h!.tagCode })).status).toBe(200);
+    const now = new Date();
+    const hm = (d: Date) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(d);
+    await rules({ wormhole: { ...cur.wormhole, feeItemId: fee, cleanWindows: [{ start: hm(new Date(now.getTime() - 30 * 60_000)), end: hm(new Date(now.getTime() + 30 * 60_000)) }] } });
+    expect((await room('W201')).status).toBe('dirty');
+    expect((await room('W202')).status).toBe('in_use');
+    expect((await open('W201', { tagCode: g!.tagCode })).body.error.code).toBe('ROOM_DIRTY');
+    // 时段外：空闲
+    await rules({ wormhole: { ...cur.wormhole, feeItemId: fee, cleanWindows: [{ start: hm(new Date(now.getTime() + 60 * 60_000)), end: hm(new Date(now.getTime() + 90 * 60_000)) }] } });
+    expect((await room('W201')).status).toBe('free');
+    // 客人结账离店：虫洞自动空出来
+    await pay(h!.visitId);
+    expect((await room('W202')).status).toBe('free');
+    await rules({ wormhole: { ...cur.wormhole, feeItemId: null, cleanWindows: [] } });
   });
 });

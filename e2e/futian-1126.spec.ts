@@ -5,6 +5,8 @@
 //   批次 2：FT-02 输编号即选、默认不平铺；FT-07 括单；FT-06 限时换技师；FT-09 限时撤房（回空闲）；FT-19 补单；后台房态中心规则；CY-01 同组汇总。
 //   批次 3：FT-03 过夜客人先开房、再在详情里拍照补传留宿确认单（待补传 → 已上传 1 张）；FT-04 退房后待清的卡片标「留宿」；
 //           FT-13 康美部员工登录只看房态与手牌号（没有项目、技师、金额，详情里没有历史与动作）。
+//   批次 4：FT-15 后台建分区、把床位归进去；FT-16 大厅开单两张床位一次提交；FT-12 下钟床位即空；FT-14 同一间房加项目；
+//           FT-17 零售商品挂到手牌、足浴房「点餐」带着手牌进点单页；FT-18 虫洞下单三步、客人离开。
 //           （时限超过以后拒绝、自定义时限、房费、同类型换房、业绩归属在 tests/futian-1126.test.ts 里按时刻核对）
 // 只在独立演示库跑，数据自己备、可以重复跑：空间台账里没有专用的两个空间（三层的 Q385、Q386）就导入。
 // 账号：店主 linlan，密码 yuzu2026。
@@ -19,9 +21,15 @@ import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
 const [R1, R2] = ['Q385', 'Q386'] as const;
+/** 批次 4：两张大厅床位、一个虫洞、一间足浴房 */
+const [B1, B2, WH, FOOT] = ['Q387', 'Q388', 'Q389', 'Q384'] as const;
 const SPACES = [
   [R1, 'SPA', '1', 'E2E 福田 SPA 一号'],
   [R2, 'SPA', '1', 'E2E 福田 SPA 二号'],
+  [B1, '休息大厅', '1', 'E2E 福田大厅床位一'],
+  [B2, '休息大厅', '1', 'E2E 福田大厅床位二'],
+  [WH, '虫洞', '1', 'E2E 福田虫洞一号'],
+  [FOOT, '足浴', '1', 'E2E 福田足浴一号'],
 ] as const;
 
 async function login(page: Page, username: string) {
@@ -93,6 +101,10 @@ async function ensureService(page: Page) {
 /** 店主：把这间房里留下的钟、登记收掉（下钟 / 取消派钟、退房、清洁完成） */
 async function clearRoom(page: Page, code: string) {
   let r = await cardOf(page, code);
+  if (r.wormhole?.stay) {
+    await send(page, 'post', `/api/room-center/rooms/${r.spaceId}/wormhole-leave`, { clientKey: randomUUID(), expectedVersion: r.version });
+    r = await cardOf(page, code);
+  }
   for (const s of r.guests.flatMap((g) => g.sessions)) {
     if (s.status === 'serving') await send(page, 'post', `/api/clockroom/sessions/${s.id}/finish`);
     if (s.status === 'waiting') await send(page, 'post', `/api/clockroom/sessions/${s.id}/void`, { reason: 'E2E：收掉上次留下的' });
@@ -431,5 +443,158 @@ test.describe('福田店整改 2026-11-26', () => {
     await login(page, 'linlan');
     await clearRoom(page, R1);
     await clearRoom(page, R2);
+  });
+
+  test('批次 4：FT-15 分区、FT-16 大厅开单、FT-12 下钟即空、FT-14 加项目、FT-17 零售与足浴点餐、FT-18 虫洞', async ({ page }) => {
+    await login(page, 'linlan');
+    await ensureSpaces(page);
+    await ensureService(page);
+    await ensureDrinks(page);
+    for (const code of SPACES.map((s) => s[0])) await clearRoom(page, code);
+    const items = (await getJson<{ items: { id: number; name: string; active: boolean }[] }>(page, '/api/catalog?all=1')).items;
+    const CIG = { name: 'E2E 福田香烟', category: '零售', price: 3500, code: 'FT17' };
+    const cig = items.find((i) => i.name === CIG.name);
+    if (!cig) await send(page, 'post', '/api/items', CIG);
+    else await send(page, 'put', `/api/items/${cig.id}`, { ...CIG, active: true });
+    const FEE = { name: 'E2E 福田虫洞费', category: '虫洞', price: 3800 };
+    let feeId = items.find((i) => i.name === FEE.name)?.id;
+    if (!feeId) feeId = (await send<{ items: { id: number; name: string }[] }>(page, 'post', '/api/items', FEE)).items.find((i) => i.name === FEE.name)!.id;
+    const rulesNow = await getJson<RoomCenterRules>(page, '/api/admin/room-center-rules');
+    await send(page, 'put', '/api/admin/room-center-rules', { ...rulesNow, wormhole: { businessTypes: ['虫洞'], cleanWindows: [], feeItemId: feeId }, goodsCategories: ['零售', '杂项'] });
+
+    // FT-15：后台加分区，把床位一归进去
+    const zoneName = `E2E甲${String(Date.now()).slice(-4)}`;
+    await page.goto('/admin/spaces/room-categories');
+    const zc = page.getByTestId('hall-zones');
+    await zc.getByTestId('hall-zone-name').fill(zoneName);
+    await zc.getByTestId('hall-zone-add').click();
+    await expect(zc.getByTestId(`hall-zone-${zoneName}`)).toBeVisible();
+    await zc.getByTestId(`hall-bed-${B1}`).selectOption({ label: zoneName });
+    await zc.getByTestId('hall-beds-save').click();
+    await expect(page.getByText('已保存 1 张床位的分区')).toBeVisible();
+    expect((await cardOf(page, B1)).hallZone?.name).toBe(zoneName);
+
+    // FT-16：大厅开单——两张床位一屏填完、一次提交，各自成单
+    const [a, b] = await checkin(page, ['E2E 大厅甲', 'E2E 大厅乙']);
+    await page.goto('/room-center');
+    await page.getByTestId('rc-hall-open').click();
+    const hall = page.getByTestId('rc-hall');
+    await expect(hall).toBeVisible();
+    const row0 = hall.getByTestId('rc-hall-row-0');
+    await row0.getByTestId('rc-hall-bed').selectOption({ label: B1 });
+    await row0.getByTestId('rc-hall-tag').fill(a!.tag);
+    await row0.getByTestId('rc-hall-item').selectOption({ label: `${ITEM.code} ${ITEM.name}` });
+    await row0.getByTestId('rc-hall-techno').fill(TECHS[0].techNo);
+    await expect(row0.getByTestId('rc-hall-row-state')).toContainText('98.00');
+    await hall.getByTestId('rc-hall-add-row').click();
+    const row1 = hall.getByTestId('rc-hall-row-1');
+    await row1.getByTestId('rc-hall-bed').selectOption({ label: B2 });
+    await row1.getByTestId('rc-hall-tag').fill(b!.tag);
+    await row1.getByTestId('rc-hall-techno').fill(TECHS[1].techNo);
+    await expect(row1.getByTestId('rc-hall-row-state')).toContainText(TECHS[1].techNo);
+    await page.getByTestId('rc-hall-submit').click();
+    await expect(page.getByText('大厅开单都提交了')).toBeVisible();
+    await page.getByTestId('rc-search').fill('Q38');
+    await expect(page.getByTestId(`rc-room-${B1}`)).toHaveAttribute('data-status', 'in_use');
+    await expect(page.getByTestId(`rc-room-${B2}`)).toHaveAttribute('data-status', 'in_use');
+    await expect(page.getByTestId(`rc-room-${B1}`)).toContainText(zoneName);
+    // FT-12：下钟床位马上空闲（不转待清）
+    for (const code of [B1, B2]) for (const s of (await cardOf(page, code)).guests.flatMap((g) => g.sessions)) await send(page, 'post', `/api/clockroom/sessions/${s.id}/finish`);
+    await expect(page.getByTestId(`rc-room-${B1}`)).toHaveAttribute('data-status', 'free');
+    await expect(page.getByTestId(`rc-room-${B2}`)).toHaveAttribute('data-status', 'free');
+
+    // FT-14：SPA 房里的客人同时再做一个项目（另一位技师）
+    const [c] = await checkin(page, ['E2E 加项目']);
+    const tech0 = (await getJson<{ technicians: { id: number; techNo: string }[] }>(page, '/api/clockroom')).technicians.find((t) => t.techNo === TECHS[0].techNo)!;
+    const item = (await getJson<{ items: { id: number; name: string }[] }>(page, '/api/catalog')).items.find((i) => i.name === ITEM.name)!;
+    const r1 = await cardOf(page, R1);
+    await send(page, 'post', `/api/room-center/rooms/${r1.spaceId}/register`, {
+      clientKey: randomUUID(),
+      tagCode: c!.tag,
+      itemId: item.id,
+      tier: 'standard',
+      quantity: 1,
+      technicianId: tech0.id,
+      callType: 'designated',
+      sellerNo: 'linlan',
+      note: '',
+      start: 'now',
+      expectedTotal: ITEM.price,
+    });
+    await page.getByTestId('rc-search').fill(R1);
+    await page.getByTestId(`rc-open-${R1}`).click();
+    const d = page.getByTestId('rc-room-dialog');
+    await d.getByTestId('rc-act-add-item').click();
+    const ai = page.getByTestId('rc-additem');
+    await ai.getByTestId('rc-additem-search').fill('FT02');
+    await ai.getByTestId('rc-additem-techno').fill(TECHS[1].techNo);
+    await page.getByTestId('rc-additem-submit').click();
+    await expect(page.getByText(`${R1} 已加项目`)).toBeVisible();
+    await expect
+      .poll(async () =>
+        (await cardOf(page, R1)).guests[0]!.sessions.filter((s) => s.status !== 'done')
+          .map((s) => s.techNo)
+          .sort(),
+      )
+      .toEqual([TECHS[0].techNo, TECHS[1].techNo].sort());
+
+    // FT-17：零售商品（输编号即选）挂到手牌上
+    await page.getByTestId(`rc-open-${R1}`).click();
+    await d.getByTestId('rc-act-goods').click();
+    const gd = page.getByTestId('rc-goods');
+    await gd.getByTestId('rc-goods-search').fill('FT17');
+    await expect(gd.getByTestId(`rc-goods-line-${CIG.name}`)).toBeVisible();
+    await expect(page.getByTestId('rc-goods-total')).toContainText('35.00');
+    await page.getByTestId('rc-goods-submit').click();
+    await expect(page.getByText('已挂到手牌上')).toBeVisible();
+    expect((await getJson<{ bill: { amountCents: number } }>(page, `/api/frontdesk/visits/${c!.visitId}`)).bill.amountCents).toBe(ITEM.price * 2 + CIG.price);
+
+    // FT-17：足浴房「点餐」带着手牌进点单页（餐厅、水吧、果吧都能点）
+    const [f] = await checkin(page, ['E2E 足浴点餐']);
+    const foot = await cardOf(page, FOOT);
+    await send(page, 'post', `/api/room-center/rooms/${foot.spaceId}/register`, {
+      clientKey: randomUUID(),
+      tagCode: f!.tag,
+      itemId: item.id,
+      tier: 'standard',
+      quantity: 1,
+      technicianId: (await getJson<{ technicians: { id: number; techNo: string }[] }>(page, '/api/clockroom')).technicians.find((t) => t.techNo === TECHS[0].techNo)!.id,
+      callType: 'designated',
+      sellerNo: 'linlan',
+      note: '',
+      start: 'later',
+      expectedTotal: ITEM.price,
+    });
+    await page.getByTestId('rc-search').fill(FOOT);
+    await page.getByTestId(`rc-open-${FOOT}`).click();
+    await d.getByTestId('rc-act-dining').click();
+    await expect(page).toHaveURL(/\/crm\/dining/);
+    await expect(page.getByTestId('dining-guest')).toContainText('E2E 足浴点餐');
+
+    // FT-18：虫洞下单三步（手牌、性别、虫洞号）收费用；客人离开以后空闲
+    const [w] = await checkin(page, ['E2E 虫洞']);
+    await page.goto('/room-center');
+    await page.getByTestId('rc-search').fill(WH);
+    await expect(page.getByTestId(`rc-room-${WH}`)).toHaveAttribute('data-status', 'free');
+    await page.getByTestId(`rc-open-${WH}`).click();
+    await d.getByTestId('rc-act-wormhole').click();
+    const wd = page.getByTestId('rc-wormhole');
+    await wd.getByTestId('rc-register-tag').fill(w!.tag);
+    await expect(wd.getByTestId('rc-register-guest')).toContainText('E2E 虫洞');
+    await expect(wd.getByTestId('rc-wormhole-code')).toHaveText(WH);
+    await expect(page.getByTestId('rc-wormhole-fee')).toContainText('38.00');
+    await page.getByTestId('rc-wormhole-submit').click();
+    await expect(page.getByText(`${WH} 已下单`)).toBeVisible();
+    await expect(page.getByTestId(`rc-room-${WH}`)).toHaveAttribute('data-status', 'in_use');
+    expect((await getJson<{ bill: { amountCents: number } }>(page, `/api/frontdesk/visits/${w!.visitId}`)).bill.amountCents).toBe(FEE.price);
+    await page.getByTestId(`rc-open-${WH}`).click();
+    await d.getByTestId('rc-act-wormhole').click();
+    await page.getByTestId('rc-wormhole-leave').click();
+    await expect(page.getByTestId(`rc-room-${WH}`)).toHaveAttribute('data-status', 'free');
+
+    // 收尾
+    for (const code of [R1, FOOT]) await clearRoom(page, code);
+    await send(page, 'put', '/api/admin/room-center-rules', { ...rulesNow });
+    await send(page, 'put', '/api/admin/dining/rules', { enabled: false });
   });
 });

@@ -209,6 +209,7 @@ export function RoomCard({
         </span>
         <span className="truncate text-[12px] text-ink-3">
           {area ? `${area} · ` : ''}
+          {room.hallZone ? `${room.hallZone.name} · ` : ''}
           {room.name}
           {room.floor ? ` · ${room.floor}` : ''}
           {room.capacity ? ` · ${room.capacity} 人` : ''}

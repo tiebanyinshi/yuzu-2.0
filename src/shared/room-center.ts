@@ -232,6 +232,10 @@ export interface RoomCard {
   dirtyOvernight: boolean;
   /** 今天订了这间、还没到店的预约（最早的一张） */
   booking: RoomBookingView | null;
+  /** 休息大厅的分区（福田店 FT-15）；不是床位或没分区的为 null */
+  hallZone: { id: number; name: string } | null;
+  /** 虫洞位（福田店 FT-18）：这个空间是不是虫洞位；在用的那一张使用单 */
+  wormhole: { stay: { id: number; tagCode: string; gender: 'male' | 'female'; fee: number; openedAt: string } | null } | null;
   /** 并房：一起的几间（含自己；第一间是主房）；没并房为空 */
   merged: { spaceId: number; code: string }[];
   /** 卡片上的四样：客人、技师、从什么时候起算已用时长、金额（没人用为 null） */
@@ -258,6 +262,12 @@ export interface RoomCenterBoard {
   todayBookings: RoomCenterBooking[];
   /** 福田店整改：后台设的三个时限（分钟）——换技师（FT-06）、撤房（FT-09）、下钟后免房费（FT-10） */
   limits: { swapTechMinutes: number; revokeMinutes: number; freeAfterClockOffMinutes: number };
+  /** 休息大厅的分区（FT-15，后台设的；开单选床位按分区列） */
+  hallZones: { id: number; name: string }[];
+  /** 虫洞的费用项目（FT-18，后台「房态中心规则」里设的）；没设的为 null（不收费） */
+  wormholeFee: { itemId: number; name: string; price: number } | null;
+  /** 零售与杂项能挂的分类（FT-17，后台「房态中心规则」里设的） */
+  goodsCategories: string[];
   /** 只看房态与手牌号（福田店 FT-13：康美部的账户）：卡片上没有项目、技师、金额、客人姓名，房间详情里没有历史与动作 */
   statusOnly: boolean;
 }
@@ -299,6 +309,11 @@ export const ROOM_EVENT_KINDS = [
   'revoke',
   'backfill',
   'room_fee',
+  // 福田店整改批次 4（迁移 471）
+  'add_item',
+  'goods',
+  'wormhole_in',
+  'wormhole_out',
 ] as const;
 export type RoomEventKind = (typeof ROOM_EVENT_KINDS)[number];
 export const ROOM_EVENT_LABELS: Record<RoomEventKind, string> = {
@@ -316,6 +331,10 @@ export const ROOM_EVENT_LABELS: Record<RoomEventKind, string> = {
   revoke: '撤房',
   backfill: '补单',
   room_fee: '房费',
+  add_item: '加项目',
+  goods: '零售 / 杂项',
+  wormhole_in: '虫洞入住',
+  wormhole_out: '虫洞离开',
 };
 
 /** 登记单的种类（福田店整改 FT-07 括单、FT-19 补单） */
@@ -454,4 +473,11 @@ export function arrangeRooms<T extends { code: string; guests: readonly { overni
   const list = opts.overnightOnly ? rooms.filter(isOvernightRoom) : [...rooms];
   if (opts.order === 'desc') list.sort((a, b) => b.code.localeCompare(a.code, 'zh-Hans-CN', { numeric: true }));
   return list;
+}
+
+/** 后台的休息大厅分区与床位（福田店 FT-15） */
+export interface HallZonesAdmin {
+  zones: { id: number; name: string; sortOrder: number; active: boolean; beds: number }[];
+  /** 休息大厅一类的空间（床位）与它在哪个分区 */
+  beds: { spaceId: number; code: string; name: string; businessType: string; active: boolean; zoneId: number | null }[];
 }

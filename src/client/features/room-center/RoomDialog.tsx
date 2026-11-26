@@ -5,7 +5,28 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { ArrowRightLeft, CalendarClock, Camera, CircleCheck, DoorOpen, FilePlus2, History, Link2, Play, Plus, Shuffle, Sparkles, Square, Timer, Undo2, Unlink, UserPlus, Wrench } from 'lucide-react';
+import {
+  ArrowRightLeft,
+  CalendarClock,
+  Camera,
+  ShoppingBag,
+  UtensilsCrossed,
+  CircleCheck,
+  DoorOpen,
+  FilePlus2,
+  History,
+  Link2,
+  Play,
+  Plus,
+  Shuffle,
+  Sparkles,
+  Square,
+  Timer,
+  Undo2,
+  Unlink,
+  UserPlus,
+  Wrench,
+} from 'lucide-react';
 import {
   elapsedText,
   isLobbyBusinessType,
@@ -44,7 +65,9 @@ export type RoomDialogAction =
   /** 福田店 FT-06：限时内换技师 */
   | { kind: 'swap'; session: RoomSessionView }
   /** 福田店 FT-09 撤房、FT-19 补单 */
-  | { kind: 'move' | 'merge' | 'checkout' | 'maintenance' | 'dirty' | 'restore' | 'revoke' | 'backfill' };
+  | { kind: 'move' | 'merge' | 'checkout' | 'maintenance' | 'dirty' | 'restore' | 'revoke' | 'backfill' }
+  /** 福田店批次 4：同一工位加项目（FT-14）、零售与杂项（FT-17）、虫洞下单 / 离开（FT-18） */
+  | { kind: 'add_item' | 'goods' | 'wormhole' };
 
 const SESSION_STATE: Record<RoomSessionView['status'], string> = { waiting: '待上钟', serving: '服务中', done: '已下钟' };
 const EVENT_TONE: Partial<Record<RoomEventKind, 'pine' | 'lake' | 'yuzu' | 'clay' | 'neutral'>> = {
@@ -273,7 +296,7 @@ export function RoomDialog({
           {label} <StatusChip status={room.status} />
         </span>
       }
-      description={`${room.businessType}${room.floor ? ` · ${room.floor}` : ''}${room.capacity ? ` · ${room.capacity} 人` : ''} · ${ROOM_SOURCE_LABELS[room.kind]}：${ROOM_SOURCE_HINTS[room.kind]}`}
+      description={`${room.businessType}${room.hallZone ? ` · ${room.hallZone.name}` : ''}${room.floor ? ` · ${room.floor}` : ''}${room.capacity ? ` · ${room.capacity} 人` : ''} · ${ROOM_SOURCE_LABELS[room.kind]}：${ROOM_SOURCE_HINTS[room.kind]}`}
     >
       <div className="space-y-5" data-testid="rc-room-dialog" data-status={room.status}>
         <RoomActionStatus action={stateAct} room={room} />
@@ -421,7 +444,8 @@ export function RoomDialog({
         {clockError && <Notice tone="error" title={clockError} />}
 
         <div className="flex flex-wrap gap-2" data-testid="rc-actions">
-          {room.kind === 'service' && (room.status === 'free' || room.status === 'booked') && (
+          {/* 休息大厅的床位也能登记（FT-16） */}
+          {(room.kind === 'service' || (room.kind === 'hall' && lobby)) && (room.status === 'free' || room.status === 'booked') && (
             <Button
               variant="primary"
               icon={<DoorOpen className="size-4" />}
@@ -431,6 +455,49 @@ export function RoomDialog({
               data-testid="rc-act-register"
             >
               登记
+            </Button>
+          )}
+          {/* 虫洞（FT-18）：没人的下单，有人的离开；清洁时段里是待清，不能下单 */}
+          {room.wormhole && (room.status === 'free' || room.status === 'booked' || room.status === 'in_use') && (
+            <Button
+              variant="primary"
+              icon={<DoorOpen className="size-4" />}
+              className="h-11"
+              disabled={!can('frontdesk.operate')}
+              onClick={() => onAction({ kind: 'wormhole' })}
+              data-testid="rc-act-wormhole"
+            >
+              {room.wormhole.stay ? '客人离开' : '虫洞下单'}
+            </Button>
+          )}
+          {/* 同一工位加项目（FT-14）、零售与杂项（FT-17）、足浴房点餐（FT-17） */}
+          {room.status === 'in_use' && room.guests.some((g) => g.registrationId !== null) && (
+            <Button variant="secondary" icon={<Plus className="size-4" />} className="h-11" disabled={!canPost} onClick={() => onAction({ kind: 'add_item' })} data-testid="rc-act-add-item">
+              加项目
+            </Button>
+          )}
+          {room.status === 'in_use' && room.guests.length > 0 && (
+            <Button
+              variant="secondary"
+              icon={<ShoppingBag className="size-4" />}
+              className="h-11"
+              disabled={!can('frontdesk.operate')}
+              onClick={() => onAction({ kind: 'goods' })}
+              data-testid="rc-act-goods"
+            >
+              零售 / 杂项
+            </Button>
+          )}
+          {room.status === 'in_use' && room.guests.length > 0 && room.businessType.includes('足浴') && (
+            <Button
+              variant="secondary"
+              icon={<UtensilsCrossed className="size-4" />}
+              className="h-11"
+              disabled={!can('dining.order')}
+              onClick={() => navigate(`/crm/dining?tag=${encodeURIComponent(room.guests[0]!.tagCode)}&room=${encodeURIComponent(room.code)}`)}
+              data-testid="rc-act-dining"
+            >
+              点餐
             </Button>
           )}
           {room.kind === 'party' && (room.status === 'free' || room.status === 'booked') && (

@@ -303,6 +303,7 @@
   - `460`（`460_gf_hr.sql`，P07）：事项类型加 HR 付款批次；批次 `gf_hr_batches`（批次号唯一、常规批次同部门同期唯一）、人员明细 `gf_hr_batch_lines`、出纳复核 `gf_hr_checks`、批次付款 `gf_hr_payouts`、分摊规则与版本 `gf_alloc_rules` / `gf_alloc_rule_versions`、分摊执行与冲正 `gf_alloc_runs`（明细、复核、付款、版本、分摊都只追加）。回滚 `docs/rollback/460_gf_hr.down.sql`。
 - **福田店餐饮与房态中心整改（店主 2026-11-26《福田店餐饮与房态中心整改需求文档》，设计与批次记录见 `docs/FUTIAN_1126.md`）**：四个本地批次做完统一一个 PR，不改版本号。迁移号 `470`–`479`：
   - `470`（`470_room_center_futian.sql`，批次 2）：登记单加类型 `kind`（普通 / 括单 / 补单，FT-07、FT-19）、结束方式加「撤房」「补单」（FT-09、FT-19）；房间事件加撤房、补单、房费；钟单加 `room_neutral`（撤掉的、补录的钟不算用过房间，不让房间转待清）。回滚 `docs/rollback/470_room_center_futian.down.sql`。
+  - `471`（`471_hall_wormhole.sql`，批次 4）：休息大厅分区 `hall_zones` 与空间上的 `hall_zone_id`（FT-15）；虫洞使用单 `wormhole_stays`（FT-18，只能开着 → 结束）；房间事件加同一工位加项目、零售与杂项、虫洞入住 / 离开。回滚 `docs/rollback/471_hall_wormhole.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

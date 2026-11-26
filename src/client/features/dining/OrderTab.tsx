@@ -206,6 +206,21 @@ export function OrderTab() {
     setParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromTable, !!menu.data]);
+  // 从房态中心点「点餐」进来（福田店 FT-17：足浴房的客人点餐厅、水吧、果吧）：?tag=手牌号&room=房号，直接找这位客人、出品单送到这间房
+  const fromTag = params.get('tag');
+  useEffect(() => {
+    if (!fromTag) return;
+    const roomNo = params.get('room') ?? '';
+    setTagText(fromTag);
+    setRoomText(roomNo);
+    setTag(fromTag);
+    setRoom(roomNo || null);
+    const next = new URLSearchParams(params);
+    next.delete('tag');
+    next.delete('room');
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromTag]);
   const recovering = !tablesOn && mode === 'table' && tablePending(tableSession);
   useEffect(() => {
     if (menu.data && !tablesOn && mode === 'table' && !recovering) setMode('tag');

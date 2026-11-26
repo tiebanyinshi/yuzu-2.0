@@ -14,10 +14,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { History, LayoutGrid, Map as MapIcon, MoonStar, Settings2 } from 'lucide-react';
+import { BedDouble, History, LayoutGrid, Map as MapIcon, MoonStar, Settings2 } from 'lucide-react';
 import type { BookingDetail } from '@shared/bookings';
 import {
   arrangeRooms,
+  isLobbyBusinessType,
   isOvernightRoom,
   matchesRoomSearch,
   ROOM_ORDER_LABELS,
@@ -49,7 +50,9 @@ import { StayDialog, type StayAction } from '../rooms/StayDialog';
 import { CloseUsageDialog, CloseUsageFor, EndUsageById, OpenUsageDialog } from '../rooms/UsageDialogs';
 import { roomUrl, useRefreshRoomCenter, useRoomCenter } from './queries';
 import { CheckoutRoomDialog, ExtendRoomDialog, MaintenanceDialog, MergeRoomDialog, MoveRoomDialog, NoteActionDialog } from './RoomActions';
-import { BackfillRoomDialog, RevokeRoomDialog, SwapTechDialog, type RoomLimits } from './RoomFutianDialogs';
+import { BackfillRoomDialog, RevokeRoomDialog, SwapTechDialog } from './RoomFutianDialogs';
+import { AddItemDialog, GoodsDialog, WormholeDialog } from './RoomExtrasDialogs';
+import { HallOrderDialog } from './HallOrderDialog';
 import { RoomCard as RoomTile } from './RoomCard';
 import { RoomDialog, type RoomDialogAction } from './RoomDialog';
 import { RoomOrderPanel, RoomOrdersDialog, useRoomOrderOutlets } from './RoomOrders';
@@ -122,6 +125,7 @@ function RoomCenterBody() {
   const [detail, setDetail] = useState<number | null>(null);
   // FT-08（福田店 2026-11-26）：右键菜单开在哪一间、鼠标在哪
   const [menu, setMenu] = useState<MenuAt | null>(null);
+  const [hall, setHall] = useState(false);
   // 搜索（重做第五批）：房号、手牌号、客人姓名，命中的跨房型列出来
   const [search, setSearch] = useState('');
   const [action, setAction] = useState<Action | null>(null);
@@ -298,6 +302,12 @@ function RoomCenterBody() {
           ]}
         />
         <span className="flex-1" />
+        {/* 休息大厅开单（FT-16）：有空着的大厅床位、能登记的岗位 */}
+        {can('technician.dispatch') && can('frontdesk.operate') && board.rooms.some((r) => r.kind === 'hall' && isLobbyBusinessType(r.businessType)) && (
+          <Button variant="secondary" className="h-11" icon={<BedDouble className="size-4" />} onClick={() => setHall(true)} data-testid="rc-hall-open">
+            大厅开单
+          </Button>
+        )}
         {(can('settings.manage') || can('catalog.manage')) && (
           <Link
             to="/admin/spaces/room-categories"
@@ -425,12 +435,23 @@ function RoomCenterBody() {
           }}
         />
       )}
+      {hall && board && (
+        <HallOrderDialog
+          board={board}
+          onClose={() => setHall(false)}
+          onDone={(next) => {
+            setHall(false);
+            refresh(next);
+            toast({ tone: 'success', title: '大厅开单都提交了', body: '各自成单，技师下钟床位就空出来' });
+          }}
+        />
+      )}
       {actionRoom && action && (
         <ActionDialog
           room={actionRoom}
           a={action.a}
           rooms={board.rooms}
-          limits={board.limits}
+          board={board}
           onClose={closeAction}
           onDetail={() => {
             closeAction();
@@ -624,11 +645,12 @@ function Overview({ board, pick, grid, onAll }: { board: RoomCenterBoard; pick: 
 }
 
 /** 房间详情里点的动作：登记、开单、结束 / 撤单、续钟、换房、并房、退房、维修、标待清、恢复 */
-function ActionDialog({ room, a, rooms, limits, onClose, onDetail }: { room: RoomCard; a: RoomDialogAction; rooms: RoomCard[]; limits: RoomLimits; onClose: () => void; onDetail: () => void }) {
+function ActionDialog({ room, a, rooms, board, onClose, onDetail }: { room: RoomCard; a: RoomDialogAction; rooms: RoomCard[]; board: RoomCenterBoard; onClose: () => void; onDetail: () => void }) {
   const toast = useToast();
   const refresh = useRefreshRoomCenter();
-  const done = (board?: RoomCenterBoard | null) => {
-    refresh(board ?? null);
+  const limits = board.limits;
+  const done = (next?: RoomCenterBoard | null) => {
+    refresh(next ?? null);
     onClose();
   };
   switch (a.kind) {
@@ -682,6 +704,41 @@ function ActionDialog({ room, a, rooms, limits, onClose, onDetail }: { room: Roo
           onDone={() => {
             toast({ tone: 'success', title: `${room.code} 已换技师` });
             done();
+          }}
+        />
+      );
+    case 'add_item':
+      return (
+        <AddItemDialog
+          room={room}
+          onClose={onClose}
+          onDone={(next) => {
+            toast({ tone: 'success', title: `${room.code} 已加项目`, body: '另一位技师同时做，各自计费与业绩' });
+            done(next);
+          }}
+        />
+      );
+    case 'goods':
+      return (
+        <GoodsDialog
+          room={room}
+          categories={board.goodsCategories}
+          onClose={onClose}
+          onDone={(next) => {
+            toast({ tone: 'success', title: `已挂到手牌上` });
+            done(next);
+          }}
+        />
+      );
+    case 'wormhole':
+      return (
+        <WormholeDialog
+          room={room}
+          fee={board.wormholeFee}
+          onClose={onClose}
+          onDone={(next) => {
+            toast({ tone: 'success', title: `${room.code} 已下单` });
+            done(next);
           }}
         />
       );

@@ -8,6 +8,7 @@
 // 服务的房间（v0.7.16 房态图）：派钟在技师队列之后、建钟单之前给房间（空间台账的一行）加共享锁；换房间只锁钟单一行、再给房间加共享锁。
 // 空间台账停用空间、改业态时锁空间一行（排他）再查里面还没结束的钟单，不锁钟单，不会反向加锁。
 
+import { isLobbyBusinessType } from '@shared/room-center';
 import { z } from 'zod';
 import { canServe, gradeLabel, technicianText, tierFor, type CallType, type Technician, type TechnicianBookingHint } from '@shared/technicians';
 import { PRICE_TIER_LABELS, type PriceTier } from '@shared/catalog';
@@ -214,7 +215,8 @@ export async function lockServiceSpace(tx: Tx, spaceId: number): Promise<Service
   if (!sp) throw notFound('房间不存在，请刷新后重新选择');
   const name = spaceLabel(sp.code, sp.displayName);
   if (!sp.active) throw conflict('SPACE_INACTIVE', `房间 ${name} 已停用，请换一间`);
-  if (!isTechnicianBusinessType(sp.businessType)) {
+  // 休息大厅的床位也能派钟（福田店 FT-16：大厅开单选床位）
+  if (!isTechnicianBusinessType(sp.businessType) && !isLobbyBusinessType(sp.businessType)) {
     throw unprocessable('SPACE_NOT_SERVICE', `${name} 是「${sp.businessType}」，不是技师服务的房间（${TECHNICIAN_BUSINESS_TYPES.join('、')}），请换一间`);
   }
   if (!sp.sellable) throw conflict('SPACE_NOT_SELLABLE', `房间 ${name} 在空间台账里不可售，请换一间`);

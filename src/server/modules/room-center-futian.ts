@@ -68,6 +68,8 @@ export const RoomCenterRulesInput = z.object({
     cleanWindows: z.array(z.object({ start: z.string().regex(HHMM, '时间写成 08:00'), end: z.string().regex(HHMM, '时间写成 08:30') })).max(MAX_CLEAN_WINDOWS, `清洁时段最多 ${MAX_CLEAN_WINDOWS} 段`),
     feeItemId: z.number().int().positive().nullable(),
   }),
+  /** 零售与杂项能挂的分类（FT-17）；旧页面不带时保持原值 */
+  goodsCategories: z.array(z.string().trim().min(1).max(16)).max(10).optional(),
 });
 
 async function saveRoomCenterRules(deps: Deps, raw: unknown, ctx: OpContext): Promise<RoomCenterRules> {
@@ -76,7 +78,7 @@ async function saveRoomCenterRules(deps: Deps, raw: unknown, ctx: OpContext): Pr
     deps.sql,
     ROOM_CENTER_RULES_KEY,
     loadRoomCenterRules,
-    async (_before, tx) => {
+    async (before, tx) => {
       // 计费项目要是在售、有价格的
       const ids = [...input.roomFees.flatMap((f) => (f.feeItemId ? [f.feeItemId] : [])), ...(input.wormhole.feeItemId ? [input.wormhole.feeItemId] : [])];
       const items = ids.length ? await loadPricedItems(tx, ids) : new Map();
@@ -84,7 +86,7 @@ async function saveRoomCenterRules(deps: Deps, raw: unknown, ctx: OpContext): Pr
         const item = items.get(id);
         if (!item || !item.active) throw unprocessable('FEE_ITEM_INACTIVE', '有计费项目已停用或不存在，请重新选择');
       }
-      return normalizeRoomCenterRules(input);
+      return normalizeRoomCenterRules({ ...input, goodsCategories: input.goodsCategories ?? before.goodsCategories });
     },
     ctx,
   );

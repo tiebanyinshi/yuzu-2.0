@@ -1,14 +1,14 @@
 // 后台「空间台账 → 房态中心房型」下面的「房态中心规则」（福田店整改 2026-11-26，docs/FUTIAN_1126.md 第 5 节）：
 //   三个时限——换技师（FT-06）、撤房免费（FT-09）、下钟后免房费（FT-10），默认都是 15 分钟，0 为不开；
 //   房间按时间计费（FT-17 ④）——按业态设：计费项目（价格 = 每小时多少）、起步、计费单位、封顶，默认不开。
-// 虫洞的清洁时段（FT-18）在批次 4 里加到这张卡上；这里保存时原样带回。
+//   虫洞（FT-18）——哪几种业态是虫洞位、清洁时段、费用项目；零售与杂项（FT-17 ②③）能挂的分类。
 
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { centsToInput, formatYuan, parseYuan } from '@shared/money';
 import type { RoomCategoriesAdmin } from '@shared/room-center';
-import { MAX_RULE_MINUTES, ROOM_FEE_STEP_OPTIONS, type RoomCenterRules, type RoomFeeRule } from '@shared/room-center-rules';
+import { MAX_CLEAN_WINDOWS, MAX_RULE_MINUTES, ROOM_FEE_STEP_OPTIONS, type RoomCenterRules, type RoomFeeRule } from '@shared/room-center-rules';
 import { api, errorMessage } from '../../lib/api';
 import { useCatalog } from '../../lib/queries';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -23,13 +23,31 @@ interface Draft {
   revokeMinutes: string;
   freeAfterClockOffMinutes: string;
   roomFees: FeeDraft[];
+  /** FT-18 虫洞：哪几种业态（顿号或逗号分开）、清洁时段、费用项目 */
+  wormholeTypes: string;
+  cleanWindows: { start: string; end: string }[];
+  wormholeFeeItemId: number | null;
+  /** FT-17 零售与杂项能挂的分类（顿号或逗号分开） */
+  goods: string;
 }
+const splitList = (v: string) => [
+  ...new Set(
+    v
+      .split(/[、,，\s]+/)
+      .map((x) => x.trim())
+      .filter(Boolean),
+  ),
+];
 
 const toDraft = (r: RoomCenterRules): Draft => ({
   swapTechMinutes: String(r.swapTechMinutes),
   revokeMinutes: String(r.revokeMinutes),
   freeAfterClockOffMinutes: String(r.freeAfterClockOffMinutes),
   roomFees: r.roomFees.map((f) => ({ ...f, minMinutes: String(f.minMinutes), cap: f.capCents ? centsToInput(f.capCents) : '' })),
+  wormholeTypes: r.wormhole.businessTypes.join('、'),
+  cleanWindows: r.wormhole.cleanWindows,
+  wormholeFeeItemId: r.wormhole.feeItemId,
+  goods: r.goodsCategories.join('、'),
 });
 
 const LIMITS = [
@@ -78,7 +96,15 @@ export function RoomCenterRulesCard() {
           if (f.enabled && !f.feeItemId) throw new Error(`「${f.businessType}」开了计费，要选计费项目`);
           return { businessType: f.businessType, enabled: f.enabled, feeItemId: f.feeItemId, minMinutes: Number(f.minMinutes) || 0, stepMinutes: f.stepMinutes, capCents: cap };
         }),
-        wormhole: seen!.wormhole,
+        wormhole: {
+          businessTypes: splitList(draft.wormholeTypes),
+          cleanWindows: draft.cleanWindows.map((w) => {
+            if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(w.start) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(w.end)) throw new Error('清洁时段写成 08:00–08:30 这样');
+            return w;
+          }),
+          feeItemId: draft.wormholeFeeItemId,
+        },
+        goodsCategories: splitList(draft.goods),
       };
     } catch (e) {
       return setError((e as Error).message);
@@ -208,6 +234,74 @@ export function RoomCenterRulesCard() {
             先在上面建房型，再给业态设计费。
           </Notice>
         )}
+      </div>
+      <div className="space-y-2 border-t border-line pt-4" data-testid="rc-rule-wormhole">
+        <h3 className="text-[14px] font-bold text-ink">虫洞（FT-18）</h3>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="虫洞位的业态" htmlFor="rc-rule-wormhole-types" hint="空间台账里的业态，多个用顿号分开">
+            <Input id="rc-rule-wormhole-types" value={draft.wormholeTypes} onChange={(e) => setDraft({ ...draft, wormholeTypes: e.target.value })} data-testid="rc-rule-wormhole-types" />
+          </Field>
+          <Field label="费用项目" hint="下单时挂到手牌上；不选是不收费">
+            <Select
+              value={draft.wormholeFeeItemId ?? ''}
+              onChange={(e) => setDraft({ ...draft, wormholeFeeItemId: e.target.value ? Number(e.target.value) : null })}
+              data-testid="rc-rule-wormhole-fee"
+            >
+              <option value="">不收费</option>
+              {items.map((it) => (
+                <option key={it.id} value={it.id}>
+                  {it.catalogCode ? `${it.catalogCode} ` : ''}
+                  {it.name} · {formatYuan(it.price)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+        <Field label="清洁时段" hint="每天这几段时间里没人的虫洞是待清（打扫），其余时间没人是空闲；跨零点的写成 23:00–01:00">
+          <div className="flex flex-wrap items-center gap-2">
+            {draft.cleanWindows.map((w, i) => (
+              <span key={i} className="flex items-center gap-1" data-testid={`rc-rule-clean-${i}`}>
+                <Input
+                  type="time"
+                  fullWidth={false}
+                  className="w-28"
+                  value={w.start}
+                  onChange={(e) => setDraft({ ...draft, cleanWindows: draft.cleanWindows.map((x, k) => (k === i ? { ...x, start: e.target.value } : x)) })}
+                  aria-label="开始"
+                />
+                –
+                <Input
+                  type="time"
+                  fullWidth={false}
+                  className="w-28"
+                  value={w.end}
+                  onChange={(e) => setDraft({ ...draft, cleanWindows: draft.cleanWindows.map((x, k) => (k === i ? { ...x, end: e.target.value } : x)) })}
+                  aria-label="结束"
+                />
+                <Button size="sm" variant="ghost" onClick={() => setDraft({ ...draft, cleanWindows: draft.cleanWindows.filter((_, k) => k !== i) })} aria-label="删掉这一段">
+                  删
+                </Button>
+              </span>
+            ))}
+            {draft.cleanWindows.length < MAX_CLEAN_WINDOWS && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Plus className="size-3.5" />}
+                onClick={() => setDraft({ ...draft, cleanWindows: [...draft.cleanWindows, { start: '08:00', end: '08:30' }] })}
+                data-testid="rc-rule-clean-add"
+              >
+                加一段
+              </Button>
+            )}
+          </div>
+        </Field>
+      </div>
+
+      <div className="border-t border-line pt-4">
+        <Field label="零售与杂项能挂的分类（FT-17）" htmlFor="rc-rule-goods" hint="价目里这几个分类的项目能在房间里挂（香烟、扑克、清洁费……），多个用顿号分开">
+          <Input id="rc-rule-goods" value={draft.goods} onChange={(e) => setDraft({ ...draft, goods: e.target.value })} data-testid="rc-rule-goods" />
+        </Field>
       </div>
       {error && <Notice tone="error" title={error} data-testid="rc-rules-error" />}
     </Card>

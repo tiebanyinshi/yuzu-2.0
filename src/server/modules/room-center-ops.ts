@@ -228,7 +228,8 @@ export async function registerRoom(deps: Deps, spaceId: number, raw: unknown, ct
     const today = await businessDate(tx, deps, at);
     const opened = await openRooms(tx, today, [spaceId]);
     const x = roomOf(opened, spaceId);
-    if (x.kind !== 'service') {
+    // 休息大厅的床位（福田店 FT-16）也能登记：开单选床位、技师、项目，下钟即空（FT-12）
+    if (x.kind !== 'service' && !(x.kind === 'hall' && isLobbyBusinessType(x.room.space.businessType))) {
       throw unprocessable('ROOM_NOT_SERVICE', x.kind === 'hotel' ? HOTEL_ELSEWHERE : `${x.label} 是「${x.room.space.businessType}」，不是技师服务的房间，不能这样登记`);
     }
     if (input.join && isLobbyBusinessType(x.room.space.businessType)) throw unprocessable('LOBBY_NO_JOIN', `${x.label} 是休息大厅，不能同房加人：请另选一个位置登记`);

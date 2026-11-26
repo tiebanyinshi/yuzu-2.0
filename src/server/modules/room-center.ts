@@ -78,8 +78,10 @@ import { loadRoomRules, roomsBoard } from './rooms';
 import { loadUsageRules, usageBoard } from './usages';
 import type { RoomOrderSummary } from '@shared/room-orders';
 import { roomOrderSums } from './room-orders';
+import { addRoomItem, leaveWormhole, loadHallZones, openWormhole, openWormholeStays, postRoomGoods, registerHallZoneRoutes, wormholeStatus } from './room-center-hall';
 import { attachOvernightPhoto, backfillRoom, overnightPhotos, registerRoomCenterRulesRoutes, revokeRoom, swapTechnician } from './room-center-futian';
 import { loadRoomCenterRules } from './room-center-fees';
+import { isWormholeType } from '@shared/room-center-rules';
 
 // ───────────────────────── 房型（后台） ─────────────────────────
 
@@ -248,6 +250,7 @@ function orderOnlyCard(r: RoomCard): RoomCard {
     amount: null,
     phase: null,
     plannedEnd: null,
+    wormhole: r.wormhole ? { stay: null } : null,
   };
 }
 
@@ -276,8 +279,9 @@ function statusOnlyCard(r: RoomCard): RoomCard {
       amount: 0,
       billAmount: 0,
     })),
-    guestText: tags.length ? tags.map((t) => `手牌 ${t}`).join('、') : null,
+    guestText: tags.length ? tags.map((t) => `手牌 ${t}`).join('、') : r.wormhole?.stay ? `手牌 ${r.wormhole.stay.tagCode}` : null,
     orders: null,
+    wormhole: r.wormhole ? { stay: r.wormhole.stay ? { ...r.wormhole.stay, fee: 0 } : null } : null,
   };
 }
 
@@ -299,6 +303,19 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
   const memberIds = [...facts.values()].flatMap((f) => f.guests.flatMap((g) => (g.visit.memberId === null ? [] : [Number(g.visit.memberId)])));
   const grades = showGuests ? await memberGradeBadges(db, memberIds, today) : new Map();
 
+  // 休息大厅分区（FT-15）、虫洞（FT-18）
+  const hallZones = await loadHallZones(db);
+  const zoneName = new Map(hallZones.map((z) => [z.id, z.name]));
+  const zoneOf = new Map(
+    (await db<{ id: number; hallZoneId: number }[]>`SELECT id, hall_zone_id FROM spaces WHERE store_id = ${currentStoreId()} AND hall_zone_id IS NOT NULL`).map((r) => [
+      Number(r.id),
+      Number(r.hallZoneId),
+    ]),
+  );
+  const stays = await openWormholeStays(db);
+  const [feeItem] = rules.wormhole.feeItemId
+    ? await db<{ id: number; name: string; price: number }[]>`SELECT id, name, price FROM service_items WHERE id = ${rules.wormhole.feeItemId} AND active`
+    : [];
   // 过夜的留宿确认单照片（FT-03）：挂在登记单上的附件
   const regIds = [...facts.values()].flatMap((f) => f.guests.flatMap((g) => (g.registration ? [Number(g.registration.id)] : [])));
   const photos = await overnightPhotos(db, regIds);
@@ -372,7 +389,14 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
     const sp = f.space;
     // 「客房」业态的空间不在这里出卡片：客房按房间（rooms）出，见下
     if (sp.businessType === ROOM_BUSINESS_TYPE) continue;
-    const st = statusOfFacts(f);
+    const st0 = statusOfFacts(f);
+    // 虫洞位（FT-18）：有人在用 / 清洁时段或手动标的待清 / 空闲，用过不自动转待清
+    const wormholeSpace = isWormholeType(rules, sp.businessType);
+    const stay = wormholeSpace ? stays.get(id) : undefined;
+    const manualDirty = !!f.state?.dirtyAt && new Date(f.state.dirtyAt).getTime() > new Date(f.state.cleanedAt).getTime();
+    const st = wormholeSpace
+      ? { ...st0, status: wormholeStatus(st0.status, stay, manualDirty, rules, at, deps.config.timezone), inUse: !!stay, dirtySince: manualDirty ? f.state!.dirtyAt : null }
+      : st0;
     // 停用、不可售的空间不营业，不出卡片；还有人用着的照样显示到用完
     if (!(sp.active && sp.sellable) && !st.inUse) continue;
     const kind = roomKindOf(sp.businessType, usages.businessTypes);
@@ -414,7 +438,11 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
           }
         : null,
       merged: (groupOf.get(id) ?? []).map((m) => ({ spaceId: m, code: facts.get(m)!.space.code })),
-      guestText: guests.length ? guests.map((g) => g.guest).join('、') : usage ? `手牌 ${usage.tagCode} · ${usage.guests} 人` : null,
+      guestText: guests.length ? guests.map((g) => g.guest).join('、') : usage ? `手牌 ${usage.tagCode} · ${usage.guests} 人` : stay ? `手牌 ${stay.tagCode}` : null,
+      hallZone: zoneOf.has(id) && zoneName.has(zoneOf.get(id)!) ? { id: zoneOf.get(id)!, name: zoneName.get(zoneOf.get(id)!)! } : null,
+      wormhole: wormholeSpace
+        ? { stay: stay ? { id: stay.id, tagCode: stay.tagCode, gender: stay.gender, fee: showGuests ? stay.feeCents : 0, openedAt: new Date(stay.openedAt).toISOString() } : null }
+        : null,
       techText: techs.length ? techs.join('、') : null,
       since: guests.length ? earliest(all.map((s) => s.startedAt)) : (usage?.openedAt ?? null),
       amount: guests.length ? guests.reduce((n, g) => n + g.amount, 0) : null,
@@ -447,6 +475,8 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       booking: null,
       merged: [],
       guestText: r.stay ? (showGuests ? (r.stay.memberName ?? (r.stay.guestLabel || `手牌 ${r.stay.tagCode}`)) : `手牌 ${r.stay.tagCode}`) : null,
+      hallZone: null,
+      wormhole: null,
       techText: null,
       since: r.stay?.checkedInAt ?? null,
       amount: r.stay ? r.stay.chargedAmount : null,
@@ -500,6 +530,9 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
     todayBookings: fullRead && !statusOnly ? await todayBookings(db, today, showGuests) : [],
     limits: { swapTechMinutes: rules.swapTechMinutes, revokeMinutes: rules.revokeMinutes, freeAfterClockOffMinutes: rules.freeAfterClockOffMinutes },
     statusOnly,
+    hallZones,
+    wormholeFee: feeItem ? { itemId: Number(feeItem.id), name: feeItem.name, price: Number(feeItem.price) } : null,
+    goodsCategories: rules.goodsCategories,
   };
 }
 
@@ -591,6 +624,14 @@ function eventText(kind: RoomEventKind, d: Record<string, unknown>, tz: string):
       ]);
     case 'room_fee':
       return parts([`手牌 ${s('tag')} 房费 ${formatYuan(n('amount'))}`, `下钟后 ${n('freeMinutes')} 分钟内不计，计 ${n('chargedMinutes')} 分钟${d.capped ? '（封顶）' : ''}`]);
+    case 'add_item':
+      return parts([`手牌 ${s('tag')} 加项目 ${s('item')}`, s('technician'), formatYuan(n('amount'))]);
+    case 'goods':
+      return parts([`手牌 ${s('tag')} ${Array.isArray(d.items) ? (d.items as string[]).join('、') : ''}`, formatYuan(n('amount'))]);
+    case 'wormhole_in':
+      return parts([`手牌 ${s('tag')} 入住（${d.gender === 'female' ? '女' : '男'}）`, n('fee') ? `费用 ${formatYuan(n('fee'))}` : '不收费']);
+    case 'wormhole_out':
+      return parts([`手牌 ${s('tag')} 离开`]);
   }
 }
 
@@ -759,6 +800,24 @@ export function registerRoomCenterRoutes(app: FastifyInstance, deps: Deps) {
   app.get('/api/room-center/rooms/:id/history', { preHandler: [read, notStatusOnly] }, async (req) => roomHistory(deps, await space(req)));
   app.get('/api/room-center/rooms/:id/checkout-preview', { preHandler: [dispatch, notStatusOnly] }, async (req) => roomCheckoutPreview(deps, await space(req)));
   app.get('/api/room-center/guest', { preHandler: [dispatch, notStatusOnly] }, async (req) => lookupGuest(deps, req.query));
+  // 福田店批次 4：同一工位加项目（FT-14）、零售与杂项（FT-17）、虫洞下单与离开（FT-18）
+  app.post('/api/room-center/rooms/:id/add-item', { preHandler: post }, async (req) => {
+    await addRoomItem(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  app.post('/api/room-center/rooms/:id/goods', { preHandler: guard('frontdesk.operate') }, async (req) => {
+    await postRoomGoods(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  app.post('/api/room-center/rooms/:id/wormhole', { preHandler: guard('frontdesk.operate') }, async (req) => {
+    await openWormhole(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  app.post('/api/room-center/rooms/:id/wormhole-leave', { preHandler: guardAny('frontdesk.operate', 'technician.dispatch') }, async (req) => {
+    await leaveWormhole(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  registerHallZoneRoutes(app, deps);
   // 过夜的留宿确认单照片（FT-03）：先传附件（/api/oa/attachments），再挂到这间房的登记单上；可以开房以后补传
   app.post('/api/room-center/rooms/:id/overnight-photo', { preHandler: [guardAny('technician.dispatch', 'frontdesk.operate', 'room.housekeep'), notStatusOnly] }, async (req) => {
     await attachOvernightPhoto(deps, await space(req), req.body, ctxOf(req));

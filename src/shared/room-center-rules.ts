@@ -2,7 +2,7 @@
 // 三个时限（换技师 FT-06、撤房免费 FT-09、下钟后免房费 FT-10），房间按时间计费的规则（FT-17 ④），虫洞的清洁时段（FT-18）。
 // 存在 settings 表的 room_center_rules 一行；没设过的按下面的默认（默认建议都是 15 分钟，房间计费默认不开）。
 
-import { HHMM } from './business-date';
+import { HHMM, minuteOfDay } from './business-date';
 import { chargedUsageMinutes } from './usages';
 
 export const ROOM_CENTER_RULES_KEY = 'room_center_rules';
@@ -38,6 +38,8 @@ export interface RoomCenterRules {
   roomFees: RoomFeeRule[];
   /** FT-18：虫洞位（这几种业态）与清洁时段 */
   wormhole: { businessTypes: string[]; cleanWindows: CleanWindow[]; feeItemId: number | null };
+  /** FT-17 ②③：房间里能挂的零售商品与杂项费——这几个分类里的项目（项目在后台「价目」里维护名称、编号、价格） */
+  goodsCategories: string[];
 }
 
 export const DEFAULT_ROOM_CENTER_RULES: RoomCenterRules = {
@@ -46,6 +48,7 @@ export const DEFAULT_ROOM_CENTER_RULES: RoomCenterRules = {
   freeAfterClockOffMinutes: 15,
   roomFees: [],
   wormhole: { businessTypes: ['虫洞'], cleanWindows: [], feeItemId: null },
+  goodsCategories: ['零售', '杂项'],
 };
 
 export const MAX_RULE_MINUTES = 240;
@@ -68,6 +71,7 @@ export function normalizeRoomCenterRules(raw: unknown): RoomCenterRules {
       cleanWindows: Array.isArray(w.cleanWindows) ? w.cleanWindows.filter((c) => c && HHMM.test(c.start) && HHMM.test(c.end)) : [],
       feeItemId: typeof w.feeItemId === 'number' ? w.feeItemId : null,
     },
+    goodsCategories: Array.isArray(r.goodsCategories) ? r.goodsCategories.filter((c) => typeof c === 'string' && c.trim()) : [...DEFAULT_ROOM_CENTER_RULES.goodsCategories],
   };
 }
 
@@ -104,3 +108,16 @@ export function minutesLeft(since: string | null, limit: number, now: number): n
   if (!since || limit <= 0) return 0;
   return Math.max(0, Math.ceil((new Date(since).getTime() + limit * 60_000 - now) / 60_000));
 }
+
+/** 现在是不是在某个清洁时段里（FT-18；HH:MM 按门店时区，跨零点的时段照算） */
+export function inCleanWindow(windows: readonly CleanWindow[], at: Date, timeZone: string): boolean {
+  const now = minuteOfDay(at, timeZone);
+  const toMin = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+  return windows.some((w) => {
+    const [s, e] = [toMin(w.start), toMin(w.end)];
+    return s <= e ? now >= s && now < e : now >= s || now < e;
+  });
+}
+
+/** 是不是虫洞位（FT-18） */
+export const isWormholeType = (rules: Pick<RoomCenterRules, 'wormhole'>, businessType: string) => rules.wormhole.businessTypes.includes(businessType);

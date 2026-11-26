@@ -983,6 +983,8 @@ const rcRoom = (spaceId: number, code: string, categoryKey: string, kind: RoomCa
   dirtySince: null,
   dirtyNote: '',
   dirtyOvernight: false,
+  hallZone: null,
+  wormhole: null,
   booking: null,
   merged: [],
   guestText: null,
@@ -1034,6 +1036,9 @@ const rcCounts = (list: RoomCard[]) => ({
 const RC_BOARD: RoomCenterBoard = {
   limits: { swapTechMinutes: 15, revokeMinutes: 15, freeAfterClockOffMinutes: 15 },
   statusOnly: false,
+  hallZones: [],
+  wormholeFee: null,
+  goodsCategories: ['零售', '杂项'],
   serverTime: NOW,
   businessDate: NOW.slice(0, 10),
   categories: [

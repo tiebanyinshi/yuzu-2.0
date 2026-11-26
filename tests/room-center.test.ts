@@ -228,8 +228,8 @@ describe('卡片式登记', () => {
     expect((await register('S301', { ...ok, tagCode: 'F059' })).body.error.code).toBe('TAG_NOT_IN_STORE');
     expect((await register('S301', { ...ok, sellerNo: 'nobody' })).body.error.code).toBe('SELLER_NOT_FOUND');
     expect((await register('S301', { ...ok, expectedTotal: 100 })).body.error.code).toBe('PRICE_CHANGED');
-    // 不是技师服务的房间：大厅、派对房、客房业态的空间都不能这样登记
-    expect((await register('H201', ok)).body.error.code).toBe('ROOM_NOT_SERVICE');
+    // 不是技师服务的房间：派对房、客房业态、茶室一类的空间都不能这样登记（休息大厅的床位福田店 FT-16 起能登记，见 tests/futian-1126.test.ts）
+    expect((await register('Z201', ok)).body.error.code).toBe('ROOM_NOT_SERVICE');
     expect((await register('P201', ok)).body.error.code).toBe('ROOM_NOT_SERVICE');
     expect((await register('G301', ok)).body.error.code).toBe('ROOM_NOT_SERVICE');
     // 没上牌的技师：钟房原来的核对照样生效，整笔回滚
