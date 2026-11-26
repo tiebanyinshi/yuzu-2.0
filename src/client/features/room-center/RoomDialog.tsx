@@ -138,6 +138,7 @@ export function RoomDialog({
   onClose,
   onAction,
   onOrders,
+  onOrder,
 }: {
   room: RoomCard;
   now: number;
@@ -145,6 +146,8 @@ export function RoomDialog({
   onAction: (a: RoomDialogAction) => void;
   /** 房态点单（回测整改 P08）：打开这间房的点单记录 */
   onOrders?: () => void;
+  /** 点单（FT-01：原来详情栏里的「点单」挪到这里；在用、能在水吧或果吧下单的给） */
+  onOrder?: () => void;
 }) {
   const can = useCan();
   const toast = useToast();
@@ -234,6 +237,11 @@ export function RoomDialog({
                 <span className="ml-2 text-[12px] text-ink-3">（在房间里点水吧、果吧要「在水吧下单」或「在果吧下单」权限，请找店长在「岗位权限」里开通）</span>
               )}
             </span>
+            {onOrder && (
+              <Button size="sm" variant="primary" onClick={onOrder} data-testid="rc-room-order">
+                点单
+              </Button>
+            )}
             {onOrders && (
               <Button size="sm" variant="secondary" onClick={onOrders} data-testid="rc-room-orders-open">
                 点单记录

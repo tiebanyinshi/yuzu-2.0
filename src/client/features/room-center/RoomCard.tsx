@@ -2,8 +2,8 @@
 // 点卡片：空闲的技师服务房间直接登记、空闲的派对房直接开单、客房打开入住或入住单；别的打开房间详情。右上角的「详情」什么时候都能点。
 // 客房的卡片多两行客房原来的内容：手牌、几号入住（预离）或钟点房已住多久、押金（8.1.16，原来的「客房」页并进来）。
 // 回测整改 P08：「在用」的房间多一个「点单」（只有能在水吧或果吧下单的账号看得到），卡片上写房里现在的客人从房态点了几单、多少钱。
-// 排版优化（店主 2026-11-24）：房号 + 右上角状态标签、区域与房型小字；空闲写「可排房」；维修的斜纹底；点卡片在右侧展开详情栏（选中的描边），
-// 原来点卡片做的那一下挪到详情栏的主按钮上；右上角的「详情」照旧。
+// 排版优化（店主 2026-11-24）：房号 + 右上角状态标签、区域与房型小字；空闲写「可排房」；维修的斜纹底。
+// 福田店整改（2026-11-26）：FT-01 点卡片直接弹出「详情与动作」（去掉右侧详情栏）；FT-08 右键（触屏长按）设置房态。
 
 import { ChevronRight, CupSoda, Link2, Users } from 'lucide-react';
 import { elapsedText, type RoomCard as Room } from '@shared/room-center';
@@ -139,6 +139,7 @@ export function RoomCard({
   onOpen,
   onDetail,
   onOrder,
+  onMenu,
 }: {
   room: Room;
   now: number;
@@ -153,6 +154,8 @@ export function RoomCard({
   onDetail: () => void;
   /** 房态点单（回测整改 P08）：只有「在用」的房间、账号能在水吧或果吧下单时给 */
   onOrder?: () => void;
+  /** FT-08（福田店 2026-11-26）：右键（触屏长按）打开设置房态的菜单，给鼠标的位置 */
+  onMenu?: (x: number, y: number) => void;
 }) {
   const order = room.status === 'in_use' ? onOrder : undefined;
   return (
@@ -167,6 +170,14 @@ export function RoomCard({
         selected && 'ring-2 ring-ink-2 ring-offset-1',
       )}
       data-testid={`rc-room-${room.code}`}
+      onContextMenu={
+        onMenu
+          ? (e) => {
+              e.preventDefault();
+              onMenu(e.clientX, e.clientY);
+            }
+          : undefined
+      }
       data-status={room.status}
       data-selected={selected ? 'true' : undefined}
       data-highlight={highlight ? 'booking' : undefined}

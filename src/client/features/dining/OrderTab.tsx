@@ -42,6 +42,7 @@ import { PriceEntryDialog } from './DishPriceMode';
 import { weighedAmount, weightText } from '@shared/dish-price-mode';
 import { DishVoidDialog } from './DishVoid';
 import { ReceiptDialog, type ReceiptTarget } from './ReceiptDialog';
+import { OrderedDishes } from './OrderedDishes';
 import { GroupChips, OutletEntry, OutletFilter } from './slots';
 import { ALL_CATEGORIES, CategoryTabs } from '../../components/CategoryTabs';
 import { guestParams, OrderNoteInput, orderExtras, outletProblem, useOrderOutlets } from './OrderExtras';
@@ -661,7 +662,8 @@ export function OrderTab() {
         </Card>
       </div>
 
-      <div className="space-y-4 lg:sticky lg:top-5 lg:self-start">
+      {/* CY-03（福田店 2026-11-26）：右侧边栏在宽屏上限高、自己滚动，选再多菜也能往下翻；「下单」那一行贴在边栏底部，一直看得到 */}
+      <div className="scroll-thin space-y-4 lg:sticky lg:top-5 lg:max-h-[calc(100dvh-8rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain" data-testid="dining-sidebar">
         <Card className="p-4" data-testid="dining-cart">
           <SectionTitle
             aside={
@@ -812,7 +814,7 @@ export function OrderTab() {
             </div>
           )}
           {op.state.phase === 'error' && <Notice tone="error" title={op.state.message} className="mt-3" />}
-          <div className="mt-3 flex items-center gap-3 border-t border-line pt-3">
+          <div className="sticky bottom-0 z-10 -mx-4 mt-3 flex items-center gap-3 border-t border-line bg-card px-4 py-3" data-testid="dining-submit-bar">
             <span className="min-w-0 flex-1 text-[13px] text-ink-3">
               {problem ? (
                 <span className="text-clay">{problem}</span>
@@ -828,6 +830,8 @@ export function OrderTab() {
           </div>
           <p className="mt-2 text-[12px] leading-relaxed text-ink-4">下单就是记到客人或这桌的账上（不是收款），结账时一起结。点错了在下面「还没上的菜」里退菜。</p>
         </Card>
+
+        <OrderedDishes target={t ? { session: t.id } : g ? { visit: g.visitId } : null} />
 
         {target && (
           <Card className="p-4" data-testid="dining-pending">

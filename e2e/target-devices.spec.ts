@@ -1103,12 +1103,12 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
       await expectOnScreen(page, ['rc-act-checkout', 'rc-act-move', 'rc-act-join']);
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('rc-room-dialog')).toHaveCount(0);
-      // 点卡片展开详情栏（宽屏在右侧、窄屏是底部抽屉），主按钮登记
+      // 点卡片直接弹出「详情与动作」（福田店 FT-01），在里面点登记
       await page.getByTestId('rc-open-S9901').click();
-      await expect(page.getByTestId('rc-panel')).toBeVisible();
+      await expect(page.getByTestId('rc-room-dialog')).toBeVisible();
       await expectFits(page);
-      await expectOnScreen(page, ['rc-panel-go', 'rc-panel-close']);
-      await page.getByTestId('rc-panel-go').click();
+      await expectOnScreen(page, ['rc-act-register']);
+      await page.getByTestId('rc-act-register').click();
       await expect(page.getByTestId('rc-register').or(page.getByText('技师没取回来'))).toBeVisible();
       await expectFits(page);
       await expectOnScreen(page, ['rc-register-submit']);
