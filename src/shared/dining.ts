@@ -676,3 +676,24 @@ export interface DiningReceipt {
   /** 份数：有效的、已上、还没上（未上 + 制作中 + 已出餐）、已退；金额只算有效的 */
   totals: { quantity: number; served: number; waiting: number; voided: number; amount: number };
 }
+
+/**
+ * 同组客人的点单汇总（福田店整改 CY-01，2026-11-26）：同一组（同行组 / 联牌）的每位客人点过的餐饮（退掉的不算），
+ * 每道菜的单价、份数、金额，与全组的合计。没有同组的就只有这一位
+ */
+export interface DiningGroupSummary {
+  /** 同行组编号；这位客人没有同组为 null */
+  groupId: number | null;
+  members: {
+    visitId: number;
+    tagCode: string;
+    guest: string;
+    /** 已经结账离店的（照样列出，只读） */
+    closed: boolean;
+    lines: { billLineId: number; name: string; unitPrice: number; quantity: number; amount: number; state: ReceiptLineState }[];
+    quantity: number;
+    amount: number;
+  }[];
+  quantity: number;
+  amount: number;
+}

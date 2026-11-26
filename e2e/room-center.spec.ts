@@ -198,6 +198,9 @@ test.describe('8.1.16 房态中心', () => {
       await swipe(page, card.uid.toLowerCase());
       await expect(reg.getByTestId('rc-register-tag')).toHaveValue(g1.tag);
       await expect(reg.getByTestId('rc-register-guest')).toContainText('E2E 房态一');
+      // FT-02：默认不平铺项目，点「全部」才列出来
+      await expect(reg.getByTestId(`rc-register-item-${ITEM.name}`)).toHaveCount(0);
+      await reg.getByTestId('rc-register-categories').getByRole('button', { name: /^全部/ }).click();
       await reg.getByTestId(`rc-register-item-${ITEM.name}`).click();
       await reg.getByRole('radiogroup', { name: '上钟方式' }).getByRole('radio', { name: /点钟/ }).click();
       await reg.getByTestId(`rc-register-tech-${TECH.techNo}`).click();

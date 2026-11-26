@@ -171,6 +171,8 @@ export interface RoomGuestView {
   overnight: boolean;
   /** 登记的时刻（没有登记单的是钟单建的时刻） */
   since: string;
+  /** 登记单的种类：普通、括单（技师自己约的客人）；钟房直接派进来的是普通 */
+  kind: RegistrationKind;
   sessions: RoomSessionView[];
   /** 这次登记里几张钟单的金额合计 */
   amount: number;
@@ -250,6 +252,8 @@ export interface RoomCenterBoard {
   rooms: RoomCard[];
   /** 当天的预约单（8.1.44，《前台系统开发》「房态显示当天预约单」）：技师、派对房、客房三种，取消的不列；只为点单来看的为空 */
   todayBookings: RoomCenterBooking[];
+  /** 福田店整改：后台设的三个时限（分钟）——换技师（FT-06）、撤房（FT-09）、下钟后免房费（FT-10） */
+  limits: { swapTechMinutes: number; revokeMinutes: number; freeAfterClockOffMinutes: number };
 }
 
 /** 房态页上的一张预约（只读；改、到店、取消在预约看板） */
@@ -273,7 +277,23 @@ export interface RoomCenterBooking {
   serviceNo: string | null;
 }
 
-export const ROOM_EVENT_KINDS = ['register', 'move_out', 'move_in', 'checkout', 'extend', 'merge', 'unmerge', 'dirty', 'cleaned', 'maintenance', 'restore'] as const;
+export const ROOM_EVENT_KINDS = [
+  'register',
+  'move_out',
+  'move_in',
+  'checkout',
+  'extend',
+  'merge',
+  'unmerge',
+  'dirty',
+  'cleaned',
+  'maintenance',
+  'restore',
+  // 福田店整改（2026-11-26，迁移 470）
+  'revoke',
+  'backfill',
+  'room_fee',
+] as const;
 export type RoomEventKind = (typeof ROOM_EVENT_KINDS)[number];
 export const ROOM_EVENT_LABELS: Record<RoomEventKind, string> = {
   register: '登记',
@@ -287,7 +307,15 @@ export const ROOM_EVENT_LABELS: Record<RoomEventKind, string> = {
   cleaned: '清洁完成',
   maintenance: '维修',
   restore: '恢复',
+  revoke: '撤房',
+  backfill: '补单',
+  room_fee: '房费',
 };
+
+/** 登记单的种类（福田店整改 FT-07 括单、FT-19 补单） */
+export const REGISTRATION_KINDS = ['normal', 'bracket', 'backfill'] as const;
+export type RegistrationKind = (typeof REGISTRATION_KINDS)[number];
+export const REGISTRATION_KIND_LABELS: Record<RegistrationKind, string> = { normal: '普通', bracket: '括单', backfill: '补单' };
 
 /**
  * 房间动作（换房、退房、并房、拆并、维修、恢复、标待清、清洁完成）带的操作编号记下的那一条房间事件（8.1.16）：
@@ -358,6 +386,11 @@ export interface RoomCheckoutPreview {
   }[];
   /** 几位客人手牌账单的合计（退房时带回来核对：看过预览以后账又变了要重新看） */
   unpaidTotal: number;
+  /**
+   * 房费（福田店 FT-10 / FT-17）：这间房按时间计费时，按现在退房要收多少（退房时按那一刻重算，记在先登记的那位客人的手牌上）；
+   * 这个业态没设计费为 null
+   */
+  roomFee: { amount: number; minutes: number; chargedMinutes: number; startsAt: string | null; freeMinutes: number; capped: boolean; tagCode: string } | null;
 }
 
 export const MAX_ROOM_NOTE = 100;

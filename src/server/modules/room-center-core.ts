@@ -5,9 +5,10 @@
 // 「在用」：这间房有开着的登记单，或有还没结束的钟单（客人在店；钟房直接派进来的也算），或有开着的使用单。
 // 「待清」：没人用，而且最近一次「清洁完成」（没点过的按房态行建的时刻）之后——有钟单在这间房做完（或上了钟被退钟）、
 //          有使用单结束（撤单不算）、有登记单退房或客人结账离店（撤销来访不算）、或被手动标过（换房换出去也记在这里）。
+//          福田店整改（2026-11-26）：撤房（FT-09）作废的钟、补单（FT-19）补录的钟与它们的登记单不算用过（钟单记 room_neutral）。
 // 「维修」：房态行上记着。  「已预订」：今天有订这间房、还没到店的预约（派对房等按房间订；技师预约、客房预约不订具体房间）。
 
-import { roomStatusOf, type RoomEventKind, type RoomStatus } from '@shared/room-center';
+import { roomStatusOf, type RegistrationKind, type RoomEventKind, type RoomStatus } from '@shared/room-center';
 import { spaceLabel } from '@shared/spaces';
 import type { CallType } from '@shared/technicians';
 import type { Db, Tx } from '../db';
@@ -83,6 +84,8 @@ export interface RegistrationFact {
   openedAt: string;
   /** 客人是否过夜（重做第五批） */
   overnight: boolean;
+  /** 普通 / 括单 / 补单（福田店整改 FT-07、FT-19；开着的不会是补单） */
+  kind: RegistrationKind;
 }
 
 /** 房间里的一位客人：登记单（钟房直接派进来的没有）与他在这间房的钟单 */
@@ -137,7 +140,7 @@ export async function loadRoomFacts(db: Db, today: string, spaceIds?: number[]):
     WHERE st.store_id = ${store} ${only('st.space_id')}`;
   // 开着的登记单（客人还在店；结账、撤销来访时登记单一起结束，这里再按来访核对一次）
   const regs = await db<RegistrationFact[]>`
-    SELECT r.id, r.space_id, r.visit_id, r.session_id, r.seller_no, r.seller_name, r.note, r.opened_at, r.overnight
+    SELECT r.id, r.space_id, r.visit_id, r.session_id, r.seller_no, r.seller_name, r.note, r.opened_at, r.overnight, r.kind
     FROM room_registrations r JOIN visits v ON v.id = r.visit_id
     WHERE r.status = 'open' AND v.status = 'open' AND r.store_id = ${store} ${only('r.space_id')}
     ORDER BY r.id`;
@@ -169,9 +172,10 @@ export async function loadRoomFacts(db: Db, today: string, spaceIds?: number[]):
     (
       await db<{ id: number; sessionEnd: string | null; usageEnd: string | null; regEnd: string | null }[]>`
         SELECT sp.id,
-               (SELECT max(s.ended_at) FROM technician_sessions s WHERE s.space_id = sp.id AND s.status IN ('done', 'rejected')) AS session_end,
+               (SELECT max(s.ended_at) FROM technician_sessions s WHERE s.space_id = sp.id AND s.status IN ('done', 'rejected') AND NOT s.room_neutral) AS session_end,
                (SELECT max(u.closed_at) FROM space_usages u WHERE u.space_id = sp.id AND u.status = 'closed') AS usage_end,
-               (SELECT max(r.closed_at) FROM room_registrations r WHERE r.space_id = sp.id AND r.status = 'closed' AND r.close_kind <> 'visit_cancel') AS reg_end
+               (SELECT max(r.closed_at) FROM room_registrations r WHERE r.space_id = sp.id AND r.status = 'closed'
+                  AND r.close_kind NOT IN ('visit_cancel', 'revoked', 'backfill')) AS reg_end
         FROM spaces sp WHERE sp.store_id = ${store} ${only('sp.id')}`
     ).map((r) => [Number(r.id), later(later(r.sessionEnd, r.usageEnd), r.regEnd)]),
   );

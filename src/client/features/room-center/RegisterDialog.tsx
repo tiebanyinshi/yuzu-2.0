@@ -30,7 +30,7 @@ import { cn, formatTime } from '../../lib/utils';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
-import { Button, Field, Input, Notice, Segmented, Skeleton } from '../../components/ui';
+import { Button, ConfirmCheck, Field, Input, Notice, Segmented, Skeleton } from '../../components/ui';
 import { PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
 import { clockroomKey, roomUrl } from './queries';
 import { durationText, ItemPicker } from './ItemPicker';
@@ -71,6 +71,8 @@ export function RegisterDialog({
   const [itemId, setItemId] = useState<number | null>(null);
   const [techNoInput, setTechNoInput] = useState('');
   const [overnight, setOvernight] = useState(false);
+  /** 括单（福田店 FT-07）：技师自己带来的客人——点钟，业绩归这位技师，房间卡片上写「括单」 */
+  const [bracket, setBracket] = useState(false);
   const [tier, setTier] = useState<PriceTier | null>(null);
   const [callType, setCallType] = useState<CallType | null>(null);
   const [technicianId, setTechnicianId] = useState<number | null>(null);
@@ -179,10 +181,11 @@ export function RegisterDialog({
         startedAt: startedAt?.toISOString(),
         join,
         overnight: askOvernight ? overnight : undefined,
+        bracket: mode === 'designated' && bracket ? true : undefined,
         expectedTotal: total,
       },
       tagCodes: [guest.tagCode],
-      summary: `房态登记 ${where}：${item.name}${overnight && askOvernight ? '（过夜）' : ''}（${tech.techNo} 号 ${tech.name} · ${CALL_TYPE_LABELS[mode]}，出单员 ${seller.data!.name}）`,
+      summary: `房态登记 ${where}：${item.name}${overnight && askOvernight ? '（过夜）' : ''}${mode === 'designated' && bracket ? '（括单）' : ''}（${tech.techNo} 号 ${tech.name} · ${CALL_TYPE_LABELS[mode]}，出单员 ${seller.data!.name}）`,
       amount: total,
     }));
     if (done) finish(done);
@@ -443,6 +446,11 @@ export function RegisterDialog({
                 </ul>
               )}
             </Field>
+            {mode === 'designated' && (
+              <ConfirmCheck checked={bracket} onChange={setBracket}>
+                <span data-testid="rc-register-bracket">括单：这位客人是{tech ? ` ${tech.techNo} 号 ${tech.name}` : '技师'}自己带来的（业绩归这位技师，房间卡片上标「括单」）</span>
+              </ConfirmCheck>
+            )}
             {skipping && (
               <Field label={`改派原因（轮钟应派给 ${first!.techNo} 号 ${first!.name}）`} htmlFor="rc-skip" hint="例如：客人要女技师；记进钟房日志">
                 <Input id="rc-skip" value={skipReason} maxLength={100} onChange={(e) => setSkipReason(e.target.value)} disabled={op.locked} data-testid="rc-register-skip" />

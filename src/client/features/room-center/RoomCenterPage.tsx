@@ -49,6 +49,7 @@ import { StayDialog, type StayAction } from '../rooms/StayDialog';
 import { CloseUsageDialog, CloseUsageFor, EndUsageById, OpenUsageDialog } from '../rooms/UsageDialogs';
 import { roomUrl, useRefreshRoomCenter, useRoomCenter } from './queries';
 import { CheckoutRoomDialog, ExtendRoomDialog, MaintenanceDialog, MergeRoomDialog, MoveRoomDialog, NoteActionDialog } from './RoomActions';
+import { BackfillRoomDialog, RevokeRoomDialog, SwapTechDialog, type RoomLimits } from './RoomFutianDialogs';
 import { RoomCard as RoomTile } from './RoomCard';
 import { RoomDialog, type RoomDialogAction } from './RoomDialog';
 import { RoomOrderPanel, RoomOrdersDialog, useRoomOrderOutlets } from './RoomOrders';
@@ -410,6 +411,7 @@ function RoomCenterBody() {
         <RoomDialog
           room={detailRoom}
           now={now}
+          limits={board.limits}
           onClose={() => setDetail(null)}
           onOrder={orderOutlets.length && detailRoom.status === 'in_use' ? () => (setDetail(null), setOrdering({ key: detailRoom.key, view: 'order' })) : undefined}
           onOrders={() => {
@@ -427,6 +429,7 @@ function RoomCenterBody() {
           room={actionRoom}
           a={action.a}
           rooms={board.rooms}
+          limits={board.limits}
           onClose={closeAction}
           onDetail={() => {
             closeAction();
@@ -620,7 +623,7 @@ function Overview({ board, pick, grid, onAll }: { board: RoomCenterBoard; pick: 
 }
 
 /** 房间详情里点的动作：登记、开单、结束 / 撤单、续钟、换房、并房、退房、维修、标待清、恢复 */
-function ActionDialog({ room, a, rooms, onClose, onDetail }: { room: RoomCard; a: RoomDialogAction; rooms: RoomCard[]; onClose: () => void; onDetail: () => void }) {
+function ActionDialog({ room, a, rooms, limits, onClose, onDetail }: { room: RoomCard; a: RoomDialogAction; rooms: RoomCard[]; limits: RoomLimits; onClose: () => void; onDetail: () => void }) {
   const toast = useToast();
   const refresh = useRefreshRoomCenter();
   const done = (board?: RoomCenterBoard | null) => {
@@ -666,5 +669,31 @@ function ActionDialog({ room, a, rooms, onClose, onDetail }: { room: RoomCard; a
     case 'dirty':
     case 'restore':
       return <NoteActionDialog room={room} action={a.kind} onClose={onClose} onDone={onClose} />;
+    case 'revoke':
+      return <RevokeRoomDialog room={room} limits={limits} onClose={onClose} onDone={onClose} />;
+    case 'swap':
+      return (
+        <SwapTechDialog
+          room={room}
+          session={a.session}
+          limits={limits}
+          onClose={onClose}
+          onDone={() => {
+            toast({ tone: 'success', title: `${room.code} 已换技师` });
+            done();
+          }}
+        />
+      );
+    case 'backfill':
+      return (
+        <BackfillRoomDialog
+          room={room}
+          onClose={onClose}
+          onDone={(board) => {
+            toast({ tone: 'success', title: `${room.code} 已补单`, body: '挂在客人的手牌账单上，记「补单」' });
+            done(board);
+          }}
+        />
+      );
   }
 }

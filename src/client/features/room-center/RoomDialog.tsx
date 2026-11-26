@@ -5,8 +5,8 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { CalendarClock, CircleCheck, DoorOpen, History, Link2, Play, Plus, Shuffle, Sparkles, Square, Timer, Unlink, UserPlus, Wrench } from 'lucide-react';
-import { elapsedText, isLobbyBusinessType, ROOM_SOURCE_HINTS, ROOM_SOURCE_LABELS, type RoomCard, type RoomEventKind, type RoomSessionView } from '@shared/room-center';
+import { ArrowRightLeft, CalendarClock, CircleCheck, DoorOpen, FilePlus2, History, Link2, Play, Plus, Shuffle, Sparkles, Square, Timer, Undo2, Unlink, UserPlus, Wrench } from 'lucide-react';
+import { elapsedText, isLobbyBusinessType, REGISTRATION_KIND_LABELS, ROOM_SOURCE_HINTS, ROOM_SOURCE_LABELS, type RoomCard, type RoomEventKind, type RoomSessionView } from '@shared/room-center';
 import { formatYuan } from '@shared/money';
 import { spaceLabel } from '@shared/spaces';
 import { usageEstimate } from '@shared/usages';
@@ -21,6 +21,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Notice, SectionTitle, Skeleton } from '../../components/ui';
 import { useRefreshRoomCenter, useRoomAction, useRoomHistory } from './queries';
 import { RoomActionStatus } from './RoomActions';
+import { revokeLeft, swapLeft, type RoomLimits } from './RoomFutianDialogs';
 import { StatusChip } from './status';
 
 export type RoomDialogAction =
@@ -28,7 +29,10 @@ export type RoomDialogAction =
   | { kind: 'usage_open' }
   | { kind: 'usage_close'; mode: 'end' | 'cancel' }
   | { kind: 'extend'; session: RoomSessionView }
-  | { kind: 'move' | 'merge' | 'checkout' | 'maintenance' | 'dirty' | 'restore' };
+  /** 福田店 FT-06：限时内换技师 */
+  | { kind: 'swap'; session: RoomSessionView }
+  /** 福田店 FT-09 撤房、FT-19 补单 */
+  | { kind: 'move' | 'merge' | 'checkout' | 'maintenance' | 'dirty' | 'restore' | 'revoke' | 'backfill' };
 
 const SESSION_STATE: Record<RoomSessionView['status'], string> = { waiting: '待上钟', serving: '服务中', done: '已下钟' };
 const EVENT_TONE: Partial<Record<RoomEventKind, 'pine' | 'lake' | 'yuzu' | 'clay' | 'neutral'>> = {
@@ -37,6 +41,9 @@ const EVENT_TONE: Partial<Record<RoomEventKind, 'pine' | 'lake' | 'yuzu' | 'clay
   move_in: 'lake',
   move_out: 'yuzu',
   checkout: 'yuzu',
+  revoke: 'clay',
+  backfill: 'lake',
+  room_fee: 'yuzu',
   dirty: 'yuzu',
   cleaned: 'pine',
   maintenance: 'clay',
@@ -52,6 +59,8 @@ function SessionRow({
   busy,
   onClock,
   onExtend,
+  swapLeftMin,
+  onSwap,
 }: {
   s: RoomSessionView;
   now: number;
@@ -60,6 +69,9 @@ function SessionRow({
   busy: boolean;
   onClock: (action: 'start' | 'finish') => void;
   onExtend: () => void;
+  /** FT-06：还剩几分钟能换技师（0 = 不能换，不给按钮） */
+  swapLeftMin: number;
+  onSwap: () => void;
 }) {
   const left = s.plannedEnd ? Math.ceil((new Date(s.plannedEnd).getTime() - now) / 60_000) : null;
   return (
@@ -84,6 +96,11 @@ function SessionRow({
       </span>
       <Money cents={s.amount} className="text-[16px] font-bold text-ink" />
       <span className="flex gap-1.5">
+        {swapLeftMin > 0 && (
+          <Button size="sm" variant="ghost" icon={<ArrowRightLeft className="size-3.5" />} disabled={!canPost || busy} onClick={onSwap} data-testid={`rc-swap-${s.sessionNo}`}>
+            换技师{s.status === 'serving' && <span className="num ml-0.5 text-[12px] text-ink-3">剩 {swapLeftMin} 分</span>}
+          </Button>
+        )}
         {s.status === 'waiting' && (
           <Button size="sm" variant="primary" icon={<Play className="size-3.5" />} disabled={!canDispatch || busy} onClick={() => onClock('start')} data-testid={`rc-start-${s.sessionNo}`}>
             上钟
@@ -139,9 +156,12 @@ export function RoomDialog({
   onAction,
   onOrders,
   onOrder,
+  limits,
 }: {
   room: RoomCard;
   now: number;
+  /** 后台设的时限（撤房、换技师；福田店 FT-06、FT-09） */
+  limits: RoomLimits;
   onClose: () => void;
   onAction: (a: RoomDialogAction) => void;
   /** 房态点单（回测整改 P08）：打开这间房的点单记录 */
@@ -189,6 +209,8 @@ export function RoomDialog({
   };
   const stateOff = !canHousekeep || stateAct.locked;
   const dispatchOff = !canDispatch || dispatchAct.locked;
+  const revokeMin = revokeLeft(room, limits, now);
+  const canBackfill = canPost && can('frontdesk.backfill');
   const usageMinutes = room.usage ? Math.max(0, Math.floor((now - new Date(room.usage.openedAt).getTime()) / 60_000)) : 0;
 
   return (
@@ -283,6 +305,11 @@ export function RoomDialog({
               <span className="text-[14px] font-semibold text-ink-2">{g.guest}</span>
               {g.memberGradeLabel && <Badge tone="yuzu">{g.memberGradeLabel}</Badge>}
               {g.registrationId === null && <Badge tone="neutral">钟房派进来的，没有登记单</Badge>}
+              {g.kind === 'bracket' && (
+                <span data-testid="rc-guest-bracket">
+                  <Badge tone="lake">{REGISTRATION_KIND_LABELS.bracket}</Badge>
+                </span>
+              )}
             </p>
             <p className="mt-0.5 text-[12.5px] text-ink-3">
               {formatTime(g.since)} {g.registrationId === null ? '派钟' : '登记'}
@@ -301,6 +328,8 @@ export function RoomDialog({
                   busy={clockBusy}
                   onClock={(a) => void clock(s, a)}
                   onExtend={() => onAction({ kind: 'extend', session: s })}
+                  swapLeftMin={swapLeft(s, limits, now)}
+                  onSwap={() => onAction({ kind: 'swap', session: s })}
                 />
               ))}
             </ul>
@@ -384,6 +413,12 @@ export function RoomDialog({
               <Button variant="secondary" icon={<Shuffle className="size-4" />} className="h-11" disabled={dispatchOff} onClick={() => onAction({ kind: 'move' })} data-testid="rc-act-move">
                 换房
               </Button>
+              {/* FT-09：开房后限时内撤房（不收费） */}
+              {revokeMin > 0 && (
+                <Button variant="ghost" icon={<Undo2 className="size-4" />} className="h-11" disabled={dispatchOff} onClick={() => onAction({ kind: 'revoke' })} data-testid="rc-act-revoke">
+                  撤房<span className="num ml-1 text-[12px] text-ink-3">剩 {revokeMin} 分</span>
+                </Button>
+              )}
               {/* 休息大厅不同房加人、不并房（重做第五批，PC24） */}
               {!lobby && (
                 <Button
@@ -402,6 +437,12 @@ export function RoomDialog({
           {(room.kind === 'service' || room.kind === 'party') && !lobby && room.status === 'in_use' && room.merged.length <= 1 && (
             <Button variant="secondary" icon={<Link2 className="size-4" />} className="h-11" disabled={dispatchOff} onClick={() => onAction({ kind: 'merge' })} data-testid="rc-act-merge">
               并房
+            </Button>
+          )}
+          {/* FT-19：补录漏开的单、手工单（值班经理及以上） */}
+          {room.kind === 'service' && room.status !== 'maintenance' && (
+            <Button variant="secondary" icon={<FilePlus2 className="size-4" />} className="h-11" disabled={!canBackfill} onClick={() => onAction({ kind: 'backfill' })} data-testid="rc-act-backfill">
+              补单
             </Button>
           )}
           {room.status === 'dirty' && (

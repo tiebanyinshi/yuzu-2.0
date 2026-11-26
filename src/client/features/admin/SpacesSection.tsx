@@ -45,6 +45,7 @@ import { SpaceImportCard } from './SpaceImportCard';
 import { FloorplanCard } from './FloorplanCard';
 import { LocationsCard, useInvalidateLocations } from './LocationsCard';
 import { RoomCategoriesCard } from './RoomCategoriesCard';
+import { RoomCenterRulesCard } from './RoomCenterRulesCard';
 import { useActiveSubTab, useGoSubTab } from '../../components/SubNav';
 
 type Tab = 'spaces' | 'zones' | 'room-categories' | 'import' | 'plans' | 'locations';
@@ -115,7 +116,10 @@ function SpacesBody() {
         />
       )}
       {tab === 'room-categories' ? (
-        <RoomCategoriesCard />
+        <>
+          <RoomCategoriesCard />
+          <RoomCenterRulesCard />
+        </>
       ) : tab === 'locations' ? (
         <LocationsCard />
       ) : tab === 'plans' ? (

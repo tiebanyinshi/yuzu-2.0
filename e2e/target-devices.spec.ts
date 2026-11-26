@@ -929,6 +929,7 @@ const RC_CAT = { spa: 'c990001', party: 'c990002', hall: 'c990003' } as const;
 const rcGuest = (visitId: number, tagCode: string, guest: string, techNo: string, techName: string): RoomGuestView => ({
   registrationId: visitId,
   visitId,
+  kind: 'normal',
   tagCode,
   guest,
   memberGradeLabel: 'L3 观澜',
@@ -1029,6 +1030,7 @@ const rcCounts = (list: RoomCard[]) => ({
   booked: list.filter((r) => r.status === 'booked').length,
 });
 const RC_BOARD: RoomCenterBoard = {
+  limits: { swapTechMinutes: 15, revokeMinutes: 15, freeAfterClockOffMinutes: 15 },
   serverTime: NOW,
   businessDate: NOW.slice(0, 10),
   categories: [

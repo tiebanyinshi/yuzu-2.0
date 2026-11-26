@@ -75,6 +75,8 @@ import { loadRoomRules, roomsBoard } from './rooms';
 import { loadUsageRules, usageBoard } from './usages';
 import type { RoomOrderSummary } from '@shared/room-orders';
 import { roomOrderSums } from './room-orders';
+import { backfillRoom, registerRoomCenterRulesRoutes, revokeRoom, swapTechnician } from './room-center-futian';
+import { loadRoomCenterRules } from './room-center-fees';
 
 // ───────────────────────── 房型（后台） ─────────────────────────
 
@@ -256,6 +258,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
   const usages = await usageBoard(db);
   const usageOf = new Map(usages.spaces.map((s) => [Number(s.id), s]));
   const facts = await loadRoomFacts(db, today);
+  const rules = await loadRoomCenterRules(db);
   const hotelOn = (await loadRoomRules(db)).enabled;
   const hotel = hotelOn ? await roomsBoard(deps) : null;
   const showGuests = seesGuests(actor);
@@ -279,6 +282,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
       sellerName: showGuests ? (g.registration?.sellerName ?? '') : '',
       note: showGuests ? (g.registration?.note ?? '') : '',
       overnight: g.registration?.overnight ?? false,
+      kind: g.registration?.kind ?? 'normal',
       since: g.registration?.openedAt ?? g.sessions[0]?.createdAt ?? at.toISOString(),
       sessions,
       amount: sessions.reduce((n, s) => n + s.amount, 0),
@@ -443,6 +447,7 @@ export async function roomCenterBoard(deps: Deps, actor: Actor): Promise<RoomCen
     total: count(rooms),
     rooms: fullRead ? rooms : rooms.map(orderOnlyCard),
     todayBookings: fullRead ? await todayBookings(db, today, showGuests) : [],
+    limits: { swapTechMinutes: rules.swapTechMinutes, revokeMinutes: rules.revokeMinutes, freeAfterClockOffMinutes: rules.freeAfterClockOffMinutes },
   };
 }
 
@@ -519,6 +524,21 @@ function eventText(kind: RoomEventKind, d: Record<string, unknown>, tz: string):
       return parts([d.update ? '改维修信息' : '', s('reason'), typeof d.expectedAt === 'string' ? `预计 ${monthDayTime(new Date(d.expectedAt), tz)} 完成` : '']);
     case 'restore':
       return parts([`维修结束${s('reason') ? `（${s('reason')}）` : ''}`, s('note')]);
+    // 福田店整改（2026-11-26）
+    case 'revoke':
+      return parts([`手牌 ${s('tag')} 撤房，不收费`, n('voided') > 0 ? `作废 ${formatYuan(n('voided'))}` : '', `原因：${s('reason')}`]);
+    case 'backfill':
+      return parts([
+        `补单 · 手牌 ${s('tag')}`,
+        s('item'),
+        typeof d.startedAt === 'string' ? `${monthDayTime(new Date(d.startedAt), tz)}–${typeof d.endedAt === 'string' ? monthDayTime(new Date(d.endedAt), tz) : ''}` : '',
+        formatYuan(n('amount')),
+        `出单员 ${s('seller')}`,
+        s('slipNo') && s('slipNo') !== '补单' ? `手工单 ${s('slipNo')}` : '',
+        s('note'),
+      ]);
+    case 'room_fee':
+      return parts([`手牌 ${s('tag')} 房费 ${formatYuan(n('amount'))}`, `下钟后 ${n('freeMinutes')} 分钟内不计，计 ${n('chargedMinutes')} 分钟${d.capped ? '（封顶）' : ''}`]);
   }
 }
 
@@ -725,6 +745,19 @@ export function registerRoomCenterRoutes(app: FastifyInstance, deps: Deps) {
     await markCleaned(deps, await space(req), req.body, ctxOf(req));
     return board(req);
   });
+  // 福田店整改（2026-11-26，docs/FUTIAN_1126.md）：撤房（FT-09，调度那一类）、换技师（FT-06，就是转钟：挂账那一类）、补单（FT-19，补录纸质单的权限）
+  app.post('/api/room-center/rooms/:id/revoke', { preHandler: dispatch }, async (req) => {
+    await revokeRoom(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  app.post('/api/room-center/rooms/:id/swap-tech', { preHandler: post }, async (req) => {
+    await swapTechnician(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
+  app.post('/api/room-center/rooms/:id/backfill', { preHandler: guard('technician.dispatch', 'frontdesk.operate', 'frontdesk.backfill') }, async (req) => {
+    await backfillRoom(deps, await space(req), req.body, ctxOf(req));
+    return board(req);
+  });
 
   // 「结果待确认」（8.1.16）：房间动作按编号只读查回（GET）、确认作废（POST abandon；之后原请求即使到达也整笔不做）。
   // 只认房态中心的两类，按原业务的权限（改房态要「客房打扫、维修」，换房、退房、并房要「钟房派钟」）——只管打扫的后勤没有前台权限，
@@ -755,4 +788,5 @@ export function registerRoomCenterRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/admin/room-categories', { preHandler: admin }, async (req) => saveCategory(deps, null, req.body, ctxOf(req)));
   app.put('/api/admin/room-categories/:id', { preHandler: admin }, async (req) => saveCategory(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.post('/api/admin/room-categories/defaults', { preHandler: admin }, async (req) => createDefaultCategories(deps, ctxOf(req)));
+  registerRoomCenterRulesRoutes(app, deps);
 }

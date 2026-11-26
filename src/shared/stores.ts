@@ -30,6 +30,8 @@ export const STORE_SCOPED_SETTING_KEYS = [
   'frontdesk_risk_rules',
   // 8.1.15：建档表单的字段显隐、必填与实体卡押金（docs/MEMBERS_V8115.md）
   'member_form_rules',
+  // 福田店整改（2026-11-26，docs/FUTIAN_1126.md）：房态中心的三个时限、房间计费、虫洞清洁时段
+  'room_center_rules',
   // 8.1.41：轮班周期（班次按店分，轮班跟着按店；docs/V8141_ROTA.md）
   'technician_rotas',
 ] as const;

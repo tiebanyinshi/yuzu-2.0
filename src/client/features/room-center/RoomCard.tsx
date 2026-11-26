@@ -70,6 +70,12 @@ function CardBody({ room, now, hint }: { room: Room; now: number; hint: string |
               过夜
             </span>
           )}
+          {/* 括单（福田店 FT-07）：技师自己带来的客人 */}
+          {room.guests.some((g) => g.kind === 'bracket') && (
+            <span className="shrink-0 rounded bg-yuzu-soft px-1.5 text-[12px] font-semibold text-yuzu-deep" data-testid="rc-bracket">
+              括单
+            </span>
+          )}
         </p>
         {room.techText && (
           <p className="truncate text-[13px] text-ink-2" data-testid="rc-tech">

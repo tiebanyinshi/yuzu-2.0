@@ -42,7 +42,7 @@ import { currentStoreId } from '../lib/store-context';
 import { parse, positiveCents } from '../lib/validate';
 import { extensionLine, lockServiceSpace, setSessionSpaceTx } from './clockroom';
 import { PostInput, postChargesTx } from './frontdesk/bills';
-import { businessDate, hashRequest, runIdempotent, saveKey } from './frontdesk/common';
+import { assertOpen, businessDate, hashRequest, lockVisits, runIdempotent, saveKey } from './frontdesk/common';
 import {
   assertRoomVersion,
   bumpRoomVersion,
@@ -58,6 +58,7 @@ import {
   type RoomStatusFacts,
 } from './room-center-core';
 import { getUsage, loadUsageRules, OpenUsageInput, openUsageTx } from './usages';
+import { chargeRoomFeeTx, quoteRoomFee } from './room-center-fees';
 
 const clientKey = z.uuid('缺少有效的操作编号，请刷新页面后重试');
 const expectedVersion = z.number('缺少房态版本号，请刷新页面后重试').int().min(0);
@@ -72,7 +73,7 @@ interface Opened {
  * 写操作的开头：锁住这几间房的房态行（连同它们并房的伙伴，id 升序），再读一次这些房间的事实。
  * 加锁之前先看一眼并房的伙伴；锁住以后再看一眼，多出来没锁到的（刚好有人并房）让页面刷新重来。
  */
-async function openRooms(tx: Tx, today: string, primary: number[]): Promise<Opened> {
+export async function openRooms(tx: Tx, today: string, primary: number[]): Promise<Opened> {
   const ids = new Set(primary);
   for (const id of primary) for (const p of await mergePartners(tx, id)) ids.add(p);
   const versions = await lockRoomStates(tx, [...ids]);
@@ -83,16 +84,16 @@ async function openRooms(tx: Tx, today: string, primary: number[]): Promise<Open
   return { facts, versions, usageTypes: (await loadUsageRules(tx)).businessTypes };
 }
 
-function roomOf(o: Opened, spaceId: number): { room: RoomFacts; st: RoomStatusFacts; kind: RoomSource; label: string; version: number } {
+export function roomOf(o: Opened, spaceId: number): { room: RoomFacts; st: RoomStatusFacts; kind: RoomSource; label: string; version: number } {
   const room = o.facts.get(spaceId);
   if (!room) throw notFound('房间不存在，请刷新后重试');
   return { room, st: statusOfFacts(room), kind: roomKindOf(room.space.businessType, o.usageTypes), label: roomLabel(room.space), version: o.versions.get(spaceId)!.version };
 }
 
-const HOTEL_ELSEWHERE = '客房的入住、退房与房态在客房的入住单、「改房态」里办（房态中心的客房卡片会打开它们）';
+export const HOTEL_ELSEWHERE = '客房的入住、退房与房态在客房的入住单、「改房态」里办（房态中心的客房卡片会打开它们）';
 
 /** 能不能开这间房（登记、开单、换进来）：维修、待清的不行；有人用着的不行（同房加人除外） */
-function assertOpenable(x: { room: RoomFacts; st: RoomStatusFacts; label: string }, join: boolean) {
+export function assertOpenable(x: { room: RoomFacts; st: RoomStatusFacts; label: string }, join: boolean) {
   const { room, st, label } = x;
   if (!room.space.active || !room.space.sellable) throw conflict('SPACE_INACTIVE', `${label} 在空间台账里停用或不可售，请换一间`);
   if (room.state?.maintenance) throw conflict('ROOM_MAINTENANCE', `${label} 在维修（${room.state.maintenanceReason ?? ''}），恢复以后才能用，请换一间`);
@@ -106,6 +107,13 @@ function assertOpenable(x: { room: RoomFacts; st: RoomStatusFacts; label: string
 
 const tagsOf = (guests: GuestFact[]) => guests.map((g) => g.visit.tagCode);
 
+/** 这种业态归在哪个房型（启用的房态中心房型；没归房型的按业态本身算一类）：换房只能换同类型的（福田店 FT-11） */
+export async function roomCategoryOf(db: Db, businessType: string): Promise<{ key: string; name: string }> {
+  const [c] = await db<{ id: number; name: string }[]>`
+    SELECT id, name FROM room_categories WHERE store_id = ${currentStoreId()} AND active AND ${businessType} = ANY(business_types) ORDER BY sort_order, id LIMIT 1`;
+  return c ? { key: `c${c.id}`, name: c.name } : { key: `t:${businessType}`, name: businessType };
+}
+
 // ───────────────────────── 房间动作的操作编号（8.1.16） ─────────────────────────
 
 /** 房间动作的两类操作编号：改房态（维修、恢复、标待清、清洁完成）、调度（换房、退房、并房、拆并）——作废时按各自的权限 */
@@ -117,7 +125,7 @@ type RoomOp = 'space_state' | 'space_dispatch';
  * （saveKey 写编号前在编号的咨询锁里核对作废登记，作废先登记的整笔回滚）。编号记在 idempotency_keys，ref_id 是这一步记下的
  * 第一条房间事件。房态版本号照旧在 body 里核对，是第二道。
  */
-async function runRoomOp(deps: Deps, ctx: OpContext, opts: { key: string; opType: RoomOp; requestHash: string }, body: (tx: Tx, at: Date, today: string) => Promise<number>) {
+export async function runRoomOp(deps: Deps, ctx: OpContext, opts: { key: string; opType: RoomOp; requestHash: string }, body: (tx: Tx, at: Date, today: string) => Promise<number>) {
   await runIdempotent(deps, opts, async (tx) => {
     const at = ctx.at ?? new Date();
     const eventId = await body(tx, at, await businessDate(tx, deps, at));
@@ -176,9 +184,12 @@ export const RegisterInput = z
     join: z.boolean().default(false),
     /** 客人是否过夜（按摩房、足浴房、SPA 房问，PC25） */
     overnight: z.boolean().default(false),
+    /** 括单（福田店 FT-07）：技师自己约的客人；只能点钟（就是约他的那位技师）。不带时与以前的请求一样（摘要不变） */
+    bracket: z.boolean().optional(),
     expectedTotal: positiveCents('本次合计'),
   })
-  .refine((v) => v.start !== 'at' || !!v.startedAt, '已经开始了的，请填写几点开始的');
+  .refine((v) => v.start !== 'at' || !!v.startedAt, '已经开始了的，请填写几点开始的')
+  .refine((v) => !v.bracket || v.callType === 'designated', '括单是技师自己约的客人，上钟方式请选点钟（约他的那位技师）');
 
 /** 这位客人已经登记在别的房间：一位客人同时只登记在一间房 */
 async function assertNotRegistered(db: Db, visitId: number, tagCode: string) {
@@ -270,8 +281,9 @@ export async function registerRoom(deps: Deps, spaceId: number, raw: unknown, ct
       await tx`UPDATE technician_sessions SET started_at = ${new Date(Math.min(startedAt.getTime(), at.getTime()))} WHERE id = ${sessionId} AND status = 'serving'`;
     }
     const [reg] = await tx<{ id: number }[]>`
-      INSERT INTO room_registrations (space_id, visit_id, session_id, seller_no, seller_name, note, opened_at, opened_by, open_key, overnight)
-      VALUES (${spaceId}, ${visitId}, ${sessionId}, ${seller.no}, ${seller.name}, ${input.note}, ${at}, ${ctx.actor.id}, ${key}, ${input.overnight})
+      INSERT INTO room_registrations (space_id, visit_id, session_id, seller_no, seller_name, note, opened_at, opened_by, open_key, overnight, kind)
+      VALUES (${spaceId}, ${visitId}, ${sessionId}, ${seller.no}, ${seller.name}, ${input.note}, ${at}, ${ctx.actor.id}, ${key}, ${input.overnight},
+              ${input.bracket ? 'bracket' : 'normal'})
       RETURNING id`;
     await bumpRoomVersion(tx, [spaceId], ctx.actor.id, at);
     const detail = {
@@ -289,6 +301,7 @@ export async function registerRoom(deps: Deps, spaceId: number, raw: unknown, ct
       ...(input.note ? { note: input.note } : {}),
       ...(input.join ? { join: true } : {}),
       ...(input.overnight ? { overnight: true } : {}),
+      ...(input.bracket ? { bracket: true } : {}),
     };
     await logRoomEvent(tx, { spaceId, kind: 'register', registrationId: Number(reg!.id), detail, staffId: ctx.actor.id, at });
     await writeAudit(tx, { staffId: ctx.actor.id, action: 'room_center_register', targetType: 'space', targetId: spaceId, detail, ip: ctx.ip, businessDate: today });
@@ -404,6 +417,11 @@ export async function moveRoom(deps: Deps, spaceId: number, raw: unknown, ctx: O
       throw unprocessable('MOVE_NOT_SERVICE', from.kind === 'hotel' || to.kind === 'hotel' ? HOTEL_ELSEWHERE : '只有技师服务的房间之间可以这样换房（派对房等请结束使用后在新房间开单）');
     }
     if (from.room.guests.length === 0) throw conflict('ROOM_NOT_IN_USE', `${from.label} 现在没有客人，不用换房，请刷新`);
+    // 福田店 FT-11：只能换到同类型（同一个房态中心房型；没归房型的按业态）的房间
+    const [fromCat, toCat] = [await roomCategoryOf(tx, from.room.space.businessType), await roomCategoryOf(tx, to.room.space.businessType)];
+    if (fromCat.key !== toCat.key) {
+      throw unprocessable('MOVE_OTHER_TYPE', `${from.label} 是「${fromCat.name}」，${to.label} 是「${toCat.name}」：换房只能换同类型的房间，请换一间「${fromCat.name}」`);
+    }
     assertOpenable(to, false);
     // 钟单：在这间房里还没结束的几张，按编号一张张换（钟单一行 → 新房间共享锁 → 位置）
     const moving = from.room.guests.flatMap((g) => g.sessions).filter((s) => Number(s.spaceId) === spaceId && s.status !== 'done');
@@ -433,6 +451,9 @@ export async function moveRoom(deps: Deps, spaceId: number, raw: unknown, ctx: O
 
 // ───────────────────────── 退房 ─────────────────────────
 
+/** 登记了的客人的钟都下了（没下完的退不了房，不用先算房费） */
+const running0 = (room: RoomFacts) => room.guests.filter((g) => g.registration).every((g) => g.sessions.every((s) => s.status === 'done'));
+
 /** 这间房里登记了的客人与他们的账：退房前的预览、退房时的核对用同一份 */
 function checkoutGuests(room: RoomFacts): RoomCheckoutPreview['guests'] {
   return room.guests.flatMap((g) =>
@@ -461,7 +482,10 @@ export async function roomCheckoutPreview(deps: Deps, spaceId: number): Promise<
   const room = (await loadRoomFacts(deps.sql, today, [spaceId])).get(spaceId);
   if (!room) throw notFound('房间不存在，请刷新后重试');
   const guests = checkoutGuests(room);
-  return { spaceId, code: room.space.code, version: room.state?.version ?? 0, guests, unpaidTotal: guests.reduce((n, g) => n + g.billAmount, 0) };
+  // 房费（福田店 FT-10 / FT-17）：按现在退房要收多少（退房时按那一刻重算）
+  const q = roomKindOf(room.space.businessType, (await loadUsageRules(deps.sql)).businessTypes) === 'service' ? await quoteRoomFee(deps.sql, room, new Date()) : null;
+  const roomFee = q ? { amount: q.amount, minutes: q.minutes, chargedMinutes: q.chargedMinutes, startsAt: q.startsAt, freeMinutes: q.freeMinutes, capped: q.capped, tagCode: q.tagCode } : null;
+  return { spaceId, code: room.space.code, version: room.state?.version ?? 0, guests, unpaidTotal: guests.reduce((n, g) => n + g.billAmount, 0), roomFee };
 }
 
 export const RoomCheckoutInput = z.object({
@@ -487,6 +511,16 @@ export async function checkoutRoom(deps: Deps, spaceId: number, raw: unknown, ct
     const x = roomOf(await openRooms(tx, today, [spaceId]), spaceId);
     assertRoomVersion(x.version, input.expectedVersion, x.label);
     if (x.kind === 'hotel') throw unprocessable('ROOM_NOT_SERVICE', HOTEL_ELSEWHERE);
+    // 房费（福田店 FT-10 / FT-17）：要收的先锁那位客人的来访与账单——来访在登记单之前锁（收银台结账也是先来访后登记单，同一个方向）
+    const fee = x.kind === 'service' && running0(x.room) ? await quoteRoomFee(tx, x.room, at) : null;
+    let feeBillId: number | null = null;
+    if (fee && fee.amount > 0) {
+      const v = (await lockVisits(tx, [fee.visitId])).get(fee.visitId)!;
+      assertOpen(v);
+      const [bill] = await tx<{ id: number; status: string }[]>`SELECT id, status FROM bills WHERE id = ${v.billId} FOR UPDATE`;
+      if (bill!.status !== 'open') throw conflict('BILL_CLOSED', `手牌 ${fee.tagCode} 的账单已结束，记不了房费，请刷新`);
+      feeBillId = Number(bill!.id);
+    }
     // 登记单按 id 升序锁（与结账时结束登记单同一个顺序）；锁住以后以它为准
     const regs = await tx<{ id: number }[]>`SELECT id FROM room_registrations WHERE space_id = ${spaceId} AND status = 'open' ORDER BY id FOR UPDATE`;
     const guests = checkoutGuests(x.room).filter((g) => regs.some((r) => Number(r.id) === g.registrationId));
@@ -503,15 +537,22 @@ export async function checkoutRoom(deps: Deps, spaceId: number, raw: unknown, ct
         sessionIds: running.map((s) => s.sessionId),
       });
     }
-    const unpaid = guests.reduce((n, g) => n + g.billAmount, 0);
-    if (unpaid !== input.seenUnpaid) throw conflict('BILL_CHANGED', `账单在你看过预览以后有变化（现在 ${formatYuan(unpaid)}），请重新看一遍再退房`, { unpaid });
+    const billed = guests.reduce((n, g) => n + g.billAmount, 0);
+    if (billed !== input.seenUnpaid) throw conflict('BILL_CHANGED', `账单在你看过预览以后有变化（现在 ${formatYuan(billed)}），请重新看一遍再退房`, { unpaid: billed });
+    // 房费按退房这一刻算（预览以后多过的几分钟不算账变了），记上以后一起算没结的
+    const roomFee = fee?.amount ?? 0;
+    const unpaid = billed + roomFee;
     if (unpaid > 0 && !input.inHouse) {
       throw unprocessable('UNPAID_CONFIRM', `账单还有 ${formatYuan(unpaid)} 没结：请客人到收银台结清，或确认「客人带着手牌继续在店，离店时在收银台结」再退房`, { unpaid });
     }
     for (const g of guests) {
+      const own = fee && fee.visitId === g.visitId ? roomFee : 0;
       await tx`
-        UPDATE room_registrations SET status = 'closed', closed_at = greatest(opened_at, ${at}), closed_by = ${ctx.actor.id}, close_kind = 'checkout', unpaid_cents = ${g.billAmount}
+        UPDATE room_registrations SET status = 'closed', closed_at = greatest(opened_at, ${at}), closed_by = ${ctx.actor.id}, close_kind = 'checkout', unpaid_cents = ${g.billAmount + own}
         WHERE id = ${g.registrationId}`;
+    }
+    if (fee && feeBillId !== null) {
+      await chargeRoomFeeTx(tx, fee, { spaceId, label: x.label, businessType: x.room.space.businessType, code: x.room.space.code, billId: feeBillId, key, at, today, staffId: ctx.actor.id });
     }
     // 并房：这间房退了，它的并房关系解除
     const partners = await tx<{ spaceId: number }[]>`
@@ -519,7 +560,8 @@ export async function checkoutRoom(deps: Deps, spaceId: number, raw: unknown, ct
     await bumpRoomVersion(tx, [spaceId, ...partners.map((p) => Number(p.spaceId))], ctx.actor.id, at);
     const events: number[] = [];
     for (const g of guests) {
-      const detail = { room: x.label, tag: g.tagCode, roomAmount: g.roomAmount, unpaid: g.billAmount, inHouse: g.billAmount > 0 };
+      const own = fee && fee.visitId === g.visitId ? roomFee : 0;
+      const detail = { room: x.label, tag: g.tagCode, roomAmount: g.roomAmount, unpaid: g.billAmount + own, inHouse: g.billAmount + own > 0, ...(own ? { roomFee: own } : {}) };
       events.push(await logRoomEvent(tx, { spaceId, kind: 'checkout', registrationId: g.registrationId, detail, staffId: ctx.actor.id, at }));
     }
     await writeAudit(tx, {
@@ -527,7 +569,7 @@ export async function checkoutRoom(deps: Deps, spaceId: number, raw: unknown, ct
       action: 'room_center_checkout',
       targetType: 'space',
       targetId: spaceId,
-      detail: { room: x.label, tags: guests.map((g) => g.tagCode), unpaid, inHouse: unpaid > 0 },
+      detail: { room: x.label, tags: guests.map((g) => g.tagCode), unpaid, inHouse: unpaid > 0, ...(roomFee ? { roomFee } : {}) },
       ip: ctx.ip,
       businessDate: today,
     });
