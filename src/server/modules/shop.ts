@@ -28,10 +28,13 @@ import {
   type ShopCompareOffer,
   type ShopCompareResult,
   type ShopItem,
+  type ShopMaterialRow,
   type ShopOffer,
   type ShopSku,
   type ShopSkuCore,
   type ShopSkuStatus,
+  type ShopSupplierDetail,
+  type ShopSupplierRow,
 } from '@shared/shop';
 import type { Db } from '../db';
 import { guardAny } from '../auth/guard';
@@ -42,6 +45,7 @@ import { todayIn } from '../lib/dates';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
 import { loadExpenseRules } from './expenses';
+import { supplierLicenses } from './inventory/admission';
 import { docDateSchema } from './inventory/common';
 import { createMallRequest, mallRequest, pagedMall } from './mall';
 import { allowedStores } from './stores';
@@ -172,6 +176,7 @@ async function catalog(deps: Deps, actor: Actor, storeIdRaw: unknown): Promise<S
       canPool: me.canReview || me.canStock,
       canManageSku: can(actor, 'purchase.manage'),
       canApproveSku: can(actor, 'purchase.rules') || actor.role === 'owner',
+      canEditMaster: can(actor, 'inventory.master'),
     },
     today,
   };
@@ -542,16 +547,275 @@ async function skuOp(deps: Deps, actor: Actor, skuId: number, ip: string | undef
   return one(deps.sql, skuId);
 }
 
+// ───────────────────────── 供应商档案与集团物料主档（FR-03 / FR-04） ─────────────────────────
+
+const SupplierPatchInput = z
+  .object({
+    contact: z.string().trim().max(40, '联系人最多 40 个字').optional(),
+    phone: z.string().trim().max(32, '电话最多 32 个字').optional(),
+    note: z.string().trim().max(200, '备注最多 200 个字').optional(),
+    active: z.boolean().optional(),
+  })
+  .refine((v) => v.contact !== undefined || v.phone !== undefined || v.note !== undefined || v.active !== undefined, '请至少修改一项内容');
+
+const MaterialPatchInput = z
+  .object({
+    category: z.string().trim().max(16, '分类最多 16 个字').optional(),
+    note: z.string().trim().max(200, '备注最多 200 个字').optional(),
+    active: z.boolean().optional(),
+  })
+  .refine((v) => v.category !== undefined || v.note !== undefined || v.active !== undefined, '请至少修改一项内容');
+
+const BatchCategoryInput = z.object({
+  materialIds: z.array(id).min(1, '请至少选择一个物料').max(200, '一次最多批量修改 200 个物料'),
+  category: z.string().trim().max(16, '分类最多 16 个字'),
+});
+
+async function listShopSuppliers(db: Db, actor: Actor): Promise<ShopSupplierRow[]> {
+  const canContact = can(actor, 'purchase.manage') || can(actor, 'inventory.master');
+  const rows = await db<
+    {
+      id: number;
+      code: string;
+      name: string;
+      active: boolean;
+      admission: string;
+      admissionNote: string;
+      contact: string;
+      phone: string;
+      note: string;
+      categories: string[];
+      activeSkuCount: number;
+      totalSkuCount: number;
+      lastPriceChangeAt: string | null;
+      avgLeadDays: number | null;
+    }[]
+  >`
+    SELECT sp.id, sp.code, sp.name, sp.active, sp.admission, sp.admission_note, sp.contact, sp.phone, sp.note,
+           coalesce((SELECT array_agg(DISTINCT nullif(m.category, '') ORDER BY nullif(m.category, ''))
+                     FROM mall_skus k JOIN materials m ON m.id = k.material_id
+                     WHERE k.supplier_id = sp.id AND nullif(m.category, '') IS NOT NULL), '{}') AS categories,
+           (SELECT count(*)::int FROM mall_skus k WHERE k.supplier_id = sp.id AND k.status = 'approved') AS active_sku_count,
+           (SELECT count(*)::int FROM mall_skus k WHERE k.supplier_id = sp.id) AS total_sku_count,
+           greatest(
+             (SELECT max(c.decided_at) FROM mall_sku_changes c JOIN mall_skus k ON k.id = c.sku_id WHERE k.supplier_id = sp.id AND c.status = 'approved'),
+             (SELECT max(k.approved_at) FROM mall_skus k WHERE k.supplier_id = sp.id)
+           ) AS last_price_change_at,
+           (SELECT round(avg(k.lead_days))::int FROM mall_skus k WHERE k.supplier_id = sp.id AND k.status = 'approved') AS avg_lead_days
+    FROM suppliers sp
+    ORDER BY sp.active DESC, (sp.admission = 'approved') DESC, sp.code`;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    active: r.active,
+    admission: r.admission,
+    admissionNote: r.admissionNote,
+    categories: r.categories ?? [],
+    activeSkuCount: Number(r.activeSkuCount),
+    totalSkuCount: Number(r.totalSkuCount),
+    lastPriceChangeAt: r.lastPriceChangeAt,
+    avgLeadDays: r.avgLeadDays === null ? null : Number(r.avgLeadDays),
+    contact: canContact ? r.contact : null,
+    phone: canContact ? r.phone : null,
+    note: r.note,
+  }));
+}
+
+async function shopSupplierDetail(db: Db, actor: Actor, supplierId: number): Promise<ShopSupplierDetail> {
+  const all = await listShopSuppliers(db, actor);
+  const base = all.find((s) => s.id === supplierId);
+  if (!base) throw notFound('供应商不存在');
+  const [adm] = await db<{ admissionByName: string | null; admissionAt: string | null }[]>`
+    SELECT st.display_name AS admission_by_name, sp.admission_at
+    FROM suppliers sp LEFT JOIN staff st ON st.id = sp.admission_by WHERE sp.id = ${supplierId}`;
+  const rawLicenses = await supplierLicenses(db, supplierId);
+  const skus = await db<
+    {
+      id: number;
+      skuCode: string;
+      materialId: number;
+      materialCode: string;
+      materialName: string;
+      unit: string;
+      priceCents: number;
+      taxRateBp: number;
+      moqMilli: number;
+      leadDays: number;
+      freightCents: number;
+      validUntil: string;
+      status: ShopSkuStatus;
+      corePending: boolean;
+    }[]
+  >`
+    SELECT k.id, k.sku_code, k.material_id, m.code AS material_code, m.name AS material_name, m.purchase_unit AS unit,
+           k.price_cents, k.tax_rate_bp, k.moq_milli, k.lead_days, k.freight_cents,
+           to_char(k.valid_until, 'YYYY-MM-DD') AS valid_until, k.status, k.core_pending
+    FROM mall_skus k JOIN materials m ON m.id = k.material_id
+    WHERE k.supplier_id = ${supplierId} ORDER BY k.status = 'approved' DESC, m.code, k.id`;
+  const [hist] = await db<{ orderCount: number; totalAmountCents: string }[]>`
+    SELECT count(*)::int AS order_count, coalesce(sum(total_cents), 0)::text AS total_amount_cents
+    FROM purchase_orders WHERE supplier_id = ${supplierId} AND status IN ('approved', 'closed')`;
+  return {
+    ...base,
+    admissionByName: adm?.admissionByName ?? null,
+    admissionAt: adm?.admissionAt ?? null,
+    licenses: rawLicenses.map((l) => ({
+      id: l.id,
+      kind: l.kind,
+      name: l.name,
+      licenseNo: l.licenseNo,
+      validUntil: l.validUntil,
+      mediaUrl: l.media?.url ?? null,
+      addedByName: l.addedByName,
+      addedAt: l.addedAt,
+    })),
+    skus: skus.map((k) => ({
+      id: Number(k.id),
+      skuCode: k.skuCode,
+      materialId: Number(k.materialId),
+      materialCode: k.materialCode,
+      materialName: k.materialName,
+      unit: k.unit,
+      priceCents: Number(k.priceCents),
+      taxRateBp: k.taxRateBp,
+      grossCents: grossCents(Number(k.priceCents), k.taxRateBp),
+      moqMilli: Number(k.moqMilli),
+      leadDays: k.leadDays,
+      freightCents: Number(k.freightCents),
+      validUntil: k.validUntil,
+      status: k.status,
+      corePending: k.corePending,
+    })),
+    history: {
+      orderCount: Number(hist?.orderCount ?? 0),
+      totalAmountCents: Number(hist?.totalAmountCents ?? 0),
+    },
+  };
+}
+
+async function listShopMaterials(db: Db, today: string): Promise<ShopMaterialRow[]> {
+  const rows = await db<
+    {
+      id: number;
+      code: string;
+      name: string;
+      category: string;
+      specification: string;
+      unit: string;
+      inventoryUnit: string;
+      note: string;
+      active: boolean;
+      skuCount: number;
+      activeSkuCount: number;
+      supplierCount: number;
+    }[]
+  >`
+    SELECT m.id, m.code, m.name, m.category, m.specification, m.purchase_unit AS unit, m.inventory_unit, m.note, m.active,
+           (SELECT count(*)::int FROM mall_skus k WHERE k.material_id = m.id) AS sku_count,
+           (SELECT count(*)::int FROM mall_skus k WHERE k.material_id = m.id AND k.status = 'approved') AS active_sku_count,
+           (SELECT count(DISTINCT k.supplier_id)::int FROM mall_skus k WHERE k.material_id = m.id AND k.status = 'approved') AS supplier_count
+    FROM materials m WHERE m.tracked
+    ORDER BY m.active DESC, m.category, m.code`;
+  const activePrices = await db<{ materialId: number; priceCents: number; taxRateBp: number }[]>`
+    SELECT k.material_id, k.price_cents, k.tax_rate_bp
+    FROM mall_skus k JOIN suppliers sp ON sp.id = k.supplier_id JOIN materials m ON m.id = k.material_id
+    WHERE k.status = 'approved' AND NOT k.core_pending AND sp.active AND sp.admission = 'approved'
+      AND k.valid_until >= ${today}::date AND k.unit = m.purchase_unit AND k.unit_factor_milli = m.purchase_factor_milli`;
+  const lowestByMat = new Map<number, number>();
+  for (const p of activePrices) {
+    const mid = Number(p.materialId);
+    const g = grossCents(Number(p.priceCents), p.taxRateBp);
+    const cur = lowestByMat.get(mid);
+    if (cur === undefined || g < cur) lowestByMat.set(mid, g);
+  }
+  return rows.map((m) => ({
+    id: Number(m.id),
+    code: m.code,
+    name: m.name,
+    category: m.category,
+    specification: m.specification,
+    unit: m.unit,
+    inventoryUnit: m.inventoryUnit,
+    note: m.note,
+    active: m.active,
+    skuCount: Number(m.skuCount),
+    activeSkuCount: Number(m.activeSkuCount),
+    supplierCount: Number(m.supplierCount),
+    lowestGrossCents: lowestByMat.get(Number(m.id)) ?? null,
+  }));
+}
+
 export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
   const P = '/api/erp/shop';
   const shopper = guardAny('request.create', 'request.review', 'request.stock', 'purchase.manage');
   const skuRead = guardAny('purchase.manage', 'purchase.rules');
+  const masterWrite = guardAny('inventory.master');
   // 目录是页面的起点：只审 SKU 的（「采购规则」）也要能进来，才找得到「SKU 维护」（Codex 审查）
   const catalogRead = guardAny('request.create', 'request.review', 'request.stock', 'purchase.manage', 'purchase.rules');
 
   app.get(`${P}/catalog`, { preHandler: catalogRead }, async (req) => catalog(deps, req.actor, (req.query as { storeId?: string } | undefined)?.storeId));
   app.get(`${P}/offers`, { preHandler: catalogRead }, async (req) => compareOffers(deps, req.actor, req.query));
+  app.get(`${P}/suppliers`, { preHandler: skuRead }, async (req) => listShopSuppliers(sql, req.actor));
+  app.get(`${P}/suppliers/:id`, { preHandler: skuRead }, async (req) => shopSupplierDetail(sql, req.actor, parse(idParam, req.params).id));
+  const patchSupplier = async (req: { params: unknown; body: unknown; actor: Actor; ip: string }) => {
+    const supplierId = parse(idParam, req.params).id;
+    const v = parse(SupplierPatchInput, req.body);
+    await sql.begin(async (tx) => {
+      await setTxTimeouts(tx);
+      const [cur] = await tx<{ id: number; contact: string; phone: string; note: string; active: boolean }[]>`
+        SELECT id, contact, phone, note, active FROM suppliers WHERE id = ${supplierId} FOR UPDATE`;
+      if (!cur) throw notFound('供应商不存在');
+      await tx`
+        UPDATE suppliers SET contact = ${v.contact ?? cur.contact}, phone = ${v.phone ?? cur.phone}, note = ${v.note ?? cur.note},
+               active = ${v.active ?? cur.active}, updated_at = now()
+        WHERE id = ${supplierId}`;
+      await writeAudit(tx, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'supplier', targetId: supplierId, detail: { source: 'shop', ...v }, ip: req.ip });
+    });
+    return shopSupplierDetail(sql, req.actor, supplierId);
+  };
+  app.patch(`${P}/suppliers/:id`, { preHandler: masterWrite }, patchSupplier);
+  app.put(`${P}/suppliers/:id`, { preHandler: masterWrite }, patchSupplier);
+  app.get(`${P}/materials`, { preHandler: skuRead }, async () => listShopMaterials(sql, todayIn(deps.config.timezone)));
+  const patchMaterial = async (req: { params: unknown; body: unknown; actor: Actor; ip: string }) => {
+    const materialId = parse(idParam, req.params).id;
+    const v = parse(MaterialPatchInput, req.body);
+    await sql.begin(async (tx) => {
+      await setTxTimeouts(tx);
+      const [cur] = await tx<{ id: number; category: string; note: string; active: boolean }[]>`
+        SELECT id, category, note, active FROM materials WHERE id = ${materialId} AND tracked FOR UPDATE`;
+      if (!cur) throw notFound('受管物料不存在');
+      await tx`
+        UPDATE materials SET category = ${v.category ?? cur.category}, note = ${v.note ?? cur.note}, active = ${v.active ?? cur.active}, updated_at = now()
+        WHERE id = ${materialId}`;
+      await writeAudit(tx, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'material', targetId: materialId, detail: { source: 'shop', ...v }, ip: req.ip });
+    });
+    const list = await listShopMaterials(sql, todayIn(deps.config.timezone));
+    return list.find((m) => m.id === materialId)!;
+  };
+  app.patch(`${P}/materials/:id`, { preHandler: masterWrite }, patchMaterial);
+  app.put(`${P}/materials/:id`, { preHandler: masterWrite }, patchMaterial);
+  app.post(`${P}/materials/batch-category`, { preHandler: masterWrite }, async (req) => {
+    const v = parse(BatchCategoryInput, req.body);
+    const ids = [...new Set(v.materialIds)].sort((a, b) => a - b);
+    const updated = await sql.begin(async (tx) => {
+      await setTxTimeouts(tx);
+      const locked = await tx<{ id: number }[]>`SELECT id FROM materials WHERE id IN ${tx(ids)} AND tracked ORDER BY id FOR UPDATE`;
+      if (locked.length === 0) throw notFound('未找到可修改的受管物料');
+      const foundIds = locked.map((r) => Number(r.id));
+      await tx`UPDATE materials SET category = ${v.category}, updated_at = now() WHERE id IN ${tx(foundIds)}`;
+      await writeAudit(tx, {
+        staffId: req.actor.id,
+        action: 'inventory_master_saved',
+        targetType: 'material',
+        detail: { source: 'shop_batch_category', materialIds: foundIds, category: v.category },
+        ip: req.ip,
+      });
+      return foundIds.length;
+    });
+    return { updated };
+  });
   app.post(`${P}/requests`, { preHandler: guardAny('request.create') }, async (req, reply) => {
     const r = await submit(deps, req.body, req.actor, req.ip);
     if (!r.replayed) reply.code(201);

@@ -93,7 +93,15 @@ export interface ShopCatalog {
   categories: { name: string; count: number }[];
   items: ShopItem[];
   purposes: string[];
-  me: { departmentId: number | null; departmentName: string | null; canPickDepartment: boolean; canPool: boolean; canManageSku: boolean; canApproveSku: boolean };
+  me: {
+    departmentId: number | null;
+    departmentName: string | null;
+    canPickDepartment: boolean;
+    canPool: boolean;
+    canManageSku: boolean;
+    canApproveSku: boolean;
+    canEditMaster: boolean;
+  };
   today: string;
 }
 
@@ -517,4 +525,64 @@ export function groupShopCart(catalog: ShopCatalog, cart: ShopCart): ShopCartSum
     totalCents,
     priceChangedSkuIds,
   };
+}
+
+/** 供应商档案列表行（FR-03）：复用 ERP suppliers + supplier_licenses + mall_skus 单一数据源 */
+export interface ShopSupplierRow {
+  id: number;
+  code: string;
+  name: string;
+  active: boolean;
+  admission: string;
+  admissionNote: string;
+  categories: string[];
+  activeSkuCount: number;
+  totalSkuCount: number;
+  lastPriceChangeAt: string | null;
+  avgLeadDays: number | null;
+  /** 字段级权限受控：无权限时为 null，页面展示「联系采购获取」 */
+  contact: string | null;
+  phone: string | null;
+  note: string;
+}
+
+export interface ShopSupplierDetail extends ShopSupplierRow {
+  admissionByName: string | null;
+  admissionAt: string | null;
+  licenses: { id: number; kind: string; name: string; licenseNo: string; validUntil: string | null; mediaUrl: string | null; addedByName: string; addedAt: string }[];
+  skus: {
+    id: number;
+    skuCode: string;
+    materialId: number;
+    materialCode: string;
+    materialName: string;
+    unit: string;
+    priceCents: number;
+    taxRateBp: number;
+    grossCents: number;
+    moqMilli: number;
+    leadDays: number;
+    freightCents: number;
+    validUntil: string;
+    status: ShopSkuStatus;
+    corePending: boolean;
+  }[];
+  history: { orderCount: number; totalAmountCents: number };
+}
+
+/** 集团物料主档列表行（FR-04）：复用 ERP materials + mall_skus 单一数据源；单位变更仍走原 ERP 档案并触发关联 SKU 重审 */
+export interface ShopMaterialRow {
+  id: number;
+  code: string;
+  name: string;
+  category: string;
+  specification: string;
+  unit: string;
+  inventoryUnit: string;
+  note: string;
+  active: boolean;
+  skuCount: number;
+  activeSkuCount: number;
+  supplierCount: number;
+  lowestGrossCents: number | null;
 }

@@ -62,7 +62,7 @@ const makeCatalog = (offers: ShopOffer[]): ShopCatalog => ({
       ]
     : [],
   purposes: ['客用消耗'],
-  me: { departmentId: 1, departmentName: '运营部', canPickDepartment: false, canPool: false, canManageSku: false, canApproveSku: false },
+  me: { departmentId: 1, departmentName: '运营部', canPickDepartment: false, canPool: false, canManageSku: false, canApproveSku: false, canEditMaster: false },
   today: '2026-11-25',
 });
 

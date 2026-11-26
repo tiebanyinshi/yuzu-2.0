@@ -370,4 +370,86 @@ describe('SKU 的边界（Codex 审查）', () => {
     expect(empty.status).toBe(200);
     expect(empty.body).toMatchObject({ material: null, offers: [], recommendedSkuId: null });
   });
+
+  it('供应商档案（FR-03）：准入状态与 SKU 拦截一致、字段级权限隐藏联系人/电话、受控编辑不碰收款账户', async () => {
+    // 只有 purchase.rules 没有 purchase.manage / inventory.master 的审核员：能看档案，但联系人与电话为 null（前端显示「联系采购获取」）
+    await createStaff(ctx.sql, { username: 'shop_rules_only', displayName: '规则审核员', role: 'backoffice', duties: [], password: PASSWORD, mustChangePassword: false });
+    await ctx.sql`UPDATE staff SET permission_adjust = ${ctx.sql.json({ add: ['purchase.rules'], remove: [] })} WHERE username = 'shop_rules_only'`;
+    const rulesOnly = await login(ctx.app, 'shop_rules_only');
+
+    // 普通申购人无权访问
+    expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/suppliers')).status).toBe(403);
+    expect((await api(ctx.app, reqA, 'GET', `/api/erp/shop/suppliers/${supA}`)).status).toBe(403);
+
+    // 规则审核员看列表与详情：联系人/电话脱敏，不能编辑
+    const rListMasked = await api(ctx.app, rulesOnly, 'GET', '/api/erp/shop/suppliers');
+    expect(rListMasked.status, JSON.stringify(rListMasked.body)).toBe(200);
+    const maskedSup = (rListMasked.body as { id: number; contact: string | null; phone: string | null; admission: string }[]).find((s) => s.id === supA)!;
+    expect(maskedSup.contact).toBeNull();
+    expect(maskedSup.phone).toBeNull();
+    expect(maskedSup.admission).toBe('approved');
+    expect((await api(ctx.app, rulesOnly, 'PUT', `/api/erp/shop/suppliers/${supA}`, { note: '越权' })).status).toBe(403);
+
+    // 有档案权限的店主修改联系人与备注，且不影响收款账户
+    const [origSup] = await ctx.sql<{ contact: string; phone: string; note: string; bankAccount: string }[]>`SELECT contact, phone, note, bank_account FROM suppliers WHERE id = ${supA}`;
+    try {
+      const patched = await api(ctx.app, boss, 'PUT', `/api/erp/shop/suppliers/${supA}`, { contact: '张联络', phone: '13800138000', note: '商城档案备注' });
+      expect(patched.status, JSON.stringify(patched.body)).toBe(200);
+      expect(patched.body).toMatchObject({ id: supA, contact: '张联络', phone: '13800138000', note: '商城档案备注' });
+      const [afterSup] = await ctx.sql<{ bankAccount: string }[]>`SELECT bank_account FROM suppliers WHERE id = ${supA}`;
+      expect(afterSup!.bankAccount).toBe(origSup!.bankAccount);
+
+      // 准入状态改为 pending 时，档案页与目录 SKU 的阻断原因同源一致
+      const s = await listed((await sku({ supplierId: supA })).id);
+      await ctx.sql`UPDATE suppliers SET admission = 'pending' WHERE id = ${supA}`;
+      const det = await api(ctx.app, buyer, 'GET', `/api/erp/shop/suppliers/${supA}`);
+      expect(det.status).toBe(200);
+      expect(det.body.admission).toBe('pending');
+      expect((await offer(reqA, s.id))!.block).toBe('supplier');
+    } finally {
+      await ctx.sql`UPDATE suppliers SET admission = 'approved', contact = ${origSup!.contact}, phone = ${origSup!.phone}, note = ${origSup!.note} WHERE id = ${supA}`;
+    }
+  });
+
+  it('集团物料主档（FR-04）：停用后商城与比价立即不可见、历史需求单仍可查，支持批量改分类', async () => {
+    const s = await listed((await sku({ supplierId: supA, moqMilli: q(10) })).id);
+    const created = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'catalog', lines: [{ skuId: s.id, priceVersion: s.priceVersion, qtyMilli: q(10) }] });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const reqId = created.body.request.id as number;
+
+    const [origMat] = await ctx.sql<{ category: string; note: string; active: boolean }[]>`SELECT category, note, active FROM materials WHERE id = ${mat.id}`;
+    try {
+      // 普通员工不能看/改物料主档
+      expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/materials')).status).toBe(403);
+      expect((await api(ctx.app, reqA, 'PUT', `/api/erp/shop/materials/${mat.id}`, { active: false })).status).toBe(403);
+      expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/materials/batch-category', { materialIds: [mat.id], category: '测试类' })).status).toBe(403);
+
+      // 停用物料
+      const dis = await api(ctx.app, boss, 'PUT', `/api/erp/shop/materials/${mat.id}`, { active: false, note: '停用测试' });
+      expect(dis.status, JSON.stringify(dis.body)).toBe(200);
+      expect(dis.body).toMatchObject({ id: mat.id, active: false, note: '停用测试' });
+
+      // 商城目录与比价接口立即不可见
+      const cat = await catalog(reqA);
+      expect((cat.items as { material: { id: number } }[]).some((i) => i.material.id === mat.id)).toBe(false);
+      const off = await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=${mat.id}&storeId=${storeId}`);
+      expect(off.status).toBe(200);
+      expect(off.body).toMatchObject({ material: null, offers: [] });
+
+      // 已提交历史需求单仍正常可读
+      const histReq = await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests/${reqId}`);
+      expect(histReq.status, JSON.stringify(histReq.body)).toBe(200);
+      expect(histReq.body.id).toBe(reqId);
+
+      // 恢复启用并批量改分类
+      expect((await api(ctx.app, boss, 'PUT', `/api/erp/shop/materials/${mat.id}`, { active: true })).status).toBe(200);
+      const batch = await api(ctx.app, boss, 'POST', '/api/erp/shop/materials/batch-category', { materialIds: [mat.id], category: '批量测试类' });
+      expect(batch.status, JSON.stringify(batch.body)).toBe(200);
+      expect(batch.body.updated).toBe(1);
+      const mats = await api(ctx.app, buyer, 'GET', '/api/erp/shop/materials');
+      expect((mats.body as { id: number; category: string }[]).find((m) => m.id === mat.id)!.category).toBe('批量测试类');
+    } finally {
+      await ctx.sql`UPDATE materials SET category = ${origMat!.category}, note = ${origMat!.note}, active = ${origMat!.active} WHERE id = ${mat.id}`;
+    }
+  });
 });

@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ClipboardList, Eye, PencilLine, Search, ShoppingCart, Store as StoreIcon, Warehouse } from 'lucide-react';
+import { ArrowLeft, Building2, ClipboardList, Eye, Package, PencilLine, Search, ShoppingCart, Store as StoreIcon, Warehouse } from 'lucide-react';
 import { formatYuan } from '@shared/money';
 import { formatQty, parseQty } from '@shared/quantity';
 import { MALL_DISPLAY_LABELS, type MallDisplayStatus, type MallRequest, type MallRequestBrief } from '@shared/mall';
@@ -46,6 +46,8 @@ import { ShopCartView } from './ShopCartView';
 import { SkuAdmin } from './SkuAdmin';
 
 const ShopComparePage = lazyPage(() => import('./ShopComparePage').then((m) => m.ShopComparePage));
+const ShopSuppliersPage = lazyPage(() => import('./ShopMasterPages').then((m) => m.ShopSuppliersPage));
+const ShopMaterialsPage = lazyPage(() => import('./ShopMasterPages').then((m) => m.ShopMaterialsPage));
 
 const BASE = '/erp/shop';
 const SUBMIT_URL = '/api/erp/shop/requests';
@@ -120,13 +122,16 @@ export function ShopPage() {
   const { cart, setCart } = useCart();
   const count = cart.lines.length;
   const c = q.data;
+  const canAdminView = !!c && (c.me.canManageSku || c.me.canApproveSku);
   const tabs: { to: string; label: string; icon: ReactNode; show: boolean }[] = [
     { to: BASE, label: '商城', icon: <StoreIcon className="size-4" />, show: true },
     { to: `${BASE}/cart`, label: `采购清单${count ? `（${count}）` : ''}`, icon: <ShoppingCart className="size-4" />, show: true },
     { to: `${BASE}/custom`, label: '自主申请', icon: <PencilLine className="size-4" />, show: true },
     { to: `${BASE}/mine`, label: '我的采购需求', icon: <ClipboardList className="size-4" />, show: true },
     { to: `${BASE}/pool`, label: '需求池', icon: <Warehouse className="size-4" />, show: !!c?.me.canPool },
-    { to: `${BASE}/skus`, label: 'SKU 维护', icon: <Warehouse className="size-4" />, show: !!c && (c.me.canManageSku || c.me.canApproveSku) },
+    { to: `${BASE}/skus`, label: 'SKU 维护', icon: <Warehouse className="size-4" />, show: canAdminView },
+    { to: `${BASE}/suppliers`, label: '供应商档案', icon: <Building2 className="size-4" />, show: canAdminView },
+    { to: `${BASE}/materials`, label: '物料主档', icon: <Package className="size-4" />, show: canAdminView },
   ];
   const active = (to: string) => (to === BASE ? path === '' || path.startsWith('item') || path.startsWith('compare') : `${BASE}/${path}`.startsWith(to));
   const nav = (
@@ -164,6 +169,8 @@ export function ShopPage() {
   else if (path === 'mine' || path === 'pool') body = <RequestList scope={path} />;
   else if (path.startsWith('mine/') || path.startsWith('pool/')) body = <RequestDetail id={Number(path.split('/')[1])} cart={cart} setCart={setCart} c={q.data} />;
   else if (path === 'skus') body = <SkuAdmin catalog={q.data} />;
+  else if (path === 'suppliers') body = canAdminView ? <ShopSuppliersPage catalog={q.data} /> : <Navigate to={BASE} replace />;
+  else if (path === 'materials') body = canAdminView ? <ShopMaterialsPage catalog={q.data} /> : <Navigate to={BASE} replace />;
   else body = <Navigate to={BASE} replace />;
   return (
     <ErpPage title="采购商城" description="选品比价、加清单、提采购需求；商城里没有的走自主申请。提交后就是一张采购需求单，主管确认、核库、采购审核照常办。">
