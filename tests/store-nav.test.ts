@@ -36,6 +36,8 @@ describe('主导航的业务域', () => {
     expect(where).toMatchObject({
       发卡台: '前台',
       收银台: '前台',
+      // 柜况（8.1.49）：能看在店手牌的都有
+      柜况: '前台',
       预约: '前台',
       餐饮: '餐饮',
       房态中心: '房态',
@@ -106,8 +108,9 @@ describe('主导航的业务域', () => {
     const cashierItems = visibleStoreNav(canOf(cashierOnly), session({ permissions: cashierOnly })).flatMap((d) => d.items.map((i) => i.label));
     expect(cashierItems).toContain('收银台');
     expect(cashierItems).not.toContain('发卡台');
+    // 只有查看的：两个台都看得到（进去只能看），还有只看的柜况（8.1.49）
     const readOnly: Permission[] = ['frontdesk.read'];
-    expect(visibleStoreNav(canOf(readOnly), session({ permissions: readOnly })).flatMap((d) => d.items.map((i) => i.label))).toEqual(['发卡台', '收银台']);
+    expect(visibleStoreNav(canOf(readOnly), session({ permissions: readOnly })).flatMap((d) => d.items.map((i) => i.label))).toEqual(['发卡台', '收银台', '柜况']);
     const dishesOnly: Permission[] = ['dish.water'];
     const nav = visibleStoreNav(canOf(dishesOnly), session({ permissions: dishesOnly }));
     expect(nav.map((d) => [d.label, d.items.map((i) => i.label)])).toEqual([['餐饮', ['菜品']]]);

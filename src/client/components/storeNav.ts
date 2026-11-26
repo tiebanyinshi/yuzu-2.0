@@ -26,6 +26,7 @@ import {
   IdCard,
   Megaphone,
   MonitorPlay,
+  LayoutGrid,
 } from 'lucide-react';
 import { CRM_SETTINGS_PERMISSIONS } from '@shared/admin';
 import { DISH_PERMISSIONS } from '@shared/dishes';
@@ -75,6 +76,8 @@ const STORE_NAV: StoreNavDomain[] = [
       // 两项都没有、只有查看的两个都看得到（进去只能看）。规则在 @shared/frontdesk 的 deskEntries
       { to: '/crm/frontdesk', label: '发卡台', icon: ConciergeBell, perm: 'frontdesk.read', when: (s) => deskEntries(s.permissions).issue },
       { to: '/crm/cashier', label: '收银台', icon: Banknote, perm: 'frontdesk.read', when: (s) => deskEntries(s.permissions).cashier },
+      // 柜况（8.1.49，docs/LOCKERS_V8149.md）：全店手牌柜此刻的状态（空闲、在用、锁定、维修），能看在店手牌的都有
+      { to: '/crm/lockers', label: '柜况', icon: LayoutGrid, perm: 'frontdesk.read' },
       // 预约（v0.7.28 ③）：技师、派对房等、客房电话预订的预约看板；小程序的预约在这里确认
       { to: '/crm/bookings', label: '预约', icon: CalendarClock, perm: 'booking.manage' },
     ],
@@ -215,6 +218,7 @@ export function useStoreNav(): StoreNavDomain[] {
 const LEGACY_ORDER = [
   '/crm/frontdesk',
   '/crm/cashier',
+  '/crm/lockers',
   '/crm/clockroom',
   '/crm/announcer',
   '/crm/tech-board',
