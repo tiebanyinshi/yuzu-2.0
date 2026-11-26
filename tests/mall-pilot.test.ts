@@ -88,6 +88,7 @@ describe('退回后在原单补资料', () => {
   it('只有提单人、只有退回的、看到的要是最新的；补完回到待审核，单号不变，记下补了什么', async () => {
     const r = (await submit(brand, customLine({ name: '工牌挂绳' }))).body.request as { id: number; docNo: string; updatedAt: string; lines: { id: number }[] };
     const body = (over: Record<string, unknown> = {}) => ({
+      clientKey: randomUUID(),
       expectedUpdatedAt: r.updatedAt,
       contactName: '品牌部小王',
       budgetProject: '品牌物料',
@@ -111,7 +112,8 @@ describe('退回后在原单补资料', () => {
     // 别人不能补；看到的过时了拒绝
     expect((await api(ctx.app, other, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body({ expectedUpdatedAt: returned.updatedAt }))).status).toBe(403);
     expect((await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body())).body.error.code).toBe('REQUEST_CHANGED');
-    const ok = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body({ expectedUpdatedAt: returned.updatedAt }));
+    const sent = body({ expectedUpdatedAt: returned.updatedAt });
+    const ok = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, sent);
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(ok.body).toMatchObject({ id: r.id, docNo: r.docNo, status: 'submitted', reason: null, priority: 'high' });
     expect(ok.body.lines[0]).toMatchObject({ qtyMilli: q(100), customSpec: { size: '90cm' } });
@@ -119,8 +121,26 @@ describe('退回后在原单补资料', () => {
     const actions = (ok.body.approvals as { action: string; reason: string }[]).map((a) => `${a.action}:${a.reason}`);
     expect(actions).toContain('return:请补尺寸与工艺');
     expect(actions).toContain('revise:补资料：补了尺寸与工艺');
-    // 已经重提了，再提一次（原样重提）：不是退回状态，拒绝，不会重复
+    // 回复丢了、同一个编号原样重提（Codex 审查）：认得是同一笔，不再写；查回找得到；换了内容拒绝
+    const replay = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, sent);
+    expect(replay.status, JSON.stringify(replay.body)).toBe(200);
+    expect((replay.body.approvals as { action: string }[]).filter((a) => a.action === 'revise')).toHaveLength(1);
+    expect((await api(ctx.app, brand, 'GET', `/api/erp/ops/${sent.clientKey}?type=mall_resubmit`)).body).toMatchObject({ found: true, refId: r.id });
+    expect((await api(ctx.app, other, 'GET', `/api/erp/ops/${sent.clientKey}?type=mall_resubmit`)).status).toBe(403);
+    expect((await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, { ...sent, remark: '另一笔' })).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    // 新的编号再提：已经不是退回状态，拒绝，不会重复
     expect((await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body({ expectedUpdatedAt: returned.updatedAt }))).body.error.code).toBe('INVALID_STATE');
+    // 确认作废了的编号晚到：不提交
+    const r2 = (await submit(brand, customLine({ name: '名片' }))).body.request as { id: number; lines: { id: number }[] };
+    expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r2.id}/return`, { reason: '请补' })).status).toBe(200);
+    const back2 = await detail(brand, r2.id);
+    const late = {
+      ...body({ expectedUpdatedAt: back2.updatedAt }),
+      lines: [{ id: r2.lines[0]!.id, qtyMilli: q(2), customKind: 'custom', customSpec: { size: '90×54mm', craft: '铜版纸', scene: '前台', sample: false, budgetCents: null }, details: '' }],
+    };
+    expect((await api(ctx.app, brand, 'POST', `/api/erp/ops/${late.clientKey}/abandon`, { type: 'mall_resubmit', summary: '作废补资料' })).status).toBe(200);
+    expect((await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r2.id}/resubmit`, late)).body.error.code).toBe('OP_ABANDONED');
+    expect((await detail(brand, r2.id)).status).toBe('returned');
   });
 });
 
@@ -227,6 +247,14 @@ describe('Codex 审查后的边界', () => {
     const key = randomUUID();
     expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ clientKey: key, imageIds: [imgId] }))).status).toBe(201);
     expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ clientKey: key, imageIds: [imgId], unitPriceCents: 1 }))).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    // 只有采购审核、没有主数据维护权限的账号（Codex 审查）：方案的查回、确认作废照样能做
+    await createStaff(ctx.sql, { username: 'pilot_reviewer', displayName: '采购审核', role: 'backoffice', duties: ['approve'], password: PASSWORD, mustChangePassword: false });
+    const reviewer = await login(ctx.app, 'pilot_reviewer');
+    expect((await api(ctx.app, reviewer, 'GET', `/api/erp/ops/${key}?type=mall_quote`)).body).toMatchObject({ found: true, refId: r.id });
+    const lost = randomUUID();
+    expect((await api(ctx.app, reviewer, 'POST', `/api/erp/ops/${lost}/abandon`, { type: 'mall_quote', summary: '作废方案' })).body).toMatchObject({ found: false, abandoned: true });
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/quotes`, quote({ clientKey: lost }))).body.error.code).toBe('OP_ABANDONED');
+    expect((await api(ctx.app, brand, 'GET', `/api/erp/ops/${key}?type=mall_quote`)).status).toBe(403);
     const stock = await login(ctx.app, 'lixiao', 'yuzu2026'); // 物资经办：能看库存、看需求单图片
     for (const cookie of [stock, brand]) {
       expect((await ctx.app.inject({ method: 'GET', url: `/api/erp/images/${imgId}`, headers: { cookie } })).statusCode).toBe(404);
@@ -239,6 +267,7 @@ describe('Codex 审查后的边界', () => {
     expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请写尺码' })).status).toBe(200);
     const back = await detail(brand, r.id);
     const ok = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, {
+      clientKey: randomUUID(),
       expectedUpdatedAt: back.updatedAt,
       contactName: '品牌部小王',
       budgetProject: '品牌物料',

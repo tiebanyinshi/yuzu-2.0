@@ -240,7 +240,12 @@ export function ShopPage() {
         }}
         className="mb-4"
       />
-      <ErpPendingPanel types={['shop_master']} filter={(op) => op.staffId === session.staff.id} onFound={() => void qc.invalidateQueries({ queryKey: ['shop'] })} className="mb-4" />
+      <ErpPendingPanel
+        types={['shop_master', 'mall_quote', 'mall_resubmit']}
+        filter={(op) => op.staffId === session.staff.id}
+        onFound={() => void qc.invalidateQueries({ queryKey: ['shop'] })}
+        className="mb-4"
+      />
       {body}
       {/* 浮在右下角的清单（玻璃质感）：逛的时候随时看得到加了几样；提醒在页面上方，不挡它 */}
       {count > 0 && (path === '' || path.startsWith('item/')) && (

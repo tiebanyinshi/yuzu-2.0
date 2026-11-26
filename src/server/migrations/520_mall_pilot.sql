@@ -64,3 +64,27 @@ COMMENT ON COLUMN inv_doc_lines.redeliver_milli IS '收货拒收里供应商要�
 ALTER TABLE erp_images DROP CONSTRAINT erp_images_scope_check;
 ALTER TABLE erp_images ADD CONSTRAINT erp_images_scope_check CHECK (scope IN ('general', 'contract', 'concierge', 'quote'));
 
+
+-- 记成交方案、原单补资料重提的「结果待确认」（Codex 审查）：各用自己的操作类型（mall_quote 按采购权限查回、作废；mall_resubmit 只能查回、作废自己的），
+-- 不借主数据的 shop_master（那个要「物料主数据维护」权限）。在当时的约束上追加类型（与 370 同一写法，不照旧名单重建）
+DO $$
+DECLARE
+  t text;
+  expression text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['idempotency_keys', 'op_fences'] LOOP
+    SELECT pg_get_expr(conbin, conrelid) INTO expression
+      FROM pg_constraint
+     WHERE conrelid = t::regclass AND conname = t || '_op_type_check';
+    IF expression IS NULL THEN
+      RAISE EXCEPTION '找不到 %.%_op_type_check 约束', t, t;
+    END IF;
+    EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', t, t || '_op_type_check');
+    EXECUTE format(
+      'ALTER TABLE %I ADD CONSTRAINT %I CHECK ((%s) OR op_type IN (''mall_quote'', ''mall_resubmit''))',
+      t,
+      t || '_op_type_check',
+      expression
+    );
+  END LOOP;
+END $$;

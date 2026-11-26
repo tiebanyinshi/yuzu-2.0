@@ -82,6 +82,8 @@ const ResubmitLine = z.object({
 });
 
 const ResubmitInput = z.object({
+  /** 操作编号（Codex 审查）：页面本机先记下再发；回复丢了在页面顶部查回 / 原样重提 / 确认作废（mall_resubmit） */
+  clientKey: z.uuid('缺少操作编号，请刷新页面后重试'),
   /** 页面看到的这张单的修改时间：之后又被退回、改过的拒绝（晚到的旧请求不盖掉之后的修改） */
   expectedUpdatedAt: z.string().min(10),
   contactName: z.string().trim().min(1, '请填写经办人').max(40),
@@ -125,9 +127,18 @@ interface StoredLine {
  */
 export async function resubmitMallRequest(deps: Deps, requestId: number, raw: unknown, actor: Actor, ip?: string): Promise<void> {
   const input = parse(ResubmitInput, raw);
+  const requestHash = hashRequest({ op: 'mall_resubmit', requestId, ...input, clientKey: undefined });
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const r = await lockRequest(tx, requestId);
+    await assertNotFenced(tx, input.clientKey, 'mall_resubmit', erpOpAbandoned);
+    const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`
+      SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+    if (done) {
+      // 同一个编号原样重提：第一次已经提交，不再写
+      if (done.opType !== 'mall_resubmit' || done.requestHash !== requestHash || Number(done.staffId) !== actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的补资料');
+      return;
+    }
     if (r.source !== 'mall') throw conflict('NOT_MALL', '这张需求单不是采购商城提的，请在 ERP 的采购需求单里改');
     if (r.requesterId !== actor.id && actor.role !== 'owner') throw forbidden('只能补自己提的需求单');
     if (r.status !== 'returned') throw conflict('INVALID_STATE', '只有被退回的需求单能在原单上补资料');
@@ -164,6 +175,7 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
       };
     });
     await validateLines(tx, lines, { mall: true });
+    await assertMoq(tx, lines);
     await clearStockDecisions(tx, requestId);
     await rewriteLinesInPlace(
       tx,
@@ -193,7 +205,19 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
       detail: { action: 'mall_resubmit', remark: input.remark, lines: lines.length },
       ip,
     });
+    await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'mall_resubmit', ${requestHash}, ${requestId}, ${actor.id})`;
   });
+}
+
+/** 选品的行改了数量（Codex 审查）：按这个 SKU 现在的起订量再核一遍，与第一次从清单提交一样（BELOW_MOQ） */
+async function assertMoq(db: Db, lines: LineWrite[]) {
+  const codes = [...new Set(lines.map((l) => l.mallSkuCode).filter((c): c is string => !!c))];
+  if (!codes.length) return;
+  const moq = new Map((await db<{ skuCode: string; moqMilli: number }[]>`SELECT sku_code, moq_milli FROM mall_skus WHERE sku_code IN ${db(codes)}`).map((k) => [k.skuCode, Number(k.moqMilli)]));
+  for (const l of lines) {
+    const min = l.mallSkuCode ? moq.get(l.mallSkuCode) : undefined;
+    if (min !== undefined && l.qtyMilli < min) throw unprocessable('BELOW_MOQ', `「${l.name}」低于起订量，请改数量`);
+  }
 }
 
 /**
@@ -295,7 +319,7 @@ const QuoteInput = z.object({
 
 /**
  * 记一条方案：接单的人（或审核的人、店主）；需求单要在审核中或已通过。
- * 「结果待确认」与主数据同一套（shop_master 操作编号，Codex 审查）：页面本机先记下再发；同一个编号原样重提返回第一次那条，内容不同的拒绝；确认作废的编号晚到也不记
+ * 「结果待确认」用自己的操作类型 mall_quote（按采购权限查回、作废，Codex 审查）：页面本机先记下再发；同一个编号原样重提返回第一次那条，内容不同的拒绝；确认作废的编号晚到也不记
  */
 export async function addQuote(deps: Deps, requestId: number, raw: unknown, actor: Actor, ip?: string): Promise<void> {
   const input = parse(QuoteInput, raw);
@@ -304,11 +328,11 @@ export async function addQuote(deps: Deps, requestId: number, raw: unknown, acto
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const r = await lockRequest(tx, requestId);
-    await assertNotFenced(tx, input.clientKey, 'shop_master', erpOpAbandoned);
+    await assertNotFenced(tx, input.clientKey, 'mall_quote', erpOpAbandoned);
     const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`
       SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
     if (done) {
-      if (done.opType !== 'shop_master' || done.requestHash !== requestHash || Number(done.staffId) !== actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的方案');
+      if (done.opType !== 'mall_quote' || done.requestHash !== requestHash || Number(done.staffId) !== actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的方案');
       return;
     }
     if (r.source !== 'mall') throw conflict('NOT_MALL', '这张需求单不是采购商城提的');
@@ -338,7 +362,7 @@ export async function addQuote(deps: Deps, requestId: number, raw: unknown, acto
     // 记了方案还没人接的：顺手算接单
     await tx`UPDATE purchase_requests SET sourcing_owner_id = coalesce(sourcing_owner_id, ${actor.id}), sourcing_claimed_at = coalesce(sourcing_claimed_at, now()) WHERE id = ${requestId}`;
     await writeAudit(tx, { staffId: actor.id, action: 'purchase_request', targetType: 'purchase_request', targetId: requestId, detail: { action: 'mall_quote', quoteId: q!.id, supplierName }, ip });
-    await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'shop_master', ${requestHash}, ${requestId}, ${actor.id})`;
+    await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'mall_quote', ${requestHash}, ${requestId}, ${actor.id})`;
   });
 }
 

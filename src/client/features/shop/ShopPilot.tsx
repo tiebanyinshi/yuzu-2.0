@@ -302,6 +302,9 @@ export function CustomSpecView({ l }: { l: MallRequestLine }) {
 export function ResubmitPanel({ r, categories, onDone }: { r: MallRequest; categories: string[]; onDone: (next: MallRequest) => void }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const session = useSession();
+  // 本机还有一笔补资料没确认结果（Codex 审查）：先在页面顶部查回、原样重提或确认作废，不另发新的
+  const pending = useErpRecorded(['mall_resubmit']).some((op) => op.staffId === session.staff.id && op.url === `/api/erp/shop/requests/${r.id}/resubmit`);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(0);
@@ -321,11 +324,15 @@ export function ResubmitPanel({ r, categories, onDone }: { r: MallRequest; categ
       ? '至少留一行'
       : (kept.map((x) => (x.custom ? customItemProblem(x.custom) : parseQty(x.qty) ? null : `「${x.line.name}」请填写数量`)).find(Boolean) ??
         (!head.contactName.trim() || !head.budgetProject.trim() || !head.needBy || !head.deliveryAddress.trim() ? '请把经办人、预算项目、期望到货、收货地点填全' : null) ??
-        (!remark.trim() ? '请写一句补了什么' : null));
+        (!remark.trim() ? '请写一句补了什么' : null) ??
+        (pending ? '上一次补资料还没确认结果：先在页面顶部处理' : null));
+  // 与记方案同一套「结果待确认」（Codex 审查）：本机先记下编号与内容再发；回复丢了不当成没提交，在页面顶部查回、原样重提或确认作废
   const send = async () => {
     setBusy(true);
+    const key = uuid();
     try {
-      const next = await api.put<MallRequest>(`/api/erp/shop/requests/${r.id}/resubmit`, {
+      const body = {
+        clientKey: key,
         expectedUpdatedAt: r.updatedAt,
         ...head,
         contactName: head.contactName.trim(),
@@ -334,13 +341,27 @@ export function ResubmitPanel({ r, categories, onDone }: { r: MallRequest; categ
         note: head.note.trim(),
         remark: remark.trim(),
         lines: kept.map((x) => (x.custom ? { id: x.line.id, ...customItemBody(x.custom) } : { id: x.line.id, qtyMilli: parseQty(x.qty) })),
+      };
+      const next = await sendErpOp<MallRequest>({
+        key,
+        type: 'mall_resubmit',
+        method: 'PUT',
+        url: `/api/erp/shop/requests/${r.id}/resubmit`,
+        body,
+        summary: `补资料重提 · ${r.docNo}`,
+        staffName: session.staff.displayName,
+        staffId: session.staff.id,
       });
       void qc.invalidateQueries({ queryKey: ['shop'] });
       toast({ tone: 'success', title: '已补好资料、重新提交', body: `单号不变：${next.docNo}` });
       setOpen(false);
       onDone(next);
     } catch (e) {
-      toast({ tone: 'error', title: '没有提交', body: errorMessage(e) });
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '补资料结果待确认', body: '回复没收到，可能已经提交：记录留在本机，请在页面顶部查回、原样重提或确认作废' });
+        void qc.invalidateQueries({ queryKey: ['shop'] });
+        setOpen(false);
+      } else toast({ tone: 'error', title: '没有提交', body: errorMessage(e) });
     } finally {
       setBusy(false);
     }
@@ -575,8 +596,8 @@ function QuoteDialog({ r, onClose, onDone }: { r: MallRequest; onClose: () => vo
   const toast = useToast();
   const session = useSession();
   const qc = useQueryClient();
-  // 本机还有一笔主数据（含方案）没确认结果：先处理那一笔，不另开新的
-  const pending = useErpRecorded(['shop_master']).filter((op) => op.staffId === session.staff.id).length > 0;
+  // 本机还有一笔方案没确认结果：先处理那一笔，不另开新的
+  const pending = useErpRecorded(['mall_quote']).filter((op) => op.staffId === session.staff.id).length > 0;
   const suppliers = useQuery({ queryKey: ['shop', 'pilot-suppliers'], queryFn: () => api.get<{ id: number; name: string; active: boolean }[]>('/api/inventory/suppliers') });
   const [key] = useState(() => uuid());
   const [busy, setBusy] = useState(false);
@@ -608,7 +629,7 @@ function QuoteDialog({ r, onClose, onDone }: { r: MallRequest; onClose: () => vo
           : !Number.isInteger(lead) || lead < 0 || lead > 365
             ? '交期写 0–365 天'
             : null;
-  // 与主数据同一套「结果待确认」（Codex 审查）：本机先记下编号与内容再发；回复丢了在页面顶部查回、原样重提或确认作废，不会记成两条
+  // 「结果待确认」（Codex 审查；操作类型 mall_quote，采购自己就能查回、作废）：本机先记下编号与内容再发；回复丢了在页面顶部查回、原样重提或确认作废，不会记成两条
   const save = async () => {
     setBusy(true);
     try {
@@ -629,7 +650,7 @@ function QuoteDialog({ r, onClose, onDone }: { r: MallRequest; onClose: () => vo
       };
       const next = await sendErpOp<MallRequest>({
         key,
-        type: 'shop_master',
+        type: 'mall_quote',
         method: 'POST',
         url: `/api/erp/shop/requests/${r.id}/quotes`,
         body,

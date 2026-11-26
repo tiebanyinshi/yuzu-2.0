@@ -201,6 +201,9 @@ export const FENCED_OPS = [
   'oa_announcement',
   // 采购商城 V1.1（迁移 370）：主数据维护（供应商编辑/启停、物料编辑/启停、批量改分类）；编号记在 idempotency_keys
   'shop_master',
+  // 8.1.51 商城试点（迁移 520）：记成交方案、原单补资料重提；编号记在 idempotency_keys（ref_id 是那张需求单）
+  'mall_quote',
+  'mall_resubmit',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 

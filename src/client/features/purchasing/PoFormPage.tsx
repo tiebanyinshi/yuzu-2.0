@@ -51,6 +51,18 @@ interface Line {
   images: ImageRef[];
   /** 来自哪几行需求（v0.7.8）：同一物料的几行需求合并成这一行 */
   requests: PoLineRequest[];
+  /** 带进来的需求选定的方案单价（8.1.51，按采购单位；没有方案的为 null） */
+  planPrice?: string | null;
+  /** 合并的几行需求方案单价不一样（Codex 审查）：单价空着，要采购重新定价 */
+  planConflict?: boolean;
+}
+
+/** 需求选定方案的含税单价换成每采购单位（8.1.51）：需求按库存单位提的乘换算；单位对不上的给空，让采购填 */
+function planPriceOf(o: OpenRequestLine, m: Material): string | null {
+  if (!o.plan) return null;
+  if (o.unit === m.purchaseUnit) return centsToInput(o.plan.unitPriceCents);
+  if (o.unit === m.inventoryUnit) return centsToInput(Math.round((o.plan.unitPriceCents * m.purchaseFactorMilli) / 1000));
+  return '';
 }
 
 const asRequest = (o: OpenRequestLine): PoLineRequest => ({
@@ -214,13 +226,24 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
   const mergeRequest = (ls: Line[], m: Material, o: OpenRequestLine): Line[] => {
     // 核库时已经从库存领了一部分的（8.1.10）：默认只买剩下的
     const qty = requestQtyInPurchase({ qtyMilli: o.qtyMilli - (o.issuedQtyMilli ?? 0), unit: o.unit }, m);
+    const plan = planPriceOf(o, m);
     const existingLine = ls.find((l) => l.materialId === m.id);
     if (existingLine) {
       if (existingLine.requests.some((r) => r.lineId === o.id)) return ls;
       const prevQty = parseQty(existingLine.qty, 3);
       const images = [...existingLine.images, ...o.images.filter((i) => !existingLine.images.some((x) => x.id === i.id))].slice(0, MAX_LINE_IMAGES);
+      // 一张采购单里同一物料只能一行：几行需求选定的方案单价不一样时（Codex 审查），不拿第一条的价顶，单价空着请采购重新定
+      const conflict = existingLine.planConflict || ((plan !== null || (existingLine.planPrice ?? null) !== null) && plan !== (existingLine.planPrice ?? null));
       return ls.map((l) =>
-        l.key === existingLine.key ? { ...l, requests: [...l.requests, asRequest(o)], images, qty: qty !== null && prevQty !== null ? formatQty(prevQty + qty).replace(/,/g, '') : l.qty } : l,
+        l.key === existingLine.key
+          ? {
+              ...l,
+              requests: [...l.requests, asRequest(o)],
+              images,
+              qty: qty !== null && prevQty !== null ? formatQty(prevQty + qty).replace(/,/g, '') : l.qty,
+              ...(conflict ? { price: '', planConflict: true } : {}),
+            }
+          : l,
       );
     }
     const line = newLine(m);
@@ -231,13 +254,8 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
         qty: qty !== null ? formatQty(qty).replace(/,/g, '') : '',
         // 商城需求选定了成交方案（8.1.51）：按方案的含税单价；没有再按物料参考价、部门填的参考价
         // 需求按库存单位提的（Codex 审查）：方案单价按采购单位换算（× 每采购单位折合的库存数）；单位对不上的空着让采购填，不拿物料参考价顶
-        price: o.plan
-          ? o.unit === m.purchaseUnit
-            ? centsToInput(o.plan.unitPriceCents)
-            : o.unit === m.inventoryUnit
-              ? centsToInput(Math.round((o.plan.unitPriceCents * m.purchaseFactorMilli) / 1000))
-              : ''
-          : line.price || (o.refPriceCents !== null && o.unit === m.purchaseUnit ? centsToInput(o.refPriceCents) : ''),
+        price: plan ?? (line.price || (o.refPriceCents !== null && o.unit === m.purchaseUnit ? centsToInput(o.refPriceCents) : '')),
+        planPrice: plan,
         spec: (o.details || m.specification).slice(0, 80),
         images: o.images.slice(0, MAX_LINE_IMAGES),
         requests: [asRequest(o)],
@@ -847,8 +865,20 @@ function PoLineRow({
         <p className="num mt-1 text-right text-[12px] text-ink-3">{row.base !== null ? `= ${formatQty(row.base)} ${l.inventoryUnit}` : ''}</p>
       </div>
       <div>
-        <MoneyInput value={l.price} disabled={locked || priceLocked} onChange={(e) => onPatch({ price: e.target.value })} aria-label={`单价（元/${l.purchaseUnit}）`} className="h-10 text-right" />
-        <p className="mt-1 text-right text-[12px] text-ink-3">{priceLocked ? '已有收货，单价锁定' : `元 / ${l.purchaseUnit}`}</p>
+        <MoneyInput
+          value={l.price}
+          disabled={locked || priceLocked}
+          onChange={(e) => onPatch({ price: e.target.value, planConflict: false })}
+          aria-label={`单价（元/${l.purchaseUnit}）`}
+          className="h-10 text-right"
+        />
+        {l.planConflict ? (
+          <p className="mt-1 text-right text-[12px] text-clay" data-testid="po-plan-conflict">
+            几条需求定的方案单价不一样，请重新定价
+          </p>
+        ) : (
+          <p className="mt-1 text-right text-[12px] text-ink-3">{priceLocked ? '已有收货，单价锁定' : `元 / ${l.purchaseUnit}`}</p>
+        )}
       </div>
       <div className="text-right @4xl:pt-2">{row.amount !== null ? <Money cents={row.amount} className="text-[15px] font-bold" /> : <span className="text-ink-4">—</span>}</div>
       <div className="flex items-start gap-1 @4xl:pt-1">
