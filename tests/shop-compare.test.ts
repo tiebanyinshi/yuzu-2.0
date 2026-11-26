@@ -1,26 +1,44 @@
 // 采购商城比价页（FR-01 批次 A）单测：纯整数含税总成本公式、0 分误差一致性、阻断原因与推荐解释。
 
 import { describe, expect, it } from 'vitest';
-import { buildCompareOffers, formatTaxRate, grossCents, lineGoodsCents, lineGrossCents, resolveCompareQtyMilli, SHOP_MAX_QTY_MILLI, type ShopCatalog, type ShopOffer } from '../src/shared/shop';
+import {
+  applyCompareCartSelection,
+  buildCompareOffers,
+  filterAndSortCompareOffers,
+  findMaterialCartLine,
+  formatTaxRate,
+  grossCents,
+  lineGoodsCents,
+  lineGrossCents,
+  resolveCompareQtyMilli,
+  SHOP_MAX_QTY_MILLI,
+  type ShopCart,
+  type ShopCatalog,
+  type ShopOffer,
+} from '../src/shared/shop';
 
-const makeOffer = (over: Partial<ShopOffer> = {}): ShopOffer => ({
-  skuId: 101,
-  skuCode: 'SKU-A',
-  priceVersion: 1,
-  supplier: { id: 1, name: '甲供应商', admission: 'approved' },
-  priceCents: 1000,
-  taxRateBp: 1300,
-  grossCents: grossCents(1000, 1300),
-  moqMilli: 10_000,
-  leadDays: 3,
-  freightCents: 0,
-  validUntil: '2027-12-31',
-  stores: [],
-  status: 'approved',
-  corePending: false,
-  block: null,
-  ...over,
-});
+const makeOffer = (over: Partial<ShopOffer> = {}): ShopOffer => {
+  const priceCents = over.priceCents ?? 1000;
+  const taxRateBp = over.taxRateBp ?? 1300;
+  return {
+    skuId: 101,
+    skuCode: 'SKU-A',
+    priceVersion: 1,
+    supplier: { id: 1, name: '甲供应商', admission: 'approved' },
+    priceCents,
+    taxRateBp,
+    grossCents: over.grossCents ?? grossCents(priceCents, taxRateBp),
+    moqMilli: 10_000,
+    leadDays: 3,
+    freightCents: 0,
+    validUntil: '2027-12-31',
+    stores: [],
+    status: 'approved',
+    corePending: false,
+    block: null,
+    ...over,
+  };
+};
 
 const makeCatalog = (offers: ShopOffer[]): ShopCatalog => ({
   storeId: 1,
@@ -157,5 +175,57 @@ describe('比价聚合 buildCompareOffers（0 分误差、排序、阻断与推�
     expect(resolveCompareQtyMilli(item, 'invalid')).toEqual({ qtyMilli: 12_500, clamped: false });
     expect(resolveCompareQtyMilli(item, null)).toEqual({ qtyMilli: 12_500, clamped: false });
     expect(resolveCompareQtyMilli(undefined, null)).toEqual({ qtyMilli: 1000, clamped: false });
+  });
+});
+
+describe('比价页排序、筛选与原位替换清单（批次 B）', () => {
+  it('按总成本/单价/交期排序并按包邮/可立即下单/已准入筛选', () => {
+    const offers = buildCompareOffers(
+      makeCatalog([
+        makeOffer({ skuId: 1, priceCents: 1000, freightCents: 0, leadDays: 5, moqMilli: 10_000 }),
+        makeOffer({ skuId: 2, priceCents: 950, freightCents: 1500, leadDays: 2, moqMilli: 10_000 }),
+        makeOffer({ skuId: 3, supplier: { id: 3, name: '未准入', admission: 'pending' }, priceCents: 800, freightCents: 0, leadDays: 1, moqMilli: 10_000, block: 'supplier' }),
+      ]),
+      16,
+      10_000,
+      '2026-11-25T10:00:00Z',
+    ).offers;
+    const none = { freeShippingOnly: false, purchasableOnly: false, admittedOnly: false };
+    expect(filterAndSortCompareOffers(offers, 'total', none).map((o) => o.skuId)).toEqual([1, 2, 3]);
+    expect(filterAndSortCompareOffers(offers, 'unit', none).map((o) => o.skuId)).toEqual([2, 1, 3]);
+    expect(filterAndSortCompareOffers(offers, 'lead', none).map((o) => o.skuId)).toEqual([2, 1, 3]);
+    expect(filterAndSortCompareOffers(offers, 'total', { ...none, freeShippingOnly: true }).map((o) => o.skuId)).toEqual([1, 3]);
+    expect(filterAndSortCompareOffers(offers, 'total', { ...none, freeShippingOnly: true, purchasableOnly: true }).map((o) => o.skuId)).toEqual([1]);
+    expect(filterAndSortCompareOffers(offers, 'total', { ...none, admittedOnly: true }).map((o) => o.skuId)).toEqual([1, 2]);
+  });
+
+  it('选这家加清单、原位替换供应商（只留 1 行且运费只计一次）、跨门店不静默覆写', () => {
+    const matSkus = [101, 102, 103];
+    const empty: ShopCart = { storeId: null, lines: [] };
+    // 1) 加入新物料
+    const added = applyCompareCartSelection(empty, { skuId: 101, priceVersion: 1 }, matSkus, 10_000, 1);
+    expect(added.kind).toBe('added');
+    if (added.kind === 'cross_store') throw new Error('unexpected');
+    expect(added.cart).toEqual({ storeId: 1, lines: [{ skuId: 101, priceVersion: 1, qtyMilli: 10_000 }] });
+
+    // 2) 插入另一个物料 201 在前面，再替换 101 → 102：应原位替换，保留顺序且该物料仅 1 行
+    const withOther: ShopCart = { storeId: 1, lines: [{ skuId: 201, priceVersion: 1, qtyMilli: 5000 }, ...added.cart.lines] };
+    expect(findMaterialCartLine(withOther, 1, matSkus)?.skuId).toBe(101);
+    const replaced = applyCompareCartSelection(withOther, { skuId: 102, priceVersion: 2 }, matSkus, 12_000, 1);
+    expect(replaced.kind).toBe('replaced');
+    if (replaced.kind === 'cross_store') throw new Error('unexpected');
+    expect(replaced.replacedSkuId).toBe(101);
+    expect(replaced.cart.lines).toEqual([
+      { skuId: 201, priceVersion: 1, qtyMilli: 5000 },
+      { skuId: 102, priceVersion: 2, qtyMilli: 12_000 },
+    ]);
+
+    // 3) 跨门店时不静默覆写；确认后才重置
+    const cross = applyCompareCartSelection(replaced.cart, { skuId: 103, priceVersion: 1 }, matSkus, 10_000, 2);
+    expect(cross).toEqual({ kind: 'cross_store' });
+    const reset = applyCompareCartSelection(replaced.cart, { skuId: 103, priceVersion: 1 }, matSkus, 10_000, 2, true);
+    expect(reset.kind).toBe('added');
+    if (reset.kind === 'cross_store') throw new Error('unexpected');
+    expect(reset.cart).toEqual({ storeId: 2, lines: [{ skuId: 103, priceVersion: 1, qtyMilli: 10_000 }] });
   });
 });

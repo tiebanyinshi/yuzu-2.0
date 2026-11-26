@@ -343,4 +343,31 @@ describe('SKU 的边界（Codex 审查）', () => {
       await ctx.sql`UPDATE materials SET purchase_unit = ${m!.purchaseUnit} WHERE id = ${mat.id}`;
     }
   });
+
+  it('比价接口 GET /api/erp/shop/offers：服务端计算可采购与阻断原因（含 below_moq），受门店范围保护，空物料返回空态', async () => {
+    const sFree = await listed((await sku({ supplierId: supA, priceCents: 1000, taxRateBp: 1300, freightCents: 0, moqMilli: q(10), leadDays: 5 })).id);
+    const sHighMoq = await listed((await sku({ supplierId: supB, priceCents: 900, taxRateBp: 1300, freightCents: 0, moqMilli: q(50), leadDays: 3 })).id);
+    const r = await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=${mat.id}&qtyMilli=${q(10)}&storeId=${storeId}`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const offers = r.body.offers as { skuId: number; purchasable: boolean; blockReason: string | null; totalCents: number }[];
+    const freeRow = offers.find((o) => o.skuId === sFree.id)!;
+    const moqRow = offers.find((o) => o.skuId === sHighMoq.id)!;
+    expect(freeRow).toMatchObject({ purchasable: true, blockReason: null, totalCents: 11_300 });
+    expect(moqRow).toMatchObject({ purchasable: false, blockReason: 'below_moq', totalCents: 10_170 });
+    // 提高到 50：高起订量行解锁
+    const r50 = await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=${mat.id}&qtyMilli=${q(50)}&storeId=${storeId}`);
+    expect((r50.body.offers as { skuId: number; purchasable: boolean; blockReason: string | null }[]).find((o) => o.skuId === sHighMoq.id)).toMatchObject({
+      purchasable: true,
+      blockReason: null,
+    });
+    // 越权门店 403
+    const [otherStore] = await ctx.sql<{ id: number }[]>`SELECT id FROM stores WHERE id <> ${storeId} LIMIT 1`;
+    if (otherStore) {
+      expect((await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=${mat.id}&storeId=${otherStore.id}`)).status).toBe(403);
+    }
+    // 不存在的物料返回空态
+    const empty = await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=999999&storeId=${storeId}`);
+    expect(empty.status).toBe(200);
+    expect(empty.body).toMatchObject({ material: null, offers: [], recommendedSkuId: null });
+  });
 });

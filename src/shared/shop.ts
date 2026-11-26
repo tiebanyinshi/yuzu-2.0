@@ -171,6 +171,7 @@ export interface ShopCompareResult {
   storeName: string;
   today: string;
   updatedAt: string;
+  qtyMilli: number;
   offers: ShopCompareOffer[];
   recommendedSkuId: number | null;
   recommendReason: string | null;
@@ -191,8 +192,27 @@ export function resolveCompareQtyMilli(item: ShopItem | undefined, queryQty: str
   return { qtyMilli: Math.min(SHOP_MAX_QTY_MILLI, Math.min(...pool.map((o) => o.moqMilli))), clamped: false };
 }
 
-/** 构造推荐解释（只解释，不自动选中、不隐藏其他行） */
-function recommendReasonOf(sortedPurchasable: readonly ShopCompareOffer[]): string | null {
+export interface ShopCartLine {
+  skuId: number;
+  priceVersion: number;
+  qtyMilli: number;
+}
+
+export interface ShopCart {
+  storeId: number | null;
+  lines: ShopCartLine[];
+}
+
+export type ShopCompareSort = 'total' | 'unit' | 'lead';
+
+export interface ShopCompareFilters {
+  freeShippingOnly: boolean;
+  purchasableOnly: boolean;
+  admittedOnly: boolean;
+}
+
+/** 构造推荐解释（只解释，不自动选中、不隐藏其他行）；服务端 GET /api/erp/shop/offers 与前端聚合共用 */
+export function compareRecommendReason(sortedPurchasable: readonly ShopCompareOffer[]): string | null {
   const best = sortedPurchasable[0];
   if (!best) return null;
   const second = sortedPurchasable[1];
@@ -205,12 +225,82 @@ function recommendReasonOf(sortedPurchasable: readonly ShopCompareOffer[]): stri
   return '当前含税总成本最低';
 }
 
+/** 比价页排序与筛选（可采购行始终排在阻断行之前） */
+export function filterAndSortCompareOffers(offers: readonly ShopCompareOffer[], sort: ShopCompareSort, filters: ShopCompareFilters): ShopCompareOffer[] {
+  const filtered = offers.filter((o) => {
+    if (filters.freeShippingOnly && o.freightCents !== 0) return false;
+    if (filters.purchasableOnly && !o.purchasable) return false;
+    if (filters.admittedOnly && !o.admitted) return false;
+    return true;
+  });
+  return [...filtered].sort((a, b) => {
+    if (a.purchasable !== b.purchasable) return a.purchasable ? -1 : 1;
+    if (sort === 'unit') {
+      if (a.grossCents !== b.grossCents) return a.grossCents - b.grossCents;
+      if (a.totalCents !== b.totalCents) return a.totalCents - b.totalCents;
+    } else if (sort === 'lead') {
+      if (a.leadDays !== b.leadDays) return a.leadDays - b.leadDays;
+      if (a.totalCents !== b.totalCents) return a.totalCents - b.totalCents;
+    } else {
+      if (a.totalCents !== b.totalCents) return a.totalCents - b.totalCents;
+      if (a.leadDays !== b.leadDays) return a.leadDays - b.leadDays;
+    }
+    return a.skuId - b.skuId;
+  });
+}
+
+/** 查清单里是否已有该物料的某家报价（仅同门店有效） */
+export function findMaterialCartLine(cart: ShopCart, storeId: number, materialSkuIds: readonly number[]): ShopCartLine | null {
+  if (cart.storeId !== null && cart.storeId !== storeId) return null;
+  const set = new Set(materialSkuIds);
+  return cart.lines.find((l) => set.has(l.skuId)) ?? null;
+}
+
+/**
+ * 比价页「选这家」写入清单（纯函数）：
+ * - 清单属于另一门店且非空 → 除非 allowResetOtherStore 为 true，否则返回 cross_store（不静默覆写）；
+ * - 该物料已在清单 → 原位替换（保留 1 行、不重复计运费，去掉同物料可能残留的其他 SKU）；
+ * - 该物料不在清单 → 追加一行。
+ */
+export function applyCompareCartSelection(
+  cart: ShopCart,
+  offer: Pick<ShopCompareOffer, 'skuId' | 'priceVersion'>,
+  materialSkuIds: readonly number[],
+  qtyMilli: number,
+  storeId: number,
+  allowResetOtherStore = false,
+): { kind: 'cross_store' } | { kind: 'added' | 'updated' | 'replaced'; cart: ShopCart; replacedSkuId?: number } {
+  const otherStore = cart.lines.length > 0 && cart.storeId !== null && cart.storeId !== storeId;
+  if (otherStore && !allowResetOtherStore) return { kind: 'cross_store' };
+  const baseLines = otherStore ? [] : cart.lines;
+  const matSet = new Set(materialSkuIds);
+  const existingIdx = baseLines.findIndex((l) => matSet.has(l.skuId));
+  const nextLine: ShopCartLine = { skuId: offer.skuId, priceVersion: offer.priceVersion, qtyMilli };
+  if (existingIdx >= 0) {
+    const prev = baseLines[existingIdx]!;
+    const lines: ShopCartLine[] = [];
+    for (let i = 0; i < baseLines.length; i += 1) {
+      if (i === existingIdx) lines.push(nextLine);
+      else if (!matSet.has(baseLines[i]!.skuId)) lines.push(baseLines[i]!);
+    }
+    return {
+      kind: prev.skuId === offer.skuId ? 'updated' : 'replaced',
+      cart: { storeId, lines },
+      replacedSkuId: prev.skuId === offer.skuId ? undefined : prev.skuId,
+    };
+  }
+  return {
+    kind: 'added',
+    cart: { storeId, lines: [...baseLines, nextLine] },
+  };
+}
+
 /** 将 catalog 已返回的报价聚合成比价页结构；默认按「可采购优先 → 含税总成本升序 → 交期升序」排序 */
 export function buildCompareOffers(catalog: ShopCatalog, materialId: number, qtyMilli: number, updatedAt: string): ShopCompareResult {
   const storeName = catalog.stores.find((s) => s.id === catalog.storeId)?.name ?? `门店 ${catalog.storeId}`;
   const item = catalog.items.find((i) => i.material.id === materialId);
   if (!item) {
-    return { material: null, storeId: catalog.storeId, storeName, today: catalog.today, updatedAt, offers: [], recommendedSkuId: null, recommendReason: null };
+    return { material: null, storeId: catalog.storeId, storeName, today: catalog.today, updatedAt, qtyMilli, offers: [], recommendedSkuId: null, recommendReason: null };
   }
   const offers: ShopCompareOffer[] = item.offers.map((o) => {
     const blockReason: ShopCompareBlock | null = o.block ?? (qtyMilli < o.moqMilli ? 'below_moq' : null);
@@ -240,21 +330,17 @@ export function buildCompareOffers(catalog: ShopCatalog, materialId: number, qty
       totalCents,
     };
   });
-  offers.sort((a, b) => {
-    if (a.purchasable !== b.purchasable) return a.purchasable ? -1 : 1;
-    if (a.totalCents !== b.totalCents) return a.totalCents - b.totalCents;
-    if (a.leadDays !== b.leadDays) return a.leadDays - b.leadDays;
-    return a.skuId - b.skuId;
-  });
-  const ok = offers.filter((o) => o.purchasable);
+  const sorted = filterAndSortCompareOffers(offers, 'total', { freeShippingOnly: false, purchasableOnly: false, admittedOnly: false });
+  const ok = sorted.filter((o) => o.purchasable);
   return {
     material: item.material,
     storeId: catalog.storeId,
     storeName,
     today: catalog.today,
     updatedAt,
-    offers,
+    qtyMilli,
+    offers: sorted,
     recommendedSkuId: ok[0]?.skuId ?? null,
-    recommendReason: recommendReasonOf(ok),
+    recommendReason: compareRecommendReason(ok),
   };
 }

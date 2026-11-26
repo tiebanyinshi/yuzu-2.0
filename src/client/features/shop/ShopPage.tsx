@@ -7,15 +7,28 @@
 // 清单存在本机（每个账号一份）；提交时服务端按 SKU 重新核对价格版本、能不能买、起订量。
 // 提交带操作编号：先在本机记下这一笔再发，结果不确定时可以原样重提、查回或确认作废（AGENTS.md「结果待确认」）。
 
-import { useMemo, useState, type ReactNode } from 'react';
-import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ClipboardList, PencilLine, Search, ShoppingCart, Store as StoreIcon, Warehouse } from 'lucide-react';
+import { ArrowLeft, ClipboardList, Eye, PencilLine, Search, ShoppingCart, Store as StoreIcon, Warehouse } from 'lucide-react';
 import { formatYuan } from '@shared/money';
 import { formatQty, parseQty } from '@shared/quantity';
 import { MALL_DISPLAY_LABELS, type MallDisplayStatus, type MallRequest, type MallRequestBrief } from '@shared/mall';
 import { PAYMENT_INTENT_LABELS, PRIORITY_LABELS, REQUEST_PRIORITIES, type MallPaymentIntent, type RequestPriority } from '@shared/requests';
-import { lineGrossCents, SHOP_BLOCK_LABELS, SHOP_CUSTOM_UNITS, type ShopCatalog, type ShopItem, type ShopOffer } from '@shared/shop';
+import {
+  buildCompareOffers,
+  formatTaxRate,
+  lineGrossCents,
+  resolveCompareQtyMilli,
+  SHOP_BLOCK_LABELS,
+  SHOP_COMPARE_BLOCK_LABELS,
+  SHOP_CUSTOM_UNITS,
+  type ShopCart,
+  type ShopCartLine,
+  type ShopCatalog,
+  type ShopItem,
+  type ShopOffer,
+} from '@shared/shop';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
@@ -23,6 +36,7 @@ import { lazyPage } from '../../lib/lazyPage';
 import { useSession } from '../../lib/session';
 import { cn, formatDateTime, uuid } from '../../lib/utils';
 import { LoadFailed } from '../../components/LoadFailed';
+import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, Select, Skeleton, Textarea } from '../../components/ui';
 import { ErpPage } from '../erp/ErpHome';
@@ -33,19 +47,13 @@ const ShopComparePage = lazyPage(() => import('./ShopComparePage').then((m) => m
 
 const BASE = '/erp/shop';
 const SUBMIT_URL = '/api/erp/shop/requests';
+const CATALOG_RESTORE_KEY = 'yuzu.shop.catalogRestore';
 const catalogKey = (storeId: number | null) => ['shop', 'catalog', storeId] as const;
 
 // ───────────────────────── 本机的清单与待确认的提交 ─────────────────────────
 
-interface CartLine {
-  skuId: number;
-  priceVersion: number;
-  qtyMilli: number;
-}
-interface Cart {
-  storeId: number | null;
-  lines: CartLine[];
-}
+type CartLine = ShopCartLine;
+type Cart = ShopCart;
 const memory: Record<string, string> = {};
 const store = {
   get(key: string): string | null {
@@ -143,10 +151,10 @@ export function ShopPage() {
   const updatedAt = q.dataUpdatedAt ? new Date(q.dataUpdatedAt).toISOString() : new Date().toISOString();
   let body: ReactNode;
   if (path.startsWith('compare/')) {
-    body = <ShopComparePage materialId={compareMaterialId} catalog={q.data} loading={q.isPending} error={q.error} retrying={q.isFetching} onRetry={() => void q.refetch()} updatedAt={updatedAt} />;
+    body = <ShopComparePage materialId={compareMaterialId} storeId={activeStoreId} cart={cart} setCart={setCart} />;
   } else if (q.isPending) body = <Skeleton className="h-80" />;
   else if (q.error) body = <LoadFailed title="商城没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
-  else if (path === '') body = <Home c={q.data} setStore={pickStore} />;
+  else if (path === '') body = <Home c={q.data} setStore={pickStore} updatedAt={updatedAt} />;
   else if (path.startsWith('item/')) body = <ItemPage c={q.data} materialId={Number(path.slice(5))} cart={cart} setCart={setCart} />;
   else if (path === 'cart') body = <CartPage c={q.data} cart={cart} setCart={setCart} />;
   else if (path === 'checkout') body = <Checkout c={q.data} cart={cart} setCart={setCart} />;
@@ -181,17 +189,73 @@ export function ShopPage() {
 
 // ───────────────────────── 目录 ─────────────────────────
 
-function Home({ c, setStore }: { c: ShopCatalog; setStore: (id: number) => void }) {
-  const [cat, setCat] = useState<string | null>(null);
-  const [kw, setKw] = useState('');
+interface CatalogSavedState {
+  cat: string | null;
+  kw: string;
+  scrollTop: number;
+  winY: number;
+}
+
+function readSavedCatalog(): CatalogSavedState | null {
+  try {
+    const raw = sessionStorage.getItem(CATALOG_RESTORE_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(CATALOG_RESTORE_KEY);
+    return JSON.parse(raw) as CatalogSavedState;
+  } catch {
+    return null;
+  }
+}
+
+function Home({ c, setStore, updatedAt }: { c: ShopCatalog; setStore: (id: number) => void; updatedAt: string }) {
+  const location = useLocation();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const restored = useRef<CatalogSavedState | null>(null);
+  if (restored.current === null && ((location.state as { restoreCatalog?: boolean } | null)?.restoreCatalog || typeof window !== 'undefined')) {
+    const saved = readSavedCatalog();
+    if (saved) restored.current = saved;
+  }
+  const [cat, setCat] = useState<string | null>(() => restored.current?.cat ?? null);
+  const [kw, setKw] = useState(() => restored.current?.kw ?? '');
+  const [previewItem, setPreviewItem] = useState<ShopItem | null>(null);
+
+  // 返回商品列表时恢复进入比价页前的滚动位置（ERP 主内容区在 <main> 里滚动，同时兼容窗口滚动）
+  useEffect(() => {
+    const target = restored.current;
+    if (!target) return;
+    restored.current = null;
+    requestAnimationFrame(() => {
+      const scroller = rootRef.current?.closest('main');
+      if (scroller && target.scrollTop > 0) scroller.scrollTop = target.scrollTop;
+      if (target.winY > 0) window.scrollTo(0, target.winY);
+    });
+  }, []);
+
+  const rememberPosition = () => {
+    try {
+      const scroller = rootRef.current?.closest('main');
+      const payload: CatalogSavedState = { cat, kw, scrollTop: scroller?.scrollTop ?? 0, winY: window.scrollY };
+      sessionStorage.setItem(CATALOG_RESTORE_KEY, JSON.stringify(payload));
+    } catch {
+      // 隐私模式无法写 sessionStorage 时静默降级
+    }
+  };
+
   const items = useMemo(() => {
     const k = kw.trim().toLowerCase();
     return c.items.filter(
       (i) => (!cat || (i.material.category || '未分类') === cat) && (!k || `${i.material.name} ${i.material.code} ${i.material.specification} ${i.material.category}`.toLowerCase().includes(k)),
     );
   }, [c.items, cat, kw]);
+
+  const previewCompare = useMemo(() => {
+    if (!previewItem) return null;
+    const def = resolveCompareQtyMilli(previewItem, null);
+    return buildCompareOffers(c, previewItem.material.id, def.qtyMilli, updatedAt);
+  }, [c, previewItem, updatedAt]);
+
   return (
-    <div className="space-y-4" data-testid="shop-home">
+    <div ref={rootRef} className="space-y-4" data-testid="shop-home">
       <div className="flex flex-wrap items-end gap-3">
         <Field label="门店（业态）" htmlFor="shop-store">
           <Select id="shop-store" value={c.storeId} onChange={(e) => setStore(Number(e.target.value))} fullWidth={false}>
@@ -229,7 +293,7 @@ function Home({ c, setStore }: { c: ShopCatalog; setStore: (id: number) => void 
           {items.map((i) => (
             <li key={i.material.id}>
               <div className="mo-lift flex h-full flex-col rounded-xl border border-line bg-card p-4 shadow-card hover:border-pine/50">
-                <Link to={`${BASE}/item/${i.material.id}`} className="flex flex-1 flex-col" data-testid={`shop-item-${i.material.id}`}>
+                <Link to={`${BASE}/item/${i.material.id}`} onClick={rememberPosition} className="flex flex-1 flex-col" data-testid={`shop-item-${i.material.id}`}>
                   <span className="text-[12.5px] text-ink-3">{i.material.category || '未分类'}</span>
                   <span className="mt-0.5 text-[15px] font-bold text-ink">{i.material.name}</span>
                   <span className="text-[12.5px] text-ink-3">
@@ -241,13 +305,26 @@ function Home({ c, setStore }: { c: ShopCatalog; setStore: (id: number) => void 
                   <span className="text-[16px] font-bold text-clay">
                     {i.fromGrossCents !== null ? `${formatYuan(i.fromGrossCents)} 起` : <span className="text-[13px] font-normal text-ink-4">暂无可采购价</span>}
                   </span>
-                  <Link
-                    to={`${BASE}/compare/${i.material.id}?from=catalog&storeId=${c.storeId}`}
-                    className="tap relative inline-flex items-center text-[12.5px] font-semibold text-pine hover:underline"
-                    data-testid={`shop-compare-link-${i.material.id}`}
-                  >
-                    {i.purchasable} 家可选 →
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewItem(i)}
+                      className="tap relative inline-flex items-center gap-1 text-[12.5px] text-ink-3 hover:text-ink"
+                      aria-label={`快捷预览 ${i.material.name} 报价`}
+                      data-testid={`shop-preview-btn-${i.material.id}`}
+                    >
+                      <Eye className="size-3.5" />
+                      预览
+                    </button>
+                    <Link
+                      to={`${BASE}/compare/${i.material.id}?from=catalog&storeId=${c.storeId}`}
+                      onClick={rememberPosition}
+                      className="tap relative inline-flex items-center text-[12.5px] font-semibold text-pine hover:underline"
+                      data-testid={`shop-compare-link-${i.material.id}`}
+                    >
+                      {i.purchasable} 家可选 →
+                    </Link>
+                  </div>
                 </div>
               </div>
             </li>
@@ -260,6 +337,59 @@ function Home({ c, setStore }: { c: ShopCatalog; setStore: (id: number) => void 
           <Button icon={<PencilLine className="size-4" />}>自主申请</Button>
         </Link>
       </Card>
+
+      {/* 卡片快捷只读预览（UX-02：仅预览报价摘要，不提供选供应商操作，正式比价进入独立比价页） */}
+      <Dialog
+        open={previewItem !== null}
+        onClose={() => setPreviewItem(null)}
+        title={previewItem ? `${previewItem.material.name} · 报价快捷预览` : '报价快捷预览'}
+        width="max-w-lg"
+        footer={
+          previewItem && (
+            <>
+              <Button variant="ghost" onClick={() => setPreviewItem(null)}>
+                关闭
+              </Button>
+              <Link
+                to={`${BASE}/compare/${previewItem.material.id}?from=catalog&storeId=${c.storeId}`}
+                onClick={() => {
+                  rememberPosition();
+                  setPreviewItem(null);
+                }}
+              >
+                <Button variant="primary" data-testid="shop-preview-to-compare">
+                  进入独立比价页 →
+                </Button>
+              </Link>
+            </>
+          )
+        }
+      >
+        {previewCompare && previewItem && (
+          <div className="space-y-2.5 text-[13px]" data-testid="shop-quick-preview">
+            <p className="text-[12.5px] text-ink-3">
+              只读快捷预览（按 {formatQty(previewCompare.qtyMilli)} {previewItem.material.unit} 试算）；完整横向比价与选供应商请进入独立比价页。
+            </p>
+            <ul className="divide-y divide-line rounded-lg border border-line">
+              {previewCompare.offers.slice(0, 5).map((o) => (
+                <li key={o.skuId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-ink">{o.supplierName}</p>
+                    <p className="text-[12.5px] text-ink-3">
+                      含税 {formatYuan(o.grossCents)}/{previewItem.material.unit}（税 {formatTaxRate(o.taxRateBp)}）· {o.freightCents === 0 ? '包邮' : `运费 ${formatYuan(o.freightCents)}`} · 交期{' '}
+                      {o.leadDays} 天
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-clay">{formatYuan(o.totalCents)}</p>
+                    <Badge tone={o.purchasable ? 'pine' : 'ember'}>{o.purchasable ? '可采购' : SHOP_COMPARE_BLOCK_LABELS[o.blockReason!]}</Badge>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Dialog>
     </div>
   );
 }
@@ -456,6 +586,15 @@ function CartPage({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (
               <Button size="sm" onClick={() => setCart({ ...cart, lines: cart.lines.map((l) => (l.skuId === r.line.skuId ? { ...l, priceVersion: r.offer!.priceVersion } : l)) })}>
                 确认新价
               </Button>
+            )}
+            {r.item && (
+              <Link
+                to={`${BASE}/compare/${r.item.material.id}?from=list&skuId=${r.line.skuId}&qty=${encodeURIComponent(formatQty(r.line.qtyMilli))}&storeId=${c.storeId}`}
+                className="tap relative inline-flex h-8 items-center rounded-sm px-2.5 text-[12.5px] font-semibold text-pine hover:bg-paper-2"
+                data-testid={`shop-cart-switch-${r.line.skuId}`}
+              >
+                换供应商
+              </Link>
             )}
             <Button size="sm" variant="ghost" onClick={() => setCart({ ...cart, lines: cart.lines.filter((l) => l.skuId !== r.line.skuId) })}>
               移除

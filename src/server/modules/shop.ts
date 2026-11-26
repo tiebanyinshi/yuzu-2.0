@@ -11,9 +11,28 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { shiftDate } from '@shared/labels';
 import { can } from '@shared/permissions';
 import { REQUEST_PRIORITIES } from '@shared/requests';
-import { grossCents, SHOP_BLOCK_LABELS, type ShopBlock, type ShopCatalog, type ShopItem, type ShopOffer, type ShopSku, type ShopSkuCore, type ShopSkuStatus } from '@shared/shop';
+import {
+  compareRecommendReason,
+  filterAndSortCompareOffers,
+  grossCents,
+  lineGoodsCents,
+  lineGrossCents,
+  SHOP_BLOCK_LABELS,
+  SHOP_MAX_QTY_MILLI,
+  type ShopBlock,
+  type ShopCatalog,
+  type ShopCompareBlock,
+  type ShopCompareOffer,
+  type ShopCompareResult,
+  type ShopItem,
+  type ShopOffer,
+  type ShopSku,
+  type ShopSkuCore,
+  type ShopSkuStatus,
+} from '@shared/shop';
 import type { Db } from '../db';
 import { guardAny } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
@@ -155,6 +174,96 @@ async function catalog(deps: Deps, actor: Actor, storeIdRaw: unknown): Promise<S
       canApproveSku: can(actor, 'purchase.rules') || actor.role === 'owner',
     },
     today,
+  };
+}
+
+const OffersQuery = z.object({
+  materialId: z.coerce.number().int().positive('物料编号不正确'),
+  qtyMilli: z.coerce.number().int().positive().max(SHOP_MAX_QTY_MILLI, '数量不能超过 1,000,000').optional(),
+  storeId: z.coerce.number().int().positive().optional(),
+});
+
+/** 比价页专用只读接口（FR-01 第 6 条）：服务端计算 purchasable 与 blockReason（含 below_moq），返回含税总成本与推荐解释 */
+async function compareOffers(deps: Deps, actor: Actor, raw: unknown): Promise<ShopCompareResult> {
+  const q = parse(OffersQuery, raw ?? {});
+  const db = deps.sql;
+  const today = todayIn(deps.config.timezone);
+  const allowed = (await allowedStores(db, actor)).map((x) => Number(x.id));
+  const stores = (await db<{ id: number; name: string }[]>`SELECT id, name FROM stores WHERE active AND id IN ${db(allowed.length ? allowed : [0])} ORDER BY sort_order, id`).map((s) => ({
+    id: Number(s.id),
+    name: s.name,
+  }));
+  if (q.storeId !== undefined && !stores.some((s) => s.id === q.storeId)) throw forbidden('你不能查看这家门店的报价');
+  const pick = [q.storeId, actor.storeId].find((x) => x != null && stores.some((s) => s.id === x));
+  const storeId = pick ?? stores[0]?.id ?? 1;
+  const storeName = stores.find((s) => s.id === storeId)?.name ?? `门店 ${storeId}`;
+
+  const [material] = await db<{ id: number; code: string; name: string; category: string; specification: string; unit: string; note: string }[]>`
+    SELECT id, code, name, category, specification, purchase_unit AS unit, note FROM materials WHERE id = ${q.materialId} AND active AND tracked`;
+  if (!material) {
+    return { material: null, storeId, storeName, today, updatedAt: new Date().toISOString(), qtyMilli: q.qtyMilli ?? 1000, offers: [], recommendedSkuId: null, recommendReason: null };
+  }
+
+  const skus = await db<(SkuRow & { updatedAt: string })[]>`
+    SELECT ${SKU_COLS(db)}, k.updated_at FROM mall_skus k JOIN suppliers sp ON sp.id = k.supplier_id
+    WHERE k.material_id = ${q.materialId} AND k.status IN ('approved', 'disabled') ORDER BY k.id`;
+  const allStoreNames = new Map((await db<{ id: number; name: string }[]>`SELECT id, name FROM stores`).map((s) => [Number(s.id), s.name]));
+
+  // 未传 qtyMilli 时按可采购报价最小起订量（无则全部报价最小起订量），兜底 1 单位
+  let qtyMilli = q.qtyMilli ?? 1000;
+  if (q.qtyMilli === undefined && skus.length > 0) {
+    const ok = skus.filter((k) => blockOf(k, storeId, today) === null);
+    const pool = ok.length > 0 ? ok : skus;
+    qtyMilli = Math.min(SHOP_MAX_QTY_MILLI, Math.min(...pool.map((k) => Number(k.moqMilli))));
+  }
+
+  let latestMs = 0;
+  const offers: ShopCompareOffer[] = skus.map((k) => {
+    const ts = Date.parse(k.updatedAt);
+    if (!Number.isNaN(ts) && ts > latestMs) latestMs = ts;
+    const baseBlock = blockOf(k, storeId, today);
+    const moqMilli = Number(k.moqMilli);
+    const blockReason: ShopCompareBlock | null = baseBlock ?? (qtyMilli < moqMilli ? 'below_moq' : null);
+    const priceCents = Number(k.priceCents);
+    const freightCents = Number(k.freightCents);
+    const storeIds = k.storeIds.map(Number);
+    return {
+      skuId: Number(k.id),
+      skuCode: k.skuCode,
+      priceVersion: k.priceVersion,
+      supplierId: Number(k.supplierId),
+      supplierName: k.supplierName,
+      admission: k.admission,
+      admitted: k.admission === 'approved' && k.supplierActive,
+      priceCents,
+      taxRateBp: k.taxRateBp,
+      grossCents: grossCents(priceCents, k.taxRateBp),
+      freightCents,
+      moqMilli,
+      leadDays: k.leadDays,
+      estimatedArrival: shiftDate(today, k.leadDays),
+      validUntil: k.validUntil,
+      storeIds,
+      stores: storeIds.map((s) => ({ id: s, name: allStoreNames.get(s) ?? `门店 ${s}` })),
+      purchasable: blockReason === null,
+      blockReason,
+      goodsCents: lineGoodsCents(priceCents, k.taxRateBp, qtyMilli),
+      totalCents: lineGrossCents(priceCents, k.taxRateBp, qtyMilli, freightCents),
+    };
+  });
+
+  const sorted = filterAndSortCompareOffers(offers, 'total', { freeShippingOnly: false, purchasableOnly: false, admittedOnly: false });
+  const ok = sorted.filter((o) => o.purchasable);
+  return {
+    material: { ...material, id: Number(material.id) },
+    storeId,
+    storeName,
+    today,
+    updatedAt: latestMs > 0 ? new Date(latestMs).toISOString() : new Date().toISOString(),
+    qtyMilli,
+    offers: sorted,
+    recommendedSkuId: ok[0]?.skuId ?? null,
+    recommendReason: compareRecommendReason(ok),
   };
 }
 
@@ -442,6 +551,7 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   const catalogRead = guardAny('request.create', 'request.review', 'request.stock', 'purchase.manage', 'purchase.rules');
 
   app.get(`${P}/catalog`, { preHandler: catalogRead }, async (req) => catalog(deps, req.actor, (req.query as { storeId?: string } | undefined)?.storeId));
+  app.get(`${P}/offers`, { preHandler: catalogRead }, async (req) => compareOffers(deps, req.actor, req.query));
   app.post(`${P}/requests`, { preHandler: guardAny('request.create') }, async (req, reply) => {
     const r = await submit(deps, req.body, req.actor, req.ip);
     if (!r.replayed) reply.code(201);
