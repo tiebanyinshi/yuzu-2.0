@@ -56,6 +56,35 @@ export interface AppConfig {
    * 至少 32 个字符；没配为空——商城接口一律回 503 MALL_NOT_CONFIGURED。只写在 .env，不进 Git
    */
   mallApiKey: string | null;
+  /** 热表归档的保留天数（数据库评估，docs/DB_REVIEW_V8147.md 第 5 节）：超过的由每小时的归档任务挪进 archived_* 表 */
+  archive: ArchiveConfig;
+}
+
+/** 保留天数：0 = 不归档这一类 */
+export interface ArchiveConfig {
+  /** 位置事件与轨迹段（ARCHIVE_LOCATION_DAYS，默认 180） */
+  locationDays: number;
+  /** 对外调用记录（ARCHIVE_INTEGRATION_CALL_DAYS，默认 180） */
+  integrationCallDays: number;
+  /** 企业微信推送记录，只挪已发完、已失败的（ARCHIVE_WECOM_PUSH_DAYS，默认 365） */
+  wecomPushDays: number;
+}
+
+export function loadArchiveConfig(env: NodeJS.ProcessEnv): ArchiveConfig {
+  const days = (raw: string | undefined, fallback: number, name: string) => {
+    const v = raw?.trim();
+    if (!v) return fallback;
+    if (!/^\d+$/.test(v)) throw new Error(`${name} 要写整数天数（0 = 不归档）`);
+    const n = Number(v);
+    // 太短会把还在用的挪走：位置轨迹、调用记录页面看的都是近期，至少留 30 天
+    if (n !== 0 && n < 30) throw new Error(`${name} 至少 30 天（0 = 不归档）`);
+    return n;
+  };
+  return {
+    locationDays: days(env.ARCHIVE_LOCATION_DAYS, 180, 'ARCHIVE_LOCATION_DAYS'),
+    integrationCallDays: days(env.ARCHIVE_INTEGRATION_CALL_DAYS, 180, 'ARCHIVE_INTEGRATION_CALL_DAYS'),
+    wecomPushDays: days(env.ARCHIVE_WECOM_PUSH_DAYS, 365, 'ARCHIVE_WECOM_PUSH_DAYS'),
+  };
 }
 
 /**
@@ -277,6 +306,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     payrollFileKey: loadPayrollFileKey(process.env),
     geo: overrides.geo ?? loadGeoConfig(process.env, env),
     mallApiKey: loadMallApiKey(process.env),
+    archive: overrides.archive ?? loadArchiveConfig(process.env),
     ...overrides,
   };
 }

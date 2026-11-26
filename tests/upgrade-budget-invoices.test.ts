@@ -8,11 +8,13 @@ import { readdir, readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSql, type Sql } from '../src/server/db';
 import { migrate } from '../src/server/migrate';
-import { TEST_DB } from './helpers';
+import { migrationsFrom, TEST_DB } from './helpers';
 import { resetPublicSchema } from './test-db';
 
 const MIGRATIONS = new URL('../src/server/migrations/', import.meta.url);
 const NEW = ['086_expense_budgets.sql', '087_input_invoices.sql'];
+/** 8.1.47 数据库评估起的迁移（480 起）给全部表补索引、注释，用到 086、087 建的表：8.0.2 的库里也没有，升级时按文件名一起补上 */
+const LATER = migrationsFrom('480_fk_indexes.sql');
 let sql: Sql;
 
 beforeAll(() => {
@@ -25,7 +27,7 @@ afterAll(async () => {
 async function schemaAt802() {
   await resetPublicSchema(sql);
   await sql`CREATE TABLE schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`;
-  for (const f of (await readdir(MIGRATIONS)).filter((x) => x.endsWith('.sql') && !NEW.includes(x)).sort()) {
+  for (const f of (await readdir(MIGRATIONS)).filter((x) => x.endsWith('.sql') && !NEW.includes(x) && !LATER.includes(x)).sort()) {
     await sql.unsafe(await readFile(new URL(f, MIGRATIONS), 'utf8'));
     await sql`INSERT INTO schema_migrations (version) VALUES (${f})`;
   }
@@ -48,7 +50,7 @@ describe('8.0.2 → 8.0.3 · 费用预算与进项发票台账', () => {
     const [submitted] = await claim('BX-1', 'submitted');
     const [confirmed] = await claim('BX-2', 'confirmed');
 
-    expect(await migrate(sql)).toEqual(NEW);
+    expect(await migrate(sql)).toEqual([...NEW, ...LATER]);
 
     expect(await sql`SELECT kind, kind_label, source, cert_status, cert_period, issuer_name, cert_version FROM supplier_invoices WHERE id = ${inv!.id}`).toEqual([
       { kind: 'vat_special', kindLabel: '增值税专用发票', source: 'three_way', certStatus: 'pending', certPeriod: null, issuerName: '', certVersion: 1 },
