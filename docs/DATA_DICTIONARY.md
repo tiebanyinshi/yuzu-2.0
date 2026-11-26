@@ -7,7 +7,7 @@
 「只追加」的表（账本、流水、审批动作、归档表）有触发器拒绝改删，改错走冲正或作废登记。
 列表里「键」：`PK` 主键；「引用」是外键指向的表。
 
-共 451 张表、5377 列。
+共 451 张表、5378 列。
 
 ## 目录
 
@@ -395,6 +395,7 @@ v0.7.30（主线）审批中心（docs/APPROVALS.md，默认 A1–A10 待确认�
 | business_date | date |  | 是 |  |  |  |
 | created_at | timestamp with time zone |  |  | now() |  |  |
 | store_id | bigint |  |  | yuzu_store() | stores |  |
+| request_id | text |  | 是 |  |  | 写这条审计的那次请求的编号（响应头 x-request-id、日志里的 reqId）；自动任务写的为空（迁移 490） |
 
 ### auth_grants
 
@@ -2555,7 +2556,7 @@ v0.7.15 · 飞书需求 RQ-004 第二段（docs/FLOORPLAN.md）：底图转换�
 | batch_no | text |  | 是 |  |  |  |
 | produced_on | date |  | 是 |  |  |  |
 | expires_on | date |  | 是 |  |  |  |
-| redeliver_milli | bigint |  |  | 0 |  | 收货拒收里供应商要补发的数量（待补，库存单位千分；不超过拒收数，8.1.49） |
+| redeliver_milli | bigint |  |  | 0 |  | 收货拒收里供应商要补发的数量（待补，库存单位千分；不超过拒收数，8.1.51） |
 
 ### inv_docs
 
@@ -2951,7 +2952,7 @@ S5 餐饮第一步（ROADMAP 第 10 节）：出品档口、菜品的出品档�
 
 ### material_images
 
-物料的商品图（8.1.48 采购商城）：每样物料最多 6 张，sort_no=1 是封面；图片本身在 erp_images。物料主档里整组换（删了重写），改动记审计 material_images
+物料的商品图（8.1.50 采购商城）：每样物料最多 6 张，sort_no=1 是封面；图片本身在 erp_images。物料主档里整组换（删了重写），改动记审计 material_images
 
 | 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -4228,8 +4229,8 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | reason_text | text |  |  | ''::text |  |  |
 | freight_cents | bigint |  | 是 |  |  | 单位：分 |
 | tax_rate_bp | integer |  | 是 |  |  |  |
-| custom_kind | text |  | 是 |  |  | 商城自主申请：standard 非定制（现成品）/ custom 定制；选品的行为空（8.1.49） |
-| custom_spec | jsonb |  | 是 |  |  | 定制的结构化要求：size 尺寸规格、craft 材质工艺、scene 使用场景、sample 是否打样、budgetCents 预算（8.1.49） |
+| custom_kind | text |  | 是 |  |  | 商城自主申请：standard 非定制（现成品）/ custom 定制；选品的行为空（8.1.51） |
+| custom_spec | jsonb |  | 是 |  |  | 定制的结构化要求：size 尺寸规格、craft 材质工艺、scene 使用场景、sample 是否打样、budgetCents 预算（8.1.51） |
 
 ### purchase_request_progress_marks
 
@@ -4281,7 +4282,7 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | budget_project | text |  |  | ''::text |  |  |
 | delivery_address | text |  |  | ''::text |  |  |
 | payment_intent | text |  | 是 |  |  |  |
-| sourcing_owner_id | bigint |  | 是 |  | staff | 接单跟进的供应链 BP（商城需求池「接单」，8.1.49） |
+| sourcing_owner_id | bigint |  | 是 |  | staff | 接单跟进的供应链 BP（商城需求池「接单」，8.1.51） |
 | sourcing_claimed_at | timestamp with time zone |  | 是 |  |  | 接单时间 |
 
 ### receipt_imports
@@ -8255,7 +8256,7 @@ OA-02 账号与批量开通（docs/OA.md 第 5 节）：后台「组织架构 �
 
 ### mall_request_quotes
 
-商城需求的成交方案（8.1.49）：供应链 BP 记下的供应商、含税单价、运费、交期与报价截图；部门确认或 BP 记已在微信确认后为 selected，转采购单时带上
+商城需求的成交方案（8.1.51）：供应链 BP 记下的供应商、含税单价、运费、交期与报价截图；部门确认或 BP 记已在微信确认后为 selected，转采购单时带上
 
 | 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |

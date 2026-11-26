@@ -431,7 +431,7 @@ export interface InvDocLine {
   deliveredMilli: number | null;
   rejectedMilli: number | null;
   rejectReason: string;
-  /** 拒收里供应商要补发的（待补，8.1.49） */
+  /** 拒收里供应商要补发的（待补，8.1.51） */
   redeliverMilli: number;
   priceCents: number | null;
   amountCents: number | null;

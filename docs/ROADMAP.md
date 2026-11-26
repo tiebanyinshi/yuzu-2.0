@@ -291,10 +291,10 @@
   - 8.1.44（`350`–`369`）：《前台系统开发》十一条——收银台（备注板块、打单 / 买单 / 买角、加项目与作废迁到收银台、左栏收纳）用 `350`–`359`，备注记经办人与同组 / 单人、已发券改使用条件、混合支付、同行人组建与拆分结算、房态显示当天预约、买单时建档与查会员用 `360`–`369`。
     - `350`（`350_visit_remarks.sql`，收银台，设计见 `docs/V8144_CASHIER.md`）：前台备注（同组 / 单人，记经办人与时间，可带标签）与撤下记录，两张表都只追加；「备注记经办人与同组 / 单人」与收银台备注板块是同一份数据，一起放在这一号。回滚脚本 `docs/rollback/350_visit_remarks.down.sql`。
     - `360`（`360_coupon_usage_terms.sql`，前台 B，设计见 `docs/V8144_FRONTDESK.md`）：发过券的模板门槛、适用范围也能改（数据库保护只留面额、折扣、兑换什么、有效期、档级）。回滚 `docs/rollback/360_coupon_usage_terms.down.sql`。
-- **8.1.49（`500`–`509`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8149.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
-  - `500`（`500_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；需求单 `sourcing_owner_id`、`sourcing_claimed_at`；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/500_mall_pilot.down.sql`。
-- **8.1.48（`490`–`499`）**：采购商城做成逛电商的感觉（玻璃质感、大图卡片、商品页大图）、排到 ERP 供应链第一项（店主 2026-11-26，设计见 `docs/MALL_V8148.md`；8.1.47 与 `480`–`489` 已给数据库评估）。
-  - `490`（`490_material_images.sql`）：物料商品图 `material_images`（每样最多 6 张、第 1 张是封面，图片存在 `erp_images`）。回滚 `docs/rollback/490_material_images.down.sql`。
+- **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
+  - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；需求单 `sourcing_owner_id`、`sourcing_claimed_at`；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。
+- **8.1.50（`510`–`519`）**：采购商城做成逛电商的感觉（玻璃质感、大图卡片、商品页大图）、排到 ERP 供应链第一项（店主 2026-11-26，设计见 `docs/MALL_V8150.md`；8.1.47–8.1.49 与 `480`–`499` 已给别的开发线）。
+  - `510`（`510_material_images.sql`）：物料商品图 `material_images`（每样最多 6 张、第 1 张是封面，图片存在 `erp_images`）。回滚 `docs/rollback/510_material_images.down.sql`。
 - **8.1.46（没有迁移）**：官网接素材库（Design 四板块第三批，`docs/BOARDS.md` 第 5 节）——「官网 · 首屏视频 / 分享图」两个用途（全公司一份、只在总店换），官网经不要登录的 `/api/public/website/…` 取，取不到用自带的；Design 首页加「官网」卡片。
 - **采购商城 V1.1（批次 A–F2，不改版本号）**：独立比价页、清单按供应商分组、供应商档案与物料主档、后台总览与路由预览、我的需求分组与导出、三步分步结算。迁移号 `370`：
   - `370`（`370_shop_master_ops.sql`，合并前 Codex 审查）：商城主数据写操作（供应商编辑 / 启停、物料编辑 / 启停、批量改分类）接操作编号幂等与「确认作废」，`idempotency_keys` / `op_fences` 的类型约束动态追加 `shop_master`。回滚 `docs/rollback/370_shop_master_ops.down.sql`。
@@ -315,6 +315,9 @@
   - `481`（`481_schema_comments.sql`）：全部表与 637 列的库内注释（COMMENT ON，取自建表那份迁移的注释），`docs/DATA_DICTIONARY.md` 由它生成。回滚 `docs/rollback/481_schema_comments.down.sql`。
   - `482`（`482_store_fks.sql`）：8 张有 `store_id` 却没挂门店外键的表补外键（先 NOT VALID 再 VALIDATE）。回滚 `docs/rollback/482_store_fks.down.sql`。
   - `483`（`483_archive_tables.sql`）：位置事件、轨迹段、对外调用记录、企业微信推送记录的归档表 `archived_*`，原表只追加的触发器在归档任务里放行 DELETE。回滚 `docs/rollback/483_archive_tables.down.sql`（已归档的先挪回原表）。
+
+- **后端评估与加固 8.1.48（店主 2026-11-26「审查后端、出评估报告、学 Medusa / Supabase / Trigger.dev、以瘦身为目标」，报告见 `docs/BACKEND_REVIEW_V8148.md`）**：迁移号 `490`–`499`：
+  - `490`（`490_audit_request_id.sql`）：审计记录 `audit_logs` 加请求编号 `request_id`（可空，日志与审计对得上）。回滚 `docs/rollback/490_audit_request_id.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

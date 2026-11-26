@@ -109,7 +109,7 @@ export interface RequestLineProgress {
   receivedMilli: number;
   /** 已生效的退供应商数量 */
   returnedMilli: number;
-  /** 收货时拒收的数量与其中供应商要补发的（待补，8.1.49） */
+  /** 收货时拒收的数量与其中供应商要补发的（待补，8.1.51） */
   rejectedMilli: number;
   redeliverMilli: number;
   inventoryUnit: string | null;
@@ -171,9 +171,9 @@ export interface RequestLineMallInfo {
   freightCents: number | null;
   /** 税率（基点，1300 = 13%） */
   taxRateBp: number | null;
-  /** 自主申请（8.1.49）：standard 非定制 / custom 定制；选品的行为空 */
+  /** 自主申请（8.1.51）：standard 非定制 / custom 定制；选品的行为空 */
   customKind: MallCustomKind | null;
-  /** 定制的结构化要求（8.1.49） */
+  /** 定制的结构化要求（8.1.51） */
   customSpec: MallCustomSpec | null;
 }
 
@@ -299,7 +299,7 @@ export interface OpenRequestLine {
   supplier: { id: number; name: string } | null;
   /** 已经从库存领用的数量（这一行的单位，8.1.10）：转采购单时默认买剩下的 */
   issuedQtyMilli: number;
-  /** 商城需求选定的成交方案（8.1.49）：供应商（没建档的只有名字）、含税单价、交期；没选定的为空 */
+  /** 商城需求选定的成交方案（8.1.51）：供应商（没建档的只有名字）、含税单价、交期；没选定的为空 */
   plan: { supplierId: number | null; supplierName: string; unitPriceCents: number; taxRateBp: number; leadDays: number } | null;
 }
 

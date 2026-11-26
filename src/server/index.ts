@@ -1,3 +1,4 @@
+import { every } from './lib/throttle';
 import { buildApp } from './app';
 import { purgeExpiredSessions } from './auth/session';
 import { ensureInitialOwner } from './bootstrap';
@@ -62,12 +63,10 @@ async function main() {
 
   // 每分钟的自动任务（赠金到期、会员到期处理、权益发放、生日礼、预约、会员挑战、次卡过期，见 jobs.ts）：
   // 启动时先跑一次，之后每分钟一次；生日礼每 10 分钟查一次
-  let lastBirthday = 0;
+  const birthdayDue = every(10 * 60_000);
   const jobLog: JobLog = { info: (msg) => app.log.info(msg), error: (msg, err) => app.log.error({ err }, msg) };
   const sweep = async () => {
-    const birthday = Date.now() - lastBirthday >= 10 * 60_000;
-    if (birthday) lastBirthday = Date.now();
-    await runMinuteJobs({ sql, config }, jobLog, { birthday });
+    await runMinuteJobs({ sql, config }, jobLog, { birthday: birthdayDue() });
     // 顺带检查应用在跑的标记（数据库重启过、专用连接断了就重新拿）
     try {
       await presence.ensure();
@@ -78,7 +77,19 @@ async function main() {
   await sweep();
   // CI 的升级自检等这一行再停应用（停在半路，会员到期处理等记录会停在「没跑完」）
   app.log.info('启动时的每分钟任务已跑完一轮');
-  const sweeper = setInterval(() => void sweep(), 60_000);
+  // 上一轮还没跑完（库忙、任务多）就跳过这一轮，不叠着跑（8.1.48 后端评估第 4 节）；停机时等正在跑的这一轮收尾
+  let sweeping: Promise<void> | null = null;
+  const sweeper = setInterval(() => {
+    if (sweeping) {
+      app.log.warn('上一轮每分钟任务还没跑完，跳过这一轮');
+      return;
+    }
+    sweeping = sweep()
+      .catch((error) => app.log.error({ err: error }, '每分钟任务出错，下一分钟重试'))
+      .finally(() => {
+        sweeping = null;
+      });
+  }, 60_000);
 
   // 硬件连接（v0.7.21）：每 2 秒查一次设备（网口心跳、终端上报超时）；打印任务的恢复在开端口之前做过了。
   // 断网打印队列（v0.7.28）：每轮心跳之后，恢复在线的打印机把等它的单子改回排队补打，等太久的不再打
@@ -112,6 +123,8 @@ async function main() {
       await app.close();
       await mpApp?.close();
       await canteenApp?.close();
+      // 正在跑的每分钟任务收尾再断库（最多等到上面的 10 秒强退）
+      await sweeping;
       await presence.release();
       await sql.end({ timeout: 5 });
     } catch (error) {

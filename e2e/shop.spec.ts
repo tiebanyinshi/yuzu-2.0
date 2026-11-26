@@ -118,7 +118,7 @@ test.describe('采购商城', () => {
     for (const id of skuIds) await page.request.post(`/api/erp/shop/skus/${id}/disable`, { data: {} });
   });
 
-  test('商品图（8.1.48）：物料主档传一张图、保存 → 商城卡片与商品页都换上这张图', async ({ page }) => {
+  test('商品图（8.1.50）：物料主档传一张图、保存 → 商城卡片与商品页都换上这张图', async ({ page }) => {
     await login(page);
     const cat = (await (await page.request.get('/api/erp/shop/catalog')).json()) as { items: { material: { id: number; imageIds: number[] } }[] };
     const item = cat.items[0];
@@ -147,7 +147,7 @@ test.describe('采购商城', () => {
     expect((await page.request.put(`/api/erp/shop/materials/${id}/images`, { data: { imageIds: [], expectedImageIds: cur } })).ok()).toBe(true);
   });
 
-  test('试点（8.1.49）：定制申请 → 退回 → 在原单补资料重提 → 采购接单、记成交方案 → 部门确认方案', async ({ page }) => {
+  test('试点（8.1.51）：定制申请 → 退回 → 在原单补资料重提 → 采购接单、记成交方案 → 部门确认方案', async ({ page }) => {
     await login(page);
     const stamp = Date.now().toString(36);
     const today = ((await (await page.request.get('/api/auth/me')).json()) as { calendarToday: string }).calendarToday;

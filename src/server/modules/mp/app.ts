@@ -2,7 +2,7 @@
 // 只认网关：每个请求都要带网关密钥（比对摘要，常量时间）。这个端口上没有员工会话、管理后台和静态页面，
 // 员工用的端口（PORT）上也没有 /api/mp/*；Tailscale 只放行网关服务器到这个端口。
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { baseServerOptions, installErrorHandler, installRequestId, sharedKeyMatcher } from '../../lib/http-kit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { MP_GATEWAY_HEADER } from '@shared/mp';
 import type { AppConfig } from '../../config';
@@ -26,8 +26,6 @@ import { purgeOldBindings } from './retention';
 import { registerMpMemberRoutes } from './routes';
 import { registerMpStudioRoutes } from './studio-routes';
 
-const digest = (s: string) => createHash('sha256').update(s, 'utf8').digest();
-
 export interface MpAppOptions {
   /** 门店系统的微信支付（第二期）：不给就按环境变量建（没配为 null）；测试传模拟的 */
   pay?: PayRuntime | null;
@@ -40,13 +38,12 @@ export interface MpAppOptions {
 export async function buildMpApp(sql: Sql, config: AppConfig, opts: MpAppOptions = {}): Promise<FastifyInstance> {
   const key = config.mp.gatewayKey;
   if (!key || key.length < 32) throw new Error('小程序端口没有配网关密钥（MP_GATEWAY_KEY，至少 32 个字符），不开');
-  const expected = digest(key);
-  const app = Fastify({ logger: { level: config.logLevel }, bodyLimit: 16 * 1024 });
+  const keyMatches = sharedKeyMatcher(key);
+  // 网关转来的 x-request-id 照认（lib/http-kit.ts），网关与门店的日志能串起来
+  const app = Fastify({ ...baseServerOptions(config.logLevel), bodyLimit: 16 * 1024 });
 
   app.addHook('onRequest', async (req) => {
-    const got = req.headers[MP_GATEWAY_HEADER];
-    // 先各自取摘要再比：长度不同也不提前返回
-    if (typeof got !== 'string' || !timingSafeEqual(digest(got), expected)) {
+    if (!keyMatches(req.headers[MP_GATEWAY_HEADER])) {
       throw new AppError(401, 'MP_GATEWAY_REJECTED', '请求来源不正确');
     }
   });
@@ -66,25 +63,14 @@ export async function buildMpApp(sql: Sql, config: AppConfig, opts: MpAppOptions
     return payload;
   });
 
-  // 错误文字网关会原样转给小程序，面向顾客；不带内部细节
-  app.setErrorHandler((error, req, reply) => {
-    if (error instanceof AppError) {
-      reply.status(error.status).send({ error: { code: error.code, message: error.message } });
-      return;
-    }
-    const e = error as { statusCode?: number; code?: string };
-    if (e.code === '55P03' || e.code === '57014' || e.code === '40P01' || e.code === '40001') {
-      // 等锁或执行超时、死锁、串行化冲突（8.1.3）：事务已回滚，确定没有生效
-      req.log.warn({ err: error }, e.code === '40P01' ? '死锁，事务已回滚' : e.code === '40001' ? '串行化冲突，事务已回滚' : '记账等待超时');
-      reply.status(409).send({ error: { code: 'BUSY', message: '门店系统正忙，这次没有生效，请稍后再试' } });
-      return;
-    }
-    if (e.statusCode && e.statusCode < 500) {
-      reply.status(e.statusCode).send({ error: { code: 'BAD_REQUEST', message: '请求格式不正确' } });
-      return;
-    }
-    req.log.error({ err: error }, '小程序端口未处理的错误');
-    reply.status(500).send({ error: { code: 'INTERNAL', message: '门店系统出了点问题，请稍后再试' } });
+  installRequestId(app);
+  // 错误文字网关会原样转给小程序，面向顾客；不带内部细节（lib/http-kit.ts 统一的错误出口）
+  installErrorHandler(app, {
+    busy: () => '门店系统正忙，这次没有生效，请稍后再试',
+    internal: '门店系统出了点问题，请稍后再试',
+    details: false,
+    dbGuards: false,
+    logLabel: '小程序端口未处理的错误',
   });
   app.setNotFoundHandler((_req, reply) => {
     reply.status(404).send({ error: { code: 'NOT_FOUND', message: '接口不存在' } });

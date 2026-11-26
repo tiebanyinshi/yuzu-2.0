@@ -1,3 +1,4 @@
+import { baseServerOptions, installErrorHandler, installRequestId } from './lib/http-kit';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import cookie from '@fastify/cookie';
@@ -100,6 +101,7 @@ import { registerMarketingCostRoutes } from './modules/marketing-cost';
 import { registerMembershipRoutes } from './modules/membership';
 import { registerBenefitRoutes } from './modules/benefits';
 import { registerVipLockerRoutes } from './modules/vip-lockers';
+import { registerLockerRoutes } from './modules/lockers';
 import { registerBenefitTierRoutes } from './modules/benefit-tiers';
 import { registerTrialRoutes } from './modules/member-trials';
 import { registerDeviceRoutes } from './modules/devices';
@@ -192,7 +194,8 @@ function originHost(origin: string): string | null {
 
 export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: { level: config.logLevel },
+    // 日志脱敏、请求编号（8.1.48，lib/http-kit.ts）
+    ...baseServerOptions(config.logLevel),
     bodyLimit: 64 * 1024,
     // 正式服在反向代理（Caddy）后面时设 TRUST_PROXY：来源 IP、https 按代理转来的算（8.0.0，docs/RELEASE_V800.md）
     trustProxy: config.trustProxy.length ? config.trustProxy : false,
@@ -240,7 +243,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   // 当前门店（8.0.22，docs/MULTISTORE_V8022.md 第 3 节）：处理请求时在这家店的上下文里——事务开头记上门店、
   // 业务表 store_id 的默认值取它；放在请求体解析以后（preHandler），处理函数整个在里面
   app.addHook('preHandler', (req, _reply, done) => {
-    runInStore(req.actor?.storeId ?? DEFAULT_STORE_ID, done);
+    runInStore(req.actor?.storeId ?? DEFAULT_STORE_ID, done, req.id);
   });
 
   // 浏览器按声明的类型解析响应，不猜测内容类型（测试服 E2E 报告）；不让别的网站把页面嵌进去（防点击劫持），
@@ -252,20 +255,11 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
     return payload;
   });
 
-  app.setErrorHandler((error, req, reply) => {
-    if (error instanceof AppError) {
-      reply.status(error.status).send({ error: { code: error.code, message: error.message, details: error.details } });
-      return;
-    }
-    const e = error as { statusCode?: number; code?: string; message: string };
-    if (e.code === '23514' || e.code === '23503') {
-      req.log.warn({ err: error }, '数据库约束拦截');
-      reply.status(422).send({ error: { code: 'CONSTRAINT', message: '数据校验未通过，操作未生效，请核对后重试' } });
-      return;
-    }
-    if (e.code === '55P03' || e.code === '57014' || e.code === '40P01' || e.code === '40001') {
+  installRequestId(app);
+  // 统一的错误出口（lib/http-kit.ts；映射规则与小程序、员工端口同一份）
+  installErrorHandler(app, {
+    busy: (req) => {
       // 等锁或执行超时、死锁、串行化冲突（8.1.3）：事务已回滚，操作没有生效；页面带原操作编号自动重发
-      req.log.warn({ err: error }, e.code === '40P01' ? '死锁，事务已回滚' : e.code === '40001' ? '串行化冲突，事务已回滚' : '记账等待超时');
       const path = routePath(req);
       const what =
         path.startsWith('/api/inventory') || path.startsWith('/api/purchase') || path.startsWith('/api/payables')
@@ -275,20 +269,12 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
             : path.startsWith('/api/admin/spaces')
               ? '空间台账'
               : '该会员';
-      reply.status(409).send({ error: { code: 'BUSY', message: `${what}正在被其他终端操作，本次未生效，请稍后重试` } });
-      return;
-    }
-    if (e.code === 'P0001') {
-      req.log.warn({ err: error }, '只追加保护拦截');
-      reply.status(409).send({ error: { code: 'IMMUTABLE', message: '已入账记录不可修改' } });
-      return;
-    }
-    if (e.statusCode && e.statusCode < 500) {
-      reply.status(e.statusCode).send({ error: { code: e.code ?? 'BAD_REQUEST', message: '请求格式不正确' } });
-      return;
-    }
-    req.log.error({ err: error }, '未处理的错误');
-    reply.status(500).send({ error: { code: 'INTERNAL', message: '服务器出了点问题，操作可能未完成，请通过单号或流水核对结果' } });
+      return `${what}正在被其他终端操作，本次未生效，请稍后重试`;
+    },
+    internal: '服务器出了点问题，操作可能未完成，请通过单号或流水核对结果',
+    details: true,
+    dbGuards: true,
+    logLabel: '未处理的错误',
   });
 
   app.get('/api/health', async () => {
@@ -462,6 +448,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerPurchaseLedgerRoutes(app, deps);
   registerLegacyRoutes(app, deps);
   registerFrontdeskRoutes(app, deps);
+  // 柜况与智能柜锁（8.1.49，docs/LOCKERS_V8149.md）
+  registerLockerRoutes(app, deps);
   registerTechnicianRoutes(app, deps);
   registerClockroomRoutes(app, deps);
   registerDiningRoutes(app, deps);

@@ -229,7 +229,7 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
       {
         ...line,
         qty: qty !== null ? formatQty(qty).replace(/,/g, '') : '',
-        // 商城需求选定了成交方案（8.1.49）：按方案的含税单价；没有再按物料参考价、部门填的参考价
+        // 商城需求选定了成交方案（8.1.51）：按方案的含税单价；没有再按物料参考价、部门填的参考价
         price: o.plan && o.unit === m.purchaseUnit ? centsToInput(o.plan.unitPriceCents) : line.price || (o.refPriceCents !== null && o.unit === m.purchaseUnit ? centsToInput(o.refPriceCents) : ''),
         spec: (o.details || m.specification).slice(0, 80),
         images: o.images.slice(0, MAX_LINE_IMAGES),
@@ -254,7 +254,7 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
     }
     setLines(next);
     setUnmatched(rest);
-    // 选定方案的供应商（8.1.49）：这次带来的行都定了同一家建过档的供应商、还没选供应商时，替采购选上
+    // 选定方案的供应商（8.1.51）：这次带来的行都定了同一家建过档的供应商、还没选供应商时，替采购选上
     const planSuppliers = new Set(openLines.data.map((o) => o.plan?.supplierId ?? null));
     const only = planSuppliers.size === 1 ? [...planSuppliers][0] : null;
     if (only && !supplierId) setSupplierId(only);

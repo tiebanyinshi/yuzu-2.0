@@ -319,7 +319,7 @@ const CustomSubmit = Header.extend({
     qtyMilli: z.number().int().positive().max(1_000_000_000),
     unit: z.string().trim().min(1).max(8),
     details: z.string().trim().max(1000).default(''),
-    /** 8.1.49：非定制（现成品）/ 定制；定制写尺寸、材质工艺、使用场景、打样、预算 */
+    /** 8.1.51：非定制（现成品）/ 定制；定制写尺寸、材质工艺、使用场景、打样、预算 */
     customKind: z.enum(['standard', 'custom']).default('standard'),
     customSpec: CustomSpecInput.nullable().default(null),
     brandModel: z.string().trim().max(150).default(''),
@@ -772,7 +772,7 @@ async function listShopMaterials(db: Db, today: string): Promise<ShopMaterialRow
   }));
 }
 
-// ───────────────────────── 商品图（8.1.48，迁移 490） ─────────────────────────
+// ───────────────────────── 商品图（8.1.50，迁移 510） ─────────────────────────
 
 /** 每样物料的商品图（按第几张排好；第 1 张是封面） */
 async function materialImages(db: Db, materialIds?: number[]): Promise<Map<number, number[]>> {
@@ -1166,7 +1166,7 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     const list = await listShopMaterials(sql, todayIn(deps.config.timezone));
     return list.find((m) => m.id === materialId)!;
   };
-  // 商品图（8.1.48）：物料主档里整组换（要「物料档案」权限）；采购商城的人都能看，只给挂在物料上的图，别的图片按编号取不到
+  // 商品图（8.1.50）：物料主档里整组换（要「物料档案」权限）；采购商城的人都能看，只给挂在物料上的图，别的图片按编号取不到
   app.put(`${P}/materials/:id/images`, { preHandler: masterWrite }, async (req) => ({
     imageIds: await setMaterialImages(sql, parse(idParam, req.params).id, req.body, req.actor.id, req.ip),
   }));
@@ -1234,7 +1234,7 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     return csvReply(reply, fileName, csv);
   });
   app.get(`${P}/requests/:id`, { preHandler: shopper }, async (req) => mallRequest(deps, req.actor, parse(idParam, req.params).id));
-  // 8.1.49 试点：退回后在原单补资料重提（提单人）；需求池接单（采购）；成交方案（采购记、部门确认或采购代记已在微信确认）
+  // 8.1.51 试点：退回后在原单补资料重提（提单人）；需求池接单（采购）；成交方案（采购记、部门确认或采购代记已在微信确认）
   app.put(`${P}/requests/:id/resubmit`, { preHandler: guardAny('request.create') }, async (req) => {
     const rid = parse(idParam, req.params).id;
     await resubmitMallRequest(deps, rid, req.body, req.actor, req.ip);

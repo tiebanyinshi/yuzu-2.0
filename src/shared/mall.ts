@@ -119,7 +119,7 @@ export interface MallRequestLine {
   expectedCategory: string;
   reasonText: string;
   imageIds: number[];
-  /** 自主申请（8.1.49）：standard 非定制 / custom 定制；选品的行为空 */
+  /** 自主申请（8.1.51）：standard 非定制 / custom 定制；选品的行为空 */
   customKind: MallCustomKind | null;
   customSpec: MallCustomSpec | null;
   progress: {
@@ -131,7 +131,7 @@ export interface MallRequestLine {
     orderedMilli: number;
     receivedMilli: number;
     returnedMilli: number;
-    /** 收货拒收的、其中供应商要补发的（待补，8.1.49；库存单位） */
+    /** 收货拒收的、其中供应商要补发的（待补，8.1.51；库存单位） */
     rejectedMilli: number;
     redeliverMilli: number;
     inventoryUnit: string | null;
@@ -139,7 +139,7 @@ export interface MallRequestLine {
 }
 
 /**
- * 成交方案（8.1.49）：供应链 BP 在微信上谈好，回到系统记下的供应商、单价、交期与报价截图。
+ * 成交方案（8.1.51）：供应链 BP 在微信上谈好，回到系统记下的供应商、单价、交期与报价截图。
  * 部门看得到供应商、交期、方案说明；价格、截图、内部备注只有采购看得到（看不到的为空）
  */
 export interface MallQuote {
@@ -199,9 +199,9 @@ export interface MallRequest {
   approvals: { action: string; actorName: string; reason: string; createdAt: string }[];
   timeline: MallTimelineNode[];
   lines: MallRequestLine[];
-  /** 接单跟进的供应链 BP（8.1.49） */
+  /** 接单跟进的供应链 BP（8.1.51） */
   sourcingOwner: { id: number; name: string; claimedAt: string } | null;
-  /** 成交方案（8.1.49） */
+  /** 成交方案（8.1.51） */
   quotes: MallQuote[];
   /** 这个账号：能不能看价格、能不能接单记方案、能不能在原单补资料、能不能确认方案 */
   can: { seePrices: boolean; source: boolean; resubmit: boolean; confirmPlan: boolean };
@@ -227,7 +227,7 @@ export interface MallRequestBrief {
   orderedLines: number;
   receivedLines: number;
   summary: string;
-  /** 接单跟进的供应链 BP（8.1.49；没人接的为空） */
+  /** 接单跟进的供应链 BP（8.1.51；没人接的为空） */
   sourcingOwner: { id: number; name: string } | null;
 }
 

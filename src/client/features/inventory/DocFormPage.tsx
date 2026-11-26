@@ -49,7 +49,7 @@ interface LineDraft {
   /** 合格实收是否手动改过（否则跟随送达数量） */
   acceptedTouched: boolean;
   rejectReason: string;
-  /** 拒收里供应商要补发的（待补，8.1.49；库存单位，空 = 0） */
+  /** 拒收里供应商要补发的（待补，8.1.51；库存单位，空 = 0） */
   redeliver: string;
   /** 批次与效期（8.0.7 3.3）：管效期的物料收货时填 */
   batchNo?: string;

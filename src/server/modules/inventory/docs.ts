@@ -81,7 +81,7 @@ const ReceiptLine = z.object({
   deliveredMilli: positiveQty('送达数量'),
   acceptedMilli: qty('合格实收数量'),
   rejectReason: z.string().trim().max(100).default(''),
-  /** 拒收里供应商要补发的（待补，8.1.49）：不超过拒收数；其余是退回不补 */
+  /** 拒收里供应商要补发的（待补，8.1.51）：不超过拒收数；其余是退回不补 */
   redeliverMilli: qty('待补数量').default(0),
   /** 每采购单位价格（分）；关联采购单时以采购单价格为准 */
   priceCents: z.number().int().nonnegative().max(100_000_000).nullable().default(null),

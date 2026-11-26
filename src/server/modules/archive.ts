@@ -3,6 +3,7 @@
 // 挪 = 同一事务里 DELETE … RETURNING 再 INSERT 进归档表（原编号不变），原表只追加的触发器只在 SET LOCAL yuzu.archiving = 'on' 时放行 DELETE。
 // 账本、单据、审计日志不在这里：只追加、永久保留。
 
+import { every } from '../lib/throttle';
 import type { ArchiveConfig } from '../config';
 import type { Sql, Tx } from '../db';
 import { setTxTimeouts } from '../lib/tx';
@@ -116,10 +117,9 @@ export async function archiveOnce(sql: Sql, cfg: ArchiveConfig, now: Date = new 
   return run;
 }
 
-let lastRun = 0;
+const archiveDue = every(60 * 60 * 1000);
 /** 每小时一次（每个进程各自计时；几个进程同时挪，同一行只会被一个删掉，另一个的那批挪 0 行） */
 export async function runHotTableArchive(sql: Sql, cfg: ArchiveConfig, now = Date.now()): Promise<ArchiveRun | null> {
-  if (now - lastRun < 60 * 60 * 1000) return null;
-  lastRun = now;
+  if (!archiveDue(now)) return null;
   return archiveOnce(sql, cfg, new Date(now));
 }

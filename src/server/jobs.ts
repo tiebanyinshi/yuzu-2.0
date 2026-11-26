@@ -2,6 +2,8 @@
 // 各项互不影响：一项出错写日志、接着跑下一项，下一分钟再试。顺序有讲究：到期处理在权益发放、生日礼之前
 // （按新的档阶发，不按过期的档阶发，Codex 自动审查 43d53e9）。
 
+import { purgeExpiredSessions } from './auth/session';
+import { every } from './lib/throttle';
 import { runHotTableArchive } from './modules/archive';
 import { sendCcDigest } from './modules/govflow/engine';
 import type { AppConfig } from './config';
@@ -37,6 +39,8 @@ export interface JobLog {
   info: (msg: string) => void;
   error: (msg: string, err?: unknown) => void;
 }
+
+const sessionPurgeDue = every(60 * 60 * 1000);
 
 export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: JobLog, opts: { now?: Date; birthday?: boolean } = {}): Promise<void> {
   const { sql, config } = deps;
@@ -90,6 +94,12 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
     if (n > 0) log.info(`清掉没传完的培训上传：${n} 个`);
   } catch (error) {
     log.error('清理没传完的培训上传失败，一小时后重试', error);
+  }
+  // 过期的登录（8.1.48 后端评估第 6 节）：原来只在启动时清，长期不重启的门店机 sessions 表一直长；改为每小时清一次
+  try {
+    if (sessionPurgeDue(now.getTime())) await purgeExpiredSessions(sql);
+  } catch (error) {
+    log.error('清理过期登录失败，一小时后重试', error);
   }
   // 热表归档（数据库评估，docs/DB_REVIEW_V8147.md 第 5 节）：每小时把超过保留天数的位置事件与轨迹段、对外调用记录、企业微信推送记录挪进归档表
   try {

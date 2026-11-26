@@ -726,7 +726,7 @@ describe('SKU 的边界（Codex 审查）', () => {
   });
 });
 
-describe('商品图（8.1.48，迁移 490）', () => {
+describe('商品图（8.1.50，迁移 510）', () => {
   const png = (n: number) => {
     // 1×1 PNG，末尾补几个字节让内容各不相同（按内容去重）
     const base = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');

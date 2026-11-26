@@ -19,6 +19,8 @@
 - [`CONVENTIONS.md`](CONVENTIONS.md)：开发约定（专题）
 - [`TESTING.md`](TESTING.md)：测试与 CI（飞书需求 RQ-008，v0.7.18 定稿；2026-11-20 改成按改动与风险挑选，见第 6 节）
 - [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
@@ -31,6 +33,7 @@
 - [`AI_V8022.md`](AI_V8022.md)：8.0.22 设计 · AI 辅助（MD-D）
 - [`APPROVALS.md`](APPROVALS.md)：审批中心（v0.7.30）
 - [`APPROVAL_V4.md`](APPROVAL_V4.md)：业财法审批流（V4.0，P01–P07）
+- [`BACKEND_REVIEW_V8148.md`](BACKEND_REVIEW_V8148.md)：后端评估与加固（8.1.48）
 - [`BENEFITS.md`](BENEFITS.md)：会员体系 v2 第二期：本店权益自动发放（v0.7.24 设计稿）
 - [`BOARDS.md`](BOARDS.md)：四个板块：CRM、ERP、WCP、Design（店主 2026-11-24）
 - [`BUDGET_INVOICES.md`](BUDGET_INVOICES.md)：费用预算与进项发票台账（8.0.3）· 设计稿
@@ -40,6 +43,8 @@
 - [`CONCIERGE_LINKS.md`](CONCIERGE_LINKS.md)：管家部与会员、资源系统联动
 - [`CONTRACTS.md`](CONTRACTS.md)：合同与法务审查（v0.7.31）
 - [`COUPONS.md`](COUPONS.md)：券与会员权益（v0.7.20，飞书需求 RQ-006 后半；定稿）
+- [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
+- [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
 - [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
 - [`DB_REVIEW_V8147.md`](DB_REVIEW_V8147.md)：数据库 Schema 评估与整改（8.1.47）
 - [`DESKS_V8115.md`](DESKS_V8115.md)：8.1.15 · 前台拆成发卡台与收银台
@@ -73,10 +78,11 @@
 - [`LEDGER.md`](LEDGER.md)：采购台账、四个视图与 12 条账目自检（v0.7.9，飞书需求 RQ-005 第三步）
 - [`LEGACY_LEDGER.md`](LEGACY_LEDGER.md)：8–10 月旧账只读对照（v0.7.10，飞书需求 RQ-005 收尾）
 - [`LINGYU_AUDIT_V8137.md`](LINGYU_AUDIT_V8137.md)：8.1.37 对照「领浴」问题表：修缺陷、加防护
+- [`LOCKERS_V8149.md`](LOCKERS_V8149.md)：柜况与智能柜锁接口（8.1.49）
 - [`MALL_V8131.md`](MALL_V8131.md)：采购商城 V1.1 对接（8.1.31，yuzu 侧）
 - [`MALL_V8132.md`](MALL_V8132.md)：采购商城并进柚子（8.1.32）
-- [`MALL_V8148.md`](MALL_V8148.md)：8.1.48 · 采购商城：逛电商的感觉、商品图、排到采购第一项
-- [`MALL_V8149.md`](MALL_V8149.md)：8.1.49 · 采购商城试点：定制 / 非定制、原单补资料、BP 接单与成交方案、收货待补
+- [`MALL_V8150.md`](MALL_V8150.md)：8.1.50 · 采购商城：逛电商的感觉、商品图、排到采购第一项
+- [`MALL_V8151.md`](MALL_V8151.md)：8.1.51 · 采购商城试点：定制 / 非定制、原单补资料、BP 接单与成交方案、收货待补
 - [`MASCOT.md`](MASCOT.md)：看板娘「柚子」（第二版：手绘动画，待店主确认）
 - [`MEMBERSHIP.md`](MEMBERSHIP.md)：会员体系 v2（设计稿；店主 2026-11-03 两次答复后修订；第一期 v0.7.23 已按本稿实现，见第 14 节）
 - [`MEMBERSHIP_FINISH.md`](MEMBERSHIP_FINISH.md)：会员体系收尾（v0.7.26）

@@ -396,7 +396,7 @@ export async function openLines(db: Db, ids?: number[]): Promise<OpenRequestLine
            coalesce((SELECT json_agg(json_build_object('id', i.image_id, 'url', '/api/erp/images/' || i.image_id) ORDER BY i.sort_no)
                      FROM purchase_request_line_images i WHERE i.request_line_id = l.id), '[]'::json) AS images,
            coalesce(ls.issued_qty_milli, 0) AS issued_qty_milli,
-           -- 商城需求选定的成交方案（8.1.49）：转采购单时带上供应商与含税单价
+           -- 商城需求选定的成交方案（8.1.51）：转采购单时带上供应商与含税单价
            (SELECT json_build_object('supplierId', q.supplier_id, 'supplierName', q.supplier_name, 'unitPriceCents', q.unit_price_cents,
                                      'taxRateBp', q.tax_rate_bp, 'leadDays', q.lead_days)
               FROM mall_request_quotes q WHERE q.line_id = l.id AND q.status = 'selected') AS plan
