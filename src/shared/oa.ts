@@ -120,7 +120,18 @@ export interface StaffImportResult {
 
 // ───────────── OA-03 站内通知与附件（docs/OA.md 第 6 节） ─────────────
 
-export const NOTIFICATION_KINDS = ['attendance_exception', 'makeup_result', 'approval_todo', 'approval_urge', 'approval_result', 'schedule_change', 'payslip', 'im_message', 'system'] as const;
+export const NOTIFICATION_KINDS = [
+  'attendance_exception',
+  'makeup_result',
+  'approval_todo',
+  'approval_urge',
+  'approval_result',
+  'schedule_change',
+  'payslip',
+  'im_message',
+  'announcement',
+  'system',
+] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
   attendance_exception: '打卡异常',
@@ -131,6 +142,7 @@ export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
   schedule_change: '排班变更',
   payslip: '工资条',
   im_message: '新消息',
+  announcement: '公告',
   system: '系统',
 };
 
@@ -311,22 +323,147 @@ export interface ScheduleCell {
   shiftIds: number[];
   /** 标了「连班」：与前后相邻的班次打卡窗口可以首尾相接 */
   consecutive: boolean;
+  /** 员工办公 v1.1 第 2 批（EO5）：这一格有未发布的改动（草稿、待删或连班待生效） */
+  unpublished?: boolean;
+}
+
+/** 一次排班发布记录 */
+export interface SchedulePublishRecord {
+  id: number;
+  groupId: number;
+  fromDate: string;
+  toDate: string;
+  staffCount: number;
+  cellCount: number;
+  publishedBy: number;
+  publishedByName: string;
+  createdAt: string;
+}
+
+/** 发布排班的结果（saved.id 是发布批次，没有待发布改动时为考勤组） */
+export interface SchedulePublishResult {
+  publish: SchedulePublishRecord | null;
+  staffCount: number;
+  cellCount: number;
+  replayed: boolean;
+  saved: { id: number };
+}
+
+export interface ScheduleWeekMember {
+  staffId: number;
+  name: string;
+  position: PositionKey | null;
+  editable: boolean;
+  publishable: boolean;
 }
 
 export interface ScheduleWeek {
-  /** 能看的考勤组（hr.attendance 是本店全部启用的；部门负责人是有本部门员工的） */
+  /** 能看的考勤组（人事为本店全部启用的；部门经理与被授权人是有可见员工的） */
   groups: { id: number; name: string }[];
   group: { id: number; name: string } | null;
   from: string;
   to: string;
-  /** 今天（业务日期）：之前的日子不能改 */
+  /** 今天（业务日期）：之前的日子不能改、不能发 */
   today: string;
-  /** 能不能改（部门负责人只能看） */
+  /** 能不能改（至少能编排一位可见员工） */
   editable: boolean;
-  members: { staffId: number; name: string; position: PositionKey | null }[];
+  /** 能不能发布（至少能发布一位可见员工） */
+  publishable: boolean;
+  /** 当前展示日期段（今天起）里，我有权限查看的未发布格子数 */
+  unpublishedCount: number;
+  /** 本考勤组最近几次发布记录 */
+  recentPublishes: SchedulePublishRecord[];
+  members: ScheduleWeekMember[];
   /** 本店的班次（启用的，加上这段时间里排着的停用班次） */
   shifts: OaShift[];
   cells: ScheduleCell[];
+}
+
+// ───────────────────────── 排班授权（员工办公 v1.1 第 2 批，需求文档 5.2） ─────────────────────────
+
+/** 可授出的排班权限点（不含授权权——不可转授） */
+export const SCHEDULE_GRANT_PERMS = ['view', 'edit', 'publish'] as const;
+export type ScheduleGrantPerm = (typeof SCHEDULE_GRANT_PERMS)[number];
+export const SCHEDULE_GRANT_PERM_LABELS: Record<ScheduleGrantPerm, string> = {
+  view: '查看排班',
+  edit: '编排排班',
+  publish: '发布排班',
+};
+
+/** 排班授权范围 */
+export const SCHEDULE_SCOPE_TYPES = ['group', 'dept', 'dept_tree', 'staff', 'all_company'] as const;
+export type ScheduleScopeType = (typeof SCHEDULE_SCOPE_TYPES)[number];
+export const SCHEDULE_SCOPE_LABELS: Record<ScheduleScopeType, string> = {
+  group: '指定考勤组',
+  dept: '指定部门',
+  dept_tree: '部门及下级部门',
+  staff: '指定员工',
+  all_company: '全公司',
+};
+
+/** 排班授权有效期默认 1 年、最长 2 年；备注上限 200 字 */
+export const SCHEDULE_GRANT_DEFAULT_DAYS = 365;
+export const SCHEDULE_GRANT_MAX_DAYS = 730;
+export const SCHEDULE_GRANT_NOTE_MAX = 200;
+
+export type ScheduleGrantStatus = 'active' | 'pending' | 'expired' | 'transferred' | 'revoked';
+export const SCHEDULE_GRANT_STATUS_LABELS: Record<ScheduleGrantStatus, string> = {
+  active: '生效中',
+  pending: '未生效',
+  expired: '已过期',
+  transferred: '调岗失效',
+  revoked: '已撤销',
+};
+
+export interface ScheduleGrant {
+  id: number;
+  grantorStaffId: number;
+  grantorName: string;
+  granteeStaffId: number;
+  granteeName: string;
+  granteePosition: PositionKey;
+  granteeCurrentPosition: PositionKey | null;
+  permissions: ScheduleGrantPerm[];
+  scopeType: ScheduleScopeType;
+  scopeGroupId: number | null;
+  scopeGroupName: string | null;
+  scopeDeptKey: OrgDepartment | null;
+  scopeDeptName: string | null;
+  scopeStaffIds: number[] | null;
+  scopeStaffNames: string[];
+  scopeCapDepts: OrgDepartment[] | null;
+  validFrom: string;
+  validTo: string;
+  note: string;
+  status: ScheduleGrantStatus;
+  createdAt: string;
+  revokedAt: string | null;
+  revokedByName: string | null;
+  revokeReason: string | null;
+  canRevoke: boolean;
+}
+
+export interface ScheduleAccessSummary {
+  canView: boolean;
+  canEdit: boolean;
+  canPublish: boolean;
+  canGrant: boolean;
+  builtInRole: 'hr' | 'dept_head' | 'none';
+  builtInDepts: OrgDepartment[] | null;
+}
+
+export interface ScheduleGrantPage {
+  today: string;
+  access: ScheduleAccessSummary;
+  grants: ScheduleGrant[];
+  candidates: { staffId: number; name: string; position: PositionKey; department: OrgDepartment | null }[];
+  groups: { id: number; name: string }[];
+  departments: { key: OrgDepartment; name: string }[];
+}
+
+export interface ScheduleGrantSaved {
+  grant: ScheduleGrant;
+  replayed: boolean;
 }
 
 export interface MyScheduleItem {
@@ -334,6 +471,7 @@ export interface MyScheduleItem {
   name: string;
   startMinute: number;
   endMinute: number;
+  inAdvanceMinutes: number;
   consecutive: boolean;
 }
 /**
@@ -503,7 +641,188 @@ export interface PunchGroupInfo {
   faceRequired: boolean;
   locations: { id: number; name: string; lat: number; lng: number; radiusM: number }[];
 }
-/** 员工打卡页：现在（门店所在地，第几分钟）、考勤组与打卡点、前后几天的排班、今天的明细 */
+
+/** 打卡卡片「下一张该打的卡」（员工办公 v1.1 第 2 批，docs/OA_MOBILE.md） */
+export type NextPunchAction = 'in' | 'out' | 'wait' | 'done' | 'rest' | 'no_group';
+export interface NextPunchHint {
+  action: NextPunchAction;
+  label: string;
+  detail: string;
+  shiftId: number | null;
+  shiftName: string | null;
+  businessDate: string | null;
+  windowFrom: number | null;
+  windowTo: number | null;
+  inWindow: boolean;
+  /** 考勤组需要定位时，在打卡围栏外允许改走外勤打卡 */
+  outworkAllowed: boolean;
+}
+
+const hhmm = (minute: number) => `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+const clockRelative = (epochMin: number, today: string) => {
+  const d = dateOfEpochMinute(epochMin);
+  const t = hhmm(minuteOfEpochMinute(epochMin));
+  return d === today ? t : d < today ? `前一日 ${t}` : `次日 ${t}`;
+};
+const shiftClockRange = (s: Pick<PunchSlotView, 'startMinute' | 'endMinute'>) => `${hhmm(s.startMinute)}–${s.endMinute <= s.startMinute ? '次日 ' : ''}${hhmm(s.endMinute)}`;
+
+/**
+ * 结合当前时刻与已发布排班，计算打卡卡片与打卡页「下一张该打什么卡」：
+ * 与 matchPunch 同口径（连班交接先提示还没打的那张卡，同一时刻下班卡优先于上班卡），不按自然日硬猜。
+ */
+export function nextPunchHint(now: number, today: string, slots: readonly PunchSlotView[], group: PunchGroupInfo | null): NextPunchHint {
+  if (!group) {
+    return {
+      action: 'no_group',
+      label: '未入考勤组',
+      detail: '还没加入考勤组，打卡前请找人力行政部',
+      shiftId: null,
+      shiftName: null,
+      businessDate: null,
+      windowFrom: null,
+      windowTo: null,
+      inWindow: false,
+      outworkAllowed: false,
+    };
+  }
+  const outworkAllowed = group.gpsRequired;
+  const active: { kind: 'in' | 'out'; slot: PunchSlotView; anchor: number; filled: boolean }[] = [];
+  for (const s of slots) {
+    const w = s.windows;
+    if (now >= w.inFrom && now <= w.inTo) active.push({ kind: 'in', slot: s, anchor: w.start, filled: !!s.in });
+    if (now >= w.outFrom && now <= w.outTo) active.push({ kind: 'out', slot: s, anchor: w.end, filled: !!s.out });
+  }
+  active.sort((a, b) => a.anchor - b.anchor || (a.kind === b.kind ? 0 : a.kind === 'out' ? -1 : 1));
+  const open = active.find((h) => !h.filled);
+  if (open) {
+    const s = open.slot;
+    const w = s.windows;
+    if (open.kind === 'in') {
+      const late = now > w.lateAfter ? '（已过上班时间，将记迟到）' : '';
+      return {
+        action: 'in',
+        label: '打上班卡',
+        detail: `${s.name} ${shiftClockRange(s)}，${clockRelative(w.inTo, today)} 前可打${late}`,
+        shiftId: s.shiftId,
+        shiftName: s.name,
+        businessDate: s.date,
+        windowFrom: w.inFrom,
+        windowTo: w.inTo,
+        inWindow: true,
+        outworkAllowed,
+      };
+    }
+    const early = now < w.end ? '（未到下班时间，将记早退）' : '';
+    return {
+      action: 'out',
+      label: '打下班卡',
+      detail: `${s.name} ${shiftClockRange(s)}，${clockRelative(w.outTo, today)} 前可打${early}`,
+      shiftId: s.shiftId,
+      shiftName: s.name,
+      businessDate: s.date,
+      windowFrom: w.outFrom,
+      windowTo: w.outTo,
+      inWindow: true,
+      outworkAllowed,
+    };
+  }
+
+  // 还没进下一个未打窗口：找今天起最近一张即将开启的卡（含已在班中的下班卡、以及今晚开窗的次日 00:00 夜班上班卡）
+  const todayEnd = epochMinuteOf(today, 1440);
+  const upcoming: { kind: 'in' | 'out'; slot: PunchSlotView; from: number; to: number }[] = [];
+  for (const s of slots) {
+    const w = s.windows;
+    if (!s.in && w.inFrom > now && (s.date === today || w.inFrom <= todayEnd)) {
+      upcoming.push({ kind: 'in', slot: s, from: w.inFrom, to: w.inTo });
+    }
+    if (!s.out && w.outFrom > now && (now >= w.inFrom || s.date === today)) {
+      upcoming.push({ kind: 'out', slot: s, from: w.outFrom, to: w.outTo });
+    }
+  }
+  upcoming.sort((a, b) => a.from - b.from || (a.kind === b.kind ? 0 : a.kind === 'out' ? -1 : 1));
+  const next = upcoming[0];
+  if (next) {
+    const s = next.slot;
+    const kindText = next.kind === 'in' ? '上班卡' : '下班卡';
+    return {
+      action: 'wait',
+      label: `待打${kindText}`,
+      detail: `${s.name} ${clockRelative(next.from, today)} 起可打${kindText}`,
+      shiftId: s.shiftId,
+      shiftName: s.name,
+      businessDate: s.date,
+      windowFrom: next.from,
+      windowTo: next.to,
+      inWindow: false,
+      outworkAllowed,
+    };
+  }
+
+  // 下班窗口仍开着、但之前打成了早退卡：允许下班后重打更新最后一次有效卡
+  const earlyOut = active.find((h) => h.kind === 'out' && h.slot.out && h.slot.out.earlyMinutes > 0);
+  if (earlyOut) {
+    const s = earlyOut.slot;
+    return {
+      action: 'out',
+      label: '更新下班卡',
+      detail: `${s.name} 已在 ${s.out!.localTime} 早退打卡，${clockRelative(s.windows.outTo, today)} 前可重打更新`,
+      shiftId: s.shiftId,
+      shiftName: s.name,
+      businessDate: s.date,
+      windowFrom: s.windows.outFrom,
+      windowTo: s.windows.outTo,
+      inWindow: true,
+      outworkAllowed,
+    };
+  }
+
+  const relevant = slots.filter((s) => s.date === today || (now >= s.windows.inFrom && now <= s.windows.outTo));
+  if (relevant.length > 0) {
+    const missed = relevant.find((s) => !s.in || !s.out);
+    if (missed) {
+      return {
+        action: 'done',
+        label: '打卡窗口已过',
+        detail: `${missed.name} 打卡窗口已结束，缺卡可提交补卡`,
+        shiftId: missed.shiftId,
+        shiftName: missed.name,
+        businessDate: missed.date,
+        windowFrom: null,
+        windowTo: null,
+        inWindow: false,
+        outworkAllowed,
+      };
+    }
+    const last = relevant[relevant.length - 1]!;
+    return {
+      action: 'done',
+      label: '今日已打卡',
+      detail: '今天的班次上下班卡已打齐',
+      shiftId: last.shiftId,
+      shiftName: last.name,
+      businessDate: last.date,
+      windowFrom: null,
+      windowTo: null,
+      inWindow: false,
+      outworkAllowed,
+    };
+  }
+
+  return {
+    action: 'rest',
+    label: '今日休息',
+    detail: '今天没有已发布的排班',
+    shiftId: null,
+    shiftName: null,
+    businessDate: null,
+    windowFrom: null,
+    windowTo: null,
+    inWindow: false,
+    outworkAllowed,
+  };
+}
+
+/** 员工打卡页：现在（门店所在地，第几分钟）、考勤组与打卡点、前后几天的排班、今天的明细与下一张该打的卡 */
 export interface PunchToday {
   now: number;
   today: string;
@@ -512,6 +831,7 @@ export interface PunchToday {
   face: FaceStatus;
   slots: PunchSlotView[];
   punches: OaPunch[];
+  nextPunch: NextPunchHint;
 }
 export interface PunchResult {
   punch: OaPunch;
@@ -578,6 +898,14 @@ export interface FaceEnrollSaved {
   enrollment: FaceEnrollment;
   replayed: boolean;
 }
+/** 人脸比对服务接入状态（员工办公 v1.1 第 6 批，EO3）：只读状态，由服务器运行环境决定 */
+export type FaceServiceMode = 'mock' | 'unconfigured' | 'live';
+export interface FaceServiceStatus {
+  mode: FaceServiceMode;
+  provider: string | null;
+  fallbackPolicy: 'manual_review';
+  note: string;
+}
 
 // ───────────────────────── OA-08 考勤结算（docs/OA.md 第 11 节） ─────────────────────────
 
@@ -636,11 +964,26 @@ export interface AttendanceDay {
   editable: boolean;
 }
 /** 员工「我的考勤」：本人一个月 */
+/** 补卡最多补几天以前的（与服务端审批提交校验同一口径） */
+export const MAKEUP_BACK_DAYS = 30;
+
+/** 本月审批中的补卡单（用于在「我的考勤」异常行提示审批中并直达详情） */
+export interface MyAttendancePendingMakeup {
+  date: string;
+  shiftId: number;
+  kind: 'in' | 'out';
+  approvalId: number;
+}
+
 export interface MyAttendance {
   month: string;
+  /** 门店所在地的今天（用于判断异常行是否仍在补卡期限内） */
+  today: string;
   rows: AttendanceDailyRow[];
   /** OA-09：本人这个月的汇总 */
   summary: AttendanceMonthStats;
+  /** 本月审批中的补卡单 */
+  pendingMakeups: MyAttendancePendingMakeup[];
 }
 
 // ───────────────────────── OA-09 考勤月报与假期余额（docs/OA.md 第 12 节） ─────────────────────────
@@ -825,4 +1168,58 @@ export interface LeaveTypeSaved {
   types: LeaveType[];
   id: number;
   replayed: boolean;
+}
+
+// ───────────── 员工办公 v1.1 第 5 批：公司公告（docs/OA_MOBILE.md） ─────────────
+
+export type AnnouncementScope = 'all' | 'dept';
+export type AnnouncementStatus = 'published' | 'recalled';
+
+export const ANNOUNCEMENT_TITLE_MAX = 80;
+export const ANNOUNCEMENT_BODY_MAX = 5000;
+export const ANNOUNCEMENT_ATTACHMENTS_MAX = 9;
+
+export interface OaAnnouncement {
+  id: number;
+  title: string;
+  body: string;
+  scope: AnnouncementScope;
+  targetDepts: OrgDepartment[];
+  pinned: boolean;
+  status: AnnouncementStatus;
+  publishedById: number;
+  publishedByName: string;
+  publishedAt: string;
+  recalledByName: string | null;
+  recalledAt: string | null;
+  recallReason: string;
+  version: number;
+  attachments: OaAttachment[];
+  /** 员工端：当前账号何时读过（未读为 null） */
+  readAt: string | null;
+  /** 管理端：已读人数与目标范围总人数 */
+  readCount?: number;
+  targetCount?: number;
+}
+
+export interface OaAnnouncementList {
+  items: OaAnnouncement[];
+  unreadCount: number;
+}
+
+export interface OaAnnouncementSaved {
+  announcement: OaAnnouncement;
+  replayed: boolean;
+}
+
+export interface OaAnnouncementReader {
+  staffId: number;
+  name: string;
+  department: string | null;
+  readAt: string;
+}
+
+export interface OaAnnouncementReaders {
+  readers: OaAnnouncementReader[];
+  targetCount: number;
 }

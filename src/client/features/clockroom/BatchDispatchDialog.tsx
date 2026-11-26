@@ -16,6 +16,7 @@ import { useCatalog } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { cn } from '../../lib/utils';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
+import { LoadFailed } from '../../components/LoadFailed';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { Button, Input, Notice, Segmented, Select } from '../../components/ui';
@@ -106,10 +107,21 @@ export function BatchDispatchDialog({ open, board, onClose, onDone }: { open: bo
     return null;
   })();
   const total = rows.reduce((n, r) => n + (plan.get(r.rid)?.price ?? 0), 0);
-  const firstProblem = rows.length === 0 ? '请至少加一张手牌' : (problems.map((p, i) => (p ? `第 ${i + 1} 行：${p}` : null)).find(Boolean) ?? dupTech);
 
   // 有一笔「一次派钟」结果待确认：按它记下的那位客人认出来（关掉再开也看得到）
-  const stale = useFrontdeskPending().find((p) => p.url === BATCH_DISPATCH_URL) ?? null;
+  const allPending = useFrontdeskPending();
+  const stale = allPending.find((p) => p.url === BATCH_DISPATCH_URL) ?? null;
+  // 这一批里任何一位客人还有别的结果待确认（单张派钟、挂账、结账……）：先处理好那一笔再派，
+  // 不然两笔用不同的编号都生效，同一位客人会重复挂账（合并前 Codex 审查 8a7023d：以前只看编号最小的那位）
+  const blocker = allPending.find((p) => p.key !== stale?.key && visitIds.some((v) => p.visitId === v || !!p.visitIds?.includes(v))) ?? null;
+  const blockerText = blocker
+    ? `手牌 ${blocker.tagCodes.filter((c) => rows.some((r) => r.tagText.trim().toLowerCase() === c.toLowerCase())).join('、') || blocker.tagCodes.join('、')} 还有一笔「${blocker.summary}」结果待确认，请先在前台顶上的「结果待确认」里处理好再派`
+    : null;
+  // 在店手牌、价目还没取到或取不到：先说这个，不把每张手牌都说成「不是在店客人的手牌」（合并前 Codex 审查 1c79c00）
+  const tagsFailed = tags.isError && !tags.data;
+  const catalogFailed = catalog.isError && !catalog.data;
+  const loadProblem = tagsFailed || catalogFailed ? '在店手牌或价目没取到，请重试' : tags.isPending || catalog.isPending ? '正在取在店手牌与价目…' : null;
+  const firstProblem = loadProblem ?? (rows.length === 0 ? '请至少加一张手牌' : (problems.map((p, i) => (p ? `第 ${i + 1} 行：${p}` : null)).find(Boolean) ?? dupTech ?? blockerText));
   const anchor = stale?.visitId ?? (visitIds.length ? Math.min(...visitIds) : null);
   const op = useFrontdeskOp<true>({ type: 'bill_post', visitId: anchor, staffName: session.staff.displayName, pick: doneOnFound });
 
@@ -178,6 +190,15 @@ export function BatchDispatchDialog({ open, board, onClose, onDone }: { open: bo
         </>
       }
     >
+      {(tagsFailed || catalogFailed) && (
+        <LoadFailed
+          title={tagsFailed ? '在店手牌没取到' : '价目没取到'}
+          onRetry={() => void (tagsFailed ? tags.refetch() : catalog.refetch())}
+          retrying={tags.isFetching || catalog.isFetching}
+          className="mb-3"
+          testId="batch-dispatch-failed"
+        />
+      )}
       <PendingPanel op={op} onResolved={() => onDone()} />
       {waiting.length > 0 && (
         <div className="mb-3">

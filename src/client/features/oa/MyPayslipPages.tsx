@@ -29,8 +29,11 @@ function MyPayslipListPage() {
   const q = useQuery({ queryKey: KEY, queryFn: () => api.get<MyPayslipItem[]>('/api/oa/my/payslips') });
   return (
     <>
-      <PageHeader dateMode="calendar" title="工资条" subtitle="只有你自己看得到；看过没问题请确认签收" />
-      <div className="mx-auto w-full max-w-2xl p-4 md:p-7">
+      <div className="max-md:hidden">
+        <PageHeader dateMode="calendar" title="工资条" subtitle="只有你自己看得到；看过没问题请确认签收" />
+      </div>
+      <div className="mx-auto w-full max-w-2xl space-y-3 p-3 md:p-7">
+        <h1 className="text-[17px] font-bold text-ink md:hidden">工资条</h1>
         <Card className="p-2 md:p-3" data-testid="my-payslips">
           {q.isPending ? (
             <Skeleton className="h-40" />
@@ -84,17 +87,23 @@ function MyPayslipDetailPage({ id }: { id: number }) {
   const objection = d ? `/oa/approvals/new/payslip_objection?f.payslip=${encodeURIComponent(`${monthLabel(d.month)} · ${d.title}`)}` : '';
   return (
     <>
-      <PageHeader
-        dateMode="calendar"
-        title="工资条"
-        actions={
-          <Link to="/oa/payslips" className="tap relative inline-flex h-9 items-center gap-1 text-[14px] font-semibold text-pine" data-testid="my-payslip-back">
-            <ChevronLeft className="size-4" />
-            全部
-          </Link>
-        }
-      />
-      <div className="mx-auto w-full max-w-2xl space-y-4 p-4 md:p-7">
+      <div className="max-md:hidden">
+        <PageHeader
+          dateMode="calendar"
+          title="工资条"
+          actions={
+            <Link to="/oa/payslips" className="tap relative inline-flex h-9 items-center gap-1 text-[14px] font-semibold text-pine" data-testid="my-payslip-back">
+              <ChevronLeft className="size-4" />
+              全部
+            </Link>
+          }
+        />
+      </div>
+      <div className="mx-auto w-full max-w-2xl space-y-3 p-3 md:space-y-4 md:p-7">
+        <Link to="/oa/payslips" className="tap relative inline-flex items-center gap-1 text-[14px] font-semibold text-pine md:hidden" data-testid="my-payslip-back-mobile">
+          <ChevronLeft className="size-4" />
+          全部工资条
+        </Link>
         {q.isPending ? (
           <Skeleton className="h-80" />
         ) : q.isError && !d ? (

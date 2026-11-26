@@ -12,6 +12,7 @@ import { formatStoreCouponCode, type CouponRow, type CouponTemplate, type Member
 import { issueBirthdayCoupons } from '../src/server/modules/coupons';
 import { buildDailyRecon } from '../src/server/ops/recon';
 import { createStaff } from '../src/server/modules/staff';
+import { couponLedger } from '../src/server/modules/coupon-ledger';
 import { api, createMember, login, PASSWORD, rechargeBody, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -631,5 +632,76 @@ describe('8.1.40 券的使用限制、发放台账、结账单印券号', () => 
     const csv = await ctx.app.inject({ method: 'GET', url: `/api/coupons/ledger.csv?from=${today}&to=${today}`, headers: { cookie: ctx.owner } });
     expect(csv.statusCode).toBe(200);
     expect(csv.body).toContain(formatStoreCouponCode(code));
+    // 券名以 = 开头：导出里当文本（合并前 Codex 审查 305508f）
+    const evil = await template({ name: '=SUM(1,2)', kind: 'cash', faceValue: 100 });
+    const member = (await ctx.sql<{ id: number }[]>`SELECT id FROM members ORDER BY id LIMIT 1`)[0]!;
+    expect((await issue(Number(member.id), evil.id, 1, ctx.owner)).status).toBe(201);
+    const csv2 = await ctx.app.inject({ method: 'GET', url: `/api/coupons/ledger.csv?from=${today}&to=${today}`, headers: { cookie: ctx.owner } });
+    expect(csv2.body).toContain(`"'=SUM(1,2)"`);
+    expect(csv2.body).not.toMatch(/,=SUM/);
+    // 一共几张不受一次能看的张数限制；超过的标出截断（导出超过上限时服务端拒绝，不悄悄截掉；合并前 Codex 审查 bcd2901）
+    const all = (await api(ctx.app, ctx.owner, 'GET', `/api/coupons/ledger?from=${today}&to=${today}`)).body;
+    expect(all.total).toBe(all.rows.length);
+    const one = await couponLedger(ctx.sql, { from: today, to: today }, 1);
+    expect(one).toMatchObject({ truncated: true, total: all.total });
+    expect(one.rows).toHaveLength(1);
+  });
+});
+
+describe('8.1.40 发券试算的上限（合并前 Codex 审查 8a7023d 起几轮）', () => {
+  const estimateOf = async (templateId: number) => {
+    const r = await api(ctx.app, ctx.owner, 'POST', '/api/coupons/campaigns/preview', { templateId, audience: {} });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    return r.body.estimate as { perCoupon: number | null; uncappedWhy?: string; referencePerCoupon?: number };
+  };
+  it('只写真的上限：兑换没设最多抵的不封顶，另给按价目最贵一份的参考（各档、门店价都算，券限门店的只看那几家）；门票、折扣券写明原因', async () => {
+    // 券果盘：默认档 ¥38，另加一档 ¥58
+    await ctx.sql`INSERT INTO service_item_prices (item_id, tier, price) VALUES (${item['券果盘']!}, 'premium', 5800) ON CONFLICT (item_id, tier) DO UPDATE SET price = 5800`;
+    const exchange = await template({ name: '果盘兑换券（试算）', kind: 'exchange', exchangeItemId: item['券果盘'] });
+    expect(await estimateOf(exchange.id)).toMatchObject({ perCoupon: null, referencePerCoupon: 5800 });
+    expect((await estimateOf(exchange.id)).uncappedWhy).toContain('没设「最多抵」');
+    const cappedEx = await template({ name: '果盘兑换券（最多抵）', kind: 'exchange', exchangeItemId: item['券果盘'], maxOff: 4000 });
+    expect((await estimateOf(cappedEx.id)).perCoupon).toBe(4000);
+
+    // 门票按在店时长累计：没设最多抵不封顶，设了按最多抵
+    const [tt] = await ctx.sql<{ id: number }[]>`SELECT id FROM ticket_types WHERE active ORDER BY id LIMIT 1`;
+    const ticket = await template({ name: '门票兑换券（试算）', kind: 'exchange', exchangeTicketTypeId: Number(tt!.id) });
+    expect(await estimateOf(ticket.id)).toMatchObject({ perCoupon: null, uncappedWhy: '兑换门票按在店时长累计，没设「最多抵」' });
+    const ticketCapped = await template({ name: '门票兑换券（最多抵）', kind: 'exchange', exchangeTicketTypeId: Number(tt!.id), maxOff: 9900 });
+    expect((await estimateOf(ticketCapped.id)).perCoupon).toBe(9900);
+
+    // 参考价算上门店改过的价；券限了门店的只看那几家
+    const [st] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('CE2', '试算乙店', 1) RETURNING id`;
+    const [staffRow] = await ctx.sql<{ id: number }[]>`SELECT id FROM staff ORDER BY id LIMIT 1`;
+    await ctx.sql`INSERT INTO service_item_store_prices (store_id, item_id, tier, price, updated_by) VALUES (${st!.id}, ${item['券果盘']!}, 'standard', 9800, ${staffRow!.id})`;
+    expect((await estimateOf(exchange.id)).referencePerCoupon).toBe(9800);
+    const hereOnly = await template({ name: '果盘兑换券（只限本店）', kind: 'exchange', exchangeItemId: item['券果盘'], storeIds: [1] });
+    expect((await estimateOf(hereOnly.id)).referencePerCoupon).toBe(5800);
+
+    const open = await template({ name: '八折不封顶（试算）', kind: 'discount', ratePercent: 80 });
+    expect(await estimateOf(open.id)).toMatchObject({ perCoupon: null, uncappedWhy: '折扣券没设「最多减」' });
+  });
+});
+
+describe('8.1.40 已发的券说明里带使用限制（合并前 Codex 审查 fca1ba4）', () => {
+  it('无记名券、发出去的券：说明里照样写星期、时段、点钟', async () => {
+    const t = await template({
+      name: '周末点钟券',
+      kind: 'cash',
+      faceValue: 1500,
+      weekdays: [6, 7],
+      timeFrom: 660,
+      timeTo: 840,
+      designatedOnly: true,
+      validity: 'fixed',
+      validFrom: today,
+      validTo: '2099-12-31',
+    });
+    expect(t.summary).toContain('限点钟');
+    const b = await api(ctx.app, ctx.owner, 'POST', '/api/coupons/batches', { clientKey: randomUUID(), templateId: t.id, quantity: 2, note: '限制说明' });
+    expect(b.status, JSON.stringify(b.body)).toBe(201);
+    expect(b.body.summary).toBe('代金券 ¥15.00 · 周六、周日 · 11:00–14:00 · 限点钟');
+    const list = (await api(ctx.app, ctx.owner, 'GET', '/api/coupons/batches')).body as { id: number; summary: string }[];
+    expect(list.find((x) => x.id === b.body.id)!.summary).toBe(b.body.summary);
   });
 });

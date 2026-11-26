@@ -46,6 +46,16 @@ const schedule = async (staffId: number, date: string, names: string[], consecut
     groupId: plainGroup,
     cells: [{ staffId, date, shiftIds: names.map((n) => shifts[n]!), consecutive, expected }],
   });
+  if (r.status === 200) {
+    const pub = await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/schedule/publish', {
+      clientKey: randomUUID(),
+      storeId: DEFAULT_STORE_ID,
+      groupId: plainGroup,
+      from: date,
+      to: date,
+    });
+    expect(pub.status, JSON.stringify(pub.body)).toBe(200);
+  }
   return r;
 };
 const punch = (who: Emp, body: object = {}, clientKey = randomUUID()) => api(ctx.app, who.cookie, 'POST', '/api/oa/attendance/punch', { clientKey, storeId: DEFAULT_STORE_ID, ...body });

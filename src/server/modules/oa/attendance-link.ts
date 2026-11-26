@@ -36,7 +36,11 @@ export async function leaveDays(tx: Tx, staffId: number, start: HalfDay, end: Ha
   const [grouped] = await tx`
     SELECT 1 FROM oa_group_members m JOIN oa_attendance_groups g ON g.id = m.group_id WHERE m.staff_id = ${staffId} AND g.active LIMIT 1`;
   const scheduled = grouped
-    ? new Set((await tx<{ d: string }[]>`SELECT DISTINCT work_date::text AS d FROM oa_schedules WHERE staff_id = ${staffId} AND work_date BETWEEN ${start.date} AND ${end.date}`).map((r) => r.d))
+    ? new Set(
+        (
+          await tx<{ d: string }[]>`SELECT DISTINCT work_date::text AS d FROM oa_schedules WHERE staff_id = ${staffId} AND status = 'published' AND work_date BETWEEN ${start.date} AND ${end.date}`
+        ).map((r) => r.d),
+      )
     : null;
   const out: { date: string; part: 'full' | 'am' | 'pm'; halves: number }[] = [];
   for (let d = start.date; d <= end.date; d = shiftDate(d, 1)) {
@@ -100,7 +104,7 @@ async function slotOf(tx: Tx, staffId: number, date: string, shiftId: number): P
     SELECT o.store_id, sh.start_minute, sh.end_minute, sh.rest_start_minute, sh.rest_end_minute, sh.in_advance_minutes, sh.late_grace_minutes,
            sh.in_after_minutes, sh.out_before_minutes, sh.out_delay_minutes
     FROM oa_schedules o JOIN oa_shifts sh ON sh.id = o.shift_id
-    WHERE o.staff_id = ${staffId} AND o.work_date = ${date} AND o.shift_id = ${shiftId}`;
+    WHERE o.staff_id = ${staffId} AND o.work_date = ${date} AND o.shift_id = ${shiftId} AND o.status = 'published'`;
   return s ? { ...s, storeId: Number(s.storeId) } : null;
 }
 

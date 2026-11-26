@@ -40,6 +40,14 @@ const schedule = async (who: Emp, date: string, name: string) => {
     cells: [{ staffId: who.id, date, shiftIds: [shifts[name]!], consecutive: false, expected: { shiftIds: [], consecutive: false } }],
   });
   expect(r.status, JSON.stringify(r.body)).toBe(200);
+  const pub = await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/schedule/publish', {
+    clientKey: randomUUID(),
+    storeId: DEFAULT_STORE_ID,
+    groupId,
+    from: date,
+    to: date,
+  });
+  expect(pub.status, JSON.stringify(pub.body)).toBe(200);
 };
 const punch = async (who: Emp, date: string, hhmm: string) => {
   at(date, hhmm);
@@ -170,6 +178,16 @@ describe('OA-08 考勤结算与异常', () => {
       cells: [{ staffId: emp.absent!.id, date: D2, shiftIds: [], consecutive: false, expected: { shiftIds: [shifts['白班']!], consecutive: false } }],
     });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
+    // 草稿未发布前原旷工结果仍在；发布删除后结果撤掉且重算不再出来
+    expect(await rowOf(emp.absent!, D2)).toMatchObject({ status: 'absent' });
+    const pub = await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/schedule/publish', {
+      clientKey: randomUUID(),
+      storeId: DEFAULT_STORE_ID,
+      groupId,
+      from: D2,
+      to: D2,
+    });
+    expect(pub.status, JSON.stringify(pub.body)).toBe(200);
     expect(await rowOf(emp.absent!, D2)).toBeUndefined();
     await api(ctx.app, ctx.owner, 'POST', '/api/oa/attendance/daily/settle', { date: D2, storeId: DEFAULT_STORE_ID });
     expect(await rowOf(emp.absent!, D2)).toBeUndefined();

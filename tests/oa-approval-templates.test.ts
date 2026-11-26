@@ -63,9 +63,9 @@ afterAll(async () => {
   await ctx.close();
 });
 
-describe('OA-11 六类审批模板', () => {
-  it('六个模板都在：通用、请假、加班、出差、报销、补卡（OA-18 另加「工资条异议」）', () => {
-    expect(Object.keys(tpl).sort()).toEqual(['expense', 'general', 'leave', 'makeup', 'overtime', 'payslip_objection', 'trip']);
+describe('OA-11 审批模板（含工资条异议、用章）', () => {
+  it('内置模板都在：通用、请假、加班、出差、报销、补卡、工资条异议、用章', () => {
+    expect(Object.keys(tpl).sort()).toEqual(['expense', 'general', 'leave', 'makeup', 'overtime', 'payslip_objection', 'seal', 'trip']);
     expect(tpl.leave!.conditions).toEqual({ leave_over_3_days: true });
     expect(tpl.expense!.conditions).toEqual({ expense_over_5000: true });
   });
@@ -152,6 +152,20 @@ describe('OA-11 六类审批模板', () => {
     expect(code(await post(emp.staff!, 'makeup', { date: shiftDate(today, -3), shiftId, kind: '上班卡', reason: 'x' }))).toBe('FORM_INVALID');
     expect(code(await post(emp.staff!, 'makeup', { date: shiftDate(today, 1), shiftId, kind: '上班卡', reason: 'x' }))).toBe('FORM_INVALID');
     expect(code(await post(emp.staff!, 'makeup', { date: shiftDate(today, -31), shiftId, kind: '上班卡', reason: 'x' }))).toBe('FORM_INVALID');
+  });
+
+  it('用章：选印章类型、文件名、份数、用章日期与事由，自动拼标题并校验份数', async () => {
+    const s = await ok(emp.staff!, 'seal', {
+      sealType: '合同专用章',
+      docName: '年度保洁服务协议',
+      copies: 2,
+      useDate: today,
+      reason: '与供应商签署年度合同',
+    });
+    expect(s.title).toBe('用章 · 合同专用章 · 年度保洁服务协议');
+    expect(s.steps.map((x) => x.approverId)).toEqual([emp.lead!.id]);
+    expect(code(await post(emp.staff!, 'seal', { sealType: '公章', docName: '协议', copies: 0, useDate: today, reason: '盖章' }))).toBe('FORM_INVALID');
+    expect(code(await post(emp.staff!, 'seal', { sealType: '不存在的章', docName: '协议', copies: 1, useDate: today, reason: '盖章' }))).toBe('FORM_INVALID');
   });
 
   it('审批中心的「待我审批」加上办公审批；转交选人只列在职员工', async () => {

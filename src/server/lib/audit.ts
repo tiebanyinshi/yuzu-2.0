@@ -388,7 +388,15 @@ export type AuditAction =
   | 'dish_deleted'
   | 'dish_restored'
   // 8.1.16 菜品维护的「结果待确认」：确认作废一个操作编号（Codex 审查 d12390f 的 P1，docs/DISHES_V8115.md 第 9 节）
-  | 'dish_op_abandoned';
+  | 'dish_op_abandoned'
+  // 员工办公 v1.1 第 2 批（docs/OA_MOBILE.md）：排班发布、排班授权与撤销
+  | 'oa_schedule_published'
+  | 'oa_schedule_grant_created'
+  | 'oa_schedule_grant_revoked'
+  // 员工办公 v1.1 第 5 批（docs/OA_MOBILE.md）：公司公告发布、编辑与撤回
+  | 'oa_announcement_published'
+  | 'oa_announcement_updated'
+  | 'oa_announcement_recalled';
 
 export interface AuditEntry {
   staffId: number | null;
