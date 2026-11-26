@@ -72,7 +72,9 @@ test.describe('8.1.15 平板电子菜单与工作台的退出', () => {
     await sheet.getByTestId('emenu-leave-stay').click();
     await expect(sheet).toHaveCount(0);
     await key.click();
-    // 按住到一半松手：取消（界面是从左下角长出来的，hover 会等它停稳再把指针移上去）
+    // 按住到一半松手：取消。界面是从左下角长出来的（em-leave-in，0.34 秒，又移又放大）：先等它长完再按——
+    // 动画刚开头的两帧位置没变，hover 会当它「停稳了」，按下去的点随后被移走的键甩开，按住就没开始（主线 CI 076e9a2）
+    await sheet.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
     await home.hover();
     await page.mouse.down();
     await expect(home).toHaveAttribute('data-holding', '');
