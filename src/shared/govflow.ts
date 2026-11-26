@@ -319,6 +319,7 @@ export const GF_DOC_TYPES = [
   'travel',
   'entertain',
   'seal_use',
+  'hr_batch',
 ] as const;
 export type GfDocType = (typeof GF_DOC_TYPES)[number];
 export const GF_DOC_TYPE_LABELS: Record<GfDocType, string> = {
@@ -335,6 +336,7 @@ export const GF_DOC_TYPE_LABELS: Record<GfDocType, string> = {
   travel: '出差申请',
   entertain: '商务招待',
   seal_use: '用印证照',
+  hr_batch: 'HR 付款批次',
 };
 
 /** 金额（分）的整数比较边界：审批按「不含税」口径 */
