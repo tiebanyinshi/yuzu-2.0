@@ -122,6 +122,7 @@ import { registerSupplyRoutes } from './modules/govflow/supply';
 import { registerPettyRoutes } from './modules/govflow/petty';
 import { registerContractRoutes as registerGfContractRoutes } from './modules/govflow/contracts';
 import { registerPaymentRoutes as registerGfPaymentRoutes } from './modules/govflow/payments';
+import { registerExpenseRoutes as registerGfExpenseRoutes } from './modules/govflow/expense';
 import { registerOaStaffImportRoutes } from './modules/oa/staff-import';
 import { registerOaAttendanceSetupRoutes } from './modules/oa/attendance-setup';
 import { registerOaAttendanceDailyRoutes } from './modules/oa/attendance-daily';
@@ -355,6 +356,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerPettyRoutes(app, deps);
   registerGfContractRoutes(app, deps);
   registerGfPaymentRoutes(app, deps);
+  registerGfExpenseRoutes(app, deps);
   registerOaStaffImportRoutes(app, deps);
   registerOaNotificationRoutes(app, deps);
   registerOaAnnouncementRoutes(app, deps);
