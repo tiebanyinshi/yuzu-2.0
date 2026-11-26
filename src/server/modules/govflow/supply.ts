@@ -45,6 +45,7 @@ import { nextDocNo, setTxTimeouts } from '../../lib/tx';
 import { idParam, parse } from '../../lib/validate';
 import { NOT_EMPLOYEE_ROLES } from '../oa/org';
 import { insertDoc, loadDoc, registerHooks, rolesOf, submitFlow, type DocRow } from './engine';
+import { flagReconfirm } from './payments';
 import { templateFor } from './types';
 
 const iso = (d: Date | string) => new Date(d).toISOString();
@@ -530,7 +531,8 @@ registerHooks('supplier_admission', {
 
 registerHooks('supplier_change', {
   template: (doc) => (doc.payload.core ? REVIEW : [{ kind: 'role', role: 'supply_chain_head', stage: 'final' }]),
-  ccRoles: (doc) => (doc.payload.core ? ['cfo', 'finance_chief'] : []),
+  // 核心变更知会 CFO、财总；收款账户变更另外知会财务审核人（P05：已批付款要重新确认）
+  ccRoles: (doc) => (doc.payload.core ? ['cfo', 'finance_chief', 'finance_reviewer'] : []),
   beforeSubmit: async (tx, doc) => {
     const s = await loadSupplier(tx, supplierIdOf(doc), true);
     if (s.version !== Number(doc.payload.baseVersion)) throw conflict('GF_STALE', '供应商资料已经变过，请重新发起变更');
@@ -551,6 +553,8 @@ registerHooks('supplier_change', {
         version = version + 1, pending_change_doc_id = NULL, updated_at = now()
       WHERE id = ${id}`;
     await snapshot(tx, id, doc.id);
+    // 收款账户变了：这个供应商还没付完的付款申请要财务重新确认（P05）
+    if (c.bankAccount !== undefined || c.bankName !== undefined || c.accountName !== undefined) await flagReconfirm(tx, id);
   },
   ended: async (tx, doc) => {
     await tx`UPDATE gf_suppliers SET pending_change_doc_id = NULL, updated_at = now() WHERE id = ${supplierIdOf(doc)} AND pending_change_doc_id = ${doc.id}`;

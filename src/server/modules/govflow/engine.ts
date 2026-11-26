@@ -446,7 +446,9 @@ export async function sendCcDigest(db: Sql, timeZone: string, now = new Date()):
 // ───────────────────────── 状态 ─────────────────────────
 
 export async function statusOf(db: Db, doc: DocRow, flowStatus: GfFlowStatus | null, timeZone: string): Promise<DerivedStatus> {
-  const [s] = await db<{ n: number }[]>`SELECT count(*)::int AS n FROM gf_specials WHERE doc_id = ${doc.id} AND backfilled_at IS NULL`;
+  // 关联的特批：挂在这个事项上的，或付款申请引用的（紧急付款先特批、后发起）
+  const specialId = doc.payload.specialId ? Number(doc.payload.specialId) : 0;
+  const [s] = await db<{ n: number }[]>`SELECT count(*)::int AS n FROM gf_specials WHERE (doc_id = ${doc.id} OR id = ${specialId}) AND backfilled_at IS NULL`;
   return deriveStatus({
     flow: flowStatus,
     withdrawn: !!doc.withdrawnAt,

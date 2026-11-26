@@ -37,8 +37,9 @@ import { yuanToCents } from './money';
 import { SkuBatchReviewPanel, SupplierDetailPage, SupplierList } from './SupplyPages';
 import { PettyActions, PettyPanel } from './PettyPages';
 import { ContractPanel, ContractsPanel } from './ContractPages';
+import { PaymentPanel, PaymentsPanel } from './PaymentPages';
 
-type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'roles';
+type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'roles';
 const STATUS_TONE: Record<GfStatus, 'neutral' | 'pine' | 'moss' | 'yuzu' | 'ember' | 'clay' | 'lake' | 'ink'> = {
   draft: 'neutral',
   reviewing: 'lake',
@@ -79,6 +80,7 @@ function GovHome() {
     { value: 'suppliers', label: '供应商库' },
     { value: 'petty', label: '零星采购' },
     { value: 'contracts', label: '合同' },
+    { value: 'payments', label: '付款' },
     ...(meta.data?.canManageRoles ? [{ value: 'roles' as const, label: '角色映射' }] : []),
   ];
   return (
@@ -107,6 +109,10 @@ function GovHome() {
           <SpecialsPanel />
         ) : box === 'suppliers' ? (
           <SupplierList />
+        ) : box === 'payments' ? (
+          meta.data ? (
+            <PaymentsPanel meta={meta.data} />
+          ) : null
         ) : box === 'contracts' ? (
           meta.data ? (
             <ContractsPanel meta={meta.data} />
@@ -343,6 +349,7 @@ function DocDetailPage({ id }: { id: number }) {
 
       {d.docType === 'sku_batch' && <SkuBatchReviewPanel doc={d} onDecisions={setDecisions} />}
       {d.docType === 'petty_purchase' && <PettyActions doc={d} onDone={() => q.refetch()} />}
+      {d.docType === 'payment' && <PaymentPanel doc={d} meta={meta.data} onDone={() => q.refetch()} />}
       {d.docType === 'contract' && <ContractPanel doc={d} meta={meta.data} onDone={(next) => (next ? navigate(`/oa/gov/${next}`) : q.refetch())} />}
       {typeof d.payload.supplierId === 'number' && (
         <Link to={`/oa/gov/suppliers/${d.payload.supplierId}`} className="block text-[14px] font-semibold text-pine">
@@ -547,10 +554,21 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
   const [reason, setReason] = useState('');
   const [a, setA] = useState<number | ''>('');
   const [b, setB] = useState<number | ''>('');
+  const [payeeAccount, setPayeeAccount] = useState('');
   const [at, setAt] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16));
   const cents = yuanToCents(amount);
   const m = useMutation({
-    mutationFn: () => api.post<GfSpecialView>('/api/gf/specials', { clientKey, docId, title, amountCents: cents, reason, confirmerIds: [a, b], confirmedAt: new Date(at).toISOString() }),
+    mutationFn: () =>
+      api.post<GfSpecialView>('/api/gf/specials', {
+        clientKey,
+        docId,
+        title,
+        amountCents: cents,
+        reason,
+        confirmerIds: [a, b],
+        confirmedAt: new Date(at).toISOString(),
+        payeeAccount: payeeAccount || null,
+      }),
     onSuccess: (s) => {
       qc.invalidateQueries({ queryKey: ['gf'] });
       toast({ tone: 'success', title: '已登记微信特批', body: `${s.specialNo}，请在 ${s.dueOn} 前补登` });
@@ -599,6 +617,9 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
         </Field>
         {people(a, setA, '确认人一')}
         {people(b, setB, '确认人二')}
+        <Field label="收款账号（紧急付款用，换账户要重新特批）">
+          <Input className="num" value={payeeAccount} onChange={(e) => setPayeeAccount(e.target.value.replace(/\D/g, ''))} />
+        </Field>
         <Field label="紧急原因" className="sm:col-span-2">
           <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
         </Field>

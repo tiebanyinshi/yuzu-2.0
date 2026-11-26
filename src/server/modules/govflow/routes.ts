@@ -390,6 +390,13 @@ const SpecialInput = z.object({
   reason: z.string().trim().min(2, '请写紧急原因（至少 2 个字）').max(500, '原因最多 500 个字'),
   confirmerIds: z.array(z.number().int().positive()).length(2, '微信特批要两个人确认'),
   confirmedAt: z.iso.datetime({ offset: true, message: '请填微信确认的时间' }),
+  /** 紧急付款的特批要记确认时的收款账号（换账户要重新特批，P05） */
+  payeeAccount: z
+    .string()
+    .trim()
+    .regex(/^\d{6,30}$/, '收款账号是 6–30 位数字')
+    .nullable()
+    .default(null),
 });
 
 async function holidays(db: Db): Promise<Map<string, 'holiday' | 'workday'>> {
@@ -426,8 +433,8 @@ async function createSpecial(deps: Deps, raw: unknown, actor: Actor, ip?: string
       const dueOn = addWorkdays(day, GF_SPECIAL_BACKFILL_WORKDAYS, await holidays(tx));
       const specialNo = await nextDocNo(tx, 'gf_special', 'TP', todayIn(deps.config.timezone));
       const [row] = await tx<{ id: number }[]>`
-        INSERT INTO gf_specials (special_no, doc_id, title, amount_cents, reason, confirmer_ids, confirmed_at, due_on, registered_by, client_key, request_hash)
-        VALUES (${specialNo}, ${input.docId}, ${input.title}, ${input.amountCents}, ${input.reason}, ${input.confirmerIds}, ${confirmed}, ${dueOn}, ${actor.id}, ${input.clientKey}, ${requestHash})
+        INSERT INTO gf_specials (special_no, doc_id, title, amount_cents, reason, confirmer_ids, confirmed_at, due_on, registered_by, client_key, request_hash, payee_account)
+        VALUES (${specialNo}, ${input.docId}, ${input.title}, ${input.amountCents}, ${input.reason}, ${input.confirmerIds}, ${confirmed}, ${dueOn}, ${actor.id}, ${input.clientKey}, ${requestHash}, ${input.payeeAccount})
         RETURNING id`;
       const id = Number(row!.id);
       await writeAudit(tx, {
