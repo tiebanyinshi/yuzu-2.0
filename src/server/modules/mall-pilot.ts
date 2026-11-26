@@ -233,8 +233,13 @@ async function rewriteLinesInPlace(tx: Db, requestId: number, stored: StoredLine
   }
   // 先挪开行号，免得重排时撞「一张单里行号不重复」
   await tx`UPDATE purchase_request_lines SET line_no = line_no + 1000 WHERE request_id = ${requestId}`;
+  const before = new Map(stored.map((l) => [l.id, l]));
   for (const [i, l] of lines.entries()) {
     const lineId = keepIds[i]!;
+    // 改了单位（Codex 审查）：方案的单价是按原来的单位报的（比如 ¥2/个），换成「盒」以后就不对了——这一行的方案全部撤下，请采购按新单位重新记
+    if (before.get(lineId)?.unit !== l.unit) {
+      await tx`UPDATE mall_request_quotes SET status = 'withdrawn', recommended = false, selected_mode = NULL, selected_by = NULL, selected_at = NULL WHERE line_id = ${lineId} AND status <> 'withdrawn'`;
+    }
     await tx`
       UPDATE purchase_request_lines SET line_no = ${i + 1}, name = ${l.name}, qty_milli = ${l.qtyMilli}, unit = ${l.unit}, link = ${l.link}, details = ${l.details},
              brand_model = ${l.brandModel ?? ''}, expected_category = ${l.expectedCategory ?? ''}, reason_text = ${l.reasonText ?? ''},

@@ -554,6 +554,21 @@ function QuoteCard({ q, line, r, onChange }: { q: MallQuote; line: MallRequestLi
       {r.can.seePrices && q.internalNote && <p className="text-[12.5px] text-ink-3">内部备注：{q.internalNote}</p>}
       {r.can.seePrices && q.imageIds.length > 0 && <ImageThumbs images={q.imageIds.map(quoteImageRef)} />}
       {selected && q.selectedNote && <p className="text-[12.5px] text-ink-3">确认说明：{q.selectedNote}</p>}
+      {/* 选定了、还没转采购单的（Codex 审查）：供应商变卦时采购照样能撤下；已转采购单的服务端拒绝（QUOTE_ORDERED） */}
+      {selected && r.can.source && (
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Undo2 className="size-3.5" />}
+            loading={busy}
+            onClick={() => void act(`/api/erp/shop/quotes/${q.id}/withdraw`, {}, '方案已撤下')}
+            data-testid={`shop-quote-withdraw-${q.id}`}
+          >
+            撤下
+          </Button>
+        </div>
+      )}
       {!selected && (
         <div className="flex flex-wrap justify-end gap-2">
           {r.can.confirmPlan && (

@@ -300,5 +300,23 @@ describe('Codex 审查后的边界', () => {
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(ok.body.lines[0]).toMatchObject({ id: lineId, qtyMilli: q(20) });
     expect(ok.body.quotes[0]).toMatchObject({ id: qt.id, status: 'proposed' });
+    // 再退回、补资料时改了单位（Codex 审查）：按原单位报的方案全部撤下，不拿 ¥/件 的价当 ¥/箱 用
+    expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '按箱买' })).status).toBe(200);
+    const back3 = await detail(brand, r.id);
+    const boxed = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, {
+      clientKey: randomUUID(),
+      expectedUpdatedAt: back3.updatedAt,
+      contactName: '品牌部小王',
+      budgetProject: '品牌物料',
+      needBy: shiftDate(today, 12),
+      deliveryAddress: '总店前台',
+      priority: 'normal',
+      remark: '改成按箱',
+      lines: [{ id: lineId, qtyMilli: q(1), unit: '箱', customKind: 'custom', customSpec: { size: '一箱 20 件', craft: '涤棉', scene: '前台', sample: false, budgetCents: null }, details: '' }],
+    });
+    expect(boxed.status, JSON.stringify(boxed.body)).toBe(200);
+    expect(boxed.body.quotes).toHaveLength(0);
+    const [gone] = await ctx.sql<{ status: string }[]>`SELECT status FROM mall_request_quotes WHERE id = ${qt.id}`;
+    expect(gone!.status).toBe('withdrawn');
   });
 });
