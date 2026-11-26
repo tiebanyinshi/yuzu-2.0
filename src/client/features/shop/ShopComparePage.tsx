@@ -6,13 +6,23 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { ArrowLeft, ChevronRight, Minus, PencilLine, Plus, Sparkles } from 'lucide-react';
 import { formatYuan } from '@shared/money';
-import { formatQty, parseQty } from '@shared/quantity';
-import { buildCompareOffers, defaultCompareQtyMilli, formatTaxRate, SHOP_COMPARE_BLOCK_LABELS, type ShopCatalog, type ShopCompareOffer, type ShopCompareResult } from '@shared/shop';
+import { formatQty } from '@shared/quantity';
+import {
+  buildCompareOffers,
+  formatTaxRate,
+  resolveCompareQtyMilli,
+  SHOP_COMPARE_BLOCK_LABELS,
+  SHOP_MAX_QTY_MILLI,
+  type ShopCatalog,
+  type ShopCompareOffer,
+  type ShopCompareResult,
+} from '@shared/shop';
 import { cn, formatDateTime } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
-import { Badge, Button, Card, Input, Notice, Skeleton } from '../../components/ui';
+import { MilliQtyInput } from '../../components/QtyInput';
+import { Badge, Button, Card, Notice, Skeleton } from '../../components/ui';
 
 const BASE = '/erp/shop';
 
@@ -32,27 +42,26 @@ export interface ShopComparePageProps {
   updatedAt: string;
 }
 
+const MAX_QTY_LABEL = formatQty(SHOP_MAX_QTY_MILLI);
+
 export function ShopComparePage({ materialId, catalog, loading, error, retrying, onRetry, updatedAt }: ShopComparePageProps) {
   const [searchParams] = useSearchParams();
   const queryQty = searchParams.get('qty');
   const currentSkuId = Number(searchParams.get('skuId')) || null;
 
   const item = useMemo(() => catalog?.items.find((i) => i.material.id === materialId), [catalog, materialId]);
-  const initialQtyMilli = useMemo(() => defaultCompareQtyMilli(item, queryQty), [item, queryQty]);
+  const initialQty = useMemo(() => resolveCompareQtyMilli(item, queryQty), [item, queryQty]);
 
-  const [qtyText, setQtyText] = useState<string>(() => (queryQty && parseQty(queryQty) ? queryQty : ''));
-  const [qtyDirty, setQtyDirty] = useState(false);
+  const [customQtyMilli, setCustomQtyMilli] = useState<number | null>(null);
+  const [qtyHint, setQtyHint] = useState<string | null>(() => (initialQty.clamped ? `数量最多 ${MAX_QTY_LABEL}，已按 ${MAX_QTY_LABEL} 算` : null));
 
-  // 切换物料或首次拉到目录数据时同步默认数量（用户手动改过的不覆盖）
+  // 切换物料或地址栏 ?qty= 变化时重置手工输入，并对超上限的 URL 参数给出一致提示
   useEffect(() => {
-    setQtyDirty(false);
-    setQtyText(queryQty && parseQty(queryQty) ? queryQty : '');
-  }, [materialId, queryQty]);
+    setCustomQtyMilli(null);
+    setQtyHint(initialQty.clamped ? `数量最多 ${MAX_QTY_LABEL}，已按 ${MAX_QTY_LABEL} 算` : null);
+  }, [materialId, queryQty, initialQty.clamped]);
 
-  const effectiveText = qtyDirty ? qtyText : qtyText || formatQty(initialQtyMilli);
-  const parsedQty = parseQty(effectiveText);
-  const qtyInvalid = parsedQty === null || parsedQty <= 0;
-  const activeQtyMilli = qtyInvalid ? initialQtyMilli : parsedQty;
+  const activeQtyMilli = customQtyMilli ?? initialQty.qtyMilli;
 
   const result: ShopCompareResult | null = useMemo(() => {
     if (!catalog || !Number.isInteger(materialId) || materialId <= 0) return null;
@@ -60,17 +69,30 @@ export function ShopComparePage({ materialId, catalog, loading, error, retrying,
   }, [catalog, materialId, activeQtyMilli, updatedAt]);
 
   const setQtyMilli = (nextMilli: number) => {
-    const safe = Math.max(1, Math.min(1_000_000_000, Math.round(nextMilli)));
-    setQtyDirty(true);
-    setQtyText(formatQty(safe));
+    const rounded = Math.round(nextMilli);
+    if (rounded > SHOP_MAX_QTY_MILLI) {
+      setCustomQtyMilli(SHOP_MAX_QTY_MILLI);
+      setQtyHint(`数量最多 ${MAX_QTY_LABEL}，已按 ${MAX_QTY_LABEL} 算`);
+      return;
+    }
+    setCustomQtyMilli(Math.max(1, rounded));
+    setQtyHint(null);
   };
 
   const stepQty = (deltaUnits: number) => {
-    const base = activeQtyMilli;
-    const stepMilli = 1000;
-    const next = base + deltaUnits * stepMilli;
-    if (next <= 0) setQtyMilli(Math.min(base, 1000));
-    else setQtyMilli(next);
+    const next = activeQtyMilli + deltaUnits * 1000;
+    if (next > SHOP_MAX_QTY_MILLI) {
+      setCustomQtyMilli(SHOP_MAX_QTY_MILLI);
+      setQtyHint(`数量最多 ${MAX_QTY_LABEL}，已按 ${MAX_QTY_LABEL} 算`);
+      return;
+    }
+    if (next <= 0) {
+      setCustomQtyMilli(Math.min(activeQtyMilli, 1000));
+      setQtyHint(null);
+      return;
+    }
+    setCustomQtyMilli(next);
+    setQtyHint(null);
   };
 
   const unit = result?.material?.unit ?? '';
@@ -307,31 +329,29 @@ export function ShopComparePage({ materialId, catalog, loading, error, retrying,
           </div>
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-1.5">
-              <Button size="sm" variant="secondary" aria-label="减少数量" onClick={() => stepQty(-1)} data-testid="compare-qty-minus">
+              <Button size="sm" variant="secondary" aria-label="减少数量" disabled={activeQtyMilli <= 1000} onClick={() => stepQty(-1)} data-testid="compare-qty-minus">
                 <Minus className="size-4" />
               </Button>
-              <Input
+              <MilliQtyInput
                 id="compare-qty-input"
-                inputMode="decimal"
-                fullWidth={false}
-                invalid={qtyInvalid}
-                value={effectiveText}
-                onChange={(e) => {
-                  setQtyDirty(true);
-                  setQtyText(e.target.value);
-                }}
-                className="h-9 w-28 text-center font-semibold"
-                aria-label={`采购数量（${unit}）`}
-                data-testid="compare-qty-input"
+                valueMilli={activeQtyMilli}
+                minMilli={1}
+                maxMilli={SHOP_MAX_QTY_MILLI}
+                decimals={3}
+                onChange={setCustomQtyMilli}
+                onHint={setQtyHint}
+                label={`采购数量（${unit}）`}
+                className="h-9 w-28 text-[14px]"
+                testId="compare-qty-input"
               />
               <Button size="sm" variant="secondary" aria-label="增加数量" onClick={() => stepQty(1)} data-testid="compare-qty-plus">
                 <Plus className="size-4" />
               </Button>
               <span className="text-[13px] font-semibold text-ink-2">{unit}</span>
             </div>
-            {qtyInvalid && (
+            {qtyHint && (
               <p className="text-[12.5px] font-medium text-clay" role="alert" data-testid="compare-qty-error">
-                请输入大于 0 的数字（最多三位小数）
+                {qtyHint}
               </p>
             )}
           </div>
@@ -362,7 +382,8 @@ export function ShopComparePage({ materialId, catalog, loading, error, retrying,
       />
 
       <p className="text-[12.5px] text-ink-3">
-        含税总成本 = 向上取整（未税单价 × 数量 ×（1 + 税率））+ 运费（每次采购一笔，不随数量叠加）；与加入采购清单后的行金额 0 分误差。部门选的供应商为采购意向，最终由采购确认。
+        含税总成本 = 向上取整（未税单价 × 数量 ×（1 + 税率））+ 运费（每次采购一笔，不随数量叠加）；与采购清单行金额 0 分误差。提交后需求单行按含税参考单价留存供 ERP
+        预估，部门选的供应商为采购意向，最终由采购确认。
       </p>
     </div>
   );

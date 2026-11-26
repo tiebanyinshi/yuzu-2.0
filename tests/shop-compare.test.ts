@@ -1,7 +1,7 @@
 // 采购商城比价页（FR-01 批次 A）单测：纯整数含税总成本公式、0 分误差一致性、阻断原因与推荐解释。
 
 import { describe, expect, it } from 'vitest';
-import { buildCompareOffers, defaultCompareQtyMilli, formatTaxRate, grossCents, lineGoodsCents, lineGrossCents, type ShopCatalog, type ShopOffer } from '../src/shared/shop';
+import { buildCompareOffers, formatTaxRate, grossCents, lineGoodsCents, lineGrossCents, resolveCompareQtyMilli, SHOP_MAX_QTY_MILLI, type ShopCatalog, type ShopOffer } from '../src/shared/shop';
 
 const makeOffer = (over: Partial<ShopOffer> = {}): ShopOffer => ({
   skuId: 101,
@@ -145,16 +145,17 @@ describe('比价聚合 buildCompareOffers（0 分误差、排序、阻断与推�
     expect(empty.recommendReason).toBeNull();
   });
 
-  it('defaultCompareQtyMilli：优先 URL ?qty=，其次可采购最小起订量', () => {
+  it('resolveCompareQtyMilli：优先 URL ?qty=，超提交上限 1,000,000 统一截断并标 clamped，其次可采购最小起订量', () => {
     const cat = makeCatalog([
       makeOffer({ skuId: 1, moqMilli: 5000, block: 'expired' }),
       makeOffer({ skuId: 2, moqMilli: 20_000, block: null }),
       makeOffer({ skuId: 3, moqMilli: 12_500, block: null }),
     ]);
     const item = cat.items[0];
-    expect(defaultCompareQtyMilli(item, '7.5')).toBe(7500);
-    expect(defaultCompareQtyMilli(item, 'invalid')).toBe(12_500);
-    expect(defaultCompareQtyMilli(item, null)).toBe(12_500);
-    expect(defaultCompareQtyMilli(undefined, null)).toBe(1000);
+    expect(resolveCompareQtyMilli(item, '7.5')).toEqual({ qtyMilli: 7500, clamped: false });
+    expect(resolveCompareQtyMilli(item, '1000001')).toEqual({ qtyMilli: SHOP_MAX_QTY_MILLI, clamped: true });
+    expect(resolveCompareQtyMilli(item, 'invalid')).toEqual({ qtyMilli: 12_500, clamped: false });
+    expect(resolveCompareQtyMilli(item, null)).toEqual({ qtyMilli: 12_500, clamped: false });
+    expect(resolveCompareQtyMilli(undefined, null)).toEqual({ qtyMilli: 1000, clamped: false });
   });
 });

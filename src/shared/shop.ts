@@ -135,6 +135,8 @@ export interface ShopSkuCore {
 }
 
 export const SHOP_TAX_RATES = [1300, 900, 600, 300, 100, 0] as const;
+/** 与服务端 CatalogSubmit / CustomSubmit 一致的数量上限：1,000,000 单位（1,000,000,000 milli） */
+export const SHOP_MAX_QTY_MILLI = 1_000_000_000;
 
 /** 比价页单条报价（结构对齐 FR-01 第 6 条，后端切 GET /api/erp/shop/offers 时前端零改动） */
 export interface ShopCompareOffer {
@@ -174,16 +176,19 @@ export interface ShopCompareResult {
   recommendReason: string | null;
 }
 
-/** 比价页初始数量：优先取 URL ?qty=，否则取可采购报价最小起订量（无则全部报价最小起订量），兜底 1 单位 */
-export function defaultCompareQtyMilli(item: ShopItem | undefined, queryQty: string | null): number {
+/** 比价页初始数量（与提交上限一致）：优先取 URL ?qty=（超上限按 SHOP_MAX_QTY_MILLI 截断并标记 clamped），否则取可采购报价最小起订量，兜底 1 单位 */
+export function resolveCompareQtyMilli(item: ShopItem | undefined, queryQty: string | null): { qtyMilli: number; clamped: boolean } {
   if (queryQty) {
     const parsed = parseQty(queryQty);
-    if (parsed !== null && parsed > 0) return parsed;
+    if (parsed !== null && parsed > 0) {
+      if (parsed > SHOP_MAX_QTY_MILLI) return { qtyMilli: SHOP_MAX_QTY_MILLI, clamped: true };
+      return { qtyMilli: parsed, clamped: false };
+    }
   }
-  if (!item || item.offers.length === 0) return 1000;
+  if (!item || item.offers.length === 0) return { qtyMilli: 1000, clamped: false };
   const ok = item.offers.filter((o) => o.block === null);
   const pool = ok.length > 0 ? ok : item.offers;
-  return Math.min(...pool.map((o) => o.moqMilli));
+  return { qtyMilli: Math.min(SHOP_MAX_QTY_MILLI, Math.min(...pool.map((o) => o.moqMilli))), clamped: false };
 }
 
 /** 构造推荐解释（只解释，不自动选中、不隐藏其他行） */
