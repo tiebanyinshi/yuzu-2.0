@@ -8,6 +8,7 @@ import { resolve } from 'node:path';
 import fastifyCookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import { baseServerOptions, installErrorHandler, installRequestId } from '../../lib/http-kit';
 import { canEditMenu, canScan, canUseMailbox, isLanHost, type CanteenMe } from '@shared/canteen';
 import { businessDateOf } from '@shared/business-date';
 import type { AppConfig } from '../../config';
@@ -84,7 +85,7 @@ export async function buildCanteenApp(sql: Sql, config: AppConfig, opts: Canteen
   const secret = config.canteen.codeSecret;
   if (!secret || secret.length < 32) throw new Error('员工端口没有配饭卡码的密钥（CANTEEN_CODE_SECRET，至少 32 个字符），不开');
   const now = opts.clock ?? Date.now;
-  const app = Fastify({ logger: { level: config.logLevel }, bodyLimit: 32 * 1024, trustProxy: config.canteen.trustProxy.length ? config.canteen.trustProxy : false });
+  const app = Fastify({ ...baseServerOptions(config.logLevel), bodyLimit: 32 * 1024, trustProxy: config.canteen.trustProxy.length ? config.canteen.trustProxy : false });
   await app.register(fastifyCookie);
   // 过载保护（8.1.3，docs/RESILIENCE_V813.md 第 3.5 节）：和主端口一样，忙的时候新请求直接回「系统正忙、没处理」。
   // 不做频率限制、不看访问网段：员工手机多在店里 Wi-Fi 上共用一个出口 IP，登录、自己登记原来就有失败次数限制
@@ -146,23 +147,14 @@ export async function buildCanteenApp(sql: Sql, config: AppConfig, opts: Canteen
     return payload;
   });
 
-  // 错误文字面向员工；不带内部细节
-  app.setErrorHandler((error, req, reply) => {
-    if (error instanceof AppError) {
-      reply.status(error.status).send({ error: { code: error.code, message: error.message, details: error.details } });
-      return;
-    }
-    const e = error as { statusCode?: number; code?: string };
-    if (e.code === '55P03' || e.code === '57014') {
-      reply.status(409).send({ error: { code: 'BUSY', message: '饭堂这会儿有点忙，请再试一次' } });
-      return;
-    }
-    if (e.statusCode && e.statusCode < 500) {
-      reply.status(e.statusCode).send({ error: { code: 'BAD_REQUEST', message: '请求格式不正确' } });
-      return;
-    }
-    req.log.error({ err: error }, '员工端口未处理的错误');
-    reply.status(500).send({ error: { code: 'INTERNAL', message: '门店系统出了点问题，请稍后再试' } });
+  installRequestId(app);
+  // 错误文字面向员工；不带内部细节（lib/http-kit.ts 统一的错误出口）
+  installErrorHandler(app, {
+    busy: () => '饭堂这会儿有点忙，请再试一次',
+    internal: '门店系统出了点问题，请稍后再试',
+    details: true,
+    dbGuards: false,
+    logLabel: '员工端口未处理的错误',
   });
 
   const meta = (req: FastifyRequest) => ({ ip: req.ip, userAgent: req.headers['user-agent'] });

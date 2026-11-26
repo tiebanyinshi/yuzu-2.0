@@ -6,11 +6,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSql, type Sql } from '../src/server/db';
 import { migrate } from '../src/server/migrate';
 import { archiveOnce } from '../src/server/modules/archive';
-import { TEST_DB } from './helpers';
+import { migrationsFrom, TEST_DB } from './helpers';
 import { resetPublicSchema } from './test-db';
 
 const ROLLBACK = new URL('../docs/rollback/', import.meta.url);
-const MINE = ['480_fk_indexes', '481_schema_comments', '482_store_fks', '483_archive_tables'];
+/** 480 起的全部迁移（以后 49x 的也在里面）：按倒序回滚、再迁移 */
+const MINE = migrationsFrom('480_fk_indexes.sql').map((f) => f.replace(/\.sql$/, ''));
 let sql: Sql;
 
 beforeAll(() => {
@@ -45,7 +46,7 @@ async function signature(): Promise<string[]> {
   return rows.map((r) => r.x).sort();
 }
 
-describe('迁移 480–483 可回滚', () => {
+describe('迁移 480 起可回滚', () => {
   it('迁移 → 回滚 → 再迁移，结构与第一次一样；归档的记录回到原表', async () => {
     await resetPublicSchema(sql);
     await migrate(sql);

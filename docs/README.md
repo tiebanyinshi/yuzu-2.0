@@ -31,6 +31,7 @@
 - [`AI_V8022.md`](AI_V8022.md)：8.0.22 设计 · AI 辅助（MD-D）
 - [`APPROVALS.md`](APPROVALS.md)：审批中心（v0.7.30）
 - [`APPROVAL_V4.md`](APPROVAL_V4.md)：业财法审批流（V4.0，P01–P07）
+- [`BACKEND_REVIEW_V8148.md`](BACKEND_REVIEW_V8148.md)：后端评估与加固（8.1.48）
 - [`BENEFITS.md`](BENEFITS.md)：会员体系 v2 第二期：本店权益自动发放（v0.7.24 设计稿）
 - [`BOARDS.md`](BOARDS.md)：四个板块：CRM、ERP、WCP、Design（店主 2026-11-24）
 - [`BUDGET_INVOICES.md`](BUDGET_INVOICES.md)：费用预算与进项发票台账（8.0.3）· 设计稿

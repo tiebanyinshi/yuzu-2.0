@@ -1,5 +1,14 @@
 # 变更记录
 
+## v8.1.48 · 后端评估与加固（瘦身）
+
+店主 2026-11-26：审查后端、出评估报告，参考 Medusa、Supabase、Trigger.dev，以瘦身为目标。报告见 `docs/BACKEND_REVIEW_V8148.md`（含升级与回滚步骤）。由 v8.1.47 升级执行迁移 `490`，回滚脚本 `docs/rollback/490_audit_request_id.down.sql`。
+
+- 请求编号：三个端口认上游带来的 `x-request-id`、没有就生成，响应头带回、日志每行带、审计记录记上（`490`）；500 的提示带编号。
+- 日志脱敏：Cookie、Authorization、服务密钥头不进日志。
+- 三个端口的错误出口、服务密钥比对、7 个任务的节流各收成一份（`lib/http-kit.ts`、`lib/throttle.ts`）。
+- 每分钟任务不再叠跑，停机时等这一轮收尾；过期登录每小时清一次。
+
 ## v8.1.47 · 数据库评估与整改
 
 店主 2026-11-26：审查 PostgreSQL 库结构、出评估报告、补数据字典。报告与方案见 `docs/DB_REVIEW_V8147.md`，数据字典见 `docs/DATA_DICTIONARY.md`。由 v8.1.46 升级执行迁移 `480`–`483`，回滚脚本在 `docs/rollback/`。

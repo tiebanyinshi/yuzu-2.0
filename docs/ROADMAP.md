@@ -312,6 +312,9 @@
   - `482`（`482_store_fks.sql`）：8 张有 `store_id` 却没挂门店外键的表补外键（先 NOT VALID 再 VALIDATE）。回滚 `docs/rollback/482_store_fks.down.sql`。
   - `483`（`483_archive_tables.sql`）：位置事件、轨迹段、对外调用记录、企业微信推送记录的归档表 `archived_*`，原表只追加的触发器在归档任务里放行 DELETE。回滚 `docs/rollback/483_archive_tables.down.sql`（已归档的先挪回原表）。
 
+- **后端评估与加固 8.1.48（店主 2026-11-26「审查后端、出评估报告、学 Medusa / Supabase / Trigger.dev、以瘦身为目标」，报告见 `docs/BACKEND_REVIEW_V8148.md`）**：迁移号 `490`–`499`：
+  - `490`（`490_audit_request_id.sql`）：审计记录 `audit_logs` 加请求编号 `request_id`（可空，日志与审计对得上）。回滚 `docs/rollback/490_audit_request_id.down.sql`。
+
 ## 8. 店主决策（2026-10-29 已签认）
 
 第 8 节原列的 8 项决策，店主除下面的补充外**全部按推荐**签认；逐项结论与落地位置（现状 / R1.2 / R1.3–R1.5 / 运营）见 `PENDING_DECISIONS.md`「2026-10-29 店主答复」，期初导入模板见同一节与 `docs/data/opening-template.csv`。
