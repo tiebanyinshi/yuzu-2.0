@@ -125,7 +125,7 @@ test.describe('采购商城', () => {
     expect(item, '前一条用例上架过报价，目录里应该有东西').toBeTruthy();
     const id = item!.material.id;
     // 先清空（重复跑时从没有图开始）
-    await page.request.put(`/api/erp/shop/materials/${id}/images`, { data: { imageIds: [], expectedImageIds: item!.material.imageIds } });
+    await page.request.put(`/api/erp/shop/materials/${id}/images`, { data: { imageIds: [], expectedImageIds: item!.material.imageIds, clientKey: crypto.randomUUID() } });
     await page.goto('/erp/shop/materials');
     await page.getByTestId(`shop-mat-open-${id}`).click();
     const box = page.getByTestId('shop-mat-images');
@@ -144,6 +144,6 @@ test.describe('采购商城', () => {
     // 收尾：清空，别影响别的用例
     const now = (await (await page.request.get('/api/erp/shop/catalog')).json()) as { items: { material: { id: number; imageIds: number[] } }[] };
     const cur = now.items.find((i) => i.material.id === id)!.material.imageIds;
-    expect((await page.request.put(`/api/erp/shop/materials/${id}/images`, { data: { imageIds: [], expectedImageIds: cur } })).ok()).toBe(true);
+    expect((await page.request.put(`/api/erp/shop/materials/${id}/images`, { data: { imageIds: [], expectedImageIds: cur, clientKey: crypto.randomUUID() } })).ok()).toBe(true);
   });
 });

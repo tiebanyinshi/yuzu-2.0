@@ -793,7 +793,7 @@ function MaterialEditDialog({ material, canEdit, onClose }: { material: ShopMate
             <Input id="sm-note" maxLength={200} disabled={!canEdit} value={note} onChange={(e) => setNote(e.target.value)} />
           </Field>
         </div>
-        <MaterialImagesEditor materialId={material.id} imageIds={material.imageIds} canEdit={canEdit} />
+        <MaterialImagesEditor materialId={material.id} name={material.name} imageIds={material.imageIds} canEdit={canEdit} run={run} busy={busy} blocked={blocked} />
         <p className="text-[12.5px] text-ink-3">
           当前关联 {material.supplierCount} 家供应商、{material.activeSkuCount} 条在架 SKU（共 {material.skuCount} 条）。如需修改采购单位或换算，请前往 ERP 库存档案，改动后关联 SKU
           将按规则重新审核上架。
