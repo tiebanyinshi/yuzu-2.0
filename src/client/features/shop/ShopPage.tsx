@@ -10,7 +10,23 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Building2, ClipboardList, Eye, Package, PencilLine, Search, ShoppingCart, Store as StoreIcon, Warehouse } from 'lucide-react';
+import {
+  ArrowLeft,
+  Building2,
+  ChevronDown,
+  ChevronUp,
+  ClipboardList,
+  Eye,
+  GitBranch,
+  LayoutDashboard,
+  Package,
+  PencilLine,
+  Search,
+  ShoppingCart,
+  Store as StoreIcon,
+  Warehouse,
+  X,
+} from 'lucide-react';
 import { formatYuan } from '@shared/money';
 import { formatQty, parseQty } from '@shared/quantity';
 import { MALL_DISPLAY_LABELS, type MallDisplayStatus, type MallRequest, type MallRequestBrief } from '@shared/mall';
@@ -29,6 +45,8 @@ import {
   type ShopCatalog,
   type ShopItem,
   type ShopOffer,
+  type ShopOverview,
+  type ShopRoutePreview,
 } from '@shared/shop';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
@@ -48,6 +66,7 @@ import { SkuAdmin } from './SkuAdmin';
 const ShopComparePage = lazyPage(() => import('./ShopComparePage').then((m) => m.ShopComparePage));
 const ShopSuppliersPage = lazyPage(() => import('./ShopMasterPages').then((m) => m.ShopSuppliersPage));
 const ShopMaterialsPage = lazyPage(() => import('./ShopMasterPages').then((m) => m.ShopMaterialsPage));
+const ShopOverviewPage = lazyPage(() => import('./ShopOverviewPage').then((m) => m.ShopOverviewPage));
 
 const BASE = '/erp/shop';
 const SUBMIT_URL = '/api/erp/shop/requests';
@@ -123,12 +142,19 @@ export function ShopPage() {
   const count = cart.lines.length;
   const c = q.data;
   const canAdminView = !!c && (c.me.canManageSku || c.me.canApproveSku);
-  const tabs: { to: string; label: string; icon: ReactNode; show: boolean }[] = [
+  const overviewQ = useQuery({
+    queryKey: ['shop', 'overview'],
+    queryFn: () => api.get<ShopOverview>('/api/erp/shop/overview'),
+    enabled: canAdminView,
+  });
+  const todoCount = overviewQ.data?.counts.totalTodos ?? 0;
+  const tabs: { to: string; label: string; icon: ReactNode; show: boolean; badge?: number; testId?: string }[] = [
     { to: BASE, label: '商城', icon: <StoreIcon className="size-4" />, show: true },
     { to: `${BASE}/cart`, label: `采购清单${count ? `（${count}）` : ''}`, icon: <ShoppingCart className="size-4" />, show: true },
     { to: `${BASE}/custom`, label: '自主申请', icon: <PencilLine className="size-4" />, show: true },
     { to: `${BASE}/mine`, label: '我的采购需求', icon: <ClipboardList className="size-4" />, show: true },
     { to: `${BASE}/pool`, label: '需求池', icon: <Warehouse className="size-4" />, show: !!c?.me.canPool },
+    { to: `${BASE}/overview`, label: '后台总览', icon: <LayoutDashboard className="size-4" />, show: canAdminView, badge: todoCount, testId: 'shop-tab-overview' },
     { to: `${BASE}/skus`, label: 'SKU 维护', icon: <Warehouse className="size-4" />, show: canAdminView },
     { to: `${BASE}/suppliers`, label: '供应商档案', icon: <Building2 className="size-4" />, show: canAdminView },
     { to: `${BASE}/materials`, label: '物料主档', icon: <Package className="size-4" />, show: canAdminView },
@@ -142,6 +168,7 @@ export function ShopPage() {
           <Link
             key={t.to}
             to={t.to}
+            data-testid={t.testId}
             className={cn(
               'tap relative inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-semibold',
               active(t.to) ? 'bg-pine text-paper' : 'bg-card text-ink-2 ring-1 ring-line hover:text-ink',
@@ -149,6 +176,14 @@ export function ShopPage() {
           >
             {t.icon}
             {t.label}
+            {t.badge !== undefined && t.badge > 0 && (
+              <span
+                className={cn('inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[12px] leading-5 font-bold', active(t.to) ? 'bg-paper text-pine' : 'bg-clay text-paper')}
+                data-testid="shop-todo-badge"
+              >
+                {t.badge}
+              </span>
+            )}
           </Link>
         ))}
     </nav>
@@ -168,6 +203,7 @@ export function ShopPage() {
   else if (path === 'custom') body = <CustomForm c={q.data} />;
   else if (path === 'mine' || path === 'pool') body = <RequestList scope={path} />;
   else if (path.startsWith('mine/') || path.startsWith('pool/')) body = <RequestDetail id={Number(path.split('/')[1])} cart={cart} setCart={setCart} c={q.data} />;
+  else if (path === 'overview') body = canAdminView ? <ShopOverviewPage catalog={q.data} /> : <Navigate to={BASE} replace />;
   else if (path === 'skus') body = <SkuAdmin catalog={q.data} />;
   else if (path === 'suppliers') body = canAdminView ? <ShopSuppliersPage catalog={q.data} /> : <Navigate to={BASE} replace />;
   else if (path === 'materials') body = canAdminView ? <ShopMaterialsPage catalog={q.data} /> : <Navigate to={BASE} replace />;
@@ -263,8 +299,50 @@ function Home({ c, setStore, updatedAt }: { c: ShopCatalog; setStore: (id: numbe
     return buildCompareOffers(c, previewItem.material.id, def.qtyMilli, updatedAt);
   }, [c, previewItem, updatedAt]);
 
+  // FR-10 员工侧一次性引导提示（本会话关闭后不再弹出）
+  const [dismissed, setDismissed] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('yuzu.shop.dismissedNudges') ?? '{}') as Record<string, boolean>;
+    } catch {
+      return {};
+    }
+  });
+  const dismissNudge = (key: string) => {
+    const next = { ...dismissed, [key]: true };
+    setDismissed(next);
+    try {
+      sessionStorage.setItem('yuzu.shop.dismissedNudges', JSON.stringify(next));
+    } catch {
+      // 隐私模式无法写 sessionStorage 时仅内存中关闭
+    }
+  };
+  const showMissingDeptNudge = !c.me.departmentId && !c.me.canPickDepartment && !dismissed.missing_dept;
+  const noOffersKey = `no_offers_${c.storeId}`;
+  const showNoOffersNudge = c.items.every((i) => i.purchasable === 0) && !dismissed[noOffersKey];
+
   return (
     <div ref={rootRef} className="space-y-4" data-testid="shop-home">
+      {showMissingDeptNudge && (
+        <div className="flex items-start justify-between gap-2 rounded-xl border border-yuzu-deep/30 bg-yuzu-soft/50 px-3.5 py-2.5 text-[13px] text-ink" data-testid="shop-nudge-missing-dept">
+          <span>您的员工档案尚未补全所属部门，提交采购需求前请联系店主在员工档案中设置部门。</span>
+          <button type="button" onClick={() => dismissNudge('missing_dept')} className="tap relative shrink-0 text-ink-3 hover:text-ink" aria-label="关闭提示">
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
+      {showNoOffersNudge && (
+        <div className="flex items-start justify-between gap-2 rounded-xl border border-line bg-paper-2 px-3.5 py-2.5 text-[13px] text-ink-2" data-testid="shop-nudge-no-offers">
+          <span>
+            当前门店暂无可直接下单的在架报价，可切换门店或直接
+            <Link to={`${BASE}/custom`} className="ml-1 font-semibold text-pine hover:underline">
+              发起自主申请 →
+            </Link>
+          </span>
+          <button type="button" onClick={() => dismissNudge(noOffersKey)} className="tap relative shrink-0 text-ink-3 hover:text-ink" aria-label="关闭提示">
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap items-end gap-3">
         <Field label="门店（业态）" htmlFor="shop-store">
           <Select id="shop-store" value={c.storeId} onChange={(e) => setStore(Number(e.target.value))} fullWidth={false}>
@@ -744,6 +822,130 @@ function useSubmit(onDone: (r: MallRequest) => void) {
   return { send, busy, blocked };
 }
 
+const ROUTE_STATUS_BADGE: Record<ShopRoutePreview['nodes'][number]['status'], { label: string; tone: 'pine' | 'ember' | 'clay' | 'neutral' }> = {
+  active: { label: '需流转', tone: 'pine' },
+  auto: { label: '自动确认', tone: 'pine' },
+  skipped: { label: '跳过', tone: 'neutral' },
+  blocked: { label: '需补全', tone: 'clay' },
+};
+
+/** FR-02 提交前审批路由预览（可折叠，服务端实时计算，接口异常时降级静态说明且永不阻塞提交） */
+function RoutePreviewCard({
+  storeId,
+  departmentId,
+  paymentIntent,
+  priority,
+  kind,
+  lines,
+}: {
+  storeId: number;
+  departmentId: string;
+  paymentIntent: MallPaymentIntent;
+  priority: RequestPriority;
+  kind: 'catalog' | 'custom';
+  lines: readonly ShopCartLine[];
+}) {
+  const [open, setOpen] = useState(true);
+  const lineParam = useMemo(() => (kind === 'catalog' ? lines.map((l) => `${l.skuId}:${l.qtyMilli}`).join(',') : ''), [kind, lines]);
+  const url = useMemo(() => {
+    const qs = new URLSearchParams({
+      storeId: String(storeId),
+      paymentIntent,
+      priority,
+      kind,
+    });
+    if (departmentId && /^[1-9]\d*$/.test(departmentId)) qs.set('departmentId', departmentId);
+    if (lineParam) qs.set('lines', lineParam);
+    return `/api/erp/shop/route-preview?${qs.toString()}`;
+  }, [storeId, departmentId, paymentIntent, priority, kind, lineParam]);
+
+  const q = useQuery({
+    queryKey: ['shop', 'route-preview', url],
+    queryFn: () => api.get<ShopRoutePreview>(url),
+    retry: false,
+  });
+
+  return (
+    <Card className="p-4" data-testid="shop-route-preview">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center justify-between gap-2 text-left" data-testid="shop-route-preview-toggle">
+        <span className="inline-flex items-center gap-1.5 text-[14px] font-bold text-ink">
+          <GitBranch className="size-4 text-pine" aria-hidden />
+          审批路由预览（预计流转，以 ERP 实际核验为准）
+        </span>
+        <span className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-ink-3">
+          {open ? '收起' : '展开'}
+          {open ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+        </span>
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-3">
+          {q.isPending ? (
+            <div className="space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-8 w-3/4" />
+            </div>
+          ) : q.error || !q.data ? (
+            <div className="space-y-2 rounded-lg border border-line bg-paper-2/50 p-3 text-[12.5px] text-ink-2" data-testid="shop-route-preview-fallback">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-ink">路由预览暂未取回（不影响直接提交）</span>
+                <Button size="sm" variant="ghost" onClick={() => void q.refetch()}>
+                  重试
+                </Button>
+              </div>
+              <p>预计流转：部门主管确认 → 核库 → 采购审核 → 下单 → 到货。</p>
+              <p className="text-ink-3">同日同供应商累计、采购日累计 3 万元分流与备用金额度由 ERP 核验；紧急程度仅用于排序，不构成紧急特批。</p>
+            </div>
+          ) : (
+            <>
+              <ol className="grid gap-2 sm:grid-cols-5" aria-label="预计审批节点" data-testid="shop-route-preview-nodes">
+                {q.data.nodes.map((node, idx) => {
+                  const st = ROUTE_STATUS_BADGE[node.status];
+                  return (
+                    <li
+                      key={node.key}
+                      data-testid={`shop-route-node-${node.key}`}
+                      className={cn(
+                        'rounded-lg border px-2.5 py-2 text-[12.5px]',
+                        node.status === 'skipped' ? 'border-line bg-paper-2/40 text-ink-3' : node.status === 'blocked' ? 'border-clay/50 bg-clay-soft/20' : 'border-pine/30 bg-card',
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-bold text-ink">
+                          {idx + 1}. {node.label}
+                        </span>
+                        <Badge tone={st.tone}>{st.label}</Badge>
+                      </div>
+                      <p className="mt-1 truncate text-ink-2" title={node.role}>
+                        {node.role}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ol>
+
+              {q.data.hasUnpriced && (
+                <div className="rounded-lg border border-line bg-paper-2/60 px-3 py-2 text-[12.5px] font-semibold text-ink" data-testid="shop-route-unpriced">
+                  待寻源，金额待定
+                </div>
+              )}
+
+              <ul className="space-y-1 text-[12.5px]" data-testid="shop-route-preview-hints">
+                {q.data.hints.map((h) => (
+                  <li key={`${h.code}-${h.text.slice(0, 12)}`} className={cn('flex items-start gap-1.5', h.tone === 'warning' ? 'font-semibold text-clay' : 'text-ink-2')}>
+                    <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-current" aria-hidden />
+                    <span>{h.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Checkout({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (c: Cart) => void }) {
   const session = useSession();
   const navigate = useNavigate();
@@ -780,17 +982,13 @@ function Checkout({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (
           ))}
         </ul>
         <p className="mt-2 text-right text-[15px] font-bold">预计含税总额 {formatYuan(total)}</p>
-        <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[12.5px] text-ink-3">
-          <li>提交后生成一张采购需求单，先由部门主管确认（全部需求单都审），再核库、采购审核。</li>
-          <li>部门选的供应商是采购意向，最终由采购确认；同日同供应商累计、备用金额度、合同与预算由 ERP 核验。</li>
-          <li>紧急程度只用于排序，不等于紧急特批。</li>
-        </ul>
         {bad && (
           <Notice tone="error" title="清单里有不能提交的行" className="mt-3">
             回采购清单修改（已失效、门店不对、改过价或低于起订量）。
           </Notice>
         )}
       </Card>
+      <RoutePreviewCard storeId={c.storeId} departmentId={f.departmentId} paymentIntent={f.paymentIntent} priority={f.priority} kind="catalog" lines={cart.lines} />
       <div className="flex justify-end gap-2">
         <Link to={`${BASE}/cart`}>
           <Button variant="ghost">返回清单</Button>
@@ -865,8 +1063,8 @@ function CustomForm({ c }: { c: ShopCatalog }) {
       <Card className="p-4">
         <p className="mb-3 text-[14px] font-bold">② 部门与交付</p>
         <HeaderFields c={c} f={f} set={setF} />
-        <p className="mt-3 text-[12.5px] text-ink-3">采购受理后寻源、归类与报价；没有金额时，3 万累计、备用金额度等等报价后由 ERP 核验。</p>
       </Card>
+      <RoutePreviewCard storeId={c.storeId} departmentId={f.departmentId} paymentIntent={f.paymentIntent} priority={f.priority} kind="custom" lines={[]} />
       <div className="flex justify-end">
         <Button
           variant="primary"

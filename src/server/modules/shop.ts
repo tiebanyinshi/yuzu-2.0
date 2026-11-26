@@ -12,6 +12,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { shiftDate } from '@shared/labels';
+import { formatYuan } from '@shared/money';
 import { can } from '@shared/permissions';
 import { REQUEST_PRIORITIES } from '@shared/requests';
 import {
@@ -30,6 +31,10 @@ import {
   type ShopItem,
   type ShopMaterialRow,
   type ShopOffer,
+  type ShopOverview,
+  type ShopRoutePreview,
+  type ShopRoutePreviewHint,
+  type ShopRoutePreviewNode,
   type ShopSku,
   type ShopSkuCore,
   type ShopSkuStatus,
@@ -41,13 +46,15 @@ import { guardAny } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors';
-import { todayIn } from '../lib/dates';
+import { clockIn, todayIn } from '../lib/dates';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
 import { loadExpenseRules } from './expenses';
 import { supplierLicenses } from './inventory/admission';
 import { docDateSchema } from './inventory/common';
+import { loadPurchaseRules } from './inventory/purchase-rules';
 import { createMallRequest, mallRequest, pagedMall } from './mall';
+import { pettyBalances, pettyOccupied } from './petty-uses';
 import { allowedStores } from './stores';
 import { hashRequest } from '../lib/idempotency';
 import { myContext } from './requests';
@@ -746,6 +753,283 @@ async function listShopMaterials(db: Db, today: string): Promise<ShopMaterialRow
   }));
 }
 
+// ───────────────────────── 审批路由预览与后台总览（FR-02 / FR-05 / FR-10） ─────────────────────────
+
+const RoutePreviewQuery = z.object({
+  storeId: z.coerce.number().int().positive('门店编号不正确'),
+  departmentId: z.coerce.number().int().positive().optional(),
+  paymentIntent: z.enum(['company_direct', 'dept_petty']).default('company_direct'),
+  priority: z.enum(REQUEST_PRIORITIES).default('normal'),
+  kind: z.enum(['catalog', 'custom']).default('catalog'),
+  /** 清单行：skuId:qtyMilli 以逗号分隔，如 "11:10000,15:5000" */
+  lines: z.string().max(1600).optional(),
+});
+
+function parsePreviewLines(raw: string | undefined): { skuId: number; qtyMilli: number }[] {
+  if (!raw || !raw.trim()) return [];
+  const out: { skuId: number; qtyMilli: number }[] = [];
+  for (const part of raw.split(',').slice(0, 50)) {
+    const m = /^([1-9]\d*):([1-9]\d*)$/.exec(part.trim());
+    if (!m) continue;
+    const skuId = Number(m[1]);
+    const qtyMilli = Math.min(SHOP_MAX_QTY_MILLI, Number(m[2]));
+    if (Number.isSafeInteger(skuId) && Number.isSafeInteger(qtyMilli)) out.push({ skuId, qtyMilli });
+  }
+  return out;
+}
+
+const DAILY_SPLIT_THRESHOLD_CENTS = 3_000_000; // 3 万元日累计分流参考门槛
+
+async function routePreview(deps: Deps, actor: Actor, raw: unknown): Promise<ShopRoutePreview> {
+  const q = parse(RoutePreviewQuery, raw ?? {});
+  const db = deps.sql;
+  const tz = deps.config.timezone;
+  const today = todayIn(tz);
+
+  const allowed = (await allowedStores(db, actor)).map((s) => Number(s.id));
+  if (!allowed.includes(q.storeId)) throw forbidden('你不能查看这家门店的审批路由');
+
+  const [rules, me] = await Promise.all([loadPurchaseRules(db), myContext(db, actor)]);
+  const canPickDept = actor.role === 'owner' || me.canReview;
+  const deptId = canPickDept ? (q.departmentId ?? me.departmentId) : me.departmentId;
+
+  const hints: ShopRoutePreviewHint[] = [];
+
+  // 1) 部门主管确认节点（与 createMallRequest 调 deptConfirmFor(..., true) 完全同口径）
+  let deptNode: ShopRoutePreviewNode;
+  if (!deptId) {
+    deptNode = { key: 'dept_confirm', label: '部门主管确认', role: '待补所属部门', status: 'blocked' };
+    hints.push({ code: 'missing_department', tone: 'warning', text: '员工档案尚未填写所属部门，请店主在员工档案补齐后再提交。' });
+  } else {
+    const [d] = await db<{ name: string; headId: number | null; headName: string | null; headActive: boolean | null }[]>`
+      SELECT d.name, d.head_id, h.display_name AS head_name, h.active AS head_active
+      FROM departments d LEFT JOIN staff h ON h.id = d.head_id WHERE d.id = ${deptId}`;
+    if (!d) {
+      deptNode = { key: 'dept_confirm', label: '部门主管确认', role: '部门不存在', status: 'blocked' };
+    } else if (!d.headId || !d.headActive) {
+      deptNode = { key: 'dept_confirm', label: '部门主管确认', role: `${d.name}未设主管（跳过）`, status: 'skipped' };
+    } else if (actor.id === Number(d.headId) || actor.role === 'owner') {
+      deptNode = { key: 'dept_confirm', label: '部门主管确认', role: `${d.headName}（提交即确认）`, status: 'auto' };
+    } else {
+      deptNode = { key: 'dept_confirm', label: '部门主管确认', role: d.headName ?? '部门主管', status: 'active' };
+    }
+  }
+
+  // 2) 核库节点与金额/同日同供应商提示（与 enterStockCheck 完全同口径）
+  let stockNode: ShopRoutePreviewNode;
+  let estimateCents: number | null = null;
+  const hasUnpriced = q.kind === 'custom';
+
+  if (q.kind === 'custom') {
+    stockNode = { key: 'stock_check', label: '核库', role: '自主申请无编码，直进审核', status: 'skipped' };
+    hints.push({
+      code: 'unpriced_custom',
+      tone: 'info',
+      text: '待寻源，金额待定：自主申请提交后由采购归类寻源报价，同日累计、3 万元分流与备用金额度在报价后由 ERP 核验。',
+    });
+  } else {
+    const lineSpecs = parsePreviewLines(q.lines);
+    const skuIds = [...new Set(lineSpecs.map((l) => l.skuId))];
+    const skuRows = skuIds.length
+      ? await db<
+          {
+            id: number;
+            supplierId: number;
+            supplierName: string;
+            priceCents: number;
+            taxRateBp: number;
+            freightCents: number;
+            materialActive: boolean;
+            tracked: boolean;
+            stockMilli: number;
+          }[]
+        >`
+          SELECT k.id, k.supplier_id, sp.name AS supplier_name, k.price_cents, k.tax_rate_bp, k.freight_cents,
+                 m.active AS material_active, m.tracked, m.stock_milli
+          FROM mall_skus k JOIN suppliers sp ON sp.id = k.supplier_id JOIN materials m ON m.id = k.material_id
+          WHERE k.id IN ${db(skuIds)}`
+      : [];
+    const bySku = new Map(skuRows.map((r) => [Number(r.id), r]));
+
+    let sumCents = 0;
+    let hasCentralStock = false;
+    const bySupplier = new Map<number, { name: string; cents: number }>();
+
+    for (const l of lineSpecs) {
+      const k = bySku.get(l.skuId);
+      if (!k) continue;
+      const lineCents = lineGrossCents(Number(k.priceCents), k.taxRateBp, l.qtyMilli, Number(k.freightCents));
+      sumCents += lineCents;
+      if (k.materialActive && k.tracked && Number(k.stockMilli) > 0) hasCentralStock = true;
+      const sid = Number(k.supplierId);
+      const prev = bySupplier.get(sid);
+      bySupplier.set(sid, { name: k.supplierName, cents: (prev?.cents ?? 0) + lineCents });
+    }
+    estimateCents = sumCents;
+
+    if (q.priority === 'urgent') {
+      stockNode = { key: 'stock_check', label: '核库', role: '紧急件跳过核库', status: 'skipped' };
+    } else if (!rules.stockCheckEnabled) {
+      stockNode = { key: 'stock_check', label: '核库', role: '规则未开启核库', status: 'skipped' };
+    } else if (hasCentralStock) {
+      stockNode = { key: 'stock_check', label: '核库', role: `库管（${rules.stockCheckHours} 小时时限）`, status: 'active' };
+    } else {
+      stockNode = { key: 'stock_check', label: '核库', role: '总仓无结存，直进审核', status: 'skipped' };
+    }
+
+    // 同日同供应商累计与采购日累计 3 万元提示（只读参考，非承诺）
+    const supIds = [...bySupplier.keys()];
+    const todayRows = supIds.length
+      ? await db<{ supplierId: number; reqCount: number; cents: string }[]>`
+          SELECT l.supplier_id, count(DISTINCT r.id)::int AS req_count,
+                 coalesce(sum(round((l.qty_milli::numeric * coalesce(l.ref_price_cents, 0)) / 1000)), 0)::bigint::text AS cents
+          FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
+          WHERE r.store_id = ${q.storeId} AND r.status NOT IN ('draft', 'cancelled', 'rejected')
+            AND (r.created_at AT TIME ZONE ${tz})::date = ${today}::date
+            AND l.supplier_id IN ${db(supIds)}
+          GROUP BY l.supplier_id`
+      : [];
+    const todayBySup = new Map(todayRows.map((r) => [Number(r.supplierId), { count: Number(r.reqCount), cents: Number(r.cents) }]));
+    const [todayStoreRow] = await db<{ cents: string }[]>`
+      SELECT coalesce(sum(round((l.qty_milli::numeric * coalesce(l.ref_price_cents, 0)) / 1000)), 0)::bigint::text AS cents
+      FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
+      WHERE r.store_id = ${q.storeId} AND r.status NOT IN ('draft', 'cancelled', 'rejected')
+        AND (r.created_at AT TIME ZONE ${tz})::date = ${today}::date`;
+    const todayStoreCents = Number(todayStoreRow?.cents ?? 0);
+
+    for (const [sid, cur] of bySupplier) {
+      const prev = todayBySup.get(sid);
+      if (prev && prev.count > 0) {
+        hints.push({
+          code: 'same_day_merge',
+          tone: 'info',
+          text: `可能触发同日同供应商累计合并：「${cur.name}」今日已有 ${prev.count} 张需求单，含本单预计累计 ${formatYuan(prev.cents + cur.cents)}（以 ERP 核验为准）。`,
+        });
+      }
+    }
+
+    const dailyTotal = todayStoreCents + sumCents;
+    if (dailyTotal >= DAILY_SPLIT_THRESHOLD_CENTS) {
+      hints.push({
+        code: 'daily_30k',
+        tone: 'warning',
+        text: `可能触发采购日累计 3 万元分流：本店今日含本单预计累计 ${formatYuan(dailyTotal)}，最终由 ERP 审核分流认定。`,
+      });
+    }
+    if (rules.quoteThresholdCents > 0 && sumCents >= rules.quoteThresholdCents) {
+      hints.push({
+        code: 'quote_threshold',
+        tone: 'info',
+        text: `本单预计金额已达询价门槛（${formatYuan(rules.quoteThresholdCents)}），采购环节按规则需至少 ${rules.minQuotes} 家比价核验。`,
+      });
+    }
+  }
+
+  // 3) 每日截单提醒
+  if (rules.cutoffEnabled && clockIn(tz) >= rules.cutoffTime) {
+    hints.push({
+      code: 'cutoff',
+      tone: 'info',
+      text: `当前已过每日截单时间（${rules.cutoffTime}），预计最早次日由采购审核通过。`,
+    });
+  }
+
+  // 4) 部门备用金支付提示（读取 8.1.42 统一部门备用金可用余额）
+  if (q.paymentIntent === 'dept_petty') {
+    if (deptId) {
+      const [bal, occ] = await Promise.all([pettyBalances(db, deptId), pettyOccupied(db, deptId)]);
+      const avail = (bal.get(deptId) ?? 0) - (occ.get(deptId) ?? 0);
+      hints.push({
+        code: 'petty_cash',
+        tone: estimateCents !== null && avail < estimateCents ? 'warning' : 'info',
+        text: `拟用部门备用金支付：当前可用余额 ${formatYuan(avail)}，实际占用与报销核销由 ERP 核验。`,
+      });
+    } else {
+      hints.push({ code: 'petty_cash', tone: 'info', text: '拟用部门备用金支付：备用金额度与可用余额由 ERP 按所属部门核验。' });
+    }
+  }
+
+  // 5) FR-02 必含文案：紧急程度仅用于排序，不构成紧急特批
+  hints.push({
+    code: 'urgency_rule',
+    tone: q.priority === 'urgent' ? 'warning' : 'neutral',
+    text: '紧急程度仅用于排序，不构成紧急特批；正式紧急采购审批需按制度另行认定。',
+  });
+
+  const nodes: ShopRoutePreviewNode[] = [
+    deptNode,
+    stockNode,
+    { key: 'purchase_review', label: '采购审核', role: '采购审核', status: 'active' },
+    { key: 'po_order', label: '下单', role: rules.requestPoDirect ? '采购下单（免二次审）' : '采购下单', status: 'active' },
+    { key: 'receive', label: '到货', role: '门店 / 仓库验收', status: 'active' },
+  ];
+
+  return { nodes, hints, estimateCents, hasUnpriced };
+}
+
+async function shopOverview(db: Db): Promise<ShopOverview> {
+  const [row] = await db<
+    {
+      materials: number;
+      activeMaterials: number;
+      suppliers: number;
+      admittedSuppliers: number;
+      activeSkus: number;
+      totalSkus: number;
+      pendingSkus: number;
+      pendingSkuChanges: number;
+      pendingSuppliers: number;
+      materialsWeek: number;
+      suppliersWeek: number;
+      skusWeek: number;
+      requestsWeek: number;
+    }[]
+  >`
+    SELECT
+      (SELECT count(*)::int FROM materials WHERE tracked) AS materials,
+      (SELECT count(*)::int FROM materials WHERE tracked AND active) AS active_materials,
+      (SELECT count(*)::int FROM suppliers) AS suppliers,
+      (SELECT count(*)::int FROM suppliers WHERE active AND admission = 'approved') AS admitted_suppliers,
+      (SELECT count(*)::int FROM mall_skus WHERE status = 'approved') AS active_skus,
+      (SELECT count(*)::int FROM mall_skus) AS total_skus,
+      (SELECT count(*)::int FROM mall_skus WHERE status = 'pending') AS pending_skus,
+      (SELECT count(*)::int FROM mall_sku_changes WHERE status = 'pending') AS pending_sku_changes,
+      (SELECT count(*)::int FROM suppliers WHERE active AND admission = 'pending') AS pending_suppliers,
+      (SELECT count(*)::int FROM materials WHERE tracked AND created_at >= now() - interval '7 days') AS materials_week,
+      (SELECT count(*)::int FROM suppliers WHERE created_at >= now() - interval '7 days') AS suppliers_week,
+      (SELECT count(*)::int FROM mall_skus WHERE created_at >= now() - interval '7 days') AS skus_week,
+      (SELECT count(*)::int FROM purchase_requests WHERE source = 'mall' AND created_at >= now() - interval '7 days') AS requests_week`;
+  const r = row!;
+  const pendingSkus = Number(r.pendingSkus);
+  const pendingSkuChanges = Number(r.pendingSkuChanges);
+  const pendingSuppliers = Number(r.pendingSuppliers);
+  return {
+    counts: {
+      materials: Number(r.materials),
+      activeMaterials: Number(r.activeMaterials),
+      suppliers: Number(r.suppliers),
+      admittedSuppliers: Number(r.admittedSuppliers),
+      activeSkus: Number(r.activeSkus),
+      totalSkus: Number(r.totalSkus),
+      pendingSkus,
+      pendingSkuChanges,
+      pendingSuppliers,
+      totalTodos: pendingSkus + pendingSkuChanges + pendingSuppliers,
+    },
+    recent: {
+      materialsWeek: Number(r.materialsWeek),
+      suppliersWeek: Number(r.suppliersWeek),
+      skusWeek: Number(r.skusWeek),
+      requestsWeek: Number(r.requestsWeek),
+    },
+    todos: {
+      pendingSkus,
+      pendingSkuChanges,
+      pendingSuppliers,
+    },
+  };
+}
+
 export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
   const P = '/api/erp/shop';
@@ -757,6 +1041,8 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
 
   app.get(`${P}/catalog`, { preHandler: catalogRead }, async (req) => catalog(deps, req.actor, (req.query as { storeId?: string } | undefined)?.storeId));
   app.get(`${P}/offers`, { preHandler: catalogRead }, async (req) => compareOffers(deps, req.actor, req.query));
+  app.get(`${P}/route-preview`, { preHandler: shopper }, async (req) => routePreview(deps, req.actor, req.query));
+  app.get(`${P}/overview`, { preHandler: skuRead }, async () => shopOverview(sql));
   app.get(`${P}/suppliers`, { preHandler: skuRead }, async (req) => listShopSuppliers(sql, req.actor));
   app.get(`${P}/suppliers/:id`, { preHandler: skuRead }, async (req) => shopSupplierDetail(sql, req.actor, parse(idParam, req.params).id));
   const patchSupplier = async (req: { params: unknown; body: unknown; actor: Actor; ip: string }) => {

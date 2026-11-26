@@ -586,3 +586,51 @@ export interface ShopMaterialRow {
   supplierCount: number;
   lowestGrossCents: number | null;
 }
+
+/** 提交前审批路由预览（FR-02）：由 ERP 后端按真实采购规则、部门主管与总仓结存计算，前端只展示 */
+export interface ShopRoutePreviewNode {
+  key: 'dept_confirm' | 'stock_check' | 'purchase_review' | 'po_order' | 'receive';
+  label: string;
+  role: string;
+  status: 'active' | 'auto' | 'skipped' | 'blocked';
+}
+
+export interface ShopRoutePreviewHint {
+  code: string;
+  tone: 'info' | 'warning' | 'neutral';
+  text: string;
+}
+
+export interface ShopRoutePreview {
+  nodes: ShopRoutePreviewNode[];
+  hints: ShopRoutePreviewHint[];
+  estimateCents: number | null;
+  hasUnpriced: boolean;
+}
+
+/** 供应链后台总览（FR-05 & FR-10 & UX-10）：一次返回 4 统计卡、近 7 日增量与待办明细 */
+export interface ShopOverview {
+  counts: {
+    materials: number;
+    activeMaterials: number;
+    suppliers: number;
+    admittedSuppliers: number;
+    activeSkus: number;
+    totalSkus: number;
+    pendingSkus: number;
+    pendingSkuChanges: number;
+    pendingSuppliers: number;
+    totalTodos: number;
+  };
+  recent: {
+    materialsWeek: number;
+    suppliersWeek: number;
+    skusWeek: number;
+    requestsWeek: number;
+  };
+  todos: {
+    pendingSkus: number;
+    pendingSkuChanges: number;
+    pendingSuppliers: number;
+  };
+}

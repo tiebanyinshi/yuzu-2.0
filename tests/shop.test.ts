@@ -452,4 +452,91 @@ describe('SKU 的边界（Codex 审查）', () => {
       await ctx.sql`UPDATE materials SET category = ${origMat!.category}, note = ${origMat!.note}, active = ${origMat!.active} WHERE id = ${mat.id}`;
     }
   });
+
+  it('审批路由预览（FR-02）：预计节点与提交后真实流转一致、含紧急程度免责与待寻源标注、越权门店 403', async () => {
+    const headId = await createStaff(ctx.sql, {
+      username: 'shop_head_e',
+      displayName: '运营部门主管',
+      role: 'backoffice',
+      duties: ['request'],
+      departmentId: deptA,
+      password: PASSWORD,
+      mustChangePassword: false,
+    });
+    await ctx.sql`UPDATE departments SET head_id = ${headId} WHERE id = ${deptA}`;
+    try {
+      const s = await listed((await sku({ supplierId: supA, moqMilli: q(10), priceCents: 1200, taxRateBp: 1300, freightCents: 0 })).id);
+      // 1) 正常目录单预览：部门主管确认 active、含紧急程度说明
+      const preview = await api(ctx.app, reqA, 'GET', `/api/erp/shop/route-preview?storeId=${storeId}&kind=catalog&priority=normal&paymentIntent=dept_petty&lines=${s.id}:${q(10)}`);
+      expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+      const nodes = preview.body.nodes as { key: string; status: string; role: string }[];
+      const hints = preview.body.hints as { code: string; text: string }[];
+      expect(nodes.find((n) => n.key === 'dept_confirm')).toMatchObject({ status: 'active', role: '运营部门主管' });
+      expect(hints.some((h) => h.code === 'urgency_rule' && h.text.includes('紧急程度仅用于排序，不构成紧急特批'))).toBe(true);
+      expect(hints.some((h) => h.code === 'petty_cash')).toBe(true);
+      expect(preview.body.hasUnpriced).toBe(false);
+
+      // 真实提交同一单：流转首节点与预览完全一致（待主管确认）
+      const submitted = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', {
+        ...header({ priority: 'normal', paymentIntent: 'dept_petty' }),
+        kind: 'catalog',
+        lines: [{ skuId: s.id, priceVersion: s.priceVersion, qtyMilli: q(10) }],
+      });
+      expect(submitted.status, JSON.stringify(submitted.body)).toBe(201);
+      expect(submitted.body.request.deptConfirm).toMatchObject({ state: 'pending', headName: '运营部门主管' });
+      expect(submitted.body.request.displayStatus).toBe('dept_pending');
+
+      // 提交完一单后再次预览同供应商：给出同日同供应商累计合并提示
+      const secondPreview = await api(ctx.app, reqA, 'GET', `/api/erp/shop/route-preview?storeId=${storeId}&kind=catalog&priority=urgent&lines=${s.id}:${q(10)}`);
+      expect(secondPreview.status).toBe(200);
+      expect((secondPreview.body.nodes as { key: string; status: string }[]).find((n) => n.key === 'stock_check')?.status).toBe('skipped');
+      expect((secondPreview.body.hints as { code: string }[]).some((h) => h.code === 'same_day_merge')).toBe(true);
+
+      // 2) 自主申请预览：标注待寻源、金额待定
+      const customPreview = await api(ctx.app, reqA, 'GET', `/api/erp/shop/route-preview?storeId=${storeId}&kind=custom&priority=high`);
+      expect(customPreview.status).toBe(200);
+      expect(customPreview.body.hasUnpriced).toBe(true);
+      expect(customPreview.body.estimateCents).toBeNull();
+      expect((customPreview.body.hints as { code: string; text: string }[]).some((h) => h.code === 'unpriced_custom' && h.text.includes('待寻源，金额待定'))).toBe(true);
+
+      // 3) 越权门店 403
+      const [otherStore] = await ctx.sql<{ id: number }[]>`SELECT id FROM stores WHERE id <> ${storeId} LIMIT 1`;
+      if (otherStore) {
+        expect((await api(ctx.app, reqA, 'GET', `/api/erp/shop/route-preview?storeId=${otherStore.id}&kind=custom`)).status).toBe(403);
+      }
+    } finally {
+      await ctx.sql`UPDATE departments SET head_id = NULL WHERE id = ${deptA}`;
+    }
+  });
+
+  it('供应链后台总览（FR-05 & FR-10）：统计计数与各列表实际条数一致，待办汇总准确', async () => {
+    // 普通申购人无权查看后台总览
+    expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/overview')).status).toBe(403);
+
+    // 建一条待审核 SKU，验证待办计数包含它
+    const pendingSku = await sku();
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${pendingSku.id}/submit`, {})).status).toBe(200);
+
+    const [ov, mats, sups, skus] = await Promise.all([
+      api(ctx.app, buyer, 'GET', '/api/erp/shop/overview'),
+      api(ctx.app, buyer, 'GET', '/api/erp/shop/materials'),
+      api(ctx.app, buyer, 'GET', '/api/erp/shop/suppliers'),
+      api(ctx.app, buyer, 'GET', '/api/erp/shop/skus'),
+    ]);
+    expect(ov.status, JSON.stringify(ov.body)).toBe(200);
+    const counts = ov.body.counts as {
+      materials: number;
+      suppliers: number;
+      activeSkus: number;
+      pendingSkus: number;
+      pendingSkuChanges: number;
+      pendingSuppliers: number;
+      totalTodos: number;
+    };
+    expect(counts.materials).toBe((mats.body as unknown[]).length);
+    expect(counts.suppliers).toBe((sups.body as unknown[]).length);
+    expect(counts.activeSkus).toBe((skus.body as { status: string }[]).filter((k) => k.status === 'approved').length);
+    expect(counts.pendingSkus).toBeGreaterThanOrEqual(1);
+    expect(counts.totalTodos).toBe(counts.pendingSkus + counts.pendingSkuChanges + counts.pendingSuppliers);
+  });
 });
