@@ -8,8 +8,10 @@ import { ExternalLink, FileText, Package, Search, Store as StoreIcon } from 'luc
 import { formatYuan } from '@shared/money';
 import { formatQty } from '@shared/quantity';
 import { formatTaxRate, SHOP_SKU_STATUS_LABELS, type ShopCatalog, type ShopMaterialRow, type ShopSupplierDetail, type ShopSupplierRow } from '@shared/shop';
-import { api, errorMessage } from '../../lib/api';
-import { formatDateTime } from '../../lib/utils';
+import { api, errorMessage, UncertainError } from '../../lib/api';
+import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
+import { useSession } from '../../lib/session';
+import { formatDateTime, uuid } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -31,6 +33,54 @@ function supplierStatusBadge(s: Pick<ShopSupplierRow, 'active' | 'admission'>): 
   if (s.admission === 'approved') return { text: '已准入', tone: 'pine' };
   if (s.admission === 'suspended') return { text: '准入暂停', tone: 'clay' };
   return { text: '待准入', tone: 'ember' };
+}
+
+/** 主数据写操作统一走操作编号与「结果待确认」协议：先存本机读回核对再发；断网/超时/5xx 留在页面顶部查回、原样重提或作废 */
+function useShopMasterWrite() {
+  const session = useSession();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const recorded = useErpRecorded(['shop_master']).filter((op) => op.staffId === session.staff.id);
+  const blocked = recorded.length > 0;
+  const run = async <T,>(
+    opts: { method: 'PUT' | 'POST'; url: string; body: Record<string, unknown>; summary: string; okTitle: string },
+    onSuccess?: (result: T) => void,
+  ): Promise<'ok' | 'uncertain' | 'error'> => {
+    if (blocked) {
+      toast({ tone: 'error', title: '上一次主数据保存还没确认结果', body: '请先在页面顶部查回、按原内容重新提交或确认作废，再发起新的修改' });
+      return 'error';
+    }
+    setBusy(true);
+    try {
+      const clientKey = uuid();
+      const result = await sendErpOp<T>({
+        key: clientKey,
+        type: 'shop_master',
+        method: opts.method,
+        url: opts.url,
+        body: { ...opts.body, clientKey },
+        summary: `采购商城主数据 · ${opts.summary}`,
+        staffName: session.staff.displayName,
+        staffId: session.staff.id,
+      });
+      toast({ tone: 'success', title: opts.okTitle });
+      void qc.invalidateQueries({ queryKey: ['shop'] });
+      onSuccess?.(result);
+      return 'ok';
+    } catch (e) {
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '结果待确认', body: '网络中断或服务器未返回结果，记录已留在本机。请在页面顶部查回结果、按原内容重新提交或确认作废。' });
+        void qc.invalidateQueries({ queryKey: ['shop'] });
+        return 'uncertain';
+      }
+      toast({ tone: 'error', title: errorMessage(e) });
+      return 'error';
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { run, busy, blocked };
 }
 
 // ───────────────────────── FR-03 供应商档案页 ─────────────────────────
@@ -205,8 +255,7 @@ export function ShopSuppliersPage({ catalog }: { catalog: ShopCatalog }) {
 }
 
 function SupplierDetailDialog({ supplierId, canEdit, onClose }: { supplierId: number; canEdit: boolean; onClose: () => void }) {
-  const qc = useQueryClient();
-  const toast = useToast();
+  const { run, busy, blocked } = useShopMasterWrite();
   const q = useQuery({
     queryKey: ['shop', 'supplier', supplierId],
     queryFn: () => api.get<ShopSupplierDetail>(`/api/erp/shop/suppliers/${supplierId}`),
@@ -215,7 +264,6 @@ function SupplierDetailDialog({ supplierId, canEdit, onClose }: { supplierId: nu
   const [contact, setContact] = useState('');
   const [phone, setPhone] = useState('');
   const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
 
   const d = q.data;
   const startEdit = () => {
@@ -225,17 +273,12 @@ function SupplierDetailDialog({ supplierId, canEdit, onClose }: { supplierId: nu
     setNote(d.note);
     setEditing(true);
   };
-  const save = async (patch: { contact?: string; phone?: string; note?: string; active?: boolean }, okMsg: string) => {
-    setBusy(true);
-    try {
-      await api.put(`/api/erp/shop/suppliers/${supplierId}`, patch);
-      toast({ tone: 'success', title: okMsg });
+  const save = async (patch: { contact?: string; phone?: string; note?: string; active?: boolean }, summary: string, okMsg: string) => {
+    const status = await run({ method: 'PUT', url: `/api/erp/shop/suppliers/${supplierId}`, body: patch, summary, okTitle: okMsg });
+    if (status === 'ok') setEditing(false);
+    else if (status === 'uncertain') {
       setEditing(false);
-      void qc.invalidateQueries({ queryKey: ['shop'] });
-    } catch (e) {
-      toast({ tone: 'error', title: errorMessage(e) });
-    } finally {
-      setBusy(false);
+      onClose();
     }
   };
 
@@ -264,7 +307,7 @@ function SupplierDetailDialog({ supplierId, canEdit, onClose }: { supplierId: nu
             </div>
             <div className="flex flex-wrap gap-2">
               {canEdit && !editing && (
-                <Button size="sm" variant="secondary" onClick={startEdit} data-testid="shop-supplier-edit-btn">
+                <Button size="sm" variant="secondary" disabled={blocked} onClick={startEdit} data-testid="shop-supplier-edit-btn">
                   编辑联系与备注
                 </Button>
               )}
@@ -273,7 +316,8 @@ function SupplierDetailDialog({ supplierId, canEdit, onClose }: { supplierId: nu
                   size="sm"
                   variant={d.active ? 'ghost' : 'primary'}
                   loading={busy}
-                  onClick={() => void save({ active: !d.active }, d.active ? '已停用供应商' : '已恢复供应商')}
+                  disabled={blocked}
+                  onClick={() => void save({ active: !d.active }, `${d.active ? '停用' : '恢复'}供应商 ${d.name}`, d.active ? '已停用供应商' : '已恢复供应商')}
                   data-testid="shop-supplier-toggle-active"
                 >
                   {d.active ? '停用' : '恢复启用'}
@@ -308,7 +352,14 @@ function SupplierDetailDialog({ supplierId, canEdit, onClose }: { supplierId: nu
                 <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
                   取消
                 </Button>
-                <Button size="sm" variant="primary" loading={busy} onClick={() => void save({ contact, phone, note }, '供应商信息已保存')} data-testid="shop-supplier-save">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  loading={busy}
+                  disabled={blocked}
+                  onClick={() => void save({ contact, phone, note }, `更新供应商 ${d.name}`, '供应商信息已保存')}
+                  data-testid="shop-supplier-save"
+                >
                   保存
                 </Button>
               </div>
@@ -404,8 +455,7 @@ function SupplierDetailDialog({ supplierId, canEdit, onClose }: { supplierId: nu
 // ───────────────────────── FR-04 集团物料主档页 ─────────────────────────
 
 export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
-  const qc = useQueryClient();
-  const toast = useToast();
+  const { run, busy, blocked } = useShopMasterWrite();
   const [kw, setKw] = useState('');
   const [catFilter, setCatFilter] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -413,7 +463,6 @@ export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchCategory, setBatchCategory] = useState('');
   const [editingMat, setEditingMat] = useState<ShopMaterialRow | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const q = useQuery({
     queryKey: ['shop', 'materials'],
@@ -435,33 +484,33 @@ export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
   const togglePick = (id: number) => setPickedIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
 
   const toggleActive = async (m: ShopMaterialRow) => {
-    setBusy(true);
-    try {
-      await api.put(`/api/erp/shop/materials/${m.id}`, { active: !m.active });
-      toast({ tone: 'success', title: m.active ? `已停用「${m.name}」（商城不再展示，历史单据保留）` : `已恢复启用「${m.name}」` });
-      void qc.invalidateQueries({ queryKey: ['shop'] });
-    } catch (e) {
-      toast({ tone: 'error', title: errorMessage(e) });
-    } finally {
-      setBusy(false);
-    }
+    await run({
+      method: 'PUT',
+      url: `/api/erp/shop/materials/${m.id}`,
+      body: { active: !m.active },
+      summary: `${m.active ? '停用' : '启用'}物料 ${m.name}`,
+      okTitle: m.active ? `已停用「${m.name}」（商城不再展示，历史单据保留）` : `已恢复启用「${m.name}」`,
+    });
   };
 
   const applyBatchCategory = async () => {
     if (!pickedIds.length) return;
-    setBusy(true);
-    try {
-      const r = await api.post<{ updated: number }>('/api/erp/shop/materials/batch-category', { materialIds: pickedIds, category: batchCategory.trim() });
-      toast({ tone: 'success', title: `已将 ${r.updated} 个物料分类更新为「${batchCategory.trim() || '未分类'}」` });
-      setPickedIds([]);
-      setBatchOpen(false);
-      setBatchCategory('');
-      void qc.invalidateQueries({ queryKey: ['shop'] });
-    } catch (e) {
-      toast({ tone: 'error', title: errorMessage(e) });
-    } finally {
-      setBusy(false);
-    }
+    const cat = batchCategory.trim();
+    const status = await run<{ id: number; updated: number }>(
+      {
+        method: 'POST',
+        url: '/api/erp/shop/materials/batch-category',
+        body: { materialIds: pickedIds, category: cat },
+        summary: `批量修改 ${pickedIds.length} 个物料分类为「${cat || '未分类'}」`,
+        okTitle: `已将 ${pickedIds.length} 个物料分类更新为「${cat || '未分类'}」`,
+      },
+      () => {
+        setPickedIds([]);
+        setBatchOpen(false);
+        setBatchCategory('');
+      },
+    );
+    if (status === 'uncertain') setBatchOpen(false);
   };
 
   const columns: DataColumn<ShopMaterialRow>[] = [
@@ -523,7 +572,7 @@ export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
             {catalog.me.canEditMaster ? '维护' : '详情'}
           </Button>
           {catalog.me.canEditMaster && (
-            <Button size="sm" variant="ghost" loading={busy} onClick={() => void toggleActive(m)} data-testid={`shop-mat-toggle-${m.id}`}>
+            <Button size="sm" variant="ghost" loading={busy} disabled={blocked} onClick={() => void toggleActive(m)} data-testid={`shop-mat-toggle-${m.id}`}>
               {m.active ? '停用' : '启用'}
             </Button>
           )}
@@ -561,7 +610,7 @@ export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
             <option value="inactive">已停用</option>
           </Select>
           {catalog.me.canEditMaster && pickedIds.length > 0 && (
-            <Button size="sm" variant="primary" onClick={() => setBatchOpen(true)} data-testid="shop-mat-batch-btn">
+            <Button size="sm" variant="primary" disabled={blocked} onClick={() => setBatchOpen(true)} data-testid="shop-mat-batch-btn">
               批量改分类（已选 {pickedIds.length}）
             </Button>
           )}
@@ -604,11 +653,25 @@ export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
               rows.map((m) => (
                 <Card key={m.id} className="space-y-2 p-4" data-testid={`shop-mat-card-${m.id}`}>
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-[14.5px] font-bold text-ink">{m.name}</p>
-                      <p className="text-[12.5px] text-ink-3">
-                        {m.code} · {m.category || '未分类'} · 单位 {m.unit}
-                      </p>
+                    <div className="flex min-w-0 items-start gap-2.5">
+                      {catalog.me.canEditMaster && (
+                        <label className="tap -m-2 inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center">
+                          <input
+                            type="checkbox"
+                            className="size-5 accent-pine"
+                            checked={pickedIds.includes(m.id)}
+                            onChange={() => togglePick(m.id)}
+                            aria-label={`选择 ${m.name}`}
+                            data-testid={`shop-mat-mobile-check-${m.id}`}
+                          />
+                        </label>
+                      )}
+                      <div className="min-w-0">
+                        <p className="truncate text-[14.5px] font-bold text-ink">{m.name}</p>
+                        <p className="text-[12.5px] text-ink-3">
+                          {m.code} · {m.category || '未分类'} · 单位 {m.unit}
+                        </p>
+                      </div>
                     </div>
                     <Badge tone={m.active ? 'pine' : 'neutral'}>{m.active ? '在用' : '已停用'}</Badge>
                   </div>
@@ -620,7 +683,7 @@ export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
                       {catalog.me.canEditMaster ? '维护' : '详情'}
                     </Button>
                     {catalog.me.canEditMaster && (
-                      <Button size="sm" variant="ghost" loading={busy} onClick={() => void toggleActive(m)}>
+                      <Button size="sm" variant="ghost" loading={busy} disabled={blocked} onClick={() => void toggleActive(m)}>
                         {m.active ? '停用' : '启用'}
                       </Button>
                     )}
@@ -644,7 +707,7 @@ export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
             <Button variant="ghost" onClick={() => setBatchOpen(false)}>
               取消
             </Button>
-            <Button variant="primary" loading={busy} onClick={() => void applyBatchCategory()} data-testid="shop-mat-batch-save">
+            <Button variant="primary" loading={busy} disabled={blocked} onClick={() => void applyBatchCategory()} data-testid="shop-mat-batch-save">
               确认修改
             </Button>
           </>
@@ -659,25 +722,20 @@ export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
 }
 
 function MaterialEditDialog({ material, canEdit, onClose }: { material: ShopMaterialRow; canEdit: boolean; onClose: () => void }) {
-  const qc = useQueryClient();
-  const toast = useToast();
+  const { run, busy, blocked } = useShopMasterWrite();
   const [category, setCategory] = useState(material.category);
   const [note, setNote] = useState(material.note);
   const [active, setActive] = useState(material.active);
-  const [busy, setBusy] = useState(false);
 
   const save = async () => {
-    setBusy(true);
-    try {
-      await api.put(`/api/erp/shop/materials/${material.id}`, { category: category.trim(), note: note.trim(), active });
-      toast({ tone: 'success', title: '物料主档已保存' });
-      void qc.invalidateQueries({ queryKey: ['shop'] });
-      onClose();
-    } catch (e) {
-      toast({ tone: 'error', title: errorMessage(e) });
-    } finally {
-      setBusy(false);
-    }
+    const status = await run({
+      method: 'PUT',
+      url: `/api/erp/shop/materials/${material.id}`,
+      body: { category: category.trim(), note: note.trim(), active },
+      summary: `更新物料 ${material.name}`,
+      okTitle: '物料主档已保存',
+    });
+    if (status === 'ok' || status === 'uncertain') onClose();
   };
 
   return (
@@ -692,7 +750,7 @@ function MaterialEditDialog({ material, canEdit, onClose }: { material: ShopMate
             <Button variant="ghost" onClick={onClose}>
               取消
             </Button>
-            <Button variant="primary" loading={busy} onClick={() => void save()} data-testid="shop-mat-save">
+            <Button variant="primary" loading={busy} disabled={blocked} onClick={() => void save()} data-testid="shop-mat-save">
               保存
             </Button>
           </>

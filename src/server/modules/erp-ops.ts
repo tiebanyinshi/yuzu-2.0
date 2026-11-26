@@ -175,6 +175,8 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   oa_im_group: [],
   // 员工办公 v1.1 第 5 批：公司公告（发布 / 撤回）
   oa_announcement: ['oa.announce'],
+  // 采购商城 V1.1：主数据维护（供应商、物料、批量改分类）
+  shop_master: ['inventory.master'],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -275,6 +277,8 @@ const READ: Record<ErpOpType, Permission[]> = {
   oa_im_group: [],
   // 员工办公 v1.1 第 5 批：公司公告
   oa_announcement: ['oa.announce'],
+  // 采购商城 V1.1：主数据维护
+  shop_master: ['inventory.master'],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {

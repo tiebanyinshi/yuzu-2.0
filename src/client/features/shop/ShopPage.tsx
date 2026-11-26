@@ -140,9 +140,14 @@ export function ShopPage() {
     }
   };
   const q = useQuery({ queryKey: catalogKey(activeStoreId), queryFn: () => api.get<ShopCatalog>(`/api/erp/shop/catalog${activeStoreId ? `?storeId=${activeStoreId}` : ''}`) });
+  const qc = useQueryClient();
   const { cart, setCart } = useCart();
   const count = cart.lines.length;
   const c = q.data;
+  // 地址栏显式带了已核验的 storeId（例如从比价页进入清单）时同步进持久门店状态，后续跳结算/目录不回退
+  useEffect(() => {
+    if (urlStoreId !== null && c && c.storeId === urlStoreId) setStoreId(urlStoreId);
+  }, [urlStoreId, c]);
   const canAdminView = !!c && (c.me.canManageSku || c.me.canApproveSku);
   const overviewQ = useQuery({
     queryKey: ['shop', 'overview'],
@@ -195,7 +200,7 @@ export function ShopPage() {
   const updatedAt = q.dataUpdatedAt ? new Date(q.dataUpdatedAt).toISOString() : new Date().toISOString();
   let body: ReactNode;
   if (path.startsWith('compare/')) {
-    body = <ShopComparePage materialId={compareMaterialId} storeId={activeStoreId} cart={cart} setCart={setCart} />;
+    body = <ShopComparePage materialId={compareMaterialId} storeId={activeStoreId} cart={cart} setCart={setCart} onSyncStore={setStoreId} />;
   } else if (q.isPending) body = <Skeleton className="h-80" />;
   else if (q.error) body = <LoadFailed title="商城没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
   else if (path === '') body = <Home c={q.data} setStore={pickStore} updatedAt={updatedAt} />;
@@ -229,6 +234,7 @@ export function ShopPage() {
         }}
         className="mb-4"
       />
+      <ErpPendingPanel types={['shop_master']} filter={(op) => op.staffId === session.staff.id} onFound={() => void qc.invalidateQueries({ queryKey: ['shop'] })} className="mb-4" />
       {body}
     </ErpPage>
   );
@@ -1166,10 +1172,14 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
         <Card className="p-4">
           <EmptyState
             art="search"
-            title={hasFilter ? '当前筛选条件下没有采购需求' : '还没有采购需求单'}
-            description={hasFilter ? '放宽状态、日期或关键词条件再看看。' : '去商城选购商品或发起自主申请。'}
+            title={q.hasNextPage ? '最近批次内暂未匹配到该筛选条件的单据' : hasFilter ? '当前筛选条件下没有采购需求' : '还没有采购需求单'}
+            description={q.hasNextPage ? '还有更早的记录未扫完，可点击下方「加载更早的」继续查找。' : hasFilter ? '放宽状态、日期或关键词条件再看看。' : '去商城选购商品或发起自主申请。'}
             action={
-              hasFilter ? (
+              q.hasNextPage ? (
+                <Button size="sm" variant="primary" loading={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
+                  继续查找更早记录
+                </Button>
+              ) : hasFilter ? (
                 <Button
                   size="sm"
                   variant="secondary"

@@ -52,6 +52,7 @@ export interface ShopComparePageProps {
   storeId: number | null;
   cart: ShopCart;
   setCart: (next: ShopCart) => void;
+  onSyncStore: (storeId: number) => void;
 }
 
 function parseInitialQueryQty(raw: string | null): { qtyMilli: number | null; clamped: boolean } {
@@ -62,7 +63,7 @@ function parseInitialQueryQty(raw: string | null): { qtyMilli: number | null; cl
   return { qtyMilli: parsed, clamped: false };
 }
 
-export function ShopComparePage({ materialId, storeId, cart, setCart }: ShopComparePageProps) {
+export function ShopComparePage({ materialId, storeId, cart, setCart, onSyncStore }: ShopComparePageProps) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
@@ -106,6 +107,11 @@ export function ShopComparePage({ materialId, storeId, cart, setCart }: ShopComp
   });
 
   const result = q.data;
+  const resolvedStoreId = result?.storeId ?? null;
+  // 服务端核验通过的比价门店同步回商城持久门店状态，离开比价页进入清单/结算/目录时不会回退到旧门店
+  useEffect(() => {
+    if (resolvedStoreId !== null) onSyncStore(resolvedStoreId);
+  }, [resolvedStoreId, onSyncStore]);
   const activeQtyMilli = customQtyMilli ?? result?.qtyMilli ?? 1000;
   const materialSkuIds = useMemo(() => (result?.offers ?? []).map((o) => o.skuId), [result?.offers]);
   const currentCartLine = useMemo(() => (result ? findMaterialCartLine(cart, result.storeId, materialSkuIds) : null), [cart, result, materialSkuIds]);
@@ -146,7 +152,7 @@ export function ShopComparePage({ materialId, storeId, cart, setCart }: ShopComp
 
   const goBack = () => {
     if (from === 'list') {
-      navigate(`${BASE}/cart`);
+      navigate(resolvedStoreId !== null ? `${BASE}/cart?storeId=${resolvedStoreId}` : `${BASE}/cart`);
       return;
     }
     navigate(BASE, { state: { restoreCatalog: true } });
@@ -159,6 +165,7 @@ export function ShopComparePage({ materialId, storeId, cart, setCart }: ShopComp
       setCrossStoreTarget(offer);
       return;
     }
+    onSyncStore(result.storeId);
     setCart(applied.cart);
     setMobilePickedSkuId(offer.skuId);
     const unitLabel = result.material.unit;
@@ -379,7 +386,7 @@ export function ShopComparePage({ materialId, storeId, cart, setCart }: ShopComp
 
       {lastPickedText && (
         <Notice tone="success" title={`已写入采购清单：${lastPickedText}`} data-testid="compare-added-notice">
-          <Link to={`${BASE}/cart`} className="inline-flex items-center gap-1 font-semibold text-pine hover:underline" data-testid="compare-view-cart">
+          <Link to={`${BASE}/cart?storeId=${result.storeId}`} className="inline-flex items-center gap-1 font-semibold text-pine hover:underline" data-testid="compare-view-cart">
             <ShoppingCart className="size-3.5" />
             查看清单 →
           </Link>

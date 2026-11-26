@@ -513,6 +513,8 @@ export const ERP_OP_TYPES = [
   'oa_im_group',
   // 员工办公 v1.1 第 5 批：公司公告（发布 / 撤回）
   'oa_announcement',
+  // 采购商城 V1.1：主数据维护（供应商编辑 / 启停、物料编辑 / 启停、批量改分类）
+  'shop_master',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -607,6 +609,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   oa_approval_act: '处理审批',
   oa_im_group: '建群',
   oa_announcement: '公司公告',
+  shop_master: '商城主数据维护',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */

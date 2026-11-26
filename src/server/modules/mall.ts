@@ -373,19 +373,19 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
       ORDER BY po.created_at ASC LIMIT 1`,
     deps.sql<{ at: string; actorName: string | null }[]>`
       SELECT x.at, x.actor_name FROM (
-        SELECT d.created_at AS at, st.display_name AS actor_name
+        SELECT coalesce(d.confirmed_at, d.created_at) AS at, st.display_name AS actor_name
         FROM purchase_request_lines l
         JOIN purchase_order_line_requests polr ON polr.request_line_id = l.id
         JOIN inv_doc_lines il ON il.po_line_id = polr.po_line_id
         JOIN inv_docs d ON d.id = il.doc_id
-        LEFT JOIN staff st ON st.id = d.created_by
-        WHERE l.request_id = ${requestId} AND d.status = 'approved'
+        LEFT JOIN staff st ON st.id = coalesce(d.confirmed_by, d.created_by)
+        WHERE l.request_id = ${requestId} AND d.doc_type = 'receipt' AND d.status = 'confirmed'
         UNION ALL
-        SELECT d.created_at AS at, st.display_name AS actor_name
+        SELECT coalesce(d.confirmed_at, d.created_at) AS at, st.display_name AS actor_name
         FROM request_line_stock s
         JOIN inv_docs d ON d.id = s.inv_doc_id
-        LEFT JOIN staff st ON st.id = d.created_by
-        WHERE s.request_id = ${requestId} AND d.status = 'approved'
+        LEFT JOIN staff st ON st.id = coalesce(d.confirmed_by, d.created_by)
+        WHERE s.request_id = ${requestId} AND d.doc_type = 'issue' AND d.status = 'confirmed'
       ) x ORDER BY x.at DESC LIMIT 1`,
   ]);
   const at = (await progressTimes(deps.sql, [requestId])).get(requestId) ?? r.updatedAt;
@@ -618,7 +618,7 @@ async function queryPagedMall(
   deps: Deps,
   actor: Actor,
   q: Omit<z.infer<typeof PagedQuery>, 'limit'> & { limit: number },
-  opts: { mineOnly: boolean },
+  opts: { mineOnly: boolean; maxRounds?: number; chunkSize?: number },
 ): Promise<{ requests: MallRequestBrief[]; nextBeforeId: number | null }> {
   if (q.from && q.to && q.from > q.to) throw badRequest('开始日期不能晚于结束日期');
   const db = deps.sql;
@@ -627,12 +627,16 @@ async function queryPagedMall(
   const scope = (me.canReview || me.canStock) && !opts.mineOnly ? undefined : { staffId: actor.id, departmentId: me.departmentId };
   const pattern = q.q ? `%${escapeLike(q.q)}%` : null;
   const allowedDisplay = q.group ? new Set(MALL_GROUP_STATUSES[q.group]) : null;
-  const chunkSize = Math.min(200, Math.max(q.limit + 1, 50));
+  const chunkSize = opts.chunkSize ?? Math.min(200, Math.max(q.limit + 1, 50));
+  const maxRounds = opts.maxRounds ?? 40;
 
   const matched: MallRequestBrief[] = [];
   let cursor = q.beforeId;
-  // 按块向后翻找，确保按 13 态分组后分页不跳行、不重行、且只有真正还有下一页时才返回 nextBeforeId
-  for (let round = 0; round < 40 && matched.length <= q.limit; round += 1) {
+  let exhausted = false;
+  // 按块向后翻找，确保按 13 态分组后分页不跳行、不重行：
+  // · 收够 limit + 1 条时停下，下一页从第 limit 条的 id 往前找；
+  // · 若扫满本轮上限仍未见底，则返回已扫到的最小 id 作为续取游标，避免稀疏分组提前截断。
+  for (let round = 0; round < maxRounds && matched.length <= q.limit; round += 1) {
     const page = await db<{ id: number }[]>`
       SELECT r.id FROM purchase_requests r
       WHERE r.source = 'mall'
@@ -649,7 +653,10 @@ async function queryPagedMall(
         ${cursor ? db`AND r.id < ${cursor}` : db``}
         ${scope ? db`AND ${REQUESTER_OR_DEPT(db, scope)}` : db``}
       ORDER BY r.id DESC LIMIT ${chunkSize}`;
-    if (!page.length) break;
+    if (!page.length) {
+      exhausted = true;
+      break;
+    }
     const ids = page.map((r) => Number(r.id));
     const byId = new Map((await briefs(db, await summaries(db, { ids, timezone: tz }))).map((b) => [b.id, b]));
     for (const idVal of ids) {
@@ -659,20 +666,30 @@ async function queryPagedMall(
       matched.push(brief);
       if (matched.length > q.limit) break;
     }
-    if (page.length < chunkSize) break;
+    if (page.length < chunkSize) {
+      exhausted = true;
+      break;
+    }
     cursor = ids[ids.length - 1]!;
   }
 
-  const hasMore = matched.length > q.limit;
-  const requests = hasMore ? matched.slice(0, q.limit) : matched;
-  return { requests, nextBeforeId: hasMore && requests.length ? requests[requests.length - 1]!.id : null };
+  if (matched.length > q.limit) {
+    const requests = matched.slice(0, q.limit);
+    return { requests, nextBeforeId: requests[requests.length - 1]!.id };
+  }
+  return { requests: matched, nextBeforeId: !exhausted && cursor !== undefined ? cursor : null };
 }
 
 /**
  * 柚子里的商城页面「我的采购需求」「需求池」（Codex 审查 + FR-08）：来源是商城的单，按编号从新到旧一页页取，
  * 紧急程度、状态分组、关键词、日期范围都在服务端筛选再分页，老的单翻页也找得到。
  */
-export async function pagedMall(deps: Deps, actor: Actor, raw: unknown, opts: { mineOnly: boolean }): Promise<{ requests: MallRequestBrief[]; nextBeforeId: number | null }> {
+export async function pagedMall(
+  deps: Deps,
+  actor: Actor,
+  raw: unknown,
+  opts: { mineOnly: boolean; maxRounds?: number; chunkSize?: number },
+): Promise<{ requests: MallRequestBrief[]; nextBeforeId: number | null }> {
   const q = parse(PagedQuery, raw ?? {});
   return queryPagedMall(deps, actor, q, opts);
 }
@@ -682,7 +699,12 @@ const MALL_EXPORT_LIMIT = 5000;
 /** 商城侧「我的采购需求 / 需求池」当前筛选结果导出（FR-11）：与页面可见范围、筛选条件完全一致，金额按元保留两位小数 */
 export async function exportMallCsv(deps: Deps, actor: Actor, raw: unknown, opts: { mineOnly: boolean; ip?: string }): Promise<{ fileName: string; csv: string; count: number }> {
   const parsed = parse(PagedQuery.omit({ beforeId: true, limit: true }), raw ?? {});
-  const { requests } = await queryPagedMall(deps, actor, { ...parsed, beforeId: undefined, limit: MALL_EXPORT_LIMIT }, { mineOnly: opts.mineOnly });
+  const { requests } = await queryPagedMall(
+    deps,
+    actor,
+    { ...parsed, beforeId: undefined, limit: MALL_EXPORT_LIMIT },
+    { mineOnly: opts.mineOnly, maxRounds: Number.POSITIVE_INFINITY, chunkSize: 500 },
+  );
   const ids = requests.map((r) => r.id);
   const metaRows = ids.length
     ? await deps.sql<{ id: number; storeName: string | null; estimateCents: string | null; hasPrice: boolean }[]>`

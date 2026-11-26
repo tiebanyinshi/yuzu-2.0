@@ -57,7 +57,9 @@ import { loadPurchaseRules } from './inventory/purchase-rules';
 import { createMallRequest, exportMallCsv, mallRequest, pagedMall } from './mall';
 import { pettyBalances, pettyOccupied } from './petty-uses';
 import { allowedStores } from './stores';
+import { assertNotFenced } from '../lib/fences';
 import { hashRequest } from '../lib/idempotency';
+import { erpOpAbandoned } from './erp-ops';
 import { myContext } from './requests';
 
 const id = z.number().int().positive();
@@ -559,6 +561,7 @@ async function skuOp(deps: Deps, actor: Actor, skuId: number, ip: string | undef
 
 const SupplierPatchInput = z
   .object({
+    clientKey: z.uuid('操作编号不正确'),
     contact: z.string().trim().max(40, '联系人最多 40 个字').optional(),
     phone: z.string().trim().max(32, '电话最多 32 个字').optional(),
     note: z.string().trim().max(200, '备注最多 200 个字').optional(),
@@ -568,6 +571,7 @@ const SupplierPatchInput = z
 
 const MaterialPatchInput = z
   .object({
+    clientKey: z.uuid('操作编号不正确'),
     category: z.string().trim().max(16, '分类最多 16 个字').optional(),
     note: z.string().trim().max(200, '备注最多 200 个字').optional(),
     active: z.boolean().optional(),
@@ -575,6 +579,7 @@ const MaterialPatchInput = z
   .refine((v) => v.category !== undefined || v.note !== undefined || v.active !== undefined, '请至少修改一项内容');
 
 const BatchCategoryInput = z.object({
+  clientKey: z.uuid('操作编号不正确'),
   materialIds: z.array(id).min(1, '请至少选择一个物料').max(200, '一次最多批量修改 200 个物料'),
   category: z.string().trim().max(16, '分类最多 16 个字'),
 });
@@ -1048,9 +1053,19 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   app.get(`${P}/suppliers/:id`, { preHandler: skuRead }, async (req) => shopSupplierDetail(sql, req.actor, parse(idParam, req.params).id));
   const patchSupplier = async (req: { params: unknown; body: unknown; actor: Actor; ip: string }) => {
     const supplierId = parse(idParam, req.params).id;
-    const v = parse(SupplierPatchInput, req.body);
+    const { clientKey, ...v } = parse(SupplierPatchInput, req.body);
+    const requestHash = hashRequest({ op: 'supplier_patch', supplierId, patch: v });
     await sql.begin(async (tx) => {
       await setTxTimeouts(tx);
+      await assertNotFenced(tx, clientKey, 'shop_master', erpOpAbandoned);
+      const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`
+        SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${clientKey}`;
+      if (done) {
+        if (done.opType !== 'shop_master' || done.requestHash !== requestHash || Number(done.staffId) !== req.actor.id) {
+          throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的主数据维护');
+        }
+        return;
+      }
       const [cur] = await tx<{ id: number; contact: string; phone: string; note: string; active: boolean }[]>`
         SELECT id, contact, phone, note, active FROM suppliers WHERE id = ${supplierId} FOR UPDATE`;
       if (!cur) throw notFound('供应商不存在');
@@ -1059,6 +1074,7 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
                active = ${v.active ?? cur.active}, updated_at = now()
         WHERE id = ${supplierId}`;
       await writeAudit(tx, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'supplier', targetId: supplierId, detail: { source: 'shop', ...v }, ip: req.ip });
+      await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${clientKey}, 'shop_master', ${requestHash}, ${supplierId}, ${req.actor.id})`;
     });
     return shopSupplierDetail(sql, req.actor, supplierId);
   };
@@ -1067,9 +1083,19 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   app.get(`${P}/materials`, { preHandler: skuRead }, async () => listShopMaterials(sql, todayIn(deps.config.timezone)));
   const patchMaterial = async (req: { params: unknown; body: unknown; actor: Actor; ip: string }) => {
     const materialId = parse(idParam, req.params).id;
-    const v = parse(MaterialPatchInput, req.body);
+    const { clientKey, ...v } = parse(MaterialPatchInput, req.body);
+    const requestHash = hashRequest({ op: 'material_patch', materialId, patch: v });
     await sql.begin(async (tx) => {
       await setTxTimeouts(tx);
+      await assertNotFenced(tx, clientKey, 'shop_master', erpOpAbandoned);
+      const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`
+        SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${clientKey}`;
+      if (done) {
+        if (done.opType !== 'shop_master' || done.requestHash !== requestHash || Number(done.staffId) !== req.actor.id) {
+          throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的主数据维护');
+        }
+        return;
+      }
       const [cur] = await tx<{ id: number; category: string; note: string; active: boolean }[]>`
         SELECT id, category, note, active FROM materials WHERE id = ${materialId} AND tracked FOR UPDATE`;
       if (!cur) throw notFound('受管物料不存在');
@@ -1077,6 +1103,7 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
         UPDATE materials SET category = ${v.category ?? cur.category}, note = ${v.note ?? cur.note}, active = ${v.active ?? cur.active}, updated_at = now()
         WHERE id = ${materialId}`;
       await writeAudit(tx, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'material', targetId: materialId, detail: { source: 'shop', ...v }, ip: req.ip });
+      await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${clientKey}, 'shop_master', ${requestHash}, ${materialId}, ${req.actor.id})`;
     });
     const list = await listShopMaterials(sql, todayIn(deps.config.timezone));
     return list.find((m) => m.id === materialId)!;
@@ -1084,24 +1111,36 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   app.patch(`${P}/materials/:id`, { preHandler: masterWrite }, patchMaterial);
   app.put(`${P}/materials/:id`, { preHandler: masterWrite }, patchMaterial);
   app.post(`${P}/materials/batch-category`, { preHandler: masterWrite }, async (req) => {
-    const v = parse(BatchCategoryInput, req.body);
-    const ids = [...new Set(v.materialIds)].sort((a, b) => a - b);
-    const updated = await sql.begin(async (tx) => {
+    const { clientKey, materialIds, category } = parse(BatchCategoryInput, req.body);
+    const ids = [...new Set(materialIds)].sort((a, b) => a - b);
+    const requestHash = hashRequest({ op: 'material_batch_category', ids, category });
+    return sql.begin(async (tx) => {
       await setTxTimeouts(tx);
+      await assertNotFenced(tx, clientKey, 'shop_master', erpOpAbandoned);
+      const [done] = await tx<{ opType: string; requestHash: string; refId: number; staffId: number }[]>`
+        SELECT op_type, request_hash, ref_id, staff_id FROM idempotency_keys WHERE key = ${clientKey}`;
+      if (done) {
+        if (done.opType !== 'shop_master' || done.requestHash !== requestHash || Number(done.staffId) !== req.actor.id) {
+          throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的主数据维护');
+        }
+        const [cnt] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM materials WHERE id IN ${tx(ids)} AND tracked`;
+        return { id: Number(done.refId), updated: Number(cnt?.n ?? 0) };
+      }
       const locked = await tx<{ id: number }[]>`SELECT id FROM materials WHERE id IN ${tx(ids)} AND tracked ORDER BY id FOR UPDATE`;
       if (locked.length === 0) throw notFound('未找到可修改的受管物料');
       const foundIds = locked.map((r) => Number(r.id));
-      await tx`UPDATE materials SET category = ${v.category}, updated_at = now() WHERE id IN ${tx(foundIds)}`;
+      await tx`UPDATE materials SET category = ${category}, updated_at = now() WHERE id IN ${tx(foundIds)}`;
       await writeAudit(tx, {
         staffId: req.actor.id,
         action: 'inventory_master_saved',
         targetType: 'material',
-        detail: { source: 'shop_batch_category', materialIds: foundIds, category: v.category },
+        detail: { source: 'shop_batch_category', materialIds: foundIds, category },
         ip: req.ip,
       });
-      return foundIds.length;
+      const refId = foundIds[0]!;
+      await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${clientKey}, 'shop_master', ${requestHash}, ${refId}, ${req.actor.id})`;
+      return { id: refId, updated: foundIds.length };
     });
-    return { updated };
   });
   app.post(`${P}/requests`, { preHandler: guardAny('request.create') }, async (req, reply) => {
     const r = await submit(deps, req.body, req.actor, req.ip);

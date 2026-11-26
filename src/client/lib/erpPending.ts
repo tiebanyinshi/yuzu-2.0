@@ -13,8 +13,9 @@ export interface ErpPendingOp {
   /** 操作编号（幂等键） */
   key: string;
   type: ErpOpType;
-  /** 提交地址与原请求，重新提交时原样发送 */
+  /** 提交地址、方法（默认 POST）与原请求，重新提交时原样发送 */
   url: string;
+  method?: 'POST' | 'PUT';
   body: unknown;
   /** 展示用，如「采购部 · 办公 · ¥60.00」 */
   summary: string;
@@ -168,7 +169,8 @@ export async function sendErpOp<T>(op: Omit<ErpPendingOp, 'createdAt' | 'uncerta
     throw e;
   }
   try {
-    const result = await api.post<T>(record.url, record.body, { timeoutMs: record.timeoutMs ?? 20_000 });
+    const reqOpts = { timeoutMs: record.timeoutMs ?? 20_000 };
+    const result = record.method === 'PUT' ? await api.put<T>(record.url, record.body, reqOpts) : await api.post<T>(record.url, record.body, reqOpts);
     removeErpPending(record.key);
     return result;
   } catch (raw) {

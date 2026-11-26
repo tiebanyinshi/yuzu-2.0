@@ -199,6 +199,8 @@ export const FENCED_OPS = [
   'oa_im_group',
   // 员工办公 v1.1 第 5 批（迁移 294）：公司公告发布 / 撤回；编号记在 idempotency_keys（ref_id 是那条公告）
   'oa_announcement',
+  // 采购商城 V1.1（迁移 370）：主数据维护（供应商编辑/启停、物料编辑/启停、批量改分类）；编号记在 idempotency_keys
+  'shop_master',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 
