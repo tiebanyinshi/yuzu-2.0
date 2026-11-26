@@ -414,6 +414,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '400_govflow_core.sql',
   '410_gf_supply.sql',
   '420_gf_petty.sql',
+  '430_gf_contract.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */
