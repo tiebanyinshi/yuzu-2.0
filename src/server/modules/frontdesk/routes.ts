@@ -5,7 +5,9 @@ import { ISO_DATE } from '@shared/business-date';
 import { can } from '@shared/permissions';
 import { guard, guardAny } from '../../auth/guard';
 import { MAX_OVERTIME_HOURLY_CENTS, VOID_PERMISSIONS } from '@shared/frontdesk-v8117';
-import { readSnapshot } from '../../db';
+import { readSnapshot, type Tx } from '../../db';
+import { BUY_CODE_PATTERN, MAX_BUY_CODES, type BuyCode } from '@shared/frontdesk';
+import { PRICE_TIERS } from '@shared/catalog';
 import { checkoutDaySummary } from '../settlement';
 import type { Deps } from '../../lib/context';
 import { badRequest, forbidden, notFound } from '../../lib/errors';
@@ -16,7 +18,7 @@ import { resolveReadableDate } from '../ledger';
 import { refundShiftOptions } from '../shifts';
 import { checkout, findCoupon, getCheckout, listCheckouts, previewCheckout, voidCheckout, type CheckoutInputData } from './checkout';
 import { createRefund, getRefund, listRefunds, refundOptions, voidRefund, type RefundInputData } from './refunds';
-import { couponByCode, couponLines, withTicketLines } from '../coupon-checkout';
+import { couponByCode, couponMomentOf, couponLines, withTicketLines } from '../coupon-checkout';
 import { previewTableCheckout } from '../tables';
 import { listTicketTypes, saveTicketType, setVisitTicket, type TicketTypeInputData } from './tickets';
 import { frontdeskChecks } from './checks';
@@ -24,6 +26,8 @@ import { businessDate, FRONTDESK_OP_PERMISSIONS, FRONTDESK_OPS, loadFrontdeskRul
 import { batchCreate, deleteHandTag, generateTags, setTagService, importHandTags, listTags, lockHandTag, setTagCard, tagByCard, unlockHandTag, updateHandTag, type ImportInputData } from './tags';
 import { registerIncidentRoutes } from './incidents';
 import { registerRiskRoutes } from './risk';
+import { registerRemarkRoutes } from './remarks';
+import { bindVisitMember, lookupCashierMembers, MemberLookupQuery } from './cashier-member';
 import { memberLockerGrades } from './vip';
 import {
   abandonFrontdeskOp,
@@ -55,7 +59,29 @@ const RulesInput = z.object({
     .int('金额必须是整数（分）')
     .min(0, '金额不能为负')
     .max(MAX_OVERTIME_HOURLY_CENTS, `每小时最多 ¥${MAX_OVERTIME_HOURLY_CENTS / 100}`),
+  // 8.1.44 买角：数字代号 → 价目项目与价格档（清单待业务提供，默认空）；代号不能重复，项目在保存时逐条核对
+  buyCodes: z
+    .array(
+      z.object({
+        code: z.string('请填写数字代号').regex(BUY_CODE_PATTERN, '数字代号是 1–4 位数字'),
+        itemId: z.number().int().positive('请选择项目'),
+        tier: z.enum(PRICE_TIERS, '价格档不正确'),
+      }),
+    )
+    .max(MAX_BUY_CODES, `数字代号最多 ${MAX_BUY_CODES} 条`)
+    .refine((list) => new Set(list.map((c) => c.code)).size === list.length, '数字代号有重复'),
 });
+
+/** 买角的代号对到的项目要在售、有这一档价格（保存时核对；之后项目停用了，收银台敲到时照挂账的规矩拒绝） */
+async function assertBuyCodeItems(tx: Tx, codes: readonly BuyCode[]) {
+  if (codes.length === 0) return;
+  const rows = await tx<{ itemId: number; tier: string }[]>`
+    SELECT p.item_id, p.tier FROM service_item_prices p JOIN service_items i ON i.id = p.item_id
+    WHERE i.active AND p.item_id IN ${tx([...new Set(codes.map((c) => c.itemId))])}`;
+  const ok = new Set(rows.map((r) => `${r.itemId}:${r.tier}`));
+  const bad = codes.find((c) => !ok.has(`${c.itemId}:${c.tier}`));
+  if (bad) throw badRequest(`数字代号 ${bad.code} 对的项目已停用或没有这一档价格，请重新选择`);
+}
 
 export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
@@ -112,10 +138,17 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
     return swapTag(deps, id, req.body as SwapInputData, ctxOf(req));
   });
 
-  app.post('/api/frontdesk/visits/:id/group', { preHandler: guard('frontdesk.operate') }, async (req) => {
+  // 8.1.44（《前台系统开发》同行人组建与拆分结算）：收银台买单时也能把分批到的客人组成同行、或把不一起结的拆出去，有结账权限就行
+  app.post('/api/frontdesk/visits/:id/group', { preHandler: guardAny('frontdesk.operate', 'frontdesk.checkout') }, async (req) => {
     const { id } = parse(idParam, req.params);
     return changeGroup(deps, id, req.body as GroupInputData, ctxOf(req));
   });
+
+  // 8.1.44：买单时查会员（余额、充没充过值）、把会员记到手牌上（现场建档走 POST /api/members）
+  app.get('/api/frontdesk/member-lookup', { preHandler: guard('member.read') }, async (req) => lookupCashierMembers(sql, parse(MemberLookupQuery, req.query).q));
+  app.post('/api/frontdesk/visits/:id/member', { preHandler: guardAny('frontdesk.operate', 'frontdesk.checkout') }, async (req) =>
+    bindVisitMember(deps, parse(idParam, req.params).id, req.body, ctxOf(req)),
+  );
 
   app.post('/api/frontdesk/visits/:id/cancel', { preHandler: guard('frontdesk.operate') }, async (req) => {
     const { id } = parse(idParam, req.params);
@@ -201,7 +234,8 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
       memberIds = pre.members.map((m) => m.id);
       lines = await couponLines(sql, billIds);
     }
-    const option = await couponByCode(sql, input.code, memberIds, lines, await businessDate(sql, deps, at));
+    const date = await businessDate(sql, deps, at);
+    const option = await couponByCode(sql, input.code, memberIds, lines, date, couponMomentOf(date, at, deps.config.timezone));
     return option ? { found: true, option } : { found: false };
   });
 
@@ -329,7 +363,18 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
 
   // 只改提交的字段，其余沿用当前规则；合并后整体校验（v0.7.22：在锁里读当前规则再合并，两人同时改不同字段不会互相覆盖）
   app.put('/api/frontdesk/rules', { preHandler: guard('settings.manage') }, async (req) => {
-    await saveRuleSetting(sql, 'frontdesk_rules', loadFrontdeskRules, (before) => parse(RulesInput, { ...before, ...parse(RulesInput.partial(), req.body) }), ctxOf(req));
+    const patch = parse(RulesInput.partial(), req.body);
+    await saveRuleSetting(
+      sql,
+      'frontdesk_rules',
+      loadFrontdeskRules,
+      async (before, tx) => {
+        const after = parse(RulesInput, { ...before, ...patch });
+        if (patch.buyCodes) await assertBuyCodeItems(tx, after.buyCodes);
+        return after;
+      },
+      ctxOf(req),
+    );
     return loadFrontdeskRules(sql);
   });
 
@@ -338,4 +383,6 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
   // ── 8.1.15：发牌前风控（黑名单、未结离店、重复到店、预约）与发牌后的异常处置 ──
   registerRiskRoutes(app, deps);
   registerIncidentRoutes(app, deps);
+  // 8.1.44：前台备注（同组 / 单人，记经办人与时间）
+  registerRemarkRoutes(app, deps);
 }

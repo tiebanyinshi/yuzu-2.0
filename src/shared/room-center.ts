@@ -12,6 +12,7 @@ import type { RoomBoardRoom } from './rooms';
 import { isTechnicianBusinessType, ROOM_BUSINESS_TYPE } from './spaces';
 import type { UsageDetail } from './usages';
 import type { RoomOrderSummary } from './room-orders';
+import type { BookingKind, BookingSource, BookingStatus } from './bookings';
 
 export const ROOM_STATUSES = ['free', 'in_use', 'dirty', 'maintenance', 'booked'] as const;
 export type RoomStatus = (typeof ROOM_STATUSES)[number];
@@ -247,6 +248,29 @@ export interface RoomCenterBoard {
   /** 全部房型合起来的数量（总览用） */
   total: RoomCounts;
   rooms: RoomCard[];
+  /** 当天的预约单（8.1.44，《前台系统开发》「房态显示当天预约单」）：技师、派对房、客房三种，取消的不列；只为点单来看的为空 */
+  todayBookings: RoomCenterBooking[];
+}
+
+/** 房态页上的一张预约（只读；改、到店、取消在预约看板） */
+export interface RoomCenterBooking {
+  id: number;
+  bookingNo: string;
+  kind: BookingKind;
+  status: BookingStatus;
+  source: BookingSource;
+  startsAt: string;
+  endsAt: string;
+  /** 客房电话预订保留到几点；别的为 null */
+  holdUntil: string | null;
+  /** 客人：会员名或登记的称呼；看不到客人信息的岗位写「客人」 */
+  guest: string;
+  guests: number;
+  /** 约的什么：「足疗 · 8 号 小王」「P01 大包」「豪华大床房」 */
+  target: string;
+  /** 到店后的手牌、开的单（钟单、入住单、使用单）；还没有为 null */
+  arrivalTagCode: string | null;
+  serviceNo: string | null;
 }
 
 export const ROOM_EVENT_KINDS = ['register', 'move_out', 'move_in', 'checkout', 'extend', 'merge', 'unmerge', 'dirty', 'cleaned', 'maintenance', 'restore'] as const;
@@ -367,4 +391,21 @@ export function matchesRoomSearch(r: Pick<RoomCard, 'code' | 'name' | 'guests' |
   if (!k) return true;
   const hit = (s: string | null | undefined) => !!s && s.replace(/\s+/g, '').toLowerCase().includes(k);
   return hit(r.code) || hit(r.name) || hit(r.guestText) || r.guests.some((g) => hit(g.tagCode) || hit(g.guest)) || hit(r.hotel?.stay?.tagCode) || hit(r.hotel?.stay?.guestLabel);
+}
+
+/**
+ * 房态中心的排序与过夜筛选（8.1.40，docs/V8140_B.md 第 1、2 节）：只在页面上排、筛，接口不变。
+ * 「从小到大」就是原来的顺序（楼层、房号）；「从大到小」按房号倒排（数字按数值比，A102 在 A99 前面）。
+ */
+export type RoomOrder = 'asc' | 'desc';
+export const ROOM_ORDERS: readonly RoomOrder[] = ['asc', 'desc'];
+export const ROOM_ORDER_LABELS: Record<RoomOrder, string> = { asc: '房号从小到大', desc: '房号从大到小' };
+
+/** 这间房里有过夜的客人 */
+export const isOvernightRoom = (r: { guests: readonly { overnight: boolean }[] }): boolean => r.guests.some((g) => g.overnight);
+
+export function arrangeRooms<T extends { code: string; guests: readonly { overnight: boolean }[] }>(rooms: readonly T[], opts: { order: RoomOrder; overnightOnly: boolean }): T[] {
+  const list = opts.overnightOnly ? rooms.filter(isOvernightRoom) : [...rooms];
+  if (opts.order === 'desc') list.sort((a, b) => b.code.localeCompare(a.code, 'zh-Hans-CN', { numeric: true }));
+  return list;
 }

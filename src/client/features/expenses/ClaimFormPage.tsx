@@ -3,7 +3,8 @@
 // 单笔超过门槛（默认 2000 元）要负责人确认。
 // 断网时「结果待确认」（v0.7.8 修正）：提交前把编号和原请求存在本机并读回核对，存不了就不提交；
 // 刷新、关闭页面后仍在页面顶部查回、按原内容重新提交（同一编号不会重复登记）或确认作废。
-// 8.1.9：钱从「零采备用金」来的，勾这张报销单报的是哪几笔申用（供应链在面板上提交了报销的，docs/ERP_V819.md 第 2.3 节）。
+// 8.1.42：钱从「备用金」来的，可以勾这张报销单报的是这个部门哪几笔申用（在「备用金申用」里提交了报销的，docs/V8142_PETTY.md；
+// 原来 8.1.9 的「零采备用金」并进了备用金，不再是单独的一项）。
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -32,7 +33,7 @@ import { useInvoiceLookup } from '../invoices/queries';
 import { BudgetHint, invoiceBlocking, InvoiceLedgerFields, useClaimOverBudget, type CategoryAmounts, type InvoiceExtras } from './ClaimExtras';
 import { InvoiceScanButton, kindFromHint, RecognitionCheck, RecognizedMark, useInvoiceRecognition } from '../invoices/InvoiceScan';
 import { totalFromExTax } from '@shared/invoice-recognize';
-import { POOL_BACKFILL_LABELS, type PoolUsesForClaim } from '@shared/petty-pool';
+import { PETTY_BACKFILL_LABELS, type PettyUseForClaim } from '@shared/petty-uses';
 import { api } from '../../lib/api';
 
 interface AdhocLine {
@@ -66,9 +67,8 @@ export function ClaimFormPage() {
   const [purpose, setPurpose] = useState('');
   const [paySource, setPaySource] = useState<PaySource>(params.get('advance') ? 'petty' : 'company');
   const [advanceId, setAdvanceId] = useState<number | null>(Number(params.get('advance')) || null);
-  // 零采备用金（8.1.9）：报的是哪几笔申用
-  const [poolUseIds, setPoolUseIds] = useState<number[]>([]);
-  const poolOn = session.erpModules.includes('pettyPool');
+  // 备用金申用（8.1.42）：报的是这个部门哪几笔申用（选填）
+  const [useIds, setUseIds] = useState<number[]>([]);
   const [invoiceType, setInvoiceType] = useState('');
   const [taxRateBp, setTaxRateBp] = useState<number | null>(null);
   const [invoiceNo, setInvoiceNo] = useState('');
@@ -94,25 +94,26 @@ export function ClaimFormPage() {
   const pending = useErpPending(['expense_claim']);
 
   const advances = useAdvances({ departmentId: departmentId ? String(departmentId) : undefined, unsettled: '1' }, paySource === 'petty' && !!departmentId);
-  // 模块关着时也取一次：关之前已经提交报销的申用，财务照样要能登记报销（接口不在模块的前缀下；Codex 审查 785ca18）
-  const poolUses = useQuery({
-    queryKey: ['inv', 'pool-uses-for-claim'],
-    queryFn: () => api.get<PoolUsesForClaim>('/api/erp/expenses/pool-uses'),
-    enabled: paySource === 'pool' || !poolOn,
+  // 这个部门已提交报销、还没登记的申用（钱从备用金来时才取）
+  const pettyUses = useQuery({
+    queryKey: ['inv', 'petty-uses-for-claim', departmentId],
+    queryFn: () => api.get<PettyUseForClaim[]>(`/api/erp/expenses/petty-uses?departmentId=${departmentId}`),
+    enabled: paySource === 'petty' && !!departmentId,
   });
-  const poolChoosable = poolOn || paySource === 'pool' || (poolUses.data?.uses.length ?? 0) > 0;
-  const chosenUses = (poolUses.data?.uses ?? []).filter((u) => poolUseIds.includes(u.id));
-  const poolSum = chosenUses.reduce((t, u) => t + u.amountCents, 0);
+  const usesHere = paySource === 'petty' ? (pettyUses.data ?? []) : [];
+  const chosenUses = usesHere.filter((u) => useIds.includes(u.id));
+  const usesSum = chosenUses.reduce((t, u) => t + u.amountCents, 0);
   /** 勾的申用都已补单、而且是同一张采购单：可以按那张采购单报销 */
-  const poolPo = chosenUses.length > 0 && chosenUses.every((u) => u.purchaseOrderId !== null && u.purchaseOrderId === chosenUses[0]!.purchaseOrderId) ? chosenUses[0]! : null;
-  const togglePoolUse = (id: number) => {
-    const next = poolUseIds.includes(id) ? poolUseIds.filter((x) => x !== id) : [...poolUseIds, id];
-    setPoolUseIds(next);
-    const first = poolUses.data?.uses.find((u) => u.id === next[0]);
-    // 经办人带第一笔的申请人，部门带设置里的归属部门（人改过的不动）
+  const usesPo = chosenUses.length > 0 && chosenUses.every((u) => u.purchaseOrderId !== null && u.purchaseOrderId === chosenUses[0]!.purchaseOrderId) ? chosenUses[0]! : null;
+  const toggleUse = (id: number) => {
+    const next = useIds.includes(id) ? useIds.filter((x) => x !== id) : [...useIds, id];
+    setUseIds(next);
+    const first = usesHere.find((u) => u.id === next[0]);
+    // 经办人带第一笔的申请人（人改过的不动）
     if (first && !touched.current.has('handler')) setHandlerId(first.applicantId);
-    if (poolUses.data?.departmentId && !touched.current.has('department')) setDepartmentId(poolUses.data.departmentId);
   };
+  // 换了部门或不用备用金了：勾的申用不再算（申用只能报在自己部门的备用金上）
+  useEffect(() => setUseIds([]), [departmentId, paySource]);
   const candidates = usePoCandidates(poQuery.trim(), mode === 'po' && !poId);
   const po = usePoForClaim(mode === 'po' ? poId : null);
   // 一键转报销（v0.7.29 ERP 采购五项②，E2）：选了采购单就读一次默认值，只填人还没动过的项
@@ -220,31 +221,29 @@ export function ClaimFormPage() {
             ? '请选择用途'
             : paySource === 'petty' && !advanceId
               ? '请选择这笔钱出自哪一笔打款'
-              : paySource === 'pool' && poolUseIds.length === 0
-                ? '请勾这张报销单报的是哪几笔申用'
-                : mode === 'adhoc' && channels.length > 0 && !channelDef
-                  ? '请选择采购途径'
-                  : pickChannel && channelDef?.needsNote && channelNote.trim().length < 2
-                    ? `采购途径选了「${channelDef.label}」，请写明在哪买的`
-                    : !inv
-                      ? '请选择发票类型'
-                      : taxRateBp === null
-                        ? '请选择税点'
-                        : inv.needsNumber && !invoiceNo.trim()
-                          ? `${inv.label}要填发票号码`
-                          : invoiceProblem
-                            ? invoiceProblem
-                            : rec.needsCheck
-                              ? '请对照票面核对识别出来的内容并勾选'
-                              : mode === 'po'
-                                ? !poId
-                                  ? '请选择采购单'
-                                  : chosenPo.length === 0
-                                    ? '请勾选要报销的行'
-                                    : freightOn && (!freightCents || freightCents <= 0)
-                                      ? '请填写运费金额'
-                                      : (chosenPo.find((r) => r.err)?.err ?? null)
-                                : (adhocRows.find((r) => r.err)?.err ?? null);
+              : mode === 'adhoc' && channels.length > 0 && !channelDef
+                ? '请选择采购途径'
+                : pickChannel && channelDef?.needsNote && channelNote.trim().length < 2
+                  ? `采购途径选了「${channelDef.label}」，请写明在哪买的`
+                  : !inv
+                    ? '请选择发票类型'
+                    : taxRateBp === null
+                      ? '请选择税点'
+                      : inv.needsNumber && !invoiceNo.trim()
+                        ? `${inv.label}要填发票号码`
+                        : invoiceProblem
+                          ? invoiceProblem
+                          : rec.needsCheck
+                            ? '请对照票面核对识别出来的内容并勾选'
+                            : mode === 'po'
+                              ? !poId
+                                ? '请选择采购单'
+                                : chosenPo.length === 0
+                                  ? '请勾选要报销的行'
+                                  : freightOn && (!freightCents || freightCents <= 0)
+                                    ? '请填写运费金额'
+                                    : (chosenPo.find((r) => r.err)?.err ?? null)
+                              : (adhocRows.find((r) => r.err)?.err ?? null);
 
   if (!can('expense.manage')) return <Navigate to="/erp/expenses" replace />;
 
@@ -310,7 +309,7 @@ export function ClaimFormPage() {
         purpose,
         paySource,
         advanceId: paySource === 'petty' ? advanceId : null,
-        ...(paySource === 'pool' ? { poolUseIds } : {}),
+        ...(paySource === 'petty' && chosenUses.length ? { useIds: chosenUses.map((u) => u.id) } : {}),
         invoiceType,
         taxRateBp,
         invoiceNo: invoiceNo.trim(),
@@ -457,35 +456,31 @@ export function ClaimFormPage() {
                   touch('paySource');
                   setPaySource(v);
                 }}
-                options={(poolChoosable ? (['petty', 'company', 'pool'] as const) : (['petty', 'company'] as const)).map((v) => ({ value: v, label: PAY_SOURCE_LABELS[v] }))}
+                options={(['petty', 'company'] as const).map((v) => ({ value: v, label: PAY_SOURCE_LABELS[v] }))}
               />
             </Field>
-            {paySource === 'pool' && (
-              <div className="sm:col-span-full" data-testid="ex-pool-uses">
-                <p className="mb-1.5 text-[13px] font-semibold text-ink-2">报的是哪几笔申用（供应链在「零采备用金」里提交了报销的）</p>
-                {poolUses.isPending ? (
-                  <Skeleton className="h-16" />
-                ) : poolUses.isError && !poolUses.data ? (
-                  <LoadFailed title="零采备用金的申用没取回来" onRetry={() => void poolUses.refetch()} retrying={poolUses.isFetching} />
-                ) : poolUses.data && poolUses.data.uses.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-line px-3 py-3 text-[13px] text-ink-3">没有待登记的申用：供应链要先在「零采备用金」里点「报销」提交。</p>
+            {paySource === 'petty' && departmentId && (pettyUses.isError ? !pettyUses.data : usesHere.length > 0) && (
+              <div className="sm:col-span-full" data-testid="ex-petty-uses">
+                <p className="mb-1.5 text-[13px] font-semibold text-ink-2">报的是哪几笔申用（选填：这个部门在「备用金申用」里提交了报销的）</p>
+                {pettyUses.isError && !pettyUses.data ? (
+                  <LoadFailed title="备用金的申用没取回来" onRetry={() => void pettyUses.refetch()} retrying={pettyUses.isFetching} />
                 ) : (
                   <ul className="scroll-thin max-h-64 space-y-1.5 overflow-y-auto">
-                    {poolUses.data?.uses.map((u) => (
+                    {usesHere.map((u) => (
                       <li key={u.id}>
                         <label
                           className={cn(
                             'flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2 text-[13px]',
-                            poolUseIds.includes(u.id) ? 'border-pine bg-pine-tint' : 'border-line bg-card',
+                            useIds.includes(u.id) ? 'border-pine bg-pine-tint' : 'border-line bg-card',
                           )}
                         >
-                          <input type="checkbox" checked={poolUseIds.includes(u.id)} disabled={locked} onChange={() => togglePoolUse(u.id)} data-testid={`ex-pool-use-${u.id}`} />
+                          <input type="checkbox" checked={useIds.includes(u.id)} disabled={locked} onChange={() => toggleUse(u.id)} data-testid={`ex-petty-use-${u.id}`} />
                           <span className="font-semibold">{u.docNo}</span>
                           <span className="num text-ink-3">{u.useDate}</span>
                           <span>{u.applicantName}</span>
                           <span className="min-w-0 flex-1 truncate text-ink-2">{u.content}</span>
                           <span className="text-[12px] text-ink-3">
-                            {u.backfill ? POOL_BACKFILL_LABELS[u.backfill] : ''}
+                            {u.backfill ? PETTY_BACKFILL_LABELS[u.backfill] : ''}
                             {u.poNo ? ` ${u.poNo}` : ''}
                           </span>
                           <span className="num font-bold">¥{formatAmount(u.amountCents)}</span>
@@ -496,18 +491,19 @@ export function ClaimFormPage() {
                 )}
                 {chosenUses.length > 0 && (
                   <p className="mt-1.5 text-[12.5px] text-ink-2">
-                    勾了 {chosenUses.length} 笔，申用共 <span className="num font-semibold">¥{formatAmount(poolSum)}</span>；报销金额按实际花的填，可以和申用不一样。报销单确认后这几笔自动回补。
-                    {poolPo && mode === 'adhoc' && (
+                    勾了 {chosenUses.length} 笔，申用共 <span className="num font-semibold">¥{formatAmount(usesSum)}</span>
+                    ；报销金额按实际花的填，可以和申用不一样。报销单确认后这几笔不再占用，要回到定额请按「建议补足」打款。
+                    {usesPo && mode === 'adhoc' && (
                       <button
                         type="button"
                         className="ml-1 font-semibold text-pine hover:underline"
                         onClick={() => {
                           setMode('po');
-                          setPoId(poolPo.purchaseOrderId);
+                          setPoId(usesPo.purchaseOrderId);
                         }}
-                        data-testid="ex-pool-use-po"
+                        data-testid="ex-petty-use-po"
                       >
-                        按补单的采购单 {poolPo.poNo} 报销
+                        按补单的采购单 {usesPo.poNo} 报销
                       </button>
                     )}
                   </p>

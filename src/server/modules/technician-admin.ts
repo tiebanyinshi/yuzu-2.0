@@ -3,6 +3,7 @@
 //   · 组别：分组与组长，一位技师一个组。
 //   · 班次：班次的名字与起止时间、排班表（一位技师一天一格）、临时调班（改当天已经排了的格子、两人对调，要写原因）。
 //     排班的每一次改动都另记一条（technician_schedule_changes，只追加）。
+//     轮班周期（8.1.41，technician-rota.ts）：门店自定的轮班，按它生成排班也走排班的同一条路。
 //   · 休假：申请（钟房的岗位替技师提）→ 批准 / 驳回（维护技师名册的岗位）；批了的在那几天不进排位——钟房读的时候按休假单算
 //     （technician-day.ts 的 approvedLeavesOn），不靠定时任务；批准、销假时休假含今天的，同一个事务里把今天的上牌状态也改了。
 //
@@ -58,6 +59,7 @@ import { idParam, parse } from '../lib/validate';
 import { lockQueue, syncLeaveToday } from './clockroom';
 import { businessDate } from './frontdesk/common';
 import { approvedLeavesOn, groupNames, scheduleOn } from './technician-day';
+import { ApplyInput, loadRotas, rotaPlanCells, saveRotas } from './technician-rota';
 import { loadTechnicianKinds, loadTechnicians } from './technicians';
 import { technicianPhotoUrl } from '@shared/technician-ranking';
 
@@ -336,7 +338,14 @@ function assertSchedulable(date: string, today: string) {
  * 一位技师一天提交了两次的拒绝。
  */
 async function planSchedule(deps: Deps, raw: unknown, ctx: OpContext): Promise<void> {
-  const { cells } = parse(PlanInput, raw);
+  await writePlan(deps, parse(PlanInput, raw).cells, ctx);
+}
+
+/**
+ * 排班与按轮班生成（8.1.41）共用：核对、跳过没变的、今天已经排了的拒绝、逐格留痕、一条审计。
+ * source 是按哪份轮班生成的（审计里写明）；返回改了几格。
+ */
+async function writePlan(deps: Deps, cells: ScheduleCell[], ctx: OpContext, source?: { rotaId: number; rotaName: string }): Promise<number> {
   const keys = new Set(cells.map((c) => `${c.technicianId}|${c.date}`));
   if (keys.size !== cells.length) throw badRequest('同一位技师同一天提交了两次');
   let changed = 0;
@@ -359,14 +368,23 @@ async function planSchedule(deps: Deps, raw: unknown, ctx: OpContext): Promise<v
       changed += 1;
     }
     if (changed === 0) return;
+    const range = dates[0] === dates.at(-1) ? dates[0] : `${dates[0]} 至 ${dates.at(-1)}`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'technician_schedule',
       targetType: 'technician_schedule',
-      detail: { kind: 'plan', from: dates[0], to: dates.at(-1), changed, summary: `技师排班：${dates[0] === dates.at(-1) ? dates[0] : `${dates[0]} 至 ${dates.at(-1)}`}，改了 ${changed} 格` },
+      detail: {
+        kind: 'plan',
+        from: dates[0],
+        to: dates.at(-1),
+        changed,
+        ...source,
+        summary: source ? `按轮班「${source.rotaName}」排班：${range}，${unique(cells.map((c) => c.technicianId)).length} 位技师，改了 ${changed} 格` : `技师排班：${range}，改了 ${changed} 格`,
+      },
       ip: ctx.ip,
     });
   });
+  return changed;
 }
 
 /** 临时调班：改一位技师某一天的班（当天已经排了的也能改），或与另一位技师对调这一天的班；必须写原因，逐条留痕 */
@@ -617,6 +635,16 @@ export function registerTechnicianAdminRoutes(app: FastifyInstance, deps: Deps) 
     const q = parse(ScheduleQuery, req.query ?? {});
     await planSchedule(deps, req.body, ctxOf(req));
     return scheduleView(sql, deps, q.from, q.days);
+  });
+  // 轮班周期（8.1.41，docs/V8141_ROTA.md）：清单整份保存；按轮班生成排班走上面排班的同一条路（同样的核对、留痕与审计）
+  app.get('/api/technician-admin/rotas', read, async () => ({ rotas: await loadRotas(sql) }));
+  app.put('/api/technician-admin/rotas', manage, async (req) => ({ rotas: await saveRotas(sql, req.body, ctxOf(req)) }));
+  app.post('/api/technician-admin/rotas/:id/apply', manage, async (req) => {
+    const q = parse(ScheduleQuery, req.query ?? {});
+    const a = parse(ApplyInput, req.body);
+    const { rota, cells } = await rotaPlanCells(sql, parse(idParam, req.params).id, a);
+    const changed = await writePlan(deps, cells, ctxOf(req), { rotaId: rota.id, rotaName: rota.name });
+    return { ...(await scheduleView(sql, deps, q.from, q.days)), changed };
   });
   app.post('/api/technician-admin/schedule/adjust', manage, async (req) => {
     const q = parse(ScheduleQuery, req.query ?? {});

@@ -494,7 +494,7 @@ export async function giftLedger(db: Db, f: LedgerFilter, today: string): Promis
 }
 
 /**
- * 导出明细。一次最多 EXPORT_LIMIT 张：多取一张，超过就整份拒绝、请缩短日期范围（与零采备用金的导出一样），
+ * 导出明细。一次最多 EXPORT_LIMIT 张：多取一张，超过就整份拒绝、请缩短日期范围（与备用金申用台账的导出一样），
  * 不悄悄截掉早的那些——否则导出的少了、与台账上的合计对不上（Codex 审查 cf81873）。limit 只给用例换小。
  */
 export async function giftLedgerCsv(db: Db, f: LedgerFilter, today: string, actor: Actor, limit = EXPORT_LIMIT): Promise<string> {

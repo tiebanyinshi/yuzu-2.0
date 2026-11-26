@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { ALL_PERMISSIONS, LOCKED_PERMISSIONS, permissionsOf, type Permission } from '../src/shared/permissions';
+import { ERP_MODULES } from '../src/shared/erp';
 import {
   LINED_DEPARTMENTS,
   ORG_DEPARTMENTS,
@@ -143,12 +144,15 @@ describe('权限模板（表 3 逐列）', () => {
     }
   });
 
-  it('能登记布草、申用备用金的岗位都看得到对应的页面（页面与列表接口要「看」那一项，Codex 审查 036b336）', () => {
+  it('能登记布草的岗位都看得到对应的页面（页面与列表接口要「看」那一项，Codex 审查 036b336）；备用金申用一项就能进申用页（8.1.42）', () => {
     for (const pos of POSITIONS) {
       const perms = positionDefaults(pos.key, ALL_PERMISSIONS);
       if (perms.includes('linen.manage')) expect(perms, pos.title).toContain('linen.read');
-      if (perms.includes('pool.manage')) expect(perms, pos.title).toContain('pool.read');
     }
+    expect(ERP_MODULES.expenses.perms).toContain('petty.use');
+    // 原来零采备用金的两项不再有（迁移 340 改成 petty.use）
+    expect(ALL_PERMISSIONS.some((p) => p.startsWith('pool.'))).toBe(false);
+    expect(positionDefaults('outreach.staff', ALL_PERMISSIONS)).toContain('petty.use');
   });
 
   it('退菜按出品口（8.1.17）跟着下单：能在哪个出品口下单就能退哪个出品口的菜；康美部没有餐厅', () => {

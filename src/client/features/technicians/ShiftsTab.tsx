@@ -1,4 +1,5 @@
 // 技师管理 · 技师班次（8.1.15）：班次的名字与起止时间、一周的排班表、临时调班、改动记录。
+//   · 轮班周期（8.1.41，RotaCard.tsx）：门店自定的轮班，按它给技师生成排班。
 //   · 排班表：一位技师一天一格——上哪个班、排休、没排；点格子改。以后的日子直接排；
 //     今天已经排了的格子只能走「临时调班」（要写原因），两人对调也算临时调班；过去的不能改。每次改动都另记一条。
 //   · 休假单（待审批、已批准）标在格子上：批了休假的那几天不进排位，排了班也不算。
@@ -30,6 +31,7 @@ import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Segmented, Select, Skeleton } from '../../components/ui';
 import { scheduleKey, scheduleUrl, techViewKey, useSchedule, useTechAdminRefresh } from './queries';
+import { RotaCard } from './RotaCard';
 
 const DAYS = 7;
 
@@ -82,6 +84,7 @@ export function ShiftsTab({ view }: { view: TechnicianAdminView }) {
           </ul>
         )}
       </Card>
+      <RotaCard view={view} />
       <ScheduleCard view={view} />
       <ShiftDialog target={editingShift} onClose={() => setEditingShift(null)} />
     </div>

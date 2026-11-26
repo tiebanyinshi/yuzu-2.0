@@ -107,6 +107,7 @@ function CheckoutSlip({ d }: { d: CheckoutPrint }) {
             {d.perks.map((k) => (
               <div key={k.paymentId} data-testid={`print-perk-${k.kind}`}>
                 <Row left={perkTitle(k)} right={`-${yuan(k.amount)}`} />
+                {k.code && <p className="pl-3 text-[11px] break-all">券号 {k.code}</p>}
                 {perkOperatorsText(k) && <p className="pl-3 text-[11px] break-all">{perkOperatorsText(k)}</p>}
                 {k.detail && <p className="pl-3 text-[11px] break-all">{k.detail}</p>}
               </div>
