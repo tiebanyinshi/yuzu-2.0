@@ -20,7 +20,8 @@ export const isTableCheckout = (d: Pick<CheckoutDetail, 'bills'>) => d.bills.som
 
 /** 一笔优惠 / 赠送：类别、名称、减了多少，下面一行是说明与经办人（发放、授权、渠道） */
 export function PerkRow({ perk }: { perk: CheckoutPerk }) {
-  const sub = [perk.name ? perk.detail : '', perkOperatorsText(perk)].filter(Boolean).join(' · ');
+  // 8.1.40：券号写在说明前面
+  const sub = [perk.code ? `券号 ${perk.code}` : '', perk.name ? perk.detail : '', perkOperatorsText(perk)].filter(Boolean).join(' · ');
   return (
     <div data-testid={`checkout-perk-${perk.kind}`}>
       <p className="flex items-baseline gap-2">

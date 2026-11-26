@@ -1,12 +1,14 @@
 // 收银台（8.1.15，docs/DESKS_V8115.md 第 3.3 节）：客人离店结账。左边是待结账清单（在店的手牌），直接敲牌号回车就打开；
-// 右边是只读账单（不能加项目、作废、换牌），带这位客人能用的权益与优惠；预结账、结账、结账记录都在这里。
-// 接待发牌、换牌、挂账在发卡台（FrontdeskPage）。两个台共用一个「补录纸质单」状态（desk.tsx 的 DeskLayout）。
+// 右边是账单，带这位客人能用的权益与优惠；预结账、结账、结账记录都在这里。
+// 8.1.44（docs/V8144_CASHIER.md）：加项目、作废 / 退菜、买角（敲数字代号挂项目）、打单（打预结单）、备注板块都在这里；
+// 打开一位客人后左栏收成一列窄的清单、账单区放大，账单抬头不再重复手牌、入场时间、在店时长。
+// 接待发牌、换牌、同行在发卡台（FrontdeskPage）。两个台共用一个「补录纸质单」状态（desk.tsx 的 DeskLayout）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { ArrowDownWideNarrow, Calculator, FilePenLine, Gift, Hash, Keyboard, ReceiptText, Search, ShieldCheck, Store, Ticket, UserRound, X } from 'lucide-react';
-import { matchTags, normalizeTagCode, uniqueTagMatch, ZONE_LABELS, type BoardTag } from '@shared/frontdesk';
+import { matchTags, normalizeTagCode, uniqueTagMatch, ZONE_LABELS, type BoardTag, type VisitDetail } from '@shared/frontdesk';
 import { useCan, useSession } from '../../lib/session';
-import { cn, isTypingTarget } from '../../lib/utils';
+import { cn, formatTime, isTypingTarget } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -29,6 +31,11 @@ import { stayMinutes, stayText, useBoard, useCheckoutPreview, useRefreshFrontdes
 import { FindGuestDialog } from './ToolDialogs';
 import { PreviewDialog } from './VisitDialogs';
 import { PriceTrialDialog } from './PriceTrialDialog';
+import { AddItemsDialog } from './AddItemsDialog';
+import { lazyPage } from '../../lib/lazyPage';
+
+// 改票种的对话框在结账那份代码里（结账对话框本来就在这一页）
+const TicketDialog = lazyPage(() => import('./CheckoutDialog').then((m) => m.TicketDialog));
 
 type QueueFilter = 'all' | 'spent' | 'group' | 'long';
 type QueueSort = 'code' | 'amount' | 'stay';
@@ -53,7 +60,7 @@ export function CashierPage() {
   const [picked, setPicked] = useState(false);
   const [filter, setFilter] = useState<QueueFilter>('all');
   const [sort, setSort] = useState<QueueSort>('code');
-  const [dialog, setDialog] = useState<null | { kind: 'preview' } | { kind: 'checkout'; ids?: number[] } | { kind: 'records'; checkoutId?: number }>(null);
+  const [dialog, setDialog] = useState<null | { kind: 'preview' | 'add' | 'buy' | 'ticket' } | { kind: 'checkout'; ids?: number[] } | { kind: 'records'; checkoutId?: number }>(null);
   const [checksOpen, setChecksOpen] = useState(false);
   const [finding, setFinding] = useState(false);
   const [trial, setTrial] = useState(false);
@@ -90,14 +97,15 @@ export function CashierPage() {
   const resume = params.get('resume');
   useEffect(() => {
     if (!resume) return;
-    // 发牌、挂账、换牌、转明细在发卡台处理：带着这几种来的转过去
-    if (resume !== 'checkout' && resume !== 'checkout_refund') {
+    // 发牌、换牌、转明细在发卡台处理：带着这几种来的转过去（挂账 8.1.44 起在收银台）
+    if (resume !== 'checkout' && resume !== 'checkout_refund' && resume !== 'bill_post') {
       navigate(`/crm/frontdesk?${params}`, { replace: true });
       return;
     }
     if (!board.data) return;
-    if (resume === 'checkout' && (!visit.data || visit.data.id !== selectedId)) return;
+    if (resume !== 'checkout_refund' && (!visit.data || visit.data.id !== selectedId)) return;
     if (resume === 'checkout_refund') setDialog({ kind: 'records', checkoutId: Number(params.get('c')) || undefined });
+    else if (resume === 'bill_post') setDialog({ kind: 'add' });
     else setDialog({ kind: 'checkout' });
     const next = new URLSearchParams(params);
     next.delete('resume');
@@ -105,13 +113,18 @@ export function CashierPage() {
     setParams(next, { replace: true });
   }, [resume, board.data, visit.data, selectedId, params, setParams, navigate]);
 
-  // 盲打牌号、F8 预结账、F9 结账
+  // 盲打牌号、F4 加项目、F6 买角、F8 预结账、F9 买单（结账）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       // 窄屏时账单是侧滑抽屉（也是 dialog），不挡快捷键；其他弹窗打开时不响应
       if (document.querySelector('[role="dialog"]:not([aria-label="手牌账单"])')) return;
       const sheetOpen = !!document.querySelector('[role="dialog"][aria-label="手牌账单"]');
+      if ((e.key === 'F4' || e.key === 'F6') && visit.data?.status === 'open' && can('frontdesk.operate')) {
+        e.preventDefault();
+        setDialog({ kind: e.key === 'F4' ? 'add' : 'buy' });
+        return;
+      }
       if (e.key === 'F8' && visit.data?.status === 'open') {
         e.preventDefault();
         setDialog({ kind: 'preview' });
@@ -158,6 +171,20 @@ export function CashierPage() {
   // 这位客人现在能用的权益（与结账对话框同一个核对接口，按此刻计价）
   const perks = useCheckoutPreview(selectedId && open ? [selectedId] : [], !!selectedId && !!open && !dialog);
 
+  /** 打单（8.1.44）：这位客人与同组在店的手牌一起打一张预结单（与「预结账」默认勾选的一样），新窗口打开、读到数据自动调出打印 */
+  const printPrebill = () => {
+    if (!visit.data) return;
+    const mates = visit.data.group?.mates.filter((m) => m.status === 'open').map((m) => m.visitId) ?? [];
+    const ids = mates.length ? mates : [visit.data.id];
+    const w = window.open(`/print/prebill/${ids.join(',')}?auto=1`, '_blank', 'popup,width=420,height=760');
+    if (!w) toast({ tone: 'error', title: '打印窗口被浏览器拦下了', body: '请在地址栏右侧允许本站弹出窗口，再点一次打单' });
+  };
+  const afterChange = (v: VisitDetail, message: string) => {
+    setDialog(null);
+    refresh([v.id]);
+    toast({ tone: 'success', title: message });
+  };
+
   const panel = (
     <BillPanel
       desk="cashier"
@@ -166,8 +193,10 @@ export function CashierPage() {
       error={visit.error}
       rules={board.data?.rules}
       extra={visit.data ? <BillPerks visit={visit.data} preview={perks.data} loading={perks.isPending} /> : undefined}
+      compact={wide}
       onAction={(a: PanelAction) => {
-        if (a === 'preview' || a === 'checkout' || a === 'records') setDialog({ kind: a });
+        if (a === 'print') printPrebill();
+        else if (a === 'preview' || a === 'checkout' || a === 'records' || a === 'add' || a === 'buy' || a === 'ticket') setDialog({ kind: a });
       }}
       onSelectVisit={select}
       onChanged={() => refresh(selectedId ? [selectedId] : [])}
@@ -229,7 +258,15 @@ export function CashierPage() {
           </>
         }
       />
-      <div className={cn('grid min-h-0 flex-1', wide ? 'grid-cols-[minmax(0,1fr)_400px] xl:grid-cols-[minmax(0,1fr)_460px]' : 'grid-cols-1')}>
+      {/* 8.1.44 第 11 条：打开一位客人后左栏收窄、清单一行一位，账单区放大 */}
+      <div
+        className={cn(
+          'grid min-h-0 flex-1',
+          !wide ? 'grid-cols-1' : selectedId ? 'grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)]' : 'grid-cols-[minmax(0,1fr)_400px] xl:grid-cols-[minmax(0,1fr)_460px]',
+        )}
+        data-testid="cashier-layout"
+        data-expanded={wide && !!selectedId}
+      >
         <div className="flex min-h-0 flex-col">
           <div className="shrink-0 space-y-3 border-b border-line px-5 pt-4 pb-3 md:px-6">
             <CrossDayShiftNotice />
@@ -340,9 +377,9 @@ export function CashierPage() {
               <p className="py-10 text-center text-[13.5px] text-ink-3">{q ? '没有对上的在店手牌' : '这个筛选下没有手牌'}</p>
             ) : (
               // 清单够宽时排两列（台式收银机的大屏一屏看得到更多手牌），窄了一列
-              <ul className="grid grid-cols-1 gap-2 @min-[56rem]:grid-cols-2">
+              <ul className={cn('grid grid-cols-1 @min-[56rem]:grid-cols-2', wide && selectedId ? 'gap-1.5' : 'gap-2')}>
                 {shown.map((t) => (
-                  <QueueRow key={t.id} tag={t} now={now} selected={t.visit!.id === selectedId} primary={t === primary} onClick={() => openTag(t)} />
+                  <QueueRow key={t.id} tag={t} now={now} compact={wide && !!selectedId} selected={t.visit!.id === selectedId} primary={t === primary} onClick={() => openTag(t)} />
                 ))}
               </ul>
             )}
@@ -356,10 +393,10 @@ export function CashierPage() {
               panel
             ) : (
               <div className="flex h-full flex-col items-center justify-center px-8 text-center" data-testid="cashier-empty">
-                <EmptyState art="calm" title="选一张手牌看账单" description="直接敲牌号（如 23）回车，或点左侧的手牌。这里只看不改：加项目、换牌在发卡台。" />
+                <EmptyState art="calm" title="选一张手牌看账单" description="直接敲牌号（如 23）回车，或点左侧的手牌。加项目、买角、作废、打单、买单都在这里；换牌、同行在发卡台。" />
                 <div className="mt-2 space-y-1.5 text-[12.5px] text-ink-3">
                   <p className="flex items-center justify-center gap-1.5">
-                    <Keyboard className="size-4" /> <Kbd>F8</Kbd> 预结账 · <Kbd>F9</Kbd> 结账
+                    <Keyboard className="size-4" /> <Kbd>F4</Kbd> 加项目 · <Kbd>F6</Kbd> 买角 · <Kbd>F8</Kbd> 预结账 · <Kbd>F9</Kbd> 买单
                   </p>
                 </div>
               </div>
@@ -394,12 +431,29 @@ export function CashierPage() {
       <ChecksDialog open={checksOpen} onClose={() => setChecksOpen(false)} />
       <FindGuestDialog open={finding} tags={tags} onClose={() => setFinding(false)} onPick={select} />
       {trial && <PriceTrialDialog open onClose={() => setTrial(false)} />}
+      {/* 8.1.44：加项目、买角（同一个挂账对话框，买角打开时先敲数字代号）、改票种在收银台 */}
+      {visit.data && (dialog?.kind === 'add' || dialog?.kind === 'buy') && (
+        <AddItemsDialog
+          open
+          visit={visit.data}
+          buyCodes={dialog.kind === 'buy' ? (board.data?.rules.buyCodes ?? []) : undefined}
+          onClose={() => setDialog(null)}
+          onDone={(v) => afterChange(v, `已挂到 ${v.tag.code}`)}
+        />
+      )}
+      {visit.data && dialog?.kind === 'ticket' && (
+        <TicketDialog open visit={visit.data} onClose={() => setDialog(null)} onDone={(v) => afterChange(v, `${v.tag.code} 票种改为 ${v.ticket?.name ?? ''}`)} />
+      )}
     </>
   );
 }
 
-/** 待结账清单的一行：牌号、客人与档阶、同行、手上的券 / 签赠、在店多久、已挂多少 */
-function QueueRow({ tag, now, selected, primary, onClick }: { tag: BoardTag; now: number; selected: boolean; primary: boolean; onClick: () => void }) {
+/**
+ * 待结账清单的一行：牌号、客人与档阶、同行、手上的券 / 签赠、备注标签（8.1.44）、在店多久、已挂多少。
+ * compact（8.1.44 第 11 条，打开了一位客人、左栏收窄时）：一行一位，只留牌号、客人、金额与提醒；选中的那一行另写入场时刻与在店时长
+ * （账单抬头不再重复这几样）
+ */
+function QueueRow({ tag, now, selected, primary, compact, onClick }: { tag: BoardTag; now: number; selected: boolean; primary: boolean; compact: boolean; onClick: () => void }) {
   const v = tag.visit!;
   return (
     <li>
@@ -410,13 +464,14 @@ function QueueRow({ tag, now, selected, primary, onClick }: { tag: BoardTag; now
         aria-pressed={selected}
         aria-label={`手牌 ${tag.code}，${ZONE_LABELS[tag.zone].title}，${v.memberName ? `会员 ${v.memberName}` : '散客'}，已挂 ${(v.amountCents / 100).toFixed(2)} 元`}
         className={cn(
-          'flex min-h-[60px] w-full items-center gap-3 rounded-[14px] border bg-card px-3.5 py-2 text-left shadow-card transition-[box-shadow,border-color] hover:border-line-strong hover:shadow-lift',
+          'flex w-full items-center gap-3 rounded-[14px] border bg-card text-left shadow-card transition-[box-shadow,border-color] hover:border-line-strong hover:shadow-lift',
+          compact ? 'min-h-[44px] px-3 py-1.5' : 'min-h-[60px] px-3.5 py-2',
           selected ? 'border-pine ring-2 ring-pine ring-offset-2 ring-offset-paper' : primary ? 'border-yuzu ring-2 ring-yuzu' : 'border-line',
         )}
       >
-        <span className="flex w-[72px] shrink-0 flex-col items-start gap-1">
-          <span className="num text-[20px] leading-none font-bold tracking-tight">{tag.code}</span>
-          {tag.kind === 'vip' ? <VipChip level={tag.vipLevel!} /> : <ZoneChip zone={tag.zone} />}
+        <span className={cn('flex shrink-0 flex-col items-start gap-1', compact ? 'w-[56px]' : 'w-[72px]')}>
+          <span className={cn('num leading-none font-bold tracking-tight', compact ? 'text-[17px]' : 'text-[20px]')}>{tag.code}</span>
+          {!compact && (tag.kind === 'vip' ? <VipChip level={tag.vipLevel!} /> : <ZoneChip zone={tag.zone} />)}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-1.5 text-[13.5px]">
@@ -435,8 +490,18 @@ function QueueRow({ tag, now, selected, primary, onClick }: { tag: BoardTag; now
             )}
             {v.groupNo && <GroupMark groupNo={v.groupNo} count={v.groupOpenCount} />}
           </span>
-          <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-ink-3">
-            <span className="num font-semibold">在店 {stayText(v.checkedInAt, now)}</span>
+          <span className={cn('mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-ink-3', compact && !selected && 'mt-0.5')}>
+            {(!compact || selected) && (
+              <span className="num font-semibold" data-testid={selected ? 'queue-selected-stay' : undefined}>
+                {selected && `入场 ${formatTime(v.checkedInAt)} · `}在店 {stayText(v.checkedInAt, now)}
+              </span>
+            )}
+            {/* 前台备注的标签（8.1.44）：客诉等，收银别漏看 */}
+            {v.remarkTags.map((t) => (
+              <span key={t} className="rounded-sm bg-clay-soft px-1 font-bold text-clay" data-testid={`queue-${tag.code}-remark`}>
+                {t}
+              </span>
+            ))}
             {/* 超时在店（8.1.15：超 12 / 24 / 72 小时黄 / 橙 / 红）、临时外出、异常待办：颜色都配文字与图标 */}
             <VisitStatusChips visit={v} now={now} testId={`queue-${tag.code}`} />
             {/* 手上有能用的签赠 / 券：提醒收银别漏了 */}

@@ -1415,6 +1415,7 @@ function describeChange(action: string, detail: Record<string, unknown>): string
       if (detail.key === 'role_permissions') return '调整了岗位权限';
       if (detail.key === 'technician_rules') return '修改了技师规则';
       if (detail.key === 'technician_kinds') return '修改了技师类型的清单';
+      if (detail.key === 'technician_rotas') return '修改了技师的轮班周期';
       if (detail.key === 'clockroom_rules') return '修改了钟房与轮钟规则';
       if (detail.key === 'commission_rules') return '修改了技师提成规则';
       if (detail.key === 'dining_rules') return '修改了餐饮规则';
