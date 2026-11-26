@@ -110,7 +110,8 @@ test.describe('待确认操作在关闭、刷新、重新登录后仍可处理',
     // 之后办理的新一笔是合法的新交易，不应被禁止
     await prepareRecharge(page, /轻享 300/, '现金');
     await page.getByRole('button', { name: /确认入账/ }).click();
-    await expect(page.getByText('充值已入账')).toBeVisible();
+    // 认结果页的标题：上一条「已查回：……充值已入账」的提示可能还在（8.1.42 起提示在上方、不挡按钮，点得更快）
+    await expect(page.getByRole('heading', { name: '充值已入账' })).toBeVisible();
     expect(await rechargeCount(page, '唐果')).toBe(countBefore + 2);
   });
 
