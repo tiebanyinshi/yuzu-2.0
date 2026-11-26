@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest';
 import {
   applyCompareCartSelection,
   buildCompareOffers,
+  catalogCardSummary,
   filterAndSortCompareOffers,
   findMaterialCartLine,
   formatTaxRate,
   grossCents,
+  groupShopCart,
   lineGoodsCents,
   lineGrossCents,
   resolveCompareQtyMilli,
@@ -227,5 +229,55 @@ describe('比价页排序、筛选与原位替换清单（批次 B）', () => {
     expect(reset.kind).toBe('added');
     if (reset.kind === 'cross_store') throw new Error('unexpected');
     expect(reset.cart).toEqual({ storeId: 2, lines: [{ skuId: 103, priceVersion: 1, qtyMilli: 10_000 }] });
+  });
+});
+
+describe('清单按供应商分组、起订量进度与商品卡摘要（批次 C）', () => {
+  it('groupShopCart：组小计之和等于总计，起订量进度与缺口准确，问题集中汇总', () => {
+    const oA1 = makeOffer({ skuId: 401, supplier: { id: 10, name: '供应商甲', admission: 'approved' }, priceCents: 1000, freightCents: 0, moqMilli: 100_000, priceVersion: 1 });
+    const oA2 = makeOffer({ skuId: 402, supplier: { id: 10, name: '供应商甲', admission: 'approved' }, priceCents: 500, freightCents: 800, moqMilli: 100_000, priceVersion: 2 });
+    const oB1 = makeOffer({ skuId: 403, supplier: { id: 20, name: '供应商乙', admission: 'approved' }, priceCents: 2000, freightCents: 1500, moqMilli: 10_000, priceVersion: 1 });
+    const cat: ShopCatalog = {
+      ...makeCatalog([]),
+      items: [
+        { material: { id: 1, code: 'M1', name: '浴巾', category: '布草', specification: '', unit: '条', note: '' }, offers: [oA1, oB1], fromGrossCents: 1130, purchasable: 2 },
+        { material: { id: 2, code: 'M2', name: '毛巾', category: '布草', specification: '', unit: '条', note: '' }, offers: [oA2], fromGrossCents: 565, purchasable: 1 },
+      ],
+    };
+    const cart: ShopCart = {
+      storeId: 1,
+      lines: [
+        { skuId: 401, priceVersion: 1, qtyMilli: 120_000 }, // 120/100 达标
+        { skuId: 402, priceVersion: 1, qtyMilli: 60_000 }, // 价格版本旧（V1 vs V2）且低于起订量
+        { skuId: 403, priceVersion: 1, qtyMilli: 10_000 }, // 10/10 达标
+      ],
+    };
+    const sum = groupShopCart(cat, cart);
+    expect(sum.sameStore).toBe(true);
+    expect(sum.groups).toHaveLength(2);
+    // 组小计之和严格等于总计，每行总额严格等于 lineGrossCents
+    expect(sum.groups.reduce((s, g) => s + g.subtotalCents, 0)).toBe(sum.totalCents);
+    for (const g of sum.groups) {
+      for (const r of g.rows) {
+        expect(r.totalCents).toBe(lineGrossCents(r.offer!.priceCents, r.offer!.taxRateBp, r.line.qtyMilli, r.offer!.freightCents));
+      }
+    }
+    const row401 = sum.groups[0]!.rows[0]!;
+    expect(row401).toMatchObject({ moqReached: true, moqShortfallMilli: 0, moqPercent: 100, problem: null });
+    const row402 = sum.groups[0]!.rows[1]!;
+    expect(row402).toMatchObject({ moqReached: false, moqShortfallMilli: 40_000, moqPercent: 60, problemKind: 'price_changed' });
+    expect(sum.priceChangedSkuIds).toEqual([402]);
+    expect(sum.issues.some((i) => i.skuId === 402 && i.kind === 'price_changed')).toBe(true);
+  });
+
+  it('catalogCardSummary：最快交期与包邮只按可采购报价计算', () => {
+    const cat = makeCatalog([
+      makeOffer({ skuId: 1, leadDays: 1, freightCents: 0, block: 'expired' }),
+      makeOffer({ skuId: 2, leadDays: 5, freightCents: 0, block: null }),
+      makeOffer({ skuId: 3, leadDays: 3, freightCents: 1000, block: null }),
+    ]);
+    expect(catalogCardSummary(cat.items[0]!)).toEqual({ fastestLeadDays: 3, hasFreeShipping: true, minMoqMilli: 10_000 });
+    const allBlocked = makeCatalog([makeOffer({ skuId: 1, leadDays: 2, freightCents: 0, block: 'store' })]);
+    expect(catalogCardSummary(allBlocked.items[0]!)).toEqual({ fastestLeadDays: null, hasFreeShipping: false, minMoqMilli: null });
   });
 });

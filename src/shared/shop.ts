@@ -4,7 +4,7 @@
 
 import { shiftDate } from './labels';
 import { formatYuan } from './money';
-import { parseQty } from './quantity';
+import { formatQty, parseQty } from './quantity';
 
 export type ShopSkuStatus = 'draft' | 'pending' | 'approved' | 'disabled';
 export const SHOP_SKU_STATUS_LABELS: Record<ShopSkuStatus, string> = { draft: '草稿', pending: '待审核', approved: '已上架', disabled: '已停用' };
@@ -342,5 +342,179 @@ export function buildCompareOffers(catalog: ShopCatalog, materialId: number, qty
     offers: sorted,
     recommendedSkuId: ok[0]?.skuId ?? null,
     recommendReason: compareRecommendReason(ok),
+  };
+}
+
+export interface ShopCardMeta {
+  fastestLeadDays: number | null;
+  hasFreeShipping: boolean;
+  minMoqMilli: number | null;
+}
+
+/** 商品卡摘要信息（FR-09）：只统计当前门店可采购报价的最快交期、是否含包邮与最小起订量 */
+export function catalogCardSummary(item: ShopItem): ShopCardMeta {
+  const ok = item.offers.filter((o) => o.block === null);
+  if (ok.length === 0) return { fastestLeadDays: null, hasFreeShipping: false, minMoqMilli: null };
+  return {
+    fastestLeadDays: Math.min(...ok.map((o) => o.leadDays)),
+    hasFreeShipping: ok.some((o) => o.freightCents === 0),
+    minMoqMilli: Math.min(...ok.map((o) => o.moqMilli)),
+  };
+}
+
+export type ShopCartIssueKind = 'store' | 'missing' | 'blocked' | 'price_changed' | 'below_moq';
+
+export interface ShopCartIssue {
+  key: string;
+  skuId: number | null;
+  kind: ShopCartIssueKind;
+  label: string;
+  detail: string;
+}
+
+export interface ShopCartGroupedRow {
+  line: ShopCartLine;
+  item: ShopItem | null;
+  offer: ShopOffer | null;
+  unit: string;
+  goodsCents: number;
+  freightCents: number;
+  totalCents: number;
+  moqReached: boolean;
+  moqShortfallMilli: number;
+  moqPercent: number;
+  problemKind: Exclude<ShopCartIssueKind, 'store'> | null;
+  problem: string | null;
+}
+
+export interface ShopCartSupplierGroup {
+  key: string;
+  supplierId: number | null;
+  supplierName: string;
+  admission: string | null;
+  rows: ShopCartGroupedRow[];
+  goodsCents: number;
+  freightCents: number;
+  subtotalCents: number;
+}
+
+export interface ShopCartSummary {
+  sameStore: boolean;
+  groups: ShopCartSupplierGroup[];
+  issues: ShopCartIssue[];
+  lineCount: number;
+  goodsCents: number;
+  freightCents: number;
+  totalCents: number;
+  priceChangedSkuIds: number[];
+}
+
+/** 采购清单按供应商分组并汇总问题与金额（FR-06）：复用 lineGoodsCents / lineGrossCents，保证组小计之和严格等于总计且与比价页 0 分误差 */
+export function groupShopCart(catalog: ShopCatalog, cart: ShopCart): ShopCartSummary {
+  const sameStore = cart.storeId === null || cart.storeId === catalog.storeId;
+  const issues: ShopCartIssue[] = [];
+  if (!sameStore) {
+    const cartStoreName = catalog.stores.find((s) => s.id === cart.storeId)?.name;
+    issues.push({
+      key: 'store',
+      skuId: null,
+      kind: 'store',
+      label: '门店不一致',
+      detail: cartStoreName ? `这份清单是按「${cartStoreName}」加的，请切回该门店或清空重选` : '这份清单是按另一家门店加的，请在首页把门店换回来再提交，或清空重选',
+    });
+  }
+
+  const groupMap = new Map<string, ShopCartSupplierGroup>();
+  const priceChangedSkuIds: number[] = [];
+
+  for (const line of cart.lines) {
+    const item = catalog.items.find((i) => i.offers.some((o) => o.skuId === line.skuId)) ?? null;
+    const offer = item?.offers.find((o) => o.skuId === line.skuId) ?? null;
+    const unit = item?.material.unit ?? '';
+    const goodsCents = offer ? lineGoodsCents(offer.priceCents, offer.taxRateBp, line.qtyMilli) : 0;
+    const freightCents = offer?.freightCents ?? 0;
+    const totalCents = offer ? lineGrossCents(offer.priceCents, offer.taxRateBp, line.qtyMilli, freightCents) : 0;
+
+    let problemKind: Exclude<ShopCartIssueKind, 'store'> | null = null;
+    let problem: string | null = null;
+    if (!offer) {
+      problemKind = 'missing';
+      problem = '这条报价已经没有了';
+    } else if (offer.block) {
+      problemKind = 'blocked';
+      problem = SHOP_BLOCK_LABELS[offer.block];
+    } else if (offer.priceVersion !== line.priceVersion) {
+      problemKind = 'price_changed';
+      problem = '加清单以后改过价：请确认新价';
+      priceChangedSkuIds.push(line.skuId);
+    } else if (line.qtyMilli < offer.moqMilli) {
+      problemKind = 'below_moq';
+      problem = `低于起订量 ${formatQty(offer.moqMilli)}${unit ? ` ${unit}` : ''}`;
+    }
+
+    const moqMilli = offer?.moqMilli ?? 0;
+    const moqReached = !offer || line.qtyMilli >= moqMilli;
+    const moqShortfallMilli = offer && line.qtyMilli < moqMilli ? moqMilli - line.qtyMilli : 0;
+    const moqPercent = !offer || moqMilli <= 0 ? 100 : Math.min(100, Math.floor((line.qtyMilli * 100) / moqMilli));
+
+    const name = item?.material.name ?? `SKU ${line.skuId}`;
+    if (problem && problemKind) {
+      issues.push({
+        key: `${problemKind}-${line.skuId}`,
+        skuId: line.skuId,
+        kind: problemKind,
+        label: name,
+        detail: problem,
+      });
+    }
+
+    const gKey = offer ? `sup-${offer.supplier.id}` : 'unknown';
+    let group = groupMap.get(gKey);
+    if (!group) {
+      group = {
+        key: gKey,
+        supplierId: offer?.supplier.id ?? null,
+        supplierName: offer?.supplier.name ?? '失效或已下架报价',
+        admission: offer?.supplier.admission ?? null,
+        rows: [],
+        goodsCents: 0,
+        freightCents: 0,
+        subtotalCents: 0,
+      };
+      groupMap.set(gKey, group);
+    }
+    group.rows.push({
+      line,
+      item,
+      offer,
+      unit,
+      goodsCents,
+      freightCents,
+      totalCents,
+      moqReached,
+      moqShortfallMilli,
+      moqPercent,
+      problemKind,
+      problem,
+    });
+    group.goodsCents += goodsCents;
+    group.freightCents += freightCents;
+    group.subtotalCents += totalCents;
+  }
+
+  const groups = [...groupMap.values()];
+  const goodsCents = groups.reduce((s, g) => s + g.goodsCents, 0);
+  const freightCents = groups.reduce((s, g) => s + g.freightCents, 0);
+  const totalCents = groups.reduce((s, g) => s + g.subtotalCents, 0);
+
+  return {
+    sameStore,
+    groups,
+    issues,
+    lineCount: cart.lines.length,
+    goodsCents,
+    freightCents,
+    totalCents,
+    priceChangedSkuIds,
   };
 }
