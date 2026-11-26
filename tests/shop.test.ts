@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { todayIn } from '../src/server/modules/inventory/common';
+import { pagedMall } from '../src/server/modules/mall';
 import { requestChecks } from '../src/server/modules/requests';
 import { createStaff } from '../src/server/modules/staff';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
@@ -342,5 +343,385 @@ describe('SKU 的边界（Codex 审查）', () => {
     } finally {
       await ctx.sql`UPDATE materials SET purchase_unit = ${m!.purchaseUnit} WHERE id = ${mat.id}`;
     }
+  });
+
+  it('比价接口 GET /api/erp/shop/offers：服务端计算可采购与阻断原因（含 below_moq），受门店范围保护，空物料返回空态', async () => {
+    const sFree = await listed((await sku({ supplierId: supA, priceCents: 1000, taxRateBp: 1300, freightCents: 0, moqMilli: q(10), leadDays: 5 })).id);
+    const sHighMoq = await listed((await sku({ supplierId: supB, priceCents: 900, taxRateBp: 1300, freightCents: 0, moqMilli: q(50), leadDays: 3 })).id);
+    const r = await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=${mat.id}&qtyMilli=${q(10)}&storeId=${storeId}`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const offers = r.body.offers as { skuId: number; purchasable: boolean; blockReason: string | null; totalCents: number }[];
+    const freeRow = offers.find((o) => o.skuId === sFree.id)!;
+    const moqRow = offers.find((o) => o.skuId === sHighMoq.id)!;
+    expect(freeRow).toMatchObject({ purchasable: true, blockReason: null, totalCents: 11_300 });
+    expect(moqRow).toMatchObject({ purchasable: false, blockReason: 'below_moq', totalCents: 10_170 });
+    // 提高到 50：高起订量行解锁
+    const r50 = await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=${mat.id}&qtyMilli=${q(50)}&storeId=${storeId}`);
+    expect((r50.body.offers as { skuId: number; purchasable: boolean; blockReason: string | null }[]).find((o) => o.skuId === sHighMoq.id)).toMatchObject({
+      purchasable: true,
+      blockReason: null,
+    });
+    // 越权门店 403
+    const [otherStore] = await ctx.sql<{ id: number }[]>`SELECT id FROM stores WHERE id <> ${storeId} LIMIT 1`;
+    if (otherStore) {
+      expect((await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=${mat.id}&storeId=${otherStore.id}`)).status).toBe(403);
+    }
+    // 不存在的物料返回空态
+    const empty = await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=999999&storeId=${storeId}`);
+    expect(empty.status).toBe(200);
+    expect(empty.body).toMatchObject({ material: null, offers: [], recommendedSkuId: null });
+  });
+
+  it('供应商档案（FR-03）：准入状态与 SKU 拦截一致、字段级权限隐藏联系人/电话、受控编辑不碰收款账户', async () => {
+    // 只有 purchase.rules 没有 purchase.manage / inventory.master 的审核员：能看档案，但联系人与电话为 null（前端显示「联系采购获取」）
+    await createStaff(ctx.sql, { username: 'shop_rules_only', displayName: '规则审核员', role: 'backoffice', duties: [], password: PASSWORD, mustChangePassword: false });
+    await ctx.sql`UPDATE staff SET permission_adjust = ${ctx.sql.json({ add: ['purchase.rules'], remove: [] })} WHERE username = 'shop_rules_only'`;
+    const rulesOnly = await login(ctx.app, 'shop_rules_only');
+
+    // 普通申购人无权访问
+    expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/suppliers')).status).toBe(403);
+    expect((await api(ctx.app, reqA, 'GET', `/api/erp/shop/suppliers/${supA}`)).status).toBe(403);
+
+    // 规则审核员看列表与详情：联系人/电话脱敏，不能编辑
+    const rListMasked = await api(ctx.app, rulesOnly, 'GET', '/api/erp/shop/suppliers');
+    expect(rListMasked.status, JSON.stringify(rListMasked.body)).toBe(200);
+    const maskedSup = (rListMasked.body as { id: number; contact: string | null; phone: string | null; admission: string }[]).find((s) => s.id === supA)!;
+    expect(maskedSup.contact).toBeNull();
+    expect(maskedSup.phone).toBeNull();
+    expect(maskedSup.admission).toBe('approved');
+    expect((await api(ctx.app, rulesOnly, 'PUT', `/api/erp/shop/suppliers/${supA}`, { clientKey: randomUUID(), note: '越权' })).status).toBe(403);
+    // 缺操作编号拒绝 400
+    expect((await api(ctx.app, boss, 'PUT', `/api/erp/shop/suppliers/${supA}`, { note: '缺编号' })).status).toBe(400);
+
+    // 有档案权限的店主修改联系人与备注，且不影响收款账户；重提同一操作编号不覆盖后续更新、不重复审计
+    const [origSup] = await ctx.sql<{ contact: string; phone: string; note: string; bankAccount: string }[]>`SELECT contact, phone, note, bank_account FROM suppliers WHERE id = ${supA}`;
+    try {
+      const k1 = randomUUID();
+      const patched = await api(ctx.app, boss, 'PUT', `/api/erp/shop/suppliers/${supA}`, { clientKey: k1, contact: '张联络', phone: '13800138000', note: '商城档案备注' });
+      expect(patched.status, JSON.stringify(patched.body)).toBe(200);
+      expect(patched.body).toMatchObject({ id: supA, contact: '张联络', phone: '13800138000', note: '商城档案备注' });
+      const [afterSup] = await ctx.sql<{ bankAccount: string }[]>`SELECT bank_account FROM suppliers WHERE id = ${supA}`;
+      expect(afterSup!.bankAccount).toBe(origSup!.bankAccount);
+
+      // 查回结果可用
+      const lookup = await api(ctx.app, boss, 'GET', `/api/erp/ops/${k1}?type=shop_master`);
+      expect(lookup.status, JSON.stringify(lookup.body)).toBe(200);
+      expect(lookup.body).toMatchObject({ found: true, abandoned: false, refId: supA });
+
+      // 另一笔新操作把备注更新成新值，随后旧操作编号 k1 晚到重提：不覆盖新值且不追加第二条审计
+      const k2 = randomUUID();
+      expect((await api(ctx.app, boss, 'PUT', `/api/erp/shop/suppliers/${supA}`, { clientKey: k2, note: '更新后的备注' })).status).toBe(200);
+      const [auditBefore] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM audit_logs WHERE target_type = 'supplier' AND target_id = ${String(supA)}`;
+      const replay = await api(ctx.app, boss, 'PUT', `/api/erp/shop/suppliers/${supA}`, { clientKey: k1, contact: '张联络', phone: '13800138000', note: '商城档案备注' });
+      expect(replay.status, JSON.stringify(replay.body)).toBe(200);
+      expect(replay.body.note).toBe('更新后的备注');
+      const [auditAfter] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM audit_logs WHERE target_type = 'supplier' AND target_id = ${String(supA)}`;
+      expect(auditAfter!.n).toBe(auditBefore!.n);
+
+      // 同编号不同内容拒绝 409
+      expect((await api(ctx.app, boss, 'PUT', `/api/erp/shop/suppliers/${supA}`, { clientKey: k1, note: '篡改内容' })).status).toBe(409);
+
+      // 先确认作废再晚到的原请求被拦（OP_ABANDONED），数据库值不被修改
+      const kAbandon = randomUUID();
+      const ab = await api(ctx.app, boss, 'POST', `/api/erp/ops/${kAbandon}/abandon`, { type: 'shop_master', summary: '作废供应商修改' });
+      expect(ab.status, JSON.stringify(ab.body)).toBe(200);
+      expect(ab.body).toMatchObject({ found: false, abandoned: true });
+      const blockedLate = await api(ctx.app, boss, 'PUT', `/api/erp/shop/suppliers/${supA}`, { clientKey: kAbandon, note: '不应生效' });
+      expect(blockedLate.status).toBe(409);
+      expect(blockedLate.body.error.code).toBe('OP_ABANDONED');
+      const [checkSup] = await ctx.sql<{ note: string }[]>`SELECT note FROM suppliers WHERE id = ${supA}`;
+      expect(checkSup!.note).toBe('更新后的备注');
+
+      // 准入状态改为 pending 时，档案页与目录 SKU 的阻断原因同源一致
+      const s = await listed((await sku({ supplierId: supA })).id);
+      await ctx.sql`UPDATE suppliers SET admission = 'pending' WHERE id = ${supA}`;
+      const det = await api(ctx.app, buyer, 'GET', `/api/erp/shop/suppliers/${supA}`);
+      expect(det.status).toBe(200);
+      expect(det.body.admission).toBe('pending');
+      expect((await offer(reqA, s.id))!.block).toBe('supplier');
+    } finally {
+      await ctx.sql`UPDATE suppliers SET admission = 'approved', contact = ${origSup!.contact}, phone = ${origSup!.phone}, note = ${origSup!.note} WHERE id = ${supA}`;
+    }
+  });
+
+  it('集团物料主档（FR-04）：停用后商城与比价立即不可见、历史需求单仍可查，支持批量改分类且带操作编号防重', async () => {
+    const s = await listed((await sku({ supplierId: supA, moqMilli: q(10) })).id);
+    const created = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header(), kind: 'catalog', lines: [{ skuId: s.id, priceVersion: s.priceVersion, qtyMilli: q(10) }] });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const reqId = created.body.request.id as number;
+
+    const [origMat] = await ctx.sql<{ category: string; note: string; active: boolean }[]>`SELECT category, note, active FROM materials WHERE id = ${mat.id}`;
+    try {
+      // 普通员工不能看/改物料主档
+      expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/materials')).status).toBe(403);
+      expect((await api(ctx.app, reqA, 'PUT', `/api/erp/shop/materials/${mat.id}`, { clientKey: randomUUID(), active: false })).status).toBe(403);
+      expect((await api(ctx.app, reqA, 'POST', '/api/erp/shop/materials/batch-category', { clientKey: randomUUID(), materialIds: [mat.id], category: '测试类' })).status).toBe(403);
+
+      // 停用物料
+      const matKey1 = randomUUID();
+      const dis = await api(ctx.app, boss, 'PUT', `/api/erp/shop/materials/${mat.id}`, { clientKey: matKey1, active: false, note: '停用测试' });
+      expect(dis.status, JSON.stringify(dis.body)).toBe(200);
+      expect(dis.body).toMatchObject({ id: mat.id, active: false, note: '停用测试' });
+
+      // 商城目录与比价接口立即不可见
+      const cat = await catalog(reqA);
+      expect((cat.items as { material: { id: number } }[]).some((i) => i.material.id === mat.id)).toBe(false);
+      const off = await api(ctx.app, reqA, 'GET', `/api/erp/shop/offers?materialId=${mat.id}&storeId=${storeId}`);
+      expect(off.status).toBe(200);
+      expect(off.body).toMatchObject({ material: null, offers: [] });
+
+      // 已提交历史需求单仍正常可读
+      const histReq = await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests/${reqId}`);
+      expect(histReq.status, JSON.stringify(histReq.body)).toBe(200);
+      expect(histReq.body.id).toBe(reqId);
+
+      // 恢复启用后，旧操作编号 matKey1 晚到重提不会把物料再停用回去
+      expect((await api(ctx.app, boss, 'PUT', `/api/erp/shop/materials/${mat.id}`, { clientKey: randomUUID(), active: true })).status).toBe(200);
+      const lateDisable = await api(ctx.app, boss, 'PUT', `/api/erp/shop/materials/${mat.id}`, { clientKey: matKey1, active: false, note: '停用测试' });
+      expect(lateDisable.status, JSON.stringify(lateDisable.body)).toBe(200);
+      expect(lateDisable.body.active).toBe(true);
+
+      // 批量改分类：带操作编号，同编号重提不覆盖后续新分类
+      const batchKey = randomUUID();
+      const batch = await api(ctx.app, boss, 'POST', '/api/erp/shop/materials/batch-category', { clientKey: batchKey, materialIds: [mat.id], category: '批量测试类' });
+      expect(batch.status, JSON.stringify(batch.body)).toBe(200);
+      expect(batch.body).toMatchObject({ id: mat.id, updated: 1 });
+      expect((await api(ctx.app, boss, 'PUT', `/api/erp/shop/materials/${mat.id}`, { clientKey: randomUUID(), category: '后续新类' })).status).toBe(200);
+      const batchReplay = await api(ctx.app, boss, 'POST', '/api/erp/shop/materials/batch-category', { clientKey: batchKey, materialIds: [mat.id], category: '批量测试类' });
+      expect(batchReplay.status, JSON.stringify(batchReplay.body)).toBe(200);
+      expect(batchReplay.body).toMatchObject({ id: mat.id, updated: 1 });
+      const mats = await api(ctx.app, buyer, 'GET', '/api/erp/shop/materials');
+      expect((mats.body as { id: number; category: string }[]).find((m) => m.id === mat.id)!.category).toBe('后续新类');
+    } finally {
+      await ctx.sql`UPDATE materials SET category = ${origMat!.category}, note = ${origMat!.note}, active = ${origMat!.active} WHERE id = ${mat.id}`;
+    }
+  });
+
+  it('审批路由预览（FR-02）：预计节点与提交后真实流转一致、含紧急程度免责与待寻源标注、越权门店 403', async () => {
+    const headId = await createStaff(ctx.sql, {
+      username: 'shop_head_e',
+      displayName: '运营部门主管',
+      role: 'backoffice',
+      duties: ['request'],
+      departmentId: deptA,
+      password: PASSWORD,
+      mustChangePassword: false,
+    });
+    await ctx.sql`UPDATE departments SET head_id = ${headId} WHERE id = ${deptA}`;
+    try {
+      const s = await listed((await sku({ supplierId: supA, moqMilli: q(10), priceCents: 1200, taxRateBp: 1300, freightCents: 0 })).id);
+      // 1) 正常目录单预览：部门主管确认 active、含紧急程度说明
+      const preview = await api(ctx.app, reqA, 'GET', `/api/erp/shop/route-preview?storeId=${storeId}&kind=catalog&priority=normal&paymentIntent=dept_petty&lines=${s.id}:${q(10)}`);
+      expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+      const nodes = preview.body.nodes as { key: string; status: string; role: string }[];
+      const hints = preview.body.hints as { code: string; text: string }[];
+      expect(nodes.find((n) => n.key === 'dept_confirm')).toMatchObject({ status: 'active', role: '运营部门主管' });
+      expect(hints.some((h) => h.code === 'urgency_rule' && h.text.includes('紧急程度仅用于排序，不构成紧急特批'))).toBe(true);
+      expect(hints.some((h) => h.code === 'petty_cash')).toBe(true);
+      expect(preview.body.hasUnpriced).toBe(false);
+
+      // 真实提交同一单：流转首节点与预览完全一致（待主管确认）
+      const submitted = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', {
+        ...header({ priority: 'normal', paymentIntent: 'dept_petty' }),
+        kind: 'catalog',
+        lines: [{ skuId: s.id, priceVersion: s.priceVersion, qtyMilli: q(10) }],
+      });
+      expect(submitted.status, JSON.stringify(submitted.body)).toBe(201);
+      expect(submitted.body.request.deptConfirm).toMatchObject({ state: 'pending', headName: '运营部门主管' });
+      expect(submitted.body.request.displayStatus).toBe('dept_pending');
+
+      // 提交完一单后再次预览同供应商：给出同日同供应商累计合并提示
+      const secondPreview = await api(ctx.app, reqA, 'GET', `/api/erp/shop/route-preview?storeId=${storeId}&kind=catalog&priority=urgent&lines=${s.id}:${q(10)}`);
+      expect(secondPreview.status).toBe(200);
+      expect((secondPreview.body.nodes as { key: string; status: string }[]).find((n) => n.key === 'stock_check')?.status).toBe('skipped');
+      expect((secondPreview.body.hints as { code: string }[]).some((h) => h.code === 'same_day_merge')).toBe(true);
+
+      // 2) 自主申请预览：标注待寻源、金额待定
+      const customPreview = await api(ctx.app, reqA, 'GET', `/api/erp/shop/route-preview?storeId=${storeId}&kind=custom&priority=high`);
+      expect(customPreview.status).toBe(200);
+      expect(customPreview.body.hasUnpriced).toBe(true);
+      expect(customPreview.body.estimateCents).toBeNull();
+      expect((customPreview.body.hints as { code: string; text: string }[]).some((h) => h.code === 'unpriced_custom' && h.text.includes('待寻源，金额待定'))).toBe(true);
+
+      // 3) 越权门店 403
+      const [otherStore] = await ctx.sql<{ id: number }[]>`SELECT id FROM stores WHERE id <> ${storeId} LIMIT 1`;
+      if (otherStore) {
+        expect((await api(ctx.app, reqA, 'GET', `/api/erp/shop/route-preview?storeId=${otherStore.id}&kind=custom`)).status).toBe(403);
+      }
+    } finally {
+      await ctx.sql`UPDATE departments SET head_id = NULL WHERE id = ${deptA}`;
+    }
+  });
+
+  it('供应链后台总览（FR-05 & FR-10）：统计计数与各列表实际条数一致，待办汇总准确', async () => {
+    // 普通申购人无权查看后台总览
+    expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/overview')).status).toBe(403);
+
+    // 建一条待审核 SKU，验证待办计数包含它
+    const pendingSku = await sku();
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/shop/skus/${pendingSku.id}/submit`, {})).status).toBe(200);
+
+    const [ov, mats, sups, skus] = await Promise.all([
+      api(ctx.app, buyer, 'GET', '/api/erp/shop/overview'),
+      api(ctx.app, buyer, 'GET', '/api/erp/shop/materials'),
+      api(ctx.app, buyer, 'GET', '/api/erp/shop/suppliers'),
+      api(ctx.app, buyer, 'GET', '/api/erp/shop/skus'),
+    ]);
+    expect(ov.status, JSON.stringify(ov.body)).toBe(200);
+    const counts = ov.body.counts as {
+      materials: number;
+      suppliers: number;
+      activeSkus: number;
+      pendingSkus: number;
+      pendingSkuChanges: number;
+      pendingSuppliers: number;
+      totalTodos: number;
+    };
+    expect(counts.materials).toBe((mats.body as unknown[]).length);
+    expect(counts.suppliers).toBe((sups.body as unknown[]).length);
+    expect(counts.activeSkus).toBe((skus.body as { status: string }[]).filter((k) => k.status === 'approved').length);
+    expect(counts.pendingSkus).toBeGreaterThanOrEqual(1);
+    expect(counts.totalTodos).toBe(counts.pendingSkus + counts.pendingSkuChanges + counts.pendingSuppliers);
+  });
+
+  it('我的需求增强与导出（FR-08 & FR-11）：状态分组/关键词/日期筛选分页准确、导出 CSV 条数与金额单位一致、详情带服务端节点时间与操作人', async () => {
+    const tag = `EXPORT-${randomUUID().slice(0, 6)}`;
+    const line = { name: `${tag} 专用定制件`, expectedCategory: '', qtyMilli: q(2), unit: '套', details: '规格要求', brandModel: '', link: '', reasonText: 'FR-08测试', imageIds: [] };
+    const created = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', { ...header({ budgetProject: tag }), kind: 'custom', line });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const reqId = created.body.request.id as number;
+    const docNo = created.body.request.docNo as string;
+
+    // 1) 关键词 + 日期 + 状态分组（进行中）筛选命中且分页准确
+    const activeHit = await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests?scope=mine&group=active&q=${encodeURIComponent(tag)}&from=${today}&to=${today}`);
+    expect(activeHit.status, JSON.stringify(activeHit.body)).toBe(200);
+    expect((activeHit.body.requests as { id: number }[]).map((r) => r.id)).toEqual([reqId]);
+    expect(activeHit.body.nextBeforeId).toBeNull();
+
+    // 另一状态分组（已终止）不包含该单
+    const endedMiss = await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests?scope=mine&group=ended&q=${encodeURIComponent(tag)}`);
+    expect(endedMiss.status).toBe(200);
+    expect(endedMiss.body.requests).toHaveLength(0);
+
+    // 开始日期晚于结束日期 400
+    expect((await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests?scope=mine&from=${shiftDate(today, 2)}&to=${today}`)).status).toBe(400);
+
+    // 2) FR-11 导出当前筛选结果：条数与列表一致，包含单号与表头；需求池权限隔离
+    const expRes = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/erp/shop/requests/export?scope=mine&group=active&q=${encodeURIComponent(tag)}`,
+      headers: { cookie: reqA },
+    });
+    expect(expRes.statusCode).toBe(200);
+    expect(expRes.headers['content-type']).toContain('text/csv');
+    const lines = expRes.body
+      .replace(/^\uFEFF/, '')
+      .trim()
+      .split(/\r?\n/);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('需求单号,门店,部门,预估金额（元）,状态,紧急程度,更新时间,摘要');
+    expect(lines[1]).toContain(docNo);
+    // 普通申购人无权导出需求池
+    expect((await api(ctx.app, reqA, 'GET', '/api/erp/shop/requests/export?scope=pool')).status).toBe(403);
+
+    // 3) 采购审核通过后，详情页 timeline 带真实服务端时间戳与操作人
+    const approved = await api(ctx.app, buyer, 'POST', `/api/erp/requests/${reqId}/approve`, {});
+    expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+    const det = await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests/${reqId}`);
+    expect(det.status).toBe(200);
+    const timeline = det.body.timeline as { key: string; done: boolean; at: string | null; actorName: string | null }[];
+    expect(timeline.find((n) => n.key === 'submit')).toMatchObject({ done: true, actorName: '运营部申购' });
+    expect(timeline.find((n) => n.key === 'submit')!.at).toBeTruthy();
+    expect(timeline.find((n) => n.key === 'review')).toMatchObject({ done: true });
+    expect(timeline.find((n) => n.key === 'review')!.at).toBeTruthy();
+    expect(timeline.find((n) => n.key === 'review')!.actorName).toBeTruthy();
+  });
+
+  it('到货节点时间线读取已确认入库单，且稀疏状态分组扫满本轮上限时保留续取游标不截断', async () => {
+    const tag = `RECV-${randomUUID().slice(0, 6)}`;
+    const s = await listed((await sku({ supplierId: supA, moqMilli: q(1) })).id);
+    // 先创建一张较老的「进行中」需求单
+    const olderActive = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', {
+      ...header({ budgetProject: tag }),
+      kind: 'catalog',
+      lines: [{ skuId: s.id, priceVersion: s.priceVersion, qtyMilli: q(1) }],
+    });
+    expect(olderActive.status, JSON.stringify(olderActive.body)).toBe(201);
+    const olderActiveId = olderActive.body.request.id as number;
+
+    // 再创建一张更新的需求单，走完审核 → 下单 → 确认全量收货（变为 received，归入 done 组而非 active 组）
+    const newerDone = await api(ctx.app, reqA, 'POST', '/api/erp/shop/requests', {
+      ...header({ budgetProject: tag }),
+      kind: 'catalog',
+      lines: [{ skuId: s.id, priceVersion: s.priceVersion, qtyMilli: q(1) }],
+    });
+    expect(newerDone.status, JSON.stringify(newerDone.body)).toBe(201);
+    const doneId = newerDone.body.request.id as number;
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/requests/${doneId}/approve`, {})).status).toBe(200);
+    const reqDetail = await api(ctx.app, buyer, 'GET', `/api/erp/requests/${doneId}`);
+    const reqLineId = reqDetail.body.lines[0].id as number;
+
+    const poRes = await api(ctx.app, boss, 'POST', '/api/purchase-orders', {
+      clientKey: randomUUID(),
+      supplierId: supA,
+      orderDate: today,
+      action: 'save',
+      lines: [{ materialId: mat.id, purchaseQtyMilli: q(1), priceCents: 1000, requestLineIds: [reqLineId] }],
+    });
+    expect(poRes.status, JSON.stringify(poRes.body)).toBe(201);
+    const po = poRes.body.po;
+    expect((await api(ctx.app, boss, 'POST', `/api/purchase-orders/${po.id}/submit`, {})).status).toBe(200);
+    await api(ctx.app, boss, 'POST', `/api/purchase-orders/${po.id}/approve`, {});
+    const freshPo = (await api(ctx.app, boss, 'GET', `/api/purchase-orders/${po.id}`)).body;
+    const [buyerRow] = await ctx.sql<{ id: number }[]>`SELECT id FROM staff WHERE username = 'zhouyi'`;
+    const recQty = Number(freshPo.lines[0].baseQtyMilli);
+    const rec = await api(ctx.app, boss, 'POST', '/api/inventory/docs', {
+      clientKey: randomUUID(),
+      docType: 'receipt',
+      docDate: today,
+      supplierId: supA,
+      purchaseOrderId: po.id,
+      coAcceptorId: Number(buyerRow!.id),
+      lines: [{ materialId: mat.id, poLineId: freshPo.lines[0].id, deliveredMilli: recQty, acceptedMilli: recQty }],
+    });
+    expect(rec.status, JSON.stringify(rec.body)).toBe(201);
+    const recDoc = rec.body.doc;
+    if (recDoc.status !== 'confirmed') {
+      const confirmed = await api(ctx.app, boss, 'POST', `/api/inventory/docs/${recDoc.id}/approve`, {});
+      expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(200);
+    }
+
+    // 1) 到货节点必须命中 confirmed 入库单并带上确认时间与操作人
+    const det = await api(ctx.app, reqA, 'GET', `/api/erp/shop/requests/${doneId}`);
+    expect(det.status, JSON.stringify(det.body)).toBe(200);
+    expect(det.body.displayStatus).toBe('received');
+    const timeline = det.body.timeline as { key: string; done: boolean; at: string | null; actorName: string | null }[];
+    const receiveNode = timeline.find((n) => n.key === 'receive')!;
+    expect(receiveNode.done).toBe(true);
+    expect(receiveNode.at).toBeTruthy();
+    expect(receiveNode.actorName).toBeTruthy();
+
+    // 2) 稀疏分组扫满本轮上限（chunkSize=1, maxRounds=1）：第 1 页只扫到最新的 received 单（通过 SQL approved 粗筛但被 active 组排除），
+    //    仍必须返回 nextBeforeId = doneId，而不是 null；续翻下一页即可命中较老的 olderActiveId
+    const [bossStaff] = await ctx.sql<{ id: number; username: string; displayName: string; role: 'owner'; departmentId: number | null }[]>`
+      SELECT id, username, display_name, role, department_id FROM staff WHERE username = 'linlan'`;
+    const bossActor = {
+      id: Number(bossStaff!.id),
+      username: bossStaff!.username,
+      displayName: bossStaff!.displayName,
+      role: bossStaff!.role,
+      duties: [],
+      permissions: ['request.review' as const],
+      mustChangePassword: false,
+      storeId,
+      departmentId: bossStaff!.departmentId,
+    };
+    const deps = { sql: ctx.sql, config: ctx.config };
+    const p1 = await pagedMall(deps, bossActor, { group: 'active', q: tag, limit: 10 }, { mineOnly: false, maxRounds: 1, chunkSize: 1 });
+    expect(p1.requests).toHaveLength(0);
+    expect(p1.nextBeforeId).toBe(doneId);
+
+    const p2 = await pagedMall(deps, bossActor, { group: 'active', q: tag, beforeId: p1.nextBeforeId, limit: 10 }, { mineOnly: false, maxRounds: 1, chunkSize: 1 });
+    expect(p2.requests.map((r) => r.id)).toEqual([olderActiveId]);
   });
 });

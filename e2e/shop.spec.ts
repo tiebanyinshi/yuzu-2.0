@@ -71,13 +71,18 @@ test.describe('采购商城', () => {
     // 3 × 10.00 ×1.13 = 33.90
     await expect(page.getByTestId('shop-cart-total')).toContainText('33.90');
     await page.getByTestId('shop-to-checkout').click();
-    await page.locator('#shop-budget').fill('E2E 预算');
-    await page.locator('#shop-needby').fill(today);
-    await page.locator('#shop-address').fill('本店仓库');
-    // 店主没有所属部门：替一个部门提（与 ERP 填单页一样）
+    // 第 1 步：采购业务信息（店主没有所属部门：替一个部门提，与 ERP 填单页一样）
     await page.locator('#shop-dept').selectOption({ index: 1 });
     if (!(await page.locator('#shop-entity').inputValue())) await page.locator('#shop-entity').selectOption({ index: 1 });
+    await page.locator('#shop-budget').fill('E2E 预算');
+    await page.getByTestId('shop-checkout-next').click();
+    // 第 2 步：交付要求
+    await page.locator('#shop-needby').fill(today);
+    await page.locator('#shop-address').fill('本店仓库');
     await page.getByTestId('shop-priority-high').click();
+    await page.getByTestId('shop-checkout-next').click();
+    // 第 3 步：提交前确认 + 审批路由预览
+    await expect(page.getByTestId('shop-route-preview-nodes')).toBeVisible();
     await page.getByTestId('shop-submit').click();
     await expect(page.getByTestId('shop-request-detail')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('shop-request-detail')).toContainText('XQ');

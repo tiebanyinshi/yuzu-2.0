@@ -11,22 +11,55 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { shiftDate } from '@shared/labels';
+import { formatYuan } from '@shared/money';
 import { can } from '@shared/permissions';
 import { REQUEST_PRIORITIES } from '@shared/requests';
-import { grossCents, SHOP_BLOCK_LABELS, type ShopBlock, type ShopCatalog, type ShopItem, type ShopOffer, type ShopSku, type ShopSkuCore, type ShopSkuStatus } from '@shared/shop';
+import {
+  compareRecommendReason,
+  filterAndSortCompareOffers,
+  grossCents,
+  lineGoodsCents,
+  lineGrossCents,
+  SHOP_BLOCK_LABELS,
+  SHOP_MAX_QTY_MILLI,
+  type ShopBlock,
+  type ShopCatalog,
+  type ShopCompareBlock,
+  type ShopCompareOffer,
+  type ShopCompareResult,
+  type ShopItem,
+  type ShopMaterialRow,
+  type ShopOffer,
+  type ShopOverview,
+  type ShopRoutePreview,
+  type ShopRoutePreviewHint,
+  type ShopRoutePreviewNode,
+  type ShopSku,
+  type ShopSkuCore,
+  type ShopSkuStatus,
+  type ShopSupplierDetail,
+  type ShopSupplierRow,
+} from '@shared/shop';
 import type { Db } from '../db';
 import { guardAny } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
+import { csvReply } from '../lib/csv';
 import { conflict, forbidden, notFound, unprocessable } from '../lib/errors';
-import { todayIn } from '../lib/dates';
+import { clockIn, todayIn } from '../lib/dates';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
 import { loadExpenseRules } from './expenses';
+import { supplierLicenses } from './inventory/admission';
 import { docDateSchema } from './inventory/common';
-import { createMallRequest, mallRequest, pagedMall } from './mall';
+import { loadPurchaseRules } from './inventory/purchase-rules';
+import { createMallRequest, exportMallCsv, mallRequest, pagedMall } from './mall';
+import { pettyBalances, pettyOccupied } from './petty-uses';
 import { allowedStores } from './stores';
+import { assertNotFenced } from '../lib/fences';
 import { hashRequest } from '../lib/idempotency';
+import { erpOpAbandoned } from './erp-ops';
 import { myContext } from './requests';
 
 const id = z.number().int().positive();
@@ -153,8 +186,99 @@ async function catalog(deps: Deps, actor: Actor, storeIdRaw: unknown): Promise<S
       canPool: me.canReview || me.canStock,
       canManageSku: can(actor, 'purchase.manage'),
       canApproveSku: can(actor, 'purchase.rules') || actor.role === 'owner',
+      canEditMaster: can(actor, 'inventory.master'),
     },
     today,
+  };
+}
+
+const OffersQuery = z.object({
+  materialId: z.coerce.number().int().positive('物料编号不正确'),
+  qtyMilli: z.coerce.number().int().positive().max(SHOP_MAX_QTY_MILLI, '数量不能超过 1,000,000').optional(),
+  storeId: z.coerce.number().int().positive().optional(),
+});
+
+/** 比价页专用只读接口（FR-01 第 6 条）：服务端计算 purchasable 与 blockReason（含 below_moq），返回含税总成本与推荐解释 */
+async function compareOffers(deps: Deps, actor: Actor, raw: unknown): Promise<ShopCompareResult> {
+  const q = parse(OffersQuery, raw ?? {});
+  const db = deps.sql;
+  const today = todayIn(deps.config.timezone);
+  const allowed = (await allowedStores(db, actor)).map((x) => Number(x.id));
+  const stores = (await db<{ id: number; name: string }[]>`SELECT id, name FROM stores WHERE active AND id IN ${db(allowed.length ? allowed : [0])} ORDER BY sort_order, id`).map((s) => ({
+    id: Number(s.id),
+    name: s.name,
+  }));
+  if (q.storeId !== undefined && !stores.some((s) => s.id === q.storeId)) throw forbidden('你不能查看这家门店的报价');
+  const pick = [q.storeId, actor.storeId].find((x) => x != null && stores.some((s) => s.id === x));
+  const storeId = pick ?? stores[0]?.id ?? 1;
+  const storeName = stores.find((s) => s.id === storeId)?.name ?? `门店 ${storeId}`;
+
+  const [material] = await db<{ id: number; code: string; name: string; category: string; specification: string; unit: string; note: string }[]>`
+    SELECT id, code, name, category, specification, purchase_unit AS unit, note FROM materials WHERE id = ${q.materialId} AND active AND tracked`;
+  if (!material) {
+    return { material: null, storeId, storeName, today, updatedAt: new Date().toISOString(), qtyMilli: q.qtyMilli ?? 1000, offers: [], recommendedSkuId: null, recommendReason: null };
+  }
+
+  const skus = await db<(SkuRow & { updatedAt: string })[]>`
+    SELECT ${SKU_COLS(db)}, k.updated_at FROM mall_skus k JOIN suppliers sp ON sp.id = k.supplier_id
+    WHERE k.material_id = ${q.materialId} AND k.status IN ('approved', 'disabled') ORDER BY k.id`;
+  const allStoreNames = new Map((await db<{ id: number; name: string }[]>`SELECT id, name FROM stores`).map((s) => [Number(s.id), s.name]));
+
+  // 未传 qtyMilli 时按可采购报价最小起订量（无则全部报价最小起订量），兜底 1 单位
+  let qtyMilli = q.qtyMilli ?? 1000;
+  if (q.qtyMilli === undefined && skus.length > 0) {
+    const ok = skus.filter((k) => blockOf(k, storeId, today) === null);
+    const pool = ok.length > 0 ? ok : skus;
+    qtyMilli = Math.min(SHOP_MAX_QTY_MILLI, Math.min(...pool.map((k) => Number(k.moqMilli))));
+  }
+
+  let latestMs = 0;
+  const offers: ShopCompareOffer[] = skus.map((k) => {
+    const ts = Date.parse(k.updatedAt);
+    if (!Number.isNaN(ts) && ts > latestMs) latestMs = ts;
+    const baseBlock = blockOf(k, storeId, today);
+    const moqMilli = Number(k.moqMilli);
+    const blockReason: ShopCompareBlock | null = baseBlock ?? (qtyMilli < moqMilli ? 'below_moq' : null);
+    const priceCents = Number(k.priceCents);
+    const freightCents = Number(k.freightCents);
+    const storeIds = k.storeIds.map(Number);
+    return {
+      skuId: Number(k.id),
+      skuCode: k.skuCode,
+      priceVersion: k.priceVersion,
+      supplierId: Number(k.supplierId),
+      supplierName: k.supplierName,
+      admission: k.admission,
+      admitted: k.admission === 'approved' && k.supplierActive,
+      priceCents,
+      taxRateBp: k.taxRateBp,
+      grossCents: grossCents(priceCents, k.taxRateBp),
+      freightCents,
+      moqMilli,
+      leadDays: k.leadDays,
+      estimatedArrival: shiftDate(today, k.leadDays),
+      validUntil: k.validUntil,
+      storeIds,
+      stores: storeIds.map((s) => ({ id: s, name: allStoreNames.get(s) ?? `门店 ${s}` })),
+      purchasable: blockReason === null,
+      blockReason,
+      goodsCents: lineGoodsCents(priceCents, k.taxRateBp, qtyMilli),
+      totalCents: lineGrossCents(priceCents, k.taxRateBp, qtyMilli, freightCents),
+    };
+  });
+
+  const sorted = filterAndSortCompareOffers(offers, 'total', { freeShippingOnly: false, purchasableOnly: false, admittedOnly: false });
+  const ok = sorted.filter((o) => o.purchasable);
+  return {
+    material: { ...material, id: Number(material.id) },
+    storeId,
+    storeName,
+    today,
+    updatedAt: latestMs > 0 ? new Date(latestMs).toISOString() : new Date().toISOString(),
+    qtyMilli,
+    offers: sorted,
+    recommendedSkuId: ok[0]?.skuId ?? null,
+    recommendReason: compareRecommendReason(ok),
   };
 }
 
@@ -433,15 +557,591 @@ async function skuOp(deps: Deps, actor: Actor, skuId: number, ip: string | undef
   return one(deps.sql, skuId);
 }
 
+// ───────────────────────── 供应商档案与集团物料主档（FR-03 / FR-04） ─────────────────────────
+
+const SupplierPatchInput = z
+  .object({
+    clientKey: z.uuid('操作编号不正确'),
+    contact: z.string().trim().max(40, '联系人最多 40 个字').optional(),
+    phone: z.string().trim().max(32, '电话最多 32 个字').optional(),
+    note: z.string().trim().max(200, '备注最多 200 个字').optional(),
+    active: z.boolean().optional(),
+  })
+  .refine((v) => v.contact !== undefined || v.phone !== undefined || v.note !== undefined || v.active !== undefined, '请至少修改一项内容');
+
+const MaterialPatchInput = z
+  .object({
+    clientKey: z.uuid('操作编号不正确'),
+    category: z.string().trim().max(16, '分类最多 16 个字').optional(),
+    note: z.string().trim().max(200, '备注最多 200 个字').optional(),
+    active: z.boolean().optional(),
+  })
+  .refine((v) => v.category !== undefined || v.note !== undefined || v.active !== undefined, '请至少修改一项内容');
+
+const BatchCategoryInput = z.object({
+  clientKey: z.uuid('操作编号不正确'),
+  materialIds: z.array(id).min(1, '请至少选择一个物料').max(200, '一次最多批量修改 200 个物料'),
+  category: z.string().trim().max(16, '分类最多 16 个字'),
+});
+
+async function listShopSuppliers(db: Db, actor: Actor): Promise<ShopSupplierRow[]> {
+  const canContact = can(actor, 'purchase.manage') || can(actor, 'inventory.master');
+  const rows = await db<
+    {
+      id: number;
+      code: string;
+      name: string;
+      active: boolean;
+      admission: string;
+      admissionNote: string;
+      contact: string;
+      phone: string;
+      note: string;
+      categories: string[];
+      activeSkuCount: number;
+      totalSkuCount: number;
+      lastPriceChangeAt: string | null;
+      avgLeadDays: number | null;
+    }[]
+  >`
+    SELECT sp.id, sp.code, sp.name, sp.active, sp.admission, sp.admission_note, sp.contact, sp.phone, sp.note,
+           coalesce((SELECT array_agg(DISTINCT nullif(m.category, '') ORDER BY nullif(m.category, ''))
+                     FROM mall_skus k JOIN materials m ON m.id = k.material_id
+                     WHERE k.supplier_id = sp.id AND nullif(m.category, '') IS NOT NULL), '{}') AS categories,
+           (SELECT count(*)::int FROM mall_skus k WHERE k.supplier_id = sp.id AND k.status = 'approved') AS active_sku_count,
+           (SELECT count(*)::int FROM mall_skus k WHERE k.supplier_id = sp.id) AS total_sku_count,
+           greatest(
+             (SELECT max(c.decided_at) FROM mall_sku_changes c JOIN mall_skus k ON k.id = c.sku_id WHERE k.supplier_id = sp.id AND c.status = 'approved'),
+             (SELECT max(k.approved_at) FROM mall_skus k WHERE k.supplier_id = sp.id)
+           ) AS last_price_change_at,
+           (SELECT round(avg(k.lead_days))::int FROM mall_skus k WHERE k.supplier_id = sp.id AND k.status = 'approved') AS avg_lead_days
+    FROM suppliers sp
+    ORDER BY sp.active DESC, (sp.admission = 'approved') DESC, sp.code`;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    code: r.code,
+    name: r.name,
+    active: r.active,
+    admission: r.admission,
+    admissionNote: r.admissionNote,
+    categories: r.categories ?? [],
+    activeSkuCount: Number(r.activeSkuCount),
+    totalSkuCount: Number(r.totalSkuCount),
+    lastPriceChangeAt: r.lastPriceChangeAt,
+    avgLeadDays: r.avgLeadDays === null ? null : Number(r.avgLeadDays),
+    contact: canContact ? r.contact : null,
+    phone: canContact ? r.phone : null,
+    note: r.note,
+  }));
+}
+
+async function shopSupplierDetail(db: Db, actor: Actor, supplierId: number): Promise<ShopSupplierDetail> {
+  const all = await listShopSuppliers(db, actor);
+  const base = all.find((s) => s.id === supplierId);
+  if (!base) throw notFound('供应商不存在');
+  const [adm] = await db<{ admissionByName: string | null; admissionAt: string | null }[]>`
+    SELECT st.display_name AS admission_by_name, sp.admission_at
+    FROM suppliers sp LEFT JOIN staff st ON st.id = sp.admission_by WHERE sp.id = ${supplierId}`;
+  const rawLicenses = await supplierLicenses(db, supplierId);
+  const skus = await db<
+    {
+      id: number;
+      skuCode: string;
+      materialId: number;
+      materialCode: string;
+      materialName: string;
+      unit: string;
+      priceCents: number;
+      taxRateBp: number;
+      moqMilli: number;
+      leadDays: number;
+      freightCents: number;
+      validUntil: string;
+      status: ShopSkuStatus;
+      corePending: boolean;
+    }[]
+  >`
+    SELECT k.id, k.sku_code, k.material_id, m.code AS material_code, m.name AS material_name, m.purchase_unit AS unit,
+           k.price_cents, k.tax_rate_bp, k.moq_milli, k.lead_days, k.freight_cents,
+           to_char(k.valid_until, 'YYYY-MM-DD') AS valid_until, k.status, k.core_pending
+    FROM mall_skus k JOIN materials m ON m.id = k.material_id
+    WHERE k.supplier_id = ${supplierId} ORDER BY k.status = 'approved' DESC, m.code, k.id`;
+  const [hist] = await db<{ orderCount: number; totalAmountCents: string }[]>`
+    SELECT count(*)::int AS order_count, coalesce(sum(total_cents), 0)::text AS total_amount_cents
+    FROM purchase_orders WHERE supplier_id = ${supplierId} AND status IN ('approved', 'closed')`;
+  return {
+    ...base,
+    admissionByName: adm?.admissionByName ?? null,
+    admissionAt: adm?.admissionAt ?? null,
+    licenses: rawLicenses.map((l) => ({
+      id: l.id,
+      kind: l.kind,
+      name: l.name,
+      licenseNo: l.licenseNo,
+      validUntil: l.validUntil,
+      mediaUrl: l.media?.url ?? null,
+      addedByName: l.addedByName,
+      addedAt: l.addedAt,
+    })),
+    skus: skus.map((k) => ({
+      id: Number(k.id),
+      skuCode: k.skuCode,
+      materialId: Number(k.materialId),
+      materialCode: k.materialCode,
+      materialName: k.materialName,
+      unit: k.unit,
+      priceCents: Number(k.priceCents),
+      taxRateBp: k.taxRateBp,
+      grossCents: grossCents(Number(k.priceCents), k.taxRateBp),
+      moqMilli: Number(k.moqMilli),
+      leadDays: k.leadDays,
+      freightCents: Number(k.freightCents),
+      validUntil: k.validUntil,
+      status: k.status,
+      corePending: k.corePending,
+    })),
+    history: {
+      orderCount: Number(hist?.orderCount ?? 0),
+      totalAmountCents: Number(hist?.totalAmountCents ?? 0),
+    },
+  };
+}
+
+async function listShopMaterials(db: Db, today: string): Promise<ShopMaterialRow[]> {
+  const rows = await db<
+    {
+      id: number;
+      code: string;
+      name: string;
+      category: string;
+      specification: string;
+      unit: string;
+      inventoryUnit: string;
+      note: string;
+      active: boolean;
+      skuCount: number;
+      activeSkuCount: number;
+      supplierCount: number;
+    }[]
+  >`
+    SELECT m.id, m.code, m.name, m.category, m.specification, m.purchase_unit AS unit, m.inventory_unit, m.note, m.active,
+           (SELECT count(*)::int FROM mall_skus k WHERE k.material_id = m.id) AS sku_count,
+           (SELECT count(*)::int FROM mall_skus k WHERE k.material_id = m.id AND k.status = 'approved') AS active_sku_count,
+           (SELECT count(DISTINCT k.supplier_id)::int FROM mall_skus k WHERE k.material_id = m.id AND k.status = 'approved') AS supplier_count
+    FROM materials m WHERE m.tracked
+    ORDER BY m.active DESC, m.category, m.code`;
+  const activePrices = await db<{ materialId: number; priceCents: number; taxRateBp: number }[]>`
+    SELECT k.material_id, k.price_cents, k.tax_rate_bp
+    FROM mall_skus k JOIN suppliers sp ON sp.id = k.supplier_id JOIN materials m ON m.id = k.material_id
+    WHERE k.status = 'approved' AND NOT k.core_pending AND sp.active AND sp.admission = 'approved'
+      AND k.valid_until >= ${today}::date AND k.unit = m.purchase_unit AND k.unit_factor_milli = m.purchase_factor_milli`;
+  const lowestByMat = new Map<number, number>();
+  for (const p of activePrices) {
+    const mid = Number(p.materialId);
+    const g = grossCents(Number(p.priceCents), p.taxRateBp);
+    const cur = lowestByMat.get(mid);
+    if (cur === undefined || g < cur) lowestByMat.set(mid, g);
+  }
+  return rows.map((m) => ({
+    id: Number(m.id),
+    code: m.code,
+    name: m.name,
+    category: m.category,
+    specification: m.specification,
+    unit: m.unit,
+    inventoryUnit: m.inventoryUnit,
+    note: m.note,
+    active: m.active,
+    skuCount: Number(m.skuCount),
+    activeSkuCount: Number(m.activeSkuCount),
+    supplierCount: Number(m.supplierCount),
+    lowestGrossCents: lowestByMat.get(Number(m.id)) ?? null,
+  }));
+}
+
+// ───────────────────────── 审批路由预览与后台总览（FR-02 / FR-05 / FR-10） ─────────────────────────
+
+const RoutePreviewQuery = z.object({
+  storeId: z.coerce.number().int().positive('门店编号不正确'),
+  departmentId: z.coerce.number().int().positive().optional(),
+  paymentIntent: z.enum(['company_direct', 'dept_petty']).default('company_direct'),
+  priority: z.enum(REQUEST_PRIORITIES).default('normal'),
+  kind: z.enum(['catalog', 'custom']).default('catalog'),
+  /** 清单行：skuId:qtyMilli 以逗号分隔，如 "11:10000,15:5000" */
+  lines: z.string().max(1600).optional(),
+});
+
+function parsePreviewLines(raw: string | undefined): { skuId: number; qtyMilli: number }[] {
+  if (!raw || !raw.trim()) return [];
+  const out: { skuId: number; qtyMilli: number }[] = [];
+  for (const part of raw.split(',').slice(0, 50)) {
+    const m = /^([1-9]\d*):([1-9]\d*)$/.exec(part.trim());
+    if (!m) continue;
+    const skuId = Number(m[1]);
+    const qtyMilli = Math.min(SHOP_MAX_QTY_MILLI, Number(m[2]));
+    if (Number.isSafeInteger(skuId) && Number.isSafeInteger(qtyMilli)) out.push({ skuId, qtyMilli });
+  }
+  return out;
+}
+
+const DAILY_SPLIT_THRESHOLD_CENTS = 3_000_000; // 3 万元日累计分流参考门槛
+
+async function routePreview(deps: Deps, actor: Actor, raw: unknown): Promise<ShopRoutePreview> {
+  const q = parse(RoutePreviewQuery, raw ?? {});
+  const db = deps.sql;
+  const tz = deps.config.timezone;
+  const today = todayIn(tz);
+
+  const allowed = (await allowedStores(db, actor)).map((s) => Number(s.id));
+  if (!allowed.includes(q.storeId)) throw forbidden('你不能查看这家门店的审批路由');
+
+  const [rules, me] = await Promise.all([loadPurchaseRules(db), myContext(db, actor)]);
+  const canPickDept = actor.role === 'owner' || me.canReview;
+  const deptId = canPickDept ? (q.departmentId ?? me.departmentId) : me.departmentId;
+
+  const hints: ShopRoutePreviewHint[] = [];
+
+  // 1) 部门主管确认节点（与 createMallRequest 调 deptConfirmFor(..., true) 完全同口径）
+  let deptNode: ShopRoutePreviewNode;
+  if (!deptId) {
+    deptNode = { key: 'dept_confirm', label: '部门主管确认', role: '待补所属部门', status: 'blocked' };
+    hints.push({ code: 'missing_department', tone: 'warning', text: '员工档案尚未填写所属部门，请店主在员工档案补齐后再提交。' });
+  } else {
+    const [d] = await db<{ name: string; headId: number | null; headName: string | null; headActive: boolean | null }[]>`
+      SELECT d.name, d.head_id, h.display_name AS head_name, h.active AS head_active
+      FROM departments d LEFT JOIN staff h ON h.id = d.head_id WHERE d.id = ${deptId}`;
+    if (!d) {
+      deptNode = { key: 'dept_confirm', label: '部门主管确认', role: '部门不存在', status: 'blocked' };
+    } else if (!d.headId || !d.headActive) {
+      deptNode = { key: 'dept_confirm', label: '部门主管确认', role: `${d.name}未设主管（跳过）`, status: 'skipped' };
+    } else if (actor.id === Number(d.headId) || actor.role === 'owner') {
+      deptNode = { key: 'dept_confirm', label: '部门主管确认', role: `${d.headName}（提交即确认）`, status: 'auto' };
+    } else {
+      deptNode = { key: 'dept_confirm', label: '部门主管确认', role: d.headName ?? '部门主管', status: 'active' };
+    }
+  }
+
+  // 2) 核库节点与金额/同日同供应商提示（与 enterStockCheck 完全同口径）
+  let stockNode: ShopRoutePreviewNode;
+  let estimateCents: number | null = null;
+  const hasUnpriced = q.kind === 'custom';
+
+  if (q.kind === 'custom') {
+    stockNode = { key: 'stock_check', label: '核库', role: '自主申请无编码，直进审核', status: 'skipped' };
+    hints.push({
+      code: 'unpriced_custom',
+      tone: 'info',
+      text: '待寻源，金额待定：自主申请提交后由采购归类寻源报价，同日累计、3 万元分流与备用金额度在报价后由 ERP 核验。',
+    });
+  } else {
+    const lineSpecs = parsePreviewLines(q.lines);
+    const skuIds = [...new Set(lineSpecs.map((l) => l.skuId))];
+    const skuRows = skuIds.length
+      ? await db<
+          {
+            id: number;
+            supplierId: number;
+            supplierName: string;
+            priceCents: number;
+            taxRateBp: number;
+            freightCents: number;
+            materialActive: boolean;
+            tracked: boolean;
+            stockMilli: number;
+          }[]
+        >`
+          SELECT k.id, k.supplier_id, sp.name AS supplier_name, k.price_cents, k.tax_rate_bp, k.freight_cents,
+                 m.active AS material_active, m.tracked, m.stock_milli
+          FROM mall_skus k JOIN suppliers sp ON sp.id = k.supplier_id JOIN materials m ON m.id = k.material_id
+          WHERE k.id IN ${db(skuIds)}`
+      : [];
+    const bySku = new Map(skuRows.map((r) => [Number(r.id), r]));
+
+    let sumCents = 0;
+    let hasCentralStock = false;
+    const bySupplier = new Map<number, { name: string; cents: number }>();
+
+    for (const l of lineSpecs) {
+      const k = bySku.get(l.skuId);
+      if (!k) continue;
+      const lineCents = lineGrossCents(Number(k.priceCents), k.taxRateBp, l.qtyMilli, Number(k.freightCents));
+      sumCents += lineCents;
+      if (k.materialActive && k.tracked && Number(k.stockMilli) > 0) hasCentralStock = true;
+      const sid = Number(k.supplierId);
+      const prev = bySupplier.get(sid);
+      bySupplier.set(sid, { name: k.supplierName, cents: (prev?.cents ?? 0) + lineCents });
+    }
+    estimateCents = sumCents;
+
+    if (q.priority === 'urgent') {
+      stockNode = { key: 'stock_check', label: '核库', role: '紧急件跳过核库', status: 'skipped' };
+    } else if (!rules.stockCheckEnabled) {
+      stockNode = { key: 'stock_check', label: '核库', role: '规则未开启核库', status: 'skipped' };
+    } else if (hasCentralStock) {
+      stockNode = { key: 'stock_check', label: '核库', role: `库管（${rules.stockCheckHours} 小时时限）`, status: 'active' };
+    } else {
+      stockNode = { key: 'stock_check', label: '核库', role: '总仓无结存，直进审核', status: 'skipped' };
+    }
+
+    // 同日同供应商累计与采购日累计 3 万元提示（只读参考，非承诺）
+    const supIds = [...bySupplier.keys()];
+    const todayRows = supIds.length
+      ? await db<{ supplierId: number; reqCount: number; cents: string }[]>`
+          SELECT l.supplier_id, count(DISTINCT r.id)::int AS req_count,
+                 coalesce(sum(round((l.qty_milli::numeric * coalesce(l.ref_price_cents, 0)) / 1000)), 0)::bigint::text AS cents
+          FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
+          WHERE r.store_id = ${q.storeId} AND r.status NOT IN ('draft', 'cancelled', 'rejected')
+            AND (r.created_at AT TIME ZONE ${tz})::date = ${today}::date
+            AND l.supplier_id IN ${db(supIds)}
+          GROUP BY l.supplier_id`
+      : [];
+    const todayBySup = new Map(todayRows.map((r) => [Number(r.supplierId), { count: Number(r.reqCount), cents: Number(r.cents) }]));
+    const [todayStoreRow] = await db<{ cents: string }[]>`
+      SELECT coalesce(sum(round((l.qty_milli::numeric * coalesce(l.ref_price_cents, 0)) / 1000)), 0)::bigint::text AS cents
+      FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
+      WHERE r.store_id = ${q.storeId} AND r.status NOT IN ('draft', 'cancelled', 'rejected')
+        AND (r.created_at AT TIME ZONE ${tz})::date = ${today}::date`;
+    const todayStoreCents = Number(todayStoreRow?.cents ?? 0);
+
+    for (const [sid, cur] of bySupplier) {
+      const prev = todayBySup.get(sid);
+      if (prev && prev.count > 0) {
+        hints.push({
+          code: 'same_day_merge',
+          tone: 'info',
+          text: `可能触发同日同供应商累计合并：「${cur.name}」今日已有 ${prev.count} 张需求单，含本单预计累计 ${formatYuan(prev.cents + cur.cents)}（以 ERP 核验为准）。`,
+        });
+      }
+    }
+
+    const dailyTotal = todayStoreCents + sumCents;
+    if (dailyTotal >= DAILY_SPLIT_THRESHOLD_CENTS) {
+      hints.push({
+        code: 'daily_30k',
+        tone: 'warning',
+        text: `可能触发采购日累计 3 万元分流：本店今日含本单预计累计 ${formatYuan(dailyTotal)}，最终由 ERP 审核分流认定。`,
+      });
+    }
+    if (rules.quoteThresholdCents > 0 && sumCents >= rules.quoteThresholdCents) {
+      hints.push({
+        code: 'quote_threshold',
+        tone: 'info',
+        text: `本单预计金额已达询价门槛（${formatYuan(rules.quoteThresholdCents)}），采购环节按规则需至少 ${rules.minQuotes} 家比价核验。`,
+      });
+    }
+  }
+
+  // 3) 每日截单提醒
+  if (rules.cutoffEnabled && clockIn(tz) >= rules.cutoffTime) {
+    hints.push({
+      code: 'cutoff',
+      tone: 'info',
+      text: `当前已过每日截单时间（${rules.cutoffTime}），预计最早次日由采购审核通过。`,
+    });
+  }
+
+  // 4) 部门备用金支付提示（读取 8.1.42 统一部门备用金可用余额）
+  if (q.paymentIntent === 'dept_petty') {
+    if (deptId) {
+      const [bal, occ] = await Promise.all([pettyBalances(db, deptId), pettyOccupied(db, deptId)]);
+      const avail = (bal.get(deptId) ?? 0) - (occ.get(deptId) ?? 0);
+      hints.push({
+        code: 'petty_cash',
+        tone: estimateCents !== null && avail < estimateCents ? 'warning' : 'info',
+        text: `拟用部门备用金支付：当前可用余额 ${formatYuan(avail)}，实际占用与报销核销由 ERP 核验。`,
+      });
+    } else {
+      hints.push({ code: 'petty_cash', tone: 'info', text: '拟用部门备用金支付：备用金额度与可用余额由 ERP 按所属部门核验。' });
+    }
+  }
+
+  // 5) FR-02 必含文案：紧急程度仅用于排序，不构成紧急特批
+  hints.push({
+    code: 'urgency_rule',
+    tone: q.priority === 'urgent' ? 'warning' : 'neutral',
+    text: '紧急程度仅用于排序，不构成紧急特批；正式紧急采购审批需按制度另行认定。',
+  });
+
+  const nodes: ShopRoutePreviewNode[] = [
+    deptNode,
+    stockNode,
+    { key: 'purchase_review', label: '采购审核', role: '采购审核', status: 'active' },
+    { key: 'po_order', label: '下单', role: rules.requestPoDirect ? '采购下单（免二次审）' : '采购下单', status: 'active' },
+    { key: 'receive', label: '到货', role: '门店 / 仓库验收', status: 'active' },
+  ];
+
+  return { nodes, hints, estimateCents, hasUnpriced };
+}
+
+async function shopOverview(db: Db): Promise<ShopOverview> {
+  const [row] = await db<
+    {
+      materials: number;
+      activeMaterials: number;
+      suppliers: number;
+      admittedSuppliers: number;
+      activeSkus: number;
+      totalSkus: number;
+      pendingSkus: number;
+      pendingSkuChanges: number;
+      pendingSuppliers: number;
+      materialsWeek: number;
+      suppliersWeek: number;
+      skusWeek: number;
+      requestsWeek: number;
+    }[]
+  >`
+    SELECT
+      (SELECT count(*)::int FROM materials WHERE tracked) AS materials,
+      (SELECT count(*)::int FROM materials WHERE tracked AND active) AS active_materials,
+      (SELECT count(*)::int FROM suppliers) AS suppliers,
+      (SELECT count(*)::int FROM suppliers WHERE active AND admission = 'approved') AS admitted_suppliers,
+      (SELECT count(*)::int FROM mall_skus WHERE status = 'approved') AS active_skus,
+      (SELECT count(*)::int FROM mall_skus) AS total_skus,
+      (SELECT count(*)::int FROM mall_skus WHERE status = 'pending') AS pending_skus,
+      (SELECT count(*)::int FROM mall_sku_changes WHERE status = 'pending') AS pending_sku_changes,
+      (SELECT count(*)::int FROM suppliers WHERE active AND admission = 'pending') AS pending_suppliers,
+      (SELECT count(*)::int FROM materials WHERE tracked AND created_at >= now() - interval '7 days') AS materials_week,
+      (SELECT count(*)::int FROM suppliers WHERE created_at >= now() - interval '7 days') AS suppliers_week,
+      (SELECT count(*)::int FROM mall_skus WHERE created_at >= now() - interval '7 days') AS skus_week,
+      (SELECT count(*)::int FROM purchase_requests WHERE source = 'mall' AND created_at >= now() - interval '7 days') AS requests_week`;
+  const r = row!;
+  const pendingSkus = Number(r.pendingSkus);
+  const pendingSkuChanges = Number(r.pendingSkuChanges);
+  const pendingSuppliers = Number(r.pendingSuppliers);
+  return {
+    counts: {
+      materials: Number(r.materials),
+      activeMaterials: Number(r.activeMaterials),
+      suppliers: Number(r.suppliers),
+      admittedSuppliers: Number(r.admittedSuppliers),
+      activeSkus: Number(r.activeSkus),
+      totalSkus: Number(r.totalSkus),
+      pendingSkus,
+      pendingSkuChanges,
+      pendingSuppliers,
+      totalTodos: pendingSkus + pendingSkuChanges + pendingSuppliers,
+    },
+    recent: {
+      materialsWeek: Number(r.materialsWeek),
+      suppliersWeek: Number(r.suppliersWeek),
+      skusWeek: Number(r.skusWeek),
+      requestsWeek: Number(r.requestsWeek),
+    },
+    todos: {
+      pendingSkus,
+      pendingSkuChanges,
+      pendingSuppliers,
+    },
+  };
+}
+
 export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
   const P = '/api/erp/shop';
   const shopper = guardAny('request.create', 'request.review', 'request.stock', 'purchase.manage');
   const skuRead = guardAny('purchase.manage', 'purchase.rules');
+  const masterWrite = guardAny('inventory.master');
   // 目录是页面的起点：只审 SKU 的（「采购规则」）也要能进来，才找得到「SKU 维护」（Codex 审查）
   const catalogRead = guardAny('request.create', 'request.review', 'request.stock', 'purchase.manage', 'purchase.rules');
 
   app.get(`${P}/catalog`, { preHandler: catalogRead }, async (req) => catalog(deps, req.actor, (req.query as { storeId?: string } | undefined)?.storeId));
+  app.get(`${P}/offers`, { preHandler: catalogRead }, async (req) => compareOffers(deps, req.actor, req.query));
+  app.get(`${P}/route-preview`, { preHandler: shopper }, async (req) => routePreview(deps, req.actor, req.query));
+  app.get(`${P}/overview`, { preHandler: skuRead }, async () => shopOverview(sql));
+  app.get(`${P}/suppliers`, { preHandler: skuRead }, async (req) => listShopSuppliers(sql, req.actor));
+  app.get(`${P}/suppliers/:id`, { preHandler: skuRead }, async (req) => shopSupplierDetail(sql, req.actor, parse(idParam, req.params).id));
+  const patchSupplier = async (req: { params: unknown; body: unknown; actor: Actor; ip: string }) => {
+    const supplierId = parse(idParam, req.params).id;
+    const { clientKey, ...v } = parse(SupplierPatchInput, req.body);
+    const requestHash = hashRequest({ op: 'supplier_patch', supplierId, patch: v });
+    await sql.begin(async (tx) => {
+      await setTxTimeouts(tx);
+      await assertNotFenced(tx, clientKey, 'shop_master', erpOpAbandoned);
+      const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`
+        SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${clientKey}`;
+      if (done) {
+        if (done.opType !== 'shop_master' || done.requestHash !== requestHash || Number(done.staffId) !== req.actor.id) {
+          throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的主数据维护');
+        }
+        return;
+      }
+      const [cur] = await tx<{ id: number; contact: string; phone: string; note: string; active: boolean }[]>`
+        SELECT id, contact, phone, note, active FROM suppliers WHERE id = ${supplierId} FOR UPDATE`;
+      if (!cur) throw notFound('供应商不存在');
+      await tx`
+        UPDATE suppliers SET contact = ${v.contact ?? cur.contact}, phone = ${v.phone ?? cur.phone}, note = ${v.note ?? cur.note},
+               active = ${v.active ?? cur.active}, updated_at = now()
+        WHERE id = ${supplierId}`;
+      await writeAudit(tx, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'supplier', targetId: supplierId, detail: { source: 'shop', ...v }, ip: req.ip });
+      await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${clientKey}, 'shop_master', ${requestHash}, ${supplierId}, ${req.actor.id})`;
+    });
+    return shopSupplierDetail(sql, req.actor, supplierId);
+  };
+  app.patch(`${P}/suppliers/:id`, { preHandler: masterWrite }, patchSupplier);
+  app.put(`${P}/suppliers/:id`, { preHandler: masterWrite }, patchSupplier);
+  app.get(`${P}/materials`, { preHandler: skuRead }, async () => listShopMaterials(sql, todayIn(deps.config.timezone)));
+  const patchMaterial = async (req: { params: unknown; body: unknown; actor: Actor; ip: string }) => {
+    const materialId = parse(idParam, req.params).id;
+    const { clientKey, ...v } = parse(MaterialPatchInput, req.body);
+    const requestHash = hashRequest({ op: 'material_patch', materialId, patch: v });
+    await sql.begin(async (tx) => {
+      await setTxTimeouts(tx);
+      await assertNotFenced(tx, clientKey, 'shop_master', erpOpAbandoned);
+      const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`
+        SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${clientKey}`;
+      if (done) {
+        if (done.opType !== 'shop_master' || done.requestHash !== requestHash || Number(done.staffId) !== req.actor.id) {
+          throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的主数据维护');
+        }
+        return;
+      }
+      const [cur] = await tx<{ id: number; category: string; note: string; active: boolean }[]>`
+        SELECT id, category, note, active FROM materials WHERE id = ${materialId} AND tracked FOR UPDATE`;
+      if (!cur) throw notFound('受管物料不存在');
+      await tx`
+        UPDATE materials SET category = ${v.category ?? cur.category}, note = ${v.note ?? cur.note}, active = ${v.active ?? cur.active}, updated_at = now()
+        WHERE id = ${materialId}`;
+      await writeAudit(tx, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'material', targetId: materialId, detail: { source: 'shop', ...v }, ip: req.ip });
+      await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${clientKey}, 'shop_master', ${requestHash}, ${materialId}, ${req.actor.id})`;
+    });
+    const list = await listShopMaterials(sql, todayIn(deps.config.timezone));
+    return list.find((m) => m.id === materialId)!;
+  };
+  app.patch(`${P}/materials/:id`, { preHandler: masterWrite }, patchMaterial);
+  app.put(`${P}/materials/:id`, { preHandler: masterWrite }, patchMaterial);
+  app.post(`${P}/materials/batch-category`, { preHandler: masterWrite }, async (req) => {
+    const { clientKey, materialIds, category } = parse(BatchCategoryInput, req.body);
+    const ids = [...new Set(materialIds)].sort((a, b) => a - b);
+    const requestHash = hashRequest({ op: 'material_batch_category', ids, category });
+    return sql.begin(async (tx) => {
+      await setTxTimeouts(tx);
+      await assertNotFenced(tx, clientKey, 'shop_master', erpOpAbandoned);
+      const [done] = await tx<{ opType: string; requestHash: string; refId: number; staffId: number }[]>`
+        SELECT op_type, request_hash, ref_id, staff_id FROM idempotency_keys WHERE key = ${clientKey}`;
+      if (done) {
+        if (done.opType !== 'shop_master' || done.requestHash !== requestHash || Number(done.staffId) !== req.actor.id) {
+          throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的主数据维护');
+        }
+        const [cnt] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM materials WHERE id IN ${tx(ids)} AND tracked`;
+        return { id: Number(done.refId), updated: Number(cnt?.n ?? 0) };
+      }
+      const locked = await tx<{ id: number }[]>`SELECT id FROM materials WHERE id IN ${tx(ids)} AND tracked ORDER BY id FOR UPDATE`;
+      if (locked.length === 0) throw notFound('未找到可修改的受管物料');
+      const foundIds = locked.map((r) => Number(r.id));
+      await tx`UPDATE materials SET category = ${category}, updated_at = now() WHERE id IN ${tx(foundIds)}`;
+      await writeAudit(tx, {
+        staffId: req.actor.id,
+        action: 'inventory_master_saved',
+        targetType: 'material',
+        detail: { source: 'shop_batch_category', materialIds: foundIds, category },
+        ip: req.ip,
+      });
+      const refId = foundIds[0]!;
+      await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${clientKey}, 'shop_master', ${requestHash}, ${refId}, ${req.actor.id})`;
+      return { id: refId, updated: foundIds.length };
+    });
+  });
   app.post(`${P}/requests`, { preHandler: guardAny('request.create') }, async (req, reply) => {
     const r = await submit(deps, req.body, req.actor, req.ip);
     if (!r.replayed) reply.code(201);
@@ -454,6 +1154,14 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     if (pool && !can(req.actor, 'request.review') && !can(req.actor, 'request.stock')) throw forbidden('需求池只给采购、库管看');
     const { scope: _scope, ...rest } = q;
     return pagedMall(deps, req.actor, rest, { mineOnly: !pool });
+  });
+  app.get(`${P}/requests/export`, { preHandler: shopper }, async (req, reply) => {
+    const q = (req.query ?? {}) as Record<string, unknown>;
+    const pool = q.scope === 'pool';
+    if (pool && !can(req.actor, 'request.review') && !can(req.actor, 'request.stock')) throw forbidden('需求池只给采购、库管看');
+    const { scope: _scope, ...rest } = q;
+    const { fileName, csv } = await exportMallCsv(deps, req.actor, rest, { mineOnly: !pool, ip: req.ip });
+    return csvReply(reply, fileName, csv);
   });
   app.get(`${P}/requests/:id`, { preHandler: shopper }, async (req) => mallRequest(deps, req.actor, parse(idParam, req.params).id));
 

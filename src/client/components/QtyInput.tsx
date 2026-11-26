@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { formatQty, parseQty } from '@shared/quantity';
 import { cn } from '../lib/utils';
 
 /**
@@ -96,6 +97,142 @@ export function QtyInput({
         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
       }}
       className={cn('num bg-transparent text-center font-bold outline-none focus:bg-yuzu-tint/60 disabled:opacity-60', bad !== null && 'text-clay', className)}
+      data-testid={testId}
+    />
+  );
+}
+
+/**
+ * 采购/物料数量输入（与 QtyInput 同一套交互与防误改约定，支持最多 3 位小数，内部全程整数 milli）：
+ *   · 输空、0 或输入中的小数（如 "1."、"0.0"）先留在草稿里不动原值，失焦恢复并提示；
+ *   · 超过 maxMilli 按 maxMilli 截断并给一致的超限提示；
+ *   · 含非数字、多余小数点或超精度小数位：不采用，标红并回到焦点进入前的原值，失焦恢复。
+ */
+export function MilliQtyInput({
+  id,
+  valueMilli,
+  minMilli = 1,
+  maxMilli = 1_000_000_000,
+  decimals = 3,
+  onChange,
+  onHint,
+  label,
+  disabled,
+  className,
+  testId,
+}: {
+  id?: string;
+  valueMilli: number;
+  minMilli?: number;
+  maxMilli?: number;
+  decimals?: 0 | 1 | 2 | 3;
+  onChange: (nextMilli: number) => void;
+  onHint?: (text: string | null) => void;
+  label: string;
+  disabled?: boolean;
+  className?: string;
+  testId?: string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [bad, setBad] = useState<string | null>(null);
+  const start = useRef(valueMilli);
+  const lastCommitted = useRef(valueMilli);
+  // 外部步进/一键达标改变 valueMilli 时清掉未提交草稿；自己刚提交的带尾零输入不强行打断
+  useEffect(() => {
+    if (valueMilli !== lastCommitted.current) {
+      lastCommitted.current = valueMilli;
+      setDraft(null);
+      setBad(null);
+    }
+  }, [valueMilli]);
+
+  const minLabel = formatQty(minMilli);
+  const maxLabel = formatQty(maxMilli);
+  const range = `${minLabel}–${maxLabel}`;
+  const commit = (next: number, keepDraft: string | null) => {
+    lastCommitted.current = next;
+    setDraft(keepDraft);
+    onChange(next);
+  };
+
+  return (
+    <input
+      id={id}
+      type="text"
+      inputMode="decimal"
+      autoComplete="off"
+      aria-label={label}
+      aria-invalid={bad !== null}
+      disabled={disabled}
+      value={bad ?? draft ?? formatQty(valueMilli)}
+      onFocus={(e) => {
+        start.current = valueMilli;
+        e.target.select();
+      }}
+      onChange={(e) => {
+        const raw = e.target.value.trim().replace(/[,，\s]/g, '');
+        if (raw === '') {
+          setBad(null);
+          setDraft('');
+          return;
+        }
+        const partialOk = decimals === 0 ? /^\d{1,9}$/.test(raw) : new RegExp(`^\\d{1,9}(?:\\.\\d{0,${decimals}})?$`).test(raw);
+        if (!partialOk) {
+          setDraft(null);
+          const snippet = raw.slice(0, 14);
+          setBad(snippet);
+          if (valueMilli !== start.current) commit(start.current, null);
+          onHint?.(`数量只能填 ${range}${decimals > 0 ? `（最多 ${decimals} 位小数）` : ' 的整数'}，「${snippet}」没有采用，仍按 ${formatQty(start.current)} 算`);
+          return;
+        }
+        setBad(null);
+        if (raw.endsWith('.')) {
+          setDraft(raw);
+          return;
+        }
+        const parsed = parseQty(raw, decimals);
+        if (parsed === null || parsed < minMilli) {
+          setDraft(raw);
+          return;
+        }
+        if (parsed > maxMilli) {
+          commit(maxMilli, null);
+          onHint?.(`数量最多 ${maxLabel}，已按 ${maxLabel} 算`);
+          return;
+        }
+        const keepDraft = raw.includes('.') && raw.endsWith('0') ? raw : null;
+        commit(parsed, keepDraft);
+        onHint?.(null);
+      }}
+      onBlur={() => {
+        if (bad !== null) {
+          setBad(null);
+          setDraft(null);
+          return;
+        }
+        if (draft === null) return;
+        const parsed = draft.endsWith('.') ? parseQty(draft.slice(0, -1), decimals) : parseQty(draft, decimals);
+        setDraft(null);
+        if (parsed !== null && parsed >= minMilli) {
+          if (parsed > maxMilli) {
+            commit(maxMilli, null);
+            onHint?.(`数量最多 ${maxLabel}，已按 ${maxLabel} 算`);
+          } else {
+            commit(parsed, null);
+            onHint?.(null);
+          }
+          return;
+        }
+        onHint?.(`数量请填 ${range}${decimals > 0 ? `（最多 ${decimals} 位小数）` : ' 的整数'}，已保留原来的 ${formatQty(valueMilli)}`);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+      }}
+      className={cn(
+        'num rounded-md border border-line-strong bg-card px-2.5 text-center font-bold text-ink outline-none transition-[border-color,box-shadow] focus:border-pine focus:shadow-[0_0_0_3px_rgb(36_73_58/0.12)] disabled:bg-paper-2 disabled:opacity-60',
+        bad !== null && 'border-clay text-clay',
+        className,
+      )}
       data-testid={testId}
     />
   );

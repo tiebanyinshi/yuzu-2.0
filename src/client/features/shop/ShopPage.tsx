@@ -7,42 +7,78 @@
 // 清单存在本机（每个账号一份）；提交时服务端按 SKU 重新核对价格版本、能不能买、起订量。
 // 提交带操作编号：先在本机记下这一笔再发，结果不确定时可以原样重提、查回或确认作废（AGENTS.md「结果待确认」）。
 
-import { useMemo, useState, type ReactNode } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ClipboardList, PencilLine, Search, ShoppingCart, Store as StoreIcon, Warehouse } from 'lucide-react';
+import {
+  ArrowLeft,
+  Building2,
+  ChevronDown,
+  ChevronUp,
+  ClipboardList,
+  Download,
+  Eye,
+  GitBranch,
+  LayoutDashboard,
+  Package,
+  PencilLine,
+  Search,
+  ShoppingCart,
+  Store as StoreIcon,
+  Warehouse,
+  X,
+} from 'lucide-react';
 import { formatYuan } from '@shared/money';
 import { formatQty, parseQty } from '@shared/quantity';
-import { MALL_DISPLAY_LABELS, type MallDisplayStatus, type MallRequest, type MallRequestBrief } from '@shared/mall';
+import { MALL_DISPLAY_LABELS, MALL_GROUP_LABELS, MALL_REQUEST_GROUPS, type MallDisplayStatus, type MallRequest, type MallRequestBrief, type MallRequestGroup } from '@shared/mall';
 import { PAYMENT_INTENT_LABELS, PRIORITY_LABELS, REQUEST_PRIORITIES, type MallPaymentIntent, type RequestPriority } from '@shared/requests';
-import { lineGrossCents, SHOP_BLOCK_LABELS, SHOP_CUSTOM_UNITS, type ShopCatalog, type ShopItem, type ShopOffer } from '@shared/shop';
+import {
+  buildCompareOffers,
+  catalogCardSummary,
+  formatTaxRate,
+  resolveCompareQtyMilli,
+  SHOP_BLOCK_LABELS,
+  SHOP_COMPARE_BLOCK_LABELS,
+  SHOP_CUSTOM_UNITS,
+  type ShopCart,
+  type ShopCartLine,
+  type ShopCatalog,
+  type ShopItem,
+  type ShopOffer,
+  type ShopOverview,
+  type ShopRoutePreview,
+} from '@shared/shop';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
+import { lazyPage } from '../../lib/lazyPage';
 import { useSession } from '../../lib/session';
 import { cn, formatDateTime, uuid } from '../../lib/utils';
+import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
+import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, Select, Skeleton, Textarea } from '../../components/ui';
 import { ErpPage } from '../erp/ErpHome';
 import { PriorityDot } from '../requests/parts';
+import { ShopCartView } from './ShopCartView';
 import { SkuAdmin } from './SkuAdmin';
+
+const ShopComparePage = lazyPage(() => import('./ShopComparePage').then((m) => m.ShopComparePage));
+const ShopSuppliersPage = lazyPage(() => import('./ShopMasterPages').then((m) => m.ShopSuppliersPage));
+const ShopMaterialsPage = lazyPage(() => import('./ShopMasterPages').then((m) => m.ShopMaterialsPage));
+const ShopOverviewPage = lazyPage(() => import('./ShopOverviewPage').then((m) => m.ShopOverviewPage));
+const ShopCheckoutView = lazyPage(() => import('./ShopCheckoutView').then((m) => m.ShopCheckoutView));
 
 const BASE = '/erp/shop';
 const SUBMIT_URL = '/api/erp/shop/requests';
+const CATALOG_RESTORE_KEY = 'yuzu.shop.catalogRestore';
 const catalogKey = (storeId: number | null) => ['shop', 'catalog', storeId] as const;
 
 // ───────────────────────── 本机的清单与待确认的提交 ─────────────────────────
 
-interface CartLine {
-  skuId: number;
-  priceVersion: number;
-  qtyMilli: number;
-}
-interface Cart {
-  storeId: number | null;
-  lines: CartLine[];
-}
+type CartLine = ShopCartLine;
+type Cart = ShopCart;
 const memory: Record<string, string> = {};
 const store = {
   get(key: string): string | null {
@@ -86,23 +122,51 @@ function useCart() {
 
 export function ShopPage() {
   const params = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const session = useSession();
   const path = (params['*'] ?? '').replace(/\/+$/, '');
+  const rawUrlStore = searchParams.get('storeId');
+  const urlStoreId = rawUrlStore && /^[1-9]\d*$/.test(rawUrlStore) ? Number(rawUrlStore) : null;
   const [storeId, setStoreId] = useState<number | null>(null);
-  const q = useQuery({ queryKey: catalogKey(storeId), queryFn: () => api.get<ShopCatalog>(`/api/erp/shop/catalog${storeId ? `?storeId=${storeId}` : ''}`) });
+  // URL 显式指定了 storeId（比价页分享/浏览器后退）时以 URL 为准，避免被此前目录页切换的本地状态覆盖
+  const activeStoreId = urlStoreId ?? storeId;
+  const pickStore = (next: number) => {
+    setStoreId(next);
+    if (searchParams.has('storeId')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set('storeId', String(next));
+      setSearchParams(nextParams, { replace: true });
+    }
+  };
+  const q = useQuery({ queryKey: catalogKey(activeStoreId), queryFn: () => api.get<ShopCatalog>(`/api/erp/shop/catalog${activeStoreId ? `?storeId=${activeStoreId}` : ''}`) });
+  const qc = useQueryClient();
   const { cart, setCart } = useCart();
   const count = cart.lines.length;
   const c = q.data;
-  const tabs: { to: string; label: string; icon: ReactNode; show: boolean }[] = [
+  // 地址栏显式带了已核验的 storeId（例如从比价页进入清单）时同步进持久门店状态，后续跳结算/目录不回退
+  useEffect(() => {
+    if (urlStoreId !== null && c && c.storeId === urlStoreId) setStoreId(urlStoreId);
+  }, [urlStoreId, c]);
+  const canAdminView = !!c && (c.me.canManageSku || c.me.canApproveSku);
+  const overviewQ = useQuery({
+    queryKey: ['shop', 'overview'],
+    queryFn: () => api.get<ShopOverview>('/api/erp/shop/overview'),
+    enabled: canAdminView,
+  });
+  const todoCount = overviewQ.data?.counts.totalTodos ?? 0;
+  const tabs: { to: string; label: string; icon: ReactNode; show: boolean; badge?: number; testId?: string }[] = [
     { to: BASE, label: '商城', icon: <StoreIcon className="size-4" />, show: true },
     { to: `${BASE}/cart`, label: `采购清单${count ? `（${count}）` : ''}`, icon: <ShoppingCart className="size-4" />, show: true },
     { to: `${BASE}/custom`, label: '自主申请', icon: <PencilLine className="size-4" />, show: true },
     { to: `${BASE}/mine`, label: '我的采购需求', icon: <ClipboardList className="size-4" />, show: true },
     { to: `${BASE}/pool`, label: '需求池', icon: <Warehouse className="size-4" />, show: !!c?.me.canPool },
-    { to: `${BASE}/skus`, label: 'SKU 维护', icon: <Warehouse className="size-4" />, show: !!c && (c.me.canManageSku || c.me.canApproveSku) },
+    { to: `${BASE}/overview`, label: '后台总览', icon: <LayoutDashboard className="size-4" />, show: canAdminView, badge: todoCount, testId: 'shop-tab-overview' },
+    { to: `${BASE}/skus`, label: 'SKU 维护', icon: <Warehouse className="size-4" />, show: canAdminView },
+    { to: `${BASE}/suppliers`, label: '供应商档案', icon: <Building2 className="size-4" />, show: canAdminView },
+    { to: `${BASE}/materials`, label: '物料主档', icon: <Package className="size-4" />, show: canAdminView },
   ];
-  const active = (to: string) => (to === BASE ? path === '' || path.startsWith('item') : `${BASE}/${path}`.startsWith(to));
+  const active = (to: string) => (to === BASE ? path === '' || path.startsWith('item') || path.startsWith('compare') : `${BASE}/${path}`.startsWith(to));
   const nav = (
     <nav aria-label="采购商城" className="mb-4 flex flex-wrap gap-1.5" data-testid="shop-tabs">
       {tabs
@@ -111,6 +175,7 @@ export function ShopPage() {
           <Link
             key={t.to}
             to={t.to}
+            data-testid={t.testId}
             className={cn(
               'tap relative inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-semibold',
               active(t.to) ? 'bg-pine text-paper' : 'bg-card text-ink-2 ring-1 ring-line hover:text-ink',
@@ -118,21 +183,37 @@ export function ShopPage() {
           >
             {t.icon}
             {t.label}
+            {t.badge !== undefined && t.badge > 0 && (
+              <span
+                className={cn('inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[12.5px] leading-5 font-bold', active(t.to) ? 'bg-paper text-pine' : 'bg-clay text-paper')}
+                data-testid="shop-todo-badge"
+              >
+                {t.badge}
+              </span>
+            )}
           </Link>
         ))}
     </nav>
   );
+  const compareSlug = path.startsWith('compare/') ? (path.slice(8).split('/')[0] ?? '') : '';
+  const compareMaterialId = /^[1-9]\d*$/.test(compareSlug) ? Number(compareSlug) : 0;
+  const updatedAt = q.dataUpdatedAt ? new Date(q.dataUpdatedAt).toISOString() : new Date().toISOString();
   let body: ReactNode;
-  if (q.isPending) body = <Skeleton className="h-80" />;
+  if (path.startsWith('compare/')) {
+    body = <ShopComparePage materialId={compareMaterialId} storeId={activeStoreId} cart={cart} setCart={setCart} onSyncStore={setStoreId} />;
+  } else if (q.isPending) body = <Skeleton className="h-80" />;
   else if (q.error) body = <LoadFailed title="商城没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
-  else if (path === '') body = <Home c={q.data} setStore={setStoreId} />;
+  else if (path === '') body = <Home c={q.data} setStore={pickStore} updatedAt={updatedAt} />;
   else if (path.startsWith('item/')) body = <ItemPage c={q.data} materialId={Number(path.slice(5))} cart={cart} setCart={setCart} />;
-  else if (path === 'cart') body = <CartPage c={q.data} cart={cart} setCart={setCart} />;
+  else if (path === 'cart') body = <ShopCartView c={q.data} cart={cart} setCart={setCart} />;
   else if (path === 'checkout') body = <Checkout c={q.data} cart={cart} setCart={setCart} />;
   else if (path === 'custom') body = <CustomForm c={q.data} />;
   else if (path === 'mine' || path === 'pool') body = <RequestList scope={path} />;
   else if (path.startsWith('mine/') || path.startsWith('pool/')) body = <RequestDetail id={Number(path.split('/')[1])} cart={cart} setCart={setCart} c={q.data} />;
+  else if (path === 'overview') body = canAdminView ? <ShopOverviewPage catalog={q.data} /> : <Navigate to={BASE} replace />;
   else if (path === 'skus') body = <SkuAdmin catalog={q.data} />;
+  else if (path === 'suppliers') body = canAdminView ? <ShopSuppliersPage catalog={q.data} /> : <Navigate to={BASE} replace />;
+  else if (path === 'materials') body = canAdminView ? <ShopMaterialsPage catalog={q.data} /> : <Navigate to={BASE} replace />;
   else body = <Navigate to={BASE} replace />;
   return (
     <ErpPage title="采购商城" description="选品比价、加清单、提采购需求；商城里没有的走自主申请。提交后就是一张采购需求单，主管确认、核库、采购审核照常办。">
@@ -153,6 +234,7 @@ export function ShopPage() {
         }}
         className="mb-4"
       />
+      <ErpPendingPanel types={['shop_master']} filter={(op) => op.staffId === session.staff.id} onFound={() => void qc.invalidateQueries({ queryKey: ['shop'] })} className="mb-4" />
       {body}
     </ErpPage>
   );
@@ -160,17 +242,115 @@ export function ShopPage() {
 
 // ───────────────────────── 目录 ─────────────────────────
 
-function Home({ c, setStore }: { c: ShopCatalog; setStore: (id: number) => void }) {
-  const [cat, setCat] = useState<string | null>(null);
-  const [kw, setKw] = useState('');
+interface CatalogSavedState {
+  cat: string | null;
+  kw: string;
+  scrollTop: number;
+  winY: number;
+}
+
+function readSavedCatalog(): CatalogSavedState | null {
+  try {
+    const raw = sessionStorage.getItem(CATALOG_RESTORE_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(CATALOG_RESTORE_KEY);
+    return JSON.parse(raw) as CatalogSavedState;
+  } catch {
+    return null;
+  }
+}
+
+function Home({ c, setStore, updatedAt }: { c: ShopCatalog; setStore: (id: number) => void; updatedAt: string }) {
+  const location = useLocation();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const restored = useRef<CatalogSavedState | null>(null);
+  if (restored.current === null && ((location.state as { restoreCatalog?: boolean } | null)?.restoreCatalog || typeof window !== 'undefined')) {
+    const saved = readSavedCatalog();
+    if (saved) restored.current = saved;
+  }
+  const [cat, setCat] = useState<string | null>(() => restored.current?.cat ?? null);
+  const [kw, setKw] = useState(() => restored.current?.kw ?? '');
+  const [previewItem, setPreviewItem] = useState<ShopItem | null>(null);
+
+  // 返回商品列表时恢复进入比价页前的滚动位置（ERP 主内容区在 <main> 里滚动，同时兼容窗口滚动）
+  useEffect(() => {
+    const target = restored.current;
+    if (!target) return;
+    restored.current = null;
+    requestAnimationFrame(() => {
+      const scroller = rootRef.current?.closest('main');
+      if (scroller && target.scrollTop > 0) scroller.scrollTop = target.scrollTop;
+      if (target.winY > 0) window.scrollTo(0, target.winY);
+    });
+  }, []);
+
+  const rememberPosition = () => {
+    try {
+      const scroller = rootRef.current?.closest('main');
+      const payload: CatalogSavedState = { cat, kw, scrollTop: scroller?.scrollTop ?? 0, winY: window.scrollY };
+      sessionStorage.setItem(CATALOG_RESTORE_KEY, JSON.stringify(payload));
+    } catch {
+      // 隐私模式无法写 sessionStorage 时静默降级
+    }
+  };
+
   const items = useMemo(() => {
     const k = kw.trim().toLowerCase();
     return c.items.filter(
       (i) => (!cat || (i.material.category || '未分类') === cat) && (!k || `${i.material.name} ${i.material.code} ${i.material.specification} ${i.material.category}`.toLowerCase().includes(k)),
     );
   }, [c.items, cat, kw]);
+
+  const previewCompare = useMemo(() => {
+    if (!previewItem) return null;
+    const def = resolveCompareQtyMilli(previewItem, null);
+    return buildCompareOffers(c, previewItem.material.id, def.qtyMilli, updatedAt);
+  }, [c, previewItem, updatedAt]);
+
+  // FR-10 员工侧一次性引导提示（本会话关闭后不再弹出）
+  const [dismissed, setDismissed] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('yuzu.shop.dismissedNudges') ?? '{}') as Record<string, boolean>;
+    } catch {
+      return {};
+    }
+  });
+  const dismissNudge = (key: string) => {
+    const next = { ...dismissed, [key]: true };
+    setDismissed(next);
+    try {
+      sessionStorage.setItem('yuzu.shop.dismissedNudges', JSON.stringify(next));
+    } catch {
+      // 隐私模式无法写 sessionStorage 时仅内存中关闭
+    }
+  };
+  const showMissingDeptNudge = !c.me.departmentId && !c.me.canPickDepartment && !dismissed.missing_dept;
+  const noOffersKey = `no_offers_${c.storeId}`;
+  const showNoOffersNudge = c.items.every((i) => i.purchasable === 0) && !dismissed[noOffersKey];
+
   return (
-    <div className="space-y-4" data-testid="shop-home">
+    <div ref={rootRef} className="space-y-4" data-testid="shop-home">
+      {showMissingDeptNudge && (
+        <div className="flex items-start justify-between gap-2 rounded-xl border border-yuzu-deep/30 bg-yuzu-soft/50 px-3.5 py-2.5 text-[13px] text-ink" data-testid="shop-nudge-missing-dept">
+          <span>您的员工档案尚未补全所属部门，提交采购需求前请联系店主在员工档案中设置部门。</span>
+          <button type="button" onClick={() => dismissNudge('missing_dept')} className="tap relative shrink-0 text-ink-3 hover:text-ink" aria-label="关闭提示">
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
+      {showNoOffersNudge && (
+        <div className="flex items-start justify-between gap-2 rounded-xl border border-line bg-paper-2 px-3.5 py-2.5 text-[13px] text-ink-2" data-testid="shop-nudge-no-offers">
+          <span>
+            当前门店暂无可直接下单的在架报价，可切换门店或直接
+            <Link to={`${BASE}/custom`} className="ml-1 font-semibold text-pine hover:underline">
+              发起自主申请 →
+            </Link>
+          </span>
+          <button type="button" onClick={() => dismissNudge(noOffersKey)} className="tap relative shrink-0 text-ink-3 hover:text-ink" aria-label="关闭提示">
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap items-end gap-3">
         <Field label="门店（业态）" htmlFor="shop-store">
           <Select id="shop-store" value={c.storeId} onChange={(e) => setStore(Number(e.target.value))} fullWidth={false}>
@@ -205,28 +385,62 @@ function Home({ c, setStore }: { c: ShopCatalog; setStore: (id: number) => void 
         </Card>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="shop-items">
-          {items.map((i) => (
-            <li key={i.material.id}>
-              <Link
-                to={`${BASE}/item/${i.material.id}`}
-                className="tap mo-lift flex h-full flex-col rounded-xl border border-line bg-card p-4 shadow-card hover:border-pine/50"
-                data-testid={`shop-item-${i.material.id}`}
-              >
-                <span className="text-[12px] text-ink-3">{i.material.category || '未分类'}</span>
-                <span className="mt-0.5 text-[15px] font-bold text-ink">{i.material.name}</span>
-                <span className="text-[12px] text-ink-3">
-                  {i.material.code}
-                  {i.material.specification && ` · ${i.material.specification}`}
-                </span>
-                <span className="mt-auto flex items-end justify-between pt-3">
-                  <span className="text-[16px] font-bold text-clay">
-                    {i.fromGrossCents !== null ? `${formatYuan(i.fromGrossCents)} 起` : <span className="text-[13px] font-normal text-ink-4">暂无可采购价</span>}
-                  </span>
-                  <span className="text-[12px] text-ink-3">{i.purchasable} 家可选 →</span>
-                </span>
-              </Link>
-            </li>
-          ))}
+          {items.map((i) => {
+            const meta = catalogCardSummary(i);
+            return (
+              <li key={i.material.id}>
+                <div className="mo-lift flex h-full min-h-[172px] flex-col rounded-xl border border-line bg-card p-4 shadow-card hover:border-pine/50">
+                  <Link to={`${BASE}/item/${i.material.id}`} onClick={rememberPosition} className="flex flex-1 flex-col" data-testid={`shop-item-${i.material.id}`}>
+                    <span className="text-[12.5px] text-ink-3">
+                      {i.material.category || '未分类'} · {i.material.code}
+                    </span>
+                    <span className="mt-0.5 line-clamp-1 text-[15px] font-bold text-ink">{i.material.name}</span>
+                    <span className="mt-0.5 line-clamp-1 min-h-[19px] text-[12.5px] text-ink-3">{i.material.specification || `采购单位：${i.material.unit}`}</span>
+                    <div className="mt-3 flex items-baseline gap-1">
+                      {i.fromGrossCents !== null ? (
+                        <>
+                          <span className="text-[19px] leading-tight font-bold text-clay">{formatYuan(i.fromGrossCents)}</span>
+                          <span className="text-[12.5px] text-ink-3">/ {i.material.unit} 起</span>
+                        </>
+                      ) : (
+                        <span className="text-[13.5px] font-semibold text-ink-3">暂无可采购价</span>
+                      )}
+                    </div>
+                    <div className="mt-1.5 flex min-h-[22px] flex-wrap items-center gap-1.5 text-[12.5px]" data-testid={`shop-card-meta-${i.material.id}`}>
+                      {meta.fastestLeadDays !== null ? (
+                        <>
+                          <span className="text-ink-2">最快 {meta.fastestLeadDays} 天到</span>
+                          {meta.hasFreeShipping && <Badge tone="pine">包邮</Badge>}
+                        </>
+                      ) : (
+                        <span className="text-ink-3">当前门店暂无可下单报价</span>
+                      )}
+                    </div>
+                  </Link>
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/70 pt-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewItem(i)}
+                      className="tap relative inline-flex items-center gap-1 text-[12.5px] text-ink-3 hover:text-ink"
+                      aria-label={`快捷预览 ${i.material.name} 报价`}
+                      data-testid={`shop-preview-btn-${i.material.id}`}
+                    >
+                      <Eye className="size-3.5" />
+                      快捷预览
+                    </button>
+                    <Link
+                      to={`${BASE}/compare/${i.material.id}?from=catalog&storeId=${c.storeId}`}
+                      onClick={rememberPosition}
+                      className="tap relative inline-flex items-center text-[13px] font-semibold text-pine hover:underline"
+                      data-testid={`shop-compare-link-${i.material.id}`}
+                    >
+                      {i.purchasable} 家可选 →
+                    </Link>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
       <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
@@ -235,6 +449,59 @@ function Home({ c, setStore }: { c: ShopCatalog; setStore: (id: number) => void 
           <Button icon={<PencilLine className="size-4" />}>自主申请</Button>
         </Link>
       </Card>
+
+      {/* 卡片快捷只读预览（UX-02：仅预览报价摘要，不提供选供应商操作，正式比价进入独立比价页） */}
+      <Dialog
+        open={previewItem !== null}
+        onClose={() => setPreviewItem(null)}
+        title={previewItem ? `${previewItem.material.name} · 报价快捷预览` : '报价快捷预览'}
+        width="max-w-lg"
+        footer={
+          previewItem && (
+            <>
+              <Button variant="ghost" onClick={() => setPreviewItem(null)}>
+                关闭
+              </Button>
+              <Link
+                to={`${BASE}/compare/${previewItem.material.id}?from=catalog&storeId=${c.storeId}`}
+                onClick={() => {
+                  rememberPosition();
+                  setPreviewItem(null);
+                }}
+              >
+                <Button variant="primary" data-testid="shop-preview-to-compare">
+                  进入独立比价页 →
+                </Button>
+              </Link>
+            </>
+          )
+        }
+      >
+        {previewCompare && previewItem && (
+          <div className="space-y-2.5 text-[13px]" data-testid="shop-quick-preview">
+            <p className="text-[12.5px] text-ink-3">
+              只读快捷预览（按 {formatQty(previewCompare.qtyMilli)} {previewItem.material.unit} 试算）；完整横向比价与选供应商请进入独立比价页。
+            </p>
+            <ul className="divide-y divide-line rounded-lg border border-line">
+              {previewCompare.offers.slice(0, 5).map((o) => (
+                <li key={o.skuId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-ink">{o.supplierName}</p>
+                    <p className="text-[12.5px] text-ink-3">
+                      含税 {formatYuan(o.grossCents)}/{previewItem.material.unit}（税 {formatTaxRate(o.taxRateBp)}）· {o.freightCents === 0 ? '包邮' : `运费 ${formatYuan(o.freightCents)}`} · 交期{' '}
+                      {o.leadDays} 天
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-clay">{formatYuan(o.totalCents)}</p>
+                    <Badge tone={o.purchasable ? 'pine' : 'ember'}>{o.purchasable ? '可采购' : SHOP_COMPARE_BLOCK_LABELS[o.blockReason!]}</Badge>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Dialog>
     </div>
   );
 }
@@ -256,7 +523,7 @@ function OfferFacts({ o, unit }: { o: ShopOffer; unit: string }) {
     <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-[12.5px]">
       <dt className="text-ink-3">未税单价</dt>
       <dd className="text-right">
-        {formatYuan(o.priceCents)}（税 {o.taxRateBp / 100}%）
+        {formatYuan(o.priceCents)}（税 {formatTaxRate(o.taxRateBp)}）
       </dd>
       <dt className="text-ink-3">起订量</dt>
       <dd className="text-right">
@@ -296,11 +563,16 @@ function ItemPage({ c, materialId, cart, setCart }: { c: ShopCatalog; materialId
   };
   return (
     <div className="space-y-4" data-testid="shop-item-page">
-      <Link to={BASE} className="inline-flex items-center gap-1 text-[13px] font-semibold text-ink-2 hover:text-ink">
-        <ArrowLeft className="size-4" /> 返回商品列表
-      </Link>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Link to={BASE} className="inline-flex items-center gap-1 text-[13px] font-semibold text-ink-2 hover:text-ink">
+          <ArrowLeft className="size-4" /> 返回商品列表
+        </Link>
+        <Link to={`${BASE}/compare/${item.material.id}?from=catalog&storeId=${c.storeId}`} className="text-[13px] font-semibold text-pine hover:underline">
+          横向比价表 →
+        </Link>
+      </div>
       <Card className="p-4">
-        <p className="text-[12px] text-ink-3">
+        <p className="text-[12.5px] text-ink-3">
           {item.material.category} · {item.material.code}
         </p>
         <h2 className="text-[19px] font-bold text-ink">{item.material.name}</h2>
@@ -315,11 +587,11 @@ function ItemPage({ c, materialId, cart, setCart }: { c: ShopCatalog; materialId
       <ul className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         {item.offers.map((o) => (
           <li key={o.skuId}>
-            <Card className={cn('flex h-full flex-col gap-3 p-4', o.block && 'opacity-60')} data-testid={`shop-offer-${o.skuId}`}>
+            <Card className={cn('flex h-full flex-col gap-3 p-4', o.block && 'opacity-70')} data-testid={`shop-offer-${o.skuId}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-[14.5px] font-bold text-ink">{o.supplier.name}</p>
-                  <p className="text-[12px] text-ink-3">
+                  <p className="text-[12.5px] text-ink-3">
                     {o.skuCode} · V{o.priceVersion}
                   </p>
                 </div>
@@ -327,7 +599,7 @@ function ItemPage({ c, materialId, cart, setCart }: { c: ShopCatalog; materialId
               </div>
               <p className="text-[20px] font-bold text-clay">
                 {formatYuan(o.grossCents)}
-                <span className="text-[12px] font-normal text-ink-3"> / {item.material.unit}（含税）</span>
+                <span className="text-[12.5px] font-normal text-ink-3"> / {item.material.unit}（含税）</span>
               </p>
               <OfferFacts o={o} unit={item.material.unit} />
               <div className="mt-auto flex items-end gap-2">
@@ -354,114 +626,7 @@ function ItemPage({ c, materialId, cart, setCart }: { c: ShopCatalog; materialId
   );
 }
 
-// ───────────────────────── 清单与提交 ─────────────────────────
-
-interface CartRow {
-  line: CartLine;
-  item: ShopItem | null;
-  offer: ShopOffer | null;
-  problem: string | null;
-  gross: number;
-}
-function cartRows(c: ShopCatalog, cart: Cart): CartRow[] {
-  return cart.lines.map((line) => {
-    const item = c.items.find((i) => i.offers.some((o) => o.skuId === line.skuId)) ?? null;
-    const offer = item?.offers.find((o) => o.skuId === line.skuId) ?? null;
-    const problem = !offer
-      ? '这条报价已经没有了'
-      : offer.block
-        ? SHOP_BLOCK_LABELS[offer.block]
-        : offer.priceVersion !== line.priceVersion
-          ? '加清单以后改过价：请确认新价'
-          : line.qtyMilli < offer.moqMilli
-            ? `低于起订量 ${formatQty(offer.moqMilli)}`
-            : null;
-    return { line, item, offer, problem, gross: offer ? lineGrossCents(offer.priceCents, offer.taxRateBp, line.qtyMilli, offer.freightCents) : 0 };
-  });
-}
-
-function CartPage({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (c: Cart) => void }) {
-  const navigate = useNavigate();
-  const sameStore = cart.storeId === null || cart.storeId === c.storeId;
-  const rows = cartRows(c, cart);
-  const [edit, setEdit] = useState<Record<number, string>>({});
-  if (!cart.lines.length)
-    return (
-      <Card className="p-8 text-center text-[13.5px] text-ink-3" data-testid="shop-cart-empty">
-        采购清单是空的。
-        <Link to={BASE} className="ml-1 font-bold text-pine hover:underline">
-          去选购 →
-        </Link>
-      </Card>
-    );
-  const total = rows.reduce((s, r) => s + r.gross, 0);
-  const freight = rows.reduce((s, r) => s + (r.offer?.freightCents ?? 0), 0);
-  const setQty = (skuId: number, text: string) => {
-    setEdit({ ...edit, [skuId]: text });
-    const milli = parseQty(text);
-    if (milli !== null && milli > 0) setCart({ ...cart, lines: cart.lines.map((l) => (l.skuId === skuId ? { ...l, qtyMilli: milli } : l)) });
-  };
-  // 输入框里的数量不对（0、负数、写错）时不能去结算：显示的和清单里记着的会不一样（Codex 审查）
-  const badEdit = (skuId: number) => {
-    const t = edit[skuId];
-    if (t === undefined) return false;
-    const milli = parseQty(t);
-    return milli === null || milli <= 0;
-  };
-  const anyBadEdit = cart.lines.some((l) => badEdit(l.skuId));
-  return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_290px]" data-testid="shop-cart">
-      <Card className="divide-y divide-line">
-        {!sameStore && (
-          <Notice tone="warning" title="这份清单是按另一家门店加的" className="m-3">
-            在首页把门店换回来再提交，或清空重选。
-          </Notice>
-        )}
-        {rows.map((r) => (
-          <div key={r.line.skuId} className="flex flex-wrap items-center gap-3 p-4" data-testid={`shop-cart-line-${r.line.skuId}`}>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[14px] font-bold text-ink">{r.item?.material.name ?? `SKU ${r.line.skuId}`}</p>
-              <p className="text-[12px] text-ink-3">{r.offer ? `${r.offer.supplier.name} · ${r.offer.skuCode} · V${r.offer.priceVersion} · ${formatYuan(r.offer.grossCents)}（含税）` : ''}</p>
-              {r.problem && <p className="text-[12px] font-semibold text-clay">{r.problem}</p>}
-              {badEdit(r.line.skuId) && <p className="text-[12px] font-semibold text-clay">数量要大于 0（最多三位小数），改对了才能去结算</p>}
-            </div>
-            <Input aria-label="数量" className="w-24" inputMode="decimal" value={edit[r.line.skuId] ?? formatQty(r.line.qtyMilli)} onChange={(e) => setQty(r.line.skuId, e.target.value)} />
-            <span className="w-28 text-right text-[13.5px] font-bold">{formatYuan(r.gross)}</span>
-            {r.offer && r.offer.priceVersion !== r.line.priceVersion && !r.offer.block && (
-              <Button size="sm" onClick={() => setCart({ ...cart, lines: cart.lines.map((l) => (l.skuId === r.line.skuId ? { ...l, priceVersion: r.offer!.priceVersion } : l)) })}>
-                确认新价
-              </Button>
-            )}
-            <Button size="sm" variant="ghost" onClick={() => setCart({ ...cart, lines: cart.lines.filter((l) => l.skuId !== r.line.skuId) })}>
-              移除
-            </Button>
-          </div>
-        ))}
-      </Card>
-      <Card className="h-fit space-y-2 p-4 lg:sticky lg:top-4">
-        <p className="flex justify-between text-[13px]">
-          <span className="text-ink-3">商品种类</span>
-          {rows.length} 行
-        </p>
-        <p className="flex justify-between text-[13px]">
-          <span className="text-ink-3">预计运费</span>
-          {formatYuan(freight)}
-        </p>
-        <p className="flex justify-between text-[15px] font-bold">
-          <span>预计含税总额</span>
-          <span data-testid="shop-cart-total">{formatYuan(total)}</span>
-        </p>
-        <p className="text-[12px] text-ink-3">预估金额不作为合同或付款依据；采购执行时可能按供应商拆成几张采购单。</p>
-        <Button variant="primary" className="w-full" disabled={!sameStore || anyBadEdit || rows.some((r) => r.problem)} onClick={() => navigate(`${BASE}/checkout`)} data-testid="shop-to-checkout">
-          填写采购需求 →
-        </Button>
-        <Link to={BASE} className="block text-center text-[12.5px] font-semibold text-pine hover:underline">
-          继续添加商品
-        </Link>
-      </Card>
-    </div>
-  );
-}
+// ───────────────────────── 提交 ─────────────────────────
 
 interface HeaderForm {
   departmentId: string;
@@ -542,7 +707,7 @@ function HeaderFields({ c, f, set }: { c: ShopCatalog; f: HeaderForm; set: (f: H
           ))}
         </Select>
       </Field>
-      <Field label="紧急程度" hint="用于采购排序，不等于紧急特批">
+      <Field label="紧急程度" hint={PRIORITY_HINT[f.priority]} className="sm:col-span-2">
         <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="紧急程度">
           {REQUEST_PRIORITIES.map((p) => (
             <button
@@ -553,8 +718,8 @@ function HeaderFields({ c, f, set }: { c: ShopCatalog; f: HeaderForm; set: (f: H
               title={PRIORITY_HINT[p]}
               onClick={() => set({ ...f, priority: p })}
               className={cn(
-                'tap relative inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-[13px] font-semibold ring-1',
-                f.priority === p ? 'bg-ink text-paper ring-ink' : 'bg-card text-ink-2 ring-line',
+                'tap relative inline-flex h-10 items-center gap-2 rounded-lg border bg-card px-3.5 text-[13px] font-semibold transition-colors',
+                f.priority === p ? 'border-ink text-ink ring-2 ring-ink/15' : 'border-line text-ink-2 hover:border-ink-3 hover:text-ink',
               )}
               data-testid={`shop-priority-${p}`}
             >
@@ -641,11 +806,133 @@ function useSubmit(onDone: (r: MallRequest) => void) {
   return { send, busy, blocked };
 }
 
+const ROUTE_STATUS_BADGE: Record<ShopRoutePreview['nodes'][number]['status'], { label: string; tone: 'pine' | 'ember' | 'clay' | 'neutral' }> = {
+  active: { label: '需流转', tone: 'pine' },
+  auto: { label: '自动确认', tone: 'pine' },
+  skipped: { label: '跳过', tone: 'neutral' },
+  blocked: { label: '需补全', tone: 'clay' },
+};
+
+/** FR-02 提交前审批路由预览（可折叠，服务端实时计算，接口异常时降级静态说明且永不阻塞提交） */
+function RoutePreviewCard({
+  storeId,
+  departmentId,
+  paymentIntent,
+  priority,
+  kind,
+  lines,
+}: {
+  storeId: number;
+  departmentId: string;
+  paymentIntent: MallPaymentIntent;
+  priority: RequestPriority;
+  kind: 'catalog' | 'custom';
+  lines: readonly ShopCartLine[];
+}) {
+  const [open, setOpen] = useState(true);
+  const lineParam = useMemo(() => (kind === 'catalog' ? lines.map((l) => `${l.skuId}:${l.qtyMilli}`).join(',') : ''), [kind, lines]);
+  const url = useMemo(() => {
+    const qs = new URLSearchParams({
+      storeId: String(storeId),
+      paymentIntent,
+      priority,
+      kind,
+    });
+    if (departmentId && /^[1-9]\d*$/.test(departmentId)) qs.set('departmentId', departmentId);
+    if (lineParam) qs.set('lines', lineParam);
+    return `/api/erp/shop/route-preview?${qs.toString()}`;
+  }, [storeId, departmentId, paymentIntent, priority, kind, lineParam]);
+
+  const q = useQuery({
+    queryKey: ['shop', 'route-preview', url],
+    queryFn: () => api.get<ShopRoutePreview>(url),
+    retry: false,
+  });
+
+  return (
+    <Card className="p-4" data-testid="shop-route-preview">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center justify-between gap-2 text-left" data-testid="shop-route-preview-toggle">
+        <span className="inline-flex items-center gap-1.5 text-[14px] font-bold text-ink">
+          <GitBranch className="size-4 text-pine" aria-hidden />
+          审批路由预览（预计流转，以 ERP 实际核验为准）
+        </span>
+        <span className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-ink-3">
+          {open ? '收起' : '展开'}
+          {open ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+        </span>
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-3">
+          {q.isPending ? (
+            <div className="space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-8 w-3/4" />
+            </div>
+          ) : q.error || !q.data ? (
+            <div className="space-y-2 rounded-lg border border-line bg-paper-2/50 p-3 text-[12.5px] text-ink-2" data-testid="shop-route-preview-fallback">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-ink">路由预览暂未取回（不影响直接提交）</span>
+                <Button size="sm" variant="ghost" onClick={() => void q.refetch()}>
+                  重试
+                </Button>
+              </div>
+              <p>预计流转：部门主管确认 → 核库 → 采购审核 → 下单 → 到货。</p>
+              <p className="text-ink-3">同日同供应商累计、采购日累计 3 万元分流与备用金额度由 ERP 核验；紧急程度仅用于排序，不构成紧急特批。</p>
+            </div>
+          ) : (
+            <>
+              <ol className="grid gap-2 sm:grid-cols-5" aria-label="预计审批节点" data-testid="shop-route-preview-nodes">
+                {q.data.nodes.map((node, idx) => {
+                  const st = ROUTE_STATUS_BADGE[node.status];
+                  return (
+                    <li
+                      key={node.key}
+                      data-testid={`shop-route-node-${node.key}`}
+                      className={cn(
+                        'rounded-lg border px-2.5 py-2 text-[12.5px]',
+                        node.status === 'skipped' ? 'border-line bg-paper-2/40 text-ink-3' : node.status === 'blocked' ? 'border-clay/50 bg-clay-soft/20' : 'border-pine/30 bg-card',
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-bold text-ink">
+                          {idx + 1}. {node.label}
+                        </span>
+                        <Badge tone={st.tone}>{st.label}</Badge>
+                      </div>
+                      <p className="mt-1 truncate text-ink-2" title={node.role}>
+                        {node.role}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ol>
+
+              {q.data.hasUnpriced && (
+                <div className="rounded-lg border border-line bg-paper-2/60 px-3 py-2 text-[12.5px] font-semibold text-ink" data-testid="shop-route-unpriced">
+                  待寻源，金额待定
+                </div>
+              )}
+
+              <ul className="space-y-1 text-[12.5px]" data-testid="shop-route-preview-hints">
+                {q.data.hints.map((h) => (
+                  <li key={`${h.code}-${h.text.slice(0, 12)}`} className={cn('flex items-start gap-1.5', h.tone === 'warning' ? 'font-semibold text-clay' : 'text-ink-2')}>
+                    <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-current" aria-hidden />
+                    <span>{h.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Checkout({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (c: Cart) => void }) {
   const session = useSession();
   const navigate = useNavigate();
-  const [f, setF] = useState<HeaderForm>(() => emptyHeader(c));
-  const rows = cartRows(c, cart);
   // 提交成功先跳到这张单，再清清单：清单一空本页会跳回清单页，用 submitted 拦住，不跟跳转抢
   const [submitted, setSubmitted] = useState(false);
   const { send, busy, blocked } = useSubmit((r) => {
@@ -653,58 +940,18 @@ function Checkout({ c, cart, setCart }: { c: ShopCatalog; cart: Cart; setCart: (
     navigate(`${BASE}/mine/${r.id}`);
     setCart({ storeId: null, lines: [] });
   });
-  if (!cart.lines.length) return submitted ? null : <Navigate to={`${BASE}/cart`} replace />;
-  const bad = rows.some((r) => r.problem) || cart.storeId !== c.storeId;
-  const total = rows.reduce((s, r) => s + r.gross, 0);
   return (
-    <div className="space-y-4" data-testid="shop-checkout">
-      <Card className="p-4">
-        <p className="mb-3 text-[14px] font-bold">① 采购业务信息</p>
-        <HeaderFields c={c} f={f} set={setF} />
-      </Card>
-      <Card className="p-4">
-        <p className="mb-2 text-[14px] font-bold">② 采购商品</p>
-        <ul className="divide-y divide-line text-[13px]">
-          {rows.map((r) => (
-            <li key={r.line.skuId} className="flex flex-wrap justify-between gap-2 py-2">
-              <span>
-                {r.item?.material.name} · {r.offer?.supplier.name}（V{r.offer?.priceVersion}）
-              </span>
-              <span>
-                {formatQty(r.line.qtyMilli)} {r.item?.material.unit} · {formatYuan(r.gross)}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2 text-right text-[15px] font-bold">预计含税总额 {formatYuan(total)}</p>
-        <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[12.5px] text-ink-3">
-          <li>提交后生成一张采购需求单，先由部门主管确认（全部需求单都审），再核库、采购审核。</li>
-          <li>部门选的供应商是采购意向，最终由采购确认；同日同供应商累计、备用金额度、合同与预算由 ERP 核验。</li>
-          <li>紧急程度只用于排序，不等于紧急特批。</li>
-        </ul>
-        {bad && (
-          <Notice tone="error" title="清单里有不能提交的行" className="mt-3">
-            回采购清单修改（已失效、门店不对、改过价或低于起订量）。
-          </Notice>
-        )}
-      </Card>
-      <div className="flex justify-end gap-2">
-        <Link to={`${BASE}/cart`}>
-          <Button variant="ghost">返回清单</Button>
-        </Link>
-        <Button
-          variant="primary"
-          loading={busy}
-          disabled={bad || blocked || headerMissing(f)}
-          onClick={() =>
-            void send({ ...headerBody(c, f, session.staff.displayName), kind: 'catalog', lines: cart.lines }, `${rows[0]?.item?.material.name ?? ''}${rows.length > 1 ? ` 等 ${rows.length} 行` : ''}`)
-          }
-          data-testid="shop-submit"
-        >
-          提交采购需求
-        </Button>
-      </div>
-    </div>
+    <ShopCheckoutView
+      c={c}
+      cart={cart}
+      staffId={session.staff.id}
+      staffDisplayName={session.staff.displayName}
+      busy={busy}
+      blocked={blocked}
+      submitted={submitted}
+      onSubmit={(body, summaryText) => void send(body, summaryText)}
+      renderRoutePreview={(f) => <RoutePreviewCard storeId={c.storeId} departmentId={f.departmentId} paymentIntent={f.paymentIntent} priority={f.priority} kind="catalog" lines={cart.lines} />}
+    />
   );
 }
 
@@ -762,8 +1009,8 @@ function CustomForm({ c }: { c: ShopCatalog }) {
       <Card className="p-4">
         <p className="mb-3 text-[14px] font-bold">② 部门与交付</p>
         <HeaderFields c={c} f={f} set={setF} />
-        <p className="mt-3 text-[12.5px] text-ink-3">采购受理后寻源、归类与报价；没有金额时，3 万累计、备用金额度等等报价后由 ERP 核验。</p>
       </Card>
+      <RoutePreviewCard storeId={c.storeId} departmentId={f.departmentId} paymentIntent={f.paymentIntent} priority={f.priority} kind="custom" lines={[]} />
       <div className="flex justify-end">
         <Button
           variant="primary"
@@ -804,23 +1051,81 @@ const DISPLAY_TONE: Partial<Record<MallDisplayStatus, 'pine' | 'ember' | 'clay' 
 
 function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
   const [priority, setPriority] = useState<RequestPriority | ''>('');
-  // 一页 50 张，从新到旧；紧急程度在服务端先筛再分页（老的单翻页也找得到，Codex 审查）
+  const [group, setGroup] = useState<MallRequestGroup | ''>('');
+  const [kw, setKw] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+
+  const filterParams = useMemo(() => {
+    const qs = new URLSearchParams({ scope });
+    if (priority) qs.set('priority', priority);
+    if (group) qs.set('group', group);
+    if (kw.trim()) qs.set('q', kw.trim());
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    return qs.toString();
+  }, [scope, priority, group, kw, from, to]);
+
+  const dateBad = !!from && !!to && from > to;
+
+  // 一页 50 张，从新到旧；状态分组、紧急程度、关键词与日期范围均在服务端先筛再分页（FR-08）
   const q = useInfiniteQuery({
-    queryKey: ['shop', 'requests', scope, priority],
+    queryKey: ['shop', 'requests', filterParams],
     initialPageParam: null as number | null,
-    queryFn: ({ pageParam }) =>
-      api.get<{ requests: MallRequestBrief[]; nextBeforeId: number | null }>(
-        `/api/erp/shop/requests?scope=${scope}${priority ? `&priority=${priority}` : ''}${pageParam ? `&beforeId=${pageParam}` : ''}`,
-      ),
+    enabled: !dateBad,
+    queryFn: ({ pageParam }) => api.get<{ requests: MallRequestBrief[]; nextBeforeId: number | null }>(`/api/erp/shop/requests?${filterParams}${pageParam ? `&beforeId=${pageParam}` : ''}`),
     getNextPageParam: (last) => last.nextBeforeId,
   });
-  if (q.isPending) return <Skeleton className="h-64" />;
-  if (q.error) return <LoadFailed title="需求没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
-  const list = q.data.pages.flatMap((p) => p.requests);
+
+  const exportHref = `/api/erp/shop/requests/export?${filterParams}`;
+  const list = q.data?.pages.flatMap((p) => p.requests) ?? [];
+  const hasFilter = !!(priority || group || kw.trim() || from || to);
+
   return (
     <div className="space-y-3" data-testid={`shop-${scope}`}>
+      {/* 状态分组筛选（FR-08：把现有 13 态归成 4 组，不自造状态） */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5" data-testid="shop-req-groups">
+          <CatChip on={group === ''} onClick={() => setGroup('')}>
+            全部状态
+          </CatChip>
+          {MALL_REQUEST_GROUPS.map((g) => (
+            <button
+              key={g}
+              type="button"
+              onClick={() => setGroup(g)}
+              data-testid={`shop-req-group-${g}`}
+              className={cn('tap relative h-8 rounded-full px-3 text-[12.5px] font-semibold', group === g ? 'bg-ink text-paper' : 'bg-card text-ink-2 ring-1 ring-line hover:text-ink')}
+            >
+              {MALL_GROUP_LABELS[g]}
+            </button>
+          ))}
+        </div>
+        <a
+          href={dateBad ? undefined : exportHref}
+          download
+          aria-disabled={dateBad}
+          onClick={(e) => {
+            if (dateBad) e.preventDefault();
+          }}
+          className={cn(
+            'tap relative inline-flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-card px-3 text-[13px] font-semibold text-ink hover:bg-paper',
+            dateBad && 'pointer-events-none opacity-50',
+          )}
+          data-testid="shop-req-export"
+        >
+          <Download className="size-4" />
+          导出表格
+        </a>
+      </div>
+
+      {/* 关键词、日期范围与紧急程度 */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select aria-label="紧急程度" value={priority} onChange={(e) => setPriority(e.target.value as RequestPriority | '')} fullWidth={false}>
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-4" />
+          <Input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜索单号 / 品名 / 预算项目" className="h-9 pl-9" aria-label="搜索需求单" data-testid="shop-req-search" />
+        </div>
+        <Select aria-label="紧急程度" value={priority} onChange={(e) => setPriority(e.target.value as RequestPriority | '')} fullWidth={false} className="h-9">
           <option value="">全部紧急程度</option>
           {REQUEST_PRIORITIES.map((p) => (
             <option key={p} value={p}>
@@ -828,10 +1133,76 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
             </option>
           ))}
         </Select>
-        <span className="text-[12.5px] text-ink-3">{scope === 'pool' ? '商城来的全部需求单；审核、退回、转采购单在 ERP「采购需求单」里办' : '本部门、自己提的、自己当主管的'}</span>
+        <div className="flex flex-wrap items-center gap-1.5 text-[12.5px] text-ink-3">
+          <Input type="date" aria-label="开始日期" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-36" data-testid="shop-req-from" />
+          <span>至</span>
+          <Input type="date" aria-label="结束日期" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-36" data-testid="shop-req-to" />
+        </div>
+        {hasFilter && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setPriority('');
+              setGroup('');
+              setKw('');
+              setFrom('');
+              setTo('');
+            }}
+            data-testid="shop-req-reset"
+          >
+            重置筛选
+          </Button>
+        )}
       </div>
-      {list.length === 0 ? (
-        <Card className="p-8 text-center text-[13.5px] text-ink-3">还没有。</Card>
+
+      <p className="text-[12.5px] text-ink-3">{scope === 'pool' ? '商城来的全部需求单；审核、退回、转采购单在 ERP「采购需求单」里办' : '本部门、自己提的、自己当主管的'}</p>
+
+      {dateBad ? (
+        <Notice tone="warning" title="开始日期不能晚于结束日期" />
+      ) : q.isPending ? (
+        <div className="space-y-2.5" data-testid="shop-req-skeleton">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-16 w-full" />
+          ))}
+        </div>
+      ) : q.error ? (
+        <LoadFailed title="需求没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />
+      ) : list.length === 0 ? (
+        <Card className="p-4">
+          <EmptyState
+            art="search"
+            title={q.hasNextPage ? '最近批次内暂未匹配到该筛选条件的单据' : hasFilter ? '当前筛选条件下没有采购需求' : '还没有采购需求单'}
+            description={q.hasNextPage ? '还有更早的记录未扫完，可点击下方「加载更早的」继续查找。' : hasFilter ? '放宽状态、日期或关键词条件再看看。' : '去商城选购商品或发起自主申请。'}
+            action={
+              q.hasNextPage ? (
+                <Button size="sm" variant="primary" loading={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
+                  继续查找更早记录
+                </Button>
+              ) : hasFilter ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setPriority('');
+                    setGroup('');
+                    setKw('');
+                    setFrom('');
+                    setTo('');
+                  }}
+                >
+                  清空筛选
+                </Button>
+              ) : (
+                <Link to={BASE}>
+                  <Button size="sm" variant="primary">
+                    去选购 →
+                  </Button>
+                </Link>
+              )
+            }
+          />
+        </Card>
       ) : (
         <Card className="divide-y divide-line">
           {list.map((r) => (
@@ -839,7 +1210,7 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
               <PriorityDot priority={r.priority} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13.5px] font-semibold text-ink">{r.summary || '—'}</span>
-                <span className="text-[12px] text-ink-3">
+                <span className="text-[12.5px] text-ink-3">
                   {r.docNo} · {r.department.name} · {formatDateTime(r.createdAt)}
                 </span>
               </span>
@@ -859,19 +1230,19 @@ function RequestList({ scope }: { scope: 'mine' | 'pool' }) {
   );
 }
 
-const STEPS: { label: string; done: (s: MallDisplayStatus) => boolean }[] = [
-  { label: '提交', done: () => true },
-  { label: '主管确认', done: (s) => s !== 'dept_pending' },
-  { label: '核库与采购审核', done: (s) => ['approved', 'sourcing', 'ordered', 'partial', 'received', 'closed', 'issued'].includes(s) },
-  { label: '下单', done: (s) => ['ordered', 'partial', 'received', 'closed'].includes(s) },
-  { label: '到货', done: (s) => ['received', 'issued'].includes(s) },
-];
-
 function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCart: (c: Cart) => void; c: ShopCatalog }) {
   const toast = useToast();
   const navigate = useNavigate();
   const q = useQuery({ queryKey: ['shop', 'request', id], queryFn: () => api.get<MallRequest>(`/api/erp/shop/requests/${id}`) });
-  if (q.isPending) return <Skeleton className="h-64" />;
+  if (q.isPending) {
+    return (
+      <div className="space-y-3">
+        {[0, 1, 2].map((i) => (
+          <Skeleton key={i} className="h-24 w-full" />
+        ))}
+      </div>
+    );
+  }
   if (q.error) return <LoadFailed title="需求单没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
   const r = q.data;
   const ended = ['returned', 'rejected', 'cancelled'].includes(r.displayStatus);
@@ -897,22 +1268,36 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
       <Link to={`${BASE}/mine`} className="inline-flex items-center gap-1 text-[13px] font-semibold text-ink-2 hover:text-ink">
         <ArrowLeft className="size-4" /> 返回我的采购需求
       </Link>
+
+      {/* FR-08：退回 / 不采购 / 撤回原因置顶展示 */}
+      {r.reason && ended && <Notice tone={r.displayStatus === 'returned' ? 'warning' : 'info'} title={`${MALL_DISPLAY_LABELS[r.displayStatus]}：${r.reason}`} data-testid="shop-request-reason" />}
+
       <Card className="space-y-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[17px] font-bold">{r.docNo}</span>
           <Badge tone={DISPLAY_TONE[r.displayStatus] ?? 'neutral'}>{MALL_DISPLAY_LABELS[r.displayStatus]}</Badge>
           <PriorityDot priority={r.priority} />
-          <span className="text-[12.5px] text-ink-3">{PRIORITY_LABELS[r.priority]}</span>
-          <span className="ml-auto text-[12px] text-ink-3">进度更新于 {formatDateTime(r.progressUpdatedAt)}</span>
+          <span className="text-[12.5px] text-ink-2">{PRIORITY_LABELS[r.priority]}</span>
+          <span className="ml-auto text-[12.5px] text-ink-3">进度更新于 {formatDateTime(r.progressUpdatedAt)}</span>
         </div>
-        <ol className="flex flex-wrap gap-2 text-[12.5px]" aria-label="进度">
-          {STEPS.map((s, i) => (
-            <li key={s.label} className={cn('rounded-full px-2.5 py-1', !ended && s.done(r.displayStatus) ? 'bg-pine text-paper' : 'bg-paper-2 text-ink-3')}>
-              {i + 1}. {s.label}
+
+        {/* FR-08：每节点真实时间与操作人（均来自服务端 timeline，不前端推算） */}
+        <ol className="grid gap-2 sm:grid-cols-5" aria-label="进度" data-testid="shop-request-timeline">
+          {r.timeline.map((step, i) => (
+            <li
+              key={step.key}
+              data-testid={`shop-timeline-${step.key}`}
+              className={cn('rounded-lg border px-2.5 py-2 text-[12.5px]', step.done ? 'border-pine/40 bg-pine-soft/40 text-ink' : 'border-line bg-paper-2/50 text-ink-3')}
+            >
+              <p className="font-bold">
+                {i + 1}. {step.label}
+              </p>
+              <p className="mt-0.5 truncate text-ink-2">{step.actorName ?? (step.done ? '已完成' : '待处理')}</p>
+              <p className="text-ink-3">{step.at ? formatDateTime(step.at) : '—'}</p>
             </li>
           ))}
         </ol>
-        {r.reason && ended && <Notice tone={r.displayStatus === 'returned' ? 'warning' : 'info'} title={`${MALL_DISPLAY_LABELS[r.displayStatus]}：${r.reason}`} data-testid="shop-request-reason" />}
+
         <dl className="grid gap-x-4 gap-y-1 text-[13px] sm:grid-cols-3">
           <Info k="部门" v={r.department.name} />
           <Info k="经办人" v={r.contactName || r.requester.name} />
@@ -935,7 +1320,7 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
                 {l.refPriceCents !== null && ` · 预估 ${formatYuan(l.refPriceCents)} / ${l.unit}`}
               </span>
             </p>
-            <p className="text-[12px] text-ink-3">
+            <p className="text-[12.5px] text-ink-3">
               {[
                 l.supplier && `意向供应商：${l.supplier.name}`,
                 l.skuCode && `${l.skuCode}（${l.priceVersion}）`,
@@ -947,11 +1332,11 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
                 .join(' · ')}
             </p>
             {l.link && (
-              <a href={l.link} target="_blank" rel="noreferrer noopener" className="text-[12px] font-semibold text-lake hover:underline">
+              <a href={l.link} target="_blank" rel="noreferrer noopener" className="text-[12.5px] font-semibold text-lake hover:underline">
                 打开参考链接 ↗
               </a>
             )}
-            <p className="text-[12px] text-ink-2">
+            <p className="text-[12.5px] text-ink-2">
               进度：{MALL_LINE_LABELS[l.progress.state]}
               {l.progress.poNo && ` · 采购单 ${l.progress.poNo}（${l.progress.supplierName}）`}
               {l.progress.receivedMilli > 0 && ` · 已到 ${formatQty(l.progress.receivedMilli)}`}
@@ -969,7 +1354,7 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
           <Button variant="ghost">在 ERP 里看这张需求单</Button>
         </Link>
       </div>
-      {!ended && r.displayStatus !== 'received' && <p className="text-right text-[12px] text-ink-3">要撤回或补充请在 ERP「采购需求单」里打开这张单；退回的撤回后在这里按原单再提。</p>}
+      {!ended && r.displayStatus !== 'received' && <p className="text-right text-[12.5px] text-ink-3">要撤回或补充请在 ERP「采购需求单」里打开这张单；退回的撤回后在这里按原单再提。</p>}
     </div>
   );
 }

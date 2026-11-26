@@ -152,6 +152,8 @@ const REF_NUMBER: Partial<Record<ErpOpType, string>> = {
   member_create: 'id',
   // 退卡退押金（8.1.15）：返回那位会员
   member_card_return: 'memberId',
+  // 采购商城 V1.1 主数据维护（供应商编辑/启停、物料编辑/启停、批量改分类）：返回受影响的主键 id
+  shop_master: 'id',
 };
 
 function refOfResponse(type: ErpOpType, data: unknown): ErpOpRef | null {

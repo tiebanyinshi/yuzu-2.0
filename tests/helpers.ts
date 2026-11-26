@@ -417,6 +417,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '340_petty_merge.sql',
   '350_visit_remarks.sql',
   '360_coupon_usage_terms.sql',
+  '370_shop_master_ops.sql',
   '400_govflow_core.sql',
   '410_gf_supply.sql',
   '420_gf_petty.sql',

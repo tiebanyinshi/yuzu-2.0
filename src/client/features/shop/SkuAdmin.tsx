@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { formatYuan, parseYuan } from '@shared/money';
 import { formatQty, parseQty } from '@shared/quantity';
-import { SHOP_SKU_STATUS_LABELS, SHOP_TAX_RATES, type ShopCatalog, type ShopSku, type ShopSkuCore } from '@shared/shop';
+import { formatTaxRate, SHOP_SKU_STATUS_LABELS, SHOP_TAX_RATES, type ShopCatalog, type ShopSku, type ShopSkuCore } from '@shared/shop';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { formatDateTime } from '../../lib/utils';
 import { Dialog } from '../../components/Overlay';
@@ -103,18 +103,18 @@ export function SkuAdmin({ catalog }: { catalog: ShopCatalog }) {
                 {s.supplier.admission !== 'approved' && <Badge tone="clay">供应商未准入</Badge>}
               </div>
               <p className="text-[12.5px] text-ink-2">
-                未税 {formatYuan(s.priceCents)} · 税 {s.taxRateBp / 100}% · 含税 {formatYuan(s.grossCents)} / {s.material.unit} · 起订 {formatQty(s.moqMilli)} · 交期 {s.leadDays} 天 · 运费{' '}
-                {formatYuan(s.freightCents)} · 有效至 {s.validUntil} · 门店 {s.stores.length ? s.stores.map((x) => x.name).join('、') : '全部'}
+                未税 {formatYuan(s.priceCents)} · 税 {formatTaxRate(s.taxRateBp)} · 含税 {formatYuan(s.grossCents)} / {s.material.unit} · 起订 {formatQty(s.moqMilli)} {s.material.unit} · 交期{' '}
+                {s.leadDays} 天 · 运费 {s.freightCents === 0 ? '包邮' : formatYuan(s.freightCents)} · 有效至 {s.validUntil} · 门店 {s.stores.length ? s.stores.map((x) => x.name).join('、') : '全部'}
               </p>
               {s.approvedByName && (
-                <p className="text-[12px] text-ink-3">
+                <p className="text-[12.5px] text-ink-3">
                   {s.approvedByName} 审核上架 {s.approvedAt && formatDateTime(s.approvedAt)}
                 </p>
               )}
               {s.pendingChange && (
                 <Notice tone="warning" title={`待审改动（${s.pendingChange.requestedByName}）：${s.pendingChange.reason}`}>
-                  改成：未税 {formatYuan(s.pendingChange.after.priceCents)}、税 {s.pendingChange.after.taxRateBp / 100}%、起订 {formatQty(s.pendingChange.after.moqMilli)}、运费{' '}
-                  {formatYuan(s.pendingChange.after.freightCents)}、有效至 {s.pendingChange.after.validUntil}、适用门店{' '}
+                  改成：未税 {formatYuan(s.pendingChange.after.priceCents)}、税 {formatTaxRate(s.pendingChange.after.taxRateBp)}、起订 {formatQty(s.pendingChange.after.moqMilli)} {s.material.unit}
+                  、运费 {s.pendingChange.after.freightCents === 0 ? '包邮' : formatYuan(s.pendingChange.after.freightCents)}、有效至 {s.pendingChange.after.validUntil}、适用门店{' '}
                   <b data-testid={`shop-sku-change-stores-${s.id}`}>
                     {s.pendingChange.after.storeIds.length ? s.pendingChange.after.storeIds.map((id) => catalog.stores.find((x) => x.id === id)?.name ?? `门店 ${id}`).join('、') : '全部门店'}
                   </b>
@@ -220,7 +220,7 @@ function CoreFields({ f, set }: { f: Form; set: (f: Form) => void }) {
         <Select id="sku-tax" value={f.taxRateBp} onChange={(e) => set({ ...f, taxRateBp: e.target.value })}>
           {SHOP_TAX_RATES.map((t) => (
             <option key={t} value={t}>
-              {t / 100}%
+              {formatTaxRate(t)}
             </option>
           ))}
         </Select>
