@@ -1,5 +1,5 @@
 import type { Db } from '../db';
-import { currentStoreId, DEFAULT_STORE_ID } from './store-context';
+import { currentRequestId, currentStoreId, DEFAULT_STORE_ID } from './store-context';
 
 export type AuditAction =
   | 'customer_record'
@@ -125,6 +125,7 @@ export type AuditAction =
   | 'hand_tags_created'
   | 'hand_tags_imported'
   | 'hand_tag_locked'
+  | 'locker_opened'
   | 'hand_tag_unlocked'
   | 'hand_tag_updated'
   | 'technician_saved'
@@ -440,9 +441,10 @@ export async function writeAudit(db: Db, entry: AuditEntry & { storeId?: number 
   // 本店照旧不写这一列（默认值就是本店，只有一家店时与以往完全一样）
   const storeCol = storeId === DEFAULT_STORE_ID ? db`` : db`, store_id`;
   const storeVal = storeId === DEFAULT_STORE_ID ? db`` : db`, ${storeId}`;
+  // 请求编号（8.1.48，迁移 490）：请求里写的记上，日志与审计能对上；自动任务里没有
   await db`
-    INSERT INTO audit_logs (staff_id, action, target_type, target_id, detail, ip, business_date ${storeCol})
+    INSERT INTO audit_logs (staff_id, action, target_type, target_id, detail, ip, business_date, request_id ${storeCol})
     VALUES (${entry.staffId}, ${entry.action}, ${entry.targetType ?? null},
             ${entry.targetId == null ? null : String(entry.targetId)},
-            ${db.json((entry.detail ?? {}) as never)}, ${entry.ip ?? null}, ${entry.businessDate ?? null} ${storeVal})`;
+            ${db.json((entry.detail ?? {}) as never)}, ${entry.ip ?? null}, ${entry.businessDate ?? null}, ${currentRequestId() ?? null} ${storeVal})`;
 }

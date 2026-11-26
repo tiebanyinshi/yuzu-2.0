@@ -368,7 +368,7 @@ function Home({ c, setStore, updatedAt }: { c: ShopCatalog; setStore: (id: numbe
           </button>
         </div>
       )}
-      {/* 首屏（8.1.48，店主：淘宝、得物那样逛高级电商的感觉）：深色渐变底 + 玻璃质感的搜索框与门店，数字说明这家店能买什么 */}
+      {/* 首屏（8.1.50，店主：淘宝、得物那样逛高级电商的感觉）：深色渐变底 + 玻璃质感的搜索框与门店，数字说明这家店能买什么 */}
       <section className="relative isolate overflow-hidden rounded-[28px] bg-rail px-5 py-6 text-paper shadow-[0_30px_80px_-40px_rgb(22_38_31/0.8)] sm:px-8 sm:py-8" data-testid="shop-hero">
         <div aria-hidden className="pointer-events-none absolute -top-24 -right-16 -z-10 size-[340px] rounded-full bg-yuzu/35 blur-3xl" />
         <div aria-hidden className="pointer-events-none absolute -bottom-32 left-10 -z-10 size-[300px] rounded-full bg-lake/45 blur-3xl" />
@@ -641,7 +641,7 @@ function ItemPage({ c, materialId, cart, setCart }: { c: ShopCatalog; materialId
           横向比价表 →
         </Link>
       </div>
-      {/* 商品页（8.1.48）：左边大图、右边名字与最低价，下面是各家报价 */}
+      {/* 商品页（8.1.50）：左边大图、右边名字与最低价，下面是各家报价 */}
       <section
         className="grid gap-5 rounded-[28px] bg-card p-4 ring-1 ring-line/60 shadow-[0_20px_60px_-36px_rgb(28_35_31/0.4)] sm:p-6 md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]"
         data-testid="shop-item-hero"

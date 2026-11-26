@@ -10,6 +10,7 @@
 //     只有上午的不判上班这一头（迟到、缺上班卡），只有下午的不判下班这一头（早退、缺下班卡）。审批通过时当场对覆盖的日子重新结算（resettleStaffDays）。
 // 加锁（docs/LOCKING.md「考勤结算」）：员工的考勤锁（lockStaffAttendance，与打卡、保存排班串行）→ 这位员工的结果行。
 
+import { every } from '../../lib/throttle';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { attendanceIssues, punchWindows, type AttendanceCover, type AttendanceDailyRow, type AttendanceDay, type AttendanceStatus, type MyAttendance, type OaShiftTimes } from '@shared/oa';
@@ -178,11 +179,10 @@ async function settle(db: Sql, slots: Slot[], actorId: number | null): Promise<n
   return n;
 }
 
-let lastRun = 0;
+const settleDue = every(SETTLE_EVERY_MS);
 /** 后台任务（每分钟调一次，10 分钟真跑一次）：最近 3 天下班窗口结束了的、还没结算或结算后又有新打卡的排班 */
 export async function runAttendanceSettlement(deps: Pick<Deps, 'sql' | 'config'>, at = new Date(), force = false): Promise<number> {
-  if (!force && at.getTime() - lastRun < SETTLE_EVERY_MS) return 0;
-  lastRun = at.getTime();
+  if (!force && !settleDue(at.getTime())) return 0;
   const today = localMinute(at, deps.config.timezone).date;
   const slots = await candidates(deps.sql, deps.config.timezone, at, deps.sql`o.work_date BETWEEN ${shiftDate(today, -SETTLE_LOOKBACK_DAYS)} AND ${today}`, false);
   return settle(deps.sql, slots, null);

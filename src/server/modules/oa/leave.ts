@@ -6,6 +6,7 @@
 //   · 人事调整：带操作编号（oa_leave_adjust），加或减、写原因；余额不够减拒绝；给员工发站内通知。
 // 加锁（docs/LOCKING.md「假期余额」）：操作编号（调整、新建假种才有）→ 余额行（INSERT … ON CONFLICT DO NOTHING 再 FOR UPDATE）→ 插明细、改合计。
 
+import { every } from '../../lib/throttle';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
@@ -170,11 +171,10 @@ export async function grantAnnualLeave(db: Sql, today: string, actorId: number |
   return n;
 }
 
-let lastGrant = 0;
+const grantDue = every(GRANT_EVERY_MS);
 /** 后台任务（每分钟调一次，一小时真跑一次） */
 export async function runAnnualLeaveGrant(deps: Pick<Deps, 'sql' | 'config'>, at = new Date()): Promise<number> {
-  if (at.getTime() - lastGrant < GRANT_EVERY_MS) return 0;
-  lastGrant = at.getTime();
+  if (!grantDue(at.getTime())) return 0;
   return grantAnnualLeave(deps.sql, localMinute(at, deps.config.timezone).date, null);
 }
 

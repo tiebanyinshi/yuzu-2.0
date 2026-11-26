@@ -763,7 +763,7 @@ async function listShopMaterials(db: Db, today: string): Promise<ShopMaterialRow
   }));
 }
 
-// ───────────────────────── 商品图（8.1.48，迁移 490） ─────────────────────────
+// ───────────────────────── 商品图（8.1.50，迁移 510） ─────────────────────────
 
 /** 每样物料的商品图（按第几张排好；第 1 张是封面） */
 async function materialImages(db: Db, materialIds?: number[]): Promise<Map<number, number[]>> {
@@ -1157,7 +1157,7 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     const list = await listShopMaterials(sql, todayIn(deps.config.timezone));
     return list.find((m) => m.id === materialId)!;
   };
-  // 商品图（8.1.48）：物料主档里整组换（要「物料档案」权限）；采购商城的人都能看，只给挂在物料上的图，别的图片按编号取不到
+  // 商品图（8.1.50）：物料主档里整组换（要「物料档案」权限）；采购商城的人都能看，只给挂在物料上的图，别的图片按编号取不到
   app.put(`${P}/materials/:id/images`, { preHandler: masterWrite }, async (req) => ({
     imageIds: await setMaterialImages(sql, parse(idParam, req.params).id, req.body, req.actor.id, req.ip),
   }));

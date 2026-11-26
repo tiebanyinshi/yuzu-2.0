@@ -43,6 +43,8 @@ beforeAll(async () => {
   // 写入期间临时放几张表、加几列，迁移前删掉，升级仍从「只有 001」的结构开始
   await sql`CREATE TABLE op_fences (key uuid, op_type text, staff_id bigint, created_at timestamptz)`;
   await sql`ALTER TABLE consumption_lines ADD COLUMN tier text`;
+  // 审计记请求编号（8.1.48，490 才有）：写入期间临时加这一列，迁移前删掉
+  await sql`ALTER TABLE audit_logs ADD COLUMN request_id text`;
   await sql`ALTER TABLE recharges ADD COLUMN over_limit_approved_by bigint`;
   await sql`ALTER TABLE consumptions ADD COLUMN over_limit_approved_by bigint`;
   await sql`ALTER TABLE members ADD COLUMN custom_fields jsonb NOT NULL DEFAULT '{}'`;
@@ -94,6 +96,7 @@ beforeAll(async () => {
   await consume(deps, { idempotencyKey: randomUUID(), memberId, customLines: [{ name: '升级前消费', amount: 12800 }], expectedTotal: 12800 }, { actor: clerkActor });
   await sql`DROP TABLE op_fences`;
   await sql`ALTER TABLE consumption_lines DROP COLUMN tier`;
+  await sql`ALTER TABLE audit_logs DROP COLUMN request_id`;
   await sql`ALTER TABLE recharges DROP COLUMN over_limit_approved_by`;
   await sql`ALTER TABLE consumptions DROP COLUMN over_limit_approved_by`;
   await sql`ALTER TABLE members DROP COLUMN custom_fields`;

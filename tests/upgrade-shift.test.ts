@@ -62,6 +62,8 @@ beforeAll(async () => {
 
   // 用现版本的记账流程写入升级前的单据。现版本会写充值单、结账单的班次（016 才有），写入期间临时加这两列，迁移前删掉
   await sql`ALTER TABLE recharges ADD COLUMN shift_id bigint`;
+  // 审计记请求编号（8.1.48，490 才有）：写入期间临时加这一列，迁移前删掉
+  await sql`ALTER TABLE audit_logs ADD COLUMN request_id text`;
   await sql`ALTER TABLE checkouts ADD COLUMN shift_id bigint`;
   // 收款按当班成员找班次（059 才有）：写入期间临时建空表（升级前的单据不记班次），迁移前删掉
   await sql`CREATE TABLE shift_members (shift_id bigint, staff_id bigint, left_at timestamptz)`;
@@ -132,6 +134,7 @@ beforeAll(async () => {
   const v = await checkin(deps, { clientKey: randomUUID(), guests: [{ tagCode: 'A001', zone: 'male' }] }, { actor: as(clerk!.id, 'clerk'), at: new Date(now - H) });
   await checkout(deps, { clientKey: randomUUID(), visitIds: [v.visits[0]!.id], expectedTotal: 49900, payments: [{ method: 'cash', amount: 49900 }] }, { actor: as(clerk!.id, 'clerk') });
   await sql`ALTER TABLE recharges DROP COLUMN shift_id`;
+  await sql`ALTER TABLE audit_logs DROP COLUMN request_id`;
   await sql`ALTER TABLE checkouts DROP COLUMN shift_id`;
   await sql`DROP TABLE shift_members`;
   await sql`ALTER TABLE visits DROP COLUMN ticket_end_at`;

@@ -9,7 +9,6 @@
 // · 只读主数据：部门、门店、主体、用途、截单规则；物料；供应商只给名字、联系人与准入状态（银行账户、电话、证照一概不给）。
 // · 不开放：商城里改退回的单、撤回（店主 2026-11-24 定：首版商城只看原因，改单回 ERP 改）；多供应商 SKU 与协议价（先不开放）。
 
-import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { formatAmount } from '@shared/money';
@@ -52,6 +51,7 @@ import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
 import { toCsv } from '../lib/csv';
 import { AppError, badRequest, conflict, forbidden, notFound, unauthorized, unprocessable } from '../lib/errors';
+import { sharedKeyMatcher } from '../lib/http-kit';
 import { assertNotFenced, fenceKey, lockOpKey } from '../lib/fences';
 import { hashRequest } from '../lib/idempotency';
 import { decodedPath } from '../lib/paths';
@@ -83,8 +83,6 @@ import {
   writeLines,
 } from './requests';
 
-const digest = (s: string) => createHash('sha256').update(s).digest();
-
 /** 地址是不是商城的接口（按解码后的路径认） */
 export const isMallPath = (path: string) => path === MALL_PREFIX || path.startsWith(`${MALL_PREFIX}/`);
 
@@ -100,9 +98,8 @@ const positiveInt = (raw: unknown): number | null => {
  */
 export async function authenticateMall(req: FastifyRequest, sql: Sql, config: AppConfig): Promise<void> {
   if (!config.mallApiKey) throw new AppError(503, 'MALL_NOT_CONFIGURED', '门店系统还没有配置采购商城的服务密钥（MALL_API_KEY），商城接口没有开');
-  const got = req.headers[MALL_KEY_HEADER];
-  // 先各自取摘要再比：长度不同也不提前返回
-  if (typeof got !== 'string' || !timingSafeEqual(digest(got), digest(config.mallApiKey))) throw new AppError(401, 'MALL_KEY_REJECTED', '请求来源不正确');
+  // 先各自取摘要再比：长度不同也不提前返回（lib/http-kit.ts）
+  if (!sharedKeyMatcher(config.mallApiKey)(req.headers[MALL_KEY_HEADER])) throw new AppError(401, 'MALL_KEY_REJECTED', '请求来源不正确');
   if (decodedPath(req.url) === `${MALL_PREFIX}/auth/verify`) return;
   const staffId = positiveInt(req.headers[MALL_STAFF_HEADER]);
   if (staffId === null) throw new AppError(401, 'MALL_STAFF_REQUIRED', `请在 ${MALL_STAFF_HEADER} 里带上员工编号`);

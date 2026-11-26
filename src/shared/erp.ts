@@ -313,7 +313,7 @@ export const ERP_MODULES: Record<ErpModuleKey, ErpModuleDef> = {
  */
 export const ERP_NAV_GROUPS: readonly { key: string; title: string; modules: readonly ErpModuleKey[] }[] = [
   { key: 'approvals', title: '审批', modules: ['approvals'] },
-  // 采购商城排第一（店主 2026-11-26：「采购商城是目前进采购的第一项」，8.1.48）
+  // 采购商城排第一（店主 2026-11-26：「采购商城是目前进采购的第一项」，8.1.50）
   { key: 'supply', title: '供应链', modules: ['shop', 'inventory', 'purchasing', 'requests', 'deptStock', 'assets', 'linen'] },
   { key: 'finance', title: '财务', modules: ['payments', 'payables', 'expenses', 'invoices', 'salesInvoices', 'receivables', 'bank'] },
   { key: 'contracts', title: '合同', modules: ['contracts'] },

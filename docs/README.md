@@ -31,6 +31,7 @@
 - [`AI_V8022.md`](AI_V8022.md)：8.0.22 设计 · AI 辅助（MD-D）
 - [`APPROVALS.md`](APPROVALS.md)：审批中心（v0.7.30）
 - [`APPROVAL_V4.md`](APPROVAL_V4.md)：业财法审批流（V4.0，P01–P07）
+- [`BACKEND_REVIEW_V8148.md`](BACKEND_REVIEW_V8148.md)：后端评估与加固（8.1.48）
 - [`BENEFITS.md`](BENEFITS.md)：会员体系 v2 第二期：本店权益自动发放（v0.7.24 设计稿）
 - [`BOARDS.md`](BOARDS.md)：四个板块：CRM、ERP、WCP、Design（店主 2026-11-24）
 - [`BUDGET_INVOICES.md`](BUDGET_INVOICES.md)：费用预算与进项发票台账（8.0.3）· 设计稿
@@ -73,9 +74,10 @@
 - [`LEDGER.md`](LEDGER.md)：采购台账、四个视图与 12 条账目自检（v0.7.9，飞书需求 RQ-005 第三步）
 - [`LEGACY_LEDGER.md`](LEGACY_LEDGER.md)：8–10 月旧账只读对照（v0.7.10，飞书需求 RQ-005 收尾）
 - [`LINGYU_AUDIT_V8137.md`](LINGYU_AUDIT_V8137.md)：8.1.37 对照「领浴」问题表：修缺陷、加防护
+- [`LOCKERS_V8149.md`](LOCKERS_V8149.md)：柜况与智能柜锁接口（8.1.49）
 - [`MALL_V8131.md`](MALL_V8131.md)：采购商城 V1.1 对接（8.1.31，yuzu 侧）
 - [`MALL_V8132.md`](MALL_V8132.md)：采购商城并进柚子（8.1.32）
-- [`MALL_V8148.md`](MALL_V8148.md)：8.1.48 · 采购商城：逛电商的感觉、商品图、排到采购第一项
+- [`MALL_V8150.md`](MALL_V8150.md)：8.1.50 · 采购商城：逛电商的感觉、商品图、排到采购第一项
 - [`MASCOT.md`](MASCOT.md)：看板娘「柚子」（第二版：手绘动画，待店主确认）
 - [`MEMBERSHIP.md`](MEMBERSHIP.md)：会员体系 v2（设计稿；店主 2026-11-03 两次答复后修订；第一期 v0.7.23 已按本稿实现，见第 14 节）
 - [`MEMBERSHIP_FINISH.md`](MEMBERSHIP_FINISH.md)：会员体系收尾（v0.7.26）
