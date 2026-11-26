@@ -21,6 +21,7 @@ import { idParam, parse } from '../lib/validate';
 import { setTxTimeouts } from '../lib/tx';
 import { docDateSchema } from './inventory/common';
 import { advanceRows, listClaimsForAdvanceDept, loadExpenseRules, toAdvanceSummary } from './expenses';
+import { pettyOccupied } from './petty-uses';
 
 const JOURNAL_LIMIT = 3000;
 const yuan = (cents: number) => (cents < 0 ? '-' : '') + formatAmount(Math.abs(cents)).replace(/,/g, '');
@@ -80,12 +81,14 @@ export async function listPettyAccounts(db: Db, timezone: string): Promise<Petty
     SELECT e.department_id, coalesce(-sum(e.delta_cents) FILTER (WHERE e.kind = 'expense' AND e.date >= ${monthStart}), 0)::bigint AS spent, max(e.date)::text AS last
     FROM (${events(db, null)}) e GROUP BY e.department_id`;
   const byDept = new Map(monthly.map((m) => [Number(m.departmentId), m]));
+  // 申用还占着的（8.1.42：零采备用金并进来以后，申用记在部门的备用金上）
+  const occupied = await pettyOccupied(db);
   const rows: PettyAccountRow[] = [];
   for (const d of depts) {
     const mine = advances.filter((a) => a.department.id === Number(d.id));
     const m = byDept.get(Number(d.id));
     // 停用、没设置、也没有往来的部门不列
-    if (!d.active && mine.length === 0 && !m) continue;
+    if (!d.active && mine.length === 0 && !m && !occupied.has(Number(d.id))) continue;
     const balance = mine.reduce((t, a) => t + a.outstandingCents, 0);
     const limit = d.limitCents === null ? null : Number(d.limitCents);
     rows.push({
@@ -99,6 +102,8 @@ export async function listPettyAccounts(db: Db, timezone: string): Promise<Petty
       owedCents: mine.reduce((t, a) => t + Math.max(0, -a.outstandingCents), 0),
       pendingCents: mine.reduce((t, a) => t + a.pendingCents, 0),
       monthSpentCents: m ? Number(m.spent) : 0,
+      occupiedCents: occupied.get(Number(d.id)) ?? 0,
+      availableCents: balance - (occupied.get(Number(d.id)) ?? 0),
       openAdvances: mine.filter((a) => a.state !== 'settled').length,
       overdue: mine.filter((a) => a.state === 'overdue').length,
       topUpCents: limit !== null && balance < limit ? limit - balance : null,
@@ -206,7 +211,8 @@ function journalCsv(j: PettyJournal) {
 
 const AccountInput = z.object({
   custodianId: z.number().int().positive().nullable(),
-  limitCents: z.number().int().positive('定额要大于 0').max(100_000_000, '定额不能超过 100 万元').nullable(),
+  // 8.1.42 起上限与原来零采备用金的总额一样是 1,000 万元（迁移 340 把零采备用金的总额并进部门的定额）
+  limitCents: z.number().int().positive('定额要大于 0').max(1_000_000_000, '定额不能超过 1,000 万元').nullable(),
   note: z.string().trim().max(200, '备注最多 200 个字').default(''),
   /** 打开时的版本号；还没设过的是 0 */
   version: z.number().int().min(0),

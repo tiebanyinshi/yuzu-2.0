@@ -137,7 +137,7 @@
   @keyframes toast-in {
     from {
       opacity: 0;
-      transform: translateX(18px);
+      transform: translateY(-12px);
     }
     to {
       opacity: 1;
@@ -498,7 +498,7 @@
 @keyframes mo-toast-out {
   to {
     opacity: 0;
-    transform: translateX(18px);
+    transform: translateY(-12px);
   }
 }
 @keyframes mo-menu-out {

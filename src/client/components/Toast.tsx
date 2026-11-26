@@ -25,7 +25,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={push}>
       {children}
-      <div className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-[min(360px,calc(100vw-32px))] flex-col gap-2" aria-live="polite">
+      {/* 8.1.42：放在页面上方正中、点击穿透——以前在右下角，挡住对话框、抽屉右下角的「同意」「保存」这些按钮（店主 2026-11-25） */}
+      <div className="pointer-events-none fixed top-3 left-1/2 z-[60] flex w-[min(400px,calc(100vw-32px))] -translate-x-1/2 flex-col gap-2 print:hidden" aria-live="polite">
         {items.map((t) => (
           <ToastCard key={t.id} item={t} />
         ))}
@@ -34,15 +35,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** 一条提示：从右边滑入；到时间卸掉时留一个影子往右滑出（8.0.16） */
+/** 一条提示：从上面落下；到时间卸掉时留一个影子往上淡出（8.0.16；8.1.42 挪到上方）。不接点击，下面的按钮照样点得到 */
 function ToastCard({ item: t }: { item: ToastItem }) {
   const ref = useExitGhost<HTMLDivElement>();
   return (
-    <div
-      ref={ref}
-      data-mo-out="toast"
-      className={cn('pointer-events-auto z-[60] flex animate-toast-in gap-3 rounded-lg border bg-card px-4 py-3 shadow-pop', t.tone === 'error' ? 'border-clay/30' : 'border-line')}
-    >
+    <div ref={ref} data-mo-out="toast" className={cn('z-[60] flex animate-toast-in gap-3 rounded-lg border bg-card px-4 py-3 shadow-pop', t.tone === 'error' ? 'border-clay/30' : 'border-line')}>
       {t.tone === 'success' && <CircleCheck className="mt-0.5 size-[18px] shrink-0 text-pine" />}
       {t.tone === 'error' && <CircleAlert className="mt-0.5 size-[18px] shrink-0 text-clay" />}
       {t.tone === 'info' && <Info className="mt-0.5 size-[18px] shrink-0 text-lake" />}

@@ -2,6 +2,7 @@
 // 先预览人数，再发；通知两个开关——短信、会员端弹窗（到账当天起弹，到期前 N 天再弹）。
 // 发券走「结果待确认」：没收到结果时记在页面上方，查回、按原内容重新提交（同一编号，不会多发）或确认作废。
 
+import { formatYuan } from '@shared/money';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Eye, MessageSquareText, Plus, Send, Smartphone } from 'lucide-react';
@@ -148,7 +149,8 @@ function CampaignDialog({ open, onClose, onDone }: { open: boolean; onClose: () 
   const choices = (templates.data ?? []).filter((t) => t.active && !templateExpired(t, session.today));
   const template = choices.find((t) => t.id === templateId) ?? null;
   const audience = { grades, tagIds, tagMode };
-  const inputKey = JSON.stringify({ templateId: template?.id ?? null, audience });
+  // 张数也算进去（合并前 Codex 审查 fca1ba4）：预览完改了每人几张，试算的张数、最多抵就过期了，要重新预览
+  const inputKey = JSON.stringify({ templateId: template?.id ?? null, audience, quantity });
   /** 只认按现在这组条件算出来的预览 */
   const preview = previewed && previewed.key === inputKey ? previewed : null;
   const n = Number(quantity);
@@ -171,7 +173,11 @@ function CampaignDialog({ open, onClose, onDone }: { open: boolean; onClose: () 
     setError(null);
     try {
       const key = inputKey;
-      const result = await api.post<CampaignPreview>('/api/coupons/campaigns/preview', { templateId: template.id, audience });
+      const result = await api.post<CampaignPreview>('/api/coupons/campaigns/preview', {
+        templateId: template.id,
+        audience,
+        ...(Number.isInteger(n) && n >= 1 && n <= 10 ? { quantity: n } : {}),
+      });
       setPreviewed({ ...result, key });
     } catch (e) {
       setError(errorMessage(e));
@@ -372,6 +378,22 @@ function CampaignDialog({ open, onClose, onDone }: { open: boolean; onClose: () 
               {preview.validTo && `券有效期到 ${preview.validTo}。`}
               {preview.sample.length > 0 && `前几位：${preview.sample.map((m) => `${m.name}（${m.gradeLabel}）`).join('、')}${preview.count > preview.sample.length ? '……' : ''}`}
             </span>
+            {preview.estimate && (
+              <span className="mt-1 block" data-testid="campaign-preview-estimate">
+                试算：发 {preview.estimate.coupons} 张，
+                {preview.estimate.maxTotal === null
+                  ? `每张最多抵多少不封顶（${preview.estimate.uncappedWhy ?? '没有上限'}）${
+                      preview.estimate.referencePerCoupon !== undefined
+                        ? `，按现在价目最贵的一份约 ${formatYuan(preview.estimate.referencePerCoupon)}、一共约 ${formatYuan(preview.estimate.referencePerCoupon * preview.estimate.coupons)}`
+                        : ''
+                    }`
+                  : `每张最多抵 ${formatYuan(preview.estimate.perCoupon ?? 0)}，一共最多抵 ${formatYuan(preview.estimate.maxTotal)}`}
+                {preview.estimate.useRate !== null
+                  ? `；这个券以前的核销率 ${(preview.estimate.useRate * 100).toFixed(1)}%${preview.estimate.expectedCost !== null ? `，估计成本约 ${formatYuan(preview.estimate.expectedCost)}${preview.estimate.maxTotal === null ? '（按参考价）' : ''}` : ''}`
+                  : '；这个券还没发过，没有核销率可参考'}
+                。
+              </span>
+            )}
           </Notice>
         )}
         {!preview && template && <p className="text-[12.5px] text-ink-3">先点「预览人数」，核对圈到的人数再发。</p>}

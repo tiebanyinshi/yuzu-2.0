@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import {
+  couponLimitProblem,
   couponTermsText,
   evaluateCoupon,
   formatStoreCouponCode,
@@ -14,8 +15,11 @@ import {
   STORE_COUPON_CODE_PATTERN,
   type CheckoutCouponOption,
   type CouponLine,
+  type CouponMoment,
   type CouponTerms,
 } from '@shared/coupons';
+import { minuteOfDay } from '@shared/business-date';
+import { currentStoreId } from '../lib/store-context';
 import { formatYuan } from '@shared/money';
 import type { Db, Tx } from '../db';
 import { conflict, unprocessable } from '../lib/errors';
@@ -31,7 +35,7 @@ export async function couponLines(db: Db, billIds: number[]): Promise<CouponLine
                 WHEN l.source = 'room' THEN '客房'
                 WHEN l.item_id IS NULL THEN '其他（手动金额、赔偿等）'
                 ELSE coalesce(nullif(si.category, ''), '未分类') END AS category,
-           l.item_id, l.ticket_type_id, l.name, l.unit_price, l.quantity, l.amount,
+           l.item_id, l.ticket_type_id, l.name, l.unit_price, l.quantity, l.amount, l.call_type,
            -- 派对房等的使用单费用（v0.7.28）：房费还是开台费；房费在营业日是周一至周四时包房房费折扣也打（M44），
            -- 开台费不打——与明细在价目里的分类无关（分类选了「客房」的也一样，测试会话 18d4344 的 P2）
            uc.kind AS usage_charge,
@@ -67,6 +71,8 @@ interface CouponRowForCheckout extends CouponTerms {
   giftReason: string | null;
   /** 发放人（8.1.15）：发券记录的经办人 */
   giftIssuerName: string | null;
+  /** 限门店的券（8.1.40）：门店编号 → 名称，提示用 */
+  storeNames: Record<string, string>;
 }
 
 const COUPON_FOR_CHECKOUT = (db: Db) => db`
@@ -75,7 +81,9 @@ const COUPON_FOR_CHECKOUT = (db: Db) => db`
          t.exchange_item_id, t.exchange_ticket_type_id, xi.name AS exchange_item_name, xt.name AS exchange_ticket_name, ck.checkout_no,
          t.buy_item_id, bi.name AS buy_item_name, t.gift_material_id, t.gift_qty_milli, t.gift_warehouse_id,
          t.gift, t.gift_segment, au.display_name AS gift_authorizer_name, ci.gift_channel, CASE WHEN t.gift THEN ci.reason END AS gift_reason,
-         CASE WHEN t.gift THEN isu.display_name END AS gift_issuer_name
+         CASE WHEN t.gift THEN isu.display_name END AS gift_issuer_name,
+         t.weekdays, t.time_from, t.time_to, t.store_ids, t.designated_only,
+         (SELECT coalesce(json_object_agg(st.id, st.name), '{}'::json) FROM stores st WHERE st.id = ANY (t.store_ids)) AS store_names
   FROM coupons c JOIN coupon_templates t ON t.id = c.template_id LEFT JOIN members m ON m.id = c.member_id
   LEFT JOIN service_items xi ON xi.id = t.exchange_item_id LEFT JOIN ticket_types xt ON xt.id = t.exchange_ticket_type_id
   LEFT JOIN service_items bi ON bi.id = t.buy_item_id
@@ -94,7 +102,19 @@ const termsOf = (r: CouponRowForCheckout): CouponTerms => ({
   exchangeItemId: r.exchangeItemId === null ? null : Number(r.exchangeItemId),
   exchangeTicketTypeId: r.exchangeTicketTypeId === null ? null : Number(r.exchangeTicketTypeId),
   buyItemId: r.buyItemId === null ? null : Number(r.buyItemId),
+  weekdays: (r.weekdays ?? []).map(Number),
+  timeFrom: r.timeFrom ?? null,
+  timeTo: r.timeTo ?? null,
+  storeIds: (r.storeIds ?? []).map(Number),
+  designatedOnly: r.designatedOnly ?? false,
 });
+const storeNamesOf = (r: CouponRowForCheckout) => Object.fromEntries(Object.entries(r.storeNames ?? {}).map(([k, v]) => [Number(k), v]));
+
+/** 结账那一刻（8.1.40 券的使用限制）：营业日是星期几、店里几点、哪家店 */
+export function couponMomentOf(date: string, at: Date, timeZone: string): CouponMoment {
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return { weekday: dow === 0 ? 7 : dow, minute: minuteOfDay(at, timeZone), storeId: currentStoreId() };
+}
 const summaryOf = (r: CouponRowForCheckout) =>
   couponTermsText(termsOf(r), {
     items: {
@@ -105,7 +125,10 @@ const summaryOf = (r: CouponRowForCheckout) =>
   });
 
 /** 这张券在这次结账里能不能用、能抵多少（不加锁，结账前核对用；结账事务里由 redeemCoupon 再核对一遍） */
-function judge(r: CouponRowForCheckout, ctx: { memberIds: number[]; lines: CouponLine[]; date: string }): { usable: boolean; amount: number; reason: string | null; lineIds: number[] } {
+function judge(
+  r: CouponRowForCheckout,
+  ctx: { memberIds: number[]; lines: CouponLine[]; date: string; moment: CouponMoment },
+): { usable: boolean; amount: number; reason: string | null; lineIds: number[] } {
   const no = (reason: string) => ({ usable: false, amount: 0, reason, lineIds: [] });
   if (r.status === 'used') return no(`这张券已经用过了${r.checkoutNo ? `（结账单 ${r.checkoutNo}）` : ''}`);
   if (r.status === 'voided') return no('这张券已作废');
@@ -114,6 +137,9 @@ function judge(r: CouponRowForCheckout, ctx: { memberIds: number[]; lines: Coupo
   if (r.memberId !== null && !ctx.memberIds.includes(r.memberId)) {
     return no(`这张券是会员「${r.memberName ?? ''}」的，只能在这位会员结账时用；同行朋友请合并到同一张结账单`);
   }
+  // 8.1.40：星期、时段、门店
+  const limit = couponLimitProblem(termsOf(r), ctx.moment, storeNamesOf(r));
+  if (limit) return no(limit);
   const ev = evaluateCoupon(termsOf(r), ctx.lines);
   return ev.usable ? { usable: true, amount: ev.amount, reason: null, lineIds: ev.lineIds } : no(ev.reason);
 }
@@ -133,22 +159,22 @@ const toOption = (r: CouponRowForCheckout, j: ReturnType<typeof judge>): Checkou
 });
 
 /** 结账前核对：这几位会员没用过、没过期的券，能用的排前面（能抵多的在前） */
-export async function memberCouponOptions(db: Db, memberIds: number[], lines: CouponLine[], date: string): Promise<CheckoutCouponOption[]> {
+export async function memberCouponOptions(db: Db, memberIds: number[], lines: CouponLine[], date: string, moment: CouponMoment): Promise<CheckoutCouponOption[]> {
   if (memberIds.length === 0) return [];
   const rows = await db<CouponRowForCheckout[]>`
     ${COUPON_FOR_CHECKOUT(db)}
     WHERE c.member_id IN ${db(memberIds)} AND c.status = 'available' AND c.valid_to >= ${date}
     ORDER BY c.valid_to, c.id LIMIT 100`;
-  return rows.map((r) => toOption(r, judge(r, { memberIds, lines, date }))).sort((a, b) => Number(b.usable) - Number(a.usable) || b.amount - a.amount || a.validTo.localeCompare(b.validTo));
+  return rows.map((r) => toOption(r, judge(r, { memberIds, lines, date, moment }))).sort((a, b) => Number(b.usable) - Number(a.usable) || b.amount - a.amount || a.validTo.localeCompare(b.validTo));
 }
 
 export const CouponCodeInput = z.string('请填写券码').transform(normalizeStoreCouponCode).pipe(z.string().regex(STORE_COUPON_CODE_PATTERN, '券码是 12 位字母数字（没有 0、O、1、I），请核对'));
 
 /** 输入券码核对（结账前）：没有这张券时 found 为 false */
-export async function couponByCode(db: Db, rawCode: string, memberIds: number[], lines: CouponLine[], date: string): Promise<CheckoutCouponOption | null> {
+export async function couponByCode(db: Db, rawCode: string, memberIds: number[], lines: CouponLine[], date: string, moment: CouponMoment): Promise<CheckoutCouponOption | null> {
   const code = parse(CouponCodeInput, rawCode);
   const [r] = await db<CouponRowForCheckout[]>`${COUPON_FOR_CHECKOUT(db)} WHERE c.code = ${code}`;
-  return r ? toOption(r, judge(r, { memberIds, lines, date })) : null;
+  return r ? toOption(r, judge(r, { memberIds, lines, date, moment })) : null;
 }
 
 /**
@@ -157,12 +183,12 @@ export async function couponByCode(db: Db, rawCode: string, memberIds: number[],
  */
 export async function redeemCoupon(
   tx: Tx,
-  o: { code: string; expectedAmount: number; memberIds: number[]; billIds: number[]; checkoutId: number; date: string; at: Date; staffId: number },
+  o: { code: string; expectedAmount: number; memberIds: number[]; billIds: number[]; checkoutId: number; date: string; at: Date; staffId: number; timeZone: string },
 ): Promise<{ couponId: number; amount: number; lineIds: number[]; ref: string }> {
   const [r] = await tx<CouponRowForCheckout[]>`${COUPON_FOR_CHECKOUT(tx)} WHERE c.code = ${o.code} FOR UPDATE OF c`;
   if (!r) throw unprocessable('COUPON_NOT_FOUND', `没有券码 ${formatStoreCouponCode(o.code)} 这张券，请核对`);
   const lines = await couponLines(tx, o.billIds);
-  const j = judge(r, { memberIds: o.memberIds, lines, date: o.date });
+  const j = judge(r, { memberIds: o.memberIds, lines, date: o.date, moment: couponMomentOf(o.date, o.at, o.timeZone) });
   if (!j.usable) {
     const code = r.status === 'used' ? 'COUPON_USED' : r.status === 'voided' ? 'COUPON_VOIDED' : 'COUPON_NOT_USABLE';
     throw (r.status === 'used' ? conflict : unprocessable)(code, j.reason ?? '这张券现在不能用', { code: o.code });

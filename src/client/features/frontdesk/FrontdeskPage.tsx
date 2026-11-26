@@ -1,5 +1,6 @@
-// 发卡台（8.1.15，docs/DESKS_V8115.md 第 3.2 节；原「前台」）：客人入场——接待发牌、会员等级识别、换牌、同行、挂账，
+// 发卡台（8.1.15，docs/DESKS_V8115.md 第 3.2 节；原「前台」）：客人入场——接待发牌、会员等级识别、换牌、同行，
 // 以及找客人、锁牌、补录纸质单。不参与结账：看账单、预结账、结账、结账记录都在收银台（CashierPage）。
+// 8.1.44（docs/V8144_CASHIER.md）：「加项目」「作废」迁到收银台，发卡台与接待发牌都不加项目、不作废。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { FilePenLine, Hash, Keyboard, Lock, Search, ShieldCheck, TriangleAlert, UserPlus, X } from 'lucide-react';
@@ -24,7 +25,6 @@ import { Dialog, Sheet } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Button, Kbd, Notice, Segmented, Skeleton } from '../../components/ui';
 import { useMedia } from '../inventory/useMedia';
-import { AddItemsDialog } from './AddItemsDialog';
 import { BackfillBar, useBackfill } from './backfill';
 import { BillPanel, type PanelAction } from './BillPanel';
 import { CheckinDialog, type CheckinPrefill } from './CheckinDialog';
@@ -116,15 +116,14 @@ export function FrontdeskPage() {
   const resume = params.get('resume');
   useEffect(() => {
     if (!resume) return;
-    // 结账、退款单在收银台处理（8.1.15）：旧链接、书签带着这两种来的转过去
-    if (resume === 'checkout' || resume === 'checkout_refund') {
+    // 结账、退款单在收银台处理（8.1.15），挂账也是（8.1.44）：带着这几种来的转过去
+    if (resume === 'checkout' || resume === 'checkout_refund' || resume === 'bill_post') {
       navigate(`/crm/cashier?${params}`, { replace: true });
       return;
     }
     if (!board.data) return;
     if (resume !== 'checkin' && (!visit.data || visit.data.id !== selectedId)) return;
     if (resume === 'checkin') setDialog({ kind: 'checkin', prefill: {} });
-    else if (resume === 'bill_post') setDialog({ kind: 'add' });
     else if (resume === 'tag_swap') setDialog({ kind: 'swap' });
     else if (resume === 'line_move') setDialog({ kind: 'move' });
     else if (resume === 'visit_incident') setDialog({ kind: 'incident' });
@@ -139,7 +138,7 @@ export function FrontdeskPage() {
     return new Set(g ? g.mates.filter((m) => m.status === 'open').map((m) => m.visitId) : []);
   }, [visit.data]);
 
-  // 盲打牌号：在页面任意位置直接敲数字或字母，自动进入牌号框；F2 发牌、F4 加项目（预结账、结账在收银台）
+  // 盲打牌号：在页面任意位置直接敲数字或字母，自动进入牌号框；F2 发牌（加项目、预结账、结账在收银台）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -149,11 +148,6 @@ export function FrontdeskPage() {
       if (e.key === 'F2' && can('frontdesk.operate')) {
         e.preventDefault();
         setDialog({ kind: 'checkin', prefill: {} });
-        return;
-      }
-      if (e.key === 'F4' && visit.data?.status === 'open' && can('frontdesk.operate')) {
-        e.preventDefault();
-        setDialog({ kind: 'add' });
         return;
       }
       if (isTypingTarget(e.target)) return;
@@ -169,7 +163,7 @@ export function FrontdeskPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [can, visit.data, selectedId, select]);
+  }, [can, selectedId, select]);
 
   /** 状态板上的分区：男宾、女宾；库里还有旧儿童区手牌时另列 */
   const zonesInPool = TAG_ZONES.filter((z) => z !== 'child' || tags.some((t) => t.zone === 'child'));
@@ -486,12 +480,12 @@ export function FrontdeskPage() {
               panel
             ) : (
               <div className="flex h-full flex-col items-center justify-center px-8 text-center" data-testid="issue-empty">
-                <EmptyState art="calm" title="选一张手牌看客人卡" description="直接敲牌号（如 23）回车，或点左侧手牌。空闲手牌点一下即可发牌；在店的手牌在这里换牌、加项目、绑同行。" />
+                <EmptyState art="calm" title="选一张手牌看客人卡" description="直接敲牌号（如 23）回车，或点左侧手牌。空闲手牌点一下即可发牌；在店的手牌在这里换牌、绑同行。" />
                 <div className="mt-2 space-y-1.5 text-[12.5px] text-ink-3">
                   <p className="flex items-center justify-center gap-1.5">
-                    <Keyboard className="size-4" /> <Kbd>F2</Kbd> 接待发牌 · <Kbd>F4</Kbd> 加项目
+                    <Keyboard className="size-4" /> <Kbd>F2</Kbd> 接待发牌
                   </p>
-                  <p>看账单、预结账与结账在「收银台」。</p>
+                  <p>加项目、作废、预结账与买单在「收银台」。</p>
                 </div>
               </div>
             )}
@@ -506,7 +500,6 @@ export function FrontdeskPage() {
       {dialog?.kind === 'checkin' && (
         <CheckinDialog open tags={tags} rules={board.data?.rules} riskEnabled={board.data?.risk.enabled ?? false} prefill={dialog.prefill} onClose={() => setDialog(null)} onDone={afterCheckin} />
       )}
-      {visit.data && dialog?.kind === 'add' && <AddItemsDialog open visit={visit.data} onClose={() => setDialog(null)} onDone={(v) => afterChange(v, `已挂到 ${v.tag.code}`)} />}
       {visit.data && (dialog?.kind === 'swap' || dialog?.kind === 'lost') && (
         <SwapDialog
           open

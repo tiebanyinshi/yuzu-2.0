@@ -30,6 +30,8 @@ export const STORE_SCOPED_SETTING_KEYS = [
   'frontdesk_risk_rules',
   // 8.1.15：建档表单的字段显隐、必填与实体卡押金（docs/MEMBERS_V8115.md）
   'member_form_rules',
+  // 8.1.41：轮班周期（班次按店分，轮班跟着按店；docs/V8141_ROTA.md）
+  'technician_rotas',
 ] as const;
 
 export const STORE_CODE_PATTERN = /^[A-Z0-9]{2,8}$/;

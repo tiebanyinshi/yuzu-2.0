@@ -80,38 +80,43 @@
         <div class="day-meter" aria-hidden="true"><span data-day-meter></span></div>
       </section>
 
-      <!-- 四扇门：与系统里的门户页一致 -->
+      <!-- 四扇门：与系统里的门户页一致（CRM、ERP、WCP、Design，docs/BOARDS.md） -->
       <section class="doors" aria-labelledby="doors-title">
         <h2 id="doors-title" class="section-title">一个账号，四扇门</h2>
         <p class="section-lede">登录一次，按岗位看到自己能进的那几扇；进不去的门照样在那儿，只是不开。</p>
         <div class="doors-grid">
           <a class="door door-yuzu" href="https://sys.yuzusystem.xyz" data-tilt>
-            <span class="door-name">柚子</span>
-            <span class="door-text">前台营业：发卡台、收银台、钟房、餐饮、房态中心、会员与储值、流水与日结。</span>
+            <span class="door-name">CRM</span>
+            <span class="door-text">客人与前台营业：发卡台、收银台、房态中心、钟房与技师、餐饮、会员与储值、流水与日结。</span>
           </a>
           <a class="door door-erp" href="https://sys.yuzusystem.xyz" data-tilt>
             <span class="door-name">ERP</span>
-            <span class="door-text">库存、采购、货款、合同、费用与发票，审批都走一处。</span>
+            <span class="door-text">财务与经营管理：库存、采购、货款、合同、备用金与发票，审批都走一处。</span>
           </a>
           <a class="door door-office" href="https://sys.yuzusystem.xyz" data-tilt>
-            <span class="door-name">办公</span>
-            <span class="door-text">排班、考勤打卡、审批、通讯录与工资条。</span>
+            <span class="door-name">WCP</span>
+            <span class="door-text">员工工作台：排班、考勤打卡、审批、通讯录与工资条。</span>
           </a>
           <a class="door door-admin" href="https://sys.yuzusystem.xyz" data-tilt>
-            <span class="door-name">管理后台</span>
-            <span class="door-text">规则、价目表、手牌池、员工与权限、数据看板。</span>
+            <span class="door-name">Design</span>
+            <span class="door-text">品牌与设计：素材库、电子菜单的版面、对客导览，还有你正在看的这个官网。</span>
           </a>
         </div>
       </section>
 
-      <!-- 一句话：钱怎么记（这一段的底是第二池水） -->
+      <!-- 一句话：这套系统是 AI 写的，所以记钱的规矩定得死（这一段的底是第二池水；8.1.43 重写） -->
       <section class="ledger" aria-labelledby="ledger-title">
         <canvas class="ledger-canvas" data-ripple aria-hidden="true"></canvas>
         <div class="ledger-inner">
-          <h2 id="ledger-title" class="ledger-title" data-fill aria-label="钱按分记，账只往后写。"><span class="line">钱按分记，</span><span class="line">账只往后写。</span></h2>
+          <h2 id="ledger-title" class="ledger-title" data-fill aria-label="纯天然 AI 制作，零人工代码添加。"><span class="line">纯天然 AI 制作，</span><span class="line">零人工代码添加。</span></h2>
           <div class="ledger-notes">
-            <p>金额一律是整数的分，不用小数算钱。记下的单子不改不删：撤销、作废、冲销都另记一笔，写上原因和经办人。</p>
-            <p>网断了、回复没收到，就先在这台电脑上存好，等连上了核对一遍再说，同一笔不会扣两次。</p>
+            <p class="ledger-eyebrow">这套系统是怎么来的</p>
+            <ol class="ledger-lines">
+              <li><span class="ln-no" aria-hidden="true">01</span><span>柚子从数据库的第一张表，到你正在看的这一页，都是 AI 写的。</span></li>
+              <li><span class="ln-no" aria-hidden="true">02</span><span>店主管提需求、挑毛病、点合并。</span></li>
+              <li><span class="ln-no" aria-hidden="true">03</span><span>测试是 AI 写的，审代码的也是 AI，人在边上看它们互相挑刺。</span></li>
+              <li><span class="ln-no" aria-hidden="true">04</span><span>至今为止，它们没喊过一次累。</span></li>
+            </ol>
           </div>
         </div>
       </section>
@@ -136,7 +141,7 @@
         <a class="btn btn-primary btn-lg" href="https://sys.yuzusystem.xyz" data-magnetic>登录柚子系统</a>
         <div class="marquee" aria-hidden="true">
           <div class="marquee-row" data-marquee>
-            <span>发卡</span><span>收银</span><span>钟房</span><span>餐饮</span><span>房态</span><span>会员</span><span>储值</span><span>日结</span><span>ERP</span><span>办公</span><span>饭堂</span><span>巡场</span>
+            <span>发卡</span><span>收银</span><span>钟房</span><span>餐饮</span><span>房态</span><span>会员</span><span>储值</span><span>日结</span><span>ERP</span><span>WCP</span><span>Design</span><span>饭堂</span><span>巡场</span>
           </div>
         </div>
       </section>

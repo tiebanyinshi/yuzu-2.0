@@ -9,6 +9,8 @@ import { ctxOf } from '../lib/context';
 import { idParam, parse } from '../lib/validate';
 import { businessDate, hashRequest, runIdempotent } from './frontdesk/common';
 import { setAnnouncer } from './clock-calls';
+import { dispatchBatch } from './clockroom-batch';
+import { moveBefore } from './clockroom-queue';
 import {
   assignLine,
   callTechnician,
@@ -52,6 +54,9 @@ export function registerClockroomRoutes(app: FastifyInstance, deps: Deps) {
     );
     return clockroomBoard(sql, deps);
   });
+
+  // 8.1.40：一次给多张手牌派钟（一个操作编号、一个事务，全部生效或全部不生效），权限与单张派钟相同
+  app.post('/api/clockroom/dispatch-batch', { preHandler: guard('technician.dispatch', 'frontdesk.operate') }, async (req) => dispatchBatch(deps, req.body, ctxOf(req)));
 
   app.get('/api/clockroom/spaces', { preHandler: guard('technician.dispatch') }, async () => clockSpaces(sql));
   app.post('/api/clockroom/sessions/:id/space', { preHandler: guard('technician.dispatch') }, async (req) => setSessionSpace(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
@@ -104,6 +109,8 @@ export function registerClockroomRoutes(app: FastifyInstance, deps: Deps) {
   );
 
   app.post('/api/clockroom/technicians/:id/state', { preHandler: guard('technician.dispatch') }, async (req) => changeState(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
+  // 8.1.40：排位调到某人前面（同工种、都在岗，原因必填），权限与排到队尾相同
+  app.post('/api/clockroom/technicians/:id/move-before', { preHandler: guard('technician.dispatch') }, async (req) => moveBefore(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.post('/api/clockroom/sign-in-all', { preHandler: guard('technician.dispatch') }, async (req) => signInAll(deps, ctxOf(req)));
 
   // 8.1.15 排位播报：手动叫号、登记主播报终端（接管、放下、报到）；回测整改 P03 起是单独的页面与权限，钟房的岗位照旧能叫号

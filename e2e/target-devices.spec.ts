@@ -44,8 +44,8 @@ type PageKey =
   | 'dining-ledger'
   | 'dining-voids'
   | 'admin-dining'
-  // 8.1.9：零采备用金、库管入库、签赠（后台知识库、管家部与客户部的签赠台账）
-  | 'pool'
+  // 8.1.9：库管入库、签赠（后台知识库、管家部与客户部的签赠台账）；8.1.42 备用金申用（原来 8.1.9 的零采备用金）
+  | 'petty-uses'
   | 'direct-receipt'
   | 'admin-gifts'
   | 'gift-ledger-concierge'
@@ -80,7 +80,7 @@ const DEVICES: Device[] = [
       'dining-ledger',
       'dining-voids',
       'admin-dining',
-      'pool',
+      'petty-uses',
       'direct-receipt',
       'admin-gifts',
       'gift-ledger-customer',
@@ -105,7 +105,7 @@ const DEVICES: Device[] = [
       'dining-receipt',
       'dining-tables',
       'dining-ledger',
-      'pool',
+      'petty-uses',
       'gift-ledger-concierge',
       'requests-stock',
       'dining-dishes',
@@ -1038,6 +1038,39 @@ const RC_BOARD: RoomCenterBoard = {
   ],
   total: rcCounts(RC_ROOMS),
   rooms: RC_ROOMS,
+  // 8.1.44：当天的预约单（合成）
+  todayBookings: [
+    {
+      id: 990_801,
+      bookingNo: 'YY-SYN-8144-1',
+      kind: 'technician',
+      status: 'confirmed',
+      source: 'phone',
+      startsAt: ago(-60),
+      endsAt: ago(-150),
+      holdUntil: null,
+      guest: '合成电话客人',
+      guests: 2,
+      target: '足底按摩（经典 90 分钟） · 18 号 技师小林',
+      arrivalTagCode: null,
+      serviceNo: null,
+    },
+    {
+      id: 990_802,
+      bookingNo: 'YY-SYN-8144-2',
+      kind: 'room',
+      status: 'arrived',
+      source: 'front',
+      startsAt: ago(30),
+      endsAt: ago(-30),
+      holdUntil: ago(-60),
+      guest: '合成订房客人',
+      guests: 1,
+      target: '合成豪华大床房',
+      arrivalTagCode: 'A023',
+      serviceNo: 'KF20261125-0001',
+    },
+  ],
 };
 const RC_HISTORY: RoomHistory = {
   spaceId: 990_702,
@@ -1057,7 +1090,9 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     try {
       await page.goto('/crm/room-center');
       await expect(page.getByTestId('rc-stats')).toBeVisible();
+      await expect(page.getByTestId('rc-today-bookings')).toContainText('待到店 1 张');
       await expectFits(page);
+      await expectOnScreen(page, ['rc-booking-YY-SYN-8144-1', 'rc-booking-YY-SYN-8144-2']);
       await page.getByTestId(`rc-tab-${RC_CAT.spa}`).click();
       await expect(page.getByTestId('rc-room-S9905')).toHaveAttribute('data-status', 'booked');
       await expectFits(page);
@@ -1111,10 +1146,10 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await expect(page.getByTestId('urgent-contract-due').or(page.getByText('没有要补合同的急采'))).toBeVisible();
     await expectFits(page);
   },
-  // 8.1.9 零采备用金（总额没配置时顶上有提示，照样不横向滚动）
-  pool: async (page) => {
-    await page.goto('/erp/pool');
-    await expect(page.getByTestId('pool-page')).toBeVisible();
+  // 8.1.42 备用金申用（原来 8.1.9 的零采备用金；部门还没有备用金时顶上有提示，照样不横向滚动）
+  'petty-uses': async (page) => {
+    await page.goto('/erp/petty/uses');
+    await expect(page.getByTestId('pu-page')).toBeVisible();
     await expectFits(page);
   },
   // 8.1.9 库管入库：不选采购单的收货表单
@@ -1144,7 +1179,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await expectFits(page);
     await expectOnScreen(page, ['gift-issue', 'gift-from', 'gift-to']);
   },
-  // 发卡台（8.1.15，原「前台」）：手牌板；点一张在店的手牌，客人卡上的加项目、换牌、去收银台都在屏幕里
+  // 发卡台（8.1.15，原「前台」）：手牌板；点一张在店的手牌，客人卡上的换牌、去收银台都在屏幕里（8.1.44 起加项目在收银台）
   frontdesk: async (page) => {
     await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
@@ -1152,9 +1187,9 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await page.locator('[data-testid^="tag-"][data-state="in_use"]').first().click();
     await expect(page.getByTestId('bill-panel')).toHaveAttribute('data-desk', 'issue');
     await expectFits(page);
-    await expectOnScreen(page, ['action-add', 'action-swap', 'go-cashier']);
+    await expectOnScreen(page, ['action-swap', 'go-cashier']);
   },
-  // 收银台（8.1.15）：查找框、排序、待结账清单；点第一张手牌，账单上的预结账、结账在屏幕里
+  // 收银台（8.1.15）：查找框、排序、待结账清单；点第一张手牌，账单上的打单、预结账、买单、加项目、买角在屏幕里（8.1.44）
   cashier: async (page) => {
     await page.goto('/crm/cashier');
     await expect(page.getByTestId('cashier-queue')).toBeVisible();
@@ -1163,7 +1198,7 @@ const PAGES: Record<PageKey, (page: Page) => Promise<void>> = {
     await page.getByTestId('cashier-queue').locator('button[data-testid^="queue-"]').first().click();
     await expect(page.getByTestId('bill-panel')).toHaveAttribute('data-desk', 'cashier');
     await expectFits(page);
-    await expectOnScreen(page, ['action-preview', 'action-checkout']);
+    await expectOnScreen(page, ['action-print', 'action-preview', 'action-checkout', 'action-add', 'action-buy']);
   },
   shift: async (page) => {
     await page.goto('/crm/shift');
