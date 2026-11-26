@@ -790,6 +790,8 @@ async function materialImages(db: Db, materialIds?: number[]): Promise<Map<numbe
 }
 
 const MaterialImagesInput = z.object({
+  /** 操作编号（Codex 审查）：与主数据的其他修改同一套「结果待确认」——本机先记下再发，原样重提认编号、不认图片 */
+  clientKey: z.uuid('缺少操作编号，请刷新页面后重试'),
   imageIds: z.array(z.number().int().positive()).max(SHOP_MAX_MATERIAL_IMAGES, `每样物料最多 ${SHOP_MAX_MATERIAL_IMAGES} 张商品图`),
   /** 页面看到的现在的那一组：别人先改过的拒绝（晚到的旧请求不盖掉之后的修改）；整组写，原样重提结果一样 */
   expectedImageIds: z.array(z.number().int().positive()).max(SHOP_MAX_MATERIAL_IMAGES),
@@ -799,12 +801,20 @@ const MaterialImagesInput = z.object({
 async function setMaterialImages(db: Deps['sql'], materialId: number, raw: unknown, staffId: number, ip?: string): Promise<number[]> {
   const input = parse(MaterialImagesInput, raw);
   if (new Set(input.imageIds).size !== input.imageIds.length) throw badRequest('同一张图不能放两次');
+  const requestHash = hashRequest({ op: 'material_images', materialId, imageIds: input.imageIds, expected: input.expectedImageIds });
   return db.begin(async (tx) => {
     await setTxTimeouts(tx);
+    await assertNotFenced(tx, input.clientKey, 'shop_master', erpOpAbandoned);
+    const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`
+      SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
     const [m] = await tx<{ id: number }[]>`SELECT id FROM materials WHERE id = ${materialId} AND tracked FOR UPDATE`;
     if (!m) throw notFound('物料不存在');
     const now = (await materialImages(tx, [materialId])).get(materialId) ?? [];
-    if (now.join(',') === input.imageIds.join(',')) return now;
+    // 同一个编号原样重提：不再写，返回现在的（之后别人又改过的照别人的，不拿旧请求盖掉）
+    if (done) {
+      if (done.opType !== 'shop_master' || done.requestHash !== requestHash || Number(done.staffId) !== staffId) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的主数据维护');
+      return now;
+    }
     if (now.join(',') !== input.expectedImageIds.join(',')) throw conflict('IMAGES_CHANGED', '这样物料的商品图刚被别人改过，刷新后再改');
     if (input.imageIds.length) {
       const ok = await tx<{ id: number }[]>`SELECT id FROM erp_images WHERE id IN ${tx(input.imageIds)} AND scope = 'general'`;
@@ -813,6 +823,7 @@ async function setMaterialImages(db: Deps['sql'], materialId: number, raw: unkno
     await tx`DELETE FROM material_images WHERE material_id = ${materialId}`;
     for (const [i, imageId] of input.imageIds.entries()) await tx`INSERT INTO material_images (material_id, sort_no, image_id) VALUES (${materialId}, ${i + 1}, ${imageId})`;
     await writeAudit(tx, { staffId, action: 'material_images', targetType: 'material', targetId: materialId, detail: { from: now, to: input.imageIds }, ip });
+    await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'shop_master', ${requestHash}, ${materialId}, ${staffId})`;
     return input.imageIds;
   });
 }

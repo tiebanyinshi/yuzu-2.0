@@ -737,7 +737,8 @@ describe('商品图（8.1.50，迁移 510）', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     return r.body.id as number;
   };
-  const put = (cookie: string, imageIds: number[], expectedImageIds: number[]) => api(ctx.app, cookie, 'PUT', `/api/erp/shop/materials/${mat.id}/images`, { imageIds, expectedImageIds });
+  const put = (cookie: string, imageIds: number[], expectedImageIds: number[], clientKey = randomUUID()) =>
+    api(ctx.app, cookie, 'PUT', `/api/erp/shop/materials/${mat.id}/images`, { imageIds, expectedImageIds, clientKey });
 
   it('物料主档整组换商品图：目录、比价、主档都带上；部门申购能看；别人先改过拒绝；不是商品图的图片取不到', async () => {
     const s = await sku();
@@ -746,11 +747,13 @@ describe('商品图（8.1.50，迁移 510）', () => {
     const b = await upload(boss, 2);
     // 部门申购不能改主档
     expect((await put(reqA, [a], [])).status).toBe(403);
-    const set = await put(boss, [a, b], []);
+    const key = randomUUID();
+    const set = await put(boss, [a, b], [], key);
     expect(set.status, JSON.stringify(set.body)).toBe(200);
     expect(set.body.imageIds).toEqual([a, b]);
-    // 原样重提：结果一样
-    expect((await put(boss, [a, b], [])).body.imageIds).toEqual([a, b]);
+    // 原样重提（同一个编号）：结果一样；同一个编号换了内容：拒绝
+    expect((await put(boss, [a, b], [], key)).body.imageIds).toEqual([a, b]);
+    expect((await put(boss, [a], [], key)).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
     // 看到的已经过时：拒绝
     expect((await put(boss, [b], [])).body.error.code).toBe('IMAGES_CHANGED');
     // 目录、比价、主档
@@ -773,5 +776,10 @@ describe('商品图（8.1.50，迁移 510）', () => {
     expect((await put(boss, [a, a], [b, a])).status).toBe(400);
     expect((await put(boss, [], [b, a])).body.imageIds).toEqual([]);
     expect((await ctx.app.inject({ method: 'GET', url: `/api/erp/shop/images/${a}`, headers: { cookie: reqB } })).statusCode).toBe(404);
+    // 回复丢了的那一笔晚到（Codex 审查）：之后别人改回了空的，原样重提不会把图又放回去
+    const lost = randomUUID();
+    expect((await put(boss, [a], [], lost)).body.imageIds).toEqual([a]);
+    expect((await put(boss, [], [a])).body.imageIds).toEqual([]);
+    expect((await put(boss, [a], [], lost)).body.imageIds).toEqual([]);
   });
 });

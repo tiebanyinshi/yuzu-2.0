@@ -4,14 +4,11 @@
 // · MaterialImagesEditor：物料主档里整组换商品图（上传、删、设为封面），带「看到的那一组」，别人先改过拒绝
 
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeftToLine, Package } from 'lucide-react';
 import { SHOP_MAX_MATERIAL_IMAGES, shopImageUrl } from '@shared/shop';
 import type { ImageRef } from '@shared/requests';
-import { api, errorMessage } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { ImagePicker } from '../../components/Images';
-import { useToast } from '../../components/Toast';
 import { Button } from '../../components/ui';
 
 /** 按分类给一个固定的色相：同一类的占位图颜色一样，扫一眼就分得开 */
@@ -36,12 +33,14 @@ export function ProductImage({
   rounded?: string;
   testId?: string;
 }) {
-  const [broken, setBroken] = useState(false);
+  // 坏掉的是哪一张（Codex 审查）：按图片编号记，换了封面、点了别的缩略图照样去取新的
+  const [brokenId, setBrokenId] = useState<number | null>(null);
   const cover = imageIds[0];
+  const broken = cover !== undefined && brokenId === cover;
   if (cover !== undefined && !broken)
     return (
       <div className={cn('relative overflow-hidden bg-paper-2', rounded, className)} data-testid={testId}>
-        <img src={shopImageUrl(cover)} alt={name} loading="lazy" decoding="async" onError={() => setBroken(true)} className="size-full object-cover" />
+        <img src={shopImageUrl(cover)} alt={name} loading="lazy" decoding="async" onError={() => setBrokenId(cover)} className="size-full object-cover" />
       </div>
     );
   const hue = hueOf(category || '未分类');
@@ -98,28 +97,47 @@ export function ProductGallery({ imageIds, name, category }: { imageIds: readonl
 }
 
 /** 物料主档：整组换商品图；第 1 张是封面 */
-export function MaterialImagesEditor({ materialId, imageIds, canEdit }: { materialId: number; imageIds: number[]; canEdit: boolean }) {
-  const toast = useToast();
-  const qc = useQueryClient();
+/** 主数据的写操作（ShopMasterPages 的 useShopMasterWrite）：带操作编号、本机先记下再发，结果不确定时在页面顶部查回、原样重提或确认作废 */
+export type MasterRun = <T>(
+  opts: { method: 'PUT' | 'POST'; url: string; body: Record<string, unknown>; summary: string; okTitle: string },
+  onSuccess?: (result: T) => void,
+) => Promise<'ok' | 'uncertain' | 'error'>;
+
+export function MaterialImagesEditor({
+  materialId,
+  name,
+  imageIds,
+  canEdit,
+  run,
+  busy,
+  blocked,
+}: {
+  materialId: number;
+  name: string;
+  imageIds: number[];
+  canEdit: boolean;
+  run: MasterRun;
+  busy: boolean;
+  blocked: boolean;
+}) {
   const [saved, setSaved] = useState<number[]>(imageIds);
   const [value, setValue] = useState<ImageRef[]>(() => imageIds.map((id) => ({ id, url: shopImageUrl(id) })));
   const [uploading, setUploading] = useState(false);
-  const [busy, setBusy] = useState(false);
   const dirty = value.map((v) => v.id).join(',') !== saved.join(',');
-  const save = async () => {
-    setBusy(true);
-    try {
-      const r = await api.put<{ imageIds: number[] }>(`/api/erp/shop/materials/${materialId}/images`, { imageIds: value.map((v) => v.id), expectedImageIds: saved });
-      setSaved(r.imageIds);
-      setValue(r.imageIds.map((id) => value.find((v) => v.id === id) ?? { id, url: shopImageUrl(id) }));
-      void qc.invalidateQueries({ queryKey: ['shop'] });
-      toast({ tone: 'success', title: '商品图已保存' });
-    } catch (e) {
-      toast({ tone: 'error', title: '商品图没有保存', body: errorMessage(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
+  const save = () =>
+    run<{ imageIds: number[] }>(
+      {
+        method: 'PUT',
+        url: `/api/erp/shop/materials/${materialId}/images`,
+        body: { imageIds: value.map((v) => v.id), expectedImageIds: saved },
+        summary: `换商品图 ${name}`,
+        okTitle: '商品图已保存',
+      },
+      (r) => {
+        setSaved(r.imageIds);
+        setValue(r.imageIds.map((id) => value.find((v) => v.id === id) ?? { id, url: shopImageUrl(id) }));
+      },
+    );
   const toCover = (i: number) => setValue([value[i]!, ...value.filter((_, j) => j !== i)]);
   return (
     <div className="space-y-2 rounded-xl border border-line bg-paper-2/40 p-3" data-testid="shop-mat-images">
@@ -155,7 +173,7 @@ export function MaterialImagesEditor({ materialId, imageIds, canEdit }: { materi
       )}
       {canEdit && (
         <div className="flex justify-end">
-          <Button size="sm" variant="primary" disabled={!dirty || uploading} loading={busy} onClick={() => void save()} data-testid="shop-mat-images-save">
+          <Button size="sm" variant="primary" disabled={!dirty || uploading || blocked} loading={busy} onClick={() => void save()} data-testid="shop-mat-images-save">
             保存商品图
           </Button>
         </div>

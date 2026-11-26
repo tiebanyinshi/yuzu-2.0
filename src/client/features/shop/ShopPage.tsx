@@ -370,7 +370,12 @@ function Home({ c, setStore, updatedAt }: { c: ShopCatalog; setStore: (id: numbe
         </div>
       )}
       {/* 首屏（8.1.50，店主：淘宝、得物那样逛高级电商的感觉）：深色渐变底 + 玻璃质感的搜索框与门店，数字说明这家店能买什么 */}
-      <section className="relative isolate overflow-hidden rounded-[28px] bg-rail px-5 py-6 text-paper shadow-[0_30px_80px_-40px_rgb(22_38_31/0.8)] sm:px-8 sm:py-8" data-testid="shop-hero">
+      {/* 深色首屏：标记成 rail 面（Codex 审查），深色模式下 paper 换成浅色字，字照样看得清 */}
+      <section
+        data-surface="rail"
+        className="relative isolate overflow-hidden rounded-[28px] bg-rail px-5 py-6 text-paper shadow-[0_30px_80px_-40px_rgb(22_38_31/0.8)] sm:px-8 sm:py-8"
+        data-testid="shop-hero"
+      >
         <div aria-hidden className="pointer-events-none absolute -top-24 -right-16 -z-10 size-[340px] rounded-full bg-yuzu/35 blur-3xl" />
         <div aria-hidden className="pointer-events-none absolute -bottom-32 left-10 -z-10 size-[300px] rounded-full bg-lake/45 blur-3xl" />
         <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(120deg,rgb(255_255_255/0.06),transparent_40%)]" />
