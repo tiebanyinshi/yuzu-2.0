@@ -110,6 +110,12 @@ function Board({ rows, onOpen, onEdit }: { rows: PettyAccountRow[]; onOpen: (id:
                 <span className="text-ink-3 lg:hidden">余额 </span>
                 <Money cents={r.balanceCents} className={cn('font-bold', r.balanceCents < 0 && 'text-ember')} />
                 {r.owedCents > 0 && <span className="block text-[12px] text-ember">待补付 ¥{formatAmount(r.owedCents)}</span>}
+                {/* 申用占着的（8.1.42，docs/V8142_PETTY.md）：可用 = 余额 − 已占用 */}
+                {r.occupiedCents > 0 && (
+                  <span className="block text-[12px] text-ink-3" data-testid={`petty-available-${r.department.id}`}>
+                    申用占 ¥{formatAmount(r.occupiedCents)} · 可用 ¥{formatAmount(r.availableCents)}
+                  </span>
+                )}
               </span>
               <span className="text-[12.5px] lg:text-right">
                 <span className="text-ink-3 lg:hidden">待确认 </span>
@@ -149,7 +155,7 @@ function Journal({ row }: { row: PettyAccountRow }) {
   return (
     <div className="space-y-4" data-testid="petty-journal">
       <div className="grid gap-3 sm:grid-cols-4">
-        <Stat label="余额（现在）" value={<Money cents={row.balanceCents} className="text-[18px] font-bold" />} />
+        <Stat label={row.occupiedCents > 0 ? `余额（申用占 ¥${formatAmount(row.occupiedCents)}）` : '余额（现在）'} value={<Money cents={row.balanceCents} className="text-[18px] font-bold" />} />
         <Stat label="定额" value={row.limitCents === null ? '未设' : <Money cents={row.limitCents} className="text-[18px] font-bold" />} />
         <Stat label="建议补足" value={row.topUpCents === null ? '—' : <Money cents={row.topUpCents} className="text-[18px] font-bold text-lake" />} />
         <Stat label="保管人" value={row.custodian?.name ?? '未设'} />

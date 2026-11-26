@@ -118,7 +118,7 @@ type BookingRow = Omit<BookingDetail, 'startsAt' | 'endsAt' | 'holdUntil' | 'cre
   techName: string | null;
 };
 
-async function readBookings(db: Db, where: { id?: number; date?: string; memberId?: number }): Promise<BookingDetail[]> {
+export async function readBookings(db: Db, where: { id?: number; date?: string; memberId?: number }): Promise<BookingDetail[]> {
   return (await readBookingRows(db, where)).map(({ techNo: _techNo, ...d }) => d);
 }
 

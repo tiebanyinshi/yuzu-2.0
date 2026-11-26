@@ -367,6 +367,8 @@ export interface CheckoutPerk {
   operators: { role: string; name: string }[];
   /** 用在哪几条明细上（券、会员折扣记了适用的明细）；整单的优惠 / 免单为空 */
   lineIds: number[];
+  /** 券号（8.1.40：结账单上印券号，对账、核销追溯用）；不是券的为空 */
+  code?: string | null;
 }
 
 /** 一条优惠在小票、账单上的一行字：「签赠 · 足疗体验券」「券抵扣 · 满 100 减 20」「会员折扣 · 结账折扣」「优惠 / 免单」 */

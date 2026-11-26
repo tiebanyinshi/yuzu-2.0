@@ -193,6 +193,8 @@ export function buildCheckoutSlip(d: CheckoutPrint, meta: SlipMeta): Buffer {
     s.strong('优惠与赠送');
     for (const k of d.perks) {
       s.pair(perkTitle(k), `-${yuan(k.amount)}`);
+      // 8.1.40：券号（对账、核销追溯）
+      if (k.code) s.text(`券号 ${k.code}`, 2);
       const who = perkOperatorsText(k);
       if (who) s.text(who, 2);
       if (k.detail) s.text(k.detail, 2);

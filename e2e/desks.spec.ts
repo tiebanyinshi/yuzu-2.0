@@ -182,7 +182,7 @@ async function openPreview(page: Page, visitId: number, code: string) {
 test.describe('8.1.15 发卡台与收银台', () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '会登记单据的流程只在门店电脑尺寸执行一次');
 
-  test('发卡台认会员等级、加项目、换牌，不结账 → 收银台只读、看得到签赠与经办人 → 结账单与小票写明赠送与经办人', async ({ page }) => {
+  test('发卡台认会员等级、换牌，不加项目、不结账 → 收银台加项目、作废、备注，看得到签赠与经办人 → 结账单与小票写明赠送与经办人', async ({ page }) => {
     test.setTimeout(240_000);
     const stamp = String(Date.now()).slice(-6);
     const memberName = `E2E 望岳${stamp}`;
@@ -254,22 +254,18 @@ test.describe('8.1.15 发卡台与收银台', () => {
       await expect(page.getByTestId('open-checkouts')).toHaveCount(0);
       await page.keyboard.press('F9');
       await expect(page.getByTestId('checkout-total')).toHaveCount(0);
-      // 加项目、作废、换牌都在发卡台
+      // 8.1.44：发卡台不加项目、不作废（F4 不开加项目）；换牌照旧在发卡台
+      await expect(panel.getByTestId('action-add')).toHaveCount(0);
       await page.keyboard.press('F4');
-      const add = page.getByRole('dialog').filter({ hasText: '加项目' });
-      await add.getByTestId('item-搓背').click();
-      await add.getByTestId('add-items-submit').click();
-      await expect(panel.getByTestId('bill-total')).toContainText('58.00');
-      await expect(panel.getByRole('button', { name: '作废 搓背' })).toBeVisible();
+      await expect(page.getByRole('dialog').filter({ hasText: '加项目' })).toHaveCount(0);
       await panel.getByTestId('action-swap').click();
       const swap = page.getByRole('dialog').filter({ hasText: '换牌 ·' });
       await swap.locator('#swap-code').fill(tag2!);
       await swap.getByRole('button', { name: '顾客要求换柜' }).click();
       await swap.getByTestId('swap-submit').click();
       await expect(panel.getByTestId('bill-tag')).toHaveText(tag2!);
-      await expect(panel.getByTestId('bill-total')).toContainText('58.00');
 
-      // ③ 去收银台：带着这张手牌过去；清单上标着签赠；账单只读
+      // ③ 去收银台：带着这张手牌过去；清单上标着签赠；加项目、作废在这里，换牌不在
       await panel.getByTestId('go-cashier').click();
       await expect(page).toHaveURL(/\/cashier/);
       await expect(page.getByRole('heading', { name: '收银台 · 待结账' })).toBeVisible();
@@ -279,12 +275,26 @@ test.describe('8.1.15 发卡台与收银台', () => {
       await expect(row).toContainText(memberName);
       await expect(row).toContainText('L4');
       await expect(page.getByTestId(`queue-${tag2}-gift`)).toContainText('签赠 1');
-      await expect(panel.getByTestId('cashier-readonly-hint')).toContainText('收银台只看不改');
-      for (const id of ['action-add', 'action-swap', 'action-more', 'bill-ticket-change']) await expect(panel.getByTestId(id), id).toHaveCount(0);
-      await expect(panel.getByRole('button', { name: /^作废 / })).toHaveCount(0);
-      await expect(panel).toContainText('搓背');
+      await expect(panel.getByTestId('cashier-issue-hint')).toContainText('换牌、同行在发卡台');
+      for (const id of ['action-swap', 'action-more']) await expect(panel.getByTestId(id), id).toHaveCount(0);
+      // 8.1.44：账单区放大，抬头不再重复手牌、入场、在店时长（清单上选中的那一行写着）
+      await expect(page.getByTestId('cashier-layout')).toHaveAttribute('data-expanded', 'true');
+      await expect(panel.getByTestId('bill-stay')).toBeHidden();
+      await expect(page.getByTestId('queue-selected-stay')).toContainText('入场');
       await page.keyboard.press('F4');
-      await expect(page.getByRole('dialog').filter({ hasText: '加项目' })).toHaveCount(0);
+      const add = page.getByRole('dialog').filter({ hasText: '加项目' });
+      await add.getByTestId('item-搓背').click();
+      await add.getByTestId('add-items-submit').click();
+      await expect(panel.getByTestId('bill-total')).toContainText('58.00');
+      await expect(panel.getByRole('button', { name: '作废 搓背' })).toBeVisible();
+      // 备注板块：客诉标签 + 经办人，清单上标出「客诉」
+      const remarks = panel.getByTestId('remarks-board');
+      await remarks.getByTestId('remark-tags').getByRole('button', { name: '客诉' }).click();
+      await remarks.getByTestId('remark-note').fill('E2E：嫌水温低');
+      await remarks.getByTestId('remark-submit').click();
+      await expect(remarks.getByTestId('remarks-list')).toContainText('E2E：嫌水温低');
+      await expect(remarks.getByTestId('remarks-list')).toContainText(me.displayName);
+      await expect(page.getByTestId(`queue-${tag2}-remark`)).toHaveText('客诉');
       // 权益与优惠：这张签赠能抵多少、谁发的、谁授权的、为什么
       const perks = panel.getByTestId('bill-perks');
       const giftRow = perks.getByTestId('bill-perk-gift');
@@ -344,15 +354,16 @@ test.describe('8.1.15 发卡台与收银台', () => {
     expect(open.length).toBeGreaterThan(0);
     const first = open[0]!.code;
     await expect(page.getByTestId(`queue-${first}`)).toBeVisible();
-    // 输完整牌号回车：选中这张、右边出账单（只读）
+    // 输完整牌号回车：选中这张、右边出账单（加项目、买角、打单、买单都在这里）
     await page.getByTestId('tag-search').fill(first);
     await page.keyboard.press('Enter');
     const panel = page.getByTestId('bill-panel');
     await expect(panel.getByTestId('bill-tag')).toHaveText(first);
     await expect(panel).toHaveAttribute('data-desk', 'cashier');
     await expect(panel.getByTestId('action-checkout')).toBeVisible();
-    await expect(panel.getByTestId('action-add')).toHaveCount(0);
-    // 回发卡台处理：带着这张牌过去
+    for (const id of ['action-add', 'action-buy', 'action-print']) await expect(panel.getByTestId(id), id).toBeVisible();
+    await expect(panel.getByTestId('action-checkout')).toHaveText(/买单/);
+    // 回发卡台换牌：带着这张牌过去
     await panel.getByTestId('go-issue').click();
     await expect(page).toHaveURL(/\/frontdesk/);
     await expect(page.getByTestId('bill-panel')).toHaveAttribute('data-desk', 'issue');

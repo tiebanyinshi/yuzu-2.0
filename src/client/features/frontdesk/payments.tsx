@@ -53,6 +53,13 @@ export interface WalletHint {
 }
 const VISIT_WALLET_HINT: WalletHint = { none: '本次结账的客人里没有会员。', rule: '只能用本次结账客人里的会员储值支付；同行朋友请合并到同一张结账单' };
 
+/** 这位会员这次最多能用储值付多少：可用余额（本金 + 赠金），当天充过值的再按储值额度封顶（8.0.4） */
+const walletCap = (m: PayMember) => Math.min(m.principalBalance + m.bonusBalance, m.spendQuota ? m.spendQuota.remaining : Number.MAX_SAFE_INTEGER);
+
+/** 能「补齐到应收」的一笔：金额能改（券、扫码到账、验过的券、优惠的金额不能随手改），补完以后大于 0 */
+const fillable = (r: PayRow, cents: number | null, remaining: number | null) =>
+  remaining !== null && remaining !== 0 && !['store_coupon', 'discount'].includes(r.method) && !r.payTx && !r.verification && (cents ?? 0) + remaining > 0;
+
 export interface PayRow {
   id: number;
   method: CheckoutMethod;
@@ -229,7 +236,11 @@ export function usePayRows(opts: {
       const row = newRow(method, method === 'store_coupon' ? 0 : Math.max(0, remaining ?? 0));
       if (method === 'wallet') {
         const m = opts.members?.find((x) => !rows.some((r) => r.member?.id === x.id));
-        if (m) row.member = m;
+        if (m) {
+          row.member = m;
+          // 混合支付（8.1.44）：储值默认扣到余额（与当天的储值额度）为止，剩下的再点别的方式补，默认就是还差的部分
+          row.amount = centsToInput(Math.max(0, Math.min(remaining ?? 0, walletCap(m))));
+        }
       }
       setRows((list) => [...list, row]);
     });
@@ -237,6 +248,8 @@ export function usePayRows(opts: {
   const addPreset = (method: CheckoutMethod, amount: number, patch: Partial<PayRow>) => setRows((list) => [...list, { ...newRow(method, amount), ...patch }]);
   const update = (id: number, patch: Partial<PayRow>) => edit(() => setRows((list) => list.map((r) => (r.id === id ? { ...r, ...patch } : r))));
   const remove = (id: number) => edit(() => setRows((list) => list.filter((x) => x.id !== id)));
+  /** 这一笔补齐到应收（8.1.44 混合支付）：把还差的加到这一笔上，或把多收的从这一笔里减掉 */
+  const fill = (id: number) => edit(() => setRows((list) => list.map((r, i) => (r.id === id && remaining !== null ? { ...r, amount: centsToInput(Math.max(0, (rowCents[i] ?? 0) + remaining)) } : r))));
   /** 授权弹窗签发后记到那一笔上（不经过 edit：授权时表单没有锁） */
   const setGrant = (id: number, grant: DiscountGrant) => setRows((list) => list.map((r) => (r.id === id ? { ...r, grant } : r)));
 
@@ -293,6 +306,7 @@ export function usePayRows(opts: {
     addRow,
     addPreset,
     update,
+    fill,
     remove,
     setGrant,
     payments,
@@ -382,6 +396,7 @@ export function PaymentsSection({
               onChange={(patch) => pay.update(r.id, patch)}
               onAuthorize={() => setAuthorizing(r.id)}
               onRemove={() => pay.remove(r.id)}
+              onFill={fillable(r, pay.rowCents[i] ?? null, pay.remaining) ? () => pay.fill(r.id) : undefined}
               walletHint={walletHint}
               coupons={coupons}
               arAccounts={arAccounts.data ?? []}
@@ -438,6 +453,7 @@ export function PayRowEditor({
   onChange,
   onAuthorize,
   onRemove,
+  onFill,
   walletHint = VISIT_WALLET_HINT,
   coupons,
   arAccounts = [],
@@ -453,6 +469,8 @@ export function PayRowEditor({
   onChange: (patch: Partial<PayRow>) => void;
   onAuthorize: () => void;
   onRemove: () => void;
+  /** 收款合计还不等于应收时：把这一笔补齐（加上还差的或减去多收的）；不能补的不传 */
+  onFill?: () => void;
   /** 选储值会员时的说明（手牌结账与桌台结账不同） */
   walletHint?: WalletHint;
   coupons?: CouponSource;
@@ -566,6 +584,11 @@ export function PayRowEditor({
           </>
         )}
         <span className="flex-1" />
+        {onFill && (
+          <Button size="sm" variant="ghost" onClick={onFill} disabled={locked} data-testid={`pay-fill-${row.method}`}>
+            补齐到应收
+          </Button>
+        )}
         <button
           type="button"
           aria-label="移除这笔收款"

@@ -121,8 +121,8 @@ test.describe('8.0.8 前台整改', () => {
       const guest = await checkinGuest(page, 'female', LABEL);
       await relogin(page, 'xiaozhou');
 
-      // ① 前台加项目：点护理项目 → 选技师那一步点「交给钟房派钟」→ 挂账
-      await page.goto(`/crm/frontdesk?v=${guest.visitId}`);
+      // ① 收银台加项目（8.1.44 起）：点护理项目 → 选技师那一步点「交给钟房派钟」→ 挂账
+      await page.goto(`/crm/cashier?v=${guest.visitId}`);
       const panel = page.getByTestId('bill-panel');
       await expect(panel.getByTestId('bill-tag')).toHaveText(guest.tag);
       await panel.getByTestId('action-add').click();
