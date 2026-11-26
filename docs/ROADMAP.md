@@ -306,6 +306,11 @@
   - `470`（`470_room_center_futian.sql`，批次 2）：登记单加类型 `kind`（普通 / 括单 / 补单，FT-07、FT-19）、结束方式加「撤房」「补单」（FT-09、FT-19）；房间事件加撤房、补单、房费；钟单加 `room_neutral`（撤掉的、补录的钟不算用过房间，不让房间转待清）。回滚 `docs/rollback/470_room_center_futian.down.sql`。
   - `471`（`471_hall_wormhole.sql`，批次 4）：休息大厅分区 `hall_zones` 与空间上的 `hall_zone_id`（FT-15）；虫洞使用单 `wormhole_stays`（FT-18，只能开着 → 结束）；房间事件加同一工位加项目、零售与杂项、虫洞入住 / 离开。回滚 `docs/rollback/471_hall_wormhole.down.sql`。
   - `472`（`472_room_fee_charges.sql`，后续：店主定房费只在收银台收）：房费记录 `room_fee_charges`（哪张登记单的房费记在哪一行明细上，只追加）。回滚 `docs/rollback/472_room_fee_charges.down.sql`。
+- **数据库评估与整改 8.1.47（店主 2026-11-26「审查 PostgreSQL Schema、出评估报告、补数据字典」，报告与方案见 `docs/DB_REVIEW_V8147.md`）**：迁移号 `480`–`489`：
+  - `480`（`480_fk_indexes.sql`）：272 个外键补以它打头的索引（可空的列建部分索引；指向 `staff`、`stores` 的例外）、读卡器最后一次刷卡的索引、删掉与主键重复的 `wecom_pushes_recent_idx`。回滚 `docs/rollback/480_fk_indexes.down.sql`。
+  - `481`（`481_schema_comments.sql`）：全部表与 637 列的库内注释（COMMENT ON，取自建表那份迁移的注释），`docs/DATA_DICTIONARY.md` 由它生成。回滚 `docs/rollback/481_schema_comments.down.sql`。
+  - `482`（`482_store_fks.sql`）：8 张有 `store_id` 却没挂门店外键的表补外键（先 NOT VALID 再 VALIDATE）。回滚 `docs/rollback/482_store_fks.down.sql`。
+  - `483`（`483_archive_tables.sql`）：位置事件、轨迹段、对外调用记录、企业微信推送记录的归档表 `archived_*`，原表只追加的触发器在归档任务里放行 DELETE。回滚 `docs/rollback/483_archive_tables.down.sql`（已归档的先挪回原表）。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
