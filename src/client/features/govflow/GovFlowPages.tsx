@@ -39,8 +39,9 @@ import { PettyActions, PettyPanel } from './PettyPages';
 import { ContractPanel, ContractsPanel } from './ContractPages';
 import { PaymentPanel, PaymentsPanel } from './PaymentPages';
 import { ExpensePanel } from './ExpensePages';
+import { HrBatchPanel, HrPanel } from './HrPages';
 
-type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'expense' | 'roles';
+type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'expense' | 'hr' | 'roles';
 const STATUS_TONE: Record<GfStatus, 'neutral' | 'pine' | 'moss' | 'yuzu' | 'ember' | 'clay' | 'lake' | 'ink'> = {
   draft: 'neutral',
   reviewing: 'lake',
@@ -83,6 +84,7 @@ function GovHome() {
     { value: 'contracts', label: '合同' },
     { value: 'payments', label: '付款' },
     { value: 'expense', label: '报销出差用印' },
+    { value: 'hr', label: 'HR 付款与分摊' },
     ...(meta.data?.canManageRoles ? [{ value: 'roles' as const, label: '角色映射' }] : []),
   ];
   return (
@@ -111,6 +113,10 @@ function GovHome() {
           <SpecialsPanel />
         ) : box === 'suppliers' ? (
           <SupplierList />
+        ) : box === 'hr' ? (
+          meta.data ? (
+            <HrPanel meta={meta.data} />
+          ) : null
         ) : box === 'expense' ? (
           meta.data ? (
             <ExpensePanel meta={meta.data} />
@@ -355,6 +361,7 @@ function DocDetailPage({ id }: { id: number }) {
 
       {d.docType === 'sku_batch' && <SkuBatchReviewPanel doc={d} onDecisions={setDecisions} />}
       {d.docType === 'petty_purchase' && <PettyActions doc={d} onDone={() => q.refetch()} />}
+      {d.docType === 'hr_batch' && <HrBatchPanel doc={d} meta={meta.data} onDone={() => q.refetch()} />}
       {d.docType === 'payment' && <PaymentPanel doc={d} meta={meta.data} onDone={() => q.refetch()} />}
       {d.docType === 'contract' && <ContractPanel doc={d} meta={meta.data} onDone={(next) => (next ? navigate(`/oa/gov/${next}`) : q.refetch())} />}
       {typeof d.payload.supplierId === 'number' && (

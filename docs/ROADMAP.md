@@ -290,6 +290,7 @@
   - `430`（`430_gf_contract.sql`，P04）：事项类型加合同；合同版本 `gf_contract_versions`（初版 / 减金额保留原审批 / 核心变更重新路由，只追加）。回滚 `docs/rollback/430_gf_contract.down.sql`。
   - `440`（`440_gf_payment.sql`，P05）：事项类型加付款申请；出纳付款记录 `gf_payouts`（银行流水号唯一，只追加）；微信特批加确认时的收款账号 `payee_account`。回滚 `docs/rollback/440_gf_payment.down.sql`。
   - `450`（`450_gf_expense.sql`，P06）：事项类型加报销、出差、商务招待、用印证照；部门月度差旅批复额度 `gf_travel_budgets`、差旅台账 `gf_travel_ledger`（只追加）、证照 `gf_licenses`、纸质证照借还 `gf_license_loans`。回滚 `docs/rollback/450_gf_expense.down.sql`。
+  - `460`（`460_gf_hr.sql`，P07）：事项类型加 HR 付款批次；批次 `gf_hr_batches`（批次号唯一、常规批次同部门同期唯一）、人员明细 `gf_hr_batch_lines`、出纳复核 `gf_hr_checks`、批次付款 `gf_hr_payouts`、分摊规则与版本 `gf_alloc_rules` / `gf_alloc_rule_versions`、分摊执行与冲正 `gf_alloc_runs`（明细、复核、付款、版本、分摊都只追加）。回滚 `docs/rollback/460_gf_hr.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
