@@ -60,7 +60,7 @@ async function memberBalance(page: Page, q: string) {
 test.describe('前台流程', () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '流程只在门店电脑尺寸执行一次');
 
-  test('接待同行、男女牌防呆、挂账、作废、换牌、预结账，全程不扣会员余额', async ({ page }) => {
+  test('接待同行、男女牌防呆、换牌（发卡台），挂账、作废、预结账（收银台），全程不扣会员余额', async ({ page }) => {
     await login(page, 'xiaozhou');
     await clickNav(page, '发卡台');
     await expect(page.getByRole('heading', { name: '发卡台 · 在店手牌' })).toBeVisible();
@@ -95,6 +95,20 @@ test.describe('前台流程', () => {
     await expect(panel.getByTestId('bill-group')).toContainText(femaleTag!);
     await expect(panel.getByTestId('bill-total')).toContainText('0.00');
 
+    // 换牌（发卡台）：手牌损坏，原牌自动勾选锁定；账单跟着客人走
+    await panel.getByTestId('action-swap').click();
+    const swap = page.getByRole('dialog').filter({ hasText: '换牌 ·' });
+    await swap.locator('#swap-code').fill(maleTag2!);
+    await swap.getByRole('button', { name: '手牌损坏' }).click();
+    await swap.getByTestId('swap-submit').click();
+    await expect(panel.getByTestId('bill-tag')).toHaveText(maleTag2!);
+    await expect(page.getByTestId(`tag-${maleTag}`)).toHaveAttribute('data-state', 'locked');
+
+    // 加项目、作废、预结账在收银台（8.1.15 / 8.1.44）：从客人卡带着这张手牌过去
+    await panel.getByTestId('go-cashier').click();
+    await expect(page.getByTestId('cashier-queue')).toBeVisible();
+    await expect(panel).toHaveAttribute('data-desk', 'cashier');
+
     // F4 挂账：搓背 + 柚子气泡水
     await page.keyboard.press('F4');
     const add = page.getByRole('dialog').filter({ hasText: '加项目' });
@@ -102,7 +116,7 @@ test.describe('前台流程', () => {
     await add.getByTestId('item-柚子气泡水').click();
     await add.getByTestId('add-items-submit').click();
     await expect(panel.getByTestId('bill-total')).toContainText('80.00');
-    await expect(page.getByTestId(`tag-${maleTag}`)).toContainText('80');
+    await expect(page.getByTestId(`queue-${maleTag2}`)).toContainText('80');
 
     // 作废本人刚登记的气泡水（必须选原因）
     await panel.getByRole('button', { name: '作废 柚子气泡水' }).click();
@@ -113,20 +127,7 @@ test.describe('前台流程', () => {
     await expect(panel.getByTestId('bill-total')).toContainText('58.00');
     await expect(panel).toContainText('已作废 1 项');
 
-    // 换牌：手牌损坏，原牌自动勾选锁定；账单跟着客人走
-    await panel.getByTestId('action-swap').click();
-    const swap = page.getByRole('dialog').filter({ hasText: '换牌 ·' });
-    await swap.locator('#swap-code').fill(maleTag2!);
-    await swap.getByRole('button', { name: '手牌损坏' }).click();
-    await swap.getByTestId('swap-submit').click();
-    await expect(panel.getByTestId('bill-tag')).toHaveText(maleTag2!);
-    await expect(panel.getByTestId('bill-total')).toContainText('58.00');
-    await expect(page.getByTestId(`tag-${maleTag}`)).toHaveAttribute('data-state', 'locked');
-
-    // 预结账在收银台（8.1.15）：从客人卡带着这张手牌过去；同行两张手牌合并汇总，含门票（R1.2），不收款
-    await panel.getByTestId('go-cashier').click();
-    await expect(page.getByTestId('cashier-queue')).toBeVisible();
-    await expect(panel).toHaveAttribute('data-desk', 'cashier');
+    // 预结账：同行两张手牌合并汇总，含门票（R1.2），不收款
     await page.keyboard.press('F8');
     const preview = page.getByTestId('preview');
     await expect(preview).toContainText(femaleTag!);
@@ -278,7 +279,8 @@ test.describe('前台布局', () => {
     await expect(panel.getByTestId('bill-tag')).toHaveText('A8075');
     await expect(panel.getByTestId('bill-group')).toContainText('A8076');
     const total = await panel.getByTestId('bill-total').boundingBox();
-    const addBtn = await panel.getByTestId('action-add').boundingBox();
+    // 8.1.44：发卡台的客人卡底部是换牌（加项目在收银台）
+    const addBtn = await panel.getByTestId('action-swap').boundingBox();
     expect(total!.x + total!.width).toBeLessThanOrEqual(viewport!.width);
     expect(addBtn!.y + addBtn!.height).toBeLessThanOrEqual(viewport!.height);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
@@ -290,7 +292,7 @@ test.describe('前台布局', () => {
     }
   });
 
-  test('结账对话框：储值只能用本次结账客人里的会员（不再搜索其他会员）；登记现金后无横向滚动', async ({ page }) => {
+  test('结账对话框：储值只能用本次结账客人里的会员（不再搜索其他会员）；买单时查会员；登记现金后无横向滚动', async ({ page }) => {
     await login(page, 'linlan');
     await page.goto('/crm/frontdesk');
     await expect(page.getByTestId('tag-board')).toBeVisible();
@@ -303,6 +305,14 @@ test.describe('前台布局', () => {
     await expect(page.getByTestId('pay-row-wallet')).toContainText('本次结账的客人里没有会员');
     await expect(page.getByTestId('pay-row-wallet')).toContainText('同行朋友请合并到同一张结账单');
     await expect(page.getByLabel('查找付款会员')).toHaveCount(0);
+    // 8.1.44：买单时按手机号查会员——写余额与充没充过值，能记到这张散客牌上（只看不记，可重复执行）
+    const someone = ((await (await page.request.get('/api/members?q=1990&limit=5')).json()) as { phone: string; memberNo: string; status: string }[]).find((m) => m.status === 'active')!;
+    await page.getByTestId('checkout-member-q').fill(someone.phone);
+    await page.getByTestId('checkout-member-search').click();
+    const hit = page.getByTestId(`checkout-member-hit-${someone.memberNo}`);
+    await expect(hit).toContainText('余额');
+    await expect(hit).toContainText(/充过|没充过值|有余额/);
+    await expect(hit.getByTestId('checkout-member-bind').or(hit.getByTestId('checkout-member-merge'))).toBeVisible();
     await page.getByTestId('pay-add-cash').click();
     await page.getByLabel('客人实给现金').fill('1000');
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);

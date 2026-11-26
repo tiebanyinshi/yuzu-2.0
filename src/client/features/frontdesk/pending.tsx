@@ -91,6 +91,9 @@ export interface FrontdeskPendingOp {
   autoRejected?: { at: string; message: string };
 }
 
+/** 在收银台处理「结果待确认」的几样：结账、退款单，与挂账（8.1.44 起加项目在收银台）；别的在发卡台 */
+export const CASHIER_OPS: readonly FrontdeskOpType[] = ['checkout', 'checkout_refund', 'bill_post'];
+
 export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   checkin: '接待发牌',
   bill_post: '挂账',

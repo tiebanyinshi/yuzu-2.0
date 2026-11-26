@@ -37,7 +37,7 @@ import { expireMemberBonus } from './bonus';
 import { cancelKitchenItem, createKitchenItems, kitchenStationsOf, loadDiningRules, takeDishLimits, type KitchenLine } from './dining';
 import { authorizeLineVoid } from './dining-808';
 import { assertSettled, getCheckout, Payment, recordCheckoutPayments, snapshotCheckoutItems, splitPayments } from './frontdesk/checkout';
-import { couponLines, memberCouponOptions } from './coupon-checkout';
+import { couponLines, memberCouponOptions, couponMomentOf } from './coupon-checkout';
 import { assertCanFix, businessDate, hashRequest, loadFrontdeskRules, nextDocNo, runIdempotent, saveKey, setTxTimeouts } from './frontdesk/common';
 import { loadPricedItems, priceLine } from './pricing';
 import { lockPaymentShift, openShiftOf } from './shifts';
@@ -701,6 +701,7 @@ export async function previewTableCheckout(deps: Deps, sessionIds: number[], at 
         rows.map((r) => r.billId),
       ),
       await businessDate(tx, deps, at),
+      couponMomentOf(await businessDate(tx, deps, at), at, deps.config.timezone),
     );
     // 合计含服务费；低消补足另算（收银勾了「补足低消」才加）
     return {
