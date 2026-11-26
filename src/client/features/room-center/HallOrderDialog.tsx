@@ -1,6 +1,6 @@
-// 休息大厅开单（福田店 FT-16，2026-11-26，docs/FUTIAN_1126.md）：一屏填完——手牌、项目（选技师等级 / 档次，写着各档价格）、技师性别、技师、床位
+// 休息大厅开单（福田店 FT-16，2026-11-26，docs/FUTIAN_1126.md）：一屏填完——手牌、客人性别、项目（选技师等级 / 档次，写着各档价格）、技师、床位
 // （按后台设的分区列，FT-15）；多张床位一行一张，点一次「全部提交」逐行提交、各自成单（每行各有自己的操作编号与「结果待确认」）。
-// 每一行就是一次房态中心登记（挂账 + 派钟 + 占床位）；技师下钟床位就空（FT-12）。轮钟的给队列里第一位空闲、能做这个项目、性别对的技师（前面几行选过的跳过）。
+// 每一行就是一次房态中心登记（挂账 + 派钟 + 占床位）；技师下钟床位就空（FT-12）。轮钟的给队列里第一位空闲、能做这个项目的技师（前面几行选过的跳过）；客人性别只列他能做的项目。
 
 import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -24,18 +24,19 @@ import { PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
 import { clockroomKey, roomUrl } from './queries';
 import { DUAL_LABELS, foundPosted } from './RegisterDialog';
 
-type TechGender = 'any' | 'male' | 'female';
+/** 客人性别（店主 2026-11-26 定）：只列这位客人能做的项目（价目里限定了男宾 / 女宾的） */
+type GuestGender = '' | 'male' | 'female';
 interface Row {
   id: string;
   bedId: number | null;
   tag: string;
   itemId: number | null;
   tier: PriceTier | null;
-  gender: TechGender;
+  gender: GuestGender;
   /** 技师号；空 = 轮钟 */
   techNo: string;
 }
-const newRow = (bedId: number | null = null): Row => ({ id: uuid(), bedId, tag: '', itemId: null, tier: null, gender: 'any', techNo: '' });
+const newRow = (bedId: number | null = null): Row => ({ id: uuid(), bedId, tag: '', itemId: null, tier: null, gender: '', techNo: '' });
 
 type Outcome = { state: 'idle' } | { state: 'done' } | { state: 'error'; message: string };
 
@@ -64,8 +65,7 @@ export function HallOrderDialog({ board, onClose, onDone }: { board: RoomCenterB
   const techOf = (r: Row, _i: number, cb: ClockroomBoard, used: Set<number>): BoardTechnician | null => {
     const item = items.find((x) => x.id === r.itemId);
     if (!item) return null;
-    const ok = (t: BoardTechnician) =>
-      (r.gender === 'any' || t.gender === r.gender) && !canServe(t, item, cb.techRules.tierByGrade) && !(cb.techRules.tierByGrade && r.tier && t.grade !== r.tier && item.prices.length > 1);
+    const ok = (t: BoardTechnician) => !canServe(t, item, cb.techRules.tierByGrade) && !(cb.techRules.tierByGrade && r.tier && t.grade !== r.tier && item.prices.length > 1);
     if (r.techNo.trim()) return cb.technicians.find((t) => t.techNo === r.techNo.trim() && t.active && !t.suspendedAt && (t.state === 'on' || t.state === 'rest') && ok(t)) ?? null;
     return cb.technicians.filter((t) => t.state === 'on' && !t.busy && !t.suspendedAt && !used.has(t.id) && ok(t)).sort((a, b) => a.position! - b.position!)[0] ?? null;
   };
@@ -93,7 +93,7 @@ export function HallOrderDialog({ board, onClose, onDone }: { board: RoomCenterB
       onClose={running ? () => {} : onClose}
       width="max-w-5xl"
       title="休息大厅开单"
-      description="一行一张床位：手牌、项目与档次（写着价格）、技师性别、技师（不填技师号按轮钟）、床位。点「全部提交」逐行提交，各自成单；没提交成的那一行写明原因，改好再提交。"
+      description="一行一张床位：手牌、客人性别、项目与档次（写着价格）、技师（不填技师号按轮钟）、床位。点「全部提交」逐行提交，各自成单；没提交成的那一行写明原因，改好再提交。"
       footer={
         <>
           <span className="mr-auto self-center text-[13px] text-ink-3">
@@ -141,7 +141,7 @@ export function HallOrderDialog({ board, onClose, onDone }: { board: RoomCenterB
             onClick={() => {
               const used = new Set(rows.map((x) => x.bedId));
               const prev = rows[rows.length - 1];
-              setRows((rs) => [...rs, { ...newRow(beds.find((b) => !used.has(b.spaceId))?.spaceId ?? null), itemId: prev?.itemId ?? null, tier: prev?.tier ?? null, gender: prev?.gender ?? 'any' }]);
+              setRows((rs) => [...rs, { ...newRow(beds.find((b) => !used.has(b.spaceId))?.spaceId ?? null), itemId: prev?.itemId ?? null, tier: prev?.tier ?? null, gender: '' }]);
             }}
             data-testid="rc-hall-add-row"
           >
@@ -197,15 +197,17 @@ function HallRow({
       ? '这张床位别的行选了'
       : !r.tag.trim()
         ? '请填手牌号'
-        : !item
-          ? '请选项目'
-          : !tech
-            ? r.techNo.trim()
-              ? `${r.techNo} 号不能做（没上牌、性别或等级不对）`
-              : '没有空闲、能做的技师'
-            : price === null
-              ? '这一档没有价格'
-              : null;
+        : !r.gender
+          ? '请选客人性别'
+          : !item
+            ? '请选项目'
+            : !tech
+              ? r.techNo.trim()
+                ? `${r.techNo} 号不能做（没上牌或等级不对）`
+                : '没有空闲、能做的技师'
+              : price === null
+                ? '这一档没有价格'
+                : null;
   const done = outcome.state === 'done';
   register(async () => {
     if (done) return true;
@@ -270,12 +272,14 @@ function HallRow({
           项目
           <Select value={r.itemId ?? ''} disabled={lock} onChange={(e) => onChange({ itemId: e.target.value ? Number(e.target.value) : null, tier: null })} data-testid="rc-hall-item">
             <option value="">选项目</option>
-            {items.map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.catalogCode ? `${i.catalogCode} ` : ''}
-                {i.name}
-              </option>
-            ))}
+            {items
+              .filter((i) => !i.gender || !r.gender || i.gender === r.gender)
+              .map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.catalogCode ? `${i.catalogCode} ` : ''}
+                  {i.name}
+                </option>
+              ))}
           </Select>
         </label>
         <label className="flex flex-col gap-1 text-[12px] font-semibold text-ink-3">
@@ -293,9 +297,9 @@ function HallRow({
           </Select>
         </label>
         <label className="flex flex-col gap-1 text-[12px] font-semibold text-ink-3">
-          技师性别
-          <Select value={r.gender} disabled={lock} onChange={(e) => onChange({ gender: e.target.value as TechGender })} data-testid="rc-hall-gender">
-            <option value="any">不限</option>
+          客人性别
+          <Select value={r.gender} disabled={lock} onChange={(e) => onChange({ gender: e.target.value as GuestGender, itemId: null, tier: null })} data-testid="rc-hall-gender">
+            <option value="">选性别</option>
             <option value="male">男</option>
             <option value="female">女</option>
           </Select>

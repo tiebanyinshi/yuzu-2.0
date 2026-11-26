@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { invalidateRevenue, useBusinessToday } from '../../lib/revenue';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { Banknote, CircleCheck, Clock3, LogOut, ShieldCheck, Ticket, Undo2 } from 'lucide-react';
+import { Banknote, BedDouble, CircleCheck, Clock3, LogOut, ShieldCheck, Ticket, Undo2 } from 'lucide-react';
 import { CHECKOUT_METHOD_LABELS, isFreeTicket, priceTicket, ticketChangeNeedsGrant, type CheckoutDetail, type CheckoutPreview, type RefundShiftOptions, type RefundSummary } from '@shared/checkout';
 import { minutesText } from '@shared/benefits';
 import type { CheckoutCouponOption } from '@shared/coupons';
@@ -139,7 +139,8 @@ export function CheckoutDialog({
     if (!v.needsTicket) return v.amount;
     const t = ticketTypes.data?.find((x) => x.id === ticketPick[v.visitId]);
     // 跳档宽限按这位客人的（含会员的浴票延迟，v0.7.25 续）
-    return t ? v.linesAmount + priceTicket(t, v.checkedInAt, pricedAt, v.graceMinutes ?? p!.graceMinutes).amount : null;
+    const fees = (v.roomFees ?? []).reduce((n, f) => n + f.amount, 0);
+    return t ? v.linesAmount + priceTicket(t, v.checkedInAt, pricedAt, v.graceMinutes ?? p!.graceMinutes).amount + fees : null;
   });
   const total = p && amounts.every((a) => a !== null) ? amounts.reduce<number>((s, a) => s + a!, 0) : null;
 
@@ -584,6 +585,14 @@ function ReviewTable({
               {amounts[i] !== null ? <Money cents={amounts[i]!} className="text-[16px] font-bold" /> : <span className="text-[12.5px] text-clay">待选票种</span>}
             </div>
             <div className="mt-1.5 space-y-0.5 pl-0.5 text-[12.5px] text-ink-2">
+              {/* 房费（福田店：房间按时间计费的只在收银台收，结账时按那一刻重算） */}
+              {(v.roomFees ?? []).map((f) => (
+                <p key={f.room} className="flex flex-wrap items-center gap-x-2" data-testid={`checkout-roomfee-${v.tagCode}`}>
+                  <BedDouble className="size-3.5 text-pine" />
+                  房费 · {f.room}（计 {f.chargedMinutes} 分钟）
+                  <Money cents={f.amount} className="font-semibold" />
+                </p>
+              ))}
               {v.ticket ? (
                 <p className="flex flex-wrap items-center gap-x-2" data-testid={`checkout-ticket-${v.tagCode}`}>
                   <Ticket className="size-3.5 text-pine" />

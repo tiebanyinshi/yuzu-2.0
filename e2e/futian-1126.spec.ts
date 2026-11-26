@@ -5,7 +5,7 @@
 //   批次 2：FT-02 输编号即选、默认不平铺；FT-07 括单；FT-06 限时换技师；FT-09 限时撤房（回空闲）；FT-19 补单；后台房态中心规则；CY-01 同组汇总。
 //   批次 3：FT-03 过夜客人先开房、再在详情里拍照补传留宿确认单（待补传 → 已上传 1 张）；FT-04 退房后待清的卡片标「留宿」；
 //           FT-13 康美部员工登录只看房态与手牌号（没有项目、技师、金额，详情里没有历史与动作）。
-//   批次 4：FT-15 后台建分区、把床位归进去；FT-16 大厅开单两张床位一次提交；FT-12 下钟床位即空；FT-14 同一间房加项目；
+//   批次 4：FT-15 后台建分区、把床位归进去；FT-16 大厅开单两张床位一次提交（性别是客人性别）；FT-12 下钟床位即空；FT-14 同一间房加项目；
 //           FT-17 零售商品挂到手牌、足浴房「点餐」带着手牌进点单页；FT-18 虫洞下单三步、客人离开。
 //           （时限超过以后拒绝、自定义时限、房费、同类型换房、业绩归属在 tests/futian-1126.test.ts 里按时刻核对）
 // 只在独立演示库跑，数据自己备、可以重复跑：空间台账里没有专用的两个空间（三层的 Q385、Q386）就导入。
@@ -483,6 +483,8 @@ test.describe('福田店整改 2026-11-26', () => {
     const row0 = hall.getByTestId('rc-hall-row-0');
     await row0.getByTestId('rc-hall-bed').selectOption({ label: B1 });
     await row0.getByTestId('rc-hall-tag').fill(a!.tag);
+    // 客人性别（店主 2026-11-26 定）：只列这位客人能做的项目
+    await row0.getByTestId('rc-hall-gender').selectOption('male');
     await row0.getByTestId('rc-hall-item').selectOption({ label: `${ITEM.code} ${ITEM.name}` });
     await row0.getByTestId('rc-hall-techno').fill(TECHS[0].techNo);
     await expect(row0.getByTestId('rc-hall-row-state')).toContainText('98.00');
@@ -490,6 +492,8 @@ test.describe('福田店整改 2026-11-26', () => {
     const row1 = hall.getByTestId('rc-hall-row-1');
     await row1.getByTestId('rc-hall-bed').selectOption({ label: B2 });
     await row1.getByTestId('rc-hall-tag').fill(b!.tag);
+    await row1.getByTestId('rc-hall-gender').selectOption('male');
+    await row1.getByTestId('rc-hall-item').selectOption({ label: `${ITEM.code} ${ITEM.name}` });
     await row1.getByTestId('rc-hall-techno').fill(TECHS[1].techNo);
     await expect(row1.getByTestId('rc-hall-row-state')).toContainText(TECHS[1].techNo);
     await page.getByTestId('rc-hall-submit').click();
