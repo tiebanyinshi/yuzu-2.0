@@ -17,7 +17,6 @@ export const ERP_MODULE_KEYS = [
   'contracts',
   'payments',
   'expenses',
-  'pettyPool',
   'invoices',
   'salesInvoices',
   'receivables',
@@ -206,28 +205,17 @@ export const ERP_MODULES: Record<ErpModuleKey, ErpModuleDef> = {
   expenses: {
     label: '费用与备用金',
     group: '财务',
-    description: '费用报销（按采购单或按次；发票、税点、科目、用途）、备用金打款与退回、每日平账（v0.7.7，飞书需求 RQ-005）',
+    description:
+      '费用报销（按采购单或按次；发票、税点、科目、用途）、备用金打款与退回、每日平账（v0.7.7，飞书需求 RQ-005）；备用金申用：申用占用部门备用金的可用额度、提交报销、确认后不再占用（8.1.42）',
     path: '/erp/expenses',
     // 旧账对照（v0.7.10）：8–10 月旧账只读，不进正式账
     pages: ['/erp/expenses', '/erp/petty', '/erp/ledger', '/erp/audit', '/erp/legacy'],
     apis: ['/api/erp/expenses', '/api/erp/petty', '/api/erp/ledger', '/api/erp/audit', '/api/erp/legacy'],
-    perms: ['expense.read'],
+    // 8.1.42：只有「备用金申用」的岗位（采购）也进得来，只看得到申用那一页
+    perms: ['expense.read', 'petty.use'],
     defaultEnabled: true,
     // 部门、供应商档案在库存模块里；按采购单报销读采购单（采购模块关着时只能按次报销）
     requires: ['inventory'],
-  },
-  // 零采备用金（8.1.9，docs/ERP_V819.md 第 2 节）：供应链零采专用的备用金面板；报销单仍在「费用与备用金」登记
-  pettyPool: {
-    label: '零采备用金',
-    group: '供应链',
-    description: '供应链零采专用：申用占用额度、提交报销（未补单 / 已补单 + 采购单）、报销单确认后自动回补；面板写总额、已占用、剩余可用、待报销笔数（8.1.9）',
-    path: '/erp/pool',
-    pages: ['/erp/pool'],
-    apis: ['/api/erp/pool'],
-    perms: ['pool.read'],
-    defaultEnabled: true,
-    // 选采购单读采购、库存的档案；报销单在费用模块里登记
-    requires: ['inventory', 'expenses'],
   },
   // 进项发票台账（8.0.3，docs/BUDGET_INVOICES.md 第 3 节）：三单的供应商发票、报销的专票普票、直接登记的都在这里
   invoices: {
@@ -325,7 +313,7 @@ export const ERP_MODULES: Record<ErpModuleKey, ErpModuleDef> = {
  */
 export const ERP_NAV_GROUPS: readonly { key: string; title: string; modules: readonly ErpModuleKey[] }[] = [
   { key: 'approvals', title: '审批', modules: ['approvals'] },
-  { key: 'supply', title: '供应链', modules: ['inventory', 'purchasing', 'requests', 'shop', 'deptStock', 'pettyPool', 'assets', 'linen'] },
+  { key: 'supply', title: '供应链', modules: ['inventory', 'purchasing', 'requests', 'shop', 'deptStock', 'assets', 'linen'] },
   { key: 'finance', title: '财务', modules: ['payments', 'payables', 'expenses', 'invoices', 'salesInvoices', 'receivables', 'bank'] },
   { key: 'contracts', title: '合同', modules: ['contracts'] },
   // 已经挪到后台的：页面不在 ERP 里。8.0.18 在 ERP 导航里各留了一条跳转，8.0.19 去掉；这一组留着是为了「每个模块都有归属」，
@@ -407,6 +395,8 @@ export const ERP_OP_TYPES = [
   'coupon_batch',
   // 批量发券（8.0.4 需求表 06）：圈一批会员发券，没收到结果时查回、原样重提或确认作废
   'coupon_campaign',
+  // 生成礼品卡（8.1.40，Codex 审查 8a7023d）：回复丢了查回、原样重提或确认作废，不会多生成一批
+  'gift_card_batch',
   'coupon_issue',
   // 硬件连接（v0.7.21）：登记设备、打印任务（断网后刷新也要能查回、重提或作废）
   'device_create',
@@ -478,8 +468,8 @@ export const ERP_OP_TYPES = [
   'stock_transfer',
   // 8.1.1 UI 工作台：发布、回滚（迁移 164；编号记在 studio_versions.client_key）
   'studio_publish',
-  // 8.1.9 零采备用金：申用（占额度，断网后刷新也要能查回、重提或作废）
-  'pool_use',
+  // 备用金申用（8.1.42；原来 8.1.9 零采备用金的 pool_use）：占额度，断网后刷新也要能查回、重提或作废
+  'petty_use',
   // 8.1.9 库管入库台账导入（一次进很多库存，断网后也要能查回、重提或作废）
   'receipt_import',
   // 8.1.20 出入库台账导入（入库、领料一次进很多单）
@@ -497,6 +487,9 @@ export const ERP_OP_TYPES = [
   'oa_attendance_setup',
   // OA-05 排班保存（一批格子一个编号）
   'oa_schedule_save',
+  // 员工办公 v1.1 第 2 批：排班发布、排班授权
+  'oa_schedule_publish',
+  'oa_schedule_grant',
   // OA-06 打卡
   'oa_punch',
   // OA-07 提交人脸录入
@@ -518,6 +511,8 @@ export const ERP_OP_TYPES = [
   'oa_approval_act',
   // OA-14 建群
   'oa_im_group',
+  // 员工办公 v1.1 第 5 批：公司公告（发布 / 撤回）
+  'oa_announcement',
 ] as const;
 export type ErpOpType = (typeof ERP_OP_TYPES)[number];
 export const ERP_OP_LABELS: Record<ErpOpType, string> = {
@@ -543,6 +538,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   coupon_rule: '加发券规则',
   coupon_batch: '生成无记名券',
   coupon_campaign: '批量发券',
+  gift_card_batch: '生成礼品卡',
   coupon_issue: '发券给会员',
   device_create: '登记设备',
   device_job: '测试打印',
@@ -584,7 +580,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   ota_import: '渠道订单导入',
   stock_transfer: '门店间调拨',
   studio_publish: '工作台发布 / 回滚',
-  pool_use: '零采备用金申用',
+  petty_use: '备用金申用',
   receipt_import: '库管入库台账导入',
   ledger_import: '出入库台账导入',
   gift_type: '新建签赠券类型',
@@ -595,6 +591,8 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   oa_staff_import: '批量开通员工账号',
   oa_attendance_setup: '新建班次 / 打卡点 / 考勤组',
   oa_schedule_save: '保存排班',
+  oa_schedule_publish: '发布排班',
+  oa_schedule_grant: '排班授权',
   oa_punch: '打卡',
   oa_face_enroll: '提交人脸录入',
   oa_face_review: '人脸审核',
@@ -608,6 +606,7 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   oa_approval_submit: '提交审批',
   oa_approval_act: '处理审批',
   oa_im_group: '建群',
+  oa_announcement: '公司公告',
 };
 export interface ErpOpLookup {
   /** 已经登记成功：refId 是那张单据（退回 / 补付另给所在的打款） */

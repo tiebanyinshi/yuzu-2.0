@@ -18,7 +18,7 @@ describe('ERP 导航分组', () => {
     expect(groupOf('approvals').modules).toEqual(['approvals']);
     expect(groupOf('payables').title).toBe('财务');
     expect(groupOf('contracts').title).toBe('合同');
-    expect(groupOf('inventory').modules).toEqual(['inventory', 'purchasing', 'requests', 'shop', 'deptStock', 'pettyPool', 'assets', 'linen']);
+    expect(groupOf('inventory').modules).toEqual(['inventory', 'purchasing', 'requests', 'shop', 'deptStock', 'assets', 'linen']);
     for (const g of ERP_NAV_GROUPS) {
       for (const k of g.modules) {
         if (g.key === 'moved') expect(ERP_MODULES[k].group).toBe('后台');
@@ -52,12 +52,24 @@ describe('挪到后台的三个模块', () => {
     const staff = ADMIN_GROUPS.find((g) => g.key === 'staff')!;
     expect(staff.title).toBe('人员与行政');
     // OA-01：「组织架构」跟在「员工账号」后面；店主 2026-11-24（docs/BOARDS.md）：「门店与主体」归 ERP 板块
-    expect(staff.items).toEqual(['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'permissions', 'canteen', 'patrol']);
-    // 2026-11-25：「员工培训」跟在「工资条」后面（WCP 设置）
+    expect(staff.items).toEqual(['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'announcements', 'permissions', 'canteen', 'patrol']);
+    // 2026-11-25：「员工培训」「公司公告」跟在「工资条」后面（WCP 设置）
     expect(ADMIN_SECTION_MODULES).toEqual({ canteen: 'canteen', patrol: 'patrol' });
     // 8.1.1：设计师只有「工作台：编辑 / 发布」，也要进得了后台的「工作台」；OA-01：只有「组织架构与员工档案」的（人力行政部负责人）也进得了「组织架构」；OA-12：只有办公审批两项权限的也进得了「办公审批」
-    expect(ADMIN_STANDALONE_SECTIONS).toEqual(['dashboard', 'canteen', 'patrol', 'design', 'library', 'studio', 'staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training']);
-    for (const p of ['canteen.manage', 'patrol.read', 'patrol.manage', 'erp.revenue', 'hr.org', 'hr.attendance', 'oa.templates', 'oa.all', 'payroll.manage', 'training.manage'] as Permission[])
+    expect(ADMIN_STANDALONE_SECTIONS).toEqual(['dashboard', 'canteen', 'patrol', 'design', 'library', 'studio', 'staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'announcements']);
+    for (const p of [
+      'canteen.manage',
+      'patrol.read',
+      'patrol.manage',
+      'erp.revenue',
+      'hr.org',
+      'hr.attendance',
+      'oa.templates',
+      'oa.all',
+      'payroll.manage',
+      'training.manage',
+      'oa.announce',
+    ] as Permission[])
       expect(ADMIN_ENTRY_PERMISSIONS, p).toContain(p);
     // 权限没变：还是原来那几项
     expect(ADMIN_SECTIONS.canteen.perms).toEqual(ERP_MODULES.canteen.perms);

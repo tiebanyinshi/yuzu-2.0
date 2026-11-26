@@ -24,8 +24,8 @@ const TABS: readonly SubTab[] = [
   { key: 'giftcards', label: '礼品卡', testId: 'coupon-tab-giftcards' },
 ];
 
-/** 这一页上会留下「结果待确认」的三种：批量发券、生成无记名券、发券给会员 */
-const PENDING_TYPES = ['coupon_campaign', 'coupon_batch', 'coupon_issue'] as const;
+/** 这一页上会留下「结果待确认」的四种：批量发券、生成无记名券、发券给会员、生成礼品卡（8.1.40） */
+const PENDING_TYPES = ['coupon_campaign', 'coupon_batch', 'coupon_issue', 'gift_card_batch'] as const;
 
 export function CouponIssuePage() {
   const can = useCan();

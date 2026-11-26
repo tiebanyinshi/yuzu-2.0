@@ -53,6 +53,7 @@ async function candidates(db: Db, timeZone: string, at: Date, where: Fragment, f
     JOIN oa_shifts sh ON sh.id = o.shift_id
     LEFT JOIN oa_attendance_daily d ON d.staff_id = o.staff_id AND d.business_date = o.work_date AND d.shift_id = o.shift_id
     WHERE ${where}
+      AND o.status = 'published'
       AND (${liveSchedule(db)}
            -- 调店以后原门店已经发生的那一班照常结算：有打卡或已经结算过的不因为现在不在那家店就丢掉
            OR d.id IS NOT NULL
@@ -86,10 +87,10 @@ async function settleStaff(db: Sql, staffId: number, slots: Slot[], actorId: num
 /** 在调用方的事务里结算（先取员工的考勤锁） */
 async function settleSlots(tx: Tx, staffId: number, slots: Slot[], actorId: number | null): Promise<number> {
   await lockStaffAttendance(tx, [staffId]);
-  // 锁内再核对排班还在：读候选到取锁之间人事可能刚把这一班去掉（连同结果一起删了），不能再插回去（Codex 审查 199b9dd）
+  // 锁内再核对已发布的排班还在：读候选到取锁之间人事可能刚把这一班发布去掉（连同结果一起删了），不能再插回去（Codex 审查 199b9dd）
   const still = await tx<{ workDate: string; shiftId: number }[]>`
       SELECT work_date::text AS work_date, shift_id FROM oa_schedules
-      WHERE staff_id = ${staffId} AND work_date IN ${tx([...new Set(slots.map((s) => s.workDate))])}`;
+      WHERE staff_id = ${staffId} AND status = 'published' AND work_date IN ${tx([...new Set(slots.map((s) => s.workDate))])}`;
   const live = new Set(still.map((r) => `${r.workDate}|${Number(r.shiftId)}`));
   const kept = slots.filter((s) => live.has(`${s.workDate}|${s.shiftId}`));
   const covers = kept.length
@@ -288,10 +289,26 @@ export function registerOaAttendanceDailyRoutes(app: FastifyInstance, deps: Deps
   // 员工「我的考勤」：本人一个月（各门店的都算）
   app.get('/api/oa/me/attendance', { preHandler: guard() }, async (req): Promise<MyAttendance> => {
     const q = parse(MonthQuery, req.query ?? {});
-    const month = q.month ?? localMinute(new Date(), tz).date.slice(0, 7);
+    const today = localMinute(new Date(), tz).date;
+    const month = q.month ?? today.slice(0, 7);
     const [y, m] = month.split('-').map(Number) as [number, number];
+    const from = `${month}-01`;
     const end = shiftDate(m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`, -1);
-    const rows = await loadRows(sql, tz, sql`d.staff_id = ${req.actor.id} AND d.business_date BETWEEN ${`${month}-01`} AND ${end}`);
-    return { month, rows, summary: await staffMonthStats(sql, req.actor.id, month) };
+    const rows = await loadRows(sql, tz, sql`d.staff_id = ${req.actor.id} AND d.business_date BETWEEN ${from} AND ${end}`);
+    const pendingRows = await sql<{ id: number; date: string; shiftId: string; kind: string }[]>`
+      SELECT id, form->>'date' AS date, form->>'shiftId' AS shift_id, form->>'kind' AS kind
+      FROM oa_approvals
+      WHERE applicant_id = ${req.actor.id} AND template_code = 'makeup' AND status = 'pending'
+        AND form->>'date' BETWEEN ${from} AND ${end}
+      ORDER BY id DESC`;
+    const pendingMakeups = pendingRows
+      .filter((r) => /^\d+$/.test(r.shiftId ?? '') && !!r.date)
+      .map((r) => ({
+        date: r.date,
+        shiftId: Number(r.shiftId),
+        kind: (r.kind === '下班卡' ? 'out' : 'in') as 'in' | 'out',
+        approvalId: Number(r.id),
+      }));
+    return { month, today, rows, summary: await staffMonthStats(sql, req.actor.id, month), pendingMakeups };
   });
 }

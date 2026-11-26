@@ -4,10 +4,19 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FolderOpen, FolderPlus, Pencil, Upload } from 'lucide-react';
+import { FolderOpen, FolderPlus, Pencil, Search, Upload, X } from 'lucide-react';
 import { fileSizeText } from '@shared/floorplans';
 import { ORG_DEPARTMENTS } from '@shared/positions';
-import { TRAINING_ACCEPT, TRAINING_MAX_BYTES, trainingFormatLabel, type TrainingFile, type TrainingFileDetail, type TrainingFolder } from '@shared/training';
+import {
+  newTrainingUploadKey,
+  TRAINING_ACCEPT,
+  TRAINING_MAX_BYTES,
+  trainingFormatLabel,
+  type TrainingFile,
+  type TrainingFileDetail,
+  type TrainingFolder,
+  type TrainingSearchItem,
+} from '@shared/training';
 import { api, errorMessage } from '../../lib/api';
 import { cn, formatDateTime, uuid } from '../../lib/utils';
 import { DataTable, type DataColumn } from '../../components/DataTable';
@@ -22,19 +31,122 @@ import { DownloadButton, TrainingViewer } from './TrainingViewer';
 import { sendTrainingOp, useTrainingOps, type TrainingOp } from './ops';
 
 export function TrainingSection() {
+  const qc = useQueryClient();
   const folders = useTrainingFolders();
   const [selected, setSelected] = useState<number | null>(null);
   const [editing, setEditing] = useState<TrainingFolder | 'new' | null>(null);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchOpenId, setSearchOpenId] = useState<number | null>(null);
   const list = folders.data?.folders ?? [];
   const current = list.find((f) => f.id === selected) ?? list[0] ?? null;
+  const searchQuery = useQuery({
+    queryKey: trainingKeys.search(searchTerm),
+    queryFn: () => api.get<TrainingSearchItem[]>(`/api/training/search?q=${encodeURIComponent(searchTerm)}`),
+    enabled: searchTerm.length > 0,
+  });
+  const searchColumns: DataColumn<TrainingSearchItem>[] = [
+    {
+      key: 'title',
+      header: '标题',
+      cell: (x) => (
+        <span className={cn('font-semibold', !x.file.active && 'text-ink-4 line-through')}>
+          {x.file.title}
+          {!x.file.active && <Badge className="ml-2">已下架</Badge>}
+        </span>
+      ),
+    },
+    { key: 'folder', header: '文件夹', cell: (x) => <Badge tone={x.folderKind === 'public' ? 'pine' : 'lake'}>{x.folderName}</Badge> },
+    { key: 'kind', header: '类型', cell: (x) => trainingFormatLabel(x.file.current.mime) },
+    { key: 'size', header: '大小', numeric: true, cell: (x) => fileSizeText(x.file.current.sizeBytes) },
+    { key: 'viewers', header: '看过', numeric: true, cell: (x) => `${x.file.viewerCount ?? 0} 人` },
+    { key: 'at', header: '更新', cell: (x) => formatDateTime(x.file.current.createdAt) },
+  ];
   return (
     <AdminPage
       section="training"
       wide
-      description="培训文件按文件夹放：「培训资料」所有员工都看得到，部门文件夹只有这个部门的员工看得到（自己新建、不对应部门的所有人都看得到）。员工在「WCP → 员工培训」里看。"
+      description="培训文件按文件夹放：「培训资料」所有员工都看得到，部门文件夹只有这个部门的员工看得到（自己新建、不对应部门的所有人都看得到）。员工在「WCP → 知识库 / 员工培训」里检索与查看。"
     >
       <PendingOps />
       <PendingUploads />
+      <form
+        role="search"
+        className="mb-4 flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setSearchTerm(searchInput.trim());
+        }}
+      >
+        <div className="relative min-w-60 flex-1 sm:max-w-md">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" />
+          <Input
+            value={searchInput}
+            maxLength={60}
+            onChange={(e) => {
+              setSearchInput(e.target.value);
+              if (!e.target.value.trim() && searchTerm) setSearchTerm('');
+            }}
+            placeholder="跨文件夹搜索标题、说明或文件名"
+            aria-label="搜索全部培训文件"
+            className="pr-8 pl-9"
+            data-testid="training-admin-search-input"
+          />
+          {searchInput && (
+            <button
+              type="button"
+              aria-label="清空搜索"
+              onClick={() => {
+                setSearchInput('');
+                setSearchTerm('');
+              }}
+              className="tap absolute top-1/2 right-1.5 flex size-7 -translate-y-1/2 items-center justify-center rounded-full text-ink-3 hover:text-ink"
+              data-testid="training-admin-search-clear"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+        </div>
+        <Button type="submit" variant="secondary" size="sm" data-testid="training-admin-search-submit">
+          检索全库
+        </Button>
+      </form>
+      {searchTerm && (
+        <Card className="mb-4 p-4" data-testid="training-admin-search-results">
+          <SectionTitle
+            aside={
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setSearchInput('');
+                  setSearchTerm('');
+                }}
+              >
+                收起结果
+              </Button>
+            }
+          >
+            检索「{searchTerm}」{searchQuery.data ? `（${searchQuery.data.length} 份）` : ''}
+          </SectionTitle>
+          <DataTable
+            className="mt-3"
+            columns={searchColumns}
+            rows={searchQuery.data ?? []}
+            rowKey={(x) => `${x.folderId}-${x.file.id}`}
+            loading={searchQuery.isPending}
+            failed={searchQuery.isError && !searchQuery.data}
+            onRetry={() => searchQuery.refetch()}
+            retrying={searchQuery.isFetching}
+            empty="没有搜到相关培训文件"
+            onRowClick={(x) => {
+              setSelected(x.folderId);
+              setSearchOpenId(x.file.id);
+            }}
+            rowTestId={(x) => `training-admin-search-hit-${x.file.id}`}
+          />
+        </Card>
+      )}
       <div className="grid gap-5 lg:grid-cols-[18rem_1fr]">
         <Card className="p-4" data-testid="training-admin-folders">
           <SectionTitle
@@ -75,6 +187,7 @@ export function TrainingSection() {
         {current ? <FolderFiles key={current.id} folder={current} folders={list} /> : <Skeleton className="h-60" />}
       </div>
       {editing && <FolderDialog folder={editing === 'new' ? null : editing} taken={list} onClose={() => setEditing(null)} onSaved={(f) => (setEditing(null), setSelected(f.id))} />}
+      {searchOpenId !== null && <FileDialog fileId={searchOpenId} folders={list} onClose={() => setSearchOpenId(null)} onChanged={() => qc.invalidateQueries({ queryKey: ['training'] })} />}
     </AdminPage>
   );
 }
@@ -164,6 +277,7 @@ function PendingUploadRow({ p }: { p: PendingUpload }) {
       const st = await checkPendingUpload(p);
       if (st === 'done') await done();
       else if (st === 'cancelled') toast({ tone: 'info', title: `「${p.fileName}」已经确认不传了` });
+      else if (st === 'expired') toast({ tone: 'info', title: `「${p.fileName}」上传已超过 7 天过期（未登记）`, body: '如需上传请重新选文件' });
       else setStatus('open');
     } catch (e) {
       setError(errorMessage(e));
@@ -177,7 +291,9 @@ function PendingUploadRow({ p }: { p: PendingUpload }) {
     setCancelling(true);
     setError(null);
     try {
-      if ((await cancelPendingUpload(p)) === 'done') await done();
+      const st = await cancelPendingUpload(p);
+      if (st === 'done') await done();
+      else if (st === 'expired') toast({ tone: 'info', title: `「${p.fileName}」上传已超过 7 天过期（未登记）` });
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -371,7 +487,7 @@ function FolderFiles({ folder, folders }: { folder: TrainingFolder; folders: Tra
         toast({ tone: 'error', title: `「${f.name}」超过 ${TRAINING_MAX_BYTES / 1024 / 1024} MB`, body: '视频请先压成 720p 的 MP4 再传' });
         continue;
       }
-      rows.push({ key: uuid(), file: f, target: { folderId: folder.id }, targetLabel: `文件夹「${folder.name}」`, progress: 0, error: null, done: false });
+      rows.push({ key: newTrainingUploadKey(), file: f, target: { folderId: folder.id }, targetLabel: `文件夹「${folder.name}」`, progress: 0, error: null, done: false });
     }
     setUploads((all) => [...all.filter((r) => !r.done), ...rows]);
     void run(rows);
@@ -637,7 +753,7 @@ function Versions({ detail, onUploaded }: { detail: TrainingFileDetail; onUpload
           onChange={(e) => {
             const f = e.target.files?.[0];
             e.target.value = '';
-            if (f) void run({ key: uuid(), file: f, target: { fileId: detail.file.id, note: note.trim() } });
+            if (f) void run({ key: newTrainingUploadKey(), file: f, target: { fileId: detail.file.id, note: note.trim() } });
           }}
           data-testid="training-version-input"
         />

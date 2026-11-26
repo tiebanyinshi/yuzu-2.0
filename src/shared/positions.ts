@@ -101,11 +101,11 @@ export const PERMISSION_COLUMN: Record<Permission, PermissionColumn> = {
   'invoice.manage': 'entry',
   'invoice.issue': 'entry',
   'ar.manage': 'entry',
-  // 布草、零采备用金的页面与列表接口都要「看」这一项，开单、申用离不开它：跟着录入走（Codex 审查 036b336）
+  // 布草的页面与列表接口都要「看」这一项，开单离不开它：跟着录入走（Codex 审查 036b336）
   'linen.read': 'entry',
   'linen.manage': 'entry',
-  'pool.read': 'entry',
-  'pool.manage': 'entry',
+  // 备用金申用（8.1.42，原来零采备用金的看与办两项并成一项）
+  'petty.use': 'entry',
   'asset.manage': 'entry',
   'technician.dispatch': 'entry',
   'technician.announce': 'entry',
@@ -231,6 +231,8 @@ export const PERMISSION_COLUMN: Record<Permission, PermissionColumn> = {
   'payroll.manage': 'account',
   // 员工培训（2026-11-25）：全公司的培训资料，与组织架构同一列
   'training.manage': 'account',
+  // 公司公告（员工办公 v1.1 第 5 批）：全公司与部门公告，与员工培训同一列
+  'oa.announce': 'account',
 };
 
 export interface PositionDef {
@@ -306,7 +308,21 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
   // 总经办成员：高级管理员、跨部门；除「账号与权限配置」「基础数据 / 价格配置」以外各列都开（见 gmoDefaults）
   gmo: [],
   // OA 办公（docs/OA.md 第 2 节）：人力行政部负责人管组织架构与员工档案（hr.org 算「账号与权限配置」，部门员工那一列不开）
-  'hr.lead': [...BASE_OWN, ...LEAD_COMMON, 'patrol.read', 'canteen.manage', 'audit.read', 'request.create', 'hr.org', 'hr.attendance', 'oa.templates', 'oa.all', 'payroll.manage', 'training.manage'],
+  'hr.lead': [
+    ...BASE_OWN,
+    ...LEAD_COMMON,
+    'patrol.read',
+    'canteen.manage',
+    'audit.read',
+    'request.create',
+    'hr.org',
+    'hr.attendance',
+    'oa.templates',
+    'oa.all',
+    'payroll.manage',
+    'training.manage',
+    'oa.announce',
+  ],
   // OA-04：人力行政部员工做考勤设置、排班（hr.attendance 算「业务录入」：只有总裁能有「基础数据 / 价格配置」那一列）
   'hr.staff': [...BASE_OWN, 'request.create', 'hr.attendance'],
   'front.lead': [
@@ -479,7 +495,6 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
     'payable.read',
     'linen.read',
     'asset.read',
-    'pool.read',
     'contract.read',
     'expense.read',
     'inventory.cost',
@@ -490,7 +505,7 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
     'supplierReturn.answer',
     'request.stock',
     'linen.manage',
-    'pool.manage',
+    'petty.use',
     'asset.manage',
     'contract.manage',
     'payment.request',
@@ -508,8 +523,7 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
     'request.stock',
     'linen.read',
     'linen.manage',
-    'pool.read',
-    'pool.manage',
+    'petty.use',
     'payment.request',
   ],
   'vip.lead': [

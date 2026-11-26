@@ -13,6 +13,7 @@ import {
   distanceMeters,
   epochMinuteOf,
   matchPunch,
+  nextPunchHint,
   OUTWORK_REASON_MAX,
   PUNCH_SHARED_SECONDS,
   punchWindows,
@@ -125,7 +126,7 @@ async function slotsOf(db: Db, staffId: number, from: string, to: string, lock: 
     SELECT o.work_date::text AS work_date, o.shift_id, sh.name, sh.start_minute, sh.end_minute, sh.rest_start_minute, sh.rest_end_minute,
            sh.in_advance_minutes, sh.late_grace_minutes, sh.in_after_minutes, sh.out_before_minutes, sh.out_delay_minutes
     FROM oa_schedules o JOIN oa_shifts sh ON sh.id = o.shift_id
-    WHERE o.staff_id = ${staffId} AND o.store_id = ${currentStoreId()} AND ${liveSchedule(db)} AND o.work_date BETWEEN ${from} AND ${to}
+    WHERE o.staff_id = ${staffId} AND o.store_id = ${currentStoreId()} AND o.status = 'published' AND ${liveSchedule(db)} AND o.work_date BETWEEN ${from} AND ${to}
     ORDER BY o.work_date, sh.start_minute, o.shift_id
     ${lock ? db`FOR SHARE OF o` : db``}`;
   const filled = await db<{ businessDate: string; shiftId: number; kind: PunchKind }[]>`
@@ -321,7 +322,7 @@ export function registerOaPunchRoutes(app: FastifyInstance, deps: Deps) {
       .filter((s) => s.windows.outTo >= now - 1440)
       .map((s) => ({ date: s.date, shiftId: s.shiftId, name: s.name, startMinute: s.startMinute, endMinute: s.endMinute, windows: s.windows, in: eff(s, 'in'), out: eff(s, 'out') }));
     const face = (await myFace(sql, me)).status;
-    return { now, today, group, face, slots: views, punches: rows.filter((r) => r.localDate === today).map(toPunch) };
+    return { now, today, group, face, slots: views, punches: rows.filter((r) => r.localDate === today).map(toPunch), nextPunch: nextPunchHint(now, today, views, group) };
   });
 
   app.post('/api/oa/attendance/punch', { preHandler: guard() }, async (req): Promise<PunchResult> => {

@@ -97,8 +97,14 @@ test.describe('8.0.20 进销存做深与客房', () => {
     // 待扣料：0.42 千克；现在扣一次 → 开出耗用单
     await page.reload();
     const pending = page.getByTestId(`usage-pending-${code}`);
-    await expect(pending).toContainText('该扣 0.42 千克');
-    await expect(pending).toContainText('配方耗用');
+    // 每分钟的扣料任务也可能在「出品完成」到刷新之间就扣掉了（8.1.39 CI 上撞上过一次）：那时页面上没有这一行。
+    // 等到「页面上有这一行」或者「服务端已经没有待扣的了」，有这一行就核对数量；扣的数量下面按库存再核对一次
+    const stillPending = async () => (await get<{ pending: { materialCode: string }[] }>(page.request, '/api/inventory/usage')).pending.some((p) => p.materialCode === code);
+    await expect.poll(async () => (await pending.count()) > 0 || !(await stillPending())).toBe(true);
+    if ((await pending.count()) > 0) {
+      await expect(pending).toContainText('该扣 0.42 千克');
+      await expect(pending).toContainText('配方耗用');
+    }
     await page.getByTestId('usage-run').click();
     // 每分钟的扣料任务可能刚好抢先扣掉（8.1.0 CI 上撞上过一次）：那时这一次是 0 张、写「没有待扣的了」；两种都对，下面核对结果
     await expect(page.getByText(/开了 \d+ 张耗用单|没有待扣的了/)).toBeVisible();

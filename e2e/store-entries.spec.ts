@@ -44,7 +44,7 @@ test.describe('8.0.19 门店的日常入口', () => {
     await page.getByTestId('workbench-coupon-issue').click();
     await expect(page).toHaveURL(/\/coupon-issue$/);
     await expect(page.getByRole('heading', { level: 1 })).toContainText('发券');
-    await expect(page.getByTestId('subnav').getByRole('link')).toHaveText(['批量发券', '无记名券']);
+    await expect(page.getByTestId('subnav').getByRole('link')).toHaveText(['批量发券', '无记名券', '礼品卡']);
     await expect(page.getByTestId('campaign-new')).toBeVisible();
     await page.getByTestId('coupon-tab-batches').click();
     await expect(page).toHaveURL(/\/coupon-issue\/batches$/);
@@ -55,7 +55,7 @@ test.describe('8.0.19 门店的日常入口', () => {
     // 后台「券」
     await page.getByTestId('coupon-issue-admin-link').click();
     await expect(page).toHaveURL(/\/admin\/coupons$/);
-    await expect(page.getByTestId('subnav').getByRole('link')).toHaveText(['发券规则', '券模板', '统计', '使用率']);
+    await expect(page.getByTestId('subnav').getByRole('link')).toHaveText(['发券规则', '券模板', '统计', '使用率', '发放台账']);
     await page.getByTestId('coupon-issue-link').click();
     await expect(page).toHaveURL(/\/coupon-issue$/);
     for (const [from, to] of [
