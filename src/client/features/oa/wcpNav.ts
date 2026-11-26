@@ -7,6 +7,7 @@ import {
   CalendarCheck,
   CalendarDays,
   Fingerprint,
+  Landmark,
   GraduationCap,
   Megaphone,
   MessagesSquare,
@@ -34,6 +35,8 @@ export const WCP_TILES: readonly WcpNavItem[] = [
   { to: '/oa/im', label: '消息', hint: '同事单聊、群聊，发图片与文件', icon: MessagesSquare, testId: 'oa-tile-im' },
   { to: '/oa/directory', label: '通讯录', hint: '按部门找同事、看资料、发消息', icon: BookUser, testId: 'oa-tile-directory' },
   { to: '/oa/approvals', label: '审批', hint: '请假、加班、出差、报销、补卡、用章', icon: Stamp, testId: 'oa-tile-approvals' },
+  // 业财法审批（店主 2026-11-26，docs/APPROVAL_V4.md）：审批链、会签、知会、微信特批补登；角色映射在里面（店主）
+  { to: '/oa/gov', label: '业财法审批', hint: '合同、付款、采购等事项的审批链与知会', icon: Landmark, testId: 'oa-tile-gov' },
   { to: '/oa/punch', label: '打卡', hint: '按排班打上下班卡、外勤打卡', icon: Fingerprint, testId: 'oa-tile-punch' },
   { to: '/oa/schedule', label: '我的排班', hint: '这个月每天上什么班', icon: CalendarDays, testId: 'oa-tile-schedule' },
   { to: '/oa/attendance', label: '我的考勤', hint: '每天的考勤结果、迟到缺卡', icon: CalendarCheck, testId: 'oa-tile-attendance' },
@@ -46,7 +49,7 @@ export const WCP_TILES: readonly WcpNavItem[] = [
   { to: '/oa/notifications', label: '通知', hint: '排班变更、审批、工资条、公告等提醒', icon: Bell, testId: 'oa-tile-notifications' },
 ];
 
-/** 这位账号的 WCP 入口：人人都有的十二项，加上有人员与行政任一分区权限时的「WCP 设置」（进第一个能进的分区） */
+/** 这位账号的 WCP 入口：人人都有的十三项，加上有人员与行政任一分区权限时的「WCP 设置」（进第一个能进的分区） */
 export function useWcpNav(): WcpNavItem[] {
   const can = useCan();
   const session = useSession();

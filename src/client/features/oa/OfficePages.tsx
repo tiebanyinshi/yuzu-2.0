@@ -34,6 +34,7 @@ import { DayLegend, itemText, LEAVE_PART_LABELS, MonthGrid } from './MyScheduleC
 import { ScheduleGrantsTab } from './ScheduleGrantsTab';
 import { useWcpNav, type WcpNavItem } from './wcpNav';
 import { TrainingPages } from '../training/TrainingPages';
+import { GovFlowPages } from '../govflow/GovFlowPages';
 
 /** /oa 下面的几页放在一个按需加载的文件里（首屏主包有体积上限，路由表里只占一行） */
 export function OfficePage() {
@@ -69,6 +70,8 @@ export function OfficePage() {
     <MyPayslipPages />
   ) : path.startsWith('/oa/training') ? (
     <TrainingPages />
+  ) : path.startsWith('/oa/gov') ? (
+    <GovFlowPages />
   ) : (
     <OfficeHomePage />
   );
