@@ -298,6 +298,8 @@ export const PERMISSIONS = {
   'training.manage': { roles: ['owner'] },
   /** 学堂管理（店主 2026-11-27，docs/ACADEMY.md）：课程、学习地图、题库、指派、内置课件包、全员学习数据。默认给总裁与人力行政部负责人 */
   'academy.manage': { roles: ['owner'] },
+  /** 学堂带教签核（docs/ACADEMY.md 第 5 节，XT08）：给本部门员工签实操考核、看本部门待签的实操。默认给总经办与各部门负责人 */
+  'academy.coach': { roles: ['owner'] },
   /** 公司公告管理（员工办公 v1.1 第 5 批，docs/OA_MOBILE.md）：发布、编辑、置顶、撤回公司与部门公告、查看已读名单。默认给总裁与人力行政部负责人 */
   'oa.announce': { roles: ['owner'] },
   /** 业财法审批流的角色映射（店主 2026-11-26，docs/APPROVAL_V4.md）：把真实账号配成财总、CFO、董事长等；只给总裁，不拿店主顶替这些角色 */
@@ -657,6 +659,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'payroll.manage': '工资条：模板、制表、发放、签收跟踪与薪资审计',
   'training.manage': '员工培训：文件夹、上传与换版本、下架、查看谁看过（看得到全部文件夹）',
   'academy.manage': '学堂：课程、学习地图、题库、指派、内置课件包与全员学习数据',
+  'academy.coach': '学堂带教：给本部门员工签实操考核、看本部门待签的实操',
   'oa.announce': '公司公告：发布、编辑、置顶、撤回公司与部门公告，查看已读名单',
   'gf.roles': '业财法审批：角色映射（财务审核人、财总、CFO、法务、CEO、董事长等配给真实账号）',
   'catalog.manage': '管理充值套餐与消费项目',
@@ -837,7 +840,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
     ],
   },
   { title: '员工工作台', items: ['canteen.manage', 'patrol.read', 'patrol.manage'] },
-  { title: '人事与办公', items: ['hr.org', 'hr.attendance', 'hr.attendanceDept', 'oa.templates', 'oa.all', 'payroll.manage', 'training.manage', 'academy.manage', 'oa.announce'] },
+  { title: '人事与办公', items: ['hr.org', 'hr.attendance', 'hr.attendanceDept', 'oa.templates', 'oa.all', 'payroll.manage', 'training.manage', 'academy.manage', 'academy.coach', 'oa.announce'] },
   { title: '业财法审批', items: ['gf.roles'] },
   { title: '当场授权', items: ['auth.overLimit', 'auth.vipOverride', 'auth.discount', 'auth.memberRefund', 'auth.memberPhone', 'auth.companyCharge'] },
   { title: '数据看板', items: ['report.executive', 'report.members', 'report.technicians', 'report.commission', 'marketing.cost'] },

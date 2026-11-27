@@ -5,7 +5,7 @@
 import { academyLevelOf, type AcademyCompletion } from '@shared/academy';
 import type { Db, Sql, Tx } from '../../db';
 import { conflict, forbidden, notFound } from '../../lib/errors';
-import { withTx } from '../../lib/tx';
+import { nextDocNo, withTx } from '../../lib/tx';
 import { courseDone } from './catalog';
 import { assertCourseOpen, type Learner } from './learner';
 
@@ -93,11 +93,31 @@ async function pathCompleted(tx: Tx, staffId: number, pathId: number): Promise<b
   return !!r!.done;
 }
 
+/** 营业日加几个月（月底对齐：1 月 31 日加一个月是 2 月最后一天） */
+export function addMonths(date: string, months: number): string {
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+  const first = new Date(Date.UTC(y, m - 1 + months, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  first.setUTCDate(Math.min(d, last));
+  return first.toISOString().slice(0, 10);
+}
+
+/** 完成一张地图：发证书（同一人同一张地图只有一张没撤销的；有效期按地图） */
+async function issueCertificate(tx: Tx, staffId: number, path: { id: number; title: string; validMonths: number | null }, today: string): Promise<string | null> {
+  const [had] = await tx`SELECT cert_no FROM academy_certificates WHERE staff_id = ${staffId} AND path_id = ${path.id} AND revoked_at IS NULL`;
+  if (had) return null;
+  const certNo = await nextDocNo(tx, 'academy_cert', 'XT', today);
+  await tx`
+    INSERT INTO academy_certificates (cert_no, staff_id, path_id, title, issued_on, expires_on)
+    VALUES (${certNo}, ${staffId}, ${path.id}, ${path.title}, ${today}, ${path.validMonths ? addMonths(today, path.validMonths) : null})`;
+  return certNo;
+}
+
 /**
  * 记一个课时完成（调用方已取学员咨询锁）：第一次完成给这一课时的学分；这门课因此完成的，看它在哪几张上架的地图里，
- * 地图因此完成的另给地图的学分。已经完成过的什么都不变（重学、重考不刷分，XT04）。
+ * 地图因此完成的另给地图的学分、发证书。已经完成过的什么都不变（重学、重考不刷分，XT04）。
  */
-export async function markComplete(tx: Tx, staffId: number, lesson: Pick<LessonForProgress, 'id' | 'courseId' | 'title' | 'credits'>): Promise<AcademyCompletion> {
+export async function markComplete(tx: Tx, staffId: number, lesson: Pick<LessonForProgress, 'id' | 'courseId' | 'title' | 'credits'>, today: string): Promise<AcademyCompletion> {
   const none: AcademyCompletion = { lessonId: lesson.id, credits: 0, courseCompleted: false, pathsCompleted: [], levelUp: null };
   const [p] = await tx<{ completedAt: string | null }[]>`
     SELECT completed_at FROM academy_progress WHERE staff_id = ${staffId} AND lesson_id = ${lesson.id} FOR UPDATE`;
@@ -109,14 +129,15 @@ export async function markComplete(tx: Tx, staffId: number, lesson: Pick<LessonF
   const done = await courseCompleted(tx, staffId, lesson.courseId);
   const pathsCompleted: AcademyCompletion['pathsCompleted'] = [];
   if (done) {
-    const paths = await tx<{ id: number; title: string; credits: number }[]>`
-      SELECT p.id, p.title, p.credits FROM academy_path_courses pc JOIN academy_paths p ON p.id = pc.path_id
+    const paths = await tx<{ id: number; title: string; credits: number; validMonths: number | null }[]>`
+      SELECT p.id, p.title, p.credits, p.valid_months FROM academy_path_courses pc JOIN academy_paths p ON p.id = pc.path_id
       WHERE pc.course_id = ${lesson.courseId} AND p.status = 'published' ORDER BY p.id`;
     for (const path of paths) {
       if (!(await pathCompleted(tx, staffId, Number(path.id)))) continue;
       const got = await awardCredits(tx, staffId, path.credits, 'path', Number(path.id), path.title);
       credits += got;
-      pathsCompleted.push({ id: Number(path.id), title: path.title, credits: got });
+      const certNo = await issueCertificate(tx, staffId, { id: Number(path.id), title: path.title, validMonths: path.validMonths }, today);
+      pathsCompleted.push({ id: Number(path.id), title: path.title, credits: got, certNo });
     }
   }
   const was = academyLevelOf(before).current;
@@ -125,14 +146,14 @@ export async function markComplete(tx: Tx, staffId: number, lesson: Pick<LessonF
 }
 
 /** 图文课件读完、文件看过：员工自己点「学完了」（测验要及格、实操要带教签，走各自的路） */
-export async function completeLesson(sql: Sql, l: Learner, lessonId: number): Promise<AcademyCompletion> {
+export async function completeLesson(sql: Sql, l: Learner, lessonId: number, today: string): Promise<AcademyCompletion> {
   const lesson = await lessonForProgress(sql, l, lessonId);
   if (lesson.kind === 'quiz') throw conflict('ACADEMY_LESSON_NEEDS_QUIZ', '测验要答完、及格才算完成');
   if (lesson.kind === 'practical') throw conflict('ACADEMY_LESSON_NEEDS_SIGNOFF', '实操要带教在岗看过、签「通过」才算完成');
   if (!recordable(lesson)) throw conflict('ACADEMY_PREVIEW_ONLY', '草稿或下架的课只能预览，不记学习进度');
   return withTx(sql, async (tx) => {
     await lockLearner(tx, l.id);
-    return markComplete(tx, l.id, lesson);
+    return markComplete(tx, l.id, lesson, today);
   });
 }
 

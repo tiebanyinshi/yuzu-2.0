@@ -174,25 +174,34 @@ function parseQuestion(
     explanation: joinLines(explanation),
   };
   if (named.level && !['1', '2', '3'].includes(named.level)) problem('level 只能是 1、2、3');
-  if (!q.stem) problem('缺题干');
-  if (q.stem.length > ACADEMY_STEM_MAX) problem(`题干最多 ${ACADEMY_STEM_MAX} 个字`);
-  if (q.explanation.length > ACADEMY_EXPLANATION_MAX) problem(`解析最多 ${ACADEMY_EXPLANATION_MAX} 个字`);
-  if (q.skill.length > ACADEMY_SKILL_MAX) problem(`知识点最多 ${ACADEMY_SKILL_MAX} 个字`);
-  if (!inline && !q.skill) problem('题库题要写知识点：skill=…');
-  if (kind === 'recall') {
-    if (options.length) problem('问答卡不写选项，答案写在「答：」后面');
-    if (!q.answerText) problem('问答卡缺「答：」');
-    if (q.answerText.length > ACADEMY_EXPLANATION_MAX) problem(`答案最多 ${ACADEMY_EXPLANATION_MAX} 个字`);
-  } else {
-    if (options.length < 2 || options.length > 6) problem('选项要 2–6 个');
-    if (options.some((o) => !o)) problem('有空的选项');
-    if (options.some((o) => o.length > ACADEMY_OPTION_MAX)) problem(`一个选项最多 ${ACADEMY_OPTION_MAX} 个字`);
-    if (new Set(options).size !== options.length) problem('选项有重复');
-    if (kind === 'single' && answer.length !== 1) problem('单选题要有且只有一个对的选项（- [x]）');
-    if (kind === 'multi' && answer.length < 2) problem('多选题至少两个对的选项（只有一个对的写成单选）');
-    if (kind === 'judge' && (options.length !== 2 || answer.length !== 1)) problem('判断题写「答案：对」或「答案：错」');
-  }
+  for (const message of academyQuestionProblems(q, inline)) problem(message);
   return problems.length > before ? null : q;
+}
+
+/** 一道题哪里不合规（后台手写的题与课件文本里的题共用）；inline 是课中小测（可以不写知识点） */
+export function academyQuestionProblems(q: AcademyQuestionDraft, inline = false): string[] {
+  const out: string[] = [];
+  const { kind, options, answer } = q;
+  if (!q.stem) out.push('缺题干');
+  if (q.stem.length > ACADEMY_STEM_MAX) out.push(`题干最多 ${ACADEMY_STEM_MAX} 个字`);
+  if (q.explanation.length > ACADEMY_EXPLANATION_MAX) out.push(`解析最多 ${ACADEMY_EXPLANATION_MAX} 个字`);
+  if (q.skill.length > ACADEMY_SKILL_MAX) out.push(`知识点最多 ${ACADEMY_SKILL_MAX} 个字`);
+  if (!inline && !q.skill) out.push('题库题要写知识点：skill=…');
+  if (kind === 'recall') {
+    if (options.length) out.push('问答卡不写选项，答案写在「答：」后面');
+    if (!q.answerText) out.push('问答卡缺「答：」');
+    if (q.answerText.length > ACADEMY_EXPLANATION_MAX) out.push(`答案最多 ${ACADEMY_EXPLANATION_MAX} 个字`);
+    return out;
+  }
+  if (options.length < 2 || options.length > 6) out.push('选项要 2–6 个');
+  if (options.some((o) => !o)) out.push('有空的选项');
+  if (options.some((o) => o.length > ACADEMY_OPTION_MAX)) out.push(`一个选项最多 ${ACADEMY_OPTION_MAX} 个字`);
+  if (new Set(options).size !== options.length) out.push('选项有重复');
+  if (answer.some((a) => !Number.isInteger(a) || a < 0 || a >= options.length) || new Set(answer).size !== answer.length) out.push('答案不在选项里');
+  if (kind === 'single' && answer.length !== 1) out.push('单选题要有且只有一个对的选项（- [x]）');
+  if (kind === 'multi' && answer.length < 2) out.push('多选题至少两个对的选项（只有一个对的写成单选）');
+  if (kind === 'judge' && (options.length !== 2 || answer.length !== 1)) out.push('判断题写「答案：对」或「答案：错」');
+  return out;
 }
 
 interface RawBlock {

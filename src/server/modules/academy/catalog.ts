@@ -155,6 +155,10 @@ export async function lessonView(db: Db, l: Learner, lessonId: number): Promise<
     nextId: at >= 0 && at + 1 < siblings.length ? Number(siblings[at + 1]!.id) : null,
     seconds: row.seconds ?? 0,
     file: file ? { id: Number(file.id), folderId: Number(file.folderId), title: file.title } : null,
+    // 测验、实操的部分由路由补上（assess.ts、coach.ts）
+    quizBest: null,
+    quizAvailable: 0,
+    practical: null,
   };
 }
 
