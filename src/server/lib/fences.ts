@@ -217,6 +217,9 @@ export const FENCED_OPS = [
   'mall_quote',
   'mall_resubmit',
   'mall_quote_act',
+  // 8.2.6（迁移 580）：补发物料（ref_id 是需求行）、终止申购（ref_id 是需求单）
+  'request_dispatch',
+  'mall_terminate',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 

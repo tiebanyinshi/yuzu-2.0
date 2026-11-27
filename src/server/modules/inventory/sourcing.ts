@@ -25,7 +25,7 @@ import { hashRequest } from '../../lib/idempotency';
 import { lockOpKey } from '../../lib/fences';
 import { idParam, parse } from '../../lib/validate';
 import { shiftDate } from '@shared/labels';
-import { docDateSchema, loadInventorySettings, nextDocNo, priceBaseline, setTxTimeouts, sourcingHolds, todayIn } from './common';
+import { docDateSchema, loadInventorySettings, nextDocNo, priceBaseline, requestLineIssuedSql, setTxTimeouts, sourcingHolds, todayIn } from './common';
 import { loadPurchaseRules } from './purchase-rules';
 import { createPo } from './purchasing';
 
@@ -203,9 +203,8 @@ async function checkSourcingRequests(tx: Tx, lines: { materialId: number; reques
     ORDER BY r.id FOR UPDATE`;
   const rows = await tx<{ id: number; name: string; materialId: number | null; status: string; docNo: string; takenBy: string | null; inSourcing: string | null; issued: boolean }[]>`
     SELECT l.id, l.name, l.material_id, r.status, r.doc_no,
-           -- 整行从库存领用了的（8.1.10 核库转领用）不再买
-           EXISTS (SELECT 1 FROM request_line_stock ls JOIN inv_docs ld ON ld.id = ls.inv_doc_id AND ld.status = 'confirmed'
-                   WHERE ls.request_line_id = l.id AND ls.issued_qty_milli >= l.qty_milli) AS issued,
+           -- 整行从库存领用、补发齐了的（8.1.10 核库转领用；8.2.6 起补发也算）不再买
+           ${requestLineIssuedSql(tx)} >= l.qty_milli AS issued,
            (SELECT po.doc_no FROM purchase_order_line_requests x JOIN purchase_order_lines pl ON pl.id = x.po_line_id
               JOIN purchase_orders po ON po.id = pl.po_id
              WHERE x.request_line_id = l.id AND po.status <> 'cancelled' LIMIT 1) AS taken_by,

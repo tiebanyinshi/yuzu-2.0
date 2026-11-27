@@ -183,10 +183,17 @@ export const MALL_CUSTOM_KIND_LABELS: Record<MallCustomKind, string> = { standar
 /** 定制的要求：尺寸规格、材质工艺、使用场景、要不要先打样、预算（含税总价，分；不知道的空着） */
 export interface MallCustomSpec {
   size: string;
+  /** 8.2.6 起叫「工艺要求」（之前的单写的是「材质工艺」，原样显示） */
   craft: string;
   scene: string;
   sample: boolean;
   budgetCents: number | null;
+  /** 8.2.6（需求变更文档 v0.2 图 1）：材质、允许误差、颜色 / 表面、图纸链接、设计版本；之前的单没有这几项 */
+  material?: string;
+  tolerance?: string;
+  color?: string;
+  drawingUrl?: string;
+  designVersion?: string;
 }
 
 /**

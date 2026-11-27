@@ -354,6 +354,11 @@ function DocBody({ doc, onClose }: { doc: InvDoc; onClose: () => void }) {
                         {Number(l.redeliverMilli) > 0 && `；其中供应商待补 ${formatQty(Number(l.redeliverMilli))} ${l.inventoryUnit}`}
                       </p>
                     )}
+                    {Number(l.holdMilli) > 0 && (
+                      <p className="col-span-full text-ink-2" data-testid="doc-line-hold">
+                        待判 / 待检 {formatQty(Number(l.holdMilli))} {l.inventoryUnit}（暂不入库；验完合格的再做一张收货单）
+                      </p>
+                    )}
                     {(l.batchNo || l.expiresOn) && (
                       <p className="col-span-full text-ink-3">
                         {l.batchNo ? `批号 ${l.batchNo}` : ''}
