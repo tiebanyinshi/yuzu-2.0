@@ -1,5 +1,5 @@
 // 每分钟的自动任务（应用每分钟调一次；demo-prepare 最后也调一次，准备完以后第一次启动应用不再改数据）。
-// 各项互不影响：一项出错写日志、接着跑下一项，下一分钟再试。顺序有讲究：到期处理在权益发放、生日礼之前
+// 各项互不影响：一项出错写日志、记下状态、接着跑下一项，下一分钟再试。顺序有讲究：到期处理在权益发放、生日礼之前
 // （按新的档阶发，不按过期的档阶发，Codex 自动审查 43d53e9）。
 
 import { purgeExpiredSessions } from './auth/session';
@@ -42,240 +42,214 @@ export interface JobLog {
 
 const sessionPurgeDue = every(60 * 60 * 1000);
 
+/** 每项任务最近一次的情况（8.1.53 后端评估：运行状态接口 /api/admin/runtime 给店主看哪项在出错；按进程记，重启清零） */
+export interface JobStatus {
+  name: string;
+  lastStartedAt: string;
+  lastMs: number;
+  ok: boolean;
+  lastError: string | null;
+  /** 连着失败几次（成功一次清零） */
+  failures: number;
+  runs: number;
+}
+const statuses = new Map<string, JobStatus>();
+export const jobStatuses = (): JobStatus[] => [...statuses.values()];
+
 export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: JobLog, opts: { now?: Date; birthday?: boolean } = {}): Promise<void> {
   const { sql, config } = deps;
   const now = opts.now ?? new Date();
+  // 各项互不影响：一项出错写日志、记下状态，接着跑下一项（原来每项各写一段 try / catch，8.1.53 收成这一个）
+  const step = async (name: string, failMessage: string, fn: () => Promise<void>) => {
+    const started = Date.now();
+    const prev = statuses.get(name);
+    try {
+      await fn();
+      statuses.set(name, { name, lastStartedAt: new Date(started).toISOString(), lastMs: Date.now() - started, ok: true, lastError: null, failures: 0, runs: (prev?.runs ?? 0) + 1 });
+    } catch (error) {
+      log.error(failMessage, error);
+      statuses.set(name, {
+        name,
+        lastStartedAt: new Date(started).toISOString(),
+        lastMs: Date.now() - started,
+        ok: false,
+        lastError: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+        failures: (prev?.failures ?? 0) + 1,
+        runs: (prev?.runs ?? 0) + 1,
+      });
+    }
+  };
   // 赠金到期作废（会员记账、打开会员详情时也会先处理这位会员）
-  try {
+  await step('赠金到期作废扫描', '赠金到期作废扫描失败，下一分钟重试', async () => {
     const n = await sweepExpiredBonus({ sql, config }, now);
     if (n > 0) log.info(`赠金到期作废：${n} 位会员`);
-  } catch (error) {
-    log.error('赠金到期作废扫描失败，下一分钟重试', error);
-  }
+  });
   // 会员到期处理（v0.7.23）：营业日开始后处理周期、补充期已结束的会员（今天跑过、没有到期的就什么都不做）
-  try {
+  await step('会员到期处理', '会员到期处理失败，下一分钟重试', async () => {
     const run = await runMembershipDaily({ sql, config }, now);
     if (run?.processed) log.info(`会员到期处理：${run.processed} 位（保级 ${run.retained}、进补充期 ${run.grace}、降档 ${run.downgraded}）`);
     if (run?.trialsExpired) log.info(`临时身份到期：${run.trialsExpired} 位`);
     if (run?.error) log.error(`会员到期处理有出错的：${run.error}`);
-  } catch (error) {
-    log.error('会员到期处理失败，下一分钟重试', error);
-  }
+  });
   // 会员权益（v0.7.24）：到期处理之后按新的档阶发本期的券类、生日礼、节日关怀（今天跑过、权益清单没改过就什么都不做）；
   // 日志只写这一次新发的，当天累计的写在括号里
-  try {
+  await step('会员权益自动发放', '会员权益自动发放失败，下一分钟重试', async () => {
     const run = await runBenefitsDaily({ sql, config }, now);
     if (run?.thisRun.coupons) {
       log.info(`会员权益自动发放：这一次 ${run.thisRun.processed} 位会员、${run.thisRun.coupons} 张券（营业日 ${run.businessDate} 累计 ${run.processed} 位、${run.coupons} 张）`);
     }
     if (run?.error) log.error(`会员权益自动发放有出错的：${run.error}`);
-  } catch (error) {
-    log.error('会员权益自动发放失败，下一分钟重试', error);
-  }
+  });
   // 生日礼（v0.7.20）：应用每 10 分钟查一次生日当月还没发的会员（去重键兜底，几个进程同时跑也只发一次）
   if (opts.birthday !== false) {
-    try {
+    await step('生日礼发券', '生日礼发券失败，10 分钟后重试', async () => {
       const n = await issueBirthdayCoupons({ sql, config }, now);
       if (n > 0) log.info(`生日礼：发给 ${n} 位会员`);
-    } catch (error) {
-      log.error('生日礼发券失败，10 分钟后重试', error);
-    }
+    });
   }
   // OA 附件（OA-03）：24 小时还没挂到单据上的清掉
-  try {
+  await step('清理没用上的附件', '清理没用上的附件失败，下一分钟重试', async () => {
     const n = await purgeStaleAttachments(sql);
     if (n > 0) log.info(`清掉没用上的附件：${n} 个`);
-  } catch (error) {
-    log.error('清理没用上的附件失败，下一分钟重试', error);
-  }
+  });
   // 员工培训（8.1.36，Codex 安全审查）：每小时把 24 小时还没传完的上传作废，连带传了一半的块
-  try {
+  await step('清理没传完的培训上传', '清理没传完的培训上传失败，一小时后重试', async () => {
     const n = await sweepTrainingUploads(sql);
     if (n > 0) log.info(`清掉没传完的培训上传：${n} 个`);
-  } catch (error) {
-    log.error('清理没传完的培训上传失败，一小时后重试', error);
-  }
+  });
   // 过期的登录（8.1.48 后端评估第 6 节）：原来只在启动时清，长期不重启的门店机 sessions 表一直长；改为每小时清一次
-  try {
+  await step('清理过期登录', '清理过期登录失败，一小时后重试', async () => {
     if (sessionPurgeDue(now.getTime())) await purgeExpiredSessions(sql);
-  } catch (error) {
-    log.error('清理过期登录失败，一小时后重试', error);
-  }
+  });
   // 热表归档（数据库评估，docs/DB_REVIEW_V8147.md 第 5 节）：每小时把超过保留天数的位置事件与轨迹段、对外调用记录、企业微信推送记录挪进归档表
-  try {
+  await step('热表归档', '热表归档失败，一小时后重试', async () => {
     const run = await runHotTableArchive(sql, config.archive);
     if (run && run.locationEvents + run.locationTracks + run.integrationCalls + run.wecomPushes > 0) {
       log.info(`热表归档：位置事件 ${run.locationEvents}、轨迹段 ${run.locationTracks}、对外调用 ${run.integrationCalls}、企业微信推送 ${run.wecomPushes} 条`);
     }
-  } catch (error) {
-    log.error('热表归档失败，一小时后重试', error);
-  }
+  });
   // OA 考勤结算（OA-08）：每 10 分钟看最近 3 天下班窗口结束了的排班，还没结算的、结算后又有新打卡的重新结算
-  try {
+  await step('考勤结算', '考勤结算失败，10 分钟后重试', async () => {
     const n = await runAttendanceSettlement({ sql, config }, now);
     if (n > 0) log.info(`考勤结算：${n} 条`);
-  } catch (error) {
-    log.error('考勤结算失败，10 分钟后重试', error);
-  }
+  });
   // OA 年假自动发放（OA-09）：每小时看一次，在职、填了入职日期、满了一档的员工发今年的额度（每人每年一次）
-  try {
+  await step('年假发放', '年假发放失败，一小时后重试', async () => {
     const n = await runAnnualLeaveGrant({ sql, config }, now);
     if (n > 0) log.info(`年假发放：${n} 人次`);
-  } catch (error) {
-    log.error('年假发放失败，一小时后重试', error);
-  }
+  });
   // 业财法知会日报（P01，docs/APPROVAL_V4.md）：每天 18 点以后把普通知会按人汇总成一条站内信（发过的不再发）
-  try {
+  await step('业财法知会日报', '业财法知会日报没发完，下一分钟接着发', async () => {
     const n = await sendCcDigest(sql, config.timezone, now);
     if (n > 0) log.info(`业财法知会日报：${n} 条知会`);
-  } catch (error) {
-    log.error('业财法知会日报没发完，下一分钟接着发', error);
-  }
+  });
   // 超时提醒（8.1.17 BW-1）：在店到了 12 / 24 / 72 小时的客人，在「异常待办」里记一条（每一级只记一次，经办人「系统」）
-  try {
+  await step('超时提醒', '超时提醒没记完，下一分钟重试', async () => {
     const n = await sweepOvertimeReminders({ sql, config }, now);
     if (n > 0) log.info(`超时提醒：记了 ${n} 条`);
-  } catch (error) {
-    log.error('超时提醒没记完，下一分钟重试', error);
-  }
+  });
   // 桌台到点自动恢复（8.1.17 BW-2）：餐饮规则开了「到点自动恢复」的店，维修过了预计恢复时间的桌自动恢复（经办人「系统」）
-  try {
+  await step('桌台到点自动恢复', '桌台到点自动恢复失败，下一分钟重试', async () => {
     const n = await sweepTableRestores({ sql, config }, now);
     if (n > 0) log.info(`桌台到点自动恢复：${n} 桌`);
-  } catch (error) {
-    log.error('桌台到点自动恢复失败，下一分钟重试', error);
-  }
+  });
   // 预约（v0.7.28）：小程序预约开始前还没确认的自动取消、过了时间没到店的记爽约、客房过了保留时间释放
-  try {
+  await step('预约的自动处理', '预约的自动处理失败，下一分钟重试', async () => {
     const run = await sweepBookings(sql, now);
     if (run.cancelled || run.noShow) log.info(`预约：自动取消 ${run.cancelled} 张、记爽约 ${run.noShow} 张`);
-  } catch (error) {
-    log.error('预约的自动处理失败，下一分钟重试', error);
-  }
+  });
   // 员工食堂 · 饭点提醒（docs/CANTEEN.md 第 19 节）：到点以后 30 分钟之内，每天每顿给开着提醒的员工手机发一次（几个进程同时跑也只发一次）
-  try {
+  await step('饭点提醒', '饭点提醒没发完，下一分钟接着发', async () => {
     for (const r of await runCanteenReminders({ sql, config }, now)) {
       log.info(
         `饭点提醒（${r.date} ${MEAL_LABELS[r.meal]}）：送到 ${r.sent} 台手机${r.failed ? `、${r.failed} 台没送到` : ''}${r.skippedCheckedIn ? `；${r.skippedCheckedIn} 人已经打过卡、没再提醒` : ''}`,
       );
     }
-  } catch (error) {
-    log.error('饭点提醒没发完，下一分钟接着发', error);
-  }
+  });
   // 会员挑战（v0.7.28，QY-057）：这个月到店天数满了、还没送过的会员送一次
-  try {
+  await step('会员挑战的发放', '会员挑战的发放失败，下一分钟重试', async () => {
     const r = await runVisitChallenges({ sql, config }, now);
     if (r.members > 0) log.info(`会员挑战：${r.members} 位会员满了，发券 ${r.coupons} 张`);
-  } catch (error) {
-    log.error('会员挑战的发放失败，下一分钟重试', error);
-  }
+  });
   // 草稿箱（供应链二次整改 03）：30 天没再保存的草稿、关闭（已提交、已删除）满一天的清掉
-  try {
+  await step('草稿清理', '草稿清理失败，下一分钟重试', async () => {
     const n = await sweepDrafts(sql, now);
     if (n > 0) log.info(`草稿箱：清理 ${n} 份过期或已关闭的草稿`);
-  } catch (error) {
-    log.error('草稿清理失败，下一分钟重试', error);
-  }
+  });
   // 核库（8.1.10，CK10）：超过核库时限没核完的转采购；替代提议部门没答复的照原来买
-  try {
+  await step('核库超时处理', '核库超时处理失败，下一分钟重试', async () => {
     const r = await sweepStockChecks({ sql }, now);
     if (r.timedOut + r.expired > 0) log.info(`核库：${r.timedOut} 张需求单超时转采购，${r.expired} 行替代没答复、照原来买`);
-  } catch (error) {
-    log.error('核库超时处理失败，下一分钟重试', error);
-  }
+  });
   // 批量发券（8.0.4）：请求断了、进程重启时没发完的发券单接着发（同一个人不会发两次）
-  try {
+  await step('批量发券的续发', '批量发券的续发失败，下一分钟重试', async () => {
     const n = await resumeCampaigns({ sql, config });
     if (n > 0) log.info(`批量发券：接着发了 ${n} 位会员`);
-  } catch (error) {
-    log.error('批量发券的续发失败，下一分钟重试', error);
-  }
+  });
   // 短信待发箱（8.0.4）：配了短信通道才发；没配的留在待发箱，后台导出手动发
-  try {
+  await step('短信发送', '短信发送失败，下一分钟重试', async () => {
     const r = await sendPendingSms({ sql, config });
     if (r.sent || r.failed) log.info(`短信：发出 ${r.sent} 条${r.failed ? `、${r.failed} 条没发出去（下一分钟再试，最多 3 次）` : ''}`);
-  } catch (error) {
-    log.error('短信发送失败，下一分钟重试', error);
-  }
+  });
   // 买一赠一的赠品出库（8.0.4，HY12）：结账后记下的待出库开直接耗用单，反结账的冲销；出不了的记失败等人重试
-  try {
+  await step('赠品出库', '赠品出库失败，下一分钟重试', async () => {
     const r = await processGiftOuts({ sql, config });
     if (r.done || r.failed || r.voided) log.info(`赠品出库：出库 ${r.done} 条、冲销 ${r.voided} 条${r.failed ? `、${r.failed} 条失败（营销成本页重试）` : ''}`);
-  } catch (error) {
-    log.error('赠品出库失败，下一分钟重试', error);
-  }
+  });
   // 销售出库、配方耗用（8.0.20）：结账、出品时记下的「该扣多少」轧差后开耗用单；库存不够的留着，补上以后自动扣
-  try {
+  await step('自动扣料', '自动扣料失败，下一分钟重试', async () => {
     const r = await processStockUsage({ sql, config });
     if (r.docs || r.released || r.reconciled) {
       log.info(
         `自动扣料：开了 ${r.docs} 张耗用单（${r.lines} 样物料）${r.blocked ? `、${r.blocked} 样库存不够先留着` : ''}${r.released ? `、${r.released} 批没开成（下一分钟再试）` : ''}${r.reconciled ? `、${r.reconciled} 批对上了账` : ''}`,
       );
     }
-  } catch (error) {
-    log.error('自动扣料失败，下一分钟重试', error);
-  }
+  });
   // 自动补货（8.0.20）：每天过了设定的时间，把补货建议按供应商各建一张采购单草稿（不提交）；今天跑过就什么都不做
-  try {
+  await step('自动补货', '自动补货失败，下一分钟重试', async () => {
     const r = await runAutoReplenish({ sql, config }, now);
     if (r)
       log.info(
         `自动补货 ${r.date}：建了 ${r.poIds.length} 张采购单草稿（${r.lineCount} 样物料）${r.skippedNoSupplier ? `、${r.skippedNoSupplier} 样没有供应商` : ''}${r.error ? `；出错：${r.error}` : ''}`,
       );
-  } catch (error) {
-    log.error('自动补货失败，下一分钟重试', error);
-  }
+  });
   // 次卡（v0.7.28）：过了有效期没用完的次数作废
-  try {
+  await step('次卡的过期处理', '次卡的过期处理失败，下一分钟重试', async () => {
     const n = await expireCountCards(sql, { config }, now);
     if (n > 0) log.info(`次卡：${n} 张过期作废`);
-  } catch (error) {
-    log.error('次卡的过期处理失败，下一分钟重试', error);
-  }
+  });
   // 企业微信每周一推（8.0.7）：周一 9:00 以后、开关打开、.env 配了机器人地址时推这一周的（同一周只推一次）
-  try {
+  await step('企业微信每周一推', '企业微信每周一推失败，下一分钟重试', async () => {
     const r = await runWecomWeekly({ sql, config }, now);
     if (r?.ok) log.info('企业微信：这一周的 ERP 提醒已推送');
     else if (r) log.error(`企业微信每周一推没发出去（隔 5 分钟再试，最多 ${WECOM_MAX_ATTEMPTS} 次）：${r.error}`);
-  } catch (error) {
-    log.error('企业微信每周一推失败，下一分钟重试', error);
-  }
+  });
   // 扫码收款（8.0.21）：还在支付中的去支付方查，超过 5 分钟没结果的撤单（没配置扫码收款时什么都不做）
-  try {
+  await step('扫码收款的查询', '扫码收款的查询失败，下一分钟重试', async () => {
     const n = await sweepPaying({ sql, config }, now);
     if (n > 0) log.info(`扫码收款：${n} 笔支付中的出了结果`);
-  } catch (error) {
-    log.error('扫码收款的查询失败，下一分钟重试', error);
-  }
+  });
   // 扫码收款的原路退款：停在「退款中」超过 1 分钟的再去支付方退一次（同一个退款编号）
-  try {
+  await step('扫码收款的原路退款重试', '扫码收款的原路退款重试失败，下一分钟再试', async () => {
     const n = await sweepRefunds({ sql, config }, now);
     if (n > 0) log.info(`扫码收款：${n} 笔退款中的又去支付方退了一次`);
-  } catch (error) {
-    log.error('扫码收款的原路退款重试失败，下一分钟再试', error);
-  }
+  });
   // 平台验券：停在「核销中」超过 2 分钟的去平台查结果（只查，不再核销）
-  try {
+  await step('平台验券的核销结果查询', '平台验券的核销结果查询失败，下一分钟重试', async () => {
     const n = await sweepVerifying({ sql, config }, now);
     if (n > 0) log.info(`平台验券：${n} 张核销中的补上了结果`);
-  } catch (error) {
-    log.error('平台验券的核销结果查询失败，下一分钟重试', error);
-  }
+  });
   // AI 经营小结（8.0.22）：每家店的营业日切换以后生成前一天的一份（几家店时另有全公司的一份）；已生成、关着的什么都不做。
   // 没配模型服务时只生成事实包（看板上照样能看数字）
-  try {
+  await step('AI 经营小结', 'AI 经营小结失败，下一分钟重试', async () => {
     for (const r of await runAiSummaries({ sql, config }, now)) {
       if (r.status === 'failed') log.error(`AI 经营小结（${r.date}${r.storeId === null ? ' 全公司' : ''}）没生成出来，隔 5 分钟再试`);
       else log.info(`AI 经营小结（${r.date}${r.storeId === null ? ' 全公司' : ''}）：${r.status === 'done' ? '已生成' : '没配模型服务，只记了数字'}`);
     }
-  } catch (error) {
-    log.error('AI 经营小结失败，下一分钟重试', error);
-  }
+  });
   // 平台验券（8.0.21）：每天过了设定的时间（默认 06:10），按平台拉前一个营业日的核销明细对账（没配置时什么都不做）
-  try {
+  await step('平台验券对账', '平台验券对账失败，下一分钟重试', async () => {
     const n = await runVoucherReconcile({ sql, config }, now);
     if (n > 0) log.info(`平台验券对账：对了 ${n} 个平台`);
-  } catch (error) {
-    log.error('平台验券对账失败，下一分钟重试', error);
-  }
+  });
 }
