@@ -314,6 +314,8 @@
   - `720`（`720_gf_flow_config.sql`）：`gf_settings` 加键 `rules`；各类事项的流程 `gf_flow_configs`（只追加）；`gf_flows.config_version`。回滚 `docs/rollback/720_gf_flow_config.down.sql`。
 - **8.2.17 报销统一（`730`–`739`）**：《业财法审批与 WCP 模块 需求变更》第 7 批（店主 2026-11-27，设计见 `docs/V8217_EXPENSE_UNIFY.md`）——WCP 报销模板停用、报销只在业财法、通过前至少一位审批人同意。
   - `730`（`730_oa_expense_retire.sql`）：`oa_approval_templates` 的 `expense` 停用（只改数据）。回滚 `docs/rollback/730_oa_expense_retire.down.sql`。
+- **8.2.17 之后的小修（`740`–`749`，不改版本号，随下一个版本标签发）**：店主报升级后前台自检把 8.2.4 一报多建的技师预约报成重叠（570 加标记时历史预约一律是 false；设计见 `docs/V8222_TECHNICIANS.md` 第 11 节）。
+  - `740`（`740_booking_batch_overlap.sql`）：按操作编号（`idempotency_keys` 的 `booking_create` 与 `batchRowKey` 推出的行编号）认出 8.2.4 一报多的技师预约，只把 `technician_overlap` 补成 true、每张记一条审计 `booking_overlap_backfill`；对不上的不动。函数 `yuzu_booking_batch_row_key`、`yuzu_booking_batch_links`（只读核对 `scripts/diagnose-booking-overlap.sql` 共用）。回滚 `docs/rollback/740_booking_batch_overlap.down.sql`。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
   - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。
