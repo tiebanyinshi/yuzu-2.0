@@ -220,10 +220,11 @@ export async function pathDetail(db: Db, l: Learner, id: number): Promise<Academ
   const [row] = await db<PathRow[]>`SELECT ${pathSelect(db, l.id)} WHERE p.id = ${id}`;
   if (!row) throw notFound('没有这张学习地图');
   if (row.status !== 'published' && !l.canManage) throw forbidden('这张学习地图还没上架');
-  // 地图里的课一律列出来（被指派到地图就算被指派到它的课；「只本部门」的课在地图里照样能学）
+  // 地图里的课按课程列表同一个条件给员工看（XT02，Codex 审查 1f57180）：被指派到地图就算被指派到它的课，
+  // 「只本部门」的课别的部门没被指派到的不列出来（不然看得到标题、简介却打不开）；管理权限照旧全看（预览）
   const stages = await db<CourseRow[]>`
     SELECT ${courseSelect(db, l.id)} JOIN academy_path_courses pc ON pc.course_id = c.id AND pc.path_id = ${id}
-    WHERE c.status = 'published' OR ${l.canManage} ORDER BY pc.seq`;
+    WHERE ${l.canManage ? db`TRUE` : courseListed(db, l)} ORDER BY pc.seq`;
   return { ...toPath(row), stages: stages.map(toCourse) };
 }
 
