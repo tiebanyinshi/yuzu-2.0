@@ -11,7 +11,7 @@ import { isApiError, messageOf } from '../../utils/api';
 import { shortTime } from '../../utils/format';
 import { requireMe, toLogin } from '../../utils/guard';
 import { largeTextOn } from '../../utils/prefs';
-import { downloadFile, extOf, isNew, loadFiles, markViewed, mediaUrl, openModeOf } from '../../utils/training';
+import { downloadFile, extOf, isNew, loadFiles, markViewed, mediaUrl, noteOpened, openModeOf } from '../../utils/training';
 
 let file: TrainingFile | null = null;
 let audio: WechatMiniprogram.InnerAudioContext | null = null;
@@ -173,11 +173,13 @@ Page({
       const path = await downloadFile(f, (p) => this.setData({ progress: p }));
       if (this.data.mode === 'image') {
         wx.previewImage({ urls: [path], current: path });
+        noteOpened(f.id);
         this.viewed(f);
       } else {
         await new Promise<void>((resolve, reject) =>
           wx.openDocument({ filePath: path, fileType: extOf(f.current.fileName) as 'pdf', showMenu: false, success: () => resolve(), fail: () => reject(new Error('open')) }),
         );
+        noteOpened(f.id);
         this.viewed(f);
       }
     } catch (e) {
@@ -196,6 +198,7 @@ Page({
 
   onVideoPlay() {
     autoRetries = 0;
+    if (mediaFile) noteOpened(mediaFile.id);
     if (this.data.fresh) this.viewed(mediaFile);
   },
 
@@ -230,6 +233,7 @@ Page({
       audio.onEnded(() => this.setData({ playing: false }));
       // 真的放出来了才记「看过」（地址过期、放不了的不记）
       audio.onPlay(() => {
+        if (playing) noteOpened(playing.id);
         if (this.data.fresh) this.viewed(playing);
       });
       audio.onError(() => {

@@ -6,6 +6,7 @@ import type { AcademyHome } from '../../../../src/shared/academy';
 import type { AssignedRow, CategoryRow, LevelView, PathRow } from '../../utils/academy';
 import { assignedRows, categoryRows, dailyLine, levelView, loadAcademyHome, loadDaily, pathRow } from '../../utils/academy';
 import { isApiError, isOffline, messageOf } from '../../utils/api';
+import { listPending, sendPending } from '../../utils/pending';
 import { requireMe, toLogin } from '../../utils/guard';
 import { largeTextOn } from '../../utils/prefs';
 import type { FolderRow } from '../../utils/training';
@@ -98,6 +99,9 @@ Page({
       this.setData({ ac: cached, acState: cached ? 'ready' : 'loading', acStale: !!cached });
     }
     try {
+      // 以前点「学完了」没收到回复、人走了的：先原样重提掉（学堂一个课时只给一次学分），首页的学分、进度才对
+      const left = listPending(staffId, 'academy_complete');
+      if (left.length) await Promise.all(left.map((op) => sendPending(op).catch(() => undefined)));
       // 每日一练取不到不挡首页（只少一行字）
       const [home, daily] = await Promise.all([loadAcademyHome(), loadDaily().catch(() => null)]);
       if (my !== genAc) return;

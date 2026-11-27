@@ -77,6 +77,20 @@ export function folderRows(list: TrainingFolderList): FolderRow[] {
 
 // ── 接口 ──
 
+// ── 这一次打开小程序里真打开过、真放出来过的资料（学堂的文件课时要看过才能点「学完了」） ──
+
+const openedAt: Record<number, number> = {};
+
+/** 文件页：文档打开了、图片看了、视频音频放出来了 */
+export function noteOpened(fileId: number, at: number = Date.now()): void {
+  openedAt[fileId] = at;
+}
+
+/** 从 since 起真打开过这份资料没有 */
+export function openedSince(fileId: number, since: number): boolean {
+  return (openedAt[fileId] ?? 0) >= since;
+}
+
 export const loadFolders = () => call<TrainingFolderList>('GET', '/training/folders');
 export const loadFiles = (folderId: number) => call<TrainingFile[]>('GET', `/training/folders/${folderId}/files`);
 export const searchFiles = (q: string) => call<TrainingSearchItem[]>('GET', `/training/search?q=${encodeURIComponent(q)}`);

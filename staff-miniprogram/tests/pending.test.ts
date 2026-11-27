@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { installFakeWx } from './fake-wx';
 import { clearToken, saveToken, setRelogin, setRetryDelayForTest } from '../src/utils/api';
 import type { PendingOp } from '../src/utils/pending';
-import { loadPending, savePending, sendPending } from '../src/utils/pending';
+import { listPending, loadPending, savePending, sendPending } from '../src/utils/pending';
 
 let fake: ReturnType<typeof installFakeWx>;
 const op = (over: Partial<PendingOp> = {}): PendingOp => ({
@@ -35,6 +35,16 @@ describe('结果待确认', () => {
     expect(savePending(op({ kind: 'approval_act', ref: 12 }))).toBe(true);
     expect(loadPending(7, 'approval_act', 12)).toMatchObject({ key: 'k-1' });
     expect(loadPending(7, 'approval_act', 13)).toBeNull();
+  });
+
+  it('按人、按类列出留着的（学堂开新卷、进学习页时先把以前没确定的原样重提掉）', () => {
+    savePending(op({ kind: 'academy_complete', key: 'a', ref: 3, body: {} }));
+    savePending(op({ kind: 'academy_complete', key: 'b', ref: 4, body: {} }));
+    savePending(op({ kind: 'academy_complete', key: 'c', ref: 3, body: {}, staffId: 8 }));
+    savePending(op({ kind: 'academy_daily', key: 'd', ref: 3 }));
+    expect(listPending(7, 'academy_complete').map((p) => p.key).sort()).toEqual(['a', 'b']);
+    expect(listPending(8, 'academy_complete').map((p) => p.key)).toEqual(['c']);
+    expect(listPending(7, 'academy_quiz')).toEqual([]);
   });
 
   it('存不下（读回对不上）就不发', async () => {

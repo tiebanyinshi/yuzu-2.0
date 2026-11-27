@@ -21,6 +21,8 @@ let me: StaffMpMe | null = null;
 let daily: AcademyDaily | null = null;
 let chosen: number[] = [];
 let gen = 0;
+/** 每开一页加一、关掉也加一：交题的结果只认这一页（藏起来再回来照样画，免得一直卡在「交着」） */
+let inst = 0;
 
 const UNSURE = '没收到门店系统的回复，可能已经记上了：点下面的按钮原样再交一次（不会重复记）';
 
@@ -48,7 +50,12 @@ Page({
 
   onLoad() {
     daily = null;
+    inst += 1;
     this.setData({ large: largeTextOn() });
+  },
+
+  onUnload() {
+    inst += 1;
   },
 
   async onShow() {
@@ -149,10 +156,10 @@ Page({
     const key = prior ? prior.key : uuid();
     const body = prior ? prior.body : { clientKey: key, questionId: it.questionId, version: it.version, ...extra };
     const op: PendingOp = { staffId: me.staff.id, kind: 'academy_daily', key, path: '/academy/daily/answer', body, at: prior ? prior.at : Date.now(), label: '每日一练', ref: it.questionId };
-    const my = gen;
+    const mine = inst;
     this.setData({ busy: true, notice: '', unsure: false, rejected: false });
     const out = await sendPending<AcademyDailyAnswer>(op);
-    if (my !== gen) return;
+    if (mine !== inst) return;
     this.setData({ busy: false });
     if (out.status === 'ok') {
       const a = out.data;

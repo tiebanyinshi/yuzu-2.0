@@ -34,8 +34,6 @@ export const loadCourse = (id: number) => call<AcademyCourseDetail>('GET', `/aca
 export const loadPath = (id: number) => call<AcademyPathDetail>('GET', `/academy/paths/${id}`);
 export const loadLesson = (id: number) => call<StaffMpAcademyLesson>('GET', `/academy/lessons/${id}`);
 export const pingLesson = (id: number, seconds: number) => call<{ added: number }>('POST', `/academy/lessons/${id}/ping`, { seconds });
-/** 学完了（图文课件、文件）：门店系统一个课时只给一次学分，再点一次回 0 分、不会重复记 */
-export const completeLesson = (id: number) => call<AcademyCompletion>('POST', `/academy/lessons/${id}/complete`);
 export const loadQuizResult = (attemptId: number) => call<AcademyQuizResult>('GET', `/academy/attempts/${attemptId}`);
 
 /** 学习时长一次最多报几秒（学堂那边封顶 600 秒，这里每 30 秒报一次） */

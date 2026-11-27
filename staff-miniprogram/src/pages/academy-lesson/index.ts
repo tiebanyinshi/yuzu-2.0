@@ -4,14 +4,21 @@
 //   · 测验：去测验页（开卷、交卷都带编号）；实操：列出检查项与带教签过的记录（带教在 WCP 网页上签）。
 // 打开时报一次 0 秒（学堂记下「开始学了」，实操课时由此进带教的待签）；图文课件、文件开着每 30 秒报一次学习时长
 // （学堂按两次上报的间隔算、封顶，同时开几个课时不重复计）；去文件页看文件时照样计（与学堂网页一样）。
-// 「学完了」门店系统一个课时只给一次学分：没收到结果时再点一次不会重复加分。
+// 「学完了」照「结果待确认」（AGENTS.md）先存在手机上再发，存不下就不发；没收到回复的留着，回到这一课时只能原样再点一次
+// （学堂一个课时只给一次学分，重提不会重复加分）。文件课时要在文件页里真打开、真放出来过才能点。
 
+import type { StaffMpMe } from '../../../../src/shared/staffmp';
+import type { AcademyCompletion } from '../../../../src/shared/academy';
 import type { BlockView, QuestionState } from '../../utils/academy';
-import { blockViews, completeLesson, completionText, KIND_LABELS, loadLesson, PING_SECONDS, pingLesson, questionState, toggleChoice, unansweredCount } from '../../utils/academy';
+import { blockViews, completionText, KIND_LABELS, loadLesson, PING_SECONDS, pingLesson, questionState, toggleChoice, unansweredCount } from '../../utils/academy';
 import { isApiError, isOffline, messageOf } from '../../utils/api';
 import { shortTime } from '../../utils/format';
 import { requireMe, toLogin } from '../../utils/guard';
+import type { PendingOp } from '../../utils/pending';
+import { clearPending, loadPending, SAVE_FAILED, sendPending } from '../../utils/pending';
 import { largeTextOn } from '../../utils/prefs';
+import { openedSince } from '../../utils/training';
+import { uuid } from '../../utils/uuid';
 
 let gen = 0;
 // 计时只给正在显示的那一页（同一时刻只有一页在前台；去文件页看文件时留给这一页）
@@ -19,6 +26,11 @@ let timer: number | null = null;
 let lastPing = 0;
 /** 去文件页看文件了：这一页藏起来时不停计时 */
 let inFile = false;
+/** 去文件页的时刻：回来以后看这之后真打开过那份文件没有 */
+let fileFrom = 0;
+let me: StaffMpMe | null = null;
+
+const UNSURE = '上次点「学完了」没收到门店系统的回复，可能已经记上了：再点一次「学完了」原样再发（不会重复加学分）';
 
 function stopTimer() {
   if (timer !== null) clearInterval(timer);
@@ -58,10 +70,13 @@ Page({
   },
 
   async onShow() {
-    if (!(await requireMe())) return;
+    me = await requireMe();
+    if (!me) return;
     // 从文件页回来：那段时间一直在计，接着计；别的情况重新起
     const back = inFile;
     inFile = false;
+    // 真打开过、真放出来过才算看过（只是进了文件页又退回来的不算）
+    if (back && this.data.file && openedSince(this.data.file.id, fileFrom)) this.setData({ opened: true });
     this.load();
     if (!back || timer === null) {
       lastPing = Date.now();
@@ -138,6 +153,10 @@ Page({
       });
       // 不计时的课时（测验、实操）不留计时器
       if (TIMED.indexOf(l.kind) < 0) stopTimer();
+      // 上次「学完了」没收到回复的：已经学完了就删掉，没有就提示只能原样再点一次
+      const prior = me ? loadPending(me.staff.id, 'academy_complete', l.id) : null;
+      if (prior && l.state === 'done' && me) clearPending(me.staff.id, 'academy_complete', l.id);
+      else if (prior) this.setData({ notice: UNSURE, noticeTone: 'warn', opened: true, left: 0 });
     } catch (e) {
       if (my !== gen) return;
       if (isApiError(e) && e.status === 401) return toLogin();
@@ -194,7 +213,7 @@ Page({
     const f = this.data.file;
     if (!f) return;
     inFile = true;
-    this.setData({ opened: true });
+    fileFrom = Date.now();
     wx.navigateTo({ url: `/pages/learn-file/index?folder=${f.folderId}&id=${f.id}`, fail: () => (inFile = false) });
   },
 
@@ -203,21 +222,27 @@ Page({
   },
 
   async onComplete() {
-    if (this.data.busy || this.data.done) return;
-    if (this.data.kind === 'article' && this.data.left > 0) return;
-    if (this.data.kind === 'file' && !this.data.opened) return;
-    this.setData({ busy: true, notice: '' });
-    try {
-      const c = await completeLesson(this.data.id);
-      this.setData({ done: true, notice: completionText(c), noticeTone: 'success' });
-      wx.vibrateShort({ type: 'light' });
-    } catch (e) {
-      if (isApiError(e) && e.status === 401) return toLogin();
-      const unsure = isOffline(e) || (isApiError(e) && e.status >= 500);
-      this.setData({ notice: unsure ? '没收到门店系统的回复：再点一次「学完了」，不会重复加学分' : messageOf(e), noticeTone: unsure ? 'warn' : 'error' });
-    } finally {
-      this.setData({ busy: false });
+    if (this.data.busy || this.data.done || !me) return;
+    const id = this.data.id;
+    const prior = loadPending(me.staff.id, 'academy_complete', id);
+    // 留着没确定的那一次：原样再发（不看小测答没答、文件看没看——上次已经过了这一关）
+    if (!prior) {
+      if (this.data.kind === 'article' && this.data.left > 0) return;
+      if (this.data.kind === 'file' && !this.data.opened) return;
     }
+    const op: PendingOp = prior ?? { staffId: me.staff.id, kind: 'academy_complete', key: uuid(), path: `/academy/lessons/${id}/complete`, body: {}, at: Date.now(), label: '学完了', ref: id };
+    this.setData({ busy: true, notice: '' });
+    const out = await sendPending<AcademyCompletion>(op);
+    this.setData({ busy: false });
+    if (out.status === 'ok') {
+      this.setData({ done: true, notice: completionText(out.data), noticeTone: 'success' });
+      wx.vibrateShort({ type: 'light' });
+      return;
+    }
+    if (out.status === 'signed_out') return toLogin();
+    if (out.status === 'not_sent') return this.setData({ notice: SAVE_FAILED, noticeTone: 'error' });
+    if (out.status === 'rejected') return this.setData({ notice: messageOf(out.error), noticeTone: 'error' });
+    this.setData({ notice: out.status === 'unknown' && isOffline(out.error) ? `连不上门店系统。${UNSURE}` : UNSURE, noticeTone: 'warn' });
   },
 
   onNext() {

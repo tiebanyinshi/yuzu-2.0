@@ -1,7 +1,7 @@
 // 学习的纯函数（src/utils/training.ts）：怎么打开、什么算「新」、列表里一行写什么、文件夹的先后、最近搜过的。
 
 import { describe, expect, it } from 'vitest';
-import { fileRow, folderRows, isNew, openModeOf, pushRecent } from '../src/utils/training';
+import { fileRow, folderRows, isNew, noteOpened, openedSince, openModeOf, pushRecent } from '../src/utils/training';
 
 const file = (over: Record<string, unknown> = {}) =>
   ({
@@ -64,5 +64,16 @@ describe('最近搜过', () => {
     expect(pushRecent(['a', 'b'], 'b')).toEqual(['b', 'a']);
     expect(pushRecent(['1', '2', '3', '4', '5'], '6')).toEqual(['6', '1', '2', '3', '4']);
     expect(pushRecent(['a'], '  ')).toEqual(['a']);
+  });
+});
+
+describe('真打开过没有（学堂的文件课时）', () => {
+  it('只认去文件页以后真打开、真放出来的', () => {
+    expect(openedSince(901, 1000)).toBe(false);
+    noteOpened(901, 900);
+    expect(openedSince(901, 1000)).toBe(false);
+    noteOpened(901, 1500);
+    expect(openedSince(901, 1000)).toBe(true);
+    expect(openedSince(902, 1000)).toBe(false);
   });
 });

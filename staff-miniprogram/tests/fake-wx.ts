@@ -24,6 +24,7 @@ export function installFakeWx(opts: { envVersion?: 'develop' | 'trial' | 'releas
     getStorageSync: (k: string) => (storage.has(k) ? storage.get(k) : ''),
     setStorageSync: (k: string, v: unknown) => void storage.set(k, v),
     removeStorageSync: (k: string) => void storage.delete(k),
+    getStorageInfoSync: () => ({ keys: [...storage.keys()], currentSize: 0, limitSize: 10240 }),
     getAccountInfoSync: () => ({ miniProgram: { envVersion: opts.envVersion ?? 'develop', version: '' } }),
     login: (o: { success: (r: { code: string }) => void }) => o.success({ code: loginCode }),
     request: (o: { url: string; method: string; data: unknown; header: Record<string, string>; success: (r: unknown) => void; fail: () => void }) => {
