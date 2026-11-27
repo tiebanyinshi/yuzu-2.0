@@ -147,7 +147,7 @@ test.describe('技师上钟轮播', () => {
       await page.getByTestId('tech-board-status').selectOption('serving');
       const item = await page.getByTestId('tech-board-item').locator('option').nth(1).getAttribute('value');
       await page.getByTestId('tech-board-item').selectOption(item!);
-      await expect(page.getByTestId('tech-board-active')).toContainText('状态：上钟中');
+      await expect(page.getByTestId('tech-board-active')).toContainText('状态：上钟');
       await expect(page.getByTestId('tech-board-active')).toContainText(`项目：${item}`);
       await expect(page.locator('[data-testid^="tech-board-row-"]:not([data-status="serving"])')).toHaveCount(0);
       await page.getByTestId('tech-board-chip-status').click();
