@@ -52,7 +52,7 @@ export function MealEntryTab() {
     if (!preview || op.locked) return;
     const r = (await op.submit((key) => ({
       url: '/api/dining/meal-entries',
-      body: { clientKey: key, tagCode: preview.tagCode },
+      body: { clientKey: key, tagCode: preview.tagCode, visitId: preview.visitId },
       tagCodes: [preview.tagCode],
       summary: `登记进餐 ${preview.period?.label ?? ''}`,
       amount: null,

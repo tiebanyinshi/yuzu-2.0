@@ -11,5 +11,8 @@ export { visitTicket } from './tickets';
 /** 前台挂账（bills.ts）按需加载：钟房的派钟、加钟、换项目要用，静态引用会与钟房绕成环 */
 export const loadBills = () => import('./bills');
 
+/** 前台的查回、确认作废（visits.ts）按需加载：8.2.8 餐厅入口登记进餐的「结果待确认」按餐厅的权限查回 */
+export const loadVisitOps = () => import('./visits');
+
 /** 前台结账（checkout.ts）按需加载：桌台返台要用反结账，静态引用会与桌台、钟房绕成环 */
 export const loadCheckout = () => import('./checkout');
