@@ -79,7 +79,9 @@ compare yuzu_verify_824a before after
 
 # ── b）只有一报多：8.2.4 → 8.2.17（570 … 730）→ 740
 build824 yuzu_verify_824b 0
-for f in $(ls "$HEAD_DIR/src/server/migrations" | grep -E '^(5[7-9][0-9]|6[0-9][0-9]|7[0-3][0-9])_.*\.sql$' | sort); do
+for path in "$HEAD_DIR"/src/server/migrations/*.sql; do
+  f=$(basename "$path")
+  [[ "$f" =~ ^(5[7-9][0-9]|6[0-9][0-9]|7[0-3][0-9])_.*\.sql$ ]] || continue
   [ "$(psql_db yuzu_verify_824b -c "SELECT count(*) FROM schema_migrations WHERE version = '$f'")" = 0 ] || continue
   psql_db yuzu_verify_824b -1 -f "$HEAD_DIR/src/server/migrations/$f" -c "INSERT INTO schema_migrations (version) VALUES ('$f')"
   echo "  已执行 $f"
