@@ -457,6 +457,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '580_mall_dispatch.sql',
   '590_away_lock_v827.sql',
   '600_dining_meals_v828.sql',
+  '610_pickup_v829.sql',
   '640_academy_core.sql',
   '641_academy_assess.sql',
   '642_academy_content.sql',
@@ -464,6 +465,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '710_gf_role_snapshot.sql',
   '720_gf_flow_config.sql',
   '730_oa_expense_retire.sql',
+  '740_booking_batch_overlap.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

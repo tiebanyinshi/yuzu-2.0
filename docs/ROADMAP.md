@@ -305,6 +305,9 @@
   - `590`（`590_away_lock_v827.sql`）：锁牌记录 `visit_tag_locks`（只追加，一次来访同时一把，最多 4 小时，预售指向一张手牌押金）；操作编号与「确认作废」追加 `tag_away_lock`、`tag_away_unlock`。回滚 `docs/rollback/590_away_lock_v827.down.sql`。
 - **8.2.8（`600`–`609`）**：《新店系统需求现场走场确认》第一节第 1 条（餐厅：入口刷手牌、含餐抵扣、裸票时段价、餐台与餐包；设计见 `docs/V8228_DINING_MEALS.md`）。
   - `600`（`600_dining_meals_v828.sql`）：票种含几餐 `ticket_types.meals_12h / meals_24h`（含餐门票回填 2 / 3）；进餐登记 `meal_entries`（只追加）；单项打折加自动折扣档 `auto` 与规则 `rule`（含餐、自助、首杯赠）；操作编号与「确认作废」追加 `meal_entry`。回滚 `docs/rollback/600_dining_meals_v828.down.sql`。
+- **本线版本号顺延（店主 2026-11-27：8.2.8 合并时版本号比主线低；随后又说「再延后一个版本号」）**：主线已到 8.2.17，8.2.18 留给别的线；本线余下几版排在它之后、按原顺序：8.2.19 水吧（原 8.2.9）、8.2.20 休闲娱乐（原 8.2.10）、8.2.21 泡池（原 8.2.11）、8.2.22 前台快捷键、8.2.23 发卡台界面、8.2.24 前台改良（收银员工作台 demo 三批）、8.2.25 未交回与挂失手牌清单（迁移 `740`）。迁移号不变。别的线请从 8.2.26 起排。
+- **8.2.19（`610`–`619`，原排 8.2.9）**：《新店系统需求现场走场确认》第一节第 2 条（水吧：首杯免费、赠标签、取餐叫号与扫码看进度；设计见 `docs/V82219_WATER_BAR.md`）。
+  - `610`（`610_pickup_v829.sql`）：取餐号 `pickup_tickets`（只追加，同一店同一营业日号唯一、随机编号给客人扫码）。回滚 `docs/rollback/610_pickup_v829.down.sql`。
 - **8.2.6 采购商城 v0.2（`580`–`589`）**：《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》（店主 2026-11-27，设计见 `docs/MALL_V826.md`）——分批发配与物料发配记录、退回逐项标必补、版本快照、终止申购、收货待判。
   - `580`（`580_mall_dispatch.sql`）：发配记录 `request_line_issues`（核库已开的领料单抄一份）、退回必补项 `request_fix_items`、版本快照 `purchase_request_versions`、终止申请 `request_terminations`、收货待判 `inv_doc_lines.hold_milli`；操作类型追加 `request_dispatch`、`mall_terminate`。回滚 `docs/rollback/580_mall_dispatch.down.sql`。
 - **8.2.12–8.2.17（业财法审批与 WCP、采购模块需求补充，一个集成 PR）**：店主 2026-11-27 两份需求文档分 7 批做，各批各占一个版本号、各写一份设计（`docs/V8212_APPROVALS_PURCHASING.md` … `docs/V8217_EXPENSE_UNIFY.md`），合成一个集成 PR 进 main。版本号排在另一条开发线已排的 8.2.8（餐厅）、8.2.9（水吧）、8.2.10（休闲娱乐）、8.2.11（泡池）之后（店主「延后」）；迁移号避开别的线已占的 `600`–`639`，用 `700`–`739`。8.2.12 没有迁移，8.2.16 没有迁移。
@@ -322,6 +325,8 @@
   - `642`（`642_academy_content.sql`）：批量操作 `academy_bulk_ops`（导入课件包、表格导入题、AI 出题的操作编号与结果）、问柚子 `academy_tutor_questions`。回滚 `docs/rollback/642_academy_content.down.sql`。
   - **合并以后（2026-11-27 合进 main，`3d70931`）**：① 独立验收在 `v8.2.18` 标签上补做（交接说明 `docs/HANDOFF_V8218.md` 第 5、6 节），报的问题在下一版修；② XT01–XT12 等店主确认（`docs/PENDING_DECISIONS.md`「汤崎学堂」），有不同意见再改；③ 17 门内置课件由店主或学堂管理员按 `docs/ACADEMY_PACKS.md` 的核对单审过再上架（「汤崎之道」按品牌书改写）；④ 员工小程序线的「学习」用学堂的接口，不另建一套（那条线的范围，需店主协调）；⑤ 微信内置浏览器真机未测，交门店真机测试。之后的问题在本分支 `claude/peaceful-mendel-jardzy` 的新草稿 PR 上做。
 - **柜锁发卡器（不改版本号，店主 2026-11-27）**：门店柜锁是沈阳泰格的（衣物柜、手机柜同一种，手牌是 M1 芯片）。厂家接口不公开，先给柜锁桥加读卡、写卡、清卡三个发卡器接口与能力开关 `LOCKER_CAPABILITIES`、模拟柜锁桥 `locker-bridge-mock`，柜况页加「发卡器」；拿到厂家的动态库后写泰格的柜锁桥即可（`docs/LOCKERS_V8149.md` 第 6 节，待定 GK1–GK6）。没有迁移。
+- **8.2.18 之后的小修（`740`–`749`，不改版本号，随下一个版本标签发）**：店主报升级后前台自检把 8.2.4 一报多建的技师预约报成重叠（570 加标记时历史预约一律是 false；设计见 `docs/V8222_TECHNICIANS.md` 第 11 节）。
+  - `740`（`740_booking_batch_overlap.sql`）：按操作编号（`idempotency_keys` 的 `booking_create` 与 `batchRowKey` 推出的行编号）认出 8.2.4 一报多的技师预约，只把 `technician_overlap` 补成 true、每张记一条审计 `booking_overlap_backfill`；对不上的不动。函数 `yuzu_booking_batch_row_key`、`yuzu_booking_batch_links`（只读核对 `scripts/diagnose-booking-overlap.sql` 共用）。回滚 `docs/rollback/740_booking_batch_overlap.down.sql`。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
   - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。
