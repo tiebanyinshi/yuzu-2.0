@@ -123,6 +123,7 @@
 - [`V8222_TECHNICIANS.md`](V8222_TECHNICIANS.md)：8.2.2 技师：扩钟、一报多、退技师、换项目、休假、状态、统计与导入
 - [`V8223_FRONTDESK.md`](V8223_FRONTDESK.md)：8.2.3 前台：发卡台与全店（客人类别、偏好、客诉台账、拥挤与高风险提示、技师预约权限、跳转明细、同行移出、补单）
 - [`V8224_DINING.md`](V8224_DINING.md)：8.2.4 餐饮：分组默认档口、临时项目进厨房、包房房型、服务费门店默认、返台、公司承担
+- [`V8227_AWAY_LOCK.md`](V8227_AWAY_LOCK.md)：8.2.7 收银台「锁牌外出」：锁牌最多 4 小时，锁之前先收预售
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
 - [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面
