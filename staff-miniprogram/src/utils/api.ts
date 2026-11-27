@@ -136,6 +136,8 @@ let memoryToken: string | null = null;
 const currentToken = () => memoryToken || storedToken();
 /** 有没有能用的令牌（存着的，或手机存不下时记在内存里的） */
 export const hasToken = () => !!currentToken();
+/** 现在用的令牌（退出时用它直接退，不悄悄重新登录） */
+export const tokenNow = () => currentToken();
 
 /** 令牌过期时怎么悄悄重新登录（session.ts 交进来；登录成功返回 true） */
 let relogin: (() => Promise<boolean>) | null = null;
