@@ -238,6 +238,8 @@ export const PERMISSION_COLUMN: Record<Permission, PermissionColumn> = {
   'payroll.manage': 'account',
   // 员工培训（2026-11-25）：全公司的培训资料，与组织架构同一列
   'training.manage': 'account',
+  // 汤崎学堂（2026-11-27）：全公司的课程、指派与学习数据，与员工培训同一列
+  'academy.manage': 'account',
   // 公司公告（员工办公 v1.1 第 5 批）：全公司与部门公告，与员工培训同一列
   'oa.announce': 'account',
   // 业财法审批的角色映射（2026-11-26）：谁是财总、CFO、董事长，算「账号与权限配置」
@@ -330,6 +332,7 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
     'oa.all',
     'payroll.manage',
     'training.manage',
+    'academy.manage',
     'oa.announce',
   ],
   // OA-04：人力行政部员工做考勤设置、排班（hr.attendance 算「业务录入」：只有总裁能有「基础数据 / 价格配置」那一列）
