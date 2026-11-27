@@ -5,7 +5,7 @@
 import { academyLevelOf, type AcademyCompletion } from '@shared/academy';
 import type { Db, Sql, Tx } from '../../db';
 import { conflict, forbidden, notFound } from '../../lib/errors';
-import { withTx } from '../../lib/tx';
+import { nextDocNo, withTx } from '../../lib/tx';
 import { courseDone } from './catalog';
 import { assertCourseOpen, type Learner } from './learner';
 
@@ -98,14 +98,34 @@ async function pathCompleted(tx: Tx, staffId: number, pathId: number): Promise<b
   return !!r!.done;
 }
 
+/** 营业日加几个月（月底对齐：1 月 31 日加一个月是 2 月最后一天） */
+export function addMonths(date: string, months: number): string {
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+  const first = new Date(Date.UTC(y, m - 1 + months, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  first.setUTCDate(Math.min(d, last));
+  return first.toISOString().slice(0, 10);
+}
+
+/** 学完一张地图：发证书（同一人同一张地图只有一张没撤销的；有效期按地图） */
+async function issueCertificate(tx: Tx, staffId: number, path: { id: number; title: string; validMonths: number | null }, today: string): Promise<string | null> {
+  const [had] = await tx`SELECT cert_no FROM academy_certificates WHERE staff_id = ${staffId} AND path_id = ${path.id} AND revoked_at IS NULL`;
+  if (had) return null;
+  const certNo = await nextDocNo(tx, 'academy_cert', 'XT', today);
+  await tx`
+    INSERT INTO academy_certificates (cert_no, staff_id, path_id, title, issued_on, expires_on)
+    VALUES (${certNo}, ${staffId}, ${path.id}, ${path.title}, ${today}, ${path.validMonths ? addMonths(today, path.validMonths) : null})`;
+  return certNo;
+}
+
 /**
- * 结算这位学员已经学完、还没记下的地图（调用方已取学员咨询锁）：记「学完了」（只追加，同一人同一张地图一行），给地图学分。
+ * 结算这位学员已经学完、还没记下的地图（调用方已取学员咨询锁）：记「学完了」（只追加，同一人同一张地图一行），给地图学分、发证书。
  * pathIds 只看这几张（为空看全部上架的）。地图后来才上架、加了已经学完的课时也能补上（Codex 审查 dd885a6）。
  */
 export async function settlePaths(tx: Tx, staffId: number, pathIds: number[] | null, today: string): Promise<AcademyCompletion['pathsCompleted']> {
   if (pathIds && !pathIds.length) return [];
-  const paths = await tx<{ id: number; title: string; credits: number }[]>`
-    SELECT p.id, p.title, p.credits FROM academy_paths p
+  const paths = await tx<{ id: number; title: string; credits: number; validMonths: number | null }[]>`
+    SELECT p.id, p.title, p.credits, p.valid_months FROM academy_paths p
     WHERE p.status = 'published' ${pathIds ? tx`AND p.id IN ${tx(pathIds)}` : tx``}
       AND NOT EXISTS (SELECT 1 FROM academy_path_completions x WHERE x.staff_id = ${staffId} AND x.path_id = p.id)
     ORDER BY p.id`;
@@ -114,21 +134,25 @@ export async function settlePaths(tx: Tx, staffId: number, pathIds: number[] | n
     if (!(await pathCompleted(tx, staffId, Number(path.id)))) continue;
     await tx`INSERT INTO academy_path_completions (staff_id, path_id, completed_on) VALUES (${staffId}, ${path.id}, ${today})`;
     const got = await awardCredits(tx, staffId, path.credits, 'path', Number(path.id), path.title);
-    out.push({ id: Number(path.id), title: path.title, credits: got });
+    const certNo = await issueCertificate(tx, staffId, { id: Number(path.id), title: path.title, validMonths: path.validMonths }, today);
+    out.push({ id: Number(path.id), title: path.title, credits: got, certNo });
   }
   return out;
 }
 
-/** 管理员上架地图、改了阶段：给已经学完的人补记（地图一行已锁；按员工编号顺序逐个取学员锁） */
+/**
+ * 管理员上架地图、改了阶段：给已经学完的人补记（地图一行已锁）。
+ * 先按员工编号升序把这批人的学员锁都取齐，再逐个结算：结算里发证书要锁当天的证书单号计数，
+ * 边结算边取下一位的锁的话，这边拿着计数等那位的锁、那位拿着自己的锁等计数，就成环了（Codex 审查 be8f2e7）。
+ */
 export async function settlePathForAll(tx: Tx, pathId: number, today: string) {
   const staff = await tx<{ staffId: number }[]>`
     SELECT DISTINCT pr.staff_id FROM academy_progress pr JOIN academy_lessons l ON l.id = pr.lesson_id
     JOIN academy_path_courses pc ON pc.course_id = l.course_id
     WHERE pc.path_id = ${pathId} AND pr.completed_at IS NOT NULL ORDER BY pr.staff_id`;
-  for (const { staffId } of staff) {
-    await lockLearner(tx, Number(staffId));
-    await settlePaths(tx, Number(staffId), [pathId], today);
-  }
+  const ids = staff.map((r) => Number(r.staffId));
+  for (const id of ids) await lockLearner(tx, id);
+  for (const id of ids) await settlePaths(tx, id, [pathId], today);
 }
 
 /**

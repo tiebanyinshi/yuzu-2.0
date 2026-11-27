@@ -1,4 +1,7 @@
-// 汤崎学堂（店主 2026-11-27，docs/ACADEMY.md、PENDING_DECISIONS XT01–XT12）：课程、课时、学习地图、指派、进度、学分、等级与榜单。
+// 汤崎学堂（店主 2026-11-27，docs/ACADEMY.md、PENDING_DECISIONS XT01–XT12）：课程、课时、学习地图、指派、进度、学分、等级与榜单；题库、测验、每日一练、掌握度、签核与证书。
+
+import type { FsrsGrade, MasteryStatus } from './academy-algo';
+import type { AcademyQuestionKind } from './academy-markup';
 
 export const ACADEMY_CATEGORIES = ['culture', 'must_know', 'industry', 'skill', 'system', 'safety', 'management'] as const;
 export type AcademyCategory = (typeof ACADEMY_CATEGORIES)[number];
@@ -27,6 +30,10 @@ export const ACADEMY_LESSON_KIND_LABELS: Record<AcademyLessonKind, string> = { a
 export const ACADEMY_DEFAULT_CREDITS: Record<AcademyLessonKind, number> = { article: 1, file: 1, quiz: 2, practical: 3 };
 /** 完成一张学习地图默认另给的学分、每日一练每天的学分（XT04） */
 export const ACADEMY_PATH_CREDITS = 5;
+export const ACADEMY_DAILY_CREDITS = 1;
+/** 每日一练每天几题、其中新题最多几道（XT07） */
+export const ACADEMY_DAILY_TARGET = 10;
+export const ACADEMY_DAILY_NEW_MAX = 5;
 /** 测验默认每次几道题、及格线（XT03） */
 export const ACADEMY_QUIZ_DEFAULT = { count: 5, pass: 80 } as const;
 
@@ -86,6 +93,11 @@ export interface AcademyLessonView {
   seconds: number;
   /** 文件课时：员工培训里的哪份文件（页面按员工培训的接口读内容；建议放在全员看得到的「培训资料」里） */
   file: { id: number; folderId: number; title: string } | null;
+  /** 测验课时：我最好的一次（没交过卷为空）、这门课能抽的题数 */
+  quizBest: { score: number; passed: boolean } | null;
+  quizAvailable: number;
+  /** 实操课时：检查项与带教签过的记录（新的在前） */
+  practical: { items: string[]; lessonVersion: number; signoffs: AcademySignoff[] } | null;
 }
 
 export interface AcademyPathSummary {
@@ -210,7 +222,7 @@ export interface AcademyCompletion {
   lessonId: number;
   credits: number;
   courseCompleted: boolean;
-  pathsCompleted: { id: number; title: string; credits: number }[];
+  pathsCompleted: { id: number; title: string; credits: number; certNo: string | null }[];
   /** 升级了（新等级） */
   levelUp: AcademyLevel | null;
 }
@@ -275,4 +287,154 @@ export interface AcademyLearnerRow {
   minutes: number;
   completedLessons: number;
   lastStudyOn: string | null;
+}
+
+/** 管理端的一道题 */
+export interface AcademyQuestion {
+  id: number;
+  courseId: number;
+  packKey: string | null;
+  skill: string;
+  kind: AcademyQuestionKind;
+  level: 1 | 2 | 3;
+  stem: string;
+  options: string[];
+  answer: number[];
+  answerText: string;
+  explanation: string;
+  source: 'manual' | 'pack' | 'ai' | 'import';
+  status: 'draft' | 'active' | 'retired';
+  version: number;
+}
+export const ACADEMY_QUESTION_STATUS_LABELS: Record<AcademyQuestion['status'], string> = { draft: '草稿', active: '启用', retired: '停用' };
+export const ACADEMY_QUESTION_SOURCE_LABELS: Record<AcademyQuestion['source'], string> = { manual: '手写', pack: '课件包', ai: 'AI 出题', import: '表格导入' };
+
+/** 发给作答的人看的题（不带答案） */
+export interface AcademyQuizQuestion {
+  id: number;
+  kind: AcademyQuestionKind;
+  stem: string;
+  options: string[];
+}
+
+/** 开一份测验 */
+export interface AcademyQuizView {
+  attemptId: number;
+  lessonId: number;
+  passPct: number;
+  questions: AcademyQuizQuestion[];
+  /** 这份已经交过卷（原样重提开卷时）：结果另取 */
+  submitted: boolean;
+}
+
+/** 交卷结果：每题对错、正确答案与解析 */
+export interface AcademyQuizResult {
+  attemptId: number;
+  lessonId: number;
+  score: number;
+  correct: number;
+  total: number;
+  passed: boolean;
+  passPct: number;
+  items: { questionId: number; kind: AcademyQuestionKind; stem: string; options: string[]; answer: number[]; chosen: number[]; correct: boolean; explanation: string }[];
+  /** 及格了：这一课时完成带来的学分、课程与地图 */
+  completion: AcademyCompletion | null;
+}
+
+/** 每日一练的一道题（不带答案） */
+export interface AcademyDailyItem {
+  questionId: number;
+  kind: AcademyQuestionKind;
+  stem: string;
+  options: string[];
+  skill: string;
+  courseTitle: string;
+  isNew: boolean;
+  /** 问答卡的答案（先自己想，点「看答案」再显示、再自评；Codex 审查 43c2d86）；客观题为空，交了才给答案 */
+  answerText: string | null;
+  /** 题的版本：作答时原样带回，管理员中间改过题的拒绝（Codex 审查 4c50670） */
+  version: number;
+}
+
+export interface AcademyDaily {
+  today: string;
+  /** 每天几题、今天做了几题 */
+  target: number;
+  doneToday: number;
+  items: AcademyDailyItem[];
+  /** 连续几天完成每日一练 */
+  streak: number;
+  /** 今天的学分给过没有 */
+  credited: boolean;
+}
+
+export interface AcademyDailyAnswer {
+  questionId: number;
+  /** 客观题答对没有；问答卡为空 */
+  correct: boolean | null;
+  grade: FsrsGrade;
+  answer: number[];
+  answerText: string;
+  explanation: string;
+  /** 下次复习的营业日 */
+  dueOn: string;
+  doneToday: number;
+  target: number;
+  /** 这一题让今天的每日一练完成、给了学分 */
+  credits: number;
+}
+
+export interface AcademyMastery {
+  skill: string;
+  pKnown: number;
+  attempts: number;
+  correct: number;
+  status: MasteryStatus;
+}
+
+export interface AcademyCertificate {
+  id: number;
+  certNo: string;
+  staffId: number;
+  staffName: string;
+  pathId: number;
+  title: string;
+  issuedOn: string;
+  expiresOn: string | null;
+  expired: boolean;
+  revoked: boolean;
+  revokeReason: string | null;
+}
+
+export interface AcademySignoff {
+  id: number;
+  result: 'pass' | 'retry';
+  checks: boolean[];
+  comment: string;
+  signedByName: string;
+  signedAt: string;
+}
+
+/** 带教看到的一项待签：本部门某位员工的一个实操课时 */
+export interface AcademyCoachItem {
+  staffId: number;
+  name: string;
+  departmentName: string | null;
+  lessonId: number;
+  lessonTitle: string;
+  courseId: number;
+  courseTitle: string;
+  items: string[];
+  /** 课时的版本：签核时带回来，检查项改过就拒绝（Codex 审查 43c2d86） */
+  lessonVersion: number;
+  last: { result: 'pass' | 'retry'; signedAt: string; signedByName: string } | null;
+}
+
+/** 「我的」：等级、证书、掌握度、每日一练连续天数 */
+export interface AcademyMeDetail {
+  me: AcademyMe;
+  certificates: AcademyCertificate[];
+  mastery: AcademyMastery[];
+  streak: number;
+  canCoach: boolean;
 }

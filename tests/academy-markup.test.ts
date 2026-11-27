@@ -9,6 +9,7 @@ import {
   ACADEMY_LESSON_KINDS,
   ACADEMY_LESSON_KIND_LABELS,
   ACADEMY_LEVELS,
+  ACADEMY_QUESTION_SOURCE_LABELS,
   ACADEMY_STATUS_LABELS,
 } from '../src/shared/academy';
 import { academyPlainText, ACADEMY_QUESTION_KINDS, ACADEMY_QUESTION_KIND_LABELS, parseAcademyMarkup, splitBold } from '../src/shared/academy-markup';
@@ -130,6 +131,7 @@ describe('学堂等级与截止日', () => {
   it('每个分类、状态、课时类型、题型都有中文名', () => {
     expect(ACADEMY_CATEGORIES.map((c) => ACADEMY_CATEGORY_LABELS[c])).toEqual(['汤崎之道', '应知应会', '行业通识', '岗位技能', '系统小课堂', '安全', '管理']);
     expect(Object.values(ACADEMY_STATUS_LABELS)).toEqual(['草稿', '已上架', '已下架']);
+    expect(Object.values(ACADEMY_QUESTION_SOURCE_LABELS)).toEqual(['手写', '课件包', 'AI 出题', '表格导入']);
     expect(ACADEMY_LESSON_KINDS.every((k) => ACADEMY_LESSON_KIND_LABELS[k])).toBe(true);
     expect(ACADEMY_QUESTION_KINDS.map((k) => ACADEMY_QUESTION_KIND_LABELS[k])).toEqual(['单选', '多选', '判断', '问答卡']);
   });

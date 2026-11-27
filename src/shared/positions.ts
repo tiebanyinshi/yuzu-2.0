@@ -240,6 +240,8 @@ export const PERMISSION_COLUMN: Record<Permission, PermissionColumn> = {
   'training.manage': 'account',
   // 汤崎学堂（2026-11-27）：全公司的课程、指派与学习数据，与员工培训同一列
   'academy.manage': 'account',
+  // 带教签核：本部门员工的实操考核，与「本部门排班与考勤」同一列
+  'academy.coach': 'dept',
   // 公司公告（员工办公 v1.1 第 5 批）：全公司与部门公告，与员工培训同一列
   'oa.announce': 'account',
   // 业财法审批的角色映射（2026-11-26）：谁是财总、CFO、董事长，算「账号与权限配置」
@@ -311,7 +313,7 @@ const AREA_OP: Permission[] = [
 ];
 /** 各部门负责人共有：本部门台账（当日流水）、审批中心、作废本部门员工登记错的明细、本部门员工账号 */
 // OA-05：各部门负责人看本部门员工的排班与考勤（hr.attendanceDept，算「本部门台账 / 报表」）
-const LEAD_COMMON: Permission[] = ['ledger.readToday', 'approval.act', 'staff.dept', 'hr.attendanceDept'];
+const LEAD_COMMON: Permission[] = ['ledger.readToday', 'approval.act', 'staff.dept', 'hr.attendanceDept', 'academy.coach'];
 const DEPT_STOCK: Permission[] = ['deptStock.operate', 'request.create'];
 
 /** 每个岗位的默认权限（总裁不在这里：总裁是店主，全部权限） */
@@ -462,6 +464,8 @@ export const POSITION_DEFAULTS: Record<Exclude<PositionKey, 'president'>, readon
     'approval.act',
     // OA-05：本部门员工的排班与考勤（与各部门负责人一样）
     'hr.attendanceDept',
+    // 汤崎学堂：本部门员工的实操签核（与各部门负责人一样）
+    'academy.coach',
     'ledger.readHistory',
     'ledger.export',
     'expense.read',
