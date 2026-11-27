@@ -14,6 +14,11 @@ export interface UsagePricing {
   minMinutes: number;
   stepMinutes: number;
   openFeeItemId: number | null;
+  /**
+   * 8.2.10 加钟价（分，每个计费单位）：设了就是「基础价含时长 + 加钟」——房费项目的价格是基础价、含起步时长，
+   * 起步以后每个计费单位按加钟价另记（价目表「39/2h，加钟/19.9」）；不设（旧数据没有这一项）照每小时价算
+   */
+  extraPrice?: number | null;
 }
 
 export interface UsageRules {
@@ -21,6 +26,8 @@ export interface UsageRules {
   businessTypes: string[];
   /** 按业态的计费（v0.7.28）；没设的业态不收费（与 v0.7.19 一样，场次费由前台另挂） */
   pricing: Record<string, UsagePricing>;
+  /** 8.2.10 在「休闲娱乐」页上的业态（网吧、桌球……；不带时为空，页面列全部开单即占用的业态） */
+  leisureTypes?: string[];
 }
 
 export const DEFAULT_USAGE_RULES: UsageRules = { businessTypes: [...DEFAULT_USAGE_BUSINESS_TYPES], pricing: {} };
@@ -46,6 +53,14 @@ export function usageFee(minutes: number, p: Pick<UsagePricing, 'minMinutes' | '
   const unitPrice = Math.round((hourPrice * p.stepMinutes) / 60);
   return { chargedMinutes: steps * p.stepMinutes, steps, unitPrice, amount: unitPrice * steps };
 }
+
+/** 8.2.10 基础价 + 加钟：起步以内只收基础价；之后每个计费单位（不足按一个）收加钟价 */
+export function blockUsageFee(minutes: number, p: Pick<UsagePricing, 'minMinutes' | 'stepMinutes'>, basePrice: number, extraPrice: number) {
+  const extraSteps = minutes > p.minMinutes ? Math.ceil((minutes - p.minMinutes) / p.stepMinutes) : 0;
+  return { chargedMinutes: p.minMinutes + extraSteps * p.stepMinutes, basePrice, extraSteps, extraAmount: extraSteps * extraPrice, amount: basePrice + extraSteps * extraPrice };
+}
+
+type PricingEstimate = { hourPrice: number; minMinutes: number; stepMinutes: number; openFee: number; extraPrice?: number | null };
 
 export const MAX_USAGE_GUESTS = 99;
 export const MAX_USAGE_NOTE = 100;
@@ -84,7 +99,7 @@ export interface UsageDetail {
   /** 已挂的房费与开台费（结束使用时挂的；没设计费、开着、撤单的为空） */
   fee: { amount: number; chargedMinutes: number; openFee: number } | null;
   /** 页面估算用的计费（此刻的价目；没设计费或项目停用了为空） */
-  pricing?: { itemName: string; hourPrice: number; minMinutes: number; stepMinutes: number; openFee: number } | null;
+  pricing?: { itemName: string; hourPrice: number; minMinutes: number; stepMinutes: number; openFee: number; extraPrice?: number | null } | null;
 }
 
 /** 派对房看板（8.0.8，A03）：开单即占用的业态下在用、可售的房间，与开着的使用单；不需要底图 */
@@ -105,6 +120,8 @@ export interface UsageBoardSpace {
 
 export interface UsageBoard {
   businessTypes: string[];
+  /** 8.2.10 在「休闲娱乐」页上的业态 */
+  leisureTypes?: string[];
   spaces: UsageBoardSpace[];
 }
 
@@ -124,11 +141,15 @@ export function durationText(minutes: number): string {
 }
 
 /** 页面估算：用了 minutes 分钟时的房费加开台费（结束时按结束那一刻再算一次） */
-export function usageEstimate(minutes: number, v: { hourPrice: number; minMinutes: number; stepMinutes: number; openFee: number }): number {
+export function usageEstimate(minutes: number, v: PricingEstimate): number {
+  if (v.extraPrice != null) return blockUsageFee(minutes, v, v.hourPrice, v.extraPrice).amount + v.openFee;
   return usageFee(minutes, v, v.hourPrice).amount + v.openFee;
 }
 
 /** 计费说明：「每小时 ¥X，起步 60 分钟，之后每 30 分钟计一次」 */
-export function pricingText(v: { hourPrice: number; minMinutes: number; stepMinutes: number; openFee: number }, yuan: (cents: number) => string): string {
+export function pricingText(v: PricingEstimate, yuan: (cents: number) => string): string {
+  if (v.extraPrice != null) {
+    return `${durationText(v.minMinutes)} ${yuan(v.hourPrice)}，之后每 ${v.stepMinutes} 分钟加 ${yuan(v.extraPrice)}${v.openFee > 0 ? `，开台费 ${yuan(v.openFee)}` : ''}`;
+  }
   return `每小时 ${yuan(v.hourPrice)}，起步 ${v.minMinutes} 分钟，之后每 ${v.stepMinutes} 分钟计一次${v.openFee > 0 ? `，开台费 ${yuan(v.openFee)}` : ''}`;
 }

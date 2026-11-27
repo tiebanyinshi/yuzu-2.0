@@ -444,6 +444,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '590_away_lock_v827.sql',
   '600_dining_meals_v828.sql',
   '610_pickup_v829.sql',
+  '620_leisure_v8210.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

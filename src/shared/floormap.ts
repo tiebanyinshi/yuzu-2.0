@@ -107,6 +107,8 @@ export interface UsagePricingView {
   minMinutes: number;
   stepMinutes: number;
   openFee: number;
+  /** 8.2.10 加钟价（设了时 hourPrice 是基础价、含起步时长） */
+  extraPrice?: number | null;
 }
 
 export interface FloorMapData {

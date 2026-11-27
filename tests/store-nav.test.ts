@@ -58,7 +58,8 @@ describe('主导航的业务域', () => {
     const off = visibleStoreNav(canOf(OWNER), session({ technicians: false, dining: false, rooms: false, permissions: OWNER }));
     // 房态中心（8.1.16）不看客房功能开没开：技师服务的房间、派对房、大厅都在里面
     expect(off.map((d) => d.label)).toEqual(['前台', '房态', '会员', '财务', '设置']);
-    expect(off.find((d) => d.label === '房态')!.items.map((i) => i.label)).toEqual(['房态中心']);
+    // 休闲娱乐（8.2.10）：有房态操作就有，不看客房功能
+    expect(off.find((d) => d.label === '房态')!.items.map((i) => i.label)).toEqual(['房态中心', '休闲娱乐']);
     // 只管打扫的后勤：房态这一组只有房态中心（原来的「客房」页并进来了）
     const housekeep: Permission[] = ['room.housekeep'];
     expect(visibleStoreNav(canOf(housekeep), session({ permissions: housekeep })).flatMap((d) => d.items.map((i) => i.label))).toEqual(['房态中心']);
