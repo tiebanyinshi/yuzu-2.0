@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { loadStaffMpConfig, type StaffMpConfig } from '../src/server/config';
 import { code2sessionFor, wechatReady } from '../src/server/modules/staffmp/wechat';
-import { issueTicket, mediaRewrite, TICKET_TTL_SECONDS, verifyTicket } from '../src/server/modules/staffmp/media';
+import { issueTicket, mediaRewrite, TICKET_TTL_SECONDS, TRAINING_TICKET_TTL_SECONDS, verifyTicket } from '../src/server/modules/staffmp/media';
 
 const taken = { main: 8080, mp: 8081, canteen: 8090 };
 const APPID = 'wx0123456789abcdef';
@@ -70,12 +70,16 @@ describe('微信 code 换 openid', () => {
 
 describe('短时地址的票据', () => {
   const h = 'a'.repeat(64);
-  it('签发以后 10 分钟内认，过期、改了内容或签名都不认', () => {
+  it('附件 10 分钟、培训资料 4 小时内认（视频边放边取，不能放到一半断），过期、改了内容或签名都不认', () => {
     const now = Date.parse('2026-11-27T10:00:00Z');
+    const a = issueTicket({ h, k: 'attachment', i: 7, v: null }, now);
+    expect(a.expiresAt).toBe(new Date(now + TICKET_TTL_SECONDS * 1000).toISOString());
+    expect(verifyTicket(a.ticket, now + (TICKET_TTL_SECONDS + 1) * 1000)).toBeNull();
     const { ticket, expiresAt } = issueTicket({ h, k: 'training', i: 7, v: 3 }, now);
-    expect(expiresAt).toBe(new Date(now + TICKET_TTL_SECONDS * 1000).toISOString());
+    expect(expiresAt).toBe(new Date(now + TRAINING_TICKET_TTL_SECONDS * 1000).toISOString());
     expect(verifyTicket(ticket, now + 1000)).toMatchObject({ h, k: 'training', i: 7, v: 3 });
-    expect(verifyTicket(ticket, now + (TICKET_TTL_SECONDS + 1) * 1000)).toBeNull();
+    expect(verifyTicket(ticket, now + 3 * 3600 * 1000)).not.toBeNull();
+    expect(verifyTicket(ticket, now + (TRAINING_TICKET_TTL_SECONDS + 1) * 1000)).toBeNull();
     const [body, sig] = ticket.split('.');
     const other = Buffer.from(JSON.stringify({ h, k: 'training', i: 8, v: 3, e: Math.floor(now / 1000) + 600 })).toString('base64url');
     expect(verifyTicket(`${other}.${sig}`, now)).toBeNull();

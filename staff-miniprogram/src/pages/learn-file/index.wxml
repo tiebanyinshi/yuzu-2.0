@@ -13,7 +13,7 @@
     <view wx:if="{{description}}" class="t-body-l desc">{{description}}</view>
 
     <view wx:if="{{mode === 'video'}}" class="media">
-      <video wx:if="{{mediaSrc}}" class="video" src="{{mediaSrc}}" controls show-center-play-btn enable-progress-gesture object-fit="contain" bindplay="onVideoPlay" binderror="onVideoError"></video>
+      <video wx:if="{{mediaSrc}}" class="video" src="{{mediaSrc}}" initial-time="{{resumeAt}}" autoplay="{{autoplay}}" controls show-center-play-btn enable-progress-gesture object-fit="contain" bindplay="onVideoPlay" binderror="onVideoError" bindtimeupdate="onVideoTime"></video>
       <view wx:elif="{{mediaFailed}}" class="video media-failed">
         <button class="btn secondary" hover-class="pressed" hover-stay-time="120" bindtap="onMediaRetry">重新加载视频</button>
       </view>

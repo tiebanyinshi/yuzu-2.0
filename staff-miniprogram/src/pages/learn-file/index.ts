@@ -19,8 +19,11 @@ let audio: WechatMiniprogram.InnerAudioContext | null = null;
 let mediaFile: TrainingFile | null = null;
 /** 视频放不出来时自动重连了几次（放出来了归零） */
 let autoRetries = 0;
-/** 第几次取这份资料：旧的那次的短时地址回来就不用了 */
+/** 第几次取这份资料：旧的那次（包括已经关掉的上一页）回来就不用了 */
 let gen = 0;
+/** 放到哪了（秒）：断了重新连上从这里接着放 */
+let videoPos = 0;
+let audioPos = 0;
 
 Page({
   data: {
@@ -40,6 +43,8 @@ Page({
     progress: 0,
     mediaSrc: '',
     mediaFailed: false,
+    resumeAt: 0,
+    autoplay: false,
     playing: false,
     openError: '',
   },
@@ -49,6 +54,8 @@ Page({
     file = null;
     mediaFile = null;
     autoRetries = 0;
+    videoPos = 0;
+    audioPos = 0;
     this.setData({ large: largeTextOn(), folderId: Number(q.folder) || 0, id: Number(q.id) || 0 });
   },
 
@@ -72,13 +79,15 @@ Page({
   },
 
   async load() {
-    gen += 1;
+    const my = ++gen;
     this.resetAudio();
     mediaFile = null;
     this.setData({ state: 'loading', error: '' });
     try {
       // 员工端没有单个文件的接口：取这个文件夹的资料，找出这一份
-      const found = (await loadFiles(this.data.folderId)).find((f) => f.id === this.data.id);
+      const list = await loadFiles(this.data.folderId);
+      if (my !== gen) return;
+      const found = list.find((f) => f.id === this.data.id);
       if (!found) return this.setData({ state: 'empty', error: '' });
       file = found;
       let platform = '';
@@ -99,9 +108,13 @@ Page({
         viewed: found.myLastViewedAt ? `上次看过：${shortTime(found.myLastViewedAt)}` : '',
         mediaSrc: '',
         mediaFailed: false,
+        // 断了重新连上的：从放到的地方接着放
+        resumeAt: Math.floor(videoPos),
+        autoplay: videoPos > 0,
       });
       if (mode === 'video' || mode === 'audio') this.prepareMedia();
     } catch (e) {
+      if (my !== gen) return;
       if (isApiError(e) && e.status === 401) return toLogin();
       this.setData({ state: isApiError(e) && e.code === 'NETWORK' ? 'offline' : 'error', error: messageOf(e) });
     }
@@ -170,9 +183,15 @@ Page({
     } catch (e) {
       if (isApiError(e) && e.status === 401) return toLogin();
       this.setData({ openError: isApiError(e) ? e.message : '这份资料没有打开，请再试一次；还不行请在电脑上的 WCP 里看' });
+      // 管理员刚换了新版本：重新取这份资料
+      if (isApiError(e) && e.code === 'VERSION_CHANGED') this.load();
     } finally {
       this.setData({ busy: false });
     }
+  },
+
+  onVideoTime(e: WechatMiniprogram.CustomEvent<{ currentTime: number }>) {
+    videoPos = e.detail.currentTime || 0;
   },
 
   onVideoPlay() {
@@ -202,6 +221,12 @@ Page({
       const playing = mediaFile;
       audio = wx.createInnerAudioContext({ useWebAudioImplement: false });
       audio.src = this.data.mediaSrc;
+      // 断了重新连上的：从放到的地方接着放
+      if (audioPos > 0) audio.startTime = audioPos;
+      const ctx = audio;
+      audio.onTimeUpdate(() => {
+        audioPos = ctx.currentTime || audioPos;
+      });
       audio.onEnded(() => this.setData({ playing: false }));
       // 真的放出来了才记「看过」（地址过期、放不了的不记）
       audio.onPlay(() => {

@@ -155,8 +155,93 @@ describe('令牌过期时悄悄重新登录', () => {
     await expect(api.call('POST', '/oa/attendance/punch', { clientKey: 'k' })).rejects.toMatchObject({ status: 401 });
     // 那个会话当场退掉，没有用手机主人的身份重发打卡
     expect(fake.sent.at(-1)!.url).toContain('/auth/logout');
+    // 退掉那个会话用它自己的令牌，没有放进手机上存令牌的地方
+    expect(fake.sent.at(-1)!.header.authorization).toBe('Bearer tokOwner');
     expect(fake.sent.filter((x) => x.url.endsWith('/oa/attendance/punch'))).toHaveLength(1);
     expect(fake.storage.has('wcp_token')).toBe(false);
+  });
+
+  it('晚回来的 401 不清掉别的请求刚换上的新令牌：用新令牌重发', async () => {
+    const { fake, api } = await load();
+    api.saveToken('old');
+    // 第一个请求带着旧令牌出去，回来之前别的请求已经换上了新令牌
+    const wx = (
+      globalThis as unknown as { wx: { request: (o: { header: Record<string, string>; success: (r: unknown) => void; fail: () => void; url: string; method: string; data: unknown }) => void } }
+    ).wx;
+    const original = wx.request;
+    let first = true;
+    wx.request = (o) => {
+      if (first) {
+        first = false;
+        api.saveToken('new');
+      }
+      original(o);
+    };
+    fake.reply({ status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } }, { status: 200, data: { ok: 1 } });
+    await expect(api.call('GET', '/me')).resolves.toEqual({ ok: 1 });
+    expect(fake.sent[0]!.header.authorization).toBe('Bearer old');
+    expect(fake.sent[1]!.header.authorization).toBe('Bearer new');
+    expect(fake.storage.get('wcp_token')).toBe('new');
+  });
+});
+
+describe('门店系统说先改密码、先选岗位', () => {
+  it('改「我是谁」的标记，去改密码页（已经在那一页就不动）', async () => {
+    const { fake, session, api } = await load();
+    const launched: string[] = [];
+    const g = globalThis as unknown as { wx: Record<string, unknown>; getCurrentPages: () => { route: string }[] };
+    g.wx.reLaunch = (o: { url: string }) => void launched.push(o.url);
+    g.getCurrentPages = () => [{ route: 'pages/learn/index' }];
+    fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tok', me: { ...ME, mustChangePassword: false, needsPosition: false } } });
+    await session.wechatLogin();
+    fake.reply({ status: 403, data: { error: { code: 'PASSWORD_CHANGE_REQUIRED', message: '首次登录请先修改密码' } } });
+    await expect(api.call('GET', '/training/folders')).rejects.toMatchObject({ code: 'PASSWORD_CHANGE_REQUIRED' });
+    expect(session.currentMe()!.mustChangePassword).toBe(true);
+    expect(launched).toEqual(['/pages/password/index?first=1']);
+    g.getCurrentPages = () => [{ route: 'pages/password/index' }];
+    fake.reply({ status: 403, data: { error: { code: 'PASSWORD_CHANGE_REQUIRED', message: '首次登录请先修改密码' } } });
+    await expect(api.call('GET', '/training/folders')).rejects.toBeTruthy();
+    expect(launched).toHaveLength(1);
+  });
+});
+
+describe('换了人', () => {
+  it('晚回来的「我是谁」（上一位的）不盖到新登录的人身上', async () => {
+    const { fake, session } = await load();
+    fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tok', me: ME } });
+    await session.wechatLogin();
+    const other = { ...ME, staff: { id: 9, displayName: '新来的' } };
+    // /me 发出去了，回复先压着
+    const wx = (globalThis as unknown as { wx: { request: (o: unknown) => void } }).wx;
+    const original = wx.request;
+    let held: (() => void) | null = null;
+    wx.request = (o) => {
+      held = () => original(o);
+    };
+    const pending = session.refreshMe();
+    await new Promise((r) => setTimeout(r, 0));
+    wx.request = original;
+    expect(held).not.toBeNull();
+    // 这期间换了人登录
+    fake.reply({ status: 200, data: { token: 't9', me: other, bound: false, bindError: null } });
+    await session.passwordLogin('n', 'pw', { bind: false, replace: false });
+    // 上一位的 /me 这时才回来
+    fake.reply({ status: 200, data: ME });
+    held!();
+    await pending;
+    expect(session.currentMe()!.staff.id).toBe(9);
+  });
+
+  it('退出、换了人：知识库的文件夹缓存与最近搜过的清掉', async () => {
+    const { fake, session } = await load();
+    fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tok', me: ME } });
+    await session.wechatLogin();
+    fake.storage.set('wcp_learn_folders', [{ id: 1 }]);
+    fake.storage.set('wcp_learn_recent', ['工牌']);
+    fake.reply({ status: 200, data: { ok: true } });
+    await session.logout(false);
+    expect(fake.storage.has('wcp_learn_folders')).toBe(false);
+    expect(fake.storage.has('wcp_learn_recent')).toBe(false);
   });
 });
 

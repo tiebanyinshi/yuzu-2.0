@@ -1,5 +1,7 @@
 // 短时地址（docs/STAFF_MP.md 第 5.2 节）：小程序的 <video>、<image> 不能带 Authorization 头，培训视频、审批附件的缩略图
-// 用员工小程序端口发的短时地址打开：/api/staffmp/media/<票据>，10 分钟有效、只给这个人（这一个会话）、只对这一个文件。
+// 用员工小程序端口发的短时地址打开：/api/staffmp/media/<票据>，只给这个人（这一个会话）、只对这一个文件。
+//   · 有效期：附件、缩略图 10 分钟；培训资料 4 小时——视频、音频是边放边一段一段取的（每一段都核对票据），
+//     10 分钟就断会让长视频放到一半断掉；票据绑着会话，会话退了、解绑了、人停用了照样马上打不开；
 //   · 票据 = 内容（会话摘要、哪一类、编号、版本、到期）+ HMAC 签名；签名的密钥是进程启动时随机生成的（重启以后旧票据作废，小程序重新要一张）；
 //   · 用的时候：先把地址改写到原来的接口（培训文件内容、附件、缩略图），再在读会话那一步核对签名、到期、编号对得上、会话还在、人还在职，
 //     用这个会话的身份进原来的处理函数——能不能看照旧由原来的接口当场核对（员工培训的文件夹权限、附件的登记规则）。
@@ -10,6 +12,8 @@ import { STAFFMP_PREFIX } from '@shared/staffmp';
 
 const KEY = randomBytes(32);
 export const TICKET_TTL_SECONDS = 600;
+/** 培训资料（视频、音频边放边取）的票据有效期 */
+export const TRAINING_TICKET_TTL_SECONDS = 4 * 3600;
 /** 改写以后的地址里放票据的查询参数 */
 export const TICKET_QUERY = '__ticket';
 
@@ -34,7 +38,7 @@ export type TicketPayload = z.infer<typeof Payload>;
 const sign = (body: string) => createHmac('sha256', KEY).update(body).digest('base64url');
 
 export function issueTicket(p: Omit<TicketPayload, 'e'>, nowMs = Date.now()): { ticket: string; expiresAt: string } {
-  const e = Math.floor(nowMs / 1000) + TICKET_TTL_SECONDS;
+  const e = Math.floor(nowMs / 1000) + (p.k === 'training' ? TRAINING_TICKET_TTL_SECONDS : TICKET_TTL_SECONDS);
   const body = Buffer.from(JSON.stringify({ ...p, e })).toString('base64url');
   return { ticket: `${body}.${sign(body)}`, expiresAt: new Date(e * 1000).toISOString() };
 }
