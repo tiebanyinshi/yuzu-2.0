@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeWx } from './fake-wx';
 
 const ME = { staff: { id: 1, displayName: '阿丽' }, entries: [], build: { instance: 'demo' } };
-const INFO = (over: Record<string, unknown> = {}) => ({ status: 200, data: { storeName: '汤崎', version: '8.2.6', commit: '', instance: 'demo', open: true, wechat: true, mockWechat: false, time: '', ...over } });
+const INFO = (over: Record<string, unknown> = {}) => ({
+  status: 200,
+  data: { storeName: '汤崎', version: '8.2.6', commit: '', instance: 'demo', open: true, wechat: true, mockWechat: false, time: '', ...over },
+});
 
 async function load(envVersion: 'develop' | 'release' = 'develop') {
   vi.resetModules();
@@ -60,7 +63,7 @@ describe('登录', () => {
     const { fake, session, api } = ctx;
     fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tok', me: ME } });
     await session.wechatLogin();
-    fake.reply({ status: 200, data: { ok: true } });
+    fake.reply({ status: 200, data: { ok: true, unbound: true } });
     await session.logout(true);
     expect(fake.sent[2]!.data).toEqual({ unbind: true });
     expect(fake.storage.has('wcp_token')).toBe(false);
@@ -94,6 +97,15 @@ describe('登录', () => {
     expect(fake.storage.get('wcp_token')).toBe('tok');
   });
 
+  it('退出并解开时门店系统没说解开了（旧版本）：去问，还绑着就报错、不退出', async () => {
+    const { fake, session } = ctx;
+    fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tok', me: ME } });
+    await session.wechatLogin();
+    fake.reply({ status: 200, data: { ok: true } }, { status: 200, data: { status: 'bound', displayName: '阿丽' } });
+    await expect(session.logout(true)).rejects.toMatchObject({ code: 'UNBIND_UNCONFIRMED' });
+    expect(fake.storage.get('wcp_token')).toBe('tok');
+  });
+
   it('退出并解开没收到回复、但其实解开了：确认没绑以后手机上退出', async () => {
     const { fake, session } = ctx;
     fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tok', me: ME } });
@@ -123,11 +135,7 @@ describe('令牌过期时悄悄重新登录', () => {
     const { fake, session, api } = await load();
     fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tok1', me: ME } });
     await session.wechatLogin();
-    fake.reply(
-      { status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } },
-      { status: 200, data: { status: 'ok', token: 'tok2', me: ME } },
-      { status: 200, data: { ok: 1 } },
-    );
+    fake.reply({ status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } }, { status: 200, data: { status: 'ok', token: 'tok2', me: ME } }, { status: 200, data: { ok: 1 } });
     await expect(api.call('GET', '/me')).resolves.toEqual({ ok: 1 });
     expect(fake.sent.at(-1)!.header.authorization).toBe('Bearer tok2');
   });

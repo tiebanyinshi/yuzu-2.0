@@ -180,18 +180,22 @@ export function updateMe(next: StaffMpMe): void {
  *     （不然别人拿这台手机还能一键进），员工连上以后再点一次
  */
 export async function logout(unbind: boolean): Promise<void> {
+  let failure: unknown = null;
   try {
-    await call('POST', '/auth/logout', { unbind });
+    const r = await call<{ ok: boolean; unbound?: boolean }>('POST', '/auth/logout', { unbind });
+    // 门店系统明说解开了才算；没说（旧版本门店系统）就去问
+    if (unbind && r.unbound !== true) failure = apiError('UNBIND_UNKNOWN', '门店系统没说解开了没有', 0);
   } catch (e) {
-    if (unbind) {
-      let stillBound = true;
-      try {
-        stillBound = (await peekWechat()).bound;
-      } catch {
-        stillBound = true;
-      }
-      if (stillBound) throw apiError('UNBIND_UNCONFIRMED', `没解开这个微信：${isOffline(e) ? '现在连不上门店系统' : messageOf(e)}。连上以后再点一次`, 0);
+    failure = e;
+  }
+  if (unbind && failure) {
+    let stillBound = true;
+    try {
+      stillBound = (await peekWechat()).bound;
+    } catch {
+      stillBound = true;
     }
+    if (stillBound) throw apiError('UNBIND_UNCONFIRMED', `没解开这个微信：${isOffline(failure) ? '现在连不上门店系统' : messageOf(failure)}。连上以后再点一次`, 0);
   }
   clearToken();
   write(SIGNED_OUT_KEY, true);

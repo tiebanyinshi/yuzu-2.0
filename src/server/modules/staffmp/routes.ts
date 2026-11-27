@@ -163,10 +163,12 @@ export function registerStaffMpRoutes(app: FastifyInstance, deps: Deps, code2ses
 
   app.post('/api/staffmp/auth/logout', async (req) => {
     const { unbind } = parse(LogoutInput, req.body ?? {});
+    // 解开微信要知道是谁：登录过期了回 401（小程序悄悄重新登录以后再来），不回「好了」却没解开
+    if (unbind && !req.hasSession) throw unauthorized('登录过期了：重新登录以后再解除这个微信');
     if (req.hasSession && unbind) await unbindWechat(sql, req.actor.id, { reason: 'self', ip: req.ip });
     if (req.staffmpToken) await destroySession(sql, req.staffmpToken);
     if (req.hasSession) await writeAudit(sql, { staffId: req.actor.id, action: 'logout', detail: { via: 'staffmp', unbind }, ip: req.ip });
-    return { ok: true };
+    return { ok: true, unbound: unbind };
   });
 
   app.get('/api/staffmp/me', async (req): Promise<StaffMpMe> => buildMe(deps, signedIn(req)));

@@ -31,6 +31,7 @@ Page({
     busy: false,
     progress: 0,
     mediaSrc: '',
+    mediaFailed: false,
     playing: false,
     openError: '',
   },
@@ -74,6 +75,7 @@ Page({
         fresh: isNew(found),
         viewed: found.myLastViewedAt ? `上次看过：${shortTime(found.myLastViewedAt)}` : '',
         mediaSrc: '',
+        mediaFailed: false,
       });
       if (mode === 'video' || mode === 'audio') this.prepareMedia();
     } catch (e) {
@@ -89,11 +91,17 @@ Page({
   /** 视频、音频：要一个短时地址（10 分钟有效；过期了再点一次就重新要） */
   async prepareMedia() {
     if (!file) return;
+    this.setData({ mediaFailed: false });
     try {
       this.setData({ mediaSrc: await mediaUrl(file), openError: '' });
     } catch (e) {
-      this.setData({ openError: messageOf(e) });
+      // 地址没要到（连不上、门店出错）：给「重新加载」，不留一个一直转的占位
+      this.setData({ openError: messageOf(e), mediaFailed: true });
     }
+  },
+
+  onMediaRetry() {
+    this.prepareMedia();
   },
 
   async viewed() {
