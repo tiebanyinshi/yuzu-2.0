@@ -98,3 +98,8 @@
   margin-top: 96rpx;
   text-align: center;
 }
+
+.instance.prod {
+  background-color: var(--surface-2);
+  color: var(--ink-2);
+}

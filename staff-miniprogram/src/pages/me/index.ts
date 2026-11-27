@@ -108,11 +108,13 @@ Page({
   },
 
   onLogout() {
+    // 「退出并解除这个微信」只给这台手机的微信绑定登录的会话（同事手机上「只登录这一次」的，解开的会是自己手机上的微信）
+    const bound = !!this.data.me && this.data.me.wechatBound;
     wx.showActionSheet({
-      itemList: ['退出（下次还能微信一键进）', '退出并解除这个微信'],
+      itemList: bound ? ['退出（下次还能微信一键进）', '退出并解除这个微信'] : ['退出'],
       success: async (r) => {
         try {
-          await logout(r.tapIndex === 1);
+          await logout(bound && r.tapIndex === 1);
           toLogin();
         } catch (e) {
           // 解开没确认：留在这一页，写清楚

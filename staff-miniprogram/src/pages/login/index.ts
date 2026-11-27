@@ -4,7 +4,7 @@
 //   · 「同意并登录」一并同意隐私保护指引（之后第一次打卡只剩定位一个弹窗）；
 //   · 门店系统暂停了员工小程序（SP12）、连不上的，写清楚；错误留在原地。
 
-import { instanceTag, versionText } from '../../utils/instance';
+import { instanceTag, isProdInstance, versionText } from '../../utils/instance';
 import { isApiError, isOffline, messageOf } from '../../utils/api';
 import { enterApp } from '../../utils/guard';
 import { largeTextOn } from '../../utils/prefs';
@@ -18,6 +18,7 @@ Page({
     offline: false,
     storeName: '',
     tag: '',
+    prod: false,
     version: '',
     wechat: false,
     boundName: '',
@@ -40,7 +41,7 @@ Page({
     this.setData({ loading: true, offline: false });
     try {
       const i = await info(true);
-      this.setData({ storeName: i.storeName, tag: instanceTag(i.instance), version: versionText(i.version, i.commit), closed: !i.open, wechat: i.wechat });
+      this.setData({ storeName: i.storeName, tag: instanceTag(i.instance), prod: isProdInstance(i.instance), version: versionText(i.version, i.commit), closed: !i.open, wechat: i.wechat });
       if (i.open && i.wechat) {
         const peek = await peekWechat().catch(() => ({ bound: false as const }));
         // 这个微信绑着别人：一键登录进的是那个人；用自己的账号登录时默认不绑

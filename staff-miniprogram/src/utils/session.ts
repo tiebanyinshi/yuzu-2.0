@@ -6,7 +6,7 @@
 
 import type { StaffMpInfo, StaffMpLoginReply, StaffMpMe, StaffMpWechatReply } from '../../../src/shared/staffmp';
 import { envVersion } from '../config/env';
-import { apiError, call, callAs, clearToken, hasToken, isOffline, messageOf, publicCall, saveToken, setGate, setRelogin } from './api';
+import { apiError, call, callAs, clearToken, hasToken, isOffline, messageOf, publicCall, saveToken, setGate, setRelogin, tokenNow } from './api';
 
 const ME_KEY = 'wcp_me';
 const SIGNED_OUT_KEY = 'wcp_signed_out';
@@ -188,10 +188,20 @@ export function updateMe(next: StaffMpMe): void {
  *   · 退出并解开：解开要确认——没收到回复时问门店系统「这个微信还绑着没有」，还绑着或问不到就报错、手机上不退出
  *     （不然别人拿这台手机还能一键进），员工连上以后再点一次
  */
+/** 第几次「主动退出」：退出时加一，之前开始的悄悄重新登录回来对不上就作废（不把人又登录回去） */
+let authGen = 0;
+
 export async function logout(unbind: boolean): Promise<void> {
   let failure: unknown = null;
   try {
-    const r = await call<{ ok: boolean; unbound?: boolean }>('POST', '/auth/logout', { unbind });
+    // 只退出：用手机上现在的令牌直接退（不悄悄重新登录——退出时不该再登录一次；没有令牌就不用退门店那边）；
+    // 退出并解开：要一个能用的会话（过期了悄悄重新登录以后再解开）
+    const token = tokenNow();
+    const r = unbind
+      ? await call<{ ok: boolean; unbound?: boolean }>('POST', '/auth/logout', { unbind })
+      : token
+        ? await callAs<{ ok: boolean; unbound?: boolean }>(token, 'POST', '/auth/logout', { unbind })
+        : { ok: true };
     // 门店系统明说解开了才算；没说（旧版本门店系统）就去问
     if (unbind && r.unbound !== true) failure = apiError('UNBIND_UNKNOWN', '门店系统没说解开了没有', 0);
   } catch (e) {
@@ -206,6 +216,7 @@ export async function logout(unbind: boolean): Promise<void> {
     }
     if (stillBound) throw apiError('UNBIND_UNCONFIRMED', `没解开这个微信：${isOffline(failure) ? '现在连不上门店系统' : messageOf(failure)}。连上以后再点一次`, 0);
   }
+  authGen += 1;
   clearToken();
   write(SIGNED_OUT_KEY, true);
   setMe(null);
@@ -218,11 +229,21 @@ export async function logout(unbind: boolean): Promise<void> {
  */
 export async function silentRelogin(): Promise<boolean> {
   if (signedOut()) return false;
+  const gen = authGen;
   const expected = currentMe()?.staff.id ?? null;
   const i = await info();
   if (!i.wechat) return false;
   const r = await publicCall<StaffMpWechatReply>('POST', '/auth/wechat', { code: await wechatCode(), mode: 'login' });
   if (r.status !== 'ok') return false;
+  // 这期间员工主动退出了：这个会话不要了（退掉），不把人又登录回去
+  if (gen !== authGen || signedOut()) {
+    try {
+      await callAs(r.token, 'POST', '/auth/logout', { unbind: false });
+    } catch {
+      // 退不掉：那个会话 12 小时后自己过期
+    }
+    return false;
+  }
   if (expected !== null && r.me.staff.id !== expected) {
     // 用那个令牌直接退掉（不存、不放进共用的位置：这期间别的请求不会以别人的身份发出去）
     try {

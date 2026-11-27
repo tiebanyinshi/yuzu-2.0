@@ -2,7 +2,7 @@
   <view class="hero gutter">
     <view class="brand">汤崎 WCP</view>
     <view class="t-body muted hero-sub">汤崎员工的工作台 · {{storeName || '门店系统'}}</view>
-    <view wx:if="{{tag}}" class="instance">{{tag}}</view>
+    <view wx:if="{{tag}}" class="instance {{prod ? 'prod' : ''}}">{{tag}}</view>
   </view>
 
   <view wx:if="{{loading}}" class="gutter"><view class="skeleton block"></view></view>

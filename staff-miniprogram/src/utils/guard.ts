@@ -7,13 +7,19 @@ import type { StaffMpMe } from '../../../src/shared/staffmp';
 import { currentMe, hasSession } from './session';
 
 interface AppData {
-  globalData: { needLogin: boolean; booting: Promise<void> | null };
+  globalData: { needLogin: boolean; booting: Promise<void> | null; renderedEarly: boolean };
 }
 
 /** 进得了这一页就返回「我是谁」；要去别的页（登录、改密码、选岗位）返回 null */
 export async function requireMe(): Promise<StaffMpMe | null> {
   const app = getApp<AppData>();
-  if (app.globalData.booting) await app.globalData.booting;
+  // 手机上有令牌、也存着「我是谁」：不等启动时的那一次刷新，先用上次的把页面画出来（没信号也不干等）；
+  // 刷新回来要登录、要改密码、要选岗位的，由 app.ts 再把人带过去
+  const cached = hasSession() ? currentMe() : null;
+  if (app.globalData.booting) {
+    if (cached) app.globalData.renderedEarly = true;
+    else await app.globalData.booting;
+  }
   const me = currentMe();
   if (app.globalData.needLogin || !hasSession() || !me) {
     wx.reLaunch({ url: '/pages/login/index' });

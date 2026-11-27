@@ -1,10 +1,10 @@
 // 自己画的导航栏（docs/STAFF_MP.md 第 4 节）：
-//   · Tab 页（large）：胶囊那一行左边写「汤崎 WCP」与实例标识（测试服、演示库常显，正式服不显示），下面一行是英文小标题与大标题，
+//   · Tab 页（large）：胶囊那一行左边写「汤崎 WCP」、实例标识（常显；正式服中性颜色）与版本 + SHA，下面一行是英文小标题与大标题，
 //     右边的按钮（slot actions）在大标题这一行——胶囊下面，不和胶囊挤在一起；
 //   · 子页面：左上角返回（页面栈只有一页时是「首页」）、居中的小标题；
 //   · 高度按胶囊的位置算，这一行的内容不伸进胶囊。
 
-import { instanceTag } from '../../utils/instance';
+import { instanceTag, isProdInstance, versionText } from '../../utils/instance';
 import { goHome, isFirstPage, navMetrics } from '../../utils/nav';
 import { currentMe, watchMe } from '../../utils/session';
 
@@ -25,6 +25,9 @@ Component({
     capsuleHeight: 32,
     first: false,
     tag: '',
+    prod: false,
+    /** 版本 + SHA（AGENTS.md：导航栏常显，验收按它核对是哪一个提交） */
+    build: '',
   },
   lifetimes: {
     attached() {
@@ -37,11 +40,13 @@ Component({
         capsuleHeight: m.capsuleHeight,
         first: isFirstPage(),
         tag: me ? instanceTag(me.build.instance) : '',
+        prod: !!me && isProdInstance(me.build.instance),
+        build: me ? versionText(me.build.version, me.build.commit) : '',
       });
       // 冷启动时先画页面、后登录：登录上了（或换了人、退出了）再更新实例标识，测试服、演示库的标识不会缺
       unwatchers.set(
         this,
-        watchMe((m) => this.setData({ tag: m ? instanceTag(m.build.instance) : '' })),
+        watchMe((m) => this.setData({ tag: m ? instanceTag(m.build.instance) : '', prod: !!m && isProdInstance(m.build.instance), build: m ? versionText(m.build.version, m.build.commit) : '' })),
       );
     },
     detached() {
