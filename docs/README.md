@@ -28,6 +28,8 @@
 
 ## 模块设计与专题（设计稿与实现说明；模块改了要跟着改）
 
+- [`ACADEMY.md`](ACADEMY.md)：汤崎学堂 · 员工培训体系（店主 2026-11-27）
+- [`ACADEMY_PACKS.md`](ACADEMY_PACKS.md)：汤崎学堂 · 内置课件清单与核对单
 - [`AI_V8022.md`](AI_V8022.md)：8.0.22 设计 · AI 辅助（MD-D）
 - [`APPROVALS.md`](APPROVALS.md)：审批中心（v0.7.30）
 - [`APPROVAL_V4.md`](APPROVAL_V4.md)：业财法审批流（V4.0，P01–P07）
@@ -263,6 +265,7 @@
 - [`HANDOFF_V817.md`](HANDOFF_V817.md)：v8.1.7 交接说明 · 餐饮分区与点菜单、三台目标设备
 - [`HANDOFF_V818.md`](HANDOFF_V818.md)：v8.1.8 交接说明 · 品牌部的五条（电子菜单）
 - [`HANDOFF_V819.md`](HANDOFF_V819.md)：v8.1.9 交接说明 · 零采备用金、库管入库、全局签赠
+- [`HANDOFF_V8218.md`](HANDOFF_V8218.md)：v8.2.18 交接说明 · 汤崎学堂（员工培训体系）
 
 ## 更新记录分卷
 
