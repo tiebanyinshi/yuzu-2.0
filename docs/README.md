@@ -102,6 +102,7 @@
 - [`ROOMS.md`](ROOMS.md)：S7 客房（v0.7.4）
 - [`ROOM_CENTER_V8115.md`](ROOM_CENTER_V8115.md)：8.1.15 / 8.1.16 · 房态中心（《浴族系统需求汇总》房态中心 1–4）
 - [`SPACES.md`](SPACES.md)：空间台账（RQ-004 第一段，v0.7.14）
+- [`STAFF_MP.md`](STAFF_MP.md)：员工小程序 · 汤崎 WCP（店主 2026-11-27 立项）
 - [`STOCK_CYCLES.md`](STOCK_CYCLES.md)：台面日耗品、称重与盘点 / 对账提醒（v0.7.13，Batch 4 收尾）
 - [`STUDIO_MP.md`](STUDIO_MP.md)：工作台 · 小程序的版面格式（8.1.2，给小程序线）
 - [`SUPPLIER_SETTLEMENT.md`](SUPPLIER_SETTLEMENT.md)：供应商结算与库存采购收尾（v0.7.12，RQ-002 第二步）
