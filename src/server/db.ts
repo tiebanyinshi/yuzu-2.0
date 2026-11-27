@@ -73,7 +73,11 @@ export const REPORT_STATEMENT_TIMEOUT = '60s';
 export function readSnapshot<T>(sql: Sql, fn: (tx: Tx) => Promise<T>, opts: { statementTimeout?: string | null } = {}): Promise<T> {
   const limit = opts.statementTimeout === undefined ? REPORT_STATEMENT_TIMEOUT : opts.statementTimeout;
   return sql.begin('isolation level repeatable read read only', async (tx) => {
-    if (limit) await tx`SELECT set_config('statement_timeout', ${limit}, true)`;
+    // SET LOCAL（不是数据查询，只在这个事务里有效）；时长只认「数字 + 单位」，拼进语句前核对
+    if (limit) {
+      if (!/^\d+(ms|s|min)$/.test(limit)) throw new Error(`readSnapshot: statementTimeout 写法不对：${limit}`);
+      await tx.unsafe(`SET LOCAL statement_timeout = '${limit}'`);
+    }
     return fn(tx);
   }) as Promise<T>;
 }

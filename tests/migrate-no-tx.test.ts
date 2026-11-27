@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createSql, type Sql } from '../src/server/db';
+import { createSql, readSnapshot, type Sql } from '../src/server/db';
 import { migrate, splitSimpleStatements } from '../src/server/migrate';
 import { TEST_DB } from './helpers';
 import { resetPublicSchema } from './test-db';
@@ -58,5 +58,15 @@ describe('不在事务里的迁移', () => {
     const versions = (await sql<{ version: string }[]>`SELECT version FROM schema_migrations ORDER BY version`).map((r) => r.version);
     expect(versions).toEqual(['001_t.sql', '002_idx.sql']);
     expect(await sql`SELECT to_regclass('a') AS a`).toEqual([{ a: null }]);
+  });
+});
+
+describe('报表快照的语句上限', () => {
+  it('默认每句 60 秒、只在这个事务里；传 null 不限；写法不对的拒绝', async () => {
+    const show = (db: Sql) => db<{ v: string }[]>`SELECT current_setting('statement_timeout') AS v`.then((r) => r[0]!.v);
+    expect(await readSnapshot(sql, (tx) => show(tx as unknown as Sql))).toBe('1min');
+    expect(await readSnapshot(sql, (tx) => show(tx as unknown as Sql), { statementTimeout: null })).toBe('0');
+    expect(await show(sql)).toBe('0');
+    await expect(readSnapshot(sql, async () => 1, { statementTimeout: "1s'; DROP TABLE x; --" })).rejects.toThrow(/写法不对/);
   });
 });
