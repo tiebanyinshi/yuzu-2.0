@@ -55,7 +55,9 @@ export type FrontdeskOpType =
   | 'line_discount'
   /** 手牌押金的收、退（8.2.1，对象是来访，两个台都能办） */
   | 'tag_deposit'
-  | 'tag_deposit_refund';
+  | 'tag_deposit_refund'
+  /** 返台补低消（8.2.4；8.2.5 起待确认，对象是那次开台，在「桌台」页） */
+  | 'table_return';
 
 export interface FrontdeskPendingOp {
   key: string;
@@ -129,10 +131,12 @@ export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   line_discount: '单项打折',
   tag_deposit: '收手牌押金',
   tag_deposit_refund: '退手牌押金',
+  table_return: '返台补低消',
 };
 
 /** 餐饮桌台的操作：对象是桌台或开台，不是手牌 */
-export const isTableOp = (type: FrontdeskOpType) => type === 'table_open' || type === 'table_post' || type === 'table_checkout' || type === 'table_state' || type === 'table_merge';
+export const isTableOp = (type: FrontdeskOpType) =>
+  type === 'table_open' || type === 'table_post' || type === 'table_checkout' || type === 'table_state' || type === 'table_merge' || type === 'table_return';
 /** 客房的操作（S7）：对象是房间或入住单，在客房页处理 */
 export const isRoomOp = (type: FrontdeskOpType) => type.startsWith('room_');
 /** 派对房等的使用单（v0.7.19）：对象是空间或使用单，在客房页的平面图上处理 */
@@ -310,7 +314,7 @@ export function pendingFor(
     if (isSpaceOp(type)) return table.spaceId != null && (p.spaceId === table.spaceId || !!p.spaceIds?.includes(table.spaceId));
     if (isUsageOp(type)) return table.usageId != null && !!p.usageIds?.includes(table.usageId);
     if (type === 'table_open' || type === 'table_state') return table.tableId != null && p.tableId === table.tableId;
-    if (type === 'table_post' || type === 'table_checkout' || type === 'table_merge') return table.sessionId != null && !!p.sessionIds?.includes(table.sessionId);
+    if (type === 'table_post' || type === 'table_checkout' || type === 'table_merge' || type === 'table_return') return table.sessionId != null && !!p.sessionIds?.includes(table.sessionId);
     if (type === 'room_checkin') return table.roomId != null && p.roomId === table.roomId;
     if (isRoomOp(type)) return table.stayId != null && !!p.stayIds?.includes(table.stayId);
     return p.visitId === visitId || (visitId !== null && !!p.visitIds?.includes(visitId));

@@ -1150,8 +1150,8 @@ export async function lookupFrontdeskOp(db: Db, key: string, timezone: string, e
   }
   if (row.opType === 'checkout') return { found: true as const, type: 'checkout' as const, checkout: await getCheckout(db, row.refId) };
   // 餐饮第二步：开台、桌台点单查回这一桌；桌台结账查回结账单
-  if (row.opType === 'table_open' || row.opType === 'table_post') {
-    return { found: true as const, type: row.opType as 'table_open' | 'table_post', session: await getTableSession(db, row.refId) };
+  if (row.opType === 'table_open' || row.opType === 'table_post' || row.opType === 'table_return') {
+    return { found: true as const, type: row.opType as 'table_open' | 'table_post' | 'table_return', session: await getTableSession(db, row.refId) };
   }
   if (row.opType === 'table_checkout') return { found: true as const, type: 'table_checkout' as const, checkout: await getCheckout(db, row.refId) };
   // 客房（S7）：入住、续住加段、收退押金、退房查回这间房的入住单

@@ -180,6 +180,26 @@ describe('菜单分组的默认档口（点心不再跑到中厨）', () => {
     const checks = (await api(ctx.app, ctx.owner, 'GET', '/api/frontdesk/checks')).body as { key: string; ok: boolean; detail: string }[];
     expect(checks.filter((c) => !c.ok)).toEqual([]);
   });
+
+  it('8.2.5：临时项目进厨房也按出品口核对下单权限——没有「在餐厅下单」的不能借临时项目送进餐厅的档口（Codex 审查）', async () => {
+    const v = await checkin();
+    const post = (customLines: Record<string, unknown>[], total: number) =>
+      api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${v}/charges`, { clientKey: randomUUID(), lines: [], customLines, expectedTotal: total });
+    const overrides = (value: Record<string, unknown>) =>
+      ctx.sql`INSERT INTO settings (key, value) VALUES ('role_permissions', ${ctx.sql.json(value as never)}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
+    await overrides({ clerk: { add: [], remove: ['dining.orderRestaurant'] } });
+    try {
+      const denied = await post([{ name: '临时点心', amount: 3000, stationId: station['茶点'] }], 3000);
+      expect(denied.status).toBe(403);
+      expect(denied.body.error.code).toBe('OUTLET_FORBIDDEN');
+      expect(await kitchenOf('临时点心')).toEqual([]);
+      // 不进厨房的临时项目照旧能挂
+      expect((await post([{ name: '临时杂项', amount: 500 }], 500)).status).toBe(200);
+    } finally {
+      await overrides({});
+    }
+    expect((await post([{ name: '临时点心', amount: 3000, stationId: station['茶点'] }], 3000)).status).toBe(200);
+  });
 });
 
 describe('包房房型：低消、中消、只收房费；服务费门店默认', () => {
@@ -263,9 +283,20 @@ describe('返台补低消', () => {
     const key = randomUUID();
     expect((await back(s, { clientKey: key, reason: '回来接着吃' }, ctx.clerk)).status).toBe(403);
     expect((await back(s, { clientKey: key, reason: '' })).status).toBe(400);
+    // 8.2.5：返台进「结果待确认」——员工确认作废过的编号，原请求再到整笔回滚（Codex 审查）
+    const fenced = randomUUID();
+    const abandoned = await api(ctx.app, boss, 'POST', `/api/frontdesk/ops/${fenced}/abandon`, { type: 'table_return' });
+    expect(abandoned.status, JSON.stringify(abandoned.body)).toBe(200);
+    expect(abandoned.body).toMatchObject({ found: false, abandoned: true });
+    expect((await back(s, { clientKey: fenced, reason: '回来接着吃' })).body.error.code).toBe('OP_ABANDONED');
+    expect((await ctx.sql`SELECT 1 FROM table_session_returns WHERE session_id = ${s}`).length).toBe(0);
     const r = await back(s, { clientKey: key, reason: '回来接着吃' });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.parkedAt).toBeNull();
+    // 按编号查回得到这一桌；已经生效的不能再作废
+    const found = await api(ctx.app, boss, 'GET', `/api/frontdesk/ops/${key}?type=table_return`);
+    expect(found.body).toMatchObject({ found: true, type: 'table_return', session: { id: s } });
+    expect((await api(ctx.app, boss, 'POST', `/api/frontdesk/ops/${key}/abandon`, { type: 'table_return' })).body).toMatchObject({ found: true });
     expect((await back(s, { clientKey: key, reason: '回来接着吃' })).status).toBe(200);
     expect((await ctx.sql`SELECT 1 FROM table_session_returns WHERE session_id = ${s}`).length).toBe(1);
     // 没转挂账的：直接点就行

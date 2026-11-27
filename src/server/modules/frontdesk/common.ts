@@ -75,6 +75,8 @@ export const FRONTDESK_OPS = [
   'line_discount',
   'tag_deposit',
   'tag_deposit_refund',
+  // 返台补低消（8.2.4；8.2.5 起进「结果待确认」，Codex 审查）：对象是那次开台，在「桌台」页处理
+  'table_return',
 ] as const;
 export type FrontdeskOp = (typeof FRONTDESK_OPS)[number];
 
@@ -116,6 +118,7 @@ export const FRONTDESK_OP_PERMISSIONS: Record<FrontdeskOp, readonly Permission[]
   line_discount: ['frontdesk.checkout'],
   tag_deposit: ['frontdesk.operate'],
   tag_deposit_refund: ['frontdesk.operate'],
+  table_return: ['dining.returnTable'],
 };
 
 export const abandonedError = () => conflict('OP_ABANDONED', '这笔操作已在「结果待确认」时由员工作废，不会再生效；如仍需要，请重新填写一笔');
