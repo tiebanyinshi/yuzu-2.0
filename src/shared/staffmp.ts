@@ -3,7 +3,7 @@
 
 import type { InstanceKind } from './instance';
 
-/** 员工小程序端口上所有接口的前缀：放 Caddy 的服务器按它把 staff.yuzusystem.xyz 上的请求转到员工小程序端口（第 5 节） */
+/** 员工小程序端口上所有接口的前缀：放 Caddy 的服务器按它把 sys.yuzusystem.xyz 上的请求转到员工小程序端口（第 5 节） */
 export const STAFFMP_PREFIX = '/api/staffmp';
 
 /**
@@ -80,6 +80,7 @@ export interface StaffMpMe {
   /** 老账号还没选新岗位：请他先在电脑上登录柚子选岗位 */
   needsPosition: boolean;
   /** 这个账号现在绑着微信（以后微信一键进） */
+  /** 这一个会话是不是这台手机的微信绑定登录的（绑定还在）；不是「账号在哪台手机上绑过」 */
   wechatBound: boolean;
   /** 能用的入口（第 2.4 节） */
   entries: StaffMpEntryKey[];

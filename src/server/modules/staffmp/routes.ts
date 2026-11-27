@@ -55,7 +55,7 @@ export function registerStaffMpRoutes(app: FastifyInstance, deps: Deps, code2ses
   const meOf = async (token: string): Promise<StaffMpMe> => {
     const actor = await resolveStaffMpSession(sql, token, config.sessionTtlHours);
     if (!actor) throw unauthorized('登录没有成功，请重试');
-    return buildMe(deps, actor);
+    return buildMe(deps, actor, token);
   };
   const refuse = async (staffId: number, req: FastifyRequest) => {
     const e = await eligibilityOf(sql, staffId);
@@ -158,18 +158,20 @@ export function registerStaffMpRoutes(app: FastifyInstance, deps: Deps, code2ses
       await destroyStaffSessions(tx, actor.id, req.staffmpToken);
       await writeAudit(tx, { staffId: actor.id, action: 'password_changed', detail: { via: 'staffmp' }, ip: req.ip });
     });
-    return buildMe(deps, { ...actor, mustChangePassword: false });
+    return buildMe(deps, { ...actor, mustChangePassword: false }, req.staffmpToken ?? null);
   });
 
   app.post('/api/staffmp/auth/logout', async (req) => {
     const { unbind } = parse(LogoutInput, req.body ?? {});
+    // 解开微信要知道是谁：登录过期了回 401（小程序悄悄重新登录以后再来），不回「好了」却没解开
+    if (unbind && !req.hasSession) throw unauthorized('登录过期了：重新登录以后再解除这个微信');
     if (req.hasSession && unbind) await unbindWechat(sql, req.actor.id, { reason: 'self', ip: req.ip });
     if (req.staffmpToken) await destroySession(sql, req.staffmpToken);
     if (req.hasSession) await writeAudit(sql, { staffId: req.actor.id, action: 'logout', detail: { via: 'staffmp', unbind }, ip: req.ip });
-    return { ok: true };
+    return { ok: true, unbound: unbind };
   });
 
-  app.get('/api/staffmp/me', async (req): Promise<StaffMpMe> => buildMe(deps, signedIn(req)));
+  app.get('/api/staffmp/me', async (req): Promise<StaffMpMe> => buildMe(deps, signedIn(req), req.staffmpToken ?? null));
 
   // 短时地址：只发给员工小程序的令牌（不发给短时地址自己）；能不能看由原来的接口在打开时当场核对
   app.post('/api/staffmp/media', async (req): Promise<StaffMpMediaLink> => {

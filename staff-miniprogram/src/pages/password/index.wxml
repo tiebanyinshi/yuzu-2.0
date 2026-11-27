@@ -1,0 +1,23 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="{{first ? '设一个新密码' : '改密码'}}" />
+  <view class="gutter">
+    <view wx:if="{{first}}" class="notice info intro">第一次登录，先把管理员给的初始密码改成只有你知道的。</view>
+    <view class="field">
+      <view class="field-label">现在的密码</view>
+      <input class="input" password value="{{current}}" placeholder="{{first ? '管理员给的初始密码' : '现在的密码'}}" placeholder-class="input-placeholder" maxlength="128" bindinput="onCurrent" aria-label="现在的密码" />
+    </view>
+    <view class="field">
+      <view class="field-label">新密码</view>
+      <input class="input" password value="{{next}}" placeholder="至少 8 位，字母和数字都要有" placeholder-class="input-placeholder" maxlength="72" bindinput="onNext" aria-label="新密码" />
+      <view wx:if="{{nextError}}" class="field-error">{{nextError}}</view>
+    </view>
+    <view class="field">
+      <view class="field-label">再输一次</view>
+      <input class="input" password value="{{again}}" placeholder="再输一次新密码" placeholder-class="input-placeholder" maxlength="72" bindinput="onAgain" aria-label="再输一次新密码" />
+      <view wx:if="{{againError}}" class="field-error">{{againError}}</view>
+    </view>
+    <view wx:if="{{error}}" class="notice error error-box">{{error}}</view>
+    <view class="t-caption tip">改好以后，电脑和别的手机上的登录都会退出，这台手机不用重新登录。</view>
+    <button class="btn primary block save" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onSave">改好了</button>
+  </view>
+</view>

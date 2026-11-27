@@ -180,6 +180,11 @@ describe('微信一键进与绑定（SP05）', () => {
     expect(w.body.status).toBe('ok');
     expect(w.body.me.staff.displayName).toBe('阿丽');
     expect((await s('GET', '/api/staffmp/me', w.body.token)).status).toBe(200);
+    // 「已绑定」说的是这一个会话：微信一键进的是；同一个账号在别的手机上「只登录这一次」的不是（那边不给「解除」）
+    expect((await s('GET', '/api/staffmp/me', w.body.token)).body.wechatBound).toBe(true);
+    const once = await pwLogin('alice', {});
+    expect(once.body.me.wechatBound).toBe(false);
+    expect((await s('GET', '/api/staffmp/me', once.body.token)).body.wechatBound).toBe(false);
     expect((await s('POST', '/api/staffmp/auth/wechat', null, { code: 'wx-phonea', mode: 'peek' })).body).toEqual({ status: 'bound', displayName: '阿丽' });
   });
 
@@ -224,7 +229,12 @@ describe('微信一键进与绑定（SP05）', () => {
     expect((await s('GET', '/api/staffmp/me', w.body.token)).status).toBe(401);
     const again = await s('POST', '/api/staffmp/auth/wechat', null, { code: 'wx-newphone' });
     expect(again.body.status).toBe('ok');
-    await s('POST', '/api/staffmp/auth/logout', again.body.token, { unbind: true });
+    // 令牌已经失效（过期、被退掉）时要解绑：回 401，不回「好了」却没解开
+    const dead = await s('POST', '/api/staffmp/auth/logout', w.body.token, { unbind: true });
+    expect([dead.status, dead.body.error?.code]).toEqual([401, 'UNAUTHORIZED']);
+    expect((await s('POST', '/api/staffmp/auth/wechat', null, { code: 'wx-newphone', mode: 'peek' })).body.status).toBe('bound');
+    const done = await s('POST', '/api/staffmp/auth/logout', again.body.token, { unbind: true });
+    expect(done.body).toEqual({ ok: true, unbound: true });
     expect((await s('POST', '/api/staffmp/auth/wechat', null, { code: 'wx-newphone' })).body).toEqual({ status: 'unbound' });
   });
 });

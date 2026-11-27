@@ -1,0 +1,20 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar large title="今天" eyebrow="TODAY" />
+  <state-view wx:if="{{!ready}}" state="loading" rows="2" />
+  <view wx:else class="gutter">
+    <view class="hello fade-in">
+      <view class="t-title">{{hello}}</view>
+      <view class="t-body muted num">{{sub}}</view>
+    </view>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">常用</view></view>
+      <view class="grid card">
+        <view wx:for="{{entries}}" wx:key="key" class="cell" hover-class="row-pressed" hover-stay-time="120" data-page="{{item.page}}" bindtap="onEntry" aria-role="button" aria-label="{{item.label}}">
+          <image class="cell-icon" src="/assets/icons/{{item.icon}}.png" />
+          <view class="cell-label">{{item.label}}</view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>
