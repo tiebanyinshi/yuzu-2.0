@@ -1,6 +1,6 @@
 // 8.1.15 发卡台与收银台（docs/DESKS_V8115.md）的浏览器验收：
 //   ① 主导航里「前台」分成「发卡台」「收银台」两个；
-//   ② 发卡台：手牌卡片与客人卡上认得出会员档阶与基础权益（VIP 柜、手上的券）；加项目、作废、换牌都在；没有预结账、结账、结账记录，F9 不开结账；
+//   ② 发卡台：手牌卡片与客人卡上认得出会员档阶与基础权益（VIP 柜、手上的券）；加项目、作废、换牌都在；没有预结账、结账、结账记录（8.2.1 起 F9「买单」带着手牌去收银台结账，这里不按）；
 //   ③ 从客人卡「去收银台结账」：待结账清单上这张牌标着「签赠」；账单只读（没有加项目、作废、换牌，F4 不开加项目）；
 //      「权益与优惠」里这张签赠写着渠道、发放人、授权人、事由；
 //   ④ 结账选这张签赠券：结账单与小票的「优惠与赠送」写明签赠、发放人、授权人，「收款」里只有现金；结完这张牌从待结账清单里走了。
@@ -248,12 +248,10 @@ test.describe('8.1.15 发卡台与收银台', () => {
       await expect(rights).toContainText('VIP 柜 2 级及以下');
       // 演示库（demo-prepare）开着按档自动发的会员权益券，券数不一定是 1；签赠正好一张
       await expect(rights).toContainText(/券 \d+ 张（签赠 1）/);
-      // 发卡台不结账：没有预结账、结账、结账记录；F9 不开结账
+      // 发卡台不结账：没有预结账、结账、结账记录（8.2.1 起 F9「买单」带着手牌去收银台打开结账，见 v8221-cashier）
       await expect(panel.getByTestId('action-checkout')).toHaveCount(0);
       await expect(panel.getByTestId('action-preview')).toHaveCount(0);
       await expect(page.getByTestId('open-checkouts')).toHaveCount(0);
-      await page.keyboard.press('F9');
-      await expect(page.getByTestId('checkout-total')).toHaveCount(0);
       // 8.1.44：发卡台不加项目、不作废（F4 不开加项目）；换牌照旧在发卡台
       await expect(panel.getByTestId('action-add')).toHaveCount(0);
       await page.keyboard.press('F4');
@@ -275,7 +273,7 @@ test.describe('8.1.15 发卡台与收银台', () => {
       await expect(row).toContainText(memberName);
       await expect(row).toContainText('L4');
       await expect(page.getByTestId(`queue-${tag2}-gift`)).toContainText('签赠 1');
-      await expect(panel.getByTestId('cashier-issue-hint')).toContainText('换牌、同行在发卡台');
+      await expect(panel.getByTestId('cashier-issue-hint')).toContainText('换牌在发卡台');
       for (const id of ['action-swap', 'action-more']) await expect(panel.getByTestId(id), id).toHaveCount(0);
       // 8.1.44：账单区放大，抬头不再重复手牌、入场、在店时长（清单上选中的那一行写着）
       await expect(page.getByTestId('cashier-layout')).toHaveAttribute('data-expanded', 'true');
