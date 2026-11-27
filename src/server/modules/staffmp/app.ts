@@ -33,6 +33,7 @@ import { registerTrainingRoutes } from '../training';
 import { registerAuthRoutes } from '../../auth/routes';
 import { passthroughAllowed, rewriteStaffMpUrl } from './allowlist';
 import { resolveStaffMpSession, resolveStaffMpSessionByHash } from './auth';
+import { registerStaffMpCanteenRoutes } from './canteen';
 import { MEDIA_TARGETS, mediaRewrite, TICKET_QUERY, verifyTicket } from './media';
 import { registerStaffMpRoutes } from './routes';
 import { loadStaffMpEnabled } from './settings';
@@ -43,6 +44,8 @@ export interface StaffMpAppOptions {
   code2session?: Code2Session;
   /** 开关的缓存时间（毫秒，默认 3 秒；测试给 0） */
   openCacheMs?: number;
+  /** 测试用：固定「此刻」（吃饭的餐次、巡场的轮次按它算） */
+  clock?: () => number;
 }
 
 /** 不用登录、也不看开关的接口 */
@@ -165,6 +168,8 @@ export async function buildStaffMpApp(sql: Sql, config: AppConfig, opts: StaffMp
   });
 
   registerStaffMpRoutes(app, deps, opts.code2session ?? code2sessionFor(config.staffmp));
+  // 吃饭与巡场（员工账号对上的饭堂身份，canteen.ts）
+  registerStaffMpCanteenRoutes(app, deps, opts.clock);
   // WCP 与员工培训的员工端接口（只放行 allowlist.ts 里的）
   registerOaPunchRoutes(app, deps);
   registerOaScheduleRoutes(app, deps);

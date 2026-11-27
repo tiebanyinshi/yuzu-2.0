@@ -442,6 +442,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '560_dining_v8224.sql',
   '570_review_v825.sql',
   '650_staffmp_bindings.sql',
+  '651_staffmp_canteen_links.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

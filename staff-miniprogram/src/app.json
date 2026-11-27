@@ -22,7 +22,12 @@
     "pages/directory/index",
     "pages/announcements/index",
     "pages/announcement/index",
-    "pages/notifications/index"
+    "pages/notifications/index",
+    "pages/meal/index",
+    "pages/menu/index",
+    "pages/canteen-scan/index",
+    "pages/patrol/index",
+    "pages/patrol-log/index"
   ],
   "window": {
     "navigationStyle": "custom",

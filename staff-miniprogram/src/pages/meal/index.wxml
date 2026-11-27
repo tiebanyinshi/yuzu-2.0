@@ -1,0 +1,50 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="饭卡码" />
+
+  <state-view wx:if="{{state === 'loading' || state === 'error' || state === 'offline'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+
+  <view wx:elif="{{state === 'closed'}}" class="gutter">
+    <view class="notice info">饭堂还没开张：请找管理员打开「员工食堂」。</view>
+  </view>
+
+  <view wx:elif="{{state === 'link'}}" class="gutter">
+    <view class="t-title-s head">先对上你的饭卡</view>
+    <view class="t-body muted">以前在柚子饭堂（网页）登记过吗？对上一次，以后打开这里就是你的饭卡码。</view>
+    <block wx:if="{{!linkForm}}">
+      <button class="btn primary block choice" hover-class="pressed" hover-stay-time="120" bindtap="onLinkForm">登记过，用饭堂账号对上</button>
+      <button class="btn secondary block choice2" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onCreate">没登记过，开通饭卡</button>
+    </block>
+    <block wx:else>
+      <view class="field">
+        <view class="field-label">饭堂的账号</view>
+        <input class="input" value="{{account}}" placeholder="工号、用户名或手机号" placeholder-class="input-placeholder" maxlength="40" bindinput="onAccount" aria-label="饭堂的账号" />
+      </view>
+      <view class="field">
+        <view class="field-label">饭堂的密码</view>
+        <input class="input" password value="{{password}}" placeholder="在柚子饭堂设的密码" placeholder-class="input-placeholder" maxlength="200" bindinput="onPassword" aria-label="饭堂的密码" />
+      </view>
+      <button class="btn primary block choice" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onLink">对上</button>
+      <view class="t-caption tip">忘了饭堂密码：找食堂负责人或人事。</view>
+    </block>
+    <view wx:if="{{error}}" class="notice error err">{{error}}</view>
+  </view>
+
+  <view wx:else class="gutter code-wrap">
+    <view class="card card-pad code-card">
+      <view class="who">
+        <view class="avatar">{{initial}}</view>
+        <view class="who-main">
+          <view class="t-title-s">{{name}}</view>
+          <view class="t-caption num">工号 {{empNo}}</view>
+        </view>
+      </view>
+      <canvas type="2d" id="qr" class="qr" style="width: {{qrPx}}px; height: {{qrPx}}px;" aria-label="饭卡码"></canvas>
+      <view class="progress"><view class="progress-bar" style="width: {{left * 100 / 30}}%;"></view></view>
+      <view class="t-caption center num">{{left}} 秒后自动换一个码 · 截图无效</view>
+    </view>
+    <view class="t-body center meal">{{meal}}</view>
+    <view wx:if="{{stale}}" class="t-caption center">之前的信息（现在连不上门店系统，码照样能用）</view>
+    <view class="t-caption center num">这个月吃了 {{mealsThisMonth}} 顿</view>
+    <view class="link center" hover-class="pressed" hover-stay-time="120" bindtap="onMenu" aria-role="button">看今天的菜单</view>
+  </view>
+</view>

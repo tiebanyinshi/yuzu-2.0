@@ -1,0 +1,65 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="扫码登记" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="head">
+      <view class="t-title-s">{{meal ? meal + ' · 已登记' : '现在不是开饭时间'}}</view>
+      <view wx:if="{{meal}}" class="t-display num count">{{count}}</view>
+    </view>
+
+    <view class="viewfinder card">
+      <camera wx:if="{{!cameraError}}" class="camera" mode="scanCode" device-position="back" flash="off" bindscancode="onScanCode" binderror="onCameraError"></camera>
+      <view wx:else class="camera-off">
+        <view class="t-body">没有用相机的权限，扫不了码。</view>
+        <button class="btn secondary" hover-class="pressed" hover-stay-time="120" bindtap="onOpenSetting">去打开相机</button>
+      </view>
+    </view>
+    <view class="t-caption tip">让员工把饭卡码对着相机：记上了手机会震一下，下面「刚才扫的」写着结果。</view>
+
+    <view wx:if="{{waiting}}" class="notice warn">还有 {{waiting}} 笔没交上（网络不好），存在手机上，连上以后自动补交，不会重复。</view>
+
+    <view wx:if="{{results.length}}" class="section">
+      <view class="section-head"><view class="section-title">刚才扫的</view></view>
+      <view class="card list">
+        <view wx:for="{{results}}" wx:key="key" class="row result {{item.tone}}">
+          <view class="row-main">
+            <view class="row-title">{{item.title}}</view>
+            <view class="row-sub">{{item.sub}}</view>
+          </view>
+          <view wx:if="{{item.checkinId}}" class="link undo" data-id="{{item.checkinId}}" bindtap="onVoid" aria-role="button">撤销</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">没带手机：按名字登记</view></view>
+      <view class="search-row">
+        <input class="input search" value="{{query}}" placeholder="姓名或工号" placeholder-class="input-placeholder" confirm-type="search" bindinput="onQuery" bindconfirm="onSearch" aria-label="姓名或工号" />
+        <button class="btn secondary" hover-class="pressed" hover-stay-time="120" disabled="{{searching}}" bindtap="onSearch">找</button>
+      </view>
+      <view wx:if="{{people.length}}" class="card list people">
+        <view wx:for="{{people}}" wx:key="id" class="row">
+          <view class="avatar">{{item.initial}}</view>
+          <view class="row-main">
+            <view class="row-title">{{item.name}}</view>
+            <view class="row-sub num">{{item.empNo}}{{item.department ? ' · ' + item.department : ''}}</view>
+          </view>
+          <view wx:if="{{item.checkedIn}}" class="t-caption">已登记</view>
+          <button wx:else class="btn secondary small" hover-class="pressed" hover-stay-time="120" data-index="{{index}}" bindtap="onManual">登记</button>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{recent.length}}" class="section">
+      <view class="section-head"><view class="section-title">今天登记的</view></view>
+      <view class="card list">
+        <view wx:for="{{recent}}" wx:key="id" class="row">
+          <view class="row-main">
+            <view class="row-title {{item.voided ? 'voided' : ''}}">{{item.name}}</view>
+            <view class="row-sub num">{{item.time}}{{item.manual ? ' · 手动' : ''}}{{item.voided ? ' · 已撤销' : ''}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

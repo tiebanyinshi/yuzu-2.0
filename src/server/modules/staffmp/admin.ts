@@ -9,19 +9,29 @@
 import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import { isPositionKey, positionOf } from '@shared/positions';
-import type { StaffMpAdminView, StaffMpBindingRow } from '@shared/staffmp';
+import type { StaffMpAdminView, StaffMpBindingRow, StaffMpCanteenLinkRow } from '@shared/staffmp';
 import { guardAny } from '../../auth/guard';
 import { can } from '@shared/permissions';
 import { writeAudit } from '../../lib/audit';
 import type { Deps } from '../../lib/context';
+import type { Tx } from '../../db';
 import { forbidden, notFound } from '../../lib/errors';
-import { managesOrg, orgScope, storeCond } from '../oa';
+import type { OrgScope } from '../oa';
+import { managesOrg, onDuty, orgScope, storeCond } from '../oa';
 import { idParam, parse } from '../../lib/validate';
 import { unbindWechat } from './auth';
+import { linkCanteenByAdmin, unlinkCanteen } from './canteen';
 import { loadStaffMpEnabled, saveStaffMpEnabled } from './settings';
 import { wechatReady } from './wechat';
 
 const SettingsInput = z.object({ enabled: z.boolean() });
+const LinkPairs = z.object({
+  pairs: z
+    .array(z.object({ staffId: z.number().int().positive(), employeeId: z.number().int().positive() }))
+    .min(1)
+    .max(500),
+});
+const StaffIdParam = z.object({ staffId: z.coerce.number().int().positive() });
 
 export function registerStaffMpAdminRoutes(app: FastifyInstance, { sql, config }: Deps) {
   const guardHr = guardAny('staff.manage', 'hr.org');
@@ -70,6 +80,66 @@ export function registerStaffMpAdminRoutes(app: FastifyInstance, { sql, config }
       await writeAudit(tx, { staffId: req.actor.id, action: 'staffmp_settings_changed', detail: { enabled }, ip: req.ip });
     });
     return { enabled };
+  });
+
+  // 饭卡对上（第 5.4 节，SP10）：在职员工一人一行；对上了的写饭卡，没对上的按人事档案的手机号在饭堂名单里找候选（只此一位、还没对给别人才给）
+  /** 只有 hr.org 的：员工要在自己的门店范围里、不是总裁（锁员工行以后另起一句核对，读到的是调店提交以后的） */
+  const inScope = (scope: OrgScope) => async (tx: Tx, staffId: number) => {
+    await tx`SELECT 1 FROM staff WHERE id = ${staffId} FOR SHARE`;
+    const [ok] = await tx`SELECT 1 FROM staff s WHERE s.id = ${staffId} AND ${storeCond(tx, scope)} AND (${scope.all} OR s.role <> 'owner')`;
+    if (!ok) throw notFound('没有这位员工，或不在你管的门店里');
+  };
+
+  app.get('/api/admin/staffmp/canteen-links', { preHandler: auth }, async (req): Promise<StaffMpCanteenLinkRow[]> => {
+    const scope = await orgScope(sql, req.actor);
+    const rows = await sql<
+      {
+        staffId: number;
+        displayName: string;
+        phone: string | null;
+        employeeId: number | null;
+        empName: string | null;
+        empNo: string | null;
+        method: 'admin' | 'password' | 'created' | null;
+        linkedAt: Date | string | null;
+        sugId: number | null;
+        sugName: string | null;
+        sugEmpNo: string | null;
+      }[]
+    >`
+      SELECT s.id AS staff_id, s.display_name, p.phone,
+             l.employee_id, e.name AS emp_name, e.emp_no, l.method, l.linked_at,
+             sug.id AS sug_id, sug.name AS sug_name, sug.emp_no AS sug_emp_no
+      FROM staff s
+      LEFT JOIN staff_profiles p ON p.staff_id = s.id
+      LEFT JOIN staffmp_canteen_links l ON l.staff_id = s.id
+      LEFT JOIN canteen_employees e ON e.id = l.employee_id
+      LEFT JOIN LATERAL (
+        SELECT c.id, c.name, c.emp_no FROM canteen_employees c
+        WHERE l.staff_id IS NULL AND p.phone IS NOT NULL AND c.phone = p.phone AND c.active
+          AND NOT EXISTS (SELECT 1 FROM staffmp_canteen_links x WHERE x.employee_id = c.id)
+      ) sug ON true
+      WHERE ${onDuty(sql)} AND ${storeCond(sql, scope)} AND (${scope.all} OR s.role <> 'owner')
+      ORDER BY (l.staff_id IS NULL) DESC, (sug.id IS NULL), s.display_name, s.id`;
+    return rows.map((r) => ({
+      staffId: Number(r.staffId),
+      displayName: r.displayName,
+      phone: r.phone,
+      linked:
+        r.employeeId != null ? { employeeId: Number(r.employeeId), name: r.empName ?? '', empNo: r.empNo ?? '', method: r.method ?? 'admin', linkedAt: new Date(r.linkedAt ?? 0).toISOString() } : null,
+      suggestion: r.sugId != null ? { employeeId: Number(r.sugId), name: r.sugName ?? '', empNo: r.sugEmpNo ?? '' } : null,
+    }));
+  });
+
+  app.post('/api/admin/staffmp/canteen-links', { preHandler: auth }, async (req) => {
+    const { pairs } = parse(LinkPairs, req.body);
+    return linkCanteenByAdmin(sql, pairs, req.actor.id, req.ip, inScope(await orgScope(sql, req.actor)));
+  });
+
+  app.post('/api/admin/staffmp/canteen-links/:staffId/unlink', { preHandler: auth }, async (req) => {
+    const { staffId } = parse(StaffIdParam, req.params);
+    const check = inScope(await orgScope(sql, req.actor));
+    return { ok: true, unlinked: await unlinkCanteen(sql, staffId, req.actor.id, req.ip, (tx) => check(tx, staffId)) };
   });
 
   app.post('/api/admin/staffmp/bindings/:id/revoke', { preHandler: auth }, async (req) => {

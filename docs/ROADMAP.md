@@ -332,7 +332,7 @@
   - `491`（`491_pg_stat_statements.sql`，8.1.54）：建查询统计扩展 pg_stat_statements（没权限、没有这个扩展时跳过），`cli.js db-report` 看最慢的查询、没用过的索引。回滚 `docs/rollback/491_pg_stat_statements.down.sql`。
 - **员工小程序线（店主 2026-11-27 立项，设计见 `docs/STAFF_MP.md`）**：店主「以后有两个小程序线，请你分配好模块」——顾客小程序线（原「小程序线」，Gemini）照旧；新开**员工小程序线**（员工用的微信小程序「汤崎 WCP」，Claude 员工小程序开发会话，本会话起），只写 `staff-miniprogram/`、`src/server/modules/staffmp/`、`src/client/features/staffmp/`、`src/shared/staffmp.ts`、`compose.staffmp.yaml`、`docs/STAFF_MP*.md`、`docs/HANDOFF_STAFFMP*.md`、`tests/staffmp-*.test.ts` 与迁移 `NNN_staffmp_<用途>.sql`，登记处只加挂接的几行；WCP、员工培训与汤崎学堂、柚子饭堂、巡场的规则与接口仍归主线，员工小程序线把主线的接口按白名单挂到自己的端口上（`STAFFMP_PORT`，`staff.yuzusystem.xyz/api/staffmp/*`）。分工表见设计稿第 7 节，PR 标题【员工小程序线】、标签「员工小程序线」。集成分支 `claude/awesome-wozniak-e0symx`，子 PR A–E 依次合进集成分支，最后一个 PR 合进 `main` 并改 yuzu 的版本号；员工小程序自己的版本从 `1.0.0` 起。待确认 SP01 起。迁移号预留 `650`–`659`（原登记 `610`–`619`，与 8.2.9 水吧的 `610_pickup_v829.sql` 一段撞了——那一段 `600`–`639` 由 8.2.8–8.2.11 先在 main 上登记；2026-11-27 改号，员工小程序线的迁移还没发到任何环境）：
   - `650`（`650_staffmp_bindings.sql`，子 PR A）：微信与员工账号的绑定 `staffmp_bindings`（解开只做标记、不删）、员工小程序发的会话 `staffmp_sessions`（跟着 `sessions` 删）。
-  - `651`（子 PR E，用到时登记用途）：员工账号与柚子饭堂账号对上。
+  - `651`（`651_staffmp_canteen_links.sql`，子 PR E）：员工账号与柚子饭堂账号对上 `staffmp_canteen_links`（一对一：员工主键、饭卡唯一；怎么对上的、谁、什么时候；解开删行、审计留痕）。只建新表；解开时那张饭卡的 `canteen_employees.code_epoch` 加一走饭堂原来的列，不改表。
 
 ## 8. 店主决策（2026-10-29 已签认）
 

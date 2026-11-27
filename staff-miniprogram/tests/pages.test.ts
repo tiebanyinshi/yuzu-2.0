@@ -84,6 +84,16 @@ describe('写法约定', () => {
     for (const f of ts) expect(/import\s*\{[^}]*\btype\s+\w/.test(read(f)), f).toBe(false);
   });
 
+  it('不用 Array.prototype.at、TextEncoder（老手机的小程序运行环境不一定有）', () => {
+    for (const f of ts) {
+      const code = read(f)
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/.*$/gm, '');
+      expect(/\.at\(/.test(code), `${f}: .at(`).toBe(false);
+      expect(/\bTextEncoder\b/.test(code), `${f}: TextEncoder`).toBe(false);
+    }
+  });
+
   it('不用数字分隔符', () => {
     for (const f of ts) expect(/\d_\d/.test(read(f).replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '')), f).toBe(false);
   });

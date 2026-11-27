@@ -1,6 +1,7 @@
 // 员工小程序「汤崎 WCP」（员工小程序线，docs/STAFF_MP.md）：员工小程序端口与小程序共用的类型与常量。
 // 小程序（staff-miniprogram/）只引这里的类型（编译后不留引用），接口改了那边的类型检查会报错。
 
+import type { CanteenRole, Meal } from './canteen';
 import type { InstanceKind } from './instance';
 
 /** 员工小程序端口上所有接口的前缀：放 Caddy 的服务器按它把 sys.yuzusystem.xyz 上的请求转到员工小程序端口（第 5 节） */
@@ -102,6 +103,26 @@ export interface StaffMpLoginReply {
   bound: boolean;
   /** 想绑却没绑上的原因（门店系统连不上微信；这个微信绑着别人、没说要换绑）：登录照样成功 */
   bindError: string | null;
+}
+
+/** 吃饭（第 5.4 节）：员工食堂开没开、这个人对没对上饭卡 */
+export interface StaffMpCanteenStatus {
+  /** 员工食堂开着、门店系统配了饭卡码（关着时小程序不显示吃饭） */
+  open: boolean;
+  linked: boolean;
+  employee: { name: string; empNo: string; role: CanteenRole } | null;
+  /** 现在是哪一餐的开饭时间、我这一餐打过卡没有（不在开饭时间、没对上为 null；首页此刻卡用） */
+  currentMeal: { meal: Meal; date: string; checkedIn: boolean } | null;
+}
+
+/** 后台「员工小程序 → 饭卡对上」：一行是一位员工（对上了的写饭卡，没对上的给按手机号找到的候选） */
+export interface StaffMpCanteenLinkRow {
+  staffId: number;
+  displayName: string;
+  phone: string | null;
+  linked: { employeeId: number; name: string; empNo: string; method: 'admin' | 'password' | 'created'; linkedAt: string } | null;
+  /** 没对上、按人事档案的手机号在饭堂名单里找到一位（只此一位、还没对给别人）：管理员核对后一键对上 */
+  suggestion: { employeeId: number; name: string; empNo: string } | null;
 }
 
 /** 短时地址（第 5.2 节）：给 <video>、<image> 用，10 分钟有效、只给这个人、只对这一个文件 */

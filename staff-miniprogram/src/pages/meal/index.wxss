@@ -1,0 +1,73 @@
+.head {
+  margin-top: 16rpx;
+  margin-bottom: 12rpx;
+}
+.choice {
+  margin-top: 48rpx !important;
+}
+.choice2 {
+  margin-top: 24rpx !important;
+}
+.tip {
+  margin-top: 24rpx;
+}
+.err {
+  margin-top: 32rpx;
+}
+.code-wrap {
+  padding-top: 16rpx;
+}
+.code-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.who {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  margin-bottom: 32rpx;
+}
+.avatar {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 50%;
+  background-color: var(--ink);
+  color: var(--on-ink);
+  font-size: var(--fs-title-s);
+  font-weight: 600;
+  line-height: 88rpx;
+  text-align: center;
+  flex: none;
+}
+.who-main {
+  margin-left: 24rpx;
+}
+.qr {
+  display: block;
+}
+.progress {
+  align-self: stretch;
+  height: 6rpx;
+  margin: 32rpx 0 16rpx;
+  background-color: var(--surface-2);
+  border-radius: 3rpx;
+  overflow: hidden;
+}
+.progress-bar {
+  height: 6rpx;
+  background-color: var(--wood);
+  transition: width 900ms linear;
+}
+.center {
+  text-align: center;
+}
+.meal {
+  margin-top: 32rpx;
+  font-weight: 600;
+}
+.link {
+  display: flex;
+  justify-content: center;
+  margin-top: 24rpx;
+}

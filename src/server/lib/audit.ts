@@ -444,7 +444,10 @@ export type AuditAction =
   // 员工小程序线（docs/STAFF_MP.md）：微信绑定与解开、后台的开关（登录、退出、改密码照用上面的，detail 里写 via: staffmp）
   | 'staffmp_wechat_bound'
   | 'staffmp_wechat_unbound'
-  | 'staffmp_settings_changed';
+  | 'staffmp_settings_changed'
+  // 员工小程序线 E：员工账号与柚子饭堂账号对上、解开（docs/STAFF_MP.md 第 5.4 节）
+  | 'staffmp_canteen_linked'
+  | 'staffmp_canteen_unlinked';
 
 export interface AuditEntry {
   staffId: number | null;

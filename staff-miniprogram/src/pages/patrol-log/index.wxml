@@ -1,0 +1,73 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="巡场记录" />
+  <view class="gutter date-bar">
+    <picker wx:if="{{canViewHistory}}" mode="date" value="{{date}}" start="{{minDate}}" end="{{today}}" bindchange="onDate">
+      <view class="date-pick" hover-class="pressed" hover-stay-time="120" aria-role="button" aria-label="换一天">
+        <text class="t-title-s">{{dateText || '今天'}}</text>
+        <text class="t-caption change">换一天</text>
+      </view>
+    </picker>
+    <view wx:else class="t-title-s">{{dateText || '今天'}}</view>
+  </view>
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="stats card card-pad">
+      <view class="stat">
+        <view class="t-display num">{{view.total}}</view>
+        <view class="t-caption">巡了几次</view>
+      </view>
+      <view class="stat">
+        <view class="t-display num {{view.missed ? 'bad' : ''}}">{{view.missed}}</view>
+        <view class="t-caption">漏巡（场所 × 轮）</view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">各轮</view></view>
+      <scroll-view scroll-x class="rounds" enhanced show-scrollbar="{{false}}">
+        <view
+          wx:for="{{view.rounds}}"
+          wx:key="no"
+          class="round {{item.no === view.roundNo ? 'on' : ''}} {{item.missed ? 'missed' : ''}} {{item.state}}"
+          hover-class="pressed"
+          hover-stay-time="120"
+          data-no="{{item.no}}"
+          bindtap="onRound"
+          aria-role="button"
+          aria-label="第 {{item.no}} 轮，{{item.time}}，巡了 {{item.done}} 个，共 {{item.expected}} 个"
+        >
+          <view class="round-no">第 {{item.no}} 轮</view>
+          <view class="round-time num">{{item.time}}</view>
+          <view class="round-count num">{{item.state === 'future' ? '还没到' : item.done + '/' + item.expected}}</view>
+        </view>
+      </scroll-view>
+    </view>
+
+    <view class="section">
+      <view class="section-head">
+        <view class="section-title">{{view.roundText}}</view>
+      </view>
+      <view class="t-caption progress">{{view.progress}}</view>
+      <view wx:if="{{view.points.length}}" class="card list">
+        <view wx:for="{{view.points}}" wx:key="id" class="row">
+          <view class="dot {{item.state}}"></view>
+          <view class="row-main">
+            <view class="row-title">{{item.name}}</view>
+            <view class="row-sub {{item.text === '漏巡' ? 'bad' : ''}}">{{item.area ? item.area + ' · ' : ''}}{{item.text}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{view.people.length}}" class="section">
+      <view class="section-head"><view class="section-title">这一天谁巡的</view></view>
+      <view class="card list">
+        <view wx:for="{{view.people}}" wx:key="employeeId" class="row">
+          <view class="row-main"><view class="row-title">{{item.name}}</view></view>
+          <view class="t-body num">{{item.count}} 次</view>
+        </view>
+      </view>
+    </view>
+    <view class="t-caption foot">作废、导出在管理后台「安保巡场」里。</view>
+  </view>
+</view>
