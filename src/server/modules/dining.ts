@@ -368,7 +368,8 @@ const ITEM_COLUMNS = (db: Db) => db`
   k.id, k.order_no, k.visit_id, h.code AS tag_code, v.zone, k.table_session_id, dt.name AS table_name,
   coalesce(m.name, nullif(v.guest_label, ''), tm.name, nullif(ts.guest_label, ''), '散客') AS guest, k.item_id, bl.name,
   k.quantity, k.note, k.deliver_to, k.parts, k.status, k.station_id, s.name AS station_name, k.rush_count, k.created_at, k.started_at, k.done_at, k.served_at,
-  p.display_name AS posted_by_name, coalesce(v.status, ts.status) <> 'open' AS visit_closed, k.order_note, k.deliver_room`;
+  p.display_name AS posted_by_name, coalesce(v.status, ts.status) <> 'open' AS visit_closed, k.order_note, k.deliver_room,
+  k.hold, k.urgent, k.takeaway, k.served_qty`;
 const ITEM_FROM = (db: Db) => db`
   kitchen_items k JOIN kitchen_stations s ON s.id = k.station_id
   JOIN bill_lines bl ON bl.id = k.bill_line_id
@@ -493,7 +494,7 @@ export async function diningGuestOf(db: Db, visitId: number): Promise<DiningGues
   if (!v) throw notFound('来访不存在');
   const pending = await db<DiningGuest['pending']>`
     SELECT k.id, k.bill_line_id, k.item_id, l.name, k.quantity, k.note, k.status, k.rush_count, k.created_at, l.amount, l.posted_by, l.posted_at,
-           l.addon_of, ${pendingAddonsColumn(db)}
+           l.addon_of, ${pendingAddonsColumn(db)}, k.hold, k.urgent, k.takeaway, k.served_qty
     FROM kitchen_items k JOIN bill_lines l ON l.id = k.bill_line_id
     WHERE k.visit_id = ${v.visitId} AND k.status IN ('queued', 'cooking', 'done') ORDER BY k.id`;
   return { visitId: v.visitId, tagCode: v.tagCode, zone: v.zone, guest: guestName(v.memberName, v.guestLabel), pending, roomNo: await openRoomOf(db, v.visitId) };
@@ -507,12 +508,18 @@ type KitchenAction = (typeof KITCHEN_ACTIONS)[number];
  * from：页面上看到的状态，与现在不同就拒绝（连点两下「撤回」不会退两步）；
  * servedOnly：只有点单权限的服务员只能上菜、撤回上菜（在锁内判断，不会被别人刚撤回的状态带过去）。
  */
-export async function kitchenAction(deps: Deps, id: number, action: KitchenAction, ctx: OpContext, opts: { from?: KitchenStatus; servedOnly?: boolean } = {}) {
+export async function kitchenAction(
+  deps: Deps,
+  id: number,
+  action: KitchenAction,
+  ctx: OpContext,
+  opts: { from?: KitchenStatus; servedOnly?: boolean; /** 8.2.30 分次上菜：这次上几份；不带 = 上齐 */ quantity?: number } = {},
+) {
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const at = ctx.at ?? new Date();
-    const [k] = await tx<{ status: KitchenStatus; startedAt: string | null; orderNo: string }[]>`
-      SELECT status, started_at, order_no FROM kitchen_items WHERE id = ${id} AND store_id = ${currentStoreId()} FOR UPDATE`;
+    const [k] = await tx<{ status: KitchenStatus; startedAt: string | null; orderNo: string; hold: boolean; quantity: number; servedQty: number }[]>`
+      SELECT status, started_at, order_no, hold, quantity, served_qty FROM kitchen_items WHERE id = ${id} AND store_id = ${currentStoreId()} FOR UPDATE`;
     if (!k) throw notFound('出品单不存在');
     if (k.status === 'cancelled') throw conflict('DISH_CANCELLED', '这道菜已经退了，请刷新');
     const rules = await loadDiningRules(tx);
@@ -521,6 +528,8 @@ export async function kitchenAction(deps: Deps, id: number, action: KitchenActio
     if (opts.servedOnly && (action === 'start' || action === 'done' || (action === 'undo' && k.status !== 'served'))) {
       throw new AppError(403, 'KITCHEN_ONLY', action === 'undo' ? '撤回出餐、撤回开始做由厨房在出品屏上操作' : '开始做、出餐由厨房在出品屏上操作');
     }
+    // 8.2.30 等叫：服务员点「起菜」之前厨房不做
+    if (k.hold && (action === 'start' || action === 'done')) throw conflict('DISH_HELD', '这道菜在等叫，服务员点「起菜」以后再做');
     if (action === 'start') {
       if (k.status !== 'queued') throw stale();
       await tx`UPDATE kitchen_items SET status = 'cooking', started_at = ${at}, started_by = ${ctx.actor.id} WHERE id = ${id}`;
@@ -541,11 +550,18 @@ export async function kitchenAction(deps: Deps, id: number, action: KitchenActio
       );
     } else if (action === 'serve') {
       if (k.status !== 'done') throw stale();
-      await tx`UPDATE kitchen_items SET status = 'served', served_at = ${at}, served_by = ${ctx.actor.id} WHERE id = ${id}`;
+      // 8.2.30 分次上菜：一行几份可以先上几份，上齐了才算已上菜
+      const left = k.quantity - k.servedQty;
+      const q = opts.quantity ?? left;
+      if (q < 1 || q > left) throw unprocessable('SERVE_QTY', `这道菜还有 ${left} 份没上，这次上 1–${left} 份`);
+      if (q < left) await tx`UPDATE kitchen_items SET served_qty = served_qty + ${q} WHERE id = ${id}`;
+      else await tx`UPDATE kitchen_items SET status = 'served', served_qty = quantity, served_at = ${at}, served_by = ${ctx.actor.id} WHERE id = ${id}`;
     } else {
-      // 撤回一步：已上菜 → 已出餐 → 制作中（开始过）/ 待做 → 待做
+      // 撤回一步：已上菜 → 已出餐 → 制作中（开始过）/ 待做 → 待做；分次上了几份的先撤回上的份数（8.2.30）
       if (k.status === 'served') {
-        await tx`UPDATE kitchen_items SET status = 'done', served_at = NULL, served_by = NULL WHERE id = ${id}`;
+        await tx`UPDATE kitchen_items SET status = 'done', served_qty = 0, served_at = NULL, served_by = NULL WHERE id = ${id}`;
+      } else if (k.status === 'done' && k.servedQty > 0) {
+        await tx`UPDATE kitchen_items SET served_qty = 0 WHERE id = ${id}`;
       } else if (k.status === 'done') {
         await tx`
           UPDATE kitchen_items SET status = ${k.startedAt ? 'cooking' : 'queued'}, done_at = NULL, done_by = NULL WHERE id = ${id}`;
@@ -950,9 +966,12 @@ export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
 
   app.post('/api/kitchen/items/:id/:action', { preHandler: guardAny('dining.kitchen', 'dining.order') }, async (req) => {
     const { id, action } = parse(z.object({ id: z.coerce.number().int().positive(), action: z.enum(KITCHEN_ACTIONS, '操作不正确') }), req.params);
-    const { from } = parse(z.object({ from: z.enum(KITCHEN_STATUSES).optional() }), req.body ?? {});
+    const { from, quantity } = parse(
+      z.object({ from: z.enum(KITCHEN_STATUSES).optional(), quantity: z.number('份数要是整数').int('份数要是整数').positive('份数要大于 0').optional() }),
+      req.body ?? {},
+    );
     // 服务员（只有点单权限）只能点「上菜」与撤回上菜；开始做、出餐要厨房的岗位
-    await kitchenAction(deps, id, action, ctxOf(req), { from, servedOnly: !can(req.actor, 'dining.kitchen') });
+    await kitchenAction(deps, id, action, ctxOf(req), { from, quantity, servedOnly: !can(req.actor, 'dining.kitchen') });
     return kitchenBoard(sql, deps);
   });
 

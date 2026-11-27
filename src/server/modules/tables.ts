@@ -144,7 +144,10 @@ export async function tablesBoard(db: Db, deps: Deps): Promise<TablesBoard> {
         SELECT s.id, s.session_no, s.table_id, s.guests, s.guest_label, s.member_id, m.name AS member_name, s.opened_at,
                st.display_name AS opened_by_name, b.amount_cents AS amount, b.line_count,
                (SELECT coalesce(sum(k.quantity), 0) FROM kitchen_items k
-                WHERE k.table_session_id = s.id AND k.status IN ('queued', 'cooking', 'done'))::int AS pending_dishes, s.merged_into
+                WHERE k.table_session_id = s.id AND k.status IN ('queued', 'cooking', 'done'))::int AS pending_dishes, s.merged_into,
+               -- 8.2.30 待催：最早一道下了单、还没出餐的菜（等叫的不算）
+               (SELECT min(k.created_at) FROM kitchen_items k
+                WHERE k.table_session_id = s.id AND k.status IN ('queued', 'cooking') AND NOT k.hold) AS oldest_waiting_at
         FROM table_sessions s JOIN bills b ON b.id = s.bill_id JOIN staff st ON st.id = s.opened_by LEFT JOIN members m ON m.id = s.member_id
         WHERE s.id IN ${db(ids)}`
     : [];
@@ -182,7 +185,7 @@ export async function getTableSession(db: Db, id: number): Promise<TableSessionD
   // 8.1.17：写账单那一行的名字（多档的带档名）；带上它的加料（退菜时问要不要一起退）
   const pending = await db<PendingDish[]>`
     SELECT k.id, k.bill_line_id, k.item_id, l.name, k.quantity, k.note, k.status, k.rush_count, k.created_at, l.amount, l.posted_by, l.posted_at,
-           l.addon_of, ${pendingAddonsColumn(db)}
+           l.addon_of, ${pendingAddonsColumn(db)}, k.hold, k.urgent, k.takeaway, k.served_qty
     FROM kitchen_items k JOIN bill_lines l ON l.id = k.bill_line_id
     WHERE k.table_session_id = ${id} AND k.status IN ('queued', 'cooking', 'done') ORDER BY k.id`;
   const moves = await db<TableSessionDetail['moves']>`

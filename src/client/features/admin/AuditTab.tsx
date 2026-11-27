@@ -80,6 +80,7 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   tag_away_unlocked: { label: '锁牌解锁', tone: 'lake' },
   cashier_request_submit: { label: '提交收银申请', tone: 'ember' },
   cashier_request_decide: { label: '处理收银申请', tone: 'lake' },
+  dining_kitchen_flags: { label: '等叫 / 起菜 / 加急 / 打包', tone: 'yuzu' },
   tag_deposit_refunded: { label: '退手牌押金', tone: 'lake' },
   emenu_order: { label: '平板点餐下单', tone: 'yuzu' },
   // 管家部（8.0.12）：建档、余额核对、凭证、预约接待、交班、名称核准、导出等都记在这一类，详情里的「label」写着具体是哪一样

@@ -112,6 +112,10 @@ describe('会员档级与 VIP 柜（会员体系 v2，v0.7.23）', () => {
       // 8.2.1：单项折扣按岗位的下限（几折，×10）与手牌押金的预填金额
       lineDiscountFloors: { cashier: 90, duty: 70, lead: 50, owner: 0 },
       tagDepositDefaultCents: 10000,
+      // 8.2.30：港元汇率（不收）、大额找零门槛、交班盲点
+      hkdRatePpm: null,
+      bigChangeCents: 50000,
+      shiftBlind: false,
     });
     expect(await setRules({ vipLevelThresholds: [0, 5_000_000, 5_000_000] })).toEqual(before);
     expect(await setRules({ vipOverrideEnabled: true })).toEqual(before);
