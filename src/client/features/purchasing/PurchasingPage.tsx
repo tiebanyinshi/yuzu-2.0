@@ -60,7 +60,7 @@ export function PurchasingPage() {
   const urlQ = params.get('q') ?? '';
   useEffect(() => {
     if (q.trim() === urlQ) return;
-    const t = setTimeout(() => update({ q: q.trim() || null }), 250);
+    const t = setTimeout(() => update({ q: q.trim() || null, page: null }), 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, urlQ]);
@@ -101,7 +101,7 @@ export function PurchasingPage() {
               type="button"
               role="radio"
               aria-checked={status === f.value}
-              onClick={() => update({ status: f.value || null })}
+              onClick={() => update({ status: f.value || null, page: null })}
               className={cn(
                 'tap relative h-8 rounded-full px-3 text-[12.5px] font-semibold transition-colors',
                 status === f.value ? 'bg-ink text-paper' : 'border border-line-strong bg-card text-ink-2 hover:border-ink-3',
@@ -111,7 +111,7 @@ export function PurchasingPage() {
             </button>
           ))}
         </div>
-        <Select fullWidth={false} value={supplierId} onChange={(e) => update({ supplier: e.target.value || null })} className="h-9 min-w-[150px] text-[13px]" aria-label="供应商">
+        <Select fullWidth={false} value={supplierId} onChange={(e) => update({ supplier: e.target.value || null, page: null })} className="h-9 min-w-[150px] text-[13px]" aria-label="供应商">
           <option value="">全部供应商</option>
           {suppliers.data?.map((s) => (
             <option key={s.id} value={s.id}>
