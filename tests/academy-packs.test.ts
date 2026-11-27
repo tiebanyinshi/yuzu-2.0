@@ -76,4 +76,25 @@ describe('表格导入题', () => {
     const ok = parseQuestionTable([head, ['B 是对的', '甲', '乙', '丙', 'B']], 'x');
     expect(ok.questions[0]).toMatchObject({ options: ['甲', '乙', '丙'], answer: [1] });
   });
+
+  it('超过 6 个选项（A–F）整张表拒绝；答案里有 G 以后的字母整行拒绝，不悄悄丢掉（Codex 审查 bb22802）', () => {
+    const seven = parseQuestionTable(
+      [
+        ['题干', '选项A', '选项B', '选项C', '选项D', '选项E', '选项F', '选项G', '答案'],
+        ['七个选项', '一', '二', '三', '四', '五', '六', '七', 'ACG'],
+      ],
+      'x',
+    );
+    expect(seven.questions).toEqual([]);
+    expect(seven.problems).toEqual([{ row: 1, message: '一道题最多 6 个选项（A–F），表里有选项G' }]);
+    const letter = parseQuestionTable(
+      [
+        ['题干', '选项A', '选项B', '答案'],
+        ['答案写了 G', '甲', '乙', 'AG'],
+      ],
+      'x',
+    );
+    expect(letter.questions).toEqual([]);
+    expect(letter.problems).toEqual([{ row: 2, message: '答案里的 G 没有对应的选项' }]);
+  });
 });

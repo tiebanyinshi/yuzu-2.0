@@ -7,6 +7,8 @@ import { academyQuestionProblems, type AcademyQuestionDraft, type AcademyQuestio
 
 /** 一次最多导多少行 */
 export const ACADEMY_TABLE_MAX_ROWS = 500;
+/** 一道题最多几个选项（A–F，与题库的题一致） */
+const ACADEMY_TABLE_MAX_OPTIONS = 6;
 
 const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
 const HEADERS: Record<'kind' | 'skill' | 'stem' | 'answer' | 'explanation' | 'level', string[]> = {
@@ -59,10 +61,13 @@ export function parseQuestionTable(rows: readonly (readonly string[])[], default
   };
   const optionCols: { letter: number; index: number }[] = [];
   head.forEach((h, index) => {
-    const m = /^(?:选项)?([a-f])$/i.exec(h.replace(/\s+/g, ''));
+    const m = /^(?:选项)?([a-z])$/i.exec(h.replace(/\s+/g, ''));
     if (m) optionCols.push({ letter: m[1]!.toUpperCase().charCodeAt(0) - 65, index });
   });
   optionCols.sort((a, b) => a.letter - b.letter);
+  // 一道题最多 6 个选项（A–F）：多出来的列不悄悄丢掉，整张表拒绝（Codex 审查 bb22802）
+  const tooMany = optionCols.find((o) => o.letter >= ACADEMY_TABLE_MAX_OPTIONS);
+  if (tooMany) return { questions, problems: [{ row: 1, message: `一道题最多 ${ACADEMY_TABLE_MAX_OPTIONS} 个选项（A–F），表里有选项${String.fromCharCode(65 + tooMany.letter)}` }] };
   if (at.stem < 0) return { questions, problems: [{ row: 1, message: '没找到「题干」（或「题目」「问题」）这一列' }] };
   if (at.answer < 0) return { questions, problems: [{ row: 1, message: '没找到「答案」这一列' }] };
   if (body.length > ACADEMY_TABLE_MAX_ROWS) problems.push({ row: 1, message: `一次最多导 ${ACADEMY_TABLE_MAX_ROWS} 行，分几次导` });
@@ -86,7 +91,7 @@ export function parseQuestionTable(rows: readonly (readonly string[])[], default
     const answerWord = norm(answerRaw);
     let kind: AcademyQuestionKind;
     if (declared) kind = declared;
-    else if (options.length) kind = answerWord.replace(/[^a-f]/g, '').length > 1 ? 'multi' : 'single';
+    else if (options.length) kind = answerWord.replace(/[^a-z]/g, '').length > 1 ? 'multi' : 'single';
     else if (TRUE_WORDS.includes(answerWord) || FALSE_WORDS.includes(answerWord)) kind = 'judge';
     else kind = 'recall';
     let answer: number[] = [];
@@ -104,7 +109,8 @@ export function parseQuestionTable(rows: readonly (readonly string[])[], default
         return;
       }
     } else {
-      answer = [...new Set(answerWord.replace(/[^a-f]/g, '').split(''))].map((ch) => ch.charCodeAt(0) - 97).sort((a, b) => a - b);
+      // 答案里的字母一个都不丢：超出选项的（包括 G 以后的）整行拒绝，不悄悄改成别的答案
+      answer = [...new Set(answerWord.replace(/[^a-z]/g, '').split(''))].map((ch) => ch.charCodeAt(0) - 97).sort((a, b) => a - b);
       if (!answer.length) {
         problems.push({ row, message: '选择题的答案写选项字母（如 A 或 AC）' });
         return;
