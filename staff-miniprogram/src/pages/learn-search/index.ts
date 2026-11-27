@@ -44,13 +44,17 @@ Page({
   },
 
   onClear() {
+    // 等着的那一次不搜了，正在搜的回来也不认
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    seq += 1;
     this.setData({ q: '', results: [], state: 'idle' });
   },
 
   async search(raw: string, remember = false) {
     const q = raw.trim();
-    if (!q) return this.setData({ results: [], state: 'idle' });
     const mine = ++seq;
+    if (!q) return this.setData({ results: [], state: 'idle' });
     this.setData({ state: 'loading', error: '' });
     try {
       const items = await searchFiles(q);

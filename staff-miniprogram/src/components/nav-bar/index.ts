@@ -6,7 +6,10 @@
 
 import { instanceTag } from '../../utils/instance';
 import { goHome, isFirstPage, navMetrics } from '../../utils/nav';
-import { currentMe } from '../../utils/session';
+import { currentMe, watchMe } from '../../utils/session';
+
+/** 每个导航栏各自的「我是谁」监听（卸下时取消） */
+const unwatchers = new WeakMap<object, () => void>();
 
 Component({
   options: { multipleSlots: true },
@@ -35,6 +38,16 @@ Component({
         first: isFirstPage(),
         tag: me ? instanceTag(me.build.instance) : '',
       });
+      // 冷启动时先画页面、后登录：登录上了（或换了人、退出了）再更新实例标识，测试服、演示库的标识不会缺
+      unwatchers.set(
+        this,
+        watchMe((m) => this.setData({ tag: m ? instanceTag(m.build.instance) : '' })),
+      );
+    },
+    detached() {
+      const off = unwatchers.get(this);
+      if (off) off();
+      unwatchers.delete(this);
     },
   },
   methods: {

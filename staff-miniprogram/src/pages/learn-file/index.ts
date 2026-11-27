@@ -152,6 +152,10 @@ Page({
       audio = wx.createInnerAudioContext({ useWebAudioImplement: false });
       audio.src = this.data.mediaSrc;
       audio.onEnded(() => this.setData({ playing: false }));
+      // 真的放出来了才记「看过」（地址过期、放不了的不记）
+      audio.onPlay(() => {
+        if (this.data.fresh) this.viewed();
+      });
       audio.onError(() => {
         this.setData({ playing: false, openError: '音频没有放出来，请再点一次' });
         audio?.destroy();
@@ -165,7 +169,6 @@ Page({
     } else {
       audio.play();
       this.setData({ playing: true });
-      if (this.data.fresh) this.viewed();
     }
   },
 });

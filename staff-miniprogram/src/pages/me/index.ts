@@ -111,8 +111,13 @@ Page({
     wx.showActionSheet({
       itemList: ['退出（下次还能微信一键进）', '退出并解除这个微信'],
       success: async (r) => {
-        await logout(r.tapIndex === 1);
-        toLogin();
+        try {
+          await logout(r.tapIndex === 1);
+          toLogin();
+        } catch (e) {
+          // 解开没确认：留在这一页，写清楚
+          this.setData({ error: messageOf(e) });
+        }
       },
     });
   },

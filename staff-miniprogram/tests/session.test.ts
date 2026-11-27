@@ -79,6 +79,43 @@ describe('登录', () => {
     await session.logout(false);
     expect(fake.storage.has('wcp_token')).toBe(false);
   });
+
+  it('退出并解开时连不上：问「这个微信还绑着没有」，还绑着就报错、手机上不退出', async () => {
+    const { fake, session } = ctx;
+    fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tok', me: ME } });
+    await session.wechatLogin();
+    fake.reply({ status: 0, fail: true }, { status: 200, data: { status: 'bound', displayName: '阿丽' } });
+    await expect(session.logout(true)).rejects.toMatchObject({ code: 'UNBIND_UNCONFIRMED' });
+    expect(fake.storage.get('wcp_token')).toBe('tok');
+    expect(session.currentMe()).toEqual(ME);
+    // 问也问不到：同样不退出
+    fake.reply({ status: 0, fail: true }, { status: 0, fail: true });
+    await expect(session.logout(true)).rejects.toMatchObject({ code: 'UNBIND_UNCONFIRMED' });
+    expect(fake.storage.get('wcp_token')).toBe('tok');
+  });
+
+  it('退出并解开没收到回复、但其实解开了：确认没绑以后手机上退出', async () => {
+    const { fake, session } = ctx;
+    fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tok', me: ME } });
+    await session.wechatLogin();
+    fake.reply({ status: 502, data: {} }, { status: 200, data: { status: 'unbound' } });
+    await session.logout(true);
+    expect(fake.storage.has('wcp_token')).toBe(false);
+    expect(session.signedOut()).toBe(true);
+  });
+
+  it('手机存不下令牌时这次打开照样算登录着（与发请求用同一个令牌）', async () => {
+    const { fake, session, api } = ctx;
+    const wx = (globalThis as unknown as { wx: { setStorageSync: (k: string, v: unknown) => void } }).wx;
+    const original = wx.setStorageSync;
+    wx.setStorageSync = (k, v) => {
+      if (k === 'wcp_token') throw new Error('满了');
+      original(k, v);
+    };
+    api.saveToken('mem-tok');
+    expect(fake.storage.has('wcp_token')).toBe(false);
+    expect(session.hasSession()).toBe(true);
+  });
 });
 
 describe('令牌过期时悄悄重新登录', () => {

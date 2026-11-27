@@ -6,7 +6,7 @@
 
 import type { StaffMpInfo, StaffMpLoginReply, StaffMpMe, StaffMpWechatReply } from '../../../src/shared/staffmp';
 import { envVersion } from '../config/env';
-import { apiError, call, clearToken, publicCall, saveToken, setRelogin, storedToken } from './api';
+import { apiError, call, clearToken, hasToken, isOffline, messageOf, publicCall, saveToken, setRelogin } from './api';
 
 const ME_KEY = 'wcp_me';
 const SIGNED_OUT_KEY = 'wcp_signed_out';
@@ -66,9 +66,9 @@ export function watchMe(fn: (m: StaffMpMe | null) => void): () => void {
   };
 }
 
-/** 有没有令牌（登录过、还没退出） */
+/** 有没有令牌（登录过、还没退出）：与发请求用的是同一个（手机存不下时这次打开记在内存里的也算） */
 export function hasSession(): boolean {
-  return !!storedToken();
+  return hasToken();
 }
 
 /** 员工主动退出过（登录页不自动用微信进） */
@@ -173,12 +173,25 @@ export function updateMe(next: StaffMpMe): void {
   setMe(next);
 }
 
-/** 退出；unbind = 同时解开这个微信。不论门店系统回没回，手机上都退出 */
+/**
+ * 退出；unbind = 同时解开这个微信。
+ *   · 只退出：不论门店系统回没回，手机上都退出（令牌留在门店系统里，12 小时后自己过期）；
+ *   · 退出并解开：解开要确认——没收到回复时问门店系统「这个微信还绑着没有」，还绑着或问不到就报错、手机上不退出
+ *     （不然别人拿这台手机还能一键进），员工连上以后再点一次
+ */
 export async function logout(unbind: boolean): Promise<void> {
   try {
     await call('POST', '/auth/logout', { unbind });
-  } catch {
-    // 连不上也退出：令牌留在门店系统里，12 小时后自己过期
+  } catch (e) {
+    if (unbind) {
+      let stillBound = true;
+      try {
+        stillBound = (await peekWechat()).bound;
+      } catch {
+        stillBound = true;
+      }
+      if (stillBound) throw apiError('UNBIND_UNCONFIRMED', `没解开这个微信：${isOffline(e) ? '现在连不上门店系统' : messageOf(e)}。连上以后再点一次`, 0);
+    }
   }
   clearToken();
   write(SIGNED_OUT_KEY, true);

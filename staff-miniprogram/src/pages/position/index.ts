@@ -1,10 +1,10 @@
 // 老账号第一次登录选新岗位（主线 8.1.18，GW7；docs/STAFF_MP.md 第 5.3 节）：一线员工没有电脑，在小程序里就能选。
 // 能选哪些由门店系统按原来的岗位与职责给出（/api/auth/position-options 原样挂在 /api/staffmp/account/ 下）；选完不再提示。
 
-import { call, messageOf } from '../../utils/api';
+import { call, isApiError, messageOf } from '../../utils/api';
 import { enterApp } from '../../utils/guard';
 import { largeTextOn } from '../../utils/prefs';
-import { refreshMe } from '../../utils/session';
+import { currentMe, refreshMe, updateMe } from '../../utils/session';
 
 interface PositionOption {
   key: string;
@@ -51,11 +51,20 @@ Page({
   async onSave() {
     if (!this.data.selected || this.data.busy) return;
     this.setData({ busy: true, error: '' });
+    let saved = false;
     try {
       await call('POST', '/account/position', { position: this.data.selected });
+      saved = true;
       await refreshMe();
       enterApp();
     } catch (e) {
+      // 门店系统已经记下了（这次成功、或之前那次其实成功了）：岗位只能选一次，不再让人重选；「我是谁」没刷到就先按已选好进
+      if (saved || (isApiError(e) && e.code === 'POSITION_ALREADY_SET')) {
+        const me = currentMe();
+        if (me) updateMe({ ...me, needsPosition: false });
+        refreshMe().catch(() => undefined);
+        return enterApp();
+      }
       this.setData({ error: messageOf(e) });
     } finally {
       this.setData({ busy: false });
