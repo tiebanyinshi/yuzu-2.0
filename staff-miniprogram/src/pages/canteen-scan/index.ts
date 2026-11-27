@@ -7,7 +7,7 @@
 import type { CanteenCheckinRow, CanteenPerson, CanteenToday, CheckinResult } from '../../../../src/shared/canteen';
 import { isOffline, messageOf } from '../../utils/api';
 import type { MealKey, QueuedScan, ScanOutcome } from '../../utils/canteen';
-import { MEAL_LABELS, canteenToday, enqueue, flushQueue, loadMealKey, loadQueue, mealCodeEmployee, refreshMealKey, searchPeople, submitScan, voidCheckin } from '../../utils/canteen';
+import { MEAL_LABELS, canteenToday, enqueue, flushQueue, isMealCode, loadMealKey, loadQueue, mealCodeEmployee, refreshMealKey, searchPeople, submitScan, voidCheckin } from '../../utils/canteen';
 import { initialOf, shortTime } from '../../utils/format';
 import { requireMe } from '../../utils/guard';
 import { buzz, largeTextOn } from '../../utils/prefs';
@@ -25,6 +25,8 @@ let key: MealKey | null = null;
 /** 刚扫过的员工（饭堂员工编号）与最后一次看到的时间 */
 const seen: Record<number, number> = {};
 const SAME_PERSON_MS = 60 * 1000;
+/** 首页「扫一扫」扫到饭卡码进来的：读完就登记这一笔 */
+let firstCode = '';
 let flushTimer: number | null = null;
 let gen = 0;
 
@@ -61,6 +63,10 @@ Page({
     recent: [] as { id: number; name: string; time: string; manual: boolean; voided: boolean }[],
   },
 
+  onLoad(q: Record<string, string | undefined>) {
+    firstCode = q.code && isMealCode(decodeURIComponent(q.code)) ? decodeURIComponent(q.code).toUpperCase() : '';
+  },
+
   async onShow() {
     const my = ++gen;
     this.setData({ large: largeTextOn() });
@@ -79,6 +85,13 @@ Page({
     this.setData({ state: 'ready', waiting: loadQueue('checkin', key.me.employee.id).length });
     this.loadToday();
     this.flush();
+    if (firstCode) {
+      const code = firstCode;
+      firstCode = '';
+      const id = mealCodeEmployee(code);
+      if (id) seen[id] = Date.now();
+      this.record({ code }, '扫到的饭卡码');
+    }
     if (flushTimer === null) flushTimer = setInterval(() => this.flush(), 15000) as unknown as number;
   },
 

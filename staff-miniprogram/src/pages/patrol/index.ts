@@ -55,7 +55,7 @@ Page({
       }
     }
     this.setData({ waiting: loadQueue('patrol', key.me.employee.id).length });
-    if (link) this.record(link.code, 'link', new Date(link.at + key.offsetMs).toISOString());
+    if (link) this.record(link.code, link.via, new Date(link.at + key.offsetMs).toISOString());
     await this.load();
     if (my !== gen) return;
     this.flush();
