@@ -2,19 +2,21 @@
  * 柚子官网（docs/WEBSITE.md）。
  * 设计参照 Nutlope/hallmark 的「Refract」材质（日光、水纹、泳池蓝墨）与它的去 AI 味规则，颜色取汤崎品牌书：
  * 水纹蓝 #6D94AB、Relax 蓝 #4D718C、Pure 黄 #E9C75E、Organic 绿 #6D673D、胡桃 #4A3628、麻色 #F8F1E6。
- * 字：中文标题用得意黑（Smiley Sans，OFL，只取页面用到的字），拉丁字与数字用 Funnel Display（OFL），正文用系统中文字体。
+ * 字（8.2.0）：中文标题用思源宋体 Heavy（OFL，只取页面用到的字），拉丁字与数字用 Gloock（OFL），正文用系统中文字体。
  * nav: 字标 + 一个次要链接 + 主按钮；footer: 一行，不做四栏。hero: Stage（字在左、水在右）。
  */
 
+/* 8.2.0 换字：中文标题用思源宋体 Heavy（Adobe Source Han Serif，OFL，只取页面用到的字），拉丁字与数字用 Gloock（OFL，高反差衬线）。
+   宋体配衬线是杂志、精品店的写法，不是「黑体 + 几何无衬线」那种一眼就是模板的组合；正文仍用系统字体。 */
 @font-face {
-  font-family: 'Smiley Sans';
-  src: url('fonts/smiley-sans-subset.woff2') format('woff2');
+  font-family: 'Source Han Serif Heavy';
+  src: url('fonts/source-han-serif-heavy-subset.woff2') format('woff2');
+  font-weight: 400 900;
   font-display: swap;
 }
 @font-face {
-  font-family: 'Funnel Display';
-  src: url('fonts/funnel-display-latin.woff2') format('woff2');
-  font-weight: 300 800;
+  font-family: 'Gloock';
+  src: url('fonts/gloock-latin.woff2') format('woff2');
   font-display: swap;
 }
 
@@ -36,8 +38,8 @@
   --walnut: oklch(34% 0.035 55);
   --focus: oklch(55% 0.13 240);
 
-  --font-display: 'Smiley Sans', 'Funnel Display', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-latin: 'Funnel Display', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-display: 'Gloock', 'Source Han Serif Heavy', 'Songti SC', 'STSong', 'Noto Serif SC', serif;
+  --font-latin: 'Gloock', 'Songti SC', 'Noto Serif SC', serif;
   --font-body: -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
 
   --space-1: 0.5rem;
@@ -232,7 +234,9 @@ a {
   font-weight: 400;
   font-size: clamp(7rem, 17vw, 16rem);
   line-height: 1.02;
-  letter-spacing: -0.02em;
+  /* 宋体大字放一点字距，笔画的粗细对比才透气 */
+  letter-spacing: 0.02em;
+  font-synthesis: none;
   color: var(--ink);
 }
 .hero-title .char {
@@ -271,6 +275,13 @@ a {
   display: block;
   cursor: pointer;
   touch-action: pan-y;
+}
+/* 8.2.0：3D 柚子池起来以后，2D 的那块画布藏起来（hero3d.js）；起不来时照旧是 2D */
+.pool-canvas[hidden] {
+  display: none;
+}
+.hero-pool[data-video='on'] .pool-canvas-3d {
+  visibility: hidden;
 }
 .pool-hint {
   position: absolute;
@@ -313,8 +324,9 @@ a {
   font-family: var(--font-display);
   font-weight: 400;
   font-size: clamp(2.6rem, 5vw, 4.5rem);
-  line-height: 1.04;
-  letter-spacing: -0.01em;
+  line-height: 1.12;
+  letter-spacing: 0.01em;
+  font-synthesis: none;
 }
 .section-lede {
   margin-top: var(--space-2);
