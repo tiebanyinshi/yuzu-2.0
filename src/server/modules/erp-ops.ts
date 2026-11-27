@@ -181,6 +181,9 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   mall_quote: ['purchase.manage', 'request.review'],
   mall_resubmit: [],
   mall_quote_act: [],
+  // 8.2.6：补发物料与核库同一组权限；终止申购只能查回、作废自己的（SELF_OPS）
+  request_dispatch: ['inventory.operate', 'request.stock'],
+  mall_terminate: [],
 };
 /** 查回要的权限 */
 const READ: Record<ErpOpType, Permission[]> = {
@@ -286,6 +289,9 @@ const READ: Record<ErpOpType, Permission[]> = {
   mall_quote: ['purchase.manage', 'request.review'],
   mall_resubmit: [],
   mall_quote_act: [],
+  // 8.2.6：补发物料与核库同一组权限；终止申购只能查回、作废自己的（SELF_OPS）
+  request_dispatch: ['inventory.operate', 'request.stock'],
+  mall_terminate: [],
 };
 
 export async function lookupErpOp(db: Db, key: string, type: ErpOpType): Promise<ErpOpLookup> {
@@ -417,7 +423,7 @@ const TypeQuery = z.object({ type: z.enum(ERP_OP_TYPES, '缺少原操作的业�
 const AbandonInput = TypeQuery.extend({ summary: z.string().trim().max(200).default('') });
 
 /** 登录就能做、只能查回与作废自己那一笔的操作（OA-06 打卡、OA-07 提交人脸录入、OA-10 办公审批的提交与处理、8.1.51 商城补资料重提、选定 / 撤下方案） */
-const SELF_OPS: ReadonlySet<ErpOpType> = new Set(['oa_punch', 'oa_face_enroll', 'oa_approval_submit', 'oa_approval_act', 'oa_im_group', 'mall_resubmit', 'mall_quote_act']);
+const SELF_OPS: ReadonlySet<ErpOpType> = new Set(['oa_punch', 'oa_face_enroll', 'oa_approval_submit', 'oa_approval_act', 'oa_im_group', 'mall_resubmit', 'mall_quote_act', 'mall_terminate']);
 /** 排班与排班授权：考勤管理员全看全作废；部门经理与被授权人只能查回与作废自己那一笔 */
 const SCHEDULE_OPS: ReadonlySet<ErpOpType> = new Set(['oa_schedule_save', 'oa_schedule_publish', 'oa_schedule_grant']);
 

@@ -62,7 +62,7 @@ function ClaimsPage() {
     <ErpPage
       tabs={<ExpenseTabs active="claims" />}
       title="费用报销"
-      description="一次支出一张报销单：按次或按现付供应商的采购单；单笔超过门槛要负责人确认。用备用金付的，平账在「备用金」里看。"
+      description="一次支出一张报销单：按次或按现付供应商的采购单；都要负责人审批（自己不能确认自己的）。用备用金付的，平账在「备用金」里看。"
       actions={
         <div className="flex flex-wrap gap-2">
           {session.erpModules.includes('invoices') && (
@@ -76,6 +76,13 @@ function ClaimsPage() {
             <a href={`/api/erp/expenses/export?${search(filters)}`} download>
               <Button variant="secondary" icon={<Download className="size-4" />}>
                 导出明细
+              </Button>
+            </a>
+          )}
+          {can('expense.export') && (
+            <a href="/api/erp/expenses/auto-approved" download data-testid="expenses-auto-approved">
+              <Button variant="secondary" icon={<Download className="size-4" />}>
+                没审批就通过的清单
               </Button>
             </a>
           )}

@@ -57,7 +57,10 @@ export type FrontdeskOpType =
   | 'tag_deposit'
   | 'tag_deposit_refund'
   /** 返台补低消（8.2.4；8.2.5 起待确认，对象是那次开台，在「桌台」页） */
-  | 'table_return';
+  | 'table_return'
+  /** 锁牌外出（8.2.7，对象是来访，在收银台）：锁（同一笔先收预售）、客人回来解锁 */
+  | 'tag_away_lock'
+  | 'tag_away_unlock';
 
 export interface FrontdeskPendingOp {
   key: string;
@@ -99,7 +102,7 @@ export interface FrontdeskPendingOp {
 }
 
 /** 在收银台处理「结果待确认」的几样：结账、退款单，与挂账（8.1.44 起加项目在收银台）；别的在发卡台 */
-export const CASHIER_OPS: readonly FrontdeskOpType[] = ['checkout', 'checkout_refund', 'bill_post', 'line_discount', 'tag_deposit', 'tag_deposit_refund'];
+export const CASHIER_OPS: readonly FrontdeskOpType[] = ['checkout', 'checkout_refund', 'bill_post', 'line_discount', 'tag_deposit', 'tag_deposit_refund', 'tag_away_lock', 'tag_away_unlock'];
 
 export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   checkin: '接待发牌',
@@ -132,6 +135,8 @@ export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   tag_deposit: '收手牌押金',
   tag_deposit_refund: '退手牌押金',
   table_return: '返台补低消',
+  tag_away_lock: '锁牌外出',
+  tag_away_unlock: '锁牌解锁',
 };
 
 /** 餐饮桌台的操作：对象是桌台或开台，不是手牌 */

@@ -5,7 +5,7 @@
 --   · 新权限 academy.manage（学堂管理），建议权限给人力行政部负责人（总裁默认都有）。
 -- 课程、地图来自内置课件包的记包的版本与内容摘要：管理员本地改过（local_edited）就不再用新版覆盖。
 -- 后台新建的课程、课时、地图、指派都带操作编号（client_key）与原请求摘要（request_hash）：没收到结果原样重提返回原来那个，同一编号换了内容拒绝。
--- 回滚：docs/rollback/600_academy_core.down.sql。
+-- 回滚：docs/rollback/640_academy_core.down.sql。
 
 CREATE TABLE academy_courses (
   id             bigserial PRIMARY KEY,

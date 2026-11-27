@@ -16,6 +16,10 @@ import { EmptyState } from '../../components/EmptyState';
 import { FlowLegend } from '../../components/FlowTrack';
 import { Notice, Skeleton } from '../../components/ui';
 import { PurchaseFlowCard } from './PurchaseFlow';
+import { FLOW_SORT_LABELS, FLOW_SORTS } from '@shared/purchase-sort';
+import { PRIORITY_LABELS } from '@shared/requests';
+import { DocLookup } from './DocLookup';
+import { SortBar, sortFromParams } from './SortBar';
 
 /** 按停在哪个环节筛：这几个是会停人的环节（提需求不会停） */
 const STAGES: FlowNodeKey[] = ['confirm', 'review', 'sourcing', 'award', 'approval', 'order', 'receive', 'stockin', 'pay'];
@@ -24,7 +28,18 @@ export function FlowPage() {
   const can = useCan();
   const [params, setParams] = useSearchParams();
   const filter = params.get('stage') ?? '';
-  const list = useQuery({ queryKey: ['inv', 'flow', 'list'], queryFn: () => api.get<PurchaseFlowList>('/api/purchase-flow/list'), enabled: can('inventory.read') });
+  // 8.2.12（R2）：排序在服务端做，存在网址里
+  const sort = sortFromParams(params, FLOW_SORTS);
+  const order = sort.key ? `?sort=${sort.key}&dir=${sort.dir}` : '';
+  const list = useQuery({ queryKey: ['inv', 'flow', 'list', order], queryFn: () => api.get<PurchaseFlowList>(`/api/purchase-flow/list${order}`), enabled: can('inventory.read') });
+  const setParam = (patch: Record<string, string | null>) => {
+    const next = new URLSearchParams(params);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v) next.set(k, v);
+      else next.delete(k);
+    }
+    setParams(next, { replace: true });
+  };
   if (!can('inventory.read')) return <Navigate to="/purchasing" replace />;
 
   const flows = list.data?.flows ?? [];
@@ -85,7 +100,7 @@ export function FlowPage() {
                 key={c.value}
                 type="button"
                 aria-pressed={on}
-                onClick={() => setParams(c.value ? { stage: c.value } : {}, { replace: true })}
+                onClick={() => setParam({ stage: c.value || null })}
                 className={cn(
                   'tap relative flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold transition-colors duration-150',
                   on ? 'border-pine bg-pine text-paper' : 'border-line-strong bg-card text-ink-2 hover:border-ink-3',
@@ -98,6 +113,10 @@ export function FlowPage() {
               </button>
             );
           })}
+        </div>
+        <div className="mt-2.5 flex flex-wrap items-start gap-3">
+          <DocLookup className="min-w-[240px] flex-1 md:max-w-sm" />
+          <SortBar keys={FLOW_SORTS} labels={FLOW_SORT_LABELS} value={sort} defaultLabel="卡住的在前、再按最近推进" onChange={(n) => setParam({ sort: n.key, dir: n.key ? n.dir : null })} />
         </div>
       </div>
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-7" data-testid="flow-page">
@@ -121,7 +140,15 @@ export function FlowPage() {
             {list.data?.truncated && <Notice tone="info" title="进行中的太多，只列了最近的 60 条" className="mb-4" />}
             <Stagger className="space-y-4">
               {shown.map((f) => (
-                <PurchaseFlowCard key={`${f.anchor.kind}-${f.anchor.id}`} flow={f} />
+                <div key={`${f.anchor.kind}-${f.anchor.id}`}>
+                  {(f.priority || f.departmentName) && (
+                    <p className="mb-1 flex flex-wrap gap-2 text-[12px] text-ink-3" data-testid={`flow-meta-${f.anchor.docNo}`}>
+                      {f.priority && <span className={f.priority === 'normal' ? '' : 'font-bold text-clay'}>{PRIORITY_LABELS[f.priority]}</span>}
+                      {f.departmentName && <span>{f.departmentName}</span>}
+                    </p>
+                  )}
+                  <PurchaseFlowCard flow={f} />
+                </div>
               ))}
             </Stagger>
             <FlowLegend className="mt-5" />

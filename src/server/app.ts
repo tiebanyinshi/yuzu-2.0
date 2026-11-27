@@ -45,6 +45,7 @@ import { registerRequestRoutes } from './modules/requests';
 import { authenticateMall, isMallPath, registerMallRoutes } from './modules/mall';
 import { registerShopRoutes } from './modules/shop';
 import { registerDesignRoutes } from './modules/design';
+import { registerRequestDispatchRoutes } from './modules/request-dispatch';
 import { registerRequestStockRoutes } from './modules/request-stock';
 import { registerRequestImportRoutes } from './modules/request-import';
 import { registerRequestDraftRoutes } from './modules/request-drafts';
@@ -74,6 +75,7 @@ import { registerPettyUseRoutes } from './modules/petty-uses';
 import { registerReplenishRoutes } from './modules/inventory/replenish';
 import { registerSourcingRoutes } from './modules/inventory/sourcing';
 import { registerPurchaseFlowRoutes } from './modules/purchase-flow';
+import { registerPurchaseLookupRoutes } from './modules/purchase-lookup';
 import { registerApprovalRoutes } from './modules/approvals/routes';
 import { registerContractRoutes } from './modules/contracts/routes';
 import { registerTemplateRoutes } from './modules/contracts/templates';
@@ -469,6 +471,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerSourcingRoutes(app, deps);
   // 采购流程图（8.0.17，只读）
   registerPurchaseFlowRoutes(app, deps);
+  registerPurchaseLookupRoutes(app, deps);
   // 审批中心（v0.7.30）
   registerApprovalRoutes(app, deps);
   // 合同与法务审查（v0.7.31）
@@ -501,6 +504,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerDesignRoutes(app, deps);
   // 8.1.10 核库转领用：库管核库、部门答复替代
   registerRequestStockRoutes(app, deps);
+  // 物料发配记录（8.2.6，docs/MALL_V826.md）：分批发配、补发物料
+  registerRequestDispatchRoutes(app, deps);
   registerRequestImportRoutes(app, deps);
   registerRequestDraftRoutes(app, deps);
   registerRequestSheetRoutes(app, deps);

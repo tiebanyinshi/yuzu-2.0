@@ -20,7 +20,7 @@ import { seedInventoryDemo } from '../src/server/seed-inventory';
 import { LEGAL_ITEM_KEYS, type ContractDetail } from '../src/shared/contracts';
 import { shiftDate } from '../src/shared/labels';
 import type { ContractPaymentPlan, PaymentRequestDetail } from '../src/shared/payments';
-import { api, login, PASSWORD, setup, type TestContext } from './helpers';
+import { api, login, PASSWORD, setup, type TestContext, confirmSmallClaim } from './helpers';
 
 let ctx: TestContext;
 let today: string;
@@ -281,19 +281,23 @@ describe('ERP 全流程试跑（8.0.7）', () => {
     expect(pl.amountCents).toBe(45_000);
     const claim = (
       await ok<{ claim: { id: number; status: string; amountCents: number } }>(
-        api(ctx.app, coster, 'POST', '/api/erp/expenses', {
-          clientKey: randomUUID(),
-          expenseDate: today,
-          departmentId: bathId,
-          handlerId: costerId,
-          purpose: '客用消耗',
-          paySource: 'petty',
-          advanceId: adv.id,
-          invoiceType: 'receipt',
-          taxRateBp: 0,
-          purchaseOrderId: cashPo.id,
-          lines: [{ name: pl.name, category: 'low_value', unit: pl.unit, boughtMilli: pl.boughtMilli, receivedMilli: pl.receivedMilli, amountCents: pl.amountCents, poLineId: pl.poLineId }],
-        }),
+        confirmSmallClaim(
+          ctx.app,
+          ctx.owner,
+          await api(ctx.app, coster, 'POST', '/api/erp/expenses', {
+            clientKey: randomUUID(),
+            expenseDate: today,
+            departmentId: bathId,
+            handlerId: costerId,
+            purpose: '客用消耗',
+            paySource: 'petty',
+            advanceId: adv.id,
+            invoiceType: 'receipt',
+            taxRateBp: 0,
+            purchaseOrderId: cashPo.id,
+            lines: [{ name: pl.name, category: 'low_value', unit: pl.unit, boughtMilli: pl.boughtMilli, receivedMilli: pl.receivedMilli, amountCents: pl.amountCents, poLineId: pl.poLineId }],
+          }),
+        ),
       )
     ).claim;
     expect(claim).toMatchObject({ status: 'confirmed', amountCents: 45_000 });

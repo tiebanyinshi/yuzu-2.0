@@ -137,7 +137,7 @@ function useRows(db: Db, f: UseFilter, limit: number | null) {
   return db<RawUse[]>`
     SELECT * FROM (
       SELECT u.id, u.doc_no, u.use_date, u.department_id, d.name AS department_name, u.applicant_id, a.display_name AS applicant_name, u.purpose, u.content, u.amount_cents, u.note,
-             ${db.unsafe(STATE_SQL)} AS state, u.backfill, po.id AS po_id, po.doc_no AS po_no, s.name AS supplier_name,
+             ${db.unsafe(STATE_SQL)} AS state, u.backfill, po.id AS po_id, po.doc_no AS po_no, coalesce(s.name, '自购 · ' || po.self_channel) AS supplier_name,
              u.submit_note, u.submitted_at, sb.display_name AS submitted_by_name,
              cl.id AS claim_id, cl.doc_no AS claim_no, cl.status AS claim_status, cl.amount_cents AS claim_amount_cents, cl.confirmed_at AS claim_confirmed_at,
              u.void_reason, u.voided_at, vb.display_name AS voided_by_name, cb.display_name AS created_by_name, u.created_at, u.version, u.is_synthetic
@@ -547,8 +547,8 @@ export async function claimUses(db: Db, claimId: number): Promise<PettyUseBrief[
 export async function pettyPoOptions(db: Db, q: string): Promise<PettyPoOption[]> {
   const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   const rows = await db<(Omit<PettyPoOption, 'id' | 'totalCents'> & { id: number; totalCents: number })[]>`
-    SELECT po.id, po.doc_no, s.name AS supplier_name, po.order_date, po.total_cents, po.status, po.backfill
-    FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id
+    SELECT po.id, po.doc_no, coalesce(s.name, '自购 · ' || po.self_channel) AS supplier_name, po.order_date, po.total_cents, po.status, po.backfill
+    FROM purchase_orders po LEFT JOIN suppliers s ON s.id = po.supplier_id
     WHERE po.status IN ('approved', 'closed')
       ${q ? db`AND (po.doc_no ILIKE ${like} OR s.name ILIKE ${like} OR s.code ILIKE ${like})` : db``}
     ORDER BY po.order_date DESC, po.id DESC LIMIT 50`;

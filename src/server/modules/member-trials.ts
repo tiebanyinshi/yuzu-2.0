@@ -44,7 +44,7 @@ import { ctxOf, type Deps, type OpContext } from '../lib/context';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { assertNotFenced } from '../lib/fences';
 import { hashRequest } from '../lib/idempotency';
-import { idParam, parse } from '../lib/validate';
+import { idParam, InviteePhone as PhoneField, parse } from '../lib/validate';
 import { setTxTimeouts } from '../lib/tx';
 import { onMemberSaved } from './benefits';
 import { issueOpenCardCoupons } from './coupons';
@@ -272,11 +272,6 @@ function inviteeProblem(rules: MembershipRules, inviterId: number, invitee: Invi
   if (invitee.grade >= option.grade) return `这位会员现在是「${invitee.label}」，不低于体验的「${option.label}」`;
   return null;
 }
-
-export const PhoneField = z
-  .string('请输入受邀人的手机号')
-  .transform((s) => s.replace(/[\s-]/g, ''))
-  .pipe(z.string().regex(/^1\d{10}$/, '请输入 11 位手机号'));
 
 const OptionsQuery = z.object({ phone: PhoneField.optional() });
 
