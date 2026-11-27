@@ -132,6 +132,20 @@ describe('学堂 · 课程与课时', () => {
     expect(assign.status, JSON.stringify(assign.body)).toBe(201);
     expect(await titles(ctx.clerk)).toContain('餐饮出品规范');
   });
+
+  it('地图里的「只本部门」课：别的部门没被指派到的在地图里也看不到；被指派到这张地图就看得到（Codex 审查 1f57180）', async () => {
+    const own = await publish(
+      await addLesson((await newCourse({ title: '吧台出品', category: 'must_know', departmentKey: 'dining', deptOnly: true })).course.id, { title: '出杯', kind: 'article', body: '先出热饮。' }),
+    );
+    const open = await publish(await addLesson((await newCourse({ title: '全员礼仪', category: 'must_know' })).course.id, { title: '问候', kind: 'article', body: '先问候。' }));
+    const made = await api<AcademyAdminPath>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/paths', { clientKey: randomUUID(), title: '混合地图', courseIds: [open.course.id, own.course.id] });
+    await api(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/paths/${made.body.id}`, { ...made.body, status: 'published', version: made.body.version });
+    const stages = async (cookie: string) => ((await api(ctx.app, cookie, 'GET', `/api/academy/paths/${made.body.id}`)).body.stages as { title: string }[]).map((x) => x.title);
+    expect(await stages(ctx.clerk)).toEqual(['全员礼仪']);
+    expect(await stages(diner)).toEqual(['全员礼仪', '吧台出品']);
+    await api(ctx.app, ctx.owner, 'POST', '/api/admin/academy/assignments', { clientKey: randomUUID(), pathId: made.body.id, audience: 'staff', staffId: ctx.clerkId, required: false });
+    expect(await stages(ctx.clerk)).toEqual(['全员礼仪', '吧台出品']);
+  });
 });
 
 describe('学堂 · 学习、学分与地图', () => {
