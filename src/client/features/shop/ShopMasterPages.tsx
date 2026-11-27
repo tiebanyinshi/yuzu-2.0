@@ -19,6 +19,7 @@ import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, Select, Skeleton } from '../../components/ui';
 import { MaterialImagesEditor, ProductImage } from './ProductImage';
+import { ShopImageImportButton } from './ShopImageImport';
 
 const BASE = '/erp/shop';
 
@@ -619,6 +620,7 @@ export function ShopMaterialsPage({ catalog }: { catalog: ShopCatalog }) {
             </Button>
           )}
         </div>
+        {catalog.me.canEditMaster && <ShopImageImportButton disabled={blocked} />}
         <Link to="/inventory/master" className="inline-flex items-center gap-1 text-[13px] font-semibold text-pine hover:underline">
           单位与新建物料请前往 ERP 档案
           <ExternalLink className="size-3.5" />

@@ -55,9 +55,10 @@ import { loadExpenseRules } from './expenses';
 import { supplierLicenses } from './inventory/admission';
 import { docDateSchema } from './inventory/common';
 import { loadPurchaseRules } from './inventory/purchase-rules';
-import { createMallRequest, exportMallCsv, mallRequest, pagedMall } from './mall';
+import { createMallRequest, deptPettyToday, exportMallCsv, mallRequest, pagedMall } from './mall';
 import { addQuote, claimMallRequest, CustomSpecInput, customDetails, resubmitMallRequest, selectQuote, withdrawQuote } from './mall-pilot';
 import { pettyBalances, pettyOccupied } from './petty-uses';
+import { registerShopImageImportRoutes } from './shop-image-import';
 import { allowedStores } from './stores';
 import { assertNotFenced } from '../lib/fences';
 import { hashRequest } from '../lib/idempotency';
@@ -853,8 +854,6 @@ function parsePreviewLines(raw: string | undefined): { skuId: number; qtyMilli: 
   return out;
 }
 
-const DAILY_SPLIT_THRESHOLD_CENTS = 3_000_000; // 3 万元日累计分流参考门槛
-
 async function routePreview(deps: Deps, actor: Actor, raw: unknown): Promise<ShopRoutePreview> {
   const q = parse(RoutePreviewQuery, raw ?? {});
   const db = deps.sql;
@@ -900,7 +899,7 @@ async function routePreview(deps: Deps, actor: Actor, raw: unknown): Promise<Sho
     hints.push({
       code: 'unpriced_custom',
       tone: 'info',
-      text: '待寻源，金额待定：自主申请提交后由采购归类寻源报价，同日累计、3 万元分流与备用金额度在报价后由 ERP 核验。',
+      text: '待寻源，金额待定：自主申请提交后由采购归类寻源报价，同日累计与部门日额度在报价后由 ERP 核验。',
     });
   } else {
     const lineSpecs = parsePreviewLines(q.lines);
@@ -965,13 +964,6 @@ async function routePreview(deps: Deps, actor: Actor, raw: unknown): Promise<Sho
           GROUP BY l.supplier_id`
       : [];
     const todayBySup = new Map(todayRows.map((r) => [Number(r.supplierId), { count: Number(r.reqCount), cents: Number(r.cents) }]));
-    const [todayStoreRow] = await db<{ cents: string }[]>`
-      SELECT coalesce(sum(round((l.qty_milli::numeric * coalesce(l.ref_price_cents, 0)) / 1000)), 0)::bigint::text AS cents
-      FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
-      WHERE r.store_id = ${q.storeId} AND r.status NOT IN ('draft', 'cancelled', 'rejected')
-        AND (r.created_at AT TIME ZONE ${tz})::date = ${today}::date`;
-    const todayStoreCents = Number(todayStoreRow?.cents ?? 0);
-
     for (const [sid, cur] of bySupplier) {
       const prev = todayBySup.get(sid);
       if (prev && prev.count > 0) {
@@ -983,14 +975,6 @@ async function routePreview(deps: Deps, actor: Actor, raw: unknown): Promise<Sho
       }
     }
 
-    const dailyTotal = todayStoreCents + sumCents;
-    if (dailyTotal >= DAILY_SPLIT_THRESHOLD_CENTS) {
-      hints.push({
-        code: 'daily_30k',
-        tone: 'warning',
-        text: `可能触发采购日累计 3 万元分流：本店今日含本单预计累计 ${formatYuan(dailyTotal)}，最终由 ERP 审核分流认定。`,
-      });
-    }
     if (rules.quoteThresholdCents > 0 && sumCents >= rules.quoteThresholdCents) {
       hints.push({
         code: 'quote_threshold',
@@ -1012,12 +996,21 @@ async function routePreview(deps: Deps, actor: Actor, raw: unknown): Promise<Sho
   // 4) 部门备用金支付提示（读取 8.1.42 统一部门备用金可用余额）
   if (q.paymentIntent === 'dept_petty') {
     if (deptId) {
-      const [bal, occ] = await Promise.all([pettyBalances(db, deptId), pettyOccupied(db, deptId)]);
+      const [bal, occ, quota] = await Promise.all([pettyBalances(db, deptId), pettyOccupied(db, deptId), deptPettyToday(db, deptId, tz, today)]);
       const avail = (bal.get(deptId) ?? 0) - (occ.get(deptId) ?? 0);
       hints.push({
         code: 'petty_cash',
         tone: estimateCents !== null && avail < estimateCents ? 'warning' : 'info',
         text: `拟用部门备用金支付：当前可用余额 ${formatYuan(avail)}，实际占用与报销核销由 ERP 核验。`,
+      });
+      const after = quota.taken + (estimateCents ?? 0);
+      hints.push({
+        code: 'dept_daily_quota',
+        tone: after > quota.limit ? 'warning' : 'info',
+        text:
+          after > quota.limit
+            ? `超过部门零星采购日额度 ${formatYuan(quota.limit)}：今日已用 ${formatYuan(quota.taken)}，含本单 ${formatYuan(after)}。不能用部门备用金提交，请改公司直付，或按业财法走紧急特批。`
+            : `部门零星采购日额度 ${formatYuan(quota.limit)}：今日已用 ${formatYuan(quota.taken)}，含本单 ${formatYuan(after)}。`,
       });
     } else {
       hints.push({ code: 'petty_cash', tone: 'info', text: '拟用部门备用金支付：备用金额度与可用余额由 ERP 按所属部门核验。' });
@@ -1113,6 +1106,7 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   const masterWrite = guardAny('inventory.master');
   // 目录是页面的起点：只审 SKU 的（「采购规则」）也要能进来，才找得到「SKU 维护」（Codex 审查）
   const catalogRead = guardAny('request.create', 'request.review', 'request.stock', 'purchase.manage', 'purchase.rules');
+  registerShopImageImportRoutes(app, deps);
 
   app.get(`${P}/catalog`, { preHandler: catalogRead }, async (req) => catalog(deps, req.actor, (req.query as { storeId?: string } | undefined)?.storeId));
   app.get(`${P}/offers`, { preHandler: catalogRead }, async (req) => compareOffers(deps, req.actor, req.query));
