@@ -193,6 +193,12 @@ describe('学堂 · AI 出题与问柚子', () => {
     expect(r.body.questions.every((q) => q.source === 'ai' && q.status === 'draft')).toBe(true);
     const replay = await api<AcademyAiGenerateResult>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/lessons/${lesson!.id}/generate`, { clientKey: key, count: 2 });
     expect(replay.body.questions.map((q) => q.id)).toEqual(r.body.questions.map((q) => q.id));
+    // 出完了但没收到结果、之后模型服务停了：原样重提照样拿回那一批（先查操作编号再核对）
+    setAiProviderForTests(null);
+    const later = await api<AcademyAiGenerateResult>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/lessons/${lesson!.id}/generate`, { clientKey: key, count: 2 });
+    expect(later.status, JSON.stringify(later.body)).toBe(200);
+    expect(later.body.questions.map((q) => q.id)).toEqual(r.body.questions.map((q) => q.id));
+    setAiProviderForTests(mockAiProvider());
     const [call] = await ctx.sql`SELECT action, mode, ok FROM integration_calls WHERE action = 'academy_questions' ORDER BY id DESC LIMIT 1`;
     expect(call).toMatchObject({ mode: 'mock', ok: true });
   });
@@ -208,6 +214,13 @@ describe('学堂 · AI 出题与问柚子', () => {
     expect(r.body.sources.map((s) => s.title)).toContain('晕堂');
     const replay = await api<AcademyTutorAnswer>(ctx.app, ctx.clerk, 'POST', `/api/academy/courses/${courseId}/tutor`, { clientKey: key, question: '客人晕堂了第一步怎么做？' });
     expect(replay.body.id).toBe(r.body.id);
+    // 问上了但没收到结果、之后课程下架：原样重提照样拿回那次的回答
+    const [was] = await ctx.sql<{ status: string }[]>`SELECT status FROM academy_courses WHERE id = ${courseId}`;
+    await ctx.sql`UPDATE academy_courses SET status = 'archived' WHERE id = ${courseId}`;
+    const archived = await api<AcademyTutorAnswer>(ctx.app, ctx.clerk, 'POST', `/api/academy/courses/${courseId}/tutor`, { clientKey: key, question: '客人晕堂了第一步怎么做？' });
+    expect(archived.status, JSON.stringify(archived.body)).toBe(200);
+    expect(archived.body.id).toBe(r.body.id);
+    await ctx.sql`UPDATE academy_courses SET status = ${was!.status} WHERE id = ${courseId}`;
     const none = await api<AcademyTutorAnswer>(ctx.app, ctx.clerk, 'POST', `/api/academy/courses/${courseId}/tutor`, { clientKey: randomUUID(), question: '量子力学的基本原理' });
     expect(none.body).toMatchObject({ status: 'done', answer: '课件里没讲到这个问题，请问你的主管或带教师傅。', sources: [] });
     const view = (await api<AcademyTutorView>(ctx.app, ctx.clerk, 'GET', `/api/academy/courses/${courseId}/tutor`)).body;

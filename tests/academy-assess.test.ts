@@ -147,8 +147,14 @@ describe('学堂 · 测验', () => {
     const r3 = await api<AcademyQuizResult>(ctx.app, ctx.clerk, 'POST', `/api/academy/attempts/${third.attemptId}/submit`, { answers: third.questions.map(() => [0]) });
     expect(r3.body.completion).toMatchObject({ credits: 0 });
     // 开卷以后测验下架：不再收卷（Codex 审查 43c2d86）
-    const open = (await api<AcademyQuizView>(ctx.app, ctx.clerk, 'POST', `/api/academy/lessons/${quizId}/quiz`, { clientKey: randomUUID() })).body;
+    const openKey = randomUUID();
+    const open = (await api<AcademyQuizView>(ctx.app, ctx.clerk, 'POST', `/api/academy/lessons/${quizId}/quiz`, { clientKey: openKey })).body;
     await ctx.sql`UPDATE academy_lessons SET active = false WHERE id = ${quizId}`;
+    // 开卷开上了但没收到结果、之后测验下架：原样重提照样拿回那份卷子；新开的拒绝（Codex 审查 b6beee8）
+    const again = await api<AcademyQuizView>(ctx.app, ctx.clerk, 'POST', `/api/academy/lessons/${quizId}/quiz`, { clientKey: openKey });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(again.body.attemptId).toBe(open.attemptId);
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/academy/lessons/${quizId}/quiz`, { clientKey: randomUUID() })).status).not.toBe(200);
     expect((await api(ctx.app, ctx.clerk, 'POST', `/api/academy/attempts/${open.attemptId}/submit`, { answers: open.questions.map(() => [0]) })).body.error.code).toBe('ACADEMY_PREVIEW_ONLY');
     await ctx.sql`UPDATE academy_lessons SET active = true WHERE id = ${quizId}`;
   });
