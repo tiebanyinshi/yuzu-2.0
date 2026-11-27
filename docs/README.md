@@ -76,7 +76,7 @@
 - [`LEDGER.md`](LEDGER.md)：采购台账、四个视图与 12 条账目自检（v0.7.9，飞书需求 RQ-005 第三步）
 - [`LEGACY_LEDGER.md`](LEGACY_LEDGER.md)：8–10 月旧账只读对照（v0.7.10，飞书需求 RQ-005 收尾）
 - [`LINGYU_AUDIT_V8137.md`](LINGYU_AUDIT_V8137.md)：8.1.37 对照「领浴」问题表：修缺陷、加防护
-- [`LOCKERS_V8149.md`](LOCKERS_V8149.md)：柜况与智能柜锁接口（8.1.49）
+- [`LOCKERS_V8149.md`](LOCKERS_V8149.md)：柜况与智能柜锁接口（8.1.49；第 6 节 M1 手牌发卡器，店主 2026-11-27）
 - [`MALL_V8131.md`](MALL_V8131.md)：采购商城 V1.1 对接（8.1.31，yuzu 侧）
 - [`MALL_V8132.md`](MALL_V8132.md)：采购商城并进柚子（8.1.32）
 - [`MALL_V8150.md`](MALL_V8150.md)：8.1.50 · 采购商城：逛电商的感觉、商品图、排到采购第一项

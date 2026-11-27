@@ -147,6 +147,9 @@ export type AuditAction =
   | 'hand_tags_imported'
   | 'hand_tag_locked'
   | 'locker_opened'
+  // 柜锁发卡器（docs/LOCKERS_V8149.md 第 6 节）
+  | 'locker_card_written'
+  | 'locker_card_cleared'
   | 'hand_tag_unlocked'
   | 'hand_tag_updated'
   | 'technician_saved'
