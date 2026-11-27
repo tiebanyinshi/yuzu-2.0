@@ -103,6 +103,18 @@ describe('学堂 · 课程与课时', () => {
     expect(stale.body.error.code).toBe('ACADEMY_CHANGED');
   });
 
+  it('同一操作编号的新建同时到两次：都返回同一门课，不撞唯一约束（Codex 审查 16476da）', async () => {
+    const body = { clientKey: randomUUID(), title: '同时重提的课', category: 'industry' };
+    const send = () => api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/courses', body);
+    const all = await Promise.all([send(), send(), send()]);
+    expect(all.map((r) => r.status)).toEqual([201, 201, 201]);
+    expect(new Set(all.map((r) => r.body.course.id)).size).toBe(1);
+    const path = { clientKey: randomUUID(), title: '同时重提的地图', courseIds: [] };
+    const paths = await Promise.all([1, 2].map(() => api<AcademyAdminPath>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/paths', path)));
+    expect(paths.map((r) => r.status)).toEqual([201, 201]);
+    expect(paths[0]!.body.id).toBe(paths[1]!.body.id);
+  });
+
   it('「只本部门」的课：别的部门看不到，本部门看得到；指派到的人也看得到', async () => {
     const c = await newCourse({ title: '餐饮出品规范', category: 'must_know', departmentKey: 'dining', deptOnly: true });
     await publish(await addLesson(c.course.id, { title: '出品口', kind: 'article', body: '出品口按档口分。' }));
