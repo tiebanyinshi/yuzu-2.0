@@ -8,6 +8,7 @@ import type { PriceCatalogOverview } from '../src/shared/price-catalog';
 import { blockUsageFee, usageEstimate, type UsageBoard, type UsageDetail, type UsageRules } from '../src/shared/usages';
 import type { Deps, OpContext } from '../src/server/lib/context';
 import { buildWorkbook } from '../src/server/lib/xlsx';
+import { couponLines } from '../src/server/modules/coupon-checkout';
 import { endUsage } from '../src/server/modules/usages';
 import { api, setup, type TestContext } from './helpers';
 import { priceSheet } from './price-workbook';
@@ -131,6 +132,21 @@ describe('刷手牌计时', () => {
     ]);
     const kinds = await ctx.sql<{ kind: string }[]>`SELECT kind FROM space_usage_charges WHERE usage_id = ${open.body.id} ORDER BY kind`;
     expect(kinds.map((k) => k.kind)).toEqual(['extra', 'fee']);
+    // Codex 审查（P1）：休闲娱乐的基础价也记成 fee，但周一至周四不打包房房费折扣（只认派对房房费）——结束在周二或周三
+    const k = await enter();
+    const mid = await api<UsageDetail>(ctx.app, ctx.clerk, 'POST', '/api/usages', { clientKey: randomUUID(), spaceId: sid('NB02'), tagCode: k.tagCode });
+    expect(mid.status, JSON.stringify(mid.body)).toBe(200);
+    const shDay = (t: number) => new Date(t + 8 * 3_600_000).getUTCDay();
+    let days = 1;
+    while (![2, 3].includes(shDay(new Date(mid.body.openedAt).getTime() + days * 86_400_000))) days += 1;
+    await endAfter(mid.body, days * 1440);
+    const cl = await couponLines(ctx.sql, [k.billId]);
+    const [dow] = await ctx.sql<{ d: number }[]>`SELECT extract(isodow FROM business_date)::int AS d FROM bill_lines WHERE bill_id = ${k.billId} LIMIT 1`;
+    expect([1, 2, 3, 4]).toContain(Number(dow!.d));
+    expect(cl.map((l) => [l.usageCharge, l.partyRoomDay])).toEqual([
+      ['fee', false],
+      ['extra', false],
+    ]);
 
     const h = await enter();
     const short = await api<UsageDetail>(ctx.app, ctx.clerk, 'POST', '/api/usages', { clientKey: randomUUID(), spaceId: sid('ZQ01'), tagCode: h.tagCode });

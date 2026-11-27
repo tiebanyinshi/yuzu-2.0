@@ -67,6 +67,12 @@ export async function leisurePlan(db: Db | Tx): Promise<LeisurePlan> {
       problem,
     };
   });
+  // 8.2.20（Codex 审查）：截到 8 个字以后同名的几行（「电竞标准单人机位A / B」）分不开，都标出来不让建，请先在价目表里改名
+  const seen = new Map<string, number>();
+  for (const r of rows) seen.set(r.name, (seen.get(r.name) ?? 0) + 1);
+  for (const r of rows) {
+    if ((seen.get(r.name) ?? 0) > 1 && !r.problem) r.problem = `价目表里有几行截到 ${MAX_NAME} 个字后都叫「${r.name}」，分不开；请先在价目表里把名字改得前 ${MAX_NAME} 个字不一样`;
+  }
   return { catalogTitle: catalog.set?.title ?? null, floors: floors.map((f) => ({ ...f, id: Number(f.id) })), rows };
 }
 
