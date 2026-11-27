@@ -1,5 +1,5 @@
 // 「结果待确认」（src/utils/pending.ts）：先存再发、存不下就不发；成功或门店明确拒绝删掉；超时、连不上、5xx、没登录留着，
-// 按原编号原样重提；同一处留着一笔时不发新的（手机上没有「放弃」）；按人分开存。
+// 按原编号原样重提；原样重提被拒的打卡、申请、审批先作废原编号再下结论；同一处留着一笔时不发新的（手机上没有「放弃」）；按人分开存。
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { installFakeWx } from './fake-wx';
@@ -78,10 +78,52 @@ describe('结果待确认', () => {
       expect((await sendPending(op())).status, code).toBe('unknown');
       expect(loadPending(7, 'punch'), code).toMatchObject({ key: 'k-1' });
     }
-    // 门店系统看了这一笔再拒绝的（不在打卡范围）：删掉
-    fake.reply({ status: 422, data: { error: { code: 'LOCATION_OUT', message: '不在打卡范围内' } } });
-    expect((await sendPending(op())).status).toBe('rejected');
+    // 门店系统看了这一笔再拒绝的（不在打卡范围）：先作废原编号，作废登记上了才删掉
+    fake.reply({ status: 422, data: { error: { code: 'LOCATION_OUT', message: '不在打卡范围内' } } }, { status: 200, data: { found: false, abandoned: true } });
+    const r = await sendPending(op());
+    expect(r.status).toBe('rejected');
+    expect(r.status === 'rejected' && (r.error as { code: string }).code).toBe('LOCATION_OUT');
     expect(loadPending(7, 'punch')).toBeNull();
+  });
+
+  it('原样重提被拒：打卡、申请、审批先作废原编号——前一次已经办了的，再原样重提拿回原来那一次', async () => {
+    fake.reply({ status: 0, fail: true });
+    expect((await sendPending(op())).status).toBe('unknown');
+    fake.reply(
+      { status: 422, data: { error: { code: 'LOCATION_OUT', message: '不在打卡范围内' } } },
+      { status: 200, data: { found: true, abandoned: false, refId: 5 } },
+      { status: 200, data: { punch: { id: 5 }, replayed: true } },
+    );
+    expect(await sendPending(op())).toEqual({ status: 'ok', data: { punch: { id: 5 }, replayed: true } });
+    expect(fake.sent.slice(1).map((s) => [s.url.replace(/^.*\/api\/staffmp/, ''), s.data])).toEqual([
+      ['/oa/attendance/punch', { clientKey: 'k-1', storeId: 1 }],
+      ['/ops/k-1/abandon', { type: 'oa_punch' }],
+      ['/oa/attendance/punch', { clientKey: 'k-1', storeId: 1 }],
+    ]);
+    expect(loadPending(7, 'punch')).toBeNull();
+  });
+
+  it('原样重提被拒、作废没有明确结果（连不上、被拒、两样都不是）：留着，不断定没生效', async () => {
+    const act = op({ kind: 'approval_act', ref: 12, path: '/oa/approvals/12/act', body: { clientKey: 'k-1', action: 'approve' } });
+    fake.reply({ status: 0, fail: true });
+    expect((await sendPending(act)).status).toBe('unknown');
+    const rejected = { status: 409, data: { error: { code: 'APPROVAL_CLOSED', message: '这张单已撤销' } } };
+    for (const fence of [{ status: 0, fail: true }, { status: 409, data: { error: { code: 'IDEMPOTENCY_CONFLICT', message: 'x' } } }, { status: 200, data: { found: false, abandoned: false } }]) {
+      fake.reply(rejected, fence);
+      expect((await sendPending(act)).status).toBe('unknown');
+      expect(loadPending(7, 'approval_act', 12)).toMatchObject({ key: 'k-1' });
+    }
+    expect(fake.sent.filter((s) => s.url.includes('/ops/')).map((s) => s.data)).toEqual([0, 1, 2].map(() => ({ type: 'oa_approval_act' })));
+  });
+
+  it('学堂的几样没有作废：原样重提被拒就算被拒', async () => {
+    const quiz = op({ kind: 'academy_quiz', ref: 3, path: '/academy/lessons/3/quiz', body: { clientKey: 'k-1' } });
+    fake.reply({ status: 0, fail: true });
+    expect((await sendPending(quiz)).status).toBe('unknown');
+    fake.reply({ status: 409, data: { error: { code: 'LESSON_CHANGED', message: '课时改过了' } } });
+    expect((await sendPending(quiz)).status).toBe('rejected');
+    expect(fake.sent.some((s) => s.url.includes('/ops/'))).toBe(false);
+    expect(loadPending(7, 'academy_quiz', 3)).toBeNull();
   });
 
   it('第一次发就被关卡挡下：门店系统没收这一笔，删掉', async () => {

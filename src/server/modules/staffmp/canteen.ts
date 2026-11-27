@@ -73,21 +73,29 @@ const MenusQuery = z.object({ from: z.string().optional(), to: z.string().option
 const PeopleQuery = z.object({ q: z.string().optional() });
 
 /**
- * 开通饭卡时用的工号：人事档案的工号（大写、合法、还没被饭堂名单用掉），不然用 S + 系统账号编号。
- * 那个工号上已经有一张「这个人上次在小程序开通、还没对上」的饭卡（建好了、记对上时出错；或者两次请求同时到）时照旧用它：
- * 饭堂的 createEmployee 对同工号同姓名同部门同角色回原来那张（created: false），这样重试与并发都落在同一张饭卡上，不会多开一张。
+ * 开通饭卡时用的工号：人事档案的工号（大写、合法），再是 S + 系统账号编号，再是 S + 编号 + -2…-5，取第一个「还没被饭堂名单用掉、
+ * 或者那张就是这个人上次在小程序开通、还没对上的」（建好了、记对上时出错；或者两次请求同时到）：
+ * 饭堂的 createEmployee 对同工号同姓名同部门同角色回原来那张（created: false），这样重试与并发都落在同一张饭卡上，不会多开一张；
+ * 别人的饭卡（不是这个人开的、已经对上的、停用的）一概跳过，不会因为姓名一样就对给他（Codex 审查 #53）。都用掉了就不开，请人事安排
  */
 async function empNoFor(db: Db, staffId: number, name: string): Promise<string> {
   const [p] = await db<{ empNo: string | null }[]>`SELECT emp_no FROM staff_profiles WHERE staff_id = ${staffId}`;
   const fromProfile = (p?.empNo ?? '').toUpperCase();
-  if (/^[A-Z0-9][A-Z0-9-]{0,15}$/.test(fromProfile)) {
+  const candidates = [...(/^[A-Z0-9][A-Z0-9-]{0,15}$/.test(fromProfile) ? [fromProfile] : []), `S${staffId}`, ...[2, 3, 4, 5].map((n) => `S${staffId}-${n}`)];
+  for (const empNo of candidates) {
     const [taken] = await db<{ mine: boolean }[]>`
       SELECT (e.created_by = ${staffId} AND e.name = ${name} AND e.role = 'staff' AND e.department_id IS NULL AND e.active
               AND NOT EXISTS (SELECT 1 FROM staffmp_canteen_links l WHERE l.employee_id = e.id)) AS mine
-      FROM canteen_employees e WHERE e.emp_no = ${fromProfile}`;
-    if (!taken || taken.mine) return fromProfile;
+      FROM canteen_employees e WHERE e.emp_no = ${empNo}`;
+    if (!taken || taken.mine) return empNo;
   }
-  return `S${staffId}`;
+  throw conflict('CANTEEN_EMP_NO_TAKEN', '饭堂名单里你的工号都被别的同事用了，开不了：请找食堂负责人或人事给你开饭卡');
+}
+
+/** createEmployee 回了原来那张（created: false）时再核对一次是这个人开的（选工号到建饭卡之间别人可能用同一个工号、同一个姓名开了一张） */
+async function ownCreated(db: Db, staffId: number, employeeId: number): Promise<boolean> {
+  const [row] = await db<{ ok: boolean }[]>`SELECT (created_by = ${staffId} AND active) AS ok FROM canteen_employees WHERE id = ${employeeId}`;
+  return !!row?.ok;
 }
 
 async function lockStaff(db: Db, staffId: number) {
@@ -186,7 +194,8 @@ export function registerStaffMpCanteenRoutes(app: FastifyInstance, deps: Deps, n
     const name = actor.displayName.slice(0, 16);
     // 饭堂的 createEmployee 自己开事务（主线的函数，员工小程序线不改它），所以建饭卡与记对上分两步：
     // 第二步出错或两次请求同时到时，靠 empNoFor 选回同一个工号、createEmployee 回原来那张、link 对同一张不报错，落在同一张饭卡上
-    const { employee } = await createEmployee(sql, { empNo: await empNoFor(sql, actor.id, name), name, role: 'staff', departmentId: null }, { actor, ip: req.ip });
+    const { employee, created } = await createEmployee(sql, { empNo: await empNoFor(sql, actor.id, name), name, role: 'staff', departmentId: null }, { actor, ip: req.ip });
+    if (!created && !(await ownCreated(sql, actor.id, employee.id))) throw conflict('CANTEEN_EMP_NO_TAKEN', '刚好有同事用了这个工号开饭卡：请再点一次「开通饭卡」');
     await link(sql, actor.id, employee.id, 'created', actor.id, req.ip);
     return statusOf(actor.id);
   });

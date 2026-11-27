@@ -20,6 +20,12 @@ export const STAFFMP_PASSTHROUGH = [
   { outside: 'account', inside: 'auth' },
 ] as const;
 
+/**
+ * 员工小程序上能「确认作废」的操作（/api/staffmp/ops/:key/abandon，第 2.8 节）：打卡、发起申请、处理审批。
+ * 原样重提被门店明确拒绝时，小程序先作废原编号再下结论（AGENTS.md「结果待确认」）
+ */
+export const STAFFMP_FENCE_TYPES = ['oa_punch', 'oa_approval_submit', 'oa_approval_act'] as const;
+
 /** 小程序把接口回来的地址（例如附件的 /api/oa/attachments/12）换成员工小程序端口上的地址 */
 export function staffMpPath(path: string): string {
   for (const { outside, inside } of STAFFMP_PASSTHROUGH) {

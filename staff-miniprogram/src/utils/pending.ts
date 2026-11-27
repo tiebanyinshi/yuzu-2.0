@@ -1,10 +1,13 @@
 // 「结果待确认」（AGENTS.md 开发约定，docs/STAFF_MP.md 第 2.8 节）：写操作发出去以后没收到明确结果（超时、连不上、门店出错 5xx），
 // 事务可能已经提交了。所以发之前先把原编号与原请求存在手机上并读回核对，**存不下就不发**；没收到结果的留着，
 // 只能按原编号原样重提（门店系统按编号认出来，提交过的回原来那一次）。拿到明确结果（成功，或门店明确拒绝）才从手机上删掉。
-//   · 手机上没有「放弃」：员工小程序端口上没有「确认作废」，查不到也不能断定没生效，所以留着的那一笔只能原样重提；
+//   · 手机上没有「放弃」按钮：查不到也不能断定没生效，所以留着的那一笔只能原样重提；
 //     同一处（同一个人的打卡、同一个模板的申请、同一张单的处理）留着一笔时不发新的（blocked），免得换了编号重复办。
-//   · 重提被门店明确拒绝算数：审批的提交与处理在事务里先锁操作编号、再查这个编号办没办过，前一次提交了的重提一定回原来那一次；
-//     打卡先查编号、没办过才核对位置，前一次还没落库时重提被拒，最坏多记一条打卡明细（考勤按第一次 / 最后一次算，不会算错）。
+//   · 原样重提被门店明确拒绝时，不能断定前一次没生效（打卡在锁编号之前先核对考勤组与位置，前一次可能还在路上）：
+//     打卡、发起申请、处理审批先在门店系统作废原编号（/api/staffmp/ops/:key/abandon，与网页的「确认作废」同一套）——
+//     前一次已经办了的，再原样重提一次拿到原来那一次（算成功）；作废登记上了，前一次之后即使到达也整笔回滚，这才算被拒、删掉这一笔；
+//     作废没有明确结果的，照旧留着。学堂的几样没有作废，按原来的：重提被拒就删（开卷、作答按编号认，学完了、交卷按课时、卷子认，
+//     前一次办了的重提回原来那一次）。
 //   · 没登录（401）不算拒绝：请求没进门店系统，留着，登录以后原样重提。
 //   · 按人分开存：换了人登录看不到、也不会替前一位重提。
 import { call, isApiError, isRejected } from './api';
@@ -27,6 +30,9 @@ export interface PendingOp {
   /** 对象（审批单编号、模板编号），同一类里区分 */
   ref?: number;
 }
+
+/** 能在门店系统作废原编号的（第 2.8 节）：员工小程序端口 /ops/:key/abandon 认的业务类型 */
+const FENCE_TYPES: Partial<Record<PendingKind, string>> = { punch: 'oa_punch', approval_submit: 'oa_approval_submit', approval_act: 'oa_approval_act' };
 
 const keyOf = (staffId: number, kind: PendingKind, ref?: number) => `wcp_pending:${staffId}:${kind}${ref ? `:${ref}` : ''}`;
 
@@ -94,7 +100,8 @@ export type SendOutcome<T> =
 
 /**
  * 发一次写操作（第一次或原样重提）：同一处还留着另一笔没确定的就不发（blocked）；先存再发，存不下就不发（not_sent）；
- * 成功、门店明确拒绝（4xx，不是忙、不是没登录）都删掉这一笔；超时、连不上、5xx 留着（unknown），没登录留着（signed_out）
+ * 成功、门店明确拒绝（4xx，不是忙、不是没登录）都删掉这一笔；超时、连不上、5xx 留着（unknown），没登录留着（signed_out）。
+ * 原样重提被拒：打卡、申请、审批先作废原编号（settleRejectedResend），学堂的直接算被拒
  */
 export async function sendPending<T>(op: PendingOp): Promise<SendOutcome<T>> {
   const before = loadPending(op.staffId, op.kind, op.ref);
@@ -109,9 +116,41 @@ export async function sendPending<T>(op: PendingOp): Promise<SendOutcome<T>> {
     if (isRejected(e)) {
       const resend = !!before && before.key === op.key;
       if (resend && isApiError(e) && GATE_CODES.indexOf(e.code) >= 0) return { status: 'unknown', error: e };
+      const type = FENCE_TYPES[op.kind];
+      if (resend && type) return settleRejectedResend<T>(op, type, e);
       clearPending(op.staffId, op.kind, op.ref);
       return { status: 'rejected', error: e };
     }
     return { status: 'unknown', error: e };
   }
+}
+
+/**
+ * 原样重提被拒以后：先作废原编号再下结论（AGENTS.md「结果待确认」）。
+ * 前一次已经办了（found）：再原样重提一次，门店按编号回原来那一次；作废登记上了（abandoned）：算被拒，删掉这一笔；
+ * 作废本身没有明确结果、或两样都不是：留着（unknown），等下次原样重提
+ */
+async function settleRejectedResend<T>(op: PendingOp, type: string, rejection: unknown): Promise<SendOutcome<T>> {
+  let fenced: { found?: boolean; abandoned?: boolean };
+  try {
+    fenced = await call<{ found?: boolean; abandoned?: boolean }>('POST', `/ops/${op.key}/abandon`, { type });
+  } catch (e) {
+    if (isApiError(e) && e.status === 401) return { status: 'signed_out', error: e };
+    return { status: 'unknown', error: rejection };
+  }
+  if (fenced.found) {
+    try {
+      const data = await call<T>('POST', op.path, op.body);
+      clearPending(op.staffId, op.kind, op.ref);
+      return { status: 'ok', data };
+    } catch (e) {
+      if (isApiError(e) && e.status === 401) return { status: 'signed_out', error: e };
+      return { status: 'unknown', error: e };
+    }
+  }
+  if (fenced.abandoned) {
+    clearPending(op.staffId, op.kind, op.ref);
+    return { status: 'rejected', error: rejection };
+  }
+  return { status: 'unknown', error: rejection };
 }

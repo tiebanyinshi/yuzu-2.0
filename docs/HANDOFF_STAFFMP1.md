@@ -52,6 +52,7 @@
 | 本机：新建的独立演示库 `demo-prepare`（`APP_ENV=development`、`YUZU_INSTANCE=demo`） | 一致性自检 87 项全部一致，演示库核对通过 |
 | `staff-miniprogram`：`npm run check`（类型检查 + 单元测试） | 149 条通过 |
 | 本机：收口提交（版本号、交接说明、变更记录）以后 `lint` / `check:docs` / `check:gov` / `version-source` | 见集成 PR 上最后一个提交的 CI |
+| 集成 PR 的 Codex 审查第 1 轮（`e6c9954`，报 1 条 P1、2 条 P2） | 都修了：打卡、申请、审批原样重提被拒时先确认作废原编号（新接口 `POST /api/staffmp/ops/:key/abandon`，`tests/staffmp-ops.test.ts`）；饭卡开通的兜底工号也核对是不是本人的卡；学习页的搜索也搜学堂的课程。`staff-miniprogram` 的 `npm run check` 152 条通过 |
 | 微信开发者工具、真机 | **受阻未测**（云端没有开发者工具与手机；第 5 节） |
 
 ## 4. 验收要点
@@ -61,6 +62,7 @@
    - 账号密码登录拿到令牌；带模拟微信 code 登录并绑定，之后 `POST /api/staffmp/auth/wechat` 一键进；同一个微信绑给另一位时不带 `replace` 只登录这一次、不顶掉。
    - 白名单外的接口一律 404（例如 `/api/staffmp/oa/payroll/batches`、`/api/staffmp/academy/coach`）；直接请求 `/api/oa/...`、`/api/academy/...` 内部路径 404；网页的 Cookie 不认。
    - 首次登录没改密码、老账号没选岗位的：WCP、吃饭巡场、学堂的接口一律 403（`PASSWORD_CHANGE_REQUIRED` / `POSITION_REQUIRED`）。
+   - 确认作废（`POST /api/staffmp/ops/<编号>/abandon`，`type` 只认 `oa_punch` / `oa_approval_submit` / `oa_approval_act`）：没办过的编号作废以后，再用这个编号打卡回 409 `OP_ABANDONED`、不记打卡；办过的回 `found: true`；别人的编号 403；别的业务类型 400；网页的 `/api/erp/ops/*` 在这个端口上 404。
    - 后台解开绑定后，那位员工小程序上的令牌马上 401；只有人事权限（`hr.org`）的只看、只解自己门店范围的，不列总裁。
 2. **吃饭与巡场**（饭堂开着、配了 `CANTEEN_CODE_SECRET`）：员工第一次点饭卡码，用旧饭堂账号密码对上（错的回「账号或密码不对」）；没登记过的「开通饭卡」，重试、同时点两次都只有一张；后台「饭卡对上」按手机号一键对上、解开（解开后那张饭卡的 `code_epoch` 加一）。小程序生成的饭卡码被负责人扫码登记接受，同一餐第二次回「已经打过」。巡场部门的人扫场所码记一次。
 3. **学堂**（学堂里有上架的课）：`GET /api/staffmp/academy/lessons/:id` 的图文课件带 `blocks`；学完了只给一次学分；测验开卷同一个编号回同一份，交卷重提回第一次的结果；每日一练同一个编号回同一次。

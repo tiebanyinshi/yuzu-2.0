@@ -148,6 +148,24 @@ describe('对上饭卡', () => {
     expect((await s('POST', '/api/staffmp/canteen/create', g.token, {})).body.employee.empNo).toBe(`S${g.id}`);
   });
 
+  it('S + 编号上已经有一张别人开的、同名的普通员工饭卡：不对给他，换用下一个工号；都被用了就不开（Codex 对 e6c9954 的 P2）', async () => {
+    const i = await staffLogin('ivy2', '小艾薇');
+    const theirs = await canteenEmployee(`S${i.id}`, '小艾薇');
+    const made = await s('POST', '/api/staffmp/canteen/create', i.token, {});
+    expect(made.status, JSON.stringify(made.body)).toBe(200);
+    expect(made.body.employee.empNo).toBe(`S${i.id}-2`);
+    expect((await ctx.sql`SELECT 1 FROM staffmp_canteen_links WHERE employee_id = ${theirs}`).length).toBe(0);
+    const [link] = await ctx.sql<{ employeeId: number }[]>`SELECT employee_id FROM staffmp_canteen_links WHERE staff_id = ${i.id}`;
+    expect(Number(link!.employeeId)).not.toBe(theirs);
+    // 档案工号、S + 编号、-2…-5 都是别人的：409，一张也不开、不对上
+    const j = await staffLogin('jay2', '阿杰');
+    for (const no of [`S${j.id}`, ...[2, 3, 4, 5].map((n) => `S${j.id}-${n}`)]) await canteenEmployee(no, '阿杰');
+    const none = await s('POST', '/api/staffmp/canteen/create', j.token, {});
+    expect([none.status, none.body.error?.code]).toEqual([409, 'CANTEEN_EMP_NO_TAKEN']);
+    expect((await ctx.sql`SELECT 1 FROM staffmp_canteen_links WHERE staff_id = ${j.id}`).length).toBe(0);
+    expect((await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM canteen_employees WHERE created_by = ${j.id}`)[0]!.n).toBe(0);
+  });
+
   it('首次登录没改密码、没选新岗位的：吃饭与巡场的接口一律不放行（直接调接口也拿不到码钥匙）（Codex 对 b077fbd 的 P1）', async () => {
     const h = await staffLogin('hank2', '阿汉');
     expect((await s('POST', '/api/staffmp/canteen/create', h.token, {})).status).toBe(200);

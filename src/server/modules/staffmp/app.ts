@@ -1,6 +1,6 @@
 // 员工小程序端口（员工小程序线，docs/STAFF_MP.md 第 5.2 节）：单开的 Fastify 实例，只挂员工小程序的接口。
 //   · 外面的地址都在 /api/staffmp/ 下（放 Caddy 的服务器只把 sys.yuzusystem.xyz/api/staffmp/* 转到这里）；
-//   · 自己的接口：登录、微信绑定、我是谁（routes.ts）；
+//   · 自己的接口：登录、微信绑定、我是谁（routes.ts），吃饭与巡场（canteen.ts），重提被拒时的确认作废（ops.ts）；
 //   · WCP、员工培训、汤崎学堂的员工端接口原样挂上（/api/staffmp/oa/… 进的就是 /api/oa/… 那个处理函数），只放行白名单（allowlist.ts）；
 //   · 认证只认 Authorization: Bearer <令牌>，令牌是员工小程序发的员工会话（不认浏览器 Cookie，所以没有跨站请求伪造）；
 //   · 没有管理后台的页面与接口；没设 STAFFMP_PORT 不开。
@@ -36,6 +36,7 @@ import { registerAuthRoutes } from '../../auth/routes';
 import { passthroughAllowed, rewriteStaffMpUrl } from './allowlist';
 import { resolveStaffMpSession, resolveStaffMpSessionByHash } from './auth';
 import { registerStaffMpCanteenRoutes } from './canteen';
+import { registerStaffMpOpsRoutes } from './ops';
 import { MEDIA_TARGETS, mediaRewrite, TICKET_QUERY, verifyTicket } from './media';
 import { registerStaffMpRoutes } from './routes';
 import { loadStaffMpEnabled } from './settings';
@@ -172,6 +173,8 @@ export async function buildStaffMpApp(sql: Sql, config: AppConfig, opts: StaffMp
   registerStaffMpRoutes(app, deps, opts.code2session ?? code2sessionFor(config.staffmp));
   // 吃饭与巡场（员工账号对上的饭堂身份，canteen.ts）
   registerStaffMpCanteenRoutes(app, deps, opts.clock);
+  // 打卡、发起申请、处理审批重提被拒时的「确认作废」（ops.ts）
+  registerStaffMpOpsRoutes(app, deps);
   // WCP 与员工培训的员工端接口（只放行 allowlist.ts 里的）
   registerOaPunchRoutes(app, deps);
   registerOaScheduleRoutes(app, deps);
