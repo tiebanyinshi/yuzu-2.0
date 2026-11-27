@@ -173,6 +173,7 @@ import { registerSpaceRoutes } from './modules/spaces';
 import { registerFloorplanRoutes } from './modules/floorplans';
 import { registerFloorMapRoutes } from './modules/floormap';
 import { registerUsageRoutes } from './modules/usages';
+import { registerLeisureRoutes } from './modules/leisure';
 import { registerBookingRoutes } from './modules/bookings';
 import { registerCountCardRoutes } from './modules/count-cards';
 import { registerMemberCardRoutes } from './modules/member-cards';
@@ -546,6 +547,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerFloorMapRoutes(app, deps);
   // 派对房等「开单即占用」的使用单（v0.7.19）
   registerUsageRoutes(app, deps);
+  registerLeisureRoutes(app, deps);
   registerBookingRoutes(app, deps);
   registerCountCardRoutes(app, deps);
   registerMemberCardRoutes(app, deps);

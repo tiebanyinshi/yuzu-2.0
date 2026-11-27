@@ -138,6 +138,7 @@ export type AuditAction =
   | 'cashier_request_decide'
   // 8.2.30 出品单的等叫、起菜、加急、打包
   | 'dining_kitchen_flags'
+  | 'leisure_setup'
   | 'tag_deposit_refunded'
   | 'frontdesk_abandon'
   | 'frontdesk_ticket'

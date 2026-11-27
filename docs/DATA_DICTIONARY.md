@@ -5624,7 +5624,7 @@ v0.7.28 ②（主线）：派对房等「开单即占用」的计费（设计见
 | 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
 | usage_id | bigint | PK |  |  | space_usages |  |
-| kind | text | PK |  |  |  |  |
+| kind | text | PK |  |  |  | 房费 fee / 开台费 open_fee / 加钟 extra（8.2.20：基础价含起步时长、起步以后按加钟价另记） |
 | line_id | bigint |  |  |  | bill_lines |  |
 | minutes | integer |  |  |  |  | 实际用了多久、按多久计费（开台费这两项记 0） |
 | charged_minutes | integer |  |  |  |  |  |

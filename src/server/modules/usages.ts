@@ -27,6 +27,7 @@ import {
   MAX_USAGE_NOTE,
   USAGE_STEP_OPTIONS,
   usageFee,
+  blockUsageFee,
   usageLineName,
   type UsageBoard,
   type UsageBoardSpace,
@@ -57,7 +58,8 @@ import { assertSpaceNotInMaintenance, closeRegistrationsOfVisits } from './room-
 export async function loadUsageRules(db: Db): Promise<UsageRules> {
   const row = await settingRow<Partial<UsageRules>>(db, 'usage_rules');
   const v = { ...DEFAULT_USAGE_RULES, ...row?.value };
-  return { businessTypes: v.businessTypes, pricing: v.pricing ?? {} };
+  // 8.2.20 的休闲娱乐业态只在设过时带上（旧的规则形状不变）
+  return { businessTypes: v.businessTypes, pricing: v.pricing ?? {}, ...(v.leisureTypes?.length ? { leisureTypes: v.leisureTypes } : {}) };
 }
 
 const MAX_BUSINESS_TYPE = 8;
@@ -72,22 +74,28 @@ const RulesInput = z.object({
   pricing: z
     .record(
       z.string().trim().min(1).max(MAX_BUSINESS_TYPE),
-      z.object({
-        feeItemId: z.number('请选择房费项目').int().positive('请选择房费项目'),
-        minMinutes: z
-          .number('请填写起步时长')
-          .int('起步时长要是整数分钟')
-          .min(0, '起步时长不能是负数')
-          .max(MAX_USAGE_MIN_MINUTES, `起步时长最多 ${MAX_USAGE_MIN_MINUTES} 分钟`)
-          .default(DEFAULT_USAGE_MIN_MINUTES),
-        stepMinutes: z
-          .number('请选择计费单位')
-          .refine((v) => (USAGE_STEP_OPTIONS as readonly number[]).includes(v), `计费单位只能是 ${USAGE_STEP_OPTIONS.join(' / ')} 分钟`)
-          .default(DEFAULT_USAGE_STEP_MINUTES),
-        openFeeItemId: z.number().int().positive().nullable().default(null),
-      }),
+      z
+        .object({
+          feeItemId: z.number('请选择房费项目').int().positive('请选择房费项目'),
+          minMinutes: z
+            .number('请填写起步时长')
+            .int('起步时长要是整数分钟')
+            .min(0, '起步时长不能是负数')
+            .max(MAX_USAGE_MIN_MINUTES, `起步时长最多 ${MAX_USAGE_MIN_MINUTES} 分钟`)
+            .default(DEFAULT_USAGE_MIN_MINUTES),
+          stepMinutes: z
+            .number('请选择计费单位')
+            .refine((v) => (USAGE_STEP_OPTIONS as readonly number[]).includes(v), `计费单位只能是 ${USAGE_STEP_OPTIONS.join(' / ')} 分钟`)
+            .default(DEFAULT_USAGE_STEP_MINUTES),
+          openFeeItemId: z.number().int().positive().nullable().default(null),
+          // 8.2.20 加钟价（分，每个计费单位）：设了就是「基础价含起步时长 + 加钟」
+          extraPrice: z.number('加钟价不正确').int('加钟价不正确').min(1, '加钟价要大于 0').max(10_000_000, '加钟价太大').nullable().default(null),
+        })
+        .transform(({ extraPrice, ...p }) => (extraPrice === null ? p : { ...p, extraPrice })),
     )
     .optional(),
+  /** 8.2.20 在「休闲娱乐」页上的业态；不带时保留原来的 */
+  leisureTypes: z.array(z.string().trim().min(1).max(MAX_BUSINESS_TYPE)).max(20).optional(),
 });
 
 async function saveUsageRules(deps: Deps, raw: unknown, ctx: OpContext) {
@@ -111,7 +119,12 @@ async function saveUsageRules(deps: Deps, raw: unknown, ctx: OpContext) {
     (cur) => {
       const pricing = next.pricing ?? cur.pricing;
       // 不再是开单即占用的业态，计费一起去掉
-      return { businessTypes: next.businessTypes, pricing: Object.fromEntries(Object.entries(pricing).filter(([t]) => next.businessTypes.includes(t))) };
+      const leisure = [...new Set(next.leisureTypes ?? cur.leisureTypes ?? [])].filter((t) => next.businessTypes.includes(t));
+      return {
+        businessTypes: next.businessTypes,
+        pricing: Object.fromEntries(Object.entries(pricing).filter(([t]) => next.businessTypes.includes(t))),
+        ...(leisure.length ? { leisureTypes: leisure } : {}),
+      };
     },
     ctx,
   );
@@ -137,7 +150,14 @@ export async function usagePricingViews(db: Db, rules: UsageRules): Promise<Map<
   for (const [type, p] of entries) {
     const hourPrice = price(p.feeItemId);
     if (hourPrice === null) continue;
-    out.set(type, { itemName: items.get(p.feeItemId)!.name, hourPrice, minMinutes: p.minMinutes, stepMinutes: p.stepMinutes, openFee: price(p.openFeeItemId) ?? 0 });
+    out.set(type, {
+      itemName: items.get(p.feeItemId)!.name,
+      hourPrice,
+      minMinutes: p.minMinutes,
+      stepMinutes: p.stepMinutes,
+      openFee: price(p.openFeeItemId) ?? 0,
+      extraPrice: p.extraPrice ?? null,
+    });
   }
   return out;
 }
@@ -158,9 +178,9 @@ async function readUsages(db: Db, where: { id?: number; date?: string; spaceId?:
     SELECT u.id, u.usage_no, u.space_id, sp.code AS space_code, sp.display_name AS space_name, sp.business_type,
            u.visit_id, h.code AS tag_code, v.status AS visit_status, u.guests, u.note, u.status, u.business_date::text AS business_date,
            u.opened_at, so.display_name AS opened_by_name, u.closed_at, sc.display_name AS closed_by_name, u.close_kind, u.close_reason,
-           (SELECT l.amount FROM space_usage_charges c JOIN bill_lines l ON l.id = c.line_id WHERE c.usage_id = u.id AND c.kind = 'fee') AS fee_amount,
+           (SELECT sum(l.amount)::int FROM space_usage_charges c JOIN bill_lines l ON l.id = c.line_id WHERE c.usage_id = u.id AND c.kind IN ('fee', 'extra')) AS fee_amount,
            (SELECT l.amount FROM space_usage_charges c JOIN bill_lines l ON l.id = c.line_id WHERE c.usage_id = u.id AND c.kind = 'open_fee') AS open_fee,
-           (SELECT c.charged_minutes FROM space_usage_charges c WHERE c.usage_id = u.id AND c.kind = 'fee') AS charged_minutes
+           (SELECT sum(c.charged_minutes)::int FROM space_usage_charges c WHERE c.usage_id = u.id AND c.kind IN ('fee', 'extra')) AS charged_minutes
     FROM space_usages u JOIN spaces sp ON sp.id = u.space_id JOIN visits v ON v.id = u.visit_id JOIN hand_tags h ON h.id = v.tag_id
     JOIN staff so ON so.id = u.opened_by LEFT JOIN staff sc ON sc.id = u.closed_by
     WHERE ${where.id !== undefined ? db`u.id = ${where.id}` : db`true`}
@@ -203,6 +223,7 @@ export async function usageBoard(db: Db): Promise<UsageBoard> {
   const open = new Map((await readUsages(db, { openOnly: true })).map((u) => [u.spaceId, u]));
   return {
     businessTypes: rules.businessTypes,
+    leisureTypes: rules.leisureTypes ?? [],
     spaces: spaces.map((sp) => ({ ...sp, priced: pricingOf(rules, sp.businessType) !== null, pricing: views.get(sp.businessType) ?? null, usage: open.get(sp.id) ?? null })),
   };
 }
@@ -412,9 +433,37 @@ async function chargeUsage(
     return { item, tier, price };
   };
   const feeItem = priceOf(pricing.feeItemId, '房费');
-  const fee = usageFee(minutes, pricing, feeItem.price);
-  const lines: { kind: 'fee' | 'open_fee'; itemId: number; tier: string; name: string; unitPrice: number; quantity: number; amount: number; charged: number }[] = [];
-  if (fee.amount > 0) {
+  const lines: { kind: 'fee' | 'open_fee' | 'extra'; itemId: number; tier: string; name: string; unitPrice: number; quantity: number; amount: number; charged: number }[] = [];
+  // 8.2.20 基础价 + 加钟：基础价一条（含起步时长），起步以后的加钟另一条（数量 = 几个计费单位，超过 99 合成一行）
+  const block = pricing.extraPrice != null ? blockUsageFee(minutes, pricing, feeItem.price, pricing.extraPrice) : null;
+  const fee = block ? { amount: block.amount, chargedMinutes: block.chargedMinutes } : usageFee(minutes, pricing, feeItem.price);
+  if (block) {
+    if (block.basePrice > 0) {
+      lines.push({
+        kind: 'fee',
+        itemId: feeItem.item.id,
+        tier: feeItem.tier,
+        name: usageLineName(usage.businessType, usage.spaceCode, `${durationText(pricing.minMinutes)}`),
+        unitPrice: block.basePrice,
+        quantity: 1,
+        amount: block.basePrice,
+        charged: pricing.minMinutes,
+      });
+    }
+    if (block.extraAmount > 0) {
+      const perStep = block.extraSteps <= 99;
+      lines.push({
+        kind: 'extra',
+        itemId: feeItem.item.id,
+        tier: feeItem.tier,
+        name: usageLineName(usage.businessType, usage.spaceCode, perStep ? `加钟（每 ${pricing.stepMinutes} 分钟）` : `加钟（${durationText(block.extraSteps * pricing.stepMinutes)}）`),
+        unitPrice: perStep ? pricing.extraPrice! : block.extraAmount,
+        quantity: perStep ? block.extraSteps : 1,
+        amount: block.extraAmount,
+        charged: block.extraSteps * pricing.stepMinutes,
+      });
+    }
+  } else if (fee.amount > 0 && 'steps' in fee) {
     // 数量最多 99：超长的（计费单位很小、用了一整天）合成一行
     const perStep = fee.steps <= 99 && fee.unitPrice > 0;
     lines.push({
@@ -453,7 +502,7 @@ async function chargeUsage(
       RETURNING id`;
     await tx`
       INSERT INTO space_usage_charges (usage_id, kind, line_id, minutes, charged_minutes)
-      VALUES (${usage.id}, ${l.kind}, ${row!.id}, ${l.kind === 'fee' ? minutes : 0}, ${l.charged})`;
+      VALUES (${usage.id}, ${l.kind}, ${row!.id}, ${l.kind === 'open_fee' ? 0 : minutes}, ${l.charged})`;
   }
   if (lines.length > 0) {
     const total = lines.reduce((s, l) => s + l.amount, 0);
