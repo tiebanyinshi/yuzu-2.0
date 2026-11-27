@@ -113,3 +113,18 @@ describe('待催与沽清一键恢复', () => {
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/kitchen/limits/restore-all', {})).body.restored).toBe(0);
   });
 });
+
+describe('杯贴', () => {
+  it('一单一杯一张：品名、第几杯、桌号；没有这一单的 404', async () => {
+    const p = await order(2);
+    const [k] = await ctx.sql<{ orderNo: string }[]>`SELECT order_no FROM kitchen_items WHERE id = ${p.id}`;
+    const r = await api(ctx.app, ctx.clerk, 'GET', `/api/dining/cup-labels/${k!.orderNo}`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ orderNo: k!.orderNo, where: '桌 A1', total: 2, pickupNo: null });
+    expect(r.body.labels.map((l: { name: string; seq: number }) => [l.name, l.seq])).toEqual([
+      ['虾饺', 1],
+      ['虾饺', 2],
+    ]);
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/dining/cup-labels/NO-SUCH')).status).toBe(404);
+  });
+});

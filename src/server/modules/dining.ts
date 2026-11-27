@@ -369,7 +369,7 @@ const ITEM_COLUMNS = (db: Db) => db`
   coalesce(m.name, nullif(v.guest_label, ''), tm.name, nullif(ts.guest_label, ''), '散客') AS guest, k.item_id, bl.name,
   k.quantity, k.note, k.deliver_to, k.parts, k.status, k.station_id, s.name AS station_name, k.rush_count, k.created_at, k.started_at, k.done_at, k.served_at,
   p.display_name AS posted_by_name, coalesce(v.status, ts.status) <> 'open' AS visit_closed, k.order_note, k.deliver_room,
-  k.hold, k.urgent, k.takeaway, k.served_qty`;
+  k.hold, k.urgent, k.takeaway, k.served_qty, (SELECT si.dining_outlet FROM service_items si WHERE si.id = k.item_id) AS outlet`;
 const ITEM_FROM = (db: Db) => db`
   kitchen_items k JOIN kitchen_stations s ON s.id = k.station_id
   JOIN bill_lines bl ON bl.id = k.bill_line_id

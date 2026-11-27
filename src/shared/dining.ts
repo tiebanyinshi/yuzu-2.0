@@ -278,6 +278,8 @@ export interface KitchenItem {
   urgent?: boolean;
   takeaway?: boolean;
   servedQty?: number;
+  /** 8.2.30：菜品的点单分类（餐厅 / 水吧 / 果吧）；手工的临时项目为空。水吧的出品单能打杯贴 */
+  outlet?: DiningOutlet | null;
   /** 整单备注、送达房号（8.1.15 块 B3；没有的为空） */
   orderNote: string;
   deliverRoom: string;
@@ -737,4 +739,16 @@ export interface DiningGroupSummary {
   }[];
   quantity: number;
   amount: number;
+}
+
+/** 杯贴（8.2.30，CM-21）：一单的饮品一杯一张 */
+export interface CupLabels {
+  orderNo: string;
+  /** 8.2.19 水吧的取餐号；没有为 null */
+  pickupNo: number | null;
+  /** 「手牌 A012」「桌 A1」 */
+  where: string;
+  createdAt: string;
+  total: number;
+  labels: { name: string; note: string; seq: number }[];
 }

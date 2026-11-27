@@ -19,10 +19,6 @@
 - [`CONVENTIONS.md`](CONVENTIONS.md)：开发约定（专题）
 - [`TESTING.md`](TESTING.md)：测试与 CI（飞书需求 RQ-008，v0.7.18 定稿；2026-11-20 改成按改动与风险挑选，见第 6 节）
 - [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
-- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
-- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
-- [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
-- [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
@@ -48,8 +44,6 @@
 - [`CONCIERGE_LINKS.md`](CONCIERGE_LINKS.md)：管家部与会员、资源系统联动
 - [`CONTRACTS.md`](CONTRACTS.md)：合同与法务审查（v0.7.31）
 - [`COUPONS.md`](COUPONS.md)：券与会员权益（v0.7.20，飞书需求 RQ-006 后半；定稿）
-- [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
-- [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
 - [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
 - [`DB_REVIEW_V8147.md`](DB_REVIEW_V8147.md)：数据库 Schema 评估与整改（8.1.47）
 - [`DESKS_V8115.md`](DESKS_V8115.md)：8.1.15 · 前台拆成发卡台与收银台

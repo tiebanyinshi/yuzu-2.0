@@ -31,6 +31,7 @@ import { kitchenKey, tablesKey, menuKey, useKitchenBoard, useServerNow } from '.
 import { OutletFilter } from './slots';
 import { kitchenCards, PartTicket, PartTicketsLine } from './KitchenParts';
 import { DishFlagBadges } from './DishFlags';
+import { PrintButton } from '../print/PrintButton';
 
 type Action = 'start' | 'done' | 'serve' | 'undo';
 
@@ -360,8 +361,13 @@ function Ticket({ k, now, warnMinutes, showStation, children }: { k: KitchenItem
           </Badge>
         )}
         {k.visitClosed && <Badge tone="ember">{k.tableName !== null ? '这桌已结账' : '客人已结账'}</Badge>}
-        {/* 8.2.30：等叫、加急、打包、分次上了几份 */}
+        {/* 8.2.30：等叫、加急、打包、分次上了几份；水吧的饮品能打杯贴（一单一杯一张） */}
         <DishFlagBadges p={k} />
+        {k.outlet === 'water' && (
+          <PrintButton path={`/print/cup-labels/${encodeURIComponent(k.orderNo)}`} size="sm" testId={`kds-cup-labels-${k.id}`}>
+            杯贴
+          </PrintButton>
+        )}
         <span className="flex flex-1 flex-wrap justify-end gap-1.5">{children}</span>
       </div>
     </div>

@@ -64,6 +64,7 @@ const AdminShell = lazyPage(() => import('./features/admin/AdminShell').then((m)
 const CheckoutPrintPage = lazyPage(() => import('./features/print/CheckoutPrintPage').then((m) => m.CheckoutPrintPage));
 const ContractPrintPage = lazyPage(() => import('./features/print/ContractPrintPage').then((m) => m.ContractPrintPage));
 const RefundPrintPage = lazyPage(() => import('./features/print/RefundPrintPage').then((m) => m.RefundPrintPage));
+const CupLabelsPrintPage = lazyPage(() => import('./features/print/CupLabelsPrintPage').then((m) => m.CupLabelsPrintPage));
 const PrebillPrintPage = lazyPage(() => import('./features/print/PrebillPrintPage').then((m) => m.PrebillPrintPage));
 const SettlementPrintPage = lazyPage(() => import('./features/print/SettlementPrintPage').then((m) => m.SettlementPrintPage));
 const CanteenCardsPrintPage = lazyPage(() => import('./features/canteen/CardsPrintPage').then((m) => m.CanteenCardsPrintPage));
@@ -340,6 +341,8 @@ const router = createBrowserRouter([
     children: [
       { path: 'checkout/:id', element: <CheckoutPrintPage /> },
       { path: 'refund/:id', element: <RefundPrintPage /> },
+      // 杯贴（8.2.30）：一单的饮品一杯一张
+      { path: 'cup-labels/:orderNo', element: <CupLabelsPrintPage /> },
       // 收银台「打单」（8.1.44）：几张手牌的预结单
       { path: 'prebill/:ids', element: <PrebillPrintPage /> },
       // 客诉台账（8.2.3，A4）

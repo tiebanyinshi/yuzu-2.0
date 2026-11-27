@@ -5,13 +5,15 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { guard } from '../auth/guard';
+import type { CupLabels } from '@shared/dining';
+import { guard, guardAny } from '../auth/guard';
+import type { Db } from '../db';
 import { writeAudit } from '../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../lib/context';
-import { conflict } from '../lib/errors';
+import { conflict, notFound } from '../lib/errors';
 import { currentStoreId } from '../lib/store-context';
 import { parse } from '../lib/validate';
-import { businessDate, setTxTimeouts } from './frontdesk/common';
+import { businessDate, setTxTimeouts } from './frontdesk/index';
 import { kitchenBoard } from './dining';
 
 const FlagsInput = z
@@ -94,7 +96,41 @@ export async function restoreAllLimits(deps: Deps, ctx: OpContext): Promise<{ re
   });
 }
 
+/**
+ * 杯贴（CM-21）：一单的饮品一杯一张——品名、做法与备注、第几杯、取餐号（8.2.19 水吧的取餐号，有的话）、手牌或桌号、下单时刻。
+ * 只读；页面用浏览器打印（贴纸打印机当普通打印机用），退了的不打
+ */
+export async function cupLabels(db: Db, orderNo: string): Promise<CupLabels> {
+  const rows = await db<{ name: string; note: string; quantity: number; tagCode: string | null; tableName: string | null; createdAt: Date; outlet: string | null }[]>`
+    SELECT bl.name, k.note, k.quantity, h.code AS tag_code, dt.name AS table_name, k.created_at,
+           (SELECT si.dining_outlet FROM service_items si WHERE si.id = k.item_id) AS outlet
+    FROM kitchen_items k JOIN bill_lines bl ON bl.id = k.bill_line_id
+    LEFT JOIN visits v ON v.id = k.visit_id LEFT JOIN hand_tags h ON h.id = v.tag_id
+    LEFT JOIN table_sessions ts ON ts.id = k.table_session_id LEFT JOIN dining_tables dt ON dt.id = ts.table_id
+    WHERE k.order_no = ${orderNo} AND k.store_id = ${currentStoreId()} AND k.status <> 'cancelled'
+    ORDER BY k.id`;
+  if (!rows.length) throw notFound('这一单没有能打杯贴的饮品');
+  // 一单里有水吧的饮品就只打水吧的（同一单可能还点了菜）；都没设点单分类的照全部打
+  const drinks = rows.some((r) => r.outlet === 'water') ? rows.filter((r) => r.outlet === 'water') : rows;
+  const [p] = await db<{ pickupNo: number }[]>`SELECT pickup_no FROM pickup_tickets WHERE order_no = ${orderNo}`;
+  const total = drinks.reduce((n, r) => n + r.quantity, 0);
+  const labels: CupLabels['labels'] = [];
+  for (const r of drinks) for (let i = 0; i < r.quantity; i += 1) labels.push({ name: r.name, note: r.note, seq: labels.length + 1 });
+  const first = drinks[0]!;
+  return {
+    orderNo,
+    pickupNo: p ? Number(p.pickupNo) : null,
+    where: first.tableName ? `桌 ${first.tableName}` : first.tagCode ? `手牌 ${first.tagCode}` : '',
+    createdAt: new Date(first.createdAt).toISOString(),
+    total,
+    labels,
+  };
+}
+
 export function registerDiningV8230Routes(app: FastifyInstance, deps: Deps) {
+  app.get('/api/dining/cup-labels/:orderNo', { preHandler: guardAny('dining.kitchen', 'dining.order') }, async (req) =>
+    cupLabels(deps.sql, parse(z.object({ orderNo: z.string().trim().min(1).max(40) }), req.params).orderNo),
+  );
   app.post('/api/dining/items/flags', { preHandler: guard('dining.order') }, async (req) => setKitchenFlags(deps, req.body, ctxOf(req)));
   app.post('/api/kitchen/limits/restore-all', { preHandler: guard('dining.kitchen') }, async (req) => {
     const r = await restoreAllLimits(deps, ctxOf(req));
