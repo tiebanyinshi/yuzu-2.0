@@ -67,6 +67,8 @@ export type AuditAction =
   | 'gf_payment'
   | 'gf_expense'
   | 'gf_hr'
+  // 8.2.15 业财法「流程与阈值」：改阈值、存 / 清除某类事项的流程（带改前改后）
+  | 'gf_config'
   | 'oa_payroll_reminded'
   | 'position_chosen'
   | 'member_created'

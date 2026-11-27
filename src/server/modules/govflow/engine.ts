@@ -56,6 +56,13 @@ export interface FlowRow {
   currentLevel: number;
   status: GfFlowStatus;
   submittedBy: number;
+  /** 提交时的审批人快照（8.2.14，WB2）；旧单为空，实时取 */
+  seatSnapshot: SeatSnapshot | null;
+}
+
+export interface SeatSnapshot {
+  members: Partial<Record<GfRole, number[]>>;
+  deptHeadId: number | null;
 }
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -98,8 +105,10 @@ export async function latestFlow(db: Db, docId: number, lock = false): Promise<F
  *   · ccRoles：通过后知会谁（不给就是董事长、业态总经理、财总、CFO）。
  */
 export interface TypeHooks {
-  /** 审批链模板（各类事项自己定） */
-  template?: (doc: DocRow) => GfNode[];
+  /** 审批链模板（各类事项自己定；要读设置的可以是异步的） */
+  template?: (doc: DocRow, db: Db) => GfNode[] | Promise<GfNode[]>;
+  /** 店主改了这类事项的流程（8.2.15）也照样追加在最后的节点：零星采购超额的财总＋CFO 合并特批 */
+  fixedNodes?: (doc: DocRow) => GfNode[];
   beforeApprove?: (tx: Tx, doc: DocRow, flow: FlowRow, ctx: { level: number; final: boolean; actor: Actor; extra: unknown }) => Promise<void>;
   approved?: (tx: Tx, doc: DocRow, actor: Actor) => Promise<void>;
   ended?: (tx: Tx, doc: DocRow, outcome: 'returned' | 'rejected' | 'withdrawn', actor: Actor) => Promise<void>;
@@ -116,6 +125,33 @@ export function registerHooks(docType: string, hooks: TypeHooks) {
   HOOKS.set(docType, hooks);
 }
 export const hooksOf = (docType: string): TypeHooks => HOOKS.get(docType) ?? {};
+
+// ───────────────────────── 店主改的流程（8.2.15） ─────────────────────────
+
+export interface FlowConfigRow {
+  version: number;
+  enabled: boolean;
+  nodes: GfNode[] | null;
+  ccRoles: GfRole[] | null;
+  note: string;
+  createdBy: number;
+  createdAt: Date;
+}
+
+/** 这类事项现在生效的自定义流程：最新的一版，清除了的（enabled = false）返回空，用内置的 */
+export async function activeFlowConfig(db: Db, docType: string): Promise<FlowConfigRow | null> {
+  const [r] = await db<FlowConfigRow[]>`
+    SELECT version, enabled, nodes, cc_roles, note, created_by, created_at FROM gf_flow_configs WHERE doc_type = ${docType} ORDER BY version DESC LIMIT 1`;
+  return r && r.enabled ? { ...r, createdBy: Number(r.createdBy) } : null;
+}
+
+/** 通过后知会谁：店主设了知会角色的按设的，否则按这类事项自己的，都没有的是董事长、业态总经理、财总、CFO */
+export async function ccRolesFor(db: Db, doc: DocRow): Promise<readonly GfRole[] | undefined> {
+  const cfg = await activeFlowConfig(db, doc.docType);
+  if (cfg?.ccRoles) return cfg.ccRoles;
+  const hooks = hooksOf(doc.docType);
+  return typeof hooks.ccRoles === 'function' ? hooks.ccRoles(doc) : hooks.ccRoles;
+}
 
 // ───────────────────────── 角色与部门负责人 ─────────────────────────
 
@@ -142,10 +178,29 @@ export async function deptHeadOf(db: Db, departmentId: number | null): Promise<n
   return num(d?.headId);
 }
 
+/**
+ * 这一轮各席谁能坐（8.2.14，WB2 方案 A）：按提交时的快照，改角色映射不影响在途单。
+ * 快照里的人停用了（离职）：这一席没有在用的人时，改按现在的映射取，免得单子卡死；旧单没有快照的照旧实时取。
+ */
 export async function seatContext(db: Db, doc: DocRow, flow: FlowRow): Promise<SeatContext> {
+  const live = await loadMembers(db, doc.entityId);
+  const liveHead = await deptHeadOf(db, doc.departmentId);
+  const snap = flow.seatSnapshot;
+  let members = live;
+  let deptHeadId = liveHead;
+  if (snap) {
+    const ids = [...new Set([...Object.values(snap.members).flat(), ...(snap.deptHeadId ? [snap.deptHeadId] : [])])].map(Number);
+    const active = new Set(ids.length ? (await db<{ id: number }[]>`SELECT id FROM staff WHERE id IN ${db(ids)} AND active`).map((r) => Number(r.id)) : []);
+    members = {};
+    for (const role of new Set([...Object.keys(snap.members), ...Object.keys(live)]) as Set<GfRole>) {
+      const kept = (snap.members[role] ?? []).map(Number).filter((id) => active.has(id));
+      members[role] = kept.length ? kept : (live[role] ?? []);
+    }
+    deptHeadId = snap.deptHeadId && active.has(Number(snap.deptHeadId)) ? Number(snap.deptHeadId) : liveHead;
+  }
   return {
-    members: await loadMembers(db, doc.entityId),
-    deptHeadId: await deptHeadOf(db, doc.departmentId),
+    members,
+    deptHeadId,
     performerId: doc.performerId,
     submittedBy: flow.submittedBy,
     subjectStaffId: doc.subjectStaffId,
@@ -257,6 +312,59 @@ async function notifyTodo(tx: Tx, doc: DocRow, flow: FlowRow, ctx: SeatContext) 
   });
 }
 
+export interface ApproverProblem {
+  code: 'GF_NO_APPROVER' | 'GF_COSIGN_SAME';
+  message: string;
+  seat?: string;
+}
+
+/**
+ * 一级里每一席都要不同的人坐（同意时一个人在一级里只坐一席）：按「席位 → 能坐的人」求最多能同时坐满几席（二分图最大匹配，增广路）。
+ * 只看候选人并集的人数不够：财务、法务都只有甲、人事有乙丙时并集三人，但财务、法务坐不满（8.2.15）。
+ */
+export function maxDistinctSeats(pools: readonly (readonly number[])[]): number {
+  const holder = new Map<number, number>(); // 人 → 坐的席位下标
+  const tryAssign = (seat: number, seen: Set<number>): boolean => {
+    for (const id of pools[seat]!) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const other = holder.get(id);
+      if (other === undefined || tryAssign(other, seen)) {
+        holder.set(id, seat);
+        return true;
+      }
+    }
+    return false;
+  };
+  let filled = 0;
+  for (let i = 0; i < pools.length; i += 1) if (tryAssign(i, new Set())) filled += 1;
+  return filled;
+}
+
+/**
+ * 排好的链里哪几级现在没人能审（回避以后）：提交时拿第一条报错（GF_NO_APPROVER / GF_COSIGN_SAME），
+ * 「流程与阈值 → 试算」全部列出来当提示（8.2.15）。部门负责人、履约执行人本人发起的那一级视同已确认，不算。
+ */
+export function approverProblems(nodes: readonly GfNode[], ctx: SeatContext): ApproverProblem[] {
+  const out: ApproverProblem[] = [];
+  for (const node of nodes) {
+    for (const seat of seatsOf(node)) {
+      const selfSkip = (seat === 'dept_head' && ctx.deptHeadId === ctx.submittedBy) || (seat === 'performer' && ctx.performerId === ctx.submittedBy);
+      if (selfSkip) continue;
+      const pool = seat === 'dept_head' ? (ctx.deptHeadId ? [ctx.deptHeadId] : []) : seat === 'performer' ? (ctx.performerId ? [ctx.performerId] : []) : (ctx.members[seat] ?? []);
+      if (!pool.some((id) => seatsFor(node, id, ctx).includes(seat as never))) {
+        out.push({ code: 'GF_NO_APPROVER', message: `「${seatLabel(seat)}」现在没有可以审批的人（没有配角色或都要回避），请店主在「业财法 → 角色映射」里配好再提交`, seat });
+      }
+    }
+    // 会签 / 并行分审要不同的人坐每一席
+    if (node.kind === 'all') {
+      const pools = node.roles.map((r) => (ctx.members[r] ?? []).filter((id) => seatsFor(node, id, ctx).includes(r)));
+      if (maxDistinctSeats(pools) < node.roles.length) out.push({ code: 'GF_COSIGN_SAME', message: `「${nodeLabel(node)}」要 ${node.roles.length} 个不同的人审批，现在配的人不够` });
+    }
+  }
+  return out;
+}
+
 /**
  * 提交（或退回后再提交）：按模板排链、开新一轮。调用方已锁住事项一行、核对过是提交人本人。
  * 驳回的不能再提交（驳回 = 不通过，要重新发起）；撤回的不能再提交；在审的不能重复提交。
@@ -279,26 +387,16 @@ export async function submitFlow(tx: Tx, doc: DocRow, template: GfNode[], actor:
   const plan = planFlow(template, { members, deptHeadId, performerId: doc.performerId, submittedBy: actor.id, subjectStaffId: doc.subjectStaffId, flags: doc.flags });
   // 每一级都要有人能审（回避以后），没人的不让提交：避免卡在半路
   const ctx: SeatContext = { members, deptHeadId, performerId: doc.performerId, submittedBy: actor.id, subjectStaffId: doc.subjectStaffId };
-  for (const node of plan.nodes) {
-    for (const seat of seatsOf(node)) {
-      const selfSkip = (seat === 'dept_head' && deptHeadId === actor.id) || (seat === 'performer' && doc.performerId === actor.id);
-      if (selfSkip) continue;
-      const pool = seat === 'dept_head' ? (deptHeadId ? [deptHeadId] : []) : seat === 'performer' ? (doc.performerId ? [doc.performerId] : []) : (members[seat] ?? []);
-      if (!pool.some((id) => seatsFor(node, id, ctx).includes(seat as never))) {
-        throw unprocessable('GF_NO_APPROVER', `「${seatLabel(seat)}」现在没有可以审批的人（没有配角色或都要回避），请店主在「业财法 → 角色映射」里配好再提交`, { seat });
-      }
-    }
-    // 会签 / 并行分审要不同的人坐每一席
-    if (node.kind === 'all') {
-      const pools = node.roles.map((r) => (members[r] ?? []).filter((id) => seatsFor(node, id, ctx).includes(r)));
-      const union = new Set(pools.flat());
-      if (union.size < node.roles.length) throw unprocessable('GF_COSIGN_SAME', `「${nodeLabel(node)}」要 ${node.roles.length} 个不同的人审批，现在配的人不够`);
-    }
-  }
+  const problem = approverProblems(plan.nodes, ctx)[0];
+  if (problem) throw unprocessable(problem.code, problem.message, problem.seat ? { seat: problem.seat } : undefined);
   const round = (last?.round ?? 0) + 1;
+  // 用的是店主设置的哪一版流程（8.2.15；内置的为空），写在这一轮上：之后再改流程不影响这一轮
+  const cfg = await activeFlowConfig(tx, doc.docType);
+  const configVersion = cfg?.nodes ? cfg.version : null;
+  if (configVersion !== null) plan.notes.unshift(`按「流程与阈值」里设置的流程（第 ${configVersion} 版）`);
   const [row] = await tx<FlowRow[]>`
-    INSERT INTO gf_flows (doc_id, round, nodes, notes, submitted_by)
-    VALUES (${doc.id}, ${round}, ${tx.json(plan.nodes as never)}, ${plan.notes}, ${actor.id})
+    INSERT INTO gf_flows (doc_id, round, nodes, notes, submitted_by, seat_snapshot, config_version)
+    VALUES (${doc.id}, ${round}, ${tx.json(plan.nodes as never)}, ${plan.notes}, ${actor.id}, ${tx.json({ members, deptHeadId } as never)}, ${configVersion})
     RETURNING *`;
   const flow = flowOf(row!);
   const r = await advance(tx, doc, flow, ctx, actor.id);
@@ -368,7 +466,14 @@ export async function actFlow(tx: Tx, doc: DocRow, actor: Actor, input: { action
 // ───────────────────────── 知会 ─────────────────────────
 
 /** 审批通过以后知会董事长、业态总经理、财总、CFO（已在审批链里出过结论的、提交人不重复知会） */
+/** 报销类（8.2.17，《业财法审批与 WCP 需求变更》7.3 第 3 条）：通过前至少要有一条有人同意的审批记录（节点、审批人、时间、动作），全是自动跳过的不放行 */
+const NEEDS_HUMAN_APPROVAL = new Set(['expense', 'travel', 'entertain']);
+
 async function onApproved(tx: Tx, doc: DocRow, flow: FlowRow, actor: Actor) {
+  if (NEEDS_HUMAN_APPROVAL.has(doc.docType)) {
+    const [a] = await tx`SELECT 1 FROM gf_flow_actions WHERE flow_id = ${flow.id} AND action = 'approve' LIMIT 1`;
+    if (!a) throw unprocessable('GF_NO_APPROVAL_RECORD', '报销至少要有一位审批人同意才能通过（不能全部自动跳过），请店主在「业财法 → 角色映射」里配好审批人');
+  }
   const hooks = hooksOf(doc.docType);
   await hooks.approved?.(tx, doc, actor);
   await notify(tx, [flow.submittedBy], {
@@ -378,8 +483,7 @@ async function onApproved(tx: Tx, doc: DocRow, flow: FlowRow, actor: Actor) {
     link: `/oa/gov/${doc.id}`,
     ref: { type: 'gf_doc', id: doc.id },
   });
-  const roles = typeof hooks.ccRoles === 'function' ? hooks.ccRoles(doc) : hooks.ccRoles;
-  await addCc(tx, doc, { reason: '审批通过', special: false, actorId: actor.id, roles });
+  await addCc(tx, doc, { reason: '审批通过', special: false, actorId: actor.id, roles: await ccRolesFor(tx, doc) });
 }
 
 /** 写知会（同一事项同一人只一次）；即时的马上发站内信，其他的等日报 */

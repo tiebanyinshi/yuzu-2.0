@@ -1,5 +1,5 @@
 // 业财法审批（店主 2026-11-26，docs/APPROVAL_V4.md）：WCP →「业财法审批」。
-//   /oa/gov            待我审批 / 我发起 / 知会我 / 全部（店主、内控、董事长）/ 微信特批 / 角色映射（店主）
+//   /oa/gov            待我审批 / 我发起 / 知会我 / 全部（店主、内控、董事长）/ 微信特批 / 角色映射、流程与阈值（店主）
 //   /oa/gov/:id        事项详情：审批链每一级（会签、并行分审显示还等谁）、同意 / 退回 / 驳回、知会、特批、执行
 // 手机、电脑同一页面、同一套接口。
 
@@ -19,8 +19,6 @@ import {
   type GfFilePurpose,
   type GfFlag,
   type GfMeta,
-  type GfRole,
-  type GfRoleMember,
   type GfSpecialView,
   type GfStatus,
 } from '@shared/govflow';
@@ -40,8 +38,11 @@ import { ContractPanel, ContractsPanel } from './ContractPages';
 import { PaymentPanel, PaymentsPanel } from './PaymentPages';
 import { ExpensePanel } from './ExpensePages';
 import { HrBatchPanel, HrPanel } from './HrPages';
+import { RolesPanel } from './RolesPanel';
+import { RangeExport } from '../../components/RangeExport';
+import { FlowConfigPanel } from './FlowConfigPanel';
 
-type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'expense' | 'hr' | 'roles';
+type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'expense' | 'hr' | 'roles' | 'config';
 const STATUS_TONE: Record<GfStatus, 'neutral' | 'pine' | 'moss' | 'yuzu' | 'ember' | 'clay' | 'lake' | 'ink'> = {
   draft: 'neutral',
   reviewing: 'lake',
@@ -85,7 +86,12 @@ function GovHome() {
     { value: 'payments', label: '付款' },
     { value: 'expense', label: '报销出差用印' },
     { value: 'hr', label: 'HR 付款与分摊' },
-    ...(meta.data?.canManageRoles ? [{ value: 'roles' as const, label: '角色映射' }] : []),
+    ...(meta.data?.canManageRoles
+      ? [
+          { value: 'roles' as const, label: '角色映射' },
+          { value: 'config' as const, label: '流程与阈值' },
+        ]
+      : []),
   ];
   return (
     <>
@@ -109,6 +115,10 @@ function GovHome() {
         </div>
         {box === 'roles' ? (
           <RolesPanel />
+        ) : box === 'config' ? (
+          meta.data ? (
+            <FlowConfigPanel meta={meta.data} />
+          ) : null
         ) : box === 'specials' ? (
           <SpecialsPanel />
         ) : box === 'suppliers' ? (
@@ -134,7 +144,10 @@ function GovHome() {
             <PettyPanel meta={meta.data} />
           ) : null
         ) : (
-          <DocList box={box} />
+          <>
+            {box === 'all' && <RangeExport href="/api/gf/export.xlsx" fileName="业财法事项.xlsx" testId="gf-export" />}
+            <DocList box={box} />
+          </>
         )}
       </div>
       {creating && meta.data && <NewDocDialog meta={meta.data} onClose={() => setCreating(false)} />}
@@ -522,6 +535,7 @@ function SpecialRows({ rows }: { rows: GfSpecialView[] }) {
               <span className="text-[14px] font-semibold text-ink">{s.title}</span>
               <Money cents={s.amountCents} className="text-[14px]" />
               {s.backfilledAt ? <Badge tone="moss">已补登</Badge> : <Badge tone={s.overdue ? 'clay' : 'ember'}>{s.overdue ? '补登逾期' : `待补登（${s.dueOn} 前）`}</Badge>}
+              {s.screenshotReusedIn.length > 0 && <Badge tone="yuzu">截图也用在 {s.screenshotReusedIn.join('、')}</Badge>}
             </p>
             <p className="text-[13px] text-ink-3">
               确认人 {s.confirmerNames.join('、')} · {formatDateTime(s.confirmedAt)} · 登记 {s.registeredByName}
@@ -569,22 +583,30 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
   const [b, setB] = useState<number | ''>('');
   const [payeeAccount, setPayeeAccount] = useState('');
   const [at, setAt] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16));
+  // 微信 OK 截图（8.2.16，WB6）：登记时必传
+  const [shot, setShot] = useState<File | null>(null);
   const cents = yuanToCents(amount);
   const m = useMutation({
-    mutationFn: () =>
-      api.post<GfSpecialView>('/api/gf/specials', {
-        clientKey,
-        docId,
-        title,
-        amountCents: cents,
-        reason,
-        confirmerIds: [a, b],
-        confirmedAt: new Date(at).toISOString(),
-        payeeAccount: payeeAccount || null,
-      }),
+    mutationFn: async () =>
+      api.post<GfSpecialView>(
+        '/api/gf/specials',
+        {
+          clientKey,
+          docId,
+          title,
+          amountCents: cents,
+          reason,
+          confirmerIds: [a, b],
+          confirmedAt: new Date(at).toISOString(),
+          payeeAccount: payeeAccount || null,
+          okScreenshot: { fileName: shot!.name.slice(0, 120), mime: shot!.type, base64: await readBase64(shot!) },
+        },
+        { timeoutMs: 120_000 },
+      ),
     onSuccess: (s) => {
       qc.invalidateQueries({ queryKey: ['gf'] });
-      toast({ tone: 'success', title: '已登记微信特批', body: `${s.specialNo}，请在 ${s.dueOn} 前补登` });
+      toast({ tone: 'success', title: '已登记微信特批', body: `${s.specialNo}，请在 ${s.dueOn} 前补登需求说明` });
+      if (s.screenshotReusedIn.length) toast({ tone: 'info', title: '这张 OK 截图也用在了别的特批上', body: `${s.screenshotReusedIn.join('、')}；请核对是不是同一次确认` });
       onClose();
     },
     onError: (e) => toast({ tone: 'error', title: '没有登记', body: errorMessage(e) }),
@@ -606,13 +628,18 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
       open
       onClose={onClose}
       title="登记微信特批"
-      description="紧急事项两人微信确认后在这里登记，1 个工作日内补登需求说明与 OK 截图；关联原事项的不重复审批"
+      description="紧急事项两人微信确认后在这里登记，同时上传微信里的 OK 截图；1 个工作日内补登需求说明；关联原事项的不重复审批"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button loading={m.isPending} disabled={!title.trim() || cents === null || reason.trim().length < 2 || !a || !b || a === b} onClick={() => m.mutate()} data-testid="gf-special-submit">
+          <Button
+            loading={m.isPending}
+            disabled={!title.trim() || cents === null || reason.trim().length < 2 || !a || !b || a === b || !shot}
+            onClick={() => m.mutate()}
+            data-testid="gf-special-submit"
+          >
             登记
           </Button>
         </>
@@ -635,6 +662,22 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
         </Field>
         <Field label="紧急原因" className="sm:col-span-2">
           <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
+        </Field>
+        <Field label="微信 OK 截图（必传，图片 5 MB 以内）" className="sm:col-span-2">
+          <label className="tap relative flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed border-line px-3 text-[14px] text-ink-2">
+            <Plus className="size-4" />
+            {shot ? shot.name : '选截图'}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="sr-only"
+              data-testid="gf-special-shot"
+              onChange={(e) => {
+                setShot(e.target.files?.[0] ?? null);
+                e.target.value = '';
+              }}
+            />
+          </label>
         </Field>
       </div>
     </Dialog>
@@ -669,6 +712,7 @@ function BackfillDialog({ special, onClose }: { special: GfSpecialView; onClose:
     onError: (e) => toast({ tone: 'error', title: '没有补登', body: errorMessage(e) }),
   });
   const has = (p: GfFilePurpose) => files.some((f) => f.purpose === p);
+  const needShot = !special.files.some((f) => f.purpose === 'ok_screenshot');
   const picker = (purpose: GfFilePurpose) => (
     <label className="tap relative flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed border-line px-3 text-[14px] text-ink-2">
       <Plus className="size-4" />加{GF_FILE_PURPOSE_LABELS[purpose]}（图片或 PDF，5 MB 以内）
@@ -690,13 +734,13 @@ function BackfillDialog({ special, onClose }: { special: GfSpecialView; onClose:
       open
       onClose={onClose}
       title={`补登 ${special.specialNo}`}
-      description="需求说明与 OK 截图各至少一份；补登不重复审批"
+      description={needShot ? '需求说明与 OK 截图各至少一份（这笔登记时没有截图）；补登不重复审批' : '需求说明至少一份（OK 截图登记时已传）；补登不重复审批'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button loading={m.isPending} disabled={!has('need') || !has('ok_screenshot')} onClick={() => m.mutate()} data-testid="gf-backfill-submit">
+          <Button loading={m.isPending} disabled={!has('need') || (needShot && !has('ok_screenshot'))} onClick={() => m.mutate()} data-testid="gf-backfill-submit">
             补登
           </Button>
         </>
@@ -704,7 +748,7 @@ function BackfillDialog({ special, onClose }: { special: GfSpecialView; onClose:
     >
       <div className="space-y-2">
         {picker('need')}
-        {picker('ok_screenshot')}
+        {needShot && picker('ok_screenshot')}
         {files.length > 0 && (
           <ul className="space-y-1 text-[13px] text-ink-2">
             {files.map((f, i) => (
@@ -720,83 +764,5 @@ function BackfillDialog({ special, onClose }: { special: GfSpecialView; onClose:
         <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="说明（选填）" maxLength={500} />
       </div>
     </Dialog>
-  );
-}
-
-// ───────────────────────── 角色映射 ─────────────────────────
-
-function RolesPanel() {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const meta = useMeta();
-  const q = useQuery({ queryKey: ['gf', 'roles'], queryFn: () => api.get<GfRoleMember[]>('/api/gf/roles') });
-  const [role, setRole] = useState<GfRole | ''>('');
-  const [staffId, setStaffId] = useState<number | ''>('');
-  const [entityId, setEntityId] = useState<number | ''>('');
-  const add = useMutation({
-    mutationFn: () => api.post<GfRoleMember[]>('/api/gf/roles', { role, staffId, entityId: entityId || null }),
-    onSuccess: (list) => {
-      qc.setQueryData(['gf', 'roles'], list);
-      qc.invalidateQueries({ queryKey: ['gf', 'meta'] });
-      setStaffId('');
-    },
-    onError: (e) => toast({ tone: 'error', title: '没有加上', body: errorMessage(e) }),
-  });
-  const revoke = useMutation({
-    mutationFn: (id: number) => api.post<GfRoleMember[]>(`/api/gf/roles/${id}/revoke`),
-    onSuccess: (list) => qc.setQueryData(['gf', 'roles'], list),
-    onError: (e) => toast({ tone: 'error', title: '没有撤销', body: errorMessage(e) }),
-  });
-  return (
-    <Card className="space-y-3 p-4" data-testid="gf-roles">
-      <p className="text-[13px] text-ink-2">把真实账号配成各个角色；店主不自动顶替这些角色。最高角色是董事长。按经营主体限定的只审那个主体的事项。</p>
-      <div className="grid gap-2 sm:grid-cols-4">
-        <Select value={role} onChange={(e) => setRole(e.target.value as GfRole | '')} data-testid="gf-role-role">
-          <option value="">角色</option>
-          {meta.data?.roles.map((r) => (
-            <option key={r.role} value={r.role}>
-              {r.label}
-            </option>
-          ))}
-        </Select>
-        <Select value={staffId} onChange={(e) => setStaffId(e.target.value ? Number(e.target.value) : '')} data-testid="gf-role-staff">
-          <option value="">员工</option>
-          {meta.data?.staff.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </Select>
-        <Select value={entityId} onChange={(e) => setEntityId(e.target.value ? Number(e.target.value) : '')}>
-          <option value="">所有经营主体</option>
-          {meta.data?.entities.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name}
-            </option>
-          ))}
-        </Select>
-        <Button disabled={!role || !staffId} loading={add.isPending} onClick={() => add.mutate()} data-testid="gf-role-add">
-          加上
-        </Button>
-      </div>
-      {q.isPending ? (
-        <Skeleton className="h-24" />
-      ) : (
-        <ul className="divide-y divide-line">
-          {(q.data ?? []).map((m) => (
-            <li key={m.id} className="flex items-center gap-2 py-2 text-[14px]">
-              <span className="w-40 shrink-0 font-semibold text-ink">{GF_ROLE_LABELS[m.role]}</span>
-              <span className="min-w-0 flex-1 text-ink-2">
-                {m.staffName}
-                {m.entityName ? ` · 限 ${m.entityName}` : ''}
-              </span>
-              <Button size="sm" variant="ghost" onClick={() => revoke.mutate(m.id)}>
-                撤销
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Card>
   );
 }

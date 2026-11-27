@@ -6,7 +6,7 @@
 --   · 实操签核（只追加）：带教逐项打勾、签「通过 / 再练」，不能给自己签；
 --   · 证书：完成学习地图自动发，可设有效期，管理员可以撤销并写原因；
 --   · 新权限 academy.coach（带教签核），建议权限给总经办与各部门负责人（与「本部门排班与考勤」同一批）。
--- 回滚：docs/rollback/601_academy_assess.down.sql。
+-- 回滚：docs/rollback/641_academy_assess.down.sql。
 
 CREATE TABLE academy_questions (
   id          bigserial PRIMARY KEY,

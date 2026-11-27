@@ -56,7 +56,7 @@ describe('分级（场景 1、2、33）', () => {
     expect(labels(x)).toEqual(['部门负责人', '财务审核人']);
     expect(x.payload.tier).toBe('basic');
   });
-  it('3,000.01 元或 51 件超出基础审核：只加审核内容（比价说明）不加层级', async () => {
+  it('3,000.01 元或 51 件超出基础审核：加审核内容（比价说明）不加层级，财务那一级升级由财总审（8.2.15，WB4）', async () => {
     const d = await dept('零星分级B');
     const no = await petty(c('gf_clerk'), d, { amountCents: yuan(3000) + 1 });
     expect(no.body.error.code).toBe('GF_QUOTE_REQUIRED');
@@ -64,7 +64,7 @@ describe('分级（场景 1、2、33）', () => {
     expect(qty.body.error.code).toBe('GF_QUOTE_REQUIRED');
     const ok = await petty(c('gf_clerk'), d, { amountCents: yuan(3000) + 1, quoteNote: '三家比价，最低一家' });
     const x = await doc(ok.body.docId);
-    expect(labels(x)).toEqual(['部门负责人', '财务审核人']);
+    expect(labels(x)).toEqual(['部门负责人', '财总']);
     expect(x.payload.tier).toBe('enhanced');
   });
   it('合同、工程、服务外包、预付款、固定资产不走零星快速通道', async () => {

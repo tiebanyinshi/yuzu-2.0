@@ -1,7 +1,7 @@
 -- 汤崎学堂第三批：课件与 AI（店主 2026-11-27，docs/ACADEMY.md 第 5、6、9 节，PENDING_DECISIONS XT10–XT12）：
 --   · 批量操作（导入内置课件包、从表格导入题、AI 出题）：一次一行，带操作编号与原请求摘要；没收到结果原样重提返回第一次的结果；
 --   · 问柚子：员工在课程里问的问题与回答（只按这门课的课件回答，记下引用了哪几个课时），每人每天有上限。
--- 回滚：docs/rollback/602_academy_content.down.sql。
+-- 回滚：docs/rollback/642_academy_content.down.sql。
 
 CREATE TABLE academy_bulk_ops (
   id           bigserial PRIMARY KEY,

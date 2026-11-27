@@ -10,7 +10,7 @@ import { todayIn } from '../src/server/modules/inventory/common';
 import { pettyAccountChecks } from '../src/server/modules/petty-accounts';
 import { createStaff } from '../src/server/modules/staff';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
-import { api, login, PASSWORD, setup, type TestContext } from './helpers';
+import { api, login, PASSWORD, setup, type TestContext, confirmSmallClaim } from './helpers';
 
 let ctx: TestContext;
 let today: string;
@@ -50,20 +50,24 @@ const advance = (amountCents: number, departmentId = deptId) =>
     method: 'wechat',
     evidence: '转账尾号 0042',
   });
-const claim = (body: Record<string, unknown> = {}, cookie = coster) =>
-  api(ctx.app, cookie, 'POST', '/api/erp/expenses', {
-    clientKey: randomUUID(),
-    expenseDate: today,
-    departmentId: deptId,
-    handlerId: buyerId,
-    purpose: '客用消耗',
-    paySource: 'petty',
-    advanceId,
-    invoiceType: 'receipt',
-    taxRateBp: 0,
-    lines: [{ name: '一次性拖鞋', category: 'low_value', unit: '箱', boughtMilli: 2000, receivedMilli: 2000, amountCents: 28_000 }],
-    ...body,
-  });
+const claim = async (body: Record<string, unknown> = {}, cookie = coster) =>
+  confirmSmallClaim(
+    ctx.app,
+    ctx.owner,
+    await api(ctx.app, cookie, 'POST', '/api/erp/expenses', {
+      clientKey: randomUUID(),
+      expenseDate: today,
+      departmentId: deptId,
+      handlerId: buyerId,
+      purpose: '客用消耗',
+      paySource: 'petty',
+      advanceId,
+      invoiceType: 'receipt',
+      taxRateBp: 0,
+      lines: [{ name: '一次性拖鞋', category: 'low_value', unit: '箱', boughtMilli: 2000, receivedMilli: 2000, amountCents: 28_000 }],
+      ...body,
+    }),
+  );
 const refresh = async (name: string) => {
   const u = (await api(ctx.app, buyer, 'GET', `/api/erp/petty/uses/${use[name]!.id}`)).body;
   use[name] = { id: u.id, version: u.version, docNo: u.docNo };

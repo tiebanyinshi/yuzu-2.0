@@ -3,10 +3,11 @@
 
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ClaimInput, claimRequestHash } from '../src/server/modules/expenses';
 import { todayIn } from '../src/server/modules/inventory/common';
 import { createStaff } from '../src/server/modules/staff';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
-import { api, login, PASSWORD, setup, type TestContext } from './helpers';
+import { api, login, PASSWORD, setup, type TestContext, confirmSmallClaim } from './helpers';
 
 let ctx: TestContext;
 let today: string;
@@ -59,7 +60,7 @@ const line = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const claim = (cookie: string, body: Record<string, unknown> = {}) =>
+const claimRaw = (cookie: string, body: Record<string, unknown> = {}) =>
   api(ctx.app, cookie, 'POST', '/api/erp/expenses', {
     clientKey: randomUUID(),
     expenseDate: today,
@@ -72,6 +73,8 @@ const claim = (cookie: string, body: Record<string, unknown> = {}) =>
     lines: [line()],
     ...body,
   });
+/** 以前门槛以内会自动确认的（8.2.12 起都要审批）：登记后由负责人（登记人就是负责人时由店主）审批通过 */
+const claim = async (cookie: string, body: Record<string, unknown> = {}) => confirmSmallClaim(ctx.app, cookie === approver ? boss : approver, await claimRaw(cookie, body));
 
 const settle = (cookie: string, advanceId: number, kind: 'return' | 'topup', amountCents: number, body: Record<string, unknown> = {}) =>
   api(ctx.app, cookie, 'POST', '/api/erp/petty/settlements', {
@@ -169,20 +172,22 @@ describe('费用报销：固定选项与互校', () => {
   });
 });
 
-describe('费用确认（D13：单笔超 2000 元要负责人确认）', () => {
-  it('不超过门槛登记即确认；超过的进待办，负责人确认、退回、重新提交、撤回', async () => {
-    const small = await claim(coster, { lines: [line({ amountCents: 200_000 })] });
-    expect(small.body.claim).toMatchObject({ status: 'confirmed', needsApproval: false, amountCents: 200_000 });
-
+describe('费用确认（8.2.12 B1：报销都要审批，不再登记即确认）', () => {
+  it('门槛以内也进待办；自己不能确认、登记时不能同时确认；负责人确认、退回、重新提交、撤回', async () => {
     const before = (await api(ctx.app, approver, 'GET', '/api/inventory/todo-count')).body.count;
-    const big = await claim(coster, { lines: [line({ name: '投影仪', category: 'fixed_asset', unit: '台', boughtMilli: q(1), receivedMilli: q(1), amountCents: 200_001 })] });
+    const small = await claimRaw(coster, { lines: [line({ amountCents: 200_000 })] });
+    expect(small.body.claim).toMatchObject({ status: 'submitted', needsApproval: true, amountCents: 200_000 });
+    expect((await api(ctx.app, approver, 'GET', '/api/inventory/todo-count')).body.count).toBe(before + 1);
+    const smallOk = await api(ctx.app, approver, 'POST', `/api/erp/expenses/${small.body.claim.id}/approve`, {});
+    expect(smallOk.body).toMatchObject({ status: 'confirmed', confirmedByName: '负责人' });
+
+    const big = await claimRaw(coster, { lines: [line({ name: '投影仪', category: 'fixed_asset', unit: '台', boughtMilli: q(1), receivedMilli: q(1), amountCents: 200_001 })] });
     expect(big.body.claim).toMatchObject({ status: 'submitted', needsApproval: true });
     const id = big.body.claim.id;
-    expect((await api(ctx.app, approver, 'GET', '/api/inventory/todo-count')).body.count).toBe(before + 1);
 
     // 成本核算不能自己确认，也不能在登记时同时确认
     expect((await api(ctx.app, coster, 'POST', `/api/erp/expenses/${id}/approve`, {})).status).toBe(403);
-    expect((await claim(coster, { approveNow: true })).status).toBe(403);
+    expect((await claimRaw(coster, { approveNow: true })).status).toBe(403);
 
     const ret = await api(ctx.app, approver, 'POST', `/api/erp/expenses/${id}/return`, { reason: '请补发票照片' });
     expect(ret.body).toMatchObject({ status: 'returned', returnedReason: '请补发票照片' });
@@ -196,9 +201,53 @@ describe('费用确认（D13：单笔超 2000 元要负责人确认）', () => {
     expect((await api(ctx.app, approver, 'POST', `/api/erp/expenses/${id}/void`, { reason: '重复登记' })).status).toBe(403);
     expect((await api(ctx.app, coster, 'POST', `/api/erp/expenses/${id}/void`, { reason: '重复登记' })).body.status).toBe('voided');
 
-    // 负责人也是店主：登记时可以同时确认
-    const now = await claim(boss, { approveNow: true, lines: [line({ amountCents: 300_000 })] });
-    expect(now.body.claim.status).toBe('confirmed');
+    // 店主自己登记的也不能同时确认，也不能自己审（B1 / 7.3 第 4 条）；由负责人审
+    expect((await claimRaw(boss, { approveNow: true, lines: [line({ amountCents: 300_000 })] })).status).toBe(403);
+    const mine = (await claimRaw(boss, { lines: [line({ amountCents: 300_000 })] })).body.claim;
+    expect((await api(ctx.app, boss, 'POST', `/api/erp/expenses/${mine.id}/approve`, {})).status).toBe(403);
+    expect((await api(ctx.app, approver, 'POST', `/api/erp/expenses/${mine.id}/approve`, {})).body.status).toBe('confirmed');
+
+    // 没经过审批就通过的清单（7.4）：门槛以内自动确认关了以后，新的单不在里面
+    const list = await ctx.app.inject({ method: 'GET', url: '/api/erp/expenses/auto-approved', headers: { cookie: coster } });
+    expect(list.statusCode, list.body).toBe(200);
+    expect(list.body).toContain('没经过审批就通过的报销');
+    expect(list.body).not.toContain(small.body.claim.docNo);
+    // 旧做法留下的（needs_approval = false 已确认）在清单里
+    await ctx.sql`ALTER TABLE expense_claims DISABLE TRIGGER USER`;
+    await ctx.sql`UPDATE expense_claims SET needs_approval = false WHERE id = ${small.body.claim.id}`;
+    await ctx.sql`ALTER TABLE expense_claims ENABLE TRIGGER USER`;
+    const list2 = await ctx.app.inject({ method: 'GET', url: '/api/erp/expenses/auto-approved', headers: { cookie: coster } });
+    expect(list2.body).toContain(small.body.claim.docNo);
+    expect(list2.body).toContain('登记即确认');
+  });
+
+  it('升级前带「登记时同时确认」提交、已入账没收到结果的：原样重提拿回原单，新登记照样拒绝', async () => {
+    const body = {
+      clientKey: randomUUID(),
+      expenseDate: today,
+      departmentId: deptA,
+      handlerId: costerId,
+      purpose: '办公',
+      paySource: 'company',
+      invoiceType: 'receipt',
+      taxRateBp: 0,
+      lines: [line({ amountCents: 4_200 })],
+    };
+    const first = await claimRaw(boss, { ...body, approveNow: false });
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    // 模拟升级前那一笔：当时带 approveNow 提交，操作编号记的是带 approveNow 的摘要（摘要算法升级前后一样）
+    const legacy = claimRequestHash(ClaimInput.parse({ ...body, approveNow: true }));
+    await ctx.sql.begin(async (tx) => {
+      await tx`ALTER TABLE idempotency_keys DISABLE TRIGGER idempotency_keys_append_only`;
+      await tx`UPDATE idempotency_keys SET request_hash = ${legacy} WHERE key = ${body.clientKey}`;
+      await tx`ALTER TABLE idempotency_keys ENABLE TRIGGER idempotency_keys_append_only`;
+    });
+    const again = await claimRaw(boss, { ...body, approveNow: true });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(again.body).toMatchObject({ replayed: true, claim: { id: first.body.claim.id, docNo: first.body.claim.docNo } });
+    // 同一个编号换了内容的照样冲突；新编号带 approveNow 的照样拒绝
+    expect((await claimRaw(boss, { ...body, approveNow: false })).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect((await claimRaw(boss, { ...body, clientKey: randomUUID(), approveNow: true })).status).toBe(403);
   });
 
   it('报销单内容不可改、不能删（数据库兜底）', async () => {
