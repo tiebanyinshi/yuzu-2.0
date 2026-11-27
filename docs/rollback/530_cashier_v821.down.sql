@@ -34,8 +34,12 @@ BEGIN
   expression := replace(expression, ' OR (method = ''line_discount''::text)', '');
   ALTER TABLE checkout_payments DROP CONSTRAINT checkout_payments_method_check;
   EXECUTE format('ALTER TABLE checkout_payments ADD CONSTRAINT checkout_payments_method_check CHECK (%s)', expression);
+  -- 授权用途：去掉 530 追加的「单项打折」（先删掉这一类的授权凭据，旧版本不签发这一类）
+  DELETE FROM auth_grants WHERE purpose = 'line_discount';
+  SELECT pg_get_expr(conbin, conrelid) INTO expression FROM pg_constraint WHERE conrelid = 'auth_grants'::regclass AND conname = 'auth_grants_purpose_check';
+  ALTER TABLE auth_grants DROP CONSTRAINT auth_grants_purpose_check;
+  EXECUTE format('ALTER TABLE auth_grants ADD CONSTRAINT auth_grants_purpose_check CHECK (%s)', replace(expression, ' OR (purpose = ''line_discount''::text)', ''));
 END $$;
--- 单项打折的授权凭据留在 auth_grants 里（只追加），用途约束照旧放行 line_discount：旧版本不签发这一类，不影响
 DROP INDEX IF EXISTS checkout_payments_line_discount_uq;
 -- 部门营业额快照的函数换回 108 版
 CREATE OR REPLACE FUNCTION yuzu_snapshot_checkout_items(p_checkout bigint, p_current boolean) RETURNS void LANGUAGE sql AS $$

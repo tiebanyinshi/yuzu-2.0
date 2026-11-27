@@ -291,10 +291,11 @@ describe('休假', () => {
 });
 
 describe('一报多', () => {
+  // 8.2.3 起技师预约单独一项权限，收银员默认没有：一报多由值班经理（有技师预约）来报
   it('一次几位客人：同一位技师同一时段约几位不设上限；一个编号重提不重复建；有一行不行整批不建', async () => {
     const date = (await board()).businessDate as string;
     const tomorrow = new Date(Date.parse(`${date}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-    const slots = (await api(ctx.app, ctx.clerk, 'GET', `/api/bookings/slots?kind=technician&date=${tomorrow}&itemId=${foot}`)).body as { startsAt: string }[];
+    const slots = (await api(ctx.app, duty, 'GET', `/api/bookings/slots?kind=technician&date=${tomorrow}&itemId=${foot}`)).body as { startsAt: string }[];
     const at = slots[4]!.startsAt;
     const rows = [
       { guestName: '王', tagCode: 'k001', guestPhone: '13900000011', itemId: foot, technicianId: tech['02'], startsAt: at },
@@ -302,18 +303,18 @@ describe('一报多', () => {
       { guestName: '张', itemId: foot, technicianId: null, startsAt: at },
     ];
     const clientKey = randomUUID();
-    const r = await api(ctx.app, ctx.clerk, 'POST', '/api/bookings/batch', { clientKey, rows });
+    const r = await api(ctx.app, duty, 'POST', '/api/bookings/batch', { clientKey, rows });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.bookings.map((b: { guestName: string; tagCode: string; technicianId: number | null }) => [b.guestName, b.tagCode, b.technicianId])).toEqual([
       ['王', 'K001', tech['02']],
       ['李', '', tech['02']],
       ['张', '', null],
     ]);
-    const again = await api(ctx.app, ctx.clerk, 'POST', '/api/bookings/batch', { clientKey, rows });
+    const again = await api(ctx.app, duty, 'POST', '/api/bookings/batch', { clientKey, rows });
     expect(again.body.bookings.map((b: { id: number }) => b.id)).toEqual(r.body.bookings.map((b: { id: number }) => b.id));
     expect((await ctx.sql`SELECT count(*)::int AS n FROM bookings WHERE client_key IN ${ctx.sql([0, 1, 2].map((i) => batchRowKey(clientKey, i)))}`)[0]!.n).toBe(3);
     // 第 2 行的技师做不了足疗：整批不建，提示写第几行
-    const bad = await api(ctx.app, ctx.clerk, 'POST', '/api/bookings/batch', {
+    const bad = await api(ctx.app, duty, 'POST', '/api/bookings/batch', {
       clientKey: randomUUID(),
       rows: [rows[0], { ...rows[1], technicianId: tech['09'] }],
     });
