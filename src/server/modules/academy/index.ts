@@ -96,7 +96,7 @@ export function registerAcademyRoutes(app: FastifyInstance, deps: Deps) {
   app.put('/api/admin/academy/lessons/:id', { preHandler: manage }, async (req) => updateLesson(sql, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.get('/api/admin/academy/paths', { preHandler: manage }, async () => adminPaths(sql));
   app.post('/api/admin/academy/paths', { preHandler: manage }, async (req, reply) => reply.code(201).send(await createPath(sql, req.body, ctxOf(req))));
-  app.put('/api/admin/academy/paths/:id', { preHandler: manage }, async (req) => updatePath(sql, parse(idParam, req.params).id, req.body, ctxOf(req)));
+  app.put('/api/admin/academy/paths/:id', { preHandler: manage }, async (req) => updatePath(sql, parse(idParam, req.params).id, req.body, ctxOf(req), today()));
   app.get('/api/admin/academy/assignments', { preHandler: manage }, async () => adminAssignments(sql, today()));
   app.post('/api/admin/academy/assignments', { preHandler: manage }, async (req, reply) => reply.code(201).send(await createAssignment(sql, req.body, ctxOf(req), today())));
   app.put('/api/admin/academy/assignments/:id', { preHandler: manage }, async (req) => updateAssignment(sql, parse(idParam, req.params).id, req.body, ctxOf(req), today()));

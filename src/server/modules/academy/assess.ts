@@ -13,6 +13,7 @@ import type { Db, Sql, Tx } from '../../db';
 import { writeAudit } from '../../lib/audit';
 import type { OpContext } from '../../lib/context';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
+import { hashRequest } from '../../lib/idempotency';
 import { withTx } from '../../lib/tx';
 import { parse } from '../../lib/validate';
 import type { Learner } from './learner';
@@ -22,7 +23,7 @@ import { lessonForProgress, lockLearner, markComplete } from './progress';
 // ───────────────────────── 题库（管理端） ─────────────────────────
 
 const QuestionInput = z.object({
-  clientKey: z.uuid('操作编号不正确').optional(),
+  clientKey: z.uuid('缺少操作编号或格式不正确'),
   kind: z.enum(ACADEMY_QUESTION_KINDS as [AcademyQuestionKind, ...AcademyQuestionKind[]], '题型不正确'),
   skill: z.string().trim().min(1, '请填写知识点').max(30, '知识点最多 30 个字'),
   level: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(1),
@@ -34,6 +35,7 @@ const QuestionInput = z.object({
   status: z.enum(['draft', 'active', 'retired']).default('active'),
 });
 const QuestionUpdate = QuestionInput.omit({ clientKey: true }).extend({ version: z.number().int().positive() });
+type QuestionFields = z.infer<typeof QuestionUpdate>;
 
 interface QuestionRow {
   id: number;
@@ -54,7 +56,7 @@ interface QuestionRow {
 const QUESTION_COLS = (db: Db) => db`id, course_id, pack_key, skill, kind, level, stem, options, answer, answer_text, explanation, source, status, version`;
 const toQuestion = (r: QuestionRow): AcademyQuestion => ({ ...r, id: Number(r.id), courseId: Number(r.courseId) });
 
-function checkQuestion(input: z.infer<typeof QuestionInput>) {
+function checkQuestion(input: QuestionFields) {
   const q = { ...input, options: input.kind === 'recall' ? [] : input.options, answer: input.kind === 'recall' ? [] : input.answer };
   const problems = academyQuestionProblems(q);
   if (problems.length) throw unprocessable('ACADEMY_QUESTION_INVALID', problems[0]!, { problems });
@@ -72,17 +74,18 @@ export async function createQuestion(sql: Sql, courseId: number, raw: unknown, c
   return withTx(sql, async (tx) => {
     const [c] = await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR UPDATE`;
     if (!c) throw notFound('没有这门课');
-    if (input.clientKey) {
-      const [had] = await tx<QuestionRow[]>`SELECT ${QUESTION_COLS(tx)} FROM academy_questions WHERE client_key = ${input.clientKey}`;
-      if (had) {
-        if (Number(had.courseId) !== courseId || had.stem !== q.stem) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一道题，请刷新后重新填写');
-        return toQuestion(had);
-      }
+    // 原样重提比对整份请求的摘要（Codex 审查 dd885a6 同一类问题）
+    const { clientKey: _key, ...rest } = input;
+    const hash = hashRequest({ ...rest, courseId });
+    const [had] = await tx<(QuestionRow & { requestHash: string })[]>`SELECT ${QUESTION_COLS(tx)}, request_hash FROM academy_questions WHERE client_key = ${input.clientKey}`;
+    if (had) {
+      if (had.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一道题，请刷新后重新填写');
+      return toQuestion(had);
     }
     const [row] = await tx<QuestionRow[]>`
-      INSERT INTO academy_questions (course_id, skill, kind, level, stem, options, answer, answer_text, explanation, source, status, client_key, created_by)
+      INSERT INTO academy_questions (course_id, skill, kind, level, stem, options, answer, answer_text, explanation, source, status, client_key, request_hash, created_by)
       VALUES (${courseId}, ${q.skill}, ${q.kind}, ${q.level}, ${q.stem}, ${tx.json(q.options)}, ${tx.json(q.answer)}, ${q.answerText}, ${q.explanation},
-              'manual', ${q.status}, ${input.clientKey ?? null}, ${ctx.actor.id})
+              'manual', ${q.status}, ${input.clientKey}, ${hash}, ${ctx.actor.id})
       RETURNING ${QUESTION_COLS(tx)}`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,

@@ -24,10 +24,12 @@ CREATE TABLE academy_questions (
   status      text NOT NULL DEFAULT 'active' CHECK (status IN ('draft', 'active', 'retired')),
   version     integer NOT NULL DEFAULT 1,
   client_key  uuid UNIQUE,
+  request_hash text CHECK (request_hash ~ '^[0-9a-f]{64}$'),
   created_by  bigint REFERENCES staff (id),
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now(),
-  CHECK ((kind = 'recall') = (jsonb_array_length(options) = 0))
+  CHECK ((kind = 'recall') = (jsonb_array_length(options) = 0)),
+  CHECK ((client_key IS NULL) = (request_hash IS NULL))
 );
 CREATE INDEX academy_questions_course_idx ON academy_questions (course_id, status);
 COMMENT ON TABLE academy_questions IS '学堂题库：题挂在课上（测验从这门课启用的题里抽，问答卡只进每日一练）；AI 出的题先是草稿，人审过才启用';
@@ -37,6 +39,7 @@ COMMENT ON COLUMN academy_questions.kind IS 'single 单选 / multi 多选 / judg
 COMMENT ON COLUMN academy_questions.level IS '难度：1 记住、2 理解、3 应用（布鲁姆分类三档）';
 COMMENT ON COLUMN academy_questions.answer IS '对的选项（从 0 起的下标数组）';
 COMMENT ON COLUMN academy_questions.answer_text IS '问答卡的答案';
+COMMENT ON COLUMN academy_questions.request_hash IS '后台新建时原请求的摘要：同一操作编号重提时内容不一样的拒绝（课件包导入、AI 出题的两列为空）';
 
 CREATE TABLE academy_attempts (
   id           bigserial PRIMARY KEY,

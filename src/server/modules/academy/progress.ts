@@ -46,6 +46,9 @@ export async function pingLesson(sql: Sql, l: Learner, lessonId: number, seconds
   if (!recordable(lesson)) return { added: 0 };
   return withTx(sql, async (tx) => {
     await lockLearner(tx, l.id);
+    // 同一个人同时开着几个课时（几台设备）：按这个人所有课时里最近一次上报算间隔，同一段时间不重复计（Codex 审查 dd885a6）
+    const [any] = await tx<{ elapsed: number | null }[]>`
+      SELECT floor(EXTRACT(EPOCH FROM now() - max(last_ping_at)))::int AS elapsed FROM academy_progress WHERE staff_id = ${l.id}`;
     const [row] = await tx<{ elapsed: number | null }[]>`
       SELECT floor(EXTRACT(EPOCH FROM now() - last_ping_at))::int AS elapsed
       FROM academy_progress WHERE staff_id = ${l.id} AND lesson_id = ${lessonId} FOR UPDATE`;
@@ -53,7 +56,9 @@ export async function pingLesson(sql: Sql, l: Learner, lessonId: number, seconds
     if (!row) {
       await tx`INSERT INTO academy_progress (staff_id, lesson_id, last_ping_at) VALUES (${l.id}, ${lessonId}, now())`;
     } else {
-      added = row.elapsed === null ? 0 : Math.max(0, Math.min(seconds, row.elapsed + 5, ACADEMY_PING_MAX_SECONDS));
+      const lessonGap = row.elapsed ?? 0;
+      const learnerGap = any!.elapsed ?? lessonGap;
+      added = row.elapsed === null ? 0 : Math.max(0, Math.min(seconds, lessonGap + 5, learnerGap + 5, ACADEMY_PING_MAX_SECONDS));
       await tx`UPDATE academy_progress SET seconds = seconds + ${added}, last_ping_at = now() WHERE staff_id = ${l.id} AND lesson_id = ${lessonId}`;
     }
     if (added > 0) {
@@ -102,7 +107,7 @@ export function addMonths(date: string, months: number): string {
   return first.toISOString().slice(0, 10);
 }
 
-/** 完成一张地图：发证书（同一人同一张地图只有一张没撤销的；有效期按地图） */
+/** 学完一张地图：发证书（同一人同一张地图只有一张没撤销的；有效期按地图） */
 async function issueCertificate(tx: Tx, staffId: number, path: { id: number; title: string; validMonths: number | null }, today: string): Promise<string | null> {
   const [had] = await tx`SELECT cert_no FROM academy_certificates WHERE staff_id = ${staffId} AND path_id = ${path.id} AND revoked_at IS NULL`;
   if (had) return null;
@@ -114,35 +119,66 @@ async function issueCertificate(tx: Tx, staffId: number, path: { id: number; tit
 }
 
 /**
- * 记一个课时完成（调用方已取学员咨询锁）：第一次完成给这一课时的学分；这门课因此完成的，看它在哪几张上架的地图里，
- * 地图因此完成的另给地图的学分、发证书。已经完成过的什么都不变（重学、重考不刷分，XT04）。
+ * 结算这位学员已经学完、还没记下的地图（调用方已取学员咨询锁）：记「学完了」（只追加，同一人同一张地图一行），给地图学分、发证书。
+ * pathIds 只看这几张（为空看全部上架的）。地图后来才上架、加了已经学完的课时也能补上（Codex 审查 dd885a6）。
+ */
+export async function settlePaths(tx: Tx, staffId: number, pathIds: number[] | null, today: string): Promise<AcademyCompletion['pathsCompleted']> {
+  if (pathIds && !pathIds.length) return [];
+  const paths = await tx<{ id: number; title: string; credits: number; validMonths: number | null }[]>`
+    SELECT p.id, p.title, p.credits, p.valid_months FROM academy_paths p
+    WHERE p.status = 'published' ${pathIds ? tx`AND p.id IN ${tx(pathIds)}` : tx``}
+      AND NOT EXISTS (SELECT 1 FROM academy_path_completions x WHERE x.staff_id = ${staffId} AND x.path_id = p.id)
+    ORDER BY p.id`;
+  const out: AcademyCompletion['pathsCompleted'] = [];
+  for (const path of paths) {
+    if (!(await pathCompleted(tx, staffId, Number(path.id)))) continue;
+    await tx`INSERT INTO academy_path_completions (staff_id, path_id, completed_on) VALUES (${staffId}, ${path.id}, ${today})`;
+    const got = await awardCredits(tx, staffId, path.credits, 'path', Number(path.id), path.title);
+    const certNo = await issueCertificate(tx, staffId, { id: Number(path.id), title: path.title, validMonths: path.validMonths }, today);
+    out.push({ id: Number(path.id), title: path.title, credits: got, certNo });
+  }
+  return out;
+}
+
+/** 管理员上架地图、改了阶段：给已经学完的人补记（地图一行已锁；按员工编号顺序逐个取学员锁） */
+export async function settlePathForAll(tx: Tx, pathId: number, today: string) {
+  const staff = await tx<{ staffId: number }[]>`
+    SELECT DISTINCT pr.staff_id FROM academy_progress pr JOIN academy_lessons l ON l.id = pr.lesson_id
+    JOIN academy_path_courses pc ON pc.course_id = l.course_id
+    WHERE pc.path_id = ${pathId} AND pr.completed_at IS NOT NULL ORDER BY pr.staff_id`;
+  for (const { staffId } of staff) {
+    await lockLearner(tx, Number(staffId));
+    await settlePaths(tx, Number(staffId), [pathId], today);
+  }
+}
+
+/**
+ * 记一个课时完成（调用方已取学员咨询锁）：第一次完成给这一课时的学分；这门课学完了的，结算它所在的上架地图（地图学分）。
+ * 已经完成过的不再给课时学分（重学、重考不刷分，XT04），但照样结算一次地图（之前漏记的补上）。
  */
 export async function markComplete(tx: Tx, staffId: number, lesson: Pick<LessonForProgress, 'id' | 'courseId' | 'title' | 'credits'>, today: string): Promise<AcademyCompletion> {
-  const none: AcademyCompletion = { lessonId: lesson.id, credits: 0, courseCompleted: false, pathsCompleted: [], levelUp: null };
   const [p] = await tx<{ completedAt: string | null }[]>`
     SELECT completed_at FROM academy_progress WHERE staff_id = ${staffId} AND lesson_id = ${lesson.id} FOR UPDATE`;
-  if (p?.completedAt) return none;
   const before = await creditsOf(tx, staffId);
-  if (p) await tx`UPDATE academy_progress SET completed_at = now() WHERE staff_id = ${staffId} AND lesson_id = ${lesson.id}`;
-  else await tx`INSERT INTO academy_progress (staff_id, lesson_id, completed_at) VALUES (${staffId}, ${lesson.id}, now())`;
-  let credits = await awardCredits(tx, staffId, lesson.credits, 'lesson', lesson.id, lesson.title);
-  const done = await courseCompleted(tx, staffId, lesson.courseId);
-  const pathsCompleted: AcademyCompletion['pathsCompleted'] = [];
-  if (done) {
-    const paths = await tx<{ id: number; title: string; credits: number; validMonths: number | null }[]>`
-      SELECT p.id, p.title, p.credits, p.valid_months FROM academy_path_courses pc JOIN academy_paths p ON p.id = pc.path_id
-      WHERE pc.course_id = ${lesson.courseId} AND p.status = 'published' ORDER BY p.id`;
-    for (const path of paths) {
-      if (!(await pathCompleted(tx, staffId, Number(path.id)))) continue;
-      const got = await awardCredits(tx, staffId, path.credits, 'path', Number(path.id), path.title);
-      credits += got;
-      const certNo = await issueCertificate(tx, staffId, { id: Number(path.id), title: path.title, validMonths: path.validMonths }, today);
-      pathsCompleted.push({ id: Number(path.id), title: path.title, credits: got, certNo });
-    }
+  let credits = 0;
+  if (!p?.completedAt) {
+    if (p) await tx`UPDATE academy_progress SET completed_at = now() WHERE staff_id = ${staffId} AND lesson_id = ${lesson.id}`;
+    else await tx`INSERT INTO academy_progress (staff_id, lesson_id, completed_at) VALUES (${staffId}, ${lesson.id}, now())`;
+    credits = await awardCredits(tx, staffId, lesson.credits, 'lesson', lesson.id, lesson.title);
   }
+  const done = await courseCompleted(tx, staffId, lesson.courseId);
+  const pathsCompleted = done
+    ? await settlePaths(
+        tx,
+        staffId,
+        (await tx<{ pathId: number }[]>`SELECT path_id FROM academy_path_courses WHERE course_id = ${lesson.courseId}`).map((r) => Number(r.pathId)),
+        today,
+      )
+    : [];
+  credits += pathsCompleted.reduce((n, x) => n + x.credits, 0);
   const was = academyLevelOf(before).current;
   const now = academyLevelOf(before + credits).current;
-  return { lessonId: lesson.id, credits, courseCompleted: done, pathsCompleted, levelUp: now.level > was.level ? now : null };
+  return { lessonId: lesson.id, credits, courseCompleted: done && !p?.completedAt, pathsCompleted, levelUp: now.level > was.level ? now : null };
 }
 
 /** 图文课件读完、文件看过：员工自己点「学完了」（测验要及格、实操要带教签，走各自的路） */

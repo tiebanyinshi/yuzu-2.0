@@ -24,7 +24,16 @@ let quizId: number;
 let practicalId: number;
 let path: AcademyAdminPath;
 
-const Q = (skill: string, stem: string, right: string, wrong: string) => ({ kind: 'single', skill, level: 1, stem, options: [right, wrong], answer: [0], explanation: `${stem}的解析` });
+const Q = (skill: string, stem: string, right: string, wrong: string) => ({
+  clientKey: randomUUID(),
+  kind: 'single',
+  skill,
+  level: 1,
+  stem,
+  options: [right, wrong],
+  answer: [0],
+  explanation: `${stem}的解析`,
+});
 
 beforeAll(async () => {
   ctx = await setup();
@@ -34,17 +43,23 @@ beforeAll(async () => {
   await ctx.sql`UPDATE staff SET needs_position = false WHERE id IN (${leadId}, ${dinerId})`;
   lead = await login(ctx.app, 'frontlead');
   diner = await login(ctx.app, 'diner2');
-  const made = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/courses', { title: '前厅接待', category: 'must_know' });
+  const made = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/courses', { clientKey: randomUUID(), title: '前厅接待', category: 'must_know' });
   const id = made.body.course.id;
-  await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${id}/lessons`, { title: '六步接待', kind: 'article', body: '问候、发牌。' });
-  await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${id}/lessons`, { title: '接待实操', kind: 'practical', body: '- 主动问候\n- 核对人数\n- 指引更衣室' });
-  const withQuiz = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${id}/lessons`, { title: '课后测验', kind: 'quiz', quizCount: 3, quizPass: 60 });
+  await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${id}/lessons`, { clientKey: randomUUID(), title: '六步接待', kind: 'article', body: '问候、发牌。' });
+  await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${id}/lessons`, { clientKey: randomUUID(), title: '接待实操', kind: 'practical', body: '- 主动问候\n- 核对人数\n- 指引更衣室' });
+  const withQuiz = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${id}/lessons`, {
+    clientKey: randomUUID(),
+    title: '课后测验',
+    kind: 'quiz',
+    quizCount: 3,
+    quizPass: 60,
+  });
   course = withQuiz.body;
   quizId = course.lessons.find((l) => l.kind === 'quiz')!.id;
   practicalId = course.lessons.find((l) => l.kind === 'practical')!.id;
   const pub = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/courses/${id}`, { ...course.course, status: 'published', version: course.course.version });
   course = pub.body;
-  const p = await api<AcademyAdminPath>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/paths', { title: '前厅新员工地图', validMonths: 12, courseIds: [id] });
+  const p = await api<AcademyAdminPath>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/paths', { clientKey: randomUUID(), title: '前厅新员工地图', validMonths: 12, courseIds: [id] });
   path = (await api<AcademyAdminPath>(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/paths/${p.body.id}`, { ...p.body, status: 'published', version: p.body.version })).body;
 });
 afterAll(async () => ctx.close());
@@ -56,20 +71,23 @@ describe('学堂 · 题库', () => {
     expect(bad.body.error).toMatchObject({ code: 'ACADEMY_QUESTION_INVALID', message: '单选题要有且只有一个对的选项（- [x]）' });
     const key = randomUUID();
     const first = await api<AcademyQuestion>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${course.course.id}/questions`, {
-      clientKey: key,
       ...Q('问候', '见到客人先做什么？', '微笑问候', '低头玩手机'),
+      clientKey: key,
     });
     expect(first.status).toBe(201);
     expect(first.body).toMatchObject({ source: 'manual', status: 'active', options: ['微笑问候', '低头玩手机'], answer: [0] });
     const again = await api<AcademyQuestion>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${course.course.id}/questions`, {
-      clientKey: key,
       ...Q('问候', '见到客人先做什么？', '微笑问候', '低头玩手机'),
+      clientKey: key,
     });
     expect(again.body.id).toBe(first.body.id);
+    const other = await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${course.course.id}/questions`, { ...Q('问候', '换了题干', '甲', '乙'), clientKey: key });
+    expect(other.body.error.code).toBe('IDEMPOTENCY_CONFLICT');
     for (const q of [Q('问候', '客人进门几米内要问候？', '三米', '三十米'), Q('发牌', '发牌前先核对什么？', '人数', '天气'), Q('发牌', '手牌是什么？', '在店消费的凭证', '纪念品')]) {
       expect((await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${course.course.id}/questions`, q)).status).toBe(201);
     }
     const recall = await api<AcademyQuestion>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${course.course.id}/questions`, {
+      clientKey: randomUUID(),
       kind: 'recall',
       skill: '发牌',
       stem: '客人丢了手牌怎么办？',
