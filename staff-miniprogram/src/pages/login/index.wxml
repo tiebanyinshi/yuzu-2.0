@@ -1,0 +1,57 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <view class="hero gutter">
+    <view class="brand">汤崎 WCP</view>
+    <view class="t-body muted hero-sub">汤崎员工的工作台 · {{storeName || '门店系统'}}</view>
+    <view wx:if="{{tag}}" class="instance">{{tag}}</view>
+  </view>
+
+  <view wx:if="{{loading}}" class="gutter"><view class="skeleton block"></view></view>
+
+  <view wx:elif="{{offline}}" class="gutter">
+    <view class="notice warn">现在连不上门店系统：到信号好的地方再试。</view>
+    <button class="btn secondary block retry" hover-class="pressed" hover-stay-time="120" bindtap="onRetry">重新加载</button>
+  </view>
+
+  <view wx:elif="{{closed}}" class="gutter">
+    <view class="notice info">员工小程序暂停使用了。需要打卡、请假的请先用电脑上的 WCP，或找管理员。</view>
+  </view>
+
+  <view wx:else class="gutter form">
+    <block wx:if="{{wechat && boundName}}">
+      <button class="btn primary block" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" open-type="agreePrivacyAuthorization" bindagreeprivacyauthorization="onWechat">微信一键登录（{{boundName}}）</button>
+      <view class="divider t-caption">不是{{boundName}}？用自己的账号登录</view>
+    </block>
+
+    <view class="field">
+      <view class="field-label">账号</view>
+      <input class="input" type="text" value="{{username}}" placeholder="柚子的用户名" placeholder-class="input-placeholder" maxlength="32" confirm-type="next" bindinput="onUsername" aria-label="账号" />
+      <view wx:if="{{usernameError}}" class="field-error">{{usernameError}}</view>
+    </view>
+    <view class="field">
+      <view class="field-label">密码</view>
+      <view class="password-row">
+        <input class="input password-input" password="{{!showPassword}}" value="{{password}}" placeholder="密码" placeholder-class="input-placeholder" maxlength="128" confirm-type="done" bindinput="onPassword" aria-label="密码" />
+        <view class="eye" hover-class="pressed" hover-stay-time="120" bindtap="onTogglePassword" aria-role="button" aria-label="{{showPassword ? '隐藏密码' : '显示密码'}}">{{showPassword ? '隐藏' : '显示'}}</view>
+      </view>
+      <view wx:if="{{passwordError}}" class="field-error">{{passwordError}}</view>
+    </view>
+
+    <view wx:if="{{wechat}}" class="check" hover-class="row-pressed" hover-stay-time="120" bindtap="onToggleBind" aria-role="checkbox" aria-checked="{{bind}}">
+      <view class="box {{bind ? 'on' : ''}}">{{bind ? '✓' : ''}}</view>
+      <view class="check-text">
+        <view>以后用这个微信直接进</view>
+        <view wx:if="{{boundName}}" class="t-caption">这个微信现在绑着「{{boundName}}」，勾上会先问你</view>
+      </view>
+    </view>
+
+    <view wx:if="{{error}}" class="notice error error-box">{{error}}</view>
+
+    <button class="btn {{wechat && boundName ? 'secondary' : 'primary'}} block submit" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" open-type="agreePrivacyAuthorization" bindagreeprivacyauthorization="onLogin">同意并登录</button>
+    <view class="t-caption legal">登录即同意<text class="link-inline" bindtap="onPrivacy">《隐私保护指引》</text></view>
+  </view>
+
+  <view class="foot gutter t-caption">
+    <view>忘了密码、不知道账号：找人事</view>
+    <view wx:if="{{version}}" class="faint num">{{version}}</view>
+  </view>
+</view>

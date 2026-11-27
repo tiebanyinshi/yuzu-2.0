@@ -1,0 +1,36 @@
+.head {
+  padding-top: 16rpx;
+}
+.meta {
+  margin-top: 12rpx;
+}
+.status {
+  display: flex;
+  align-items: center;
+  margin-top: 12rpx;
+  min-height: 40rpx;
+}
+.status .tag {
+  margin-right: 16rpx;
+}
+.desc {
+  margin-top: 32rpx;
+  color: var(--ink);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.media {
+  margin-top: 40rpx;
+}
+.video {
+  width: 100%;
+  height: 420rpx;
+  border-radius: var(--radius-card);
+  background-color: var(--ink);
+}
+.note {
+  margin-top: 32rpx;
+}
+.actions {
+  margin-top: 48rpx;
+}

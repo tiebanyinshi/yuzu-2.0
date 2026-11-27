@@ -15,7 +15,7 @@
     "e2e-canteen/**/*.ts"
   ],
   "project": ["src/**/*.{ts,tsx}", "tests/**/*.ts", "e2e/**/*.ts", "e2e-canteen/**/*.ts", "scripts/**/*.{mjs,ts}"],
-  "ignore": ["miniprogram/**"],
+  "ignore": ["miniprogram/**", "staff-miniprogram/**"],
   "ignoreExportsUsedInFile": true,
   "paths": {
     "@shared/*": ["./src/shared/*"],

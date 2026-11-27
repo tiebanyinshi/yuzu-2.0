@@ -1,0 +1,31 @@
+.hello {
+  padding-top: 8rpx;
+}
+.hello .t-body {
+  margin-top: 8rpx;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  overflow: hidden;
+}
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 168rpx;
+  padding: 24rpx 8rpx;
+  box-sizing: border-box;
+}
+.cell-icon {
+  width: 56rpx;
+  height: 56rpx;
+}
+.cell-label {
+  margin-top: 16rpx;
+  font-size: var(--fs-body);
+  line-height: 1.3;
+  color: var(--ink);
+  text-align: center;
+}

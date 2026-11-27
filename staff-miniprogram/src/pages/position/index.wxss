@@ -1,0 +1,26 @@
+.intro {
+  margin-top: 16rpx;
+}
+.list-wrap {
+  margin-top: 32rpx;
+}
+.list {
+  overflow: hidden;
+}
+.radio {
+  width: 40rpx;
+  height: 40rpx;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  box-sizing: border-box;
+  flex: none;
+}
+.radio.on {
+  border: 12rpx solid var(--ink);
+}
+.error-box {
+  margin-top: 32rpx;
+}
+.save {
+  margin-top: 48rpx !important;
+}

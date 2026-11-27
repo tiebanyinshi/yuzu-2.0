@@ -1,0 +1,74 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar large title="我的" eyebrow="PROFILE" />
+  <state-view wx:if="{{!ready}}" state="loading" rows="3" />
+  <view wx:else class="gutter">
+    <view class="card card-pad profile">
+      <view class="avatar">{{initial}}</view>
+      <view class="profile-main">
+        <view class="t-title-s">{{me.staff.displayName}}</view>
+        <view class="t-body muted ellipsis">{{subtitle}}</view>
+        <view wx:if="{{me.staff.empNo}}" class="t-caption num">工号 {{me.staff.empNo}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{error}}" class="notice error section">{{error}}</view>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">账号</view></view>
+      <view class="card list">
+        <view class="row">
+          <view class="row-main">
+            <view class="row-title">微信</view>
+            <view class="row-sub">{{me.wechatBound ? '已绑定：打开小程序就进' : '没绑定：每次要输密码'}}</view>
+          </view>
+          <view wx:if="{{me.wechatBound}}" class="row-action" hover-class="pressed" hover-stay-time="120" bindtap="onUnbind" aria-role="button">解除</view>
+        </view>
+        <view class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onPassword" aria-role="button">
+          <view class="row-main"><view class="row-title">改密码</view></view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">使用</view></view>
+      <view class="card list">
+        <view class="row">
+          <view class="row-main">
+            <view class="row-title">大字</view>
+            <view class="row-sub">正文和列表放大一档</view>
+          </view>
+          <switch checked="{{largeText}}" color="#1C1A17" bindchange="onLargeText" aria-label="大字" />
+        </view>
+        <view class="row">
+          <view class="row-main">
+            <view class="row-title">振动</view>
+            <view class="row-sub">打卡、巡场成功时轻振一下</view>
+          </view>
+          <switch checked="{{vibrate}}" color="#1C1A17" bindchange="onVibrate" aria-label="振动" />
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">关于</view></view>
+      <view class="card list">
+        <view class="row">
+          <view class="row-main"><view class="row-title">汤崎 WCP</view></view>
+          <view class="t-body muted num">{{appVersion}}</view>
+        </view>
+        <view class="row">
+          <view class="row-main"><view class="row-title">门店系统</view></view>
+          <view class="t-body muted num">{{serverVersion}}</view>
+        </view>
+        <view wx:if="{{tag}}" class="row">
+          <view class="row-main"><view class="row-title">实例</view></view>
+          <view class="tag neutral">{{tag}}</view>
+        </view>
+      </view>
+      <view class="t-caption hint">报问题时，把这一块截图发给人事。</view>
+    </view>
+
+    <button class="btn secondary block logout" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onLogout">退出登录</button>
+  </view>
+</view>

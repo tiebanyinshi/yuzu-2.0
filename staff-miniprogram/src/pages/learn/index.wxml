@@ -1,0 +1,28 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar large title="学习" eyebrow="LEARN" />
+  <view class="gutter">
+    <view class="search" hover-class="row-pressed" hover-stay-time="120" bindtap="onSearch" aria-role="button" aria-label="搜培训资料">
+      <image class="search-icon" src="/assets/icons/search.png" />
+      <text class="search-text">搜应知应会、培训资料</text>
+    </view>
+  </view>
+
+  <view class="section gutter">
+    <view class="section-head">
+      <view class="section-title">知识库</view>
+      <view wx:if="{{stale}}" class="t-caption">之前的信息</view>
+    </view>
+    <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '还没有培训资料' : ''}}" message="{{state === 'empty' ? '人事上传以后会出现在这里' : error}}" bindretry="onRetry" />
+    <view wx:else class="card list">
+      <view wx:for="{{folders}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" data-name="{{item.name}}" bindtap="onFolder" aria-role="button">
+        <image class="row-icon" src="/assets/icons/folder.png" />
+        <view class="row-main">
+          <view class="row-title">{{item.name}}</view>
+          <view class="row-sub num">{{item.meta}}</view>
+        </view>
+        <view wx:if="{{item.mine}}" class="tag neutral">本部门</view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+  </view>
+</view>

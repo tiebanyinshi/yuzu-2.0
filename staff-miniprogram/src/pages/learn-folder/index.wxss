@@ -1,0 +1,6 @@
+.summary {
+  margin: 8rpx 0 16rpx;
+}
+.list {
+  overflow: hidden;
+}

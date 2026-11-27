@@ -1,0 +1,35 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="搜培训资料" />
+  <view class="gutter">
+    <view class="search">
+      <image class="search-icon" src="/assets/icons/search.png" />
+      <input class="search-input" focus value="{{q}}" placeholder="例如：泡汤禁忌、收银、交班" placeholder-class="input-placeholder" confirm-type="search" maxlength="30" bindinput="onInput" bindconfirm="onConfirm" aria-label="搜培训资料" />
+      <view wx:if="{{q}}" class="clear" hover-class="pressed" hover-stay-time="120" bindtap="onClear" aria-role="button" aria-label="清空">清空</view>
+    </view>
+  </view>
+
+  <view wx:if="{{state === 'idle'}}" class="gutter section">
+    <block wx:if="{{recent.length}}">
+      <view class="section-head"><view class="section-title">最近搜过</view></view>
+      <view class="chips">
+        <view wx:for="{{recent}}" wx:key="*this" class="chip" hover-class="row-pressed" hover-stay-time="120" data-q="{{item}}" bindtap="onRecent" aria-role="button">{{item}}</view>
+      </view>
+    </block>
+    <view wx:else class="t-body muted">输入资料名字里的字，例如「禁忌」「交班」。</view>
+  </view>
+
+  <state-view wx:elif="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '没有搜到' : ''}}" message="{{state === 'empty' ? '换个说法试试，或者到知识库里按文件夹找' : error}}" rows="2" bindretry="onRetry" />
+
+  <view wx:else class="gutter section">
+    <view class="card list">
+      <view wx:for="{{results}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" data-folder="{{item.folderId}}" bindtap="onFile" aria-role="button">
+        <image class="row-icon" src="/assets/icons/{{item.icon}}.png" />
+        <view class="row-main">
+          <view class="row-title">{{item.title}}</view>
+          <view class="row-sub num">{{item.meta}}</view>
+        </view>
+        <view wx:if="{{item.isNew}}" class="tag new">新</view>
+      </view>
+    </view>
+  </view>
+</view>
