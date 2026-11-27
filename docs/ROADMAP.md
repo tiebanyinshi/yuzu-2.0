@@ -301,6 +301,7 @@
   - `540`（`540_technicians_v8222.sql`）：明细与钟单的上钟方式加 `call`（扩钟）；明细 `clock_extension`（加钟）、`tech_star`；钟房日志加 `change`；换项目记录 `technician_session_changes`；休假单 `auto_return`、`returned_at`；技师 `phone`、`height_cm`、`weight_kg`、`star`；提成规则 `store_id`；每月任务 `technician_targets`；预约 `tag_code`。回滚 `docs/rollback/540_technicians_v8222.down.sql`。
 - **8.2.5（`570`–`579`）**：8.2.4（[PR #46](https://github.com/tiebanyinshi/yuzu-2.0/pull/46)）合并时 Codex 审查还没跑完，合并后报了 6 条（4 条 P1、2 条 P2），这一版修：一报多要「技师预约」、一报多有意重叠不算自检错误、储值押金退回后的当日额度、网页导入技师锁住后再核对版本、返台进「结果待确认」、临时项目进厨房按出品口核对下单权限。
   - `570`（`570_review_v825.sql`）：`bookings.technician_overlap`（一报多建的预约）；操作编号与「确认作废」的类型约束追加 `table_return`（在当时的约束上追加），8.2.4 已经返过台的补记编号。回滚 `docs/rollback/570_review_v825.down.sql`。
+- **汤崎学堂（`600`–`609`，店主 2026-11-27，设计见 `docs/ACADEMY.md`）**：照店主发来的希尔顿欢朋学习小程序 8 张截图，做学习地图、必修指派、图文互动课件、测验、每日一练（FSRS）、掌握度（BKT）、实操签核、证书、学分等级与榜单、AI 出题与问柚子，另带一套内置课件（应知应会、水疗行业通识）。店主：「多分几个 PR 去完成，最后都审核完后，一起合并成一个 PR，用一个新版号去合并 main」——集成分支 `claude/peaceful-mendel-jardzy` 合 main，子 PR 合进集成分支；版本号在合 main 前按那时 main 的版本最后一位加一。默认做法 XT01–XT12。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
   - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。
