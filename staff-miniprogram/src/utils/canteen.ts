@@ -76,7 +76,7 @@ export async function refreshMealKey(staffId: number): Promise<MealKey> {
 }
 
 /** 门店此刻是哪一餐的开饭时间（餐次的起止是 HH:MM；跨午夜的夜宵算开始那天） */
-export function mealNow(meals: CanteenMe['meals'], hhmm: string): CanteenMe['meals'][number] | null {
+export function mealNow<W extends { start: string; end: string; enabled: boolean }>(meals: readonly W[], hhmm: string): W | null {
   for (const m of meals) {
     if (!m.enabled) continue;
     if (m.start <= m.end ? hhmm >= m.start && hhmm < m.end : hhmm >= m.start || hhmm < m.end) return m;

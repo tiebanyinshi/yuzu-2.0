@@ -3,6 +3,7 @@
 //   · 待办只放要我动手的事，最急的在上面；没有待办写「都处理完了」。
 
 import type { PunchSlotView, PunchToday } from '../../../src/shared/oa';
+import { MEAL_LABELS, mealNow, mealWindowText } from './canteen';
 import { clockOfEpochMinute, slotOf } from './punch';
 import { hhmm } from './format';
 
@@ -39,15 +40,15 @@ export interface TodayInput {
   now: number;
   /** 巡场部门的人、这一轮还没巡完的（不是巡场部门、巡完了、读不到为 null） */
   patrol: PatrolNow | null;
-  /** 在开饭时间里、能用饭堂（不在开饭时间为 null） */
+  /** 在开饭时间里、能用饭堂、这一餐还没打卡（不在开饭时间、打过了为 null） */
   meal: MealNow | null;
 }
 
 const PUNCH_PAGE = '/pages/punch/index';
 
-/** 今天在不在班：今天的某一格上班卡打了、下班卡还没打 */
-function onDutySlot(punch: PunchToday): PunchSlotView | null {
-  return punch.slots.find((s) => s.in && !s.out) ?? null;
+/** 在不在班：某一格上班卡打了、下班卡还没打，而且此刻还在这一格的打卡时段里（下班窗口过了没打下班卡的是缺卡，不算在班） */
+function onDutySlot(punch: PunchToday, now: number): PunchSlotView | null {
+  return punch.slots.find((s) => s.in && !s.out && now >= s.windows.inFrom && now <= s.windows.outTo) ?? null;
 }
 
 const minutesText = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} 小时${m % 60 ? ` ${m % 60} 分钟` : ''}` : `${m} 分钟`);
@@ -58,18 +59,18 @@ export function todayCard(input: TodayInput): TodayCard {
   const hint = punch ? punch.nextPunch : null;
   const slot = punch && hint ? slotOf(punch, hint) : null;
 
-  // 1. 上班卡、在打卡窗口里
-  if (punch && hint && hint.action === 'in' && hint.inWindow && slot) {
+  // 1. 上班卡、在打卡窗口里（窗口按本机时钟走过了就不再写「已迟到」，等重新取）
+  if (punch && hint && hint.action === 'in' && hint.inWindow && slot && now <= slot.windows.inTo) {
     const w = slot.windows;
     const late = now > w.lateAfter;
     const rel = now < w.start ? `还有 ${minutesText(w.start - now)}` : late ? `已迟到 ${minutesText(now - w.start)}` : '已到上班时间';
     return { ...base, eyebrow: '上班', title: `${hhmm(slot.startMinute)} 上班 · ${slot.name}`, detail: rel, tone: late ? 'late' : 'normal', page: PUNCH_PAGE };
   }
   // 2. 下班卡、已到下班时间
-  if (punch && hint && hint.action === 'out' && slot && now >= slot.windows.end) {
+  if (punch && hint && hint.action === 'out' && slot && now >= slot.windows.end && now <= slot.windows.outTo) {
     return { ...base, eyebrow: '下班', title: `${clockOfEpochMinute(slot.windows.end)} 下班 · 已到下班时间`, detail: slot.name, page: PUNCH_PAGE };
   }
-  const duty = punch ? onDutySlot(punch) : null;
+  const duty = punch ? onDutySlot(punch, now) : null;
   // 3. 在班、巡场这一轮还没巡完
   if (duty && patrol && patrol.missing.length) {
     return {
@@ -166,4 +167,33 @@ export function routeScan(raw: string, can: { patrol: boolean; canteenScan: bool
   }
   if (parse.isMeal(text)) return can.canteenScan ? { kind: 'meal', code: text.toUpperCase() } : { kind: 'refuse', message: '这是饭卡码：请给食堂负责人扫' };
   return { kind: 'refuse', message: '这不是店里的码' };
+}
+
+export interface MealWindowLite {
+  meal: string;
+  start: string;
+  end: string;
+  enabled: boolean;
+}
+
+/**
+ * 此刻卡的「吃饭」与「今天」里的菜一行（每次画都按本机时钟重算，不靠取数据时的结果）：
+ *   · 在开饭时间里、这一餐还没打卡：吃饭卡写这一餐与它的菜；
+ *   · 菜一行：正在开饭的那一餐，不然今天下一餐；都没有为空。
+ */
+export function mealOfNow(
+  meals: readonly MealWindowLite[],
+  hhmm: string,
+  today: string,
+  dishes: Record<string, string[]>,
+  checked: { meal: string; date: string; checkedIn: boolean } | null,
+): { meal: MealNow | null; menuLine: string } {
+  const w = mealNow(meals, hhmm);
+  const eaten = !!w && !!checked && checked.checkedIn && checked.meal === w.meal && checked.date === today;
+  const meal = w && !eaten ? { window: mealWindowText(w), dishes: dishes[w.meal] ?? [] } : null;
+  const order = meals.filter((m) => m.enabled).sort((a, b) => a.start.localeCompare(b.start));
+  const nextMeal = w ?? order.find((m) => m.start > hhmm && (dishes[m.meal] ?? []).length > 0) ?? null;
+  const list = nextMeal ? (dishes[nextMeal.meal] ?? []) : [];
+  const menuLine = nextMeal && list.length ? `${MEAL_LABELS[nextMeal.meal] ?? ''}：${list.slice(0, 4).join(' · ')}` : '';
+  return { meal, menuLine };
 }

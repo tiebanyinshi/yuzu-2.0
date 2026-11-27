@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { NextPunchHint, PunchToday } from '../../src/shared/oa';
 import { parsePatrolToken } from '../../src/shared/patrol';
 import { isMealCode, patrolCodeOf } from '../src/utils/canteen';
-import { routeScan, shiftLine, todayCard, todoRows } from '../src/utils/today';
+import { mealOfNow, routeScan, shiftLine, todayCard, todoRows } from '../src/utils/today';
 
 const DAY = 20784 * 1440; // 2026-11-27 的 0 点（1970 起第几分钟）
 const at = (h: number, m = 0) => DAY + h * 60 + m;
@@ -105,6 +105,17 @@ describe('此刻卡', () => {
     expect(missed.tone).toBe('late');
   });
 
+  it('忘了打下班卡、下班窗口过了：不算在班（不写「在班」，也不出巡场卡）', () => {
+    const c = todayCard({ punch: today(at(21), hint({ action: 'done', label: '打卡窗口已过', detail: '前厅早班 打卡窗口已结束，缺卡可提交补卡' }), true), now: at(21), patrol, meal: null });
+    expect(c.eyebrow).toBe('考勤');
+    expect(c.action).toEqual({ label: '去补卡', page: '/pages/apply/index' });
+  });
+
+  it('上班窗口按本机时钟走过了：不再写「已迟到」（等重新取）', () => {
+    const c = todayCard({ punch: today(at(9), hint({})), now: at(10, 30), patrol: null, meal: null });
+    expect(c.eyebrow).not.toBe('上班');
+  });
+
   it('读不到考勤（没信号、第一次打开）不出错', () => {
     expect(todayCard({ punch: null, now: 0, patrol: null, meal: null }).title).toBe('读不到今天的考勤');
   });
@@ -156,5 +167,31 @@ describe('扫一扫', () => {
   it('认不出的码不跳到别处', () => {
     expect(routeScan('https://example.com/x', all, parse)).toEqual({ kind: 'refuse', message: '这不是店里的码' });
     expect(routeScan('', all, parse).kind).toBe('refuse');
+  });
+});
+
+describe('吃饭（每次画都按此刻重算）', () => {
+  const meals = [
+    { meal: 'lunch', start: '10:30', end: '14:00', enabled: true },
+    { meal: 'dinner', start: '17:00', end: '19:30', enabled: true },
+  ];
+  const dishes = { lunch: ['番茄炒蛋', '红烧肉'], dinner: ['清蒸鱼'] };
+  it('开饭时间里、这一餐没打卡：出吃饭卡；菜一行是这一餐', () => {
+    const r = mealOfNow(meals, '12:00', '2026-11-27', dishes, { meal: 'lunch', date: '2026-11-27', checkedIn: false });
+    expect(r.meal).toEqual({ window: '午餐 10:30–14:00', dishes: ['番茄炒蛋', '红烧肉'] });
+    expect(r.menuLine).toBe('午餐：番茄炒蛋 · 红烧肉');
+  });
+
+  it('这一餐打过卡了：不出吃饭卡，菜一行照旧', () => {
+    const r = mealOfNow(meals, '12:00', '2026-11-27', dishes, { meal: 'lunch', date: '2026-11-27', checkedIn: true });
+    expect(r.meal).toBeNull();
+    expect(r.menuLine).toBe('午餐：番茄炒蛋 · 红烧肉');
+  });
+
+  it('开饭时间过了：不出吃饭卡，菜一行是下一餐', () => {
+    const r = mealOfNow(meals, '14:30', '2026-11-27', dishes, null);
+    expect(r.meal).toBeNull();
+    expect(r.menuLine).toBe('晚餐：清蒸鱼');
+    expect(mealOfNow(meals, '20:00', '2026-11-27', dishes, null).menuLine).toBe('');
   });
 });

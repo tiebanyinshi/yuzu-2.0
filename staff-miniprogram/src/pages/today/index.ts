@@ -9,23 +9,31 @@ import type { MyPayslipItem } from '../../../../src/shared/oa-payroll';
 import type { OaAnnouncementList } from '../../../../src/shared/oa';
 import type { StaffMpMe } from '../../../../src/shared/staffmp';
 import { call, isApiError } from '../../utils/api';
-import { MEAL_LABELS, isMealCode, loadMealKey, loadMenus, mealNow, mealWindowText, patrolCodeOf, patrolDay, refreshMealKey } from '../../utils/canteen';
+import { canteenStatus, isMealCode, loadMealKey, loadMenus, patrolCodeOf, patrolDay, refreshMealKey } from '../../utils/canteen';
 import { dayLabel, greeting, initialOf, shortTime, storeClock } from '../../utils/format';
 import { requireMe, toLogin } from '../../utils/guard';
 import { loadPending } from '../../utils/pending';
 import { hasPatrolLink, patrolView, savePatrolLink } from '../../utils/patrol';
 import { largeTextOn } from '../../utils/prefs';
-import type { MealNow, PatrolNow, TodayCard, TodoInput, TodoRow } from '../../utils/today';
-import { routeScan, shiftLine, todayCard, todoRows } from '../../utils/today';
+import type { MealWindowLite, PatrolNow, TodayCard, TodoInput, TodoRow } from '../../utils/today';
+import { mealOfNow, routeScan, shiftLine, todayCard, todoRows } from '../../utils/today';
 
-/** 上次取到的（按员工存在手机上；没信号时先画它） */
+/** 上次取到的（按员工存在手机上；没信号时先画它）。存的是原料，每次画都按本机时钟重算 */
 interface Snapshot {
+  /** 谁的：换了人登录不用上一位的 */
+  staffId: number;
   punch: PunchToday | null;
   /** 取到打卡数据时的本机时间（毫秒）：此刻卡按它往前走 */
   punchAt: number;
   patrol: PatrolNow | null;
-  meal: MealNow | null;
-  menuLine: string;
+  /** 开饭时间（存着的码钥匙里的，没信号也有）、手机与门店的时间差 */
+  meals: MealWindowLite[];
+  offsetMs: number;
+  /** 今天各餐已发布的菜（按餐） */
+  dishes: Record<string, string[]>;
+  dishesDate: string;
+  /** 这一餐打过卡没有（门店系统的饭堂状态） */
+  mealChecked: { meal: string; date: string; checkedIn: boolean } | null;
   todo: TodoInput;
   unread: number;
   notices: { id: number; title: string; time: string; pinned: boolean; unread: boolean }[];
@@ -33,11 +41,13 @@ interface Snapshot {
 }
 
 const SNAP_KEY = 'wcp_today:';
-const EMPTY_TODO: TodoInput = { pendingPunchAt: null, approvalsTodo: 0, ccUnread: 0, missedPunch: false, unsignedPayslips: [] };
+/** 页面开着时多久重新取一次（打卡窗口、开饭时间会变） */
+const REFRESH_MS = 5 * 60 * 1000;
 
 let me: StaffMpMe | null = null;
 let snap: Snapshot | null = null;
 let ticker: number | null = null;
+let lastFetch = 0;
 let seq = 0;
 
 const settle = <T>(p: Promise<T>): Promise<{ ok: true; v: T } | { ok: false; e: unknown }> =>
@@ -49,7 +59,7 @@ const settle = <T>(p: Promise<T>): Promise<{ ok: true; v: T } | { ok: false; e: 
 function loadSnap(staffId: number): Snapshot | null {
   try {
     const v = wx.getStorageSync(SNAP_KEY + staffId) as Snapshot | '';
-    return v && typeof v.savedAt === 'number' ? v : null;
+    return v && typeof v.savedAt === 'number' && v.staffId === staffId && Array.isArray(v.meals) ? v : null;
   } catch {
     return null;
   }
@@ -62,6 +72,8 @@ function saveSnap(staffId: number, s: Snapshot): void {
     // 存不下：下次没信号时少一块，不影响这次
   }
 }
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
 
 Page({
   data: {
@@ -91,15 +103,24 @@ Page({
       return;
     }
     this.header(me);
-    snap = snap ?? loadSnap(me.staff.id);
-    if (snap) this.render(snap, true);
+    // 换了人登录：不用上一位的
+    if (!snap || snap.staffId !== me.staff.id) snap = loadSnap(me.staff.id);
+    // 先画上次的（不标「之前的信息」：取不到时才标，免得每次切回来闪一下）
+    if (snap) this.render(snap, this.data.stale);
     this.refresh();
-    if (ticker === null) ticker = setInterval(() => snap && this.render(snap, this.data.stale), 30000) as unknown as number;
+    if (ticker === null) {
+      ticker = setInterval(() => {
+        if (Date.now() - lastFetch > REFRESH_MS) this.refresh();
+        else if (snap) this.render(snap, this.data.stale);
+      }, 30000) as unknown as number;
+    }
   },
 
   onHide() {
     if (ticker !== null) clearInterval(ticker);
     ticker = null;
+    // 离开时还在取的不再画（回来再取）
+    seq += 1;
   },
 
   async onPullDownRefresh() {
@@ -118,29 +139,35 @@ Page({
   },
 
   render(s: Snapshot, stale: boolean) {
-    const now = s.punch ? s.punch.now + Math.max(0, Math.floor((Date.now() - s.punchAt) / 60000)) : 0;
+    const today = storeClock().date;
+    // 昨天存的打卡数据不拿来画此刻卡（不然会写「已迟到 23 小时」）
+    const punch = s.punch && s.punch.today === today ? s.punch : null;
+    const now = punch ? punch.now + Math.max(0, Math.floor((Date.now() - s.punchAt) / 60000)) : 0;
+    const c = storeClock(new Date(Date.now() + s.offsetMs));
+    const food = mealOfNow(s.meals, `${pad2(c.hour)}:${pad2(c.minute)}`, today, s.dishesDate === today ? s.dishes : {}, s.mealChecked);
     this.setData({
       stale,
-      card: todayCard({ punch: s.punch, now, patrol: s.patrol, meal: s.meal }),
-      todos: todoRows(s.todo),
-      shift: shiftLine(s.punch),
-      menuLine: s.menuLine,
+      card: todayCard({ punch, now, patrol: punch ? s.patrol : null, meal: food.meal }),
+      todos: todoRows({ ...s.todo, missedPunch: punch ? s.todo.missedPunch : false }),
+      shift: shiftLine(punch),
+      menuLine: food.menuLine,
       unread: s.unread,
       notices: s.notices,
       hasNotices: s.notices.length > 0,
     });
   },
 
-  /** 各块分头取：取不到的那一块用上次的 */
+  /** 各块分头取：取不到的那一块用上次的；这个人没有的入口那一块是空的 */
   async refresh() {
     if (!me) return;
     const m = me;
     const mine = ++seq;
+    lastFetch = Date.now();
     const has = (k: string) => m.entries.indexOf(k as never) >= 0;
     const today = storeClock().date;
     const skip = Promise.reject(new Error('skip'));
     skip.catch(() => undefined);
-    const [punch, summary, unread, payslips, notices, patrol, menus, key] = await Promise.all([
+    const [punch, summary, unread, payslips, notices, patrol, menus, key, status] = await Promise.all([
       settle(has('punch') ? call<PunchToday>('GET', '/oa/attendance/today') : skip),
       settle(has('approvals') ? call<ApprovalSummary>('GET', '/oa/approvals/summary') : skip),
       settle(call<{ unread: number }>('GET', '/oa/notifications/unread-count')),
@@ -149,72 +176,67 @@ Page({
       settle(has('patrol') ? patrolDay() : skip),
       settle(has('canteen') ? loadMenus(today, today) : skip),
       settle(has('canteen') ? refreshMealKey(m.staff.id) : skip),
+      settle(has('canteen') ? canteenStatus() : skip),
     ]);
-    if (mine !== seq) return;
+    if (mine !== seq || !me || me.staff.id !== m.staff.id) return;
     // 登录过期（静默重新登录也不行）：去登录页
     const expired = [punch, summary, unread].some((r) => !r.ok && isApiError(r.e) && r.e.status === 401);
     if (expired) return toLogin();
-    const prev = snap;
+    // 上一份只在是这个人的时候拿来补取不到的块
+    const prev = snap && snap.staffId === m.staff.id ? snap : null;
     const anyOk = [punch, summary, unread, payslips, notices, patrol, menus].some((r) => r.ok);
+    /** 这一块：有入口取到了用新的，取不到用上次的，没有入口就是空的 */
+    const pick = <T>(entry: boolean, r: { ok: true; v: T } | { ok: false; e: unknown }, fromPrev: (p: Snapshot) => T, empty: T): T => (!entry ? empty : r.ok ? r.v : prev ? fromPrev(prev) : empty);
 
-    // 吃饭：此刻在开饭时间里（开饭时间用存着的码钥匙里的，没信号也有）
-    const mealKey = key.ok ? key.v : loadMealKey(m.staff.id);
-    let meal: MealNow | null = prev ? prev.meal : null;
-    let menuLine = prev ? prev.menuLine : '';
-    if (mealKey) {
-      const c = storeClock(new Date(Date.now() + mealKey.offsetMs));
-      const w = mealNow(mealKey.me.meals, `${String(c.hour).padStart(2, '0')}:${String(c.minute).padStart(2, '0')}`);
-      const list = menus.ok ? menus.v.filter((x) => x.published && x.date === today) : [];
-      const current = w ? list.find((x) => x.meal === w.meal) : undefined;
-      meal = w ? { window: mealWindowText(w), dishes: current ? current.dishes.map((d) => d.name) : [] } : null;
-      if (menus.ok) {
-        const next = current ?? list[0];
-        menuLine = next
-          ? `${MEAL_LABELS[next.meal] ?? ''}：${next.dishes
-              .map((d) => d.name)
-              .slice(0, 4)
-              .join(' · ')}`
-          : '';
-      }
-    } else if (!has('canteen')) {
-      meal = null;
-      menuLine = '';
+    const canteen = has('canteen');
+    const mealKey = key.ok ? key.v : canteen ? loadMealKey(m.staff.id) : null;
+    // 饭卡没对上、被解开：没有开饭时间与菜
+    const linked = !status.ok || status.v.linked;
+    const dishes: Record<string, string[]> = {};
+    if (menus.ok) for (const x of menus.v) if (x.published && x.date === today) dishes[x.meal] = x.dishes.map((d) => d.name);
+
+    let patrolNow: PatrolNow | null = null;
+    if (has('patrol')) {
+      if (patrol.ok) {
+        const v = patrolView(patrol.v);
+        const missing = patrol.v.currentRound !== null ? v.points.filter((p) => p.state === 'todo').map((p) => p.name) : [];
+        patrolNow = missing.length ? { roundText: v.roundText.replace(/ · /, ' '), missing } : null;
+      } else if (prev) patrolNow = prev.patrol;
     }
 
-    // 巡场：正在巡的这一轮还没巡的
-    let patrolNow: PatrolNow | null = prev ? prev.patrol : null;
-    if (patrol.ok) {
-      const v = patrolView(patrol.v);
-      const missing = patrol.v.currentRound !== null ? v.points.filter((p) => p.state === 'todo').map((p) => p.name) : [];
-      patrolNow = missing.length ? { roundText: v.roundText.replace(/ · /, ' '), missing } : null;
-    } else if (!has('patrol')) patrolNow = null;
-
     const pending = loadPending(m.staff.id, 'punch');
-    const punchV = punch.ok ? punch.v : prev ? prev.punch : null;
+    const punchV = pick<PunchToday | null>(has('punch'), punch, (p) => p.punch, null);
+    const sum = pick<ApprovalSummary>(has('approvals'), summary, (p) => ({ todo: p.todo.approvalsTodo, ccUnread: p.todo.ccUnread }), { todo: 0, ccUnread: 0 });
     const todo: TodoInput = {
       pendingPunchAt: pending ? shortTime(new Date(pending.at).toISOString()) : null,
-      approvalsTodo: summary.ok ? summary.v.todo : prev ? prev.todo.approvalsTodo : 0,
-      ccUnread: summary.ok ? summary.v.ccUnread : prev ? prev.todo.ccUnread : 0,
+      approvalsTodo: sum.todo,
+      ccUnread: sum.ccUnread,
       missedPunch: !!punchV && punchV.nextPunch.action === 'done' && /缺卡/.test(punchV.nextPunch.detail),
-      unsignedPayslips: payslips.ok ? payslips.v.filter((p) => !p.signedAt).map((p) => ({ id: p.id, title: p.title })) : prev ? prev.todo.unsignedPayslips : EMPTY_TODO.unsignedPayslips,
+      unsignedPayslips: !has('payslips') ? [] : payslips.ok ? payslips.v.filter((p) => !p.signedAt).map((p) => ({ id: p.id, title: p.title })) : prev ? prev.todo.unsignedPayslips : [],
     };
     const next: Snapshot = {
+      staffId: m.staff.id,
       punch: punchV,
       punchAt: punch.ok ? Date.now() : prev ? prev.punchAt : Date.now(),
       patrol: patrolNow,
-      meal,
-      menuLine,
+      meals: canteen && linked && mealKey ? mealKey.me.meals : [],
+      offsetMs: mealKey ? mealKey.offsetMs : 0,
+      dishes: canteen && linked ? (menus.ok ? dishes : prev ? prev.dishes : {}) : {},
+      dishesDate: menus.ok ? today : prev ? prev.dishesDate : '',
+      mealChecked: canteen && status.ok ? status.v.currentMeal : prev ? prev.mealChecked : null,
       todo,
       unread: unread.ok ? unread.v.unread : prev ? prev.unread : 0,
-      notices: notices.ok
-        ? notices.v.items
-            .slice()
-            .sort((a, b) => (a.pinned === b.pinned ? b.publishedAt.localeCompare(a.publishedAt) : a.pinned ? -1 : 1))
-            .slice(0, 3)
-            .map((n) => ({ id: n.id, title: n.title, time: shortTime(n.publishedAt), pinned: n.pinned, unread: !n.readAt }))
-        : prev
-          ? prev.notices
-          : [],
+      notices: !has('announcements')
+        ? []
+        : notices.ok
+          ? notices.v.items
+              .slice()
+              .sort((a, b) => (a.pinned === b.pinned ? b.publishedAt.localeCompare(a.publishedAt) : a.pinned ? -1 : 1))
+              .slice(0, 3)
+              .map((n) => ({ id: n.id, title: n.title, time: shortTime(n.publishedAt), pinned: n.pinned, unread: !n.readAt }))
+          : prev
+            ? prev.notices
+            : [],
       savedAt: Date.now(),
     };
     snap = next;
