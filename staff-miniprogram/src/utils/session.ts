@@ -45,7 +45,7 @@ export function currentMe(): StaffMpMe | null {
 }
 
 /** 按人的缓存（知识库的文件夹、最近搜过的）：退出、换了人就清掉，下一位看不到上一位的 */
-const USER_CACHES = ['wcp_learn_folders', 'wcp_learn_recent'];
+const USER_CACHES = ['wcp_learn_folders', 'wcp_learn_recent', 'wcp_academy_home'];
 
 function setMe(next: StaffMpMe | null): void {
   const prev = me ?? read<StaffMpMe>(ME_KEY);

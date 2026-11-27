@@ -9,7 +9,8 @@
 //   · 按人分开存：换了人登录看不到、也不会替前一位重提。
 import { call, isApiError, isRejected } from './api';
 
-export type PendingKind = 'punch' | 'approval_submit' | 'approval_act';
+/** 打卡、发起申请、处理审批；学堂的开卷（同一课时）、交卷（同一份卷子）、每日一练作答（同一道题） */
+export type PendingKind = 'punch' | 'approval_submit' | 'approval_act' | 'academy_quiz' | 'academy_submit' | 'academy_daily';
 
 export interface PendingOp {
   /** 谁发的（按人分开存） */

@@ -1,0 +1,231 @@
+/* 课件是阅读屏：正文 32rpx、行高 1.6，一屏一段（docs/STAFF_MP.md 第 2.3 节） */
+.reader {
+  padding-bottom: 64rpx;
+}
+.head {
+  margin: 8rpx 0 32rpx;
+}
+.eyebrow {
+  font-size: var(--fs-caption);
+  color: var(--wood-text);
+  letter-spacing: 2rpx;
+}
+.title {
+  margin: 8rpx 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.blk {
+  margin-bottom: 28rpx;
+}
+.h {
+  margin-top: 16rpx;
+  font-size: var(--fs-title-s);
+  font-weight: 600;
+}
+.p,
+.li-text {
+  font-size: var(--fs-body-l);
+  line-height: 1.6;
+}
+.b {
+  font-weight: 600;
+}
+.quote {
+  padding-left: 20rpx;
+  border-left: 4rpx solid var(--wood-soft);
+  font-size: var(--fs-body-l);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.li {
+  display: flex;
+  margin-top: 8rpx;
+}
+.li-mark {
+  flex: none;
+  width: 40rpx;
+  font-size: var(--fs-body-l);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+.li-text {
+  flex: 1;
+}
+.callout {
+  padding: 24rpx 28rpx;
+  border-radius: var(--radius-card);
+}
+.callout.tip {
+  background-color: var(--info-soft);
+}
+.callout.warn {
+  background-color: var(--warn-soft);
+}
+.callout.ban {
+  background-color: var(--danger-soft);
+}
+.callout-title {
+  margin-bottom: 4rpx;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+.callout.tip .callout-title {
+  color: var(--info);
+}
+.callout.warn .callout-title {
+  color: var(--warn);
+}
+.callout.ban .callout-title {
+  color: var(--danger);
+}
+.steps,
+.qa,
+.file,
+.table-wrap {
+  padding: 24rpx 28rpx;
+}
+.blk-title {
+  margin-bottom: 12rpx;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+.step {
+  display: flex;
+  margin-top: 16rpx;
+}
+.step-no {
+  flex: none;
+  width: 44rpx;
+  height: 44rpx;
+  margin-right: 16rpx;
+  border-radius: 22rpx;
+  background-color: var(--wood-soft);
+  font-size: var(--fs-caption);
+  line-height: 44rpx;
+  text-align: center;
+  color: var(--wood-text);
+}
+.step-main {
+  flex: 1;
+}
+.step-title {
+  font-size: var(--fs-body-l);
+  line-height: 1.5;
+}
+.cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-gap: 16rpx;
+}
+.flip {
+  min-height: 160rpx;
+  padding: 20rpx;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background-color: var(--surface);
+  transition: background-color 120ms var(--ease);
+}
+.flip.back {
+  background-color: var(--wood-soft);
+}
+.flip-text {
+  font-size: var(--fs-body);
+  line-height: 1.5;
+}
+.flip-hint {
+  margin-top: 8rpx;
+}
+.table-scroll {
+  width: 100%;
+  white-space: nowrap;
+}
+.tr {
+  display: flex;
+  border-top: 1px solid var(--line);
+}
+.tr.th {
+  border-top: none;
+  font-weight: 600;
+}
+.td {
+  flex: none;
+  min-width: 200rpx;
+  padding: 12rpx 16rpx 12rpx 0;
+  white-space: normal;
+  font-size: var(--fs-body);
+  line-height: 1.5;
+}
+.stem {
+  margin: 8rpx 0 16rpx;
+  font-size: var(--fs-body-l);
+  font-weight: 600;
+  line-height: 1.5;
+}
+.opt {
+  margin-top: 12rpx;
+  padding: 20rpx 24rpx;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  font-size: var(--fs-body-l);
+  line-height: 1.5;
+}
+.opt.chosen {
+  border-color: var(--ink);
+  border-width: 2px;
+}
+.opt.right {
+  border-color: var(--success);
+  background-color: var(--success-soft);
+}
+.opt.wrong {
+  border-color: var(--danger);
+  background-color: var(--danger-soft);
+}
+.feedback {
+  margin-top: 12rpx;
+}
+.result {
+  margin-top: 16rpx;
+  font-weight: 600;
+}
+.result.ok {
+  color: var(--success);
+}
+.result.bad {
+  color: var(--danger);
+}
+.answer {
+  margin-top: 8rpx;
+}
+.qa .btn {
+  margin-top: 16rpx;
+}
+.file .btn {
+  margin-top: 24rpx;
+}
+.sign-note {
+  margin-top: 16rpx;
+}
+.list {
+  overflow: hidden;
+  margin-top: 16rpx;
+}
+.done-note {
+  margin-top: 24rpx;
+}
+.foot {
+  margin-top: 40rpx;
+}
+.foot-hint {
+  margin-bottom: 16rpx;
+  text-align: center;
+}
+.next {
+  margin-top: 20rpx !important;
+}
+.course-link {
+  margin-top: 28rpx;
+  text-align: center;
+}

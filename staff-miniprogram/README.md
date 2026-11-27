@@ -14,13 +14,14 @@
 | `src/pages/login` `password` `position` | 登录（微信一键登录、账号密码、改绑要确认、同意并登录）、改密码、老账号选新岗位 |
 | `src/pages/today` `workbench` `me` | 今天、工作台（按要办的事分组、搜功能名）、我的（微信绑定、改密码、大字、振动、关于） |
 | `src/pages/learn*` | 学习：知识库（员工培训的文件夹与资料）、搜索、文档与图片预览、视频音频用短时地址播、记看过 |
+| `src/pages/academy-*` | 汤崎学堂（主线的学堂，`docs/ACADEMY.md`）：课程列表、学习地图、课程、课时（图文课件按块画、文件、测验、实操）、测验、每日一练；学习 Tab 上的学堂一块（等级、继续学习、每日一练、必修、地图、知识中心） |
 | `src/utils` | 接口层与令牌（`api.ts`）、登录与「我是谁」（`session.ts`）、页面的登录核对（`guard.ts`）、入口清单、导航栏、日期文字、本机偏好 |
 | `src/config/env.ts` | 按小程序的版本（开发版、体验版、正式版）选门店系统的地址 |
 | `scripts/render-icons.mjs` | 生成标签栏与入口的图标（lucide 的图形，ISC 许可见 `assets-src/LUCIDE-LICENSE.txt`） |
 | `tests/` | 单元测试（不要开发者工具） |
 | `typings/` | 只给类型检查用的声明（不进小程序包） |
 
-接口的类型直接用 yuzu 的 `src/shared/staffmp.ts`、`src/shared/training.ts`（只引类型，编译后不留引用），接口改了这里的类型检查会报错。
+接口的类型直接用 yuzu 的 `src/shared/staffmp.ts`、`src/shared/training.ts`、`src/shared/academy.ts` 等（只引类型，编译后不留引用；课件的块由门店系统解析好带回来，小程序不引学堂的解析），接口改了这里的类型检查会报错。
 
 ## 检查（不要开发者工具）
 

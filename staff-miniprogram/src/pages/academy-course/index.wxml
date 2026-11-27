@@ -1,0 +1,22 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="课程" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="head">
+      <view class="title">{{title}}</view>
+      <view wx:if="{{summary}}" class="t-body muted summary">{{summary}}</view>
+      <view class="t-caption num">{{meta}}</view>
+      <view wx:if="{{paths}}" class="t-caption">{{paths}}</view>
+    </view>
+    <view class="card list">
+      <view wx:for="{{lessons}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onLesson" aria-role="button">
+        <view class="row-main">
+          <view class="row-title">{{item.title}}</view>
+          <view class="row-sub num">{{item.sub}}</view>
+        </view>
+        <view wx:if="{{item.state}}" class="tag {{item.done ? 'neutral' : 'new'}}">{{item.state}}</view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+  </view>
+</view>

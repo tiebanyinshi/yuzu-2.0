@@ -27,7 +27,13 @@
     "pages/menu/index",
     "pages/canteen-scan/index",
     "pages/patrol/index",
-    "pages/patrol-log/index"
+    "pages/patrol-log/index",
+    "pages/academy-courses/index",
+    "pages/academy-path/index",
+    "pages/academy-course/index",
+    "pages/academy-lesson/index",
+    "pages/academy-quiz/index",
+    "pages/academy-daily/index"
   ],
   "window": {
     "navigationStyle": "custom",
