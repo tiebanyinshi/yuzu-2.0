@@ -2,6 +2,8 @@
 // 数据就是发卡台的手牌板（每 10 秒刷新），这里只看不发牌。点一个柜子看详情；接了智能柜锁控制器的，
 // 有「维护手牌池」权限的人可以远程开柜（写原因、记审计）。没接控制器时不显示开柜。
 // 接了发卡器的（第 6 节，泰格柜锁、M1 手牌）：顶上「发卡器」读卡、清卡；点柜子「写卡」把发卡器上的卡写成这个柜。
+// 写卡、清卡、开柜没收到回答（桥没回答，或浏览器没收到门店系统的回话）都按「结果待确认」：写卡、清卡记在本机，
+// 发卡器下面列出来，读卡核对出结论才去掉（lockerCardPending.ts，Codex 审查 34a7c87）；开柜请到柜前确认。不说「没成功」。
 
 import { useMemo, useState } from 'react';
 import { Navigate } from 'react-router';
@@ -14,21 +16,24 @@ import {
   LOCKER_LOCK_KIND_LABELS,
   LOCKER_STATES,
   LOCKER_STATE_LABELS,
+  settleLockerCardPending,
+  type LockerCardPending,
   type LockerCardReadView,
   type LockerCardResult,
   type LockerControllerInfo,
   type LockerOpenResult,
   type LockerState,
 } from '@shared/lockers';
-import { api, errorMessage } from '../../lib/api';
-import { useCan } from '../../lib/session';
-import { cn, formatDateTime } from '../../lib/utils';
+import { api, errorMessage, UncertainError } from '../../lib/api';
+import { useCan, useSession } from '../../lib/session';
+import { cn, formatDateTime, uuid } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { LoadFailed } from '../../components/LoadFailed';
 import { Dialog } from '../../components/Overlay';
 import { ReasonDialog } from '../../components/ReasonDialog';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, InfoItem, Notice, Segmented, Skeleton } from '../../components/ui';
+import { lockerCardPending, useLockerCardPending } from './lockerCardPending';
 import { useBoard } from './queries';
 
 const STATE_STYLE: Record<LockerState, string> = {
@@ -50,6 +55,10 @@ const STATE_TONE: Record<LockerState, 'neutral' | 'pine' | 'clay' | 'yuzu' | 'in
 
 type Filter = 'all' | LockerState;
 type ControllerView = LockerControllerInfo & { reasons: string[]; cardReasons: string[] };
+type WriteResult = LockerCardResult & { code: string; boundTag: { id: number; code: string } | null };
+
+/** 存不了待核对记录：不发（AGENTS.md：保存不了就不发请求） */
+const NOT_SAVED = { tone: 'error' as const, title: '本机记不下待核对记录，没有发', body: '浏览器存不了数据（隐私窗口或存满了）：换个普通窗口再试。' };
 
 export function LockersPage() {
   const can = useCan();
@@ -149,11 +158,15 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
   const toast = useToast();
   const [asking, setAsking] = useState(false);
   const [writing, setWriting] = useState(false);
+  const storeId = useSession().store.id;
   const write = useMutation({
-    mutationFn: (reason: string) => api.post<LockerCardResult & { code: string; boundTag: { id: number; code: string } | null }>(`/api/lockers/${tag!.id}/card/write`, { reason }),
-    onSuccess: (r) => {
+    mutationFn: ({ reason }: { reason: string; pendingId: string; code: string }) => api.post<WriteResult>(`/api/lockers/${tag!.id}/card/write`, { reason }),
+    onSuccess: (r, { pendingId }) => {
       setWriting(false);
-      if (!r.ok && r.uncertain) return toast({ tone: 'error', title: `写卡结果待确认：柜 ${r.code}`, body: `${r.message}。点「读卡」核对；没写成再写一次（写同一张卡没坏处）。` });
+      // 桥没回答、读回也对不上：记录留着，发卡器下面读卡核对
+      if (!r.ok && r.uncertain)
+        return toast({ tone: 'info', title: `写卡结果待确认：柜 ${r.code}`, body: `${r.message}。已记在发卡器下面：把这张卡放上去点「读卡」核对；没写成再写一次（写同一张卡没坏处）。` });
+      lockerCardPending.remove(pendingId);
       if (!r.ok) return toast({ tone: 'error', title: `没写成柜 ${r.code} 的卡`, body: r.message });
       // 芯片号还没绑这张手牌的，提示去后台「手牌」绑（不自动改绑，GK6）
       const bind = !r.uid
@@ -165,10 +178,23 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
             : '';
       toast({ tone: bind ? 'info' : 'success', title: `已写成柜 ${r.code} 的卡`, body: [r.message, bind].filter(Boolean).join(' ') });
     },
-    onError: (e) => toast({ tone: 'error', title: '写卡没有成功', body: errorMessage(e) }),
+    onError: (e, { pendingId, code }) => {
+      setWriting(false);
+      // 没收到门店系统的回话（超时、断网、5xx，包括写审计出错）：卡可能已经写了，记录留着
+      if (e instanceof UncertainError)
+        return toast({ tone: 'info', title: `写卡结果待确认：柜 ${code}`, body: '没收到门店系统的回答，卡可能已经写了。已记在发卡器下面：把这张卡放上去点「读卡」核对，不要当成没写成。' });
+      lockerCardPending.remove(pendingId);
+      toast({ tone: 'error', title: '写卡没有成功', body: errorMessage(e) });
+    },
   });
+  const startWrite = (reason: string) => {
+    if (!tag) return;
+    const pendingId = uuid();
+    if (!lockerCardPending.add({ id: pendingId, op: 'write', code: tag.code, storeId, at: new Date().toISOString() })) return toast(NOT_SAVED);
+    write.mutate({ reason, pendingId, code: tag.code });
+  };
   const open = useMutation({
-    mutationFn: (reason: string) => api.post<LockerOpenResult>(`/api/lockers/${tag!.id}/open`, { reason }),
+    mutationFn: ({ reason }: { reason: string; code: string }) => api.post<LockerOpenResult>(`/api/lockers/${tag!.id}/open`, { reason }),
     onSuccess: (r) => {
       setAsking(false);
       toast(
@@ -179,7 +205,12 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
             : { tone: 'error', title: `柜 ${r.code} 没有开`, body: r.message },
       );
     },
-    onError: (e) => toast({ tone: 'error', title: '远程开柜没有成功', body: errorMessage(e) }),
+    onError: (e, { code }) => {
+      setAsking(false);
+      // 没收到门店系统的回话：柜门可能已经开了
+      if (e instanceof UncertainError) return toast({ tone: 'info', title: `柜 ${code} 开没开结果待确认`, body: '没收到门店系统的回答，柜门可能已经开了：请到柜前确认，不要当成没开。' });
+      toast({ tone: 'error', title: '远程开柜没有成功', body: errorMessage(e) });
+    },
   });
   if (!tag) return null;
   const s = lockerState(tag);
@@ -238,7 +269,7 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
         reasons={controller?.reasons}
         testId="locker-open-reason"
         onClose={() => setAsking(false)}
-        onConfirm={(reason) => open.mutate(reason)}
+        onConfirm={(reason) => open.mutate({ reason, code: tag.code })}
       />
       <ReasonDialog
         open={writing}
@@ -254,7 +285,7 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
         reasons={controller?.cardReasons}
         testId="locker-card-write-reason"
         onClose={() => setWriting(false)}
-        onConfirm={(reason) => write.mutate(reason)}
+        onConfirm={startWrite}
       />
     </>
   );
@@ -263,28 +294,48 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
 /** 发卡器：读放在上面的手牌（芯片号、能开哪几把锁、绑的是哪张手牌）；有「维护手牌池」的可以清卡（退牌回收、作废） */
 function CardEncoder({ canWrite, reasons }: { canWrite: boolean; reasons: string[] }) {
   const toast = useToast();
+  const storeId = useSession().store.id;
+  const pending = useLockerCardPending(storeId);
   const [clearing, setClearing] = useState(false);
   const read = useMutation({
     mutationFn: () => api.post<LockerCardReadView>('/api/lockers/card/read', {}),
+    onSuccess: (c) => {
+      // 读到的卡能给哪几条待核对的下结论：有结论的去掉
+      for (const check of settleLockerCardPending(pending, c)) {
+        lockerCardPending.remove(check.id);
+        toast({ tone: check.outcome === 'done' ? 'success' : 'info', title: check.text });
+      }
+    },
     onError: (e) => toast({ tone: 'error', title: '读卡没有成功', body: errorMessage(e) }),
   });
   const card = read.data;
   const clear = useMutation({
     // 只清刚读到的那张卡：发卡器上换成了别的卡就不动
-    mutationFn: (reason: string) => api.post<LockerCardResult>('/api/lockers/card/clear', { reason, uid: card?.uid ?? null }),
-    onSuccess: (r) => {
+    mutationFn: ({ reason, uid }: { reason: string; uid: string | null; pendingId: string }) => api.post<LockerCardResult>('/api/lockers/card/clear', { reason, uid }),
+    onSuccess: (r, { pendingId }) => {
       setClearing(false);
-      toast(
-        r.ok
-          ? { tone: 'success', title: '已清卡', body: r.message }
-          : r.uncertain
-            ? { tone: 'error', title: '清卡结果待确认', body: `${r.message}。点「读卡」核对；没清成再清一次。` }
-            : { tone: 'error', title: '没清成', body: r.message },
-      );
+      if (!r.ok && r.uncertain) return toast({ tone: 'info', title: '清卡结果待确认', body: `${r.message}。已记在下面：把这张卡放上去点「读卡」核对；没清成再清一次。` });
+      lockerCardPending.remove(pendingId);
+      toast(r.ok ? { tone: 'success', title: '已清卡', body: r.message } : { tone: 'error', title: '没清成', body: r.message });
       if (r.ok) read.reset();
     },
-    onError: (e) => toast({ tone: 'error', title: '清卡没有成功', body: errorMessage(e) }),
+    onError: (e, { pendingId }) => {
+      setClearing(false);
+      // 没收到门店系统的回话：卡可能已经清了，记录留着
+      if (e instanceof UncertainError) {
+        read.reset();
+        return toast({ tone: 'info', title: '清卡结果待确认', body: '没收到门店系统的回答，卡可能已经清了。已记在下面：把这张卡放上去点「读卡」核对，不要当成没清成。' });
+      }
+      lockerCardPending.remove(pendingId);
+      toast({ tone: 'error', title: '清卡没有成功', body: errorMessage(e) });
+    },
   });
+  const startClear = (reason: string) => {
+    const uid = card?.uid ?? null;
+    const pendingId = uuid();
+    if (!lockerCardPending.add({ id: pendingId, op: 'clear', uid, storeId, at: new Date().toISOString() })) return toast(NOT_SAVED);
+    clear.mutate({ reason, uid, pendingId });
+  };
   return (
     <Card className="space-y-3 p-4" data-testid="locker-card-encoder">
       <div className="flex flex-wrap items-center gap-2">
@@ -301,6 +352,7 @@ function CardEncoder({ canWrite, reasons }: { canWrite: boolean; reasons: string
           </Button>
         )}
       </div>
+      {pending.length > 0 && <PendingChecks pending={pending} />}
       {card &&
         (card.ok ? (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="locker-card-result">
@@ -329,8 +381,30 @@ function CardEncoder({ canWrite, reasons }: { canWrite: boolean; reasons: string
         reasons={reasons}
         testId="locker-card-clear-reason"
         onClose={() => setClearing(false)}
-        onConfirm={(reason) => clear.mutate(reason)}
+        onConfirm={startClear}
       />
     </Card>
+  );
+}
+
+/** 没核对的写卡、清卡：读卡核对出结论自动去掉；核对过了（比如那张卡已经找不到、重写过了）可以手动去掉 */
+function PendingChecks({ pending }: { pending: LockerCardPending[] }) {
+  return (
+    <Notice tone="warning" title="结果待确认：把那张卡放在发卡器上点「读卡」核对" className="space-y-1" data-testid="locker-card-pending">
+      <ul className="space-y-1.5">
+        {pending.map((p) => (
+          <li key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="locker-card-pending-item">
+            <span className="min-w-0 flex-1">
+              {p.op === 'write'
+                ? `写卡 · 柜 ${p.code} · ${formatDateTime(p.at)}：卡里是柜 ${p.code} 就是写成了，不是就再写一次`
+                : `清卡${p.uid ? ` · 芯片号 ${p.uid}` : ''} · ${formatDateTime(p.at)}：读回是空白就是清成了`}
+            </span>
+            <Button size="sm" variant="ghost" onClick={() => lockerCardPending.remove(p.id)} data-testid="locker-card-pending-dismiss">
+              已核对
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </Notice>
   );
 }

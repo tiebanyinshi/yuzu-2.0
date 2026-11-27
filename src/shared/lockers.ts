@@ -148,3 +148,39 @@ export interface LockerOpenResult {
 
 /** 远程开柜的原因（必填，记审计）；常用的几句 */
 export const LOCKER_OPEN_REASONS = ['客人忘带手牌', '手牌失灵', '清洁、检修', '客人遗留物品'] as const;
+
+/**
+ * 写卡、清卡结果待确认时页面记下的那一次（Codex 审查 34a7c87，docs/LOCKERS_V8149.md 第 6.4 节）：
+ * 桥没回答、浏览器没收到门店系统的回话（超时、断网、5xx，包括写审计出错）都可能已经写了、清了，
+ * 发请求以前记在本机，没有结论就留着，读卡核对出结论才去掉；不能当成没做。
+ */
+export type LockerCardPending = { id: string; op: 'write'; code: string; storeId: number; at: string } | { id: string; op: 'clear'; uid: string | null; storeId: number; at: string };
+
+export interface LockerCardCheck {
+  id: string;
+  /** done：确实做成了；not_done：确实没做成（只有清卡读回同一张芯片号时能断定） */
+  outcome: 'done' | 'not_done';
+  text: string;
+}
+
+/**
+ * 读到一张卡以后，哪些待核对的有了结论：
+ *   · 写卡：卡里写的就是那个柜 → 写成了；不是的不下结论（可能放的不是刚才那张卡）；
+ *   · 清卡（记着芯片号的）：读到同一张芯片号，空白 → 清成了，还写着柜 → 没清成；别的卡不下结论。
+ */
+export function settleLockerCardPending(list: readonly LockerCardPending[], read: Pick<LockerCardRead, 'ok' | 'uid' | 'code'>): LockerCardCheck[] {
+  if (!read.ok) return [];
+  const out: LockerCardCheck[] = [];
+  for (const p of list) {
+    if (p.op === 'write') {
+      if (read.code === p.code) out.push({ id: p.id, outcome: 'done', text: `核对：卡里是柜 ${p.code}，写成了` });
+    } else if (p.uid && read.uid === p.uid) {
+      out.push(
+        read.code === null
+          ? { id: p.id, outcome: 'done', text: `核对：芯片号 ${p.uid} 已清成空白` }
+          : { id: p.id, outcome: 'not_done', text: `核对：芯片号 ${p.uid} 没清成，卡里还是柜 ${read.code}；要清再清一次` },
+      );
+    }
+  }
+  return out;
+}
