@@ -127,6 +127,15 @@ export const CONVENTION_RULES = [
     allow: ['src/client/components/Overlay.tsx', 'src/client/features/emenu/'],
     hint: '弹窗用公共的 Dialog / Sheet（src/client/components/Overlay.tsx：遮罩、Esc、焦点、手机上全屏都在里面），不再自己画',
   },
+  // 8.1.52（后端评估 docs/BACKEND_REVIEW_V8148.md 第 3 节）：接口里把请求体、查询、路径参数直接断言成类型（req.body as X）。
+  // 存量逐个核对过，都在下游 parse 过；新写的直接 parse(Schema, req.body)，不再断言
+  {
+    key: 'request-cast',
+    pattern: /\breq\.(?:body|query|params)\s+as\b/g,
+    scope: ['src/server/'],
+    allow: [],
+    hint: '接口的输入直接 parse(zod 模式, req.body)，不写 req.body as X（断言不校验，下游忘了 parse 就是没校验的输入）',
+  },
 ];
 
 /** allow 里的一项管不管这个文件：以 / 结尾的是整个目录 */

@@ -61,6 +61,32 @@ export interface AppConfig {
   archive: ArchiveConfig;
   /** 智能柜锁（docs/LOCKERS_V8149.md）：控制器到货前是 none */
   lockers: LockerConfig;
+  /**
+   * 换密钥时还认的旧密钥（后端评估 docs/BACKEND_REVIEW_V8148.md 第 6 节，照 Supabase 的「新的签、新旧都认、过期再撤」）：
+   * 环境变量 <名字>_PREVIOUS，逗号分隔，每把至少 32 个字符。新签发、新加密一律用当前那把；旧的只用来核对、解密，过了有效期从这里删掉。
+   */
+  previousKeys: PreviousKeys;
+}
+
+export interface PreviousKeys {
+  /** CANTEEN_CODE_SECRET_PREVIOUS：员工手机上还没刷新的饭卡码钥匙照样认 */
+  canteenCode: string[];
+  /** PAYROLL_FILE_KEY_PREVIOUS：用旧密钥加密的工资表原件照样能下载 */
+  payrollFile: string[];
+  /** MALL_API_KEY_PREVIOUS：商城后端换密钥期间旧的照样认 */
+  mallApi: string[];
+}
+
+export function loadPreviousKeys(env: NodeJS.ProcessEnv): PreviousKeys {
+  const list = (name: string) => {
+    const keys = (env[name] ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (keys.some((k) => k.length < 32)) throw new Error(`${name} 里每把旧密钥都至少 32 个字符（逗号分隔）`);
+    return keys;
+  };
+  return { canteenCode: list('CANTEEN_CODE_SECRET_PREVIOUS'), payrollFile: list('PAYROLL_FILE_KEY_PREVIOUS'), mallApi: list('MALL_API_KEY_PREVIOUS') };
 }
 
 /** 智能柜锁控制器（LOCKER_DRIVER / LOCKER_BRIDGE_URL / LOCKER_BRIDGE_TOKEN） */
@@ -331,6 +357,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     mallApiKey: loadMallApiKey(process.env),
     archive: overrides.archive ?? loadArchiveConfig(process.env),
     lockers: overrides.lockers ?? loadLockerConfig(process.env),
+    previousKeys: overrides.previousKeys ?? loadPreviousKeys(process.env),
     ...overrides,
   };
 }

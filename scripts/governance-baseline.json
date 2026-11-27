@@ -66,6 +66,7 @@
     "polling": 63,
     "raw-dialog": 5,
     "raw-table": 36,
+    "request-cast": 75,
     "status-500": 2
   },
   "duplicationMaxPercent": 1,

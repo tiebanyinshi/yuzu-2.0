@@ -33,3 +33,12 @@ export function checkCanteenCode(secret: string, employeeId: number, epoch: numb
   if (step < now - CODE_ACCEPT_PAST_STEPS || step > now + CODE_ACCEPT_FUTURE_STEPS) return 'expired';
   return 'ok';
 }
+
+/** 换密钥期间（CANTEEN_CODE_SECRET_PREVIOUS）：先按当前密钥核对，签名对不上再按旧的一把一把试；都对不上才是 invalid */
+export function checkCanteenCodeAny(secrets: readonly string[], employeeId: number, epoch: number, step: number, mac: string, atMs: number): 'ok' | 'expired' | 'invalid' {
+  for (const secret of secrets) {
+    const r = checkCanteenCode(secret, employeeId, epoch, step, mac, atMs);
+    if (r !== 'invalid') return r;
+  }
+  return 'invalid';
+}

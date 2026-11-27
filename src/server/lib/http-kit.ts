@@ -89,8 +89,14 @@ export function installErrorHandler(app: FastifyInstance, t: ErrorTexts): void {
 
 const digest = (s: string) => createHash('sha256').update(s, 'utf8').digest();
 
-/** 服务密钥头比对：先各自取摘要再比（长度不同也不提前返回） */
-export function sharedKeyMatcher(key: string): (got: unknown) => boolean {
-  const expected = digest(key);
-  return (got) => typeof got === 'string' && timingSafeEqual(digest(got), expected);
+/** 服务密钥头比对：先各自取摘要再比（长度不同也不提前返回）；previous 是换密钥期间还认的旧密钥（每把都比，不提前返回） */
+export function sharedKeyMatcher(key: string, previous: readonly string[] = []): (got: unknown) => boolean {
+  const expected = [key, ...previous].map(digest);
+  return (got) => {
+    if (typeof got !== 'string') return false;
+    const d = digest(got);
+    let ok = false;
+    for (const e of expected) ok = timingSafeEqual(d, e) || ok;
+    return ok;
+  };
 }

@@ -7,7 +7,7 @@ import { loadRoleOverrides, positionFrom, sanitizeAdjust } from './role-permissi
 import type { SessionInfo } from '@shared/types';
 import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
-import { badRequest, unauthorized, unprocessable } from '../lib/errors';
+import { AppError, badRequest, unauthorized, unprocessable } from '../lib/errors';
 import { parse } from '../lib/validate';
 import { loadSettings } from '../modules/settings';
 import { loadTechnicianRules } from '../modules/technicians';
@@ -19,7 +19,7 @@ import { loadMpRules } from '../modules/mp/rules';
 import { sessionOnly } from './guard';
 import { checkLock, clearFailures, recordFailure } from './lockout';
 import { checkPasswordStrength, hashPassword, verifyPassword } from './password';
-import { SESSION_COOKIE, createSession, destroySession, destroyStaffSessions, hashSessionToken } from './session';
+import { SESSION_COOKIE, createSession, destroySession, destroyStaffSessions, hashSessionToken, storeIdsOf } from './session';
 import { DEFAULT_STORE_ID, runInStore } from '../lib/store-context';
 import { allowedStores, switchStore } from '../modules/stores';
 
@@ -138,6 +138,12 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps) {
       });
       if (staff && ok && !staff.active) throw unauthorized('该账号已停用，请联系店主');
       throw unauthorized('账号或密码不正确');
+    }
+    // 挂的门店都停用了（8.1.52 后端评估第 7 节）：不再落到本店，直接拒绝，免得看到、写进别家的数据
+    const [reach] = await sql<{ storeIds: number[] }[]>`SELECT ${storeIdsOf(sql)} AS store_ids FROM staff st WHERE st.id = ${staff.id}`;
+    if (!(reach?.storeIds ?? []).length) {
+      await writeAudit(sql, { staffId: staff.id, action: 'login_failed', detail: { username, reason: 'no_store' }, ip: req.ip });
+      throw new AppError(403, 'NO_STORE', '这个账号挂的门店都停用了：请让店主在后台「员工」里给它挂一家在营业的门店');
     }
     clearFailures(username, req.ip);
     const token = await createSession(sql, staff.id, config.sessionTtlHours, {
