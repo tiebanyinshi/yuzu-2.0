@@ -154,12 +154,20 @@ export async function unbindWechat(
 }
 
 /** 「我是谁」（第 8.1 节）：姓名、岗位、部门、门店、要不要先改密码、能用哪些入口 */
-export async function buildMe({ sql, config }: Deps, actor: Actor): Promise<StaffMpMe> {
+/**
+ * 「我是谁」。wechatBound 说的是**这一个会话**是不是这台手机的微信绑定登录的（绑定还在）——不是这个账号在哪台手机上绑过：
+ * 在同事手机上「只登录这一次」的，这里是没绑（「我的」页不给「解除」，免得解开的是自己手机上的微信）
+ */
+export async function buildMe({ sql, config }: Deps, actor: Actor, token: string | null = null): Promise<StaffMpMe> {
   const storeId = actor.storeId ?? 1;
+  const tokenHash = token ? hashSessionToken(token) : '';
   const [row] = await sql<{ empNo: string | null; storeName: string | null; bound: boolean }[]>`
     SELECT (SELECT emp_no FROM staff_profiles WHERE staff_id = ${actor.id}) AS emp_no,
            (SELECT name FROM stores WHERE id = ${storeId}) AS store_name,
-           EXISTS (SELECT 1 FROM staffmp_bindings WHERE staff_id = ${actor.id} AND revoked_at IS NULL) AS bound`;
+           EXISTS (
+             SELECT 1 FROM staffmp_sessions m JOIN staffmp_bindings b ON b.id = m.binding_id
+             WHERE m.token_hash = ${tokenHash} AND b.staff_id = ${actor.id} AND b.revoked_at IS NULL
+           ) AS bound`;
   const def = isPositionKey(actor.position) ? positionOf(actor.position) : null;
   const department = def ? (ORG_DEPARTMENTS.find((d) => d.key === def.department)?.name ?? null) : null;
   return {

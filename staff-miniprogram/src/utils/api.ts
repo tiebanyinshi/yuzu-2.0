@@ -160,15 +160,37 @@ function reloginOnce(): Promise<boolean> {
   return relogging;
 }
 
+/** 门店系统说「先改密码 / 先选岗位」时怎么办（session.ts 交进来：改「我是谁」的标记、去那一页） */
+let gate: ((code: string) => void) | null = null;
+export function setGate(fn: ((code: string) => void) | null): void {
+  gate = fn;
+}
+const GATE_CODES = ['PASSWORD_CHANGE_REQUIRED', 'POSITION_REQUIRED'];
+
 /** 要登录的接口：令牌过期时悄悄用微信重新登录、重发一次；还是不行抛 401 UNAUTHORIZED（页面去登录页） */
 export async function call<T>(method: Method, path: string, body?: Record<string, unknown>): Promise<T> {
-  const token = currentToken();
-  if (!token && !(await reloginOnce())) throw apiError('UNAUTHORIZED', '请先登录', 401);
-  let r = await sendWithBusyRetry(method, path, body, currentToken());
+  if (!currentToken() && !(await reloginOnce())) throw apiError('UNAUTHORIZED', '请先登录', 401);
+  const used = currentToken();
+  let r = await sendWithBusyRetry(method, path, body, used);
   if (r.status === 401) {
-    clearToken();
-    if (await reloginOnce()) r = await sendWithBusyRetry(method, path, body, currentToken());
+    if (currentToken() === used) {
+      // 这个令牌确实不认了：清掉、悄悄重新登录一次
+      clearToken();
+      if (await reloginOnce()) r = await sendWithBusyRetry(method, path, body, currentToken());
+    } else if (currentToken()) {
+      // 这期间别的请求已经换上了新令牌：用新的重发，不清掉它
+      r = await sendWithBusyRetry(method, path, body, currentToken());
+    }
   }
+  if (ok(r)) return r.data as T;
+  const error = errorOf(r.status, r.data);
+  if (r.status === 403 && GATE_CODES.indexOf(error.code) >= 0 && gate) gate(error.code);
+  throw error;
+}
+
+/** 用指定的令牌发一次（不悄悄重新登录、不动存着的令牌）：退掉一个不该留的会话用 */
+export async function callAs<T>(token: string, method: Method, path: string, body?: Record<string, unknown>): Promise<T> {
+  const r = await sendWithBusyRetry(method, path, body, token);
   if (ok(r)) return r.data as T;
   throw errorOf(r.status, r.data);
 }
@@ -187,9 +209,13 @@ export function download(path: string, onProgress?: (percent: number) => void): 
     const task = wx.downloadFile({
       url: apiBase() + PREFIX + path,
       header: token ? { authorization: 'Bearer ' + token } : {},
+      // 大文件（最大 200MB）慢慢下：给 10 分钟
+      timeout: 600000,
       success: (res) => {
         if (res.statusCode >= 200 && res.statusCode < 300) resolve(res.tempFilePath);
-        else reject(apiError(res.statusCode === 401 ? 'UNAUTHORIZED' : 'DOWNLOAD_FAILED', res.statusCode === 401 ? '登录过期了，请重新打开' : '文件没有下载下来，请稍后再试', res.statusCode));
+        else if (res.statusCode === 401) reject(apiError('UNAUTHORIZED', '登录过期了，请重新打开', 401));
+        else if (res.statusCode === 409) reject(apiError('VERSION_CHANGED', '这份资料刚换了新版本，已经重新打开，请再点一次', 409));
+        else reject(apiError('DOWNLOAD_FAILED', '文件没有下载下来，请稍后再试', res.statusCode));
       },
       fail: () => reject(apiError('NETWORK', '现在连不上门店系统，请到信号好的地方再试', 0)),
     });

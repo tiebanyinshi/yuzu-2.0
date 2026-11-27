@@ -180,6 +180,11 @@ describe('微信一键进与绑定（SP05）', () => {
     expect(w.body.status).toBe('ok');
     expect(w.body.me.staff.displayName).toBe('阿丽');
     expect((await s('GET', '/api/staffmp/me', w.body.token)).status).toBe(200);
+    // 「已绑定」说的是这一个会话：微信一键进的是；同一个账号在别的手机上「只登录这一次」的不是（那边不给「解除」）
+    expect((await s('GET', '/api/staffmp/me', w.body.token)).body.wechatBound).toBe(true);
+    const once = await pwLogin('alice', {});
+    expect(once.body.me.wechatBound).toBe(false);
+    expect((await s('GET', '/api/staffmp/me', once.body.token)).body.wechatBound).toBe(false);
     expect((await s('POST', '/api/staffmp/auth/wechat', null, { code: 'wx-phonea', mode: 'peek' })).body).toEqual({ status: 'bound', displayName: '阿丽' });
   });
 
