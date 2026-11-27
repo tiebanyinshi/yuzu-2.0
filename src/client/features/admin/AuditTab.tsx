@@ -105,6 +105,8 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   locker_opened: { label: '远程开柜', tone: 'ember' },
   locker_card_written: { label: '发卡器写手牌', tone: 'ember' },
   locker_card_cleared: { label: '发卡器清手牌', tone: 'neutral' },
+  locker_select_opened: { label: '远程开手机柜', tone: 'ember' },
+  locker_select_released: { label: '释放手机柜', tone: 'neutral' },
   hand_tag_updated: { label: '修改手牌', tone: 'neutral' },
   technician_saved: { label: '保存技师', tone: 'neutral' },
   technicians_imported: { label: '导入技师名册', tone: 'ember' },

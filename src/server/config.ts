@@ -98,7 +98,7 @@ export interface LockerConfig {
   bridgeUrl: string | null;
   /** http：调柜锁桥时带的密钥（至少 32 个字符；只放 .env） */
   bridgeToken: string | null;
-  /** 控制器能做的事（docs/LOCKERS_V8149.md 第 6 节）：none 为空；mock 三样都有；http 按 LOCKER_CAPABILITIES，默认 open,doors */
+  /** 控制器能做的事（docs/LOCKERS_V8149.md 第 6、7 节）：none 为空；mock 四样都有；http 按 LOCKER_CAPABILITIES，默认 open,doors */
   capabilities: LockerCapability[];
 }
 
@@ -122,7 +122,7 @@ export function loadLockerConfig(env: NodeJS.ProcessEnv): LockerConfig {
           .filter(Boolean);
   const unknown = caps.filter((c) => !(LOCKER_CAPABILITIES as readonly string[]).includes(c));
   if (unknown.length) throw new Error(`LOCKER_CAPABILITIES 只能写 ${LOCKER_CAPABILITIES.join(' / ')}（逗号分隔），不认识：${unknown.join('、')}`);
-  if (!caps.length) throw new Error('LOCKER_CAPABILITIES 至少写一样（open / doors / card）');
+  if (!caps.length) throw new Error(`LOCKER_CAPABILITIES 至少写一样（${LOCKER_CAPABILITIES.join(' / ')}）`);
   return { driver, bridgeUrl: url.replace(/\/+$/, ''), bridgeToken: token, capabilities: LOCKER_CAPABILITIES.filter((c) => caps.includes(c)) };
 }
 

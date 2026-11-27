@@ -86,7 +86,7 @@ node dist/server/cli.js device-printer-mock [--port 9100] [--mode normal|paper_o
 node dist/server/cli.js device-bridge-mock [--terminal <终端编号>] [--port 17890]
                                           # 模拟终端设备服务（桥）：输入 card / scan / nfc <号码>、unplug / plug <设备键>、fail；用法见 docs/HARDWARE.md 第 10 节
 node dist/server/cli.js locker-bridge-mock [--port 9300] [--token <至少 32 位>]
-                                          # 模拟柜锁桥（开柜、查柜门、发卡器读写清 M1 手牌）：输入 card <芯片号>、remove、show；接法见 docs/LOCKERS_V8149.md 第 6 节
+                                          # 模拟柜锁桥（开柜、查柜门、发卡器读写清 M1 手牌、手机柜自选柜）：输入 card <芯片号>、remove、show、take <手机柜号> <芯片号>、free <手机柜号>、phones；接法见 docs/LOCKERS_V8149.md 第 6、7 节
 node scripts/check-ocr-assets.mjs [目录]   # 管家部本机 OCR 的第三方文件（8.0.12，docs/CONCIERGE.md「构建资源」）：按清单核对大小与 SHA-256；默认核对仓库里的，npm run build 的最后自动核对 dist 里的
 npx tsx scripts/studio-mp-samples.ts      # 8.1.2 给小程序线的样例版面（docs/STUDIO_MP.md 第 7 节）：重新生成 tests/fixtures/studio/mp/*.json（格式或样例改了以后跑；tests/studio-mp-samples.test.ts 核对一致）
 STUDIO_URL=… STUDIO_USER=… STUDIO_PASSWORD=… node scripts/studio-mp-shots.mjs   # 8.1.2 样例的截图（375 宽、两倍像素，用手机预览页 ?bare=1）：只在独立演示库或本地开发库跑（会传样例图、生成预览码，不发布）
