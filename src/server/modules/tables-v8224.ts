@@ -24,7 +24,7 @@ import { ctxOf, type Deps, type OpContext } from '../lib/context';
 import { AppError, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { idParam, parse } from '../lib/validate';
 import { currentStoreId } from '../lib/store-context';
-import { businessDate, setTxTimeouts, voidCheckout } from './frontdesk';
+import { businessDate, loadCheckout, setTxTimeouts } from './frontdesk';
 import { tableChargesOf } from './table-charges';
 import { loadDiningRules } from './dining';
 
@@ -151,6 +151,7 @@ export async function returnTableSession(deps: Deps, sessionId: number, raw: unk
   if (!co) throw conflict('RETURN_NOT_ALLOWED', '找不到这桌的结账单，请刷新');
   if (co.sessions !== 1 || co.visits !== 0) throw conflict('RETURN_MERGED', '这张结账单一起结了几桌，不能单独返台；要改请反结账');
   try {
+    const { voidCheckout } = await loadCheckout();
     await voidCheckout(deps, co.checkoutId, { reason: `返台补低消：${input.reason}`, refundShiftId: input.refundShiftId }, ctx, {
       afterRestore: (tx, c) => finishSettledReturn(tx, deps, { sessionId, key: input.clientKey, reason: input.reason, checkout: c, ctx }),
     });
