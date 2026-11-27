@@ -62,7 +62,7 @@
   "deadExports": [],
   "conventions": {
     "inline-dvh": 1,
-    "module-internal": 260,
+    "module-internal": 258,
     "navigator.onLine": 1,
     "polling": 63,
     "raw-dialog": 5,
