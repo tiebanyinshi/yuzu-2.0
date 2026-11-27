@@ -33,9 +33,18 @@ export async function eligibilityOf(db: Db, staffId: number): Promise<{ ok: true
   return { ok: true };
 }
 
-/** 发一个员工小程序的会话：sessions 一行 + staffmp_sessions 一行（一个事务里） */
-export async function issueSession(sql: Sql, staffId: number, bindingId: number | null, ttlHours: number, meta: { ip?: string; userAgent?: string }): Promise<string> {
+/**
+ * 发一个员工小程序的会话：sessions 一行 + staffmp_sessions 一行（一个事务里）。
+ * 挂着绑定的（微信一键进、登录时顺带绑上的）先拿这位员工的锁、再核对绑定还在（Codex 审查 467189d：读到绑定以后、发会话之前
+ * 后台刚好解开或换绑了，不能再发一个挂在已经解开的绑定上的会话）；绑定已经解开的返回 null
+ */
+export async function issueSession(sql: Sql, staffId: number, bindingId: number | null, ttlHours: number, meta: { ip?: string; userAgent?: string }): Promise<string | null> {
   return withTx(sql, async (tx) => {
+    if (bindingId !== null) {
+      await lockBinding(tx, null, staffId);
+      const [live] = await tx`SELECT 1 FROM staffmp_bindings WHERE id = ${bindingId} AND staff_id = ${staffId} AND revoked_at IS NULL`;
+      if (!live) return null;
+    }
     const token = await createSession(tx, staffId, ttlHours, { ip: meta.ip, userAgent: `staffmp ${meta.userAgent ?? ''}`.trim() });
     await tx`INSERT INTO staffmp_sessions (token_hash, staff_id, binding_id) VALUES (${hashSessionToken(token)}, ${staffId}, ${bindingId})`;
     return token;
@@ -43,14 +52,16 @@ export async function issueSession(sql: Sql, staffId: number, bindingId: number 
 }
 
 /**
- * 员工小程序端口认的会话：只认员工小程序发的令牌，账号要还在职（每个请求都查，离职、改成专用账号以后马上进不来）。
+ * 员工小程序端口认的会话：只认员工小程序发的令牌，账号要还在职（每个请求都查，离职、改成专用账号以后马上进不来），
+ * 挂着绑定的、绑定已经解开的不认（解开时会话本来就删了；这一条兜住解开与发会话撞在一起的情况）。
  * 解析出来的 Actor 与网页的会话一模一样（权限、门店都按 resolveSession 现算）
  */
 export async function resolveStaffMpSession(db: Db, token: string, ttlHours: number): Promise<Actor | null> {
   const [mine] = await db<{ ok: boolean }[]>`
     SELECT (${onDuty(db)}) AS ok
     FROM staffmp_sessions m JOIN staff s ON s.id = m.staff_id LEFT JOIN staff_profiles p ON p.staff_id = s.id
-    WHERE m.token_hash = ${hashSessionToken(token)}`;
+    LEFT JOIN staffmp_bindings b ON b.id = m.binding_id
+    WHERE m.token_hash = ${hashSessionToken(token)} AND (m.binding_id IS NULL OR b.revoked_at IS NULL)`;
   if (!mine?.ok) return null;
   return resolveSession(db, token, ttlHours);
 }
@@ -65,7 +76,8 @@ export async function resolveStaffMpSessionByHash(db: Db, tokenHash: string): Pr
     FROM staffmp_sessions m
     JOIN sessions x ON x.token_hash = m.token_hash AND x.expires_at > now()
     JOIN staff s ON s.id = m.staff_id LEFT JOIN staff_profiles p ON p.staff_id = s.id
-    WHERE m.token_hash = ${tokenHash}`;
+    LEFT JOIN staffmp_bindings b ON b.id = m.binding_id
+    WHERE m.token_hash = ${tokenHash} AND (m.binding_id IS NULL OR b.revoked_at IS NULL)`;
   if (!row?.ok) return null;
   const found = await resolveStaffActor(db, Number(row.staffId), row.storeId == null ? null : Number(row.storeId));
   return found?.actor ?? null;
@@ -121,9 +133,15 @@ export async function bindWechat(sql: Sql, staffId: number, openid: string, opts
 }
 
 /** 解开这位员工现在的绑定（员工自己、后台）；没有绑着的返回 false。小程序上的会话一起退出（exceptToken 留下员工自己这一个） */
-export async function unbindWechat(sql: Sql, staffId: number, by: { reason: 'self' | 'admin'; adminId?: number; ip: string; bindingId?: number; exceptToken?: string }): Promise<boolean> {
+export async function unbindWechat(
+  sql: Sql,
+  staffId: number,
+  by: { reason: 'self' | 'admin'; adminId?: number; ip: string; bindingId?: number; exceptToken?: string; check?: (tx: Tx) => Promise<void> },
+): Promise<boolean> {
   return withTx(sql, async (tx) => {
     await lockBinding(tx, null, staffId);
+    // 后台解开：拿到锁以后再核对一次范围（等锁期间调了店的按调店后算）
+    if (by.check) await by.check(tx);
     const [live] = await tx<{ id: number }[]>`
       SELECT id FROM staffmp_bindings WHERE staff_id = ${staffId} AND revoked_at IS NULL ${by.bindingId ? tx`AND id = ${by.bindingId}` : tx``} FOR UPDATE`;
     if (!live) return false;

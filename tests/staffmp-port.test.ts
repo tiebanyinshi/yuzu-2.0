@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { staffMpPath } from '../src/shared/staffmp';
 import { buildStaffMpApp } from '../src/server/modules/staffmp';
+import { issueSession } from '../src/server/modules/staffmp/auth';
 import { STAFFMP_ALLOWLIST, rewriteStaffMpUrl } from '../src/server/modules/staffmp/allowlist';
 import { createStaff } from '../src/server/modules/staff';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
@@ -285,6 +286,51 @@ describe('开关与后台（SP12）', () => {
     expect(revoked.body).toEqual({ ok: true, revoked: true });
     expect((await admin('POST', `/api/admin/staffmp/bindings/${row.id}/revoke`)).body).toEqual({ ok: true, revoked: false });
     expect((await s('GET', '/api/staffmp/me', r.body.token)).status).toBe(401);
+  });
+
+  it('人事：岗位要后台核实过（自己选成人力负责人的不算）；开关只有总裁能改', async () => {
+    const hrId = await hire('hr1', '人事小周');
+    await ctx.sql`UPDATE staff SET position = 'hr.lead', needs_position = false, position_chosen_at = now() WHERE id = ${hrId}`;
+    const selfChosen = await login(ctx.app, 'hr1');
+    const denied = await api(ctx.app, selfChosen, 'GET', '/api/admin/staffmp');
+    expect([denied.status, denied.body.error.message]).toEqual([403, '你的岗位还没由后台核实，不能管员工小程序']);
+    await ctx.sql`UPDATE staff SET position_chosen_at = NULL WHERE id = ${hrId}`;
+    const hr = await login(ctx.app, 'hr1');
+    expect((await api(ctx.app, hr, 'GET', '/api/admin/staffmp')).status).toBe(200);
+    expect((await api(ctx.app, hr, 'PUT', '/api/admin/staffmp/settings', { enabled: false })).status).toBe(403);
+  });
+
+  it('只有人事权限的：看不到、解不开总裁与别家门店员工的绑定', async () => {
+    const hr = await login(ctx.app, 'hr1');
+    // 总裁绑了微信
+    await pwLogin('owner', { code: 'wx-ownerphone' });
+    // 只挂在别家门店的员工绑了微信
+    const [entity] = await ctx.sql<{ id: number }[]>`SELECT entity_id AS id FROM stores WHERE id = 1`;
+    const [store2] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('FT', '福田店', ${entity!.id}) RETURNING id`;
+    const farId = await hire('far1', '福田的同事');
+    await ctx.sql`INSERT INTO staff_stores (staff_id, store_id) VALUES (${farId}, ${store2!.id})`;
+    await pwLogin('far1', { code: 'wx-farphone' });
+    const all = (await admin('GET', '/api/admin/staffmp')).body.bindings as any[];
+    const names = (await api(ctx.app, hr, 'GET', '/api/admin/staffmp')).body.bindings.map((b: any) => b.displayName);
+    expect(names).not.toContain('测试店主');
+    expect(names).not.toContain('福田的同事');
+    for (const name of ['测试店主', '福田的同事']) {
+      const row = all.find((b) => b.displayName === name);
+      expect((await api(ctx.app, hr, 'POST', `/api/admin/staffmp/bindings/${row.id}/revoke`)).status, name).toBe(404);
+    }
+    // 总裁看得到全部
+    expect(all.map((b) => b.displayName)).toEqual(expect.arrayContaining(['测试店主', '福田的同事']));
+  });
+
+  it('绑定解开以后，挂着它的会话马上不认；解开以后再发挂在它上面的会话发不出来', async () => {
+    await hire('race1', '赛跑的同事');
+    const r = await pwLogin('race1', { code: 'wx-racephone' });
+    expect(r.body.bound).toBe(true);
+    const [b] = await ctx.sql<{ id: number; staffId: number }[]>`SELECT id, staff_id FROM staffmp_bindings WHERE openid = 'openid-racephone' AND revoked_at IS NULL`;
+    // 只把绑定标成解开、不删会话（模拟解开与发会话撞在一起）：令牌照样不认
+    await ctx.sql`UPDATE staffmp_bindings SET revoked_at = now(), revoke_reason = 'self' WHERE id = ${b!.id}`;
+    expect((await s('GET', '/api/staffmp/me', r.body.token)).status).toBe(401);
+    expect(await issueSession(ctx.sql, Number(b!.staffId), Number(b!.id), 12, {})).toBeNull();
   });
 
   it('关上以后除了 info 都回「暂停使用」，打开就恢复', async () => {

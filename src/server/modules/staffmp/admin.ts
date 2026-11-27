@@ -2,16 +2,20 @@
 //   GET  /api/admin/staffmp                        开关、端口与微信配没配、谁绑了微信
 //   PUT  /api/admin/staffmp/settings               开关（SP12）
 //   POST /api/admin/staffmp/bindings/:id/revoke    解开某人的微信绑定（这个人在小程序上的会话一起退出）
-// 能管员工账号的（staff.manage）、人事管组织架构的（hr.org）都能看、能改。
+// 谁能管（Codex 审查 467189d，与组织架构同一个门，src/server/modules/oa/org.ts）：总裁（staff.manage），或有 hr.org、岗位由后台核实过的人
+// （老账号自己选成人力负责人、还没核实的不算）；只有 hr.org 的只看、只解开挂的门店都在自己能进的门店里的员工，不能动总裁。
+// 整个员工小程序的开关只有总裁（staff.manage）能改。
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import { isPositionKey, positionOf } from '@shared/positions';
 import type { StaffMpAdminView, StaffMpBindingRow } from '@shared/staffmp';
 import { guardAny } from '../../auth/guard';
+import { can } from '@shared/permissions';
 import { writeAudit } from '../../lib/audit';
 import type { Deps } from '../../lib/context';
-import { notFound } from '../../lib/errors';
+import { forbidden, notFound } from '../../lib/errors';
+import { managesOrg, orgScope, storeCond } from '../oa';
 import { idParam, parse } from '../../lib/validate';
 import { unbindWechat } from './auth';
 import { loadStaffMpEnabled, saveStaffMpEnabled } from './settings';
@@ -20,9 +24,14 @@ import { wechatReady } from './wechat';
 const SettingsInput = z.object({ enabled: z.boolean() });
 
 export function registerStaffMpAdminRoutes(app: FastifyInstance, { sql, config }: Deps) {
-  const auth = guardAny('staff.manage', 'hr.org');
+  const guardHr = guardAny('staff.manage', 'hr.org');
+  const auth: preHandlerAsyncHookHandler = async function (req, reply) {
+    await guardHr.call(this, req, reply);
+    if (!(await managesOrg(sql, req.actor))) throw forbidden('你的岗位还没由后台核实，不能管员工小程序');
+  };
 
-  app.get('/api/admin/staffmp', { preHandler: auth }, async (): Promise<StaffMpAdminView> => {
+  app.get('/api/admin/staffmp', { preHandler: auth }, async (req): Promise<StaffMpAdminView> => {
+    const scope = await orgScope(sql, req.actor);
     const rows = await sql<
       { id: number; staffId: number; displayName: string; username: string; position: string | null; boundAt: Date | string; lastLoginAt: Date | string | null; liveSessions: number }[]
     >`
@@ -30,7 +39,7 @@ export function registerStaffMpAdminRoutes(app: FastifyInstance, { sql, config }
              (SELECT count(*)::int FROM staffmp_sessions m JOIN sessions x ON x.token_hash = m.token_hash
               WHERE m.staff_id = b.staff_id AND x.expires_at > now()) AS live_sessions
       FROM staffmp_bindings b JOIN staff s ON s.id = b.staff_id
-      WHERE b.revoked_at IS NULL
+      WHERE b.revoked_at IS NULL AND ${storeCond(sql, scope)} AND (${scope.all} OR s.role <> 'owner')
       ORDER BY b.bound_at DESC, b.id DESC`;
     const bindings: StaffMpBindingRow[] = rows.map((r) => ({
       id: Number(r.id),
@@ -54,6 +63,7 @@ export function registerStaffMpAdminRoutes(app: FastifyInstance, { sql, config }
   });
 
   app.put('/api/admin/staffmp/settings', { preHandler: auth }, async (req) => {
+    if (!can(req.actor, 'staff.manage')) throw forbidden('整个员工小程序的开关只有总裁能改');
     const { enabled } = parse(SettingsInput, req.body);
     await sql.begin(async (tx) => {
       await saveStaffMpEnabled(tx, enabled, req.actor.id);
@@ -64,10 +74,26 @@ export function registerStaffMpAdminRoutes(app: FastifyInstance, { sql, config }
 
   app.post('/api/admin/staffmp/bindings/:id/revoke', { preHandler: auth }, async (req) => {
     const { id } = parse(idParam, req.params);
-    const [b] = await sql<{ staffId: number }[]>`SELECT staff_id FROM staffmp_bindings WHERE id = ${id}`;
+    const scope = await orgScope(sql, req.actor);
+    // 范围外的员工、总裁（只有 hr.org 时）当作没有这个绑定：知道编号也不能越过门店范围
+    const [b] = await sql<{ staffId: number }[]>`
+      SELECT b.staff_id FROM staffmp_bindings b JOIN staff s ON s.id = b.staff_id
+      WHERE b.id = ${id} AND ${storeCond(sql, scope)} AND (${scope.all} OR s.role <> 'owner')`;
     if (!b) throw notFound('没有这个绑定');
     // 已经解开过的（两个人同时点）不再记一次
-    const revoked = await unbindWechat(sql, Number(b.staffId), { reason: 'admin', adminId: req.actor.id, ip: req.ip, bindingId: id });
+    const staffId = Number(b.staffId);
+    const revoked = await unbindWechat(sql, staffId, {
+      reason: 'admin',
+      adminId: req.actor.id,
+      ip: req.ip,
+      bindingId: id,
+      // 先锁员工行（与调店同一个顺序），再另起一句核对范围：读到的是调店提交以后的门店（与 oa/org.ts 的 inStoreScope 同一个做法）
+      check: async (tx) => {
+        await tx`SELECT 1 FROM staff WHERE id = ${staffId} FOR SHARE`;
+        const [ok] = await tx`SELECT 1 FROM staff s WHERE s.id = ${staffId} AND ${storeCond(tx, scope)} AND (${scope.all} OR s.role <> 'owner')`;
+        if (!ok) throw notFound('没有这个绑定');
+      },
+    });
     return { ok: true, revoked };
   });
 }

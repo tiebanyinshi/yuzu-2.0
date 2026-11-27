@@ -3,7 +3,7 @@
 export { notify } from './notifications';
 
 // 员工小程序线（docs/STAFF_MP.md 第 5.3 节）：员工小程序端口把这些员工端接口原样挂上（只放行白名单里的），在职员工的判定与网页同一条
-export { NOT_EMPLOYEE_ROLES } from './org';
+export { managesOrg, NOT_EMPLOYEE_ROLES, orgScope, storeCond } from './org';
 export { onDuty } from './im';
 export { registerOaPunchRoutes } from './punches';
 export { registerOaScheduleRoutes } from './schedules';

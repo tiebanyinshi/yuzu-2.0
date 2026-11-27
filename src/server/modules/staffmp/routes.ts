@@ -92,6 +92,8 @@ export function registerStaffMpRoutes(app: FastifyInstance, deps: Deps, code2ses
     const staffId = Number(b.staffId);
     await refuse(staffId, req);
     const token = await issueSession(sql, staffId, Number(b.id), config.sessionTtlHours, meta(req));
+    // 刚好被解开、换绑了：当作没绑过（小程序去账号密码登录）
+    if (!token) return { status: 'unbound' };
     await sql`UPDATE staffmp_bindings SET last_login_at = now() WHERE id = ${b.id}`;
     await sql`UPDATE staff SET last_login_at = now() WHERE id = ${staffId}`;
     await writeAudit(sql, { staffId, action: 'login', detail: { via: 'staffmp', method: 'wechat' }, ip: req.ip });
@@ -128,7 +130,13 @@ export function registerStaffMpRoutes(app: FastifyInstance, deps: Deps, code2ses
         req.log.warn({ err: error }, '员工小程序登录时绑微信没成功');
       }
     }
-    const token = await issueSession(sql, staffId, bindingId, config.sessionTtlHours, meta(req));
+    let token = await issueSession(sql, staffId, bindingId, config.sessionTtlHours, meta(req));
+    if (!token) {
+      // 刚绑上就被解开（别处同时改绑了这个微信）：这次不挂绑定，只登录这一次
+      bindingId = null;
+      bindError = '这个微信刚被改绑了：这次只登录这一次';
+      token = (await issueSession(sql, staffId, null, config.sessionTtlHours, meta(req)))!;
+    }
     if (bindingId) await sql`UPDATE staffmp_bindings SET last_login_at = now() WHERE id = ${bindingId}`;
     await sql`UPDATE staff SET last_login_at = now() WHERE id = ${staffId}`;
     await writeAudit(sql, { staffId, action: 'login', detail: { via: 'staffmp', method: 'password' }, ip: req.ip });
