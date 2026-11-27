@@ -1,0 +1,16 @@
+.head {
+  padding-top: 16rpx;
+}
+.meta {
+  margin-top: 12rpx;
+}
+.body {
+  margin-top: 32rpx;
+  color: var(--ink);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.list {
+  overflow: hidden;
+}

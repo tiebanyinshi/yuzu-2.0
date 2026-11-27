@@ -90,6 +90,8 @@
 顶上的搜索框搜入口名（打「工资」出工资条、打「假」出请假与假期余额）。入口图标一律细线图标、单色，不用表情。
 
 - **发起申请**：审批模板是后台定的表单（`/api/oa/approval/templates`），小程序照模板的字段画表单（文字、多行文字、数字、日期、时间、选项、照片附件），提交走网页同一个接口、带操作编号；没提交出去的内容留在手机上（草稿）。服务端给的出路都能接上：考勤记录里的缺卡一点「补卡」带着日期、班次进补卡单；工资条「有异议」带着那一月进工资条异议单。模板里有小程序画不了的字段类型时，这一个模板写「请在 WCP 网页上提交」。
+- **工作台那一批的做法**（C）：模板现有的十二种字段都画（附件只收照片，文件在网页上传）；假种从「我的假期」带出来，班次从那天的排班带出来，关联单从「我发起的已通过」带出来；草稿按人、按模板存在手机上（不存照片）。审批人只有「同意」「驳回」，**转交**要选人（`oa/approval/people` 不在白名单），这一版在网页上做。
+- **结果待确认**（第 2.8 节）在手机上按人分开存；没确定以前同一处（自己的打卡、同一个模板的申请、同一张单的处理）不发新的，手机上没有「放弃」（端口上没有「确认作废」，查不到也不能断定没生效）。重提被门店明确拒绝算数：审批的提交与处理在事务里先锁操作编号再查办没办过；打卡先查编号、没办过才核对位置，最坏多一条打卡明细（考勤按第一次 / 最后一次算）。没登录（401）不算拒绝，登录以后原样重提。
 
 ### 2.5 我的
 
@@ -250,7 +252,7 @@ yuzu 数据库（员工账号、WCP、员工培训 / 汤崎学堂、饭堂、巡
 
 ### 8.2 白名单里的接口（第一版）
 
-打卡与考勤：`GET oa/attendance/today`、`POST oa/attendance/punch`、`GET oa/me/schedule`、`GET oa/me/attendance`、`GET oa/me/leave`、`POST oa/attachments`（外勤照片）、`GET oa/attachments/:id`、`GET oa/attachments/:id/thumb`。审批：`GET oa/approvals`、`GET oa/approvals/summary`、`GET oa/approvals/:id`、`POST oa/approvals/:id/act`、`POST oa/approvals/:id/read`（发起申请的 `GET oa/approval/templates`、`POST oa/approvals` 在工作台那一批加）。通知与公告：`GET oa/notifications`、`GET oa/notifications/unread-count`、`POST oa/notifications/read`、`GET oa/announcements`、`GET oa/announcements/:id`、`POST oa/announcements/:id/read`。人事：`GET oa/my/payslips`、`GET oa/my/payslips/:id`、`POST oa/my/payslips/:id/sign`、`GET oa/directory`。员工培训：`GET training/folders`、`GET training/search`、`GET training/folders/:id/files`、`GET training/files/:id/content`、`POST training/files/:id/viewed`。账号：`GET auth/position-options`、`POST auth/position`（外面是 `account/…`）。都在前缀 `/api/staffmp/` 下；以 `allowlist.ts` 为准。
+打卡与考勤：`GET oa/attendance/today`、`POST oa/attendance/punch`、`GET oa/me/schedule`、`GET oa/me/attendance`、`GET oa/me/leave`、`POST oa/attachments`（外勤照片）、`GET oa/attachments/:id`、`GET oa/attachments/:id/thumb`。审批：`GET oa/approval/templates`、`POST oa/approvals`（发起申请：照模板画表单、带操作编号提交，工作台那一批加）、`GET oa/approvals`、`GET oa/approvals/summary`、`GET oa/approvals/:id`、`POST oa/approvals/:id/act`、`POST oa/approvals/:id/read`。通知与公告：`GET oa/notifications`、`GET oa/notifications/unread-count`、`POST oa/notifications/read`、`GET oa/announcements`、`GET oa/announcements/:id`、`POST oa/announcements/:id/read`。人事：`GET oa/my/payslips`、`GET oa/my/payslips/:id`、`POST oa/my/payslips/:id/sign`、`GET oa/directory`。员工培训：`GET training/folders`、`GET training/search`、`GET training/folders/:id/files`、`GET training/files/:id/content`、`POST training/files/:id/viewed`。账号：`GET auth/position-options`、`POST auth/position`（外面是 `account/…`）。都在前缀 `/api/staffmp/` 下；以 `allowlist.ts` 为准。
 
 ### 8.3 数据（迁移 `610`–`619`）
 

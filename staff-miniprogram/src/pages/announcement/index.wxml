@@ -1,0 +1,20 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="公告" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="t-title head">{{title}}</view>
+    <view class="t-caption num meta">{{meta}}</view>
+    <view class="body t-body-l">{{body}}</view>
+    <view wx:if="{{files.length}}" class="section">
+      <view class="section-head"><view class="section-title">附件</view></view>
+      <view class="card list">
+        <view wx:for="{{files}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onFile" aria-role="button">
+          <image class="row-icon" src="/assets/icons/{{item.isImage ? 'image' : 'doc'}}.png" />
+          <view class="row-main"><view class="row-title">{{item.name}}</view></view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+      </view>
+    </view>
+    <view wx:if="{{actionError}}" class="notice error section">{{actionError}}</view>
+  </view>
+</view>

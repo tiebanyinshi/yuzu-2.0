@@ -277,6 +277,31 @@ describe('短时地址（给 <video>、<image> 用）', () => {
   });
 });
 
+describe('工作台：发起申请（第 8.2 节）', () => {
+  it('照模板画表单；提交带操作编号，原样重提回原来那一张；转交选人、模板管理不放行', async () => {
+    await hire('fay', '小菲');
+    const token = (await pwLogin('fay')).body.token as string;
+    const templates = await s('GET', '/api/staffmp/oa/approval/templates', token);
+    expect(templates.status).toBe(200);
+    const general = templates.body.find((t: any) => t.code === 'general');
+    expect(general.fields.map((f: any) => f.key)).toEqual(['title', 'content', 'attachments']);
+
+    await ctx.sql`UPDATE oa_approval_templates SET levels = ${ctx.sql.json([{ kind: 'staff', staffId: ctx.clerkId }] as never)} WHERE code = 'general'`;
+    const body = { clientKey: randomUUID(), templateId: general.id, form: { title: '用章申请', content: '盖合同章', attachments: [] } };
+    const first = await s('POST', '/api/staffmp/oa/approvals', token, body);
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    expect(first.body).toMatchObject({ replayed: false, approval: { status: 'pending' } });
+    // 「结果待确认」以后原样重提：认出来，回原来那一张，不多一张
+    const again = await s('POST', '/api/staffmp/oa/approvals', token, body);
+    expect([again.status, again.body.replayed, again.body.approval.id]).toEqual([200, true, first.body.approval.id]);
+    expect((await s('GET', '/api/staffmp/oa/approvals?box=mine', token)).body.items).toHaveLength(1);
+    expect((await s('GET', `/api/staffmp/oa/approvals/${first.body.approval.id}`, token)).status).toBe(200);
+
+    expect((await s('GET', '/api/staffmp/oa/approval/people', token)).status).toBe(404);
+    expect((await s('PUT', `/api/staffmp/oa/approval/templates/${general.id}`, token, {})).status).toBe(404);
+  });
+});
+
 describe('开关与后台（SP12）', () => {
   it('后台看得到谁绑了；解开以后那个人在小程序上的会话退出', async () => {
     await hire('dave', '大卫');
