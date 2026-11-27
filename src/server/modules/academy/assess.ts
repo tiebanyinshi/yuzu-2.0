@@ -78,7 +78,7 @@ export async function createQuestion(sql: Sql, courseId: number, raw: unknown, c
   const input = parse(QuestionInput, raw);
   const q = checkQuestion(input);
   return withTx(sql, async (tx) => {
-    const [c] = await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR UPDATE`;
+    const [c] = await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR NO KEY UPDATE`;
     if (!c) throw notFound('没有这门课');
     // 原样重提比对整份请求的摘要（Codex 审查 dd885a6 同一类问题）
     const { clientKey: _key, ...rest } = input;
@@ -109,7 +109,7 @@ export async function updateQuestion(sql: Sql, id: number, raw: unknown, ctx: Op
   const input = parse(QuestionUpdate, raw);
   const q = checkQuestion(input);
   return withTx(sql, async (tx) => {
-    const [had] = await tx<QuestionRow[]>`SELECT ${QUESTION_COLS(tx)} FROM academy_questions WHERE id = ${id} FOR UPDATE`;
+    const [had] = await tx<QuestionRow[]>`SELECT ${QUESTION_COLS(tx)} FROM academy_questions WHERE id = ${id} FOR NO KEY UPDATE`;
     if (!had) throw notFound('没有这道题');
     const same =
       had.kind === q.kind &&

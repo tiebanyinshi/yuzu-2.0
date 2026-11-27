@@ -150,7 +150,7 @@ async function departmentOrNull(tx: Tx, key: string | null): Promise<string | nu
 
 async function writeLessonsAndQuestions(tx: Tx, courseId: number, c: PackCourse, existing: boolean) {
   for (const [i, l] of c.lessons.entries()) {
-    const [had] = existing ? await tx<{ id: number }[]>`SELECT id FROM academy_lessons WHERE course_id = ${courseId} AND pack_key = ${l.key} FOR UPDATE` : [];
+    const [had] = existing ? await tx<{ id: number }[]>`SELECT id FROM academy_lessons WHERE course_id = ${courseId} AND pack_key = ${l.key} FOR NO KEY UPDATE` : [];
     if (had) {
       await tx`
         UPDATE academy_lessons SET seq = ${i + 1}, title = ${l.title}, kind = ${l.kind}, body = ${l.body}, file_id = NULL, quiz_count = ${l.quizCount},
@@ -168,7 +168,7 @@ async function writeLessonsAndQuestions(tx: Tx, courseId: number, c: PackCourse,
       WHERE course_id = ${courseId} AND pack_key IS NOT NULL AND pack_key <> ALL(${c.lessons.map((l) => l.key)}) AND active`;
   }
   for (const q of c.questions) {
-    const [had] = existing ? await tx<{ id: number }[]>`SELECT id FROM academy_questions WHERE pack_key = ${q.key} FOR UPDATE` : [];
+    const [had] = existing ? await tx<{ id: number }[]>`SELECT id FROM academy_questions WHERE pack_key = ${q.key} FOR NO KEY UPDATE` : [];
     if (had) {
       await tx`
         UPDATE academy_questions SET course_id = ${courseId}, skill = ${q.skill}, kind = ${q.kind}, level = ${q.level}, stem = ${q.stem},
@@ -208,7 +208,7 @@ export async function importPacks(sql: Sql, raw: unknown, ctx: OpContext, today:
     for (const c of packs.courses) {
       if (pick && !pick.has(c.code)) continue;
       const [row] = await tx<{ id: number; packHash: string | null; localEdited: boolean }[]>`
-        SELECT id, pack_hash, local_edited FROM academy_courses WHERE code = ${c.code} FOR UPDATE`;
+        SELECT id, pack_hash, local_edited FROM academy_courses WHERE code = ${c.code} FOR NO KEY UPDATE`;
       const state = stateOf(row, c.hash);
       if (state === 'same' || state === 'edited') {
         result.courses.push({ code: c.code, title: c.title, result: state === 'same' ? 'unchanged' : 'skipped' });
@@ -239,7 +239,7 @@ export async function importPacks(sql: Sql, raw: unknown, ctx: OpContext, today:
       if (pick && !p.courses.every((c) => pick.has(c) || inDb.has(c))) continue;
       if (!p.courses.every((c) => inDb.has(c))) continue;
       const [row] = await tx<{ id: number; packHash: string | null; localEdited: boolean }[]>`
-        SELECT id, pack_hash, local_edited FROM academy_paths WHERE code = ${p.code} FOR UPDATE`;
+        SELECT id, pack_hash, local_edited FROM academy_paths WHERE code = ${p.code} FOR NO KEY UPDATE`;
       const state = stateOf(row, p.hash);
       if (state === 'same' || state === 'edited') {
         result.paths.push({ code: p.code, title: p.title, result: state === 'same' ? 'unchanged' : 'skipped' });

@@ -65,7 +65,7 @@ export async function importQuestionTable(sql: Sql, courseId: number, raw: unkno
   if (problems.length) throw unprocessable('ACADEMY_TABLE_INVALID', `第 ${problems[0]!.row} 行：${problems[0]!.message}`, { problems: problems.slice(0, 50) });
   const hash = hashRequest({ courseId, rows: input.rows, status: input.status });
   return withTx(sql, async (tx) => {
-    await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR UPDATE`;
+    await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR NO KEY UPDATE`;
     const op = await claimOp(tx, 'question_import', input.clientKey, hash, ctx.actor.id);
     if (op.had) return { questions: await questionsByIds(tx, op.had.result?.questionIds ?? []) };
     const ids: number[] = [];
@@ -180,7 +180,7 @@ export async function generateQuestions(deps: { sql: Sql; config: AppConfig }, l
     .slice(0, input.count);
   const dropped = drafts.length - good.length;
   const ids = await withTx(sql, async (tx) => {
-    await tx`SELECT id FROM academy_courses WHERE id = ${lesson.courseId} FOR UPDATE`;
+    await tx`SELECT id FROM academy_courses WHERE id = ${lesson.courseId} FOR NO KEY UPDATE`;
     const out: number[] = [];
     for (const q of good) {
       const [row] = await tx<{ id: number }[]>`
