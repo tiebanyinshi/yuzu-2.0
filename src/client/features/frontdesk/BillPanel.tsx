@@ -53,6 +53,7 @@ import { AwayLockBlock, AwayLockDialog } from './AwayLockPanel';
 import { hotkeyOf } from './hotkeys';
 import { rateLabel } from '@shared/line-discount';
 import { GroupMates } from './guest';
+import { AUTO_DISCOUNT_LABELS } from '@shared/dining-meals';
 
 /** incident：异常处置（8.1.15）；lost：手牌丢失（换牌对话框预先选好丢失）；buy：买角、print：打单（8.1.44，收银台） */
 export type PanelAction = 'add' | 'swap' | 'join' | 'companion' | 'preview' | 'checkout' | 'ticket' | 'records' | 'move' | 'incident' | 'lost' | 'buy' | 'print' | 'group';
@@ -737,8 +738,9 @@ function LineRow({
             </LineMark>
           )}
           {d &&
-            (d.finalAmount === 0 ? (
-              <LineMark tone="clay" title="这一行免单">
+            (d.finalAmount === 0 || d.rule === 'first_cup' ? (
+              // 8.2.8 / 8.2.19：含餐、自助、首杯赠（系统按规则打的）也标「赠」
+              <LineMark tone="clay" title={d.rule ? `${AUTO_DISCOUNT_LABELS[d.rule]}（系统按规则自动折掉）` : '这一行免单'}>
                 赠
               </LineMark>
             ) : (
@@ -759,9 +761,18 @@ function LineRow({
         </p>
         {d && (
           <p className="num text-[12px] font-semibold text-ember" data-testid={`line-${line.id}-discount`}>
-            原价 <Money cents={d.listAmount} className="line-through" /> · {d.rate !== null ? rateLabel(d.rate) : d.finalAmount === 0 ? '免单' : '改价'} · 减{' '}
-            <Money cents={d.listAmount - d.finalAmount} /> · {[d.byEmpNo, d.byName].filter(Boolean).join(' ')} 打{d.approvedByName && `，${d.approvedByName}授权`}
-            {d.reason && <span className="text-ink-3">（{d.reason}）</span>}
+            原价 <Money cents={d.listAmount} className="line-through" /> ·{' '}
+            {d.rule ? (
+              <>
+                {AUTO_DISCOUNT_LABELS[d.rule]} · 实收 <Money cents={d.finalAmount} />
+              </>
+            ) : (
+              <>
+                {d.rate !== null ? rateLabel(d.rate) : d.finalAmount === 0 ? '免单' : '改价'} · 减 <Money cents={d.listAmount - d.finalAmount} /> · {[d.byEmpNo, d.byName].filter(Boolean).join(' ')} 打
+                {d.approvedByName && `，${d.approvedByName}授权`}
+                {d.reason && <span className="text-ink-3">（{d.reason}）</span>}
+              </>
+            )}
           </p>
         )}
         {line.technician && (
