@@ -75,6 +75,15 @@ async function takenOf(db: Db, deptId: number, day: string) {
   return { dayUsed: Number(r!.dayUsed), dayFrozen: Number(r!.dayFrozen), monthUsed: Number(r!.monthUsed), monthFrozen: Number(r!.monthFrozen) };
 }
 
+/**
+ * 部门当天的零星采购日额度（8.1.55，店主 2026-11-27 K27-4「用 1 万」）：采购商城拟用部门备用金的需求单也照这一个额度，
+ * 不另建一套。limit 日额度；taken 台账上当天已实际占用 + 冻结中
+ */
+export async function deptDailyQuota(db: Db, deptId: number, day: string): Promise<{ limit: number; taken: number }> {
+  const [limits, taken] = await Promise.all([limitsOf(db, deptId, day), takenOf(db, deptId, day)]);
+  return { limit: limits.dailyLimit, taken: taken.dayUsed + taken.dayFrozen };
+}
+
 /** 这个事项在台账上还冻结着多少、实际占用多少 */
 async function docLedger(db: Db, docId: number) {
   const [r] = await db<{ frozen: number; used: number; day: string | null; dept: number | null }[]>`

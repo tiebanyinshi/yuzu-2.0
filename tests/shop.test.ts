@@ -8,6 +8,7 @@ import { pagedMall } from '../src/server/modules/mall';
 import { requestChecks } from '../src/server/modules/requests';
 import { createStaff } from '../src/server/modules/staff';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
+import { zip } from '../src/server/lib/xlsx';
 import { shiftDate } from '../src/shared/labels';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
@@ -807,5 +808,154 @@ describe('原单补资料（8.1.51，Codex 审查）', () => {
     const ok = await api(ctx.app, reqA, 'PUT', `/api/erp/shop/requests/${req.id}/resubmit`, body(q(100)));
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(ok.body.lines[0]).toMatchObject({ qtyMilli: q(100) });
+  });
+});
+
+describe('部门日额度（8.1.55，店主 K27-4「用 1 万」）', () => {
+  it('拟用部门备用金：预览照业财法部门日额度提示；累计超过 1 万的不能提交，公司直付不受限', async () => {
+    const s = await listed((await sku({ priceCents: 5000, taxRateBp: 0, moqMilli: q(1) })).id);
+    const lines = [{ skuId: s.id, priceVersion: s.priceVersion, qtyMilli: q(120) }]; // ¥6,000
+    const first = await api(ctx.app, reqB, 'POST', '/api/erp/shop/requests', { ...header({ paymentIntent: 'dept_petty' }), kind: 'catalog', lines });
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+
+    const preview = await api(ctx.app, reqB, 'GET', `/api/erp/shop/route-preview?storeId=${storeId}&kind=catalog&paymentIntent=dept_petty&lines=${s.id}:${q(120)}`);
+    const hint = (preview.body.hints as { code: string; tone: string; text: string }[]).find((h) => h.code === 'dept_daily_quota');
+    expect(hint).toMatchObject({ tone: 'warning' });
+    expect(hint!.text).toContain('10,000');
+    expect((preview.body.hints as { code: string }[]).some((h) => h.code === 'daily_30k')).toBe(false);
+
+    const over = await api(ctx.app, reqB, 'POST', '/api/erp/shop/requests', { ...header({ paymentIntent: 'dept_petty' }), kind: 'catalog', lines });
+    expect(over.status).toBe(422);
+    expect(over.body.error).toMatchObject({ code: 'DEPT_DAILY_QUOTA', details: { limitCents: 1_000_000, takenCents: 600_000, requestCents: 600_000 } });
+
+    const direct = await api(ctx.app, reqB, 'POST', '/api/erp/shop/requests', { ...header({ paymentIntent: 'company_direct' }), kind: 'catalog', lines });
+    expect(direct.status, JSON.stringify(direct.body)).toBe(201);
+  });
+});
+
+describe('商品图批量导入（8.1.55）', () => {
+  const pngBuf = (n: number) => Buffer.concat([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'), Buffer.alloc(n, 9)]);
+  /** WPS「嵌入单元格」图片的最小 Excel：rows 每行 [第一列文字, 图片编号...] */
+  const workbook = (rows: string[][], images: Record<string, Buffer>) => {
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const cell = (r: number, c: number, v: string) => {
+      const ref = `${String.fromCharCode(65 + c)}${r}`;
+      return v.startsWith('ID_') ? `<c r="${ref}" t="str"><f>_xlfn.DISPIMG("${v}",1)</f><v>=DISPIMG("${v}",1)</v></c>` : `<c r="${ref}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`;
+    };
+    const sheet = `<worksheet><sheetData>${rows.map((row, i) => `<row r="${i + 1}">${row.map((v, c) => (v ? cell(i + 1, c, v) : '')).join('')}</row>`).join('')}</sheetData></worksheet>`;
+    const names = Object.keys(images);
+    const ci = `<etc:cellImages xmlns:etc="x" xmlns:xdr="y" xmlns:a="z" xmlns:r="w">${names
+      .map((n, i) => `<etc:cellImage><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${i + 1}" name="${n}"/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId${i + 1}"/></xdr:blipFill></xdr:pic></etc:cellImage>`)
+      .join('')}</etc:cellImages>`;
+    const ciRels = `<Relationships>${names.map((_, i) => `<Relationship Id="rId${i + 1}" Target="media/image${i + 1}.png"/>`).join('')}</Relationships>`;
+    return zip([
+      { name: 'xl/workbook.xml', data: Buffer.from('<workbook xmlns:r="w"><sheets><sheet name="商品图" sheetId="1" r:id="rId1"/></sheets></workbook>') },
+      { name: 'xl/_rels/workbook.xml.rels', data: Buffer.from('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>') },
+      { name: 'xl/worksheets/sheet1.xml', data: Buffer.from(sheet) },
+      { name: 'xl/cellimages.xml', data: Buffer.from(ci) },
+      { name: 'xl/_rels/cellimages.xml.rels', data: Buffer.from(ciRels) },
+      ...names.map((n, i) => ({ name: `xl/media/image${i + 1}.png`, data: images[n]!, store: true })),
+    ]).toString('base64');
+  };
+  const send = (cookie: string, xlsxBase64: string, mode: 'append' | 'replace', apply: boolean) =>
+    api(ctx.app, cookie, 'POST', '/api/erp/shop/materials/images/import', { fileName: '商品图.xlsx', xlsxBase64, mode, apply });
+
+  it('预览逐行核对、有问题一行都不写；追加不重复、替换照表；没有「物料档案」权限的进不来', async () => {
+    const [m] = await ctx.sql<{ code: string }[]>`SELECT code FROM materials WHERE id = ${mat.id}`;
+    await ctx.sql`DELETE FROM material_images WHERE material_id = ${mat.id}`;
+    const imgs = { ID_A: pngBuf(11), ID_B: pngBuf(12), ID_C: pngBuf(13) };
+
+    const bad = workbook(
+      [
+        ['物料编码', '商品图1', '商品图2'],
+        [m!.code, 'ID_A', 'ID_B'],
+        ['NOPE-1', 'ID_C', ''],
+      ],
+      imgs,
+    );
+    expect((await send(reqA, bad, 'append', false)).status).toBe(403);
+    const pv = await send(boss, bad, 'append', false);
+    expect(pv.status, JSON.stringify(pv.body)).toBe(200);
+    expect(pv.body).toMatchObject({ applied: false, issueCount: 1, changedCount: 1 });
+    expect(pv.body.rows[0]).toMatchObject({ row: 2, materialId: mat.id, fileImages: 2, before: 0, after: 2, changed: true, issues: [] });
+    expect(pv.body.rows[1].issues[0]).toContain('NOPE-1');
+    const refused = await send(boss, bad, 'append', true);
+    expect(refused.status).toBe(422);
+    expect(refused.body.error.code).toBe('IMPORT_ISSUES');
+    expect((await ctx.sql`SELECT 1 FROM material_images WHERE material_id = ${mat.id}`).length).toBe(0);
+
+    const good = workbook(
+      [
+        ['物料编码', '商品图1', '商品图2'],
+        [m!.code, 'ID_A', 'ID_B'],
+      ],
+      imgs,
+    );
+    const done = await send(boss, good, 'append', true);
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(done.body).toMatchObject({ applied: true, changedCount: 1 });
+    const ids = async () => (await ctx.sql<{ imageId: number }[]>`SELECT image_id FROM material_images WHERE material_id = ${mat.id} ORDER BY sort_no`).map((r) => Number(r.imageId));
+    const afterFirst = await ids();
+    expect(afterFirst).toHaveLength(2);
+    // 原样再发：追加不重复
+    expect((await send(boss, good, 'append', true)).body.changedCount).toBe(0);
+    expect(await ids()).toEqual(afterFirst);
+    // 追加一张新的接在后面
+    expect(
+      (
+        await send(
+          boss,
+          workbook(
+            [
+              ['物料编码', '图片'],
+              [m!.code, 'ID_C'],
+            ],
+            imgs,
+          ),
+          'append',
+          true,
+        )
+      ).status,
+    ).toBe(200);
+    expect((await ids()).slice(0, 2)).toEqual(afterFirst);
+    expect(await ids()).toHaveLength(3);
+    // 替换：只剩表里的
+    const rep = await send(
+      boss,
+      workbook(
+        [
+          ['物料编码', '图片'],
+          [m!.code, 'ID_B'],
+        ],
+        imgs,
+      ),
+      'replace',
+      true,
+    );
+    expect(rep.body.rows[0]).toMatchObject({ before: 3, after: 1 });
+    expect(await ids()).toEqual([afterFirst[1]]);
+    // 商城页面取得到导入的图
+    expect((await api(ctx.app, reqA, 'GET', `/api/erp/shop/images/${afterFirst[1]}`)).status).toBe(200);
+    // 超过 6 张拦下
+    const many = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [`ID_M${i}`, pngBuf(20 + i)]));
+    const seven = await send(
+      boss,
+      workbook(
+        [
+          ['物料编码', ...Object.keys(many).map((_, i) => `图${i + 1}`)],
+          [m!.code, ...Object.keys(many)],
+        ],
+        many,
+      ),
+      'replace',
+      false,
+    );
+    expect(seven.body.rows[0].issues[0]).toContain('最多 6 张');
+    await ctx.sql`DELETE FROM material_images WHERE material_id = ${mat.id}`;
+  });
+
+  it('没有表头、不是 Excel 的给出能看懂的错', async () => {
+    expect((await send(boss, workbook([['随便', '什么']], {}), 'append', false)).body.error.code).toBe('IMPORT_HEADER');
+    expect((await send(boss, Buffer.from('not a zip file at all').toString('base64'), 'append', false)).body.error.code).toBe('IMPORT_FILE_INVALID');
   });
 });

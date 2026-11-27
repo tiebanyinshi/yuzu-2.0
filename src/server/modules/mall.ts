@@ -64,6 +64,7 @@ import { enabledErpModules, erpModuleDisabled } from './erp';
 import { loadExpenseRules } from './expenses';
 import { docDateSchema, logApproval } from './inventory/common';
 import { loadPurchaseRules } from './inventory/purchase-rules';
+import { deptDailyQuota } from './govflow/petty';
 import { enterStockCheck } from './request-stock';
 import { canConfirmPlan, canSeeDealPrices, CustomSpecInput, requestQuotes, sourcingOwner } from './mall-pilot';
 import {
@@ -223,6 +224,38 @@ async function withPurposes(db: Db, lines: z.infer<typeof MallLineInput>[]) {
   return lines.map((l) => ({ ...l, purpose: l.purpose || (purposes.includes('其他') ? '其他' : (purposes[0] ?? '')) }));
 }
 
+/**
+ * 部门当天的零星采购日额度（8.1.55，店主 2026-11-27 K27-4）：业财法额度台账（零星采购已占用 + 冻结）
+ * 加上今天商城里拟用部门备用金、还在流程里的需求单（按参考价）。商城不另建额度。
+ */
+export async function deptPettyToday(db: Db, deptId: number, tz: string, day: string): Promise<{ limit: number; taken: number }> {
+  const [gf, [mall]] = await Promise.all([
+    deptDailyQuota(db, deptId, day),
+    db<{ cents: string }[]>`
+      SELECT coalesce(sum(round((l.qty_milli::numeric * coalesce(l.ref_price_cents, 0)) / 1000)), 0)::bigint::text AS cents
+      FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
+      WHERE r.department_id = ${deptId} AND r.source = 'mall' AND r.payment_intent = 'dept_petty'
+        AND r.status NOT IN ('draft', 'cancelled', 'rejected')
+        AND (r.created_at AT TIME ZONE ${tz})::date = ${day}::date`,
+  ]);
+  return { limit: gf.limit, taken: gf.taken + Number(mall?.cents ?? 0) };
+}
+
+/** 拟用部门备用金的：在额度锁里（与业财法零星采购同一把）核对日额度，超了拒绝 */
+async function checkDeptPettyQuota(tx: Db, deptId: number | null, lines: { qtyMilli: number; refPriceCents: number | null }[], tz: string, day: string) {
+  if (!deptId) throw unprocessable('DEPARTMENT_REQUIRED', '拟用部门备用金支付要先有所属部门');
+  await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`gf_quota:${deptId}`}, 0))`;
+  const quota = await deptPettyToday(tx, deptId, tz, day);
+  const cents = lines.reduce((sum, l) => sum + Math.round((l.qtyMilli * (l.refPriceCents ?? 0)) / 1000), 0);
+  if (quota.taken + cents > quota.limit) {
+    throw unprocessable(
+      'DEPT_DAILY_QUOTA',
+      `超过部门零星采购日额度 ¥${formatAmount(quota.limit)}（今日已用 ¥${formatAmount(quota.taken)}，本单 ¥${formatAmount(cents)}）：请改公司直付，或按业财法走紧急特批`,
+      { limitCents: quota.limit, takenCents: quota.taken, requestCents: cents },
+    );
+  }
+}
+
 export async function createMallRequest(
   deps: Deps,
   raw: unknown,
@@ -258,6 +291,7 @@ export async function createMallRequest(
       const deptId = await resolveDepartment(tx, actor, input.departmentId);
       const lines = await withPurposes(tx, input.lines);
       await validateLines(tx, lines, { mall: true });
+      if (input.paymentIntent === 'dept_petty') await checkDeptPettyQuota(tx, deptId, lines, deps.config.timezone, today);
       const docNo = await nextDocNo(tx, 'purchase_request', 'XQ', today);
       const approvableOn = await approvableOnFor(tx, deps.config.timezone);
       // 全部需求单都要部门主管确认（店主 2026-11-24）：商城来的不看金额门槛
