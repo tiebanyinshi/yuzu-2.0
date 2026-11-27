@@ -77,6 +77,8 @@ export async function createQuestion(sql: Sql, courseId: number, raw: unknown, c
     // 原样重提比对整份请求的摘要（Codex 审查 dd885a6 同一类问题）
     const { clientKey: _key, ...rest } = input;
     const hash = hashRequest({ ...rest, courseId });
+    // 同一编号同时到两次时后到的等先到的提交再查（同管理端新建，Codex 审查 16476da）
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`academy_op:academy_questions:${input.clientKey}`}, 0))`;
     const [had] = await tx<(QuestionRow & { requestHash: string })[]>`SELECT ${QUESTION_COLS(tx)}, request_hash FROM academy_questions WHERE client_key = ${input.clientKey}`;
     if (had) {
       if (had.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一道题，请刷新后重新填写');
