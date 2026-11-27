@@ -32,6 +32,8 @@ import { LoadFailed } from '../../components/LoadFailed';
 import { Money } from '../../components/Money';
 import { Sheet } from '../../components/Overlay';
 import { ReasonDialog } from '../../components/ReasonDialog';
+import type { MallFixItemInput } from '@shared/mall-fix';
+import { FixItemsPicker, fixItemsProblem } from './FixItemsPicker';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Input, Notice, Segmented, Select, Skeleton } from '../../components/ui';
 import { PurchaseFlowPanel } from '../purchasing/PurchaseFlow';
@@ -494,6 +496,8 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
   const request = useRequest(id);
   const [reasonFor, setReasonFor] = useState<'return' | 'reject' | 'cancel' | 'dept-return' | null>(null);
   const [checking, setChecking] = useState(false);
+  // 退回商城的单（8.2.6）：逐项标的「本次必补」
+  const [fixItems, setFixItems] = useState<MallFixItemInput[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const r = request.data;
@@ -509,7 +513,9 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
     setBusy(true);
     setError(null);
     try {
-      await api.post<PurchaseRequest>(`/api/erp/requests/${r.id}/${action}`, reason ? { reason } : {});
+      const body = action === 'return' && r.source === 'mall' ? { reason, fixItems } : reason ? { reason } : {};
+      await api.post<PurchaseRequest>(`/api/erp/requests/${r.id}/${action}`, body);
+      if (action === 'return') setFixItems([]);
       await invalidate();
       setReasonFor(null);
       toast({ tone: 'success', title: { approve: '已通过', return: '已退回', reject: '已定为不采购', cancel: '已撤回', 'dept-confirm': '主管已确认', 'dept-return': '主管已退回' }[action] });
@@ -699,6 +705,8 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
         description={reasonFor === 'return' || reasonFor === 'dept-return' ? '提单人改了再提交。' : reasonFor === 'reject' ? '这张需求单结束，不再转采购单。' : undefined}
         confirmLabel={reasonFor === 'return' || reasonFor === 'dept-return' ? '退回' : reasonFor === 'reject' ? '不采购' : '撤回'}
         busy={busy}
+        extra={reasonFor === 'return' && r?.source === 'mall' ? <FixItemsPicker request={r} items={fixItems} onChange={setFixItems} /> : undefined}
+        blocked={reasonFor === 'return' && r?.source === 'mall' ? fixItemsProblem(fixItems) : null}
         onClose={() => setReasonFor(null)}
         onConfirm={(reason) => reasonFor && void act(reasonFor, reason)}
       />

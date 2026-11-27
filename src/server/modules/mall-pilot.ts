@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { can } from '@shared/permissions';
 import { REQUEST_PRIORITIES, type MallCustomSpec } from '@shared/requests';
 import type { MallQuote } from '@shared/mall';
+import { MALL_FIX_FIELD_LABELS, MALL_FIX_HEADER_FIELDS, MALL_FIX_LINE_FIELDS, MALL_RESUBMIT_MODES, MALL_TERMINATE_PREFIX, type MallFixField } from '@shared/mall-fix';
 import type { Db, Tx } from '../db';
 import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
@@ -19,7 +20,10 @@ import { setTxTimeouts } from '../lib/tx';
 import { parse } from '../lib/validate';
 import { docDateSchema, logApproval } from './inventory/common';
 import { erpOpAbandoned } from './erp-ops';
-import { clearStockDecisions, enterStockCheck, hasIssuedLines } from './request-stock';
+import { ensureBaseline, type FixHeader, type FixLine, headerFieldValue, lineFieldValue, openFixItems, resolveAllOpen, resolveFixItem, saveVersion, stripCustomHead } from './mall-fix';
+import { closeDraftsOfRequest } from './request-drafts';
+import { clearStockDecisions, closeOpenStockCheck, enterStockCheck, hasIssuedLines } from './request-stock';
+import { notify } from './oa';
 import { approvableOnFor, deptConfirmFor, isHeadOf, lockRequest, myContext, validateLines, type LineWrite } from './requests';
 
 const id = z.number().int().positive();
@@ -33,19 +37,32 @@ const canSource = (actor: Actor) => actor.role === 'owner' || can(actor, 'purcha
 
 export const CustomSpecInput = z.object({
   size: z.string().trim().max(120, '尺寸规格最多 120 个字').default(''),
-  craft: z.string().trim().max(200, '材质工艺最多 200 个字').default(''),
+  craft: z.string().trim().max(200, '工艺要求最多 200 个字').default(''),
   scene: z.string().trim().max(200, '使用场景最多 200 个字').default(''),
   sample: z.boolean().default(false),
   budgetCents: z.number().int().min(0).max(100_000_000).nullable().default(null),
+  // 8.2.6（需求变更文档 v0.2 图 1）：材质、允许误差、颜色 / 表面、图纸链接、设计版本
+  material: z.string().trim().max(120, '材质最多 120 个字').default(''),
+  tolerance: z.string().trim().max(60, '允许误差最多 60 个字').default(''),
+  color: z.string().trim().max(60, '颜色 / 表面最多 60 个字').default(''),
+  drawingUrl: z.string().trim().max(1000, '图纸链接最多 1000 个字').default(''),
+  designVersion: z.string().trim().max(40, '设计版本最多 40 个字').default(''),
 });
 
-/** 定制：「【定制】尺寸…；材质工艺…；使用场景…；需要先打样；预算 ¥…」+ 部门写的说明（合起来不超过 1000 个字） */
+/** 定制：「【定制】尺寸…；材质…；工艺要求…；使用场景…；需要先打样；预算 ¥…」+ 部门写的说明（合起来不超过 1000 个字） */
 export function customDetails(details: string, spec: MallCustomSpec | null): string {
   if (!spec) return details;
+  // 8.2.6 以前的单没有「材质」这一项，craft 写的是「材质工艺」，照原来的叫法
+  const v825 = spec.material !== undefined;
   const parts = [
     spec.size && `尺寸规格：${spec.size}`,
-    spec.craft && `材质工艺：${spec.craft}`,
+    spec.material && `材质：${spec.material}`,
+    spec.tolerance && `允许误差：${spec.tolerance}`,
+    spec.color && `颜色 / 表面：${spec.color}`,
+    spec.craft && `${v825 ? '工艺要求' : '材质工艺'}：${spec.craft}`,
     spec.scene && `使用场景：${spec.scene}`,
+    spec.drawingUrl && `图纸链接：${spec.drawingUrl}`,
+    spec.designVersion && `设计版本：${spec.designVersion}`,
     spec.sample ? '需要先打样确认' : '不用打样',
     spec.budgetCents !== null && `预算约 ¥${(spec.budgetCents / 100).toFixed(2)}`,
   ].filter(Boolean);
@@ -56,11 +73,24 @@ export function customDetails(details: string, spec: MallCustomSpec | null): str
   return all;
 }
 
-/** 拆回部门写的说明（改单时回显用） */
-export function plainDetails(details: string, kind: string | null): string {
-  if (kind !== 'custom' || !details.startsWith('【定制】')) return details;
-  const i = details.indexOf('\n');
-  return i < 0 ? '' : details.slice(i + 1);
+/** 只有数字和分隔符的尺寸（「140 × 105」）：看不出单位 */
+const SIZE_NO_UNIT = /^[\d\s.×xX*＊\-~～/／,，、+]+$/;
+
+/** 图纸链接要是网址 */
+export function assertDrawingUrl(spec: MallCustomSpec | null) {
+  if (spec?.drawingUrl && !/^https?:\/\/\S+$/i.test(spec.drawingUrl)) throw unprocessable('LINK_INVALID', '图纸链接要以 http:// 或 https:// 开头');
+}
+
+/**
+ * 定制的必填（店主 2026-11-27 Q1 按建议）：尺寸 / 规格要带单位、材质要写、图纸文件或链接至少一项（参考图片算图纸文件）。
+ * 免得采购拿到「140 × 105」看不出大小、没有定版图报不了价，再退回补资料
+ */
+export function assertCustomSpec(spec: MallCustomSpec, imageIds: readonly number[]) {
+  assertDrawingUrl(spec);
+  if (!spec.size) throw unprocessable('CUSTOM_SIZE_REQUIRED', '定制请写尺寸 / 规格（带单位，例如 面板 140 × 105 mm）');
+  if (SIZE_NO_UNIT.test(spec.size)) throw unprocessable('CUSTOM_SIZE_UNIT', '尺寸 / 规格只写了数字，请带上单位（mm、cm、米……），例如 面板 140 × 105 mm');
+  if (!spec.material) throw unprocessable('CUSTOM_MATERIAL_REQUIRED', '定制请写材质（例如 亚克力 5 mm、不锈钢拉丝）');
+  if (!spec.drawingUrl && !imageIds.length) throw unprocessable('CUSTOM_DRAWING_REQUIRED', '定制请上传图纸文件，或填写可查看的图纸链接（至少一项）');
 }
 
 // ───────────────────────── 退回后在原单补资料 ─────────────────────────
@@ -86,14 +116,16 @@ const ResubmitInput = z.object({
   clientKey: z.uuid('缺少操作编号，请刷新页面后重试'),
   /** 页面看到的这张单的修改时间：之后又被退回、改过的拒绝（晚到的旧请求不盖掉之后的修改） */
   expectedUpdatedAt: z.string().min(10),
+  /** 8.2.6：fix 只补必补项（其余不能改）；rewrite 重新填写（原来的整张改，默认） */
+  mode: z.enum(MALL_RESUBMIT_MODES).default('rewrite'),
   contactName: z.string().trim().min(1, '请填写经办人').max(40),
   budgetProject: z.string().trim().min(1, '请填写预算项目 / 费用归属').max(80),
   needBy: docDateSchema,
   deliveryAddress: z.string().trim().min(1, '请填写收货地点').max(120),
   priority: z.enum(REQUEST_PRIORITIES),
   note: z.string().trim().max(500).default(''),
-  /** 补资料说明：补了什么（记进审批记录，审核的人一眼看得到） */
-  remark: z.string().trim().min(1, '请写一句补了什么').max(200),
+  /** 补资料说明：补了什么（记进审批记录，审核的人一眼看得到）；只补必补项的可以不写，按补的项自动写 */
+  remark: z.string().trim().max(200).default(''),
   lines: z.array(ResubmitLine).min(1, '至少留一行').max(50),
 });
 
@@ -121,9 +153,27 @@ interface StoredLine {
   imageIds: number[];
 }
 
+const toFixLine = (l: StoredLine | LineWrite, id: number, plain: string): FixLine => ({
+  id,
+  name: l.name,
+  qtyMilli: l.qtyMilli,
+  unit: l.unit,
+  plainDetails: plain,
+  brandModel: l.brandModel ?? '',
+  link: l.link ?? '',
+  reasonText: l.reasonText ?? '',
+  customSpec: l.customSpec ?? null,
+  imageIds: l.imageIds,
+});
+
 /**
  * 退回的商城单：提单人（或店主）在原单上补资料、重新提交。单号、来源、门店、主体、部门不变；明细按页面给的整组重写（删掉的行不要了），
- * 选品的行只能改数量；自主申请的行能改全部内容。重新提交按这一次算主管确认与核库，与第一次提交一样。
+ * 选品的行只能改数量；自主申请的行能改全部内容。
+ * 8.2.6（需求变更文档 v0.2 §4.3–4.5、Q4）：
+ *   · fix 只补必补项：只有这一轮标了「本次必补」的项能改，其余原样；每一项都要补（不能空着、不能原样不动），没补的点名拦下
+ *   · rewrite 重新填写：业务字段都能改（原来的做法）；这一轮的必补项一并记为已处理
+ *   · 两种都存一版快照（V1 → V2 …）；只补必补项的，主管退回之前已经确认过的不用再确认（回到退回前的节点，不重头审批）；
+ *     重新填写的照第一次提交重新算主管确认（Codex 审查）。接单的 BP 不变；核库照常
  */
 export async function resubmitMallRequest(deps: Deps, requestId: number, raw: unknown, actor: Actor, ip?: string): Promise<void> {
   const input = parse(ResubmitInput, raw);
@@ -146,20 +196,42 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
       SELECT date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', ${input.expectedUpdatedAt}::timestamptz) AS same FROM purchase_requests WHERE id = ${requestId}`;
     if (!seen?.same) throw conflict('REQUEST_CHANGED', '这张需求单刚有变动，刷新后再补');
     if (await hasIssuedLines(tx, requestId)) throw conflict('STOCK_ISSUED_LOCKED', '这张需求单已经有行从库存领用，不能再改');
+    const fix = input.mode === 'fix';
+    const open = await openFixItems(tx, requestId);
+    if (fix && !open.length) throw conflict('NO_FIX_ITEMS', '这次退回没有标「本次必补」，请用「重新填写」补资料');
+    if (!fix && !input.remark) throw unprocessable('REMARK_REQUIRED', '请写一句补了什么');
     const stored = await storedLines(tx, requestId);
     const byId = new Map(stored.map((l) => [l.id, l]));
     if (new Set(input.lines.map((l) => l.id)).size !== input.lines.length) throw badRequest('同一行出现了两次');
+    if (fix && (input.lines.length !== stored.length || input.lines.some((x) => !byId.has(x.id)))) {
+      throw unprocessable('FIELD_LOCKED', '「仅补必补项」不能加行、删行；要改整张单请切换「重新填写」');
+    }
+    const before: FixLine[] = [];
+    const after: FixLine[] = [];
     const lines: LineWrite[] = input.lines.map((x) => {
       const old = byId.get(x.id);
       if (!old) throw unprocessable('LINE_NOT_FOUND', '有一行不属于这张需求单，刷新后再补');
-      if (old.mallSkuCode) return { ...old, qtyMilli: x.qtyMilli };
+      const oldPlain = stripCustomHead(old.details, old.customKind);
+      before.push(toFixLine(old, old.id, oldPlain));
+      if (old.mallSkuCode) {
+        const next = { ...old, qtyMilli: x.qtyMilli };
+        after.push(toFixLine(next, old.id, oldPlain));
+        return next;
+      }
       const kind = x.customKind ?? old.customKind ?? 'standard';
+      if (fix && kind !== (old.customKind ?? 'standard')) throw unprocessable('FIELD_LOCKED', `「${old.name}」不能在「仅补必补项」里改定制 / 非定制；要改请切换「重新填写」`);
       const spec = kind === 'custom' ? (x.customSpec === undefined ? old.customSpec : x.customSpec) : null;
       const link = x.link ?? old.link;
       if (link && !/^https?:\/\/\S+$/i.test(link)) throw unprocessable('LINK_INVALID', '参考链接要以 http:// 或 https:// 开头');
-      const details = x.details ?? plainDetails(old.details, old.customKind);
+      const details = x.details ?? oldPlain;
       if (!details.trim() && kind === 'standard') throw unprocessable('DETAILS_REQUIRED', '请填写规格型号');
-      return {
+      const imageIds = x.imageIds ?? old.imageIds;
+      if (spec) {
+        // 重新填写按新单的规矩核定制必填（Q1）；只补必补项只核链接格式（没要求补的项不逼着改）
+        if (fix) assertDrawingUrl(spec);
+        else assertCustomSpec(spec, imageIds);
+      }
+      const next: LineWrite = {
         ...old,
         qtyMilli: x.qtyMilli,
         name: x.name ?? old.name,
@@ -171,12 +243,20 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
         expectedCategory: x.expectedCategory ?? old.expectedCategory,
         customKind: kind,
         customSpec: spec,
-        imageIds: x.imageIds ?? old.imageIds,
+        imageIds,
       };
+      after.push(toFixLine(next, old.id, details));
+      return next;
     });
+    const [hdr] = await tx<(FixHeader & { priority: string })[]>`
+      SELECT to_char(need_by, 'YYYY-MM-DD') AS need_by, delivery_address, budget_project, contact_name, note, priority FROM purchase_requests WHERE id = ${requestId}`;
+    const nextHdr: FixHeader = { needBy: input.needBy, deliveryAddress: input.deliveryAddress, budgetProject: input.budgetProject, contactName: input.contactName, note: input.note };
+    const supplied = fix ? checkFixMode(open, before, after, hdr!, nextHdr, input.priority) : [];
     await validateLines(tx, lines, { mall: true });
     await assertMoq(tx, lines);
     await clearStockDecisions(tx, requestId);
+    // 版本快照：升级前就提交的单先补记原版本，写完明细再存这一版
+    await ensureBaseline(tx, requestId);
     await rewriteLinesInPlace(
       tx,
       requestId,
@@ -185,16 +265,39 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
       lines,
     );
     const approvableOn = await approvableOnFor(tx, deps.config.timezone);
-    const confirm = await deptConfirmFor(tx, r.departmentId, actor, lines, true);
+    // Q4：「仅补必补项」退回前主管已经确认过的不再确认（回到退回前的节点）；主管退回的（还没确认）照第一次提交重新算。
+    // 「重新填写」内容整张都能改，照第一次提交重新算主管确认（要确认的重新等主管确认），不沿用改之前的确认（Codex 审查）
+    // 安全审查（Codex，e8a71d8）：「仅补必补项」也不能借补资料扩大采购：哪一行数量加了、或者换了物品名称 / 单位，
+    // 主管确认作废、照第一次提交重新算（MV4 只对补资料、没扩大采购的保留确认）
+    const widened = lines.some((l, i) => {
+      const o = byId.get(input.lines[i]!.id);
+      return !o || l.qtyMilli > o.qtyMilli || l.name !== o.name || l.unit !== o.unit;
+    });
+    const keepConfirm = fix && r.deptConfirm === 'confirmed' && !widened;
+    const confirm = keepConfirm ? null : await deptConfirmFor(tx, r.departmentId, actor, lines, true);
     await tx`
       UPDATE purchase_requests SET need_by = ${input.needBy}, note = ${input.note}, priority = ${input.priority}, contact_name = ${input.contactName},
              budget_project = ${input.budgetProject}, delivery_address = ${input.deliveryAddress},
-             status = 'submitted', reason = NULL, submitted_at = now(), approvable_on = ${approvableOn}, updated_at = now(),
-             dept_confirm = ${confirm.state}, dept_head_id = ${confirm.headId},
-             dept_confirmed_by = ${confirm.state === 'confirmed' ? actor.id : null}, dept_confirmed_at = ${confirm.state === 'confirmed' ? tx`now()` : null}
+             status = 'submitted', reason = NULL, submitted_at = now(), approvable_on = ${approvableOn}, updated_at = now()
+             ${
+               confirm
+                 ? tx`, dept_confirm = ${confirm.state}, dept_head_id = ${confirm.headId},
+                      dept_confirmed_by = ${confirm.state === 'confirmed' ? actor.id : null}, dept_confirmed_at = ${confirm.state === 'confirmed' ? tx`now()` : null}`
+                 : tx``
+             }
       WHERE id = ${requestId}`;
+    // 必补项记下补的内容
+    if (fix) for (const it of supplied) await resolveFixItem(tx, it.id, it.value);
+    else
+      await resolveAllOpen(
+        tx,
+        requestId,
+        (lineId, field) => (lineId === null ? headerFieldValue(nextHdr, field) : lineFieldValue(after.find((l) => l.id === lineId) ?? before.find((l) => l.id === lineId)!, field)) || '（重新填写）',
+      );
+    await saveVersion(tx, requestId, input.mode, actor.id);
+    const remark = input.remark || `补齐必补项：${supplied.map((it) => it.label).join('；')}`.slice(0, 200);
     // 审批记录：先记补了什么（修改），再记重新提交
-    await logApproval(tx, 'purchase_request', requestId, 'revise', actor.id, `补资料：${input.remark}`);
+    await logApproval(tx, 'purchase_request', requestId, 'revise', actor.id, `${fix ? '补必补项' : '补资料'}：${remark}`);
     await logApproval(tx, 'purchase_request', requestId, 'submit', actor.id);
     await enterStockCheck(tx, requestId);
     await writeAudit(tx, {
@@ -202,10 +305,82 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
       action: 'purchase_request',
       targetType: 'purchase_request',
       targetId: requestId,
-      detail: { action: 'mall_resubmit', remark: input.remark, lines: lines.length },
+      detail: { action: 'mall_resubmit', mode: input.mode, remark, lines: lines.length, keptDeptConfirm: keepConfirm, widened },
       ip,
     });
     await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'mall_resubmit', ${requestHash}, ${requestId}, ${actor.id})`;
+  });
+}
+
+/** 定制要求的每一项对应哪个必补项（没有对应的：使用场景、打样、预算，「仅补必补项」里一律不能改） */
+const SPEC_FIX_FIELD: Partial<Record<keyof MallCustomSpec, MallFixField>> = {
+  size: 'spec.size',
+  material: 'spec.material',
+  tolerance: 'spec.tolerance',
+  color: 'spec.color',
+  craft: 'spec.craft',
+  drawingUrl: 'spec.drawing',
+  designVersion: 'spec.designVersion',
+};
+const SPEC_LOCKED_LABELS: Partial<Record<keyof MallCustomSpec, string>> = { scene: '使用场景', sample: '是否先打样', budgetCents: '预算' };
+/** 比较用：没填、空字符串、不打样都算「没有」（之前的单没有后加的几项） */
+const specValue = (s: MallCustomSpec | null, k: keyof MallCustomSpec) => {
+  const v = s?.[k];
+  return v === undefined || v === null || v === '' || v === false ? null : JSON.stringify(v);
+};
+
+/**
+ * 「仅补必补项」的核对：没标的项一律不能动（spec.drawing 标了的，图片跟着能改：图纸文件存成图片）；
+ * 标了的每一项都要补上（不能空、不能原样）。返回每一项补的内容
+ */
+function checkFixMode(
+  open: Awaited<ReturnType<typeof openFixItems>>,
+  before: FixLine[],
+  after: FixLine[],
+  hdr: FixHeader & { priority: string },
+  nextHdr: FixHeader,
+  priority: string,
+): { id: number; value: string; label: string }[] {
+  const allowed = new Set(open.map((it) => `${it.lineId ?? 0}:${it.field}`));
+  for (const it of open) if (it.field === 'spec.drawing') allowed.add(`${it.lineId}:images`);
+  if (priority !== hdr.priority) throw unprocessable('FIELD_LOCKED', '「仅补必补项」不能改紧急程度；要改请切换「重新填写」');
+  for (const f of MALL_FIX_HEADER_FIELDS) {
+    if (headerFieldValue(hdr, f) !== headerFieldValue(nextHdr, f) && !allowed.has(`0:${f}`)) {
+      throw unprocessable('FIELD_LOCKED', `「${MALL_FIX_FIELD_LABELS[f]}」这次没有要求补，不能改；要改请切换「重新填写」`);
+    }
+  }
+  for (const [i, b] of before.entries()) {
+    const a = after[i]!;
+    for (const f of MALL_FIX_LINE_FIELDS) {
+      if (f === 'spec.drawing') continue; // 图纸 = 图片 + 图纸链接，分开比（图片在 images，链接在下面）
+      const changed = f === 'images' ? b.imageIds.join() !== a.imageIds.join() : lineFieldValue(b, f) !== lineFieldValue(a, f);
+      if (changed && !allowed.has(`${b.id}:${f}`)) throw unprocessable('FIELD_LOCKED', `第 ${i + 1} 行「${MALL_FIX_FIELD_LABELS[f]}」这次没有要求补，不能改；要改请切换「重新填写」`);
+    }
+    // 定制要求整个对象逐项比（Codex 审查）：使用场景、要不要打样、预算不在必补项里，也一样锁定；只有这一轮标了的那几项能改
+    const keys = new Set([...Object.keys(b.customSpec ?? {}), ...Object.keys(a.customSpec ?? {})]) as Set<keyof MallCustomSpec>;
+    for (const k of keys) {
+      if (specValue(b.customSpec, k) === specValue(a.customSpec, k)) continue;
+      const field = SPEC_FIX_FIELD[k];
+      if (!field || !allowed.has(`${b.id}:${field}`)) {
+        throw unprocessable('FIELD_LOCKED', `第 ${i + 1} 行「${field ? MALL_FIX_FIELD_LABELS[field] : (SPEC_LOCKED_LABELS[k] ?? '定制要求')}」这次没有要求补，不能改；要改请切换「重新填写」`);
+      }
+    }
+  }
+  return open.map((it) => {
+    const idx = it.lineId === null ? -1 : before.findIndex((l) => l.id === it.lineId);
+    const label = it.lineId === null ? MALL_FIX_FIELD_LABELS[it.field] : `第 ${idx + 1} 行 ${MALL_FIX_FIELD_LABELS[it.field]}`;
+    const was = it.lineId === null ? headerFieldValue(hdr, it.field) : idx >= 0 ? lineFieldValue(before[idx]!, it.field) : '';
+    const now = it.lineId === null ? headerFieldValue(nextHdr, it.field) : idx >= 0 ? lineFieldValue(after[idx]!, it.field) : '';
+    const drawingSame =
+      it.field === 'spec.drawing' &&
+      idx >= 0 &&
+      (before[idx]!.customSpec?.drawingUrl ?? '') === (after[idx]!.customSpec?.drawingUrl ?? '') &&
+      before[idx]!.imageIds.join() === after[idx]!.imageIds.join();
+    if (idx < 0 && it.lineId !== null) return { id: it.id, value: '（这一行已删除）', label };
+    // 图纸按链接与图片编号比（Codex 审查）：显示文字只有张数，换掉一张错的图纸、张数不变也算补了
+    const unchanged = it.field === 'spec.drawing' ? drawingSame : now === was;
+    if (!now.trim() || unchanged) throw unprocessable('FIX_ITEM_MISSING', `还没补：${label}（${it.requirement}）`, { fixItemId: it.id });
+    return { id: it.id, value: now, label };
   });
 }
 
@@ -269,6 +444,138 @@ async function storedLines(db: Db, requestId: number): Promise<StoredLine[]> {
     taxRateBp: l.taxRateBp === null ? null : Number(l.taxRateBp),
     imageIds: (l.imageIds ?? []).map(Number),
   }));
+}
+
+// ───────────────────────── 终止申购（8.2.6，需求变更文档 v0.2 §4.6、Q5） ─────────────────────────
+
+const TerminateInput = z.object({
+  clientKey: z.uuid('缺少操作编号，请刷新页面后重试'),
+  reason: z.string().trim().min(2, '请写终止原因（至少 2 个字）').max(200),
+});
+const DecideTerminationInput = z.object({
+  /** 操作编号（Codex 审查）：页面本机先记下再发；回复丢了在页面顶部查回 / 原样重提 / 确认作废（与申请终止同一类 mall_terminate） */
+  clientKey: z.uuid('缺少操作编号，请刷新页面后重试'),
+  /** 页面上看到的那一次终止申请的提交时间：驳回以后提单人又申请了一次，晚到的旧确认不能落到新申请上 */
+  expectedRequestedAt: z.string('缺少终止申请的时间，请刷新页面后重试').min(10, '缺少终止申请的时间，请刷新页面后重试'),
+  approve: z.boolean(),
+  note: z.string().trim().max(200).default(''),
+});
+
+/** 能直接终止、能确认别人申请的终止：这个部门的负责人（主管）、供应链 BP（采购经办 / 审核）、店主 */
+async function canApproveTermination(db: Db, actor: Actor, r: { departmentId: number; deptHeadId: number | null }) {
+  return canSource(actor) || isHeadOf(await myContext(db, actor), actor, r);
+}
+
+/** 终止：需求单结束（撤回同一个状态 cancelled，原因写「终止：…」），核库收起、草稿关掉；已发配的记录照旧留着 */
+async function endRequest(tx: Tx, requestId: number, reason: string, actorId: number) {
+  await closeOpenStockCheck(tx, requestId);
+  await tx`UPDATE purchase_requests SET status = 'cancelled', reason = ${MALL_TERMINATE_PREFIX + reason}, updated_at = now() WHERE id = ${requestId}`;
+  await closeDraftsOfRequest(tx, requestId);
+  await logApproval(tx, 'purchase_request', requestId, 'cancel', actorId, MALL_TERMINATE_PREFIX + reason);
+}
+
+/**
+ * 终止该申购：待审核、退回补资料中的商城单。提单人申请的，等部门负责人或 BP 确认（Q5 按建议）；
+ * 负责人、BP、店主自己点的直接终止。返回 terminated 已终止 / pending 等确认
+ */
+export async function terminateMallRequest(deps: Deps, requestId: number, raw: unknown, actor: Actor, ip?: string): Promise<'terminated' | 'pending'> {
+  const input = parse(TerminateInput, raw);
+  const requestHash = hashRequest({ op: 'mall_terminate', requestId, reason: input.reason });
+  return deps.sql.begin(async (tx) => {
+    await setTxTimeouts(tx);
+    const r = await lockRequest(tx, requestId);
+    await assertNotFenced(tx, input.clientKey, 'mall_terminate', erpOpAbandoned);
+    const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`
+      SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+    if (done) {
+      if (done.opType !== 'mall_terminate' || done.requestHash !== requestHash || Number(done.staffId) !== actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的操作');
+      return r.status === 'cancelled' ? 'terminated' : 'pending';
+    }
+    if (r.source !== 'mall') throw conflict('NOT_MALL', '这张需求单不是采购商城提的，请在 ERP 的采购需求单里撤回');
+    const approver = await canApproveTermination(tx, actor, r);
+    if (r.requesterId !== actor.id && !approver) throw forbidden('只有提单人、部门负责人或供应链 BP 能终止这张申购');
+    if (r.status !== 'submitted' && r.status !== 'returned') throw conflict('INVALID_STATE', '只有待审核、退回补资料中的申购能终止（已通过的请找采购关闭）');
+    const [pending] = await tx<{ status: string }[]>`SELECT status FROM request_terminations WHERE request_id = ${requestId} FOR UPDATE`;
+    if (pending?.status === 'pending' && !approver) throw conflict('TERMINATION_PENDING', '已经申请终止，在等部门负责人或 BP 确认');
+    const status = approver ? 'approved' : 'pending';
+    await tx`
+      INSERT INTO request_terminations (request_id, reason, status, requested_by, decided_by, decided_at)
+      VALUES (${requestId}, ${input.reason}, ${status}, ${actor.id}, ${approver ? actor.id : null}, ${approver ? tx`now()` : null})
+      ON CONFLICT (request_id) DO UPDATE SET reason = EXCLUDED.reason, status = EXCLUDED.status, requested_by = EXCLUDED.requested_by, requested_at = now(),
+        decided_by = EXCLUDED.decided_by, decided_at = EXCLUDED.decided_at, decide_note = ''`;
+    if (approver) await endRequest(tx, requestId, input.reason, actor.id);
+    else {
+      await tx`UPDATE purchase_requests SET updated_at = now() WHERE id = ${requestId}`;
+      const heads = await tx<{ id: number }[]>`
+        SELECT DISTINCT x.id FROM (SELECT ${r.deptHeadId}::bigint AS id UNION SELECT head_id FROM departments WHERE id = ${r.departmentId}) x WHERE x.id IS NOT NULL`;
+      await notify(
+        tx,
+        heads.map((h) => Number(h.id)),
+        { kind: 'system', title: `需求单 ${r.docNo} 申请终止`, body: `原因：${input.reason}。请在采购商城的这张需求单里确认或驳回。` },
+      );
+    }
+    await writeAudit(tx, { staffId: actor.id, action: 'mall_terminate', targetType: 'purchase_request', targetId: requestId, detail: { status, reason: input.reason }, ip });
+    await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'mall_terminate', ${requestHash}, ${requestId}, ${actor.id})`;
+    return approver ? 'terminated' : 'pending';
+  });
+}
+
+/**
+ * 部门负责人或 BP 确认 / 驳回提单人申请的终止。返回 terminated 已终止 / declined 已驳回。
+ * 带操作编号（与申请终止同一类 mall_terminate，内容不同）：原样重提认得、不再处理；只处理页面上看到的那一次申请（expectedRequestedAt），
+ * 之后提单人又申请了的拒绝（TERMINATION_CHANGED），免得晚到的旧确认 / 驳回落到新申请上
+ */
+export async function decideTermination(deps: Deps, requestId: number, raw: unknown, actor: Actor, ip?: string): Promise<'terminated' | 'declined'> {
+  const input = parse(DecideTerminationInput, raw);
+  const requestHash = hashRequest({ op: 'mall_terminate_decide', requestId, ...input, clientKey: undefined });
+  const result = input.approve ? 'terminated' : 'declined';
+  return deps.sql.begin(async (tx) => {
+    await setTxTimeouts(tx);
+    const r = await lockRequest(tx, requestId);
+    await assertNotFenced(tx, input.clientKey, 'mall_terminate', erpOpAbandoned);
+    const [done] = await tx<{ opType: string; requestHash: string; staffId: number }[]>`
+      SELECT op_type, request_hash, staff_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+    if (done) {
+      if (done.opType !== 'mall_terminate' || done.requestHash !== requestHash || Number(done.staffId) !== actor.id) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一笔内容不同的操作');
+      return result;
+    }
+    const [t] = await tx<{ status: string; reason: string; requestedBy: number; same: boolean }[]>`
+      SELECT status, reason, requested_by,
+             date_trunc('milliseconds', requested_at) = date_trunc('milliseconds', ${input.expectedRequestedAt}::timestamptz) AS same
+      FROM request_terminations WHERE request_id = ${requestId} FOR UPDATE`;
+    if (t && !t.same) throw conflict('TERMINATION_CHANGED', '提单人之后又申请了一次终止，刷新后按最新的申请处理');
+    if (!t || t.status !== 'pending') throw conflict('NO_PENDING_TERMINATION', '这张需求单没有在等确认的终止申请');
+    if (!(await canApproveTermination(tx, actor, r))) throw forbidden('只有部门负责人或供应链 BP 能确认终止');
+    if (input.approve && r.status !== 'submitted' && r.status !== 'returned') throw conflict('INVALID_STATE', '这张需求单已经不能终止了');
+    await tx`
+      UPDATE request_terminations SET status = ${input.approve ? 'approved' : 'declined'}, decided_by = ${actor.id}, decided_at = now(), decide_note = ${input.note}
+      WHERE request_id = ${requestId}`;
+    if (input.approve) await endRequest(tx, requestId, t.reason, actor.id);
+    else await tx`UPDATE purchase_requests SET updated_at = now() WHERE id = ${requestId}`;
+    await notify(tx, [Number(t.requestedBy)], {
+      kind: 'system',
+      title: input.approve ? `需求单 ${r.docNo} 已终止` : `需求单 ${r.docNo} 的终止申请被驳回`,
+      body: input.approve ? `终止原因：${t.reason}` : `说明：${input.note || '（没写）'}。这张单照常往下走。`,
+    });
+    await writeAudit(tx, {
+      staffId: actor.id,
+      action: 'mall_terminate',
+      targetType: 'purchase_request',
+      targetId: requestId,
+      detail: { decide: input.approve ? 'approved' : 'declined', note: input.note },
+      ip,
+    });
+    await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'mall_terminate', ${requestHash}, ${requestId}, ${actor.id})`;
+    return result;
+  });
+}
+
+/** 商城详情里「终止」按钮怎么显示：direct 直接终止、request 申请终止、null 不显示；decide 能确认别人申请的终止 */
+export async function terminationAbility(db: Db, actor: Actor, r: { status: string; source: string; requesterId: number; departmentId: number; deptHeadId: number | null }, pending: boolean) {
+  if (r.source !== 'mall' || (r.status !== 'submitted' && r.status !== 'returned')) return { terminate: null, decide: false };
+  const approver = await canApproveTermination(db, actor, r);
+  const terminate: 'direct' | 'request' | null = approver ? 'direct' : r.requesterId === actor.id && !pending ? 'request' : null;
+  return { terminate, decide: approver && pending };
 }
 
 // ───────────────────────── 需求池接单 ─────────────────────────

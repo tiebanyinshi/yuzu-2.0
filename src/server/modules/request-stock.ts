@@ -31,9 +31,8 @@ import { hashRequest } from '../lib/idempotency';
 import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
 import { erpOpAbandoned } from './erp-ops';
-import { createRequestIssue } from './inventory/docs';
-import { logApproval } from './inventory/common';
-import { loadPurchaseRules } from './inventory/purchase-rules';
+import { createRequestIssue, loadPurchaseRules, logApproval } from './inventory';
+import { recordIssue } from './request-dispatch';
 import { closeDraftsOfRequest } from './request-drafts';
 import { getRequest } from './requests';
 import { systemStaffId } from './system-staff';
@@ -319,6 +318,10 @@ export async function submitStockCheck(deps: Deps, requestId: number, raw: unkno
 
       const doc = issues.length ? await createRequestIssue(tx, deps, { departmentId: r.departmentId, handler: r.requesterName, note: `需求单 ${r.docNo} 核库转领用`, lines: issues }, actor) : null;
       for (const p of plans) {
+        // 物料发配记录（8.2.6）：核库领用是这一行的第一次发配
+        if (p.decision === 'issue') {
+          await recordIssue(tx, { lineId: p.lineId, requestId, departmentId: r.departmentId, docId: doc!.id, qtyMilli: p.issued, kind: 'stock', note: '核库领用', actorId: actor.id });
+        }
         await tx`
           INSERT INTO request_line_stock (request_line_id, request_id, decision, issued_qty_milli, substitute_material_id, substitute_qty_milli, substitute_state, inv_doc_id, decided_by)
           VALUES (${p.lineId}, ${requestId}, ${p.decision}, ${p.issued}, ${p.subId}, ${p.subQty}, ${p.decision === 'substitute' ? 'pending' : null},
@@ -404,6 +407,7 @@ export async function answerSubstitute(deps: Deps, requestId: number, lineId: nu
               proposer,
             ),
           );
+          await recordIssue(tx, { lineId, requestId, departmentId: r.departmentId, docId: doc.id, qtyMilli: Number(s.qtyMilli), kind: 'stock', note: '核库替代品', actorId: actor.id });
           await tx`
             UPDATE request_line_stock SET substitute_state = 'accepted', issued_qty_milli = ${Number(s.qtyMilli)}, inv_doc_id = ${doc.id},
                    answered_by = ${actor.id}, answered_at = now()

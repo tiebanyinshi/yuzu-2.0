@@ -4,6 +4,7 @@
 //   · 待办数字（库存、采购的导航）：待准入的供应商、快到期 / 过期的证照、呆滞、临期 / 过期的批次。只读，不加锁。
 
 import type { FastifyInstance } from 'fastify';
+import { dispatchReadyCount } from '../request-dispatch';
 import type { ExpiryLot, SupplyTodo } from '@shared/supply';
 import type { Db } from '../../db';
 import { guard } from '../../auth/guard';
@@ -68,6 +69,7 @@ export async function supplyTodo(db: Db, today: string): Promise<SupplyTodo> {
     expiredLots: lots.filter((l) => l.daysLeft < 0).length,
     contractDue: await contractDueCount(db),
     stockChecks: await stockCheckCount(db),
+    dispatchReady: await dispatchReadyCount(db),
   };
 }
 

@@ -155,7 +155,9 @@ test.describe('采购商城', () => {
     await page.getByTestId('sc-kind-custom').click();
     await page.locator('#sc-name').fill(`E2E 易拉宝 ${stamp}`);
     await page.locator('#sc-size').fill('80×200cm');
-    await page.locator('#sc-craft').fill('PP 合成纸');
+    await page.locator('#sc-material').fill('PP 合成纸');
+    await page.locator('#sc-craft').fill('四色印刷');
+    await page.locator('#sc-drawing').fill('https://example.com/e2e-v1.pdf');
     await page.getByTestId('sc-sample').check();
     await page.locator('#sc-reason').fill('店庆活动');
     await page.locator('#shop-budget').fill('E2E 品牌物料');
@@ -171,18 +173,25 @@ test.describe('采购商城', () => {
     await expect(detail).toContainText('需要先打样');
     const id = Number(/\/erp\/shop\/mine\/(\d+)/.exec(page.url())![1]);
 
-    // 采购退回：部门在原单上补资料、重新提交（单号不变）
-    expect((await page.request.post(`/api/erp/requests/${id}/return`, { data: { reason: '请补设计稿说明' } })).ok()).toBe(true);
+    // 采购退回（8.2.6：逐项标「本次必补」）：部门在原单上只补必补项、重新提交（单号不变，存 V2）
+    const lineId = ((await (await page.request.get(`/api/erp/shop/requests/${id}`)).json()) as { lines: { id: number }[] }).lines[0]!.id;
+    const fixItems = [{ lineId, field: 'details', requirement: '写清画面用哪一版' }];
+    expect((await page.request.post(`/api/erp/requests/${id}/return`, { data: { reason: '请补设计稿说明', fixItems } })).ok()).toBe(true);
     await page.reload();
     await expect(page.getByTestId('shop-resubmit-notice')).toContainText('请补设计稿说明');
+    await expect(page.getByTestId('shop-resubmit-notice')).toContainText('本次必补 1 项');
     await page.getByTestId('shop-resubmit-open').click();
     const panel = page.getByTestId('shop-resubmit');
-    await panel.locator('[id$="-details"]').first().fill('画面按品牌部 11 月版');
-    await page.getByTestId('shop-resubmit-remark').fill('补了设计说明');
+    await expect(page.getByTestId('shop-resubmit-mode-fix')).toHaveAttribute('aria-checked', 'true');
+    await expect(panel.getByTestId('shop-fix-fields')).toContainText('写清画面用哪一版');
+    await panel.getByTestId('shop-fix-fields').locator('textarea').first().fill('画面按品牌部 11 月版');
+    await expect(page.getByTestId('shop-resubmit-send')).toHaveText('补齐后重新提交');
     await page.getByTestId('shop-resubmit-send').click();
     await expect(page.getByText('已补好资料、重新提交')).toBeVisible();
     await expect(page.getByTestId('shop-resubmit-notice')).toHaveCount(0);
     await expect(detail).toContainText('画面按品牌部 11 月版');
+    await expect(page.getByTestId('shop-versions')).toContainText('V2');
+    await expect(page.getByTestId('shop-fix-history')).toContainText('补的：画面按品牌部 11 月版');
 
     // 采购接单、记成交方案；部门（这里店主替部门）确认
     await page.getByTestId('shop-claim').click();

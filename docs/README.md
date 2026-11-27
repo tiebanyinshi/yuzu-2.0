@@ -19,6 +19,10 @@
 - [`CONVENTIONS.md`](CONVENTIONS.md)：开发约定（专题）
 - [`TESTING.md`](TESTING.md)：测试与 CI（飞书需求 RQ-008，v0.7.18 定稿；2026-11-20 改成按改动与风险挑选，见第 6 节）
 - [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
+- [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
@@ -43,6 +47,8 @@
 - [`CONCIERGE_LINKS.md`](CONCIERGE_LINKS.md)：管家部与会员、资源系统联动
 - [`CONTRACTS.md`](CONTRACTS.md)：合同与法务审查（v0.7.31）
 - [`COUPONS.md`](COUPONS.md)：券与会员权益（v0.7.20，飞书需求 RQ-006 后半；定稿）
+- [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
+- [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
 - [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
 - [`DB_REVIEW_V8147.md`](DB_REVIEW_V8147.md)：数据库 Schema 评估与整改（8.1.47）
 - [`DESKS_V8115.md`](DESKS_V8115.md)：8.1.15 · 前台拆成发卡台与收银台
@@ -81,6 +87,7 @@
 - [`MALL_V8132.md`](MALL_V8132.md)：采购商城并进柚子（8.1.32）
 - [`MALL_V8150.md`](MALL_V8150.md)：8.1.50 · 采购商城：逛电商的感觉、商品图、排到采购第一项
 - [`MALL_V8151.md`](MALL_V8151.md)：8.1.51 · 采购商城试点：定制 / 非定制、原单补资料、BP 接单与成交方案、收货待补
+- [`MALL_V826.md`](MALL_V826.md)：8.2.6 · 采购商城 v0.2：分批发配、退回补资料、终止申购、收货待判
 - [`MASCOT.md`](MASCOT.md)：看板娘「柚子」（第二版：手绘动画，待店主确认）
 - [`MEMBERSHIP.md`](MEMBERSHIP.md)：会员体系 v2（设计稿；店主 2026-11-03 两次答复后修订；第一期 v0.7.23 已按本稿实现，见第 14 节）
 - [`MEMBERSHIP_FINISH.md`](MEMBERSHIP_FINISH.md)：会员体系收尾（v0.7.26）
@@ -125,6 +132,7 @@
 - [`V8222_TECHNICIANS.md`](V8222_TECHNICIANS.md)：8.2.2 技师：扩钟、一报多、退技师、换项目、休假、状态、统计与导入
 - [`V8223_FRONTDESK.md`](V8223_FRONTDESK.md)：8.2.3 前台：发卡台与全店（客人类别、偏好、客诉台账、拥挤与高风险提示、技师预约权限、跳转明细、同行移出、补单）
 - [`V8224_DINING.md`](V8224_DINING.md)：8.2.4 餐饮：分组默认档口、临时项目进厨房、包房房型、服务费门店默认、返台、公司承担
+- [`V8227_AWAY_LOCK.md`](V8227_AWAY_LOCK.md)：8.2.7 收银台「锁牌外出」：锁牌最多 4 小时，锁之前先收预售
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
 - [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面

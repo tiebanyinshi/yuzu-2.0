@@ -1,6 +1,7 @@
 // 采购商城 V1.1 对接（8.1.31，docs/MALL_V8131.md）：商城后端调 yuzu 的 /api/erp/mall/* 时双方用的格式。
 // 金额一律整数分，数量千分之一单位（与需求单一样）。
 
+import type { MallFixItem, MallTermination, MallVersionBrief } from './mall-fix';
 import type { MallCustomKind, MallCustomSpec, MallPaymentIntent, RequestPriority, RequestStatus, StockCheckState } from './requests';
 
 /** 商城的接口前缀与请求头 */
@@ -203,8 +204,17 @@ export interface MallRequest {
   sourcingOwner: { id: number; name: string; claimedAt: string } | null;
   /** 成交方案（8.1.51） */
   quotes: MallQuote[];
-  /** 这个账号：能不能看价格、能不能接单记方案、能不能在原单补资料、能不能确认方案 */
-  can: { seePrices: boolean; source: boolean; resubmit: boolean; confirmPlan: boolean };
+  /** 退回时逐项标的「本次必补」（8.2.6；各轮都在，round 区分） */
+  fixItems: MallFixItem[];
+  /** 每次提交的版本（8.2.6；快照另取 /versions/:no） */
+  versions: MallVersionBrief[];
+  /** 终止申购（8.2.6）：申请、确认或驳回的记录 */
+  termination: MallTermination | null;
+  /**
+   * 这个账号：能不能看价格、能不能接单记方案、能不能在原单补资料、能不能确认方案；
+   * terminate（8.2.6）direct 直接终止、request 申请终止（等负责人或 BP 确认）、null 不能；decideTermination 能确认别人申请的终止
+   */
+  can: { seePrices: boolean; source: boolean; resubmit: boolean; confirmPlan: boolean; terminate: 'direct' | 'request' | null; decideTermination: boolean };
 }
 
 /** 列表、批量查状态的一行（不带明细） */

@@ -126,6 +126,8 @@ beforeAll(async () => {
   await sql`CREATE TABLE tag_deposits (id bigint, deposit_no text, visit_id bigint, method text, amount bigint, member_id bigint, consumption_id bigint, status text, store_id bigint, business_date date, refund_business_date date, staff_id bigint, refunded_by bigint)`;
   // 补单（8.2.3，550 才有）：读明细时标出补单的出单员，写入期间临时建最小的空表，迁移前删掉
   await sql`CREATE TABLE bill_supplements (op_key uuid, visit_id bigint, issuer_id bigint, actual_at timestamptz, created_by bigint)`;
+  // 锁牌外出（8.2.7，590 才有）：挂账核对牌锁没锁、结账时解锁，写入期间临时建最小的空表，迁移前删掉
+  await sql`CREATE TABLE visit_tag_locks (id bigint, visit_id bigint, lock_until timestamptz, released_at timestamptz, released_by bigint, release_kind text, tag_deposit_id bigint)`;
   await sql`CREATE TABLE bookings (id bigint, booking_no text, status text, arrival_visit_id bigint, arrived_at timestamptz)`;
   // 现版本结账时一起结束这几位客人在房态中心的登记单（190 才有）：写入期间临时建空表，迁移前删掉
   await sql`CREATE TABLE room_registrations (id bigint, space_id bigint, visit_id bigint, status text)`;
@@ -178,6 +180,7 @@ beforeAll(async () => {
   await sql`ALTER TABLE visits DROP COLUMN risk_approved_by, DROP COLUMN risk_approved_at, DROP COLUMN risk_reason`;
   await sql`ALTER TABLE visits DROP COLUMN guest_category`;
   await sql`DROP TABLE bill_line_discounts`;
+  await sql`DROP TABLE visit_tag_locks`;
   await sql`DROP TABLE tag_deposits`;
   await sql`DROP TABLE bill_supplements`;
   await sql`ALTER TABLE hand_tags DROP COLUMN service_status, DROP COLUMN service_note`;

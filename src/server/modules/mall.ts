@@ -13,6 +13,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { formatAmount } from '@shared/money';
 import { can } from '@shared/permissions';
+import { MALL_TERMINATE_PREFIX, MALL_TERMINATION_STATUS_LABELS } from '@shared/mall-fix';
 import {
   MALL_BATCH_LIMIT,
   MALL_DISPLAY_LABELS,
@@ -66,7 +67,8 @@ import { docDateSchema, logApproval } from './inventory/common';
 import { loadPurchaseRules } from './inventory/purchase-rules';
 import { deptDailyQuota } from './govflow/petty';
 import { enterStockCheck } from './request-stock';
-import { canConfirmPlan, canSeeDealPrices, CustomSpecInput, requestQuotes, sourcingOwner } from './mall-pilot';
+import { fixItemsOf, saveVersion, terminationOf, versionsOf } from './mall-fix';
+import { canConfirmPlan, canSeeDealPrices, CustomSpecInput, requestQuotes, sourcingOwner, terminationAbility } from './mall-pilot';
 import {
   approvableOnFor,
   deptConfirmFor,
@@ -306,6 +308,7 @@ export async function createMallRequest(
                 'mall', ${input.externalNo}, ${input.contactName}, ${input.storeId}, ${input.entityId}, ${input.budgetProject}, ${input.deliveryAddress}, ${input.paymentIntent})
         RETURNING id`;
       await writeLines(tx, row!.id, lines);
+      await saveVersion(tx, row!.id, 'submit', actor.id);
       await enterStockCheck(tx, row!.id);
       await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'purchase_request', ${requestHash}, ${row!.id}, ${actor.id})`;
       await logApproval(tx, 'purchase_request', row!.id, 'create', actor.id);
@@ -362,6 +365,11 @@ function progressDisplayOf(states: readonly RequestLineProgress['state'][]): Mal
   if (states.some((s) => s === 'ordered' || s === 'closed')) return 'ordered';
   if (states.some((s) => s === 'sourcing')) return 'sourcing';
   return 'approved';
+}
+
+/** 终止申购（8.2.6）：与撤回同一个状态，商城上写「已终止」 */
+function terminatedLabel(r: { status: string; reason: string | null }): string | null {
+  return r.status === 'cancelled' && r.reason?.startsWith(MALL_TERMINATE_PREFIX) ? MALL_TERMINATION_STATUS_LABELS.approved : null;
 }
 
 /** 详情（各行进度齐全）合出给商城看的状态 */
@@ -426,6 +434,13 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
   ]);
   const at = (await progressTimes(deps.sql, [requestId])).get(requestId) ?? r.updatedAt;
   const pilot = { owner: await sourcingOwner(deps.sql, requestId), quotes: await requestQuotes(deps.sql, requestId, actor) };
+  const [fixItems, versions, termination] = await Promise.all([fixItemsOf(deps.sql, requestId), versionsOf(deps.sql, requestId), terminationOf(deps.sql, requestId)]);
+  const ability = await terminationAbility(
+    deps.sql,
+    actor,
+    { status: r.status, source: r.source, requesterId: r.requester.id, departmentId: r.department.id, deptHeadId: r.deptConfirm.head?.id ?? null },
+    termination?.status === 'pending',
+  );
   const display = displayOf(r);
   const ended = ['returned', 'rejected', 'cancelled'].includes(display);
   const revApprovals = [...r.approvals].reverse();
@@ -476,7 +491,7 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
     source: r.source,
     status: r.status,
     displayStatus: display,
-    displayLabel: MALL_DISPLAY_LABELS[display],
+    displayLabel: terminatedLabel(r) ?? MALL_DISPLAY_LABELS[display],
     reason: r.reason,
     department: r.department,
     requester: r.requester,
@@ -499,7 +514,12 @@ export async function mallRequest(deps: Deps, actor: Actor, requestId: number): 
     timeline,
     sourcingOwner: pilot.owner,
     quotes: pilot.quotes,
+    fixItems,
+    versions,
+    termination,
     can: {
+      terminate: ability.terminate,
+      decideTermination: ability.decide,
       seePrices: canSeeDealPrices(actor),
       source: canSeeDealPrices(actor) && ['submitted', 'approved'].includes(r.status),
       resubmit: r.status === 'returned' && r.source === 'mall' && (r.requester.id === actor.id || actor.role === 'owner'),
@@ -552,7 +572,7 @@ function briefOf(r: PurchaseRequestSummary & { reason: string | null }, at: stri
     source: r.source,
     status: r.status,
     displayStatus: display,
-    displayLabel: MALL_DISPLAY_LABELS[display],
+    displayLabel: terminatedLabel(r) ?? MALL_DISPLAY_LABELS[display],
     reason: r.reason,
     department: r.department,
     priority: r.priority,
