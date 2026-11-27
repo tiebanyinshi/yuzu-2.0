@@ -34,7 +34,11 @@ import { DayLegend, itemText, LEAVE_PART_LABELS, MonthGrid } from './MyScheduleC
 import { ScheduleGrantsTab } from './ScheduleGrantsTab';
 import { useWcpNav, type WcpNavItem } from './wcpNav';
 import { TrainingPages } from '../training/TrainingPages';
+import { lazyPage } from '../../lib/lazyPage';
 import { GovFlowPages } from '../govflow/GovFlowPages';
+
+// 汤崎学堂（docs/ACADEMY.md）：页面多，单独按需加载，不撑大 WCP 这一包
+const AcademyPages = lazyPage(() => import('../academy/AcademyPages').then((m) => m.AcademyPages));
 
 /** /oa 下面的几页放在一个按需加载的文件里（首屏主包有体积上限，路由表里只占一行） */
 export function OfficePage() {
@@ -70,6 +74,8 @@ export function OfficePage() {
     <MyPayslipPages />
   ) : path.startsWith('/oa/training') ? (
     <TrainingPages />
+  ) : path.startsWith('/oa/academy') ? (
+    <AcademyPages />
   ) : path.startsWith('/oa/gov') ? (
     <GovFlowPages />
   ) : (

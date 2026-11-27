@@ -44,7 +44,9 @@ const leave = (typeId: number, start: [string, 'am' | 'pm'], end: [string, 'am' 
 });
 
 beforeAll(async () => {
+  // 8.2.17 起 WCP 的报销模板停用（报销统一到业财法）；这里测的是以前提的 WCP 报销那一套，先打开
   ctx = await setup();
+  await ctx.sql`UPDATE oa_approval_templates SET active = true WHERE code = 'expense'`;
   emp.staff = await hire('at_staff', 'front.staff');
   emp.free = await hire('at_free', 'front.staff'); // 不在考勤组
   emp.lead = await hire('at_lead', 'front.lead');
@@ -186,3 +188,37 @@ async function upload(who: Emp) {
   expect(r.status, JSON.stringify(r.body)).toBe(201);
   return r.body.id;
 }
+
+describe('报销不自动通过（8.2.12，《业财法审批与 WCP 需求变更》B1）', () => {
+  it('发起人就是最上级：没有别的店主时拦下，不直接通过；有别的店主时交给他审', async () => {
+    const owner: Emp = { id: ctx.ownerId, cookie: ctx.owner };
+    const form = async () => ({ category: '交通', amount: 8_800, occurredOn: '2031-05-02', invoices: [await upload(owner)] });
+    expect(code(await post(owner, 'expense', await form()))).toBe('NO_APPROVER');
+    await ctx.sql`INSERT INTO staff (username, display_name, role, password_hash) SELECT 'at_owner2', '第二位店主', 'owner', password_hash FROM staff WHERE id = ${ctx.ownerId}`;
+    const [o2] = await ctx.sql<{ id: number }[]>`SELECT id FROM staff WHERE username = 'at_owner2'`;
+    const e = await ok(owner, 'expense', await form());
+    expect(e.status).toBe('pending');
+    expect(e.steps.map((s) => s.approverId)).toEqual([Number(o2!.id)]);
+    // 别的单照旧（OA12）：店主自己发起的通用审批直接通过
+    expect((await ok(owner, 'general', { title: '用章', content: '盖章' })).status).toBe('approved');
+  });
+});
+
+describe('报销统一到业财法（8.2.17，WB11）', () => {
+  it('WCP 的报销模板停用后：模板列表里没有报销，提交给出去业财法发起的提示', async () => {
+    await ctx.sql`UPDATE oa_approval_templates SET active = false WHERE code = 'expense'`;
+    const list = (await api(ctx.app, emp.staff!.cookie, 'GET', '/api/oa/approval/templates')).body as ApprovalTemplate[];
+    expect(list.map((t) => t.code)).not.toContain('expense');
+    const r = await post(emp.staff!, 'expense', { category: '交通', amount: 100, occurredOn: '2031-05-02', invoices: [] });
+    expect((r.body as unknown as { error: { code: string } }).error.code).toBe('EXPENSE_MOVED');
+    await ctx.sql`UPDATE oa_approval_templates SET active = true WHERE code = 'expense'`;
+  });
+
+  it('迁移 730 把报销模板停用', async () => {
+    await ctx.sql`UPDATE oa_approval_templates SET active = true WHERE code = 'expense'`;
+    await ctx.sql.file('src/server/migrations/730_oa_expense_retire.sql');
+    const [t] = await ctx.sql<{ active: boolean }[]>`SELECT active FROM oa_approval_templates WHERE code = 'expense'`;
+    expect(t!.active).toBe(false);
+    await ctx.sql`UPDATE oa_approval_templates SET active = true WHERE code = 'expense'`;
+  });
+});

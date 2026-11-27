@@ -77,14 +77,60 @@ export interface PoRevision {
     channel?: string | null;
     totalCents: number;
     lines: { materialName: string; spec?: string; purchaseQtyMilli: number; purchaseUnit: string; priceCents: number; amountCents: number; imageIds?: number[] }[];
+    /** 自购信息与票据（8.2.13 Codex 审查后补：改版会换掉票据，旧版的凭证留在这里；8.2.13 以前的版本、供应商采购没有） */
+    self?: {
+      reason: SelfReason;
+      reasonNote: string;
+      channel: string;
+      handlerId: number;
+      handlerName: string;
+      payMethod: SelfPayMethod;
+      boughtOn: string | null;
+      receiptImageIds: number[];
+    } | null;
   };
 }
+
+// ───────────────────────── 自购（8.2.13，《采购模块需求补充》R3，docs/V8213_SELF_PURCHASE.md） ─────────────────────────
+
+export const PURCHASE_METHODS = ['supplier', 'self'] as const;
+export type PurchaseMethod = (typeof PURCHASE_METHODS)[number];
+export const PURCHASE_METHOD_LABELS: Record<PurchaseMethod, string> = { supplier: '供应商采购', self: '自购' };
+export const SELF_REASONS = ['no_supplier', 'urgent', 'petty', 'other'] as const;
+export type SelfReason = (typeof SELF_REASONS)[number];
+export const SELF_REASON_LABELS: Record<SelfReason, string> = { no_supplier: '无供应商可供', urgent: '应急', petty: '零星采购', other: '其他' };
+export const SELF_PAY_METHODS = ['employee_advance', 'petty', 'company_transfer', 'other'] as const;
+export type SelfPayMethod = (typeof SELF_PAY_METHODS)[number];
+export const SELF_PAY_METHOD_LABELS: Record<SelfPayMethod, string> = { employee_advance: '员工垫付后报销', petty: '备用金', company_transfer: '对公转账', other: '其他' };
+/**
+ * 自购超过这个金额（分）加一级店主复核的默认值（PS5：文档没给金额，先按报销原来的门槛 2,000 元）。
+ * 8.2.13 之后（不改版本号）在「采购规则」里可改（`PurchaseRules.selfOwnerReviewCents`），这里只作默认
+ */
+export const SELF_REVIEW_CENTS = 200_000;
+
+export interface SelfPurchaseInfo {
+  reason: SelfReason;
+  reasonNote: string;
+  /** 购买渠道 / 商家名称（不是供应商档案） */
+  channel: string;
+  handler: Ref;
+  payMethod: SelfPayMethod;
+  boughtOn: string | null;
+  receiptImages: { id: number; url: string }[];
+}
+
+/** 列表、详情上「供应商」那一栏：自购写「自购 · 渠道」 */
+export const partyLabel = (supplierName: string | null, self: { channel: string } | null) => (self ? `自购 · ${self.channel}` : (supplierName ?? ''));
 
 export interface PurchaseOrder {
   id: number;
   docNo: string;
   status: PoStatus;
-  supplier: Ref;
+  /** 供应商采购的供应商；自购为空（8.2.13） */
+  supplier: Ref | null;
+  purchaseMethod: PurchaseMethod;
+  /** 自购信息（供应商采购为空） */
+  self: SelfPurchaseInfo | null;
   /** 采购途径（v0.7.29，E1）；v0.7.29 以前的单据为空 */
   channel: ChannelRef | null;
   /** 从哪张询价单转来的（v0.7.29，E5） */
@@ -149,9 +195,11 @@ export interface PoSummary {
   id: number;
   docNo: string;
   status: PoStatus;
+  /** 自购的写「自购 · 渠道」（8.2.13） */
   supplierName: string;
+  purchaseMethod: PurchaseMethod;
   channel: ChannelRef | null;
-  supplierId: number;
+  supplierId: number | null;
   orderDate: string;
   expectedDate: string | null;
   totalCents: number;
@@ -163,6 +211,8 @@ export interface PoSummary {
   receiving: ReceivingState;
   createdByName: string;
   createdAt: string;
+  /** 紧急程度（8.2.12 R2）：关联需求单里最急的那张；没关联需求单的为空 */
+  priority: 'urgent' | 'high' | 'normal' | null;
 }
 
 // ───────────────────────── 货款与付款 ─────────────────────────
@@ -540,6 +590,8 @@ export interface PurchaseRules {
   urgentContractMinCents: number;
   /** 补合同期限（天，CK19）：从急采生效那天算 */
   contractDueDays: number;
+  /** 自购店主复核（分，PS5）：自购采购单合计超过它的，负责人之后加一级店主；提交时按当时的值定审批级数 */
+  selfOwnerReviewCents: number;
 }
 
 /** 默认规则（待确认，E1、E4–E6、CG01、CG03–CG05）：在「采购 → 采购规则」里改 */
@@ -567,6 +619,8 @@ export const DEFAULT_PURCHASE_RULES: PurchaseRules = {
   stockCheckHours: 24,
   urgentContractMinCents: 2_000_000,
   contractDueDays: 15,
+  // 自购超过 ¥2,000 加店主复核（PS5，8.2.13 起；之后在采购规则里可改）
+  selfOwnerReviewCents: SELF_REVIEW_CENTS,
 };
 
 /** 急采上限：分级的最高一档 */

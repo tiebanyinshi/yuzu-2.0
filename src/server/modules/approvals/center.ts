@@ -120,6 +120,17 @@ async function activeSubjects(db: Db): Promise<ApproverSubject[]> {
   });
 }
 
+/**
+ * 刚开的审批单当前这一级有没有人能审（8.2.12，B1 / 7.3：查不到审批人的单停在待审并告警，不自动通过）。
+ * 没有在审的审批单返回 false
+ */
+export async function pendingStuck(db: Db, kind: ApprovalDocKind, docId: number): Promise<boolean> {
+  const [r] = await db<{ id: number }[]>`SELECT id FROM approval_requests WHERE doc_kind = ${kind} AND doc_id = ${docId} AND status = 'pending'`;
+  if (!r) return false;
+  const [req] = await loadRequests(db, { ids: [Number(r.id)] });
+  return !!req && isStuck(req, await activeSubjects(db));
+}
+
 /** 这一级目前有没有人能审：或签要有一位在用、能审的（提交人不能审自己的单时不算提交人）；会签要指定的人都还能审，或者有店主 */
 function isStuck(req: RequestRow, staff: ApproverSubject[]): boolean {
   const step = req.steps[req.currentLevel - 1]!;
@@ -142,11 +153,11 @@ async function summaries(db: Db, reqs: RequestRow[]): Promise<Map<string, string
   const po = ids('purchase_order');
   if (po.length) {
     const rows = await db<{ id: number; party: string; items: string | null; n: number }[]>`
-      SELECT p.id, s.name AS party,
+      SELECT p.id, coalesce(s.name, '自购 · ' || p.self_channel) AS party,
              (SELECT string_agg(x.name, '、') FROM (SELECT m.name FROM purchase_order_lines pl JOIN materials m ON m.id = pl.material_id
                WHERE pl.po_id = p.id ORDER BY pl.line_no LIMIT 3) x) AS items,
              (SELECT count(*) FROM purchase_order_lines WHERE po_id = p.id) AS n
-      FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id WHERE p.id IN ${db(po)}`;
+      FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id WHERE p.id IN ${db(po)}`;
     for (const r of rows) put('purchase_order', Number(r.id), r.party, r.items, r.n);
   }
   const inv = ids('inv_doc');
@@ -164,7 +175,7 @@ async function summaries(db: Db, reqs: RequestRow[]): Promise<Map<string, string
   const pay = ids('payment');
   if (pay.length) {
     const rows = await db<{ id: number; party: string; method: PayMethod }[]>`
-      SELECT p.id, s.name AS party, p.method FROM payments p JOIN suppliers s ON s.id = p.supplier_id WHERE p.id IN ${db(pay)}`;
+      SELECT p.id, s.name AS party, p.method FROM payments p LEFT JOIN suppliers s ON s.id = p.supplier_id WHERE p.id IN ${db(pay)}`;
     for (const r of rows) put('payment', Number(r.id), r.party, PAY_METHOD_LABELS[r.method] ?? r.method, 1);
   }
   const op = ids('opening_payable');
@@ -343,8 +354,8 @@ async function digestOf(db: Db, kind: ApprovalDocKind, docId: number, requestId:
       return paymentRequestDigest(db, docId, timeZone);
     case 'purchase_order': {
       const [p] = await db<{ supplierName: string; orderDate: string; note: string; revision: number; backfill: boolean; channelLabel: string | null; expectedDate: string | null }[]>`
-        SELECT s.name AS supplier_name, p.order_date, p.note, p.revision, p.backfill, p.channel_label, p.expected_date
-        FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${docId}`;
+        SELECT coalesce(s.name, '自购 · ' || p.self_channel) AS supplier_name, p.order_date, p.note, p.revision, p.backfill, p.channel_label, p.expected_date
+        FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${docId}`;
       if (!p) throw notFound('采购单不存在');
       const pc = await poContract(db, docId);
       const lines = await db<{ id: number; name: string; spec: string; purchaseQtyMilli: number; purchaseUnit: string; priceCents: number; amountCents: number }[]>`
@@ -454,7 +465,7 @@ async function digestOf(db: Db, kind: ApprovalDocKind, docId: number, requestId:
     }
     case 'payment': {
       const [p] = await db<{ supplierName: string; payDate: string; note: string; method: PayMethod; evidence: string }[]>`
-        SELECT s.name AS supplier_name, p.pay_date, p.note, p.method, p.evidence FROM payments p JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${docId}`;
+        SELECT s.name AS supplier_name, p.pay_date, p.note, p.method, p.evidence FROM payments p LEFT JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${docId}`;
       if (!p) throw notFound('付款记录不存在');
       const allocs = await db<{ id: number; docNo: string; amountCents: number }[]>`
         SELECT pa.id, coalesce(d.doc_no, o.doc_no) AS doc_no, pa.amount_cents

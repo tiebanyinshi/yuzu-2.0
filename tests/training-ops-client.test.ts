@@ -1,10 +1,13 @@
 // 员工培训后台「改资料」写操作的本机待确认记录（src/client/features/training/ops.ts，Codex 审查 f5de374）：
-// 结果不明的原样重提，被拒绝时要能断定结果（409 / 404 / 400 / 422）才删；401、403、429 这类留着。
+// 结果不明的原样重提，被拒绝时要能断定结果（409 / 404 / 400 / 422）才删；401、403、429 这类留着；没确认的编号换了内容不发。
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn() }));
 vi.mock('../src/client/lib/api', () => {
   class ApiError extends Error {
-    constructor(public status: number) {
+    constructor(
+      public status: number,
+      public code = '',
+    ) {
       super('rejected');
     }
   }
@@ -13,6 +16,7 @@ vi.mock('../src/client/lib/api', () => {
 });
 import { ApiError, UncertainError } from '../src/client/lib/api';
 import { sendTrainingOp } from '../src/client/features/training/ops';
+import { createLocalOps } from '../src/client/lib/localOps';
 
 let storage = new Map<string, string>();
 beforeEach(() => {
@@ -51,11 +55,48 @@ describe('sendTrainingOp', () => {
     await expect(sendTrainingOp(op('c'))).rejects.toBeInstanceOf(ApiError);
     expect(pending()).toEqual([]);
   });
+  it('没确认的编号换了内容（对话框里改了再保存）：不发，原来那份留着、照旧能原样重提（Codex 审查 34b9815）', async () => {
+    mocks.put.mockRejectedValueOnce(new UncertainError('timeout'));
+    await expect(sendTrainingOp(op('e'))).rejects.toBeInstanceOf(UncertainError);
+    const changed = { ...op('e'), body: { name: '安保部（改）', version: 1 } };
+    await expect(sendTrainingOp(changed)).rejects.toThrow('只能按原内容重新提交');
+    expect(mocks.put).toHaveBeenCalledTimes(1);
+    expect(pending().map((x) => x.key)).toEqual(['e']);
+    mocks.put.mockResolvedValueOnce({ ok: true });
+    await expect(sendTrainingOp(op('e'))).resolves.toEqual({ ok: true });
+    expect(mocks.put).toHaveBeenLastCalledWith('/api/admin/training/folders/1', { name: '安保部', version: 1 });
+    expect(pending()).toEqual([]);
+  });
   it('重提成功：删', async () => {
     mocks.put.mockRejectedValueOnce(new UncertainError('timeout'));
     await expect(sendTrainingOp(op('d'))).rejects.toBeInstanceOf(UncertainError);
     mocks.put.mockResolvedValueOnce({ ok: true });
     await expect(sendTrainingOp(op('d'))).resolves.toEqual({ ok: true });
     expect(pending()).toEqual([]);
+  });
+});
+
+describe('createLocalOps（学堂用的两个选项，Codex 审查 6dffa29）', () => {
+  const academy = () => createLocalOps('yuzu.test.v1', { stillRunning: ['ACADEMY_AI_RUNNING'] });
+  const gen = (staffId: number) => ({ key: 'g', method: 'POST' as const, url: '/api/admin/academy/lessons/1/generate', body: { clientKey: 'g', count: 5 }, summary: 'AI 出题', staffId });
+  const left = () => JSON.parse(storage.get('yuzu.test.v1') ?? '[]') as { key: string }[];
+  it('重提时服务端说还在出题（409 ACADEMY_AI_RUNNING）：不能断定，留着；出完了再重提才删', async () => {
+    const ops = academy();
+    mocks.post.mockRejectedValueOnce(new UncertainError('timeout'));
+    await expect(ops.send(gen(7))).rejects.toBeInstanceOf(UncertainError);
+    mocks.post.mockRejectedValueOnce(new ApiError(409, 'ACADEMY_AI_RUNNING', 'x'));
+    await expect(ops.send(gen(7))).rejects.toBeInstanceOf(ApiError);
+    expect(left().map((x) => x.key)).toEqual(['g']);
+    mocks.post.mockResolvedValueOnce({ questions: [] });
+    await expect(ops.send(gen(7))).resolves.toEqual({ questions: [] });
+    expect(left()).toEqual([]);
+  });
+  it('别人登录时提交、还没确认的：换了人不发，记录留给本人', async () => {
+    const ops = academy();
+    mocks.post.mockRejectedValueOnce(new UncertainError('timeout'));
+    await expect(ops.send(gen(7))).rejects.toBeInstanceOf(UncertainError);
+    await expect(ops.send(gen(8))).rejects.toThrow('别人登录时提交的');
+    expect(mocks.post).toHaveBeenCalledTimes(1);
+    expect(left().map((x) => x.key)).toEqual(['g']);
   });
 });

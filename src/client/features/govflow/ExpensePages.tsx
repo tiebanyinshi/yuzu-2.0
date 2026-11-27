@@ -2,7 +2,7 @@
 //   /oa/gov?box=expense   四个入口 + 本部门（内控看全部）的差旅额度 + 证照台账（借出、超期）
 
 import { useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { GfDocCard, GfMeta } from '@shared/govflow';
 import { SEAL_KINDS, SEAL_KIND_LABELS, type LicenseView, type SealKind, type TravelBudgetView } from '@shared/govflow-expense';
@@ -36,6 +36,14 @@ export function ExpensePanel({ meta }: { meta: GfMeta }) {
         <Button size="sm" variant="secondary" onClick={() => setOpen('seal')}>
           用印证照
         </Button>
+        {/* 报销统一成一套（8.2.17，WB11）：写明分工，并能跳到以前在 WCP「审批」里提的报销 */}
+        <p className="w-full text-[12.5px] text-ink-3" data-testid="gf-expense-unified">
+          报销只在这里发起、查看，审批按业财法的规则走，审批记录只有这一份。以前在 WCP「审批」里提的报销照旧在
+          <Link to="/oa/approvals" className="mx-0.5 font-semibold text-pine underline">
+            审批列表
+          </Link>
+          里查看。
+        </p>
       </Card>
       <h2 className="text-[15px] font-bold text-ink">部门本月差旅额度</h2>
       <DataTable<TravelBudgetView>

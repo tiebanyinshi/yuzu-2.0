@@ -61,6 +61,7 @@ import { DeliverRoomField, findGuestByRoom, findGuestByTag, prepareDiningOrder }
 import { comboPartsOf, withDishOptions } from './dish-options';
 import type { ComboPartPlan } from './dish-lines';
 import { pendingAddonsColumn } from './dish-addon-void';
+import { MEAL_PERIOD_KEYS } from '@shared/dining-meals';
 
 export async function loadDiningRules(db: Db): Promise<DiningRules> {
   const row = await settingRow<Partial<DiningRules>>(db, 'dining_rules');
@@ -698,6 +699,21 @@ const RulesInput = z.object({
   serviceFeeBp: z.number('服务费比例不正确').int('服务费比例不正确').min(0, '服务费比例不能是负数').max(MAX_SERVICE_FEE_BP, '服务费最多 30%'),
   serviceFeeScope: z.enum(['rooms', 'all'], '服务费用在哪些桌不正确'),
   returnWindowMinutes: z.number('分钟数必须是整数').int('分钟数必须是整数').min(1, '至少 1 分钟').max(MAX_RETURN_WINDOW_MINUTES, `最多 ${MAX_RETURN_WINDOW_MINUTES} 分钟`),
+  // 8.2.19：水吧首杯免费
+  firstCupFree: z.boolean(),
+  // 8.2.8：餐厅的餐段与裸票餐费（四段各一条，价钱 0 = 这一段不供餐）
+  mealPeriods: z
+    .array(
+      z.object({
+        key: z.enum(MEAL_PERIOD_KEYS, '餐段不正确'),
+        start: z.number('时间不正确').int('时间不正确').min(0, '时间不正确').max(1439, '时间不正确'),
+        end: z.number('时间不正确').int('时间不正确').min(0, '时间不正确').max(1439, '时间不正确'),
+        price: z.number('餐费必须是整数（分）').int('餐费必须是整数（分）').min(0, '餐费不能是负数').max(1_000_000, '餐费最多 ¥10,000'),
+      }),
+    )
+    .length(MEAL_PERIOD_KEYS.length, '四个餐段都要填')
+    .refine((ps) => new Set(ps.map((p) => p.key)).size === ps.length, '餐段重复了')
+    .refine((ps) => ps.every((p) => p.start !== p.end), '餐段的开始和结束不能是同一时间'),
 });
 const StationInput = z.object({
   name: z.string().trim().min(1, '请填写档口名称').max(MAX_STATION_NAME, `档口名称最多 ${MAX_STATION_NAME} 字`),
@@ -901,7 +917,7 @@ export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
       : order.toRoom;
     const { toRoom: _toRoom, ...rest } = req.body as Record<string, unknown>;
     // 点单页只能点进厨房的菜（其他项目、手动金额请到前台登记）
-    await postCharges(deps, visitId, { ...rest, customLines: [] } as never, ctxOf(req), { dining: { onlyKitchen: true }, ...(toRoom ? { toRoom } : {}) });
+    await postCharges(deps, visitId, { ...rest, customLines: [] } as never, ctxOf(req), { dining: { onlyKitchen: true }, buffet: true, ...(toRoom ? { toRoom } : {}) });
     return diningGuestOf(sql, body.visitId);
   });
 

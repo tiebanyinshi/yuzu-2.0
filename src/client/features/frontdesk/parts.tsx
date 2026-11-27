@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
-import { AlarmClock, Crown, DoorOpen, Link2, Lock, ShieldAlert, Sparkles, TriangleAlert, UserRound } from 'lucide-react';
+import { AlarmClock, Crown, DoorOpen, Link2, Lock, LockKeyhole, ShieldAlert, Sparkles, TriangleAlert, UserRound } from 'lucide-react';
 import { tagArea, TAG_SERVICE_LABELS, ZONE_LABELS, type BoardTag, type HandTag, type TagKind, type TagServiceStatus, type TagZone } from '@shared/frontdesk';
 import { overstayOf } from '@shared/frontdesk-risk';
 import { categoryMark, highRiskOf } from '@shared/frontdesk-v8223';
-import { cn } from '../../lib/utils';
+import { cn, formatTime } from '../../lib/utils';
 import { Money } from '../../components/Money';
 import { stayMinutes, stayText, useGuestRules } from './queries';
 
@@ -134,7 +134,7 @@ export function VisitStatusChips({
   chipClass,
   testId,
 }: {
-  visit: { checkedInAt: string; awaySince: string | null; openTodos: number; guestCategory?: string; amountCents?: number };
+  visit: { checkedInAt: string; awaySince: string | null; awayLockUntil?: string | null; openTodos: number; guestCategory?: string; amountCents?: number };
   now: number;
   /** 每个小标另加的样式（手牌卡片底下排成整行的色带） */
   chipClass?: string;
@@ -168,10 +168,23 @@ export function VisitStatusChips({
           {over.label}
         </StatusChip>
       )}
-      {visit.awaySince && (
-        <StatusChip tone="lake" icon={<DoorOpen className="size-4 shrink-0" />} className={chipClass} title="临时外出，手牌仍占用，不能发给别人" testId={testId && `${testId}-away`}>
-          外出
+      {visit.awayLockUntil ? (
+        // 锁牌外出（8.2.7）：锁着期间不能挂账，到点自动解锁
+        <StatusChip
+          tone="clay"
+          icon={<LockKeyhole className="size-4 shrink-0" />}
+          className={chipClass}
+          title={`锁牌外出，锁到 ${formatTime(visit.awayLockUntil)}；锁着不能挂账，客人回来在收银台解锁`}
+          testId={testId && `${testId}-away-lock`}
+        >
+          锁牌 {formatTime(visit.awayLockUntil)}
         </StatusChip>
+      ) : (
+        visit.awaySince && (
+          <StatusChip tone="lake" icon={<DoorOpen className="size-4 shrink-0" />} className={chipClass} title="临时外出，手牌仍占用，不能发给别人" testId={testId && `${testId}-away`}>
+            外出
+          </StatusChip>
+        )
       )}
       {visit.openTodos > 0 && (
         <StatusChip tone="clay" icon={<TriangleAlert className="size-4 shrink-0" />} className={chipClass} title={`${visit.openTodos} 条异常待办没处理完`} testId={testId && `${testId}-todo`}>

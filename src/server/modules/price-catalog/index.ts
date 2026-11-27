@@ -27,6 +27,7 @@ import { lockStoreCatalog, registerPriceLinkRoutes } from './links';
 import { parsePriceCatalog, PriceFileError } from './parse';
 import { priceSheet, priceSheets } from './sheet-io';
 import { activePriceCatalog, entriesOf, priceCatalogOverview, priceCatalogSet, rowOf } from './read';
+export { activePriceCatalog };
 
 const FileFields = z.object({
   fileName: z.string().trim().min(1, '缺少文件名').max(120, '文件名太长'),

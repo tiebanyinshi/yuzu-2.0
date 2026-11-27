@@ -177,7 +177,7 @@ export function ErpShell() {
               : k === 'invoices'
                 ? invTodo.data?.due
                 : k === 'inventory' && supplyTodo.data
-                  ? supplyTodo.data.slowMoving + supplyTodo.data.expiringLots + supplyTodo.data.expiredLots || undefined
+                  ? supplyTodo.data.slowMoving + supplyTodo.data.expiringLots + supplyTodo.data.expiredLots + (supplyTodo.data.dispatchReady ?? 0) || undefined
                   : k === 'purchasing' && supplyTodo.data
                     ? supplyTodo.data.pendingAdmission + supplyTodo.data.licensesDue + (supplyTodo.data.contractDue ?? 0) || undefined
                     : // 待核库的需求单（8.1.10，给库管）

@@ -1161,6 +1161,22 @@ export async function ruleCatalog(db: Db): Promise<RuleEntry[]> {
     dflt: prd.flowStallDays,
     metaKey: 'purchase_rules',
   });
+  // 自购店主复核（PS5）：8.2.13 是常量，之后（不改版本号）在采购规则里可改
+  const selfReviewText = (r: typeof pr) => (r.selfOwnerReviewCents > 0 ? `合计超过 ${formatYuan(r.selfOwnerReviewCents)} 的自购，负责人之后加一级店主复核` : '每张自购都在负责人之后加一级店主复核');
+  add({
+    key: 'purchase_rules.selfOwnerReview',
+    group: 'inventory',
+    label: '自购店主复核',
+    value: selfReviewText(pr),
+    defaultValue: selfReviewText(prd),
+    pending: true,
+    section: 'rules',
+    href: '/erp/settings/purchase',
+    hint: '自购的采购单都要负责人审批、提交人不能审；审批中心给采购单配了规则的按规则。改了只管以后提交的',
+    current: pr.selfOwnerReviewCents,
+    dflt: prd.selfOwnerReviewCents,
+    metaKey: 'purchase_rules',
+  });
   const pay = await loadPaymentRules(db);
   const payd = DEFAULT_PAYMENT_RULES;
   const payDaysText = (r: typeof pay) => payDaysLabel(r.payDays) || '没有固定付款日';
@@ -1213,8 +1229,9 @@ export async function ruleCatalog(db: Db): Promise<RuleEntry[]> {
     key: 'expense_rules.threshold',
     group: 'erp',
     label: '报销要负责人确认的门槛',
-    value: `单笔超过 ${formatYuan(exp.approvalThresholdCents)}`,
-    defaultValue: `单笔超过 ${formatYuan(expd.approvalThresholdCents)}`,
+    // 8.2.12（B1）：门槛以内自动确认默认关，全部报销都要审批；门槛只在打开时才有用
+    value: exp.autoConfirmBelowThreshold ? `单笔超过 ${formatYuan(exp.approvalThresholdCents)}` : '全部要审批（门槛以内自动确认已关）',
+    defaultValue: '全部要审批（门槛以内自动确认已关）',
     pending: true,
     section: 'rules',
     href: '/erp/settings/expenses',
@@ -1376,6 +1393,13 @@ const CHANGE_ACTIONS = [
   'space_import',
   'training_folder_saved',
   'training_file_saved',
+  'academy_course_saved',
+  'academy_path_saved',
+  'academy_assignment_saved',
+  'academy_question_saved',
+  'academy_certificate_revoked',
+  'academy_pack_imported',
+  'academy_questions_imported',
   'location_reader_saved',
   'items_zone_updated',
   // 8.1.15 菜品管理
@@ -1478,6 +1502,22 @@ function describeChange(action: string, detail: Record<string, unknown>): string
       return typeof detail.summary === 'string' ? detail.summary : '修改了培训文件夹';
     case 'training_file_saved':
       return typeof detail.summary === 'string' ? detail.summary : '修改了培训文件';
+    case 'academy_course_saved':
+      return typeof detail.summary === 'string' ? detail.summary : '修改了学堂课程';
+    case 'academy_path_saved':
+      return typeof detail.summary === 'string' ? detail.summary : '修改了学习地图';
+    case 'academy_assignment_saved':
+      return typeof detail.summary === 'string' ? detail.summary : '修改了学堂指派';
+    case 'academy_question_saved':
+      return typeof detail.summary === 'string' ? detail.summary : '修改了学堂题库';
+    case 'academy_signoff':
+      return typeof detail.summary === 'string' ? detail.summary : '签了实操考核';
+    case 'academy_certificate_revoked':
+      return typeof detail.summary === 'string' ? detail.summary : '撤销了学堂证书';
+    case 'academy_pack_imported':
+      return typeof detail.summary === 'string' ? detail.summary : '导入了学堂内置课程包';
+    case 'academy_questions_imported':
+      return typeof detail.summary === 'string' ? detail.summary : '导入了学堂题库';
     case 'space_import':
       return typeof detail.summary === 'string' ? detail.summary : '导入了空间台账';
     case 'location_reader_saved':

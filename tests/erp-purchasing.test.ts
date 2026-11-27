@@ -6,7 +6,7 @@ import { DEFAULT_PURCHASE_RULES, PURCHASE_CHANNELS } from '../src/shared/purchas
 import { todayIn } from '../src/server/modules/inventory/common';
 import { createStaff } from '../src/server/modules/staff';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
-import { api, login, PASSWORD, setup, type TestContext } from './helpers';
+import { api, login, PASSWORD, setup, type TestContext, confirmSmallClaim } from './helpers';
 
 let ctx: TestContext;
 let today: string;
@@ -34,19 +34,23 @@ const newPo = (body: Record<string, unknown>) =>
     ...body,
   });
 
-const claim = (body: Record<string, unknown> = {}) =>
-  api(ctx.app, coster, 'POST', '/api/erp/expenses', {
-    clientKey: randomUUID(),
-    expenseDate: today,
-    departmentId: deptA,
-    handlerId: costerId,
-    purpose: '办公',
-    paySource: 'company',
-    invoiceType: 'receipt',
-    taxRateBp: 0,
-    lines: [{ name: '打印纸', category: 'office', unit: '包', boughtMilli: q(2), receivedMilli: q(2), amountCents: 6_000 }],
-    ...body,
-  });
+const claim = async (body: Record<string, unknown> = {}) =>
+  confirmSmallClaim(
+    ctx.app,
+    ctx.owner,
+    await api(ctx.app, coster, 'POST', '/api/erp/expenses', {
+      clientKey: randomUUID(),
+      expenseDate: today,
+      departmentId: deptA,
+      handlerId: costerId,
+      purpose: '办公',
+      paySource: 'company',
+      invoiceType: 'receipt',
+      taxRateBp: 0,
+      lines: [{ name: '打印纸', category: 'office', unit: '包', boughtMilli: q(2), receivedMilli: q(2), amountCents: 6_000 }],
+      ...body,
+    }),
+  );
 
 beforeAll(async () => {
   ctx = await setup();

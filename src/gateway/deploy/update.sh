@@ -2,7 +2,9 @@
 # 网关服务器更新到指定版本：src/gateway/deploy/update.sh <版本标签或完整 SHA>（docs/DEPLOY_GATEWAY.md 第 6 节）
 # 与 scripts/update.sh 一样只部署已合并进 main 的版本：开发分支（claude/* 等）、未合并的 PR 与缩写 SHA 一律拒绝。
 # 网关不存业务数据：不备份、不迁移。回到上一版就是用上一版的 SHA 再执行一次（最后会打出来；镜像还在就不用重新构建）。
-# 步骤：核对版本 → 切换代码 → 构建网关镜像（按完整 SHA 打标签）→ 换上 → 应该开着的网关逐个起来 → Caddy 加载这一版的配置 → 经 Caddy 核对；
+# 步骤：核对版本 → 切换代码 → 构建网关镜像（按完整 SHA 打标签）→ 换上 → 应该开着的网关逐个起来 →
+#   平时（店主 2026-11-27 起小程序都用 sys.yuzusystem.xyz，HTTPS 在正式服那台）：经这台的 Tailscale 地址（GATEWAY_BIND）核对每个网关；
+#   网关自己有域名时（COMPOSE_PROFILES 加 own-domain）：Caddy 加载这一版的配置 → 经 Caddy 核对；
 # 有一项不通过就返回失败。
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -54,7 +56,7 @@ fi
 docker tag "$image" yuzu-gateway:current
 docker compose up -d --remove-orphans
 
-# 核对：按 .env 的 COMPOSE_PROFILES 算出应该开着的服务（caddy、gateway-test，正式切换后还有 gateway-prod），
+# 核对：按 .env 的 COMPOSE_PROFILES 算出应该开着的服务（gateway-test，正式切换后还有 gateway-prod；own-domain 时还有 caddy），
 # 一个一个核对，缺了、退出了、连不通都算失败（小程序线测试预检 3ab3ab5 的 P2：原来只看开着的网关，退出的被跳过）
 ok=true
 expected=$(docker compose config --services)
@@ -79,13 +81,15 @@ for svc in $expected; do
   if $up; then echo "✓ $svc 已起来"; else echo "✗ $svc 没有起来：docker compose logs $svc" >&2; ok=false; fi
 done
 
-# Caddy：每次都重新加载这一版的 Caddyfile（caddy/ 整个目录挂进容器，切换版本后看得到新文件）；
+# Caddy（只在 own-domain 时有）：每次都重新加载这一版的 Caddyfile（caddy/ 整个目录挂进容器，切换版本后看得到新文件）；
 # 加载失败时 Caddy 照旧用原来的配置，这里判失败
-if out=$(docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1); then
-  echo "✓ Caddy 已加载这一版的配置"
-else
-  echo "✗ Caddy 没有加载这一版的配置（原来的配置照旧在用）：${out%%$'\n'*}；docker compose logs caddy" >&2
-  ok=false
+if has_service caddy; then
+  if out=$(docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1); then
+    echo "✓ Caddy 已加载这一版的配置"
+  else
+    echo "✗ Caddy 没有加载这一版的配置（原来的配置照旧在用）：${out%%$'\n'*}；docker compose logs caddy" >&2
+    ok=false
+  fi
 fi
 
 # 经 Caddy 核对每个开着的网关（连本机 443、按域名验证书）：第一次部署时证书要申请一会儿，最多等 60 秒
@@ -108,14 +112,28 @@ check_https() {
     ok=false
   fi
 }
-domains=""
-if has_service gateway-test; then domains="$(env_of GATEWAY_TEST_DOMAIN)"; fi
-if has_service gateway-prod; then domains="$domains $(env_of GATEWAY_PROD_DOMAIN)"; fi
+# 平时：经这台的 Tailscale 地址核对每个网关（正式服那台的 Caddy 就是这样连进来的）
+check_bind() {
+  local svc=$1 port=$2 bind health=""
+  bind=$(env_of GATEWAY_BIND)
+  if health=$(curl -fsS --max-time 10 "http://$bind:$port/v1/health" 2>&1); then
+    echo "✓ $svc：http://$bind:$port/v1/health：$health"
+  else
+    echo "✗ 经 Tailscale 地址连不通 $svc（http://$bind:$port）：${health%%$'\n'*}；查 .env 的 GATEWAY_BIND 是不是 tailscale ip -4" >&2
+    ok=false
+  fi
+}
 if ! command -v curl >/dev/null 2>&1; then
-  echo "✗ 这台机器没有 curl，经 Caddy 核对不了：sudo apt-get install -y curl" >&2
+  echo "✗ 这台机器没有 curl，核对不了：sudo apt-get install -y curl" >&2
   ok=false
-else
+elif has_service caddy; then
+  domains=""
+  if has_service gateway-test; then domains="$(env_of GATEWAY_TEST_DOMAIN)"; fi
+  if has_service gateway-prod; then domains="$domains $(env_of GATEWAY_PROD_DOMAIN)"; fi
   for domain in $domains; do check_https "$domain"; done
+else
+  if has_service gateway-test; then check_bind gateway-test 8300; fi
+  if has_service gateway-prod; then check_bind gateway-prod 8301; fi
 fi
 
 if $ok; then

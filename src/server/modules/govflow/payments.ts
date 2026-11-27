@@ -213,7 +213,7 @@ async function createPayment(deps: Deps, input: PaymentInputT, actor: Actor): Pr
       );
       if (invoiceLater) await tx`UPDATE gf_docs SET backfill_open = true WHERE id = ${id}`;
       const doc = await loadDoc(tx, id, true);
-      await submitFlow(tx, doc, templateFor(doc), actor);
+      await submitFlow(tx, doc, await templateFor(tx, doc), actor);
       return id;
     });
   } catch (error) {

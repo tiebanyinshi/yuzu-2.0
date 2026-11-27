@@ -18,3 +18,13 @@ export const idParam = z.object({ id: z.coerce.number().int().positive('编号�
 export const dateSchema = (label = '日期') => z.string(`请填写${label}（YYYY-MM-DD）`).regex(ISO_DATE, `${label}格式应为 YYYY-MM-DD`);
 export const cents = (label: string) => z.number(`${label}必须是数字`).int(`${label}必须精确到分`).nonnegative(`${label}不能为负数`).max(1_000_000_000, `${label}过大`);
 export const positiveCents = (label: string) => cents(label).positive(`${label}必须大于 0`);
+
+/**
+ * 受邀人手机号（体验邀请、小程序邀请都用）：去掉空格与横线后要 11 位。
+ * 放在这里而不放在 member-trials.ts：mp-entries.ts 在模块顶层用它建校验，两者互相引用，
+ * 按某些加载顺序（命令行迁移）会在 member-trials 还没初始化时就读它
+ */
+export const InviteePhone = z
+  .string('请输入受邀人的手机号')
+  .transform((s) => s.replace(/[\s-]/g, ''))
+  .pipe(z.string().regex(/^1\d{10}$/, '请输入 11 位手机号'));

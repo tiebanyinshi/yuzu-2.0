@@ -234,6 +234,16 @@ export const sourcingHolds = (db: Db) => db`
                   WHERE hx.request_line_id = sr.request_line_id
                     AND hl.po_id = (SELECT max(hp.id) FROM purchase_orders hp WHERE hp.sourcing_event_id = e.id)))`;
 
+/**
+ * 需求行 l 已经给到部门的数量（需求行的单位）：核库领用与之后每一次补发（8.2.6 物料发配记录）的合计，领料单作废的不算。
+ * 核库领用同时记在 request_line_stock 与发配记录里，取两者大的那个不重算；转采购的缺口 = 申请量 − 这个数（Codex 审查）。
+ */
+export const requestLineIssuedSql = (db: Db) => db`greatest(
+  coalesce((SELECT sum(ls.issued_qty_milli) FROM request_line_stock ls JOIN inv_docs ld ON ld.id = ls.inv_doc_id AND ld.status = 'confirmed'
+            WHERE ls.request_line_id = l.id), 0),
+  coalesce((SELECT sum(li.qty_milli) FROM request_line_issues li JOIN inv_docs lv ON lv.id = li.inv_doc_id AND lv.status = 'confirmed'
+            WHERE li.request_line_id = l.id), 0))::bigint`;
+
 export function assertNotFuture(date: string, timeZone: string) {
   if (date > todayIn(timeZone)) throw unprocessable('FUTURE_DATE', '单据日期不能晚于今天');
 }
@@ -436,8 +446,10 @@ export async function poSettlement(db: Db, poId: number): Promise<'credit' | 'ca
               ORDER BY d.confirmed_at, d.id LIMIT 1),
              CASE WHEN EXISTS (SELECT 1 FROM expense_claims c WHERE c.purchase_order_id = p.id AND c.status IN ('submitted', 'returned', 'confirmed'))
                   THEN 'cash' END,
+             -- 自购（8.2.13）没有供应商：按现付，不记应付
+             CASE WHEN p.purchase_method = 'self' THEN 'cash' END,
              s.settlement) AS settlement
-    FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${poId}`;
+    FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${poId}`;
   return row?.settlement ?? 'credit';
 }
 

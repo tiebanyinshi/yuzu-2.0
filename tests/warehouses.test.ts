@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { todayIn } from '../src/server/modules/inventory/common';
 import { createStaff } from '../src/server/modules/staff';
-import { api, login, PASSWORD, setup, type TestContext } from './helpers';
+import { api, login, PASSWORD, setup, type TestContext, confirmSmallClaim } from './helpers';
 
 let ctx: TestContext;
 let today: string;
@@ -529,18 +529,22 @@ describe('冲销：当月发生的当月冲销完（#21）与分工', () => {
     expect(voided.body.status).toBe('voided');
 
     // 报销与备用金：上月的不能冲销，本月的成本岗可以
-    const claim = (expenseDate: string) =>
-      api(ctx.app, coster, 'POST', '/api/erp/expenses', {
-        clientKey: randomUUID(),
-        expenseDate,
-        departmentId: bathId,
-        handlerId: costerId,
-        purpose: '办公',
-        paySource: 'company',
-        invoiceType: 'receipt',
-        taxRateBp: 0,
-        lines: [{ name: '打印纸', category: 'office', unit: '包', boughtMilli: q(1), receivedMilli: q(1), amountCents: 3_000 }],
-      });
+    const claim = async (expenseDate: string) =>
+      confirmSmallClaim(
+        ctx.app,
+        ctx.owner,
+        await api(ctx.app, coster, 'POST', '/api/erp/expenses', {
+          clientKey: randomUUID(),
+          expenseDate,
+          departmentId: bathId,
+          handlerId: costerId,
+          purpose: '办公',
+          paySource: 'company',
+          invoiceType: 'receipt',
+          taxRateBp: 0,
+          lines: [{ name: '打印纸', category: 'office', unit: '包', boughtMilli: q(1), receivedMilli: q(1), amountCents: 3_000 }],
+        }),
+      );
     const oldClaim = (await claim(lastMonth)).body.claim;
     expect(oldClaim.status).toBe('confirmed');
     expect((await api(ctx.app, coster, 'POST', `/api/erp/expenses/${oldClaim.id}/void`, { reason: '重复' })).body.error.code).toBe('VOID_CROSS_MONTH');

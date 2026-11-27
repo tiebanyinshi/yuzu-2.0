@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createStaff } from '../src/server/modules/staff';
+import { todayIn } from '../src/server/lib/dates';
 import { act, setupPeople, yuan, type People } from './govflow-helpers';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
@@ -56,7 +57,7 @@ describe('分级（场景 1、2、33）', () => {
     expect(labels(x)).toEqual(['部门负责人', '财务审核人']);
     expect(x.payload.tier).toBe('basic');
   });
-  it('3,000.01 元或 51 件超出基础审核：只加审核内容（比价说明）不加层级', async () => {
+  it('3,000.01 元或 51 件超出基础审核：加审核内容（比价说明）不加层级，财务那一级升级由财总审（8.2.15，WB4）', async () => {
     const d = await dept('零星分级B');
     const no = await petty(c('gf_clerk'), d, { amountCents: yuan(3000) + 1 });
     expect(no.body.error.code).toBe('GF_QUOTE_REQUIRED');
@@ -64,7 +65,7 @@ describe('分级（场景 1、2、33）', () => {
     expect(qty.body.error.code).toBe('GF_QUOTE_REQUIRED');
     const ok = await petty(c('gf_clerk'), d, { amountCents: yuan(3000) + 1, quoteNote: '三家比价，最低一家' });
     const x = await doc(ok.body.docId);
-    expect(labels(x)).toEqual(['部门负责人', '财务审核人']);
+    expect(labels(x)).toEqual(['部门负责人', '财总']);
     expect(x.payload.tier).toBe('enhanced');
   });
   it('合同、工程、服务外包、预付款、固定资产不走零星快速通道', async () => {
@@ -115,7 +116,8 @@ describe('部门备用金额度（场景 4、5、19、25、26、27、40）', () 
   it('日、月都超也只特批一次；特批只给本事项（下一笔还要特批）；特批驳回即解冻', async () => {
     const d = await dept('额度合并');
     const [g] = await ctx.sql<{ id: number }[]>`SELECT id FROM gf_docs ORDER BY id LIMIT 1`;
-    const month = new Date().toISOString().slice(0, 7);
+    // 额度按门店时区的本月（月底那晚 UTC 还是上个月）
+    const month = todayIn(ctx.config.timezone).slice(0, 7);
     await ctx.sql`INSERT INTO gf_dept_quotas (department_id, effective_month, daily_cents, monthly_cents, doc_id) VALUES (${d}, ${`${month}-01`}, ${yuan(1000)}, ${yuan(1000)}, ${g!.id})`;
     const big = await petty(c('gf_clerk'), d, { amountCents: yuan(1200), quoteNote: '比价' });
     const x = await doc(big.body.docId);
@@ -225,9 +227,10 @@ describe('逾期限制', () => {
 describe('月度额度核定（场景 42）', () => {
   it('内控提建议，财总＋CFO 共同审批，次月生效；本月不变；不能改本月', async () => {
     const d = await dept('核定部门');
-    const now = new Date();
-    const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 7);
-    const thisMonth = now.toISOString().slice(0, 7);
+    // 本月、次月按门店时区（月底那晚 UTC 还是上个月）
+    const thisMonth = todayIn(ctx.config.timezone).slice(0, 7);
+    const [y, m] = thisMonth.split('-').map(Number) as [number, number];
+    const next = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 7);
     const body = { departmentId: d, dailyCents: yuan(20_000), monthlyCents: yuan(80_000), reason: '旺季' };
     expect((await api(ctx.app, c('gf_clerk'), 'POST', '/api/gf/quota-adjust', { clientKey: randomUUID(), month: next, ...body })).status).toBe(403);
     expect((await api(ctx.app, c('gf_ic'), 'POST', '/api/gf/quota-adjust', { clientKey: randomUUID(), month: thisMonth, ...body })).body.error.code).toBe('GF_MONTH');

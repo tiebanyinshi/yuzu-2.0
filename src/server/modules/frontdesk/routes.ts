@@ -17,6 +17,7 @@ import { checkBackfillAt } from './backfill';
 import { moveLines, postCharges, voidLine, type PostInputData } from './bills';
 import { discountLine, revokeLineDiscount } from './line-discounts';
 import { collectDeposit, refundDeposit } from './tag-deposits';
+import { awayLockVisit, awayUnlockVisit } from './away-lock';
 import { resolveReadableDate } from '../ledger';
 import { refundShiftOptions } from '../shifts';
 import { checkout, findCoupon, getCheckout, listCheckouts, previewCheckout, voidCheckout, type CheckoutInputData } from './checkout';
@@ -200,6 +201,15 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/frontdesk/deposits/:id/refund', { preHandler: guard('frontdesk.operate') }, async (req) => {
     const { id } = parse(idParam, req.params);
     return refundDeposit(deps, id, req.body, ctxOf(req));
+  });
+  // 锁牌外出（8.2.7）：先收预售再锁（最多 4 小时）、客人回来解锁；在收银台办
+  app.post('/api/frontdesk/visits/:id/away-lock', { preHandler: guard('frontdesk.operate') }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    return getVisit(sql, await awayLockVisit(deps, id, req.body, ctxOf(req)), deps.config.timezone);
+  });
+  app.post('/api/frontdesk/visits/:id/away-unlock', { preHandler: guard('frontdesk.operate') }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    return getVisit(sql, await awayUnlockVisit(deps, id, req.body, ctxOf(req)), deps.config.timezone);
   });
 
   // 转单（v0.7.6）：挂错手牌的明细转到另一位在店客人的手牌上（操作编号；权限与作废明细相同）

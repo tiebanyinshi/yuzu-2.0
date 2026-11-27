@@ -41,6 +41,7 @@ const StaffTab = lazyPage(() => import('./StaffTab').then((m) => m.StaffTab));
 const StoresSection = lazyPage(() => import('./StoresSection').then((m) => m.StoresSection));
 const TagsTab = lazyPage(() => import('./TagsTab').then((m) => m.TagsTab));
 const TrainingSection = lazyPage(() => import('../training/TrainingSection').then((m) => m.TrainingSection));
+const AcademyAdmin = lazyPage(() => import('../academy/AcademyAdmin').then((m) => m.AcademyAdmin));
 const StaffMpSection = lazyPage(() => import('../staffmp/StaffMpSection').then((m) => m.StaffMpSection));
 const CanteenPage = lazyPage(() => import('../canteen/CanteenPage').then((m) => m.CanteenPage));
 const PatrolPage = lazyPage(() => import('../patrol/PatrolPage').then((m) => m.PatrolPage));
@@ -107,6 +108,7 @@ export const adminRoutes: RouteObject[] = [
   { path: 'oa-approvals/:tab?', element: <OaApprovalAdminSection /> },
   { path: 'payroll/:tab?', element: <PayrollSection /> },
   { path: 'training', element: <TrainingSection /> },
+  { path: 'academy/:tab?', element: <AcademyAdmin /> },
   { path: 'announcements', element: <AnnouncementsSection /> },
   { path: 'staffmp', element: <StaffMpSection /> },
   { path: 'permissions', element: <PermissionsSection /> },
