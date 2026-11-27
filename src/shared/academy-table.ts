@@ -72,7 +72,16 @@ export function parseQuestionTable(rows: readonly (readonly string[])[], default
     const stem = cell(at.stem);
     const answerRaw = cell(at.answer);
     if (!stem && !answerRaw && cells.every((c) => !c.trim())) return;
-    const options = optionCols.map((o) => cell(o.index)).filter(Boolean);
+    // 选项按字母放（A 是第 0 个）：中间空着一格不能往前挤，挤了答案字母就对不上了（Codex 审查 a69d88e）
+    const byLetter: string[] = [];
+    for (const o of optionCols) byLetter[o.letter] = cell(o.index);
+    const last = byLetter.reduce((acc, v, k) => (v ? k : acc), -1);
+    const options = Array.from({ length: last + 1 }, (_, k) => byLetter[k] ?? '');
+    const blank = options.findIndex((o) => !o);
+    if (blank >= 0) {
+      problems.push({ row, message: `选项要从 A 开始连着填：选项${String.fromCharCode(65 + blank)}空着，后面的选项却有内容` });
+      return;
+    }
     const declared = KIND_WORDS[norm(cell(at.kind))];
     const answerWord = norm(answerRaw);
     let kind: AcademyQuestionKind;
@@ -98,6 +107,11 @@ export function parseQuestionTable(rows: readonly (readonly string[])[], default
       answer = [...new Set(answerWord.replace(/[^a-f]/g, '').split(''))].map((ch) => ch.charCodeAt(0) - 97).sort((a, b) => a - b);
       if (!answer.length) {
         problems.push({ row, message: '选择题的答案写选项字母（如 A 或 AC）' });
+        return;
+      }
+      const missing = answer.find((k) => k >= options.length);
+      if (missing !== undefined) {
+        problems.push({ row, message: `答案里的 ${String.fromCharCode(65 + missing)} 没有对应的选项` });
         return;
       }
     }

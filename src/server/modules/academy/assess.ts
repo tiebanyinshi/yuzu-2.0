@@ -83,6 +83,8 @@ export async function createQuestion(sql: Sql, courseId: number, raw: unknown, c
     // 原样重提比对整份请求的摘要（Codex 审查 dd885a6 同一类问题）
     const { clientKey: _key, ...rest } = input;
     const hash = hashRequest({ ...rest, courseId });
+    // 同一编号同时到两次时后到的等先到的提交再查（同管理端新建，Codex 审查 16476da）
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`academy_op:academy_questions:${input.clientKey}`}, 0))`;
     const [had] = await tx<(QuestionRow & { requestHash: string })[]>`SELECT ${QUESTION_COLS(tx)}, request_hash FROM academy_questions WHERE client_key = ${input.clientKey}`;
     if (had) {
       if (had.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一道题，请刷新后重新填写');
@@ -109,6 +111,10 @@ export async function updateQuestion(sql: Sql, id: number, raw: unknown, ctx: Op
   const input = parse(QuestionUpdate, raw);
   const q = checkQuestion(input);
   return withTx(sql, async (tx) => {
+    // 课程一行 → 题一行：与题库新建、导入课程包同一个顺序（改完要记课程「本地改过」，Codex 审查 a69d88e）；题不会换课程
+    const [ref] = await tx<{ courseId: number }[]>`SELECT course_id FROM academy_questions WHERE id = ${id}`;
+    if (!ref) throw notFound('没有这道题');
+    await tx`SELECT id FROM academy_courses WHERE id = ${ref.courseId} FOR NO KEY UPDATE`;
     const [had] = await tx<QuestionRow[]>`SELECT ${QUESTION_COLS(tx)} FROM academy_questions WHERE id = ${id} FOR NO KEY UPDATE`;
     if (!had) throw notFound('没有这道题');
     const same =

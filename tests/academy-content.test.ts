@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AcademyAiGenerateResult, AcademyPackImportResult, AcademyPackStatus, AcademyTutorAnswer, AcademyTutorView } from '../src/shared/academy';
 import { mockAiProvider } from '../src/server/integrations/ai';
+import { hashRequest } from '../src/server/lib/idempotency';
 import { setAiProviderForTests } from '../src/server/modules/ai';
 import { api, setup, type TestContext } from './helpers';
 
@@ -121,6 +122,41 @@ describe('学堂 · 表格导入题', () => {
 });
 
 describe('学堂 · AI 出题与问柚子', () => {
+  it('原编号卡在「进行中」：中途断了（超过 15 分钟）的按没做成给原因；题没存上的记失败，再提给原因（Codex 审查 a69d88e）', async () => {
+    setAiProviderForTests(mockAiProvider());
+    const [lesson] = await ctx.sql<{ id: number; courseId: number }[]>`
+      SELECT l.id, l.course_id FROM academy_lessons l JOIN academy_courses c ON c.id = l.course_id WHERE c.code = 'spa-103' AND l.pack_key = 'faint'`;
+    const url = `/api/admin/academy/lessons/${lesson!.id}/generate`;
+    const hash = hashRequest({ lessonId: lesson!.id, count: 2 });
+    const stale = randomUUID();
+    await ctx.sql`
+      INSERT INTO academy_bulk_ops (client_key, kind, request_hash, created_by, created_at)
+      VALUES (${stale}, 'ai_questions', ${hash}, ${ctx.ownerId}, now() - interval '20 minutes')`;
+    const r1 = await api(ctx.app, ctx.owner, 'POST', url, { clientKey: stale, count: 2 });
+    expect(r1.body.error).toMatchObject({ code: 'ACADEMY_AI_FAILED', message: '上一次中途断了，没有做完，换一次再试' });
+    const fresh = randomUUID();
+    await ctx.sql`INSERT INTO academy_bulk_ops (client_key, kind, request_hash, created_by) VALUES (${fresh}, 'ai_questions', ${hash}, ${ctx.ownerId})`;
+    expect((await api(ctx.app, ctx.owner, 'POST', url, { clientKey: fresh, count: 2 })).body.error.code).toBe('ACADEMY_AI_RUNNING');
+    // 别的事务拿着这门课一行超过等锁时间：出的题存不上
+    let locked!: () => void;
+    const ready = new Promise<void>((r) => (locked = r));
+    const holding = ctx.sql.begin(async (tx) => {
+      await tx`SELECT id FROM academy_courses WHERE id = ${lesson!.courseId} FOR UPDATE`;
+      locked();
+      await new Promise((r) => setTimeout(r, 6_500));
+    });
+    await ready;
+    const key = randomUUID();
+    const r2 = await api(ctx.app, ctx.owner, 'POST', url, { clientKey: key, count: 2 });
+    expect(r2.status).not.toBe(200);
+    await holding;
+    const [op] = await ctx.sql<{ status: string; error: string }[]>`SELECT status, error FROM academy_bulk_ops WHERE client_key = ${key}`;
+    expect(op).toMatchObject({ status: 'failed', error: expect.stringContaining('出的题没存上') });
+    const again = await api(ctx.app, ctx.owner, 'POST', url, { clientKey: key, count: 2 });
+    expect(again.body.error.code).toBe('ACADEMY_AI_FAILED');
+    expect((await ctx.sql`SELECT 1 FROM academy_questions WHERE source = 'ai' AND course_id = ${lesson!.courseId}`).length).toBe(0);
+  });
+
   it('没配模型服务时都拒绝；配了（模拟）以后 AI 按课中小测出草稿题，原样重提返回同一批', async () => {
     const [lesson] = await ctx.sql<{ id: number }[]>`
       SELECT l.id FROM academy_lessons l JOIN academy_courses c ON c.id = l.course_id WHERE c.code = 'spa-103' AND l.pack_key = 'faint'`;

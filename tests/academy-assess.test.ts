@@ -246,3 +246,25 @@ describe('学堂 · 实操签核与证书', () => {
     expect((await api(ctx.app, ctx.owner, 'GET', '/api/admin/academy/certificates')).body).toEqual([expect.objectContaining({ certNo: cert.certNo, revoked: true, staffName: '测试店员' })]);
   });
 });
+
+describe('学堂 · 上架地图给之前学完的人补发证书', () => {
+  it('几个人先学完了课，地图后来才上架：上架时先取齐这批人的学员锁再逐个结算，每人一张证书、编号不重（Codex 审查 be8f2e7）', async () => {
+    const made = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/courses', { clientKey: randomUUID(), title: '安全巡场', category: 'safety' });
+    const withLesson = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${made.body.course.id}/lessons`, {
+      clientKey: randomUUID(),
+      title: '巡场路线',
+      kind: 'article',
+      body: '每小时巡一次。',
+    });
+    const c = withLesson.body;
+    await api(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/courses/${c.course.id}`, { ...c.course, status: 'published', version: c.course.version });
+    const lessonId = c.lessons[0]!.id;
+    for (const who of [ctx.clerk, lead, diner]) expect((await api(ctx.app, who, 'POST', `/api/academy/lessons/${lessonId}/complete`)).status).toBe(200);
+    const p = await api<AcademyAdminPath>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/paths', { clientKey: randomUUID(), title: '安全年度复训', validMonths: 12, courseIds: [c.course.id] });
+    const pub = await api<AcademyAdminPath>(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/paths/${p.body.id}`, { ...p.body, status: 'published', version: p.body.version });
+    expect(pub.status).toBe(200);
+    const certs = await ctx.sql<{ staffId: number; certNo: string }[]>`SELECT staff_id, cert_no FROM academy_certificates WHERE path_id = ${p.body.id} ORDER BY staff_id`;
+    expect(certs).toHaveLength(3);
+    expect(new Set(certs.map((x) => x.certNo)).size).toBe(3);
+  });
+});

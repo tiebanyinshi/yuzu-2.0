@@ -36,11 +36,21 @@ async function providerOrThrow(db: Db, config: AppConfig) {
 // ───────────────────────── 批量操作的记录（导入题、AI 出题） ─────────────────────────
 
 /** 先占一行（带操作编号与原请求摘要）：已经有的——摘要一样返回它，不一样拒绝 */
+/**
+ * 模型调用最长多久（DeepSeek 一次请求 120 秒、最多重试两次，结构化输出不合格还会再要一次）：
+ * 「进行中」超过这么久还没结束的，就是进程中途停了（重启、断电），按没做成算，不让原编号永远卡在「进行中」（Codex 审查 a69d88e）。
+ */
+const AI_STALE_MINUTES = 15;
+const STALE_ERROR = '上一次中途断了，没有做完，换一次再试';
+
 async function claimOp(db: Db, kind: 'question_import' | 'ai_questions', clientKey: string, hash: string, staffId: number) {
   const [row] = await db<{ id: number }[]>`
     INSERT INTO academy_bulk_ops (client_key, kind, request_hash, created_by) VALUES (${clientKey}, ${kind}, ${hash}, ${staffId})
     ON CONFLICT (client_key) DO NOTHING RETURNING id`;
   if (row) return { id: Number(row.id), had: null };
+  await db`
+    UPDATE academy_bulk_ops SET status = 'failed', error = ${STALE_ERROR}, finished_at = now()
+    WHERE client_key = ${clientKey} AND status = 'running' AND created_at < now() - make_interval(mins => ${AI_STALE_MINUTES})`;
   const [had] = await db<{ id: number; kind: string; requestHash: string; status: string; result: { questionIds: number[]; dropped?: number } | null; error: string | null }[]>`
     SELECT id, kind, request_hash, status, result, error FROM academy_bulk_ops WHERE client_key = ${clientKey}`;
   if (!had || had.kind !== kind || had.requestHash !== hash) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一次操作，请刷新后重新做');
@@ -195,7 +205,7 @@ export async function generateQuestions(deps: { sql: Sql; config: AppConfig }, l
     .filter((q) => academyQuestionProblems(q).length === 0)
     .slice(0, input.count);
   const dropped = drafts.length - good.length;
-  const ids = await withTx(sql, async (tx) => {
+  const save = withTx(sql, async (tx) => {
     await tx`SELECT id FROM academy_courses WHERE id = ${lesson.courseId} FOR NO KEY UPDATE`;
     const out: number[] = [];
     for (const q of good) {
@@ -216,6 +226,13 @@ export async function generateQuestions(deps: { sql: Sql; config: AppConfig }, l
       ip: ctx.ip,
     });
     return out;
+  });
+  // 题没存上（等锁超时、数据库断开）：这一次按没做成记下，原编号再提给出原因，不会一直「进行中」。
+  // 只改还在「进行中」的：提交其实成功了的（已是「做完」）不动
+  const ids = await save.catch(async (e: unknown) => {
+    const why = `出的题没存上（${message(e)}），换一次再试`.slice(0, 500);
+    await sql`UPDATE academy_bulk_ops SET status = 'failed', error = ${why}, finished_at = now() WHERE id = ${op.id} AND status = 'running'`.catch(() => undefined);
+    throw e;
   });
   return { questions: await questionsByIds(sql, ids), dropped };
 }
@@ -275,7 +292,9 @@ const tutorView = (r: {
   status: AcademyTutorAnswer['status'];
   error: string | null;
   createdAt: string;
-}): AcademyTutorAnswer => ({ ...r, id: Number(r.id) });
+}): AcademyTutorAnswer =>
+  // 「回答中」超过模型调用最长的时间还没结束：进程中途停了，按没答出来给（不写库）
+  r.status === 'answering' && Date.now() - Date.parse(r.createdAt) > AI_STALE_MINUTES * 60_000 ? { ...r, id: Number(r.id), status: 'failed', error: STALE_ERROR } : { ...r, id: Number(r.id) };
 
 const usedToday = async (db: Db, staffId: number, tz: string, today: string) =>
   (await db<{ n: number }[]>`SELECT count(*)::int AS n FROM academy_tutor_questions WHERE staff_id = ${staffId} AND (created_at AT TIME ZONE ${tz})::date = ${today}`)[0]!.n;

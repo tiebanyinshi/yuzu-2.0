@@ -105,8 +105,13 @@ const requestHash = (input: { clientKey: string }, extra: Record<string, unknown
   const { clientKey: _key, ...rest } = input;
   return hashRequest({ ...rest, ...extra });
 };
-/** 同一编号已经建过：摘要一样返回原来那个的编号，不一样拒绝 */
+/**
+ * 同一编号已经建过：摘要一样返回原来那个的编号，不一样拒绝。
+ * 先按操作编号加事务级咨询锁（Codex 审查 16476da）：同一编号的两次请求同时到时，后到的等先到的提交后再查，
+ * 查得到原来那条就照原样返回，不会两边都没查到、后插的撞唯一约束变成 500。
+ */
 async function replayed(tx: Tx, table: 'academy_courses' | 'academy_lessons' | 'academy_paths' | 'academy_assignments', clientKey: string, hash: string): Promise<number | null> {
+  await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`academy_op:${table}:${clientKey}`}, 0))`;
   const [had] = await tx<{ id: number; requestHash: string }[]>`SELECT id, request_hash FROM ${tx(table)} WHERE client_key = ${clientKey}`;
   if (!had) return null;
   if (had.requestHash !== hash) throw sameKey();
