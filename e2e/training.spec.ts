@@ -72,9 +72,10 @@ test.describe('员工培训', () => {
     await expect(files.getByText(`安全手册${tag}`, { exact: true })).toBeVisible();
     await expect(files.getByText(`应知应会${tag}`, { exact: true })).toBeVisible();
 
-    // ② WCP 里看（左侧菜单「员工培训」在「人脸录入」与「通知」之间）
+    // ② WCP 里看：「员工培训」宫格改成「学堂」（XT01），培训资料在学堂首页的「知识库」入口
     await page.goto('/oa');
-    await page.getByTestId('oa-tile-training').click();
+    await page.getByTestId('oa-tile-academy').click();
+    await page.getByTestId('academy-entry-knowledge').click();
     await page.getByTestId('training-folders').getByText('培训资料', { exact: true }).click();
     const pdfRow = page
       .getByTestId('training-files')

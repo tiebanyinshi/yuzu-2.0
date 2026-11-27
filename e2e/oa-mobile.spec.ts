@@ -58,8 +58,13 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
     await page.getByTestId('wcp-tab-messages').click();
     await expect.poll(() => new URL(page.url()).pathname).toBe('/oa/im');
     await expect(page.getByTestId('wcp-tab-messages')).toHaveAttribute('aria-current', 'page');
+    // 「知识库」改叫「学堂」（XT01，docs/ACADEMY.md）：学堂首页里有知识库入口
     await page.getByTestId('wcp-tab-knowledge').click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/oa/academy');
+    await expect(page.getByTestId('wcp-tab-knowledge')).toHaveText(/学堂/);
+    await page.getByTestId('academy-entry-knowledge').click();
     await expect.poll(() => new URL(page.url()).pathname).toBe('/oa/training');
+    await expect(page.getByTestId('wcp-tab-knowledge')).toHaveAttribute('aria-current', 'page');
 
     // 我的：头像与账号、假期余额、本月排班、人脸录入、设置
     await page.getByTestId('wcp-tab-me').click();
@@ -494,15 +499,17 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
     await mp.goto('/oa');
     await expect(mp.getByTestId('oa-tile-announcements-badge')).toBeVisible({ timeout: 15_000 });
 
-    // 知识库 Tab：顶栏搜索框检索刚上传的文档并打开预览，零横向滚动
+    // 学堂 Tab（原来的知识库，XT01）：顶栏搜索框同时搜课程与培训资料，检索刚上传的文档并打开预览，零横向滚动
     await mp.getByTestId('wcp-tab-knowledge').click();
-    await expect(mp).toHaveURL(/\/oa\/training$/);
+    await expect(mp).toHaveURL(/\/oa\/academy$/);
+    // 学堂页面是按需加载的：地址先变、页面后到，等学堂首页出来再搜（不然搜的还是工作台）
+    await expect(mp.getByTestId('academy-home')).toBeVisible({ timeout: 15_000 });
     await mp.getByTestId('wcp-mobile-search').fill(pdfTitle);
     await mp.getByTestId('wcp-mobile-search').press('Enter');
-    await expect(mp.getByTestId('training-search-results')).toContainText(pdfTitle, { timeout: 15_000 });
+    await expect(mp.getByTestId('academy-search-docs')).toContainText(pdfTitle, { timeout: 15_000 });
     expect(await mp.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await mp
-      .getByTestId('training-search-results')
+      .getByTestId('academy-search-docs')
       .getByRole('link', { name: new RegExp(pdfTitle) })
       .first()
       .click();
@@ -567,6 +574,11 @@ test.describe('员工办公 v1.1 第 1 批：手机框架与登录', () => {
       { path: '/oa/im', readyTestId: 'messages-tabbar' },
       { path: '/oa/notifications', readyTestId: 'messages-tabbar' },
       { path: '/oa/training', readyTestId: 'training-search-input' },
+      { path: '/oa/academy', readyTestId: 'academy-home' },
+      { path: '/oa/academy/paths', readyTestId: 'academy-paths' },
+      { path: '/oa/academy/daily', readyTestId: 'academy-daily' },
+      { path: '/oa/academy/me', readyTestId: 'academy-me' },
+      { path: '/oa/academy/rank', readyTestId: 'academy-rank-page' },
       { path: '/oa/announcements', readyTestId: 'ann-tab-all' },
       { path: '/oa/directory', readyTestId: 'dir' },
       { path: '/oa/payslips', readyTestId: 'my-payslips' },
