@@ -104,6 +104,8 @@ async function quoteSnapshot(db: Db, eventId: number, supplierName: string): Pro
 
 async function poSnapshot(db: Db, poId: number): Promise<SupplierLinkSnapshot> {
   const po = await getPo(db, poId);
+  // 自购（8.2.13）没有供应商，不发供应商链接
+  if (!po.supplier) throw unprocessable('SELF_NO_SUPPLIER_LINK', '自购的采购单没有供应商，不能发供应商链接');
   const { storeName } = await loadSettings(db);
   return {
     storeName,

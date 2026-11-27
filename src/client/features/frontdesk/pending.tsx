@@ -350,6 +350,8 @@ export type ReconcileOutcome =
  */
 export function opsPath(op: { key: string; type: FrontdeskPendingOp['type']; url: string; body?: unknown }): string {
   if (op.type === 'bill_post' && op.url === '/api/dining/orders') return `/api/dining/ops/${op.key}`;
+  // 8.2.8 餐厅入口登记进餐：按「在餐厅下单」的权限查回、作废（平板没有前台权限）
+  if (op.type === 'meal_entry') return `/api/dining/meal-entry-ops/${op.key}`;
   // 房态点单（回测整改 P08）：按这一单的出品口走房态点单自己的查回、作废（要那个出品口的下单权限，碰不到别的挂账、另一个出品口的点单）
   if (op.type === 'room_order') {
     const outlet = (op.body as { outlet?: unknown } | null)?.outlet === 'fruit' ? 'fruit' : 'water';

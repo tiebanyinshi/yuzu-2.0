@@ -13,6 +13,7 @@ import { cn, formatTime } from '../../lib/utils';
 import { Money } from '../../components/Money';
 import { Button, Card, Notice } from '../../components/ui';
 import { PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
+import type { TagByCard } from '@shared/frontdesk-risk';
 import { TagCardInput } from '../frontdesk/TagCardInput';
 
 export function MealEntryTab() {
@@ -34,7 +35,12 @@ export function MealEntryTab() {
     [qc],
     { intervalMs: 30_000 },
   );
-  const op = useFrontdeskOp<unknown>({ type: 'meal_entry', visitId: preview?.visitId ?? null, staffName: session.staff.displayName, pick: (f) => ('visit' in f ? f.visit : null) });
+  const op = useFrontdeskOp<unknown>({
+    type: 'meal_entry',
+    visitId: preview?.visitId ?? null,
+    staffName: session.staff.displayName,
+    pick: (f) => (f.found && f.type === 'meal_entered' ? f.visitId : null),
+  });
 
   const look = async (tag: string) => {
     const t = tag.trim();
@@ -52,7 +58,8 @@ export function MealEntryTab() {
     if (!preview || op.locked) return;
     const r = (await op.submit((key) => ({
       url: '/api/dining/meal-entries',
-      body: { clientKey: key, tagCode: preview.tagCode },
+      // 预览时屏幕上的收费一起带上：提交时对不上（刚改了价、含餐数）服务端要求重新刷牌核对
+      body: { clientKey: key, tagCode: preview.tagCode, visitId: preview.visitId, expected: { period: preview.period!.key, kind: preview.kind, price: preview.period!.price } },
       tagCodes: [preview.tagCode],
       summary: `登记进餐 ${preview.period?.label ?? ''}`,
       amount: null,
@@ -97,6 +104,8 @@ export function MealEntryTab() {
             ariaLabel="手牌号"
             inputClassName="num text-[20px] font-bold"
             testId="meal-entry-tag"
+            // 刷卡按餐厅的权限查（平板没有前台读的权限）
+            lookup={(uid) => api.get<TagByCard>(`/api/dining/tags/by-card?uid=${encodeURIComponent(uid)}`)}
           />
         </div>
         <PendingPanel op={op} onResolved={() => void qc.invalidateQueries({ queryKey: ['dining'] })} />

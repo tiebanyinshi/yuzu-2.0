@@ -110,6 +110,37 @@ describe('锁牌外出', () => {
     await checks();
   });
 
+  it('锁着也不能入住客房、不能开派对房等的使用单（这几处不走挂账，单独核对）', async () => {
+    const v = await enter();
+    expect((await lock(v.id, {})).status).toBe(200);
+    // 客房
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/rooms/rules', { enabled: true, checkoutMinute: 720, lateFullMinute: 1080, hourlyGraceMinutes: 15, defaultDeposit: 0 })).status).toBe(200);
+    const t = await api(ctx.app, ctx.owner, 'POST', '/api/admin/rooms/types', { name: '锁牌用例房', kind: 'daily', price: 38800 });
+    const typeId = t.body.types.find((x: { name: string }) => x.name === '锁牌用例房').id;
+    const r = await api(ctx.app, ctx.owner, 'POST', '/api/admin/rooms/rooms', { roomNo: '901', floor: '9', roomTypeId: typeId });
+    const roomId = r.body.rooms.find((x: { roomNo: string }) => x.roomNo === '901').id;
+    const stay = await api(ctx.app, ctx.clerk, 'POST', '/api/rooms/checkin', { clientKey: randomUUID(), guests: 1, roomId, expectedRate: 38800, tagCode: v.tagCode });
+    expect(code(stay), JSON.stringify(stay.body)).toBe('TAG_AWAY_LOCKED');
+    // 派对房等的使用单
+    expect(
+      (
+        await api(ctx.app, ctx.owner, 'POST', '/api/admin/spaces/imports', {
+          kind: 'spaces',
+          fileName: 's.csv',
+          encoding: 'UTF-8',
+          clientKey: randomUUID(),
+          csv: ['楼层,区域字母,编码,业态,容量(人),建议显示名,面积,编码图原始标注,备注', 'L2,,X901,派对房,8,锁牌用例派对房,,,'].join('\r\n'),
+        })
+      ).status,
+    ).toBe(201);
+    const sp = ((await api(ctx.app, ctx.owner, 'GET', '/api/admin/spaces')).body.spaces as { id: number; code: string }[]).find((x) => x.code === 'X901')!;
+    const usage = await api(ctx.app, ctx.clerk, 'POST', '/api/usages', { clientKey: randomUUID(), spaceId: sp.id, tagCode: v.tagCode });
+    expect(code(usage), JSON.stringify(usage.body)).toBe('TAG_AWAY_LOCKED');
+    // 解锁以后都能用
+    expect((await unlock(v.id)).status).toBe(200);
+    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/usages', { clientKey: randomUUID(), spaceId: sp.id, tagCode: v.tagCode })).status).toBe(200);
+  });
+
   it('结账时自动解锁，预售照押金抵扣；储值收的预售先退回原卡再扣', async () => {
     const m = await createMember(ctx, '锁牌会员');
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/recharges', rechargeBody(m.id, 100000, 0))).status).toBe(200);

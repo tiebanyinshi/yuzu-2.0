@@ -43,6 +43,7 @@ import { badRequest, conflict, notFound, unprocessable } from '../lib/errors';
 import { idParam, parse } from '../lib/validate';
 import { docDateSchema } from './inventory/common';
 import { assertCanFix, businessDate, hashRequest, loadFrontdeskRules, lockVisits, nextDocNo, runIdempotent, saveKey } from './frontdesk/common';
+import { assertNotAwayLocked } from './frontdesk/index';
 import { loadPricedItems } from './pricing';
 import { leaveUsages, locateUsage } from './locations';
 import { ctxOf } from '../lib/context';
@@ -261,6 +262,8 @@ export async function openUsageTx(
   const [visit] = await tx<{ id: number; visitNo: string; billId: number; status: string }[]>`
     SELECT id, visit_no, bill_id, status FROM visits WHERE id = ${peek.id} FOR SHARE`;
   if (visit!.status !== 'open') throw conflict('VISIT_CLOSED', `来访 ${visit!.visitNo} 已${visit!.status === 'settled' ? '结账离店' : '撤销'}，不能开单`);
+  // 8.2.7：锁牌外出的客人不能开单（来访已加共享锁，与锁牌串行）
+  await assertNotAwayLocked(tx, visit!.id, input.tagCode);
   // ② 空间一行（与空间台账的停用、改业态串行；不挡外键检查）
   const [space] = await tx<{ id: number; code: string; displayName: string; businessType: string; active: boolean; sellable: boolean }[]>`
     SELECT id, code, display_name, business_type, active, sellable FROM spaces WHERE id = ${input.spaceId} AND store_id = ${currentStoreId()} FOR NO KEY UPDATE`;

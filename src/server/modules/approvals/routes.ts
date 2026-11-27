@@ -48,6 +48,7 @@ import { approvePo, returnPo } from '../inventory/purchasing';
 import { approvalCounts, assertApprovalKindOpen, getApprovalDetail, listApprovals, urgentAwaitingAcceptance, urgentBackfills, type ApprovalTab } from './center';
 import { hasApprovalAccess, staffNames } from './engine';
 import { loadSettings } from '../settings';
+import { registerApprovalExport } from './export';
 
 const id = z.number().int().positive();
 const dateStr = z.iso.date('日期格式不对');
@@ -372,6 +373,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: Deps) {
     const q = parse(ListQuery, req.query);
     return listApprovals(sql, req.actor, config.timezone, q.tab as ApprovalTab, q.docType);
   });
+  registerApprovalExport(app, deps);
   app.get('/api/approvals/count', { preHandler: ACT }, async (req) => approvalCounts(sql, req.actor, config.timezone));
   // 急采待补单（A10）：生效后超过 3 天没补采购单的，进负责人的待办
   app.get('/api/approvals/backfills', { preHandler: guard('inventory.approve') }, async () => urgentBackfills(sql, config.timezone));

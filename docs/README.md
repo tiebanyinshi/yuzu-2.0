@@ -19,6 +19,8 @@
 - [`CONVENTIONS.md`](CONVENTIONS.md)：开发约定（专题）
 - [`TESTING.md`](TESTING.md)：测试与 CI（飞书需求 RQ-008，v0.7.18 定稿；2026-11-20 改成按改动与风险挑选，见第 6 节）
 - [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
@@ -41,6 +43,8 @@
 - [`CONCIERGE_LINKS.md`](CONCIERGE_LINKS.md)：管家部与会员、资源系统联动
 - [`CONTRACTS.md`](CONTRACTS.md)：合同与法务审查（v0.7.31）
 - [`COUPONS.md`](COUPONS.md)：券与会员权益（v0.7.20，飞书需求 RQ-006 后半；定稿）
+- [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
+- [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
 - [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
 - [`DB_REVIEW_V8147.md`](DB_REVIEW_V8147.md)：数据库 Schema 评估与整改（8.1.47）
 - [`DESKS_V8115.md`](DESKS_V8115.md)：8.1.15 · 前台拆成发卡台与收银台
@@ -79,6 +83,7 @@
 - [`MALL_V8132.md`](MALL_V8132.md)：采购商城并进柚子（8.1.32）
 - [`MALL_V8150.md`](MALL_V8150.md)：8.1.50 · 采购商城：逛电商的感觉、商品图、排到采购第一项
 - [`MALL_V8151.md`](MALL_V8151.md)：8.1.51 · 采购商城试点：定制 / 非定制、原单补资料、BP 接单与成交方案、收货待补
+- [`MALL_V826.md`](MALL_V826.md)：8.2.6 · 采购商城 v0.2：分批发配、退回补资料、终止申购、收货待判
 - [`MASCOT.md`](MASCOT.md)：看板娘「柚子」（第二版：手绘动画，待店主确认）
 - [`MEMBERSHIP.md`](MEMBERSHIP.md)：会员体系 v2（设计稿；店主 2026-11-03 两次答复后修订；第一期 v0.7.23 已按本稿实现，见第 14 节）
 - [`MEMBERSHIP_FINISH.md`](MEMBERSHIP_FINISH.md)：会员体系收尾（v0.7.26）
@@ -119,6 +124,12 @@
 - [`V8142_PETTY.md`](V8142_PETTY.md)：8.1.42 · 备用金合并：零采备用金并进备用金
 - [`V8144_CASHIER.md`](V8144_CASHIER.md)：8.1.44（收银台）：《前台系统开发》里收银台的六条
 - [`V8144_FRONTDESK.md`](V8144_FRONTDESK.md)：8.1.44（前台 B）：已发券改条件、混合支付、同行组建与拆分、房态显示预约、买单时查会员
+- [`V8212_APPROVALS_PURCHASING.md`](V8212_APPROVALS_PURCHASING.md)：8.2.12 · 报销不再自动通过；采购按单号直达与排序
+- [`V8213_SELF_PURCHASE.md`](V8213_SELF_PURCHASE.md)：8.2.13 · 采购：无供应商自购
+- [`V8214_GF_ROLES.md`](V8214_GF_ROLES.md)：8.2.14 · 业财法：角色映射可改、变更记录、提交时快照审批人
+- [`V8215_GF_CONFIG.md`](V8215_GF_CONFIG.md)：8.2.15 · 业财法：流程与阈值后台可改、试算
+- [`V8216_GF_EXPORT.md`](V8216_GF_EXPORT.md)：8.2.16 · 业财法与审批中心导出；微信特批登记时必传 OK 截图
+- [`V8217_EXPENSE_UNIFY.md`](V8217_EXPENSE_UNIFY.md)：8.2.17 · 报销统一成一套：WCP 发起 / 查看，业财法审批与执行
 - [`V8221_CASHIER.md`](V8221_CASHIER.md)：8.2.1 批 1：收银台（单项打折、一键快捷键、经办人前置与改价标记、换牌规则、手牌押金）
 - [`V8222_TECHNICIANS.md`](V8222_TECHNICIANS.md)：8.2.2 技师：扩钟、一报多、退技师、换项目、休假、状态、统计与导入
 - [`V8223_FRONTDESK.md`](V8223_FRONTDESK.md)：8.2.3 前台：发卡台与全店（客人类别、偏好、客诉台账、拥挤与高风险提示、技师预约权限、跳转明细、同行移出、补单）

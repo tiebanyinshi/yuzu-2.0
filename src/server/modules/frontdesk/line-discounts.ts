@@ -57,6 +57,7 @@ interface LockedDiscount {
   id: number;
   finalAmount: number;
   rate: number | null;
+  tier: string;
 }
 
 /** 来访 → 账单 → 明细 → 这一行有效的折扣（都在一个事务里）；返回锁住的来访、明细与折扣 */
@@ -70,7 +71,12 @@ async function lockLine(tx: Tx, visitId: number, lineId: number) {
   if (!line || line.billId !== visit.billId) throw notFound('这一行明细不在这位客人的账单上，请刷新后重试');
   if (line.status !== 'active') throw conflict('ALREADY_VOIDED', `「${line.name}」已作废，不能打折`);
   const [current] = await tx<LockedDiscount[]>`
-    SELECT id, final_amount, rate FROM bill_line_discounts WHERE line_id = ${lineId} AND status = 'active' FOR UPDATE`;
+    SELECT id, final_amount, rate, tier FROM bill_line_discounts WHERE line_id = ${lineId} AND status = 'active' FOR UPDATE`;
+  // 8.2.8（Codex 安全审查）：系统按规则打的（含餐、自助、首杯赠）不能手动撤下、改折扣——那样等于绕过了含餐与入口登记；
+  // 打错了把这一行作废（餐费作废时它带出来的自助折扣一并撤下），再按规则重新登记 / 点单
+  if (current?.tier === 'auto') {
+    throw conflict('AUTO_DISCOUNT_LOCKED', `「${line.name}」是系统按规则折的（含餐、自助或首杯赠），不能手动改；不对的话请作废这一行再重新登记`);
+  }
   return { visit, line, current: current ?? null };
 }
 
@@ -194,4 +200,20 @@ export async function insertAutoDiscount(
                                      client_key, business_date, created_at, rule)
     VALUES (${a.lineId}, ${a.billId}, ${a.amount}, ${finalAmount}, ${finalAmount === 0 ? 0 : null}, ${a.reason}, 'auto', 0, ${a.staffId}, NULL, NULL,
             ${derivedKey(`auto-discount:${a.opKey}:${a.lineId}`)}, ${a.date}, ${a.at}, ${a.rule})`;
+}
+
+/**
+ * 8.2.8（Codex 安全审查）：餐厅入口的餐费那一行作废了，这次登记带出来的自助折扣一并撤下（调用方已锁来访，作废在同一个事务里）。
+ * 带出来的 = 这位客人这次登记以后、下一次登记以前点的、规则是「自助」的那几行；撤下以后照原价收
+ */
+export async function revokeBuffetOfMeal(tx: Tx, a: { mealLineId: number; billId: number; staffId: number; at: Date }): Promise<number> {
+  const rows = await tx<{ id: number }[]>`
+    WITH e AS (SELECT visit_id, created_at FROM meal_entries WHERE line_id = ${a.mealLineId}),
+         nx AS (SELECT min(m.created_at) AS t FROM meal_entries m, e WHERE m.visit_id = e.visit_id AND m.created_at > e.created_at)
+    UPDATE bill_line_discounts d SET status = 'revoked', revoked_by = ${a.staffId}, revoked_at = ${a.at}, revoke_reason = '餐费作废，自助折扣一并撤下'
+    FROM bill_lines l, e, nx
+    WHERE d.line_id = l.id AND d.status = 'active' AND d.tier = 'auto' AND d.rule = 'buffet' AND l.bill_id = ${a.billId}
+      AND l.posted_at >= e.created_at AND (nx.t IS NULL OR l.posted_at < nx.t)
+    RETURNING d.id`;
+  return rows.length;
 }

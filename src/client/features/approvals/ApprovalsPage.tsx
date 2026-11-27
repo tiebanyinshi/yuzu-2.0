@@ -22,6 +22,7 @@ import { ApprovalSheet } from './ApprovalSheet';
 import { DelegationsPanel } from './DelegationsPanel';
 import { useApprovals, useRefreshAfterApproval, useUrgentAccepts, useUrgentBackfills, type ApprovalTab } from './queries';
 import { sendBatchApprove, sentLabel, useUncertainApprovals } from './uncertain';
+import { RangeExport } from '../../components/RangeExport';
 
 type Tab = ApprovalTab | 'rules' | 'delegations';
 
@@ -100,6 +101,7 @@ export function ApprovalsPage() {
               审批规则
             </Link>
           </div>
+          {can('approval.rules') && <RangeExport href="/api/approvals/export.xlsx" fileName="审批中心.xlsx" testId="approval-export" />}
           {tab === 'mine' && overdue > 0 && (
             <Notice tone="warning" icon={<TriangleAlert className="size-4" />} title={`${overdue} 张超时`} data-testid="approval-overdue">
               当前这一级等了超过 {rules.approvalOverdueHours} 小时，已排在最前。

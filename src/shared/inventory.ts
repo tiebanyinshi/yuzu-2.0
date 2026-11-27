@@ -433,6 +433,8 @@ export interface InvDocLine {
   rejectReason: string;
   /** 拒收里供应商要补发的（待补，8.1.51） */
   redeliverMilli: number;
+  /** 待判 / 待检、暂不入库的（8.2.6；与待补分开，不算拒收） */
+  holdMilli: number;
   priceCents: number | null;
   amountCents: number | null;
   poLineId: number | null;

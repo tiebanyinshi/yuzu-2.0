@@ -6,7 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULT_MEAL_PERIODS, mealAllowance, mealPeriodAt, mealPeriodRange } from '../src/shared/dining-meals';
 import type { CheckoutPreview } from '../src/shared/checkout';
 import type { VisitDetail } from '../src/shared/frontdesk';
-import { api, setup, type TestContext } from './helpers';
+import { createStaff } from '../src/server/modules/staff';
+import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
 let tagNo = 0;
@@ -20,7 +21,15 @@ const checkin = async (ticketTypeId?: number) => {
   expect(r.status, JSON.stringify(r.body)).toBe(201);
   return { id: r.body.visits[0].id as number, tagCode };
 };
-const enter = (tagCode: string, key = randomUUID()) => api(ctx.app, ctx.clerk, 'POST', '/api/dining/meal-entries', { clientKey: key, tagCode });
+/** 在店的那位客人（预览时看到的）；没人在店时随便给一个，让牌号先报「不在店」 */
+const visitOf = async (tagCode: string) =>
+  Number((await ctx.sql<{ id: number }[]>`SELECT v.id FROM visits v JOIN hand_tags t ON t.id = v.tag_id WHERE t.code = ${tagCode} AND v.status = 'open'`)[0]?.id ?? 1);
+/** 照页面：先刷牌预览，再带上看到的客人与收费登记 */
+const enter = async (tagCode: string, key = randomUUID(), cookie = ctx.clerk) => {
+  const pv = (await api(ctx.app, cookie, 'GET', `/api/dining/meal-entries/preview?tag=${tagCode}`)).body as { period: { key: string; price: number } | null; kind: string | null };
+  const expected = pv.period ? { period: pv.period.key, kind: pv.kind ?? 'paid', price: pv.period.price } : { period: 'lunch', kind: 'paid', price: 0 };
+  return api(ctx.app, cookie, 'POST', '/api/dining/meal-entries', { clientKey: key, tagCode, visitId: await visitOf(tagCode), expected });
+};
 const visit = async (id: number) => (await api<VisitDetail>(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/visits/${id}`)).body;
 const code = (r: { body: unknown }) => (r.body as { error?: { code: string } }).error?.code;
 const due = async (id: number) => (await api<CheckoutPreview>(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/checkout-preview?ids=${id}`)).body;
@@ -87,7 +96,14 @@ describe('餐厅入口', () => {
     const r = await enter(g.tagCode, key);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body).toMatchObject({ entered: true, used: 1 });
-    expect((await enter(g.tagCode, key)).status).toBe(200);
+    // 同一个编号原样重提（断网重试发的是原来那一笔）：照原样返回，不再记一笔
+    const replay = await api(ctx.app, ctx.clerk, 'POST', '/api/dining/meal-entries', {
+      clientKey: key,
+      tagCode: g.tagCode,
+      visitId: g.id,
+      expected: { period: 'lunch', kind: 'included', price: 19900 },
+    });
+    expect(replay.status, JSON.stringify(replay.body)).toBe(200);
     expect(code(await enter(g.tagCode))).toBe('MEAL_ENTERED');
     const v = await visit(g.id);
     const line = v.lines.find((l) => l.name === '午餐自助')!;
@@ -134,6 +150,49 @@ describe('餐厅入口', () => {
     await expect(ctx.sql`UPDATE meal_entries SET kind = 'paid' WHERE visit_id = ${g2.id}`).rejects.toThrow();
   });
 
+  it('Codex 审查：只认预览时看到的客人；餐费不能转单；只有餐厅权限的岗位也能查回、作废', async () => {
+    const g = await checkin();
+    // 预览之后这张牌换了人（这里直接给一个别的来访）：拒绝，不记到别人头上
+    const other = await checkin();
+    const wrong = await api(ctx.app, ctx.clerk, 'POST', '/api/dining/meal-entries', {
+      clientKey: randomUUID(),
+      tagCode: g.tagCode,
+      visitId: other.id,
+      expected: { period: 'lunch', kind: 'paid', price: 19900 },
+    });
+    expect(code(wrong)).toBe('VISIT_CHANGED');
+    expect((await ctx.sql`SELECT 1 FROM meal_entries WHERE visit_id IN ${ctx.sql([g.id, other.id])}`).length).toBe(0);
+    // 餐费不能转到别的牌上
+    expect((await enter(g.tagCode)).status).toBe(200);
+    const line = (await visit(g.id)).lines.find((l) => l.name === '午餐自助')!;
+    const moved = await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/lines/move', { clientKey: randomUUID(), lineIds: [line.id], toTagCode: other.tagCode, reason: '挂错手牌' });
+    expect(code(moved)).toBe('LINE_NOT_MOVABLE');
+    // 平板（只有「在餐厅下单」，没有前台权限）：走餐厅的查回、作废
+    await createStaff(ctx.sql, { username: 'pad', displayName: '餐厅平板', role: 'tablet', password: PASSWORD, mustChangePassword: false });
+    const pad = await login(ctx.app, 'pad');
+    const key = randomUUID();
+    expect((await enter(other.tagCode, key, pad)).status).toBe(200);
+    expect((await api(ctx.app, pad, 'GET', `/api/frontdesk/ops/${key}?type=meal_entry`)).status).toBe(403);
+    // 查回只给「登上了、哪次来访」，不给整张客人卡（Codex 审查第二轮）
+    expect((await api(ctx.app, pad, 'GET', `/api/dining/meal-entry-ops/${key}`)).body).toEqual({ found: true, type: 'meal_entered', visitId: other.id });
+    // 刷卡：平板按餐厅的权限查（前台的 403），只给牌号、不带来访
+    await ctx.sql`UPDATE hand_tags SET card_uid = 'CAFE0001' WHERE code = ${other.tagCode}`;
+    expect((await api(ctx.app, pad, 'GET', '/api/frontdesk/tags/by-card?uid=CAFE0001')).status).toBe(403);
+    expect((await api(ctx.app, pad, 'GET', '/api/dining/tags/by-card?uid=cafe0001')).body).toMatchObject({ found: true, tag: { code: other.tagCode }, visit: null });
+    // 预览以后收费变了（后台改了价）：要求重新刷牌
+    const g3 = await checkin();
+    const stale = await api(ctx.app, ctx.clerk, 'POST', '/api/dining/meal-entries', {
+      clientKey: randomUUID(),
+      tagCode: g3.tagCode,
+      visitId: g3.id,
+      expected: { period: 'lunch', kind: 'paid', price: 9900 },
+    });
+    expect(code(stale)).toBe('MEAL_CHANGED');
+    expect((await ctx.sql`SELECT 1 FROM meal_entries WHERE visit_id = ${g3.id}`).length).toBe(0);
+    const gone = randomUUID();
+    expect((await api(ctx.app, pad, 'POST', `/api/dining/meal-entry-ops/${gone}/abandon`, {})).status).toBe(200);
+  });
+
   it('餐台点菜折零：登记了这一餐的客人点的餐厅的菜折成 0，水吧照价；没登记的照价', async () => {
     const g = await checkin();
     expect((await enter(g.tagCode)).status).toBe(200);
@@ -162,5 +221,31 @@ describe('餐厅入口', () => {
     // 结账：折掉的不收
     const p = await due(g.id);
     expect(p.lineDiscountAmount).toBe(11600);
+  });
+
+  it('Codex 安全审查：系统打的折扣不能手动撤、改；餐费作废了，这一餐带出来的自助折扣一并撤下', async () => {
+    const g = await checkin();
+    expect((await enter(g.tagCode)).status).toBe(200);
+    const o = await api(ctx.app, ctx.clerk, 'POST', '/api/dining/orders', { clientKey: randomUUID(), visitId: g.id, lines: [{ itemId: item['小炒肉'], quantity: 1 }], expectedTotal: 5800 });
+    expect(o.status, JSON.stringify(o.body)).toBe(200);
+    const before = (await visit(g.id)).lines.filter((l) => l.status === 'active');
+    const meal = before.find((l) => l.name === '午餐自助')!;
+    const dish = before.find((l) => l.name === '小炒肉')!;
+    expect(dish.discount).toMatchObject({ finalAmount: 0, reason: '自助' });
+    // 手动撤下、改折扣：都不行（经理也不行）
+    const rv = await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/lines/${dish.id}/discount/revoke`, { clientKey: randomUUID(), reason: '想改回原价' });
+    expect(code(rv), JSON.stringify(rv.body)).toBe('AUTO_DISCOUNT_LOCKED');
+    const rp = await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/lines/${dish.id}/discount`, { clientKey: randomUUID(), rate: 50, reason: '改八折' });
+    expect(code(rp), JSON.stringify(rp.body)).toBe('AUTO_DISCOUNT_LOCKED');
+    // 餐费那一行作废：菜的自助折扣一并撤下，照原价收
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/lines/${meal.id}/void`, { reason: '登记错了' })).status).toBe(200);
+    const after = (await visit(g.id)).lines.find((l) => l.id === dish.id)!;
+    expect(after.status).toBe('active');
+    expect(after.discount).toBeNull();
+    const [d] = await ctx.sql<{ status: string; revokeReason: string }[]>`SELECT status, revoke_reason FROM bill_line_discounts WHERE line_id = ${dish.id}`;
+    expect(d).toMatchObject({ status: 'revoked', revokeReason: '餐费作废，自助折扣一并撤下' });
+    expect((await due(g.id)).lineDiscountAmount ?? 0).toBe(0);
+    const checks = (await api(ctx.app, ctx.owner, 'GET', '/api/frontdesk/checks')).body as { label: string; ok: boolean; detail: string }[];
+    for (const c of checks) expect(c.ok, `${c.label}：${c.detail}`).toBe(true);
   });
 });

@@ -51,6 +51,8 @@ interface LineDraft {
   rejectReason: string;
   /** 拒收里供应商要补发的（待补，8.1.51；库存单位，空 = 0） */
   redeliver: string;
+  /** 待判 / 待检、暂不入库的（8.2.6；库存单位，空 = 0）：送达 = 合格实收 + 待判 + 拒收 */
+  hold?: string;
   /** 批次与效期（8.0.7 3.3）：管效期的物料收货时填 */
   batchNo?: string;
   producedOn?: string;
@@ -86,6 +88,9 @@ interface FormState {
   lines: LineDraft[];
 }
 
+/** 拒收原因快捷选项（8.2.6，需求变更文档 v0.2 第 8 章）：点一下填进去，仍可手改 */
+const RECEIPT_REJECT_REASONS = ['质量不合格', '规格不符', '破损', '数量短缺'] as const;
+
 const blankLine = (materialId: number, over: Partial<LineDraft> = {}): LineDraft => ({
   key: uuid(),
   materialId,
@@ -95,6 +100,7 @@ const blankLine = (materialId: number, over: Partial<LineDraft> = {}): LineDraft
   acceptedTouched: false,
   rejectReason: '',
   redeliver: '',
+  hold: '',
   price: '',
   sourceLineId: null,
   poLineId: null,
@@ -290,6 +296,7 @@ function formFromDoc(doc: InvDoc, materials: Map<number, Material>): FormState {
         acceptedTouched: true,
         rejectReason: l.rejectReason,
         redeliver: l.redeliverMilli ? formatQty(Number(l.redeliverMilli)).replace(/,/g, '') : '',
+        hold: l.holdMilli ? formatQty(Number(l.holdMilli)).replace(/,/g, '') : '',
         batchNo: l.batchNo ?? '',
         producedOn: l.producedOn ?? '',
         expiresOn: l.expiresOn ?? '',
@@ -565,13 +572,21 @@ function DocForm({
   }, [source.data, sourceType, form.lines.length, form.sourceDocId]);
 
   // ── 按采购单收货 ──
-  const openPos = usePos({ open: '1', supplierId: form.supplierId ? String(form.supplierId) : undefined }, central && type === 'receipt' && !!form.supplierId);
+  // 自购（8.2.13）：采购单没有供应商；供应商选「自购（不选供应商）」时列自购的采购单
   const po = usePo(central && type === 'receipt' ? form.purchaseOrderId : null);
+  const [selfMode, setSelfMode] = useState(false);
+  const selfReceipt = selfMode || po.data?.purchaseMethod === 'self';
+  // 采购方式在服务端筛（8.2.13 Codex 审查后补）：不在取回的前 300 张里再筛，自购的单不会被挤掉
+  const openPos = usePos(
+    { open: '1', method: selfReceipt ? 'self' : 'supplier', supplierId: form.supplierId ? String(form.supplierId) : undefined },
+    central && type === 'receipt' && (!!form.supplierId || selfReceipt),
+  );
   const poLines = useMemo(() => new Map((po.data?.lines ?? []).map((l) => [l.id, l])), [po.data]);
   const choosePo = (poId: number | null) => patch({ purchaseOrderId: poId, lines: [] });
   useEffect(() => {
     if (!po.data || po.data.id !== form.purchaseOrderId) return;
-    if (!form.supplierId) patch({ supplierId: po.data.supplier.id });
+    // 自购（8.2.13）的采购单没有供应商：收货单也不选供应商
+    if (!form.supplierId && po.data.supplier) patch({ supplierId: po.data.supplier.id });
     if (form.lines.length > 0) return;
     // 带出未到齐的行：送达默认按剩余数量（能整箱时按箱），单价取采购单
     const lines = po.data.lines
@@ -596,6 +611,8 @@ function DocForm({
     let after: number | null = null;
     let amount: number | null = null;
     let rejected: number | null = null;
+    /** 送达减合格实收：待判 + 拒收（8.2.6） */
+    let gap: number | null = null;
     let maxReturn: number | null = null;
     let book: number | null = null;
     let diff: number | null = null;
@@ -665,8 +682,11 @@ function DocForm({
           }
         }
         if (delivered.milli !== null && accepted.milli !== null) {
-          rejected = delivered.milli - accepted.milli;
-          if (rejected < 0) errorText = '合格实收不能多于送达';
+          gap = delivered.milli - accepted.milli;
+          const hold = l.hold?.trim() ? parseQty(l.hold) : 0;
+          rejected = gap - (hold ?? 0);
+          if (gap < 0) errorText = '合格实收不能多于送达';
+          else if (hold === null || rejected < 0) errorText = errorText ?? '待判不能多于送达减合格实收';
           else if (rejected > 0 && !l.rejectReason.trim()) errorText = errorText ?? '请填写拒收原因';
           else if (l.redeliver.trim() && (parseQty(l.redeliver) === null || parseQty(l.redeliver)! > rejected)) errorText = errorText ?? '待补不能多于拒收数量';
           // 管效期的物料（8.0.7 3.3）：到期日必填，填了生产日期、有保质期的可以不填
@@ -689,6 +709,7 @@ function DocForm({
       after,
       amount,
       rejected,
+      gap,
       maxReturn,
       book,
       diff,
@@ -733,7 +754,7 @@ function DocForm({
 
   // ── 表头校验 ──
   const headerError =
-    type === 'receipt' && !form.supplierId
+    type === 'receipt' && !form.supplierId && !selfReceipt
       ? '请选择供应商'
       : urgent && !form.departmentId
         ? '请选给哪个部门买的'
@@ -833,6 +854,7 @@ function DocForm({
             acceptedMilli: r.accepted!.milli,
             rejectReason: r.rejected && r.rejected > 0 ? r.line.rejectReason.trim() : '',
             redeliverMilli: r.rejected && r.rejected > 0 && r.line.redeliver.trim() ? (parseQty(r.line.redeliver) ?? 0) : 0,
+            holdMilli: r.gap && r.gap > 0 && r.line.hold?.trim() ? (parseQty(r.line.hold) ?? 0) : 0,
             priceCents: r.price,
             batchNo: r.line.batchNo?.trim() || null,
             producedOn: r.line.producedOn || null,
@@ -985,11 +1007,15 @@ function DocForm({
                 <Field label="供应商" htmlFor="supplier">
                   <Select
                     id="supplier"
-                    value={form.supplierId ?? ''}
+                    value={selfReceipt ? 'self' : (form.supplierId ?? '')}
                     disabled={locked}
-                    onChange={(e) => patch({ supplierId: Number(e.target.value) || null, ...(form.purchaseOrderId ? { purchaseOrderId: null, lines: [] } : {}) })}
+                    onChange={(e) => {
+                      setSelfMode(e.target.value === 'self');
+                      patch({ supplierId: Number(e.target.value) || null, ...(form.purchaseOrderId ? { purchaseOrderId: null, lines: [] } : {}) });
+                    }}
                   >
                     <option value="">选择供应商</option>
+                    {central && <option value="self">自购（不选供应商）</option>}
                     {data.suppliers?.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.code} · {s.name}
@@ -998,8 +1024,8 @@ function DocForm({
                   </Select>
                 </Field>
                 {central && (
-                  <Field label="采购单" htmlFor="po" hint={form.supplierId ? '没有采购单不能收货' : '先选供应商'}>
-                    <Select id="po" value={form.purchaseOrderId ?? ''} disabled={locked || !form.supplierId || !!editing} onChange={(e) => choosePo(Number(e.target.value) || null)}>
+                  <Field label="采购单" htmlFor="po" hint={form.supplierId || selfReceipt ? '没有采购单不能收货' : '先选供应商'}>
+                    <Select id="po" value={form.purchaseOrderId ?? ''} disabled={locked || (!form.supplierId && !selfReceipt) || !!editing} onChange={(e) => choosePo(Number(e.target.value) || null)}>
                       <option value="">请选择采购单</option>
                       {form.purchaseOrderId && !openPos.data?.some((p) => p.id === form.purchaseOrderId) && po.data && <option value={po.data.id}>{po.data.docNo}</option>}
                       {openPos.data
@@ -1322,6 +1348,7 @@ interface Row {
   after?: number | null;
   amount?: number | null;
   rejected?: number | null;
+  gap?: number | null;
   maxReturn?: number | null;
   book?: number | null;
   diff?: number | null;
@@ -1621,29 +1648,47 @@ function ReceiptCells({
       </div>
       <div className="min-w-0">
         {caption('拒收')}
-        {row.rejected ? (
+        {row.gap ? (
           <>
-            <Qty milli={row.rejected} unit={m.inventoryUnit} className="block text-right text-[14px] font-bold text-clay @5xl:pt-1" />
+            {/* 待判 / 待检（8.2.6，Q10）：还没判定合格与否、暂不入库的，与拒收、待补分开记 */}
             <Input
-              value={line.rejectReason}
-              disabled={locked}
-              onChange={(e) => onPatch({ rejectReason: e.target.value })}
-              placeholder="拒收原因"
-              aria-label="拒收原因"
-              maxLength={100}
-              invalid={!line.rejectReason.trim()}
-              className="mt-1 h-9 text-[13px]"
-            />
-            <Input
-              value={line.redeliver}
+              value={line.hold ?? ''}
               disabled={locked}
               inputMode="decimal"
-              onChange={(e) => onPatch({ redeliver: e.target.value })}
-              placeholder={`其中待补（${m.inventoryUnit}，选填）`}
-              aria-label="其中供应商待补的数量"
-              className="mt-1 h-9 text-[13px]"
-              data-testid="receipt-redeliver"
+              onChange={(e) => onPatch({ hold: e.target.value })}
+              placeholder={`其中待判 / 待检（${m.inventoryUnit}，选填）`}
+              aria-label="其中待判、待检的数量"
+              className="mb-1 h-9 text-[13px]"
+              data-testid="receipt-hold"
             />
+            {row.rejected ? (
+              <>
+                <Qty milli={row.rejected} unit={m.inventoryUnit} className="block text-right text-[14px] font-bold text-clay @5xl:pt-1" />
+                <ReasonChips reasons={RECEIPT_REJECT_REASONS} value={line.rejectReason} onPick={(r) => onPatch({ rejectReason: r })} disabled={locked} testId="receipt-reject-chips" />
+                <Input
+                  value={line.rejectReason}
+                  disabled={locked}
+                  onChange={(e) => onPatch({ rejectReason: e.target.value })}
+                  placeholder="拒收原因"
+                  aria-label="拒收原因"
+                  maxLength={100}
+                  invalid={!line.rejectReason.trim()}
+                  className="mt-1 h-9 text-[13px]"
+                />
+                <Input
+                  value={line.redeliver}
+                  disabled={locked}
+                  inputMode="decimal"
+                  onChange={(e) => onPatch({ redeliver: e.target.value })}
+                  placeholder={`其中待补（${m.inventoryUnit}，选填）`}
+                  aria-label="其中供应商待补的数量"
+                  className="mt-1 h-9 text-[13px]"
+                  data-testid="receipt-redeliver"
+                />
+              </>
+            ) : (
+              <span className="block text-ink-4 @5xl:text-right">都待判，无拒收</span>
+            )}
           </>
         ) : (
           <span className="block text-ink-4 @5xl:pt-2.5 @5xl:text-right">无</span>

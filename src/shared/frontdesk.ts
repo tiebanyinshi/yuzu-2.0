@@ -473,6 +473,8 @@ export type FrontdeskOpLookup =
    * 康美部只有点单权限，看不到前台的账（Codex 审查 f6327a4）
    */
   | { found: true; type: 'dining_order'; visitId: number }
+  /** 餐厅入口登记进餐（8.2.8，`/api/dining/meal-entry-ops`）：只说登上了、记在哪次来访上（平板没有前台读的权限） */
+  | { found: true; type: 'meal_entered'; visitId: number }
   /** 房态点单（回测整改 P07，`/api/room-center/order-ops`）：生效了、记在哪次来访上 */
   | { found: true; type: 'room_order'; visitId: number };
 

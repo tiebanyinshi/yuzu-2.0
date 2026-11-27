@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withCreditCheck } from '../src/shared/govflow-supply';
-import { act, setupPeople, yuan, type People } from './govflow-helpers';
+import { act, okShot, setupPeople, yuan, type People } from './govflow-helpers';
 import { api, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -170,6 +170,7 @@ describe('紧急特批（场景 14–16）', () => {
       confirmerIds: [p.ids.gf_cfo, p.ids.gf_ceo],
       confirmedAt: new Date(Date.now() - 60_000).toISOString(),
       payeeAccount: '6222777788889999',
+      okScreenshot: okShot(randomUUID()),
       ...body,
     });
   it('未入库供应商：CFO＋经营主体负责人微信确认后，出纳独立核验；分次累计不超特批金额；换账户要重新特批', async () => {

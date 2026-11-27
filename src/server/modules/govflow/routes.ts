@@ -6,6 +6,7 @@
 //   /api/gf/docs/:id/submit|act|withdraw|execute
 //   /api/gf/specials                  微信特批：登记（两人确认、唯一特批编号）、列表、补登（需求说明 + OK 截图）
 //   /api/gf/files/:id                 下载补登的文件（看得到事项 / 特批的人）
+//   /api/gf/config…                   流程与阈值（8.2.15，config.ts）
 
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
@@ -30,6 +31,7 @@ import {
   type GfMeta,
   type GfNodeView,
   type GfRole,
+  type GfRoleChange,
   type GfRoleMember,
   type GfSpecialView,
   type GfStage,
@@ -47,7 +49,9 @@ import { nextDocNo, setTxTimeouts } from '../../lib/tx';
 import { idParam, parse } from '../../lib/validate';
 import { NOT_EMPLOYEE_ROLES } from '../oa/org';
 import { notify } from '../oa/notifications';
+import { registerGovflowExport } from './export';
 import { actFlow, addCc, docOf, hooksOf, insertDoc, latestFlow, loadDoc, loadMembers, rolesOf, seatContext, seatLabel, statusOf, submitFlow, waitingSeats, type DocRow, type FlowRow } from './engine';
+import { registerGfConfigRoutes } from './config';
 import { templateFor } from './types';
 
 const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOString());
@@ -79,11 +83,45 @@ async function canView(db: Db, actor: Actor, doc: DocRow): Promise<boolean> {
 
 async function listMembers(db: Db): Promise<GfRoleMember[]> {
   const rows = await db<(Omit<GfRoleMember, 'createdAt'> & { createdAt: Date })[]>`
-    SELECT m.id, m.role, m.staff_id, s.display_name AS staff_name, m.entity_id, e.name AS entity_name, m.note, c.display_name AS created_by_name, m.created_at
+    SELECT m.id, m.role, m.staff_id, s.display_name AS staff_name, s.username AS staff_no, d.name AS department_name,
+           m.entity_id, e.name AS entity_name, m.note, c.display_name AS created_by_name, m.created_at
     FROM gf_role_members m JOIN staff s ON s.id = m.staff_id JOIN staff c ON c.id = m.created_by LEFT JOIN legal_entities e ON e.id = m.entity_id
+         LEFT JOIN departments d ON d.id = s.department_id
     WHERE m.revoked_at IS NULL ORDER BY array_position(${GF_ROLES as unknown as string[]}::text[], m.role), s.display_name`;
   return rows.map((r) => ({ ...r, id: Number(r.id), staffId: Number(r.staffId), entityId: r.entityId === null ? null : Number(r.entityId), createdAt: iso(r.createdAt)! }));
 }
+
+/** 变更记录（8.2.14，A1）：加（不是替换别的）、改（替换了旧的一条）、撤（撤销且没有被替换），新的在前 */
+async function roleChanges(db: Db): Promise<GfRoleChange[]> {
+  const rows = await db<(Omit<GfRoleChange, 'at'> & { at: Date })[]>`
+    SELECT * FROM (
+      SELECT m.id, m.role, s.display_name AS staff_name, s.username AS staff_no, e.name AS entity_name, m.note,
+             CASE WHEN m.replaces_id IS NULL THEN 'add' ELSE 'edit' END AS op,
+             os.display_name AS replaced_staff_name, coalesce(o.revoke_reason, '') AS reason, c.display_name AS by_name, m.created_at AS at
+      FROM gf_role_members m JOIN staff s ON s.id = m.staff_id JOIN staff c ON c.id = m.created_by LEFT JOIN legal_entities e ON e.id = m.entity_id
+           LEFT JOIN gf_role_members o ON o.id = m.replaces_id LEFT JOIN staff os ON os.id = o.staff_id
+      UNION ALL
+      SELECT m.id, m.role, s.display_name, s.username, e.name, m.note, 'revoke', NULL, m.revoke_reason, r.display_name, m.revoked_at
+      FROM gf_role_members m JOIN staff s ON s.id = m.staff_id JOIN staff r ON r.id = m.revoked_by LEFT JOIN legal_entities e ON e.id = m.entity_id
+      WHERE m.revoked_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM gf_role_members n WHERE n.replaces_id = m.id)
+    ) x ORDER BY at DESC, id DESC LIMIT 500`;
+  return rows.map((r) => ({ ...r, id: Number(r.id), at: iso(r.at)! }));
+}
+
+/** 能配业财法角色的员工：在用、不是专用账号 */
+async function assertRoleStaff(tx: Tx, staffId: number) {
+  const [s] = await tx<{ role: string }[]>`SELECT role FROM staff WHERE id = ${staffId} AND active`;
+  if (!s) throw unprocessable('GF_STAFF', '员工不存在或已停用');
+  if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(s.role)) throw unprocessable('GF_STAFF', '专用账号不能配业财法角色');
+}
+
+const EditInput = z.object({
+  staffId: z.number().int().positive('请选员工'),
+  entityId: z.number().int().positive().nullable().default(null),
+  note: z.string().trim().max(100, '备注最多 100 个字').default(''),
+  reason: z.string().trim().min(2, '请写修改原因（至少 2 个字）').max(200, '原因最多 200 个字'),
+});
+const RevokeInput = z.object({ reason: z.string().trim().max(200, '原因最多 200 个字').default('') });
 
 const MemberInput = z.object({
   role: z.enum(GF_ROLES, '请选角色'),
@@ -148,7 +186,7 @@ async function createDoc(deps: Deps, raw: unknown, actor: Actor, ip?: string): P
       await writeAudit(tx, { staffId: actor.id, action: 'gf_doc', targetType: 'gf_doc', targetId: id, detail: { op: 'create', bizNo, amountCents: input.amountCents, flags }, ip });
       if (input.submit) {
         const doc = await loadDoc(tx, id, true);
-        await submitFlow(tx, doc, templateFor(doc), actor);
+        await submitFlow(tx, doc, await templateFor(tx, doc), actor);
       }
       return id;
     });
@@ -355,6 +393,14 @@ async function listSpecials(db: Db, where: Fragment, timeZone: string): Promise<
   const ids = rows.map((r) => Number(r.id));
   const files = await db<{ id: number; ownerId: number; purpose: GfFilePurpose; fileName: string; sizeBytes: number }[]>`
     SELECT id, owner_id, purpose, file_name, size_bytes FROM gf_files WHERE owner_type = 'special' AND owner_id IN ${db(ids)} ORDER BY id`;
+  // OK 截图复用（8.2.16，WB7：只提示、不拦）：同一张截图（内容摘要一样）也用在了别的特批上
+  const reused = await db<{ ownerId: number; others: string }[]>`
+    SELECT f.owner_id, string_agg(DISTINCT o.special_no, '、') AS others
+    FROM gf_files f JOIN gf_files g ON g.sha256 = f.sha256 AND g.owner_type = 'special' AND g.purpose = 'ok_screenshot' AND g.owner_id <> f.owner_id
+         JOIN gf_specials o ON o.id = g.owner_id
+    WHERE f.owner_type = 'special' AND f.purpose = 'ok_screenshot' AND f.owner_id IN ${db(ids)}
+    GROUP BY f.owner_id`;
+  const reusedOf = new Map(reused.map((r) => [Number(r.ownerId), r.others.split('、')]));
   const staff = new Map(
     (await db<{ id: number; displayName: string }[]>`SELECT id, display_name FROM staff WHERE id IN ${db([...new Set(rows.flatMap((r) => r.confirmerIds.map(Number)))])}`).map((s) => [
       Number(s.id),
@@ -379,8 +425,22 @@ async function listSpecials(db: Db, where: Fragment, timeZone: string): Promise<
     files: files.filter((f) => Number(f.ownerId) === Number(r.id)).map((f) => ({ id: Number(f.id), purpose: f.purpose, fileName: f.fileName, sizeBytes: f.sizeBytes })),
     overdue: !r.backfilledAt && r.dueOn < today,
     registeredByName: r.registeredByName,
+    screenshotReusedIn: reusedOf.get(Number(r.id)) ?? [],
   }));
 }
+
+/** 登记时的微信 OK 截图（8.2.16，WB6：发起时必传；只收图片） */
+const OkShotInput = z.object(
+  {
+    fileName: z.string().trim().min(1).max(120),
+    mime: z.enum(['image/png', 'image/jpeg', 'image/webp'], 'OK 截图只收 PNG、JPG、WEBP 图片'),
+    base64: z
+      .string()
+      .min(4)
+      .max(Math.ceil((GF_FILE_MAX_BYTES * 4) / 3) + 8, '截图最多 5 MB'),
+  },
+  '请上传微信里的 OK 截图',
+);
 
 const SpecialInput = z.object({
   clientKey: uuid,
@@ -390,6 +450,8 @@ const SpecialInput = z.object({
   reason: z.string().trim().min(2, '请写紧急原因（至少 2 个字）').max(500, '原因最多 500 个字'),
   confirmerIds: z.array(z.number().int().positive()).length(2, '微信特批要两个人确认'),
   confirmedAt: z.iso.datetime({ offset: true, message: '请填微信确认的时间' }),
+  /** 新登记必传；接口上可缺，只为升级前就在「结果待确认」里的原请求（没有这一栏）能按原编号查回（createSpecial 里再拦） */
+  okScreenshot: OkShotInput.optional(),
   /** 紧急付款的特批要记确认时的收款账号（换账户要重新特批，P05） */
   payeeAccount: z
     .string()
@@ -407,18 +469,36 @@ async function holidays(db: Db): Promise<Map<string, 'holiday' | 'workday'>> {
 async function createSpecial(deps: Deps, raw: unknown, actor: Actor, ip?: string): Promise<number> {
   const input = parse(SpecialInput, raw);
   if (input.confirmerIds[0] === input.confirmerIds[1]) throw badRequest('微信特批要两个不同的人确认');
-  const requestHash = hashRequest({ ...input, clientKey: undefined });
+  const okShot = input.okScreenshot;
+  const shot = okShot ? Buffer.from(okShot.base64, 'base64') : null;
+  if (okShot && shot) {
+    if (shot.length === 0 || shot.length > GF_FILE_MAX_BYTES) throw unprocessable('GF_FILE_SIZE', 'OK 截图大小不对（最多 5 MB）');
+    if (!MAGIC[okShot.mime]!(shot)) throw unprocessable('GF_FILE_TYPE', 'OK 截图的内容与图片类型对不上');
+  }
+  const shotSha = shot ? createHash('sha256').update(shot).digest('hex') : null;
+  // 操作编号核对用截图的摘要，不把整张图算进去；升级前（8.2.16 以前）的摘要没有截图这一栏，原样重提的也认
+  const legacyHash = hashRequest({ ...input, clientKey: undefined, okScreenshot: undefined });
+  const requestHash = okShot ? hashRequest({ ...input, clientKey: undefined, okScreenshot: { ...okShot, base64: shotSha } }) : legacyHash;
   const existing = async (db: Db) => {
     const [row] = await db<{ id: number; requestHash: string }[]>`SELECT id, request_hash FROM gf_specials WHERE client_key = ${input.clientKey}`;
     if (!row) return null;
-    if (row.requestHash !== requestHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一笔特批，请刷新页面后重新填写');
+    if (row.requestHash !== requestHash && row.requestHash !== legacyHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一笔特批，请刷新页面后重新填写');
     return Number(row.id);
   };
+  // 先按操作编号查回已提交的，再要求截图：只有真正新登记的才必传
+  const committed = await existing(deps.sql);
+  if (committed) return committed;
+  const needShot = () => {
+    if (!okShot || !shot || !shotSha) throw badRequest('请上传微信里的 OK 截图', { field: 'okScreenshot' });
+    return { okShot, shot, shotSha };
+  };
+  needShot();
   try {
     return await deps.sql.begin(async (tx) => {
       await setTxTimeouts(tx);
       const found = await existing(tx);
       if (found) return found;
+      const { okShot: file, shot: content, shotSha: sha } = needShot();
       const confirmed = new Date(input.confirmedAt);
       if (confirmed.getTime() > Date.now() + 5 * 60_000) throw unprocessable('GF_FUTURE', '微信确认时间不能晚于现在');
       const people = await tx<{ id: number }[]>`SELECT id FROM staff WHERE id IN ${tx(input.confirmerIds)} AND active`;
@@ -437,6 +517,9 @@ async function createSpecial(deps: Deps, raw: unknown, actor: Actor, ip?: string
         VALUES (${specialNo}, ${input.docId}, ${input.title}, ${input.amountCents}, ${input.reason}, ${input.confirmerIds}, ${confirmed}, ${dueOn}, ${actor.id}, ${input.clientKey}, ${requestHash}, ${input.payeeAccount})
         RETURNING id`;
       const id = Number(row!.id);
+      await tx`
+        INSERT INTO gf_files (owner_type, owner_id, purpose, file_name, mime, size_bytes, sha256, content, uploaded_by)
+        VALUES ('special', ${id}, 'ok_screenshot', ${file.fileName}, ${file.mime}, ${content.length}, ${sha}, ${content}, ${actor.id})`;
       await writeAudit(tx, {
         staffId: actor.id,
         action: 'gf_special',
@@ -450,7 +533,7 @@ async function createSpecial(deps: Deps, raw: unknown, actor: Actor, ip?: string
       await notify(tx, [actor.id], {
         kind: 'system',
         title: `微信特批待补登：${input.title}`,
-        body: `${specialNo} 请在 ${dueOn} 前上传需求说明与 OK 截图补登`,
+        body: `${specialNo} 请在 ${dueOn} 前上传需求说明补登`,
         link: '/oa/gov?box=specials',
         ref: { type: 'gf_special', id },
       });
@@ -476,7 +559,7 @@ const FileInput = z.object({
 });
 const BackfillInput = z.object({
   note: z.string().trim().max(500, '说明最多 500 个字').default(''),
-  files: z.array(FileInput).min(2, '要上传需求说明与 OK 截图').max(6, '一次最多 6 个文件'),
+  files: z.array(FileInput).min(1, '要上传需求说明').max(6, '一次最多 6 个文件'),
 });
 
 const MAGIC: Record<string, (b: Buffer) => boolean> = {
@@ -489,7 +572,7 @@ const MAGIC: Record<string, (b: Buffer) => boolean> = {
 async function backfillSpecial(deps: Deps, id: number, raw: unknown, actor: Actor, ip?: string) {
   const input = parse(BackfillInput, raw);
   const purposes = new Set(input.files.map((f) => f.purpose));
-  if (!purposes.has('need') || !purposes.has('ok_screenshot')) throw unprocessable('GF_BACKFILL_FILES', '补登要有需求说明与 OK 截图各至少一份');
+  if (!purposes.has('need')) throw unprocessable('GF_BACKFILL_FILES', '补登要有需求说明（至少一份）');
   const decoded = input.files.map((f) => {
     const buf = Buffer.from(f.base64, 'base64');
     if (buf.length === 0 || buf.length > GF_FILE_MAX_BYTES) throw unprocessable('GF_FILE_SIZE', `「${f.fileName}」大小不对（最多 5 MB）`);
@@ -503,6 +586,9 @@ async function backfillSpecial(deps: Deps, id: number, raw: unknown, actor: Acto
     if (!s) throw notFound('没有这笔特批');
     if (s.backfilledAt) throw conflict('GF_BACKFILLED', '这笔特批已经补登过了（补登不重复审批）');
     if (Number(s.registeredBy) !== actor.id && !s.confirmerIds.map(Number).includes(actor.id)) throw forbidden('只有登记人或两位确认人能补登');
+    // 8.2.16 以前登记的特批没有 OK 截图：补登时照旧要补上
+    const [shot] = await tx`SELECT 1 FROM gf_files WHERE owner_type = 'special' AND owner_id = ${id} AND purpose = 'ok_screenshot'`;
+    if (!shot && !purposes.has('ok_screenshot')) throw unprocessable('GF_BACKFILL_FILES', '这笔特批登记时没有 OK 截图，补登要一起上传');
     for (const f of decoded) {
       await tx`
         INSERT INTO gf_files (owner_type, owner_id, purpose, file_name, mime, size_bytes, sha256, content, uploaded_by)
@@ -524,6 +610,8 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
     if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(req.actor.role)) throw forbidden('这个账号不能用业财法审批');
   };
   const manage = guard('gf.roles');
+  // 流程与阈值（8.2.15）：在这里挂，不另占 app.ts 一行
+  registerGfConfigRoutes(app, deps);
 
   app.get('/api/gf/meta', { preHandler: staffOnly }, async (req): Promise<GfMeta> => {
     const entities = await sql<{ id: number; name: string }[]>`SELECT id, name FROM legal_entities ORDER BY id`;
@@ -541,14 +629,14 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
     };
   });
 
+  registerGovflowExport(app, deps, { staffOnly, seesAll, listSelect: LIST_SELECT, cardsOf });
+
   app.get('/api/gf/roles', { preHandler: staffOnly }, async () => listMembers(sql));
 
   app.post('/api/gf/roles', { preHandler: manage }, async (req) => {
     const input = parse(MemberInput, req.body);
     await sql.begin(async (tx) => {
-      const [s] = await tx<{ role: string }[]>`SELECT role FROM staff WHERE id = ${input.staffId} AND active`;
-      if (!s) throw unprocessable('GF_STAFF', '员工不存在或已停用');
-      if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(s.role)) throw unprocessable('GF_STAFF', '专用账号不能配业财法角色');
+      await assertRoleStaff(tx, input.staffId);
       try {
         const [row] = await tx<{ id: number }[]>`
           INSERT INTO gf_role_members (role, staff_id, entity_id, note, created_by) VALUES (${input.role}, ${input.staffId}, ${input.entityId}, ${input.note}, ${req.actor.id}) RETURNING id`;
@@ -563,13 +651,51 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
 
   app.post('/api/gf/roles/:id/revoke', { preHandler: manage }, async (req) => {
     const { id } = parse(idParam, req.params);
+    const { reason } = parse(RevokeInput, req.body ?? {});
     await sql.begin(async (tx) => {
-      const rows = await tx`UPDATE gf_role_members SET revoked_at = now(), revoked_by = ${req.actor.id} WHERE id = ${id} AND revoked_at IS NULL RETURNING id`;
+      const rows = await tx`
+        UPDATE gf_role_members SET revoked_at = now(), revoked_by = ${req.actor.id}, revoke_reason = ${reason} WHERE id = ${id} AND revoked_at IS NULL RETURNING id`;
       if (!rows.length) throw notFound('没有这条角色映射（或已撤销）');
-      await writeAudit(tx, { staffId: req.actor.id, action: 'gf_role', targetType: 'gf_role_member', targetId: id, detail: { op: 'revoke' }, ip: req.ip });
+      await writeAudit(tx, { staffId: req.actor.id, action: 'gf_role', targetType: 'gf_role_member', targetId: id, detail: { op: 'revoke', reason }, ip: req.ip });
     });
     return listMembers(sql);
   });
+
+  // 修改（8.2.14，A1、WB1）：换人、改经营主体范围、改备注；角色不能改。旧的一条撤销、新建一条指回它。
+  // 已经提交的单按提交时的快照审批（WB2），不受影响；之后提交的按新的
+  app.post('/api/gf/roles/:id/edit', { preHandler: manage }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    const input = parse(EditInput, req.body);
+    await sql.begin(async (tx) => {
+      const [old] = await tx<{ role: string; staffId: number; entityId: number | null; note: string }[]>`
+        SELECT role, staff_id, entity_id, note FROM gf_role_members WHERE id = ${id} AND revoked_at IS NULL FOR UPDATE`;
+      if (!old) throw notFound('没有这条角色映射（或已撤销），请刷新后再看');
+      if (Number(old.staffId) === input.staffId && (old.entityId === null ? null : Number(old.entityId)) === input.entityId && old.note === input.note) {
+        throw unprocessable('GF_ROLE_SAME', '没有改动');
+      }
+      await assertRoleStaff(tx, input.staffId);
+      await tx`UPDATE gf_role_members SET revoked_at = now(), revoked_by = ${req.actor.id}, revoke_reason = ${input.reason} WHERE id = ${id}`;
+      try {
+        const [row] = await tx<{ id: number }[]>`
+          INSERT INTO gf_role_members (role, staff_id, entity_id, note, created_by, replaces_id)
+          VALUES (${old.role}, ${input.staffId}, ${input.entityId}, ${input.note}, ${req.actor.id}, ${id}) RETURNING id`;
+        await writeAudit(tx, {
+          staffId: req.actor.id,
+          action: 'gf_role',
+          targetType: 'gf_role_member',
+          targetId: Number(row!.id),
+          detail: { op: 'edit', replaces: id, before: { staffId: Number(old.staffId), entityId: old.entityId, note: old.note }, after: input },
+          ip: req.ip,
+        });
+      } catch (error) {
+        if (isUniqueViolation(error, 'gf_role_members_active_uq')) throw conflict('GF_ROLE_DUP', '这个人已经是这个角色了');
+        throw error;
+      }
+    });
+    return listMembers(sql);
+  });
+
+  app.get('/api/gf/roles/changes', { preHandler: manage }, async () => roleChanges(sql));
 
   app.get('/api/gf/docs', { preHandler: staffOnly }, async (req) => {
     const { box } = parse(z.object({ box: z.enum(['mine', 'todo', 'cc', 'all']).default('mine') }), req.query ?? {});
@@ -587,7 +713,7 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
       await setTxTimeouts(tx);
       const doc = await bump(tx, id, version);
       if (doc.createdBy !== req.actor.id) throw forbidden('只有发起人能提交');
-      await submitFlow(tx, doc, templateFor(doc), req.actor);
+      await submitFlow(tx, doc, await templateFor(tx, doc), req.actor);
       await writeAudit(tx, { staffId: req.actor.id, action: 'gf_doc', targetType: 'gf_doc', targetId: id, detail: { op: 'submit' }, ip: req.ip });
     });
     return detail(deps, req.actor, id);
@@ -671,7 +797,7 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
     return listSpecials(sql, all ? sql`true` : sql`(s.registered_by = ${req.actor.id} OR ${req.actor.id} = ANY (s.confirmer_ids))`, deps.config.timezone);
   });
 
-  app.post('/api/gf/specials', { preHandler: staffOnly }, async (req) => {
+  app.post('/api/gf/specials', { preHandler: staffOnly, bodyLimit: 8 * 1024 * 1024 }, async (req) => {
     const id = await createSpecial(deps, req.body, req.actor, req.ip);
     return (await listSpecials(sql, sql`s.id = ${id}`, deps.config.timezone))[0]!;
   });

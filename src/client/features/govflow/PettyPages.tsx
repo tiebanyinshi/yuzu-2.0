@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { GfDocDetail, GfMeta } from '@shared/govflow';
-import { PETTY_KINDS, PETTY_KIND_LABELS, type PettyKind, type PettyPreview, type PettyQuotaView } from '@shared/govflow-petty';
+import { DEFAULT_GF_RULES, PETTY_KINDS, PETTY_KIND_LABELS, pettyBasicText, rulesYuan, type GfRules, type PettyKind, type PettyPreview, type PettyQuotaView } from '@shared/govflow-petty';
 import { api, errorMessage } from '../../lib/api';
 import { cn, uuid } from '../../lib/utils';
 import { Money } from '../../components/Money';
@@ -22,6 +22,8 @@ export function PettyPanel({ meta }: { meta: GfMeta }) {
   const [adjust, setAdjust] = useState(false);
   const oversight = meta.canManageRoles || meta.myRoles.some((r) => ['internal_control', 'finance_chief', 'cfo', 'chairman', 'finance_reviewer'].includes(r));
   const board = useQuery({ queryKey: ['gf', 'petty-board'], queryFn: () => api.get<PettyQuotaView[]>('/api/gf/petty/board'), enabled: oversight });
+  const settings = useQuery({ queryKey: ['gf', 'settings'], queryFn: () => api.get<{ purchaseDeptId: number | null; rules: GfRules }>('/api/gf/settings') });
+  const rules = settings.data?.rules ?? DEFAULT_GF_RULES;
   return (
     <div className="space-y-3" data-testid="gf-petty">
       <div className="flex flex-wrap gap-2">
@@ -35,7 +37,8 @@ export function PettyPanel({ meta }: { meta: GfMeta }) {
         )}
       </div>
       <Card className="p-4 text-[13px] text-ink-2">
-        单笔 3,000 元且 50 件以内基础审核（同日同供应商合并算），超出要写比价说明；部门备用金日 1 万、月 5 万，超额由财总＋CFO 合并特批； 合同、工程、服务外包、预付款、固定资产不走零星采购。
+        单笔 {rulesYuan(rules.pettyBasicCents)}且 {rules.pettyBasicQty} 件以内基础审核（同日同供应商合并算），超出要写比价说明；部门备用金默认日 {rulesYuan(rules.deptDailyCents)}、月{' '}
+        {rulesYuan(rules.deptMonthlyCents)}（核定过的按核定），超额由财总＋CFO 合并特批；合同、工程、服务外包、预付款、固定资产不走零星采购。
       </Card>
       {oversight && (
         <DataTable<PettyQuotaView>
@@ -69,13 +72,13 @@ export function PettyPanel({ meta }: { meta: GfMeta }) {
           ]}
         />
       )}
-      {creating && <PettyDialog meta={meta} onClose={() => setCreating(false)} />}
+      {creating && <PettyDialog meta={meta} rules={rules} onClose={() => setCreating(false)} />}
       {adjust && <AdjustDialog meta={meta} onClose={() => setAdjust(false)} />}
     </div>
   );
 }
 
-function PettyDialog({ meta, onClose }: { meta: GfMeta; onClose: () => void }) {
+function PettyDialog({ meta, rules, onClose }: { meta: GfMeta; rules: GfRules; onClose: () => void }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
@@ -156,9 +159,9 @@ function PettyDialog({ meta, onClose }: { meta: GfMeta; onClose: () => void }) {
         </Field>
         <label className="flex items-center gap-2 text-[14px] text-ink sm:col-span-2">
           <input type="checkbox" checked={f.urgent} onChange={(e) => setF({ ...f, urgent: e.target.checked })} />
-          紧急（采购部门当日累计超 1 万时，紧急的走财总＋CFO 特批，非紧急转正式采购）
+          紧急（采购部门当日累计超 {rulesYuan(rules.purchaseDeptDailyCents)}时，紧急的走财总＋CFO 特批，非紧急转正式采购）
         </label>
-        <Field label="比价说明（超出 3,000 元或 50 件时必填）" className="sm:col-span-2">
+        <Field label={`比价说明（超出 ${pettyBasicText(rules)}时必填）`} className="sm:col-span-2">
           <Textarea rows={2} value={f.quoteNote} onChange={(e) => setF({ ...f, quoteNote: e.target.value })} />
         </Field>
       </div>

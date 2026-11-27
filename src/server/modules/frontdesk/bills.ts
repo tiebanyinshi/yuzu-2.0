@@ -29,6 +29,7 @@ import { recordSupplement } from './guest-tx';
 import { locateCharges, locateSession } from '../locations';
 import { currentStoreId } from '../../lib/store-context';
 import { assertNotAwayLocked } from './away-lock';
+import { revokeBuffetOfMeal } from './line-discounts';
 
 export const PostInput = z
   .object({
@@ -534,6 +535,8 @@ export async function voidLine(deps: Deps, lineId: number, raw: unknown, ctx: Op
     }
     // 餐饮明细（退菜）：出品单改为已退，扣过沽清的按原份数加回
     await cancelKitchenItem(tx, line!.id, `退菜：${input.reason}`, ctx.actor, at);
+    // 8.2.8（Codex 安全审查）：餐厅入口的餐费作废了，这一餐带出来的自助折扣一并撤下（不然餐费、菜都成了 0）
+    await revokeBuffetOfMeal(tx, { mealLineId: line!.id, billId: visit.billId, staffId: ctx.actor.id, at });
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'frontdesk_void',
@@ -634,8 +637,11 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
       WHERE l.id IN ${tx(lineIds)} ORDER BY l.id FOR UPDATE OF l`;
     if (lines.length !== lineIds.length || lines.some((l) => l.billId !== from.billId)) throw notFound('有明细不存在，请刷新后重试');
     const rules = await loadFrontdeskRules(tx);
+    // 8.2.8（Codex 审查）：餐厅入口登记的餐费跟着那一次进餐登记（自助资格、厨房自检都认它），不能转；挂错了作废后在餐厅入口重新登记
+    const mealLines = new Set((await tx<{ lineId: number }[]>`SELECT line_id FROM meal_entries WHERE line_id IN ${tx(lineIds)}`).map((r) => Number(r.lineId)));
     for (const l of lines) {
       if (l.status !== 'active') throw conflict('ALREADY_VOIDED', `「${l.name}」已作废，不能再转`);
+      if (mealLines.has(Number(l.id))) throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是餐厅入口登记的餐费，不能转；挂错了请作废后在餐厅入口给那位客人重新登记`);
       if (l.source === 'room') throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是房费，随入住单走，不能转`);
       // 8.1.39（R11）：餐饮的菜能转；加料跟着主菜走
       if (l.addonOf !== null && !lineIds.includes(l.addonOf)) throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是加料，请连同它的主菜一起转`);

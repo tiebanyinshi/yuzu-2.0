@@ -10,9 +10,11 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { minuteOfDay } from '@shared/business-date';
 import { diningSlotOf } from '@shared/dining';
-import { MEAL_PERIOD_LABELS, mealAllowance, mealPeriodAt, mealPeriodRange, type MealEntryPreview, type MealEntryRow, type MealPeriod } from '@shared/dining-meals';
+import { normalizeTagCode } from '@shared/frontdesk';
+import type { FrontdeskOpLookup } from '@shared/frontdesk';
+import { MEAL_PERIOD_KEYS, MEAL_PERIOD_LABELS, mealAllowance, mealPeriodAt, mealPeriodRange, type MealEntryPreview, type MealEntryRow, type MealPeriod } from '@shared/dining-meals';
 import type { Db, Tx } from '../db';
-import { guard } from '../auth/guard';
+import { guard, guardAny } from '../auth/guard';
 import { ctxOf, type Deps, type OpContext } from '../lib/context';
 import { conflict, notFound, unprocessable } from '../lib/errors';
 import { parse } from '../lib/validate';
@@ -20,11 +22,15 @@ import { currentStoreId } from '../lib/store-context';
 import { loadDiningOutlets } from './dining-v8139';
 import { loadDiningRules } from './dining';
 import { findGuestByTag } from './dining-order-v8115';
-import { businessDate, hashRequest, insertAutoDiscount, loadBills, lockVisits, runIdempotent, visitTicket } from './frontdesk/index';
+import { assertOpen, businessDate, hashRequest, insertAutoDiscount, loadBills, loadTags, loadVisitOps, lockVisits, runIdempotent, visitTicket } from './frontdesk/index';
 
 const EntryInput = z.object({
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   tagCode: z.string('请刷手牌或输入牌号').trim().min(1, '请刷手牌或输入牌号').max(16, '牌号太长'),
+  /** 预览时看到的那位客人（Codex 审查：牌刚换过、结账后又发给别人时，不能记到屏幕上没看到的客人头上） */
+  visitId: z.number('请先刷手牌看一眼再登记').int().positive(),
+  /** 预览时屏幕上的收费（Codex 审查第二轮）：哪一餐、含餐抵扣还是照价、多少钱；提交时对不上（后台刚改了价、票种含餐数）就要重新刷牌看 */
+  expected: z.object({ period: z.enum(MEAL_PERIOD_KEYS), kind: z.enum(['included', 'paid']), price: z.number().int().min(0) }, '请先刷手牌看一眼再登记'),
 });
 
 /** 此刻的餐段（不在供餐时间为 null） */
@@ -83,7 +89,8 @@ export async function previewMealEntry(deps: Deps, tagCode: string, now = new Da
 export async function createMealEntry(deps: Deps, raw: unknown, ctx: OpContext): Promise<MealEntryPreview> {
   const input = parse(EntryInput, raw);
   const g = await visitByTag(deps.sql, input.tagCode);
-  const requestHash = hashRequest({ op: 'meal_entry', visitId: g.visitId });
+  if (g.visitId !== input.visitId) throw conflict('VISIT_CHANGED', `手牌 ${g.tagCode} 现在是另一位客人了（刚换过牌或结账后又发出去），请重新刷牌核对`);
+  const requestHash = hashRequest({ op: 'meal_entry', visitId: input.visitId, expected: input.expected });
   const { postChargesTx } = await loadBills();
   await runIdempotent(deps, { key: input.clientKey, opType: 'meal_entry', requestHash }, async (tx) => {
     const at = ctx.at ?? new Date();
@@ -91,11 +98,18 @@ export async function createMealEntry(deps: Deps, raw: unknown, ctx: OpContext):
     const p = await periodNow(tx, deps, at);
     if (!p) throw unprocessable('MEAL_CLOSED', '现在不是供餐时间（餐段与时间在后台「餐饮规则」里设），不能登记进餐');
     // 先锁来访，再核对这一餐登记过没有、还有几餐含餐（同一位客人的两次登记排队）
-    const visit = (await lockVisits(tx, [g.visitId])).get(g.visitId)!;
+    const visit = (await lockVisits(tx, [input.visitId])).get(input.visitId)!;
+    // 锁住以后再核对：这张牌还在这位客人手上（读和锁之间换了牌、结了账的拒绝）
+    assertOpen(visit);
+    const [now] = await tx<{ code: string }[]>`SELECT code FROM hand_tags WHERE id = ${visit.tagId}`;
+    if (normalizeTagCode(now?.code ?? '') !== normalizeTagCode(g.tagCode)) throw conflict('VISIT_CHANGED', `这位客人刚换了牌，请重新刷牌核对`);
     const { entered, used } = await entryState(tx, visit.id, date, p.key);
     if (entered) throw conflict('MEAL_ENTERED', `手牌 ${g.tagCode} 今天的${MEAL_PERIOD_LABELS[p.key]}已经登记过了`);
     const { allowance } = await allowanceOf(tx, visit.id, at, date);
     const kind = used < allowance ? 'included' : 'paid';
+    if (input.expected.period !== p.key || input.expected.kind !== kind || input.expected.price !== p.price) {
+      throw conflict('MEAL_CHANGED', '这一餐的收费刚刚变了（换了餐段、改了价或含餐数），请重新刷牌核对后再登记');
+    }
     const name = `${MEAL_PERIOD_LABELS[p.key]}自助`;
     const posted = await postChargesTx(
       tx,
@@ -214,4 +228,33 @@ export function registerMealEntryRoutes(app: FastifyInstance, deps: Deps) {
     return { date, periods: rules.mealPeriods, entries: await listMealEntries(deps, date) };
   });
   app.post('/api/dining/meal-entries', restaurant, async (req) => createMealEntry(deps, req.body, ctxOf(req)));
+  // 登记进餐的「结果待确认」按餐厅的权限查回、确认作废（Codex 审查：平板等只有「在餐厅下单」的岗位没有前台权限，走前台的查回会 403）
+  const OpKey = z.object({ key: z.uuid('操作编号不正确') });
+  app.get('/api/dining/meal-entry-ops/:key', { preHandler: guardAny('dining.orderRestaurant', 'frontdesk.read') }, async (req) => {
+    const { key } = parse(OpKey, req.params);
+    const { lookupFrontdeskOp } = await loadVisitOps();
+    return mealOpResult((await lookupFrontdeskOp(deps.sql, key, deps.config.timezone, 'meal_entry')) as FrontdeskOpLookup);
+  });
+  app.post('/api/dining/meal-entry-ops/:key/abandon', { preHandler: guardAny('dining.orderRestaurant', 'frontdesk.operate') }, async (req) => {
+    const { key } = parse(OpKey, req.params);
+    const { abandonFrontdeskOp } = await loadVisitOps();
+    return mealOpResult((await abandonFrontdeskOp(deps, key, 'meal_entry', ctxOf(req))) as FrontdeskOpLookup);
+  });
+  // 餐厅入口刷卡（Codex 审查第二轮）：平板没有前台权限，前台的「按芯片号查手牌」会 403；这里按餐厅的权限查，只给牌号与在不在店
+  app.get('/api/dining/tags/by-card', restaurant, async (req) => {
+    const { uid } = parse(z.object({ uid: z.string('请刷卡或填写芯片号').max(64, '芯片号不正确') }), req.query ?? {});
+    const { tagByCard } = await loadTags();
+    const r = await tagByCard(deps.sql, uid);
+    return r.found ? { ...r, visit: null } : r;
+  });
+}
+
+/**
+ * 登记进餐的查回、作废结果只给「生效没有、哪次来访」（Codex 审查第二轮）：前台的查回带整张客人卡（会员手机号、余额、全部明细），
+ * 那些要前台读的权限；平板只要知道这一笔登上了没有。照点单页查回（diningOpResult）的做法
+ */
+function mealOpResult(r: FrontdeskOpLookup): FrontdeskOpLookup {
+  if (!r.found) return r;
+  if (r.type !== 'meal_entry') return { found: false, abandoned: false };
+  return { found: true, type: 'meal_entered', visitId: r.visit.id };
 }
