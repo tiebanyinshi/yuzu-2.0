@@ -25,8 +25,11 @@ let key: MealKey | null = null;
 /** 刚扫过的员工（饭堂员工编号）与最后一次看到的时间 */
 const seen: Record<number, number> = {};
 const SAME_PERSON_MS = 60 * 1000;
-/** 首页「扫一扫」扫到饭卡码进来的：读完就登记这一笔 */
+/** 首页「扫一扫」扫到饭卡码进来的：读完就登记这一笔（按首页扫到的时刻记） */
 let firstCode = '';
+let firstAt = 0;
+/** 首页带来的扫码时刻最多认多久以前的（再早的当成现在扫的，免得旧链接带着很久以前的时刻） */
+const FIRST_AT_MAX_MS = 10 * 60 * 1000;
 let flushTimer: number | null = null;
 let gen = 0;
 
@@ -65,6 +68,8 @@ Page({
 
   onLoad(q: Record<string, string | undefined>) {
     firstCode = q.code && isMealCode(decodeURIComponent(q.code)) ? decodeURIComponent(q.code).toUpperCase() : '';
+    const at = Number(q.at) || 0;
+    firstAt = at > 0 && at <= Date.now() && Date.now() - at < FIRST_AT_MAX_MS ? at : 0;
   },
 
   async onShow() {
@@ -87,10 +92,12 @@ Page({
     this.flush();
     if (firstCode) {
       const code = firstCode;
+      const at = firstAt;
       firstCode = '';
+      firstAt = 0;
       const id = mealCodeEmployee(code);
       if (id) seen[id] = Date.now();
-      this.record({ code }, '扫到的饭卡码');
+      this.record({ code }, '扫到的饭卡码', at || undefined);
     }
     if (flushTimer === null) flushTimer = setInterval(() => this.flush(), 15000) as unknown as number;
   },
@@ -139,12 +146,13 @@ Page({
   },
 
   /** 登记一笔：先存手机上（存不下不发），再交；返回结果（存不下为 null） */
-  async record(body: { code?: string; employeeId?: number }, label: string): Promise<ScanOutcome<CheckinResult> | null> {
+  /** 登记一笔：at 是扫到的时刻（本机时钟，首页扫的带过来；不给就是现在） */
+  async record(body: { code?: string; employeeId?: number }, label: string, at?: number): Promise<ScanOutcome<CheckinResult> | null> {
     if (!key) return null;
     const employeeId = key.me.employee.id;
     const item: QueuedScan = {
       kind: 'checkin',
-      body: { clientKey: uuid(), scannedAt: new Date(Date.now() + key.offsetMs).toISOString(), ...body },
+      body: { clientKey: uuid(), scannedAt: new Date((at ?? Date.now()) + key.offsetMs).toISOString(), ...body },
       label,
       savedAt: Date.now(),
     };

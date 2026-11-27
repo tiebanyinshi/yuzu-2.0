@@ -3,7 +3,7 @@
 //   · 待办只放要我动手的事，最急的在上面；没有待办写「都处理完了」。
 
 import type { PunchSlotView, PunchToday } from '../../../src/shared/oa';
-import { MEAL_LABELS, mealNow, mealWindowText } from './canteen';
+import { MEAL_LABELS, mealNow, mealWindowText, shiftDate } from './canteen';
 import { clockOfEpochMinute, slotOf } from './punch';
 import { hhmm } from './format';
 
@@ -189,8 +189,10 @@ export function mealOfNow(
   checked: { meal: string; date: string; checkedIn: boolean } | null,
 ): { meal: MealNow | null; menuLine: string } {
   const w = mealNow(meals, hhmm);
-  const eaten = !!w && !!checked && checked.checkedIn && checked.meal === w.meal && checked.date === today;
-  const meal = w && !eaten ? { window: mealWindowText(w), dishes: dishes[w.meal] ?? [] } : null;
+  // 跨零点的一餐（例如 22:00–01:00）过了零点还算开饭那天的（与门店系统 mealAt 同一个算法）；那一天的菜手机上没有，不写菜
+  const mealDate = w && w.start > w.end && hhmm < w.end ? shiftDate(today, -1) : today;
+  const eaten = !!w && !!checked && checked.checkedIn && checked.meal === w.meal && checked.date === mealDate;
+  const meal = w && !eaten ? { window: mealWindowText(w), dishes: mealDate === today ? (dishes[w.meal] ?? []) : [] } : null;
   const order = meals.filter((m) => m.enabled).sort((a, b) => a.start.localeCompare(b.start));
   const nextMeal = w ?? order.find((m) => m.start > hhmm && (dishes[m.meal] ?? []).length > 0) ?? null;
   const list = nextMeal ? (dishes[nextMeal.meal] ?? []) : [];

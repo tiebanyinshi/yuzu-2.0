@@ -41,7 +41,7 @@
 
     <view class="section">
       <view class="section-head"><view class="section-title">待办</view></view>
-      <view wx:if="{{!todos.length}}" class="t-body muted">都处理完了。</view>
+      <view wx:if="{{!todos.length}}" class="t-body muted">{{todoUnknown ? '有几项没取到，下拉刷新再试。' : '都处理完了。'}}</view>
       <view wx:else class="card">
         <view wx:for="{{todos}}" wx:key="key" class="row" hover-class="row-pressed" hover-stay-time="120" data-page="{{item.page}}" bindtap="onGo" aria-role="button">
           <image class="row-icon" src="/assets/icons/{{item.icon}}.png" />
