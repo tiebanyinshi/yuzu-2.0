@@ -164,6 +164,16 @@ describe('学堂 · 表格导入题', () => {
     const both = await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${c!.id}/questions/import`, { clientKey: randomUUID(), csv, rows: [['问题', '答案']] });
     expect(both.status).toBe(400);
   });
+
+  it('500 行的表超过默认 64 KB 的请求上限也导得进（Codex 审查 6ee05cd）', async () => {
+    const [c] = await ctx.sql<{ id: number }[]>`SELECT id FROM academy_courses WHERE code = 'mk-general'`;
+    const line = (i: number) => `第 ${i} 题：客人在汤池边滑倒、说脚踝疼，当班员工第一步应该怎么做？,先让客人别动、问清哪里疼，再叫值班经理与急救箱，不要自己去扶着走（${i}）`;
+    const csv = `问题,答案\n${Array.from({ length: 500 }, (_, i) => line(i + 1)).join('\n')}\n`;
+    expect(Buffer.byteLength(JSON.stringify({ csv }))).toBeGreaterThan(64 * 1024);
+    const r = await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${c!.id}/questions/import`, { clientKey: randomUUID(), csv });
+    expect(r.status, JSON.stringify(r.body).slice(0, 300)).toBe(201);
+    expect(r.body.questions).toHaveLength(500);
+  });
 });
 
 describe('学堂 · AI 出题与问柚子', () => {

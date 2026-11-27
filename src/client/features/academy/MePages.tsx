@@ -144,7 +144,8 @@ export function DailyPage() {
           </Card>
           {item ? (
             <DailyCard
-              key={item.questionId}
+              // 题号 + 版本：题被改过（重新取回来是新版本）就整张卡重来，选过的选项不带到新题上（Codex 审查 6ee05cd）
+              key={`${item.questionId}:${item.version}`}
               item={item}
               onAnswered={(a) => {
                 setDone(a);
