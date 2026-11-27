@@ -443,16 +443,19 @@ export const SwapInput = z
     lockOld: z.boolean().default(false),
     /** 丢牌赔偿（分）：挂到客人账单；与当前规则的金额不一致时拒绝，避免改价后挂错。不收时为 null */
     lostFee: z.number().int().positive('赔偿金额不正确').nullable().default(null),
+    /** 8.2.21：客人把手牌弄丢了（换牌时登记挂失；收丢牌赔偿的也算），原手牌进挂失清单 */
+    lost: z.boolean().default(false),
     /** 当场授权编号：换到等级不够的 VIP 柜时，由值班经理 / 店总签发 */
     vipGrantId: z.uuid('授权编号格式不正确').nullable().default(null),
   })
-  .refine((v) => v.lostFee === null || v.lockOld, { message: '丢失的手牌需要同时锁定，避免再次发出', path: ['lockOld'] });
+  .refine((v) => v.lostFee === null || v.lockOld, { message: '丢失的手牌需要同时锁定，避免再次发出', path: ['lockOld'] })
+  .refine((v) => !v.lost || v.lockOld, { message: '丢失的手牌需要同时锁定，避免再次发出', path: ['lockOld'] });
 export type SwapInputData = z.input<typeof SwapInput>;
 
 export async function swapTag(deps: Deps, visitId: number, raw: SwapInputData, ctx: OpContext) {
   const input = parse(SwapInput, raw);
   const { clientKey: key, ...payload } = input;
-  const requestHash = hashRequest({ visitId, ...hashedPayload(payload, ['lostFee', 'vipGrantId']) });
+  const requestHash = hashRequest({ visitId, ...hashedPayload(payload, ['lostFee', 'vipGrantId', 'lost']) });
   await runIdempotent(deps, { key, opType: 'tag_swap', requestHash }, async (tx) => {
     const at = ctx.at ?? new Date();
     const rules = await loadFrontdeskRules(tx);
@@ -504,9 +507,12 @@ export async function swapTag(deps: Deps, visitId: number, raw: SwapInputData, c
       INSERT INTO visit_tag_changes (visit_id, from_tag_id, to_tag_id, reason, old_tag_locked, operator_id, created_at, vip_override_by)
       VALUES (${visit.id}, ${from.id}, ${to.id}, ${input.reason}, ${input.lockOld}, ${ctx.actor.id}, ${at}, ${override?.approverId ?? null})
       RETURNING id`;
+    // 8.2.21：收了丢牌赔偿或登记丢了的，原手牌进挂失清单（记下这位客人）
+    const lost = input.lost || input.lostFee !== null;
     if (input.lockOld) {
       await tx`
-        UPDATE hand_tags SET locked = true, lock_reason = ${input.reason}, locked_by = ${ctx.actor.id}, locked_at = ${at}, updated_at = now()
+        UPDATE hand_tags SET locked = true, lock_reason = ${input.reason}, locked_by = ${ctx.actor.id}, locked_at = ${at}, updated_at = now(),
+                             lock_kind = ${lost ? 'lost' : null}, lock_visit_id = ${lost ? visit.id : null}
         WHERE id = ${from.id}`;
     }
     await saveKey(tx, key, 'tag_swap', requestHash, change!.id, ctx.actor.id);

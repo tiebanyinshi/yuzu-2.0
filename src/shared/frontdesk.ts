@@ -122,6 +122,26 @@ export const TAG_SERVICE_STATUSES = ['normal', 'paused', 'repair'] as const;
 export type TagServiceStatus = (typeof TAG_SERVICE_STATUSES)[number];
 export const TAG_SERVICE_LABELS: Record<TagServiceStatus, string> = { normal: '正常', paused: '暂停使用', repair: '维修中' };
 
+/** 8.2.21 锁定的原因类别（docs/V82221_TAG_EXCEPTIONS.md）：挂失（客人弄丢）、未交回（结了账没还牌）；手动锁的不分类 */
+export const TAG_LOCK_KINDS = ['lost', 'unreturned'] as const;
+export type TagLockKind = (typeof TAG_LOCK_KINDS)[number];
+export const TAG_LOCK_KIND_LABELS: Record<TagLockKind, string> = { lost: '挂失', unreturned: '未交回' };
+
+/** 8.2.21 异常手牌清单的一行：挂失、未交回、手动锁定、暂停使用、维修中 */
+export type TagExceptionKind = TagLockKind | 'locked' | 'paused' | 'repair';
+export const TAG_EXCEPTION_LABELS: Record<TagExceptionKind, string> = { lost: '挂失', unreturned: '未交回', locked: '手动锁定', paused: '暂停使用', repair: '维修中' };
+export interface TagException {
+  tagId: number;
+  code: string;
+  zone: TagZone;
+  kind: TagExceptionKind;
+  reason: string | null;
+  at: string | null;
+  byName: string | null;
+  /** 挂失、未交回时是哪位客人（那一次来访） */
+  guest: { visitId: number; visitNo: string; name: string; checkedOutAt: string | null } | null;
+}
+
 /** 前台能不能把这张牌发出去：启用、没锁定、柜子正常、没人在用 */
 export const tagIssuable = (t: Pick<HandTag, 'active' | 'locked' | 'serviceStatus'> & { visit?: unknown }) => t.active && !t.locked && t.serviceStatus === 'normal' && !t.visit;
 

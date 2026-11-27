@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Lock, LockOpen } from 'lucide-react';
-import { normalizeTagCode, uniqueTagMatch, ZONE_LABELS, type BoardTag } from '@shared/frontdesk';
+import { normalizeTagCode, TAG_LOCK_KIND_LABELS, uniqueTagMatch, ZONE_LABELS, type BoardTag, type TagLockKind } from '@shared/frontdesk';
 import { api, errorMessage } from '../../lib/api';
 import { useCan, useReasons } from '../../lib/session';
 import { cn } from '../../lib/utils';
@@ -12,18 +12,35 @@ import { Button, Field, Input, Notice } from '../../components/ui';
 import { ZoneChip } from './parts';
 
 /** 锁牌 / 解锁：空闲手牌丢失、损坏时锁定，找回或修好后解锁（值班经理、店总、店主） */
-export function TagLockDialog({ open, tags, initialCode, onClose, onDone }: { open: boolean; tags: BoardTag[]; initialCode?: string; onClose: () => void; onDone: (message: string) => void }) {
+export function TagLockDialog({
+  open,
+  tags,
+  initialCode,
+  initialKind,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  tags: BoardTag[];
+  initialCode?: string;
+  initialKind?: TagLockKind;
+  onClose: () => void;
+  onDone: (message: string) => void;
+}) {
   const can = useCan();
   const lockReasons = useReasons('lockReasons');
   const [code, setCode] = useState('');
   const [reason, setReason] = useState('');
+  // 8.2.21：挂失 / 未交回进异常手牌清单（记下最后一位结账的客人），手动锁的不进
+  const [kind, setKind] = useState<TagLockKind | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useResetOnOpen(open, () => {
     setCode(initialCode ?? '');
     setReason('');
+    setKind(initialKind ?? null);
     setError(null);
-  }, [initialCode]);
+  }, [initialCode, initialKind]);
 
   const c = normalizeTagCode(code);
   const tag = c ? (tags.find((t) => t.code === c) ?? uniqueTagMatch(tags, c)) : null;
@@ -70,10 +87,17 @@ export function TagLockDialog({ open, tags, initialCode, onClose, onDone }: { op
               icon={<Lock className="size-4" />}
               loading={busy}
               disabled={!tag || !!tag.visit || reason.trim().length < 2}
-              onClick={() => tag && run(() => api.post(`/api/frontdesk/tags/${tag.id}/lock`, { reason: reason.trim() }), `手牌 ${tag.code} 已锁定`)}
+              onClick={() =>
+                tag &&
+                run(
+                  () => api.post(`/api/frontdesk/tags/${tag.id}/lock`, { reason: reason.trim(), ...(kind ? { kind } : {}) }),
+                  kind ? `手牌 ${tag.code} 已登记${TAG_LOCK_KIND_LABELS[kind]}` : `手牌 ${tag.code} 已锁定`,
+                )
+              }
               data-testid="tag-lock"
             >
-              锁定{tag ? ` ${tag.code}` : ''}
+              {kind ? `登记${TAG_LOCK_KIND_LABELS[kind]}` : '锁定'}
+              {tag ? ` ${tag.code}` : ''}
             </Button>
           )}
         </>
@@ -109,6 +133,28 @@ export function TagLockDialog({ open, tags, initialCode, onClose, onDone }: { op
           <Notice tone="warning" title="这张牌上有在店客人，不能直接锁定">
             丢失或损坏时，请在手牌账单里给客人换牌并勾选「锁定原手牌」。
           </Notice>
+        )}
+        {tag && !tag.locked && !tag.visit && (
+          <Field label="类别" hint="挂失、未交回的进「异常手牌」清单，记下最后一位结账用这张牌的客人">
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="锁定类别">
+              {([null, 'unreturned', 'lost'] as const).map((k) => (
+                <button
+                  key={k ?? 'manual'}
+                  type="button"
+                  role="radio"
+                  aria-checked={kind === k}
+                  onClick={() => setKind(k)}
+                  className={cn(
+                    'tap h-8 rounded-full border px-3 text-[13px] font-semibold',
+                    kind === k ? 'border-clay bg-clay-soft text-clay' : 'border-line bg-card text-ink-2 hover:border-line-strong',
+                  )}
+                  data-testid={`tag-lock-kind-${k ?? 'manual'}`}
+                >
+                  {k ? TAG_LOCK_KIND_LABELS[k] : '只锁定（损坏、故障）'}
+                </button>
+              ))}
+            </div>
+          </Field>
         )}
         {tag && !tag.locked && !tag.visit && (
           <Field label="锁定原因">
