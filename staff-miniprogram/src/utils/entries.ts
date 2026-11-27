@@ -42,7 +42,7 @@ export const ENTRIES: EntryDef[] = [
   { key: 'directory', label: '通讯录', icon: 'directory', group: 'people', page: '/pages/directory/index', keywords: ['电话', '同事', '联系'] },
   { key: 'announcements', label: '公告', icon: 'announcements', group: 'people', page: '/pages/announcements/index', keywords: ['通知', '公司公告'] },
   { key: 'knowledge', label: '知识库', icon: 'knowledge', group: 'learn', page: '/pages/learn/index', keywords: ['培训', '资料', '应知应会', '学习'] },
-  { key: 'academy', label: '汤崎学堂', icon: 'academy', group: 'learn', page: null, keywords: ['学习', '课程', '必修', '考试'] },
+  { key: 'academy', label: '汤崎学堂', icon: 'academy', group: 'learn', page: '/pages/academy-courses/index', keywords: ['学习', '课程', '必修', '考试', '每日一练', '学习地图'] },
 ];
 
 export interface EntryView {

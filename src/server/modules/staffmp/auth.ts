@@ -16,7 +16,8 @@ import { NOT_EMPLOYEE_ROLES, notify, onDuty } from '../oa';
 import { canteenEntries } from './canteen';
 
 /** 人人都有的入口（第 2.4 节）；吃饭、巡场按员工食堂与巡场的开关、对上的饭卡加（canteen.ts） */
-const BASE_ENTRIES: readonly StaffMpEntryKey[] = ['punch', 'schedule', 'attendance', 'leave', 'approvals', 'payslips', 'directory', 'announcements', 'knowledge'];
+// 汤崎学堂与员工培训一样只给在职员工用：员工小程序本来就只让在职员工登录（eligibilityOf），所以人人都有
+const BASE_ENTRIES: readonly StaffMpEntryKey[] = ['punch', 'schedule', 'attendance', 'leave', 'approvals', 'payslips', 'directory', 'announcements', 'knowledge', 'academy'];
 
 /** 这个账号能不能用员工小程序；不能的给一句面向员工的原因 */
 export async function eligibilityOf(db: Db, staffId: number): Promise<{ ok: true } | { ok: false; code: string; message: string }> {

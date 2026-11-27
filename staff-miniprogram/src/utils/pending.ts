@@ -9,7 +9,8 @@
 //   · 按人分开存：换了人登录看不到、也不会替前一位重提。
 import { call, isApiError, isRejected } from './api';
 
-export type PendingKind = 'punch' | 'approval_submit' | 'approval_act';
+/** 打卡、发起申请、处理审批；学堂的开卷（同一课时）、交卷（同一份卷子）、每日一练作答（同一道题）、学完了（同一课时） */
+export type PendingKind = 'punch' | 'approval_submit' | 'approval_act' | 'academy_quiz' | 'academy_submit' | 'academy_daily' | 'academy_complete';
 
 export interface PendingOp {
   /** 谁发的（按人分开存） */
@@ -47,6 +48,22 @@ export function loadPending(staffId: number, kind: PendingKind, ref?: number): P
     return v && typeof v.key === 'string' ? v : null;
   } catch {
     return null;
+  }
+}
+
+/** 这个人这一类留着的全部（学堂开新卷、进每日一练时把以前没确定的先原样重提掉） */
+export function listPending(staffId: number, kind: PendingKind): PendingOp[] {
+  try {
+    const prefix = `wcp_pending:${staffId}:${kind}`;
+    const keys = wx.getStorageInfoSync().keys.filter((k) => k === prefix || k.startsWith(`${prefix}:`));
+    const out: PendingOp[] = [];
+    for (const k of keys) {
+      const v = wx.getStorageSync(k) as PendingOp | '';
+      if (v && typeof v.key === 'string' && v.kind === kind) out.push(v);
+    }
+    return out;
+  } catch {
+    return [];
   }
 }
 

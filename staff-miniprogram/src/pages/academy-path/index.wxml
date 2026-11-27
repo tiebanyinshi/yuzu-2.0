@@ -1,0 +1,23 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="学习地图" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="head">
+      <view class="title">{{title}}</view>
+      <view wx:if="{{summary}}" class="t-body muted summary">{{summary}}</view>
+      <view class="t-caption num">{{meta}}</view>
+    </view>
+    <view class="stages">
+      <view wx:for="{{stages}}" wx:key="id" class="stage" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onCourse" aria-role="button">
+        <view class="dot {{item.done ? 'done' : ''}} num">{{item.no}}</view>
+        <view class="card stage-card">
+          <view class="row-main">
+            <view class="row-title">{{item.title}}</view>
+            <view class="row-sub num">{{item.sub}}</view>
+          </view>
+          <view wx:if="{{item.progress}}" class="tag {{item.done ? 'neutral' : 'new'}}">{{item.progress}}</view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>
