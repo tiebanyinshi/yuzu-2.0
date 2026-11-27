@@ -37,6 +37,7 @@ const AnnouncerPage = lazyPage(() => import('./features/clockroom/AnnouncerPage'
 const TechnicianAdminPage = lazyPage(() => import('./features/technicians/TechnicianAdminPage').then((m) => m.TechnicianAdminPage));
 const DiningPage = lazyPage(() => import('./features/dining/DiningPage').then((m) => m.DiningPage));
 const TechBoardPage = lazyPage(() => import('./features/clockroom/TechBoardPage').then((m) => m.TechBoardPage));
+const PoolPage = lazyPage(() => import('./features/pool/PoolPage').then((m) => m.PoolPage));
 const LeisurePage = lazyPage(() => import('./features/leisure/LeisurePage').then((m) => m.LeisurePage));
 const RoomCenterPage = lazyPage(() => import('./features/room-center/RoomCenterPage').then((m) => m.RoomCenterPage));
 const BookingsPage = lazyPage(() => import('./features/bookings/BookingsPage').then((m) => m.BookingsPage));
@@ -499,6 +500,7 @@ const router = createBrowserRouter([
       { path: 'dining/:tab?', element: <DiningPage /> },
       { path: 'room-center', element: <RoomCenterPage /> },
       { path: 'leisure', element: <LeisurePage /> },
+      { path: 'pool', element: <PoolPage /> },
       { path: 'rooms', element: <RoomsMoved /> },
       { path: 'bookings', element: <BookingsPage /> },
       // 发券（8.0.19，IA4）：批量发券、无记名券从后台「券」挪到门店，会员工作台右上角进

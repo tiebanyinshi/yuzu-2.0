@@ -114,6 +114,7 @@
   - 餐厅入口登记进餐（8.2.8，`docs/V8228_DINING_MEALS.md`）：先锁来访（核对这一餐登记过没有、还有几餐含餐）→ 走挂账（`postChargesTx`：来访 → 账单 → …）记一行餐费 → 写登记与自动折扣；点单页的餐台折零在挂账的同一个事务里、写完明细以后只读地核对登记、写自动折扣。
   - 水吧首杯免费与取餐号（8.2.19，`docs/V82219_WATER_BAR.md`）：都在挂账（`postChargesTx`）的同一个事务里、建完出品单以后：首杯按已锁的来访只读地核对已有的首杯赠、写自动折扣；发号先取「这家店这一营业日取餐号」的咨询锁（`pg_advisory_xact_lock`）再取最大号 + 1，插入 `pickup_tickets`（只追加）。
   - 休闲娱乐一键建（8.2.20，`docs/V82220_LEISURE.md`）：一个事务里：规则设置的锁（`saveRuleSetting`）→ 空间台账的咨询锁（`lockLedger`）→ 楼层一行（`FOR SHARE`）→ 插入台位、写规则；开单、结束计时照「开单即占用」原来的顺序，加钟那一行与房费一起在结束的事务里写。
+  - 泡池（8.2.21，`docs/V82221_POOL.md`）：下单就是钟房派钟（`/api/clockroom/dispatch`），照它原来的顺序；绑技师工牌只锁那一位技师的一行（`FOR UPDATE`），芯片号重复靠唯一索引兜底。
 - 房态点单（回测整改 P07，`docs/YUZU_REQ_V820.md` 第 8 节，`room-orders.ts`）：不锁房态行。按挂账的 `runIdempotent`（`bill_post`）先查编号 → 房间一行（客房 `rooms` 或空间 `spaces`，`FOR KEY SHARE`：`room_orders` 的外键要这把锁，放在锁来访之前，与客房退房「入住单 → 客房 → 来访」同一个先后）；房间里现在的客人、出品口与分类配置、下单权限都只读地核对 → 来访 → 账单 →（核对这间房还是这位客人，`PostOptions.toRoom`）→ 沽清 → 出品单（就是 `postChargesTx` 的顺序）→ 最后插入 `room_orders` / `room_order_lines`（只追加）→ 写编号。撤单是作废账单明细（照前台作废明细的锁），不碰这两张表。按出品口的分类配置（`room_order_outlets`）按水吧、果吧的固定顺序逐行写，不锁别的；看板上的单数与金额、点单记录只读。
 - 8.2.4 餐饮（`docs/V8224_DINING.md` 第 7 节）：分组默认档口走规则锁（`saveRuleSetting`，存在 `dining_rules.groupStations`）；菜品「单独设档口」按项目 id 升序锁菜品行（`FOR UPDATE`，与后台「出品档口与菜品」同一个写法）；下单按分组选档口只读、不加锁；
   - 临时项目选档口：挂账原来的顺序（来访 → 账单 → 沽清 → 出品单），档口只读地核对，临时项目不扣沽清；

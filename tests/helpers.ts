@@ -459,6 +459,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '600_dining_meals_v828.sql',
   '610_pickup_v829.sql',
   '620_leisure_v8210.sql',
+  '630_pool_v8211.sql',
   '640_academy_core.sql',
   '641_academy_assess.sql',
   '642_academy_content.sql',

@@ -7,6 +7,7 @@
 
 import {
   Banknote,
+  Bath,
   BedDouble,
   BriefcaseBusiness,
   CalendarCheck2,
@@ -131,6 +132,8 @@ const STORE_NAV: StoreNavDomain[] = [
     icon: Hourglass,
     items: [
       { to: '/crm/clockroom', label: '钟房', icon: Hourglass, perm: 'technician.dispatch', when: (s) => s.technicians },
+      // 泡池（8.2.21，docs/V82221_POOL.md）：男汤 / 女汤泡池区刷客人手牌、刷技师工牌派钟上钟
+      { to: '/crm/pool', label: '泡池', icon: Bath, perm: 'technician.dispatch', when: (s) => s.technicians },
       // 上钟播报（回测整改 P03，回测 4-1）：从钟房里移出来，与钟房同级；权限单独授，排位员可以只有这一项
       { to: '/crm/announcer', label: '上钟播报', icon: Megaphone, perm: ['technician.announce', 'technician.dispatch'], when: (s) => s.technicians },
       // 回测整改 P09（回测 4-2）：技师上钟轮播，只读大屏；可单独授给值班经理、排位员
@@ -227,6 +230,7 @@ const LEGACY_ORDER = [
   '/crm/cashier',
   '/crm/lockers',
   '/crm/clockroom',
+  '/crm/pool',
   '/crm/announcer',
   '/crm/tech-board',
   '/crm/dining',

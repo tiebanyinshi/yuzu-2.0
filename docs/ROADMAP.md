@@ -327,6 +327,8 @@
   - `740`（`740_booking_batch_overlap.sql`）：按操作编号（`idempotency_keys` 的 `booking_create` 与 `batchRowKey` 推出的行编号）认出 8.2.4 一报多的技师预约，只把 `technician_overlap` 补成 true、每张记一条审计 `booking_overlap_backfill`；对不上的不动。函数 `yuzu_booking_batch_row_key`、`yuzu_booking_batch_links`（只读核对 `scripts/diagnose-booking-overlap.sql` 共用）。回滚 `docs/rollback/740_booking_batch_overlap.down.sql`。
 - **8.2.20（`620`–`629`，原排 8.2.10）**：《新店系统需求现场走场确认》第二节（休闲娱乐：网吧、桌球按台位刷手牌计时、单独收费，价目表一键建；设计见 `docs/V82220_LEISURE.md`）。
   - `620`（`620_leisure_v8210.sql`）：使用单计费表 `space_usage_charges` 的类型加 `extra`（加钟）。回滚 `docs/rollback/620_leisure_v8210.down.sql`。
+- **8.2.21（`630`–`639`，原排 8.2.11）**：《新店系统需求现场走场确认》第三节（男汤 / 女汤泡池：刷客人手牌、刷技师工牌派钟上钟，进技师业绩；设计见 `docs/V82221_POOL.md`）。
+  - `630`（`630_pool_v8211.sql`）：技师工牌芯片号 `technicians.card_uid`（同一门店不重复）。回滚 `docs/rollback/630_pool_v8211.down.sql`。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
   - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。
