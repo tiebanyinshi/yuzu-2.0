@@ -99,24 +99,25 @@ export async function signOff(sql: Sql, ctx: OpContext, raw: unknown, today: str
     WHERE s.id = ${input.staffId} AND ${onDuty(sql)}`;
   if (!trainee) throw notFound('没有这位在职员工');
   if (!scope.all && (!scope.department || trainee.department !== scope.department)) throw forbidden('只能给本部门的同事签实操');
-  const [lesson] = await sql<{ id: number; courseId: number; title: string; credits: number; body: string; kind: string; active: boolean; courseStatus: string; version: number }[]>`
-    SELECT l.id, l.course_id, l.title, l.credits, l.body, l.kind, l.active, c.status AS course_status, l.version
-    FROM academy_lessons l JOIN academy_courses c ON c.id = l.course_id WHERE l.id = ${input.lessonId}`;
-  if (!lesson || lesson.kind !== 'practical') throw notFound('没有这个实操课时');
-  if (!lesson.active || lesson.courseStatus !== 'published') throw conflict('ACADEMY_PREVIEW_ONLY', '草稿或下架的课不能签');
-  const items = practicalItems(lesson.body);
-  // 带教打勾时看的是哪一版检查项：管理员改过（哪怕条数没变）就拒绝，免得按旧要求签了新要求（Codex 审查 43c2d86）
-  if (input.lessonVersion !== lesson.version) throw conflict('ACADEMY_CHANGED', '这项实操的检查项刚改过，请刷新后按新的检查项再签');
-  if (input.checks.length !== items.length) throw badRequest(`这个实操有 ${items.length} 项，打勾的是 ${input.checks.length} 项（检查项刚改过，请刷新）`);
-  if (input.result === 'pass' && input.checks.some((c) => !c)) throw badRequest('还有没达标的项，签「再练」或者全部达标再签「通过」');
   return withTx(sql, async (tx) => {
     await lockLearner(tx, input.staffId);
+    // 先查这个操作编号签过没有：签上了但没收到结果、之后课时又改过或下架了的，原样重提照样返回第一次的结果（Codex 审查 4c50670）
     const [had] = await tx<{ id: number; staffId: number; lessonId: number }[]>`SELECT id, staff_id, lesson_id FROM academy_signoffs WHERE client_key = ${input.clientKey}`;
     if (had) {
       if (Number(had.staffId) !== input.staffId || Number(had.lessonId) !== input.lessonId) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一次签核，请刷新');
       const [s] = (await signoffsOf(tx, input.staffId, input.lessonId)).filter((x) => x.id === Number(had.id));
       return { signoff: s!, completed: s!.result === 'pass', credits: 0 };
     }
+    const [lesson] = await tx<{ id: number; courseId: number; title: string; credits: number; body: string; kind: string; active: boolean; courseStatus: string; version: number }[]>`
+      SELECT l.id, l.course_id, l.title, l.credits, l.body, l.kind, l.active, c.status AS course_status, l.version
+      FROM academy_lessons l JOIN academy_courses c ON c.id = l.course_id WHERE l.id = ${input.lessonId}`;
+    if (!lesson || lesson.kind !== 'practical') throw notFound('没有这个实操课时');
+    if (!lesson.active || lesson.courseStatus !== 'published') throw conflict('ACADEMY_PREVIEW_ONLY', '草稿或下架的课不能签');
+    const items = practicalItems(lesson.body);
+    // 带教打勾时看的是哪一版检查项：管理员改过（哪怕条数没变）就拒绝，免得按旧要求签了新要求（Codex 审查 43c2d86）
+    if (input.lessonVersion !== lesson.version) throw conflict('ACADEMY_CHANGED', '这项实操的检查项刚改过，请刷新后按新的检查项再签');
+    if (input.checks.length !== items.length) throw badRequest(`这个实操有 ${items.length} 项，打勾的是 ${input.checks.length} 项（检查项刚改过，请刷新）`);
+    if (input.result === 'pass' && input.checks.some((c) => !c)) throw badRequest('还有没达标的项，签「再练」或者全部达标再签「通过」');
     const [done] = await tx`SELECT 1 FROM academy_progress WHERE staff_id = ${input.staffId} AND lesson_id = ${input.lessonId} AND completed_at IS NOT NULL`;
     if (done) throw conflict('ACADEMY_ALREADY_DONE', '这项实操已经签过「通过」了');
     const [row] = await tx<{ id: number }[]>`

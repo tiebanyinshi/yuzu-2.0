@@ -165,11 +165,16 @@ describe('学堂 · 每日一练', () => {
     expect(daily.items.filter((i) => i.kind !== 'recall').every((i) => i.answerText === null)).toBe(true);
     expect(daily.items.find((i) => i.kind === 'recall')!.answerText).toBe('先安抚，核对后挂失补牌。');
     const recall = daily.items.find((i) => i.kind === 'recall')!;
-    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/academy/daily/answer', { clientKey: randomUUID(), questionId: recall.questionId })).status).toBe(400);
+    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/academy/daily/answer', { clientKey: randomUUID(), questionId: recall.questionId, version: recall.version })).status).toBe(400);
+    // 页面上的题是旧版本（管理员中间改过题）：拒绝，不按旧题记掌握度（Codex 审查 4c50670）
+    expect(
+      (await api(ctx.app, ctx.clerk, 'POST', '/api/academy/daily/answer', { clientKey: randomUUID(), questionId: recall.questionId, grade: 4, version: recall.version + 1 })).body.error.code,
+    ).toBe('ACADEMY_CHANGED');
     let last: { credits: number; doneToday: number } = { credits: 0, doneToday: 0 };
     for (const item of daily.items) {
       const key = randomUUID();
-      const body = item.kind === 'recall' ? { clientKey: key, questionId: item.questionId, grade: 4 } : { clientKey: key, questionId: item.questionId, choice: [0] };
+      const body =
+        item.kind === 'recall' ? { clientKey: key, questionId: item.questionId, version: item.version, grade: 4 } : { clientKey: key, questionId: item.questionId, version: item.version, choice: [0] };
       const r = await api(ctx.app, ctx.clerk, 'POST', '/api/academy/daily/answer', body);
       expect(r.status, JSON.stringify(r.body)).toBe(200);
       if (item.kind === 'recall') expect(r.body).toMatchObject({ correct: null, grade: 4, answerText: '先安抚，核对后挂失补牌。' });
@@ -182,9 +187,10 @@ describe('学堂 · 每日一练', () => {
     const after = (await api<AcademyDaily>(ctx.app, ctx.clerk, 'GET', '/api/academy/daily')).body;
     expect(after).toMatchObject({ items: [], credited: true, streak: 1, doneToday: daily.items.length });
     // 练过的题今天不能再答
-    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/academy/daily/answer', { clientKey: randomUUID(), questionId: daily.items[0]!.questionId, choice: [0], grade: 3 })).body.error.code).toBe(
-      'ACADEMY_DAILY_GONE',
-    );
+    expect(
+      (await api(ctx.app, ctx.clerk, 'POST', '/api/academy/daily/answer', { clientKey: randomUUID(), questionId: daily.items[0]!.questionId, version: daily.items[0]!.version, choice: [0], grade: 3 }))
+        .body.error.code,
+    ).toBe('ACADEMY_DAILY_GONE');
     // 没学过这门课的人：没有新题
     expect((await api<AcademyDaily>(ctx.app, diner, 'GET', '/api/academy/daily')).body.items).toEqual([]);
   });
@@ -221,10 +227,18 @@ describe('学堂 · 实操签核与证书', () => {
     const pass = await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: key, checks: [true, true, true], result: 'pass' });
     expect(pass.body).toMatchObject({ completed: true, credits: 3 });
     expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: key, checks: [true, true, true], result: 'pass' })).body).toMatchObject({ completed: true, credits: 0 });
+    // 签上了但没收到结果、之后检查项又改过：原样重提照样返回第一次的结果，不被版本核对挡住（Codex 审查 4c50670）
+    await ctx.sql`UPDATE academy_lessons SET version = version + 1 WHERE id = ${practicalId}`;
+    expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: key, checks: [true, true, true], result: 'pass' })).body).toMatchObject({
+      completed: true,
+      credits: 0,
+      signoff: { result: 'pass' },
+    });
+    base.lessonVersion += 1;
     expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: randomUUID(), checks: [true, true, true], result: 'pass' })).body.error.code).toBe('ACADEMY_ALREADY_DONE');
     await expect(ctx.sql`DELETE FROM academy_signoffs WHERE staff_id = ${ctx.clerkId}`).rejects.toThrow();
     const view = (await api<AcademyLessonView>(ctx.app, ctx.clerk, 'GET', `/api/academy/lessons/${practicalId}`)).body;
-    expect(view.practical).toMatchObject({ items: ['主动问候', '核对人数', '指引更衣室'], lessonVersion: lessonVersion + 1 });
+    expect(view.practical).toMatchObject({ items: ['主动问候', '核对人数', '指引更衣室'], lessonVersion: lessonVersion + 2 });
     expect(view.practical!.signoffs.map((s) => s.result)).toEqual(['pass', 'retry']);
     // 学完最后一节：课程完成、地图完成、发证书（12 个月有效）
     const article = course.lessons.find((l) => l.kind === 'article')!;

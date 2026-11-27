@@ -352,6 +352,8 @@ export interface AcademyDailyItem {
   isNew: boolean;
   /** 问答卡的答案（先自己想，点「看答案」再显示、再自评；Codex 审查 43c2d86）；客观题为空，交了才给答案 */
   answerText: string | null;
+  /** 题的版本：作答时原样带回，管理员中间改过题的拒绝（Codex 审查 4c50670） */
+  version: number;
 }
 
 export interface AcademyDaily {
