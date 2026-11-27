@@ -28,7 +28,21 @@ import { previewTableCheckout } from '../tables';
 import { listTicketTypes, saveTicketType, setVisitTicket, type TicketTypeInputData } from './tickets';
 import { frontdeskChecks } from './checks';
 import { businessDate, FRONTDESK_OP_PERMISSIONS, FRONTDESK_OPS, loadFrontdeskRules } from './common';
-import { batchCreate, deleteHandTag, generateTags, setTagService, importHandTags, listTags, lockHandTag, setTagCard, tagByCard, unlockHandTag, updateHandTag, type ImportInputData } from './tags';
+import {
+  batchCreate,
+  deleteHandTag,
+  generateTags,
+  setTagService,
+  importHandTags,
+  listTagExceptions,
+  listTags,
+  lockHandTag,
+  setTagCard,
+  tagByCard,
+  unlockHandTag,
+  updateHandTag,
+  type ImportInputData,
+} from './tags';
 import { registerIncidentRoutes } from './incidents';
 import { registerRiskRoutes } from './risk';
 import { registerGuestRoutes } from './guest';
@@ -396,6 +410,9 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
     await setTagService(deps, parse(idParam, req.params).id, req.body, ctxOf(req));
     return { ok: true };
   });
+
+  // 8.2.21 异常手牌清单：挂失、未交回、锁定、暂停、维修（docs/V82221_TAG_EXCEPTIONS.md）
+  app.get('/api/frontdesk/tag-exceptions', { preHandler: guard('frontdesk.read') }, async () => ({ tags: await listTagExceptions(sql) }));
 
   app.post('/api/frontdesk/tags/:id/lock', { preHandler: guard('frontdesk.operate') }, async (req) => {
     const { id } = parse(idParam, req.params);

@@ -14,6 +14,7 @@ import {
   ZONE_LABELS,
   type BoardTag,
   type CheckinResult,
+  type TagLockKind,
   type TagZone,
   type VisitDetail,
   DEFAULT_FRONTDESK_RULES,
@@ -47,6 +48,7 @@ const TicketDialog = lazyPage(() => import('./CheckoutDialog').then((m) => m.Tic
 
 /** 锁牌 / 解锁：用得少，按需加载（不进首屏主包） */
 const TagLockDialog = lazyPage(() => import('./TagLockDialog').then((m) => m.TagLockDialog));
+const TagExceptionsDialog = lazyPage(() => import('./TagExceptionsDialog').then((m) => m.TagExceptionsDialog));
 
 type StatusFilter = 'all' | 'in' | 'free' | 'locked';
 
@@ -79,11 +81,13 @@ export function FrontdeskPage() {
   const [risksOpen, setRisksOpen] = useState(false);
   const guestRules = useGuestRules();
   /** 找在店客人、锁牌 / 解锁 */
-  const [tool, setTool] = useState<null | { kind: 'find' } | { kind: 'lock'; code?: string }>(null);
+  const [tool, setTool] = useState<null | { kind: 'find' } | { kind: 'lock'; code?: string; lockKind?: TagLockKind } | { kind: 'exceptions' }>(null);
   const backfill = useBackfill();
   const searchRef = useRef<HTMLInputElement>(null);
 
   const tags = board.data?.tags ?? [];
+  // 8.2.21 异常手牌（锁定的牌）几张：工具栏上提示
+  const lockedCount = useMemo(() => tags.filter((t) => t.locked).length, [tags]);
   const matches = useMemo(() => (q ? matchTags(tags, q) : []), [tags, q]);
   const unique = useMemo(() => (q ? uniqueTagMatch(tags, q) : null), [tags, q]);
   const primary = picked ? matches[Math.min(cursor, matches.length - 1)] : (unique ?? undefined);
@@ -293,6 +297,14 @@ export function FrontdeskPage() {
               </Button>
               <Button size="sm" variant="ghost" icon={<Search className="size-4" />} onClick={() => setTool({ kind: 'find' })} data-testid="open-find-guest">
                 找客人
+              </Button>
+              <Button size="sm" variant="ghost" icon={<TriangleAlert className="size-4" />} onClick={() => setTool({ kind: 'exceptions' })} data-testid="open-tag-exceptions">
+                异常手牌
+                {lockedCount > 0 && (
+                  <StatusChip tone="clay" className="ml-0.5" testId="tag-exceptions-count">
+                    {lockedCount}
+                  </StatusChip>
+                )}
               </Button>
               {can('frontdesk.tags') && (
                 <Button size="sm" variant="ghost" icon={<Lock className="size-4" />} onClick={() => setTool({ kind: 'lock' })} data-testid="open-tag-lock">
@@ -572,12 +584,24 @@ export function FrontdeskPage() {
         <TicketDialog open visit={visit.data} onClose={() => setDialog(null)} onDone={(v) => afterChange(v, `${v.tag.code} 票种改为 ${v.ticket?.name ?? ''}`)} />
       )}
       <ChecksDialog open={checksOpen} onClose={() => setChecksOpen(false)} />
+      {tool?.kind === 'exceptions' && (
+        <TagExceptionsDialog
+          open
+          onClose={() => setTool(null)}
+          onRegister={() => setTool({ kind: 'lock', lockKind: 'unreturned' })}
+          onDone={(message) => {
+            refresh();
+            toast({ tone: 'success', title: message });
+          }}
+        />
+      )}
       <FindGuestDialog open={tool?.kind === 'find'} tags={tags} onClose={() => setTool(null)} onPick={select} />
       {tool?.kind === 'lock' && (
         <TagLockDialog
           open
           tags={tags}
           initialCode={tool.code}
+          initialKind={tool.lockKind}
           onClose={() => setTool(null)}
           onDone={(message) => {
             setTool(null);

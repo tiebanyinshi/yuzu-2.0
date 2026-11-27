@@ -311,6 +311,8 @@
   - `620`（`620_leisure_v8210.sql`）：使用单计费表 `space_usage_charges` 的类型加 `extra`（加钟）。回滚 `docs/rollback/620_leisure_v8210.down.sql`。
 - **8.2.11（`630`–`639`）**：《新店系统需求现场走场确认》第三节（男汤 / 女汤泡池：刷客人手牌、刷技师工牌派钟上钟，进技师业绩；设计见 `docs/V82211_POOL.md`）。
   - `630`（`630_pool_v8211.sql`）：技师工牌芯片号 `technicians.card_uid`（同一门店不重复）。回滚 `docs/rollback/630_pool_v8211.down.sql`。
+- **8.2.21（`740`–`749`）**：店主 2026-11-27 收银员工作台 demo 待定五项里定「做」的第 3 项（未交回、挂失手牌清单；设计见 `docs/V82221_TAG_EXCEPTIONS.md`）。`700`–`739` 已被业财法与采购线占用。
+  - `740`（`740_tag_exceptions_v8221.sql`）：`hand_tags.lock_kind`（挂失 / 未交回）、`hand_tags.lock_visit_id`（哪一次来访）。回滚 `docs/rollback/740_tag_exceptions_v8221.down.sql`。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
   - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。

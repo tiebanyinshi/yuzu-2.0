@@ -12,17 +12,21 @@ import {
   TAG_CODE_PATTERN,
   TAG_GENERATE_MAX,
   TAG_KINDS,
+  TAG_LOCK_KIND_LABELS,
+  TAG_LOCK_KINDS,
   TAG_SERVICE_LABELS,
   TAG_SERVICE_STATUSES,
   ZONES,
   type HandTag,
+  type TagException,
+  type TagLockKind,
 } from '@shared/frontdesk';
 import { HAND_TAG_IMPORT_MAX_ROWS, type HandTagImportReport } from '@shared/hand-tag-import';
 import { CARD_UID_PATTERN, normalizeCardUid, type TagByCard } from '@shared/frontdesk-risk';
 import { isUniqueViolation, type Db, type Sql } from '../../db';
 import { writeAudit } from '../../lib/audit';
 import type { OpContext } from '../../lib/context';
-import { badRequest, conflict, notFound } from '../../lib/errors';
+import { badRequest, conflict, notFound, unprocessable } from '../../lib/errors';
 import { parse } from '../../lib/validate';
 import type { Deps } from '../../lib/context';
 import { setTxTimeouts } from './common';
@@ -104,7 +108,11 @@ async function lockTag(tx: Db, id: number) {
   return { ...tag, inUse: use!.inUse };
 }
 
-export const LockInput = z.object({ reason: z.string().trim().min(2, '请填写锁定原因（至少 2 个字）').max(100, '原因最多 100 字') });
+export const LockInput = z.object({
+  reason: z.string().trim().min(2, '请填写锁定原因（至少 2 个字）').max(100, '原因最多 100 字'),
+  /** 8.2.21：挂失 / 未交回（记下是哪位客人那次来访），不带是手动锁 */
+  kind: z.enum(TAG_LOCK_KINDS, '锁定类别不正确').optional(),
+});
 
 export async function lockHandTag(deps: Deps, id: number, raw: unknown, ctx: OpContext) {
   const input = parse(LockInput, raw);
@@ -113,10 +121,26 @@ export async function lockHandTag(deps: Deps, id: number, raw: unknown, ctx: OpC
     const tag = await lockTag(tx, id);
     if (tag.inUse) throw conflict('TAG_IN_USE', `手牌 ${tag.code} 上有在店客人，请先给客人换牌并勾选「锁定原手牌」`);
     if (tag.locked) throw conflict('TAG_ALREADY_LOCKED', `手牌 ${tag.code} 已经是锁定状态`);
+    // 8.2.21：挂失 / 未交回记下最后一位用这张牌的客人（结了账的那一次来访）；没人用过的牌只能手动锁
+    let visitId: number | null = null;
+    if (input.kind) {
+      const [last] = await tx<{ id: number }[]>`
+        SELECT id FROM visits WHERE tag_id = ${id} AND status = 'settled' ORDER BY closed_at DESC, id DESC LIMIT 1`;
+      if (!last) throw unprocessable('TAG_NEVER_USED', `手牌 ${tag.code} 还没有客人结账用过，不能登记${TAG_LOCK_KIND_LABELS[input.kind]}；要停用请直接锁定`);
+      visitId = last.id;
+    }
     await tx`
-      UPDATE hand_tags SET locked = true, lock_reason = ${input.reason}, locked_by = ${ctx.actor.id}, locked_at = now(), updated_at = now()
+      UPDATE hand_tags SET locked = true, lock_reason = ${input.reason}, locked_by = ${ctx.actor.id}, locked_at = now(), updated_at = now(),
+                           lock_kind = ${input.kind ?? null}, lock_visit_id = ${visitId}
       WHERE id = ${id}`;
-    await writeAudit(tx, { staffId: ctx.actor.id, action: 'hand_tag_locked', targetType: 'hand_tag', targetId: id, detail: { code: tag.code, reason: input.reason }, ip: ctx.ip });
+    await writeAudit(tx, {
+      staffId: ctx.actor.id,
+      action: 'hand_tag_locked',
+      targetType: 'hand_tag',
+      targetId: id,
+      detail: { code: tag.code, reason: input.reason, ...(input.kind ? { kind: input.kind, visitId } : {}) },
+      ip: ctx.ip,
+    });
   });
 }
 
@@ -125,8 +149,19 @@ export async function unlockHandTag(deps: Deps, id: number, ctx: OpContext) {
     await setTxTimeouts(tx);
     const tag = await lockTag(tx, id);
     if (!tag.locked) return;
-    await tx`UPDATE hand_tags SET locked = false, lock_reason = NULL, locked_by = NULL, locked_at = NULL, updated_at = now() WHERE id = ${id}`;
-    await writeAudit(tx, { staffId: ctx.actor.id, action: 'hand_tag_unlocked', targetType: 'hand_tag', targetId: id, detail: { code: tag.code }, ip: ctx.ip });
+    const [prev] = await tx<{ lockKind: string | null }[]>`SELECT lock_kind FROM hand_tags WHERE id = ${id}`;
+    await tx`
+      UPDATE hand_tags SET locked = false, lock_reason = NULL, locked_by = NULL, locked_at = NULL, lock_kind = NULL, lock_visit_id = NULL, updated_at = now()
+      WHERE id = ${id}`;
+    // 8.2.21：挂失、未交回的解锁 = 找回了，审计里记一笔
+    await writeAudit(tx, {
+      staffId: ctx.actor.id,
+      action: 'hand_tag_unlocked',
+      targetType: 'hand_tag',
+      targetId: id,
+      detail: { code: tag.code, ...(prev?.lockKind ? { recovered: prev.lockKind } : {}) },
+      ip: ctx.ip,
+    });
   });
 }
 
@@ -564,4 +599,49 @@ export async function setTagCard(deps: Deps, id: number, raw: unknown, ctx: OpCo
     }
     throw error;
   }
+}
+
+/**
+ * 8.2.21 异常手牌清单（docs/V82221_TAG_EXCEPTIONS.md）：挂失、未交回、手动锁定、暂停使用、维修中，挂失 / 未交回带上当时的客人。
+ * 排序：挂失、未交回在前，同类按时间从早到晚（越早越该追）
+ */
+export async function listTagExceptions(db: Db): Promise<TagException[]> {
+  const rows = await db<
+    {
+      tagId: number;
+      code: string;
+      zone: TagException['zone'];
+      locked: boolean;
+      lockKind: TagLockKind | null;
+      lockReason: string | null;
+      lockedAt: Date | null;
+      lockedByName: string | null;
+      serviceStatus: string;
+      serviceNote: string | null;
+      serviceAt: Date | null;
+      serviceByName: string | null;
+      visitId: number | null;
+      visitNo: string | null;
+      memberName: string | null;
+      guestLabel: string | null;
+      closedAt: Date | null;
+    }[]
+  >`
+    SELECT t.id AS tag_id, t.code, t.zone, t.locked, t.lock_kind, t.lock_reason, t.locked_at, s.display_name AS locked_by_name,
+           t.service_status, t.service_note, t.service_at, ss.display_name AS service_by_name,
+           v.id AS visit_id, v.visit_no, m.name AS member_name, v.guest_label, v.closed_at
+    FROM hand_tags t
+    LEFT JOIN staff s ON s.id = t.locked_by
+    LEFT JOIN staff ss ON ss.id = t.service_by
+    LEFT JOIN visits v ON v.id = t.lock_visit_id
+    LEFT JOIN members m ON m.id = v.member_id
+    WHERE t.store_id = ${currentStoreId()} AND t.deleted_at IS NULL AND (t.locked OR t.service_status <> 'normal')`;
+  const iso = (d: Date | string | null) => (d ? new Date(d).toISOString() : null);
+  const list: TagException[] = rows.map((r) => {
+    const guest = r.visitId ? { visitId: r.visitId, visitNo: r.visitNo!, name: r.memberName ?? (r.guestLabel || '散客'), checkedOutAt: iso(r.closedAt) } : null;
+    if (r.locked) return { tagId: r.tagId, code: r.code, zone: r.zone, kind: r.lockKind ?? 'locked', reason: r.lockReason, at: iso(r.lockedAt), byName: r.lockedByName, guest };
+    return { tagId: r.tagId, code: r.code, zone: r.zone, kind: r.serviceStatus as 'paused' | 'repair', reason: r.serviceNote, at: iso(r.serviceAt), byName: r.serviceByName, guest: null };
+  });
+  const rank: Record<TagException['kind'], number> = { lost: 0, unreturned: 1, locked: 2, repair: 3, paused: 4 };
+  return list.sort((a, b) => rank[a.kind] - rank[b.kind] || (a.at ?? '').localeCompare(b.at ?? '') || a.code.localeCompare(b.code));
 }

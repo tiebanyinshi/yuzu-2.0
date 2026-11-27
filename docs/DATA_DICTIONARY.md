@@ -7,7 +7,7 @@
 「只追加」的表（账本、流水、审批动作、归档表）有触发器拒绝改删，改错走冲正或作废登记。
 列表里「键」：`PK` 主键；「引用」是外键指向的表。
 
-共 466 张表、5551 列。
+共 466 张表、5553 列。
 
 ## 目录
 
@@ -2559,6 +2559,8 @@ v0.7.15 · 飞书需求 RQ-004 第二段（docs/FLOORPLAN.md）：底图转换�
 | service_at | timestamp with time zone |  | 是 |  |  |  |
 | deleted_at | timestamp with time zone |  | 是 |  |  |  |
 | deleted_by | bigint |  | 是 |  | staff |  |
+| lock_kind | text |  | 是 |  |  | 8.2.21 锁定的原因类别：lost 挂失（客人弄丢）、unreturned 未交回（结了账没还牌）；手动锁的为空。解锁时清掉 |
+| lock_visit_id | bigint |  | 是 |  | visits | 8.2.21 挂失 / 未交回的是哪一次来访（找当时的客人）；解锁时清掉 |
 
 ### idempotency_keys
 
