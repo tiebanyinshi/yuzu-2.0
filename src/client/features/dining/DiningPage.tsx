@@ -16,6 +16,7 @@ import { Notice } from '../../components/ui';
 import { DishesTab } from './DishesTab';
 import { KitchenTab, LimitsTab } from './KitchenTab';
 import { LedgerTab } from './LedgerTab';
+import { MealEntryTab } from './MealEntryTab';
 import { OrderTab } from './OrderTab';
 import { useDiningMenu } from './queries';
 import { TablesTab } from './TablesTab';
@@ -23,6 +24,8 @@ import { TablesTodoBadge } from './TableReminders';
 
 const TABS = [
   { key: 'order', label: '点单', perms: ['dining.order'], subtitle: '找到手牌客人或用餐中的桌，点的菜记在客人或这桌的账上（结账时一起结），同时送到厨房' },
+  // 8.2.8：所有进餐厅的人刷手牌登记进餐（含餐抵扣、裸票时段价）
+  { key: 'entry', label: '餐厅入口', perms: ['dining.orderRestaurant'], subtitle: '刷手牌登记进餐：含餐的这一餐抵扣成 0，裸票按时段价记在手牌上；登记了的客人点餐厅的菜不另收，最后在前台结账' },
   { key: 'tables', label: '桌台', perms: ['dining.order', 'frontdesk.checkout'], subtitle: '不洗浴的客人在桌台上用餐：点空闲的桌开台，点用餐中的桌看明细、点单、结账' },
   { key: 'kitchen', label: '厨房出品', perms: ['dining.kitchen', 'dining.order'], subtitle: '待做 → 制作中 → 已出餐 → 上菜，5 秒刷新；点错了可以撤回一步' },
   { key: 'limits', label: '沽清', perms: ['dining.kitchen'], subtitle: '今天某道菜还剩几份；沽清（卖完）后点单页不能再点，退菜按原份数加回' },
@@ -87,7 +90,9 @@ export function DiningPage() {
             <OrderTab />
           </div>
         )}
-        {current.key === 'tables' ? (
+        {current.key === 'entry' ? (
+          <MealEntryTab />
+        ) : current.key === 'tables' ? (
           <TablesTab />
         ) : current.key === 'kitchen' ? (
           <KitchenTab />
