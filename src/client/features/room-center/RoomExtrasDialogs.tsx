@@ -32,14 +32,17 @@ import { TagField } from './TagField';
 const label = (room: RoomCard) => spaceLabel(room.code, room.name);
 
 /** 房里的客人（选挂给谁）：一位就直接是他 */
+/** 康美部看到的客人只有手牌号（名字就是「手牌 X」），不重复写 */
+const guestLabel = (g: RoomGuestView, sep: string) => (g.guest === `手牌 ${g.tagCode}` ? `手牌 ${g.tagCode}` : `${g.tagCode}${sep}${g.guest}`);
+
 function GuestPick({ guests, value, onChange, disabled }: { guests: RoomGuestView[]; value: number | null; onChange: (v: number) => void; disabled?: boolean }) {
-  if (guests.length <= 1) return <p className="text-[14px] font-semibold text-ink">{guests[0] ? `手牌 ${guests[0].tagCode} · ${guests[0].guest}` : '这间房没有客人'}</p>;
+  if (guests.length <= 1) return <p className="text-[14px] font-semibold text-ink">{guests[0] ? `手牌 ${guestLabel(guests[0], ' · ').replace(/^手牌 /, '')}` : '这间房没有客人'}</p>;
   return (
     <Segmented<string>
       ariaLabel="挂给哪位客人"
       value={value === null ? '' : String(value)}
       onChange={(v) => onChange(Number(v))}
-      options={guests.map((g) => ({ value: String(g.visitId), label: `${g.tagCode} ${g.guest}`, disabled }))}
+      options={guests.map((g) => ({ value: String(g.visitId), label: guestLabel(g, ' '), disabled }))}
     />
   );
 }

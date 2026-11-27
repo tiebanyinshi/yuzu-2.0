@@ -12,7 +12,7 @@ import type { AppConfig } from '../../config';
 import { AppError, badRequest, forbidden, notFound, unprocessable } from '../../lib/errors';
 import { setTxTimeouts } from '../../lib/tx';
 import { parse } from '../../lib/validate';
-import { checkCanteenCode } from './code';
+import { checkCanteenCodeAny } from './code';
 import type { CanteenSessionEmployee } from './portal-auth';
 import { loadCanteenSettings } from './settings';
 
@@ -96,7 +96,8 @@ export async function recordCheckin(deps: { sql: Sql; config: AppConfig }, recor
     if (!e) throw code ? unprocessable('CODE_INVALID', '这不是柚子饭堂的饭卡码') : notFound('没有这位员工');
     if (!e.active) throw unprocessable('EMPLOYEE_INACTIVE', `${e.name}（${e.empNo}）已停用，不能在饭堂打卡`);
     if (code) {
-      const check = checkCanteenCode(secret, e.id, e.codeEpoch, code.step, code.mac, atMs);
+      // 换密钥期间（CANTEEN_CODE_SECRET_PREVIOUS）：手机上还是旧码钥匙的照样认，刷新以后就是新的
+      const check = checkCanteenCodeAny([secret, ...config.previousKeys.canteenCode], e.id, e.codeEpoch, code.step, code.mac, atMs);
       if (check === 'invalid') throw unprocessable('CODE_INVALID', '码对不上：请对方打开柚子饭堂、联网刷新一下再扫');
       if (check === 'expired') throw unprocessable('CODE_EXPIRED', '码过期了（截图或停在后台太久）：请对方刷新一下再扫');
     }

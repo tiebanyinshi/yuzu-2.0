@@ -592,6 +592,30 @@ export interface ShopMaterialRow {
 
 /** 每样物料最多几张商品图（8.1.50，迁移 510） */
 export const SHOP_MAX_MATERIAL_IMAGES = 6;
+
+/** 商品图批量导入（8.1.55）：一行一样物料 */
+export interface ShopImageImportRow {
+  /** 文件里的第几行 */
+  row: number;
+  materialId: number | null;
+  materialCode: string;
+  materialName: string;
+  /** 这一行表里放了几张图 */
+  fileImages: number;
+  /** 导入前、导入后各几张 */
+  before: number;
+  after: number;
+  changed: boolean;
+  issues: string[];
+}
+
+export interface ShopImageImportResult {
+  mode: 'append' | 'replace';
+  applied: boolean;
+  rows: ShopImageImportRow[];
+  issueCount: number;
+  changedCount: number;
+}
 /** 商品图的地址：采购商城的人都能看（只给挂在物料上的图） */
 export const shopImageUrl = (imageId: number) => `/api/erp/shop/images/${imageId}`;
 

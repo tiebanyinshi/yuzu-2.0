@@ -75,6 +75,8 @@ export async function resolveSession(db: Db, token: string, ttlHours: number): P
     WHERE s.token_hash = ${hashToken(token)} AND s.expires_at > now()`;
   const row = rows[0];
   if (!row || !row.active) return null;
+  // 挂的门店都停用了：不再落到本店（8.1.52），当作没登录
+  if (!(row.storeIds ?? []).length) return null;
   if (row.stale) {
     await db`
       UPDATE sessions SET last_seen_at = now(), expires_at = now() + make_interval(hours => ${ttlHours})
@@ -91,7 +93,7 @@ export async function resolveSession(db: Db, token: string, ttlHours: number): P
 export async function resolveStaffActor(db: Db, staffId: number, preferredStoreId: number | null): Promise<{ actor: Actor; storeIds: number[] } | null> {
   const rows = await db<ActorRow[]>`SELECT ${actorColumns(db)} FROM staff st WHERE st.id = ${staffId}`;
   const row = rows[0];
-  if (!row || !row.active) return null;
+  if (!row || !row.active || !(row.storeIds ?? []).length) return null;
   return { actor: actorOf(row, preferredStoreId), storeIds: (row.storeIds ?? []).map(Number) };
 }
 
@@ -112,7 +114,11 @@ export function storeIdsOf(db: Db) {
     END)`;
 }
 
-/** 会话里选的门店还能进就用它；不然用能进的第一家（最近用过的）；一家都进不了的落在本店（页面上照样只能看到本店的） */
+/**
+ * 会话里选的门店还能进就用它；不然用能进的第一家（最近用过的）。
+ * 一家都进不了的（挂的门店都停用了）不再落到本店（8.1.52 后端评估第 7 节：会串店）——会话解析、商城认人直接当作没登录，
+ * 登录时拒绝（NO_STORE）；这里的兜底只给没有门店信息的调用方。
+ */
 export function effectiveStore(sessionStoreId: number | null, storeIds: number[]): number {
   if (sessionStoreId != null && storeIds.includes(Number(sessionStoreId))) return Number(sessionStoreId);
   return storeIds[0] ?? DEFAULT_STORE_ID;

@@ -5,7 +5,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppError } from '../src/server/lib/errors';
 import { baseServerOptions, installErrorHandler, installRequestId, requestIdOf, sharedKeyMatcher } from '../src/server/lib/http-kit';
 import { every } from '../src/server/lib/throttle';
-import { PASSWORD, setup, type TestContext } from './helpers';
+import { runMinuteJobs, jobStatuses } from '../src/server/jobs';
+import { api, PASSWORD, setup, type TestContext } from './helpers';
 
 describe('请求编号与统一的错误出口（不要数据库）', () => {
   const build = async (dbGuards: boolean) => {
@@ -108,5 +109,52 @@ describe('请求编号记进审计（迁移 490）', () => {
     const again = await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'owner', password: PASSWORD } });
     const [row2] = await ctx.sql<{ requestId: string | null }[]>`SELECT request_id FROM audit_logs WHERE action = 'login' ORDER BY id DESC LIMIT 1`;
     expect(row2!.requestId).toBe(again.headers['x-request-id']);
+  });
+
+  it('运行状态（8.1.53）：只给店主；每分钟的任务跑过一轮后每项都有记录，出错的记下原因与连着失败几次', async () => {
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/admin/runtime')).status).toBe(403);
+    const log = { info: () => undefined, error: () => undefined };
+    await runMinuteJobs({ sql: ctx.sql, config: ctx.config }, log);
+    const res = await api(ctx.app, ctx.owner, 'GET', '/api/admin/runtime');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ version: ctx.config.version, protection: { inFlight: expect.any(Number) } });
+    const jobs = res.body.jobs as { name: string; ok: boolean; runs: number; failures: number }[];
+    expect(jobs.length).toBeGreaterThanOrEqual(25);
+    expect(jobs.find((j) => j.name === '短信发送')).toMatchObject({ ok: true, failures: 0 });
+    // 出错的一项：表被改名，下一轮记失败、连着失败 1 次；改回来以后再跑一轮清零
+    await ctx.sql`ALTER TABLE erp_drafts RENAME TO erp_drafts_tmp`;
+    try {
+      await runMinuteJobs({ sql: ctx.sql, config: ctx.config }, log);
+    } finally {
+      await ctx.sql`ALTER TABLE erp_drafts_tmp RENAME TO erp_drafts`;
+    }
+    const drafts = jobStatuses().find((j) => j.name === '草稿清理')!;
+    expect(drafts).toMatchObject({ ok: false, failures: 1 });
+    expect(drafts.lastError).toMatch(/erp_drafts/);
+    await runMinuteJobs({ sql: ctx.sql, config: ctx.config }, log);
+    expect(jobStatuses().find((j) => j.name === '草稿清理')).toMatchObject({ ok: true, failures: 0 });
+  });
+  it('内容安全策略的报告（8.1.56）：两种写法都收、不要登录、回 204；认不出的也回 204、不记', async () => {
+    const legacy = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/csp-report',
+      headers: { 'content-type': 'application/csp-report' },
+      payload: JSON.stringify({ 'csp-report': { 'blocked-uri': 'https://evil.example/x.js', 'violated-directive': 'script-src' } }),
+    });
+    expect(legacy.statusCode).toBe(204);
+    const modern = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/csp-report',
+      headers: { 'content-type': 'application/reports+json' },
+      payload: JSON.stringify([{ type: 'csp-violation', body: { blockedURL: 'inline' } }]),
+    });
+    expect(modern.statusCode).toBe(204);
+    const junk = await ctx.app.inject({ method: 'POST', url: '/api/csp-report', headers: { 'content-type': 'application/csp-report' }, payload: 'not json' });
+    expect(junk.statusCode).toBe(204);
+  });
+
+  it('健康检查分两种（8.1.56）：/api/ping 不查库，/api/health 查库', async () => {
+    expect((await ctx.app.inject({ method: 'GET', url: '/api/ping' })).json()).toMatchObject({ ok: true });
+    expect((await ctx.app.inject({ method: 'GET', url: '/api/health' })).json()).toMatchObject({ ok: true });
   });
 });

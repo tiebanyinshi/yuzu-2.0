@@ -93,13 +93,9 @@ export function shiftDate(isoDate: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-/** 没留手机号的会员（匿名卡，8.1.15）在页面、小票、导出里写的字 */
-export const NO_PHONE_LABEL = '未留手机号';
+import { NO_PHONE_LABEL } from './mask';
 
-export function maskPhone(phone: string | null | undefined): string {
-  if (!phone) return NO_PHONE_LABEL;
-  return phone.length === 11 ? `${phone.slice(0, 3)} **** ${phone.slice(7)}` : phone;
-}
+export { maskPhone, NO_PHONE_LABEL } from './mask';
 
 export function formatPhone(phone: string | null | undefined): string {
   if (!phone) return NO_PHONE_LABEL;

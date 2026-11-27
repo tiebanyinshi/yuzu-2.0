@@ -256,7 +256,7 @@ function orderOnlyCard(r: RoomCard): RoomCard {
 
 /**
  * 康美部的账户（福田店 FT-13）：只留房态与客人的手牌号——没有项目、技师、钟、金额、客人姓名、出单员、备注、预约、维修与打扫的说明；
- * 房内点单的单数与金额照给（店主 2026-11-26 定：康美部能看到）
+ * 房内点单的单数与金额照给（店主 2026-11-26 定：康美部能看到）；能给房里的客人挂零售、杂项（店主 2026-11-27），结账照旧在前厅收银台
  */
 function statusOnlyCard(r: RoomCard): RoomCard {
   const tags = [...r.guests.map((g) => g.tagCode), ...(r.usage ? [r.usage.tagCode] : []), ...(r.hotel?.stay ? [r.hotel.stay.tagCode] : [])];
@@ -265,7 +265,8 @@ function statusOnlyCard(r: RoomCard): RoomCard {
     status: r.status,
     guests: r.guests.map((g) => ({
       registrationId: null,
-      visitId: 0,
+      // 来访编号照给（8.1.57，店主 2026-11-27）：康美部能给房里的客人挂零售、杂项（照旧到前厅收银台统一结账），挂的时候要指明是哪位客人
+      visitId: g.visitId,
       tagCode: g.tagCode,
       guest: `手牌 ${g.tagCode}`,
       memberGradeLabel: null,

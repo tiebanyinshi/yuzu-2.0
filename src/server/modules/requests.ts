@@ -773,12 +773,12 @@ export async function actOnRequest(deps: Deps, requestId: number, action: 'appro
 
 // ───────────────────────── 图片 ─────────────────────────
 
-const ImageInput = z.object({
+export const ImageInput = z.object({
   mime: z.enum(['image/jpeg', 'image/png', 'image/webp'], '只能上传 JPEG、PNG、WebP 图片'),
   data: z.string().min(16).max(1_500_000),
 });
 
-function sniff(buf: Buffer): string | null {
+export function sniffImage(buf: Buffer): string | null {
   if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
   if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
   if (buf.length > 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
@@ -791,7 +791,7 @@ export async function saveImage(db: Db, raw: unknown, actor: Actor, scope: 'gene
   const buf = Buffer.from(input.data, 'base64');
   if (buf.length === 0) throw badRequest('图片内容为空');
   if (buf.length > MAX_IMAGE_BYTES) throw unprocessable('IMAGE_TOO_LARGE', '图片压缩后仍超过 1 MB，请换一张或裁小一点');
-  const kind = sniff(buf);
+  const kind = sniffImage(buf);
   if (!kind || kind !== input.mime) throw unprocessable('IMAGE_INVALID', '文件不是有效的 JPEG、PNG 或 WebP 图片');
   const sha = createHash('sha256').update(buf).digest('hex');
   const [row] = await db<{ id: number }[]>`

@@ -14,6 +14,8 @@ x-logging: &logging
 services:
   db:
     image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    # 预加载 pg_stat_statements（数据库评估第 4 节）：记下各条查询的次数与耗时，`cli.js db-report` 看最慢的查询；只多占一点共享内存
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements", "-c", "pg_stat_statements.track=top"]
     restart: unless-stopped
     environment:
       POSTGRES_USER: yuzu
@@ -22,6 +24,8 @@ services:
       TZ: ${APP_TIMEZONE:-Asia/Shanghai}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # 内存上限（后端评估第 8 节）：一边吃光内存不拖垮另一边；按门店机的内存在 .env 里调（DB_MEM_LIMIT / APP_MEM_LIMIT）
+    mem_limit: ${DB_MEM_LIMIT:-2g}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U yuzu -d yuzu"]
       interval: 5s
@@ -43,6 +47,7 @@ services:
     # 不同 Compose 项目使用独立标签，演示构建不会覆盖试用 / 正式镜像。
     image: ${APP_IMAGE:-yuzu-app:${COMPOSE_PROJECT_NAME:-local}}
     restart: unless-stopped
+    mem_limit: ${APP_MEM_LIMIT:-2g}
     depends_on:
       db:
         condition: service_healthy

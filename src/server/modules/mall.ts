@@ -64,12 +64,14 @@ import { enabledErpModules, erpModuleDisabled } from './erp';
 import { loadExpenseRules } from './expenses';
 import { docDateSchema, logApproval } from './inventory/common';
 import { loadPurchaseRules } from './inventory/purchase-rules';
+import { deptDailyQuota } from './govflow/petty';
 import { enterStockCheck } from './request-stock';
 import { canConfirmPlan, canSeeDealPrices, CustomSpecInput, requestQuotes, sourcingOwner } from './mall-pilot';
 import {
   approvableOnFor,
   deptConfirmFor,
   getRequest,
+  ImageInput,
   lineStates,
   myContext,
   PROGRESS_AT_SQL,
@@ -100,7 +102,7 @@ const positiveInt = (raw: unknown): number | null => {
 export async function authenticateMall(req: FastifyRequest, sql: Sql, config: AppConfig): Promise<void> {
   if (!config.mallApiKey) throw new AppError(503, 'MALL_NOT_CONFIGURED', '门店系统还没有配置采购商城的服务密钥（MALL_API_KEY），商城接口没有开');
   // 先各自取摘要再比：长度不同也不提前返回（lib/http-kit.ts）
-  if (!sharedKeyMatcher(config.mallApiKey)(req.headers[MALL_KEY_HEADER])) throw new AppError(401, 'MALL_KEY_REJECTED', '请求来源不正确');
+  if (!sharedKeyMatcher(config.mallApiKey, config.previousKeys.mallApi)(req.headers[MALL_KEY_HEADER])) throw new AppError(401, 'MALL_KEY_REJECTED', '请求来源不正确');
   if (decodedPath(req.url) === `${MALL_PREFIX}/auth/verify`) return;
   const staffId = positiveInt(req.headers[MALL_STAFF_HEADER]);
   if (staffId === null) throw new AppError(401, 'MALL_STAFF_REQUIRED', `请在 ${MALL_STAFF_HEADER} 里带上员工编号`);
@@ -223,6 +225,38 @@ async function withPurposes(db: Db, lines: z.infer<typeof MallLineInput>[]) {
   return lines.map((l) => ({ ...l, purpose: l.purpose || (purposes.includes('其他') ? '其他' : (purposes[0] ?? '')) }));
 }
 
+/**
+ * 部门当天的零星采购日额度（8.1.55，店主 2026-11-27 K27-4）：业财法额度台账（零星采购已占用 + 冻结）
+ * 加上今天商城里拟用部门备用金、还在流程里的需求单（按参考价）。商城不另建额度。
+ */
+export async function deptPettyToday(db: Db, deptId: number, tz: string, day: string): Promise<{ limit: number; taken: number }> {
+  const [gf, [mall]] = await Promise.all([
+    deptDailyQuota(db, deptId, day),
+    db<{ cents: string }[]>`
+      SELECT coalesce(sum(round((l.qty_milli::numeric * coalesce(l.ref_price_cents, 0)) / 1000)), 0)::bigint::text AS cents
+      FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
+      WHERE r.department_id = ${deptId} AND r.source = 'mall' AND r.payment_intent = 'dept_petty'
+        AND r.status NOT IN ('draft', 'cancelled', 'rejected')
+        AND (r.created_at AT TIME ZONE ${tz})::date = ${day}::date`,
+  ]);
+  return { limit: gf.limit, taken: gf.taken + Number(mall?.cents ?? 0) };
+}
+
+/** 拟用部门备用金的：在额度锁里（与业财法零星采购同一把）核对日额度，超了拒绝 */
+async function checkDeptPettyQuota(tx: Db, deptId: number | null, lines: { qtyMilli: number; refPriceCents: number | null }[], tz: string, day: string) {
+  if (!deptId) throw unprocessable('DEPARTMENT_REQUIRED', '拟用部门备用金支付要先有所属部门');
+  await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`gf_quota:${deptId}`}, 0))`;
+  const quota = await deptPettyToday(tx, deptId, tz, day);
+  const cents = lines.reduce((sum, l) => sum + Math.round((l.qtyMilli * (l.refPriceCents ?? 0)) / 1000), 0);
+  if (quota.taken + cents > quota.limit) {
+    throw unprocessable(
+      'DEPT_DAILY_QUOTA',
+      `超过部门零星采购日额度 ¥${formatAmount(quota.limit)}（今日已用 ¥${formatAmount(quota.taken)}，本单 ¥${formatAmount(cents)}）：请改公司直付，或按业财法走紧急特批`,
+      { limitCents: quota.limit, takenCents: quota.taken, requestCents: cents },
+    );
+  }
+}
+
 export async function createMallRequest(
   deps: Deps,
   raw: unknown,
@@ -258,6 +292,7 @@ export async function createMallRequest(
       const deptId = await resolveDepartment(tx, actor, input.departmentId);
       const lines = await withPurposes(tx, input.lines);
       await validateLines(tx, lines, { mall: true });
+      if (input.paymentIntent === 'dept_petty') await checkDeptPettyQuota(tx, deptId, lines, deps.config.timezone, today);
       const docNo = await nextDocNo(tx, 'purchase_request', 'XQ', today);
       const approvableOn = await approvableOnFor(tx, deps.config.timezone);
       // 全部需求单都要部门主管确认（店主 2026-11-24）：商城来的不看金额门槛
@@ -888,6 +923,43 @@ async function masterSuppliers(deps: Deps) {
     SELECT id, code, name, contact, admission, updated_at FROM suppliers WHERE active ORDER BY code`;
   return { suppliers: rows.map((s) => ({ id: Number(s.id), code: s.code, name: s.name, contact: s.contact, admission: s.admission, updatedAt: s.updatedAt })) };
 }
+
+// ───────────────────────── 对外契约 ─────────────────────────
+
+/**
+ * 采购商城对外接口的契约（8.1.56，后端评估第 3 节：只给对外的接口写契约，不全量生成 OpenAPI）。
+ * 每个接口：请求的校验模式（就是处理函数里 parse 用的那一份）与返回的类型名（src/shared/mall.ts）。
+ * docs/contracts/mall-api.json 由它生成（UPDATE_CONTRACTS=1 npx vitest run tests/mall-contract.test.ts），
+ * 用例核对文件与代码一致、路由一个不漏——改了接口要一起改这份文件，商城那边照它对接。
+ */
+export const MALL_API_CONTRACT = [
+  { method: 'POST', path: '/auth/verify', auth: '无（核对账号密码）', body: VerifyInput, returns: 'MallIdentity' },
+  { method: 'GET', path: '/staff/me', auth: '登录', returns: 'MallIdentity' },
+  { method: 'GET', path: '/master/meta', auth: 'request.create | request.review | request.stock', returns: '{ departments, stores, entities, purposes, priorities, rules }' },
+  { method: 'GET', path: '/master/materials', auth: 'request.create | request.review | request.stock', returns: '{ materials }' },
+  { method: 'GET', path: '/master/suppliers', auth: 'request.create | request.review | request.stock', returns: '{ suppliers }' },
+  { method: 'POST', path: '/requests', auth: 'request.create', body: MallCreateInput, returns: 'MallCreateResult（新建 201、原样重提 200）' },
+  {
+    method: 'GET',
+    path: '/requests',
+    auth: 'request.create | request.review | request.stock',
+    query: ListQuery,
+    returns: '{ requests: MallRequestBrief[], nextCursor: { updatedSince, afterId } | null }',
+  },
+  {
+    method: 'POST',
+    path: '/requests/batch-status',
+    auth: 'request.create | request.review | request.stock',
+    body: BatchInput,
+    returns: '{ requests: MallRequestBrief[], missing: { ids, externalNos } }',
+  },
+  { method: 'GET', path: '/requests/by-key/:key', auth: 'request.create', params: KeyParam, returns: '操作编号查回：{ found, …, request: MallRequest | null }' },
+  { method: 'GET', path: '/requests/by-external/:externalNo', auth: 'request.create | request.review | request.stock', params: ExternalParam, returns: 'MallRequest' },
+  { method: 'GET', path: '/requests/:id', auth: 'request.create | request.review | request.stock', params: idParam, returns: 'MallRequest' },
+  { method: 'POST', path: '/ops/:key/abandon', auth: 'request.create', params: KeyParam, body: AbandonInput, returns: '同 by-key（确认作废后再查回）' },
+  { method: 'POST', path: '/images', auth: 'request.create', body: ImageInput, returns: '{ id }（201）' },
+  { method: 'GET', path: '/images/:id', auth: 'request.create | request.review | request.stock', params: idParam, returns: '图片（image/jpeg、png、webp）' },
+] as const;
 
 // ───────────────────────── 路由 ─────────────────────────
 

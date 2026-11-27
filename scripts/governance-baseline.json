@@ -62,10 +62,12 @@
   "deadExports": [],
   "conventions": {
     "inline-dvh": 1,
+    "module-internal": 263,
     "navigator.onLine": 1,
     "polling": 63,
     "raw-dialog": 5,
     "raw-table": 36,
+    "request-cast": 75,
     "status-500": 2
   },
   "duplicationMaxPercent": 1,

@@ -433,6 +433,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '482_store_fks.sql',
   '483_archive_tables.sql',
   '490_audit_request_id.sql',
+  '491_pg_stat_statements.sql',
   '510_material_images.sql',
   '520_mall_pilot.sql',
 ];

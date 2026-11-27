@@ -318,6 +318,7 @@
 
 - **后端评估与加固 8.1.48（店主 2026-11-26「审查后端、出评估报告、学 Medusa / Supabase / Trigger.dev、以瘦身为目标」，报告见 `docs/BACKEND_REVIEW_V8148.md`）**：迁移号 `490`–`499`：
   - `490`（`490_audit_request_id.sql`）：审计记录 `audit_logs` 加请求编号 `request_id`（可空，日志与审计对得上）。回滚 `docs/rollback/490_audit_request_id.down.sql`。
+  - `491`（`491_pg_stat_statements.sql`，8.1.54）：建查询统计扩展 pg_stat_statements（没权限、没有这个扩展时跳过），`cli.js db-report` 看最慢的查询、没用过的索引。回滚 `docs/rollback/491_pg_stat_statements.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
@@ -420,7 +421,7 @@
 
 - CG10 采购组参不参与库管收货（`docs/PURCHASING_V801.md` 第 10 项，挂起）。
 - 还是「待确认」的默认：CG01–CG11、BI01–BI12、A1–A10、C1–C12、E1–E8、N1–N12、HY01–HY20 等（`PENDING_DECISIONS.md`）；店主确认后要改的在下一版落地。
-- Z5 管理后台与 ERP 只在店里与 Tailscale 内打开（要写代码，`PENDING_DECISIONS.md` Z5、`RELEASE_V800.md`）；云上正式服打门店的网口打印机（改由门店终端转发，`RELEASE_V800.md` 写另排）。
+- ~~Z5 管理后台与 ERP 只在店里与 Tailscale 内打开~~：不做（店主 2026-11-10 定公网也能上，2026-11-27 再次确认「Z5 不要做，不能只通过 Tailscale 访问」）；云上正式服打门店的网口打印机（改由门店终端转发，`RELEASE_V800.md` 写另排）。
 - 客房押金规则（Q17，第 10 节第 9 项）；电话预订与保留时长。
 - 真实发短信：要阿里云账号、签名与模板（HY08，代码已经有了）。
 - 要真机或硬件的：终端设备服务 APK（`docs/HARDWARE.md`）、第二级精确定位、门锁客控 / 手牌柜锁控 / 闸机（D8 本期不做）。

@@ -1,7 +1,10 @@
+import { guard } from './auth/guard';
+import { jobStatuses } from './jobs';
 import { baseServerOptions, installErrorHandler, installRequestId } from './lib/http-kit';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import cookie from '@fastify/cookie';
+import { z } from 'zod';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { AppConfig } from './config';
@@ -192,6 +195,24 @@ function originHost(origin: string): string | null {
   }
 }
 
+/** 页面的内容安全策略（先 Report-Only）：页面、脚本、样式、图片都从本机来；本机 OCR 的识别库要 wasm 与 blob 工人 */
+const PAGE_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "media-src 'self' blob:",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+  "frame-ancestors 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  'report-uri /api/csp-report',
+].join('; ');
+const CspReports = z.union([z.object({ 'csp-report': z.record(z.string(), z.unknown()) }), z.array(z.object({ body: z.record(z.string(), z.unknown()) })).max(5)]);
+
 export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInstance> {
   const app = Fastify({
     // 日志脱敏、请求编号（8.1.48，lib/http-kit.ts）
@@ -252,7 +273,27 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
     reply.header('x-content-type-options', 'nosniff');
     reply.header('x-frame-options', 'SAMEORIGIN');
     reply.header('referrer-policy', 'same-origin');
+    // 页面的内容安全策略（8.1.56，后端评估第 6 节）：先只报告不拦（Report-Only），浏览器把会被拦的写进日志；
+    // 看一周日志里没有正常功能被拦，再改成 Content-Security-Policy 生效
+    if (String(reply.getHeader('content-type') ?? '').startsWith('text/html') && !reply.hasHeader('content-security-policy')) {
+      reply.header('content-security-policy-report-only', PAGE_CSP);
+    }
     return payload;
+  });
+  // 浏览器报上来的「会被拦的」：只记日志（每条截短），不进库；不要登录
+  app.addContentTypeParser(['application/csp-report', 'application/reports+json'], { parseAs: 'string', bodyLimit: 16_384 }, (_req, body, done) => {
+    try {
+      done(null, JSON.parse(String(body)));
+    } catch {
+      done(null, {});
+    }
+  });
+  app.post('/api/csp-report', async (req, reply) => {
+    // 老写法 { "csp-report": {…} }，新写法（Reporting API）[{ type, body: {…} }]；认不出的什么都不记
+    const parsed = CspReports.safeParse(req.body);
+    const reports = !parsed.success ? [] : Array.isArray(parsed.data) ? parsed.data.map((r) => r.body) : [parsed.data['csp-report']];
+    for (const r of reports.filter(Boolean)) req.log.warn({ csp: JSON.stringify(r).slice(0, 600) }, '页面内容安全策略：这一项上线后会被拦');
+    return reply.code(204).send();
   });
 
   installRequestId(app);
@@ -275,6 +316,20 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
     details: true,
     dbGuards: true,
     logLabel: '未处理的错误',
+  });
+
+  // 运行状态（8.1.53 后端评估第 5 节，照 Trigger.dev 的任务面板、不引入 Prometheus）：店主看每分钟的任务哪项在出错、
+  // 过载保护此刻的情况、内存。只读、只给店主（经营规则设置权限）；按进程记，重启清零
+  app.get('/api/admin/runtime', { preHandler: guard('settings.manage') }, async () => {
+    const mem = process.memoryUsage();
+    return {
+      version: config.version,
+      commit: config.commit,
+      startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+      memoryMb: { rss: Math.round(mem.rss / 1048576), heapUsed: Math.round(mem.heapUsed / 1048576) },
+      protection: protection.stats(),
+      jobs: jobStatuses(),
+    };
   });
 
   app.get('/api/health', async () => {

@@ -75,6 +75,14 @@ function ScreenRow() {
   );
 }
 
+interface ServerRuntime {
+  version: string;
+  startedAt: string;
+  memoryMb: { rss: number; heapUsed: number };
+  protection: { inFlight: number; lagMs: number };
+  jobs: { name: string; lastMs: number; ok: boolean; lastError: string | null; failures: number }[];
+}
+
 export function NetworkPage() {
   const conn = useConnection();
   const problems = useProblems();
@@ -86,6 +94,9 @@ export function NetworkPage() {
   const storageOk = useMemo(storageWorks, []);
   const [checking, setChecking] = useState(false);
   const canSeeStore = Boolean(session.data?.permissions.includes('audit.read'));
+  // 服务器的运行状态（8.1.53 后端评估）：每分钟的任务哪项在出错、过载保护、内存；只给店主，打开这一页时取一次
+  const canSeeRuntime = Boolean(session.data?.permissions.includes('settings.manage'));
+  const runtime = useQuery({ queryKey: ['admin-runtime'], queryFn: () => api.get<ServerRuntime>('/api/admin/runtime'), enabled: canSeeRuntime });
   const storeErrors = useQuery({
     queryKey: ['client-errors'],
     queryFn: () => api.get<ClientErrorRecord[]>('/api/client-errors'),
@@ -224,6 +235,31 @@ export function NetworkPage() {
           )}
           <p className="text-[12px] text-ink-4">「清掉页面缓存」只清这一页暂存的数据，不清「结果待确认」的记录。</p>
         </Card>
+
+        {canSeeRuntime && runtime.data && (
+          <Card className="space-y-3 p-5" data-testid="network-runtime">
+            <h2 className="text-[15px] font-bold">服务器的后台任务</h2>
+            <p className="text-[12.5px] text-ink-3">
+              版本 {runtime.data.version}，{new Date(runtime.data.startedAt).toLocaleString('zh-CN', { hour12: false })} 起在跑；内存 {runtime.data.memoryMb.rss} MB；在处理的请求{' '}
+              {runtime.data.protection.inFlight} 个、事件循环延迟 {runtime.data.protection.lagMs} 毫秒。下面是每分钟的任务最近一次的情况（重启清零）。
+            </p>
+            <ul className="divide-y divide-line text-[13px]">
+              {[...runtime.data.jobs]
+                .sort((a, b) => Number(a.ok) - Number(b.ok) || b.failures - a.failures)
+                .map((j) => (
+                  <li key={j.name} className="flex flex-wrap items-baseline gap-x-3 py-1.5" data-testid="network-runtime-job" data-ok={j.ok}>
+                    <span className={j.ok ? 'text-ink' : 'font-bold text-clay'}>{j.name}</span>
+                    <span className="tabular-nums text-ink-3">{j.lastMs} 毫秒</span>
+                    {!j.ok && (
+                      <span className="break-words text-clay">
+                        连着失败 {j.failures} 次：{j.lastError}
+                      </span>
+                    )}
+                  </li>
+                ))}
+            </ul>
+          </Card>
+        )}
 
         {canSeeStore && (
           <Card className="space-y-3 p-5" data-testid="network-store-errors">
