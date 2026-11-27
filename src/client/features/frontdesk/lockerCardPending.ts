@@ -7,8 +7,6 @@ import { useSyncExternalStore } from 'react';
 import type { LockerCardPending } from '@shared/lockers';
 
 const KEY = 'yuzu.lockers.cardPending';
-/** 最多留几条：再多说明一直没核对，最早的先挤掉 */
-const MAX = 20;
 const listeners = new Set<() => void>();
 let cachedRaw: string | null | undefined;
 let cached: LockerCardPending[] = [];
@@ -45,9 +43,12 @@ function persist(list: LockerCardPending[]): boolean {
 }
 
 export const lockerCardPending = {
-  /** 发请求以前记下；存不了（或读回对不上）返回 false，调用方不发 */
+  /**
+   * 发请求以前记下；存不了（或读回对不上）返回 false，调用方不发。
+   * 不设条数上限、不挤掉旧的：没核对的那一次可能已经改了卡，提醒不能自己消失（Codex 审查 b446d09）
+   */
   add(p: LockerCardPending): boolean {
-    return persist([...readAll().filter((x) => x.id !== p.id), p].slice(-MAX));
+    return persist([...readAll().filter((x) => x.id !== p.id), p]);
   },
   remove(id: string): void {
     const list = readAll();

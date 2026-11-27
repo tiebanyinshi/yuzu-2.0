@@ -156,30 +156,27 @@ export const LOCKER_OPEN_REASONS = ['客人忘带手牌', '手牌失灵', '清�
  */
 export type LockerCardPending = { id: string; op: 'write'; code: string; storeId: number; at: string } | { id: string; op: 'clear'; uid: string | null; storeId: number; at: string };
 
+/** 读卡核对出「确实做成了」的那一条（只认做成了的证据：读回没变不能断定没做——桥可能还在做，Codex 审查 b446d09） */
 export interface LockerCardCheck {
   id: string;
-  /** done：确实做成了；not_done：确实没做成（只有清卡读回同一张芯片号时能断定） */
-  outcome: 'done' | 'not_done';
   text: string;
 }
 
 /**
- * 读到一张卡以后，哪些待核对的有了结论：
- *   · 写卡：卡里写的就是那个柜 → 写成了；不是的不下结论（可能放的不是刚才那张卡）；
- *   · 清卡（记着芯片号的）：读到同一张芯片号，空白 → 清成了，还写着柜 → 没清成；别的卡不下结论。
+ * 读到一张卡以后，哪些待核对的确定做成了：
+ *   · 写卡：卡里写的就是那个柜 → 写成了；
+ *   · 清卡（记着芯片号的）：读到同一张芯片号、是空白 → 清成了。
+ * 别的都不下结论、记录留着：卡里还是原样，可能原来那次还在桥里没做完（之后会生效），也可能放的不是刚才那张卡；
+ * 核对过了（比如已经重写、重清成功，或卡找不到了）由人点「已核对」去掉。
  */
 export function settleLockerCardPending(list: readonly LockerCardPending[], read: Pick<LockerCardRead, 'ok' | 'uid' | 'code'>): LockerCardCheck[] {
   if (!read.ok) return [];
   const out: LockerCardCheck[] = [];
   for (const p of list) {
     if (p.op === 'write') {
-      if (read.code === p.code) out.push({ id: p.id, outcome: 'done', text: `核对：卡里是柜 ${p.code}，写成了` });
-    } else if (p.uid && read.uid === p.uid) {
-      out.push(
-        read.code === null
-          ? { id: p.id, outcome: 'done', text: `核对：芯片号 ${p.uid} 已清成空白` }
-          : { id: p.id, outcome: 'not_done', text: `核对：芯片号 ${p.uid} 没清成，卡里还是柜 ${read.code}；要清再清一次` },
-      );
+      if (read.code === p.code) out.push({ id: p.id, text: `核对：卡里是柜 ${p.code}，写成了` });
+    } else if (p.uid && read.uid === p.uid && read.code === null) {
+      out.push({ id: p.id, text: `核对：芯片号 ${p.uid} 已清成空白` });
     }
   }
   return out;

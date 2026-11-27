@@ -11,14 +11,14 @@ const pending: LockerCardPending[] = [
 
 describe('发卡器待核对：读卡下结论', () => {
   it('写卡：卡里就是那个柜算写成了；别的柜、空白卡不下结论', () => {
-    expect(settleLockerCardPending(pending, { ok: true, uid: '0499AA11', code: 'A8067' })).toEqual([{ id: 'w1', outcome: 'done', text: expect.stringContaining('写成了') }]);
+    expect(settleLockerCardPending(pending, { ok: true, uid: '0499AA11', code: 'A8067' })).toEqual([{ id: 'w1', text: expect.stringContaining('写成了') }]);
     expect(settleLockerCardPending(pending, { ok: true, uid: '0499AA11', code: 'A8068' })).toEqual([]);
     expect(settleLockerCardPending(pending, { ok: true, uid: '0499AA11', code: null })).toEqual([]);
   });
 
-  it('清卡：同一张芯片号空白算清成了、还写着柜算没清成；别的卡、没记芯片号的不下结论', () => {
-    expect(settleLockerCardPending(pending, { ok: true, uid: '04A1B2C3', code: null })).toEqual([{ id: 'c1', outcome: 'done', text: expect.stringContaining('已清成空白') }]);
-    expect(settleLockerCardPending(pending, { ok: true, uid: '04A1B2C3', code: 'A8060' })).toEqual([{ id: 'c1', outcome: 'not_done', text: expect.stringContaining('没清成') }]);
+  it('清卡：同一张芯片号读回空白算清成了；还写着柜不下结论（原来那次可能还在桥里没做完，Codex 审查 b446d09）；别的卡、没记芯片号的不下结论', () => {
+    expect(settleLockerCardPending(pending, { ok: true, uid: '04A1B2C3', code: null })).toEqual([{ id: 'c1', text: expect.stringContaining('已清成空白') }]);
+    expect(settleLockerCardPending(pending, { ok: true, uid: '04A1B2C3', code: 'A8060' })).toEqual([]);
     expect(settleLockerCardPending(pending, { ok: true, uid: '0499AA11', code: null })).toEqual([]);
   });
 

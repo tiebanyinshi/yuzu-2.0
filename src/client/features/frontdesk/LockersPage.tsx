@@ -303,7 +303,7 @@ function CardEncoder({ canWrite, reasons }: { canWrite: boolean; reasons: string
       // 读到的卡能给哪几条待核对的下结论：有结论的去掉
       for (const check of settleLockerCardPending(pending, c)) {
         lockerCardPending.remove(check.id);
-        toast({ tone: check.outcome === 'done' ? 'success' : 'info', title: check.text });
+        toast({ tone: 'success', title: check.text });
       }
     },
     onError: (e) => toast({ tone: 'error', title: '读卡没有成功', body: errorMessage(e) }),
@@ -396,8 +396,8 @@ function PendingChecks({ pending }: { pending: LockerCardPending[] }) {
           <li key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="locker-card-pending-item">
             <span className="min-w-0 flex-1">
               {p.op === 'write'
-                ? `写卡 · 柜 ${p.code} · ${formatDateTime(p.at)}：卡里是柜 ${p.code} 就是写成了，不是就再写一次`
-                : `清卡${p.uid ? ` · 芯片号 ${p.uid}` : ''} · ${formatDateTime(p.at)}：读回是空白就是清成了`}
+                ? `写卡 · 柜 ${p.code} · ${formatDateTime(p.at)}：读到卡里是柜 ${p.code} 就是写成了；还不是的可以再写一次，写成了再读一次`
+                : `清卡${p.uid ? ` · 芯片号 ${p.uid}` : ''} · ${formatDateTime(p.at)}：读回是空白就是清成了；还写着柜的可以再清一次，清成了再读一次`}
             </span>
             <Button size="sm" variant="ghost" onClick={() => lockerCardPending.remove(p.id)} data-testid="locker-card-pending-dismiss">
               已核对
