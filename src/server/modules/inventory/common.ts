@@ -234,6 +234,16 @@ export const sourcingHolds = (db: Db) => db`
                   WHERE hx.request_line_id = sr.request_line_id
                     AND hl.po_id = (SELECT max(hp.id) FROM purchase_orders hp WHERE hp.sourcing_event_id = e.id)))`;
 
+/**
+ * 需求行 l 已经给到部门的数量（需求行的单位）：核库领用与之后每一次补发（8.2.6 物料发配记录）的合计，领料单作废的不算。
+ * 核库领用同时记在 request_line_stock 与发配记录里，取两者大的那个不重算；转采购的缺口 = 申请量 − 这个数（Codex 审查）。
+ */
+export const requestLineIssuedSql = (db: Db) => db`greatest(
+  coalesce((SELECT sum(ls.issued_qty_milli) FROM request_line_stock ls JOIN inv_docs ld ON ld.id = ls.inv_doc_id AND ld.status = 'confirmed'
+            WHERE ls.request_line_id = l.id), 0),
+  coalesce((SELECT sum(li.qty_milli) FROM request_line_issues li JOIN inv_docs lv ON lv.id = li.inv_doc_id AND lv.status = 'confirmed'
+            WHERE li.request_line_id = l.id), 0))::bigint`;
+
 export function assertNotFuture(date: string, timeZone: string) {
   if (date > todayIn(timeZone)) throw unprocessable('FUTURE_DATE', '单据日期不能晚于今天');
 }

@@ -122,6 +122,8 @@ export type AuditAction =
   | 'frontdesk_line_discount'
   | 'frontdesk_line_discount_revoke'
   | 'tag_deposit_received'
+  | 'tag_away_locked'
+  | 'tag_away_unlocked'
   | 'tag_deposit_refunded'
   | 'frontdesk_abandon'
   | 'frontdesk_ticket'

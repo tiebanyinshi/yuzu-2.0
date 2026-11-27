@@ -301,6 +301,8 @@
   - `540`（`540_technicians_v8222.sql`）：明细与钟单的上钟方式加 `call`（扩钟）；明细 `clock_extension`（加钟）、`tech_star`；钟房日志加 `change`；换项目记录 `technician_session_changes`；休假单 `auto_return`、`returned_at`；技师 `phone`、`height_cm`、`weight_kg`、`star`；提成规则 `store_id`；每月任务 `technician_targets`；预约 `tag_code`。回滚 `docs/rollback/540_technicians_v8222.down.sql`。
 - **8.2.5（`570`–`579`）**：8.2.4（[PR #46](https://github.com/tiebanyinshi/yuzu-2.0/pull/46)）合并时 Codex 审查还没跑完，合并后报了 6 条（4 条 P1、2 条 P2），这一版修：一报多要「技师预约」、一报多有意重叠不算自检错误、储值押金退回后的当日额度、网页导入技师锁住后再核对版本、返台进「结果待确认」、临时项目进厨房按出品口核对下单权限。
   - `570`（`570_review_v825.sql`）：`bookings.technician_overlap`（一报多建的预约）；操作编号与「确认作废」的类型约束追加 `table_return`（在当时的约束上追加），8.2.4 已经返过台的补记编号。回滚 `docs/rollback/570_review_v825.down.sql`。
+- **8.2.7（`590`–`599`）**：店主 2026-11-27——收银台锁牌外出：锁牌最多 4 小时，锁之前先收预售（设计见 `docs/V8227_AWAY_LOCK.md`）。同一天的《新店系统需求现场走场确认》（餐厅含餐与时段价、水吧首杯免费与取餐叫号、休闲娱乐、男汤女汤泡池）排在 8.2.8 起分批做。
+  - `590`（`590_away_lock_v827.sql`）：锁牌记录 `visit_tag_locks`（只追加，一次来访同时一把，最多 4 小时，预售指向一张手牌押金）；操作编号与「确认作废」追加 `tag_away_lock`、`tag_away_unlock`。回滚 `docs/rollback/590_away_lock_v827.down.sql`。
 - **8.2.6 采购商城 v0.2（`580`–`589`）**：《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》（店主 2026-11-27，设计见 `docs/MALL_V826.md`）——分批发配与物料发配记录、退回逐项标必补、版本快照、终止申购、收货待判。
   - `580`（`580_mall_dispatch.sql`）：发配记录 `request_line_issues`（核库已开的领料单抄一份）、退回必补项 `request_fix_items`、版本快照 `purchase_request_versions`、终止申请 `request_terminations`、收货待判 `inv_doc_lines.hold_milli`；操作类型追加 `request_dispatch`、`mall_terminate`。回滚 `docs/rollback/580_mall_dispatch.down.sql`。
 - **8.2.8 采购自购（`590`–`599`）**：《采购模块需求补充（单号搜索 / 排序 / 无供应商自购）》第 3 批（店主 2026-11-27，设计见 `docs/V828_SELF_PURCHASE.md`）——采购单可以不选供应商（自购），票据照片、负责人审批（超过 ¥2,000 加店主）、收货不选供应商、按现付走报销。

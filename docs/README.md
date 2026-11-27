@@ -120,16 +120,11 @@
 - [`V8142_PETTY.md`](V8142_PETTY.md)：8.1.42 · 备用金合并：零采备用金并进备用金
 - [`V8144_CASHIER.md`](V8144_CASHIER.md)：8.1.44（收银台）：《前台系统开发》里收银台的六条
 - [`V8144_FRONTDESK.md`](V8144_FRONTDESK.md)：8.1.44（前台 B）：已发券改条件、混合支付、同行组建与拆分、房态显示预约、买单时查会员
-- [`V8210_GF_CONFIG.md`](V8210_GF_CONFIG.md)：8.2.10 · 业财法：流程与阈值后台可改、试算
-- [`V8211_GF_EXPORT.md`](V8211_GF_EXPORT.md)：8.2.11 · 业财法与审批中心导出；微信特批登记时必传 OK 截图
-- [`V8212_EXPENSE_UNIFY.md`](V8212_EXPENSE_UNIFY.md)：8.2.12 · 报销统一成一套：WCP 发起 / 查看，业财法审批与执行
 - [`V8221_CASHIER.md`](V8221_CASHIER.md)：8.2.1 批 1：收银台（单项打折、一键快捷键、经办人前置与改价标记、换牌规则、手牌押金）
 - [`V8222_TECHNICIANS.md`](V8222_TECHNICIANS.md)：8.2.2 技师：扩钟、一报多、退技师、换项目、休假、状态、统计与导入
 - [`V8223_FRONTDESK.md`](V8223_FRONTDESK.md)：8.2.3 前台：发卡台与全店（客人类别、偏好、客诉台账、拥挤与高风险提示、技师预约权限、跳转明细、同行移出、补单）
 - [`V8224_DINING.md`](V8224_DINING.md)：8.2.4 餐饮：分组默认档口、临时项目进厨房、包房房型、服务费门店默认、返台、公司承担
-- [`V827_APPROVALS_PURCHASING.md`](V827_APPROVALS_PURCHASING.md)：8.2.7 · 报销不再自动通过；采购按单号直达与排序
-- [`V828_SELF_PURCHASE.md`](V828_SELF_PURCHASE.md)：8.2.8 · 采购：无供应商自购
-- [`V829_GF_ROLES.md`](V829_GF_ROLES.md)：8.2.9 · 业财法：角色映射可改、变更记录、提交时快照审批人
+- [`V8227_AWAY_LOCK.md`](V8227_AWAY_LOCK.md)：8.2.7 收银台「锁牌外出」：锁牌最多 4 小时，锁之前先收预售
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
 - [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面
