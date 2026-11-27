@@ -111,6 +111,7 @@ export const STAFF_REGISTRY = new Map([
   ['src/server/modules/patrol/index.ts', '安保巡场领域入口的导出'],
   ['docs/LOCKING.md', '加锁顺序登记（「员工小程序」一节）'],
   ['docs/README.md', '文档索引'],
+  ['docs/DATA_DICTIONARY.md', '新表的数据字典（scripts/gen-data-dictionary.mjs 重新生成，tests/schema-health.test.ts 核对）'],
   ['.github/workflows/ci.yml', 'CI 里员工小程序的类型检查与单元测试'],
   ['knip.json', '员工小程序的目录不进死代码检查'],
 ]);

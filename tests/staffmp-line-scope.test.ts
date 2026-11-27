@@ -38,7 +38,10 @@ describe('员工小程序线的 PR', () => {
       'src/server/config.ts',
       'src/shared/admin.ts',
       'src/server/modules/oa/index.ts',
+      'src/server/modules/canteen/index.ts',
+      'src/server/modules/patrol/index.ts',
       'docs/LOCKING.md',
+      'docs/DATA_DICTIONARY.md',
       '.github/workflows/ci.yml',
       'docs/ROADMAP.md',
     ])
