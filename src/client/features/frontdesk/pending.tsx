@@ -60,7 +60,9 @@ export type FrontdeskOpType =
   | 'table_return'
   /** 锁牌外出（8.2.7，对象是来访，在收银台）：锁（同一笔先收预售）、客人回来解锁 */
   | 'tag_away_lock'
-  | 'tag_away_unlock';
+  | 'tag_away_unlock'
+  /** 餐厅入口登记进餐（8.2.8，对象是来访，在「餐厅入口」页） */
+  | 'meal_entry';
 
 export interface FrontdeskPendingOp {
   key: string;
@@ -137,6 +139,7 @@ export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   table_return: '返台补低消',
   tag_away_lock: '锁牌外出',
   tag_away_unlock: '锁牌解锁',
+  meal_entry: '登记进餐',
 };
 
 /** 餐饮桌台的操作：对象是桌台或开台，不是手牌 */
@@ -347,6 +350,8 @@ export type ReconcileOutcome =
  */
 export function opsPath(op: { key: string; type: FrontdeskPendingOp['type']; url: string; body?: unknown }): string {
   if (op.type === 'bill_post' && op.url === '/api/dining/orders') return `/api/dining/ops/${op.key}`;
+  // 8.2.8 餐厅入口登记进餐：按「在餐厅下单」的权限查回、作废（平板没有前台权限）
+  if (op.type === 'meal_entry') return `/api/dining/meal-entry-ops/${op.key}`;
   // 房态点单（回测整改 P08）：按这一单的出品口走房态点单自己的查回、作废（要那个出品口的下单权限，碰不到别的挂账、另一个出品口的点单）
   if (op.type === 'room_order') {
     const outlet = (op.body as { outlet?: unknown } | null)?.outlet === 'fruit' ? 'fruit' : 'water';
