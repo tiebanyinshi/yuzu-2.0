@@ -380,7 +380,9 @@ export interface SettlementAnomaly {
     | 'refund'
     | 'refund_void'
     // 储值退回（v0.7.26）
-    | 'member_refund';
+    | 'member_refund'
+    // 8.2.4：结账时公司承担（客人身体不适、招待……，当场授权）
+    | 'company_charge';
   at: string | null;
   docNo: string | null;
   memberName: string | null;

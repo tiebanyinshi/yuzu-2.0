@@ -9,6 +9,7 @@ import type { MenuDish } from '@shared/dining';
 import type { ComboPartOption, ComboSwapOption, DishAddonOption, DishMethodGroup, DishMethodOption, DishPart } from '@shared/dishes';
 import type { Db } from '../db';
 import { pricesColumn } from './pricing';
+import { groupStationOverrides } from './dining-v8224';
 
 export interface DishOptionSet {
   methods: DishMethodOption[];
@@ -73,13 +74,16 @@ export async function comboDefsOf(db: Db, itemIds: number[]): Promise<Map<number
            (i.active AND NOT i.technician_required AND coalesce(s.active, false)) AS available, CASE WHEN s.active THEN i.station_id END AS station_id
     FROM dish_combo_swaps w JOIN service_items i ON i.id = w.to_item_id LEFT JOIN kitchen_stations s ON s.id = i.station_id
     WHERE w.combo_item_id IN ${db(ids)} ORDER BY w.combo_item_id, w.item_id, w.sort_no, w.to_item_id`;
+  // 8.2.4：子项没单独设档口的，分组设了默认档口的按分组走（档口停用了的照旧跟着套餐出）
+  const byGroup = await groupStationOverrides(db, [...rows.map((r) => r.itemId), ...swaps.map((w) => w.toItemId)]);
+  const stationOf = (itemId: number, own: number | null) => (own === null ? null : (byGroup.get(itemId)?.id ?? own));
   for (const r of rows) {
     const mine = swaps
       .filter((w) => w.comboItemId === r.comboItemId && w.itemId === r.itemId)
-      .map((w) => ({ itemId: w.toItemId, name: w.name, priceDiff: w.priceDiff, available: w.available, stationId: w.stationId }));
+      .map((w) => ({ itemId: w.toItemId, name: w.name, priceDiff: w.priceDiff, available: w.available, stationId: stationOf(w.toItemId, w.stationId) }));
     out.set(r.comboItemId, [
       ...(out.get(r.comboItemId) ?? []),
-      { itemId: r.itemId, name: r.name, quantity: r.quantity, stationId: r.stationId, swappable: r.swappable, swaps: r.swappable ? mine : [] },
+      { itemId: r.itemId, name: r.name, quantity: r.quantity, stationId: stationOf(r.itemId, r.stationId), swappable: r.swappable, swaps: r.swappable ? mine : [] },
     ]);
   }
   return out;

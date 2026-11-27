@@ -123,6 +123,10 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   table_merge: { label: '并台', tone: 'lake' },
   table_split: { label: '拆台', tone: 'lake' },
   table_park: { label: '包房转挂账', tone: 'ember' },
+  // 8.2.4 餐饮（docs/V8224_DINING.md）
+  items_station_pinned: { label: '菜品单独设档口', tone: 'neutral' },
+  dining_room_type_saved: { label: '保存包房房型', tone: 'neutral' },
+  table_return: { label: '返台补低消', tone: 'ember' },
   coupon_ledger_export: { label: '导出券台账', tone: 'lake' },
   coupon_terms_changed: { label: '改已发券的使用条件', tone: 'clay' },
   gift_card_batch: { label: '生成礼品卡', tone: 'lake' },

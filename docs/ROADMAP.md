@@ -291,6 +291,8 @@
   - 8.1.44（`350`–`369`）：《前台系统开发》十一条——收银台（备注板块、打单 / 买单 / 买角、加项目与作废迁到收银台、左栏收纳）用 `350`–`359`，备注记经办人与同组 / 单人、已发券改使用条件、混合支付、同行人组建与拆分结算、房态显示当天预约、买单时建档与查会员用 `360`–`369`。
     - `350`（`350_visit_remarks.sql`，收银台，设计见 `docs/V8144_CASHIER.md`）：前台备注（同组 / 单人，记经办人与时间，可带标签）与撤下记录，两张表都只追加；「备注记经办人与同组 / 单人」与收银台备注板块是同一份数据，一起放在这一号。回滚脚本 `docs/rollback/350_visit_remarks.down.sql`。
     - `360`（`360_coupon_usage_terms.sql`，前台 B，设计见 `docs/V8144_FRONTDESK.md`）：发过券的模板门槛、适用范围也能改（数据库保护只留面额、折扣、兑换什么、有效期、档级）。回滚 `docs/rollback/360_coupon_usage_terms.down.sql`。
+- **8.2.4 餐饮（`560`–`569`）**：会议纪要「餐饮系统需求对接会」（2026-11-26，设计见 `docs/V8224_DINING.md`）——菜单分组默认档口与核对列表、临时项目选档口出厨房单、包房房型（低消 / 中消 / 只收房费）、服务费门店默认、返台补低消、公司承担。
+  - `560`（`560_dining_v8224.sql`）：菜品 `station_pinned`（单独设档口）；`kitchen_items.item_id` 可为空（临时项目）；包房房型 `dining_room_types`、桌台 `room_type_id`；`dining_tables.service_fee_bp` 可为空（跟门店默认，原来的 0 改成空）；结账自动记的明细加 `room_fee`；返台记录 `table_session_returns`；结账方式 `company`（`checkout_payments.company_reason`，授权人、授权编号与优惠共用约束）与授权用途 `company_charge`（三个类型约束都在当时的约束上追加）。回滚 `docs/rollback/560_dining_v8224.down.sql`。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
   - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。

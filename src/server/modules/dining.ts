@@ -35,6 +35,9 @@ import {
 } from '@shared/dining';
 import { MAX_DIRTY_ALERT_MINUTES } from '@shared/frontdesk-v8117';
 import { assertGroupsUnused, OutletGroupsInput, registerDiningV8139Routes, stationWindowsOf } from './dining-v8139';
+import { groupStationOverrides, pinnedForStation, registerDiningV8224Routes } from './dining-v8224';
+import { MAX_SERVICE_FEE_BP } from '@shared/table-charges';
+import { MAX_RETURN_WINDOW_MINUTES } from '@shared/dining-v8224';
 import { minuteOfDay } from '@shared/business-date';
 import { inWindow, notOnSaleText, onSaleAt, stationAt, type DishStationWindow, type DishWindow } from '@shared/dining-v8139';
 import { defaultTier, sortTiers, type TierPrice } from '@shared/catalog';
@@ -74,7 +77,8 @@ export interface DiningClock {
 
 /**
  * 进厨房的菜品：餐饮功能开启、挂在启用的档口上的项目 → 档口（需要技师的项目不进厨房）。
- * 8.1.39：设了档口时段的，这一刻落在哪一段就到那一段的档口（那个档口停用了的照菜品自己的档口）；出品单记的就是这里给的档口
+ * 8.1.39：设了档口时段的，这一刻落在哪一段就到那一段的档口（那个档口停用了的照菜品自己的档口）；出品单记的就是这里给的档口。
+ * 8.2.4：没单独设档口的菜，分组设了默认档口的按分组走（档口时段优先）
  */
 export async function kitchenStationsOf(db: Db, itemIds: number[], clock: DiningClock): Promise<Map<number, number>> {
   const unique = [...new Set(itemIds)];
@@ -90,7 +94,11 @@ export async function kitchenStationsOf(db: Db, itemIds: number[], clock: Dining
       )
     : new Map<number, DishStationWindow[]>();
   const minute = minuteOfDay(clock.at, clock.timeZone);
-  return new Map(rows.map((r) => [r.id, stationAt(r.stationId, windows.get(r.id), minute)]));
+  const byGroup = await groupStationOverrides(
+    db,
+    rows.map((r) => r.id),
+  );
+  return new Map(rows.map((r) => [r.id, stationAt(byGroup.get(r.id)?.id ?? r.stationId, windows.get(r.id), minute)]));
 }
 
 export interface DishLine {
@@ -143,7 +151,8 @@ async function assertOnSale(db: Db, wanted: Map<number, { label: string }>, cloc
 
 export interface KitchenLine {
   billLineId: number;
-  itemId: number;
+  /** 菜品；手工下的临时项目（8.2.4）为空 */
+  itemId: number | null;
   stationId: number;
   quantity: number;
   note: string;
@@ -183,12 +192,16 @@ export async function createKitchenItems(
   // 套餐（8.1.15 菜品管理）：下单当时含哪几样记在出品单上（只读、不加锁；以后改了套餐，已经下的单还是当时的）
   const combos = await comboPartsOf(
     tx,
-    args.lines.map((l) => l.itemId),
+    args.lines.flatMap((l) => (l.itemId === null ? [] : [l.itemId])),
   );
   const madeParts: number[] = [];
   for (const l of args.lines) {
     // 套餐内容的快照（8.1.17：换过的记原来是哪一样）
-    const snapshot: DishPart[] = l.parts ? l.parts.map((p) => ({ name: p.name, quantity: p.perCombo, ...(p.swappedFrom ? { from: p.swappedFrom } : {}) })) : (combos.get(l.itemId) ?? []);
+    const snapshot: DishPart[] = l.parts
+      ? l.parts.map((p) => ({ name: p.name, quantity: p.perCombo, ...(p.swappedFrom ? { from: p.swappedFrom } : {}) }))
+      : l.itemId === null
+        ? []
+        : (combos.get(l.itemId) ?? []);
     const [row] = await tx<{ id: number }[]>`
       INSERT INTO kitchen_items (order_no, bill_line_id, visit_id, table_session_id, item_id, station_id, quantity, note, status, business_date,
                                  limit_taken, created_by, created_at, done_by, done_at, served_by, served_at, deliver_to, parts, order_note, deliver_room)
@@ -264,7 +277,7 @@ export async function cancelKitchenItem(tx: Tx, billLineId: number, reason: stri
 export async function unservedDishesOf(db: Db, visitIds: number[]) {
   return db<{ tagCode: string; name: string; quantity: number; status: KitchenStatus }[]>`
     SELECT h.code AS tag_code, i.name, k.quantity, k.status
-    FROM kitchen_items k JOIN service_items i ON i.id = k.item_id JOIN visits v ON v.id = k.visit_id JOIN hand_tags h ON h.id = v.tag_id
+    FROM kitchen_items k JOIN bill_lines i ON i.id = k.bill_line_id JOIN visits v ON v.id = k.visit_id JOIN hand_tags h ON h.id = v.tag_id
     WHERE k.visit_id IN ${db(visitIds)} AND k.status IN ('queued', 'cooking', 'done') ORDER BY k.id`;
 }
 
@@ -321,14 +334,21 @@ export async function kitchenDishes(db: Db, today: string, clock?: DiningClock):
         { activeOnly: true },
       )
     : new Map<number, DishStationWindow[]>();
+  // 8.2.4：跟分组默认档口走的菜
+  const byGroup = await groupStationOverrides(
+    db,
+    rows.map((r) => r.id),
+  );
   // 8.1.17（BW10）：菜品表里排过的按排的先后（同一个小类挨在一起），没排过的在后面、照原来的顺序
   return rows.map(({ prices, diningOutlet, diningGroup, catalogCategory, saleWindows, priceMode, ...r }) => {
     const slot = diningSlotOf({ outlet: diningOutlet, group: diningGroup, category: r.category, stationName: r.stationName }, outlets);
     // 8.1.39：此刻落在哪一段档口时段的，写那个档口
     const timed = minute === null ? undefined : windows.get(r.id)?.find((w) => inWindow(w, minute));
     // 8.1.17（BW5）：多档的菜带上各档的价，点单时弹出来选；只有一档的不带。价目表来的菜带上「餐段 → 分类」（重做第三批）
+    const grouped = byGroup.get(r.id);
     return {
       ...r,
+      ...(grouped ? { stationId: grouped.id, stationName: grouped.name } : {}),
       ...(timed ? { stationId: timed.stationId, stationName: timed.stationName ?? r.stationName } : {}),
       ...(saleWindows && saleWindows.length ? { saleWindows, offSale: minute !== null && !onSaleAt(saleWindows, minute) } : {}),
       price: defaultPrice(prices),
@@ -349,7 +369,7 @@ const ITEM_COLUMNS = (db: Db) => db`
   k.quantity, k.note, k.deliver_to, k.parts, k.status, k.station_id, s.name AS station_name, k.rush_count, k.created_at, k.started_at, k.done_at, k.served_at,
   p.display_name AS posted_by_name, coalesce(v.status, ts.status) <> 'open' AS visit_closed, k.order_note, k.deliver_room`;
 const ITEM_FROM = (db: Db) => db`
-  kitchen_items k JOIN service_items i ON i.id = k.item_id JOIN kitchen_stations s ON s.id = k.station_id
+  kitchen_items k JOIN kitchen_stations s ON s.id = k.station_id
   JOIN bill_lines bl ON bl.id = k.bill_line_id
   LEFT JOIN visits v ON v.id = k.visit_id LEFT JOIN hand_tags h ON h.id = v.tag_id LEFT JOIN members m ON m.id = v.member_id
   LEFT JOIN table_sessions ts ON ts.id = k.table_session_id LEFT JOIN dining_tables dt ON dt.id = ts.table_id
@@ -674,6 +694,10 @@ const RulesInput = z.object({
   dirtyAlertMinutes: z.number('分钟数必须是整数').int('分钟数必须是整数').min(1, '至少 1 分钟').max(MAX_DIRTY_ALERT_MINUTES, `最多 ${MAX_DIRTY_ALERT_MINUTES} 分钟`),
   // 8.1.39（R4）：餐厅、水吧的小分类
   outletGroups: OutletGroupsInput,
+  // 8.2.4：门店的服务费默认、用在哪些桌；已结账的包房单多久以内能返台
+  serviceFeeBp: z.number('服务费比例不正确').int('服务费比例不正确').min(0, '服务费比例不能是负数').max(MAX_SERVICE_FEE_BP, '服务费最多 30%'),
+  serviceFeeScope: z.enum(['rooms', 'all'], '服务费用在哪些桌不正确'),
+  returnWindowMinutes: z.number('分钟数必须是整数').int('分钟数必须是整数').min(1, '至少 1 分钟').max(MAX_RETURN_WINDOW_MINUTES, `最多 ${MAX_RETURN_WINDOW_MINUTES} 分钟`),
 });
 const StationInput = z.object({
   name: z.string().trim().min(1, '请填写档口名称').max(MAX_STATION_NAME, `档口名称最多 ${MAX_STATION_NAME} 字`),
@@ -709,6 +733,8 @@ export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
   // 8.1.39（餐饮 B）：小分类名单、前台结账核对的只看餐饮
   registerDiningV8139Routes(app, deps);
+  // 8.2.4：菜单分组的默认档口、菜品「单独设档口」
+  registerDiningV8224Routes(app, deps);
 
   // 后台「餐饮」：规则（只有店主）、出品档口与菜品的档口（能管理价目的岗位）
   app.get('/api/admin/dining', { preHandler: guardAny('settings.manage', 'catalog.manage') }, async () => diningAdmin(sql));
@@ -719,10 +745,11 @@ export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
       'dining_rules',
       loadDiningRules,
       async (before, tx) => {
-        const after = parse(RulesInput, { ...before, ...parse(RulesInput.partial(), req.body) });
+        const parsed = parse(RulesInput, { ...before, ...parse(RulesInput.partial(), req.body) });
         // 8.1.39（R4）：删掉、改名的小分类还有菜在用的不让存
-        await assertGroupsUnused(tx, before, after);
-        return after;
+        await assertGroupsUnused(tx, before, parsed);
+        // 8.2.4：分组默认档口在「档口与出品」里单独改，保存餐饮规则不动它
+        return { ...parsed, groupStations: before.groupStations };
       },
       ctxOf(req),
     );
@@ -768,8 +795,8 @@ export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
     const ids = [...new Set(items.map((i) => i.id))];
     if (ids.length !== items.length) throw unprocessable('DUPLICATE_ITEM', '同一道菜提交了两次');
     await sql.begin(async (tx) => {
-      const rows = await tx<{ id: number; name: string; stationId: number | null; technicianRequired: boolean; diningOutlet: string | null; diningGroup: string }[]>`
-        SELECT id, name, station_id, technician_required, dining_outlet, dining_group FROM service_items WHERE id IN ${tx(ids)} ORDER BY id FOR UPDATE`;
+      const rows = await tx<{ id: number; name: string; category: string; stationId: number | null; technicianRequired: boolean; diningOutlet: string | null; diningGroup: string }[]>`
+        SELECT id, name, category, station_id, technician_required, dining_outlet, dining_group FROM service_items WHERE id IN ${tx(ids)} ORDER BY id FOR UPDATE`;
       if (rows.length !== ids.length) throw notFound('有菜品不存在，请刷新后重试');
       const tech = rows.find((r) => r.technicianRequired && items.some((i) => i.id === r.id && i.stationId !== undefined && i.stationId !== null));
       if (tech) throw unprocessable('ITEM_NEEDS_TECHNICIAN', `「${tech.name}」需要技师，不进厨房；要进厨房请先在「技师」里取消「需要技师」`);
@@ -782,7 +809,12 @@ export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
       // 出品档口：带了而且变了的
       const wantStation = (r: (typeof rows)[number]) => byId.get(r.id)!.stationId;
       const stationChanged = rows.filter((r) => wantStation(r) !== undefined && r.stationId !== wantStation(r));
-      for (const r of stationChanged) await tx`UPDATE service_items SET station_id = ${wantStation(r)!}, updated_at = now() WHERE id = ${r.id}`;
+      for (const r of stationChanged) {
+        const to = wantStation(r)!;
+        // 8.2.4：换到的不是分组的默认档口就记成「单独设」，是分组默认（或分组没设）的跟分组
+        const slot = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: stations.find((x) => x.id === to)?.name ?? null }, outlets);
+        await tx`UPDATE service_items SET station_id = ${to}, station_pinned = ${to === null ? false : await pinnedForStation(tx, slot, to)}, updated_at = now() WHERE id = ${r.id}`;
+      }
       if (stationChanged.length) {
         const name = (sid: number | null) => (sid === null ? '不进厨房' : stations.find((s) => s.id === sid)!.name);
         await writeAudit(tx, {

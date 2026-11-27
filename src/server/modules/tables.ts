@@ -52,6 +52,7 @@ import { applyTableCharges, tableChargesOf } from './table-charges';
 import { MAX_SERVICE_FEE_BP } from '@shared/table-charges';
 import { lockAddonLines, pendingAddonsColumn, voidAddonLines, WithAddonsField } from './dish-addon-void';
 import type { TableState } from '@shared/dining-v8115';
+import { assertRoomTypeUsable, roomTypesOf } from './tables-v8224';
 
 // ───────────────────────── 后台：桌台 ─────────────────────────
 
@@ -63,27 +64,32 @@ const TableInput = z.object({
   active: z.boolean().default(true),
   /** 8.1.39：低消（分，0 为不设）、服务费比例（万分之几，0 为不收）；不带的不改（新建按 0） */
   minSpend: z.number('低消不正确').int('低消不正确').min(0, '低消不能是负数').max(100_000_000, '低消最多 ¥1,000,000').optional(),
-  serviceFeeBp: z.number('服务费比例不正确').int('服务费比例不正确').min(0, '服务费比例不能是负数').max(MAX_SERVICE_FEE_BP, '服务费最多 30%').optional(),
+  /** 8.2.4：空为跟门店默认（0 为这张桌不收） */
+  serviceFeeBp: z.number('服务费比例不正确').int('服务费比例不正确').min(0, '服务费比例不能是负数').max(MAX_SERVICE_FEE_BP, '服务费最多 30%').nullable().optional(),
+  /** 8.2.4：包房的房型（空为不是包房）；不带的不改（新建按不是包房） */
+  roomTypeId: z.number('房型不正确').int('房型不正确').positive('房型不正确').nullable().optional(),
 });
 
 export async function tablesAdmin(db: Db): Promise<TablesAdmin> {
   const tables = await db<TablesAdmin['tables']>`
-    SELECT t.id, t.name, t.area, t.seats, t.sort_order, t.active, t.min_spend::int AS min_spend, t.service_fee_bp,
+    SELECT t.id, t.name, t.area, t.seats, t.sort_order, t.active, t.min_spend::int AS min_spend, t.service_fee_bp, t.room_type_id,
            (SELECT count(*) FROM table_sessions s WHERE s.table_id = t.id)::int AS session_count
     FROM dining_tables t WHERE t.store_id = ${currentStoreId()} ORDER BY t.sort_order, t.id`;
-  return { tables };
+  return { tables, roomTypes: await roomTypesOf(db) };
 }
 
 async function saveTable(deps: Deps, id: number | null, raw: unknown, ctx: OpContext) {
   const t = parse(TableInput, raw);
   await deps.sql.begin(async (tx) => {
+    // 8.2.4：挂的房型要是这家店的、在用的（原来就挂着的停用房型照留）
+    if (t.roomTypeId) await assertRoomTypeUsable(tx, t.roomTypeId, id);
     const [dup] = await tx<{ id: number }[]>`
       SELECT id FROM dining_tables WHERE lower(btrim(name)) = lower(${t.name}) AND id IS DISTINCT FROM ${id} AND store_id = ${currentStoreId()}`;
     if (dup) throw conflict('TABLE_NAME_TAKEN', `已有桌台「${t.name}」`);
     if (id === null) {
       const [row] = await tx<{ id: number }[]>`
-        INSERT INTO dining_tables (name, area, seats, sort_order, active, created_by, min_spend, service_fee_bp)
-        VALUES (${t.name}, ${t.area}, ${t.seats}, ${t.sortOrder}, ${t.active}, ${ctx.actor.id}, ${t.minSpend ?? 0}, ${t.serviceFeeBp ?? 0}) RETURNING id`;
+        INSERT INTO dining_tables (name, area, seats, sort_order, active, created_by, min_spend, service_fee_bp, room_type_id)
+        VALUES (${t.name}, ${t.area}, ${t.seats}, ${t.sortOrder}, ${t.active}, ${ctx.actor.id}, ${t.minSpend ?? 0}, ${t.serviceFeeBp ?? null}, ${t.roomTypeId ?? null}) RETURNING id`;
       await writeAudit(tx, { staffId: ctx.actor.id, action: 'dining_table_saved', targetType: 'dining_table', targetId: row!.id, detail: { summary: `新建桌台「${t.name}」` }, ip: ctx.ip });
       return;
     }
@@ -95,7 +101,9 @@ async function saveTable(deps: Deps, id: number | null, raw: unknown, ctx: OpCon
     }
     await tx`
       UPDATE dining_tables SET name = ${t.name}, area = ${t.area}, seats = ${t.seats}, sort_order = ${t.sortOrder}, active = ${t.active}, updated_at = now(),
-             min_spend = coalesce(${t.minSpend ?? null}::bigint, min_spend), service_fee_bp = coalesce(${t.serviceFeeBp ?? null}::int, service_fee_bp)
+             min_spend = coalesce(${t.minSpend ?? null}::bigint, min_spend)
+             ${t.serviceFeeBp === undefined ? tx`` : tx`, service_fee_bp = ${t.serviceFeeBp}`}
+             ${t.roomTypeId === undefined ? tx`` : tx`, room_type_id = ${t.roomTypeId}`}
       WHERE id = ${id}`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,
@@ -664,7 +672,7 @@ export async function previewTableCheckout(deps: Deps, sessionIds: number[], at 
     const lines = await tx<{ id: number; billId: number; name: string; quantity: number; amount: number }[]>`
       SELECT id, bill_id, name, quantity, amount FROM bill_lines
       WHERE status = 'active' AND charge_kind IS NULL AND bill_id IN ${tx(rows.map((r) => r.billId))} ORDER BY id`;
-    const charges = await tableChargesOf(tx, ids);
+    const charges = await tableChargesOf(tx, ids, deps.config.timezone);
     const memberRows = rows.some((r) => r.memberId)
       ? await tx<Omit<TableCheckoutPreview['members'][number], 'spendQuota'>[]>`
           SELECT id, name, member_no, status, principal_balance, bonus_balance FROM members
@@ -674,7 +682,7 @@ export async function previewTableCheckout(deps: Deps, sessionIds: number[], at 
     const members = await withSpendQuota(tx, memberRows, await businessDate(tx, deps, at), (await loadSettings(tx)).rechargeSpendPct);
     const dishes = await tx<TableCheckoutPreview['dishes']>`
       SELECT t.name AS table_name, i.name, k.quantity, k.status
-      FROM kitchen_items k JOIN service_items i ON i.id = k.item_id JOIN table_sessions s ON s.id = k.table_session_id JOIN dining_tables t ON t.id = s.table_id
+      FROM kitchen_items k JOIN bill_lines i ON i.id = k.bill_line_id JOIN table_sessions s ON s.id = k.table_session_id JOIN dining_tables t ON t.id = s.table_id
       WHERE k.table_session_id IN ${tx(ids)} AND k.status IN ('queued', 'cooking', 'done') ORDER BY k.id`;
     const sessions = rows.map((r) => ({
       sessionId: r.id,
@@ -703,10 +711,10 @@ export async function previewTableCheckout(deps: Deps, sessionIds: number[], at 
       await businessDate(tx, deps, at),
       couponMomentOf(await businessDate(tx, deps, at), at, deps.config.timezone),
     );
-    // 合计含服务费；低消补足另算（收银勾了「补足低消」才加）
+    // 合计含服务费、房费（8.2.4）；低消补足另算（收银勾了「补足低消」才加）
     return {
       sessions,
-      totalAmount: sessions.reduce((sum, x) => sum + x.amount + x.charge.serviceFee, 0),
+      totalAmount: sessions.reduce((sum, x) => sum + x.amount + x.charge.serviceFee + x.charge.roomFee, 0),
       minSpendShortfall: sessions.reduce((sum, x) => sum + x.charge.shortfall, 0),
       members,
       storeCoupons,
@@ -772,6 +780,7 @@ export async function checkoutTables(deps: Deps, raw: unknown, ctx: OpContext): 
       date: await businessDate(tx, deps, at),
       at,
       staffId: ctx.actor.id,
+      timeZone: deps.config.timezone,
     });
     const rows = await tx<{ id: number; billId: number; amount: number; guests: number; openedAt: string; tableName: string }[]>`
       SELECT s.id, s.bill_id, b.amount_cents AS amount, s.guests, s.opened_at, t.name AS table_name
@@ -800,7 +809,20 @@ export async function checkoutTables(deps: Deps, raw: unknown, ctx: OpContext): 
     }
     const tables = rows.map((r) => r.tableName);
     const memberIds = [...guests].filter((m): m is number => m !== null);
-    await recordCheckoutPayments(tx, deps, { checkoutId, checkoutNo, payments: input.payments, discount, tagCodes: [], tables, billIds, memberIds, date, at, ctx });
+    await recordCheckoutPayments(tx, deps, {
+      checkoutId,
+      checkoutNo,
+      payments: input.payments,
+      discount,
+      tagCodes: [],
+      tables,
+      billIds,
+      memberIds,
+      date,
+      at,
+      ctx,
+      companyScope: { visitIds: [], tableSessionIds: ids },
+    });
     await snapshotCheckoutItems(tx, checkoutId);
     // 扣库存（8.0.20）：不进厨房的明细按用料记「该扣多少」（与手牌结账同一个做法）
     await recordSaleUsage(tx, checkoutId, billIds, date);
@@ -821,6 +843,7 @@ export async function checkoutTables(deps: Deps, raw: unknown, ctx: OpContext): 
         tables,
         total,
         ...(charged.serviceFee || charged.topUp ? { serviceFee: charged.serviceFee, minSpendTopUp: charged.topUp } : {}),
+        ...(charged.roomFee ? { roomFee: charged.roomFee } : {}),
         payments: input.payments.map((p) => ({ method: p.method, amount: p.amount })),
         ...(discount ? { discount: { amount: discounts[0]!.amount, reason: discount.reason, approverId: discount.approverId, approverName: discount.approverName } } : {}),
       },

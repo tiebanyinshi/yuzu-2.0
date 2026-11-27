@@ -11,7 +11,8 @@
 //     名下有没处理完的「未结离店」的会员发牌（绑定这几位会员与原因），或一笔超时加收（绑定来访、金额与原因）。
 // 优惠与降档的原因由申请的员工在弹窗里填写，随授权一起签发、核销后记到单据上。
 
-export const GRANT_PURPOSES = ['vip_tag', 'over_limit', 'checkout_discount', 'ticket_discount', 'member_refund', 'member_phone', 'line_void', 'checkin_risk'] as const;
+//   · company_charge：结账时「公司承担」（值班经理、店总、店主可授权，8.2.4，docs/V8224_DINING.md 第 5 节），绑定一起结账的来访或开台、金额、原因与说明。
+export const GRANT_PURPOSES = ['vip_tag', 'over_limit', 'checkout_discount', 'ticket_discount', 'member_refund', 'member_phone', 'line_void', 'checkin_risk', 'company_charge'] as const;
 export type GrantPurpose = (typeof GRANT_PURPOSES)[number];
 
 export const GRANT_TTL_MINUTES = 5;
@@ -82,6 +83,7 @@ export type MemberRefundGrantRequest = { purpose: 'member_refund'; scope: Member
 export type MemberPhoneGrantRequest = { purpose: 'member_phone'; scope: MemberPhoneScope };
 export type LineVoidGrantRequest = { purpose: 'line_void'; scope: LineVoidScope };
 export type CheckinRiskGrantRequest = { purpose: 'checkin_risk'; scope: import('./frontdesk-risk').CheckinRiskScope };
+export type CompanyChargeGrantRequest = { purpose: 'company_charge'; scope: import('./dining-v8224').CompanyChargeScope };
 export type GrantRequest =
   | VipGrantRequest
   | OverLimitGrantRequest
@@ -90,7 +92,8 @@ export type GrantRequest =
   | MemberRefundGrantRequest
   | MemberPhoneGrantRequest
   | LineVoidGrantRequest
-  | CheckinRiskGrantRequest;
+  | CheckinRiskGrantRequest
+  | CompanyChargeGrantRequest;
 
 /** 签发的授权：授权编号、授权人与有效期，连同申请时的用途与对象 */
 export type Granted<R extends GrantRequest = GrantRequest> = R & {
@@ -104,6 +107,7 @@ export type OverLimitGrant = Granted<OverLimitGrantRequest>;
 export type DiscountGrant = Granted<DiscountGrantRequest>;
 export type TicketGrant = Granted<TicketGrantRequest>;
 export type CheckinRiskGrant = Granted<CheckinRiskGrantRequest>;
+export type CompanyChargeGrant = Granted<CompanyChargeGrantRequest>;
 
 /** 来访编号按升序去重，授权与结账按同一顺序比较 */
 export const sortedVisitIds = (ids: readonly number[]) => [...new Set(ids)].sort((a, b) => a - b);

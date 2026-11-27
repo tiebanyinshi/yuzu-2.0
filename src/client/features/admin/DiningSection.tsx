@@ -40,6 +40,9 @@ import { AdminPage, PriceSheetLink } from './AdminShell';
 import { SubPane } from '../../components/SubNav';
 import { RoomOrderConfigCard } from './RoomOrderConfigCard';
 import { groupsProblem, OutletGroupsEditor } from './DiningGroupsEditor';
+import { GroupStationsCard } from './GroupStationsCard';
+import { roomTypeText, RoomTypesCard } from './RoomTypesCard';
+import { MAX_RETURN_WINDOW_MINUTES } from '@shared/dining-v8224';
 
 const adminKey = ['admin', 'dining'] as const;
 const useDiningAdmin = () => useQuery({ queryKey: adminKey, queryFn: () => api.get<DiningAdmin>('/api/admin/dining') });
@@ -61,14 +64,32 @@ export function DiningSection() {
       </SubPane>
       <SubPane tab="stations" className="space-y-5">
         <StationsCard />
+        <GroupStationsSection />
         <ItemsCard />
         <RoomOrderConfigCard />
       </SubPane>
-      <SubPane tab="tables">
+      <SubPane tab="tables" className="space-y-5">
+        <RoomTypesSection />
         <TablesCard />
       </SubPane>
     </AdminPage>
   );
+}
+
+/** 8.2.4：菜单分组的默认档口与核对列表 */
+function GroupStationsSection() {
+  const can = useCan();
+  const admin = useDiningAdmin();
+  if (!admin.data) return <Skeleton className="h-32" />;
+  return <GroupStationsCard outlets={diningOutletsOf(admin.data.rules)} stations={admin.data.stations} editable={can('catalog.manage')} />;
+}
+
+/** 8.2.4：包房房型 */
+function RoomTypesSection() {
+  const can = useCan();
+  const tables = useTablesAdmin();
+  if (!tables.data) return <Skeleton className="h-32" />;
+  return <RoomTypesCard data={tables.data} queryKey={tablesAdminKey} editable={can('catalog.manage')} />;
 }
 
 function RulesCard() {
@@ -91,6 +112,9 @@ function RulesCard() {
   const dirtyOk = Number.isInteger(draft.dirtyAlertMinutes) && draft.dirtyAlertMinutes >= 1 && draft.dirtyAlertMinutes <= MAX_DIRTY_ALERT_MINUTES;
   const freeCents = freeText === null ? draft.voidFreeCents : freeText.trim() === '' ? null : parseYuan(freeText);
   const freeOk = freeCents !== null && freeCents >= 0 && freeCents <= MAX_VOID_FREE_CENTS;
+  // 8.2.4：门店的服务费默认（%）、返台时限
+  const feeOk = Number.isInteger(draft.serviceFeeBp) && draft.serviceFeeBp >= 0 && draft.serviceFeeBp <= MAX_SERVICE_FEE_BP;
+  const returnOk = Number.isInteger(draft.returnWindowMinutes) && draft.returnWindowMinutes >= 1 && draft.returnWindowMinutes <= MAX_RETURN_WINDOW_MINUTES;
   const mapped = admin.data.items.filter((i) => i.stationId !== null && !i.technicianRequired).length;
   // 8.1.39（R4）：菜单的小分类
   const groupsBad = groupsProblem(draft.outletGroups);
@@ -237,6 +261,55 @@ function RulesCard() {
           </span>,
           true,
         )}
+        {row(
+          '服务费（门店默认）',
+          '桌台没单独设服务费的按这个比例收，按这一桌点了、没退、没赠送的菜算（不算房费、低消补足）。默认只用在挂了房型的包房；桌台自己设了比例（含 0）的照桌台的。',
+          <span className="flex shrink-0 flex-wrap items-center gap-2 whitespace-nowrap">
+            <Input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              max={MAX_SERVICE_FEE_BP / 100}
+              value={Number.isNaN(draft.serviceFeeBp) ? '' : draft.serviceFeeBp / 100}
+              disabled={!editable}
+              onChange={(e) => set({ serviceFeeBp: e.target.value === '' ? NaN : Math.round(Number(e.target.value) * 100) })}
+              className="num h-10 w-20"
+              aria-label="服务费门店默认（%）"
+              data-testid="dining-service-fee"
+            />
+            <span className="text-[13px] text-ink-3">%</span>
+            <Segmented
+              ariaLabel="门店默认服务费用在哪些桌"
+              value={draft.serviceFeeScope}
+              onChange={(v) => editable && set({ serviceFeeScope: v as DiningRules['serviceFeeScope'] })}
+              options={[
+                { value: 'rooms', label: '只收包房', disabled: !editable },
+                { value: 'all', label: '所有桌台', disabled: !editable },
+              ]}
+            />
+          </span>,
+          true,
+        )}
+        {row(
+          '返台时限',
+          '包房结账时补了低消、客人还没走（桌台待清台）的，结账后这么多分钟以内可以返台：反结账这张单、回到桌台继续点，补到低消再结。清了台就不能返台。',
+          <span className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={MAX_RETURN_WINDOW_MINUTES}
+              value={Number.isNaN(draft.returnWindowMinutes) ? '' : draft.returnWindowMinutes}
+              disabled={!editable}
+              onChange={(e) => set({ returnWindowMinutes: e.target.value === '' ? NaN : Number(e.target.value) })}
+              className="num h-10 w-20"
+              aria-label="返台时限（分钟）"
+              data-testid="dining-return-window"
+            />
+            <span className="text-[13px] text-ink-3">分钟</span>
+          </span>,
+          true,
+        )}
         <OutletGroupsEditor value={draft.outletGroups} onChange={(outletGroups) => set({ outletGroups })} editable={editable} items={admin.data.items} saved={admin.data.rules.outletGroups} />
         {row(
           '小额退菜上限',
@@ -261,6 +334,8 @@ function RulesCard() {
       {!minutesOk && <Notice tone="error" title="分钟数要在 1 到 180 之间" className="mt-3" />}
       {!dirtyOk && <Notice tone="error" title={`待清台的分钟数要在 1 到 ${MAX_DIRTY_ALERT_MINUTES} 之间`} className="mt-3" />}
       {!freeOk && <Notice tone="error" title={`小额退菜上限填 0 到 ${formatYuan(MAX_VOID_FREE_CENTS)} 之间的金额`} className="mt-3" />}
+      {!feeOk && <Notice tone="error" title={`服务费填 0 到 ${MAX_SERVICE_FEE_BP / 100} 之间的比例`} className="mt-3" />}
+      {!returnOk && <Notice tone="error" title={`返台时限填 1 到 ${MAX_RETURN_WINDOW_MINUTES} 分钟`} className="mt-3" />}
       {groupsBad && <Notice tone="error" title={groupsBad} className="mt-3" />}
       {error && <Notice tone="error" title={error} className="mt-3" />}
       <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
@@ -280,7 +355,7 @@ function RulesCard() {
               variant="ghost"
               onClick={() => {
                 // 小分类不跟着恢复（还有菜在用的改不回去），在上面单独改
-                setDraft({ ...DEFAULT_DINING_RULES, enabled: draft.enabled, outletGroups: draft.outletGroups });
+                setDraft({ ...DEFAULT_DINING_RULES, enabled: draft.enabled, outletGroups: draft.outletGroups, groupStations: draft.groupStations });
                 setFreeText(null);
               }}
             >
@@ -288,7 +363,7 @@ function RulesCard() {
             </Button>
           )}
         {editable && (
-          <Button variant="primary" loading={busy} disabled={!dirty || !minutesOk || !freeOk || !dirtyOk || !!groupsBad} onClick={save} data-testid="dining-rules-save">
+          <Button variant="primary" loading={busy} disabled={!dirty || !minutesOk || !freeOk || !dirtyOk || !feeOk || !returnOk || !!groupsBad} onClick={save} data-testid="dining-rules-save">
             保存餐饮规则
           </Button>
         )}
@@ -723,7 +798,11 @@ function TablesCard() {
               <span className="num min-w-[72px] text-[14.5px] font-bold">{t.name}</span>
               <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-3">
                 {t.area || '不分区'} · {t.seats} 座{t.minSpend ? ` · 低消 ${formatYuan(t.minSpend)}` : ''}
-                {t.serviceFeeBp ? ` · ${serviceFeeText(t.serviceFeeBp)}` : ''}
+                {t.serviceFeeBp ? ` · ${serviceFeeText(t.serviceFeeBp)}` : t.serviceFeeBp === 0 ? ' · 不收服务费' : ''}
+                {(() => {
+                  const rt = tables.data.roomTypes.find((r) => r.id === t.roomTypeId);
+                  return rt ? ` · 包房 ${rt.name}（${roomTypeText(rt)}）` : '';
+                })()}
               </span>
               <span className="text-[12px] text-ink-4">开台 {t.sessionCount} 次</span>
               <span className="num text-[12px] text-ink-4">排序 {t.sortOrder}</span>
@@ -737,12 +816,12 @@ function TablesCard() {
           ))}
         </ul>
       )}
-      <TableDialog target={editing} onClose={() => setEditing(null)} />
+      <TableDialog target={editing} roomTypes={tables.data.roomTypes} onClose={() => setEditing(null)} />
     </Card>
   );
 }
 
-function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; onClose: () => void }) {
+function TableDialog({ target, roomTypes, onClose }: { target: DiningTable | 'new' | null; roomTypes: TablesAdmin['roomTypes']; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [name, setName] = useState('');
@@ -753,6 +832,8 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
   /** 8.1.39：低消（元）、服务费（%） */
   const [minSpend, setMinSpend] = useState('');
   const [feePct, setFeePct] = useState('');
+  /** 8.2.4：包房的房型（空为不是包房） */
+  const [roomTypeId, setRoomTypeId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [opened, setOpened] = useState<typeof target>(null);
@@ -766,12 +847,14 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
     setSortOrder(String(t?.sortOrder ?? 0));
     setActive(t?.active ?? true);
     setMinSpend(t?.minSpend ? centsToInput(t.minSpend) : '');
-    setFeePct(t?.serviceFeeBp ? String(t.serviceFeeBp / 100) : '');
+    // 8.2.4：空着为跟门店默认，填 0 为这张桌不收
+    setFeePct(t?.serviceFeeBp === null || t?.serviceFeeBp === undefined ? '' : String(t.serviceFeeBp / 100));
+    setRoomTypeId(t?.roomTypeId ?? null);
     setError(null);
   }
   const minSpendCents = minSpend.trim() ? parseYuan(minSpend) : 0;
-  const feeBp = feePct.trim() ? Math.round(Number(feePct) * 100) : 0;
-  const chargesOk = minSpendCents !== null && minSpendCents >= 0 && Number.isFinite(feeBp) && feeBp >= 0 && feeBp <= MAX_SERVICE_FEE_BP;
+  const feeBp = feePct.trim() ? Math.round(Number(feePct) * 100) : null;
+  const chargesOk = minSpendCents !== null && minSpendCents >= 0 && (feeBp === null || (Number.isFinite(feeBp) && feeBp >= 0 && feeBp <= MAX_SERVICE_FEE_BP));
   const seatNum = Number(seats);
   const order = Number(sortOrder);
   const ok =
@@ -790,7 +873,7 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
     setBusy(true);
     setError(null);
     try {
-      const body = { name: name.trim(), area: area.trim(), seats: seatNum, sortOrder: order, active, minSpend: minSpendCents ?? 0, serviceFeeBp: feeBp };
+      const body = { name: name.trim(), area: area.trim(), seats: seatNum, sortOrder: order, active, minSpend: minSpendCents ?? 0, serviceFeeBp: feeBp, roomTypeId };
       const next = target === 'new' ? await api.post<TablesAdmin>('/api/admin/dining/tables', body) : await api.put<TablesAdmin>(`/api/admin/dining/tables/${target!.id}`, body);
       qc.setQueryData(tablesAdminKey, next);
       void qc.invalidateQueries({ queryKey: ['dining'] });
@@ -845,10 +928,25 @@ function TableDialog({ target, onClose }: { target: DiningTable | 'new' | null; 
         </div>
         {/* 8.1.39（docs/V8139.md 第 3 节）：包房的低消与服务费；空着为不设 */}
         <div className="flex flex-wrap gap-4">
-          <Field label="低消（元）" htmlFor="table-min-spend" hint="菜钱不到低消不能直接结账：收银勾「补足低消」，或先转挂账；空着为不设">
+          <Field label="包房房型" htmlFor="table-room-type" hint="挂了房型就是包房：低消按房型，服务费跟门店默认">
+            <Select id="table-room-type" value={roomTypeId ?? ''} onChange={(e) => setRoomTypeId(Number(e.target.value) || null)} className="w-44" data-testid="dining-table-room-type">
+              <option value="">不是包房</option>
+              {roomTypes
+                .filter((r) => r.active || r.id === roomTypeId)
+                .map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                    {r.active ? '' : '（停用）'}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <Field label="低消（元）" htmlFor="table-min-spend" hint="桌台自己设的优先于房型；菜钱不到低消不能直接结账：补足低消、返台再点或先转挂账；空着为不设">
             <MoneyInput id="table-min-spend" value={minSpend} onChange={(e) => setMinSpend(e.target.value)} className="w-36" data-testid="dining-table-min-spend" />
           </Field>
-          <Field label="服务费（%）" htmlFor="table-fee" hint="结账时按没赠送、没退的菜算；空着为不收，最多 30">
+          <Field label="服务费（%）" htmlFor="table-fee" hint="结账时按没赠送、没退的菜算；空着为跟门店默认，填 0 为不收，最多 30">
             <Input id="table-fee" inputMode="decimal" value={feePct} onChange={(e) => setFeePct(e.target.value)} className="num w-28" data-testid="dining-table-fee" />
           </Field>
         </div>
