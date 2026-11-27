@@ -115,6 +115,11 @@ export interface LockerCardRead {
 /** 写卡、清卡的结果 */
 export interface LockerCardResult {
   ok: boolean;
+  /**
+   * 结果待确认（Codex 审查 f8b2853）：柜锁桥没回答（超时、断线、5xx），读回核对也没对上——卡可能已经写了、清了，
+   * 把卡放回发卡器读卡核对；没写成再写一次（写同一张卡没坏处）。不能当成「没写成」
+   */
+  uncertain: boolean;
   uid: string | null;
   message: string;
 }
@@ -132,6 +137,11 @@ export const LOCKER_CARD_REASONS = ['补发手牌', '手牌失灵重写', '新�
 export interface LockerOpenResult {
   code: string;
   opened: boolean;
+  /**
+   * 结果待确认（Codex 审查 f8b2853）：柜锁桥没回答（超时、断线、5xx），能查柜门的也没查出来——柜门可能已经开了，
+   * 要到柜前确认；不能当成「没开」
+   */
+  uncertain: boolean;
   /** 控制器的回话（失败时写原因） */
   message: string;
 }

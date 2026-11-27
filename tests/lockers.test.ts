@@ -100,7 +100,7 @@ describe('柜锁控制器（不要数据库）', () => {
     }) as typeof fetch;
     const cfg = { driver: 'http' as const, bridgeUrl: 'http://bridge', bridgeToken: 'k'.repeat(32), capabilities: ['open' as const, 'doors' as const] };
     const c = createLockerController(cfg, fakeFetch);
-    expect(await c.open('A8060')).toEqual({ code: 'A8060', opened: true, message: '3 号板第 7 路' });
+    expect(await c.open('A8060')).toEqual({ code: 'A8060', opened: true, uncertain: false, message: '3 号板第 7 路' });
     expect(await c.doors(['A8060', 'Z9999'])).toEqual([
       { code: 'A8060', doorOpen: false, known: true },
       { code: 'Z9999', doorOpen: null, known: false },
@@ -109,9 +109,45 @@ describe('柜锁控制器（不要数据库）', () => {
     const down = createLockerController(cfg, (async () => {
       throw new Error('ECONNREFUSED');
     }) as typeof fetch);
+    // 没收到回答：不当成没开，结果待确认（Codex 审查 f8b2853）
     const r = await down.open('A8060');
-    expect(r.opened).toBe(false);
-    expect(r.message).toContain('连不上柜锁桥');
+    expect(r).toMatchObject({ opened: false, uncertain: true });
+    expect(r.message).toContain('柜门可能已经开了');
+  });
+
+  it('结果待确认（Codex 审查 f8b2853）：没收到回答时写卡读回核对、开柜查柜门；对上了按做成算，对不上标待确认；4xx 是明确没做', async () => {
+    const cfg = { driver: 'http' as const, bridgeUrl: 'http://bridge', bridgeToken: 'k'.repeat(32), capabilities: ['open' as const, 'doors' as const, 'card' as const] };
+    const respond = (handlers: Record<string, () => Response>) =>
+      (async (url: string) => {
+        const path = new URL(url).pathname;
+        const h = handlers[path];
+        if (!h) throw new Error('timeout');
+        return h();
+      }) as typeof fetch;
+    const json =
+      (v: unknown, status = 200) =>
+      () =>
+        new Response(JSON.stringify(v), { status });
+    // 写卡超时，但读回已经是要写的柜：按写成算，注明读回核对
+    const written = createLockerController(cfg, respond({ '/card/read': json({ ok: true, uid: '04A1B2C3', code: 'A8060' }) }));
+    const w1 = await written.writeCard('A8060', '04A1B2C3');
+    expect(w1).toMatchObject({ ok: true, uncertain: false, uid: '04A1B2C3' });
+    expect(w1.message).toContain('读回核对');
+    // 写卡回 503、读回还是空白卡：结果待确认（桥可能还在写）
+    const pending = createLockerController(cfg, respond({ '/card/write': json({}, 503), '/card/read': json({ ok: true, uid: '04A1B2C3', code: null }) }));
+    const w2 = await pending.writeCard('A8060', null);
+    expect(w2).toMatchObject({ ok: false, uncertain: true, uid: '04A1B2C3' });
+    expect(w2.message).toContain('读回的卡里是 空白');
+    // 清卡超时、读回也读不到：结果待确认
+    expect(await createLockerController(cfg, respond({})).clearCard(null)).toMatchObject({ ok: false, uncertain: true });
+    // 桥回 400：明确没做
+    expect(await createLockerController(cfg, respond({ '/card/write': json({}, 400) })).writeCard('A8060', null)).toMatchObject({ ok: false, uncertain: false });
+    expect(await createLockerController(cfg, respond({ '/open': json({}, 401) })).open('A8060')).toMatchObject({ opened: false, uncertain: false });
+    // 开柜超时、查柜门开着：按开了算
+    expect(await createLockerController(cfg, respond({ '/doors': json({ doors: [{ code: 'A8060', doorOpen: true }] }) })).open('A8060')).toMatchObject({
+      opened: true,
+      uncertain: false,
+    });
   });
 
   it('发卡器（模拟）：读空白卡、写成柜号（衣物柜、手机柜）、清卡；不是要写的那张卡不写；发卡器上没卡时说明', async () => {
@@ -155,8 +191,8 @@ describe('柜锁控制器（不要数据库）', () => {
       ],
       message: '已读',
     });
-    expect(await c.writeCard('A8060', '04A1B2C3')).toEqual({ ok: true, uid: '04A1B2C3', message: '已写：衣物柜 A8060、手机柜 P060' });
-    expect(await c.clearCard(null)).toEqual({ ok: false, uid: null, message: '发卡器没有写成' });
+    expect(await c.writeCard('A8060', '04A1B2C3')).toEqual({ ok: true, uncertain: false, uid: '04A1B2C3', message: '已写：衣物柜 A8060、手机柜 P060' });
+    expect(await c.clearCard(null)).toEqual({ ok: false, uncertain: false, uid: null, message: '发卡器没有写成' });
     expect(calls.map((x) => [x.url, x.body])).toEqual([
       ['http://bridge/card/read', {}],
       ['http://bridge/card/write', { code: 'A8060', uid: '04A1B2C3' }],
@@ -165,7 +201,7 @@ describe('柜锁控制器（不要数据库）', () => {
     const down = createLockerController(cfg, (async () => {
       throw new Error('ECONNREFUSED');
     }) as typeof fetch);
-    expect((await down.writeCard('A8060', null)).message).toContain('连不上柜锁桥');
+    expect(await down.writeCard('A8060', null)).toMatchObject({ ok: false, uncertain: true });
     await expect(down.readCard()).rejects.toThrow();
   });
 
@@ -239,7 +275,7 @@ describe('远程开柜接口', () => {
     expect(w.body).toMatchObject({ ok: true, uid: '04A1B2C3', code: 'L8004', boundTag: { code: 'L8003' } });
     const [audit] = await ctx.sql<{ targetId: string; detail: Record<string, unknown> }[]>`
       SELECT target_id, detail FROM audit_logs WHERE action = 'locker_card_written' ORDER BY id DESC LIMIT 1`;
-    expect(audit).toMatchObject({ targetId: String(other!.id), detail: { code: 'L8004', uid: '04A1B2C3', reason: '手牌失灵重写', driver: 'mock', ok: true } });
+    expect(audit).toMatchObject({ targetId: String(other!.id), detail: { code: 'L8004', uid: '04A1B2C3', reason: '手牌失灵重写', driver: 'mock', ok: true, uncertain: false } });
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/lockers/card/read', {})).body).toMatchObject({ code: 'L8004', tag: { code: 'L8003' }, mismatch: true });
 
     // 不是要清的那张卡：不清，照样记审计（没清成）

@@ -9,6 +9,8 @@
 //       POST {LOCKER_BRIDGE_URL}/card/write  { code, uid? }      → { ok, uid?, message? }
 //       POST {LOCKER_BRIDGE_URL}/card/clear  { uid? }            → { ok, uid?, message? }
 //     带 Authorization: Bearer {LOCKER_BRIDGE_TOKEN}；每次 5 秒超时；开柜、写卡、清卡都不自动重试（再做一次没坏处，但要让人知道上一次没成）。
+//     桥回 4xx 算明确没做；超时、断线、5xx、回的不是 JSON 算「结果待确认」（桥可能已经做了）：写卡、清卡读回一次卡核对，开柜能查柜门的查一次，
+//     对上了按做成算（注明是读回核对的），对不上的标 uncertain，页面让人读卡 / 到柜前确认（Codex 审查 f8b2853）。
 
 import { CARD_UID_PATTERN, normalizeCardUid } from '@shared/frontdesk-risk';
 import {
@@ -71,10 +73,16 @@ const cardRead = (r: { ok?: unknown; uid?: unknown; code?: unknown; locks?: unkn
 
 const cardResult = (r: { ok?: unknown; uid?: unknown; message?: unknown }, done: string): LockerCardResult => {
   const ok = r.ok === true;
-  return { ok, uid: cleanUid(r.uid), message: text(r.message) ?? (ok ? done : '发卡器没有写成') };
+  return { ok, uncertain: false, uid: cleanUid(r.uid), message: text(r.message) ?? (ok ? done : '发卡器没有写成') };
 };
 
-const unreachable = (error: unknown) => `连不上柜锁桥：${error instanceof Error ? error.message : String(error)}`.slice(0, 200);
+/** 桥明确拒绝（4xx）：确定没做 */
+class BridgeRejected extends Error {}
+/** 超时、断线、5xx、回的不是 JSON：桥可能已经做了，结果待确认 */
+class BridgeUncertain extends Error {}
+
+const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const uncertainText = (what: string, error: unknown, back: string) => `没收到柜锁桥的回答（${why(error)}），${what}；${back}`.slice(0, 200);
 
 export function createLockerController(cfg: LockerConfig, fetchImpl: typeof fetch = fetch, hardware?: MockLockerHardware): LockerController {
   const has = (c: string) => (cfg.capabilities as readonly string[]).includes(c);
@@ -102,14 +110,53 @@ export function createLockerController(cfg: LockerConfig, fetchImpl: typeof fetc
   }
   if (cfg.driver === 'http' && cfg.bridgeUrl && cfg.bridgeToken) {
     const call = async <T>(path: string, body: unknown): Promise<T> => {
-      const res = await fetchImpl(`${cfg.bridgeUrl}${path}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.bridgeToken}` },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-      if (!res.ok) throw new Error(`柜锁桥回 ${res.status}`);
-      return (await res.json()) as T;
+      let res: Response;
+      try {
+        res = await fetchImpl(`${cfg.bridgeUrl}${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.bridgeToken}` },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+      } catch (error) {
+        throw new BridgeUncertain(why(error));
+      }
+      if (res.status >= 500) throw new BridgeUncertain(`柜锁桥回 ${res.status}`);
+      if (!res.ok) throw new BridgeRejected(`柜锁桥回 ${res.status}`);
+      try {
+        return (await res.json()) as T;
+      } catch {
+        throw new BridgeUncertain('柜锁桥回的不是 JSON');
+      }
+    };
+    const doors = async (codes: readonly string[]): Promise<LockerDoor[]> => {
+      const r = await call<{ doors?: unknown }>('/doors', { codes });
+      const list = Array.isArray(r.doors) ? r.doors : [];
+      const byCode = new Map<string, LockerDoor>();
+      for (const d of list as { code?: unknown; doorOpen?: unknown; known?: unknown }[]) {
+        if (typeof d?.code !== 'string') continue;
+        byCode.set(d.code, { code: d.code, doorOpen: typeof d.doorOpen === 'boolean' ? d.doorOpen : null, known: d.known !== false });
+      }
+      return codes.map((code) => byCode.get(code) ?? { code, doorOpen: null, known: false });
+    };
+    const readBack = async () => {
+      try {
+        return cardRead(await call('/card/read', {}));
+      } catch {
+        return null;
+      }
+    };
+    /** 写卡、清卡没收到回答：读回一次卡，已经是要的样子就按做成算，否则结果待确认 */
+    const settleCard = async (error: unknown, done: (c: LockerCardRead) => boolean, doneText: string, what: string): Promise<LockerCardResult> => {
+      if (error instanceof BridgeRejected) return { ok: false, uncertain: false, uid: null, message: `柜锁桥拒绝了：${why(error)}` };
+      const back = await readBack();
+      if (back?.ok && done(back)) return { ok: true, uncertain: false, uid: back.uid, message: `没收到柜锁桥的回答，读回核对：${doneText}` };
+      return {
+        ok: false,
+        uncertain: true,
+        uid: back?.uid ?? null,
+        message: uncertainText(`卡可能已经${what}`, error, back?.ok ? `读回的卡里是 ${back.code ?? '空白'}：稍后把卡放回发卡器读卡核对` : '把卡放回发卡器读卡核对'),
+      };
     };
     return {
       info,
@@ -117,21 +164,21 @@ export function createLockerController(cfg: LockerConfig, fetchImpl: typeof fetc
         try {
           const r = await call<{ ok?: unknown; message?: unknown }>('/open', { code });
           const opened = r.ok === true;
-          return { code, opened, message: text(r.message) ?? (opened ? '已开' : '控制器没有开') };
+          return { code, opened, uncertain: false, message: text(r.message) ?? (opened ? '已开' : '控制器没有开') };
         } catch (error) {
-          return { code, opened: false, message: unreachable(error) };
+          if (error instanceof BridgeRejected) return { code, opened: false, uncertain: false, message: `柜锁桥拒绝了：${why(error)}` };
+          // 没收到回答：能查柜门的查一次，开着就按开了算
+          if (info.canDoors) {
+            const door = await doors([code]).then(
+              (d) => d[0],
+              () => null,
+            );
+            if (door?.doorOpen === true) return { code, opened: true, uncertain: false, message: '没收到柜锁桥的回答，查柜门：已经开了' };
+          }
+          return { code, opened: false, uncertain: true, message: uncertainText('柜门可能已经开了', error, '请到柜前确认') };
         }
       },
-      async doors(codes) {
-        const r = await call<{ doors?: unknown }>('/doors', { codes });
-        const list = Array.isArray(r.doors) ? r.doors : [];
-        const byCode = new Map<string, LockerDoor>();
-        for (const d of list as { code?: unknown; doorOpen?: unknown; known?: unknown }[]) {
-          if (typeof d?.code !== 'string') continue;
-          byCode.set(d.code, { code: d.code, doorOpen: typeof d.doorOpen === 'boolean' ? d.doorOpen : null, known: d.known !== false });
-        }
-        return codes.map((code) => byCode.get(code) ?? { code, doorOpen: null, known: false });
-      },
+      doors,
       async readCard() {
         return cardRead(await call('/card/read', {}));
       },
@@ -139,14 +186,14 @@ export function createLockerController(cfg: LockerConfig, fetchImpl: typeof fetc
         try {
           return cardResult(await call('/card/write', uid ? { code, uid } : { code }), '已写');
         } catch (error) {
-          return { ok: false, uid: null, message: unreachable(error) };
+          return settleCard(error, (c) => c.code === code && (!uid || c.uid === uid), `卡已写成 ${code}`, '写了');
         }
       },
       async clearCard(uid) {
         try {
           return cardResult(await call('/card/clear', uid ? { uid } : {}), '已清');
         } catch (error) {
-          return { ok: false, uid: null, message: unreachable(error) };
+          return settleCard(error, (c) => c.code === null && (!uid || c.uid === uid), '卡已清成空白', '清了');
         }
       },
     };
@@ -155,7 +202,7 @@ export function createLockerController(cfg: LockerConfig, fetchImpl: typeof fetc
   return {
     info: { driver: 'none', canOpen: false, canDoors: false, canCard: false },
     async open(code) {
-      return { code, opened: false, message: none };
+      return { code, opened: false, uncertain: false, message: none };
     },
     async doors() {
       return [];
@@ -164,10 +211,10 @@ export function createLockerController(cfg: LockerConfig, fetchImpl: typeof fetc
       return { ok: false, uid: null, code: null, locks: [], message: none };
     },
     async writeCard() {
-      return { ok: false, uid: null, message: none };
+      return { ok: false, uncertain: false, uid: null, message: none };
     },
     async clearCard() {
-      return { ok: false, uid: null, message: none };
+      return { ok: false, uncertain: false, uid: null, message: none };
     },
   };
 }

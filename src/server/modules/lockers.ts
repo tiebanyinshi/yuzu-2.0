@@ -7,7 +7,8 @@
 //   POST /api/lockers/:id/card/write    把发卡器上的卡写成这张手牌的柜（维护手牌池、写原因、记审计 locker_card_written）
 //   POST /api/lockers/card/clear        清卡（维护手牌池、写原因、记审计 locker_card_cleared）
 //   没配发卡器回 503 LOCKER_CARD_NOT_CONFIGURED；读卡时桥没回应回 502 LOCKER_CONTROLLER_DOWN。
-// 开柜、写卡、清卡都在事务外调控制器（不拿着数据库连接等 5 秒），之后单独写审计。
+// 开柜、写卡、清卡都在事务外调控制器（不拿着数据库连接等 5 秒），之后单独写审计；桥没回答、读回也没对上的记 uncertain（结果待确认），
+// 页面让人读卡 / 到柜前确认，不当成没做（Codex 审查 f8b2853）。
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -75,7 +76,7 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
       action: 'locker_opened',
       targetType: 'hand_tag',
       targetId: id,
-      detail: { code: tag.code, reason, driver: controller.info.driver, opened: result.opened, message: result.message },
+      detail: { code: tag.code, reason, driver: controller.info.driver, opened: result.opened, uncertain: result.uncertain, message: result.message },
       ip: ctx.ip,
     });
     return result;
@@ -108,7 +109,7 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
       action: 'locker_card_written',
       targetType: 'hand_tag',
       targetId: id,
-      detail: { code: tag.code, uid: result.uid ?? uid, reason, driver: controller.info.driver, ok: result.ok, message: result.message },
+      detail: { code: tag.code, uid: result.uid ?? uid, reason, driver: controller.info.driver, ok: result.ok, uncertain: result.uncertain, message: result.message },
       ip: ctx.ip,
     });
     // 这张卡的芯片号绑的是哪张手牌：没绑、绑在别的牌上的，页面提示去后台「手牌」绑（不自动改绑，GK6）
@@ -126,7 +127,7 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
       action: 'locker_card_cleared',
       targetType: 'hand_tag',
       targetId: tag?.id,
-      detail: { uid: result.uid ?? uid, code: tag?.code ?? null, reason, driver: controller.info.driver, ok: result.ok, message: result.message },
+      detail: { uid: result.uid ?? uid, code: tag?.code ?? null, reason, driver: controller.info.driver, ok: result.ok, uncertain: result.uncertain, message: result.message },
       ip: ctx.ip,
     });
     return result;

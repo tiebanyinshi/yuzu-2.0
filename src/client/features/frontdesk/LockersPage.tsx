@@ -153,6 +153,7 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
     mutationFn: (reason: string) => api.post<LockerCardResult & { code: string; boundTag: { id: number; code: string } | null }>(`/api/lockers/${tag!.id}/card/write`, { reason }),
     onSuccess: (r) => {
       setWriting(false);
+      if (!r.ok && r.uncertain) return toast({ tone: 'error', title: `写卡结果待确认：柜 ${r.code}`, body: `${r.message}。点「读卡」核对；没写成再写一次（写同一张卡没坏处）。` });
       if (!r.ok) return toast({ tone: 'error', title: `没写成柜 ${r.code} 的卡`, body: r.message });
       // 芯片号还没绑这张手牌的，提示去后台「手牌」绑（不自动改绑，GK6）
       const bind = !r.uid
@@ -170,7 +171,13 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
     mutationFn: (reason: string) => api.post<LockerOpenResult>(`/api/lockers/${tag!.id}/open`, { reason }),
     onSuccess: (r) => {
       setAsking(false);
-      toast(r.opened ? { tone: 'success', title: `柜 ${r.code} 已开`, body: r.message } : { tone: 'error', title: `柜 ${r.code} 没有开`, body: r.message });
+      toast(
+        r.opened
+          ? { tone: 'success', title: `柜 ${r.code} 已开`, body: r.message }
+          : r.uncertain
+            ? { tone: 'error', title: `柜 ${r.code} 开没开结果待确认`, body: `${r.message}（不要当成没开）` }
+            : { tone: 'error', title: `柜 ${r.code} 没有开`, body: r.message },
+      );
     },
     onError: (e) => toast({ tone: 'error', title: '远程开柜没有成功', body: errorMessage(e) }),
   });
@@ -267,7 +274,13 @@ function CardEncoder({ canWrite, reasons }: { canWrite: boolean; reasons: string
     mutationFn: (reason: string) => api.post<LockerCardResult>('/api/lockers/card/clear', { reason, uid: card?.uid ?? null }),
     onSuccess: (r) => {
       setClearing(false);
-      toast(r.ok ? { tone: 'success', title: '已清卡', body: r.message } : { tone: 'error', title: '没清成', body: r.message });
+      toast(
+        r.ok
+          ? { tone: 'success', title: '已清卡', body: r.message }
+          : r.uncertain
+            ? { tone: 'error', title: '清卡结果待确认', body: `${r.message}。点「读卡」核对；没清成再清一次。` }
+            : { tone: 'error', title: '没清成', body: r.message },
+      );
       if (r.ok) read.reset();
     },
     onError: (e) => toast({ tone: 'error', title: '清卡没有成功', body: errorMessage(e) }),
