@@ -29,6 +29,7 @@ import { recordSupplement } from './guest-tx';
 import { locateCharges, locateSession } from '../locations';
 import { currentStoreId } from '../../lib/store-context';
 import { assertNotAwayLocked } from './away-lock';
+import { revokeBuffetOfMeal } from './line-discounts';
 
 export const PostInput = z
   .object({
@@ -523,6 +524,8 @@ export async function voidLine(deps: Deps, lineId: number, raw: unknown, ctx: Op
     }
     // 餐饮明细（退菜）：出品单改为已退，扣过沽清的按原份数加回
     await cancelKitchenItem(tx, line!.id, `退菜：${input.reason}`, ctx.actor, at);
+    // 8.2.8（Codex 安全审查）：餐厅入口的餐费作废了，这一餐带出来的自助折扣一并撤下（不然餐费、菜都成了 0）
+    await revokeBuffetOfMeal(tx, { mealLineId: line!.id, billId: visit.billId, staffId: ctx.actor.id, at });
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'frontdesk_void',

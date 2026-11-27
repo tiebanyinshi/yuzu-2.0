@@ -222,4 +222,30 @@ describe('餐厅入口', () => {
     const p = await due(g.id);
     expect(p.lineDiscountAmount).toBe(11600);
   });
+
+  it('Codex 安全审查：系统打的折扣不能手动撤、改；餐费作废了，这一餐带出来的自助折扣一并撤下', async () => {
+    const g = await checkin();
+    expect((await enter(g.tagCode)).status).toBe(200);
+    const o = await api(ctx.app, ctx.clerk, 'POST', '/api/dining/orders', { clientKey: randomUUID(), visitId: g.id, lines: [{ itemId: item['小炒肉'], quantity: 1 }], expectedTotal: 5800 });
+    expect(o.status, JSON.stringify(o.body)).toBe(200);
+    const before = (await visit(g.id)).lines.filter((l) => l.status === 'active');
+    const meal = before.find((l) => l.name === '午餐自助')!;
+    const dish = before.find((l) => l.name === '小炒肉')!;
+    expect(dish.discount).toMatchObject({ finalAmount: 0, reason: '自助' });
+    // 手动撤下、改折扣：都不行（经理也不行）
+    const rv = await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/lines/${dish.id}/discount/revoke`, { clientKey: randomUUID(), reason: '想改回原价' });
+    expect(code(rv), JSON.stringify(rv.body)).toBe('AUTO_DISCOUNT_LOCKED');
+    const rp = await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/lines/${dish.id}/discount`, { clientKey: randomUUID(), rate: 50, reason: '改八折' });
+    expect(code(rp), JSON.stringify(rp.body)).toBe('AUTO_DISCOUNT_LOCKED');
+    // 餐费那一行作废：菜的自助折扣一并撤下，照原价收
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/lines/${meal.id}/void`, { reason: '登记错了' })).status).toBe(200);
+    const after = (await visit(g.id)).lines.find((l) => l.id === dish.id)!;
+    expect(after.status).toBe('active');
+    expect(after.discount).toBeNull();
+    const [d] = await ctx.sql<{ status: string; revokeReason: string }[]>`SELECT status, revoke_reason FROM bill_line_discounts WHERE line_id = ${dish.id}`;
+    expect(d).toMatchObject({ status: 'revoked', revokeReason: '餐费作废，自助折扣一并撤下' });
+    expect((await due(g.id)).lineDiscountAmount ?? 0).toBe(0);
+    const checks = (await api(ctx.app, ctx.owner, 'GET', '/api/frontdesk/checks')).body as { label: string; ok: boolean; detail: string }[];
+    for (const c of checks) expect(c.ok, `${c.label}：${c.detail}`).toBe(true);
+  });
 });
