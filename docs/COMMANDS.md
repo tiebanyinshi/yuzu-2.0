@@ -37,6 +37,8 @@ node dist/server/cli.js demo-check         # 核对演示库（只读）：check
 node dist/server/cli.js demo-reset --confirm <库名>   # 只在独立演示库（development，实例不是 prod/shadow/test）：先备份核验，再清库从零准备（先停应用；应用开着时拒绝）
 node dist/server/cli.js check              # 会员（含营业口径）、库存、前台自检，全部 ✓ 才算一致
 node dist/server/cli.js fingerprint        # 数据指纹（只读）；--expect <摘要> 比对，不一致退出码为 1
+PGOPTIONS='-c default_transaction_read_only=on' psql "$DATABASE_URL" -f scripts/diagnose-booking-overlap.sql   # 前台自检报的技师预约重叠逐对列出出处（只读，迁移 740 起；docs/V8222_TECHNICIANS.md 第 11 节）
+ADMIN_URL=postgres://…:5432 scripts/verify-batch-overlap-upgrade.sh ../yuzu-v824   # 手工核对：v8.2.4 的真代码建一报多、本仓库升级（新建 yuzu_verify_824a/b/c；v8.2.4 工作区与用法见同一节）
 E2E_DEMO_SHOWCASE=1 E2E_BASE_URL=… npx playwright test e2e/demo-showcase.spec.ts --project=门店电脑   # demo-prepare 准备好的库上核对演示场景
 ```
 
