@@ -181,7 +181,7 @@ export async function frontdeskChecks(db: Db): Promise<FrontdeskCheck[]> {
   const itemDiff = await db<{ checkoutNo: string }[]>`
     SELECT c.checkout_no FROM checkouts c
     LEFT JOIN (SELECT checkout_id, sum(amount) AS amount, sum(discount) AS discount FROM checkout_items GROUP BY checkout_id) i ON i.checkout_id = c.id
-    LEFT JOIN (SELECT checkout_id, sum(amount) AS amount FROM checkout_payments WHERE method IN ('discount', 'store_coupon', 'member_discount') GROUP BY checkout_id) d
+    LEFT JOIN (SELECT checkout_id, sum(amount) AS amount FROM checkout_payments WHERE method IN ('discount', 'store_coupon', 'member_discount', 'line_discount') GROUP BY checkout_id) d
       ON d.checkout_id = c.id
     WHERE coalesce(i.amount, 0) <> c.total_amount OR coalesce(i.discount, 0) <> coalesce(d.amount, 0)
     LIMIT 5`;

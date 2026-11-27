@@ -37,6 +37,7 @@ import { stayText, useCheckout, useCheckoutDaySummary, useCheckoutPreview, useCh
 import { InvoiceRequestButton } from '../sales-invoices/InvoiceRequest';
 import { DiningOnlyPanel } from './DiningOnlyPanel';
 import { CheckoutMemberLookup, CompanionTools } from './CheckoutCompanions';
+import { TAG_DEPOSIT_METHOD_LABELS, type TagDeposit } from '@shared/tag-deposit';
 
 // 结账（S3）：勾选要一起结的手牌 → 核对门票与明细 → 登记收款（可组合）→ 确认结清。
 // 应收合计、储值扣款构成以服务端为准：门票刚好跳档、余额或扣款规则变化时服务端拒绝，页面刷新后重新核对。
@@ -143,6 +144,9 @@ export function CheckoutDialog({
     return t ? v.linesAmount + priceTicket(t, v.checkedInAt, pricedAt, v.graceMinutes ?? p!.graceMinutes).amount + fees : null;
   });
   const total = p && amounts.every((a) => a !== null) ? amounts.reduce<number>((s, a) => s + a!, 0) : null;
+  // 单项打折（8.2.1）：结账时自动记一笔「单项折扣」，收款只要收 应收 − 单项折扣
+  const lineDiscount = p?.lineDiscountAmount ?? 0;
+  const due = total === null ? null : total - lineDiscount;
 
   const visitIds = p ? p.visits.map((v) => v.visitId) : selected;
   // 次卡（v0.7.28）：选的几张卡按同一个算法分配到明细上（单价高的先抵、一次一份），每张卡这次抵多少
@@ -162,7 +166,7 @@ export function CheckoutDialog({
     : null;
   const pay = usePayRows({
     open,
-    total,
+    total: due,
     members: p?.members ?? null,
     grantFits: (grant, cents) => discountGrantFits(grant, visitIds, cents),
     backfill: backfill.state.active,
@@ -182,13 +186,21 @@ export function CheckoutDialog({
       otaSeeded.current = false;
       return;
     }
-    if (otaSeeded.current || !p || total === null || pay.rows.length > 0) return;
+    if (otaSeeded.current || !p || due === null || pay.rows.length > 0) return;
     otaSeeded.current = true;
-    let left = total;
+    let left = due;
     for (const h of p.otaPrepaid ?? []) {
       const amount = Math.min(h.amountCents, left);
       if (amount <= 0) break;
       pay.addPreset('coupon', amount, { platform: 'other', code: h.couponCode, dealName: `${h.channelName}${h.roomTypeName ? ` · ${h.roomTypeName}` : ''}`.slice(0, 48) });
+      left -= amount;
+    }
+    // 手牌押金（8.2.1）：现金类的押金结账时一起退，按同样方式先填进收款（抵扣），押金比应收多的当面退差额；储值扣的退回原卡，不填
+    for (const d of p.deposits ?? []) {
+      if (d.method === 'wallet') continue;
+      const amount = Math.min(d.amount, left);
+      if (amount <= 0) break;
+      pay.addPreset(d.method, amount, { ref: `押金 ${d.depositNo} 抵扣` });
       left -= amount;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -214,13 +226,14 @@ export function CheckoutDialog({
         tickets: p.visits.filter((v) => v.needsTicket).map((v) => ({ visitId: v.visitId, ticketTypeId: ticketPick[v.visitId]! })),
         expectedTotal: total!,
         payments,
+        ...(p.lineDiscountAmount !== undefined ? { expectedLineDiscount: p.lineDiscountAmount } : {}),
         note: note.trim(),
         ...(waitingNos.length ? { confirmUnstarted: waitingNos } : {}),
         ...backfillBody(backfill),
       },
       tagCodes,
       summary: `结账 ${tagCodes.length} 张（${pay.methods.join(' + ') || '免收'}）${backfillSummary(backfill)}`,
-      amount: total!,
+      amount: due!,
       visitIds,
     }));
     if (detail) setResult(detail);
@@ -304,7 +317,7 @@ export function CheckoutDialog({
             取消
           </Button>
           <Button variant="primary" size="lg" disabled={!ready || locked} loading={busy} onClick={submit} data-testid="checkout-submit">
-            确认结清{total !== null ? ` ¥${(total / 100).toFixed(2)}` : ''}
+            确认结清{due !== null ? ` ¥${(due / 100).toFixed(2)}` : ''}
           </Button>
         </>
       }
@@ -359,6 +372,13 @@ export function CheckoutDialog({
               {(p.rooms ?? []).length > 0 && <RoomsNotice rooms={p.rooms!} onClosed={() => void preview.refetch()} />}
               {(p.usages ?? []).length > 0 && <UsagesNotice usages={p.usages!} onEnded={() => void preview.refetch()} />}
               <ReviewTable preview={p} amounts={amounts} ticketPick={ticketPick} onPick={(id, t) => edit(() => setTicketPick((x) => ({ ...x, [id]: t })))} />
+              {lineDiscount > 0 && total !== null && (
+                <p className="text-[13.5px] text-ember" data-testid="checkout-line-discount">
+                  单项打折共减 <Money cents={lineDiscount} className="font-bold" />
+                  （结账时记一笔「单项折扣」），收款只收 <Money cents={total - lineDiscount} className="font-bold" />
+                </p>
+              )}
+              {(p.deposits ?? []).length > 0 && <DepositsNotice deposits={p.deposits!} due={due} />}
               {/* 8.1.39（R10）：同组几张手牌一起结，只看餐饮的明细与合计（只读） */}
               <DiningOnlyPanel visitIds={p.visits.map((v) => v.visitId)} pricedAt={p.pricedAt} />
             </>
@@ -385,7 +405,7 @@ export function CheckoutDialog({
         {/* 收款 */}
         <PaymentsSection
           pay={pay}
-          total={total}
+          total={due}
           members={p?.members ?? []}
           canWallet={can('consume.create') && !backfill.state.active}
           coupons={{
@@ -410,6 +430,48 @@ export function CheckoutDialog({
         {op.state.phase === 'error' && <Notice tone="error" title={op.state.message} />}
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * 押着的手牌押金（8.2.1）：结账时一起退掉。储值扣的退回原卡（上面的余额已经算上）；现金类的按同样方式先填进收款里抵扣，
+ * 押金比应收多的，多出来的当面退给客人
+ */
+function DepositsNotice({ deposits, due }: { deposits: TagDeposit[]; due: number | null }) {
+  const cash = deposits.filter((d) => d.method !== 'wallet').reduce((s, d) => s + d.amount, 0);
+  const wallet = deposits.filter((d) => d.method === 'wallet').reduce((s, d) => s + d.amount, 0);
+  const back = due === null ? null : Math.max(0, cash - due);
+  return (
+    <Notice tone="info" title="这几张手牌押着押金：结账时一起退">
+      <ul className="mt-1 space-y-0.5" data-testid="checkout-deposits">
+        {deposits.map((d) => (
+          <li key={d.id}>
+            <span className="num font-semibold">{d.depositNo}</span> · {TAG_DEPOSIT_METHOD_LABELS[d.method]} <Money cents={d.amount} className="font-bold" /> · {d.reason}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1">
+        {wallet > 0 && (
+          <>
+            储值扣的 <Money cents={wallet} /> 退回原卡；
+          </>
+        )}
+        {cash > 0 && (
+          <>
+            现金类的 <Money cents={cash} /> 已按同样方式填进收款（抵扣）
+            {back !== null && back > 0 ? (
+              <>
+                ，押金比应收多，当面退给客人 <Money cents={back} className="font-bold text-clay" />
+              </>
+            ) : (
+              <>
+                ，抵扣后还要收 <Money cents={Math.max(0, (due ?? 0) - cash)} className="font-bold" />
+              </>
+            )}
+          </>
+        )}
+      </p>
+    </Notice>
   );
 }
 

@@ -561,6 +561,10 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
       }
       assertCanFix(ctx.actor, l.postedBy, l.postedAt, rules, at, `「${l.name}」`);
     }
+    // 单项打过折的（8.2.1）：折扣跟着这一行在原账单上，转过去会变回原价；先恢复原价再转（到那张手牌上再打）
+    const discounted = await tx<{ name: string }[]>`
+      SELECT l.name FROM bill_line_discounts d JOIN bill_lines l ON l.id = d.line_id WHERE d.line_id IN ${tx(lineIds)} AND d.status = 'active' LIMIT 1`;
+    if (discounted.length) throw unprocessable('LINE_NOT_MOVABLE', `「${discounted[0]!.name}」打过单项折扣，请先在收银台恢复原价再转，转过去以后再打`);
     // 主菜转了、它没退的加料没选的：一起选上（不然加料留在原手牌、挂着已经转走的主菜）
     const left = await tx<{ name: string }[]>`
       SELECT name FROM bill_lines WHERE addon_of IN ${tx(lineIds)} AND status = 'active' AND NOT (id IN ${tx(lineIds)}) LIMIT 1`;

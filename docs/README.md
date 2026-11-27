@@ -119,6 +119,7 @@
 - [`V8142_PETTY.md`](V8142_PETTY.md)：8.1.42 · 备用金合并：零采备用金并进备用金
 - [`V8144_CASHIER.md`](V8144_CASHIER.md)：8.1.44（收银台）：《前台系统开发》里收银台的六条
 - [`V8144_FRONTDESK.md`](V8144_FRONTDESK.md)：8.1.44（前台 B）：已发券改条件、混合支付、同行组建与拆分、房态显示预约、买单时查会员
+- [`V8221_CASHIER.md`](V8221_CASHIER.md)：8.2.1 批 1：收银台（单项打折、一键快捷键、经办人前置与改价标记、换牌规则、手牌押金）
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
 - [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面

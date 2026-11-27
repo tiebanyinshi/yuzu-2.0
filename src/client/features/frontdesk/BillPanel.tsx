@@ -47,9 +47,13 @@ import { GroupMark, VipChip, VisitStatusChips, ZONE_STYLE } from './parts';
 import { CASHIER_OPS, FRONTDESK_OP_LABELS, useFrontdeskPending } from './pending';
 import { stayText, useServerNow } from './queries';
 import { RemarksBoard } from './Remarks';
+import { LineDiscountDialog } from './LineDiscountDialog';
+import { DepositBlock, DepositDialog } from './DepositPanel';
+import { hotkeyOf } from './hotkeys';
+import { rateLabel } from '@shared/line-discount';
 
 /** incident：异常处置（8.1.15）；lost：手牌丢失（换牌对话框预先选好丢失）；buy：买角、print：打单（8.1.44，收银台） */
-export type PanelAction = 'add' | 'swap' | 'join' | 'companion' | 'preview' | 'checkout' | 'ticket' | 'records' | 'move' | 'incident' | 'lost' | 'buy' | 'print';
+export type PanelAction = 'add' | 'swap' | 'join' | 'companion' | 'preview' | 'checkout' | 'ticket' | 'records' | 'move' | 'incident' | 'lost' | 'buy' | 'print' | 'group';
 
 /**
  * 两个台（8.1.15，docs/DESKS_V8115.md；8.1.44 起「加项目」「作废」迁到收银台，docs/V8144_CASHIER.md）：
@@ -98,6 +102,10 @@ export function BillPanel({
   /** 餐饮的菜按金额分级退（8.0.8，B02）：小额直接退，超过的请值班经理及以上当场授权 */
   const [dishVoiding, setDishVoiding] = useState<BillLine | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  /** 单项打折（8.2.1）：在哪一行上点了「折」 */
+  const [discounting, setDiscounting] = useState<BillLine | null>(null);
+  /** 手牌押金（8.2.1） */
+  const [depositOpen, setDepositOpen] = useState(false);
   const [showVoided, setShowVoided] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const can = useCan();
@@ -128,6 +136,7 @@ export function BillPanel({
   const voided = visit.lines.filter((l) => l.status === 'voided');
   // 异常（8.1.15）：这次来访记过几条、其中没处理完的待办几条
   const openTodos = visit.incidents.filter((i) => isOpenTodo(i, visit.incidents, open)).length;
+  const discountCents = visit.bill.discountCents ?? 0;
   const selfMinutes = rules?.selfVoidMinutes ?? 10;
   const canFix = (ownerId: number, at: string) => can('frontdesk.correct') || (ownerId === session.staff.id && (now - new Date(at).getTime()) / 60_000 <= selfMinutes);
 
@@ -308,7 +317,17 @@ export function BillPanel({
               <Button
                 size="sm"
                 variant="primary"
-                onClick={() => onAction(p.type === 'bill_post' ? 'add' : p.type === 'checkout' ? 'checkout' : p.type === 'line_move' ? 'move' : p.type === 'visit_incident' ? 'incident' : 'swap')}
+                onClick={() => {
+                  // 8.2.1：押金在押金对话框里处理；单项打折回到那一行的「折」
+                  if (p.type === 'tag_deposit' || p.type === 'tag_deposit_refund') return setDepositOpen(true);
+                  if (p.type === 'line_discount') {
+                    const lineId = Number(/\/lines\/(\d+)\//.exec(p.url)?.[1]);
+                    const line = visit.lines.find((l) => l.id === lineId);
+                    if (line) setDiscounting(line);
+                    return;
+                  }
+                  onAction(p.type === 'bill_post' ? 'add' : p.type === 'checkout' ? 'checkout' : p.type === 'line_move' ? 'move' : p.type === 'visit_incident' ? 'incident' : 'swap');
+                }}
                 data-testid="bill-pending-resolve"
               >
                 去处理
@@ -346,7 +365,7 @@ export function BillPanel({
                   <div key={src} className="pt-3">
                     <div className="flex items-center justify-between text-[12px] font-bold text-ink-3">
                       <span>{BILL_SOURCE_LABELS[src]}</span>
-                      <Money cents={rows.reduce((s, l) => s + l.amount, 0)} />
+                      <Money cents={rows.reduce((s, l) => s + (l.discount ? l.discount.finalAmount : l.amount), 0)} />
                     </div>
                     <ul className="mt-1.5 space-y-1.5">
                       {rows.map((l) => (
@@ -357,6 +376,8 @@ export function BillPanel({
                           allowed={l.source === 'dining' || canFix(l.postedById, l.postedAt)}
                           selfMinutes={selfMinutes}
                           onVoid={() => (l.source === 'dining' ? setDishVoiding(l) : setVoiding(l))}
+                          canDiscount={!issue && open && can('frontdesk.checkout') && !l.name.startsWith('门票')}
+                          onDiscount={() => setDiscounting(l)}
                         />
                       ))}
                     </ul>
@@ -436,6 +457,7 @@ export function BillPanel({
           </div>
           <div className={cn('min-w-0', compact && '@min-[44rem]:[&>*:first-child]:mt-0')}>
             {extra}
+            <DepositBlock visit={visit} onOpen={() => setDepositOpen(true)} />
             <RemarksBoard visit={visit} onChanged={onChanged} />
           </div>
         </div>
@@ -463,25 +485,44 @@ export function BillPanel({
           <div className="@min-[22rem]:grow">
             <p className="w-0 min-w-full text-[12px] font-semibold text-ink-3">{issue ? '已挂合计（不含门票）' : open ? '本牌未结（已挂明细）' : '账单金额'}</p>
             <span data-testid="bill-total">
-              <Money cents={visit.bill.amountCents} className={cn('leading-tight font-bold text-ink', issue ? 'text-[22px]' : 'text-[30px]')} />
+              <Money cents={visit.bill.amountCents - discountCents} className={cn('leading-tight font-bold text-ink', issue ? 'text-[22px]' : 'text-[30px]')} />
             </span>
+            {discountCents > 0 && (
+              <p className="w-0 min-w-full text-[12px] text-ember" data-testid="bill-line-discount">
+                原价 <Money cents={visit.bill.amountCents} /> · 单项打折已减 <Money cents={discountCents} />
+              </p>
+            )}
             {!issue && open && visit.ticket && (
               <p className="w-0 min-w-full text-[12px] text-ink-3" data-testid="bill-due">
-                含门票此刻应收 <Money cents={visit.bill.amountCents + visit.ticket.amount} size="key" className="text-pine" />
+                含门票此刻应收 <Money cents={visit.bill.amountCents - discountCents + visit.ticket.amount} size="key" className="text-pine" />
               </p>
             )}
           </div>
           {issue ? (
             // 发卡台不结账：有结账权限的人从这里带着这张手牌去收银台；已经结过的去收银台看结账单
             (open ? can('frontdesk.checkout') : !!visit.checkout) && (
-              <Button variant="secondary" className="@min-[22rem]:ml-auto" icon={<ArrowRight className="size-4" />} onClick={() => navigate(`/crm/cashier?v=${visit.id}`)} data-testid="go-cashier">
+              <Button
+                variant="secondary"
+                className="@min-[22rem]:ml-auto"
+                icon={<ArrowRight className="size-4" />}
+                onClick={() => navigate(`/crm/cashier?v=${visit.id}${open ? '&resume=checkout' : ''}`)}
+                kbd={open ? hotkeyOf('checkout') : undefined}
+                data-testid="go-cashier"
+              >
                 {open ? '去收银台结账' : '去收银台看结账单'}
               </Button>
             )
           ) : open ? (
             <div className="flex flex-wrap gap-2 @min-[22rem]:ml-auto">
               {/* 打单（8.1.44 第 9 条）：打一张预结单给客人核对，不收款、不释放手牌 */}
-              <Button variant="secondary" className="flex-auto @min-[22rem]:flex-none" icon={<Printer className="size-4" />} onClick={() => onAction('print')} data-testid="action-print">
+              <Button
+                variant="secondary"
+                className="flex-auto @min-[22rem]:flex-none"
+                icon={<Printer className="size-4" />}
+                onClick={() => onAction('print')}
+                kbd={hotkeyOf('print')}
+                data-testid="action-print"
+              >
                 打单
               </Button>
               <Button
@@ -525,13 +566,17 @@ export function BillPanel({
             <Button variant="secondary" size="lg" icon={<Hash className="size-4" />} onClick={() => onAction('buy')} kbd="F6" data-testid="action-buy">
               买角
             </Button>
+            {/* 8.2.1：组合 / 拆分同行两个台都有 */}
+            <Button variant="secondary" size="lg" icon={<Link2 className="size-4" />} onClick={() => onAction('group')} kbd={hotkeyOf('group')} data-testid="action-group">
+              同行
+            </Button>
           </div>
         )}
         {!issue && open && (
           // 收银台不换牌、不绑同行：这几样照旧在发卡台
           <p className="mt-2 flex flex-wrap items-center gap-x-1.5 text-[12px] text-ink-3" data-testid="cashier-issue-hint">
             <Lock className="size-3.5 shrink-0" />
-            换牌、同行在发卡台。
+            换牌在发卡台。
             {can('frontdesk.operate') && (
               <button type="button" onClick={() => navigate(`/crm/frontdesk?v=${visit.id}`)} className="font-semibold text-pine hover:underline" data-testid="go-issue">
                 去发卡台 →
@@ -543,6 +588,9 @@ export function BillPanel({
           <div className="mt-3 flex gap-2">
             <Button variant="secondary" size="lg" className="flex-1" icon={<ArrowLeftRight className="size-4" />} onClick={() => onAction('swap')} data-testid="action-swap">
               换牌
+            </Button>
+            <Button variant="secondary" size="lg" icon={<Link2 className="size-4" />} onClick={() => onAction('group')} kbd={hotkeyOf('group')} data-testid="action-group">
+              同行
             </Button>
             <MoreMenu
               items={[
@@ -606,6 +654,33 @@ export function BillPanel({
         }}
       />
 
+      {discounting && (
+        <LineDiscountDialog
+          open
+          visit={visit}
+          line={discounting}
+          rules={rules}
+          onClose={() => setDiscounting(null)}
+          onDone={(v, message) => {
+            setDiscounting(null);
+            onChanged(v);
+            toast({ tone: 'success', title: message });
+          }}
+        />
+      )}
+      {depositOpen && (
+        <DepositDialog
+          open
+          visit={visit}
+          rules={rules}
+          onClose={() => setDepositOpen(false)}
+          onDone={(v, message) => {
+            onChanged(v);
+            toast({ tone: 'success', title: message });
+          }}
+        />
+      )}
+
       <QuickReasonDialog
         open={cancelling}
         title={`撤销来访 · ${visit.tag.code}`}
@@ -625,11 +700,52 @@ export function BillPanel({
   );
 }
 
-function LineRow({ line, canVoid, allowed, selfMinutes, onVoid }: { line: BillLine; canVoid: boolean; allowed: boolean; selfMinutes: number; onVoid: () => void }) {
+/**
+ * 账单的一行（8.2.1）：经办人放到最前面（工号 · 姓名 · 手机尾号），手动定的价、单项打折、免单（赠）有角标；
+ * 打过折的写原价、几折、减了多少、谁打的（谁授权的）。收银台每一行旁边一个「折」
+ */
+function LineRow({
+  line,
+  canVoid,
+  allowed,
+  selfMinutes,
+  onVoid,
+  canDiscount,
+  onDiscount,
+}: {
+  line: BillLine;
+  canVoid: boolean;
+  allowed: boolean;
+  selfMinutes: number;
+  onVoid: () => void;
+  canDiscount: boolean;
+  onDiscount: () => void;
+}) {
+  const d = line.discount ?? null;
+  const operator = [line.postedByEmpNo, line.postedByName, line.postedByPhoneTail ? `尾号 ${line.postedByPhoneTail}` : null].filter(Boolean).join(' · ');
   return (
     <li className="group/line flex items-start gap-2" data-testid={`line-${line.id}`}>
       <div className="min-w-0 flex-1">
+        <p className="num text-[12px] font-semibold text-ink-3" data-testid={`line-${line.id}-operator`}>
+          {operator} · {line.backfill ? formatDateTime(line.postedAt) : formatTime(line.postedAt)}
+          {line.backfill && <span className="ml-1 font-semibold text-lake">· 补录 纸质单 {line.backfill.slipNo}</span>}
+        </p>
         <p className="flex items-baseline gap-1.5 text-[14px]">
+          {line.manualPrice && (
+            <LineMark tone="lake" title="手动定的价（手动金额、时价 / 杂项、称重）">
+              改价
+            </LineMark>
+          )}
+          {d &&
+            (d.finalAmount === 0 ? (
+              <LineMark tone="clay" title="这一行免单">
+                赠
+              </LineMark>
+            ) : (
+              <LineMark tone="ember" title="单项打折">
+                折
+              </LineMark>
+            ))}
           <span className="truncate font-semibold">{line.name}</span>
           <span className="num shrink-0 text-[12.5px] text-ink-3">
             × {line.quantity}
@@ -641,6 +757,13 @@ function LineRow({ line, canVoid, allowed, selfMinutes, onVoid }: { line: BillLi
             )}
           </span>
         </p>
+        {d && (
+          <p className="num text-[12px] font-semibold text-ember" data-testid={`line-${line.id}-discount`}>
+            原价 <Money cents={d.listAmount} className="line-through" /> · {d.rate !== null ? rateLabel(d.rate) : d.finalAmount === 0 ? '免单' : '改价'} · 减{' '}
+            <Money cents={d.listAmount - d.finalAmount} /> · {[d.byEmpNo, d.byName].filter(Boolean).join(' ')} 打{d.approvedByName && `，${d.approvedByName}授权`}
+            {d.reason && <span className="text-ink-3">（{d.reason}）</span>}
+          </p>
+        )}
         {line.technician && (
           <p className="flex items-center gap-1 text-[12px] font-semibold text-pine" data-testid={`line-${line.id}-technician`}>
             <HandHeart className="size-3.5" />
@@ -654,12 +777,20 @@ function LineRow({ line, canVoid, allowed, selfMinutes, onVoid }: { line: BillLi
             {line.kitchen.note && <span className="min-w-0 truncate text-ink-3">· {line.kitchen.note}</span>}
           </p>
         )}
-        <p className="num text-[12px] text-ink-4">
-          {line.backfill ? formatDateTime(line.postedAt) : formatTime(line.postedAt)} · {line.postedByName}
-          {line.backfill && <span className="ml-1 font-semibold text-lake">· 补录 纸质单 {line.backfill.slipNo}</span>}
-        </p>
       </div>
-      <Money cents={line.amount} className="pt-px text-[14px] font-bold" />
+      <Money cents={d ? d.finalAmount : line.amount} className="pt-px text-[14px] font-bold" />
+      {canDiscount && (
+        <button
+          type="button"
+          onClick={onDiscount}
+          aria-label={`给 ${line.name} 打折`}
+          title={d ? '改折扣或恢复原价' : '给这一行打折（按折扣或填折后价）'}
+          className="tap relative flex h-7 shrink-0 items-center rounded-md px-1.5 text-[12px] font-semibold text-ink-3 transition-colors hover:bg-ember-soft hover:text-ember"
+          data-testid={`line-${line.id}-discount-open`}
+        >
+          折
+        </button>
+      )}
       {canVoid && (
         <button
           type="button"
@@ -675,6 +806,16 @@ function LineRow({ line, canVoid, allowed, selfMinutes, onVoid }: { line: BillLi
         </button>
       )}
     </li>
+  );
+}
+
+/** 明细行上的角标：改价、折、赠 */
+function LineMark({ tone, title, children }: { tone: 'lake' | 'ember' | 'clay'; title: string; children: ReactNode }) {
+  const cls = { lake: 'bg-lake-soft text-lake', ember: 'bg-ember-soft text-ember', clay: 'bg-clay-soft text-clay' }[tone];
+  return (
+    <span title={title} className={cn('shrink-0 self-center rounded-[5px] px-1 text-[12px] leading-[18px] font-bold', cls)}>
+      {children}
+    </span>
   );
 }
 

@@ -26,7 +26,7 @@ import { conflict, unprocessable } from '../lib/errors';
 import { parse } from '../lib/validate';
 import { usageCoversItem } from './stock-usage';
 
-/** 账单上的有效明细，部门与部门营业额快照同一口径（门票、客房、其他、价目分类、未分类） */
+/** 账单上的有效明细（单项打过折的除外），部门与部门营业额快照同一口径（门票、客房、其他、价目分类、未分类） */
 export async function couponLines(db: Db, billIds: number[]): Promise<CouponLine[]> {
   if (billIds.length === 0) return [];
   return db<CouponLine[]>`
@@ -43,6 +43,8 @@ export async function couponLines(db: Db, billIds: number[]): Promise<CouponLine
     FROM bill_lines l LEFT JOIN service_items si ON si.id = l.item_id
     LEFT JOIN space_usage_charges uc ON uc.line_id = l.id
     WHERE l.bill_id IN ${db(billIds)} AND l.status = 'active'
+      -- 单项打过折的明细（8.2.1）不再用券、次卡、会员折扣（不打折上折，docs/V8221_CASHIER.md 第 1.3 节）
+      AND NOT EXISTS (SELECT 1 FROM bill_line_discounts d WHERE d.line_id = l.id AND d.status = 'active')
     ORDER BY l.id`;
 }
 

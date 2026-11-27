@@ -113,6 +113,11 @@ export type AuditAction =
   | 'clock_transfer'
   | 'clock_session_room'
   | 'frontdesk_move'
+  // 8.2.1：单项打折、撤下折扣；手牌押金的收、退
+  | 'frontdesk_line_discount'
+  | 'frontdesk_line_discount_revoke'
+  | 'tag_deposit_received'
+  | 'tag_deposit_refunded'
   | 'frontdesk_abandon'
   | 'frontdesk_ticket'
   | 'frontdesk_checkout'

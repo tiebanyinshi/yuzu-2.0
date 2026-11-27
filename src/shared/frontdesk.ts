@@ -73,6 +73,13 @@ export interface FrontdeskRules {
    * 默认一条都没有（收银台「买角」写明还没配置）；在后台「手牌与前台」维护
    */
   buyCodes: BuyCode[];
+  /**
+   * 单项打折（8.2.1，docs/V8221_CASHIER.md 第 1 节）：每一档最低能打到收原价的百分之几（待店主确认，默认前台收银 90、值班经理 70、
+   * 部门负责人 50、店主 0 = 能免单）；在后台「手牌与前台」改
+   */
+  lineDiscountFloors: import('./line-discount').LineDiscountFloors;
+  /** 手牌押金（8.2.1）：收押金时先填好的金额（分），可以改；0 = 不预填 */
+  tagDepositDefaultCents: number;
 }
 
 /** 买角的一条数字代号：1–4 位数字 → 价目项目（与价格档）；价格照挂账时项目的当前价 */
@@ -98,6 +105,8 @@ export const DEFAULT_FRONTDESK_RULES: FrontdeskRules = {
   overtimeGraceMinutes: 15,
   overtimeSurchargeHourlyCents: 0,
   buyCodes: [],
+  lineDiscountFloors: { cashier: 90, duty: 70, lead: 50, owner: 0 },
+  tagDepositDefaultCents: 10000,
 };
 
 /** 牌号：0–2 位大写字母前缀 + 1–5 位数字 */
@@ -317,6 +326,14 @@ export interface BillLine {
   businessDate: string;
   postedById: number;
   postedByName: string;
+  /** 经办人的工号（员工档案，8.2.1 账单明细把经办人放到前面）；没建档案的为 null */
+  postedByEmpNo?: string | null;
+  /** 经办人手机尾号 4 位；没登记的为 null */
+  postedByPhoneTail?: string | null;
+  /** 手动定的价（8.2.1 改价标记）：手动金额、时价 / 杂项、称重的明细 */
+  manualPrice?: boolean;
+  /** 这一行的单项折扣（8.2.1）；没打折的为 null。amount 照旧是原价 */
+  discount?: import('./line-discount').LineDiscountInfo | null;
   postedAt: string;
   voidReason: string | null;
   voidedByName: string | null;
@@ -361,7 +378,7 @@ export interface GroupMate {
 
 export interface VisitHistoryEvent {
   at: string;
-  kind: 'checkin' | 'swap' | 'join' | 'leave' | 'post' | 'void' | 'close' | 'ticket' | 'reopen' | 'incident';
+  kind: 'checkin' | 'swap' | 'join' | 'leave' | 'post' | 'void' | 'close' | 'ticket' | 'reopen' | 'incident' | 'discount' | 'deposit';
   text: string;
   operatorName: string;
 }
@@ -412,7 +429,10 @@ export interface VisitDetail {
   } | null;
   /** 已结账离店时的结账单 */
   checkout: { id: number; checkoutNo: string; status: 'completed' | 'voided' } | null;
-  bill: { id: number; billNo: string; status: VisitStatus; amountCents: number; lineCount: number };
+  /** discountCents：有效明细上单项打折折掉的合计（8.2.1）；amountCents 照旧是原价合计 */
+  bill: { id: number; billNo: string; status: VisitStatus; amountCents: number; lineCount: number; discountCents?: number };
+  /** 手牌押金（8.2.1，含已退的） */
+  deposits?: import('./tag-deposit').TagDeposit[];
   lines: BillLine[];
   group: { id: number; groupNo: string; status: 'open' | 'closed'; mates: GroupMate[]; openAmountCents: number } | null;
   history: VisitHistoryEvent[];
@@ -423,7 +443,7 @@ export interface VisitDetail {
 export type FrontdeskOpLookup =
   | { found: false; abandoned: boolean }
   | { found: true; type: 'checkin'; checkin: CheckinResult }
-  | { found: true; type: 'bill_post' | 'tag_swap' | 'line_move' | 'visit_incident'; visit: VisitDetail }
+  | { found: true; type: 'bill_post' | 'tag_swap' | 'line_move' | 'visit_incident' | 'line_discount' | 'tag_deposit' | 'tag_deposit_refund'; visit: VisitDetail }
   | { found: true; type: 'checkout' | 'table_checkout'; checkout: CheckoutDetail }
   | { found: true; type: 'table_open' | 'table_post'; session: import('./dining').TableSessionDetail }
   | { found: true; type: 'room_checkin' | 'room_extend' | 'room_deposit' | 'room_refund' | 'room_close'; stay: import('./rooms').StayDetail }
