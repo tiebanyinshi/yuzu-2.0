@@ -9,7 +9,20 @@
     "pages/position/index",
     "pages/learn-folder/index",
     "pages/learn-file/index",
-    "pages/learn-search/index"
+    "pages/learn-search/index",
+    "pages/punch/index",
+    "pages/schedule/index",
+    "pages/attendance/index",
+    "pages/leave/index",
+    "pages/approvals/index",
+    "pages/approval/index",
+    "pages/apply/index",
+    "pages/payslips/index",
+    "pages/payslip/index",
+    "pages/directory/index",
+    "pages/announcements/index",
+    "pages/announcement/index",
+    "pages/notifications/index"
   ],
   "window": {
     "navigationStyle": "custom",
@@ -35,6 +48,10 @@
   "usingComponents": {
     "nav-bar": "/components/nav-bar/index",
     "state-view": "/components/state-view/index"
+  },
+  "requiredPrivateInfos": ["getLocation"],
+  "permission": {
+    "scope.userLocation": { "desc": "打卡时核对你在不在门店的打卡范围里（只在点打卡时取一次）" }
   },
   "__usePrivacyCheck__": true,
   "style": "v2",

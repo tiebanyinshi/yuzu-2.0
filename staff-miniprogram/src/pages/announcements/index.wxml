@@ -1,0 +1,17 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="公告" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '还没有公告' : ''}}" message="{{state === 'empty' ? '公司发了公告会出现在这里' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view wx:if="{{unread}}" class="t-caption summary num">{{unread}} 条没读</view>
+    <view class="card list">
+      <view wx:for="{{rows}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onOpen" aria-role="button">
+        <view class="row-main">
+          <view class="row-title {{item.unread ? 'strong' : ''}}"><text wx:if="{{item.pinned}}" class="tag neutral pin">置顶</text>{{item.title}}</view>
+          <view class="row-sub num">{{item.sub}}</view>
+        </view>
+        <view wx:if="{{item.unread}}" class="dot" aria-label="没读"></view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,30 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="申请与审批" />
+  <view class="tabs gutter">
+    <view wx:for="{{tabs}}" wx:key="box" class="tab {{box === item.box ? 'on' : ''}}" hover-class="pressed" hover-stay-time="120" data-box="{{item.box}}" bindtap="onTab" aria-role="tab" aria-selected="{{box === item.box}}">
+      {{item.label}}<text wx:if="{{counts[item.box]}}" class="count num">{{counts[item.box]}}</text>
+    </view>
+  </view>
+  <state-view
+    wx:if="{{state !== 'ready'}}"
+    state="{{state}}"
+    title="{{state === 'empty' ? (box === 'todo' ? '没有要你审批的' : box === 'mine' ? '你还没有发起过申请' : '没有抄送给你的') : ''}}"
+    message="{{state === 'empty' ? (box === 'mine' ? '请假、补卡、工资条有疑问，都在下面「发起申请」' : '') : error}}"
+    bindretry="onRetry"
+  />
+  <view wx:else class="gutter list-wrap">
+    <view class="card list">
+      <view wx:for="{{rows}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onOpen" aria-role="button">
+        <view class="row-main">
+          <view class="row-title {{item.unread ? 'strong' : ''}}">{{item.title}}</view>
+          <view class="row-sub">{{item.sub}}</view>
+        </view>
+        <view class="status {{item.status}}">{{item.statusText}}</view>
+      </view>
+    </view>
+    <view wx:if="{{loadingMore}}" class="t-caption more">正在取更早的…</view>
+  </view>
+  <view class="bottom-bar">
+    <button class="btn primary block" hover-class="pressed" hover-stay-time="120" bindtap="onApply">发起申请</button>
+  </view>
+</view>

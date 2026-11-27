@@ -1,0 +1,23 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="我的排班" />
+  <view class="gutter month-bar">
+    <view class="month-btn" hover-class="pressed" hover-stay-time="120" bindtap="onPrev" aria-role="button" aria-label="上个月">上个月</view>
+    <view class="t-title-s num">{{monthText}}</view>
+    <view class="month-btn" hover-class="pressed" hover-stay-time="120" bindtap="onNext" aria-role="button" aria-label="下个月">下个月</view>
+  </view>
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '这个月没有排班' : ''}}" message="{{state === 'empty' ? '这几天没有排班，问问主管' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="t-caption summary">这个月排了 {{workDays}} 天班</view>
+    <view class="card list">
+      <view wx:for="{{rows}}" wx:key="date" class="row {{item.isToday ? 'today' : ''}} {{item.past ? 'past' : ''}}">
+        <view class="day num">{{item.day}}</view>
+        <view class="row-main">
+          <view class="row-title">{{item.shifts || item.statusText}}</view>
+          <view wx:if="{{item.shifts}}" class="row-sub">{{item.statusText}}</view>
+        </view>
+        <view wx:if="{{item.isToday}}" class="tag new">今天</view>
+        <view wx:elif="{{item.status === 'leave' || item.status === 'absent'}}" class="tag neutral">{{item.statusText}}</view>
+      </view>
+    </view>
+  </view>
+</view>

@@ -17,7 +17,9 @@ export const STAFFMP_ALLOWLIST: readonly string[] = [
   'POST /api/oa/attachments',
   'GET /api/oa/attachments/:id',
   'GET /api/oa/attachments/:id/thumb',
-  // 审批：列表（待我审批、我的申请、抄送我的）、红点数、详情、同意 / 驳回 / 转交、标已读
+  // 审批：发起申请（模板、提交，带操作编号）、列表（待我审批、我的申请、抄送我的）、红点数、详情、同意 / 驳回 / 转交、标已读
+  'GET /api/oa/approval/templates',
+  'POST /api/oa/approvals',
   'GET /api/oa/approvals',
   'GET /api/oa/approvals/summary',
   'GET /api/oa/approvals/:id',

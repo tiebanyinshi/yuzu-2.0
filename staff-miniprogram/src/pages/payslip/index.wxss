@@ -1,0 +1,50 @@
+.head {
+  margin-top: 16rpx;
+}
+.net-label {
+  margin-top: 24rpx;
+}
+.net {
+  font-size: 80rpx;
+  line-height: 1.15;
+  font-weight: 600;
+  color: var(--ink);
+}
+.signed {
+  margin-top: 16rpx;
+}
+.list {
+  overflow: hidden;
+}
+.kv {
+  display: flex;
+  align-items: baseline;
+  padding: 24rpx 32rpx;
+  background-color: var(--surface);
+}
+.kv + .kv {
+  border-top: 1px solid var(--line);
+}
+.k {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.v {
+  flex: none;
+  margin-left: 24rpx;
+  font-size: var(--fs-body);
+  color: var(--ink);
+  text-align: right;
+}
+.v.money {
+  font-weight: 600;
+}
+.sign {
+  margin-top: 48rpx !important;
+}
+.objection {
+  margin-top: 24rpx;
+  text-align: center;
+}

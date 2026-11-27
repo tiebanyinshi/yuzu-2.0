@@ -1,0 +1,36 @@
+.month-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 8rpx 0 24rpx;
+}
+.month-btn {
+  min-width: 128rpx;
+  height: 88rpx;
+  line-height: 88rpx;
+  text-align: center;
+  font-weight: 600;
+  color: var(--ink);
+}
+.summary {
+  margin-bottom: 16rpx;
+}
+.list {
+  overflow: hidden;
+}
+.day {
+  width: 160rpx;
+  flex: none;
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.today {
+  background-color: var(--wood-soft);
+}
+.today .day {
+  color: var(--ink);
+  font-weight: 600;
+}
+.past .row-title {
+  color: var(--ink-2);
+}
