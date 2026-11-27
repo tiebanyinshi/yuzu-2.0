@@ -1,6 +1,6 @@
 # 汤崎 WCP · 员工小程序
 
-员工小程序线的代码（[`docs/STAFF_MP.md`](../docs/STAFF_MP.md)）：原生小程序 + TypeScript，只连 yuzu 的员工小程序端口（`STAFFMP_PORT`，外面是 `https://staff.yuzusystem.xyz/api/staffmp/*`）。打卡、审批、员工培训……的规则都在 yuzu 里（主线），小程序只做界面；员工小程序端口把主线的员工端接口按白名单原样挂上（设计稿第 5.3 节）。
+员工小程序线的代码（[`docs/STAFF_MP.md`](../docs/STAFF_MP.md)）：原生小程序 + TypeScript，只连 yuzu 的员工小程序端口（`STAFFMP_PORT`，外面是 `https://sys.yuzusystem.xyz/api/staffmp/*`）。打卡、审批、员工培训……的规则都在 yuzu 里（主线），小程序只做界面；员工小程序端口把主线的员工端接口按白名单原样挂上（设计稿第 5.3 节）。
 
 视觉照设计稿第 4 节与第 13.1 节的核对清单：亚麻米白底、墨色字与墨色主按钮、木色只做点缀；颜色、字号写成 `src/app.wxss` 的令牌，页面只用令牌（`tests/pages.test.ts` 查页面样式里没有十六进制颜色，`tests/contrast.test.ts` 核对令牌的对比度）。
 
@@ -47,7 +47,7 @@ npm run check      # 类型检查 + 单元测试；CI 的「员工小程序：�
 | --- | --- | --- |
 | 开发版 | `DEV_BASE`（本机，默认 `http://127.0.0.1:8095`） | 门店系统是模拟微信时用模拟 |
 | 体验版 | 测试服的员工小程序域名（定下来以后填进 `src/config/env.ts`；没填之前体验版打不开，不会连到正式服） | 同上 |
-| 正式版 | `https://staff.yuzusystem.xyz` | 一律用真的微信登录 |
+| 正式版 | `https://sys.yuzusystem.xyz` | 一律用真的微信登录 |
 
 ## 写法上的约定
 

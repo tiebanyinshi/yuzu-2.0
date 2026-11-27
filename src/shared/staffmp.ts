@@ -3,7 +3,7 @@
 
 import type { InstanceKind } from './instance';
 
-/** 员工小程序端口上所有接口的前缀：放 Caddy 的服务器按它把 staff.yuzusystem.xyz 上的请求转到员工小程序端口（第 5 节） */
+/** 员工小程序端口上所有接口的前缀：放 Caddy 的服务器按它把 sys.yuzusystem.xyz 上的请求转到员工小程序端口（第 5 节） */
 export const STAFFMP_PREFIX = '/api/staffmp';
 
 /**
