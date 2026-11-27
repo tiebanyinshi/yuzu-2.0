@@ -243,6 +243,18 @@ describe('学堂 · 实操签核与证书', () => {
     base.lessonVersion += 1;
     expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: randomUUID(), checks: [true, true, true], result: 'pass' })).body.error.code).toBe('ACADEMY_ALREADY_DONE');
     await expect(ctx.sql`DELETE FROM academy_signoffs WHERE staff_id = ${ctx.clerkId}`).rejects.toThrow();
+    // 签上了没收到结果、带教重提之前被签的人离职了：原样重提照样返回第一次的结果，不当成「没有这位员工」（Codex 审查 bd376ff）
+    await ctx.sql`UPDATE staff SET active = false WHERE id = ${ctx.clerkId}`;
+    try {
+      expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: key, checks: [true, true, true], result: 'pass' })).body).toMatchObject({
+        completed: true,
+        credits: 0,
+        signoff: { result: 'pass' },
+      });
+      expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: randomUUID(), checks: [true, true, true], result: 'retry' })).status).toBe(404);
+    } finally {
+      await ctx.sql`UPDATE staff SET active = true WHERE id = ${ctx.clerkId}`;
+    }
     const view = (await api<AcademyLessonView>(ctx.app, ctx.clerk, 'GET', `/api/academy/lessons/${practicalId}`)).body;
     expect(view.practical).toMatchObject({ items: ['主动问候', '核对人数', '指引更衣室'], lessonVersion: lessonVersion + 2 });
     expect(view.practical!.signoffs.map((s) => s.result)).toEqual(['pass', 'retry']);

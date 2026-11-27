@@ -94,20 +94,25 @@ export async function signOff(sql: Sql, ctx: OpContext, raw: unknown, today: str
   const input = parse(SignoffInput, raw);
   if (input.staffId === ctx.actor.id) throw forbidden('不能给自己签实操');
   const scope = await coachScope(sql, ctx.actor);
-  const [trainee] = await sql<{ department: string | null }[]>`
-    SELECT pc.department FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id LEFT JOIN position_catalog pc ON pc.key = s.position
-    WHERE s.id = ${input.staffId} AND ${onDuty(sql)}`;
+  // 带教的权限、部门范围对原样重提也照样核对；被签的人还在不在职只对新的签核核对（下面查过操作编号以后）
+  const [trainee] = await sql<{ department: string | null; onDuty: boolean }[]>`
+    SELECT pc.department, ${onDuty(sql)} AS on_duty FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id LEFT JOIN position_catalog pc ON pc.key = s.position
+    WHERE s.id = ${input.staffId}`;
   if (!trainee) throw notFound('没有这位在职员工');
   if (!scope.all && (!scope.department || trainee.department !== scope.department)) throw forbidden('只能给本部门的同事签实操');
   return withTx(sql, async (tx) => {
     await lockLearner(tx, input.staffId);
-    // 先查这个操作编号签过没有：签上了但没收到结果、之后课时又改过或下架了的，原样重提照样返回第一次的结果（Codex 审查 4c50670）
-    const [had] = await tx<{ id: number; staffId: number; lessonId: number }[]>`SELECT id, staff_id, lesson_id FROM academy_signoffs WHERE client_key = ${input.clientKey}`;
+    // 先查这个操作编号签过没有：签上了但没收到结果、之后课时又改过或下架了、被签的人离职了的，原样重提照样返回第一次的结果
+    // （Codex 审查 4c50670、bd376ff）
+    const [had] = await tx<{ id: number; staffId: number; lessonId: number; signedBy: number }[]>`
+      SELECT id, staff_id, lesson_id, signed_by FROM academy_signoffs WHERE client_key = ${input.clientKey}`;
     if (had) {
-      if (Number(had.staffId) !== input.staffId || Number(had.lessonId) !== input.lessonId) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一次签核，请刷新');
+      if (Number(had.staffId) !== input.staffId || Number(had.lessonId) !== input.lessonId || Number(had.signedBy) !== ctx.actor.id)
+        throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一次签核，请刷新');
       const [s] = (await signoffsOf(tx, input.staffId, input.lessonId)).filter((x) => x.id === Number(had.id));
       return { signoff: s!, completed: s!.result === 'pass', credits: 0 };
     }
+    if (!trainee.onDuty) throw notFound('没有这位在职员工');
     const [lesson] = await tx<{ id: number; courseId: number; title: string; credits: number; body: string; kind: string; active: boolean; courseStatus: string; version: number }[]>`
       SELECT l.id, l.course_id, l.title, l.credits, l.body, l.kind, l.active, c.status AS course_status, l.version
       FROM academy_lessons l JOIN academy_courses c ON c.id = l.course_id WHERE l.id = ${input.lessonId}`;
