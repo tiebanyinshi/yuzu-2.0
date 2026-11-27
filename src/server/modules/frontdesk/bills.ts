@@ -423,13 +423,13 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   if (backfill) await recordBackfill(tx, backfill, { kind: 'charges', opKey: key, visitId: visit.id, businessDate: date, actor: ctx.actor });
   // 补单（8.2.3）：记下出单员（明细上标「补单 · 出单员」）
   if (backfill?.issuerId) await recordSupplement(tx, { opKey: key, visitId: visit.id, issuerId: backfill.issuerId, at, staffId: ctx.actor.id });
-  // 水吧首杯免费（8.2.9）：每个小分类第一杯折掉一杯的钱（挂到手牌上的入口都走）
+  // 水吧首杯免费（8.2.18）：每个小分类第一杯折掉一杯的钱（挂到手牌上的入口都走）
   {
     const drinks = lines.flatMap((l) => (l.itemId !== null && l.source === 'dining' ? [{ lineId: lineIds.get(l)!, itemId: l.itemId, unitPrice: l.unitPrice, amount: l.amount }] : []));
     if (drinks.length) {
       const { applyFirstCup } = await import('../dining-meals');
       await applyFirstCup(tx, { visitId: visit.id, billId: visit.billId, date, at, opKey: key, staffId: ctx.actor.id, lines: drinks });
-      // 水吧取餐号（8.2.9）：这一单有水吧饮品的发一个当天的号
+      // 水吧取餐号（8.2.18）：这一单有水吧饮品的发一个当天的号
       const { issuePickup } = await import('../dining-pickup');
       await issuePickup(tx, { orderNo, visitId: visit.id, date, at, itemIds: drinks.map((d) => d.itemId) });
     }

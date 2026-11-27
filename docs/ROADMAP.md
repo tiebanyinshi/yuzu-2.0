@@ -305,7 +305,8 @@
   - `590`（`590_away_lock_v827.sql`）：锁牌记录 `visit_tag_locks`（只追加，一次来访同时一把，最多 4 小时，预售指向一张手牌押金）；操作编号与「确认作废」追加 `tag_away_lock`、`tag_away_unlock`。回滚 `docs/rollback/590_away_lock_v827.down.sql`。
 - **8.2.8（`600`–`609`）**：《新店系统需求现场走场确认》第一节第 1 条（餐厅：入口刷手牌、含餐抵扣、裸票时段价、餐台与餐包；设计见 `docs/V8228_DINING_MEALS.md`）。
   - `600`（`600_dining_meals_v828.sql`）：票种含几餐 `ticket_types.meals_12h / meals_24h`（含餐门票回填 2 / 3）；进餐登记 `meal_entries`（只追加）；单项打折加自动折扣档 `auto` 与规则 `rule`（含餐、自助、首杯赠）；操作编号与「确认作废」追加 `meal_entry`。回滚 `docs/rollback/600_dining_meals_v828.down.sql`。
-- **8.2.9（`610`–`619`）**：《新店系统需求现场走场确认》第一节第 2 条（水吧：首杯免费、赠标签、取餐叫号与扫码看进度；设计见 `docs/V8229_WATER_BAR.md`）。
+- **本线版本号顺延（店主 2026-11-27 指出 8.2.8 合并时版本号比主线低）**：主线已到 8.2.17，本线余下几版都排在它之后、按原顺序：8.2.18 水吧（原 8.2.9）、8.2.19 休闲娱乐（原 8.2.10）、8.2.20 泡池（原 8.2.11）、8.2.21 前台快捷键、8.2.22 发卡台界面、8.2.23 前台改良（收银员工作台 demo 三批）、8.2.24 未交回与挂失手牌清单（迁移 `740`）。迁移号不变。别的线请从 8.2.25 起排。
+- **8.2.18（`610`–`619`，原排 8.2.9）**：《新店系统需求现场走场确认》第一节第 2 条（水吧：首杯免费、赠标签、取餐叫号与扫码看进度；设计见 `docs/V82218_WATER_BAR.md`）。
   - `610`（`610_pickup_v829.sql`）：取餐号 `pickup_tickets`（只追加，同一店同一营业日号唯一、随机编号给客人扫码）。回滚 `docs/rollback/610_pickup_v829.down.sql`。
 - **8.2.6 采购商城 v0.2（`580`–`589`）**：《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》（店主 2026-11-27，设计见 `docs/MALL_V826.md`）——分批发配与物料发配记录、退回逐项标必补、版本快照、终止申购、收货待判。
   - `580`（`580_mall_dispatch.sql`）：发配记录 `request_line_issues`（核库已开的领料单抄一份）、退回必补项 `request_fix_items`、版本快照 `purchase_request_versions`、终止申请 `request_terminations`、收货待判 `inv_doc_lines.hold_milli`；操作类型追加 `request_dispatch`、`mall_terminate`。回滚 `docs/rollback/580_mall_dispatch.down.sql`。

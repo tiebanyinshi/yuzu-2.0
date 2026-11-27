@@ -1,4 +1,4 @@
-// 客人扫小票二维码看水吧取餐进度（8.2.9，docs/V8229_WATER_BAR.md）：不用登录，只认二维码里的随机编号，只看这一单。
+// 客人扫小票二维码看水吧取餐进度（8.2.18，docs/V82218_WATER_BAR.md）：不用登录，只认二维码里的随机编号，只看这一单。
 // 10 秒刷新（页面在后台不取）；做好了显示「请取餐」。
 import { useState } from 'react';
 import { useParams } from 'react-router';

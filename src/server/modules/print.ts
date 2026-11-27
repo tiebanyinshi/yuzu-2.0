@@ -37,7 +37,7 @@ export async function checkoutForPrint(db: Db, id: number): Promise<CheckoutPrin
         SELECT l.id, l.bill_id, l.name, l.unit_price, l.quantity, l.amount, ${technicianTextSql(db, 'l')} AS technician,
                d.final_amount, d.rule
         FROM bill_lines l JOIN checkouts c ON c.id = ${id}
-        -- 结账那一刻这一行的单项打折（8.2.1；8.2.8 / 8.2.9 的自动折扣也在这张表）
+        -- 结账那一刻这一行的单项打折（8.2.1；8.2.8 / 8.2.18 的自动折扣也在这张表）
         LEFT JOIN LATERAL (SELECT x.final_amount, x.rule FROM bill_line_discounts x
                            WHERE x.line_id = l.id AND x.created_at <= c.created_at AND (x.status = 'active' OR x.revoked_at > c.created_at)
                            ORDER BY x.id DESC LIMIT 1) d ON true

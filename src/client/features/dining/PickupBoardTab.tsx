@@ -1,4 +1,4 @@
-// 水吧取餐叫号屏（8.2.9，docs/V8229_WATER_BAR.md）：今天制作中、请取餐的号，5 秒刷新；可以放在水吧门口的大屏上。
+// 水吧取餐叫号屏（8.2.18，docs/V82218_WATER_BAR.md）：今天制作中、请取餐的号，5 秒刷新；可以放在水吧门口的大屏上。
 // 做好了在「厨房出品」里点「出餐」就变成「请取餐」，客人取走点「上菜」就从屏上消失。
 import { useState } from 'react';
 import { pickupLabel, type PickupBoard } from '@shared/dining-meals';

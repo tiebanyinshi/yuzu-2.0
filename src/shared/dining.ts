@@ -59,7 +59,7 @@ export interface DiningRules {
   returnWindowMinutes: number;
   /** 餐厅的餐段与裸票餐费（8.2.8）：入口刷手牌登记进餐按此刻的餐段收（含餐的抵扣成 0） */
   mealPeriods: import('./dining-meals').MealPeriod[];
-  /** 水吧首杯免费（8.2.9）：每位客人水吧每个小分类（手作饮料、糖水、调酒……）第一杯自动折成 0（标「赠」），第二杯起照价 */
+  /** 水吧首杯免费（8.2.18）：每位客人水吧每个小分类（手作饮料、糖水、调酒……）第一杯自动折成 0（标「赠」），第二杯起照价 */
   firstCupFree: boolean;
 }
 
@@ -680,7 +680,7 @@ export interface DiningReceiptOrder {
   /** 整单备注、送达房号（8.1.15 块 B3；没有的为空） */
   orderNote: string;
   deliverRoom: string;
-  /** 水吧取餐号（8.2.9）：这一单有水吧饮品的才有；token 是小票二维码里查进度的编号 */
+  /** 水吧取餐号（8.2.18）：这一单有水吧饮品的才有；token 是小票二维码里查进度的编号 */
   pickup?: { no: number; token: string } | null;
 }
 

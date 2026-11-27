@@ -115,7 +115,7 @@ export async function diningReceipt(db: Db, q: { session?: number; visit?: numbe
         deliverRoom: r.deliverRoom ?? '',
       });
   }
-  // 水吧取餐号（8.2.9）：这几单有的带上号与查进度的编号
+  // 水吧取餐号（8.2.18）：这几单有的带上号与查进度的编号
   const orderNos = [...groups.values()].flatMap((g) => (g.orderNo ? [g.orderNo] : []));
   const pickups = orderNos.length
     ? new Map(
