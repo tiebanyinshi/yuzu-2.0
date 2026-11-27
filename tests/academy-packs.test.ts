@@ -57,4 +57,23 @@ describe('表格导入题', () => {
     expect(parseQuestionTable([['问题', '答案']], 'x').problems[0]!.message).toBe('表格里没有题');
     expect(parseQuestionTable([['名字', '电话']], 'x').problems[0]!.message).toContain('题干');
   });
+
+  it('选项按字母对答案：中间空一格的整行拒绝，不往前挤；答案指向没有的选项拒绝；表头跳过字母也照字母算（Codex 审查 a69d88e）', () => {
+    const head = ['题干', '选项A', '选项B', '选项C', '答案'];
+    const gap = parseQuestionTable([head, ['空了 A 的题', '', '正确选项', '错误选项', 'B']], 'x');
+    expect(gap.questions).toEqual([]);
+    expect(gap.problems).toEqual([{ row: 2, message: '选项要从 A 开始连着填：选项A空着，后面的选项却有内容' }]);
+    const beyond = parseQuestionTable([head, ['只有两个选项', '甲', '乙', '', 'C']], 'x');
+    expect(beyond.problems).toEqual([{ row: 2, message: '答案里的 C 没有对应的选项' }]);
+    const skipped = parseQuestionTable(
+      [
+        ['题干', '选项A', '选项B', '选项D', '答案'],
+        ['表头少了 C', '甲', '乙', '丁', 'D'],
+      ],
+      'x',
+    );
+    expect(skipped.problems[0]!.message).toContain('选项C空着');
+    const ok = parseQuestionTable([head, ['B 是对的', '甲', '乙', '丙', 'B']], 'x');
+    expect(ok.questions[0]).toMatchObject({ options: ['甲', '乙', '丙'], answer: [1] });
+  });
 });

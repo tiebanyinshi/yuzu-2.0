@@ -140,16 +140,19 @@ export async function settlePaths(tx: Tx, staffId: number, pathIds: number[] | n
   return out;
 }
 
-/** 管理员上架地图、改了阶段：给已经学完的人补记（地图一行已锁；按员工编号顺序逐个取学员锁） */
+/**
+ * 管理员上架地图、改了阶段：给已经学完的人补记（地图一行已锁）。
+ * 先按员工编号升序把这批人的学员锁都取齐，再逐个结算：结算里发证书要锁当天的证书单号计数，
+ * 边结算边取下一位的锁的话，这边拿着计数等那位的锁、那位拿着自己的锁等计数，就成环了（Codex 审查 be8f2e7）。
+ */
 export async function settlePathForAll(tx: Tx, pathId: number, today: string) {
   const staff = await tx<{ staffId: number }[]>`
     SELECT DISTINCT pr.staff_id FROM academy_progress pr JOIN academy_lessons l ON l.id = pr.lesson_id
     JOIN academy_path_courses pc ON pc.course_id = l.course_id
     WHERE pc.path_id = ${pathId} AND pr.completed_at IS NOT NULL ORDER BY pr.staff_id`;
-  for (const { staffId } of staff) {
-    await lockLearner(tx, Number(staffId));
-    await settlePaths(tx, Number(staffId), [pathId], today);
-  }
+  const ids = staff.map((r) => Number(r.staffId));
+  for (const id of ids) await lockLearner(tx, id);
+  for (const id of ids) await settlePaths(tx, id, [pathId], today);
 }
 
 /**
