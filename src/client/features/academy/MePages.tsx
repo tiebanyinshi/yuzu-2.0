@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Award, CheckCircle2, ClipboardCheck, Flame, Sparkles } from 'lucide-react';
-import type { AcademyCoachItem, AcademyDailyAnswer, AcademyDailyItem } from '@shared/academy';
+import type { AcademyCoachItem, AcademyDaily, AcademyDailyAnswer, AcademyDailyItem } from '@shared/academy';
 import { FSRS_GRADE_LABELS, MASTERY_STATUS_LABELS, type FsrsGrade } from '@shared/academy-algo';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { cn, uuid } from '../../lib/utils';
@@ -111,6 +111,23 @@ function DailyCard({ item, onAnswered, onDone }: { item: AcademyDailyItem; onAns
 
 export function DailyPage() {
   const daily = useAcademyDaily();
+  const d = daily.data;
+  return (
+    <AcademyFrame title="每日一练" back={{ to: '/oa/academy', label: '学堂' }} testId="academy-daily">
+      <AcademyOpsPanel />
+      {daily.isError && !d ? (
+        <LoadFailed title="今天的题没有取回来" onRetry={() => void daily.refetch()} />
+      ) : !d ? (
+        <Skeleton className="h-64" />
+      ) : (
+        // 按服务端的「今天」分场（Codex 审查 a1755f6）：页面开着过了夜，切回来是新的一天，昨天练过的、正在看的、做了几题都从头算
+        <DailySession key={d.today} d={d} />
+      )}
+    </AcademyFrame>
+  );
+}
+
+function DailySession({ d }: { d: AcademyDaily }) {
   // 按题号走，不按第几题（Codex 审查 34b9815）：切回页面会重新取今天的题，服务端把今天练过的拿掉、清单变短，按序号会落空。
   //   · current：正在做的那题；passed：这次打开以后练完、点过「下一题」的；
   //   · held：交了、还在看对错的那题——重新取回来的清单里已经没有它，先留着，点「下一题」再走。
@@ -120,59 +137,49 @@ export function DailyPage() {
   const [done, setDone] = useState<AcademyDailyAnswer | null>(null);
   const qc = useQueryClient();
   const refresh = useAcademyRefresh();
-  const d = daily.data;
-  const left = d?.items.filter((i) => !passed.includes(i.questionId)) ?? [];
+  const left = d.items.filter((i) => !passed.includes(i.questionId));
   const item = held ?? left.find((i) => i.questionId === current) ?? left[0];
   return (
-    <AcademyFrame title="每日一练" back={{ to: '/oa/academy', label: '学堂' }} testId="academy-daily">
-      <AcademyOpsPanel />
-      {daily.isError && !d ? (
-        <LoadFailed title="今天的题没有取回来" onRetry={() => void daily.refetch()} />
-      ) : !d ? (
-        <Skeleton className="h-64" />
+    <>
+      <Card className="flex items-center gap-3 p-4">
+        <Flame className="size-8 shrink-0 text-ember" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <p className="text-[15px] font-bold text-ink">连续 {d.streak} 天</p>
+          <p className="text-[12px] text-ink-3">每天 {d.target} 题，到期该复习的先出（按你记忆的快慢排），练完得 1 学分</p>
+        </div>
+        <span className="text-[16px] font-bold text-ink tabular-nums" data-testid="academy-daily-count">
+          {done?.doneToday ?? d.doneToday}/{d.target}
+        </span>
+      </Card>
+      {item ? (
+        <DailyCard
+          // 题号 + 版本：题被改过（重新取回来是新版本）就整张卡重来，选过的选项不带到新题上（Codex 审查 6ee05cd）
+          key={`${item.questionId}:${item.version}`}
+          item={item}
+          onAnswered={(a) => {
+            setDone(a);
+            if (item.kind !== 'recall') setHeld(item);
+          }}
+          onDone={() => {
+            const next = left.find((i) => i.questionId !== item.questionId);
+            setHeld(null);
+            setPassed([...passed, item.questionId]);
+            setCurrent(next?.questionId ?? null);
+            if (!next) {
+              void qc.invalidateQueries({ queryKey: academyKeys.daily });
+              void refresh();
+            }
+          }}
+        />
       ) : (
-        <>
-          <Card className="flex items-center gap-3 p-4">
-            <Flame className="size-8 shrink-0 text-ember" aria-hidden />
-            <div className="min-w-0 flex-1">
-              <p className="text-[15px] font-bold text-ink">连续 {d.streak} 天</p>
-              <p className="text-[12px] text-ink-3">每天 {d.target} 题，到期该复习的先出（按你记忆的快慢排），练完得 1 学分</p>
-            </div>
-            <span className="text-[16px] font-bold text-ink tabular-nums" data-testid="academy-daily-count">
-              {done?.doneToday ?? d.doneToday}/{d.target}
-            </span>
-          </Card>
-          {item ? (
-            <DailyCard
-              // 题号 + 版本：题被改过（重新取回来是新版本）就整张卡重来，选过的选项不带到新题上（Codex 审查 6ee05cd）
-              key={`${item.questionId}:${item.version}`}
-              item={item}
-              onAnswered={(a) => {
-                setDone(a);
-                if (item.kind !== 'recall') setHeld(item);
-              }}
-              onDone={() => {
-                const next = left.find((i) => i.questionId !== item.questionId);
-                setHeld(null);
-                setPassed([...passed, item.questionId]);
-                setCurrent(next?.questionId ?? null);
-                if (!next) {
-                  void qc.invalidateQueries({ queryKey: academyKeys.daily });
-                  void refresh();
-                }
-              }}
-            />
-          ) : (
-            <EmptyState
-              title={d.credited ? '今天的练完了' : '今天没有要练的题'}
-              description={d.credited ? '明天再来，记得更牢' : '先去学一门课，学过的课的题会出现在这里'}
-              art="calm"
-              testId="academy-daily-empty"
-            />
-          )}
-        </>
+        <EmptyState
+          title={d.credited ? '今天的练完了' : '今天没有要练的题'}
+          description={d.credited ? '明天再来，记得更牢' : '先去学一门课，学过的课的题会出现在这里'}
+          art="calm"
+          testId="academy-daily-empty"
+        />
       )}
-    </AcademyFrame>
+    </>
   );
 }
 
