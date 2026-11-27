@@ -213,6 +213,8 @@ export type AuditAction =
   | 'booking_cancel'
   | 'booking_no_show'
   | 'booking_arrive'
+  // 迁移 740：8.2.4 的一报多预约补「有意重叠」标记（迁移写的，经办人为空）
+  | 'booking_overlap_backfill'
   // 次卡（v0.7.28 ④）
   | 'count_card_type_saved'
   | 'count_card_sale'

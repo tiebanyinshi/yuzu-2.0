@@ -178,7 +178,13 @@ export function buildCheckoutSlip(d: CheckoutPrint, meta: SlipMeta): Buffer {
     s.text(stay);
     for (const l of b.lines) {
       // 被签赠、券、会员折扣抵到的行标出来（8.1.15）：「足疗 [赠]」
-      s.pair(`${l.name}${perkMarks(l.perks)}`, yuan(l.amount));
+      // 单项打折（8.2.1）与含餐、自助、首杯赠（8.2.8 / 8.2.19）：前面标【赠】（折到 0 或首杯）/【折】，写原价、实收
+      const ld = l.lineDiscount;
+      if (ld) {
+        const mark = ld.finalAmount === 0 || ld.rule === 'first_cup' ? '【赠】' : '【折】';
+        s.pair(`${mark}${l.name}${perkMarks(l.perks)}`, yuan(ld.finalAmount));
+        s.text(`原价 ${yuan(l.amount)} · 实收 ${yuan(ld.finalAmount)}`, 2);
+      } else s.pair(`${l.name}${perkMarks(l.perks)}`, yuan(l.amount));
       if (l.technician) s.text(`技师 ${l.technician}`, 2);
       if (l.quantity > 1) s.text(`${l.quantity} × ${yuan(l.unitPrice)}`, 2);
     }

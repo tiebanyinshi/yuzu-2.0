@@ -715,6 +715,8 @@ const RulesInput = z.object({
   serviceFeeBp: z.number('服务费比例不正确').int('服务费比例不正确').min(0, '服务费比例不能是负数').max(MAX_SERVICE_FEE_BP, '服务费最多 30%'),
   serviceFeeScope: z.enum(['rooms', 'all'], '服务费用在哪些桌不正确'),
   returnWindowMinutes: z.number('分钟数必须是整数').int('分钟数必须是整数').min(1, '至少 1 分钟').max(MAX_RETURN_WINDOW_MINUTES, `最多 ${MAX_RETURN_WINDOW_MINUTES} 分钟`),
+  // 8.2.19：水吧首杯免费
+  firstCupFree: z.boolean(),
   // 8.2.8：餐厅的餐段与裸票餐费（四段各一条，价钱 0 = 这一段不供餐）
   mealPeriods: z
     .array(

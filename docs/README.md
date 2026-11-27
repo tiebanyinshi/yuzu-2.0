@@ -19,6 +19,10 @@
 - [`CONVENTIONS.md`](CONVENTIONS.md)：开发约定（专题）
 - [`TESTING.md`](TESTING.md)：测试与 CI（飞书需求 RQ-008，v0.7.18 定稿；2026-11-20 改成按改动与风险挑选，见第 6 节）
 - [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
+- [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
+- [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
@@ -44,6 +48,8 @@
 - [`CONCIERGE_LINKS.md`](CONCIERGE_LINKS.md)：管家部与会员、资源系统联动
 - [`CONTRACTS.md`](CONTRACTS.md)：合同与法务审查（v0.7.31）
 - [`COUPONS.md`](COUPONS.md)：券与会员权益（v0.7.20，飞书需求 RQ-006 后半；定稿）
+- [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
+- [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
 - [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)：数据字典
 - [`DB_REVIEW_V8147.md`](DB_REVIEW_V8147.md)：数据库 Schema 评估与整改（8.1.47）
 - [`DESKS_V8115.md`](DESKS_V8115.md)：8.1.15 · 前台拆成发卡台与收银台
@@ -129,6 +135,7 @@
 - [`V8215_GF_CONFIG.md`](V8215_GF_CONFIG.md)：8.2.15 · 业财法：流程与阈值后台可改、试算
 - [`V8216_GF_EXPORT.md`](V8216_GF_EXPORT.md)：8.2.16 · 业财法与审批中心导出；微信特批登记时必传 OK 截图
 - [`V8217_EXPENSE_UNIFY.md`](V8217_EXPENSE_UNIFY.md)：8.2.17 · 报销统一成一套：WCP 发起 / 查看，业财法审批与执行
+- [`V82219_WATER_BAR.md`](V82219_WATER_BAR.md)：8.2.19 水吧：首杯免费、赠标签、取餐叫号
 - [`V8221_CASHIER.md`](V8221_CASHIER.md)：8.2.1 批 1：收银台（单项打折、一键快捷键、经办人前置与改价标记、换牌规则、手牌押金）
 - [`V8222_TECHNICIANS.md`](V8222_TECHNICIANS.md)：8.2.2 技师：扩钟、一报多、退技师、换项目、休假、状态、统计与导入
 - [`V8223_FRONTDESK.md`](V8223_FRONTDESK.md)：8.2.3 前台：发卡台与全店（客人类别、偏好、客诉台账、拥挤与高风险提示、技师预约权限、跳转明细、同行移出、补单）
