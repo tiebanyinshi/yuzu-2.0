@@ -6,7 +6,8 @@ import type { AcademyAiGenerateResult, AcademyPackImportResult, AcademyPackStatu
 import { mockAiProvider } from '../src/server/integrations/ai';
 import { hashRequest } from '../src/server/lib/idempotency';
 import { setAiProviderForTests } from '../src/server/modules/ai';
-import { api, setup, type TestContext } from './helpers';
+import { createStaff } from '../src/server/modules/staff';
+import { api, PASSWORD, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
 beforeAll(async () => {
@@ -99,6 +100,27 @@ describe('学堂 · 内置课件包', () => {
     const certs = await ctx.sql<{ certNo: string }[]>`SELECT cert_no FROM academy_certificates WHERE path_id IN ${ctx.sql(ids)}`;
     expect(certs).toHaveLength(4);
     expect(new Set(certs.map((c) => c.certNo)).size).toBe(4);
+  });
+
+  it('课的新内容去掉了一节、地图没变：原来只差这一节的人导入后算学完地图并发证书（Codex 审查 7a6eee0）', async () => {
+    const [path] = await ctx.sql<{ id: number }[]>`SELECT id FROM academy_paths WHERE code = 'safety-annual'`;
+    const pathId = Number(path!.id);
+    const [first] = await ctx.sql<{ courseId: number }[]>`SELECT course_id FROM academy_path_courses WHERE path_id = ${pathId} ORDER BY seq LIMIT 1`;
+    const courseId = Number(first!.courseId);
+    // 库里这门课多一节包里已经没有的课时；有新内容（摘要对不上）
+    const [gone] = await ctx.sql<{ id: number }[]>`
+      INSERT INTO academy_lessons (course_id, pack_key, seq, title, kind, body) VALUES (${courseId}, 'gone-lesson', 99, '旧的一节', 'article', '旧的正文。') RETURNING id`;
+    await ctx.sql`UPDATE academy_courses SET pack_hash = ${'0'.repeat(64)} WHERE id = ${courseId}`;
+    const staffId = await createStaff(ctx.sql, { username: 'learner3', displayName: '学员三', role: 'clerk', password: PASSWORD, mustChangePassword: false });
+    await ctx.sql`
+      INSERT INTO academy_progress (staff_id, lesson_id, completed_at)
+      SELECT ${staffId}, l.id, now() FROM academy_lessons l
+      WHERE l.active AND l.id <> ${gone!.id} AND l.course_id IN (SELECT course_id FROM academy_path_courses WHERE path_id = ${pathId})`;
+    const r = await importPacks({});
+    expect(r.body.paths.find((p) => p.code === 'safety-annual')!.result).toBe('unchanged');
+    expect((await ctx.sql`SELECT active FROM academy_lessons WHERE id = ${gone!.id}`)[0]!.active).toBe(false);
+    expect(await ctx.sql`SELECT 1 FROM academy_path_completions WHERE staff_id = ${staffId} AND path_id = ${pathId}`).toHaveLength(1);
+    expect(await ctx.sql`SELECT 1 FROM academy_certificates WHERE staff_id = ${staffId} AND path_id = ${pathId}`).toHaveLength(1);
   });
 });
 
@@ -222,5 +244,28 @@ describe('学堂 · AI 出题与问柚子', () => {
     expect((await api(ctx.app, ctx.clerk, 'POST', `/api/academy/courses/${courseId}/tutor`, { clientKey: randomUUID(), question: '再问一次' })).body.error.code).toBe('ACADEMY_TUTOR_LIMIT');
     const [call] = await ctx.sql`SELECT request_summary FROM integration_calls WHERE action = 'academy_tutor' ORDER BY id DESC LIMIT 1`;
     expect(JSON.stringify(call!.requestSummary)).not.toContain('测试店员');
+  });
+
+  it('问柚子：用了 29 次时同一编号同时问两次，都拿到同一个回答，不被限额挡住；很长的一段不会让别的材料都挑不上（Codex 审查 7a6eee0）', async () => {
+    const [spa] = await ctx.sql<{ id: number }[]>`SELECT id FROM academy_courses WHERE code = 'spa-103'`;
+    const courseId = spa!.id;
+    await ctx.sql`
+      INSERT INTO academy_tutor_questions (staff_id, course_id, client_key, question, status)
+      SELECT ${ctx.ownerId}, ${courseId}, gen_random_uuid(), '占位', 'done' FROM generate_series(1, 29)`;
+    const body = { clientKey: randomUUID(), question: '客人晕堂了怎么办？' };
+    const both = await Promise.all([1, 2].map(() => api<AcademyTutorAnswer>(ctx.app, ctx.owner, 'POST', `/api/academy/courses/${courseId}/tutor`, body)));
+    expect(both.map((r) => r.status)).toEqual([200, 200]);
+    expect(both[0]!.body.id).toBe(both[1]!.body.id);
+    // 一节课里有一段超过 4000 字（又最相关）：切开来挑，后面短的材料照样能挑上
+    const made = await api<{ course: { id: number } }>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/courses', { clientKey: randomUUID(), title: '长课文', category: 'industry' });
+    const longId = made.body.course.id;
+    const long = `${'泡汤前先补水。'.repeat(700)}`;
+    await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${longId}/lessons`, { clientKey: randomUUID(), title: '长的一节', kind: 'article', body: `${long}\n\n泡汤前要先补水，再进池。` });
+    await ctx.sql`UPDATE academy_courses SET status = 'published' WHERE id = ${longId}`;
+    await ctx.sql`DELETE FROM academy_tutor_questions WHERE staff_id = ${ctx.clerkId} AND question = '占位'`;
+    const r = await api<AcademyTutorAnswer>(ctx.app, ctx.clerk, 'POST', `/api/academy/courses/${longId}/tutor`, { clientKey: randomUUID(), question: '泡汤前要先补水吗？' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.sources.map((x) => x.title)).toEqual(['长的一节']);
+    expect(r.body.answer).toContain('模拟回答');
   });
 });
