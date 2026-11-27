@@ -111,6 +111,10 @@ export interface PostOptions {
    * 不进厨房的项目不受影响。点单页在事务外已经核对过；钟房、渠道入口、平板点餐不带
    */
   outlets?: boolean;
+  /** 手动金额（没选档口的）记在哪个部门（8.2.7：餐厅入口的餐费记在餐饮）；不带的照旧记在洗浴 */
+  customSource?: 'dining';
+  /** 点单页下单（8.2.7）：登记了此刻这一餐的客人，餐厅出品口的菜自动折成 0（餐台自助） */
+  buffet?: boolean;
 }
 
 export type PostInputParsed = z.output<typeof PostInput>;
@@ -131,7 +135,7 @@ export interface PostTxMeta {
    * 这个编号记成哪种业务（8.1.15）：平时是挂账 bill_post；发牌后的「超时加收」也走这里挂一条手动金额的明细，
    * 编号记成 visit_incident（查回、作废都按那一类），不带时与以前完全一样
    */
-  opType?: 'bill_post' | 'visit_incident' | 'room_order_water' | 'room_order_fruit';
+  opType?: 'bill_post' | 'visit_incident' | 'room_order_water' | 'room_order_fruit' | 'meal_entry';
 }
 
 export interface PostedLine {
@@ -310,7 +314,7 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
       unitPrice: l.amount,
       quantity: 1,
       amount: l.amount,
-      source: stationId === null ? 'bath' : 'dining',
+      source: stationId === null ? (options.customSource ?? 'bath') : 'dining',
       technicianId: null,
       callType: null,
       techText: null,
@@ -418,6 +422,19 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   if (backfill) await recordBackfill(tx, backfill, { kind: 'charges', opKey: key, visitId: visit.id, businessDate: date, actor: ctx.actor });
   // 补单（8.2.3）：记下出单员（明细上标「补单 · 出单员」）
   if (backfill?.issuerId) await recordSupplement(tx, { opKey: key, visitId: visit.id, issuerId: backfill.issuerId, at, staffId: ctx.actor.id });
+  // 餐台自助（8.2.7）：登记了此刻这一餐的客人，餐厅出品口的菜自动折成 0
+  if (options.buffet) {
+    const { applyBuffetZero } = await import('../dining-meals');
+    await applyBuffetZero(tx, deps, {
+      visitId: visit.id,
+      billId: visit.billId,
+      at,
+      date,
+      opKey: key,
+      staffId: ctx.actor.id,
+      lines: lines.flatMap((l) => (l.itemId !== null && l.source === 'dining' ? [{ lineId: lineIds.get(l)!, itemId: l.itemId, amount: l.amount }] : [])),
+    });
+  }
   await saveKey(tx, key, meta.opType ?? 'bill_post', requestHash, visit.id, ctx.actor.id);
   await writeAudit(tx, {
     staffId: ctx.actor.id,

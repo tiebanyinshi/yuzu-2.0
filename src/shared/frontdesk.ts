@@ -451,7 +451,11 @@ export interface VisitDetail {
 export type FrontdeskOpLookup =
   | { found: false; abandoned: boolean }
   | { found: true; type: 'checkin'; checkin: CheckinResult }
-  | { found: true; type: 'bill_post' | 'tag_swap' | 'line_move' | 'visit_incident' | 'line_discount' | 'tag_deposit' | 'tag_deposit_refund' | 'tag_away_lock' | 'tag_away_unlock'; visit: VisitDetail }
+  | {
+      found: true;
+      type: 'bill_post' | 'tag_swap' | 'line_move' | 'visit_incident' | 'line_discount' | 'tag_deposit' | 'tag_deposit_refund' | 'tag_away_lock' | 'tag_away_unlock' | 'meal_entry';
+      visit: VisitDetail;
+    }
   | { found: true; type: 'checkout' | 'table_checkout'; checkout: CheckoutDetail }
   | { found: true; type: 'table_open' | 'table_post' | 'table_return'; session: import('./dining').TableSessionDetail }
   | { found: true; type: 'room_checkin' | 'room_extend' | 'room_deposit' | 'room_refund' | 'room_close'; stay: import('./rooms').StayDetail }

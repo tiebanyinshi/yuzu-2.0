@@ -1152,8 +1152,8 @@ export async function lookupFrontdeskOp(db: Db, key: string, timezone: string, e
   // 单项打折（8.2.1）：编号记在那次来访上；手牌押金的收、退：编号记在那一笔押金上，查回这位客人
   if (row.opType === 'line_discount') return { found: true as const, type: 'line_discount' as const, visit: await getVisit(db, row.refId, timezone) };
   // 锁牌外出（8.2.6）：锁、解锁的编号记在那次来访上
-  if (row.opType === 'tag_away_lock' || row.opType === 'tag_away_unlock') {
-    return { found: true as const, type: row.opType as 'tag_away_lock' | 'tag_away_unlock', visit: await getVisit(db, row.refId, timezone) };
+  if (row.opType === 'tag_away_lock' || row.opType === 'tag_away_unlock' || row.opType === 'meal_entry') {
+    return { found: true as const, type: row.opType as 'tag_away_lock' | 'tag_away_unlock' | 'meal_entry', visit: await getVisit(db, row.refId, timezone) };
   }
   if (row.opType === 'tag_deposit' || row.opType === 'tag_deposit_refund') {
     const [d] = await db<{ visitId: number }[]>`SELECT visit_id FROM tag_deposits WHERE id = ${row.refId}`;

@@ -43,6 +43,7 @@ import { groupsProblem, OutletGroupsEditor } from './DiningGroupsEditor';
 import { GroupStationsCard } from './GroupStationsCard';
 import { roomTypeText, RoomTypesCard } from './RoomTypesCard';
 import { MAX_RETURN_WINDOW_MINUTES } from '@shared/dining-v8224';
+import { MealPeriodsEditor, mealPeriodsProblem } from './MealPeriodsEditor';
 
 const adminKey = ['admin', 'dining'] as const;
 const useDiningAdmin = () => useQuery({ queryKey: adminKey, queryFn: () => api.get<DiningAdmin>('/api/admin/dining') });
@@ -118,6 +119,8 @@ function RulesCard() {
   const mapped = admin.data.items.filter((i) => i.stationId !== null && !i.technicianRequired).length;
   // 8.1.39（R4）：菜单的小分类
   const groupsBad = groupsProblem(draft.outletGroups);
+  // 8.2.7：餐段与裸票餐费
+  const mealsBad = mealPeriodsProblem(draft.mealPeriods);
 
   const save = async () => {
     setBusy(true);
@@ -310,6 +313,7 @@ function RulesCard() {
           </span>,
           true,
         )}
+        <MealPeriodsEditor value={draft.mealPeriods} onChange={(mealPeriods) => set({ mealPeriods })} editable={editable} />
         <OutletGroupsEditor value={draft.outletGroups} onChange={(outletGroups) => set({ outletGroups })} editable={editable} items={admin.data.items} saved={admin.data.rules.outletGroups} />
         {row(
           '小额退菜上限',
@@ -336,6 +340,7 @@ function RulesCard() {
       {!freeOk && <Notice tone="error" title={`小额退菜上限填 0 到 ${formatYuan(MAX_VOID_FREE_CENTS)} 之间的金额`} className="mt-3" />}
       {!feeOk && <Notice tone="error" title={`服务费填 0 到 ${MAX_SERVICE_FEE_BP / 100} 之间的比例`} className="mt-3" />}
       {!returnOk && <Notice tone="error" title={`返台时限填 1 到 ${MAX_RETURN_WINDOW_MINUTES} 分钟`} className="mt-3" />}
+      {mealsBad && <Notice tone="error" title={mealsBad} className="mt-3" />}
       {groupsBad && <Notice tone="error" title={groupsBad} className="mt-3" />}
       {error && <Notice tone="error" title={error} className="mt-3" />}
       <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
@@ -363,7 +368,13 @@ function RulesCard() {
             </Button>
           )}
         {editable && (
-          <Button variant="primary" loading={busy} disabled={!dirty || !minutesOk || !freeOk || !dirtyOk || !feeOk || !returnOk || !!groupsBad} onClick={save} data-testid="dining-rules-save">
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={!dirty || !minutesOk || !freeOk || !dirtyOk || !feeOk || !returnOk || !!groupsBad || !!mealsBad}
+            onClick={save}
+            data-testid="dining-rules-save"
+          >
             保存餐饮规则
           </Button>
         )}

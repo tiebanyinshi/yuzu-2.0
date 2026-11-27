@@ -22,6 +22,9 @@ export interface TicketType {
   active: boolean;
   isDefault: boolean;
   sortOrder: number;
+  /** 含几餐（8.2.7）：12 小时档 / 24 小时档各含几餐（餐厅入口登记时抵扣），0 = 不含餐 */
+  meals12h: number;
+  meals24h: number;
 }
 
 /** 在店时长 → 段数（每 12 小时一段，不足一段按一段，至少 1 段）；宽限分钟内不跳档 */

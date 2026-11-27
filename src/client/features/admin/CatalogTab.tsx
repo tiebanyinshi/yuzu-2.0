@@ -571,6 +571,11 @@ function TicketTypesCard() {
                 <span className="text-[14px] font-bold">{t.name}</span>
                 {t.isDefault && <Badge tone="pine">接待默认</Badge>}
                 {!t.active && <Badge tone="neutral">已停用</Badge>}
+                {t.meals12h > 0 && (
+                  <Badge tone="yuzu">
+                    含餐 {t.meals12h} / {t.meals24h}
+                  </Badge>
+                )}
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-3">{t.note}</span>
                 <span className="num text-[13px] text-ink-2">
                   {t.price12h || t.price24h ? (
@@ -602,6 +607,9 @@ function TicketTypeDialog({ editing, onClose }: { editing: TicketType | 'new'; o
   const [active, setActive] = useState(t?.active ?? true);
   const [isDefault, setIsDefault] = useState(t?.isDefault ?? false);
   const [sort, setSort] = useState(String(t?.sortOrder ?? 50));
+  // 8.2.7：含几餐（餐厅入口登记时抵扣）
+  const [m12, setM12] = useState(String(t?.meals12h ?? 0));
+  const [m24, setM24] = useState(String(t?.meals24h ?? 0));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const c12 = parseYuan(p12 || '0');
@@ -611,7 +619,17 @@ function TicketTypeDialog({ editing, onClose }: { editing: TicketType | 'new'; o
     setBusy(true);
     setError(null);
     try {
-      const body = { name: name.trim(), price12h: c12, price24h: c24, note: note.trim(), active, isDefault: active && isDefault, sortOrder: Number(sort) || 0 };
+      const body = {
+        name: name.trim(),
+        price12h: c12,
+        price24h: c24,
+        note: note.trim(),
+        active,
+        isDefault: active && isDefault,
+        sortOrder: Number(sort) || 0,
+        meals12h: Math.min(9, Number(m12) || 0),
+        meals24h: Math.min(9, Number(m24) || 0),
+      };
       if (t) await api.put(`/api/frontdesk/ticket-types/${t.id}`, body);
       else await api.post('/api/frontdesk/ticket-types', body);
       void qc.invalidateQueries({ queryKey: ['frontdesk', 'ticket-types'] });
@@ -655,6 +673,27 @@ function TicketTypeDialog({ editing, onClose }: { editing: TicketType | 'new'; o
         </Field>
         <Field label="排序">
           <Input value={sort} onChange={(e) => setSort(e.target.value.replace(/\D/g, ''))} inputMode="numeric" className="num" aria-label="排序" />
+        </Field>
+        <Field label="含几餐（12 小时档 / 24 小时档）" hint="餐厅入口登记时抵扣成 0；0 = 不含餐，照餐段价收">
+          <span className="flex items-center gap-2">
+            <Input
+              value={m12}
+              onChange={(e) => setM12(e.target.value.replace(/\D/g, '').slice(0, 1))}
+              inputMode="numeric"
+              className="num w-16"
+              aria-label="12 小时档含几餐"
+              data-testid="ticket-meals-12h"
+            />
+            <span className="text-ink-3">/</span>
+            <Input
+              value={m24}
+              onChange={(e) => setM24(e.target.value.replace(/\D/g, '').slice(0, 1))}
+              inputMode="numeric"
+              className="num w-16"
+              aria-label="24 小时档含几餐"
+              data-testid="ticket-meals-24h"
+            />
+          </span>
         </Field>
       </div>
       <div className="mt-3 space-y-2">

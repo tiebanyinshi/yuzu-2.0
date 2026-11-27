@@ -60,7 +60,9 @@ export type FrontdeskOpType =
   | 'table_return'
   /** 锁牌外出（8.2.6，对象是来访，在收银台）：锁（同一笔先收预售）、客人回来解锁 */
   | 'tag_away_lock'
-  | 'tag_away_unlock';
+  | 'tag_away_unlock'
+  /** 餐厅入口登记进餐（8.2.7，对象是来访，在「餐厅入口」页） */
+  | 'meal_entry';
 
 export interface FrontdeskPendingOp {
   key: string;
@@ -137,6 +139,7 @@ export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   table_return: '返台补低消',
   tag_away_lock: '锁牌外出',
   tag_away_unlock: '锁牌解锁',
+  meal_entry: '登记进餐',
 };
 
 /** 餐饮桌台的操作：对象是桌台或开台，不是手牌 */

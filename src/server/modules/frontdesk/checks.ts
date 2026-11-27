@@ -144,6 +144,8 @@ export async function frontdeskChecks(db: Db): Promise<FrontdeskCheck[]> {
     UNION ALL
     SELECT '明细 ' || l.id FROM bill_lines l
     WHERE l.source = 'dining' AND NOT EXISTS (SELECT 1 FROM kitchen_items k WHERE k.bill_line_id = l.id)
+      -- 餐厅入口登记的餐费（8.2.7）不进厨房
+      AND NOT EXISTS (SELECT 1 FROM meal_entries e WHERE e.line_id = l.id)
     LIMIT 5`;
   const [kitchen] = await db<{ n: number; open: number }[]>`
     SELECT count(*)::int AS n, count(*) FILTER (WHERE status IN ('queued', 'cooking', 'done'))::int AS open FROM kitchen_items`;

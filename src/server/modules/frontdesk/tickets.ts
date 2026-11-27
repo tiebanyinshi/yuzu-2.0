@@ -19,7 +19,7 @@ import { memberTicketExtensions } from '../ticket-extensions';
 
 export async function listTicketTypes(db: Db, all = false): Promise<TicketType[]> {
   return db<TicketType[]>`
-    SELECT id, name, price_12h, price_24h, note, active, is_default, sort_order FROM ticket_types
+    SELECT id, name, price_12h, price_24h, note, active, is_default, sort_order, meals_12h, meals_24h FROM ticket_types
     WHERE ${all} OR active ORDER BY sort_order, id`;
 }
 
@@ -27,8 +27,8 @@ export async function listTicketTypes(db: Db, all = false): Promise<TicketType[]
 export async function resolveTicketType(db: Db, id: number | undefined): Promise<TicketType | null> {
   const [row] =
     id === undefined
-      ? await db<TicketType[]>`SELECT id, name, price_12h, price_24h, note, active, is_default, sort_order FROM ticket_types WHERE is_default`
-      : await db<TicketType[]>`SELECT id, name, price_12h, price_24h, note, active, is_default, sort_order FROM ticket_types WHERE id = ${id}`;
+      ? await db<TicketType[]>`SELECT id, name, price_12h, price_24h, note, active, is_default, sort_order, meals_12h, meals_24h FROM ticket_types WHERE is_default`
+      : await db<TicketType[]>`SELECT id, name, price_12h, price_24h, note, active, is_default, sort_order, meals_12h, meals_24h FROM ticket_types WHERE id = ${id}`;
   if (id !== undefined && (!row || !row.active)) throw unprocessable('TICKET_UNAVAILABLE', '所选票种不存在或已停用，请重新选择');
   return row ?? null;
 }
@@ -42,6 +42,9 @@ const TicketTypeInput = z
     active: z.boolean().default(true),
     isDefault: z.boolean().default(false),
     sortOrder: z.number().int().min(0).max(9999).default(0),
+    // 8.2.7 含几餐：不带的修改时照旧、新建时为 0
+    meals12h: z.number('餐数必须是整数').int('餐数必须是整数').min(0, '餐数不能是负数').max(9, '最多 9 餐').optional(),
+    meals24h: z.number('餐数必须是整数').int('餐数必须是整数').min(0, '餐数不能是负数').max(9, '最多 9 餐').optional(),
   })
   .refine((v) => v.price24h >= v.price12h, { message: '24 小时档价格不能低于 12 小时档', path: ['price24h'] })
   .refine((v) => v.active || !v.isDefault, { message: '停用的票种不能设为默认', path: ['isDefault'] });
@@ -59,16 +62,19 @@ export async function saveTicketType(sql: Sql, id: number | null, raw: TicketTyp
     let before: TicketType | undefined;
     if (id) {
       [before] = await tx<TicketType[]>`
-        SELECT id, name, price_12h, price_24h, note, active, is_default, sort_order FROM ticket_types WHERE id = ${id} FOR UPDATE`;
+        SELECT id, name, price_12h, price_24h, note, active, is_default, sort_order, meals_12h, meals_24h FROM ticket_types WHERE id = ${id} FOR UPDATE`;
       if (!before) throw notFound('票种不存在');
       await tx`
         UPDATE ticket_types SET name = ${input.name}, price_12h = ${input.price12h}, price_24h = ${input.price24h}, note = ${input.note},
-                                active = ${input.active}, is_default = ${input.isDefault}, sort_order = ${input.sortOrder}, updated_at = now()
+                                active = ${input.active}, is_default = ${input.isDefault}, sort_order = ${input.sortOrder},
+                                meals_12h = coalesce(${input.meals12h ?? null}::smallint, meals_12h), meals_24h = coalesce(${input.meals24h ?? null}::smallint, meals_24h),
+                                updated_at = now()
         WHERE id = ${id}`;
     } else {
       await tx`
-        INSERT INTO ticket_types (name, price_12h, price_24h, note, active, is_default, sort_order)
-        VALUES (${input.name}, ${input.price12h}, ${input.price24h}, ${input.note}, ${input.active}, ${input.isDefault}, ${input.sortOrder})`;
+        INSERT INTO ticket_types (name, price_12h, price_24h, note, active, is_default, sort_order, meals_12h, meals_24h)
+        VALUES (${input.name}, ${input.price12h}, ${input.price24h}, ${input.note}, ${input.active}, ${input.isDefault}, ${input.sortOrder},
+                ${input.meals12h ?? 0}, ${input.meals24h ?? 0})`;
     }
     await writeAudit(tx, {
       staffId: ctx.actor.id,

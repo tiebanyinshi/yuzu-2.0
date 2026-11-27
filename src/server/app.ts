@@ -157,6 +157,7 @@ import { registerDiningRoutes } from './modules/dining';
 import { registerTableRoutes } from './modules/tables';
 import { registerTableChargeRoutes } from './modules/table-charges';
 import { registerTablesV8224Routes } from './modules/tables-v8224';
+import { registerMealEntryRoutes } from './modules/dining-meals';
 import { registerDining808Routes } from './modules/dining-808';
 import { registerDiningReceiptRoutes } from './modules/dining-receipt';
 import { registerEmenuRoutes } from './modules/emenu/routes';
@@ -515,6 +516,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerTableChargeRoutes(app, deps);
   // 8.2.4 餐饮：包房房型、返台（docs/V8224_DINING.md）
   registerTablesV8224Routes(app, deps);
+  // 8.2.7：餐厅入口刷手牌登记进餐（含餐抵扣、裸票时段价）
+  registerMealEntryRoutes(app, deps);
   registerDining808Routes(app, deps);
   // 8.1.7 点菜单（小票可视化）
   registerDiningReceiptRoutes(app, deps);
