@@ -95,14 +95,14 @@ test.describe('前台流程', () => {
     await expect(panel.getByTestId('bill-group')).toContainText(femaleTag!);
     await expect(panel.getByTestId('bill-total')).toContainText('0.00');
 
-    // 换牌（发卡台）：手牌损坏，原牌自动勾选锁定；账单跟着客人走
+    // 换牌（发卡台）：手牌损坏不锁原牌（8.2.1 起只有手牌丢失才默认锁）；账单跟着客人走
     await panel.getByTestId('action-swap').click();
     const swap = page.getByRole('dialog').filter({ hasText: '换牌 ·' });
     await swap.locator('#swap-code').fill(maleTag2!);
     await swap.getByRole('button', { name: '手牌损坏' }).click();
     await swap.getByTestId('swap-submit').click();
     await expect(panel.getByTestId('bill-tag')).toHaveText(maleTag2!);
-    await expect(page.getByTestId(`tag-${maleTag}`)).toHaveAttribute('data-state', 'locked');
+    await expect(page.getByTestId(`tag-${maleTag}`)).not.toHaveAttribute('data-state', 'locked');
 
     // 加项目、作废、预结账在收银台（8.1.15 / 8.1.44）：从客人卡带着这张手牌过去
     await panel.getByTestId('go-cashier').click();
