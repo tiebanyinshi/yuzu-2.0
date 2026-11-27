@@ -18,6 +18,7 @@ import {
   type VisitDetail,
 } from '@shared/frontdesk';
 import { useCan, useSession } from '../../lib/session';
+import { DeskOverview } from './DeskOverview';
 import { cn, isTypingTarget } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { EmptyState } from '../../components/EmptyState';
@@ -518,17 +519,8 @@ export function FrontdeskPage() {
             {selectedId ? (
               panel
             ) : (
-              <div className="flex h-full flex-col items-center justify-center px-8 text-center" data-testid="issue-empty">
-                <EmptyState art="calm" title="选一张手牌看客人卡" description="直接敲牌号（如 23）回车，或点左侧手牌。空闲手牌点一下即可发牌；在店的手牌在这里换牌、绑同行。" />
-                <div className="mt-2 space-y-1.5 text-[12.5px] text-ink-3">
-                  <p className="flex flex-wrap items-center justify-center gap-1.5">
-                    <Keyboard className="size-4" /> <Kbd>F2</Kbd> 接待发牌 · <Kbd>F7</Kbd> 同行 · <Kbd>F1</Kbd> 充卡 · <Kbd>F3</Kbd> 备注 · <Kbd>?</Kbd> 全部
-                  </p>
-                  <p>
-                    加项目、打折、作废、预结账与买单在「收银台」（<Kbd>F9</Kbd> 带着这张手牌过去）。
-                  </p>
-                </div>
-              </div>
+              // 8.2.13：没选手牌时是区域状态与最近发牌（店主 2026-11-27 收银员工作台 demo），不再是一大块空白
+              <DeskOverview tags={tags} now={now} selfMinutes={board.data?.rules.selfVoidMinutes ?? 10} onOpen={openTag} onArea={(area) => area && setQ(area)} />
             )}
           </aside>
         ) : (
