@@ -27,9 +27,12 @@ export function OpenUsageDialog({
   space,
   priced = true,
   url = '/api/usages',
+  initialTag = '',
   onClose,
   onDone,
 }: {
+  /** 8.2.20 休闲娱乐：刷了手牌再点台位，牌号带进来 */
+  initialTag?: string;
   space: UsageSpace;
   /** 这个业态设了计费；没设的（8.0.8，F7）开单时提醒结束不收房费 */
   priced?: boolean;
@@ -41,7 +44,7 @@ export function OpenUsageDialog({
   const session = useSession();
   const qc = useQueryClient();
   const toast = useToast();
-  const [tag, setTag] = useState('');
+  const [tag, setTag] = useState(initialTag);
   const [guests, setGuests] = useState(1);
   const [note, setNote] = useState('');
   // 8.1.37：这间房一小时内有预订时服务端拒绝（SPACE_BOOKED）；确认要现场占用的勾上再提交
