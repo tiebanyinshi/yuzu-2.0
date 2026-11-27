@@ -1,3 +1,5 @@
+import { guard } from './auth/guard';
+import { jobStatuses } from './jobs';
 import { baseServerOptions, installErrorHandler, installRequestId } from './lib/http-kit';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -275,6 +277,20 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
     details: true,
     dbGuards: true,
     logLabel: '未处理的错误',
+  });
+
+  // 运行状态（8.1.53 后端评估第 5 节，照 Trigger.dev 的任务面板、不引入 Prometheus）：店主看每分钟的任务哪项在出错、
+  // 过载保护此刻的情况、内存。只读、只给店主（经营规则设置权限）；按进程记，重启清零
+  app.get('/api/admin/runtime', { preHandler: guard('settings.manage') }, async () => {
+    const mem = process.memoryUsage();
+    return {
+      version: config.version,
+      commit: config.commit,
+      startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+      memoryMb: { rss: Math.round(mem.rss / 1048576), heapUsed: Math.round(mem.heapUsed / 1048576) },
+      protection: protection.stats(),
+      jobs: jobStatuses(),
+    };
   });
 
   app.get('/api/health', async () => {
