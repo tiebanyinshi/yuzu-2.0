@@ -735,6 +735,17 @@ a {
   text-decoration: underline;
   text-underline-offset: 4px;
 }
+/* ICP 备案号（工信部要求挂在页脚、链到工信部备案查询） */
+.foot-icp {
+  margin-left: var(--space-2);
+  color: inherit;
+  text-decoration: none;
+}
+.foot-icp:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
 
 /* ── 进场：只在脚本跑起来时先藏（脚本没跑，内容照常显示） ── */
 html.js [data-reveal] {
