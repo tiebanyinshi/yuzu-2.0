@@ -33,7 +33,12 @@ Page({
     this.setData({ state: 'loading', error: '' });
     try {
       const r = await call<{ needsPosition: boolean; options: PositionOption[] }>('GET', '/account/position-options');
-      if (!r.needsPosition) return enterApp();
+      if (!r.needsPosition) {
+        // 已经选过了（在电脑上选的）：本机缓存的「我是谁」跟着改，不然首页又把人送回这一页
+        const me = currentMe();
+        if (me && me.needsPosition) updateMe({ ...me, needsPosition: false });
+        return enterApp();
+      }
       this.setData({ options: r.options, state: r.options.length ? 'ready' : 'empty' });
     } catch (e) {
       this.setData({ state: 'error', error: messageOf(e) });
