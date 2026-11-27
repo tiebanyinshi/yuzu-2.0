@@ -267,7 +267,13 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
     const approvableOn = await approvableOnFor(tx, deps.config.timezone);
     // Q4：「仅补必补项」退回前主管已经确认过的不再确认（回到退回前的节点）；主管退回的（还没确认）照第一次提交重新算。
     // 「重新填写」内容整张都能改，照第一次提交重新算主管确认（要确认的重新等主管确认），不沿用改之前的确认（Codex 审查）
-    const keepConfirm = fix && r.deptConfirm === 'confirmed';
+    // 安全审查（Codex，e8a71d8）：「仅补必补项」也不能借补资料扩大采购：哪一行数量加了、或者换了物品名称 / 单位，
+    // 主管确认作废、照第一次提交重新算（MV4 只对补资料、没扩大采购的保留确认）
+    const widened = lines.some((l, i) => {
+      const o = byId.get(input.lines[i]!.id);
+      return !o || l.qtyMilli > o.qtyMilli || l.name !== o.name || l.unit !== o.unit;
+    });
+    const keepConfirm = fix && r.deptConfirm === 'confirmed' && !widened;
     const confirm = keepConfirm ? null : await deptConfirmFor(tx, r.departmentId, actor, lines, true);
     await tx`
       UPDATE purchase_requests SET need_by = ${input.needBy}, note = ${input.note}, priority = ${input.priority}, contact_name = ${input.contactName},
@@ -299,7 +305,7 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
       action: 'purchase_request',
       targetType: 'purchase_request',
       targetId: requestId,
-      detail: { action: 'mall_resubmit', mode: input.mode, remark, lines: lines.length, keptDeptConfirm: keepConfirm },
+      detail: { action: 'mall_resubmit', mode: input.mode, remark, lines: lines.length, keptDeptConfirm: keepConfirm, widened },
       ip,
     });
     await tx`INSERT INTO idempotency_keys (key, op_type, request_hash, ref_id, staff_id) VALUES (${input.clientKey}, 'mall_resubmit', ${requestHash}, ${requestId}, ${actor.id})`;

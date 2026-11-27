@@ -291,6 +291,23 @@ describe('Codex 审查修正', () => {
     expect((await api(ctx.app, barHead, 'POST', `/api/erp/requests/${r.id}/dept-confirm`, {})).status).toBe(200);
     expect((await detail(bar, r.id)).deptConfirm.state).toBe('confirmed');
   });
+
+  it('只补必补项也不能借补资料扩大采购：数量改大要主管重新确认，改小照旧不再确认（Codex 安全审查 e8a71d8）', async () => {
+    const r = await ready('展示立牌 补数量');
+    const lineId = r.lines[0]!.id;
+    const was = r.lines[0]!.qtyMilli;
+    const ret = () => api(ctx.app, buyer, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '数量不对', fixItems: [{ lineId, field: 'qty', requirement: '核对数量' }] });
+    expect((await ret()).status).toBe(200);
+    let back = await detail(bar, r.id);
+    const down = await resubmit(bar, back, { mode: 'fix', lines: [{ id: lineId, qtyMilli: was - q(1) }] });
+    expect(down.status, JSON.stringify(down.body)).toBe(200);
+    expect((down.body as Req).deptConfirm.state).toBe('confirmed');
+    expect((await ret()).status).toBe(200);
+    back = await detail(bar, r.id);
+    const up = await resubmit(bar, back, { mode: 'fix', lines: [{ id: lineId, qtyMilli: q(500) }] });
+    expect(up.status, JSON.stringify(up.body)).toBe(200);
+    expect((up.body as Req).deptConfirm.state).toBe('pending');
+  });
 });
 
 describe('用例 C：终止该申购（Q5：部门负责人或 BP 确认）', () => {
