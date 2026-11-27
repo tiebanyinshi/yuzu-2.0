@@ -537,6 +537,9 @@ const tech = (id: number, techNo: string, name: string, extra: Partial<BoardTech
   hiredOn: '2025-03-01',
   leftOn: null,
   groupId: null,
+  heightCm: null,
+  weightKg: null,
+  star: null,
   state: 'off',
   position: null,
   busy: null,
@@ -596,6 +599,7 @@ const clockSession = (id: number, techIndex: number, over: Partial<ClockSession>
   plannedEnd: null,
   space: null,
   spaceVersion: 0,
+  changed: false,
   ...over,
 });
 const CLOCK_BOARD: ClockroomBoard = {
@@ -630,7 +634,7 @@ const CLOCK_BOARD: ClockroomBoard = {
       postedByName: '小周',
     },
   ],
-  today: { clocks: 12, designated: 5, rotation: 7 },
+  today: { clocks: 12, designated: 5, rotation: 7, call: 0 },
   kinds: ['足浴', '按摩', 'SPA', '采耳', '其他'],
   categories: ['足疗', 'SPA 精油', '采耳', '头疗'],
   calls: [{ id: 990_901, at: ago(3), kind: 'dispatch', technicianId: 990_201, sessionId: 990_301, text: '请 08 号 晓晓，到 A201 观澜 SPA 双人房上钟', staffName: '小周' }],

@@ -52,8 +52,21 @@ describe('技师导入模板解析', () => {
       ['', '', '', '', '', '', '', '', '', '', ''],
     ]);
     expect(p.rows).toEqual([
-      { line: 3, techNo: '9001', name: '甲', gender: 'female', grade: 'standard', group: '按摩师A组', nickname: '小甲', hiredOn: '2023-02-08' },
-      { line: 4, techNo: '9002', name: '乙', gender: 'male', grade: 'professional', group: null, nickname: '', hiredOn: '2024-08-27' },
+      {
+        line: 3,
+        techNo: '9001',
+        name: '甲',
+        gender: 'female',
+        grade: 'standard',
+        group: '按摩师A组',
+        nickname: '小甲',
+        hiredOn: '2023-02-08',
+        phone: null,
+        heightCm: null,
+        weightKg: null,
+        star: null,
+      },
+      { line: 4, techNo: '9002', name: '乙', gender: 'male', grade: 'professional', group: null, nickname: '', hiredOn: '2024-08-27', phone: null, heightCm: null, weightKg: null, star: null },
     ]);
     expect(p.errors.map((e) => e.line)).toEqual([5, 6, 7]);
     expect(p.errors[0]!.message).toContain('性别');

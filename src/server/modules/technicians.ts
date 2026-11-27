@@ -14,6 +14,7 @@ import {
   DEFAULT_TECHNICIAN_RULES,
   gradeLabel,
   MAX_TECH_NAME,
+  MAX_TECH_STAR,
   TECH_NO_PATTERN,
   type FrontdeskTechnicians,
   type Technician,
@@ -34,6 +35,7 @@ import { loadClockroomRules, lockQueue, queueSnapshot, signOutOnDeactivate } fro
 import { saveRuleSetting } from '../lib/rule-settings';
 import { settingRow } from '../lib/store-settings';
 import { currentStoreId, storeIn } from '../lib/store-context';
+import { maskPhone } from '@shared/mask';
 
 export async function loadTechnicianRules(db: Db): Promise<TechnicianRules> {
   const row = await settingRow<Partial<TechnicianRules>>(db, 'technician_rules');
@@ -48,7 +50,7 @@ export async function loadTechnicianKinds(db: Db): Promise<string[]> {
 
 const TECH_COLUMNS = (db: Db) => db`
   t.id, t.tech_no, t.name, t.gender, t.grade, t.skills, t.active, t.sort_order, t.note, t.is_synthetic, t.suspended_at, t.suspended_reason,
-  t.nickname, t.kind, t.hired_on, t.left_on, t.group_id`;
+  t.nickname, t.kind, t.hired_on, t.left_on, t.group_id, t.height_cm, t.weight_kg, t.star`;
 
 /** 按工号排序：数字工号按数值（2 号在 10 号前面），其余按字母 */
 const ORDER = (db: Db) => db`t.active DESC, t.sort_order, (t.tech_no ~ '^[0-9]+$') DESC, length(t.tech_no), t.tech_no COLLATE "C", t.id`;
@@ -84,8 +86,8 @@ export async function technicianAdmin(db: Db): Promise<TechnicianAdmin> {
     )[0];
   const meta = await metaOf('technician_rules');
   const crMeta = await metaOf('clockroom_rules');
-  const technicians = await db<TechnicianAdmin['technicians']>`
-    SELECT ${TECH_COLUMNS(db)}, t.created_at, t.updated_at,
+  const technicians = await db<(Omit<TechnicianAdmin['technicians'][number], 'phoneMasked' | 'hasPhone'> & { phone: string })[]>`
+    SELECT ${TECH_COLUMNS(db)}, t.phone, t.created_at, t.updated_at,
            (SELECT count(*) FROM bill_lines l WHERE l.technician_id = t.id)::int AS line_count
     FROM technicians t WHERE t.store_id = ${currentStoreId()} ORDER BY ${ORDER(db)}`;
   // 分类按价目表里的顺序（与「价目与套餐」一致），不依赖数据库的排序规则
@@ -98,7 +100,14 @@ export async function technicianAdmin(db: Db): Promise<TechnicianAdmin> {
     clockroomRules: await loadClockroomRules(db),
     clockroomUpdatedAt: crMeta ? new Date(crMeta.updatedAt).toISOString() : null,
     clockroomUpdatedBy: crMeta?.updatedBy ?? null,
-    technicians: technicians.map((t) => ({ ...t, createdAt: new Date(t.createdAt).toISOString(), updatedAt: new Date(t.updatedAt).toISOString() })),
+    // 手机号只给打码的（8.2.2，复用 @shared/mask）：页面、导出都看不到全号；要改的重新输入
+    technicians: technicians.map(({ phone, ...t }) => ({
+      ...t,
+      phoneMasked: phone ? maskPhone(phone) : '',
+      hasPhone: phone !== '',
+      createdAt: new Date(t.createdAt).toISOString(),
+      updatedAt: new Date(t.updatedAt).toISOString(),
+    })),
     categories: categories.map((c) => c.category),
     kinds: await loadTechnicianKinds(db),
   };
@@ -122,6 +131,15 @@ const TechnicianInput = z.object({
   nickname: z.string().trim().max(MAX_TECH_NAME, `花名最多 ${MAX_TECH_NAME} 个字`).optional(),
   kind: z.string().trim().max(MAX_TECH_KIND, `类型最多 ${MAX_TECH_KIND} 个字`).optional(),
   hiredOn: z.string().regex(ISO_DATE, '入职日期格式应为 YYYY-MM-DD').nullable().optional(),
+  // 8.2.2：手机（不带的不动，空字符串清掉）、身高、体重、星级（不带的不动，null 清掉）
+  phone: z
+    .string()
+    .transform((v) => v.replace(/[\s-]/g, ''))
+    .pipe(z.string().regex(/^(1\d{10})?$/, '手机号应为 11 位'))
+    .optional(),
+  heightCm: z.number('身高要写厘米数').int('身高写整数厘米').min(100, '身高在 100–230 厘米之间').max(230, '身高在 100–230 厘米之间').nullable().optional(),
+  weightKg: z.number('体重要写公斤数').int('体重写整数公斤').min(30, '体重在 30–200 公斤之间').max(200, '体重在 30–200 公斤之间').nullable().optional(),
+  star: z.number('星级要写数字').int('星级写整数').min(1, `星级在 1–${MAX_TECH_STAR} 之间`).max(MAX_TECH_STAR, `星级在 1–${MAX_TECH_STAR} 之间`).nullable().optional(),
 });
 
 /** 类型要在清单里（没设类型可以；清单里已经去掉、这位技师原来就是这一类的照旧留着） */
@@ -153,6 +171,8 @@ const ClockroomRulesInput = z.object({
   defaultMinutes: z.number().int().min(10, '一钟至少 10 分钟').max(240, '一钟最多 240 分钟'),
   remindMinutes: z.number().int().min(0).max(60, '提前提醒最多 60 分钟'),
   extensionAsDesignated: z.boolean(),
+  changeItemMinutes: z.number('换项目的时限要写分钟数').int().min(0, '换项目的时限不能为负').max(120, '换项目的时限最多 120 分钟'),
+  leaveAutoReturn: z.boolean(),
 });
 
 const ItemsInput = z.object({
@@ -188,6 +208,8 @@ export async function technicianReport(db: Db, from: string, to: string): Promis
     clocks: 0,
     designated: 0,
     rotation: 0,
+    call: 0,
+    extension: 0,
     amount: 0,
     commission: { base: 0, bonus: 0, total: 0 },
   });
@@ -197,7 +219,10 @@ export async function technicianReport(db: Db, from: string, to: string): Promis
     const q = l.sign * l.quantity;
     x.clocks += q;
     x.amount += l.sign * l.amount;
-    if (l.callType === 'designated') x.designated += q;
+    // 8.2.2：加钟单列，点钟、轮钟、扩钟都不含加钟
+    if (l.extension) x.extension += q;
+    else if (l.callType === 'designated') x.designated += q;
+    else if (l.callType === 'call') x.call += q;
     else x.rotation += q;
     x.commission!.base += l.base;
     x.commission!.bonus += l.bonus;
@@ -213,10 +238,12 @@ export async function technicianReport(db: Db, from: string, to: string): Promis
       clocks: s.clocks + r.clocks,
       designated: s.designated + r.designated,
       rotation: s.rotation + r.rotation,
+      call: s.call + r.call,
+      extension: s.extension + r.extension,
       amount: s.amount + r.amount,
       commission: { base: s.commission.base + r.commission!.base, bonus: s.commission.bonus + r.commission!.bonus, total: s.commission.total + r.commission!.total },
     }),
-    { clocks: 0, designated: 0, rotation: 0, amount: 0, commission: { base: 0, bonus: 0, total: 0 } },
+    { clocks: 0, designated: 0, rotation: 0, call: 0, extension: 0, amount: 0, commission: { base: 0, bonus: 0, total: 0 } },
   );
   return { from, to, rows: list, totals, unassigned: { clocks: un!.clocks, amount: un!.amount } };
 }
@@ -225,7 +252,7 @@ export async function technicianReport(db: Db, from: string, to: string): Promis
 export const withoutCommission = (r: TechnicianReport): TechnicianReport => ({
   ...r,
   rows: r.rows.map(({ commission: _c, ...row }) => row),
-  totals: { clocks: r.totals.clocks, designated: r.totals.designated, rotation: r.totals.rotation, amount: r.totals.amount },
+  totals: { clocks: r.totals.clocks, designated: r.totals.designated, rotation: r.totals.rotation, call: r.totals.call, extension: r.totals.extension, amount: r.totals.amount },
 });
 
 export function registerTechnicianRoutes(app: FastifyInstance, deps: Deps) {
@@ -241,16 +268,16 @@ export function registerTechnicianRoutes(app: FastifyInstance, deps: Deps) {
     try {
       await sql.begin(async (tx) => {
         const [row] = await tx<{ id: number }[]>`
-          INSERT INTO technicians (tech_no, name, gender, grade, skills, active, sort_order, note, created_by, nickname, kind, hired_on)
+          INSERT INTO technicians (tech_no, name, gender, grade, skills, active, sort_order, note, created_by, nickname, kind, hired_on, phone, height_cm, weight_kg, star)
           VALUES (${t.techNo}, ${t.name}, ${t.gender}, ${t.grade}, ${t.skills}::text[], ${t.active}, ${t.sortOrder}, ${t.note}, ${req.actor.id},
-                  ${t.nickname ?? ''}, ${t.kind ?? ''}, ${t.hiredOn ?? null})
+                  ${t.nickname ?? ''}, ${t.kind ?? ''}, ${t.hiredOn ?? null}, ${t.phone ?? ''}, ${t.heightCm ?? null}, ${t.weightKg ?? null}, ${t.star ?? null})
           RETURNING id`;
         await writeAudit(tx, {
           staffId: req.actor.id,
           action: 'technician_saved',
           targetType: 'technician',
           targetId: row!.id,
-          detail: { ...t, summary: `新建技师 ${describeTechnician(t)}` },
+          detail: { ...t, phone: t.phone ? maskPhone(t.phone) : '', summary: `新建技师 ${describeTechnician(t)}` },
           ip: req.ip,
         });
       });
@@ -267,17 +294,26 @@ export function registerTechnicianRoutes(app: FastifyInstance, deps: Deps) {
     await sql.begin(async (tx) => {
       // 8.1.37：停用要动今天的排位，先拿技师队列锁再锁技师一行（与休假单批准同一个顺序）
       if (!t.active) await lockQueue(tx);
-      const [before] = await tx<Technician[]>`SELECT ${TECH_COLUMNS(tx)} FROM technicians t WHERE t.id = ${id} AND t.store_id = ${currentStoreId()} FOR UPDATE`;
+      const [before] = await tx<(Technician & { phone: string })[]>`
+        SELECT ${TECH_COLUMNS(tx)}, t.phone FROM technicians t WHERE t.id = ${id} AND t.store_id = ${currentStoreId()} FOR UPDATE`;
       if (!before) throw notFound('技师不存在');
       if (before.active && !t.active) await signOutOnDeactivate(tx, deps, { id, label: `${before.techNo} 号 ${before.name}` }, req.actor.id, new Date());
       await assertKind(tx, t.kind, before.kind);
       // 8.1.15：停用（离职）记下离职日期（没记过的记当前营业日），重新启用清掉；花名、类型、入职日期没带的不动
       const leftOn = t.active ? null : (before.leftOn ?? (await businessDate(tx, deps, new Date())));
       const extra = { nickname: t.nickname ?? before.nickname, kind: t.kind ?? before.kind, hiredOn: t.hiredOn === undefined ? before.hiredOn : t.hiredOn };
+      // 8.2.2：手机、身高、体重、星级没带的不动
+      const profile = {
+        phone: t.phone ?? before.phone,
+        heightCm: t.heightCm === undefined ? before.heightCm : t.heightCm,
+        weightKg: t.weightKg === undefined ? before.weightKg : t.weightKg,
+        star: t.star === undefined ? before.star : t.star,
+      };
       await tx`
         UPDATE technicians SET name = ${t.name}, gender = ${t.gender}, grade = ${t.grade}, skills = ${t.skills}::text[], active = ${t.active},
                sort_order = ${t.sortOrder}, note = ${t.note}, nickname = ${extra.nickname}, kind = ${extra.kind}, hired_on = ${extra.hiredOn},
-               left_on = ${leftOn}, updated_at = now()
+               left_on = ${leftOn}, phone = ${profile.phone}, height_cm = ${profile.heightCm}, weight_kg = ${profile.weightKg}, star = ${profile.star},
+               updated_at = now()
         WHERE id = ${id}`;
       await writeAudit(tx, {
         staffId: req.actor.id,
@@ -297,8 +333,12 @@ export function registerTechnicianRoutes(app: FastifyInstance, deps: Deps) {
             nickname: before.nickname,
             kind: before.kind,
             hiredOn: before.hiredOn,
+            phone: before.phone ? maskPhone(before.phone) : '',
+            heightCm: before.heightCm,
+            weightKg: before.weightKg,
+            star: before.star,
           },
-          after: { ...t, ...extra },
+          after: { ...t, ...extra, ...profile, phone: profile.phone ? maskPhone(profile.phone) : '' },
           summary: `修改技师 ${describeTechnician({ ...t, techNo: before.techNo })}`,
         },
         ip: req.ip,
@@ -359,5 +399,5 @@ export const lineTechnicianSql = (db: Db, line: string) => db`
 
 /** 明细上的技师文字（结账单、对账包用），例如「08 号 小李 · 点钟」 */
 export const technicianTextSql = (db: Db, line: string) => db`
-  (SELECT t.tech_no || ' 号 ' || t.name || ' · ' || CASE ${db(`${line}.call_type`)} WHEN 'designated' THEN '点钟' ELSE '轮钟' END
+  (SELECT t.tech_no || ' 号 ' || t.name || ' · ' || CASE ${db(`${line}.call_type`)} WHEN 'designated' THEN '点钟' WHEN 'call' THEN '扩钟' ELSE '轮钟' END
    FROM technicians t WHERE t.id = ${db(`${line}.technician_id`)})`;

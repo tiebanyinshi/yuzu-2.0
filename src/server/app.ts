@@ -172,6 +172,8 @@ import { registerPlatformRoutes } from './modules/platform-redemptions';
 import { registerGuideRoutes } from './modules/guide';
 import { registerLocationRoutes } from './modules/locations';
 import { registerCommissionRoutes } from './modules/commission';
+import { registerTechnicianStatsRoutes } from './modules/technician-stats';
+import { registerTechnicianWebImportRoutes } from './modules/technician-import-web';
 import { registerWalletRoutes } from './modules/wallet';
 import { registerMemberRefundRoutes } from './modules/member-refunds';
 import { registerMemberAdminRoutes } from './modules/member-admin';
@@ -530,6 +532,9 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerGuideRoutes(app, deps);
   registerLocationRoutes(app, deps);
   registerCommissionRoutes(app, deps);
+  // 8.2.2 技师：扩钟与十天业绩统计、每月任务；网页导入技师
+  registerTechnicianStatsRoutes(app, deps);
+  registerTechnicianWebImportRoutes(app, deps);
   registerErpRoutes(app, deps);
   // 微信小程序（小程序线）：前台用会员码查会员、解绑会员的微信、后台「小程序」
   registerMpStaffRoutes(app, deps);

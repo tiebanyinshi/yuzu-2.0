@@ -45,7 +45,12 @@ describe('岗位职权数据（P04）', () => {
     const pettyUse = rows.filter((r) => r.permission === 'petty.use').map((r) => r.positionKey);
     expect([...pettyUse].sort()).toEqual(['gmo', 'outreach.lead', 'outreach.staff']);
     expect(rows.some((r) => r.permission.startsWith('pool.'))).toBe(false);
-    expect(log.slice(2).map((l) => [l.action, l.positionKey])).toEqual([...[...announce].sort(), ...[...ledger].sort(), ...[...pettyUse].sort()].map((k) => ['suggestions', k]));
+    // 540（8.2.2）给前厅、娱乐、康养负责人与总经办加「超时退技师」，财务部负责人加「看技师业绩」
+    const voidLate = rows.filter((r) => r.permission === 'technician.voidLate').map((r) => r.positionKey);
+    expect([...voidLate].sort()).toEqual(['ent.lead', 'front.lead', 'gmo', 'wellness.lead']);
+    expect(log.slice(2).map((l) => [l.action, l.positionKey])).toEqual(
+      [...[...announce].sort(), ...[...ledger].sort(), ...[...pettyUse].sort(), ...[...voidLate].sort(), 'finance.lead'].map((k) => ['suggestions', k]),
+    );
     await expect(ctx.sql`DELETE FROM position_config_log`).rejects.toThrow();
   });
 

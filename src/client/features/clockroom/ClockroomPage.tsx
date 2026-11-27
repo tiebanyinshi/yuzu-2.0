@@ -232,7 +232,7 @@ export function ClockroomPage() {
     for (const t of d?.technicians ?? []) {
       if (!t.active) continue;
       c.all += 1;
-      c[techFilterOf(t)] += 1;
+      c[techFilterOf(t, true)] += 1;
     }
     return c;
   }, [d]);
@@ -898,6 +898,7 @@ type StateAction = 'sign_in' | 'rest' | 'back' | 'sign_out' | 'leave' | 'resume'
 
 const STATUS_TONE: Record<Exclude<TechFilter, 'all'>, 'pine' | 'yuzu' | 'lake' | 'clay' | 'neutral'> = {
   idle: 'pine',
+  brought: 'pine',
   serving: 'yuzu',
   waiting: 'lake',
   rest: 'neutral',
@@ -948,7 +949,7 @@ function FilteredTechs({
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {list.map((t) => {
-            const status = techFilterOf(t);
+            const status = techFilterOf(t, true);
             const s = t.busy ? board.sessions.find((x) => x.id === t.busy!.sessionId) : undefined;
             const left = s?.plannedEnd ? new Date(s.plannedEnd).getTime() - now : null;
             const act = (action: StateAction, ok: string, label: string, icon: React.ReactNode, variant: 'primary' | 'secondary' | 'ghost' = 'ghost') => (

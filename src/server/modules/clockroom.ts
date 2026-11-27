@@ -10,21 +10,10 @@
 
 import { isLobbyBusinessType } from '@shared/room-center';
 import { z } from 'zod';
-import { canServe, gradeLabel, technicianText, tierFor, type CallType, type Technician, type TechnicianBookingHint } from '@shared/technicians';
+import { CALL_TYPES, canServe, gradeLabel, technicianText, tierFor, type CallType, type Technician, type TechnicianBookingHint } from '@shared/technicians';
 import { PRICE_TIER_LABELS, type PriceTier } from '@shared/catalog';
 import { ZONE_LABELS } from '@shared/frontdesk';
-import {
-  DEFAULT_CLOCKROOM_RULES,
-  EVENT_KIND_LABELS,
-  type BoardSession,
-  type BoardTechnician,
-  type ClockEvent,
-  type ClockEventKind,
-  type ClockroomBoard,
-  type ClockroomRules,
-  type PendingLine,
-  type TechState,
-} from '@shared/clockroom';
+import { DEFAULT_CLOCKROOM_RULES, type BoardSession, type BoardTechnician, type ClockEventKind, type ClockroomBoard, type ClockroomRules, type PendingLine, type TechState } from '@shared/clockroom';
 import type { ClockSpace } from '@shared/floormap';
 import { isTechnicianBusinessType, spaceLabel, TECHNICIAN_BUSINESS_TYPES } from '@shared/spaces';
 import { isUniqueViolation, type Db, type Tx } from '../db';
@@ -32,7 +21,7 @@ import { writeAudit } from '../lib/audit';
 import type { Actor, Deps, OpContext } from '../lib/context';
 import { badRequest, conflict, notFound, unprocessable } from '../lib/errors';
 import { parse, positiveCents } from '../lib/validate';
-import { assertCanFix, assertOpen, businessDate, hashRequest, loadFrontdeskRules, lockVisits, nextDocNo, runIdempotent, saveKey, setTxTimeouts } from './frontdesk/common';
+import { assertOpen, businessDate, hashRequest, loadFrontdeskRules, lockVisits, nextDocNo, runIdempotent, saveKey, setTxTimeouts } from './frontdesk/common';
 import { loadPricedItems } from './pricing';
 import { loadTechnicianKinds, loadTechnicianRules, loadTechnicians } from './technicians';
 import { announcerClaim, recentCalls, recordCall, spokenRoom } from './clock-calls';
@@ -42,6 +31,7 @@ import { locateSession, locateSessionEnd, locateSignIn, locateSignOut } from './
 import { settingRow } from '../lib/store-settings';
 import { currentStoreId, DEFAULT_STORE_ID } from '../lib/store-context';
 import { assertSpaceNotInMaintenance } from './room-state';
+import { applyItemChange, assertCanVoidSession } from './clockroom-change';
 
 export async function loadClockroomRules(db: Db): Promise<ClockroomRules> {
   const row = await settingRow<Partial<ClockroomRules>>(db, 'clockroom_rules');
@@ -190,6 +180,8 @@ export interface SessionPostOptions {
   };
   /** 按实际时间补录的纸质单：钟单直接记为已下钟，不动排位 */
   backfill?: boolean;
+  /** 换项目（8.2.2，clockroom-change.ts）：同一位技师的这张钟单改成新挂的项目（原来的明细已作废），不另建钟单、不动排位 */
+  changeId?: number;
 }
 
 export interface SessionLine {
@@ -291,6 +283,7 @@ export async function attachSessions(
   );
   const perClock = (itemId: number) => durations.get(itemId)?.durationMinutes ?? rules.defaultMinutes;
   const ids: number[] = [];
+  if (options.changeId !== undefined) return applyItemChange(tx, { sessionId: options.changeId, visitId: args.visitId, lines: args.lines, perClock, actor, today, at });
 
   if (options.extendId !== undefined) {
     const [s] = await tx<{ id: number; sessionNo: string; technicianId: number; visitId: number; itemId: number; status: string }[]>`
@@ -448,14 +441,16 @@ export async function attachSessions(
       SELECT max(coalesce(started_at, ${at}) + make_interval(mins => minutes)) AS free_at FROM technician_sessions
       WHERE technician_id = ${t.id} AND status IN ('waiting', 'serving')`;
     const from = start ? at.getTime() : Math.max(at.getTime(), planned?.freeAt ? new Date(planned.freeAt).getTime() : 0);
-    await assertTechnicianNotBooked(tx, {
-      technicianId: t.id,
-      techLabel: `${t.techNo} 号 ${t.name}`,
-      from,
-      to: from + minutes * 60_000,
-      memberId: await visitMember(tx, args.visitId),
-      timeZone: deps.config.timezone,
-    });
+    // 扩钟（8.2.2）：上的就是约这位技师的客人，他别的预约（一位技师同时约几位客人）不拦
+    if (l.callType !== 'call')
+      await assertTechnicianNotBooked(tx, {
+        technicianId: t.id,
+        techLabel: `${t.techNo} 号 ${t.name}`,
+        from,
+        to: from + minutes * 60_000,
+        memberId: await visitMember(tx, args.visitId),
+        timeZone: deps.config.timezone,
+      });
 
     // 客人已离店、还记着在钟上的旧钟单先自动下钟，再上这一钟
     if (start) await closeStale(tx, deps, t.id, actor, at);
@@ -708,7 +703,8 @@ export async function voidSession(deps: Deps, id: number, raw: unknown, ctx: OpC
     const lines = await tx<{ id: number; name: string; quantity: number; amount: number; postedBy: number; postedAt: string }[]>`
       SELECT id, name, quantity, amount, posted_by, posted_at FROM bill_lines WHERE session_id = ${id} AND status = 'active' ORDER BY id FOR UPDATE`;
     const rules = await loadFrontdeskRules(tx);
-    for (const l of lines) assertCanFix(ctx.actor, l.postedBy, l.postedAt, rules, at, '这张钟单的挂账');
+    // 8.2.2：超过本人更正时限的，当班管理层（「超时退技师」权限）可以直接退；没有的提示走退项
+    assertCanVoidSession(ctx.actor, lines, rules, at);
     for (const l of lines) {
       await tx`UPDATE bill_lines SET status = 'voided', void_reason = ${text}, voided_by = ${ctx.actor.id}, voided_at = ${at} WHERE id = ${l.id}`;
     }
@@ -811,7 +807,7 @@ export const AssignInput = z.object({
   /** 操作编号（与派钟、转钟一样走「结果待确认」：超时、断网后按编号查回或确认作废，Codex 审查 fb67dca） */
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   technicianId: z.number().int().positive(),
-  callType: z.enum(['designated', 'rotation'], '上钟方式应为点钟或轮钟'),
+  callType: z.enum(CALL_TYPES, '上钟方式应为轮钟、点钟或扩钟'),
   startNow: z.boolean().default(true),
   skipReason: z.string().trim().max(100, '原因最多 100 字').optional(),
   spaceId: z
@@ -907,7 +903,7 @@ export async function assignLine(deps: Deps, lineId: number, raw: unknown, ctx: 
       actor: ctx.actor,
       options: { dispatch: { startNow: input.startNow, skipReason: input.skipReason, spaceId: input.spaceId, bookingId: input.bookingId, assign: true, fixedTier: lineTier(l.tier) } },
     });
-    await tx`UPDATE bill_lines SET technician_id = ${t.id}, call_type = ${input.callType}, session_id = ${sessionId!} WHERE id = ${l.id}`;
+    await tx`UPDATE bill_lines SET technician_id = ${t.id}, call_type = ${input.callType}, session_id = ${sessionId!}, tech_star = ${t.star} WHERE id = ${l.id}`;
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'clock_assign',
@@ -928,7 +924,7 @@ export async function assignLine(deps: Deps, lineId: number, raw: unknown, ctx: 
 export const TransferInput = z.object({
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   technicianId: z.number().int().positive(),
-  callType: z.enum(['designated', 'rotation'], '上钟方式应为点钟或轮钟'),
+  callType: z.enum(CALL_TYPES, '上钟方式应为轮钟、点钟或扩钟'),
   reason: z.string().trim().min(2, '请填写转钟原因（至少 2 个字）').max(100, '原因最多 100 字'),
   skipReason: z.string().trim().max(100, '原因最多 100 字').optional(),
 });
@@ -956,9 +952,21 @@ export async function transferSession(deps: Deps, sessionId: number, raw: unknow
     if (cur!.status !== 'waiting' && cur!.status !== 'serving') throw conflict('SESSION_CLOSED', `钟单 ${cur!.sessionNo} 已结束，不能再转钟`);
     if (Number(cur!.technicianId) === input.technicianId) throw unprocessable('TRANSFER_SAME', '转给的是同一位技师，请换一位');
     const lines = await tx<
-      { id: number; itemId: number; name: string; tier: PriceTier | null; unitPrice: number; quantity: number; amount: number; postedBy: number; postedAt: string; businessDate: string }[]
+      {
+        id: number;
+        itemId: number;
+        name: string;
+        tier: PriceTier | null;
+        unitPrice: number;
+        quantity: number;
+        amount: number;
+        postedBy: number;
+        postedAt: string;
+        businessDate: string;
+        clockExtension: boolean;
+      }[]
     >`
-      SELECT id, item_id, name, tier, unit_price, quantity, amount, posted_by, posted_at, business_date
+      SELECT id, item_id, name, tier, unit_price, quantity, amount, posted_by, posted_at, business_date, clock_extension
       FROM bill_lines WHERE session_id = ${sessionId} AND status = 'active' ORDER BY id FOR UPDATE`;
     if (lines.length === 0) throw conflict('SESSION_NO_LINES', `钟单 ${cur!.sessionNo} 没有有效的挂账，不能转钟（请刷新）`);
     const t = await checkTechnicianForLine(tx, { itemId: Number(lines[0]!.itemId), tier: lines[0]!.tier, name: lines[0]!.name }, input.technicianId);
@@ -1004,9 +1012,9 @@ export async function transferSession(deps: Deps, sessionId: number, raw: unknow
     for (const l of lines) {
       await tx`
         INSERT INTO bill_lines (bill_id, source, item_id, tier, name, unit_price, quantity, amount, post_key, business_date, posted_by, posted_at,
-                                technician_id, call_type, session_id)
+                                technician_id, call_type, session_id, clock_extension, tech_star)
         VALUES (${visit.billId}, 'therapist', ${l.itemId}, ${l.tier}, ${l.name}, ${l.unitPrice}, ${l.quantity}, ${l.amount}, ${key}, ${l.businessDate},
-                ${l.postedBy}, ${l.postedAt}, ${t.id}, ${input.callType}, ${newId!})`;
+                ${l.postedBy}, ${l.postedAt}, ${t.id}, ${input.callType}, ${newId!}, ${l.clockExtension}, ${t.star})`;
     }
     const [from] = await tx<{ techNo: string; name: string }[]>`SELECT tech_no, name FROM technicians WHERE id = ${old.technicianId}`;
     const [news] = await tx<{ sessionNo: string }[]>`SELECT session_no FROM technician_sessions WHERE id = ${newId!}`;
@@ -1313,7 +1321,8 @@ export async function clockroomBoard(db: Db, deps: Deps): Promise<ClockroomBoard
   >`
     SELECT s.id, s.session_no, s.technician_id, t.tech_no, t.name AS tech_name, s.visit_id, h.code AS tag_code, v.zone,
            m.name AS member_name, v.guest_label, s.item_id, i.name AS item_name, s.call_type, s.clocks, s.minutes, s.status, s.created_at, s.started_at,
-           s.space_id, s.space_version, sp.code AS space_code, sp.display_name AS space_name
+           s.space_id, s.space_version, sp.code AS space_code, sp.display_name AS space_name,
+           EXISTS (SELECT 1 FROM technician_session_changes c WHERE c.session_id = s.id OR c.new_session_id = s.id) AS changed
     FROM technician_sessions s JOIN technicians t ON t.id = s.technician_id JOIN visits v ON v.id = s.visit_id
     JOIN hand_tags h ON h.id = v.tag_id JOIN service_items i ON i.id = s.item_id LEFT JOIN members m ON m.id = v.member_id
     LEFT JOIN spaces sp ON sp.id = s.space_id
@@ -1380,62 +1389,13 @@ export async function clockroomBoard(db: Db, deps: Deps): Promise<ClockroomBoard
       clocks: clocks.reduce((n, c) => n + c.clocks, 0),
       designated: clocks.filter((c) => c.callType === 'designated').reduce((n, c) => n + c.clocks, 0),
       rotation: clocks.filter((c) => c.callType === 'rotation').reduce((n, c) => n + c.clocks, 0),
+      call: clocks.filter((c) => c.callType === 'call').reduce((n, c) => n + c.clocks, 0),
     },
     kinds: await loadTechnicianKinds(db),
     categories: categories.map((c) => c.category),
     calls: await recentCalls(db, at),
     announcer: await announcerClaim(db),
   };
-}
-
-const CALL = { designated: '点钟', rotation: '轮钟' } as const;
-
-function eventText(kind: ClockEventKind, d: Record<string, unknown>): string {
-  const s = (k: string) => (typeof d[k] === 'string' ? (d[k] as string) : '');
-  switch (kind) {
-    case 'dispatch':
-      return `${s('tag')} ${s('item')} × ${d.clocks ?? 1}（${CALL[d.callType as CallType] ?? ''}）${s('room') ? `，房间 ${s('room')}` : ''}${d.via === 'frontdesk' ? '，前台挂账' : ''}${d.via === 'assign' ? '，前台已点、钟房补派' : ''}${d.booking ? '，按预约' : ''}${d.backfill ? '，补录纸质单' : ''}`;
-    case 'transfer':
-      return `${d.to ? `转给 ${s('to')}` : `从 ${s('from')} 转来`}（${s('sessionNo')}）${s('reason') ? `：${s('reason')}` : ''}`;
-    case 'sign_in':
-      return d.from === 'leave' ? `取消休假，上牌${s('reason') ? `：${s('reason')}` : ''}` : s('reason');
-    case 'sign_out':
-      return d.from === 'leave' ? `取消休假${s('reason') ? `：${s('reason')}` : ''}` : s('reason');
-    case 'resume':
-      return `复牌${s('suspendedReason') ? `（停牌原因：${s('suspendedReason')}）` : ''}${s('reason') ? `：${s('reason')}` : ''}`;
-    case 'room':
-      return d.to ? `${d.from ? `房间 ${s('from')} → ` : '选房间 '}${s('to')}` : `清掉房间 ${s('from')}`;
-    case 'queue':
-      return d.before ? `调到 ${s('before')} 号前面${s('reason') ? `：${s('reason')}` : ''}` : s('reason');
-    case 'skip':
-      return `轮到时跳过，派给 ${s('to')}${s('reason') ? `：${s('reason')}` : ''}`;
-    case 'extend':
-      return `加钟 × ${d.clocks ?? 1}（${CALL[d.callType as CallType] ?? ''}）`;
-    case 'finish':
-      return `${d.auto ? `自动下钟（${s('auto')}），` : ''}实际 ${d.minutes ?? '?'} 分钟（计划 ${d.planned ?? '?'} 分钟）`;
-    default:
-      return s('reason');
-  }
-}
-
-export async function clockEvents(db: Db, date: string): Promise<ClockEvent[]> {
-  const rows = await db<
-    { id: number; createdAt: string; kind: ClockEventKind; techNo: string | null; techName: string | null; sessionNo: string | null; staffName: string; detail: Record<string, unknown> }[]
-  >`
-    SELECT e.id, e.created_at, e.kind, t.tech_no, t.name AS tech_name, s.session_no, st.display_name AS staff_name, e.detail
-    FROM technician_events e LEFT JOIN technicians t ON t.id = e.technician_id LEFT JOIN technician_sessions s ON s.id = e.session_id
-    JOIN staff st ON st.id = e.staff_id
-    WHERE e.business_date = ${date} AND coalesce(t.store_id, 1) = ${currentStoreId()} ORDER BY e.id DESC LIMIT 500`;
-  return rows.map((r) => ({
-    id: r.id,
-    at: new Date(r.createdAt).toISOString(),
-    kind: r.kind,
-    techNo: r.techNo,
-    techName: r.techName,
-    sessionNo: r.sessionNo,
-    staffName: r.staffName,
-    text: eventText(r.kind, r.detail ?? {}) || EVENT_KIND_LABELS[r.kind],
-  }));
 }
 
 // ───────────────────────── 路由 ─────────────────────────
@@ -1447,7 +1407,7 @@ export const DispatchInput = z.object({
   tier: z.enum(['standard', 'professional', 'premium']).optional(),
   quantity: z.number().int().min(1, '钟数至少为 1').max(9, '一次最多派 9 个钟'),
   technicianId: z.number().int().positive(),
-  callType: z.enum(['designated', 'rotation']),
+  callType: z.enum(CALL_TYPES),
   startNow: z.boolean().default(true),
   skipReason: z.string().trim().max(100, '原因最多 100 字').optional(),
   /** 服务的房间（v0.7.16，可不选）；不带时与升级前的请求完全相同（幂等摘要不变） */

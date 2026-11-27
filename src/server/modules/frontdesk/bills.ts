@@ -47,7 +47,7 @@ export const PostInput = z
               .nullish()
               .transform((v) => v ?? undefined),
             callType: z
-              .enum(CALL_TYPES, '上钟方式应为点钟或轮钟')
+              .enum(CALL_TYPES, '上钟方式应为轮钟、点钟或扩钟')
               .nullish()
               .transform((v) => v ?? undefined),
             /** 口味备注（v0.7.2 餐饮：少辣、不要香菜），只给进厨房的菜；不带时与升级前的请求完全相同（幂等摘要不变） */
@@ -212,6 +212,8 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
     technicianId: number | null;
     callType: CallType | null;
     techText: string | null;
+    /** 挂账时技师的星级（8.2.2，提成按星级取规则用） */
+    techStar: number | null;
     stationId: number | null;
     note: string;
     /** 加料（8.1.17）：同一次挂账里主菜那一行的下标 */
@@ -230,7 +232,7 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
     }
     const withTech = !!item && techRules.enabled && item.technicianRequired;
     let tier = l.tier;
-    let tech: { id: number; techNo: string; name: string } | null = null;
+    let tech: { id: number; techNo: string; name: string; star: number | null } | null = null;
     if (item && l.technicianId !== undefined) {
       if (!techRules.enabled) throw unprocessable('TECHNICIAN_DISABLED', '技师功能已关闭，请刷新页面后重新登记');
       if (!item.technicianRequired) throw unprocessable('TECHNICIAN_NOT_NEEDED', `「${item.name}」不需要技师，请刷新页面后重新登记`);
@@ -245,7 +247,7 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
       tier = chosen;
       tech = t;
     } else if (withTech && techRules.requireTechnician) {
-      throw unprocessable('TECHNICIAN_REQUIRED', `「${item!.name}」需要选技师与点钟 / 轮钟`);
+      throw unprocessable('TECHNICIAN_REQUIRED', `「${item!.name}」需要选技师与上钟方式（轮钟、点钟或扩钟）`);
     }
     const listed = priceLine(item, tier, l.quantity, '有项目已停用，请刷新后重新选择');
     const stationId = withTech ? null : (stations.get(l.itemId) ?? null);
@@ -264,6 +266,7 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
       technicianId: tech?.id ?? null,
       callType: l.callType ?? null,
       techText: tech ? technicianText({ ...tech, callType: l.callType }) : null,
+      techStar: tech?.star ?? null,
       stationId,
       note: l.note ?? '',
       addonOf: null,
@@ -282,6 +285,7 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
       technicianId: null,
       callType: null,
       techText: null,
+      techStar: null,
       stationId: null,
       note: '',
       addonOf: null,
@@ -342,10 +346,10 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   for (const l of lines) {
     const [row] = await tx<{ id: number }[]>`
       INSERT INTO bill_lines (bill_id, source, item_id, tier, name, unit_price, quantity, amount, post_key, business_date, posted_by, posted_at,
-                              technician_id, call_type, session_id, addon_of)
+                              technician_id, call_type, session_id, addon_of, clock_extension, tech_star)
       VALUES (${bill!.id}, ${l.source}, ${l.itemId}, ${l.tier}, ${l.name}, ${l.unitPrice}, ${l.quantity}, ${l.amount}, ${key}, ${date},
               ${ctx.actor.id}, ${at}, ${l.technicianId}, ${l.callType}, ${sessionIds.get(l) ?? null},
-              ${l.addonOf === null ? null : lineIds.get(lines[l.addonOf]!)!})
+              ${l.addonOf === null ? null : lineIds.get(lines[l.addonOf]!)!}, ${options.session?.extendId !== undefined && l.technicianId !== null}, ${l.techStar})
       RETURNING id`;
     lineIds.set(l, row!.id);
   }
@@ -541,10 +545,12 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
         ticketTypeId: number | null;
         gender: 'male' | 'female' | null;
         addonOf: number | null;
+        clockExtension: boolean;
+        techStar: number | null;
       }[]
     >`
       SELECT l.id, l.bill_id, l.source, l.item_id, l.tier, l.name, l.unit_price, l.quantity, l.amount, l.status, l.posted_by, l.posted_at,
-             l.technician_id, l.call_type, l.session_id, l.ticket_type_id, si.gender, l.addon_of
+             l.technician_id, l.call_type, l.session_id, l.ticket_type_id, si.gender, l.addon_of, l.clock_extension, l.tech_star
       FROM bill_lines l LEFT JOIN service_items si ON si.id = l.item_id
       WHERE l.id IN ${tx(lineIds)} ORDER BY l.id FOR UPDATE OF l`;
     if (lines.length !== lineIds.length || lines.some((l) => l.billId !== from.billId)) throw notFound('有明细不存在，请刷新后重试');
@@ -577,9 +583,10 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
         UPDATE bill_lines SET status = 'voided', void_reason = ${voidReason}, voided_by = ${ctx.actor.id}, voided_at = ${at} WHERE id = ${l.id}`;
       const [row] = await tx<{ id: number }[]>`
         INSERT INTO bill_lines (bill_id, source, item_id, tier, name, unit_price, quantity, amount, post_key, business_date, posted_by, posted_at,
-                                technician_id, call_type, addon_of)
+                                technician_id, call_type, addon_of, clock_extension, tech_star)
         VALUES (${to.billId}, ${l.source}, ${l.itemId}, ${l.tier}, ${l.name}, ${l.unitPrice}, ${l.quantity}, ${l.amount}, ${key}, ${date},
-                ${ctx.actor.id}, ${at}, ${l.technicianId}, ${l.callType}, ${l.addonOf === null ? null : (movedTo.get(l.addonOf) ?? null)})
+                ${ctx.actor.id}, ${at}, ${l.technicianId}, ${l.callType}, ${l.addonOf === null ? null : (movedTo.get(l.addonOf) ?? null)},
+                ${l.clockExtension}, ${l.techStar})
         RETURNING id`;
       movedTo.set(l.id, row!.id);
       if (l.source === 'dining') {

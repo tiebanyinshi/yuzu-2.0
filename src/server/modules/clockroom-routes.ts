@@ -11,11 +11,13 @@ import { businessDate, hashRequest, runIdempotent } from './frontdesk/common';
 import { setAnnouncer } from './clock-calls';
 import { dispatchBatch } from './clockroom-batch';
 import { moveBefore } from './clockroom-queue';
+import { clockEvents } from './clockroom-events';
+import { changeSessionItem } from './clockroom-change';
+import { setLeaveDays } from './technician-leave-return';
 import {
   assignLine,
   callTechnician,
   changeState,
-  clockEvents,
   clockroomBoard,
   clockSpaces,
   DispatchInput,
@@ -111,6 +113,11 @@ export function registerClockroomRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/clockroom/technicians/:id/state', { preHandler: guard('technician.dispatch') }, async (req) => changeState(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   // 8.1.40：排位调到某人前面（同工种、都在岗，原因必填），权限与排到队尾相同
   app.post('/api/clockroom/technicians/:id/move-before', { preHandler: guard('technician.dispatch') }, async (req) => moveBefore(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
+  // 8.2.2：钟房直接设长假（连休 N 天，休完自动上牌）；换项目 / 换工种（上钟不满规定分钟数）
+  app.post('/api/clockroom/technicians/:id/leave-days', { preHandler: guard('technician.dispatch') }, async (req) => setLeaveDays(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
+  app.post('/api/clockroom/sessions/:id/change', { preHandler: guard('technician.dispatch', 'frontdesk.operate') }, async (req) =>
+    changeSessionItem(deps, parse(idParam, req.params).id, req.body, ctxOf(req)),
+  );
   app.post('/api/clockroom/sign-in-all', { preHandler: guard('technician.dispatch') }, async (req) => signInAll(deps, ctxOf(req)));
 
   // 8.1.15 排位播报：手动叫号、登记主播报终端（接管、放下、报到）；回测整改 P03 起是单独的页面与权限，钟房的岗位照旧能叫号

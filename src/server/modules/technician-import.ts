@@ -67,9 +67,10 @@ export async function importTechnicians(sql: Sql, rows: TechnicianImportRow[], o
     }
     for (const r of fresh) {
       await tx`
-        INSERT INTO technicians (store_id, tech_no, name, gender, grade, skills, active, sort_order, note, created_by, nickname, kind, hired_on, group_id)
+        INSERT INTO technicians (store_id, tech_no, name, gender, grade, skills, active, sort_order, note, created_by, nickname, kind, hired_on, group_id,
+                                 phone, height_cm, weight_kg, star)
         VALUES (${storeId}, ${r.techNo}, ${r.name}, ${r.gender}, ${r.grade}, '{}'::text[], true, 0, '', ${opts.staffId}, ${r.nickname}, '', ${r.hiredOn},
-                ${r.group ? (groups.get(gk(r.group)) ?? null) : null})`;
+                ${r.group ? (groups.get(gk(r.group)) ?? null) : null}, ${r.phone ?? ''}, ${r.heightCm ?? null}, ${r.weightKg ?? null}, ${r.star ?? null})`;
     }
     await writeAudit(tx, {
       staffId: opts.staffId,
