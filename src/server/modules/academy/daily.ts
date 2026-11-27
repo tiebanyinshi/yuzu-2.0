@@ -31,9 +31,10 @@ interface Candidate {
   skill: string;
   courseTitle: string;
   isNew: boolean;
+  version: number;
 }
 
-const CANDIDATE_COLS = (db: Db) => db`q.id AS question_id, q.kind, q.stem, q.options, q.answer, q.answer_text, q.explanation, q.skill, c.title AS course_title`;
+const CANDIDATE_COLS = (db: Db) => db`q.id AS question_id, q.kind, q.stem, q.options, q.answer, q.answer_text, q.explanation, q.skill, c.title AS course_title, q.version`;
 
 /** 我「在学」的课：学过任何一个课时的、被指派到的（直接或在指派的地图里） */
 const studyingCourses = (db: Db, l: Learner) => db`
@@ -103,6 +104,7 @@ export async function dailySet(db: Db, l: Learner, today: string): Promise<Acade
         courseTitle: c.courseTitle,
         isNew: c.isNew,
         answerText: c.kind === 'recall' ? c.answerText : null,
+        version: Number(c.version),
       }),
     ),
     streak: await streakOf(db, l.id, today),
@@ -117,6 +119,8 @@ const AnswerInput = z.object({
   questionId: z.number().int().positive(),
   choice: z.array(z.number().int().min(0).max(5)).max(6).optional(),
   grade: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  /** 页面上显示的是这道题的哪一版（管理员改过选项、答案的拒绝，免得按旧题判新答案，Codex 审查 4c50670） */
+  version: z.number().int().positive(),
 });
 
 /** 答一题 */
@@ -146,6 +150,7 @@ export async function answerDaily(sql: Sql, l: Learner, raw: unknown, today: str
     }
     const q = pool.find((c) => c.questionId === input.questionId);
     if (!q) throw conflict('ACADEMY_DAILY_GONE', '这道题今天已经练过或不在今天的题里，请刷新');
+    if (Number(q.version) !== input.version) throw conflict('ACADEMY_CHANGED', '这道题刚被改过，请刷新再练');
     let grade: FsrsGrade;
     let correct: boolean | null;
     if (q.kind === 'recall') {
