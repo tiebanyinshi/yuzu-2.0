@@ -77,15 +77,15 @@ const keyParam = z.object({ key: z.string().regex(/^[a-z]+$/, '部门不正确')
  * 只有 hr.org 的（人力行政部负责人）只看、只改挂的门店都在自己能进的门店里的员工（没挂门店的按本店算），
  * 也不能给总裁办离职、复职、改档案。部门的上下级与主管是全公司的，照旧能改，但指定的主管也要在自己的范围里。
  */
-type OrgScope = { all: true } | { all: false; stores: number[] };
+export type OrgScope = { all: true } | { all: false; stores: number[] };
 
-async function orgScope(db: Db, actor: Actor): Promise<OrgScope> {
+export async function orgScope(db: Db, actor: Actor): Promise<OrgScope> {
   if (can(actor, 'staff.manage')) return { all: true };
   return { all: false, stores: (await allowedStores(db, actor)).map((x) => Number(x.id)) };
 }
 
 /** 员工在不在范围里的条件；s 是 staff 表 */
-function storeCond(db: Db, scope: OrgScope) {
+export function storeCond(db: Db, scope: OrgScope) {
   if (scope.all) return db`true`;
   return db`(NOT EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id AND NOT (x.store_id = ANY(${scope.stores}::bigint[])))
     AND (EXISTS (SELECT 1 FROM staff_stores x WHERE x.staff_id = s.id) OR ${DEFAULT_STORE_ID}::bigint = ANY(${scope.stores}::bigint[])))`;

@@ -440,7 +440,11 @@ export type AuditAction =
   // 员工办公 v1.1 第 5 批（docs/OA_MOBILE.md）：公司公告发布、编辑与撤回
   | 'oa_announcement_published'
   | 'oa_announcement_updated'
-  | 'oa_announcement_recalled';
+  | 'oa_announcement_recalled'
+  // 员工小程序线（docs/STAFF_MP.md）：微信绑定与解开、后台的开关（登录、退出、改密码照用上面的，detail 里写 via: staffmp）
+  | 'staffmp_wechat_bound'
+  | 'staffmp_wechat_unbound'
+  | 'staffmp_settings_changed';
 
 export interface AuditEntry {
   staffId: number | null;

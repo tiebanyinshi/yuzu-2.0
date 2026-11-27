@@ -12,6 +12,7 @@ import { HEARTBEAT_INTERVAL_MS } from '@shared/devices';
 import { holdAppPresence } from './presence';
 import { buildMpApp } from './modules/mp/app';
 import { buildCanteenApp } from './modules/canteen/portal';
+import { buildStaffMpApp } from './modules/staffmp';
 
 const config = loadConfig();
 // 事务开着不动超过 2 分钟由数据库断开、放掉行锁（8.1.3 WL11）
@@ -59,6 +60,15 @@ async function main() {
   if (canteenApp) {
     await canteenApp.listen({ host: config.canteen.host, port: config.canteen.port! });
     app.log.info(`员工端口（柚子饭堂）已开：${config.canteen.host}:${config.canteen.port}`);
+  }
+
+  // 员工小程序「汤崎 WCP」（员工小程序线，docs/STAFF_MP.md 第 5 节）：单开的员工小程序端口，只挂 /api/staffmp/*；没设 STAFFMP_PORT 不开
+  const staffMpApp = config.staffmp.port ? await buildStaffMpApp(sql, config) : null;
+  if (staffMpApp) {
+    await staffMpApp.listen({ host: config.staffmp.host, port: config.staffmp.port! });
+    app.log.info(
+      `员工小程序端口已开：${config.staffmp.host}:${config.staffmp.port}（微信一键登录${config.staffmp.mockWechat ? '用模拟微信' : config.staffmp.appId ? '已配好' : '没配，只能账号密码登录'}）`,
+    );
   }
 
   // 每分钟的自动任务（赠金到期、会员到期处理、权益发放、生日礼、预约、会员挑战、次卡过期，见 jobs.ts）：
@@ -123,6 +133,7 @@ async function main() {
       await app.close();
       await mpApp?.close();
       await canteenApp?.close();
+      await staffMpApp?.close();
       // 正在跑的每分钟任务收尾再断库（最多等到上面的 10 秒强退）
       await sweeping;
       await presence.release();

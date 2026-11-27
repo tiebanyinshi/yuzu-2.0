@@ -1,4 +1,5 @@
 // 线范围检查（8.1.0，docs/RELEASE_V810.md 第 3 节）：小程序线（店主 2026-11-15 起交给 Gemini）的 PR 只改小程序线自己的文件。
+// 员工小程序线（店主 2026-11-27，docs/STAFF_MP.md 第 7 节）同样：标题【员工小程序线】开头或带「员工小程序线」标签的 PR 只改员工小程序线自己的文件。
 // 由 .github/workflows/line-scope.yml 在 pull_request_target 上运行：用的是 main 上的这份脚本与工作流，PR 自己改不了它们；
 // 只读 PR 改了哪些文件（git diff --name-status），不执行 PR 里的任何代码。
 //
@@ -90,11 +91,66 @@ export function classify(change) {
   return { kind: 'blocked', reason: '不在小程序线的范围里（会员、钱包、券、结账、前台等核心只由主线改）；要核心加能力，在主线开着的 PR 上留言写清需求' };
 }
 
+// ───────────── 员工小程序线（店主 2026-11-27，docs/STAFF_MP.md 第 7 节） ─────────────
+
+export const STAFF_LINE_LABEL = '员工小程序线';
+export const STAFF_LINE_TITLE = '【员工小程序线】';
+
+/** 员工小程序线自己的目录与文件 */
+const STAFF_FREE_DIRS = ['staff-miniprogram/', 'src/server/modules/staffmp/', 'src/client/features/staffmp/'];
+const STAFF_FREE_FILES = new Set(['src/shared/staffmp.ts', 'compose.staffmp.yaml']);
+const STAFF_FREE_PATTERNS = [/^tests\/staffmp-[^/]+\.test\.ts$/, /^docs\/STAFF_MP[^/]*\.md$/, /^docs\/HANDOFF_STAFFMP[^/]*\.md$/, /^docs\/rollback\/[0-9]{3}_staffmp_[a-z0-9_]+\.down\.sql$/];
+/** 员工小程序线的登记处：小程序线的那些（Gemini 自己的说明除外），加上开端口、后台页面、领域入口的导出、加锁登记、CI 里员工小程序的 job */
+export const STAFF_REGISTRY = new Map([
+  ...[...REGISTRY].filter(([path]) => !path.startsWith('GEMINI') && !path.startsWith('.gemini/')),
+  ['src/server/index.ts', '开员工小程序端口'],
+  ['src/client/features/admin/AdminPage.tsx', '后台页面路由'],
+  ['src/client/features/admin/AdminShell.tsx', '后台分区的图标'],
+  ['src/server/modules/oa/index.ts', 'WCP 领域入口的导出（挂接员工端接口）'],
+  ['src/server/modules/canteen/index.ts', '员工食堂领域入口的导出'],
+  ['src/server/modules/patrol/index.ts', '安保巡场领域入口的导出'],
+  ['docs/LOCKING.md', '加锁顺序登记（「员工小程序」一节）'],
+  ['docs/README.md', '文档索引'],
+  ['.github/workflows/ci.yml', 'CI 里员工小程序的类型检查与单元测试'],
+  ['knip.json', '员工小程序的目录不进死代码检查'],
+]);
+const STAFF_MIGRATION = /^src\/server\/migrations\/[0-9]{3}_staffmp_[a-z0-9_]+\.sql$/;
+
+/** 是不是员工小程序线的 PR：标题【员工小程序线】开头、带「员工小程序线」标签，有一样就算（分支照旧是 claude/*，不按分支认） */
+export function isStaffLinePr({ title = '', labels = [] } = {}) {
+  return title.trim().startsWith(STAFF_LINE_TITLE) || labels.some((l) => l.trim() === STAFF_LINE_LABEL);
+}
+
+const isStaffFree = (path) => STAFF_FREE_DIRS.some((d) => path.startsWith(d)) || STAFF_FREE_FILES.has(path) || STAFF_FREE_PATTERNS.some((p) => p.test(path));
+
+/** 员工小程序线的 PR 里一个改动归哪一类（分类与小程序线一样：free / registry / migration / blocked） */
+export function classifyStaff(change) {
+  const { status, path, from } = change;
+  if (path.startsWith('src/server/migrations/') || from?.startsWith('src/server/migrations/')) {
+    if (status === 'A' && STAFF_MIGRATION.test(path)) return { kind: 'migration' };
+    if (status === 'A') return { kind: 'blocked', reason: '员工小程序线的新迁移要叫 NNN_staffmp_<用途>.sql（号先在 docs/ROADMAP.md 第 7 节登记，预留 610–619）' };
+    return { kind: 'blocked', reason: '迁移只增不改：已有的迁移不能改、删、改名，新变化写新的迁移' };
+  }
+  const paths = from && status === 'R' ? [from, path] : [path];
+  if (paths.every(isStaffFree)) return { kind: 'free' };
+  if (paths.length === 1 && STAFF_REGISTRY.has(path)) {
+    if (status === 'D') return { kind: 'blocked', reason: '登记处的文件不能删' };
+    return { kind: 'registry', note: STAFF_REGISTRY.get(path) };
+  }
+  if (paths.some((p) => isFree(p))) return { kind: 'blocked', reason: '这是（顾客）小程序线的文件，由 Gemini 改；要它加能力在小程序线开着的 PR 上留言' };
+  return { kind: 'blocked', reason: '不在员工小程序线的范围里（WCP、员工培训、饭堂、巡场的规则与接口归主线）；要主线加能力，在主线开着的 PR 上留言写清需求' };
+}
+
+/** 别的 PR 改到了员工小程序线的目录：只提醒，不拦 */
+export function staffFilesTouched(changes) {
+  return changes.filter((c) => [c.path, c.from].some((p) => p && (STAFF_FREE_DIRS.some((d) => p.startsWith(d)) || p === 'src/shared/staffmp.ts'))).map((c) => c.path);
+}
+
 /** 汇总：ok = 没有 blocked */
-export function checkLineScope(changes) {
+export function checkLineScope(changes, classifyFn = classify) {
   const result = { free: [], registry: [], migrations: [], blocked: [] };
   for (const c of changes) {
-    const r = classify(c);
+    const r = classifyFn(c);
     const shown = c.from && c.status === 'R' ? `${c.from} → ${c.path}` : c.path;
     if (r.kind === 'free') result.free.push(shown);
     else if (r.kind === 'registry') result.registry.push({ path: shown, note: r.note });
@@ -112,12 +168,18 @@ export function mpFilesTouched(changes) {
 /** 写给人看的结果（Markdown，检查的摘要页与日志共用） */
 export function report(pr, changes) {
   const lines = [];
+  if (isStaffLinePr(pr) && !isMpLinePr(pr)) return staffReport(changes);
   if (!isMpLinePr(pr)) {
     lines.push(`不是小程序线的 PR（分支 \`${pr.branch || '—'}\`），这个检查不管，通过。`);
     const touched = mpFilesTouched(changes);
     if (touched.length) {
       lines.push('', `提醒：这个 PR 改到了小程序线的文件（${touched.length} 个），小程序线由 Gemini 开发，请在 PR 说明里写明为什么：`);
       for (const p of touched.slice(0, 30)) lines.push(`- \`${p}\``);
+    }
+    const staff = staffFilesTouched(changes);
+    if (staff.length) {
+      lines.push('', `提醒：这个 PR 改到了员工小程序线的文件（${staff.length} 个），员工小程序线由 Claude 员工小程序开发会话开发，请在 PR 说明里写明为什么：`);
+      for (const p of staff.slice(0, 30)) lines.push(`- \`${p}\``);
     }
     return { ok: true, text: lines.join('\n') };
   }
@@ -136,6 +198,27 @@ export function report(pr, changes) {
     for (const g of r.registry) lines.push(`- \`${g.path}\`：${g.note}`);
   }
   lines.push('', `小程序线自己的文件：${r.free.length} 个。规则见 docs/RELEASE_V810.md 第 3 节、AGENTS.md「四个 AI 按线协作」。`);
+  return { ok: r.ok, text: lines.join('\n') };
+}
+
+/** 员工小程序线的 PR 的结果 */
+function staffReport(changes) {
+  const lines = [];
+  const r = checkLineScope(changes, classifyStaff);
+  lines.push(r.ok ? `**通过**：员工小程序线的 PR，改了 ${changes.length} 个文件，都在员工小程序线的范围里。` : `**不通过**：员工小程序线的 PR 改了 ${r.blocked.length} 个不该改的文件。`);
+  if (r.blocked.length) {
+    lines.push('', '### 不该改的（先撤掉，或在对应的线开着的 PR 上留言）');
+    for (const b of r.blocked) lines.push(`- \`${b.path}\`（${b.status}）：${b.reason}`);
+  }
+  if (r.migrations.length) {
+    lines.push('', '### 新加的迁移（核对号已在 docs/ROADMAP.md 第 7 节登记、只建员工小程序线自己的表）');
+    for (const m of r.migrations) lines.push(`- \`${m}\``);
+  }
+  if (r.registry.length) {
+    lines.push('', '### 登记处（允许，请主线开发会话复核只是加挂接的几行）');
+    for (const g of r.registry) lines.push(`- \`${g.path}\`：${g.note}`);
+  }
+  lines.push('', `员工小程序线自己的文件：${r.free.length} 个。规则见 docs/STAFF_MP.md 第 7 节。`);
   return { ok: r.ok, text: lines.join('\n') };
 }
 

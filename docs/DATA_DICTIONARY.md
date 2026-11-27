@@ -7,7 +7,7 @@
 「只追加」的表（账本、流水、审批动作、归档表）有触发器拒绝改删，改错走冲正或作废登记。
 列表里「键」：`PK` 主键；「引用」是外键指向的表。
 
-共 463 张表、5515 列。
+共 465 张表、5527 列。
 
 ## 目录
 
@@ -15,6 +15,7 @@
 - **业财法审批（gf_）**（30）：[gf_alloc_rule_versions](#gf_alloc_rule_versions) · [gf_alloc_rules](#gf_alloc_rules) · [gf_alloc_runs](#gf_alloc_runs) · [gf_cc](#gf_cc) · [gf_contract_versions](#gf_contract_versions) · [gf_dept_quotas](#gf_dept_quotas) · [gf_docs](#gf_docs) · [gf_files](#gf_files) · [gf_flow_actions](#gf_flow_actions) · [gf_flows](#gf_flows) · [gf_hr_batch_lines](#gf_hr_batch_lines) · [gf_hr_batches](#gf_hr_batches) · [gf_hr_checks](#gf_hr_checks) · [gf_hr_payouts](#gf_hr_payouts) · [gf_license_loans](#gf_license_loans) · [gf_licenses](#gf_licenses) · [gf_materials](#gf_materials) · [gf_overdue_reviews](#gf_overdue_reviews) · [gf_payouts](#gf_payouts) · [gf_quota_ledger](#gf_quota_ledger) · [gf_quota_specials](#gf_quota_specials) · [gf_role_members](#gf_role_members) · [gf_settings](#gf_settings) · [gf_sku_prices](#gf_sku_prices) · [gf_skus](#gf_skus) · [gf_specials](#gf_specials) · [gf_supplier_versions](#gf_supplier_versions) · [gf_suppliers](#gf_suppliers) · [gf_travel_budgets](#gf_travel_budgets) · [gf_travel_ledger](#gf_travel_ledger)
 - **办公 OA（oa_）**（35）：[oa_announcement_reads](#oa_announcement_reads) · [oa_announcements](#oa_announcements) · [oa_approval_cc](#oa_approval_cc) · [oa_approval_events](#oa_approval_events) · [oa_approval_steps](#oa_approval_steps) · [oa_approval_templates](#oa_approval_templates) · [oa_approvals](#oa_approvals) · [oa_attachments](#oa_attachments) · [oa_attendance_covers](#oa_attendance_covers) · [oa_attendance_daily](#oa_attendance_daily) · [oa_attendance_groups](#oa_attendance_groups) · [oa_face_enrollments](#oa_face_enrollments) · [oa_group_locations](#oa_group_locations) · [oa_group_members](#oa_group_members) · [oa_holiday_years](#oa_holiday_years) · [oa_holidays](#oa_holidays) · [oa_im_conversations](#oa_im_conversations) · [oa_im_members](#oa_im_members) · [oa_im_messages](#oa_im_messages) · [oa_leave_balances](#oa_leave_balances) · [oa_leave_entries](#oa_leave_entries) · [oa_leave_types](#oa_leave_types) · [oa_locations](#oa_locations) · [oa_notifications](#oa_notifications) · [oa_payroll_audit](#oa_payroll_audit) · [oa_payroll_batches](#oa_payroll_batches) · [oa_payroll_files](#oa_payroll_files) · [oa_payslip_templates](#oa_payslip_templates) · [oa_payslips](#oa_payslips) · [oa_punches](#oa_punches) · [oa_schedule_grants](#oa_schedule_grants) · [oa_schedule_publishes](#oa_schedule_publishes) · [oa_schedules](#oa_schedules) · [oa_shifts](#oa_shifts) · [oa_staff_imports](#oa_staff_imports)
 - **小程序（mp_，小程序线）**（17）：[mp_banners](#mp_banners) · [mp_bindings](#mp_bindings) · [mp_booking_ops](#mp_booking_ops) · [mp_coupon_claims](#mp_coupon_claims) · [mp_food_orders](#mp_food_orders) · [mp_images](#mp_images) · [mp_invites](#mp_invites) · [mp_item_intros](#mp_item_intros) · [mp_op_fences](#mp_op_fences) · [mp_recharge_events](#mp_recharge_events) · [mp_recharge_orders](#mp_recharge_orders) · [mp_recharge_recons](#mp_recharge_recons) · [mp_refund_events](#mp_refund_events) · [mp_refund_orders](#mp_refund_orders) · [mp_reminder_consents](#mp_reminder_consents) · [mp_reminder_messages](#mp_reminder_messages) · [mp_stores](#mp_stores)
+- **员工小程序（staffmp_，员工小程序线）**（2）：[staffmp_bindings](#staffmp_bindings) · [staffmp_sessions](#staffmp_sessions)
 - **员工食堂（canteen_）**（11）：[canteen_checkins](#canteen_checkins) · [canteen_employees](#canteen_employees) · [canteen_feedback](#canteen_feedback) · [canteen_feedback_reply_ops](#canteen_feedback_reply_ops) · [canteen_likes](#canteen_likes) · [canteen_menus](#canteen_menus) · [canteen_push_prefs](#canteen_push_prefs) · [canteen_push_subscriptions](#canteen_push_subscriptions) · [canteen_reminder_deliveries](#canteen_reminder_deliveries) · [canteen_reminder_runs](#canteen_reminder_runs) · [canteen_sessions](#canteen_sessions)
 - **客户关系（concierge_）**（9）：[concierge_balance_evidence](#concierge_balance_evidence) · [concierge_members](#concierge_members) · [concierge_operations](#concierge_operations) · [concierge_praise](#concierge_praise) · [concierge_praise_evidence](#concierge_praise_evidence) · [concierge_records](#concierge_records) · [concierge_revisions](#concierge_revisions) · [concierge_sync](#concierge_sync) · [concierge_uploads](#concierge_uploads)
 - **价目表（price_catalog_）**（7）：[price_catalog_changes](#price_catalog_changes) · [price_catalog_entries](#price_catalog_entries) · [price_catalog_import_ops](#price_catalog_import_ops) · [price_catalog_link_ops](#price_catalog_link_ops) · [price_catalog_links](#price_catalog_links) · [price_catalog_set_ops](#price_catalog_set_ops) · [price_catalog_sets](#price_catalog_sets)
@@ -7869,6 +7870,34 @@ OA-02 账号与批量开通（docs/OA.md 第 5 节）：后台「组织架构 �
 | version | integer |  |  | 1 |  |  |
 | updated_by | bigint |  | 是 |  | staff |  |
 | updated_at | timestamp with time zone |  |  | now() |  |  |
+
+## 员工小程序（staffmp_，员工小程序线）
+
+### staffmp_bindings
+
+员工小程序（docs/STAFF_MP.md）：微信 openid 与员工账号的绑定；解开只做标记不删，同一时刻一对一
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('staffmp_bindings_id_seq'::regclass) |  |  |
+| staff_id | bigint |  |  |  | staff |  |
+| openid | text |  |  |  |  |  |
+| bound_at | timestamp with time zone |  |  | now() |  |  |
+| last_login_at | timestamp with time zone |  | 是 |  |  |  |
+| revoked_at | timestamp with time zone |  | 是 |  |  |  |
+| revoked_by | bigint |  | 是 |  | staff |  |
+| revoke_reason | text |  | 是 |  |  |  |
+
+### staffmp_sessions
+
+员工小程序（docs/STAFF_MP.md）：哪些会话（sessions）是员工小程序发的；会话删了跟着删，解绑、停用时按它清小程序的会话
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| token_hash | text | PK |  |  | sessions |  |
+| staff_id | bigint |  |  |  | staff |  |
+| binding_id | bigint |  | 是 |  | staffmp_bindings |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
 
 ## 员工食堂（canteen_）
 
