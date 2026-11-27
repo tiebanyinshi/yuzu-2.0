@@ -535,12 +535,14 @@ async function createBookingTxFull(
   const status = a.source === 'mp' ? 'pending' : 'confirmed';
   const [row] = await tx<{ id: number }[]>`
     INSERT INTO bookings (booking_no, kind, source, status, member_id, guest_name, guest_phone, guests, item_id, technician_id, space_id, room_type_id,
-                          starts_at, ends_at, hold_until, note, business_date, created_by, created_at, client_key, request_hash, confirmed_by, confirmed_at, tag_code)
+                          starts_at, ends_at, hold_until, note, business_date, created_by, created_at, client_key, request_hash, confirmed_by, confirmed_at, tag_code,
+                          technician_overlap)
     VALUES (${bookingNo}, ${a.kind}, ${a.source}, ${status}, ${a.memberId}, ${a.guestName}, ${a.guestPhone}, ${a.guests},
             ${a.kind === 'technician' ? (a.itemId ?? null) : null}, ${a.kind === 'technician' ? (a.technicianId ?? null) : null},
             ${a.kind === 'space' ? (a.spaceId ?? null) : null}, ${a.kind === 'room' ? (a.roomTypeId ?? null) : null},
             ${a.startsAt}, ${slot.end}, ${slot.holdUntil}, ${a.note}, ${slot.date}, ${actor.id}, ${at}, ${clientKey}, ${requestHash},
-            ${status === 'confirmed' ? actor.id : null}, ${status === 'confirmed' ? at : null}, ${a.tagCode ?? ''})
+            ${status === 'confirmed' ? actor.id : null}, ${status === 'confirmed' ? at : null}, ${a.tagCode ?? ''},
+            ${a.kind === 'technician' && !!a.technicianOverlap})
     RETURNING id`;
   const id = Number(row!.id);
   await writeAudit(tx, {
@@ -632,6 +634,8 @@ export function batchRowKey(clientKey: string, index: number): string {
  * 指定了技师的不查他同一时段别的预约（一位技师同时约几位客人不设上限）；不指定的照旧要有空着的技师。锁与单张新建相同（技师预约咨询锁）
  */
 export async function createBookingBatch(deps: Deps, raw: unknown, ctx: OpContext): Promise<BookingDetail[]> {
+  // 一报多只建技师预约：与单张新建一样要「技师预约」（8.2.3），不能借批量的入口绕过
+  assertMayBook(ctx.actor, 'technician');
   const input = parse(BatchInput, raw);
   const requestHash = hashRequest({ op: 'booking_batch', source: input.source, rows: input.rows });
   const at = ctx.at ?? new Date();
@@ -1032,7 +1036,9 @@ export async function bookingChecks(db: Db) {
   const tech = await db<{ ref: string }[]>`
     SELECT a.booking_no AS ref FROM bookings a JOIN bookings b ON b.id > a.id AND b.technician_id = a.technician_id
       AND b.starts_at < a.ends_at AND a.starts_at < b.ends_at
-    WHERE a.status IN ('pending', 'confirmed') AND b.status IN ('pending', 'confirmed') LIMIT 5`;
+    WHERE a.status IN ('pending', 'confirmed') AND b.status IN ('pending', 'confirmed')
+      -- 一报多（8.2.2）有意不查同一位技师同一时段的别的预约：两张里有一张是一报多建的就不算错（8.2.5，迁移 570）
+      AND NOT a.technician_overlap AND NOT b.technician_overlap LIMIT 5`;
   const space = await db<{ ref: string }[]>`
     SELECT a.booking_no AS ref FROM bookings a JOIN bookings b ON b.id > a.id AND b.space_id = a.space_id
       AND b.starts_at < a.ends_at AND a.starts_at < b.ends_at
@@ -1042,7 +1048,7 @@ export async function bookingChecks(db: Db) {
   const bad = [...tech, ...space];
   return {
     key: 'bookings',
-    label: '预约不重叠（同一位技师、同一间房）',
+    label: '预约不重叠（同一位技师、同一间房；一报多有意重叠的不算）',
     ok: bad.length === 0,
     detail: bad.length ? `有重叠的预约：${bad.map((b) => b.ref).join('、')}` : `预约 ${n!.total} 张，还占着时段的 ${n!.open} 张，没有重叠`,
   };

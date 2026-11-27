@@ -314,6 +314,23 @@ describe('手牌押金', () => {
     expect(st.deposits.received.some((x: { method: string }) => x.method === 'wallet')).toBe(false);
   });
 
+  it('8.2.5：充值当天的储值额度也按押金退回以后算——储值扣的押金结账时先退回，预览的剩余额度跟着加回来（Codex 审查）', async () => {
+    const before = (await api(ctx.app, ctx.owner, 'GET', '/api/settings')).body.rechargeSpendPct as number | null;
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/settings', { rechargeSpendPct: 50 })).status).toBe(200);
+    try {
+      const m = await createMember(ctx, '额度押金会员');
+      expect((await api(ctx.app, ctx.owner, 'POST', '/api/recharges', rechargeBody(m.id, 10000, 0))).status).toBe(200);
+      const v = await enter({ memberId: m.id });
+      expect((await collect(v.id, { amount: 5000, method: 'wallet', expectedSplit: { principal: 5000, bonus: 0 } })).status).toBe(200);
+      // 押金用掉了今天一半的额度（¥100 × 50% = ¥50）；结账时押金先退回，所以预览里还剩 ¥50
+      const p = await preview([v.id]);
+      expect(p.members[0]!.principalBalance).toBe(10000);
+      expect(p.members[0]!.spendQuota).toMatchObject({ cap: 5000, remaining: 5000 });
+    } finally {
+      await api(ctx.app, ctx.owner, 'PUT', '/api/settings', { rechargeSpendPct: before });
+    }
+  });
+
   it('储值押金只能扣这张手牌上的会员；没有消费权限的岗位不能用储值', async () => {
     const v = await enter();
     expect(code(await collect(v.id, { amount: 5000, method: 'wallet', expectedSplit: { principal: 5000, bonus: 0 } }))).toBe('NO_MEMBER');

@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createStaff } from '../src/server/modules/staff';
-import { batchRowKey } from '../src/server/modules/bookings';
+import { batchRowKey, bookingChecks } from '../src/server/modules/bookings';
 import { sweepLeaveReturns } from '../src/server/modules/technician-leave-return';
 import { lineCommission, DEFAULT_COMMISSION_RULES, techFilterOf, TECH_FILTER_LABELS } from '../src/shared/clockroom';
 import { parseHeight, parseStar, parseWeight, parsePhone } from '../src/shared/technician-import';
@@ -322,6 +322,26 @@ describe('一报多', () => {
     expect(bad.body.error.message).toContain('第 2 行');
     expect(bad.body.error.details.row).toBe(1);
     expect((await ctx.sql`SELECT count(*)::int AS n FROM bookings`)[0]!.n).toBe(3);
+  });
+
+  it('8.2.5：一报多有意重叠的不算自检的错，别的重叠照旧报；没有「技师预约」的不能从批量入口建', async () => {
+    // 上一条建的「王」「李」同一位技师同一时段：前台自检照样通过
+    expect((await bookingChecks(ctx.sql)).ok).toBe(true);
+    // 收银员（只有「预约」）不能借批量的入口建技师预约（Codex 审查）
+    const date = (await board()).businessDate as string;
+    const tomorrow = new Date(Date.parse(`${date}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const slots = (await api(ctx.app, duty, 'GET', `/api/bookings/slots?kind=technician&date=${tomorrow}&itemId=${foot}`)).body as { startsAt: string }[];
+    const denied = await api(ctx.app, ctx.clerk, 'POST', '/api/bookings/batch', {
+      clientKey: randomUUID(),
+      rows: [{ guestName: '赵', itemId: foot, technicianId: tech['02'], startsAt: slots[6]!.startsAt }],
+    });
+    expect(denied.status).toBe(403);
+    // 两张都不是一报多建的重叠（数据坏了）照旧报出来
+    const [a] = await ctx.sql<{ id: number }[]>`SELECT id FROM bookings WHERE guest_name = '王'`;
+    await ctx.sql`UPDATE bookings SET technician_overlap = false WHERE guest_name IN ('王', '李')`;
+    expect((await bookingChecks(ctx.sql)).ok).toBe(false);
+    await ctx.sql`UPDATE bookings SET technician_overlap = true WHERE id = ${a!.id}`;
+    expect((await bookingChecks(ctx.sql)).ok).toBe(true);
   });
 });
 

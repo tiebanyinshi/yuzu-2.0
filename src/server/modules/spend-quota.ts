@@ -6,9 +6,13 @@ import { formatYuan } from '@shared/money';
 import type { Db } from '../db';
 import { unprocessable } from '../lib/errors';
 
-/** 这位会员这个营业日的额度；当天没充值、或比例是「不限」时为 null */
-export async function spendQuotaOf(db: Db, memberId: number, businessDate: string, pct: number | null): Promise<SpendQuota | null> {
+/**
+ * 这位会员这个营业日的额度；当天没充值、或比例是「不限」时为 null。
+ * reversing：这次马上要撤销的消费（结账时一起退的储值押金，8.2.5）——预览时当它已经退回，不算「已用」
+ */
+export async function spendQuotaOf(db: Db, memberId: number, businessDate: string, pct: number | null, reversing: readonly number[] = []): Promise<SpendQuota | null> {
   if (pct === null) return null;
+  const skip = reversing.length ? db`AND c.id NOT IN ${db(reversing)}` : db``;
   const [row] = await db<{ firstId: number | null; prior: number | null; carried: number; recharged: number; spent: number }[]>`
     WITH first AS (
       SELECT id, principal_after + bonus_after - principal_delta - bonus_delta AS prior
@@ -34,7 +38,7 @@ export async function spendQuotaOf(db: Db, memberId: number, businessDate: strin
            (SELECT coalesce(sum(paid_amount), 0) FROM recharges WHERE member_id = ${memberId} AND business_date = ${businessDate}) AS recharged,
            (SELECT coalesce(sum(c.total_amount), 0) FROM consumptions c JOIN ledger_entries le ON le.consumption_id = c.id AND le.entry_type = 'consume'
              WHERE c.member_id = ${memberId} AND c.status = 'completed' AND c.business_date = ${businessDate}
-               AND le.id > (SELECT id FROM first)) AS spent`;
+               AND le.id > (SELECT id FROM first) ${skip}) AS spent`;
   if (!row || row.firstId === null || row.prior === null) return null;
   const recharged = Number(row.recharged);
   const priorBalance = Number(row.prior) + Number(row.carried);
@@ -55,8 +59,14 @@ export function assertWithinSpendQuota(q: SpendQuota | null, amount: number, mem
 }
 
 /** 结账前核对：给结账里的会员带上今天的储值额度（只读） */
-export async function withSpendQuota<M extends { id: number }>(db: Db, members: M[], businessDate: string, pct: number | null): Promise<(M & { spendQuota: SpendQuota | null })[]> {
+export async function withSpendQuota<M extends { id: number }>(
+  db: Db,
+  members: M[],
+  businessDate: string,
+  pct: number | null,
+  reversing: readonly number[] = [],
+): Promise<(M & { spendQuota: SpendQuota | null })[]> {
   const out: (M & { spendQuota: SpendQuota | null })[] = [];
-  for (const m of members) out.push({ ...m, spendQuota: await spendQuotaOf(db, Number(m.id), businessDate, pct) });
+  for (const m of members) out.push({ ...m, spendQuota: await spendQuotaOf(db, Number(m.id), businessDate, pct, reversing) });
   return out;
 }

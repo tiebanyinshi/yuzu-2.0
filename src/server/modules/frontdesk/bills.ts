@@ -19,7 +19,7 @@ import { loadTechnicianRules, loadTechnicians } from '../technicians';
 import { attachSessions, lockQueue, syncSessionAfterVoid, type SessionPostOptions } from '../clockroom';
 import { cancelKitchenItem, createKitchenItems, kitchenStationsOf, loadDiningRules, takeDishLimits } from '../dining';
 import { authorizeLineVoid } from '../dining-808';
-import { assertOrderOutlets, DeliverRoomField, OrderNoteField, VoidBlameField } from '../dining-order-v8115';
+import { assertOrderOutlets, assertStationOutlets, DeliverRoomField, OrderNoteField, VoidBlameField } from '../dining-order-v8115';
 import { DishLineFields, kitchenPartsOf, limitLinesOf, planDishLines, type ComboPartPlan } from '../dish-lines';
 import { applyPriceMode, PriceModeFields } from '../dish-price-mode';
 import { lockAddonLines, voidAddonLines, WithAddonsField } from '../dish-addon-void';
@@ -291,6 +291,13 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
     tx,
     input.customLines.flatMap((l) => (l.stationId === undefined ? [] : [l.stationId])),
   );
+  if (options.outlets) {
+    await assertStationOutlets(
+      tx,
+      ctx.actor,
+      input.customLines.flatMap((l) => (l.stationId === undefined ? [] : [{ name: l.name, stationName: customStations.get(l.stationId)!.name }])),
+    );
+  }
   for (const l of input.customLines) {
     const stationId = l.stationId ?? null;
     lines.push({

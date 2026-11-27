@@ -115,6 +115,9 @@ export function TablesTab() {
       if (tile) setStateFor(tile);
     } else if (resume === 'table_merge' && s) {
       setSessionId(s);
+    } else if (resume === 'table_return' && s) {
+      // 8.2.5：返台待确认回到返台对话框（查回、原样重提、确认作废）
+      setReturning({ sessionId: s });
     }
     const next = new URLSearchParams(params);
     for (const k of ['resume', 't', 's']) next.delete(k);

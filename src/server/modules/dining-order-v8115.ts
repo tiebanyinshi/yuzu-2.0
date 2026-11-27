@@ -78,12 +78,28 @@ export async function assertOrderOutlets(db: Db, actor: Actor, itemIds: number[]
   const rows = await db<{ name: string; category: string; diningOutlet: string | null; diningGroup: string; stationName: string }[]>`
     SELECT i.name, i.category, i.dining_outlet, i.dining_group, s.name AS station_name
     FROM service_items i JOIN kitchen_stations s ON s.id = i.station_id WHERE i.id IN ${db(ids)} ORDER BY i.id`;
-  const denied: { name: string; outlet: DiningOutlet }[] = [];
   const slots = await loadDiningOutlets(db);
-  for (const r of rows) {
-    const { outlet } = diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName }, slots);
-    if (!can(actor, OUTLET_ORDER_PERMISSIONS[outlet])) denied.push({ name: r.name, outlet });
-  }
+  denyOutlets(
+    actor,
+    rows.map((r) => ({ name: r.name, outlet: diningSlotOf({ outlet: r.diningOutlet, group: r.diningGroup, category: r.category, stationName: r.stationName }, slots).outlet })),
+  );
+}
+
+/**
+ * 临时项目选了档口进厨房（8.2.4）也按出品口核对下单权限（8.2.5，Codex 审查）：没有菜品，按档口名归到出品口
+ * （与菜品没设分类时的归法一样：果吧、水吧按档口名，其余归餐厅）
+ */
+export async function assertStationOutlets(db: Db, actor: Actor, lines: { name: string; stationName: string }[]) {
+  if (lines.length === 0) return;
+  const slots = await loadDiningOutlets(db);
+  denyOutlets(
+    actor,
+    lines.map((l) => ({ name: l.name, outlet: diningSlotOf({ outlet: null, group: null, category: null, stationName: l.stationName }, slots).outlet })),
+  );
+}
+
+function denyOutlets(actor: Actor, lines: { name: string; outlet: DiningOutlet }[]) {
+  const denied = lines.filter((l) => !can(actor, OUTLET_ORDER_PERMISSIONS[l.outlet]));
   if (denied.length) {
     const outlets = [...new Set(denied.map((d) => DINING_OUTLET_LABELS[d.outlet]))].join('、');
     throw new AppError(403, 'OUTLET_FORBIDDEN', `你的岗位不能在${outlets}下单（${denied.map((d) => `「${d.name}」`).join('')}），请删掉或请有权限的同事点`, {

@@ -24,7 +24,7 @@ import { ctxOf, type Deps, type OpContext } from '../lib/context';
 import { AppError, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { idParam, parse } from '../lib/validate';
 import { currentStoreId } from '../lib/store-context';
-import { businessDate, loadCheckout, setTxTimeouts } from './frontdesk';
+import { businessDate, hashRequest, loadCheckout, saveKey, setTxTimeouts } from './frontdesk';
 import { tableChargesOf } from './table-charges';
 import { loadDiningRules } from './dining';
 
@@ -116,6 +116,13 @@ async function replayOf(db: Db, key: string, sessionId: number): Promise<boolean
   return true;
 }
 
+/**
+ * 返台的操作编号也记一份在前台的编号表（8.2.5，Codex 审查）：没收到回复时能按编号查回、确认作废；
+ * 写之前核对「确认作废」——作废过的整笔回滚（已结账的连反结账一起回滚）
+ */
+const saveReturnKey = (tx: Tx, key: string, sessionId: number, reason: string, staffId: number) =>
+  saveKey(tx, key, 'table_return', hashRequest({ op: 'table_return', sessionId, reason }), sessionId, staffId);
+
 /** 低消没够才能返台：这一次开台此刻的低消与菜钱（低消为 0 的不是包房、不能返台；够了的不用返台） */
 async function assertShort(db: Db, sessionId: number, timeZone: string) {
   const c = (await tableChargesOf(db, [sessionId], timeZone)).get(sessionId)!;
@@ -188,6 +195,7 @@ async function returnParked(deps: Deps, sessionId: number, input: z.output<typeo
     await tx`
       INSERT INTO table_session_returns (session_id, table_id, kind, checkout_id, min_spend, subtotal, reason, client_key, created_by, created_at)
       VALUES (${sessionId}, ${t!.id}, 'parked', NULL, ${c.minSpend}, ${c.subtotal}, ${input.reason}, ${input.clientKey}, ${ctx.actor.id}, ${at})`;
+    await saveReturnKey(tx, input.clientKey, sessionId, input.reason, ctx.actor.id);
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'table_return',
@@ -233,6 +241,7 @@ async function finishSettledReturn(tx: Tx, deps: Deps, a: { sessionId: number; k
   await tx`
     INSERT INTO table_session_returns (session_id, table_id, kind, checkout_id, min_spend, subtotal, reason, client_key, created_by, created_at)
     VALUES (${a.sessionId}, ${s!.tableId}, 'settled', ${a.checkout.id}, ${c.minSpend}, ${c.subtotal}, ${a.reason}, ${a.key}, ${a.ctx.actor.id}, ${a.checkout.at})`;
+  await saveReturnKey(tx, a.key, a.sessionId, a.reason, a.ctx.actor.id);
   await writeAudit(tx, {
     staffId: a.ctx.actor.id,
     action: 'table_return',
