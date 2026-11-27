@@ -37,6 +37,7 @@
 - [`BUDGET_INVOICES.md`](BUDGET_INVOICES.md)：费用预算与进项发票台账（8.0.3）· 设计稿
 - [`CANTEEN.md`](CANTEEN.md)：员工食堂 · 柚子饭堂
 - [`CASHIER.md`](CASHIER.md)：收银完善（v0.7.6 起）
+- [`CASHIER_MERGE.md`](CASHIER_MERGE.md)：收银合并：把同事做的收银员工作台对照进柚子（需求评审稿）
 - [`CONCIERGE.md`](CONCIERGE.md)：管家部 · 8.0.12
 - [`CONCIERGE_LINKS.md`](CONCIERGE_LINKS.md)：管家部与会员、资源系统联动
 - [`CONTRACTS.md`](CONTRACTS.md)：合同与法务审查（v0.7.31）
