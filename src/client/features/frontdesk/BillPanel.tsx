@@ -488,8 +488,8 @@ export function BillPanel({
                 variant="secondary"
                 className="@min-[22rem]:ml-auto"
                 icon={<ArrowRight className="size-4" />}
-                onClick={() => navigate(`/crm/cashier?v=${visit.id}${open ? '&resume=checkout' : ''}`)}
-                kbd={open ? hotkeyOf('checkout') : undefined}
+                // 按钮只带着手牌过去（到了可以先加项目、打折）；发卡台按 F9「买单」才到了直接打开结账
+                onClick={() => navigate(`/crm/cashier?v=${visit.id}`)}
                 data-testid="go-cashier"
               >
                 {open ? '去收银台结账' : '去收银台看结账单'}
