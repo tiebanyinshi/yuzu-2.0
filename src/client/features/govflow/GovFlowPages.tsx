@@ -19,8 +19,6 @@ import {
   type GfFilePurpose,
   type GfFlag,
   type GfMeta,
-  type GfRole,
-  type GfRoleMember,
   type GfSpecialView,
   type GfStatus,
 } from '@shared/govflow';
@@ -40,6 +38,7 @@ import { ContractPanel, ContractsPanel } from './ContractPages';
 import { PaymentPanel, PaymentsPanel } from './PaymentPages';
 import { ExpensePanel } from './ExpensePages';
 import { HrBatchPanel, HrPanel } from './HrPages';
+import { RolesPanel } from './RolesPanel';
 
 type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'expense' | 'hr' | 'roles';
 const STATUS_TONE: Record<GfStatus, 'neutral' | 'pine' | 'moss' | 'yuzu' | 'ember' | 'clay' | 'lake' | 'ink'> = {
@@ -720,83 +719,5 @@ function BackfillDialog({ special, onClose }: { special: GfSpecialView; onClose:
         <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="说明（选填）" maxLength={500} />
       </div>
     </Dialog>
-  );
-}
-
-// ───────────────────────── 角色映射 ─────────────────────────
-
-function RolesPanel() {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const meta = useMeta();
-  const q = useQuery({ queryKey: ['gf', 'roles'], queryFn: () => api.get<GfRoleMember[]>('/api/gf/roles') });
-  const [role, setRole] = useState<GfRole | ''>('');
-  const [staffId, setStaffId] = useState<number | ''>('');
-  const [entityId, setEntityId] = useState<number | ''>('');
-  const add = useMutation({
-    mutationFn: () => api.post<GfRoleMember[]>('/api/gf/roles', { role, staffId, entityId: entityId || null }),
-    onSuccess: (list) => {
-      qc.setQueryData(['gf', 'roles'], list);
-      qc.invalidateQueries({ queryKey: ['gf', 'meta'] });
-      setStaffId('');
-    },
-    onError: (e) => toast({ tone: 'error', title: '没有加上', body: errorMessage(e) }),
-  });
-  const revoke = useMutation({
-    mutationFn: (id: number) => api.post<GfRoleMember[]>(`/api/gf/roles/${id}/revoke`),
-    onSuccess: (list) => qc.setQueryData(['gf', 'roles'], list),
-    onError: (e) => toast({ tone: 'error', title: '没有撤销', body: errorMessage(e) }),
-  });
-  return (
-    <Card className="space-y-3 p-4" data-testid="gf-roles">
-      <p className="text-[13px] text-ink-2">把真实账号配成各个角色；店主不自动顶替这些角色。最高角色是董事长。按经营主体限定的只审那个主体的事项。</p>
-      <div className="grid gap-2 sm:grid-cols-4">
-        <Select value={role} onChange={(e) => setRole(e.target.value as GfRole | '')} data-testid="gf-role-role">
-          <option value="">角色</option>
-          {meta.data?.roles.map((r) => (
-            <option key={r.role} value={r.role}>
-              {r.label}
-            </option>
-          ))}
-        </Select>
-        <Select value={staffId} onChange={(e) => setStaffId(e.target.value ? Number(e.target.value) : '')} data-testid="gf-role-staff">
-          <option value="">员工</option>
-          {meta.data?.staff.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </Select>
-        <Select value={entityId} onChange={(e) => setEntityId(e.target.value ? Number(e.target.value) : '')}>
-          <option value="">所有经营主体</option>
-          {meta.data?.entities.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name}
-            </option>
-          ))}
-        </Select>
-        <Button disabled={!role || !staffId} loading={add.isPending} onClick={() => add.mutate()} data-testid="gf-role-add">
-          加上
-        </Button>
-      </div>
-      {q.isPending ? (
-        <Skeleton className="h-24" />
-      ) : (
-        <ul className="divide-y divide-line">
-          {(q.data ?? []).map((m) => (
-            <li key={m.id} className="flex items-center gap-2 py-2 text-[14px]">
-              <span className="w-40 shrink-0 font-semibold text-ink">{GF_ROLE_LABELS[m.role]}</span>
-              <span className="min-w-0 flex-1 text-ink-2">
-                {m.staffName}
-                {m.entityName ? ` · 限 ${m.entityName}` : ''}
-              </span>
-              <Button size="sm" variant="ghost" onClick={() => revoke.mutate(m.id)}>
-                撤销
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Card>
   );
 }

@@ -7,7 +7,7 @@
 「只追加」的表（账本、流水、审批动作、归档表）有触发器拒绝改删，改错走冲正或作废登记。
 列表里「键」：`PK` 主键；「引用」是外键指向的表。
 
-共 468 张表、5562 列。
+共 468 张表、5565 列。
 
 ## 目录
 
@@ -6665,6 +6665,7 @@ Batch 3 · S3.1–S3.3：门票 12 小时跳档、结账收款、团购券、会
 | level_started_at | timestamp with time zone |  |  | now() |  |  |
 | finished_at | timestamp with time zone |  | 是 |  |  |  |
 | finished_by | bigint |  | 是 |  | staff |  |
+| seat_snapshot | jsonb |  | 是 |  |  | 提交时的审批人快照 {members: {角色: [staff_id]}, deptHeadId}（8.2.9，WB2）；空 = 旧单，实时取 |
 
 ### gf_hr_batch_lines
 
@@ -6843,6 +6844,8 @@ Batch 3 · S3.1–S3.3：门票 12 小时跳档、结账收款、团购券、会
 | created_at | timestamp with time zone |  |  | now() |  |  |
 | revoked_by | bigint |  | 是 |  | staff |  |
 | revoked_at | timestamp with time zone |  | 是 |  |  |  |
+| replaces_id | bigint |  | 是 |  | gf_role_members | 修改映射时新的一条指回被替换的旧一条（8.2.9） |
+| revoke_reason | text |  |  | ''::text |  | 撤销或被修改替换的原因（8.2.9） |
 
 ### gf_settings
 

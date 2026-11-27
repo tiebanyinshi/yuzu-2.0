@@ -126,6 +126,7 @@
 - [`V8224_DINING.md`](V8224_DINING.md)：8.2.4 餐饮：分组默认档口、临时项目进厨房、包房房型、服务费门店默认、返台、公司承担
 - [`V827_APPROVALS_PURCHASING.md`](V827_APPROVALS_PURCHASING.md)：8.2.7 · 报销不再自动通过；采购按单号直达与排序
 - [`V828_SELF_PURCHASE.md`](V828_SELF_PURCHASE.md)：8.2.8 · 采购：无供应商自购
+- [`V829_GF_ROLES.md`](V829_GF_ROLES.md)：8.2.9 · 业财法：角色映射可改、变更记录、提交时快照审批人
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
 - [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面

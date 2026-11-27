@@ -56,6 +56,13 @@ export interface FlowRow {
   currentLevel: number;
   status: GfFlowStatus;
   submittedBy: number;
+  /** 提交时的审批人快照（8.2.9，WB2）；旧单为空，实时取 */
+  seatSnapshot: SeatSnapshot | null;
+}
+
+export interface SeatSnapshot {
+  members: Partial<Record<GfRole, number[]>>;
+  deptHeadId: number | null;
 }
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -142,10 +149,29 @@ export async function deptHeadOf(db: Db, departmentId: number | null): Promise<n
   return num(d?.headId);
 }
 
+/**
+ * 这一轮各席谁能坐（8.2.9，WB2 方案 A）：按提交时的快照，改角色映射不影响在途单。
+ * 快照里的人停用了（离职）：这一席没有在用的人时，改按现在的映射取，免得单子卡死；旧单没有快照的照旧实时取。
+ */
 export async function seatContext(db: Db, doc: DocRow, flow: FlowRow): Promise<SeatContext> {
+  const live = await loadMembers(db, doc.entityId);
+  const liveHead = await deptHeadOf(db, doc.departmentId);
+  const snap = flow.seatSnapshot;
+  let members = live;
+  let deptHeadId = liveHead;
+  if (snap) {
+    const ids = [...new Set([...Object.values(snap.members).flat(), ...(snap.deptHeadId ? [snap.deptHeadId] : [])])].map(Number);
+    const active = new Set(ids.length ? (await db<{ id: number }[]>`SELECT id FROM staff WHERE id IN ${db(ids)} AND active`).map((r) => Number(r.id)) : []);
+    members = {};
+    for (const role of new Set([...Object.keys(snap.members), ...Object.keys(live)]) as Set<GfRole>) {
+      const kept = (snap.members[role] ?? []).map(Number).filter((id) => active.has(id));
+      members[role] = kept.length ? kept : (live[role] ?? []);
+    }
+    deptHeadId = snap.deptHeadId && active.has(Number(snap.deptHeadId)) ? Number(snap.deptHeadId) : liveHead;
+  }
   return {
-    members: await loadMembers(db, doc.entityId),
-    deptHeadId: await deptHeadOf(db, doc.departmentId),
+    members,
+    deptHeadId,
     performerId: doc.performerId,
     submittedBy: flow.submittedBy,
     subjectStaffId: doc.subjectStaffId,
@@ -297,8 +323,8 @@ export async function submitFlow(tx: Tx, doc: DocRow, template: GfNode[], actor:
   }
   const round = (last?.round ?? 0) + 1;
   const [row] = await tx<FlowRow[]>`
-    INSERT INTO gf_flows (doc_id, round, nodes, notes, submitted_by)
-    VALUES (${doc.id}, ${round}, ${tx.json(plan.nodes as never)}, ${plan.notes}, ${actor.id})
+    INSERT INTO gf_flows (doc_id, round, nodes, notes, submitted_by, seat_snapshot)
+    VALUES (${doc.id}, ${round}, ${tx.json(plan.nodes as never)}, ${plan.notes}, ${actor.id}, ${tx.json({ members, deptHeadId } as never)})
     RETURNING *`;
   const flow = flowOf(row!);
   const r = await advance(tx, doc, flow, ctx, actor.id);

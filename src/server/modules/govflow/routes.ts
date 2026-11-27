@@ -30,6 +30,7 @@ import {
   type GfMeta,
   type GfNodeView,
   type GfRole,
+  type GfRoleChange,
   type GfRoleMember,
   type GfSpecialView,
   type GfStage,
@@ -79,11 +80,45 @@ async function canView(db: Db, actor: Actor, doc: DocRow): Promise<boolean> {
 
 async function listMembers(db: Db): Promise<GfRoleMember[]> {
   const rows = await db<(Omit<GfRoleMember, 'createdAt'> & { createdAt: Date })[]>`
-    SELECT m.id, m.role, m.staff_id, s.display_name AS staff_name, m.entity_id, e.name AS entity_name, m.note, c.display_name AS created_by_name, m.created_at
+    SELECT m.id, m.role, m.staff_id, s.display_name AS staff_name, s.username AS staff_no, d.name AS department_name,
+           m.entity_id, e.name AS entity_name, m.note, c.display_name AS created_by_name, m.created_at
     FROM gf_role_members m JOIN staff s ON s.id = m.staff_id JOIN staff c ON c.id = m.created_by LEFT JOIN legal_entities e ON e.id = m.entity_id
+         LEFT JOIN departments d ON d.id = s.department_id
     WHERE m.revoked_at IS NULL ORDER BY array_position(${GF_ROLES as unknown as string[]}::text[], m.role), s.display_name`;
   return rows.map((r) => ({ ...r, id: Number(r.id), staffId: Number(r.staffId), entityId: r.entityId === null ? null : Number(r.entityId), createdAt: iso(r.createdAt)! }));
 }
+
+/** 变更记录（8.2.9，A1）：加（不是替换别的）、改（替换了旧的一条）、撤（撤销且没有被替换），新的在前 */
+async function roleChanges(db: Db): Promise<GfRoleChange[]> {
+  const rows = await db<(Omit<GfRoleChange, 'at'> & { at: Date })[]>`
+    SELECT * FROM (
+      SELECT m.id, m.role, s.display_name AS staff_name, s.username AS staff_no, e.name AS entity_name, m.note,
+             CASE WHEN m.replaces_id IS NULL THEN 'add' ELSE 'edit' END AS op,
+             os.display_name AS replaced_staff_name, coalesce(o.revoke_reason, '') AS reason, c.display_name AS by_name, m.created_at AS at
+      FROM gf_role_members m JOIN staff s ON s.id = m.staff_id JOIN staff c ON c.id = m.created_by LEFT JOIN legal_entities e ON e.id = m.entity_id
+           LEFT JOIN gf_role_members o ON o.id = m.replaces_id LEFT JOIN staff os ON os.id = o.staff_id
+      UNION ALL
+      SELECT m.id, m.role, s.display_name, s.username, e.name, m.note, 'revoke', NULL, m.revoke_reason, r.display_name, m.revoked_at
+      FROM gf_role_members m JOIN staff s ON s.id = m.staff_id JOIN staff r ON r.id = m.revoked_by LEFT JOIN legal_entities e ON e.id = m.entity_id
+      WHERE m.revoked_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM gf_role_members n WHERE n.replaces_id = m.id)
+    ) x ORDER BY at DESC, id DESC LIMIT 500`;
+  return rows.map((r) => ({ ...r, id: Number(r.id), at: iso(r.at)! }));
+}
+
+/** 能配业财法角色的员工：在用、不是专用账号 */
+async function assertRoleStaff(tx: Tx, staffId: number) {
+  const [s] = await tx<{ role: string }[]>`SELECT role FROM staff WHERE id = ${staffId} AND active`;
+  if (!s) throw unprocessable('GF_STAFF', '员工不存在或已停用');
+  if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(s.role)) throw unprocessable('GF_STAFF', '专用账号不能配业财法角色');
+}
+
+const EditInput = z.object({
+  staffId: z.number().int().positive('请选员工'),
+  entityId: z.number().int().positive().nullable().default(null),
+  note: z.string().trim().max(100, '备注最多 100 个字').default(''),
+  reason: z.string().trim().min(2, '请写修改原因（至少 2 个字）').max(200, '原因最多 200 个字'),
+});
+const RevokeInput = z.object({ reason: z.string().trim().max(200, '原因最多 200 个字').default('') });
 
 const MemberInput = z.object({
   role: z.enum(GF_ROLES, '请选角色'),
@@ -546,9 +581,7 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/gf/roles', { preHandler: manage }, async (req) => {
     const input = parse(MemberInput, req.body);
     await sql.begin(async (tx) => {
-      const [s] = await tx<{ role: string }[]>`SELECT role FROM staff WHERE id = ${input.staffId} AND active`;
-      if (!s) throw unprocessable('GF_STAFF', '员工不存在或已停用');
-      if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(s.role)) throw unprocessable('GF_STAFF', '专用账号不能配业财法角色');
+      await assertRoleStaff(tx, input.staffId);
       try {
         const [row] = await tx<{ id: number }[]>`
           INSERT INTO gf_role_members (role, staff_id, entity_id, note, created_by) VALUES (${input.role}, ${input.staffId}, ${input.entityId}, ${input.note}, ${req.actor.id}) RETURNING id`;
@@ -563,13 +596,51 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
 
   app.post('/api/gf/roles/:id/revoke', { preHandler: manage }, async (req) => {
     const { id } = parse(idParam, req.params);
+    const { reason } = parse(RevokeInput, req.body ?? {});
     await sql.begin(async (tx) => {
-      const rows = await tx`UPDATE gf_role_members SET revoked_at = now(), revoked_by = ${req.actor.id} WHERE id = ${id} AND revoked_at IS NULL RETURNING id`;
+      const rows = await tx`
+        UPDATE gf_role_members SET revoked_at = now(), revoked_by = ${req.actor.id}, revoke_reason = ${reason} WHERE id = ${id} AND revoked_at IS NULL RETURNING id`;
       if (!rows.length) throw notFound('没有这条角色映射（或已撤销）');
-      await writeAudit(tx, { staffId: req.actor.id, action: 'gf_role', targetType: 'gf_role_member', targetId: id, detail: { op: 'revoke' }, ip: req.ip });
+      await writeAudit(tx, { staffId: req.actor.id, action: 'gf_role', targetType: 'gf_role_member', targetId: id, detail: { op: 'revoke', reason }, ip: req.ip });
     });
     return listMembers(sql);
   });
+
+  // 修改（8.2.9，A1、WB1）：换人、改经营主体范围、改备注；角色不能改。旧的一条撤销、新建一条指回它。
+  // 已经提交的单按提交时的快照审批（WB2），不受影响；之后提交的按新的
+  app.post('/api/gf/roles/:id/edit', { preHandler: manage }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    const input = parse(EditInput, req.body);
+    await sql.begin(async (tx) => {
+      const [old] = await tx<{ role: string; staffId: number; entityId: number | null; note: string }[]>`
+        SELECT role, staff_id, entity_id, note FROM gf_role_members WHERE id = ${id} AND revoked_at IS NULL FOR UPDATE`;
+      if (!old) throw notFound('没有这条角色映射（或已撤销），请刷新后再看');
+      if (Number(old.staffId) === input.staffId && (old.entityId === null ? null : Number(old.entityId)) === input.entityId && old.note === input.note) {
+        throw unprocessable('GF_ROLE_SAME', '没有改动');
+      }
+      await assertRoleStaff(tx, input.staffId);
+      await tx`UPDATE gf_role_members SET revoked_at = now(), revoked_by = ${req.actor.id}, revoke_reason = ${input.reason} WHERE id = ${id}`;
+      try {
+        const [row] = await tx<{ id: number }[]>`
+          INSERT INTO gf_role_members (role, staff_id, entity_id, note, created_by, replaces_id)
+          VALUES (${old.role}, ${input.staffId}, ${input.entityId}, ${input.note}, ${req.actor.id}, ${id}) RETURNING id`;
+        await writeAudit(tx, {
+          staffId: req.actor.id,
+          action: 'gf_role',
+          targetType: 'gf_role_member',
+          targetId: Number(row!.id),
+          detail: { op: 'edit', replaces: id, before: { staffId: Number(old.staffId), entityId: old.entityId, note: old.note }, after: input },
+          ip: req.ip,
+        });
+      } catch (error) {
+        if (isUniqueViolation(error, 'gf_role_members_active_uq')) throw conflict('GF_ROLE_DUP', '这个人已经是这个角色了');
+        throw error;
+      }
+    });
+    return listMembers(sql);
+  });
+
+  app.get('/api/gf/roles/changes', { preHandler: manage }, async () => roleChanges(sql));
 
   app.get('/api/gf/docs', { preHandler: staffOnly }, async (req) => {
     const { box } = parse(z.object({ box: z.enum(['mine', 'todo', 'cc', 'all']).default('mine') }), req.query ?? {});

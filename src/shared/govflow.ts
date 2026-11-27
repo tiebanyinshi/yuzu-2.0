@@ -406,6 +406,26 @@ export interface GfRoleMember {
   note: string;
   createdByName: string;
   createdAt: string;
+  /** 工号（登录账号）、所在部门（8.2.9，A1：同名的人分得清） */
+  staffNo: string;
+  departmentName: string | null;
+}
+
+/** 角色映射的变更记录（8.2.9，A1）：每一条映射的加、改、撤 */
+export interface GfRoleChange {
+  id: number;
+  role: GfRole;
+  staffName: string;
+  staffNo: string;
+  entityName: string | null;
+  note: string;
+  /** add 新加；edit 修改（替换了 replacesId 那一条）；revoke 撤销 */
+  op: 'add' | 'edit' | 'revoke';
+  /** 修改时被替换的那一条的人 */
+  replacedStaffName: string | null;
+  reason: string;
+  byName: string;
+  at: string;
 }
 
 export interface GfMeta {
