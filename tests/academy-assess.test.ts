@@ -146,6 +146,11 @@ describe('学堂 · 测验', () => {
     const third = (await api<AcademyQuizView>(ctx.app, ctx.clerk, 'POST', `/api/academy/lessons/${quizId}/quiz`, { clientKey: randomUUID() })).body;
     const r3 = await api<AcademyQuizResult>(ctx.app, ctx.clerk, 'POST', `/api/academy/attempts/${third.attemptId}/submit`, { answers: third.questions.map(() => [0]) });
     expect(r3.body.completion).toMatchObject({ credits: 0 });
+    // 开卷以后测验下架：不再收卷（Codex 审查 43c2d86）
+    const open = (await api<AcademyQuizView>(ctx.app, ctx.clerk, 'POST', `/api/academy/lessons/${quizId}/quiz`, { clientKey: randomUUID() })).body;
+    await ctx.sql`UPDATE academy_lessons SET active = false WHERE id = ${quizId}`;
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/academy/attempts/${open.attemptId}/submit`, { answers: open.questions.map(() => [0]) })).body.error.code).toBe('ACADEMY_PREVIEW_ONLY');
+    await ctx.sql`UPDATE academy_lessons SET active = true WHERE id = ${quizId}`;
   });
 });
 
@@ -156,7 +161,9 @@ describe('学堂 · 每日一练', () => {
     expect(daily.items.length).toBeGreaterThan(0);
     expect(daily.items.every((i) => i.isNew)).toBe(true);
     expect(daily.items.some((i) => i.kind === 'recall')).toBe(true);
-    expect(JSON.stringify(daily.items)).not.toContain('answerText');
+    // 客观题不带答案；问答卡带答案（页面先盖着，点「看答案」再自评）
+    expect(daily.items.filter((i) => i.kind !== 'recall').every((i) => i.answerText === null)).toBe(true);
+    expect(daily.items.find((i) => i.kind === 'recall')!.answerText).toBe('先安抚，核对后挂失补牌。');
     const recall = daily.items.find((i) => i.kind === 'recall')!;
     expect((await api(ctx.app, ctx.clerk, 'POST', '/api/academy/daily/answer', { clientKey: randomUUID(), questionId: recall.questionId })).status).toBe(400);
     let last: { credits: number; doneToday: number } = { credits: 0, doneToday: 0 };
@@ -188,17 +195,25 @@ describe('学堂 · 实操签核与证书', () => {
     const queue = (await api<AcademyCoachItem[]>(ctx.app, lead, 'GET', '/api/academy/coach')).body;
     expect(queue).toEqual([expect.objectContaining({ name: '测试店员', lessonId: practicalId, items: ['主动问候', '核对人数', '指引更衣室'], last: null })]);
     expect((await api(ctx.app, diner, 'GET', '/api/academy/coach')).status).toBe(403);
-    const base = { staffId: ctx.clerkId, lessonId: practicalId };
+    const lessonVersion = queue[0]!.lessonVersion;
+    const base = { staffId: ctx.clerkId, lessonId: practicalId, lessonVersion };
     expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: randomUUID(), checks: [true, true], result: 'pass' })).status).toBe(400);
     expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: randomUUID(), checks: [true, false, true], result: 'pass' })).status).toBe(400);
     const diner2 = await ctx.sql<{ id: number }[]>`SELECT id FROM staff WHERE username = 'diner2'`;
     expect(
-      (await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { staffId: diner2[0]!.id, lessonId: practicalId, clientKey: randomUUID(), checks: [true, true, true], result: 'pass' })).status,
+      (await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { staffId: diner2[0]!.id, lessonId: practicalId, lessonVersion, clientKey: randomUUID(), checks: [true, true, true], result: 'pass' }))
+        .status,
     ).toBe(403);
     const leadId = (await ctx.sql<{ id: number }[]>`SELECT id FROM staff WHERE username = 'frontlead'`)[0]!.id;
-    expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { staffId: leadId, lessonId: practicalId, clientKey: randomUUID(), checks: [true, true, true], result: 'pass' })).status).toBe(
-      403,
-    );
+    expect(
+      (await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { staffId: leadId, lessonId: practicalId, lessonVersion, clientKey: randomUUID(), checks: [true, true, true], result: 'pass' }))
+        .status,
+    ).toBe(403);
+    // 检查项被改过（条数没变）：拿旧版本签拒绝
+    await ctx.sql`UPDATE academy_lessons SET version = version + 1 WHERE id = ${practicalId}`;
+    expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: randomUUID(), checks: [true, true, true], result: 'pass' })).body.error.code).toBe('ACADEMY_CHANGED');
+    base.lessonVersion = (await api<AcademyCoachItem[]>(ctx.app, lead, 'GET', '/api/academy/coach')).body[0]!.lessonVersion;
+    expect(base.lessonVersion).toBe(lessonVersion + 1);
     const retry = await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: randomUUID(), checks: [true, false, true], result: 'retry', comment: '指引要说清方向' });
     expect(retry.body).toMatchObject({ completed: false, credits: 0, signoff: { result: 'retry', checks: [true, false, true], signedByName: '前厅主管' } });
     // 第一节图文课还没学：签「通过」以后课程还差一节
@@ -209,7 +224,7 @@ describe('学堂 · 实操签核与证书', () => {
     expect((await api(ctx.app, lead, 'POST', '/api/academy/signoffs', { ...base, clientKey: randomUUID(), checks: [true, true, true], result: 'pass' })).body.error.code).toBe('ACADEMY_ALREADY_DONE');
     await expect(ctx.sql`DELETE FROM academy_signoffs WHERE staff_id = ${ctx.clerkId}`).rejects.toThrow();
     const view = (await api<AcademyLessonView>(ctx.app, ctx.clerk, 'GET', `/api/academy/lessons/${practicalId}`)).body;
-    expect(view.practical).toMatchObject({ items: ['主动问候', '核对人数', '指引更衣室'] });
+    expect(view.practical).toMatchObject({ items: ['主动问候', '核对人数', '指引更衣室'], lessonVersion: lessonVersion + 1 });
     expect(view.practical!.signoffs.map((s) => s.result)).toEqual(['pass', 'retry']);
     // 学完最后一节：课程完成、地图完成、发证书（12 个月有效）
     const article = course.lessons.find((l) => l.kind === 'article')!;

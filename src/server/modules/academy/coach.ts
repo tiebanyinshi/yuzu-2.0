@@ -37,6 +37,8 @@ async function coachScope(db: Db, actor: Actor): Promise<{ all: boolean; departm
   return { all: false, department: r?.department ?? null };
 }
 
+export const lessonVersionOf = async (db: Db, lessonId: number) => (await db<{ version: number }[]>`SELECT version FROM academy_lessons WHERE id = ${lessonId}`)[0]?.version;
+
 export async function signoffsOf(db: Db, staffId: number, lessonId: number): Promise<AcademySignoff[]> {
   const rows = await db<(AcademySignoff & { id: number })[]>`
     SELECT o.id, o.result, o.checks, o.comment, s.display_name AS signed_by_name, o.signed_at
@@ -49,7 +51,7 @@ export async function signoffsOf(db: Db, staffId: number, lessonId: number): Pro
 export async function coachQueue(db: Db, actor: Actor): Promise<AcademyCoachItem[]> {
   const scope = await coachScope(db, actor);
   const rows = await db<(Omit<AcademyCoachItem, 'items' | 'last'> & { body: string; lastResult: 'pass' | 'retry' | null; lastAt: string | null; lastBy: string | null })[]>`
-    SELECT s.id AS staff_id, s.display_name AS name, d.name AS department_name, l.id AS lesson_id, l.title AS lesson_title, c.id AS course_id, c.title AS course_title, l.body,
+    SELECT s.id AS staff_id, s.display_name AS name, d.name AS department_name, l.id AS lesson_id, l.title AS lesson_title, c.id AS course_id, c.title AS course_title, l.body, l.version AS lesson_version,
       lo.result AS last_result, lo.signed_at AS last_at, lo.signed_by_name AS last_by
     FROM staff s LEFT JOIN staff_profiles p ON p.staff_id = s.id
     LEFT JOIN position_catalog pc ON pc.key = s.position LEFT JOIN org_departments d ON d.key = pc.department
@@ -73,6 +75,7 @@ export async function coachQueue(db: Db, actor: Actor): Promise<AcademyCoachItem
     courseId: Number(r.courseId),
     courseTitle: r.courseTitle,
     items: practicalItems(r.body),
+    lessonVersion: r.lessonVersion,
     last: r.lastResult ? { result: r.lastResult, signedAt: r.lastAt!, signedByName: r.lastBy! } : null,
   }));
 }
@@ -81,6 +84,7 @@ const SignoffInput = z.object({
   clientKey: z.uuid('操作编号不正确'),
   staffId: z.number().int().positive(),
   lessonId: z.number().int().positive(),
+  lessonVersion: z.number().int().positive(),
   checks: z.array(z.boolean()).min(1).max(30),
   result: z.enum(['pass', 'retry']),
   comment: z.string().trim().max(300, '评语最多 300 个字').default(''),
@@ -95,12 +99,14 @@ export async function signOff(sql: Sql, ctx: OpContext, raw: unknown, today: str
     WHERE s.id = ${input.staffId} AND ${onDuty(sql)}`;
   if (!trainee) throw notFound('没有这位在职员工');
   if (!scope.all && (!scope.department || trainee.department !== scope.department)) throw forbidden('只能给本部门的同事签实操');
-  const [lesson] = await sql<{ id: number; courseId: number; title: string; credits: number; body: string; kind: string; active: boolean; courseStatus: string }[]>`
-    SELECT l.id, l.course_id, l.title, l.credits, l.body, l.kind, l.active, c.status AS course_status
+  const [lesson] = await sql<{ id: number; courseId: number; title: string; credits: number; body: string; kind: string; active: boolean; courseStatus: string; version: number }[]>`
+    SELECT l.id, l.course_id, l.title, l.credits, l.body, l.kind, l.active, c.status AS course_status, l.version
     FROM academy_lessons l JOIN academy_courses c ON c.id = l.course_id WHERE l.id = ${input.lessonId}`;
   if (!lesson || lesson.kind !== 'practical') throw notFound('没有这个实操课时');
   if (!lesson.active || lesson.courseStatus !== 'published') throw conflict('ACADEMY_PREVIEW_ONLY', '草稿或下架的课不能签');
   const items = practicalItems(lesson.body);
+  // 带教打勾时看的是哪一版检查项：管理员改过（哪怕条数没变）就拒绝，免得按旧要求签了新要求（Codex 审查 43c2d86）
+  if (input.lessonVersion !== lesson.version) throw conflict('ACADEMY_CHANGED', '这项实操的检查项刚改过，请刷新后按新的检查项再签');
   if (input.checks.length !== items.length) throw badRequest(`这个实操有 ${items.length} 项，打勾的是 ${input.checks.length} 项（检查项刚改过，请刷新）`);
   if (input.result === 'pass' && input.checks.some((c) => !c)) throw badRequest('还有没达标的项，签「再练」或者全部达标再签「通过」');
   return withTx(sql, async (tx) => {

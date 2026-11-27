@@ -254,6 +254,10 @@ export async function submitQuiz(sql: Sql, l: Learner, attemptId: number, raw: u
       SELECT id, staff_id, lesson_id, pass_pct, total, questions, answers, correct, score, passed FROM academy_attempts WHERE id = ${attemptId} FOR UPDATE`;
     if (!a || Number(a.staffId) !== l.id) throw notFound('没有这份卷子');
     if (a.answers) return resultOf(a, null);
+    // 开卷以后课程下架、测验课时下架了：不再收卷、不记进度（已交的照样能原样返回；Codex 审查 43c2d86）
+    const [ok] = await tx<{ ok: boolean }[]>`
+      SELECT l.active AND l.kind = 'quiz' AND c.status = 'published' AS ok FROM academy_lessons l JOIN academy_courses c ON c.id = l.course_id WHERE l.id = ${a.lessonId}`;
+    if (!ok?.ok) throw conflict('ACADEMY_PREVIEW_ONLY', '这个测验已经下架，不能再交卷');
     if (answers.length !== a.questions.length) throw badRequest(`这份卷子有 ${a.questions.length} 道题，交上来的是 ${answers.length} 道`);
     const correct = a.questions.filter((q, i) => sameChoice(answers[i]!, q.answer)).length;
     const score = Math.round((correct / a.questions.length) * 100);

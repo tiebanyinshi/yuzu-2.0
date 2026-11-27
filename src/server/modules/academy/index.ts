@@ -28,7 +28,7 @@ import {
 } from './admin';
 import { adminQuestions, createQuestion, quizResult, quizSummary, startQuiz, submitQuiz, updateQuestion } from './assess';
 import { courseDetail, home, lessonView, listCourses, listPaths, pathDetail } from './catalog';
-import { adminCertificates, coachQueue, myDetail, practicalItems, revokeCertificate, signOff, signoffsOf } from './coach';
+import { adminCertificates, coachQueue, lessonVersionOf, myDetail, practicalItems, revokeCertificate, signOff, signoffsOf } from './coach';
 import { answerDaily, dailySet } from './daily';
 import { ACADEMY_MANAGE, learnerGuard, learnerOf } from './learner';
 import { completeLesson, pingLesson, rateCourse } from './progress';
@@ -62,7 +62,7 @@ export function registerAcademyRoutes(app: FastifyInstance, deps: Deps) {
     const id = parse(idParam, req.params).id;
     const view = await lessonView(sql, l, id);
     if (view.lesson.kind === 'quiz') Object.assign(view, await quizSummary(sql, l.id, id, view.course.id));
-    if (view.lesson.kind === 'practical') view.practical = { items: practicalItems(view.lesson.body), signoffs: await signoffsOf(sql, l.id, id) };
+    if (view.lesson.kind === 'practical') view.practical = { items: practicalItems(view.lesson.body), lessonVersion: (await lessonVersionOf(sql, id))!, signoffs: await signoffsOf(sql, l.id, id) };
     return view;
   });
   app.post('/api/academy/lessons/:id/ping', { preHandler: learner }, async (req) =>

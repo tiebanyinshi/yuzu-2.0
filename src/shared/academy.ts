@@ -97,7 +97,7 @@ export interface AcademyLessonView {
   quizBest: { score: number; passed: boolean } | null;
   quizAvailable: number;
   /** 实操课时：检查项与带教签过的记录（新的在前） */
-  practical: { items: string[]; signoffs: AcademySignoff[] } | null;
+  practical: { items: string[]; lessonVersion: number; signoffs: AcademySignoff[] } | null;
 }
 
 export interface AcademyPathSummary {
@@ -350,6 +350,8 @@ export interface AcademyDailyItem {
   skill: string;
   courseTitle: string;
   isNew: boolean;
+  /** 问答卡的答案（先自己想，点「看答案」再显示、再自评；Codex 审查 43c2d86）；客观题为空，交了才给答案 */
+  answerText: string | null;
 }
 
 export interface AcademyDaily {
@@ -421,6 +423,8 @@ export interface AcademyCoachItem {
   courseId: number;
   courseTitle: string;
   items: string[];
+  /** 课时的版本：签核时带回来，检查项改过就拒绝（Codex 审查 43c2d86） */
+  lessonVersion: number;
   last: { result: 'pass' | 'retry'; signedAt: string; signedByName: string } | null;
 }
 

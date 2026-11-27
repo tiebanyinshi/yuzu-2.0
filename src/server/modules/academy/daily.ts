@@ -93,7 +93,18 @@ export async function dailySet(db: Db, l: Learner, today: string): Promise<Acade
     today,
     target: ACADEMY_DAILY_TARGET,
     doneToday: stats.done,
-    items: items.map((c): AcademyDailyItem => ({ questionId: c.questionId, kind: c.kind, stem: c.stem, options: c.options, skill: c.skill, courseTitle: c.courseTitle, isNew: c.isNew })),
+    items: items.map(
+      (c): AcademyDailyItem => ({
+        questionId: c.questionId,
+        kind: c.kind,
+        stem: c.stem,
+        options: c.options,
+        skill: c.skill,
+        courseTitle: c.courseTitle,
+        isNew: c.isNew,
+        answerText: c.kind === 'recall' ? c.answerText : null,
+      }),
+    ),
     streak: await streakOf(db, l.id, today),
     credited: stats.credited,
   };
