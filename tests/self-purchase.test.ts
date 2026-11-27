@@ -1,6 +1,6 @@
 // 8.2.13 无供应商自购（《采购模块需求补充：单号搜索 / 排序 / 无供应商自购》第 3 部分，docs/V8213_SELF_PURCHASE.md）：
 // 采购单可以不选供应商，填自购原因、渠道、经办人、付款方式并上传票据；不造虚拟供应商；
-// 提交一律要负责人审批（提交人不能审），超过 ¥2,000 再加店主；收货不选供应商；结算按现金（不进应付）。
+// 提交一律要负责人审批（提交人不能审），超过 ¥2,000（采购规则里可改）再加店主；收货不选供应商；结算按现金（不进应付）。
 
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -251,5 +251,63 @@ describe('Codex 审查后补（8.2.13）', () => {
       boughtOn: today,
       receiptImageIds: [imageId],
     });
+  });
+});
+
+// 8.2.13 之后（不改版本号）：自购店主复核的金额在「采购规则」里可改（PS5「后台可改」），提交时按当时的值定审批级数
+describe('自购店主复核金额可改', () => {
+  const rulesUrl = '/api/inventory/purchase-rules';
+  const selfPo = (qty: number) => newPo({ purchaseMethod: 'self', self: selfInfo(), lines: [{ materialId: matId, purchaseQtyMilli: q(qty), priceCents: 45_000 }] });
+
+  it('默认 ¥2,000；只有能「维护采购规则」的能改，范围核对', async () => {
+    expect((await api(ctx.app, buyer, 'GET', rulesUrl)).body.selfOwnerReviewCents).toBe(200_000);
+    expect((await api(ctx.app, buyer, 'PUT', rulesUrl, { selfOwnerReviewCents: 500_000 })).status).toBe(403);
+    expect((await api(ctx.app, approver, 'PUT', rulesUrl, { selfOwnerReviewCents: 500_000 })).status).toBe(403);
+    expect((await api(ctx.app, ctx.owner, 'PUT', rulesUrl, { selfOwnerReviewCents: -1 })).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'PUT', rulesUrl, { selfOwnerReviewCents: 100_000_001 })).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'PUT', rulesUrl, { selfOwnerReviewCents: 1.5 })).status).toBe(400);
+    expect((await api(ctx.app, buyer, 'GET', rulesUrl)).body.selfOwnerReviewCents).toBe(200_000);
+  });
+
+  it('改成 ¥5,000：¥4,500 的自购只要负责人，¥5,400 的加店主；改之前提交的照旧按提交时的级数；改动记审计', async () => {
+    // 改之前提交的 ¥4,500（超过 ¥2,000）：负责人 + 店主
+    const before = await selfPo(10);
+    expect(before.status, JSON.stringify(before.body)).toBe(201);
+    expect(await pendingLevels(before.body.po.id)).toEqual(['manager', 'owner']);
+
+    const saved = await api(ctx.app, ctx.owner, 'PUT', rulesUrl, { selfOwnerReviewCents: 500_000 });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(saved.body.selfOwnerReviewCents).toBe(500_000);
+    // 只改提交的字段，别的规则不动
+    expect(saved.body.urgentContractMinCents).toBe(2_000_000);
+    const [audit] = await ctx.sql<{ detail: { key: string; before: { selfOwnerReviewCents: number }; after: { selfOwnerReviewCents: number } } }[]>`
+      SELECT detail FROM audit_logs WHERE action = 'settings_updated' AND detail->>'key' = 'purchase_rules' ORDER BY id DESC LIMIT 1`;
+    expect(audit!.detail.before.selfOwnerReviewCents).toBe(200_000);
+    expect(audit!.detail.after.selfOwnerReviewCents).toBe(500_000);
+
+    const under = await selfPo(10); // ¥4,500
+    expect(under.status, JSON.stringify(under.body)).toBe(201);
+    expect(await pendingLevels(under.body.po.id)).toEqual(['manager']);
+    // 正好 ¥5,000 不算超过
+    const at = await newPo({ purchaseMethod: 'self', self: selfInfo(), lines: [{ materialId: matId, purchaseQtyMilli: q(10), priceCents: 50_000 }] });
+    expect(at.status, JSON.stringify(at.body)).toBe(201);
+    expect(await pendingLevels(at.body.po.id)).toEqual(['manager']);
+    const over = await selfPo(12); // ¥5,400
+    expect(over.status, JSON.stringify(over.body)).toBe(201);
+    expect(await pendingLevels(over.body.po.id)).toEqual(['manager', 'owner']);
+    // 在审的单不跟着规则变
+    expect(await pendingLevels(before.body.po.id)).toEqual(['manager', 'owner']);
+
+    // 规则总表跟着写现在的值
+    const catalog = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/rules')).body;
+    expect(JSON.stringify(catalog)).toContain('超过 ¥5,000.00');
+
+    // 设成 0：每张自购都加店主，合计为 0 的也加
+    expect((await api(ctx.app, ctx.owner, 'PUT', rulesUrl, { selfOwnerReviewCents: 0 })).status).toBe(200);
+    const free = await newPo({ purchaseMethod: 'self', self: selfInfo(), lines: [{ materialId: matId, purchaseQtyMilli: q(1), priceCents: 0 }] });
+    expect(free.status, JSON.stringify(free.body)).toBe(201);
+    expect(await pendingLevels(free.body.po.id)).toEqual(['manager', 'owner']);
+
+    expect((await api(ctx.app, ctx.owner, 'PUT', rulesUrl, { selfOwnerReviewCents: 200_000 })).status).toBe(200);
   });
 });

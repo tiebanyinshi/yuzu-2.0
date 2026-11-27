@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LeaveAdjustSaved, LeaveEntry, LeaveType, LeaveTypeSaved, LeaveYear, MyLeave, NotificationPage } from '../src/shared/oa';
 import { grantAnnualLeave } from '../src/server/modules/oa/leave';
 import { DEFAULT_STORE_ID } from '../src/server/lib/store-context';
+import { todayIn } from '../src/server/lib/dates';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -122,7 +123,8 @@ describe('OA-09 假种与假期余额', () => {
   });
 
   it('员工「假期余额」：本人今年的余额与明细；人事点「按规则发放」只发本店员工、已经发过的不重复', async () => {
-    const thisYear = new Date().getFullYear();
+    // 门店时区的今年（年末那晚进程时区与门店差一天）
+    const thisYear = Number(todayIn(ctx.config.timezone).slice(0, 4));
     const lastYear = `${thisYear - 3}-01-01`;
     const e = await hire('lv_now', lastYear);
     const g = await api<{ granted: number }>(ctx.app, ctx.owner, 'POST', '/api/oa/leave/grant', {});

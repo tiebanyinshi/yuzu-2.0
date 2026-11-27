@@ -1,12 +1,15 @@
 // 自购（8.2.13，《采购模块需求补充》R3 / 5.3–5.4）：采购单选「自购」时不选供应商，填这里——自购原因、购买渠道、经办人、付款方式、
-// 购买日期、票据凭证（发票或收据照片，至少一张）。切换采购方式不清空别的内容
+// 购买日期、票据凭证（发票或收据照片，至少一张）。切换采购方式不清空别的内容。
+// 审批说明里的店主复核金额按「采购规则」里现在的值写（PS5，默认 ¥2,000）
 
 import { useQuery } from '@tanstack/react-query';
+import { formatYuan } from '@shared/money';
 import { SELF_PAY_METHOD_LABELS, SELF_PAY_METHODS, SELF_REASON_LABELS, SELF_REASONS, type PurchaseOrder, type SelfPayMethod, type SelfReason } from '@shared/purchasing';
 import type { ImageRef } from '@shared/requests';
 import { api } from '../../lib/api';
 import { ImagePicker } from '../../components/Images';
 import { Field, Input, Select } from '../../components/ui';
+import { usePurchaseRules } from './queries';
 
 export interface SelfState {
   reason: SelfReason | '';
@@ -52,9 +55,15 @@ export const selfBody = (s: SelfState) => ({
 export function SelfPurchaseFields({ s, set, disabled, onUploading }: { s: SelfState; set: (fn: (prev: SelfState) => SelfState) => void; disabled: boolean; onUploading: (busy: boolean) => void }) {
   const handlers = useQuery({ queryKey: ['inv', 'self-handlers'], queryFn: () => api.get<{ id: number; name: string }[]>('/api/purchase-orders/self-handlers'), staleTime: 60_000 });
   const put = (patch: Partial<SelfState>) => set((prev) => ({ ...prev, ...patch }));
+  const ownerReview = usePurchaseRules().data?.selfOwnerReviewCents;
   return (
     <section className="grid gap-4 rounded-lg border border-yuzu/40 bg-yuzu-soft/30 p-5 sm:grid-cols-2 lg:grid-cols-4" data-testid="po-self">
-      <p className="text-[13px] font-bold text-ink sm:col-span-2 lg:col-span-4">自购信息（不选供应商；票据进报销与发票台账查重，付款走报销或备用金）</p>
+      <div className="sm:col-span-2 lg:col-span-4">
+        <p className="text-[13px] font-bold text-ink">自购信息（不选供应商；票据进报销与发票台账查重，付款走报销或备用金）</p>
+        <p className="mt-0.5 text-[12.5px] text-ink-3" data-testid="po-self-approval">
+          提交后由负责人审批（提交人不能审自己的）{ownerReview === undefined ? '' : ownerReview > 0 ? `；合计超过 ${formatYuan(ownerReview)} 再加一级店主复核` : '；再加一级店主复核'}
+        </p>
+      </div>
       <Field label="自购原因" htmlFor="po-self-reason">
         <Select id="po-self-reason" value={s.reason} disabled={disabled} onChange={(e) => put({ reason: e.target.value as SelfReason })}>
           <option value="">选择原因</option>

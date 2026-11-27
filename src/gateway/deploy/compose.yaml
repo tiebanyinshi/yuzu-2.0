@@ -1,5 +1,7 @@
-# 小程序网关服务器（阿里云最低配，深圳；docs/DEPLOY_GATEWAY.md）：Caddy 管 HTTPS（备案域名，证书自动申请、续期），
-# 后面是测试、正式两个网关进程。只在网关服务器上用；门店 Mac mini、测试服 A 不跑这个文件。
+# 小程序网关服务器（阿里云最低配，深圳；docs/DEPLOY_GATEWAY.md）：测试、正式两个网关进程。只在网关服务器上用；门店 Mac mini、测试服 A 不跑这个文件。
+# 店主 2026-11-27：小程序都用 sys.yuzusystem.xyz（api. 子域名撤掉）——HTTPS 与证书在正式服那台的 Caddy 上，它经 Tailscale 把
+# /v1/* 转到这台的 8301（正式网关）、/trial/v1/* 转到 8300（测试网关）。所以两个网关只开在这台的 Tailscale 地址上（GATEWAY_BIND），
+# 公网不开端口；这里的 Caddy 只在网关自己有域名时用（COMPOSE_PROFILES 加 own-domain），平时不起。
 #   第一次：cd src/gateway/deploy && docker compose up -d --build
 #   更新：./update.sh <版本标签或完整 SHA>（只部署 main 上的版本）
 #   查看：docker compose ps / docker compose logs -f gateway-test
@@ -12,7 +14,7 @@ x-logging: &logging
     max-size: "10m"
     max-file: "5"
 
-# 两个网关进程共用的设置：同一个镜像，只读文件系统、不提权；不对外开端口，只有 Caddy 经内部网络连得到
+# 两个网关进程共用的设置：同一个镜像，只读文件系统、不提权；端口只开在 Tailscale 地址上（正式服那台的 Caddy 连得到）
 x-gateway: &gateway
   image: yuzu-gateway:${GATEWAY_TAG:-current}
   restart: unless-stopped
@@ -26,22 +28,26 @@ x-gateway: &gateway
   environment:
     GATEWAY_HOST: 0.0.0.0
     GATEWAY_PORT: "8300"
-    # 前面是 Caddy：按它带的 X-Forwarded-For 认顾客的 IP 限流（Caddy 不信顾客自己带的）
+    # 前面是正式服那台的 Caddy：按它带的 X-Forwarded-For 认顾客的 IP 限流（Caddy 不信顾客自己带的）；
+    # 端口只开在 Tailscale 地址上、Tailscale 只放行那台连进来，别人带不了这个头
     GATEWAY_TRUST_PROXY: "true"
     TZ: Asia/Shanghai
   logging: *logging
 
 services:
+  # 网关自己有域名时才用（COMPOSE_PROFILES 加 own-domain）：现在用 sys.yuzusystem.xyz，HTTPS 在正式服那台，这个不起
   caddy:
     image: ${CADDY_IMAGE:-caddy:2.10-alpine}
     restart: unless-stopped
+    profiles:
+      - own-domain
     # 公网只开 443（阿里云安全组同样只放行 443）；证书经 443 验证，不用开 80
     ports:
       - "443:443"
     environment:
-      GATEWAY_TEST_DOMAIN: ${GATEWAY_TEST_DOMAIN:?请在 .env 设置 GATEWAY_TEST_DOMAIN（测试网关的域名，例如 api-test.example.com）}
-      GATEWAY_PROD_DOMAIN: ${GATEWAY_PROD_DOMAIN:?请在 .env 设置 GATEWAY_PROD_DOMAIN（正式网关的域名，例如 api.example.com）}
-      ACME_EMAIL: ${ACME_EMAIL:?请在 .env 设置 ACME_EMAIL（证书到期提醒发到这个邮箱）}
+      GATEWAY_TEST_DOMAIN: ${GATEWAY_TEST_DOMAIN:-}
+      GATEWAY_PROD_DOMAIN: ${GATEWAY_PROD_DOMAIN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
       # 挂整个 caddy/ 目录，不单挂文件：git 切换版本时 Caddyfile 换了一个新文件，单挂的文件容器里还是旧的
       # （小程序线测试预检 3ab3ab5 的 P2）；这个目录里只有 Caddyfile，旁边的 .env、gateway-*.env（密钥）不进 Caddy 的容器
@@ -53,6 +59,9 @@ services:
   # 测试网关：连测试服 A 的演示库（开发版、体验版用）
   gateway-test:
     <<: *gateway
+    # 正式服那台的 Caddy 经 Tailscale 连这里（/trial/v1/*）
+    ports:
+      - "${GATEWAY_BIND:?请在 .env 设置 GATEWAY_BIND（这台的 Tailscale 地址：tailscale ip -4）}:8300:8300"
     build:
       context: ../../..
       dockerfile: src/gateway/deploy/Dockerfile
@@ -69,6 +78,9 @@ services:
     <<: *gateway
     profiles:
       - prod
+    # 正式服那台的 Caddy 经 Tailscale 连这里（/v1/*）
+    ports:
+      - "${GATEWAY_BIND:?请在 .env 设置 GATEWAY_BIND（这台的 Tailscale 地址：tailscale ip -4）}:8301:8300"
     pull_policy: never
     env_file:
       - path: gateway-prod.env

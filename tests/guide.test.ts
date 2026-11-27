@@ -10,6 +10,7 @@ import type { FloorplanDetail } from '../src/shared/floorplans';
 import { floorplanSampleDxf } from '../src/server/demo/floorplan-sample';
 import { localToMm, mmToLocal, svgLabels } from '../src/server/modules/guide';
 import { createStaff } from '../src/server/modules/staff';
+import { todayIn } from '../src/server/lib/dates';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -53,7 +54,7 @@ beforeAll(async () => {
     fileName: '样例（带设施文字）.dxf',
     contentBase64: Buffer.from(floorplanSampleDxf(1, { facilities: true })).toString('base64'),
     sourceKind: 'other',
-    receivedOn: new Date().toISOString().slice(0, 10),
+    receivedOn: todayIn(ctx.config.timezone),
   });
   expect(up.status, JSON.stringify(up.body)).toBe(202);
   batchId = up.body.batch.id;

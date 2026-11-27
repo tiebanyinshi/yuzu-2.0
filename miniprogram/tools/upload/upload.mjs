@@ -43,7 +43,7 @@ if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) fail('miniprogram/package.json 的 v
 // 体验版、正式版连的网关（src/config/env.ts）还是占位的地址时不上传：传上去也连不上
 const envTs = readFileSync(join(root, 'src/config/env.ts'), 'utf8');
 if (!dryRun && /\.invalid\b/.test(envTs)) {
-  fail('src/config/env.ts 里体验版、正式版的网关地址还是占位的（domain.invalid）：备案域名下来、改成 https://api-test.<域名> 与 https://api.<域名> 并合并进 main 之后再上传');
+  fail('src/config/env.ts 里体验版、正式版的网关地址还是占位的（domain.invalid）：改成 https://sys.yuzusystem.xyz/trial 与 https://sys.yuzusystem.xyz（docs/DEPLOY_GATEWAY.md 第 0 节）并合并进 main 之后再上传');
 }
 
 const robot = Number(process.env.MP_ROBOT?.trim() || 1);

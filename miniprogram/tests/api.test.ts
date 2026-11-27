@@ -40,7 +40,8 @@ const loadApi = async () => {
 };
 
 const future = () => new Date(Date.now() + 7 * 86400 * 1000).toISOString();
-const path = (url: string) => url.replace(/^https?:\/\/[^/]+/, '');
+// 去掉域名（体验版的地址还带一段 /trial：正式服那台的 Caddy 去掉以后转给测试网关）
+const path = (url: string) => url.replace(/^https?:\/\/[^/]+(\/trial)?/, '');
 
 beforeEach(() => {
   vi.unstubAllGlobals();
@@ -235,7 +236,7 @@ describe('模拟微信', () => {
     const api = await loadApi();
     await api.member('GET', '/v1/me');
     expect(fake.loginCodes).toBe(1);
-    expect(fake.requests[0]!.url).toBe('https://api-test.domain.invalid/v1/health');
+    expect(fake.requests[0]!.url).toBe('https://sys.yuzusystem.xyz/trial/v1/health');
   });
 });
 
