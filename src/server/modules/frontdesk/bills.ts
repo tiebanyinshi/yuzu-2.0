@@ -422,6 +422,14 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   if (backfill) await recordBackfill(tx, backfill, { kind: 'charges', opKey: key, visitId: visit.id, businessDate: date, actor: ctx.actor });
   // 补单（8.2.3）：记下出单员（明细上标「补单 · 出单员」）
   if (backfill?.issuerId) await recordSupplement(tx, { opKey: key, visitId: visit.id, issuerId: backfill.issuerId, at, staffId: ctx.actor.id });
+  // 水吧首杯免费（8.2.8）：每个小分类第一杯折掉一杯的钱（挂到手牌上的入口都走）
+  {
+    const drinks = lines.flatMap((l) => (l.itemId !== null && l.source === 'dining' ? [{ lineId: lineIds.get(l)!, itemId: l.itemId, unitPrice: l.unitPrice, amount: l.amount }] : []));
+    if (drinks.length) {
+      const { applyFirstCup } = await import('../dining-meals');
+      await applyFirstCup(tx, { visitId: visit.id, billId: visit.billId, date, at, opKey: key, staffId: ctx.actor.id, lines: drinks });
+    }
+  }
   // 餐台自助（8.2.7）：登记了此刻这一餐的客人，餐厅出品口的菜自动折成 0
   if (options.buffet) {
     const { applyBuffetZero } = await import('../dining-meals');

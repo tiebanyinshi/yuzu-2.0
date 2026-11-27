@@ -99,7 +99,7 @@ describe('后台「餐饮」', () => {
     expect(tech.body.error.code).toBe('ITEM_NEEDS_TECHNICIAN');
     expect(mapped.body.items.find((i: { name: string }) => i.name === '宫保鸡丁')).toMatchObject({ stationId: station['热菜'], technicianRequired: false });
     expect((await rules({ enabled: true }, boss)).status).toBe(403);
-    expect((await rules({ enabled: true })).status).toBe(200);
+    expect((await rules({ enabled: true, firstCupFree: false })).status).toBe(200);
     expect((await api(ctx.app, ctx.clerk, 'GET', '/api/auth/me')).body.dining).toBe(true);
     const catalog = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/rules')).body as { key: string; group: string }[];
     expect(catalog.filter((r) => r.group === 'dining').map((r) => r.key)).toEqual([

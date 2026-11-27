@@ -59,6 +59,8 @@ export interface DiningRules {
   returnWindowMinutes: number;
   /** 餐厅的餐段与裸票餐费（8.2.7）：入口刷手牌登记进餐按此刻的餐段收（含餐的抵扣成 0） */
   mealPeriods: import('./dining-meals').MealPeriod[];
+  /** 水吧首杯免费（8.2.8）：每位客人水吧每个小分类（手作饮料、糖水、调酒……）第一杯自动折成 0（标「赠」），第二杯起照价 */
+  firstCupFree: boolean;
 }
 
 /** 能自己设小分类的两处（果吧不细分） */
@@ -87,6 +89,7 @@ export const DEFAULT_DINING_RULES: DiningRules = {
   serviceFeeScope: 'rooms',
   returnWindowMinutes: 30,
   mealPeriods: DEFAULT_MEAL_PERIODS.map((p) => ({ ...p })),
+  firstCupFree: true,
 };
 
 /** 小额退菜上限最多 ¥1,000 */

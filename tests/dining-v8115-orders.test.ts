@@ -71,7 +71,8 @@ beforeAll(async () => {
     item[name] = r.body.items.find((i: { name: string }) => i.name === name).id;
     expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/dining/items', { items: [{ id: item[name], stationId: station[st] }] })).status).toBe(200);
   }
-  expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/dining/rules', { enabled: true, tablesEnabled: true })).status).toBe(200);
+  // 水吧首杯免费（8.2.8）在这里关掉：这几条核对的是台账与退菜，金额按原价算
+  expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/dining/rules', { enabled: true, tablesEnabled: true, firstCupFree: false })).status).toBe(200);
   const t = await api(ctx.app, ctx.owner, 'POST', '/api/admin/dining/tables', { name: '水吧1', area: '休闲水吧区', seats: 2 });
   tableId = t.body.tables.find((x: { name: string }) => x.name === '水吧1').id;
   // 客房：两间（只填房号时按在住的客房找客人）

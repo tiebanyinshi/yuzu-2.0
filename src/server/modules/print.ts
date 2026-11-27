@@ -33,9 +33,14 @@ export async function checkoutForPrint(db: Db, id: number): Promise<CheckoutPrin
   const billIds = detail.bills.map((b) => b.billId);
   // 结账那一刻的明细：结账时已经挂上、当时还没作废的。反结账时作废的门票照样打出，之后新挂的明细不算这张单
   const lines = billIds.length
-    ? await db<(Omit<CheckoutPrintLine, 'perks'> & { billId: number })[]>`
-        SELECT l.id, l.bill_id, l.name, l.unit_price, l.quantity, l.amount, ${technicianTextSql(db, 'l')} AS technician
+    ? await db<(Omit<CheckoutPrintLine, 'perks' | 'lineDiscount'> & { billId: number; finalAmount: number | null; rule: string | null })[]>`
+        SELECT l.id, l.bill_id, l.name, l.unit_price, l.quantity, l.amount, ${technicianTextSql(db, 'l')} AS technician,
+               d.final_amount, d.rule
         FROM bill_lines l JOIN checkouts c ON c.id = ${id}
+        -- 结账那一刻这一行的单项打折（8.2.1；8.2.7 / 8.2.8 的自动折扣也在这张表）
+        LEFT JOIN LATERAL (SELECT x.final_amount, x.rule FROM bill_line_discounts x
+                           WHERE x.line_id = l.id AND x.created_at <= c.created_at AND (x.status = 'active' OR x.revoked_at > c.created_at)
+                           ORDER BY x.id DESC LIMIT 1) d ON true
         WHERE l.bill_id IN ${db(billIds)} AND l.posted_at <= c.created_at AND (l.voided_at IS NULL OR l.voided_at > c.created_at)
         ORDER BY l.bill_id, l.id`
     : [];
@@ -52,7 +57,7 @@ export async function checkoutForPrint(db: Db, id: number): Promise<CheckoutPrin
       const own = lines
         .filter((l) => l.billId === b.billId)
         .map(
-          ({ id: lineId, name, unitPrice, quantity, amount, technician }): CheckoutPrintLine => ({
+          ({ id: lineId, name, unitPrice, quantity, amount, technician, finalAmount, rule }): CheckoutPrintLine => ({
             id: Number(lineId),
             perks: [...new Set(detail.perks.filter((p) => p.lineIds.includes(Number(lineId))).map((p) => p.kind))],
             name,
@@ -60,6 +65,7 @@ export async function checkoutForPrint(db: Db, id: number): Promise<CheckoutPrin
             quantity,
             amount,
             technician,
+            lineDiscount: finalAmount === null ? null : { finalAmount: Number(finalAmount), rule: (rule as NonNullable<CheckoutPrintLine['lineDiscount']>['rule']) ?? null },
           }),
         );
       return { ...b, lines: own, linesTotal: own.reduce((s, l) => s + l.amount, 0) };

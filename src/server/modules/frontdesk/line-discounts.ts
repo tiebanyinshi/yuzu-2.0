@@ -180,17 +180,18 @@ export async function revokeLineDiscount(deps: Deps, lineId: number, raw: unknow
 }
 
 /**
- * 系统按规则打的自动折扣（8.2.7：含餐、自助；8.2.8：首杯赠）：在挂账的同一个事务里、写完这一行明细以后调用，这一行折成 0。
+ * 系统按规则打的自动折扣（8.2.7：含餐、自助；8.2.8：首杯赠）：在挂账的同一个事务里、写完这一行明细以后调用，这一行折成 finalAmount（不给为 0）。
  * 档 auto、没有授权人，经办人记下这一笔的人；编号由这一笔的操作编号与明细算出（原样重提时不会走到这里）
  */
 export async function insertAutoDiscount(
   tx: Tx,
-  a: { lineId: number; billId: number; amount: number; rule: AutoDiscountRule; reason: string; staffId: number; opKey: string; date: string; at: Date },
+  a: { lineId: number; billId: number; amount: number; finalAmount?: number; rule: AutoDiscountRule; reason: string; staffId: number; opKey: string; date: string; at: Date },
 ): Promise<void> {
-  if (a.amount <= 0) return;
+  const finalAmount = a.finalAmount ?? 0;
+  if (a.amount <= 0 || finalAmount >= a.amount) return;
   await tx`
     INSERT INTO bill_line_discounts (line_id, bill_id, list_amount, final_amount, rate, reason, tier, floor_pct, staff_id, approved_by, grant_id,
                                      client_key, business_date, created_at, rule)
-    VALUES (${a.lineId}, ${a.billId}, ${a.amount}, 0, 0, ${a.reason}, 'auto', 0, ${a.staffId}, NULL, NULL,
+    VALUES (${a.lineId}, ${a.billId}, ${a.amount}, ${finalAmount}, ${finalAmount === 0 ? 0 : null}, ${a.reason}, 'auto', 0, ${a.staffId}, NULL, NULL,
             ${derivedKey(`auto-discount:${a.opKey}:${a.lineId}`)}, ${a.date}, ${a.at}, ${a.rule})`;
 }
