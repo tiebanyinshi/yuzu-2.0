@@ -83,6 +83,8 @@ const ReceiptLine = z.object({
   rejectReason: z.string().trim().max(100).default(''),
   /** 拒收里供应商要补发的（待补，8.1.51）：不超过拒收数；其余是退回不补 */
   redeliverMilli: qty('待补数量').default(0),
+  /** 待判 / 待检、暂不入库的（8.2.6，需求变更文档 v0.2 Q10：与供应商待补分开）：送达 = 合格实收 + 待判 + 拒收 */
+  holdMilli: qty('待判数量').default(0),
   /** 每采购单位价格（分）；关联采购单时以采购单价格为准 */
   priceCents: z.number().int().nonnegative().max(100_000_000).nullable().default(null),
   /** 批次与效期（8.0.7 3.3）：管效期的物料到期日必填（填了生产日期、物料有保质期的可以不填，按生产日期 + 保质期算），批号选填 */
@@ -106,7 +108,8 @@ const DocBody = z.discriminatedUnion('docType', [
   z.object({
     docType: z.literal('receipt'),
     ...Header,
-    supplierId: id,
+    /** 挂自购采购单（8.2.13）的收货单没有供应商，不传或传 null */
+    supplierId: id.nullable().default(null),
     purchaseOrderId: id.nullable().default(null),
     handler: z.string().trim().max(32).default(''),
     /** 一起验收的采购经办（#17 第一次验收；按采购单收货必选） */
@@ -323,7 +326,7 @@ export async function getDoc(db: Db, docId: number, timeZone?: string): Promise<
   const lines = await db<InvDoc['lines']>`
     SELECT l.id, l.line_no, l.material_id, m.code AS material_code, m.name AS material_name, m.specification, m.decimals,
            l.qty_milli, l.inventory_unit, l.purchase_unit, l.factor_milli, l.entered_qty_milli, l.entered_unit,
-           l.delivered_milli, l.rejected_milli, l.reject_reason, l.redeliver_milli, l.price_cents, l.amount_cents, l.po_line_id,
+           l.delivered_milli, l.rejected_milli, l.reject_reason, l.redeliver_milli, l.hold_milli, l.price_cents, l.amount_cents, l.po_line_id,
            l.book_milli, l.counted_milli, l.diff_reason, l.diff_note, l.source_line_id, l.note, m.counter_use, m.weighed,
            l.batch_no, l.produced_on::text AS produced_on, l.expires_on::text AS expires_on, m.expiry_tracked,
            CASE WHEN ${isDept} THEN coalesce(ws.stock_milli, 0) ELSE m.stock_milli END AS stock_milli,
@@ -503,6 +506,7 @@ interface PreparedLine {
   rejectedMilli: number | null;
   rejectReason: string;
   redeliverMilli: number;
+  holdMilli: number;
   priceCents: number | null;
   amountCents: number | null;
   poLineId: number | null;
@@ -623,6 +627,7 @@ function baseLine(m: MaterialInfo): Omit<PreparedLine, 'qtyMilli' | 'note'> {
     rejectedMilli: null,
     rejectReason: '',
     redeliverMilli: 0,
+    holdMilli: 0,
     priceCents: null,
     amountCents: null,
     poLineId: null,
@@ -906,8 +911,15 @@ async function prepare(
     }
 
     case 'receipt': {
-      const [sup] = await db<{ active: boolean }[]>`SELECT active FROM suppliers WHERE id = ${body.supplierId}`;
-      if (!sup || !sup.active) throw unprocessable('SUPPLIER_INACTIVE', '供应商不存在或已停用');
+      // 自购采购单（8.2.13）：没有供应商，收货单也不选供应商；别的收货照旧要选在用的供应商
+      const [selfPo] = body.purchaseOrderId ? await db<{ self: boolean }[]>`SELECT purchase_method = 'self' AS self FROM purchase_orders WHERE id = ${body.purchaseOrderId}` : [];
+      if (selfPo?.self) {
+        if (body.supplierId !== null) throw unprocessable('PO_SUPPLIER_MISMATCH', '自购的采购单没有供应商，收货单不选供应商');
+      } else {
+        if (body.supplierId === null) throw badRequest('请选择供应商');
+        const [sup] = await db<{ active: boolean }[]>`SELECT active FROM suppliers WHERE id = ${body.supplierId}`;
+        if (!sup || !sup.active) throw unprocessable('SUPPLIER_INACTIVE', '供应商不存在或已停用');
+      }
       const settings = await loadInventorySettings(db);
       const capText = `¥${(settings.urgentCapCents / 100).toFixed(2)}`;
       // #19：不允许没开采购单先收货；没有采购单只能由部门登记急采（进部门小仓，不超过上限）
@@ -941,11 +953,11 @@ async function prepare(
       let received = new Map<number, number>();
       let priceBasis = (await loadInventorySettings(db)).priceBasis;
       if (body.purchaseOrderId) {
-        const [po] = await db<{ supplierId: number; status: string; docNo: string; priceBasis: string }[]>`
+        const [po] = await db<{ supplierId: number | null; status: string; docNo: string; priceBasis: string }[]>`
           SELECT supplier_id, status, doc_no, price_basis FROM purchase_orders WHERE id = ${body.purchaseOrderId}`;
         if (!po) throw unprocessable('PO_NOT_FOUND', '采购单不存在');
         if (po.status !== 'approved') throw unprocessable('PO_NOT_APPROVED', `采购单 ${po.docNo} 尚未确认或已关闭，不能收货`);
-        if (po.supplierId !== body.supplierId) throw unprocessable('PO_SUPPLIER_MISMATCH', '收货供应商与采购单不一致');
+        if ((po.supplierId === null ? null : Number(po.supplierId)) !== body.supplierId) throw unprocessable('PO_SUPPLIER_MISMATCH', '收货供应商与采购单不一致');
         priceBasis = po.priceBasis;
         const rows = await db<{ id: number; materialId: number; baseQtyMilli: number; priceCents: number; factorMilli: number; purchaseUnit: string; inventoryUnit: string }[]>`
           SELECT id, material_id, base_qty_milli, price_cents, factor_milli, purchase_unit, inventory_unit
@@ -959,7 +971,9 @@ async function prepare(
         checkDecimals(m, l.deliveredMilli, '送达数量');
         checkDecimals(m, l.acceptedMilli, '合格实收数量');
         if (l.acceptedMilli > l.deliveredMilli) throw badRequest(`「${m.name}」合格实收不能多于送达数量`);
-        const rejected = l.deliveredMilli - l.acceptedMilli;
+        checkDecimals(m, l.holdMilli, '待判数量');
+        if (l.acceptedMilli + l.holdMilli > l.deliveredMilli) throw badRequest(`「${m.name}」合格实收加待判不能多于送达数量`);
+        const rejected = l.deliveredMilli - l.acceptedMilli - l.holdMilli;
         if (rejected > 0 && !l.rejectReason) throw badRequest(`「${m.name}」有拒收，请填写拒收原因`);
         checkDecimals(m, l.redeliverMilli, '待补数量');
         if (l.redeliverMilli > rejected) throw badRequest(`「${m.name}」待补不能多于拒收数量`);
@@ -998,6 +1012,7 @@ async function prepare(
           rejectedMilli: rejected,
           rejectReason: rejected > 0 ? l.rejectReason : '',
           redeliverMilli: l.redeliverMilli,
+          holdMilli: l.holdMilli,
           priceCents: price,
           amountCents,
           poLineId: body.purchaseOrderId ? l.poLineId : null,
@@ -1041,11 +1056,11 @@ async function insertLines(tx: Tx, docId: number, lines: PreparedLine[]) {
   for (const [i, l] of lines.entries()) {
     await tx`
       INSERT INTO inv_doc_lines (doc_id, line_no, material_id, qty_milli, inventory_unit, purchase_unit, factor_milli,
-                                 entered_qty_milli, entered_unit, delivered_milli, rejected_milli, reject_reason, redeliver_milli, price_cents,
+                                 entered_qty_milli, entered_unit, delivered_milli, rejected_milli, reject_reason, redeliver_milli, hold_milli, price_cents,
                                  amount_cents, po_line_id, book_milli, counted_milli, book_move_id, source_line_id, note, diff_reason, diff_note,
                                  batch_no, produced_on, expires_on)
       VALUES (${docId}, ${i + 1}, ${l.materialId}, ${l.qtyMilli}, ${l.inventoryUnit}, ${l.purchaseUnit}, ${l.factorMilli},
-              ${l.enteredQtyMilli}, ${l.enteredUnit}, ${l.deliveredMilli}, ${l.rejectedMilli}, ${l.rejectReason}, ${l.redeliverMilli}, ${l.priceCents},
+              ${l.enteredQtyMilli}, ${l.enteredUnit}, ${l.deliveredMilli}, ${l.rejectedMilli}, ${l.rejectReason}, ${l.redeliverMilli}, ${l.holdMilli ?? 0}, ${l.priceCents},
               ${l.amountCents}, ${l.poLineId}, ${l.bookMilli}, ${l.countedMilli}, ${l.bookMoveId}, ${l.sourceLineId}, ${l.note},
               ${l.diffReason ?? null}, ${l.diffNote ?? ''}, ${l.batchNo ?? null}, ${l.producedOn ?? null}, ${l.expiresOn ?? null})`;
   }
@@ -1537,18 +1552,38 @@ export async function createRequestIssue(
 
 // ───────────────────────── 对外操作 ─────────────────────────
 
+/**
+ * 单据原请求的摘要（同一操作编号重提时比对）：
+ *   · 8.1.9：不是库管入库的收货不把 direct 放进摘要（升级前就在「结果待确认」里的原请求照样对得上）；
+ *   · 8.2.6：收货行的待判 holdMilli 为 0（默认）时不放进摘要（8.2.6 以前提交的收货原样重提照样对得上）；
+ *   · legacy826Hash：8.2.6 原版（补丁前）把为 0 的 holdMilli 也算进了摘要，那段时间提交、结果没确认的收货重提时也认（Codex 审查 #58）；
+ *     新写入的一律用 requestHash。
+ */
+export function docRequestHashes(body: z.infer<typeof DocBody>, meta: { action: string; approveNow: boolean }) {
+  const receipt = body.docType === 'receipt';
+  const tail = { ...(receipt && !body.direct ? { direct: undefined } : {}), action: meta.action, approveNow: meta.approveNow };
+  const hashLines = receipt ? body.lines.map((l) => ('holdMilli' in l && !l.holdMilli ? { ...l, holdMilli: undefined } : l)) : body.lines;
+  const requestHash = hashRequest({ ...body, lines: hashLines, ...tail });
+  const legacy826Hash = receipt ? hashRequest({ ...body, ...tail }) : requestHash;
+  return { requestHash, legacy826Hash };
+}
+
+/** 测试用：按页面原样提交的请求算出两种摘要（模拟 8.2.6 补丁前写进库的摘要） */
+export function docRequestHashesOf(raw: unknown) {
+  return docRequestHashes(parse(DocBody, raw), parse(CreateInput, raw));
+}
+
 export async function createDoc(deps: Deps, raw: CreateDocInput, actor: Actor, ip?: string): Promise<{ doc: InvDoc; replayed: boolean }> {
   const meta = parse(CreateInput, raw);
   const body = parse(DocBody, raw);
   await assertCanOperate(deps.sql, actor, body.docType, await warehouseOfBody(deps.sql, body));
   if (meta.approveNow && !can(actor, 'inventory.approve')) throw forbidden('当前账号不能确认这类单据，请提交给负责人');
-  // 8.1.9：不是库管入库的收货不把 direct 放进摘要（升级前就在「结果待确认」里的原请求照样对得上）
-  const requestHash = hashRequest({ ...body, ...(body.docType === 'receipt' && !body.direct ? { direct: undefined } : {}), action: meta.action, approveNow: meta.approveNow });
+  const { requestHash, legacy826Hash } = docRequestHashes(body, meta);
   const findExisting = async (db: Db) => {
     const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`
       SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${meta.clientKey}`;
     if (!row) return null;
-    if (row.opType !== 'inv_doc' || row.requestHash !== requestHash) {
+    if (row.opType !== 'inv_doc' || (row.requestHash !== requestHash && row.requestHash !== legacy826Hash)) {
       throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一张不同的单据，请刷新页面后重新填写');
     }
     return row.refId;

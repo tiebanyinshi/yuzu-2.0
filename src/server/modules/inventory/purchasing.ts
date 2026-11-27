@@ -4,11 +4,26 @@
 // 已确认的采购单改供应商、数量或价格时，先存一份旧版本，再回到待确认。
 // 先收货后补单：补单采购单确认后只关联原收货单，不再入库、不再形成应付。
 
+import { PO_PAGE_SIZE, PO_SORTS, type PoSort, type SortDir } from '@shared/purchase-sort';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can } from '@shared/permissions';
 import { MAX_LINE_IMAGES } from '@shared/requests';
-import type { PoLine, PoRevision, PoStatus, PoSummary, PurchaseOrder, ReceivingState } from '@shared/purchasing';
+import {
+  PURCHASE_METHODS,
+  SELF_PAY_METHODS,
+  SELF_REASONS,
+  partyLabel,
+  type PoLine,
+  type PoRevision,
+  type PoStatus,
+  type PoSummary,
+  type PurchaseMethod,
+  type PurchaseOrder,
+  type ReceivingState,
+  type SelfPayMethod,
+  type SelfReason,
+} from '@shared/purchasing';
 import type { PoReimbursement } from '@shared/expenses';
 import { fitsDecimals, formatQty, lineAmountCents, priceChangePercent, toBaseQty, toPurchaseQty } from '@shared/quantity';
 import { isUniqueViolation, type Db, type Tx } from '../../db';
@@ -27,6 +42,7 @@ import {
   overThreshold,
   poSettlement,
   priceBaseline,
+  requestLineIssuedSql,
   setTxTimeouts,
   sourcingHolds,
   todayIn,
@@ -59,8 +75,22 @@ const LineInput = z.object({
   requestLineIds: z.array(id).max(50, '一行最多合并 50 行需求').optional(),
 });
 
+/** 自购信息（8.2.13，《采购模块需求补充》R3 / 5.4） */
+const SelfInput = z.object({
+  reason: z.enum(SELF_REASONS, '请选择自购原因'),
+  reasonNote: z.string().trim().max(200, '说明最多 200 个字').default(''),
+  channel: z.string().trim().min(1, '请填写购买渠道 / 商家名称').max(100, '购买渠道最多 100 个字'),
+  handlerId: id,
+  payMethod: z.enum(SELF_PAY_METHODS, '请选择付款方式'),
+  boughtOn: docDateSchema.nullable().default(null),
+  receiptImageIds: z.array(id).min(1, '请上传发票或收据照片（至少一张）').max(9, '票据最多 9 张'),
+});
+
 const PoBody = z.object({
-  supplierId: id,
+  /** 8.2.13：supplier 供应商采购（原来的做法，默认）；self 自购（不选供应商，填自购信息） */
+  purchaseMethod: z.enum(PURCHASE_METHODS).default('supplier'),
+  supplierId: id.nullable().default(null),
+  self: SelfInput.nullable().default(null),
   orderDate: docDateSchema,
   expectedDate: docDateSchema.nullable().default(null),
   note: z.string().trim().max(200).default(''),
@@ -74,6 +104,37 @@ const PoBody = z.object({
   lines: z.array(LineInput).min(1, '请至少添加一项物料').max(100, '采购单最多 100 行'),
 });
 type PoBodyInput = z.input<typeof PoBody>;
+type PoBodyParsed = z.infer<typeof PoBody>;
+
+/**
+ * 采购方式的核对（8.2.13）：供应商采购要选供应商（与原来一样）；自购不选供应商、不挂合同，自购信息要齐（选「其他」要写说明），
+ * 经办人要在职；票据照片要是采购单能用的图片
+ */
+async function checkMethod(db: Db, body: PoBodyParsed): Promise<{ supplierId: number | null; self: z.infer<typeof SelfInput> | null }> {
+  if (body.purchaseMethod === 'supplier') {
+    if (!body.supplierId) throw unprocessable('SUPPLIER_REQUIRED', '请选择供应商（没有供应商的可以选「自购」）');
+    return { supplierId: body.supplierId, self: null };
+  }
+  const self = body.self;
+  if (body.supplierId) throw unprocessable('SELF_NO_SUPPLIER', '自购不选供应商；有供应商的请选「供应商采购」');
+  if (!self) throw unprocessable('SELF_INFO_REQUIRED', '自购请填写自购原因、购买渠道、经办人、付款方式，并上传票据');
+  if (self.reason === 'other' && !self.reasonNote) throw unprocessable('SELF_REASON_NOTE_REQUIRED', '自购原因选「其他」时请写说明');
+  if (body.contractId) throw unprocessable('SELF_NO_CONTRACT', '自购没有供应商，不能挂采购合同');
+  const [h] = await db<{ active: boolean }[]>`SELECT active FROM staff WHERE id = ${self.handlerId}`;
+  if (!h?.active) throw unprocessable('SELF_HANDLER_INVALID', '自购的经办人不存在或已停用');
+  const ids = [...new Set(self.receiptImageIds)];
+  const found = await db<{ id: number }[]>`SELECT id FROM erp_images WHERE id IN ${db(ids)} AND scope = 'general'`;
+  if (found.length !== ids.length) throw unprocessable('IMAGE_NOT_FOUND', '有票据照片没有上传成功，请重新上传');
+  return { supplierId: null, self };
+}
+
+async function writeSelfReceipts(tx: Tx, poId: number, self: z.infer<typeof SelfInput> | null) {
+  await tx`DELETE FROM purchase_order_self_receipts WHERE po_id = ${poId}`;
+  if (!self) return;
+  for (const [i, imageId] of [...new Set(self.receiptImageIds)].entries()) {
+    await tx`INSERT INTO purchase_order_self_receipts (po_id, sort_no, image_id) VALUES (${poId}, ${i + 1}, ${imageId})`;
+  }
+}
 
 const Meta = z.object({
   action: z.enum(['save', 'submit']).default('submit'),
@@ -136,9 +197,16 @@ export async function poMoney(db: Db, poId: number): Promise<{ receivedCents: nu
 
 export async function getPo(db: Db, poId: number): Promise<PurchaseOrder> {
   const [po] = await db<
-    (Omit<PurchaseOrder, 'channel' | 'sourcing' | 'contract' | 'contractNote' | 'contractCheck'> & {
-      supplierId: number;
-      supplierName: string;
+    (Omit<PurchaseOrder, 'channel' | 'sourcing' | 'contract' | 'contractNote' | 'contractCheck' | 'supplier' | 'self'> & {
+      supplierId: number | null;
+      supplierName: string | null;
+      selfReason: SelfReason | null;
+      selfReasonNote: string;
+      selfChannel: string;
+      selfHandlerId: number | null;
+      selfHandlerName: string | null;
+      selfPayMethod: SelfPayMethod | null;
+      selfBoughtOn: string | null;
       backfillReceiptId: number | null;
       channelKey: string | null;
       channelLabel: string | null;
@@ -154,9 +222,12 @@ export async function getPo(db: Db, poId: number): Promise<PurchaseOrder> {
            se.id AS sourcing_id, se.doc_no AS sourcing_no, se.status AS sourcing_status,
            ab.display_name AS approved_by_name, po.approved_at, po.returned_reason,
            clb.display_name AS closed_by_name, po.closed_at, po.close_reason, po.is_synthetic, po.total_cents,
-           s.id AS supplier_id, s.name AS supplier_name, cab.display_name AS contract_added_by_name, po.contract_added_at
+           s.id AS supplier_id, s.name AS supplier_name, cab.display_name AS contract_added_by_name, po.contract_added_at,
+           po.purchase_method, po.self_reason, po.self_reason_note, po.self_channel, po.self_handler_id, sh.display_name AS self_handler_name,
+           po.self_pay_method, po.self_bought_on::text AS self_bought_on
     FROM purchase_orders po
-    JOIN suppliers s ON s.id = po.supplier_id
+    LEFT JOIN suppliers s ON s.id = po.supplier_id
+    LEFT JOIN staff sh ON sh.id = po.self_handler_id
     JOIN staff cb ON cb.id = po.created_by
     LEFT JOIN staff cab ON cab.id = po.contract_added_by
     LEFT JOIN staff ab ON ab.id = po.approved_by
@@ -219,13 +290,48 @@ export async function getPo(db: Db, poId: number): Promise<PurchaseOrder> {
     unclaimedLines: unclaimed!.n,
   };
 
-  const { supplierId, supplierName, backfillReceiptId: _b, channelKey, channelLabel, channelNote, sourcingId, sourcingNo, sourcingStatus, ...rest } = po;
+  const {
+    supplierId,
+    supplierName,
+    backfillReceiptId: _b,
+    channelKey,
+    channelLabel,
+    channelNote,
+    sourcingId,
+    sourcingNo,
+    sourcingStatus,
+    selfReason,
+    selfReasonNote,
+    selfChannel,
+    selfHandlerId,
+    selfHandlerName,
+    selfPayMethod,
+    selfBoughtOn,
+    ...rest
+  } = po;
+  const selfImages =
+    rest.purchaseMethod === 'self'
+      ? await db<{ id: number; url: string }[]>`
+          SELECT image_id AS id, '/api/erp/images/' || image_id AS url FROM purchase_order_self_receipts WHERE po_id = ${poId} ORDER BY sort_no`
+      : [];
   return {
     ...rest,
     // 挂的合同与按单价表核对（v0.7.31，C9）
     ...(await poContract(db, poId)),
     sourcing: sourcingId ? { id: Number(sourcingId), docNo: sourcingNo!, status: sourcingStatus as 'open' | 'awarded' | 'cancelled' } : null,
-    supplier: { id: supplierId, name: supplierName },
+    supplier: supplierId === null ? null : { id: Number(supplierId), name: supplierName ?? '' },
+    self:
+      rest.purchaseMethod === 'self'
+        ? {
+            reason: selfReason!,
+            reasonNote: selfReasonNote,
+            channel: selfChannel,
+            handler: { id: Number(selfHandlerId), name: selfHandlerName ?? '' },
+            payMethod: selfPayMethod!,
+            boughtOn: selfBoughtOn,
+            receiptImages: selfImages.map((i) => ({ id: Number(i.id), url: i.url })),
+          }
+        : null,
     channel: channelKey ? { key: channelKey, label: channelLabel ?? channelKey, note: channelNote } : null,
     backfillReceipt: backfillReceipt ?? null,
     lines,
@@ -244,21 +350,57 @@ export async function getPo(db: Db, poId: number): Promise<PurchaseOrder> {
   };
 }
 
-export async function listPos(db: Db, f: { status?: string; supplierId?: number; q?: string; open?: boolean }): Promise<PoSummary[]> {
+/** 采购单列表排序（8.2.12 R2）：白名单里的列；空值排最后；同值按单号、编号再排（翻页不重、不漏） */
+const PO_ORDER: Record<PoSort, string> = {
+  order_date: 'po.order_date',
+  created: 'po.created_at',
+  expected: 'po.expected_date',
+  priority: 'priority_rank',
+  total: 'po.total_cents',
+  status: "CASE po.status WHEN 'draft' THEN 1 WHEN 'returned' THEN 2 WHEN 'submitted' THEN 3 WHEN 'approved' THEN 4 WHEN 'closed' THEN 5 ELSE 6 END",
+  doc_no: 'po.doc_no',
+  supplier: "coalesce(s.name, '自购 · ' || po.self_channel)",
+};
+
+function poOrderBy(sort: PoSort | undefined, dir: SortDir | undefined): string {
+  if (!sort) return 'po.order_date DESC, po.id DESC';
+  const d = dir === 'asc' ? 'ASC' : 'DESC';
+  // 紧急程度相同时先申请的先处理（提交时间升序）
+  const tie = sort === 'priority' ? ', po.created_at ASC' : '';
+  return `${PO_ORDER[sort]} ${d} NULLS LAST${tie}, po.doc_no ${d}, po.id ${d}`;
+}
+
+export async function listPos(
+  db: Db,
+  f: { status?: string; supplierId?: number; method?: PurchaseMethod; q?: string; open?: boolean; sort?: PoSort; dir?: SortDir; offset?: number },
+): Promise<PoSummary[]> {
   const like = f.q ? `%${f.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
   const rows = await db<
-    (Omit<PoSummary, 'receiving' | 'channel'> & { orderedMilli: number; receivedMilli: number; fullLines: number; channelKey: string | null; channelLabel: string | null; channelNote: string })[]
+    (Omit<PoSummary, 'receiving' | 'channel' | 'priority'> & {
+      priorityRank: number | null;
+      orderedMilli: number;
+      receivedMilli: number;
+      fullLines: number;
+      channelKey: string | null;
+      channelLabel: string | null;
+      channelNote: string;
+    })[]
   >`
-    SELECT po.id, po.doc_no, po.status, s.name AS supplier_name, po.supplier_id, po.order_date, po.expected_date, po.total_cents,
+    SELECT po.id, po.doc_no, po.status, coalesce(s.name, '自购 · ' || po.self_channel) AS supplier_name, po.supplier_id, po.purchase_method, po.order_date, po.expected_date, po.total_cents,
            po.revision, po.backfill, cb.display_name AS created_by_name, po.created_at,
            po.channel AS channel_key, po.channel_label, po.channel_note,
            (SELECT count(*) FROM purchase_order_lines WHERE po_id = po.id) AS line_count,
            coalesce((SELECT string_agg(m.name, '、' ORDER BY pl.line_no) FROM purchase_order_lines pl JOIN materials m ON m.id = pl.material_id
                      WHERE pl.po_id = po.id AND pl.line_no <= 3), '') AS summary,
            coalesce((SELECT sum(amount_cents) FROM inv_docs WHERE purchase_order_id = po.id AND doc_type = 'receipt' AND status = 'confirmed'), 0) AS received_cents,
-           coalesce(rcv.received, 0) AS received_milli, coalesce(rcv.full_lines, 0) AS full_lines
+           coalesce(rcv.received, 0) AS received_milli, coalesce(rcv.full_lines, 0) AS full_lines,
+           -- 紧急程度（8.2.12 R2）：采购单本身没有，取关联需求单里最急的那张（没关联需求单的为空）
+           (SELECT max(CASE r.priority WHEN 'urgent' THEN 3 WHEN 'high' THEN 2 WHEN 'normal' THEN 1 END)
+              FROM purchase_order_lines pl JOIN purchase_order_line_requests x ON x.po_line_id = pl.id
+              JOIN purchase_request_lines rl ON rl.id = x.request_line_id JOIN purchase_requests r ON r.id = rl.request_id
+             WHERE pl.po_id = po.id) AS priority_rank
     FROM purchase_orders po
-    JOIN suppliers s ON s.id = po.supplier_id
+    LEFT JOIN suppliers s ON s.id = po.supplier_id
     JOIN staff cb ON cb.id = po.created_by
     LEFT JOIN LATERAL (
       SELECT sum(x.got) AS received, count(*) FILTER (WHERE x.got >= x.base_qty_milli) AS full_lines
@@ -270,12 +412,14 @@ export async function listPos(db: Db, f: { status?: string; supplierId?: number;
     WHERE true
       ${f.status ? db`AND po.status = ${f.status}` : db``}
       ${f.supplierId ? db`AND po.supplier_id = ${f.supplierId}` : db``}
+      ${f.method ? db`AND po.purchase_method = ${f.method}` : db``}
       ${f.open ? db`AND po.status = 'approved' AND NOT po.backfill` : db``}
-      ${like ? db`AND (po.doc_no ILIKE ${like} OR s.name ILIKE ${like} OR po.note ILIKE ${like})` : db``}
-    ORDER BY po.order_date DESC, po.id DESC
-    LIMIT 300`;
-  return rows.map(({ receivedMilli, fullLines, orderedMilli: _o, channelKey, channelLabel, channelNote, ...r }) => ({
+      ${like ? db`AND (po.doc_no ILIKE ${like} OR s.name ILIKE ${like} OR po.self_channel ILIKE ${like} OR po.note ILIKE ${like})` : db``}
+    ORDER BY ${db.unsafe(poOrderBy(f.sort, f.dir))}
+    LIMIT ${PO_PAGE_SIZE} OFFSET ${f.offset ?? 0}`;
+  return rows.map(({ receivedMilli, fullLines, orderedMilli: _o, channelKey, channelLabel, channelNote, priorityRank, ...r }) => ({
     ...r,
+    priority: priorityRank === null ? null : ({ 3: 'urgent', 2: 'high', 1: 'normal' } as const)[Number(priorityRank) as 1 | 2 | 3],
     channel: channelKey ? { key: channelKey, label: channelLabel ?? channelKey, note: channelNote } : null,
     receiving: receivedMilli === 0 ? 'none' : fullLines >= r.lineCount ? 'full' : 'partial',
   }));
@@ -403,9 +547,8 @@ async function checkRequestLinks(tx: Tx, poId: number | null, lines: PreparedLin
   }
   const rows = await tx<{ id: number; name: string; materialId: number | null; status: string; docNo: string; takenBy: string | null; inSourcing: string | null; issued: boolean }[]>`
     SELECT l.id, l.name, l.material_id, r.status, r.doc_no,
-           -- 整行从库存领用了的（8.1.10 核库转领用）不再买
-           EXISTS (SELECT 1 FROM request_line_stock ls JOIN inv_docs ld ON ld.id = ls.inv_doc_id AND ld.status = 'confirmed'
-                   WHERE ls.request_line_id = l.id AND ls.issued_qty_milli >= l.qty_milli) AS issued,
+           -- 整行从库存领用、补发齐了的（8.1.10 核库转领用；8.2.6 起补发也算）不再买
+           ${requestLineIssuedSql(tx)} >= l.qty_milli AS issued,
            (SELECT po.doc_no FROM purchase_order_line_requests x JOIN purchase_order_lines pl ON pl.id = x.po_line_id
               JOIN purchase_orders po ON po.id = pl.po_id
              WHERE x.request_line_id = l.id AND po.status <> 'cancelled' ${poId ? tx`AND po.id <> ${poId}` : tx``} LIMIT 1) AS taken_by,
@@ -501,7 +644,8 @@ export interface PoRow {
   id: number;
   docNo: string;
   status: PoStatus;
-  supplierId: number;
+  supplierId: number | null;
+  purchaseMethod: PurchaseMethod;
   revision: number;
   backfill: boolean;
   backfillReceiptId: number | null;
@@ -511,7 +655,7 @@ export interface PoRow {
 
 export async function lockPo(tx: Tx, poId: number): Promise<PoRow> {
   const [po] = await tx<PoRow[]>`
-    SELECT id, doc_no, status, supplier_id, revision, backfill, backfill_receipt_id, created_by, sourcing_event_id
+    SELECT id, doc_no, status, supplier_id, purchase_method, revision, backfill, backfill_receipt_id, created_by, sourcing_event_id
     FROM purchase_orders WHERE id = ${poId} FOR UPDATE`;
   if (!po) throw notFound('采购单不存在');
   return po;
@@ -614,11 +758,12 @@ async function submitLocked(tx: Tx, po: PoRow, actor: Actor, approveNow: boolean
   if (po.status === 'submitted' || po.status === 'approved') return;
   if (po.status !== 'draft' && po.status !== 'returned') throw conflict('INVALID_STATE', '采购单当前状态不能提交');
   // 询价门槛（v0.7.29 E5）：合计到门槛、没改过版的采购单要来自已定标的询价单
-  await assertQuotesForPo(tx, po.id);
+  // 自购（8.2.13）没有供应商：不核询价门槛、供应商准入（自购另有一级店主复核，见下）
+  if (po.purchaseMethod !== 'self') await assertQuotesForPo(tx, po.id);
   // 挂了合同的（v0.7.31，C9）：合同仍要生效中；超价、超量的要写原因（在采购单的锁里再核对一次，读合同不加锁）
   await assertContractDeviation(tx, po.id);
   // 供应商准入（8.0.7 A2，V2）：打开了「只能给已准入的供应商」时，待准入、暂停的拒绝（只读供应商）
-  await assertSupplierAdmitted(tx, po.id);
+  if (po.purchaseMethod !== 'self') await assertSupplierAdmitted(tx, po.id);
   await tx`UPDATE purchase_orders SET status = 'submitted', submitted_by = ${actor.id}, submitted_at = now(), updated_at = now() WHERE id = ${po.id}`;
   await logApproval(tx, 'purchase_order', po.id, 'submit', actor.id, '', po.revision);
   if (deptConfirm) {
@@ -629,14 +774,53 @@ async function submitLocked(tx: Tx, po: PoRow, actor: Actor, approveNow: boolean
   // #18：合计不超过免确认门槛的采购单提交即确认（v0.7.12）
   const [totals] = await tx<{ totalCents: number }[]>`SELECT total_cents FROM purchase_orders WHERE id = ${po.id}`;
   // 04（CG04）：每一行都来自已通过的需求单（供应链审核过）——只读需求单，不加锁（锁顺序：采购单 → 需求单，这里只在采购单的锁里读）
-  const fromRequests = (await loadPurchaseRules(tx)).requestPoDirect && (await allLinesFromApprovedRequests(tx, po.id));
-  const fallback = !fromRequests && settings.approvalRules.purchase_order && overThreshold(settings, totals?.totalCents ?? null);
+  const purchaseRules = await loadPurchaseRules(tx);
+  const fromRequests = purchaseRules.requestPoDirect && (await allLinesFromApprovedRequests(tx, po.id));
   if (approveNow && !can(actor, 'inventory.approve')) throw forbidden('当前账号不能确认采购单，请提交给负责人');
-  const r = await submitForApproval(tx, 'purchase_order', po.id, { actor, timeZone }, { fallback, approveNow });
+  // 自购（8.2.13，PS5）：都要审批（没有规则命中按一级负责人），超过采购规则里的「自购店主复核」金额（默认 ¥2,000）再加一级店主；
+  // 提交人不能审自己的自购单。审批级数随审批单存下（approval_requests.steps），之后改规则不影响在审的单
+  const self = po.purchaseMethod === 'self';
+  const fallback = self || (!fromRequests && settings.approvalRules.purchase_order && overThreshold(settings, totals?.totalCents ?? null));
+  const selfPlan = self
+    ? {
+        ruleId: null,
+        ruleVersion: null,
+        steps: [
+          { group: 'manager' as const, mode: 'any' as const },
+          // 金额设成 0 表示每张自购都加店主（含合计为 0 的单）；大于 0 时超过才加
+          ...(purchaseRules.selfOwnerReviewCents === 0 || Number(totals?.totalCents ?? 0) > purchaseRules.selfOwnerReviewCents ? [{ group: 'owner' as const, mode: 'any' as const }] : []),
+        ],
+        allowSelf: false,
+      }
+    : undefined;
+  const r = await submitForApproval(tx, 'purchase_order', po.id, { actor, timeZone }, { fallback, approveNow: approveNow && !self, defaultPlan: selfPlan, forbidSelf: self });
   if (r.outcome === 'effective') {
     const reason = !r.skipped ? '' : fromRequests ? '需求单转的采购单：供应链审核需求单即可采购，提交即确认' : settings.approvalRules.purchase_order ? '未超过免确认门槛，提交即确认' : '';
     await approveLocked(tx, { ...po, status: 'submitted' }, actor, reason);
   }
+}
+
+/**
+ * 新建采购单的请求摘要（操作编号核对用）。
+ * 供应商采购、没带自购信息的，不把 8.2.13 加的 purchaseMethod、self 两个默认值算进去，与升级前的摘要一样：
+ * 升级前提交、结果没确认的采购单升级后原样重提照旧认（8.2.13 Codex 审查后补）。
+ */
+export function poRequestHash(body: PoBodyParsed, meta: { action: string; approveNow: boolean }, opts: { backfillReceiptId?: number; deptConfirm?: boolean; sourcingEventId?: number } = {}) {
+  const legacy = body.purchaseMethod === 'supplier' && body.self === null;
+  return hashRequest({
+    ...body,
+    ...(legacy ? { purchaseMethod: undefined, self: undefined } : {}),
+    ...meta,
+    clientKey: undefined,
+    backfill: opts.backfillReceiptId ?? null,
+    deptConfirm: !!opts.deptConfirm,
+    ...(opts.sourcingEventId ? { sourcingEventId: opts.sourcingEventId } : {}),
+  });
+}
+
+/** 测试用：按页面原样提交的新建请求算摘要 */
+export function poRequestHashOf(raw: unknown) {
+  return poRequestHash(parse(PoBody, raw), parse(Meta, raw));
 }
 
 export async function createPo(deps: Deps, raw: unknown, actor: Actor, opts: { backfillReceiptId?: number; ip?: string; deptConfirm?: boolean; sourcingEventId?: number } = {}) {
@@ -645,14 +829,7 @@ export async function createPo(deps: Deps, raw: unknown, actor: Actor, opts: { b
   if (meta.approveNow && !can(actor, 'inventory.approve')) throw forbidden('当前账号不能确认采购单，请提交给负责人');
   assertNotFuture(body.orderDate, deps.config.timezone);
   if (body.expectedDate && body.expectedDate < body.orderDate) throw badRequest('预计到货日期不能早于下单日期');
-  const requestHash = hashRequest({
-    ...body,
-    ...meta,
-    clientKey: undefined,
-    backfill: opts.backfillReceiptId ?? null,
-    deptConfirm: !!opts.deptConfirm,
-    ...(opts.sourcingEventId ? { sourcingEventId: opts.sourcingEventId } : {}),
-  });
+  const requestHash = poRequestHash(body, meta, opts);
   const findExisting = async (db: Db) => {
     const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`
       SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${meta.clientKey}`;
@@ -676,9 +853,11 @@ export async function createPo(deps: Deps, raw: unknown, actor: Actor, opts: { b
         if (!ev) throw notFound('询价单不存在');
         if (ev.status !== 'awarded') throw conflict('NOT_AWARDED', '询价单还没定标（或已撤销），不能转采购单');
       }
-      const sup = await assertSupplier(tx, body.supplierId);
+      const method = await checkMethod(tx, body);
+      if (method.self && (opts.sourcingEventId || opts.backfillReceiptId)) throw unprocessable('SELF_NOT_ALLOWED', '询价单转的、补单的采购单要有供应商，不能选自购');
+      const sup = method.supplierId ? await assertSupplier(tx, method.supplierId) : { defaultChannel: null };
       const ch = resolveChannel(await loadPurchaseRules(tx), body, sup.defaultChannel);
-      if (body.contractId) await assertContractForPo(tx, body.contractId, body.supplierId, body.orderDate);
+      if (body.contractId && method.supplierId) await assertContractForPo(tx, body.contractId, method.supplierId, body.orderDate);
       const lines = await prepareLines(tx, body, new Map());
       await checkRequestLinks(tx, null, lines, new Map(), actor, opts.sourcingEventId ?? null);
       await checkImages(tx, lines);
@@ -687,13 +866,17 @@ export async function createPo(deps: Deps, raw: unknown, actor: Actor, opts: { b
       const [row] = await tx<{ id: number }[]>`
         INSERT INTO purchase_orders (doc_no, supplier_id, status, order_date, expected_date, note, price_basis, backfill,
                                      backfill_receipt_id, client_key, created_by, channel, channel_label, channel_note, sourcing_event_id,
-                                     contract_id, contract_note)
-        VALUES (${docNo}, ${body.supplierId}, 'draft', ${body.orderDate}, ${body.expectedDate}, ${body.note}, ${settings.priceBasis},
+                                     contract_id, contract_note, purchase_method, self_reason, self_reason_note, self_channel, self_handler_id,
+                                     self_pay_method, self_bought_on)
+        VALUES (${docNo}, ${method.supplierId}, 'draft', ${body.orderDate}, ${body.expectedDate}, ${body.note}, ${settings.priceBasis},
                 ${!!opts.backfillReceiptId}, ${opts.backfillReceiptId ?? null}, ${meta.clientKey}, ${actor.id},
                 ${ch.channel}, ${ch.channelLabel}, ${ch.channelNote}, ${opts.sourcingEventId ?? null},
-                ${body.contractId ?? null}, ${body.contractNote ?? ''})
+                ${body.contractId ?? null}, ${body.contractNote ?? ''}, ${body.purchaseMethod}, ${method.self?.reason ?? null},
+                ${method.self?.reasonNote ?? ''}, ${method.self?.channel ?? ''}, ${method.self?.handlerId ?? null},
+                ${method.self?.payMethod ?? null}, ${method.self?.boughtOn ?? null})
         RETURNING id`;
       const newId = row!.id;
+      await writeSelfReceipts(tx, newId, method.self);
       const total = await syncLines(tx, newId, lines, new Map());
       await tx`UPDATE purchase_orders SET total_cents = ${total} WHERE id = ${newId}`;
       await tx`
@@ -754,13 +937,13 @@ export async function updatePo(deps: Deps, poId: number, raw: PoBodyInput & { ac
     const received = [...existing.values()].some((l) => l.receivedMilli > 0);
     if (revise) {
       if (po.status !== 'approved') throw conflict('INVALID_STATE', '只有已确认的采购单需要改版');
-      if (received && body.supplierId !== po.supplierId) throw unprocessable('PO_SUPPLIER_LOCKED', '已有收货的采购单不能更换供应商');
+      if (received && (body.supplierId !== po.supplierId || body.purchaseMethod !== po.purchaseMethod)) throw unprocessable('PO_SUPPLIER_LOCKED', '已有收货的采购单不能更换供应商或采购方式');
       // 先保存当前版本，再回到待确认
       const snapshot = await getPo(tx, poId);
       await tx`
         INSERT INTO purchase_order_revisions (po_id, revision, snapshot, changed_by)
         VALUES (${poId}, ${po.revision}, ${tx.json({
-          supplierName: snapshot.supplier.name,
+          supplierName: snapshot.supplier?.name ?? partyLabel(null, snapshot.self),
           channel: snapshot.channel ? (snapshot.channel.note ? `${snapshot.channel.label} · ${snapshot.channel.note}` : snapshot.channel.label) : null,
           totalCents: snapshot.totalCents,
           lines: snapshot.lines.map((l) => ({
@@ -772,6 +955,19 @@ export async function updatePo(deps: Deps, poId: number, raw: PoBodyInput & { ac
             amountCents: l.amountCents,
             imageIds: l.images.map((i) => i.id),
           })),
+          // 自购的信息与票据（8.2.13 Codex 审查后补）：下面会换掉票据关联，旧版的凭证在这里留底
+          self: snapshot.self
+            ? {
+                reason: snapshot.self.reason,
+                reasonNote: snapshot.self.reasonNote,
+                channel: snapshot.self.channel,
+                handlerId: snapshot.self.handler.id,
+                handlerName: snapshot.self.handler.name,
+                payMethod: snapshot.self.payMethod,
+                boughtOn: snapshot.self.boughtOn,
+                receiptImageIds: snapshot.self.receiptImages.map((i) => i.id),
+              }
+            : null,
         } as never)}, ${actor.id})`;
       await tx`UPDATE purchase_orders SET status = 'returned', revision = revision + 1, updated_at = now() WHERE id = ${poId}`;
       po = { ...po, status: 'returned', revision: po.revision + 1 };
@@ -782,24 +978,36 @@ export async function updatePo(deps: Deps, poId: number, raw: PoBodyInput & { ac
     } else if (po.status !== 'draft' && po.status !== 'returned') {
       throw conflict('INVALID_STATE', po.status === 'approved' ? '已确认的采购单请使用「改版」' : '采购单当前状态不能修改');
     }
-    if (!revise && received && body.supplierId !== po.supplierId) throw unprocessable('PO_SUPPLIER_LOCKED', '已有收货的采购单不能更换供应商');
-    const sup = await assertSupplier(tx, body.supplierId);
+    if (!revise && received && (body.supplierId !== po.supplierId || body.purchaseMethod !== po.purchaseMethod)) {
+      throw unprocessable('PO_SUPPLIER_LOCKED', '已有收货的采购单不能更换供应商或采购方式');
+    }
+    const method = await checkMethod(tx, body);
+    if (method.self && po.sourcingEventId !== null) throw unprocessable('SELF_NOT_ALLOWED', '询价单转的采购单要有供应商，不能选自购');
+    const sup = method.supplierId ? await assertSupplier(tx, method.supplierId) : { defaultChannel: null };
     const ch = await channelForUpdate(tx, poId, body, sup.defaultChannel);
     // 挂的合同（v0.7.31）：不传保持原样，传 null 取消；挂着的合同仍要对得上（换了供应商、改了下单日也核对）
     const [cur] = await tx<{ contractId: number | null; contractNote: string }[]>`SELECT contract_id, contract_note FROM purchase_orders WHERE id = ${poId}`;
     const contractId = body.contractId === undefined ? (cur!.contractId === null ? null : Number(cur!.contractId)) : body.contractId;
     const contractNote = body.contractNote ?? cur!.contractNote;
-    if (contractId !== null) await assertContractForPo(tx, contractId, body.supplierId, body.orderDate);
+    if (contractId !== null) {
+      if (!method.supplierId) throw unprocessable('SELF_NO_CONTRACT', '自购没有供应商，不能挂采购合同');
+      await assertContractForPo(tx, contractId, method.supplierId, body.orderDate);
+    }
     const lines = await prepareLines(tx, body, existing);
     await checkRequestLinks(tx, poId, lines, existing, actor, po.sourcingEventId === null ? null : Number(po.sourcingEventId));
     await checkImages(tx, lines);
     const total = await syncLines(tx, poId, lines, existing);
     await tx`
-      UPDATE purchase_orders SET supplier_id = ${body.supplierId}, order_date = ${body.orderDate}, expected_date = ${body.expectedDate},
+      UPDATE purchase_orders SET supplier_id = ${method.supplierId}, order_date = ${body.orderDate}, expected_date = ${body.expectedDate},
              note = ${body.note}, total_cents = ${total}, channel = ${ch.channel}, channel_label = ${ch.channelLabel},
-             channel_note = ${ch.channelNote}, contract_id = ${contractId}, contract_note = ${contractNote}, updated_at = now()
+             channel_note = ${ch.channelNote}, contract_id = ${contractId}, contract_note = ${contractNote},
+             purchase_method = ${body.purchaseMethod}, self_reason = ${method.self?.reason ?? null}, self_reason_note = ${method.self?.reasonNote ?? ''},
+             self_channel = ${method.self?.channel ?? ''}, self_handler_id = ${method.self?.handlerId ?? null},
+             self_pay_method = ${method.self?.payMethod ?? null}, self_bought_on = ${method.self?.boughtOn ?? null}, updated_at = now()
       WHERE id = ${poId}`;
-    if (meta.action === 'submit' || revise) await submitLocked(tx, po, actor, meta.approveNow, deps.config.timezone);
+    await writeSelfReceipts(tx, poId, method.self);
+    // 按改后的采购方式提交（8.2.13 Codex 审查后补）：同一次请求里换了供应商采购 / 自购的，重读一次，不用改前的
+    if (meta.action === 'submit' || revise) await submitLocked(tx, await lockPo(tx, poId), actor, meta.approveNow, deps.config.timezone);
   });
   return getPo(deps.sql, poId);
 }
@@ -956,8 +1164,14 @@ export async function backfillPo(deps: Deps, raw: unknown, actor: Actor, ip?: st
 const ListQuery = z.object({
   status: z.string().max(16).optional(),
   supplierId: z.coerce.number().int().positive().optional(),
+  /** 采购方式（8.2.13）：收货时按供应商采购 / 自购在服务端筛 */
+  method: z.enum(PURCHASE_METHODS).optional(),
   q: z.string().trim().max(32).optional(),
   open: z.enum(['1']).optional(),
+  // 8.2.12（R2）：排序与翻页（每页 300 张）
+  sort: z.enum(PO_SORTS).optional(),
+  dir: z.enum(['asc', 'desc']).optional(),
+  offset: z.coerce.number().int().min(0).max(100_000).optional(),
 });
 
 export function registerPurchasingRoutes(app: FastifyInstance, deps: Deps) {
@@ -968,6 +1182,12 @@ export function registerPurchasingRoutes(app: FastifyInstance, deps: Deps) {
     const q = parse(ListQuery, req.query);
     return listPos(sql, { ...q, open: q.open === '1' });
   });
+  // 自购的经办人候选（8.2.13）：在职员工，只给名字
+  app.get(
+    '/api/purchase-orders/self-handlers',
+    { preHandler: guard('inventory.read') },
+    async () => sql<{ id: number; name: string }[]>`SELECT id, display_name AS name FROM staff WHERE active AND NOT system ORDER BY display_name`,
+  );
   app.get('/api/purchase-orders/by-key/:key', { preHandler: guard('inventory.read') }, async (req) => {
     const { key } = parse(z.object({ key: z.uuid() }), req.params);
     const [row] = await sql<{ id: number }[]>`SELECT id FROM purchase_orders WHERE client_key = ${key}`;

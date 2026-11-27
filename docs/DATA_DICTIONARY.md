@@ -7,12 +7,12 @@
 「只追加」的表（账本、流水、审批动作、归档表）有触发器拒绝改删，改错走冲正或作废登记。
 列表里「键」：`PK` 主键；「引用」是外键指向的表。
 
-共 466 张表、5532 列。
+共 493 张表、5828 列。
 
 ## 目录
 
-- **核心与其他**（331）：[acceptance_templates](#acceptance_templates) · [ai_questions](#ai_questions) · [ai_summaries](#ai_summaries) · [ap_entries](#ap_entries) · [ap_offset_lines](#ap_offset_lines) · [ap_offsets](#ap_offsets) · [approval_actions](#approval_actions) · [approval_delegations](#approval_delegations) · [approval_logs](#approval_logs) · [approval_requests](#approval_requests) · [approval_rules](#approval_rules) · [ar_accounts](#ar_accounts) · [ar_allocations](#ar_allocations) · [ar_charges](#ar_charges) · [ar_collections](#ar_collections) · [asset_cards](#asset_cards) · [asset_changes](#asset_changes) · [asset_stocktake_scans](#asset_stocktake_scans) · [asset_stocktakes](#asset_stocktakes) · [audit_logs](#audit_logs) · [auth_grants](#auth_grants) · [backfill_entries](#backfill_entries) · [bank_accounts](#bank_accounts) · [bank_imports](#bank_imports) · [bank_matches](#bank_matches) · [bank_statement_lines](#bank_statement_lines) · [benefit_grants](#benefit_grants) · [benefit_uses](#benefit_uses) · [benefits](#benefits) · [bill_line_discounts](#bill_line_discounts) · [bill_line_moves](#bill_line_moves) · [bill_lines](#bill_lines) · [bill_supplements](#bill_supplements) · [bills](#bills) · [bonus_expiries](#bonus_expiries) · [bonus_lot_moves](#bonus_lot_moves) · [bonus_lots](#bonus_lots) · [bookings](#bookings) · [checkout_bills](#checkout_bills) · [checkout_items](#checkout_items) · [checkout_payments](#checkout_payments) · [checkouts](#checkouts) · [commission_rule_versions](#commission_rule_versions) · [consumption_lines](#consumption_lines) · [consumptions](#consumptions) · [contract_acceptances](#contract_acceptances) · [contract_changes](#contract_changes) · [contract_files](#contract_files) · [contract_lines](#contract_lines) · [contract_payouts](#contract_payouts) · [contract_quality_issues](#contract_quality_issues) · [contract_reviews](#contract_reviews) · [contract_revisions](#contract_revisions) · [contract_seals](#contract_seals) · [contract_templates](#contract_templates) · [contract_versions](#contract_versions) · [contracts](#contracts) · [count_card_moves](#count_card_moves) · [count_card_refunds](#count_card_refunds) · [count_card_types](#count_card_types) · [count_cards](#count_cards) · [coupon_campaign_members](#coupon_campaign_members) · [coupon_campaigns](#coupon_campaigns) · [coupon_events](#coupon_events) · [coupon_gift_outs](#coupon_gift_outs) · [coupon_issues](#coupon_issues) · [coupon_rules](#coupon_rules) · [coupon_templates](#coupon_templates) · [coupons](#coupons) · [current_locations](#current_locations) · [custom_field_defs](#custom_field_defs) · [custom_field_values](#custom_field_values) · [customer_binding_events](#customer_binding_events) · [customer_binding_requests](#customer_binding_requests) · [customer_bindings](#customer_bindings) · [customer_credit_events](#customer_credit_events) · [customer_month_targets](#customer_month_targets) · [customer_recharge_credits](#customer_recharge_credits) · [customer_service_notes](#customer_service_notes) · [customer_target_versions](#customer_target_versions) · [daily_settlements](#daily_settlements) · [departments](#departments) · [design_asset_versions](#design_asset_versions) · [design_assets](#design_assets) · [design_assign_fences](#design_assign_fences) · [design_slot_assignments](#design_slot_assignments) · [device_events](#device_events) · [device_jobs](#device_jobs) · [devices](#devices) · [dining_room_types](#dining_room_types) · [dining_tables](#dining_tables) · [dish_addons](#dish_addons) · [dish_combo_items](#dish_combo_items) · [dish_combo_swaps](#dish_combo_swaps) · [dish_limits](#dish_limits) · [dish_method_groups](#dish_method_groups) · [dish_methods](#dish_methods) · [dish_ops](#dish_ops) · [dish_price_changes](#dish_price_changes) · [dish_station_windows](#dish_station_windows) · [doc_counters](#doc_counters) · [emenu_categories](#emenu_categories) · [emenu_dish_specs](#emenu_dish_specs) · [emenu_dishes](#emenu_dishes) · [emenu_images](#emenu_images) · [emenu_orders](#emenu_orders) · [emenu_page_dishes](#emenu_page_dishes) · [emenu_pages](#emenu_pages) · [entry_claims](#entry_claims) · [erp_drafts](#erp_drafts) · [erp_files](#erp_files) · [erp_images](#erp_images) · [erp_imports](#erp_imports) · [expense_budgets](#expense_budgets) · [expense_claim_lines](#expense_claim_lines) · [expense_claim_petty_uses](#expense_claim_petty_uses) · [expense_claims](#expense_claims) · [floorplan_activations](#floorplan_activations) · [floorplan_batches](#floorplan_batches) · [floorplan_floors](#floorplan_floors) · [floorplan_originals](#floorplan_originals) · [floorplan_room_outlines](#floorplan_room_outlines) · [floorplan_rooms](#floorplan_rooms) · [floors](#floors) · [gift_card_batches](#gift_card_batches) · [gift_receipts](#gift_receipts) · [group_buy_coupons](#group_buy_coupons) · [guest_blacklist](#guest_blacklist) · [guest_preferences](#guest_preferences) · [guide_markers](#guide_markers) · [hall_zones](#hall_zones) · [hand_tag_generate_ops](#hand_tag_generate_ops) · [hand_tags](#hand_tags) · [idempotency_keys](#idempotency_keys) · [integration_calls](#integration_calls) · [inv_doc_attachments](#inv_doc_attachments) · [inv_doc_lines](#inv_doc_lines) · [inv_docs](#inv_docs) · [invoice_requests](#invoice_requests) · [item_recipe_lines](#item_recipe_lines) · [item_recipes](#item_recipes) · [kitchen_item_parts](#kitchen_item_parts) · [kitchen_items](#kitchen_items) · [kitchen_stations](#kitchen_stations) · [ledger_entries](#ledger_entries) · [ledger_imports](#ledger_imports) · [legal_entities](#legal_entities) · [linen_doc_lines](#linen_doc_lines) · [linen_docs](#linen_docs) · [linen_items](#linen_items) · [location_events](#location_events) · [location_readers](#location_readers) · [location_tracks](#location_tracks) · [marketing_cost_params](#marketing_cost_params) · [material_images](#material_images) · [materials](#materials) · [member_card_deposits](#member_card_deposits) · [member_card_returns](#member_card_returns) · [member_cards](#member_cards) · [member_grade_events](#member_grade_events) · [member_history_imports](#member_history_imports) · [member_history_rows](#member_history_rows) · [member_merges](#member_merges) · [member_notices](#member_notices) · [member_phone_changes](#member_phone_changes) · [member_refund_lines](#member_refund_lines) · [member_refunds](#member_refunds) · [member_status_events](#member_status_events) · [member_tag_links](#member_tag_links) · [member_tags](#member_tags) · [member_trials](#member_trials) · [members](#members) · [membership_job_runs](#membership_job_runs) · [op_fences](#op_fences) · [opening_balances](#opening_balances) · [opening_imports](#opening_imports) · [opening_payables](#opening_payables) · [org_departments](#org_departments) · [ota_channels](#ota_channels) · [ota_imports](#ota_imports) · [ota_order_bookings](#ota_order_bookings) · [ota_orders](#ota_orders) · [patrol_checkin_repeats](#patrol_checkin_repeats) · [patrol_checkins](#patrol_checkins) · [patrol_points](#patrol_points) · [pay_refunds](#pay_refunds) · [pay_transactions](#pay_transactions) · [pay_tx_events](#pay_tx_events) · [payment_allocations](#payment_allocations) · [payment_batch_items](#payment_batch_items) · [payment_batches](#payment_batches) · [payment_request_targets](#payment_request_targets) · [payment_requests](#payment_requests) · [payments](#payments) · [petty_accounts](#petty_accounts) · [petty_advances](#petty_advances) · [petty_merge_log](#petty_merge_log) · [petty_settlements](#petty_settlements) · [petty_uses](#petty_uses) · [platform_recon_issues](#platform_recon_issues) · [platform_recon_runs](#platform_recon_runs) · [platform_redemptions](#platform_redemptions) · [platform_settlements](#platform_settlements) · [platform_verifications](#platform_verifications) · [po_match_releases](#po_match_releases) · [po_supplier_confirmations](#po_supplier_confirmations) · [position_catalog](#position_catalog) · [position_config_log](#position_config_log) · [position_suggestions](#position_suggestions) · [purchase_order_line_images](#purchase_order_line_images) · [purchase_order_line_requests](#purchase_order_line_requests) · [purchase_order_lines](#purchase_order_lines) · [purchase_order_revisions](#purchase_order_revisions) · [purchase_orders](#purchase_orders) · [purchase_request_imports](#purchase_request_imports) · [purchase_request_line_images](#purchase_request_line_images) · [purchase_request_lines](#purchase_request_lines) · [purchase_request_progress_marks](#purchase_request_progress_marks) · [purchase_requests](#purchase_requests) · [receipt_imports](#receipt_imports) · [recharge_plans](#recharge_plans) · [recharges](#recharges) · [recon_links](#recon_links) · [refund_items](#refund_items) · [refund_payments](#refund_payments) · [refunds](#refunds) · [replenish_runs](#replenish_runs) · [request_line_stock](#request_line_stock) · [reversals](#reversals) · [room_audits](#room_audits) · [room_categories](#room_categories) · [room_deposits](#room_deposits) · [room_fee_charges](#room_fee_charges) · [room_housekeeping_events](#room_housekeeping_events) · [room_moves](#room_moves) · [room_order_lines](#room_order_lines) · [room_order_outlets](#room_order_outlets) · [room_orders](#room_orders) · [room_registrations](#room_registrations) · [room_stay_charges](#room_stay_charges) · [room_stays](#room_stays) · [room_type_member_prices](#room_type_member_prices) · [room_types](#room_types) · [rooms](#rooms) · [schema_migrations](#schema_migrations) · [service_item_prices](#service_item_prices) · [service_item_store_prices](#service_item_store_prices) · [service_items](#service_items) · [sessions](#sessions) · [settings](#settings) · [shift_members](#shift_members) · [shifts](#shifts) · [sms_outbox](#sms_outbox) · [sourcing_events](#sourcing_events) · [sourcing_line_requests](#sourcing_line_requests) · [sourcing_lines](#sourcing_lines) · [sourcing_quote_lines](#sourcing_quote_lines) · [sourcing_quotes](#sourcing_quotes) · [space_aliases](#space_aliases) · [space_imports](#space_imports) · [space_room_events](#space_room_events) · [space_room_states](#space_room_states) · [space_usage_charges](#space_usage_charges) · [space_usages](#space_usages) · [spaces](#spaces) · [staff](#staff) · [staff_order_pins](#staff_order_pins) · [staff_profiles](#staff_profiles) · [staff_stores](#staff_stores) · [stock_moves](#stock_moves) · [stock_transfer_lines](#stock_transfer_lines) · [stock_transfers](#stock_transfers) · [stock_usage_batches](#stock_usage_batches) · [stock_usage_events](#stock_usage_events) · [store_settings](#store_settings) · [stores](#stores) · [studio_assets](#studio_assets) · [studio_comments](#studio_comments) · [studio_designs](#studio_designs) · [studio_preview_codes](#studio_preview_codes) · [studio_version_cancels](#studio_version_cancels) · [studio_versions](#studio_versions) · [supplier_contract_files](#supplier_contract_files) · [supplier_invoice_attachments](#supplier_invoice_attachments) · [supplier_invoice_lines](#supplier_invoice_lines) · [supplier_invoices](#supplier_invoices) · [supplier_licenses](#supplier_licenses) · [supplier_link_replies](#supplier_link_replies) · [supplier_links](#supplier_links) · [supplier_reconciliation_docs](#supplier_reconciliation_docs) · [supplier_reconciliations](#supplier_reconciliations) · [supplier_refunds](#supplier_refunds) · [suppliers](#suppliers) · [table_events](#table_events) · [table_session_moves](#table_session_moves) · [table_session_returns](#table_session_returns) · [table_sessions](#table_sessions) · [tag_deposits](#tag_deposits) · [technician_announcer](#technician_announcer) · [technician_calls](#technician_calls) · [technician_events](#technician_events) · [technician_groups](#technician_groups) · [technician_leaves](#technician_leaves) · [technician_photos](#technician_photos) · [technician_schedule](#technician_schedule) · [technician_schedule_changes](#technician_schedule_changes) · [technician_session_changes](#technician_session_changes) · [technician_sessions](#technician_sessions) · [technician_shifts](#technician_shifts) · [technician_status](#technician_status) · [technician_targets](#technician_targets) · [technicians](#technicians) · [ticket_types](#ticket_types) · [visit_category_changes](#visit_category_changes) · [visit_group_events](#visit_group_events) · [visit_groups](#visit_groups) · [visit_incident_events](#visit_incident_events) · [visit_incidents](#visit_incidents) · [visit_remark_removals](#visit_remark_removals) · [visit_remark_resolutions](#visit_remark_resolutions) · [visit_remarks](#visit_remarks) · [visit_risk_alerts](#visit_risk_alerts) · [visit_tag_changes](#visit_tag_changes) · [visit_ticket_changes](#visit_ticket_changes) · [visits](#visits) · [warehouse_stock](#warehouse_stock) · [warehouses](#warehouses) · [web_push_keys](#web_push_keys) · [wecom_pushes](#wecom_pushes) · [wormhole_stays](#wormhole_stays) · [zones](#zones)
-- **业财法审批（gf_）**（30）：[gf_alloc_rule_versions](#gf_alloc_rule_versions) · [gf_alloc_rules](#gf_alloc_rules) · [gf_alloc_runs](#gf_alloc_runs) · [gf_cc](#gf_cc) · [gf_contract_versions](#gf_contract_versions) · [gf_dept_quotas](#gf_dept_quotas) · [gf_docs](#gf_docs) · [gf_files](#gf_files) · [gf_flow_actions](#gf_flow_actions) · [gf_flows](#gf_flows) · [gf_hr_batch_lines](#gf_hr_batch_lines) · [gf_hr_batches](#gf_hr_batches) · [gf_hr_checks](#gf_hr_checks) · [gf_hr_payouts](#gf_hr_payouts) · [gf_license_loans](#gf_license_loans) · [gf_licenses](#gf_licenses) · [gf_materials](#gf_materials) · [gf_overdue_reviews](#gf_overdue_reviews) · [gf_payouts](#gf_payouts) · [gf_quota_ledger](#gf_quota_ledger) · [gf_quota_specials](#gf_quota_specials) · [gf_role_members](#gf_role_members) · [gf_settings](#gf_settings) · [gf_sku_prices](#gf_sku_prices) · [gf_skus](#gf_skus) · [gf_specials](#gf_specials) · [gf_supplier_versions](#gf_supplier_versions) · [gf_suppliers](#gf_suppliers) · [gf_travel_budgets](#gf_travel_budgets) · [gf_travel_ledger](#gf_travel_ledger)
+- **核心与其他**（357）：[academy_assignments](#academy_assignments) · [academy_attempts](#academy_attempts) · [academy_bulk_ops](#academy_bulk_ops) · [academy_cards](#academy_cards) · [academy_certificates](#academy_certificates) · [academy_courses](#academy_courses) · [academy_credits](#academy_credits) · [academy_feedback](#academy_feedback) · [academy_lessons](#academy_lessons) · [academy_mastery](#academy_mastery) · [academy_path_completions](#academy_path_completions) · [academy_path_courses](#academy_path_courses) · [academy_paths](#academy_paths) · [academy_progress](#academy_progress) · [academy_questions](#academy_questions) · [academy_reviews](#academy_reviews) · [academy_signoffs](#academy_signoffs) · [academy_study_days](#academy_study_days) · [academy_tutor_questions](#academy_tutor_questions) · [acceptance_templates](#acceptance_templates) · [ai_questions](#ai_questions) · [ai_summaries](#ai_summaries) · [ap_entries](#ap_entries) · [ap_offset_lines](#ap_offset_lines) · [ap_offsets](#ap_offsets) · [approval_actions](#approval_actions) · [approval_delegations](#approval_delegations) · [approval_logs](#approval_logs) · [approval_requests](#approval_requests) · [approval_rules](#approval_rules) · [ar_accounts](#ar_accounts) · [ar_allocations](#ar_allocations) · [ar_charges](#ar_charges) · [ar_collections](#ar_collections) · [asset_cards](#asset_cards) · [asset_changes](#asset_changes) · [asset_stocktake_scans](#asset_stocktake_scans) · [asset_stocktakes](#asset_stocktakes) · [audit_logs](#audit_logs) · [auth_grants](#auth_grants) · [backfill_entries](#backfill_entries) · [bank_accounts](#bank_accounts) · [bank_imports](#bank_imports) · [bank_matches](#bank_matches) · [bank_statement_lines](#bank_statement_lines) · [benefit_grants](#benefit_grants) · [benefit_uses](#benefit_uses) · [benefits](#benefits) · [bill_line_discounts](#bill_line_discounts) · [bill_line_moves](#bill_line_moves) · [bill_lines](#bill_lines) · [bill_supplements](#bill_supplements) · [bills](#bills) · [bonus_expiries](#bonus_expiries) · [bonus_lot_moves](#bonus_lot_moves) · [bonus_lots](#bonus_lots) · [bookings](#bookings) · [checkout_bills](#checkout_bills) · [checkout_items](#checkout_items) · [checkout_payments](#checkout_payments) · [checkouts](#checkouts) · [commission_rule_versions](#commission_rule_versions) · [consumption_lines](#consumption_lines) · [consumptions](#consumptions) · [contract_acceptances](#contract_acceptances) · [contract_changes](#contract_changes) · [contract_files](#contract_files) · [contract_lines](#contract_lines) · [contract_payouts](#contract_payouts) · [contract_quality_issues](#contract_quality_issues) · [contract_reviews](#contract_reviews) · [contract_revisions](#contract_revisions) · [contract_seals](#contract_seals) · [contract_templates](#contract_templates) · [contract_versions](#contract_versions) · [contracts](#contracts) · [count_card_moves](#count_card_moves) · [count_card_refunds](#count_card_refunds) · [count_card_types](#count_card_types) · [count_cards](#count_cards) · [coupon_campaign_members](#coupon_campaign_members) · [coupon_campaigns](#coupon_campaigns) · [coupon_events](#coupon_events) · [coupon_gift_outs](#coupon_gift_outs) · [coupon_issues](#coupon_issues) · [coupon_rules](#coupon_rules) · [coupon_templates](#coupon_templates) · [coupons](#coupons) · [current_locations](#current_locations) · [custom_field_defs](#custom_field_defs) · [custom_field_values](#custom_field_values) · [customer_binding_events](#customer_binding_events) · [customer_binding_requests](#customer_binding_requests) · [customer_bindings](#customer_bindings) · [customer_credit_events](#customer_credit_events) · [customer_month_targets](#customer_month_targets) · [customer_recharge_credits](#customer_recharge_credits) · [customer_service_notes](#customer_service_notes) · [customer_target_versions](#customer_target_versions) · [daily_settlements](#daily_settlements) · [departments](#departments) · [design_asset_versions](#design_asset_versions) · [design_assets](#design_assets) · [design_assign_fences](#design_assign_fences) · [design_slot_assignments](#design_slot_assignments) · [device_events](#device_events) · [device_jobs](#device_jobs) · [devices](#devices) · [dining_room_types](#dining_room_types) · [dining_tables](#dining_tables) · [dish_addons](#dish_addons) · [dish_combo_items](#dish_combo_items) · [dish_combo_swaps](#dish_combo_swaps) · [dish_limits](#dish_limits) · [dish_method_groups](#dish_method_groups) · [dish_methods](#dish_methods) · [dish_ops](#dish_ops) · [dish_price_changes](#dish_price_changes) · [dish_station_windows](#dish_station_windows) · [doc_counters](#doc_counters) · [emenu_categories](#emenu_categories) · [emenu_dish_specs](#emenu_dish_specs) · [emenu_dishes](#emenu_dishes) · [emenu_images](#emenu_images) · [emenu_orders](#emenu_orders) · [emenu_page_dishes](#emenu_page_dishes) · [emenu_pages](#emenu_pages) · [entry_claims](#entry_claims) · [erp_drafts](#erp_drafts) · [erp_files](#erp_files) · [erp_images](#erp_images) · [erp_imports](#erp_imports) · [expense_budgets](#expense_budgets) · [expense_claim_lines](#expense_claim_lines) · [expense_claim_petty_uses](#expense_claim_petty_uses) · [expense_claims](#expense_claims) · [floorplan_activations](#floorplan_activations) · [floorplan_batches](#floorplan_batches) · [floorplan_floors](#floorplan_floors) · [floorplan_originals](#floorplan_originals) · [floorplan_room_outlines](#floorplan_room_outlines) · [floorplan_rooms](#floorplan_rooms) · [floors](#floors) · [gift_card_batches](#gift_card_batches) · [gift_receipts](#gift_receipts) · [group_buy_coupons](#group_buy_coupons) · [guest_blacklist](#guest_blacklist) · [guest_preferences](#guest_preferences) · [guide_markers](#guide_markers) · [hall_zones](#hall_zones) · [hand_tag_generate_ops](#hand_tag_generate_ops) · [hand_tags](#hand_tags) · [idempotency_keys](#idempotency_keys) · [integration_calls](#integration_calls) · [inv_doc_attachments](#inv_doc_attachments) · [inv_doc_lines](#inv_doc_lines) · [inv_docs](#inv_docs) · [invoice_requests](#invoice_requests) · [item_recipe_lines](#item_recipe_lines) · [item_recipes](#item_recipes) · [kitchen_item_parts](#kitchen_item_parts) · [kitchen_items](#kitchen_items) · [kitchen_stations](#kitchen_stations) · [ledger_entries](#ledger_entries) · [ledger_imports](#ledger_imports) · [legal_entities](#legal_entities) · [linen_doc_lines](#linen_doc_lines) · [linen_docs](#linen_docs) · [linen_items](#linen_items) · [location_events](#location_events) · [location_readers](#location_readers) · [location_tracks](#location_tracks) · [marketing_cost_params](#marketing_cost_params) · [material_images](#material_images) · [materials](#materials) · [meal_entries](#meal_entries) · [member_card_deposits](#member_card_deposits) · [member_card_returns](#member_card_returns) · [member_cards](#member_cards) · [member_grade_events](#member_grade_events) · [member_history_imports](#member_history_imports) · [member_history_rows](#member_history_rows) · [member_merges](#member_merges) · [member_notices](#member_notices) · [member_phone_changes](#member_phone_changes) · [member_refund_lines](#member_refund_lines) · [member_refunds](#member_refunds) · [member_status_events](#member_status_events) · [member_tag_links](#member_tag_links) · [member_tags](#member_tags) · [member_trials](#member_trials) · [members](#members) · [membership_job_runs](#membership_job_runs) · [op_fences](#op_fences) · [opening_balances](#opening_balances) · [opening_imports](#opening_imports) · [opening_payables](#opening_payables) · [org_departments](#org_departments) · [ota_channels](#ota_channels) · [ota_imports](#ota_imports) · [ota_order_bookings](#ota_order_bookings) · [ota_orders](#ota_orders) · [patrol_checkin_repeats](#patrol_checkin_repeats) · [patrol_checkins](#patrol_checkins) · [patrol_points](#patrol_points) · [pay_refunds](#pay_refunds) · [pay_transactions](#pay_transactions) · [pay_tx_events](#pay_tx_events) · [payment_allocations](#payment_allocations) · [payment_batch_items](#payment_batch_items) · [payment_batches](#payment_batches) · [payment_request_targets](#payment_request_targets) · [payment_requests](#payment_requests) · [payments](#payments) · [petty_accounts](#petty_accounts) · [petty_advances](#petty_advances) · [petty_merge_log](#petty_merge_log) · [petty_settlements](#petty_settlements) · [petty_uses](#petty_uses) · [platform_recon_issues](#platform_recon_issues) · [platform_recon_runs](#platform_recon_runs) · [platform_redemptions](#platform_redemptions) · [platform_settlements](#platform_settlements) · [platform_verifications](#platform_verifications) · [po_match_releases](#po_match_releases) · [po_supplier_confirmations](#po_supplier_confirmations) · [position_catalog](#position_catalog) · [position_config_log](#position_config_log) · [position_suggestions](#position_suggestions) · [purchase_order_line_images](#purchase_order_line_images) · [purchase_order_line_requests](#purchase_order_line_requests) · [purchase_order_lines](#purchase_order_lines) · [purchase_order_revisions](#purchase_order_revisions) · [purchase_order_self_receipts](#purchase_order_self_receipts) · [purchase_orders](#purchase_orders) · [purchase_request_imports](#purchase_request_imports) · [purchase_request_line_images](#purchase_request_line_images) · [purchase_request_lines](#purchase_request_lines) · [purchase_request_progress_marks](#purchase_request_progress_marks) · [purchase_request_versions](#purchase_request_versions) · [purchase_requests](#purchase_requests) · [receipt_imports](#receipt_imports) · [recharge_plans](#recharge_plans) · [recharges](#recharges) · [recon_links](#recon_links) · [refund_items](#refund_items) · [refund_payments](#refund_payments) · [refunds](#refunds) · [replenish_runs](#replenish_runs) · [request_fix_items](#request_fix_items) · [request_line_issues](#request_line_issues) · [request_line_stock](#request_line_stock) · [request_terminations](#request_terminations) · [reversals](#reversals) · [room_audits](#room_audits) · [room_categories](#room_categories) · [room_deposits](#room_deposits) · [room_fee_charges](#room_fee_charges) · [room_housekeeping_events](#room_housekeeping_events) · [room_moves](#room_moves) · [room_order_lines](#room_order_lines) · [room_order_outlets](#room_order_outlets) · [room_orders](#room_orders) · [room_registrations](#room_registrations) · [room_stay_charges](#room_stay_charges) · [room_stays](#room_stays) · [room_type_member_prices](#room_type_member_prices) · [room_types](#room_types) · [rooms](#rooms) · [schema_migrations](#schema_migrations) · [service_item_prices](#service_item_prices) · [service_item_store_prices](#service_item_store_prices) · [service_items](#service_items) · [sessions](#sessions) · [settings](#settings) · [shift_members](#shift_members) · [shifts](#shifts) · [sms_outbox](#sms_outbox) · [sourcing_events](#sourcing_events) · [sourcing_line_requests](#sourcing_line_requests) · [sourcing_lines](#sourcing_lines) · [sourcing_quote_lines](#sourcing_quote_lines) · [sourcing_quotes](#sourcing_quotes) · [space_aliases](#space_aliases) · [space_imports](#space_imports) · [space_room_events](#space_room_events) · [space_room_states](#space_room_states) · [space_usage_charges](#space_usage_charges) · [space_usages](#space_usages) · [spaces](#spaces) · [staff](#staff) · [staff_order_pins](#staff_order_pins) · [staff_profiles](#staff_profiles) · [staff_stores](#staff_stores) · [stock_moves](#stock_moves) · [stock_transfer_lines](#stock_transfer_lines) · [stock_transfers](#stock_transfers) · [stock_usage_batches](#stock_usage_batches) · [stock_usage_events](#stock_usage_events) · [store_settings](#store_settings) · [stores](#stores) · [studio_assets](#studio_assets) · [studio_comments](#studio_comments) · [studio_designs](#studio_designs) · [studio_preview_codes](#studio_preview_codes) · [studio_version_cancels](#studio_version_cancels) · [studio_versions](#studio_versions) · [supplier_contract_files](#supplier_contract_files) · [supplier_invoice_attachments](#supplier_invoice_attachments) · [supplier_invoice_lines](#supplier_invoice_lines) · [supplier_invoices](#supplier_invoices) · [supplier_licenses](#supplier_licenses) · [supplier_link_replies](#supplier_link_replies) · [supplier_links](#supplier_links) · [supplier_reconciliation_docs](#supplier_reconciliation_docs) · [supplier_reconciliations](#supplier_reconciliations) · [supplier_refunds](#supplier_refunds) · [suppliers](#suppliers) · [table_events](#table_events) · [table_session_moves](#table_session_moves) · [table_session_returns](#table_session_returns) · [table_sessions](#table_sessions) · [tag_deposits](#tag_deposits) · [technician_announcer](#technician_announcer) · [technician_calls](#technician_calls) · [technician_events](#technician_events) · [technician_groups](#technician_groups) · [technician_leaves](#technician_leaves) · [technician_photos](#technician_photos) · [technician_schedule](#technician_schedule) · [technician_schedule_changes](#technician_schedule_changes) · [technician_session_changes](#technician_session_changes) · [technician_sessions](#technician_sessions) · [technician_shifts](#technician_shifts) · [technician_status](#technician_status) · [technician_targets](#technician_targets) · [technicians](#technicians) · [ticket_types](#ticket_types) · [visit_category_changes](#visit_category_changes) · [visit_group_events](#visit_group_events) · [visit_groups](#visit_groups) · [visit_incident_events](#visit_incident_events) · [visit_incidents](#visit_incidents) · [visit_remark_removals](#visit_remark_removals) · [visit_remark_resolutions](#visit_remark_resolutions) · [visit_remarks](#visit_remarks) · [visit_risk_alerts](#visit_risk_alerts) · [visit_tag_changes](#visit_tag_changes) · [visit_tag_locks](#visit_tag_locks) · [visit_ticket_changes](#visit_ticket_changes) · [visits](#visits) · [warehouse_stock](#warehouse_stock) · [warehouses](#warehouses) · [web_push_keys](#web_push_keys) · [wecom_pushes](#wecom_pushes) · [wormhole_stays](#wormhole_stays) · [zones](#zones)
+- **业财法审批（gf_）**（31）：[gf_alloc_rule_versions](#gf_alloc_rule_versions) · [gf_alloc_rules](#gf_alloc_rules) · [gf_alloc_runs](#gf_alloc_runs) · [gf_cc](#gf_cc) · [gf_contract_versions](#gf_contract_versions) · [gf_dept_quotas](#gf_dept_quotas) · [gf_docs](#gf_docs) · [gf_files](#gf_files) · [gf_flow_actions](#gf_flow_actions) · [gf_flow_configs](#gf_flow_configs) · [gf_flows](#gf_flows) · [gf_hr_batch_lines](#gf_hr_batch_lines) · [gf_hr_batches](#gf_hr_batches) · [gf_hr_checks](#gf_hr_checks) · [gf_hr_payouts](#gf_hr_payouts) · [gf_license_loans](#gf_license_loans) · [gf_licenses](#gf_licenses) · [gf_materials](#gf_materials) · [gf_overdue_reviews](#gf_overdue_reviews) · [gf_payouts](#gf_payouts) · [gf_quota_ledger](#gf_quota_ledger) · [gf_quota_specials](#gf_quota_specials) · [gf_role_members](#gf_role_members) · [gf_settings](#gf_settings) · [gf_sku_prices](#gf_sku_prices) · [gf_skus](#gf_skus) · [gf_specials](#gf_specials) · [gf_supplier_versions](#gf_supplier_versions) · [gf_suppliers](#gf_suppliers) · [gf_travel_budgets](#gf_travel_budgets) · [gf_travel_ledger](#gf_travel_ledger)
 - **办公 OA（oa_）**（35）：[oa_announcement_reads](#oa_announcement_reads) · [oa_announcements](#oa_announcements) · [oa_approval_cc](#oa_approval_cc) · [oa_approval_events](#oa_approval_events) · [oa_approval_steps](#oa_approval_steps) · [oa_approval_templates](#oa_approval_templates) · [oa_approvals](#oa_approvals) · [oa_attachments](#oa_attachments) · [oa_attendance_covers](#oa_attendance_covers) · [oa_attendance_daily](#oa_attendance_daily) · [oa_attendance_groups](#oa_attendance_groups) · [oa_face_enrollments](#oa_face_enrollments) · [oa_group_locations](#oa_group_locations) · [oa_group_members](#oa_group_members) · [oa_holiday_years](#oa_holiday_years) · [oa_holidays](#oa_holidays) · [oa_im_conversations](#oa_im_conversations) · [oa_im_members](#oa_im_members) · [oa_im_messages](#oa_im_messages) · [oa_leave_balances](#oa_leave_balances) · [oa_leave_entries](#oa_leave_entries) · [oa_leave_types](#oa_leave_types) · [oa_locations](#oa_locations) · [oa_notifications](#oa_notifications) · [oa_payroll_audit](#oa_payroll_audit) · [oa_payroll_batches](#oa_payroll_batches) · [oa_payroll_files](#oa_payroll_files) · [oa_payslip_templates](#oa_payslip_templates) · [oa_payslips](#oa_payslips) · [oa_punches](#oa_punches) · [oa_schedule_grants](#oa_schedule_grants) · [oa_schedule_publishes](#oa_schedule_publishes) · [oa_schedules](#oa_schedules) · [oa_shifts](#oa_shifts) · [oa_staff_imports](#oa_staff_imports)
 - **小程序（mp_，小程序线）**（17）：[mp_banners](#mp_banners) · [mp_bindings](#mp_bindings) · [mp_booking_ops](#mp_booking_ops) · [mp_coupon_claims](#mp_coupon_claims) · [mp_food_orders](#mp_food_orders) · [mp_images](#mp_images) · [mp_invites](#mp_invites) · [mp_item_intros](#mp_item_intros) · [mp_op_fences](#mp_op_fences) · [mp_recharge_events](#mp_recharge_events) · [mp_recharge_orders](#mp_recharge_orders) · [mp_recharge_recons](#mp_recharge_recons) · [mp_refund_events](#mp_refund_events) · [mp_refund_orders](#mp_refund_orders) · [mp_reminder_consents](#mp_reminder_consents) · [mp_reminder_messages](#mp_reminder_messages) · [mp_stores](#mp_stores)
 - **员工小程序（staffmp_，员工小程序线）**（3）：[staffmp_bindings](#staffmp_bindings) · [staffmp_canteen_links](#staffmp_canteen_links) · [staffmp_sessions](#staffmp_sessions)
@@ -25,6 +25,348 @@
 - **归档（archived_）**（4）：[archived_integration_calls](#archived_integration_calls) · [archived_location_events](#archived_location_events) · [archived_location_tracks](#archived_location_tracks) · [archived_wecom_pushes](#archived_wecom_pushes)
 
 ## 核心与其他
+
+### academy_assignments
+
+学堂指派规则：一张地图或一门课 × 对象（全员 / 部门 / 岗位 / 个人）；员工命中的规则合起来是「我的必修 / 推荐」，新员工、调岗自动带上
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_assignments_id_seq'::regclass) |  |  |
+| path_id | bigint |  | 是 |  | academy_paths |  |
+| course_id | bigint |  | 是 |  | academy_courses |  |
+| audience | text |  |  |  |  |  |
+| department_key | text |  | 是 |  | org_departments |  |
+| position_key | text |  | 是 |  | position_catalog |  |
+| staff_id | bigint |  | 是 |  | staff |  |
+| required | boolean |  |  | true |  | true 必修 / false 推荐（选修） |
+| due_days | smallint |  | 是 |  |  | 几天内完成：截止日 = max(starts_on, 入职日) + due_days；为空不设截止 |
+| starts_on | date |  |  |  |  | 指派生效日（营业日） |
+| active | boolean |  |  | true |  |  |
+| version | integer |  |  | 1 |  |  |
+| client_key | uuid |  | 是 |  |  |  |
+| request_hash | text |  | 是 |  |  |  |
+| created_by | bigint |  | 是 |  | staff |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+| updated_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_attempts
+
+学堂测验的一次作答：抽到的题当场存快照（题干、选项、答案），交卷后整行不能再改
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_attempts_id_seq'::regclass) |  |  |
+| staff_id | bigint |  |  |  | staff |  |
+| lesson_id | bigint |  |  |  | academy_lessons |  |
+| client_key | uuid |  |  |  |  |  |
+| questions | jsonb |  |  |  |  | 抽到的题的快照：[{id, kind, skill, stem, options, answer, explanation}] |
+| pass_pct | smallint |  |  |  |  | 这次的及格线（百分制，开卷时取课时的设置） |
+| total | smallint |  |  |  |  |  |
+| answers | jsonb |  | 是 |  |  | 交卷时的作答（每题一个选项下标数组） |
+| correct | smallint |  | 是 |  |  |  |
+| score | smallint |  | 是 |  |  | 得分（百分制，答对题数 / 总题数） |
+| passed | boolean |  | 是 |  |  |  |
+| started_at | timestamp with time zone |  |  | now() |  |  |
+| submitted_at | timestamp with time zone |  | 是 |  |  |  |
+
+### academy_bulk_ops
+
+学堂的批量操作（导入内置课件包、表格导入题、AI 出题）：带操作编号与原请求摘要，原样重提返回第一次的结果
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_bulk_ops_id_seq'::regclass) |  |  |
+| client_key | uuid |  |  |  |  |  |
+| kind | text |  |  |  |  |  |
+| request_hash | text |  |  |  |  |  |
+| status | text |  |  | 'running'::text |  |  |
+| result | jsonb |  | 是 |  |  | 做完的结果（导入了哪些课、建了哪些题） |
+| error | text |  | 是 |  |  |  |
+| created_by | bigint |  |  |  | staff |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+| finished_at | timestamp with time zone |  | 是 |  |  |  |
+
+### academy_cards
+
+每日一练的记忆卡（FSRS 间隔复习）：每人每题一张；没有卡的题是「新题」
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| staff_id | bigint | PK |  |  | staff |  |
+| question_id | bigint | PK |  |  | academy_questions |  |
+| stability | double precision |  |  |  |  | 记忆稳定度（天）：可提取概率降到 0.9 要多少天 |
+| difficulty | double precision |  |  |  |  | 难度（1–10） |
+| due_on | date |  |  |  |  | 下次该复习的营业日 |
+| reps | integer |  |  | 0 |  |  |
+| lapses | integer |  |  | 0 |  | 忘了（评 1）的次数 |
+| last_review_on | date |  | 是 |  |  | 上一次复习的营业日（算间隔天数） |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_certificates
+
+学堂证书：完成一张学习地图自动发；有效期按地图（为空长期有效）；撤销记人与原因，同一人同一张地图只有一张没撤销的
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_certificates_id_seq'::regclass) |  |  |
+| cert_no | text |  |  |  |  | 证书编号（XT + 颁发日 + 当天序号） |
+| staff_id | bigint |  |  |  | staff |  |
+| path_id | bigint |  |  |  | academy_paths |  |
+| title | text |  |  |  |  |  |
+| issued_on | date |  |  |  |  |  |
+| expires_on | date |  | 是 |  |  | 到期日；为空长期有效 |
+| revoked_at | timestamp with time zone |  | 是 |  |  |  |
+| revoked_by | bigint |  | 是 |  | staff |  |
+| revoke_reason | text |  | 是 |  |  |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_courses
+
+学堂课程（docs/ACADEMY.md）：一门课 = 学习地图上的一个阶段；分类即知识中心的栏目；来自内置课件包的记包版本与内容摘要
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_courses_id_seq'::regclass) |  |  |
+| code | text |  | 是 |  |  | 课程编号（内置课件包用它对上已导入的课程）；自己新建的为空 |
+| title | text |  |  |  |  |  |
+| summary | text |  |  | ''::text |  |  |
+| category | text |  |  |  |  | culture 汤崎之道 / must_know 应知应会 / industry 行业通识 / skill 岗位技能 / system 系统小课堂 / safety 安全 / management 管理 |
+| department_key | text |  | 是 |  | org_departments | 属于哪个部门的知识中心；为空是全员通用 |
+| dept_only | boolean |  |  | false |  | 只本部门（与被指派的人）看得到（XT02） |
+| cover | text |  |  | 'pine'::text |  |  |
+| status | text |  |  | 'draft'::text |  |  |
+| sort | integer |  |  | 100 |  |  |
+| pack_version | integer |  | 是 |  |  |  |
+| pack_hash | text |  | 是 |  |  | 从内置课件包导入时内容的 SHA-256；包有新版且 local_edited = false 时才能直接更新 |
+| local_edited | boolean |  |  | false |  | 导入以后管理员改过（再导新版不覆盖） |
+| version | integer |  |  | 1 |  |  |
+| client_key | uuid |  | 是 |  |  |  |
+| request_hash | text |  | 是 |  |  | 新建时原请求的摘要：同一操作编号重提时内容不一样的拒绝（后台新建的都带编号；从内置课件包导入的两列都为空） |
+| created_by | bigint |  | 是 |  | staff |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+| updated_at | timestamp with time zone |  |  | now() |  |  |
+| published_at | timestamp with time zone |  | 是 |  |  |  |
+
+### academy_credits
+
+学分流水（只追加）：同一人同一件事只给一次（XT04）
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_credits_id_seq'::regclass) |  |  |
+| staff_id | bigint |  |  |  | staff |  |
+| points | integer |  |  |  |  | 学分 |
+| reason | text |  |  |  |  | lesson 完成课时（含测验及格、实操通过）/ daily 每日一练 / path 完成学习地图 |
+| ref_no | bigint |  |  |  |  | lesson：课时编号；path：地图编号；daily：营业日 yyyymmdd |
+| note | text |  |  | ''::text |  |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_feedback
+
+课程评分（柯氏一级评估：学完的人打 1–5 星、写一句话）
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| staff_id | bigint | PK |  |  | staff |  |
+| course_id | bigint | PK |  |  | academy_courses |  |
+| rating | smallint |  |  |  |  |  |
+| comment | text |  |  | ''::text |  |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+| updated_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_lessons
+
+学堂课时（学习任务）：article 图文互动课件（body 是课件文本）/ file 员工培训的文件 / quiz 测验 / practical 实操签核（body 每行一个检查项）
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_lessons_id_seq'::regclass) |  |  |
+| course_id | bigint |  |  |  | academy_courses |  |
+| pack_key | text |  | 是 |  |  | 内置课件包里的课时编号（同一门课里唯一）；自己加的为空 |
+| seq | integer |  |  | 100 |  |  |
+| title | text |  |  |  |  |  |
+| kind | text |  |  |  |  |  |
+| body | text |  |  | ''::text |  | article：学堂课件文本（扩展 Markdown，src/shared/academy-markup.ts）；practical：每行一个检查项 |
+| file_id | bigint |  | 是 |  | training_files |  |
+| quiz_count | smallint |  | 是 |  |  | 测验每次抽几道题 |
+| quiz_pass | smallint |  | 是 |  |  | 测验及格线（百分制） |
+| minutes | smallint |  |  | 5 |  | 预计学习时长（分钟） |
+| credits | smallint |  |  | 1 |  | 完成这一课时给的学分（第一次完成才给） |
+| active | boolean |  |  | true |  | 下架的课时不算进课程完成 |
+| version | integer |  |  | 1 |  |  |
+| client_key | uuid |  | 是 |  |  |  |
+| request_hash | text |  | 是 |  |  |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+| updated_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_mastery
+
+知识点掌握度（贝叶斯知识追踪 BKT）：每次作答更新；≥ 0.95 已掌握、< 0.6 薄弱
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| staff_id | bigint | PK |  |  | staff |  |
+| skill | text | PK |  |  |  |  |
+| p_known | double precision |  |  |  |  | 掌握了的概率（0–1） |
+| attempts | integer |  |  | 0 |  |  |
+| correct | integer |  |  | 0 |  |  |
+| updated_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_path_completions
+
+谁学完了哪张学习地图（只追加）：记下的那一刻给地图学分（以后还发证书）；地图后来才上架、加了已学完的课，也在上架时补记
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| staff_id | bigint | PK |  |  | staff |  |
+| path_id | bigint | PK |  |  | academy_paths |  |
+| completed_on | date |  |  |  |  | 学完的营业日 |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_path_courses
+
+学习地图的阶段：一个阶段一门课，按 seq 排
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| path_id | bigint | PK |  |  | academy_paths |  |
+| course_id | bigint | PK |  |  | academy_courses |  |
+| seq | integer |  |  |  |  |  |
+
+### academy_paths
+
+学习地图（docs/ACADEMY.md 第 4 节）：按岗位或计划排好顺序的一串课程，全部完成发证书
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_paths_id_seq'::regclass) |  |  |
+| code | text |  | 是 |  |  |  |
+| title | text |  |  |  |  |  |
+| summary | text |  |  | ''::text |  |  |
+| cover | text |  |  | 'pine'::text |  |  |
+| status | text |  |  | 'draft'::text |  |  |
+| sort | integer |  |  | 100 |  |  |
+| credits | smallint |  |  | 5 |  | 完成整张地图另给的学分 |
+| valid_months | smallint |  | 是 |  |  | 证书有效几个月（安全类默认 12）；为空是长期有效 |
+| pack_version | integer |  | 是 |  |  |  |
+| pack_hash | text |  | 是 |  |  |  |
+| local_edited | boolean |  |  | false |  |  |
+| version | integer |  |  | 1 |  |  |
+| client_key | uuid |  | 是 |  |  |  |
+| request_hash | text |  | 是 |  |  |  |
+| created_by | bigint |  | 是 |  | staff |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+| updated_at | timestamp with time zone |  |  | now() |  |  |
+| published_at | timestamp with time zone |  | 是 |  |  |  |
+
+### academy_progress
+
+每人每课时的学习进度：第一次打开、完成时刻、累计学习时长
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| staff_id | bigint | PK |  |  | staff |  |
+| lesson_id | bigint | PK |  |  | academy_lessons |  |
+| started_at | timestamp with time zone |  |  | now() |  |  |
+| completed_at | timestamp with time zone |  | 是 |  |  |  |
+| seconds | integer |  |  | 0 |  | 累计学习时长（秒）：页面在前台才计，服务端按两次上报的间隔封顶 |
+| last_ping_at | timestamp with time zone |  | 是 |  |  | 上一次上报时长的时刻（下一次最多只认这段间隔） |
+
+### academy_questions
+
+学堂题库：题挂在课上（测验从这门课启用的题里抽，问答卡只进每日一练）；AI 出的题先是草稿，人审过才启用
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_questions_id_seq'::regclass) |  |  |
+| course_id | bigint |  |  |  | academy_courses |  |
+| pack_key | text |  | 是 |  |  | 内置课件包里的题号（课程编号-序号），导入时用它对上已导入的题 |
+| skill | text |  |  |  |  | 知识点（掌握度按它算） |
+| kind | text |  |  |  |  | single 单选 / multi 多选 / judge 判断 / recall 问答卡（自己评记没记住） |
+| level | smallint |  |  | 1 |  | 难度：1 记住、2 理解、3 应用（布鲁姆分类三档） |
+| stem | text |  |  |  |  |  |
+| options | jsonb |  |  | '[]'::jsonb |  |  |
+| answer | jsonb |  |  | '[]'::jsonb |  | 对的选项（从 0 起的下标数组） |
+| answer_text | text |  |  | ''::text |  | 问答卡的答案 |
+| explanation | text |  |  | ''::text |  |  |
+| source | text |  |  |  |  |  |
+| status | text |  |  | 'active'::text |  |  |
+| version | integer |  |  | 1 |  |  |
+| client_key | uuid |  | 是 |  |  |  |
+| request_hash | text |  | 是 |  |  | 后台新建时原请求的摘要：同一操作编号重提时内容不一样的拒绝（课件包导入、AI 出题的两列为空） |
+| created_by | bigint |  | 是 |  | staff |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+| updated_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_reviews
+
+每日一练与测验的作答流水（只追加）：评分、答对没有、这次之后的稳定度、难度、下次复习日
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_reviews_id_seq'::regclass) |  |  |
+| staff_id | bigint |  |  |  | staff |  |
+| question_id | bigint |  |  |  | academy_questions |  |
+| client_key | uuid |  | 是 |  |  |  |
+| source | text |  |  |  |  |  |
+| grade | smallint |  |  |  |  | 1 忘了 / 2 模糊 / 3 记得 / 4 很熟（客观题：答错 1、答对 3） |
+| correct | boolean |  | 是 |  |  | 客观题答对没有；问答卡为空（自己评） |
+| was_new | boolean |  |  |  |  | 这道题第一次练（新题每天有上限） |
+| elapsed_days | double precision |  |  |  |  | 距上一次复习过了几天 |
+| stability | double precision |  |  |  |  |  |
+| difficulty | double precision |  |  |  |  |  |
+| due_on | date |  |  |  |  |  |
+| reviewed_on | date |  |  |  |  | 营业日 |
+| reviewed_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_signoffs
+
+实操签核（柯氏三级评估，只追加）：带教在岗看过，逐项打勾，签「通过」或「再练」；不能给自己签
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_signoffs_id_seq'::regclass) |  |  |
+| staff_id | bigint |  |  |  | staff | 被考核的员工 |
+| lesson_id | bigint |  |  |  | academy_lessons |  |
+| result | text |  |  |  |  |  |
+| checks | jsonb |  |  |  |  | 每个检查项是否达标（与 items 一一对应） |
+| items | jsonb |  |  |  |  | 签的时候的检查项原文：课时后来改了、调了顺序，历史记录照这一份显示 |
+| comment | text |  |  | ''::text |  |  |
+| signed_by | bigint |  |  |  | staff |  |
+| client_key | uuid |  |  |  |  |  |
+| signed_at | timestamp with time zone |  |  | now() |  |  |
+
+### academy_study_days
+
+每人每天的学习时长（时长榜按月汇总）
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| staff_id | bigint | PK |  |  | staff |  |
+| day | date | PK |  |  |  |  |
+| seconds | integer |  |  | 0 |  | 这一天的学习时长（秒） |
+
+### academy_tutor_questions
+
+问柚子（学堂 AI 助教）：只按这门课的课件回答，记下引用了哪几个课时；只发课件正文与问题，不发员工、会员数据
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('academy_tutor_questions_id_seq'::regclass) |  |  |
+| staff_id | bigint |  |  |  | staff |  |
+| course_id | bigint |  |  |  | academy_courses |  |
+| client_key | uuid |  |  |  |  |  |
+| question | text |  |  |  |  |  |
+| answer | text |  | 是 |  |  |  |
+| sources | jsonb |  |  | '[]'::jsonb |  | 回答引用的课时：[{lessonId, title}] |
+| status | text |  |  | 'answering'::text |  | answering 回答中 / done 答完 / failed 没答出来 / unconfigured 没配模型服务 |
+| model | text |  | 是 |  |  |  |
+| input_tokens | integer |  | 是 |  |  |  |
+| output_tokens | integer |  | 是 |  |  |  |
+| error | text |  | 是 |  |  |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+| finished_at | timestamp with time zone |  | 是 |  |  |  |
 
 ### acceptance_templates
 
@@ -621,6 +963,7 @@ R1.9 按实际时间补录纸质单（店主 2026-10-29 决定要做，见 docs/
 | revoked_by | bigint |  | 是 |  | staff | 撤下的人 |
 | revoked_at | timestamp with time zone |  | 是 |  |  | 撤下的时间 |
 | revoke_reason | text |  | 是 |  |  | 撤下的原因 |
+| rule | text |  | 是 |  |  | 8.2.8：系统按规则打的自动折扣（档 auto）是哪条规则：included_meal 含餐、buffet 自助、first_cup 首杯赠；人工打的为空 |
 
 ### bill_line_moves
 
@@ -2641,6 +2984,7 @@ v0.7.15 · 飞书需求 RQ-004 第二段（docs/FLOORPLAN.md）：底图转换�
 | produced_on | date |  | 是 |  |  |  |
 | expires_on | date |  | 是 |  |  |  |
 | redeliver_milli | bigint |  |  | 0 |  | 收货拒收里供应商要补发的数量（待补，库存单位千分；不超过拒收数，8.1.51） |
+| hold_milli | bigint |  |  | 0 |  | 收货里待判 / 待检、暂不入库的数量（库存单位千分；8.2.6）；验完以后合格的再做一张收货单 |
 
 ### inv_docs
 
@@ -3080,6 +3424,24 @@ S5 餐饮第一步（ROADMAP 第 10 节）：出品档口、菜品的出品档�
 | replenish_mode | text |  |  | 'auto'::text |  |  |
 | replenish_rev | integer |  |  | 0 |  | 补货方式的版本号：每改一次加一。页面改补货方式时带上看到的版本号，对不上拒绝—— 没等到回音的旧请求晚到时，只要这之后补货方式被改过（哪怕改走又改回原来的值）就不会生效。 |
 | location | text |  |  | ''::text |  |  |
+
+### meal_entries
+
+8.2.8 餐厅入口刷手牌登记进餐：同一来访同一营业日同一餐段一条（那一行餐费作废了的可以重新登记）；含餐的那一行餐费自动折成 0，裸票照价收；只追加。金额单位分
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('meal_entries_id_seq'::regclass) |  |  |
+| store_id | bigint |  |  | yuzu_store() | stores |  |
+| visit_id | bigint |  |  |  | visits |  |
+| business_date | date |  |  |  |  |  |
+| period | text |  |  |  |  | 餐段：breakfast 早餐 / lunch 午餐 / dinner 晚餐 / supper 夜宵（时间与价钱在餐饮规则里） |
+| kind | text |  |  |  |  | included 含餐抵扣（餐费折成 0）/ paid 裸票照价收 |
+| price | bigint |  |  |  |  | 这一餐段的餐费（分，记在那一行明细上的原价） |
+| line_id | bigint |  |  |  | bill_lines | 记在手牌上的那一行餐费明细 |
+| client_key | uuid |  |  |  |  |  |
+| staff_id | bigint |  |  |  | staff |  |
+| created_at | timestamp with time zone |  |  |  |  |  |
 
 ### member_card_deposits
 
@@ -4218,6 +4580,16 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | changed_by | bigint |  |  |  | staff |  |
 | changed_at | timestamp with time zone |  |  | now() |  |  |
 
+### purchase_order_self_receipts
+
+自购采购单的票据凭证（发票或收据照片，8.2.13）
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| po_id | bigint | PK |  |  | purchase_orders |  |
+| sort_no | integer | PK |  |  |  |  |
+| image_id | bigint |  |  |  | erp_images |  |
+
 ### purchase_orders
 
 采购单 （建表：002_inventory）
@@ -4226,7 +4598,7 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | --- | --- | --- | --- | --- | --- | --- |
 | id | bigint | PK |  | nextval('purchase_orders_id_seq'::regclass) |  |  |
 | doc_no | text |  |  |  |  |  |
-| supplier_id | bigint |  |  |  | suppliers |  |
+| supplier_id | bigint |  | 是 |  | suppliers |  |
 | status | text |  |  |  |  |  |
 | order_date | date |  |  |  |  |  |
 | expected_date | date |  | 是 |  |  |  |
@@ -4257,6 +4629,13 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | contract_note | text |  |  | ''::text |  |  |
 | contract_added_by | bigint |  | 是 |  | staff |  |
 | contract_added_at | timestamp with time zone |  | 是 |  |  |  |
+| purchase_method | text |  |  | 'supplier'::text |  | supplier 供应商采购（原来的做法）；self 自购：经办人自己买，没有供应商（8.2.13） |
+| self_reason | text |  | 是 |  |  | 自购原因：no_supplier 无供应商可供、urgent 应急、petty 零星采购、other 其他（要写说明） |
+| self_reason_note | text |  |  | ''::text |  |  |
+| self_channel | text |  |  | ''::text |  | 自购的购买渠道 / 商家名称（自由文字，不是供应商档案） |
+| self_handler_id | bigint |  | 是 |  | staff |  |
+| self_pay_method | text |  | 是 |  |  | 自购付款方式：employee_advance 员工垫付后报销、petty 备用金、company_transfer 对公转账、other 其他 |
+| self_bought_on | date |  | 是 |  |  |  |
 
 ### purchase_request_imports
 
@@ -4325,6 +4704,19 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | id | bigint | PK |  | nextval('purchase_request_progress_marks_id_seq'::regclass) |  |  |
 | request_id | bigint |  |  |  | purchase_requests |  |
 | at | timestamp with time zone |  |  | clock_timestamp() |  |  |
+
+### purchase_request_versions
+
+商城需求单每次提交的完整版本快照（8.2.6）：V1、V2……只读可查
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| request_id | bigint | PK |  |  | purchase_requests |  |
+| version_no | integer | PK |  |  |  |  |
+| snapshot | jsonb |  |  |  |  |  |
+| mode | text |  |  |  |  | submit 第一次提交；fix 只补必补项；rewrite 重新填写；baseline 升级前已提交的单第一次补资料时补记的原版本 |
+| created_by | bigint |  |  |  | staff |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
 
 ### purchase_requests
 
@@ -4510,6 +4902,42 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | created_at | timestamp with time zone |  |  | now() |  |  |
 | finished_at | timestamp with time zone |  | 是 |  |  |  |
 
+### request_fix_items
+
+退回补资料的「本次必补」（8.2.6）：退回时逐项标出要补什么，补齐重提时记下补的内容；多轮退回各自一轮
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('request_fix_items_id_seq'::regclass) |  |  |
+| request_id | bigint |  |  |  | purchase_requests |  |
+| round | integer |  |  |  |  |  |
+| request_line_id | bigint |  | 是 |  | purchase_request_lines |  |
+| line_label | text |  |  | ''::text |  | 退回时那一行的名称（行删了也看得到是哪一行） |
+| field_key | text |  |  |  |  | 要补的项（src/shared/mall-fix.ts 的 MALL_FIX_FIELDS） |
+| original_value | text |  |  | ''::text |  | 退回时原来填的（补资料页灰字回显） |
+| requirement | text |  |  |  |  |  |
+| supplied_value | text |  | 是 |  |  |  |
+| returned_by | bigint |  |  |  | staff |  |
+| returned_at | timestamp with time zone |  |  | now() |  |  |
+| resolved_at | timestamp with time zone |  | 是 |  |  |  |
+
+### request_line_issues
+
+物料发配记录（8.2.6）：需求行每一次给到部门的数量与领料单；stock 核库时领用，arrival 到货后补发
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('request_line_issues_id_seq'::regclass) |  |  |
+| request_line_id | bigint |  |  |  | purchase_request_lines |  |
+| request_id | bigint |  |  |  | purchase_requests |  |
+| department_id | bigint |  |  |  | departments |  |
+| inv_doc_id | bigint |  |  |  | inv_docs | 开的部门领料单（作废了的这一条不算已发配） |
+| qty_milli | bigint |  |  |  |  | 这一次发配的数量（需求行的单位，千分之一） |
+| kind | text |  |  |  |  | stock 核库时从库存发；arrival 采购到货后在物料发配记录里补发 |
+| note | text |  |  | ''::text |  |  |
+| created_by | bigint |  |  |  | staff |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+
 ### request_line_stock
 
 8.1.10 核库转领用（docs/ERP_V8110.md 第 2 节，PENDING_DECISIONS CK8–CK17） · 需求单的核库状态：none 不用核 / 还没到（等部门主管确认）；pending 待核库；confirming 待部门确认替代； done 核完； （建表：185_stock_check）
@@ -4528,6 +4956,21 @@ v0.7.28 ⑤（主线）：第三方平台核销补录（设计见 docs/SCHEDULE_
 | decided_at | timestamp with time zone |  |  | now() |  |  |
 | answered_by | bigint |  | 是 |  | staff |  |
 | answered_at | timestamp with time zone |  | 是 |  |  |  |
+
+### request_terminations
+
+终止申购（8.2.6）：提单人申请、部门负责人或供应链 BP 确认；确认后需求单定为已撤回（显示「已终止」）
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| request_id | bigint | PK |  |  | purchase_requests |  |
+| reason | text |  |  |  |  |  |
+| status | text |  |  |  |  |  |
+| requested_by | bigint |  |  |  | staff |  |
+| requested_at | timestamp with time zone |  |  | now() |  |  |
+| decided_by | bigint |  | 是 |  | staff |  |
+| decided_at | timestamp with time zone |  | 是 |  |  |  |
+| decide_note | text |  |  | ''::text |  |  |
 
 ### reversals
 
@@ -6107,6 +6550,8 @@ v0.7.0 S6 技师第一步（ROADMAP 第 10 节：先做技师名册和「挂技�
 | sort_order | integer |  |  | 0 |  |  |
 | created_at | timestamp with time zone |  |  | now() |  |  |
 | updated_at | timestamp with time zone |  |  | now() |  |  |
+| meals_12h | smallint |  |  | 0 |  | 8.2.8：12 小时档含几餐（餐厅入口登记时抵扣，0 = 不含餐） |
+| meals_24h | smallint |  |  | 0 |  | 8.2.8：24 小时档（在店满 12 小时以后）含几餐 |
 
 ### visit_category_changes
 
@@ -6256,6 +6701,26 @@ v0.7.0 S6 技师第一步（ROADMAP 第 10 节：先做技师名册和「挂技�
 | operator_id | bigint |  |  |  | staff |  |
 | created_at | timestamp with time zone |  |  | now() |  |  |
 | vip_override_by | bigint |  | 是 |  | staff |  |
+
+### visit_tag_locks
+
+8.2.7 锁牌外出：在店客人外出时锁住他的手牌（最多 4 小时），锁之前先收预售（一张手牌押金，结账时抵扣）；锁着期间不能挂账
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('visit_tag_locks_id_seq'::regclass) |  |  |
+| store_id | bigint |  |  | yuzu_store() | stores |  |
+| visit_id | bigint |  |  |  | visits |  |
+| tag_id | bigint |  |  |  | hand_tags |  |
+| locked_at | timestamp with time zone |  |  |  |  |  |
+| lock_until | timestamp with time zone |  |  |  |  | 到这个时刻自动解锁（不超过锁牌时刻 + 4 小时） |
+| reason | text |  |  |  |  |  |
+| tag_deposit_id | bigint |  |  |  | tag_deposits | 锁牌前收的预售（手牌押金，原因「锁牌外出预收」），结账时照押金抵扣 |
+| client_key | uuid |  |  |  |  |  |
+| locked_by | bigint |  |  |  | staff |  |
+| released_at | timestamp with time zone |  | 是 |  |  |  |
+| released_by | bigint |  | 是 |  | staff |  |
+| release_kind | text |  | 是 |  |  | return 客人回来解锁、expired 到时间自动解锁、checkout 结账时解锁；空 = 还锁着 |
 
 ### visit_ticket_changes
 
@@ -6566,6 +7031,22 @@ Batch 3 · S3.1–S3.3：门票 12 小时跳档、结账收款、团购券、会
 | client_key | uuid |  | 是 |  |  |  |
 | created_at | timestamp with time zone |  |  | now() |  |  |
 
+### gf_flow_configs
+
+610 业财法各类事项店主设的流程（8.2.15，docs/V8215_GF_CONFIG.md）：只追加，每次保存 / 清除一版，生效的是最新一版（enabled = false 为清除、用内置流程）；nodes 是引擎的节点、cc_roles 是知会角色，空 = 用内置的
+
+| 列 | 类型 | 键 | 可空 | 默认 | 引用 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | PK |  | nextval('gf_flow_configs_id_seq'::regclass) |  |  |
+| doc_type | text |  |  |  |  |  |
+| version | integer |  |  |  |  |  |
+| enabled | boolean |  |  |  |  |  |
+| nodes | jsonb |  | 是 |  |  | 按顺序的审批节点（dept_head / performer / role 或签 / all 会签），1–6 级；空 = 审批链用内置的 |
+| cc_roles | text[] |  | 是 |  |  | 通过后知会的角色；空 = 用内置的，空数组 = 不知会 |
+| note | text |  |  | ''::text |  |  |
+| created_by | bigint |  |  |  | staff |  |
+| created_at | timestamp with time zone |  |  | now() |  |  |
+
 ### gf_flows
 
 400 业财法审批流 P01：审批引擎与角色底座（店主 2026-11-26，设计见 docs/APPROVAL_V4.md）。 · gf_role_members：角色映射（财务审核人、财总、CFO、法务、CEO、董事长……），店主配置；可按经营主体（法人）限定，撤销只记时间不删； （建表：400_govflow_core）
@@ -6584,6 +7065,8 @@ Batch 3 · S3.1–S3.3：门票 12 小时跳档、结账收款、团购券、会
 | level_started_at | timestamp with time zone |  |  | now() |  |  |
 | finished_at | timestamp with time zone |  | 是 |  |  |  |
 | finished_by | bigint |  | 是 |  | staff |  |
+| seat_snapshot | jsonb |  | 是 |  |  | 提交时的审批人快照 {members: {角色: [staff_id]}, deptHeadId}（8.2.14，WB2）；空 = 旧单，实时取 |
+| config_version | integer |  | 是 |  |  | 这一轮按「流程与阈值」里第几版流程排的（8.2.15）；空 = 内置流程 |
 
 ### gf_hr_batch_lines
 
@@ -6762,6 +7245,8 @@ Batch 3 · S3.1–S3.3：门票 12 小时跳档、结账收款、团购券、会
 | created_at | timestamp with time zone |  |  | now() |  |  |
 | revoked_by | bigint |  | 是 |  | staff |  |
 | revoked_at | timestamp with time zone |  | 是 |  |  |  |
+| replaces_id | bigint |  | 是 |  | gf_role_members | 修改映射时新的一条指回被替换的旧一条（8.2.14） |
+| revoke_reason | text |  |  | ''::text |  | 撤销或被修改替换的原因（8.2.14） |
 
 ### gf_settings
 

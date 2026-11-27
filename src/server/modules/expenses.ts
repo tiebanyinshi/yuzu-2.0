@@ -2,7 +2,8 @@
 //
 // 口径：
 //   · 每笔打款单独平账，只算已确认的报销：应退回 = 打款 − 支出；实际退回 = 退回 − 补付；未退回 = 应退回 − 实际退回。
-//   · 报销单超过门槛（D13，默认 2000 元）要负责人确认；不超过的登记即确认。内容不可改，错了撤回或冲销后重新登记。
+//   · 报销单都要审批（8.2.12，《业财法审批与 WCP 需求变更》B1：原来门槛以内登记即确认，现在默认关）；提交人不能审自己的单；
+//     查不到能审的人时单据停在待审、告诉店主，不自动通过。内容不可改，错了撤回或冲销后重新登记。
 //   · 按采购单报销只能选现付供应商的采购单；采购单的每一行只能在一张有效的报销单里。
 //   · 打款、退回、补付登记即生效，错了由负责人冲销。
 // 加锁顺序：备用金打款 → 采购单 → 报销单 / 退回补付单。
@@ -56,7 +57,8 @@ import { nextDocNo, setTxTimeouts } from '../lib/tx';
 import { hashRequest } from '../lib/idempotency';
 import { saveRuleSetting } from '../lib/rule-settings';
 import { ChannelKey, ChannelNote, loadPurchaseRules, resolveChannel } from './inventory/purchase-rules';
-import { approvalBrief, approveCurrent, closeApproval, overBudgetPlan, returnCurrent, submitForApproval } from './approvals/engine';
+import { approvalBrief, approveCurrent, closeApproval, overBudgetPlan, returnCurrent, submitForApproval } from './approvals';
+import { alertIfNoApprover, autoApprovedCsv } from './expense-guard';
 import { receiptAttachments } from './inventory/attachments';
 import { checkClaimBudget } from './budgets';
 import { resolveClaimInvoice } from './invoices';
@@ -446,8 +448,8 @@ async function receivedByLine(db: Db, poId: number) {
 
 export async function poForClaim(db: Db, poId: number, excludeClaimId: number | null = null): Promise<PoForClaim & { settlement: string; status: string }> {
   const [head] = await db<{ id: number; docNo: string; supplierName: string; orderDate: string; status: string; channelKey: string | null; channelLabel: string | null; channelNote: string }[]>`
-    SELECT p.id, p.doc_no, s.name AS supplier_name, p.order_date, p.status, p.channel AS channel_key, p.channel_label, p.channel_note
-    FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${poId}`;
+    SELECT p.id, p.doc_no, coalesce(s.name, '自购 · ' || p.self_channel) AS supplier_name, p.order_date, p.status, p.channel AS channel_key, p.channel_label, p.channel_note
+    FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${poId}`;
   if (!head) throw notFound('采购单不存在');
   // 结算方式按这张采购单自己的（第一张收货定下的），不看供应商当前的设置：挂账收下的货已记应付，不能再报销
   const { channelKey, channelLabel, channelNote, ...rest } = head;
@@ -478,6 +480,8 @@ const poIsCash = (db: Db) => db`
             WHERE d.purchase_order_id = p.id AND d.doc_type = 'receipt' AND d.status = 'confirmed' AND d.settlement IS NOT NULL
             ORDER BY d.confirmed_at, d.id LIMIT 1),
            CASE WHEN EXISTS (SELECT 1 FROM expense_claims c WHERE c.purchase_order_id = p.id AND c.status IN ${db(ACTIVE_CLAIM)}) THEN 'cash' END,
+           -- 自购（8.2.13）没有供应商：按现付，在报销里报（员工垫付 / 备用金）
+           CASE WHEN p.purchase_method = 'self' THEN 'cash' END,
            s.settlement) = 'cash'`;
 /** 采购单行 pl 已在有效的报销单里 */
 const lineClaimed = (db: Db) => db`
@@ -486,11 +490,11 @@ const lineClaimed = (db: Db) => db`
 export async function poCandidates(db: Db, q: string): Promise<PoCandidate[]> {
   const like = `%${q.trim()}%`;
   return db<PoCandidate[]>`
-    SELECT p.id, p.doc_no, s.name AS supplier_name, p.order_date, p.status, p.total_cents,
+    SELECT p.id, p.doc_no, coalesce(s.name, '自购 · ' || p.self_channel) AS supplier_name, p.order_date, p.status, p.total_cents,
            (SELECT count(*) FROM purchase_order_lines pl WHERE pl.po_id = p.id AND NOT ${lineClaimed(db)})::int AS open_lines
-    FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id
+    FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id
     WHERE p.status IN ('approved', 'closed') AND ${poIsCash(db)}
-      ${q.trim() ? db`AND (p.doc_no ILIKE ${like} OR s.name ILIKE ${like} OR s.code ILIKE ${like})` : db``}
+      ${q.trim() ? db`AND (p.doc_no ILIKE ${like} OR s.name ILIKE ${like} OR s.code ILIKE ${like} OR p.self_channel ILIKE ${like})` : db``}
     ORDER BY p.order_date DESC, p.id DESC
     LIMIT 50`;
 }
@@ -502,7 +506,7 @@ const TO_CLAIM_LIMIT = 300;
 /** 已收货、待报销的现付采购单张数（8.0.1 采购组整改 11：ERP 导航「费用与备用金」上的数字） */
 export async function toClaimReceivedCount(db: Db): Promise<number> {
   const [row] = await db<{ n: number }[]>`
-    SELECT count(*)::int AS n FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id
+    SELECT count(*)::int AS n FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id
     WHERE p.status IN ('approved', 'closed') AND ${poIsCash(db)}
       AND EXISTS (SELECT 1 FROM inv_docs d WHERE d.purchase_order_id = p.id AND d.doc_type = 'receipt' AND d.status = 'confirmed')
       AND EXISTS (SELECT 1 FROM purchase_order_lines pl WHERE pl.po_id = p.id AND NOT ${lineClaimed(db)})`;
@@ -526,10 +530,10 @@ export async function toClaimList(db: Db, today: string): Promise<ToClaimPo[]> {
       SELECT p.id,
              (SELECT count(*) FROM purchase_order_lines pl WHERE pl.po_id = p.id AND NOT ${lineClaimed(db)})::int AS open_lines,
              coalesce((SELECT sum(pl.amount_cents) FROM purchase_order_lines pl WHERE pl.po_id = p.id AND NOT ${lineClaimed(db)}), 0)::bigint AS open_cents
-      FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id
+      FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id
       WHERE p.status IN ('approved', 'closed') AND ${poIsCash(db)}
     )
-    SELECT p.id, p.doc_no, s.name AS supplier_name, p.order_date, p.status, p.backfill, p.total_cents,
+    SELECT p.id, p.doc_no, coalesce(s.name, '自购 · ' || p.self_channel) AS supplier_name, p.order_date, p.status, p.backfill, p.total_cents,
            p.channel AS channel_key, p.channel_label, p.channel_note,
            cb.id AS created_by_id, cb.display_name AS created_by_name,
            o.open_lines, o.open_cents,
@@ -545,7 +549,7 @@ export async function toClaimList(db: Db, today: string): Promise<ToClaimPo[]> {
               (SELECT sum(l.qty_milli) FROM inv_doc_lines l JOIN inv_docs d ON d.id = l.doc_id WHERE l.po_line_id = pl.id AND d.status = 'confirmed'), 0))::int AS full_lines,
            coalesce((SELECT sum(l.qty_milli) FROM inv_doc_lines l JOIN inv_docs d ON d.id = l.doc_id
                      JOIN purchase_order_lines pl ON pl.id = l.po_line_id WHERE pl.po_id = p.id AND d.status = 'confirmed'), 0)::bigint AS received_milli
-    FROM open_po o JOIN purchase_orders p ON p.id = o.id JOIN suppliers s ON s.id = p.supplier_id
+    FROM open_po o JOIN purchase_orders p ON p.id = o.id LEFT JOIN suppliers s ON s.id = p.supplier_id
     JOIN staff cb ON cb.id = p.created_by LEFT JOIN departments cd ON cd.id = cb.department_id
     WHERE o.open_lines > 0
     ORDER BY p.order_date, p.id
@@ -586,7 +590,7 @@ export async function claimPrefill(db: Db, timezone: string, poId: number): Prom
   const { settlement: _s, status: _st, ...po } = full;
   const rules = await loadExpenseRules(db);
   const basis: string[] = [];
-  const [head] = await db<{ createdBy: number; handlerActive: boolean; handlerDept: number | null; handlerDeptActive: boolean | null; supplierId: number }[]>`
+  const [head] = await db<{ createdBy: number; handlerActive: boolean; handlerDept: number | null; handlerDeptActive: boolean | null; supplierId: number | null }[]>`
     SELECT p.created_by, st.active AS handler_active, st.department_id AS handler_dept, d.active AS handler_dept_active, p.supplier_id
     FROM purchase_orders p JOIN staff st ON st.id = p.created_by LEFT JOIN departments d ON d.id = st.department_id
     WHERE p.id = ${poId}`;
@@ -665,7 +669,7 @@ const LineInput = z.object({
   poLineId: id.nullable().default(null),
 });
 
-const ClaimInput = z.object({
+export const ClaimInput = z.object({
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   expenseDate: docDateSchema,
   departmentId: id,
@@ -695,6 +699,16 @@ const ClaimInput = z.object({
   useIds: z.array(id).max(50, '一张报销单最多报 50 笔申用').default([]),
 });
 
+/** 报销登记的操作编号摘要：与升级前同一个算法（approveNow 照旧在里面），升级前就在「结果待确认」里的原请求照样对得上 */
+export function claimRequestHash(input: z.infer<typeof ClaimInput>) {
+  return hashRequest({
+    ...input,
+    clientKey: undefined,
+    invoiceEntryMethod: input.invoiceEntryMethod === 'manual' ? undefined : input.invoiceEntryMethod, // 手填的不放进摘要
+    useIds: input.useIds.length ? [...input.useIds].sort((a, b) => a - b) : undefined, // 没勾申用的不放进摘要
+  });
+}
+
 async function lockAdvance(tx: Tx, advanceId: number) {
   const [a] = await tx<{ id: number; docNo: string; status: string; departmentId: number; advanceDate: string; amountCents: number }[]>`
     SELECT id, doc_no, status, department_id, advance_date, amount_cents FROM petty_advances WHERE id = ${advanceId} FOR UPDATE`;
@@ -704,7 +718,16 @@ async function lockAdvance(tx: Tx, advanceId: number) {
 
 export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
   const input = parse(ClaimInput, raw);
-  if (input.approveNow && !can(actor, 'expense.approve')) throw forbidden('当前账号不能确认报销，请提交给负责人');
+  const requestHash = claimRequestHash(input);
+  const findExisting = async (db: Db) => {
+    const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+    if (!row) return null;
+    if (row.opType !== 'expense_claim' || row.requestHash !== requestHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一笔不同的登记，请刷新页面后重新填写');
+    return row.refId;
+  };
+  // 先按操作编号查回已提交的：升级前带 approveNow 提交、已入账但没收到结果的原请求原样重提要拿回原单
+  const committed = await findExisting(deps.sql);
+  if (committed) return { claim: await getClaim(deps.sql, committed), replayed: true };
   assertNotFuture(input.expenseDate, deps.config.timezone);
   const rules = await loadExpenseRules(deps.sql);
   if (!rules.purposes.includes(input.purpose)) throw unprocessable('PURPOSE_INVALID', `用途只能从固定选项里选：${rules.purposes.join('、')}`);
@@ -732,22 +755,8 @@ export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: s
   }
   const total = input.lines.reduce((t, l) => t + l.amountCents, 0);
   if (input.invoiceTaxCents !== null && input.invoiceTaxCents > total) throw badRequest('税额不能超过报销金额');
-  const needsApproval = total > rules.approvalThresholdCents;
-  // 手填的不放进摘要：升级前就在「结果待确认」里的原请求照样对得上
-  const requestHash = hashRequest({
-    ...input,
-    clientKey: undefined,
-    invoiceEntryMethod: input.invoiceEntryMethod === 'manual' ? undefined : input.invoiceEntryMethod,
-    // 没勾申用的不放进摘要（升级前就在「结果待确认」里的原请求照样对得上）
-    useIds: input.useIds.length ? [...input.useIds].sort((a, b) => a - b) : undefined,
-  });
-
-  const findExisting = async (db: Db) => {
-    const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
-    if (!row) return null;
-    if (row.opType !== 'expense_claim' || row.requestHash !== requestHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一笔不同的登记，请刷新页面后重新填写');
-    return row.refId;
-  };
+  // 门槛以内登记即确认只在显式打开时才有（默认关，B1 / Q9）
+  const needsApproval = !rules.autoConfirmBelowThreshold || total > rules.approvalThresholdCents;
 
   let claimId: number;
   let replayed = false;
@@ -757,6 +766,8 @@ export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: s
       await lockOpKey(tx, input.clientKey);
       const existing = await findExisting(tx);
       if (existing) return { id: existing, replayed: true };
+      // 8.2.12（B1 / 7.3 第 4 条）：不再有「登记时同时以负责人身份确认」，报销都要别人审（只拦新登记，查回原单在前）
+      if (input.approveNow) throw forbidden('报销不能由登记的人自己确认，请提交给负责人审批');
       await assertNotFenced(tx, input.clientKey, 'expense_claim', erpOpAbandoned);
       const [dept] = await tx<{ active: boolean }[]>`SELECT active FROM departments WHERE id = ${input.departmentId}`;
       if (!dept?.active) throw unprocessable('DEPARTMENT_INVALID', '部门不存在或已停用');
@@ -861,7 +872,7 @@ export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: s
         { actor, timeZone: deps.config.timezone },
         {
           fallback: needsApproval || budget.overBudget,
-          approveNow: input.approveNow,
+          forbidSelf: true,
           defaultPlan: budget.overBudget ? await overBudgetPlan(tx, { amountCents: total, departmentId: input.departmentId, fallback: needsApproval }) : undefined,
         },
       );
@@ -869,9 +880,10 @@ export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: s
       if (confirmNow) {
         await tx`UPDATE expense_claims SET status = 'confirmed', confirmed_by = ${actor.id}, confirmed_at = now(), needs_approval = ${!r.skipped} WHERE id = ${newId}`;
         await logApproval(tx, 'expense_claim', newId, 'approve', actor.id, r.skipped ? '未超过确认门槛，登记即确认' : '');
-      } else if (!needsApproval) {
+      } else {
         // 门槛以内、但命中了审批规则
-        await tx`UPDATE expense_claims SET needs_approval = true WHERE id = ${newId}`;
+        if (!needsApproval) await tx`UPDATE expense_claims SET needs_approval = true WHERE id = ${newId}`;
+        await alertIfNoApprover(tx, newId, docNo);
       }
       await writeAudit(tx, {
         staffId: actor.id,
@@ -904,8 +916,8 @@ export async function actOnClaim(deps: Deps, claimId: number, action: 'approve' 
     const [head] = await tx<{ advanceId: number | null }[]>`SELECT advance_id FROM expense_claims WHERE id = ${claimId}`;
     if (!head) throw notFound('报销单不存在');
     const advance = head.advanceId ? await lockAdvance(tx, head.advanceId) : null;
-    const [c] = await tx<{ id: number; status: ClaimStatus; createdBy: number; expenseDate: string }[]>`
-      SELECT id, status, created_by, expense_date FROM expense_claims WHERE id = ${claimId} FOR UPDATE`;
+    const [c] = await tx<{ id: number; docNo: string; status: ClaimStatus; createdBy: number; expenseDate: string }[]>`
+      SELECT id, doc_no, status, created_by, expense_date FROM expense_claims WHERE id = ${claimId} FOR UPDATE`;
     const mine = c!.createdBy === actor.id;
     switch (action) {
       case 'approve': {
@@ -945,8 +957,10 @@ export async function actOnClaim(deps: Deps, claimId: number, action: 'approve' 
         // 退回后再提交按当时的规则从第一级重新走；没有规则命中按默认规则（与以前一样，退回的再提交都要确认）
         await submitForApproval(tx, 'expense_claim', claimId, ctx, {
           fallback: true,
+          forbidSelf: true,
           defaultPlan: budget.overBudget ? await overBudgetPlan(tx, { amountCents: Number(cur!.amountCents), departmentId: Number(cur!.departmentId), fallback: true }) : undefined,
         });
+        await alertIfNoApprover(tx, claimId, c!.docNo);
         return logApproval(tx, 'expense_claim', claimId, 'submit', actor.id);
       case 'cancel':
         if (c!.status === 'cancelled') return;
@@ -1365,6 +1379,8 @@ export function registerExpenseRoutes(app: FastifyInstance, deps: Deps) {
           invoiceCertifyDays: rules.invoiceCertifyDays ?? before.invoiceCertifyDays,
           invoiceRemindDays: rules.invoiceRemindDays ?? before.invoiceRemindDays,
           invoiceTaxToleranceCents: rules.invoiceTaxToleranceCents ?? before.invoiceTaxToleranceCents,
+          // 8.2.12（B1，Q9）：页面不改这一项，存过的原样留着（默认关）
+          autoConfirmBelowThreshold: before.autoConfirmBelowThreshold,
         };
         return typeof legacy === 'number' ? ({ ...merged, arrivalOverdueDays: legacy } as ExpenseRules) : merged;
       },
@@ -1385,6 +1401,12 @@ export function registerExpenseRoutes(app: FastifyInstance, deps: Deps) {
     const csv = await readSnapshot(sql, (tx) => claimsCsv(tx, f));
     await writeAudit(sql, { staffId: req.actor.id, action: 'export', targetType: 'expense_claims', detail: f, ip: req.ip });
     return csvReply(reply, `费用报销明细_${f.from}_${f.to}.csv`, csv);
+  });
+  // 8.2.12（7.4）：没经过审批就通过的报销清单
+  app.get('/api/erp/expenses/auto-approved', { preHandler: guard('expense.export') }, async (req, reply) => {
+    const csv = await readSnapshot(sql, autoApprovedCsv);
+    await writeAudit(sql, { staffId: req.actor.id, action: 'export', targetType: 'expense_claims', detail: { list: 'auto_approved' }, ip: req.ip });
+    return csvReply(reply, '没经过审批就通过的报销.csv', csv);
   });
   app.get('/api/erp/expenses/checks', { preHandler: guard('expense.read') }, async () => readSnapshot(sql, expenseChecks));
   // 经办人：在职的员工（只给名字，不给账号与岗位）

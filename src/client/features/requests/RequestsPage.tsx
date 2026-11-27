@@ -3,7 +3,7 @@
 // 8.0.1（采购组整改 02、03）：红点紧急、绿点普通，待审核按紧急在前、期望到货日期早的在前排；截单以后提交的当天不能通过。
 // 8.1.10 核库转领用：库管多一个页签「待核库」；需求行上写总仓结存与核库结果，部门在这里答复替代（StockCheck.tsx）。
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { ClipboardList, Download, ExternalLink, Inbox, PackageCheck, PackageSearch, Pencil, Plus, ShoppingCart, X } from 'lucide-react';
 import { formatQty } from '@shared/quantity';
@@ -32,6 +32,8 @@ import { LoadFailed } from '../../components/LoadFailed';
 import { Money } from '../../components/Money';
 import { Sheet } from '../../components/Overlay';
 import { ReasonDialog } from '../../components/ReasonDialog';
+import type { MallFixItemInput } from '@shared/mall-fix';
+import { FixItemsPicker, fixItemsProblem } from './FixItemsPicker';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Input, Notice, Segmented, Select, Skeleton } from '../../components/ui';
 import { PurchaseFlowPanel } from '../purchasing/PurchaseFlow';
@@ -82,6 +84,13 @@ export function RequestsPage() {
   // 按提交日期筛选；不填就是全部（导出时没填按本月）
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  // 8.2.12（R1）：按单号 / 商城单号 / 物品名称搜（服务端，停手 250 毫秒再查）
+  const [qText, setQText] = useState('');
+  const [q, setQ] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setQ(qText.trim()), 250);
+    return () => clearTimeout(t);
+  }, [qText]);
   // 状态里的「待核库」不是需求单的状态，按 stock=open 查
   const list = useRequests(
     view === 'stock'
@@ -92,6 +101,7 @@ export function RequestsPage() {
           departmentId: departmentId || undefined,
           from: from || undefined,
           to: to || undefined,
+          q: q || undefined,
         },
   );
   // 导出与列表同一个筛选：状态里的「待核库」按 stock=open 导（Codex 审查 b3ca67a）
@@ -102,6 +112,8 @@ export function RequestsPage() {
       status: status === 'stock' ? '' : status,
       stock: status === 'stock' ? 'open' : '',
       departmentId,
+      // 搜索词也带上：导出的就是列表里搜出来的那些单
+      q,
     }).filter(([, v]) => v) as [string, string][],
   ).toString();
   const openId = Number(params.get('request')) || null;
@@ -205,6 +217,16 @@ export function RequestsPage() {
                   ))}
                 </Select>
               )}
+              <Input
+                value={qText}
+                onChange={(e) => setQText(e.target.value)}
+                placeholder="单号 / 物品名称"
+                aria-label="搜索需求单"
+                fullWidth={false}
+                className="h-9 w-44"
+                maxLength={64}
+                data-testid="requests-search"
+              />
               <label className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-3">
                 提交日期
                 <Input type="date" fullWidth={false} value={from} max={to || session.calendarToday} onChange={(e) => setFrom(e.target.value)} className="h-9 w-36" aria-label="提交日期从" />
@@ -494,6 +516,8 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
   const request = useRequest(id);
   const [reasonFor, setReasonFor] = useState<'return' | 'reject' | 'cancel' | 'dept-return' | null>(null);
   const [checking, setChecking] = useState(false);
+  // 退回商城的单（8.2.6）：逐项标的「本次必补」
+  const [fixItems, setFixItems] = useState<MallFixItemInput[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const r = request.data;
@@ -509,7 +533,9 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
     setBusy(true);
     setError(null);
     try {
-      await api.post<PurchaseRequest>(`/api/erp/requests/${r.id}/${action}`, reason ? { reason } : {});
+      const body = action === 'return' && r.source === 'mall' ? { reason, fixItems } : reason ? { reason } : {};
+      await api.post<PurchaseRequest>(`/api/erp/requests/${r.id}/${action}`, body);
+      if (action === 'return') setFixItems([]);
       await invalidate();
       setReasonFor(null);
       toast({ tone: 'success', title: { approve: '已通过', return: '已退回', reject: '已定为不采购', cancel: '已撤回', 'dept-confirm': '主管已确认', 'dept-return': '主管已退回' }[action] });
@@ -699,6 +725,8 @@ function RequestSheet({ id, onClose }: { id: number | null; onClose: () => void 
         description={reasonFor === 'return' || reasonFor === 'dept-return' ? '提单人改了再提交。' : reasonFor === 'reject' ? '这张需求单结束，不再转采购单。' : undefined}
         confirmLabel={reasonFor === 'return' || reasonFor === 'dept-return' ? '退回' : reasonFor === 'reject' ? '不采购' : '撤回'}
         busy={busy}
+        extra={reasonFor === 'return' && r?.source === 'mall' ? <FixItemsPicker request={r} items={fixItems} onChange={setFixItems} /> : undefined}
+        blocked={reasonFor === 'return' && r?.source === 'mall' ? fixItemsProblem(fixItems) : null}
         onClose={() => setReasonFor(null)}
         onConfirm={(reason) => reasonFor && void act(reasonFor, reason)}
       />

@@ -236,7 +236,9 @@ describe('进度与可见范围', () => {
     expect(afterConfirm.progressUpdatedAt >= created.progressUpdatedAt).toBe(true);
 
     const buyerCookie = await login(mall, 'zhouyi', 'yuzu2026');
-    expect((await api(mall, buyerCookie, 'POST', `/api/erp/requests/${created.id}/return`, { reason: '请补充尺码表' })).status).toBe(200);
+    expect(
+      (await api(mall, buyerCookie, 'POST', `/api/erp/requests/${created.id}/return`, { reason: '请补充尺码表', fixItems: [{ lineId: null, field: 'note', requirement: '附上尺码表' }] })).status,
+    ).toBe(200);
     const back = (await call('POST', '/api/erp/mall/requests/batch-status', { staff: reqA, body: { externalNos: [created.externalNo] } })).body.requests[0];
     expect(back).toMatchObject({ status: 'returned', displayStatus: 'returned', displayLabel: '已退回', reason: '请补充尺码表' });
     // 列表按进度时刻增量取

@@ -46,6 +46,15 @@ export type AuditAction =
   | 'oa_payroll_published'
   // 员工培训（2026-11-25）：文件夹的新建与修改；培训文件的上传、换版本、改标题、移动、上下架
   | 'training_folder_saved'
+  // 汤崎学堂（docs/ACADEMY.md）
+  | 'academy_course_saved'
+  | 'academy_path_saved'
+  | 'academy_assignment_saved'
+  | 'academy_question_saved'
+  | 'academy_signoff'
+  | 'academy_certificate_revoked'
+  | 'academy_pack_imported'
+  | 'academy_questions_imported'
   | 'training_file_saved'
   // 业财法审批流（2026-11-26，docs/APPROVAL_V4.md）：角色映射、事项（新建 / 提交 / 撤回 / 执行）、审批动作、微信特批
   | 'gf_role'
@@ -58,6 +67,8 @@ export type AuditAction =
   | 'gf_payment'
   | 'gf_expense'
   | 'gf_hr'
+  // 8.2.15 业财法「流程与阈值」：改阈值、存 / 清除某类事项的流程（带改前改后）
+  | 'gf_config'
   | 'oa_payroll_reminded'
   | 'position_chosen'
   | 'member_created'
@@ -120,6 +131,8 @@ export type AuditAction =
   | 'frontdesk_line_discount'
   | 'frontdesk_line_discount_revoke'
   | 'tag_deposit_received'
+  | 'tag_away_locked'
+  | 'tag_away_unlocked'
   | 'tag_deposit_refunded'
   | 'frontdesk_abandon'
   | 'frontdesk_ticket'
@@ -347,6 +360,8 @@ export type AuditAction =
   | 'design_asset_edit'
   | 'material_images'
   | 'material_images_imported'
+  | 'request_dispatch'
+  | 'mall_terminate'
   | 'design_asset_archive'
   | 'design_slot_assign'
   // 备用金申用（8.1.42；8.1.42 以前的记录是 pool_use）：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Directory } from '../src/shared/oa-directory';
 import type { ImConversationDetail, ImConversationList, ImMessagePage } from '../src/shared/oa-im';
 import { createStaff } from '../src/server/modules/staff';
+import { todayIn } from '../src/server/lib/dates';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -23,7 +24,7 @@ const messages = async (who: Emp, id: number) => (await api<ImMessagePage>(ctx.a
 const lastSystem = async (who: Emp, id: number) => (await messages(who, id)).filter((m) => m.kind === 'system').at(-1)?.body;
 const memberIds = (d: ImConversationDetail) => d.members.map((m) => m.staffId).sort((a, b) => a - b);
 const profileVersion = async (id: number) => Number((await ctx.sql<{ version: number }[]>`SELECT version FROM staff_profiles WHERE staff_id = ${id}`)[0]?.version ?? 0);
-const leave = async (id: number) => api(ctx.app, ctx.owner, 'POST', `/api/oa/employees/${id}/leave`, { leaveDate: new Date().toISOString().slice(0, 10), version: await profileVersion(id) });
+const leave = async (id: number) => api(ctx.app, ctx.owner, 'POST', `/api/oa/employees/${id}/leave`, { leaveDate: todayIn(ctx.config.timezone), version: await profileVersion(id) });
 const rehire = async (id: number) => api(ctx.app, ctx.owner, 'POST', `/api/oa/employees/${id}/rehire`, { version: await profileVersion(id) });
 const move = async (who: Emp, position: string) => {
   const r = await api(ctx.app, ctx.owner, 'PUT', `/api/staff/${who.id}`, { displayName: who.name, position, active: true });

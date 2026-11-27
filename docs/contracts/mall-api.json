@@ -363,6 +363,31 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "material": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 120
+                        },
+                        "tolerance": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 60
+                        },
+                        "color": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 60
+                        },
+                        "drawingUrl": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 1000
+                        },
+                        "designVersion": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 40
                         }
                       }
                     },

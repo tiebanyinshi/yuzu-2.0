@@ -77,6 +77,11 @@ export const FRONTDESK_OPS = [
   'tag_deposit_refund',
   // 返台补低消（8.2.4；8.2.5 起进「结果待确认」，Codex 审查）：对象是那次开台，在「桌台」页处理
   'table_return',
+  // 锁牌外出（8.2.7，docs/V8227_AWAY_LOCK.md）：锁（同一笔先收预售）、客人回来解锁；对象是来访，在收银台处理
+  'tag_away_lock',
+  'tag_away_unlock',
+  // 餐厅入口登记进餐（8.2.8，docs/V8228_DINING_MEALS.md）：对象是来访，在「餐厅入口」处理（记一行餐费，含餐的折成 0）
+  'meal_entry',
 ] as const;
 export type FrontdeskOp = (typeof FRONTDESK_OPS)[number];
 
@@ -119,6 +124,9 @@ export const FRONTDESK_OP_PERMISSIONS: Record<FrontdeskOp, readonly Permission[]
   tag_deposit: ['frontdesk.operate'],
   tag_deposit_refund: ['frontdesk.operate'],
   table_return: ['dining.returnTable'],
+  tag_away_lock: ['frontdesk.operate'],
+  tag_away_unlock: ['frontdesk.operate'],
+  meal_entry: ['dining.orderRestaurant'],
 };
 
 export const abandonedError = () => conflict('OP_ABANDONED', '这笔操作已在「结果待确认」时由员工作废，不会再生效；如仍需要，请重新填写一笔');

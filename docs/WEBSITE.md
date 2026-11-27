@@ -123,3 +123,7 @@ cd <仓库> && NODE_PATH=/tmp/yz3d/node_modules node_modules/.bin/esbuild websit
 
 中文标题：思源宋体 Heavy；拉丁字与数字：Gloock；正文仍用系统字体。都是 SIL OFL，可商用、可随网页分发。
 挑字的原则：不要 AI 生成网页最常见的「黑体 / Inter / Poppins + 渐变」；宋体配高反差衬线是杂志与精品店的路子，和「高级感」一致。
+
+## 备案号（店主 2026-11-27）
+
+页脚挂 ICP 备案号「粤ICP备2025486782号-4」，链到工信部备案查询（https://beian.miit.gov.cn/#/Integrated/index，新窗口打开）。号码改了（换备案主体、加网站序号）改 `website/index.html` 页脚的 `.foot-icp` 那一行。公安备案号下来以后照这个位置加。

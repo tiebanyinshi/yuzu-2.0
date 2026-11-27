@@ -5,7 +5,7 @@ import { ArrowLeft, CircleAlert, CircleCheck, ClipboardList, CloudOff, FileSearc
 import type { ContractCheckResult, ContractLineCheck } from '@shared/contracts';
 import type { Material, Supplier } from '@shared/inventory';
 import { centsToInput, formatAmount, parseYuan } from '@shared/money';
-import { DEFAULT_CHANNEL_KEY, type PoLineRequest, type PriceCompare, type PurchaseOrder } from '@shared/purchasing';
+import { DEFAULT_CHANNEL_KEY, PURCHASE_METHOD_LABELS, PURCHASE_METHODS, type PoLineRequest, type PriceCompare, type PurchaseMethod, type PurchaseOrder } from '@shared/purchasing';
 import { fitsDecimals, formatQty, lineAmountCents, parseQty, priceChangePercent, toBaseQty } from '@shared/quantity';
 import { MAX_LINE_IMAGES, type ImageRef, type OpenRequestLine } from '@shared/requests';
 import { api, ApiError, errorMessage, UncertainError } from '../../lib/api';
@@ -27,6 +27,7 @@ import { useOpenLines } from '../requests/queries';
 import { useContractOptions } from '../contracts/queries';
 import { SourcingCreateDialog, type SourcingDraft } from './SourcingPage';
 import { useBaseline, useInvalidateAll, usePo, usePurchaseRules } from './queries';
+import { SelfPurchaseFields, selfBody, selfProblem, selfStateFrom, type SelfState } from './SelfPurchaseFields';
 
 interface Line {
   key: string;
@@ -136,7 +137,10 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
   // 称重物料多到的（v0.7.13）：数量没改的照旧可以改单；改了的，已收货不超过新数量加容差就行（与服务端一致）
   const weighedOk = (l: Line, base: number) => l.weighed && (base === l.origBaseMilli || base + Math.floor((base * (settings.data?.weighTolerancePct ?? 10)) / 100) >= l.receivedMilli);
   const [clientKey] = useState(uuid);
-  const [supplierId, setSupplierId] = useState<number | null>(existing?.supplier.id ?? null);
+  const [supplierId, setSupplierId] = useState<number | null>(existing?.supplier?.id ?? null);
+  // 自购（8.2.13，R3）：不选供应商、填自购信息；切换采购方式不清空别的内容
+  const [method, setMethod] = useState<PurchaseMethod>(existing?.purchaseMethod ?? 'supplier');
+  const [self, setSelf] = useState<SelfState>(() => selfStateFrom(existing, session.staff.id, session.calendarToday));
   const [orderDate, setOrderDate] = useState(existing?.orderDate ?? session.calendarToday);
   const [expectedDate, setExpectedDate] = useState(existing?.expectedDate ?? '');
   const [note, setNote] = useState(existing?.note ?? '');
@@ -329,7 +333,7 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
   useEffect(() => {
     if (!contractId || !contractOptions.data) return;
     if (contractOptions.data.some((o) => o.id === contractId)) return;
-    if (existing?.contract?.id === contractId && supplierId === existing.supplier.id) return;
+    if (existing?.contract?.id === contractId && supplierId === existing.supplier?.id) return;
     setContractId(null);
   }, [contractId, contractOptions.data, supplierId, existing]);
   const checkInput = useMemo(
@@ -364,22 +368,26 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
       ? '图片还在上传，请稍等'
       : unmatched.length > 0
         ? `还有 ${unmatched.length} 行新产品没选物料`
-        : !supplierId
-          ? '请选择供应商'
-          : noteRequired && channelNote.trim().length < 2
-            ? `采购途径选了「${channelDef!.label}」，请写明在哪买的`
-            : rows.length === 0
-              ? '请至少添加一项物料'
-              : rows.some((r) => r.err)
-                ? `有 ${rows.filter((r) => r.err).length} 行需要修改`
-                : rows.some((r) => !r.ready)
-                  ? '还有行没填完整'
-                  : expectedDate && expectedDate < orderDate
-                    ? '预计到货日期不能早于下单日期'
-                    : null;
+        : method === 'supplier' && !supplierId
+          ? '请选择供应商（没有供应商的可以选「自购」）'
+          : method === 'self' && selfProblem(self)
+            ? selfProblem(self)
+            : noteRequired && channelNote.trim().length < 2
+              ? `采购途径选了「${channelDef!.label}」，请写明在哪买的`
+              : rows.length === 0
+                ? '请至少添加一项物料'
+                : rows.some((r) => r.err)
+                  ? `有 ${rows.filter((r) => r.err).length} 行需要修改`
+                  : rows.some((r) => !r.ready)
+                    ? '还有行没填完整'
+                    : expectedDate && expectedDate < orderDate
+                      ? '预计到货日期不能早于下单日期'
+                      : null;
 
   const body = (action: 'save' | 'submit') => ({
-    supplierId,
+    purchaseMethod: method,
+    supplierId: method === 'self' ? null : supplierId,
+    self: method === 'self' ? selfBody(self) : null,
     orderDate,
     expectedDate: expectedDate || null,
     note: note.trim(),
@@ -478,16 +486,33 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
           <SupplierHints supplier={suppliers.data?.find((s) => s.id === supplierId) ?? null} />
 
           <section className="grid gap-4 rounded-lg border border-line bg-card p-5 shadow-card sm:grid-cols-2 lg:grid-cols-4">
-            <Field label="供应商" htmlFor="po-sup" hint={hasReceipts ? '已有收货，不能更换' : undefined}>
-              <Select id="po-sup" value={supplierId ?? ''} disabled={locked || hasReceipts} onChange={(e) => setSupplierId(Number(e.target.value) || null)}>
-                <option value="">选择供应商</option>
-                {suppliers.data?.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.code} · {s.name}
+            <Field label="采购方式" htmlFor="po-method" hint={hasReceipts ? '已有收货，不能更换' : undefined}>
+              <Select
+                id="po-method"
+                value={method}
+                disabled={locked || hasReceipts || !!existing?.sourcing || !!existing?.backfill}
+                onChange={(e) => setMethod(e.target.value as PurchaseMethod)}
+                data-testid="po-method"
+              >
+                {PURCHASE_METHODS.map((m) => (
+                  <option key={m} value={m}>
+                    {PURCHASE_METHOD_LABELS[m]}
                   </option>
                 ))}
               </Select>
             </Field>
+            {method === 'supplier' && (
+              <Field label="供应商" htmlFor="po-sup" hint={hasReceipts ? '已有收货，不能更换' : undefined}>
+                <Select id="po-sup" value={supplierId ?? ''} disabled={locked || hasReceipts} onChange={(e) => setSupplierId(Number(e.target.value) || null)}>
+                  <option value="">选择供应商</option>
+                  {suppliers.data?.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.code} · {s.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            )}
             <Field label="下单日期" htmlFor="po-date">
               <Input id="po-date" type="date" value={orderDate} max={session.calendarToday} disabled={locked} onChange={(e) => setOrderDate(e.target.value)} className="h-10" />
             </Field>
@@ -540,7 +565,7 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
                 <Field label="合同" htmlFor="po-contract" className="sm:col-span-2" hint="选了合同，提交时按合同单价表核对（超价、超量要写原因）">
                   <Select id="po-contract" value={contractId ?? ''} disabled={locked} onChange={(e) => setContractId(Number(e.target.value) || null)} data-testid="po-contract">
                     <option value="">不挂合同</option>
-                    {existing?.contract && !contractOptions.data?.some((o) => o.id === existing.contract!.id) && supplierId === existing.supplier.id && (
+                    {existing?.contract && !contractOptions.data?.some((o) => o.id === existing.contract!.id) && supplierId === existing.supplier?.id && (
                       <option value={existing.contract.id}>
                         {existing.contract.contractNo} · {existing.contract.title}（已不在生效期）
                       </option>
@@ -579,6 +604,7 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
               <Input id="po-note" value={note} maxLength={200} disabled={locked} onChange={(e) => setNote(e.target.value)} placeholder="例如：需求来源、送货要求" className="h-10" />
             </Field>
           </section>
+          {method === 'self' && <SelfPurchaseFields s={self} set={setSelf} disabled={locked} onUploading={(b) => setLineUploading('self-receipts', b)} />}
 
           {requestIds && (
             <section className="rounded-lg border border-line bg-card p-4 shadow-card" data-testid="po-from-requests">

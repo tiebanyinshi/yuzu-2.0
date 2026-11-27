@@ -45,6 +45,7 @@ import { registerRequestRoutes } from './modules/requests';
 import { authenticateMall, isMallPath, registerMallRoutes } from './modules/mall';
 import { registerShopRoutes } from './modules/shop';
 import { registerDesignRoutes } from './modules/design';
+import { registerRequestDispatchRoutes } from './modules/request-dispatch';
 import { registerRequestStockRoutes } from './modules/request-stock';
 import { registerRequestImportRoutes } from './modules/request-import';
 import { registerRequestDraftRoutes } from './modules/request-drafts';
@@ -74,6 +75,7 @@ import { registerPettyUseRoutes } from './modules/petty-uses';
 import { registerReplenishRoutes } from './modules/inventory/replenish';
 import { registerSourcingRoutes } from './modules/inventory/sourcing';
 import { registerPurchaseFlowRoutes } from './modules/purchase-flow';
+import { registerPurchaseLookupRoutes } from './modules/purchase-lookup';
 import { registerApprovalRoutes } from './modules/approvals/routes';
 import { registerContractRoutes } from './modules/contracts/routes';
 import { registerTemplateRoutes } from './modules/contracts/templates';
@@ -122,6 +124,7 @@ import { registerSettlementRoutes } from './modules/settlement';
 import { registerStaffRoutes } from './modules/staff';
 import { registerOaOrgRoutes } from './modules/oa/org';
 import { registerTrainingRoutes } from './modules/training';
+import { registerAcademyRoutes } from './modules/academy';
 import { registerGovflowRoutes } from './modules/govflow/routes';
 import { registerSupplyRoutes } from './modules/govflow/supply';
 import { registerPettyRoutes } from './modules/govflow/petty';
@@ -157,6 +160,7 @@ import { registerDiningRoutes } from './modules/dining';
 import { registerTableRoutes } from './modules/tables';
 import { registerTableChargeRoutes } from './modules/table-charges';
 import { registerTablesV8224Routes } from './modules/tables-v8224';
+import { registerMealEntryRoutes } from './modules/dining-meals';
 import { registerDining808Routes } from './modules/dining-808';
 import { registerDiningReceiptRoutes } from './modules/dining-receipt';
 import { registerEmenuRoutes } from './modules/emenu/routes';
@@ -397,6 +401,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   // OA 办公（docs/OA.md）：OA-01 组织架构与员工档案
   registerOaOrgRoutes(app, deps);
   registerTrainingRoutes(app, deps);
+  registerAcademyRoutes(app, deps);
   registerGovflowRoutes(app, deps);
   registerSupplyRoutes(app, deps);
   registerPettyRoutes(app, deps);
@@ -468,6 +473,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerSourcingRoutes(app, deps);
   // 采购流程图（8.0.17，只读）
   registerPurchaseFlowRoutes(app, deps);
+  registerPurchaseLookupRoutes(app, deps);
   // 审批中心（v0.7.30）
   registerApprovalRoutes(app, deps);
   // 合同与法务审查（v0.7.31）
@@ -500,6 +506,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerDesignRoutes(app, deps);
   // 8.1.10 核库转领用：库管核库、部门答复替代
   registerRequestStockRoutes(app, deps);
+  // 物料发配记录（8.2.6，docs/MALL_V826.md）：分批发配、补发物料
+  registerRequestDispatchRoutes(app, deps);
   registerRequestImportRoutes(app, deps);
   registerRequestDraftRoutes(app, deps);
   registerRequestSheetRoutes(app, deps);
@@ -516,6 +524,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerTableChargeRoutes(app, deps);
   // 8.2.4 餐饮：包房房型、返台（docs/V8224_DINING.md）
   registerTablesV8224Routes(app, deps);
+  // 8.2.8：餐厅入口刷手牌登记进餐（含餐抵扣、裸票时段价）
+  registerMealEntryRoutes(app, deps);
   registerDining808Routes(app, deps);
   // 8.1.7 点菜单（小票可视化）
   registerDiningReceiptRoutes(app, deps);

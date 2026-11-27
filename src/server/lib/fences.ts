@@ -174,6 +174,11 @@ export const FENCED_OPS = [
   'tag_deposit_refund',
   // 8.2.5（迁移 570）：返台补低消（编号记在 idempotency_keys，ref_id 是那次开台，也记在 table_session_returns.client_key）
   'table_return',
+  // 8.2.7（迁移 590）：锁牌外出、客人回来解锁（编号记在 idempotency_keys，ref_id 是那次来访；锁的编号也记在 visit_tag_locks.client_key）
+  'tag_away_lock',
+  'tag_away_unlock',
+  // 8.2.8（迁移 600）：餐厅入口登记进餐（编号记在 idempotency_keys，ref_id 是那次来访，也记在 meal_entries.client_key）
+  'meal_entry',
   // OA-02 批量开通（迁移 211）：编号记在 idempotency_keys（ref_id 是那次开通 oa_staff_imports）
   'oa_staff_import',
   // OA-04 考勤设置（迁移 213）：新建班次、打卡点、考勤组；编号记在 idempotency_keys（ref_id 是新建的那一行）
@@ -212,6 +217,9 @@ export const FENCED_OPS = [
   'mall_quote',
   'mall_resubmit',
   'mall_quote_act',
+  // 8.2.6（迁移 580）：补发物料（ref_id 是需求行）、终止申购（ref_id 是需求单）
+  'request_dispatch',
+  'mall_terminate',
 ] as const;
 export type FencedOp = (typeof FENCED_OPS)[number];
 

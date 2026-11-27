@@ -16,6 +16,7 @@ export function ReasonDialog({
   extra,
   reasons,
   testId,
+  blocked,
   onClose,
   onConfirm,
 }: {
@@ -31,6 +32,8 @@ export function ReasonDialog({
   reasons?: readonly string[];
   /** 浏览器用例用：原因输入框为 `${testId}-reason`，确认按钮为 `${testId}-confirm` */
   testId?: string;
+  /** extra 里还有没填好的（8.2.6 退回商城单的必补项）：写着原因、确认按钮不能点 */
+  blocked?: string | null;
   onClose: () => void;
   onConfirm: (reason: string) => void;
 }) {
@@ -45,10 +48,11 @@ export function ReasonDialog({
       description={description}
       footer={
         <>
+          {blocked && <span className="mr-auto text-[12.5px] text-clay">{blocked}</span>}
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button variant={danger ? 'danger' : 'primary'} disabled={!ok} loading={busy} onClick={() => onConfirm(reason.trim())} data-testid={testId ? `${testId}-confirm` : undefined}>
+          <Button variant={danger ? 'danger' : 'primary'} disabled={!ok || !!blocked} loading={busy} onClick={() => onConfirm(reason.trim())} data-testid={testId ? `${testId}-confirm` : undefined}>
             {confirmLabel}
           </Button>
         </>

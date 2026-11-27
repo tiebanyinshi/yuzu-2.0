@@ -316,7 +316,7 @@ async function admit(deps: Deps, supplierId: number, clientKey: string, actor: A
       todayIn(deps.config.timezone),
     );
     const doc = await loadDoc(tx, id, true);
-    await submitFlow(tx, doc, templateFor(doc), actor);
+    await submitFlow(tx, doc, await templateFor(tx, doc), actor);
     await writeAudit(tx, { staffId: actor.id, action: 'gf_supply', targetType: 'gf_supplier', targetId: supplierId, detail: { op: 'admit', docId: id }, ip });
     return id;
   });
@@ -361,7 +361,7 @@ async function requestChange(deps: Deps, supplierId: number, raw: unknown, actor
       todayIn(deps.config.timezone),
     );
     const doc = await loadDoc(tx, id, true);
-    await submitFlow(tx, doc, templateFor(doc), actor);
+    await submitFlow(tx, doc, await templateFor(tx, doc), actor);
     await writeAudit(tx, { staffId: actor.id, action: 'gf_supply', targetType: 'gf_supplier', targetId: supplierId, detail: { op: 'change', docId: id, core, fields }, ip });
     return id;
   });
@@ -430,7 +430,7 @@ async function submitBatch(deps: Deps, raw: unknown, actor: Actor, ip?: string) 
         VALUES (${code}, ${s.id}, ${l.materialId}, ${l.name}, ${l.spec}, ${l.unit}, ${l.priceCents}, ${l.taxRateBp}, ${l.entityIds}, ${l.formats}, ${id}, ${actor.id})`;
     }
     const doc = await loadDoc(tx, id, true);
-    await submitFlow(tx, doc, templateFor(doc), actor);
+    await submitFlow(tx, doc, await templateFor(tx, doc), actor);
     await writeAudit(tx, { staffId: actor.id, action: 'gf_supply', targetType: 'gf_doc', targetId: id, detail: { op: 'sku_batch', supplierId: s.id, count: input.lines.length }, ip });
     return id;
   });
@@ -499,7 +499,7 @@ async function priceChange(deps: Deps, skuId: number, raw: unknown, actor: Actor
       todayIn(deps.config.timezone),
     );
     const doc = await loadDoc(tx, id, true);
-    await submitFlow(tx, doc, templateFor(doc), actor);
+    await submitFlow(tx, doc, await templateFor(tx, doc), actor);
     await writeAudit(tx, { staffId: actor.id, action: 'gf_supply', targetType: 'gf_sku', targetId: skuId, detail: { op: 'price', docId: id, from: k.priceCents, to: input.priceCents }, ip });
     return id;
   });

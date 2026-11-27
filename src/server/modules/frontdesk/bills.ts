@@ -28,6 +28,8 @@ import { getVisit } from './visits';
 import { recordSupplement } from './guest-tx';
 import { locateCharges, locateSession } from '../locations';
 import { currentStoreId } from '../../lib/store-context';
+import { assertNotAwayLocked } from './away-lock';
+import { revokeBuffetOfMeal } from './line-discounts';
 
 export const PostInput = z
   .object({
@@ -110,6 +112,10 @@ export interface PostOptions {
    * 不进厨房的项目不受影响。点单页在事务外已经核对过；钟房、渠道入口、平板点餐不带
    */
   outlets?: boolean;
+  /** 手动金额（没选档口的）记在哪个部门（8.2.8：餐厅入口的餐费记在餐饮）；不带的照旧记在洗浴 */
+  customSource?: 'dining';
+  /** 点单页下单（8.2.8）：登记了此刻这一餐的客人，餐厅出品口的菜自动折成 0（餐台自助） */
+  buffet?: boolean;
 }
 
 export type PostInputParsed = z.output<typeof PostInput>;
@@ -130,7 +136,7 @@ export interface PostTxMeta {
    * 这个编号记成哪种业务（8.1.15）：平时是挂账 bill_post；发牌后的「超时加收」也走这里挂一条手动金额的明细，
    * 编号记成 visit_incident（查回、作废都按那一类），不带时与以前完全一样
    */
-  opType?: 'bill_post' | 'visit_incident' | 'room_order_water' | 'room_order_fruit';
+  opType?: 'bill_post' | 'visit_incident' | 'room_order_water' | 'room_order_fruit' | 'meal_entry';
 }
 
 export interface PostedLine {
@@ -185,6 +191,8 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   // ③ 来访 → 账单
   const visit = (await lockVisits(tx, [visitId])).get(visitId)!;
   assertOpen(visit);
+  // 锁牌外出（8.2.7）：客人外出、牌锁着期间不能挂账；发牌后的异常处置（加收）照旧能记
+  if (meta.opType !== 'visit_incident') await assertNotAwayLocked(tx, visit.id);
   if (channel && Number(visit.memberId) !== channel.memberId) {
     throw conflict('VISIT_CHANGED', '这张手牌刚刚换了客人，请重新下单');
   }
@@ -307,7 +315,7 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
       unitPrice: l.amount,
       quantity: 1,
       amount: l.amount,
-      source: stationId === null ? 'bath' : 'dining',
+      source: stationId === null ? (options.customSource ?? 'bath') : 'dining',
       technicianId: null,
       callType: null,
       techText: null,
@@ -415,6 +423,19 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   if (backfill) await recordBackfill(tx, backfill, { kind: 'charges', opKey: key, visitId: visit.id, businessDate: date, actor: ctx.actor });
   // 补单（8.2.3）：记下出单员（明细上标「补单 · 出单员」）
   if (backfill?.issuerId) await recordSupplement(tx, { opKey: key, visitId: visit.id, issuerId: backfill.issuerId, at, staffId: ctx.actor.id });
+  // 餐台自助（8.2.8）：登记了此刻这一餐的客人，餐厅出品口的菜自动折成 0
+  if (options.buffet) {
+    const { applyBuffetZero } = await import('../dining-meals');
+    await applyBuffetZero(tx, deps, {
+      visitId: visit.id,
+      billId: visit.billId,
+      at,
+      date,
+      opKey: key,
+      staffId: ctx.actor.id,
+      lines: lines.flatMap((l) => (l.itemId !== null && l.source === 'dining' ? [{ lineId: lineIds.get(l)!, itemId: l.itemId, amount: l.amount }] : [])),
+    });
+  }
   await saveKey(tx, key, meta.opType ?? 'bill_post', requestHash, visit.id, ctx.actor.id);
   await writeAudit(tx, {
     staffId: ctx.actor.id,
@@ -503,6 +524,8 @@ export async function voidLine(deps: Deps, lineId: number, raw: unknown, ctx: Op
     }
     // 餐饮明细（退菜）：出品单改为已退，扣过沽清的按原份数加回
     await cancelKitchenItem(tx, line!.id, `退菜：${input.reason}`, ctx.actor, at);
+    // 8.2.8（Codex 安全审查）：餐厅入口的餐费作废了，这一餐带出来的自助折扣一并撤下（不然餐费、菜都成了 0）
+    await revokeBuffetOfMeal(tx, { mealLineId: line!.id, billId: visit.billId, staffId: ctx.actor.id, at });
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'frontdesk_void',
@@ -569,6 +592,8 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
     assertOpen(to);
     // 读到目标客人之后、锁好之前，这位客人可能刚在别的终端换了牌：牌号对不上就拒绝，不把明细转给已不在这张牌上的客人
     if (to.tagId !== target.tagId) throw conflict('TAG_CHANGED', `手牌 ${input.toTagCode} 刚刚换过牌，请刷新后重新填写转到哪张手牌`);
+    // 8.2.7：锁牌外出的客人不能挂账，转单转进去也一样
+    await assertNotAwayLocked(tx, to.id, input.toTagCode);
     const bills = await tx<{ status: string }[]>`SELECT status FROM bills WHERE id IN ${tx([from.billId, to.billId])} ORDER BY id FOR UPDATE`;
     if (bills.some((b) => b.status !== 'open')) throw conflict('BILL_CLOSED', '账单已结束，不能再转单');
     const lines = await tx<
@@ -601,8 +626,11 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
       WHERE l.id IN ${tx(lineIds)} ORDER BY l.id FOR UPDATE OF l`;
     if (lines.length !== lineIds.length || lines.some((l) => l.billId !== from.billId)) throw notFound('有明细不存在，请刷新后重试');
     const rules = await loadFrontdeskRules(tx);
+    // 8.2.8（Codex 审查）：餐厅入口登记的餐费跟着那一次进餐登记（自助资格、厨房自检都认它），不能转；挂错了作废后在餐厅入口重新登记
+    const mealLines = new Set((await tx<{ lineId: number }[]>`SELECT line_id FROM meal_entries WHERE line_id IN ${tx(lineIds)}`).map((r) => Number(r.lineId)));
     for (const l of lines) {
       if (l.status !== 'active') throw conflict('ALREADY_VOIDED', `「${l.name}」已作废，不能再转`);
+      if (mealLines.has(Number(l.id))) throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是餐厅入口登记的餐费，不能转；挂错了请作废后在餐厅入口给那位客人重新登记`);
       if (l.source === 'room') throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是房费，随入住单走，不能转`);
       // 8.1.39（R11）：餐饮的菜能转；加料跟着主菜走
       if (l.addonOf !== null && !lineIds.includes(l.addonOf)) throw unprocessable('LINE_NOT_MOVABLE', `「${l.name}」是加料，请连同它的主菜一起转`);

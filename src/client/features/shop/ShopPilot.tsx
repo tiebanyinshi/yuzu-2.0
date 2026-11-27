@@ -11,6 +11,7 @@ import { formatQty, parseQty } from '@shared/quantity';
 import { SHOP_CUSTOM_UNITS } from '@shared/shop';
 import { MALL_CUSTOM_KIND_LABELS, PRIORITY_LABELS, REQUEST_PRIORITIES, type ImageRef, type MallCustomKind, type MallCustomSpec, type RequestPriority } from '@shared/requests';
 import type { MallQuote, MallRequest, MallRequestLine } from '@shared/mall';
+import { MALL_RESUBMIT_MODE_LABELS, MALL_RESUBMIT_MODES, type MallResubmitMode } from '@shared/mall-fix';
 import { api, errorMessage, UncertainError } from '../../lib/api';
 import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { useSession } from '../../lib/session';
@@ -19,6 +20,7 @@ import { ImagePicker, ImageThumbs } from '../../components/Images';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, Select, Textarea } from '../../components/ui';
+import { FixModeFields, fixModeBody, fixValuesProblem, initialFixValues, openFixItems, TerminateButton, type FixValue } from './ShopFix';
 
 const imageRef = (id: number): ImageRef => ({ id, url: `/api/erp/images/${id}` });
 /** 报价截图单独一类（只有采购看得到，Codex 审查） */
@@ -42,6 +44,12 @@ export interface CustomItemState {
   scene: string;
   sample: boolean;
   budget: string;
+  /** 8.2.6（需求变更文档 v0.2 图 1）：材质、允许误差、颜色 / 表面、图纸链接、设计版本 */
+  material: string;
+  tolerance: string;
+  color: string;
+  drawingUrl: string;
+  designVersion: string;
   images: ImageRef[];
 }
 
@@ -60,8 +68,28 @@ export const emptyCustomItem = (): CustomItemState => ({
   scene: '',
   sample: false,
   budget: '',
+  material: '',
+  tolerance: '',
+  color: '',
+  drawingUrl: '',
+  designVersion: '',
   images: [],
 });
+
+/** 「带入示例」（需求变更文档 v0.2 §3 的填写示例）：试点演示用，部门照着改 */
+export const CUSTOM_EXAMPLE: Partial<CustomItemState> = {
+  name: '水吧台展示立牌',
+  qty: '12',
+  unit: '件',
+  size: '面板 140 × 105 mm，底座 140 × 40 mm，板厚 3 mm',
+  material: '不锈钢 304',
+  tolerance: '±1 mm',
+  color: '原色乱纹',
+  craft: '激光切割、折弯、边缘去毛刺',
+  scene: '水果吧台展示，摆在吧台台面',
+  designVersion: 'V2 定版图',
+  reasonText: '水吧上新需要展示价目与品名，商城里没有合适尺寸',
+};
 
 /** 拆掉服务端拼在前面的「【定制】……」那一段，回显部门自己写的说明 */
 const plainDetails = (details: string, kind: MallCustomKind | null) => {
@@ -89,8 +117,16 @@ export const customItemFrom = (l: MallRequestLine): CustomItemState => ({
   scene: l.customSpec?.scene ?? '',
   sample: l.customSpec?.sample ?? false,
   budget: l.customSpec?.budgetCents != null ? centsToInput(l.customSpec.budgetCents) : '',
+  material: l.customSpec?.material ?? '',
+  tolerance: l.customSpec?.tolerance ?? '',
+  color: l.customSpec?.color ?? '',
+  drawingUrl: l.customSpec?.drawingUrl ?? '',
+  designVersion: l.customSpec?.designVersion ?? '',
   images: l.imageIds.map(imageRef),
 });
+
+/** 只有数字和分隔符的尺寸（与服务端 mall-pilot.ts 同一个规则） */
+const SIZE_NO_UNIT = /^[\d\s.×xX*＊\-~～/／,，、+]+$/;
 
 /** 还差什么（空 = 可以提交） */
 export function customItemProblem(s: CustomItemState): string | null {
@@ -98,7 +134,12 @@ export function customItemProblem(s: CustomItemState): string | null {
   if (!parseQty(s.qty)) return '请填写数量';
   if (s.link && !/^https?:\/\/\S+$/i.test(s.link)) return '参考链接要以 http:// 或 https:// 开头';
   if (s.kind === 'standard' && !s.details.trim()) return '请填写规格型号';
-  if (s.kind === 'custom' && !s.size.trim() && !s.craft.trim() && !s.details.trim()) return '定制请至少写清尺寸规格、材质工艺或设计要求';
+  // 定制的必填（8.2.6 Q1）：尺寸带单位、材质、图纸文件或链接至少一项
+  if (s.kind === 'custom' && !s.size.trim()) return '定制请写尺寸 / 规格（带单位）';
+  if (s.kind === 'custom' && SIZE_NO_UNIT.test(s.size.trim())) return '尺寸 / 规格只写了数字，请带上单位（mm、cm、米……）';
+  if (s.kind === 'custom' && !s.material.trim()) return '定制请写材质';
+  if (s.kind === 'custom' && s.drawingUrl && !/^https?:\/\/\S+$/i.test(s.drawingUrl)) return '图纸链接要以 http:// 或 https:// 开头';
+  if (s.kind === 'custom' && !s.drawingUrl.trim() && !s.images.length) return '定制请上传图纸文件，或填写图纸链接（至少一项）';
   if (s.budget && parseYuan(s.budget) === null) return '预算金额格式不对';
   if (!s.reasonText.trim()) return '请填写采购理由 / 使用场景';
   return null;
@@ -106,7 +147,20 @@ export function customItemProblem(s: CustomItemState): string | null {
 
 export function customItemBody(s: CustomItemState) {
   const spec: MallCustomSpec | null =
-    s.kind === 'custom' ? { size: s.size.trim(), craft: s.craft.trim(), scene: s.scene.trim(), sample: s.sample, budgetCents: s.budget ? parseYuan(s.budget) : null } : null;
+    s.kind === 'custom'
+      ? {
+          size: s.size.trim(),
+          craft: s.craft.trim(),
+          scene: s.scene.trim(),
+          sample: s.sample,
+          budgetCents: s.budget ? parseYuan(s.budget) : null,
+          material: s.material.trim(),
+          tolerance: s.tolerance.trim(),
+          color: s.color.trim(),
+          drawingUrl: s.drawingUrl.trim(),
+          designVersion: s.designVersion.trim(),
+        }
+      : null;
   return {
     name: s.name.trim(),
     expectedCategory: s.expectedCategory,
@@ -124,7 +178,7 @@ export function customItemBody(s: CustomItemState) {
 
 const KIND_CARDS: { kind: MallCustomKind; icon: typeof ShoppingBag; title: string; hint: string }[] = [
   { kind: 'standard', icon: ShoppingBag, title: '非定制', hint: '市面上买得到的现成品，商城里还没有：写清规格型号、品牌，附链接或照片' },
-  { kind: 'custom', icon: Palette, title: '定制', hint: '要按我们的要求做的：印刷品、工服、物料定做……写清尺寸、材质工艺、要不要打样，附设计稿' },
+  { kind: 'custom', icon: Palette, title: '定制', hint: '要按我们的要求做的：印刷品、工服、物料定做……写清尺寸（带单位）、材质、工艺，附图纸或链接' },
 ];
 
 export function CustomItemFields({
@@ -205,11 +259,36 @@ export function CustomItemFields({
         </Field>
         {s.kind === 'custom' ? (
           <>
-            <Field label="尺寸 / 规格" htmlFor={id('size')} hint="例如 80×200cm、A4 双面、S/M/L 各几件">
-              <Input id={id('size')} maxLength={120} value={s.size} onChange={(e) => set({ ...s, size: e.target.value })} />
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-paper-2/70 px-3.5 py-2.5 text-[12.5px] text-ink-2 sm:col-span-2" data-testid={id('example')}>
+              <span>填写示例：尺寸写「面板 140 × 105 mm，底座 140 × 40 mm，板厚 3 mm」，材质写「不锈钢 304」，再附定版图与版本号</span>
+              <Button variant="ghost" size="sm" onClick={() => set((cur) => ({ ...cur, ...CUSTOM_EXAMPLE }))} data-testid={id('example-fill')}>
+                带入示例
+              </Button>
+            </div>
+            <Field label="尺寸 / 规格 *" htmlFor={id('size')} hint="要带单位，例如 80 × 200 cm、A4 双面、S/M/L 各几件">
+              <Input id={id('size')} maxLength={120} value={s.size} onChange={(e) => set({ ...s, size: e.target.value })} invalid={!!s.size.trim() && SIZE_NO_UNIT.test(s.size.trim())} />
             </Field>
-            <Field label="材质 / 工艺" htmlFor={id('craft')} hint="例如 PP 合成纸、烫金、刺绣、热转印">
+            <Field label="材质 *" htmlFor={id('material')} hint="例如 亚克力 5 mm、不锈钢 304、PP 合成纸">
+              <Input id={id('material')} maxLength={120} value={s.material} onChange={(e) => set({ ...s, material: e.target.value })} />
+            </Field>
+            <Field label="允许误差（选填）" htmlFor={id('tolerance')} hint="例如 ±1 mm">
+              <Input id={id('tolerance')} maxLength={60} value={s.tolerance} onChange={(e) => set({ ...s, tolerance: e.target.value })} />
+            </Field>
+            <Field label="颜色 / 表面（选填）" htmlFor={id('color')} hint="例如 哑光黑、原色乱纹">
+              <Input id={id('color')} maxLength={60} value={s.color} onChange={(e) => set({ ...s, color: e.target.value })} />
+            </Field>
+            <Field label="工艺要求" htmlFor={id('craft')} hint="例如 烫金、刺绣、热转印、激光切割">
               <Input id={id('craft')} maxLength={200} value={s.craft} onChange={(e) => set({ ...s, craft: e.target.value })} />
+            </Field>
+            <Field
+              label="图纸链接（与图纸文件至少一项）"
+              htmlFor={id('drawing')}
+              hint={s.drawingUrl && !/^https?:\/\/\S+$/i.test(s.drawingUrl) ? '要以 http:// 或 https:// 开头' : '可查看的网盘、设计稿链接'}
+            >
+              <Input id={id('drawing')} maxLength={1000} value={s.drawingUrl} onChange={(e) => set({ ...s, drawingUrl: e.target.value })} />
+            </Field>
+            <Field label="设计版本（选填）" htmlFor={id('version')} hint="例如 V2 定版图">
+              <Input id={id('version')} maxLength={40} value={s.designVersion} onChange={(e) => set({ ...s, designVersion: e.target.value })} />
             </Field>
             <Field label="用在哪、给谁用" htmlFor={id('scene')}>
               <Input id={id('scene')} maxLength={200} value={s.scene} onChange={(e) => set({ ...s, scene: e.target.value })} />
@@ -249,7 +328,9 @@ export function CustomItemFields({
           <Textarea id={id('reason')} rows={2} maxLength={1000} value={s.reasonText} onChange={(e) => set({ ...s, reasonText: e.target.value })} />
         </Field>
         <div className="sm:col-span-2">
-          <p className="mb-1.5 text-[13px] font-semibold text-ink-2">{s.kind === 'custom' ? '设计稿 / 参考图' : '照片 / 截图'}（选填，最多 9 张）</p>
+          <p className="mb-1.5 text-[13px] font-semibold text-ink-2">
+            {s.kind === 'custom' ? '图纸文件 / 设计稿 / 参考图（图片格式，与图纸链接至少一项，最多 9 张）' : '照片 / 截图（选填，最多 9 张）'}
+          </p>
           <ImagePicker value={s.images} onChange={(images) => set((cur) => ({ ...cur, images }))} max={9} onBusyChange={onUploading} testId={id('images')} />
         </div>
       </div>
@@ -272,10 +353,27 @@ export function CustomSpecView({ l }: { l: MallRequestLine }) {
               <dd>{s.size}</dd>
             </>
           )}
-          {s.craft && (
+          {(
+            [
+              ['材质', s.material],
+              ['允许误差', s.tolerance],
+              ['颜色 / 表面', s.color],
+              [s.material === undefined ? '材质工艺' : '工艺要求', s.craft],
+              ['设计版本', s.designVersion],
+            ] as const
+          )
+            .filter(([, v]) => !!v)
+            .map(([k, v]) => (
+              <SpecRow key={k} k={k} v={v!} />
+            ))}
+          {s.drawingUrl && (
             <>
-              <dt className="text-ink-3">材质工艺</dt>
-              <dd>{s.craft}</dd>
+              <dt className="text-ink-3">图纸链接</dt>
+              <dd>
+                <a href={s.drawingUrl} target="_blank" rel="noreferrer noopener" className="font-semibold text-lake hover:underline">
+                  打开图纸 ↗
+                </a>
+              </dd>
             </>
           )}
           {s.scene && (
@@ -295,6 +393,15 @@ export function CustomSpecView({ l }: { l: MallRequestLine }) {
         </dl>
       )}
     </div>
+  );
+}
+
+function SpecRow({ k, v }: { k: string; v: string }) {
+  return (
+    <>
+      <dt className="text-ink-3">{k}</dt>
+      <dd>{v}</dd>
+    </>
   );
 }
 
@@ -318,31 +425,41 @@ export function ResubmitPanel({ r, categories, onDone }: { r: MallRequest; categ
     note: r.note,
   });
   const [remark, setRemark] = useState('');
+  // 8.2.6：这一轮标了必补项的默认「仅补必补项」（其余锁定）；也可以切「重新填写」整张改
+  const fixItems = openFixItems(r);
+  const [mode, setMode] = useState<MallResubmitMode>(fixItems.length ? 'fix' : 'rewrite');
+  const [fixValues, setFixValues] = useState<Record<number, FixValue>>(() => initialFixValues(r, fixItems));
   const [items, setItems] = useState(() => r.lines.map((l) => ({ line: l, keep: true, qty: formatQty(l.qtyMilli).replace(/,/g, ''), custom: l.skuCode ? null : customItemFrom(l) })));
   const kept = items.filter((x) => x.keep);
   const problem =
-    kept.length === 0
-      ? '至少留一行'
-      : (kept.map((x) => (x.custom ? customItemProblem(x.custom) : parseQty(x.qty) ? null : `「${x.line.name}」请填写数量`)).find(Boolean) ??
-        (!head.contactName.trim() || !head.budgetProject.trim() || !head.needBy || !head.deliveryAddress.trim() ? '请把经办人、预算项目、期望到货、收货地点填全' : null) ??
-        (!remark.trim() ? '请写一句补了什么' : null) ??
-        (pending ? '上一次补资料还没确认结果：先在页面顶部处理' : null));
+    mode === 'fix'
+      ? (fixValuesProblem(r, fixItems, fixValues) ?? (pending ? '上一次补资料还没确认结果：先在页面顶部处理' : null))
+      : kept.length === 0
+        ? '至少留一行'
+        : (kept.map((x) => (x.custom ? customItemProblem(x.custom) : parseQty(x.qty) ? null : `「${x.line.name}」请填写数量`)).find(Boolean) ??
+          (!head.contactName.trim() || !head.budgetProject.trim() || !head.needBy || !head.deliveryAddress.trim() ? '请把经办人、预算项目、期望到货、收货地点填全' : null) ??
+          (!remark.trim() ? '请写一句补了什么' : null) ??
+          (pending ? '上一次补资料还没确认结果：先在页面顶部处理' : null));
   // 与记方案同一套「结果待确认」（Codex 审查）：本机先记下编号与内容再发；回复丢了不当成没提交，在页面顶部查回、原样重提或确认作废
   const send = async () => {
     setBusy(true);
     const key = uuid();
     try {
-      const body = {
-        clientKey: key,
-        expectedUpdatedAt: r.updatedAt,
-        ...head,
-        contactName: head.contactName.trim(),
-        budgetProject: head.budgetProject.trim(),
-        deliveryAddress: head.deliveryAddress.trim(),
-        note: head.note.trim(),
-        remark: remark.trim(),
-        lines: kept.map((x) => (x.custom ? { id: x.line.id, ...customItemBody(x.custom) } : { id: x.line.id, qtyMilli: parseQty(x.qty) })),
-      };
+      const body =
+        mode === 'fix'
+          ? { clientKey: key, expectedUpdatedAt: r.updatedAt, mode, remark: remark.trim(), ...fixModeBody(r, fixItems, fixValues) }
+          : {
+              clientKey: key,
+              expectedUpdatedAt: r.updatedAt,
+              mode,
+              ...head,
+              contactName: head.contactName.trim(),
+              budgetProject: head.budgetProject.trim(),
+              deliveryAddress: head.deliveryAddress.trim(),
+              note: head.note.trim(),
+              remark: remark.trim(),
+              lines: kept.map((x) => (x.custom ? { id: x.line.id, ...customItemBody(x.custom) } : { id: x.line.id, qtyMilli: parseQty(x.qty) })),
+            };
       const next = await sendErpOp<MallRequest>({
         key,
         type: 'mall_resubmit',
@@ -373,13 +490,17 @@ export function ResubmitPanel({ r, categories, onDone }: { r: MallRequest; categ
         tone="warning"
         title="这张单被退回了：照退回原因补好资料，在原单上重新提交（单号不变）"
         action={
-          <Button variant="primary" size="sm" onClick={() => setOpen(true)} data-testid="shop-resubmit-open">
-            在原单补资料
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <TerminateButton r={r} onDone={onDone} />
+            <Button variant="primary" size="sm" onClick={() => setOpen(true)} data-testid="shop-resubmit-open">
+              在原单补资料
+            </Button>
+          </div>
         }
         data-testid="shop-resubmit-notice"
       >
         退回原因：{r.reason ?? '（没写原因）'}
+        {fixItems.length > 0 && `（本次必补 ${fixItems.length} 项）`}
       </Notice>
       <Dialog
         open={open}
@@ -393,7 +514,7 @@ export function ResubmitPanel({ r, categories, onDone }: { r: MallRequest; categ
               先不提交
             </Button>
             <Button variant="primary" loading={busy} disabled={!!problem || uploading > 0} onClick={() => void send()} data-testid="shop-resubmit-send">
-              补好了，重新提交
+              {mode === 'fix' ? '补齐后重新提交' : '重新填写后提交'}
             </Button>
           </>
         }
@@ -403,69 +524,90 @@ export function ResubmitPanel({ r, categories, onDone }: { r: MallRequest; categ
             <span className="font-semibold">退回原因：</span>
             {r.reason ?? '（没写原因）'}
           </div>
-          {items.map((x, i) => (
-            <Card key={x.line.id} className={cn('space-y-3 p-4', !x.keep && 'opacity-60')}>
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[14px] font-bold text-ink">
-                  第 {x.line.lineNo} 行 · {x.line.name}
-                  {x.line.skuCode && <span className="ml-1.5 text-[12px] font-normal text-ink-3">商城选品（只能改数量）</span>}
-                </p>
-                <label className="flex items-center gap-1.5 text-[12.5px] text-ink-2">
-                  <input type="checkbox" className="size-4 accent-pine" checked={!x.keep} onChange={(e) => setItems(items.map((y, j) => (j === i ? { ...y, keep: !e.target.checked } : y)))} />
-                  这一行不要了
-                </label>
-              </div>
-              {x.keep &&
-                (x.custom ? (
-                  <CustomItemFields
-                    s={x.custom}
-                    set={(c) => setItems((prev) => prev.map((y, j) => (j === i && y.custom ? { ...y, custom: typeof c === 'function' ? c(y.custom) : c } : y)))}
-                    categories={categories}
-                    idPrefix={`rs${x.line.id}`}
-                    onUploading={(b) => setUploading((n) => Math.max(0, n + (b ? 1 : -1)))}
-                  />
-                ) : (
-                  <Field label={`数量（${x.line.unit}）`} htmlFor={`rs-qty-${x.line.id}`}>
-                    <Input
-                      id={`rs-qty-${x.line.id}`}
-                      inputMode="decimal"
-                      className="w-36"
-                      value={x.qty}
-                      onChange={(e) => setItems(items.map((y, j) => (j === i ? { ...y, qty: e.target.value } : y)))}
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="补资料方式" data-testid="shop-resubmit-mode">
+            {MALL_RESUBMIT_MODES.map((m) => (
+              <Button
+                key={m}
+                size="sm"
+                variant={mode === m ? 'primary' : 'ghost'}
+                role="radio"
+                aria-checked={mode === m}
+                disabled={m === 'fix' && !fixItems.length}
+                onClick={() => setMode(m)}
+                data-testid={`shop-resubmit-mode-${m}`}
+              >
+                {MALL_RESUBMIT_MODE_LABELS[m]}
+              </Button>
+            ))}
+            <span className="self-center text-[12px] text-ink-3">{mode === 'fix' ? '只改标了「本次必补」的项，其余原样' : '整张单的业务内容都能改（单号、部门不变）'}</span>
+          </div>
+          {mode === 'fix' && <FixModeFields r={r} items={fixItems} values={fixValues} setValues={setFixValues} onUploading={(b) => setUploading((n) => Math.max(0, n + (b ? 1 : -1)))} />}
+          {mode === 'rewrite' &&
+            items.map((x, i) => (
+              <Card key={x.line.id} className={cn('space-y-3 p-4', !x.keep && 'opacity-60')}>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[14px] font-bold text-ink">
+                    第 {x.line.lineNo} 行 · {x.line.name}
+                    {x.line.skuCode && <span className="ml-1.5 text-[12px] font-normal text-ink-3">商城选品（只能改数量）</span>}
+                  </p>
+                  <label className="flex items-center gap-1.5 text-[12.5px] text-ink-2">
+                    <input type="checkbox" className="size-4 accent-pine" checked={!x.keep} onChange={(e) => setItems(items.map((y, j) => (j === i ? { ...y, keep: !e.target.checked } : y)))} />
+                    这一行不要了
+                  </label>
+                </div>
+                {x.keep &&
+                  (x.custom ? (
+                    <CustomItemFields
+                      s={x.custom}
+                      set={(c) => setItems((prev) => prev.map((y, j) => (j === i && y.custom ? { ...y, custom: typeof c === 'function' ? c(y.custom) : c } : y)))}
+                      categories={categories}
+                      idPrefix={`rs${x.line.id}`}
+                      onUploading={(b) => setUploading((n) => Math.max(0, n + (b ? 1 : -1)))}
                     />
-                  </Field>
-                ))}
+                  ) : (
+                    <Field label={`数量（${x.line.unit}）`} htmlFor={`rs-qty-${x.line.id}`}>
+                      <Input
+                        id={`rs-qty-${x.line.id}`}
+                        inputMode="decimal"
+                        className="w-36"
+                        value={x.qty}
+                        onChange={(e) => setItems(items.map((y, j) => (j === i ? { ...y, qty: e.target.value } : y)))}
+                      />
+                    </Field>
+                  ))}
+              </Card>
+            ))}
+          {mode === 'rewrite' && (
+            <Card className="grid gap-3 p-4 sm:grid-cols-2">
+              <Field label="经办人" htmlFor="rs-contact">
+                <Input id="rs-contact" maxLength={40} value={head.contactName} onChange={(e) => setHead({ ...head, contactName: e.target.value })} />
+              </Field>
+              <Field label="预算项目 / 费用归属" htmlFor="rs-budget">
+                <Input id="rs-budget" maxLength={80} value={head.budgetProject} onChange={(e) => setHead({ ...head, budgetProject: e.target.value })} />
+              </Field>
+              <Field label="期望到货" htmlFor="rs-need">
+                <Input id="rs-need" type="date" value={head.needBy} onChange={(e) => setHead({ ...head, needBy: e.target.value })} />
+              </Field>
+              <Field label="收货地点" htmlFor="rs-addr">
+                <Input id="rs-addr" maxLength={120} value={head.deliveryAddress} onChange={(e) => setHead({ ...head, deliveryAddress: e.target.value })} />
+              </Field>
+              <Field label="优先级" htmlFor="rs-pri">
+                <Select id="rs-pri" value={head.priority} onChange={(e) => setHead({ ...head, priority: e.target.value as RequestPriority })}>
+                  {REQUEST_PRIORITIES.map((p) => (
+                    <option key={p} value={p}>
+                      {PRIORITY_LABELS[p]}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="备注" htmlFor="rs-note">
+                <Input id="rs-note" maxLength={500} value={head.note} onChange={(e) => setHead({ ...head, note: e.target.value })} />
+              </Field>
             </Card>
-          ))}
-          <Card className="grid gap-3 p-4 sm:grid-cols-2">
-            <Field label="经办人" htmlFor="rs-contact">
-              <Input id="rs-contact" maxLength={40} value={head.contactName} onChange={(e) => setHead({ ...head, contactName: e.target.value })} />
-            </Field>
-            <Field label="预算项目 / 费用归属" htmlFor="rs-budget">
-              <Input id="rs-budget" maxLength={80} value={head.budgetProject} onChange={(e) => setHead({ ...head, budgetProject: e.target.value })} />
-            </Field>
-            <Field label="期望到货" htmlFor="rs-need">
-              <Input id="rs-need" type="date" value={head.needBy} onChange={(e) => setHead({ ...head, needBy: e.target.value })} />
-            </Field>
-            <Field label="收货地点" htmlFor="rs-addr">
-              <Input id="rs-addr" maxLength={120} value={head.deliveryAddress} onChange={(e) => setHead({ ...head, deliveryAddress: e.target.value })} />
-            </Field>
-            <Field label="优先级" htmlFor="rs-pri">
-              <Select id="rs-pri" value={head.priority} onChange={(e) => setHead({ ...head, priority: e.target.value as RequestPriority })}>
-                {REQUEST_PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {PRIORITY_LABELS[p]}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="备注" htmlFor="rs-note">
-              <Input id="rs-note" maxLength={500} value={head.note} onChange={(e) => setHead({ ...head, note: e.target.value })} />
-            </Field>
-            <Field label="补了什么（给审核的人看）" htmlFor="rs-remark" className="sm:col-span-2">
-              <Input id="rs-remark" maxLength={200} value={remark} placeholder="例如：补了尺寸和设计稿，数量改成 100" onChange={(e) => setRemark(e.target.value)} data-testid="shop-resubmit-remark" />
-            </Field>
-          </Card>
+          )}
+          <Field label={mode === 'fix' ? '补充说明（选填，不写按补的项自动写）' : '补了什么（给审核的人看）'} htmlFor="rs-remark">
+            <Input id="rs-remark" maxLength={200} value={remark} placeholder="例如：补了尺寸和设计稿，数量改成 100" onChange={(e) => setRemark(e.target.value)} data-testid="shop-resubmit-remark" />
+          </Field>
         </div>
       </Dialog>
     </>

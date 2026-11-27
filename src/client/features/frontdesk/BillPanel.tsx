@@ -49,6 +49,7 @@ import { stayText, useServerNow } from './queries';
 import { RemarksBoard } from './Remarks';
 import { LineDiscountDialog } from './LineDiscountDialog';
 import { DepositBlock, DepositDialog } from './DepositPanel';
+import { AwayLockBlock, AwayLockDialog } from './AwayLockPanel';
 import { hotkeyOf } from './hotkeys';
 import { rateLabel } from '@shared/line-discount';
 import { GroupMates } from './guest';
@@ -107,6 +108,7 @@ export function BillPanel({
   const [discounting, setDiscounting] = useState<BillLine | null>(null);
   /** 手牌押金（8.2.1） */
   const [depositOpen, setDepositOpen] = useState(false);
+  const [awayLockOpen, setAwayLockOpen] = useState(false);
   const [showVoided, setShowVoided] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const can = useCan();
@@ -303,6 +305,8 @@ export function BillPanel({
                 onClick={() => {
                   // 8.2.1：押金在押金对话框里处理；单项打折回到那一行的「折」
                   if (p.type === 'tag_deposit' || p.type === 'tag_deposit_refund') return setDepositOpen(true);
+                  // 8.2.7：锁牌外出、解锁在锁牌对话框里处理
+                  if (p.type === 'tag_away_lock' || p.type === 'tag_away_unlock') return setAwayLockOpen(true);
                   if (p.type === 'line_discount') {
                     const lineId = Number(/\/lines\/(\d+)\//.exec(p.url)?.[1]);
                     const line = visit.lines.find((l) => l.id === lineId);
@@ -440,6 +444,7 @@ export function BillPanel({
           </div>
           <div className={cn('min-w-0', compact && '@min-[44rem]:[&>*:first-child]:mt-0')}>
             {extra}
+            <AwayLockBlock visit={visit} cashier={!issue} onOpen={() => setAwayLockOpen(true)} />
             <DepositBlock visit={visit} onOpen={() => setDepositOpen(true)} />
             <RemarksBoard visit={visit} onChanged={onChanged} />
           </div>
@@ -646,6 +651,18 @@ export function BillPanel({
           onClose={() => setDiscounting(null)}
           onDone={(v, message) => {
             setDiscounting(null);
+            onChanged(v);
+            toast({ tone: 'success', title: message });
+          }}
+        />
+      )}
+      {awayLockOpen && (
+        <AwayLockDialog
+          visit={visit}
+          rules={rules}
+          onClose={() => setAwayLockOpen(false)}
+          onDone={(v, message) => {
+            setAwayLockOpen(false);
             onChanged(v);
             toast({ tone: 'success', title: message });
           }}

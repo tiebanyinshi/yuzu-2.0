@@ -44,9 +44,10 @@ import type { Actor, Deps } from '../lib/context';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { idParam, parse } from '../lib/validate';
 import { erpOpAbandoned } from './erp-ops';
+import { FixItemsInput, recordFixItems } from './mall-fix';
 import { closeDraftsOfRequest, closeDraftsOnSubmit, DraftRef } from './request-drafts';
 import { loadExpenseRules } from './expenses';
-import { docDateSchema, logApproval, sourcingHolds } from './inventory/common';
+import { docDateSchema, logApproval, requestLineIssuedSql, sourcingHolds } from './inventory/common';
 import { clockIn, todayIn } from '../lib/dates';
 import { shiftDate } from '@shared/labels';
 import { loadPurchaseRules } from './inventory/purchase-rules';
@@ -56,6 +57,8 @@ import { CENTRAL_STOCK_SQL, centralStockOf, clearStockDecisions, closeOpenStockC
 
 const id = z.number().int().positive();
 const ReasonInput = z.object({ reason: z.string().trim().min(2, '请填写原因（至少 2 个字）').max(200) });
+/** 退回（8.2.6）：商城来的需求单要逐项标「本次必补」（docs/MALL_V826.md） */
+const ReturnInput = ReasonInput.extend({ fixItems: FixItemsInput.default([]) });
 
 // ───────────────────────── 谁在看 ─────────────────────────
 
@@ -93,7 +96,7 @@ export function visible(me: Awaited<ReturnType<typeof myContext>>, actor: Actor,
 /** 需求行的进度：对应的有效采购单行（撤回的不算）、已生效的收货与退供应商数量 */
 const PROGRESS_SQL = (db: Db) => db`
   (SELECT json_build_object(
-            'poId', po.id, 'docNo', po.doc_no, 'status', po.status, 'supplierName', s.name,
+            'poId', po.id, 'docNo', po.doc_no, 'status', po.status, 'supplierName', coalesce(s.name, '自购 · ' || po.self_channel),
             'orderedMilli', pl.base_qty_milli, 'inventoryUnit', pl.inventory_unit,
             'mergedLines', (SELECT count(*) FROM purchase_order_line_requests y WHERE y.po_line_id = pl.id),
             'receivedMilli', coalesce((SELECT sum(il.qty_milli) FROM inv_doc_lines il JOIN inv_docs d ON d.id = il.doc_id
@@ -106,7 +109,7 @@ const PROGRESS_SQL = (db: Db) => db`
             'redeliverMilli', coalesce((SELECT sum(il.redeliver_milli) FROM inv_doc_lines il JOIN inv_docs d ON d.id = il.doc_id
                                        WHERE il.po_line_id = pl.id AND d.doc_type = 'receipt' AND d.status = 'confirmed'), 0))
      FROM purchase_order_line_requests x JOIN purchase_order_lines pl ON pl.id = x.po_line_id
-     JOIN purchase_orders po ON po.id = pl.po_id JOIN suppliers s ON s.id = po.supplier_id
+     JOIN purchase_orders po ON po.id = pl.po_id LEFT JOIN suppliers s ON s.id = po.supplier_id
      WHERE x.request_line_id = l.id AND po.status <> 'cancelled'
      ORDER BY pl.id LIMIT 1)`;
 
@@ -212,6 +215,15 @@ const PRIORITY_RANK = (db: Db, col: ReturnType<Db>) => db`(CASE ${col} WHEN 'urg
 const STOCK_FILTER = (db: Db, f: { status?: RequestStatus; stock?: boolean }) =>
   f.stock ? db`AND r.status = 'submitted' AND r.stock_check IN ('pending', 'confirming')` : f.status === 'submitted' ? db`AND r.stock_check NOT IN ('pending', 'confirming')` : db``;
 
+/** 按单号 / 商城单号（不管大小写与分隔符）或物品名称搜（8.2.12 R1）：列表与导出同一个条件 */
+const SEARCH_FILTER = (db: Db, q: string | undefined) => {
+  if (!q) return db``;
+  const qNorm = q.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const qLike = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  return db`AND (${qNorm.length >= 3 ? db`regexp_replace(upper(r.doc_no || ' ' || coalesce(r.external_no, '')), '[^A-Z0-9 ]', '', 'g') LIKE ${`%${qNorm}%`} OR` : db``}
+                 EXISTS (SELECT 1 FROM purchase_request_lines sl WHERE sl.request_id = r.id AND sl.name ILIKE ${qLike}))`;
+};
+
 export async function summaries(
   db: Db,
   f: {
@@ -230,6 +242,8 @@ export async function summaries(
     from?: string;
     to?: string;
     timezone?: string;
+    /** 按单号 / 商城单号（不管大小写与分隔符）或物品名称搜（8.2.12 R1） */
+    q?: string;
   },
 ) {
   // 截单（03）：今天还不能通过的（最早可通过日期在今天以后）；截单关了以后都能通过（按现在的规则）
@@ -276,6 +290,7 @@ export async function summaries(
       ${f.from && f.timezone ? db`AND (r.created_at AT TIME ZONE ${f.timezone})::date >= ${f.from}` : db``}
       ${f.to && f.timezone ? db`AND (r.created_at AT TIME ZONE ${f.timezone})::date <= ${f.to}` : db``}
       ${f.requesterOrDept ? db`AND ${REQUESTER_OR_DEPT(db, f.requesterOrDept)}` : db``}
+      ${SEARCH_FILTER(db, f.q)}
     ${
       f.stock
         ? // 待核库：待核库的在前，进待核库早的在前
@@ -307,7 +322,11 @@ export const toSummary = (r: Awaited<ReturnType<typeof summaries>>[number]): Pur
 export const isHeadOf = (me: Awaited<ReturnType<typeof myContext>>, actor: Actor, r: { departmentId: number; deptHeadId: number | null }) =>
   actor.role === 'owner' || (r.deptHeadId != null && Number(r.deptHeadId) === actor.id) || me.headOf.includes(r.departmentId);
 
-export async function listRequests(db: Db, actor: Actor, f: { status?: RequestStatus; stock?: boolean; departmentId?: number; from?: string; to?: string; timezone?: string }): Promise<RequestsList> {
+export async function listRequests(
+  db: Db,
+  actor: Actor,
+  f: { status?: RequestStatus; stock?: boolean; departmentId?: number; from?: string; to?: string; timezone?: string; q?: string },
+): Promise<RequestsList> {
   const me = await myContext(db, actor);
   const rows = await summaries(db, { ...f, requesterOrDept: me.canReview || me.canStock ? undefined : { staffId: actor.id, departmentId: me.departmentId } });
   return { requests: rows.map(toSummary), me };
@@ -395,15 +414,12 @@ export async function openLines(db: Db, ids?: number[]): Promise<OpenRequestLine
            CASE WHEN l.supplier_id IS NULL THEN NULL ELSE json_build_object('id', sp.id, 'name', sp.name) END AS supplier,
            coalesce((SELECT json_agg(json_build_object('id', i.image_id, 'url', '/api/erp/images/' || i.image_id) ORDER BY i.sort_no)
                      FROM purchase_request_line_images i WHERE i.request_line_id = l.id), '[]'::json) AS images,
-           coalesce(ls.issued_qty_milli, 0) AS issued_qty_milli,
+           ${requestLineIssuedSql(db)} AS issued_qty_milli,
            -- 商城需求选定的成交方案（8.1.51）：转采购单时带上供应商与含税单价
            (SELECT json_build_object('supplierId', q.supplier_id, 'supplierName', q.supplier_name, 'unitPriceCents', q.unit_price_cents,
                                      'taxRateBp', q.tax_rate_bp, 'leadDays', q.lead_days)
               FROM mall_request_quotes q WHERE q.line_id = l.id AND q.status = 'selected') AS plan
     FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
-    -- 从库存领用了的数量（8.1.10）：领料单冲销了的不算
-    LEFT JOIN request_line_stock ls ON ls.request_line_id = l.id AND ls.inv_doc_id IS NOT NULL
-         AND EXISTS (SELECT 1 FROM inv_docs ld WHERE ld.id = ls.inv_doc_id AND ld.status = 'confirmed')
     JOIN departments d ON d.id = r.department_id JOIN staff s ON s.id = r.requester_id
     LEFT JOIN materials m ON m.id = l.material_id LEFT JOIN suppliers sp ON sp.id = l.supplier_id
     WHERE r.status = 'approved'
@@ -413,8 +429,8 @@ export async function openLines(db: Db, ids?: number[]): Promise<OpenRequestLine
       AND NOT EXISTS (SELECT 1 FROM sourcing_line_requests sr JOIN sourcing_lines sl ON sl.id = sr.sourcing_line_id
                       JOIN sourcing_events e ON e.id = sl.event_id
                       WHERE sr.request_line_id = l.id AND ${sourcingHolds(db)})
-      -- 整行从库存领用了的不再转采购（8.1.10）
-      AND coalesce(ls.issued_qty_milli, 0) < l.qty_milli
+      -- 整行从库存领用、补发齐了的不再转采购（8.1.10；8.2.6 起补发也算）
+      AND ${requestLineIssuedSql(db)} < l.qty_milli
       ${ids ? db`AND l.id IN ${db(ids)}` : db``}
     ORDER BY ${PRIORITY_RANK(db, db`r.priority`)}, r.need_by ASC NULLS LAST, r.submitted_at, r.id, l.line_no
     LIMIT 500`;
@@ -692,6 +708,7 @@ export async function updateRequest(deps: Deps, requestId: number, raw: unknown,
 
 export async function actOnRequest(deps: Deps, requestId: number, action: 'approve' | 'return' | 'reject' | 'cancel' | 'dept-confirm' | 'dept-return', raw: unknown, actor: Actor, ip?: string) {
   const reason = action === 'approve' || action === 'dept-confirm' ? '' : parse(ReasonInput, raw).reason;
+  const fixItems = action === 'return' ? parse(ReturnInput, raw).fixItems : [];
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const r = await lockRequest(tx, requestId);
@@ -747,8 +764,11 @@ export async function actOnRequest(deps: Deps, requestId: number, action: 'appro
         // 核库（8.1.10）：核库没完的不退回；已经有行领用的不能退回修改（领用的行不能再改）
         if (stockCheckOpen(r.stockCheck)) throw conflict('STOCK_CHECK_PENDING', '这张需求单还在核库，核完以后才能退回（可以先定为不采购）');
         if (await hasIssuedLines(tx, requestId)) throw conflict('STOCK_ISSUED_LOCKED', '这张需求单已经有行从库存领用，不能退回修改；剩下的可以通过或定为不采购');
+        // 商城来的（8.2.6，需求变更文档 v0.2 §4.5）：不允许只写一句整体意见，至少标一项「本次必补」
+        if (r.source === 'mall' && !fixItems.length) throw unprocessable('FIX_ITEMS_REQUIRED', '商城提的需求单退回时要逐项标「本次必补」（至少一项），部门照着补');
+        const marked = await recordFixItems(tx, requestId, fixItems, actor.id);
         await tx`UPDATE purchase_requests SET status = 'returned', reason = ${reason}, updated_at = now() WHERE id = ${requestId}`;
-        return logApproval(tx, 'purchase_request', requestId, 'return', actor.id, reason);
+        return logApproval(tx, 'purchase_request', requestId, 'return', actor.id, marked ? `${reason}（${marked}）`.slice(0, 500) : reason);
       case 'reject':
         if (!can(actor, 'request.review')) throw forbidden('当前账号不能审核需求单');
         if (r.status === 'rejected') return;
@@ -878,11 +898,11 @@ const PROGRESS_LABELS: Record<RequestLineProgress['state'], string> = {
 };
 
 /** 需求单导出：每一行需求一行，带下单 / 到货 / 退货与采购单号。能导出的是有「导出费用」权限的人（店主、对账付款、成本核算、负责人），导出全部部门 */
-async function requestsCsv(db: Db, timezone: string, f: { from: string; to: string; status?: RequestStatus; stock?: boolean; departmentId?: number }) {
+async function requestsCsv(db: Db, timezone: string, f: { from: string; to: string; status?: RequestStatus; stock?: boolean; departmentId?: number; q?: string }) {
   const [n] = await db<{ count: number }[]>`
     SELECT count(*)::int AS count FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
     WHERE (r.created_at AT TIME ZONE ${timezone})::date BETWEEN ${f.from} AND ${f.to}
-      ${f.status ? db`AND r.status = ${f.status}` : db``} ${STOCK_FILTER(db, f)} ${f.departmentId ? db`AND r.department_id = ${f.departmentId}` : db``}`;
+      ${f.status ? db`AND r.status = ${f.status}` : db``} ${STOCK_FILTER(db, f)} ${f.departmentId ? db`AND r.department_id = ${f.departmentId}` : db``} ${SEARCH_FILTER(db, f.q)}`;
   if (n!.count > EXPORT_LIMIT) throw unprocessable('EXPORT_TOO_LARGE', `这段时间有 ${n!.count} 行需求，一次最多导出 ${EXPORT_LIMIT} 行，请缩短日期范围`);
   const rows = await db<
     {
@@ -915,13 +935,12 @@ async function requestsCsv(db: Db, timezone: string, f: { from: string; to: stri
            l.line_no, l.name, m.name AS material_name, l.purpose, l.qty_milli, l.unit, l.ref_price_cents, l.link, l.details, l.note,
            (SELECT count(*)::int FROM purchase_request_line_images i WHERE i.request_line_id = l.id) AS image_count,
            ${PROGRESS_SQL(db)} AS progress, ${SOURCING_SQL(db)} AS sourcing,
-           coalesce((SELECT ls.issued_qty_milli FROM request_line_stock ls JOIN inv_docs ld ON ld.id = ls.inv_doc_id AND ld.status = 'confirmed'
-                     WHERE ls.request_line_id = l.id), 0) AS issued_milli
+           ${requestLineIssuedSql(db)} AS issued_milli
     FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
     JOIN departments d ON d.id = r.department_id JOIN staff s ON s.id = r.requester_id
     LEFT JOIN materials m ON m.id = l.material_id
     WHERE (r.created_at AT TIME ZONE ${timezone})::date BETWEEN ${f.from} AND ${f.to}
-      ${f.status ? db`AND r.status = ${f.status}` : db``} ${STOCK_FILTER(db, f)} ${f.departmentId ? db`AND r.department_id = ${f.departmentId}` : db``}
+      ${f.status ? db`AND r.status = ${f.status}` : db``} ${STOCK_FILTER(db, f)} ${f.departmentId ? db`AND r.department_id = ${f.departmentId}` : db``} ${SEARCH_FILTER(db, f.q)}
     ORDER BY r.created_at, r.id, l.line_no`;
   const out: (string | number)[][] = [
     [
@@ -997,6 +1016,8 @@ const ListQuery = z.object({
   // 按提交日期筛选（v0.7.9）
   from: docDateSchema.optional(),
   to: docDateSchema.optional(),
+  /** 8.2.12（R1）：单号、商城单号或物品名称 */
+  q: z.string().trim().max(64).optional(),
 });
 const ExportQuery = ListQuery.extend({ from: docDateSchema, to: docDateSchema });
 const IdsQuery = z.object({

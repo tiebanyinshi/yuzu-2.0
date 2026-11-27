@@ -71,7 +71,7 @@ describe('后台的一级分组', () => {
       'mp',
     ]);
     expect(of('erp')).toEqual(['stores', 'integrations', 'opening', 'audit']);
-    expect(of('wcp')).toEqual(['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'announcements', 'staffmp', 'permissions', 'canteen', 'patrol']);
+    expect(of('wcp')).toEqual(['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'academy', 'announcements', 'staffmp', 'permissions', 'canteen', 'patrol']);
     expect(of('design')).toEqual(['design', 'library', 'studio', 'guide']);
     expect(boardOfSection('guide')).toBe('design');
     expect(adminSectionOfPath('/admin')).toBe('home');

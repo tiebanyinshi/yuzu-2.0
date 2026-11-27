@@ -245,7 +245,7 @@ async function orderedRows(db: Db, f: OrderedFilter) {
   // 只要未到、超期的：已结束的采购单只会是「已到齐」或「已结束」，直接不读
   const approvedOnly = f.state === 'open' || f.state === 'overdue';
   return db<(Omit<OrderedLine, 'state' | 'dueDate' | 'overdue'> & { poStatus: string })[]>`
-    SELECT po.id AS po_id, po.doc_no, po.order_date, po.expected_date, po.status AS po_status, s.name AS supplier_name,
+    SELECT po.id AS po_id, po.doc_no, po.order_date, po.expected_date, po.status AS po_status, coalesce(s.name, '自购 · ' || po.self_channel) AS supplier_name,
            CASE WHEN po.channel_label IS NULL THEN NULL WHEN po.channel_note = '' THEN po.channel_label
                 ELSE po.channel_label || ' · ' || po.channel_note END AS channel,
            pl.id AS line_id, m.code AS material_code, m.name AS material_name, pl.spec, pl.purchase_qty_milli, pl.purchase_unit,
@@ -258,7 +258,7 @@ async function orderedRows(db: Db, f: OrderedFilter) {
                      JOIN purchase_request_lines rl ON rl.id = x.request_line_id JOIN purchase_requests r ON r.id = rl.request_id
                      JOIN departments d ON d.id = r.department_id WHERE x.po_line_id = pl.id), '{}') AS departments
     FROM purchase_order_lines pl JOIN purchase_orders po ON po.id = pl.po_id
-    JOIN suppliers s ON s.id = po.supplier_id JOIN materials m ON m.id = pl.material_id
+    LEFT JOIN suppliers s ON s.id = po.supplier_id JOIN materials m ON m.id = pl.material_id
     WHERE po.status IN ('approved', 'closed')
       ${f.from ? db`AND po.order_date >= ${f.from}` : db``}
       ${f.to ? db`AND po.order_date <= ${f.to}` : db``}
