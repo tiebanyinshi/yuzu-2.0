@@ -14,5 +14,8 @@ export const loadBills = () => import('./bills');
 /** 前台的查回、确认作废（visits.ts）按需加载：8.2.8 餐厅入口登记进餐的「结果待确认」按餐厅的权限查回 */
 export const loadVisitOps = () => import('./visits');
 
+/** 手牌池（tags.ts）按需加载：8.2.8 餐厅入口按芯片号查手牌（平板没有前台权限） */
+export const loadTags = () => import('./tags');
+
 /** 前台结账（checkout.ts）按需加载：桌台返台要用反结账，静态引用会与桌台、钟房绕成环 */
 export const loadCheckout = () => import('./checkout');
