@@ -66,10 +66,10 @@ npm run check      # 类型检查 + 单元测试；CI 的「小程序：类型�
 | 版本 | 网关 | 微信 |
 | --- | --- | --- |
 | 开发版 | `DEV_GATEWAY`（本机，默认 `http://127.0.0.1:8300`） | 网关是模拟微信时用模拟 |
-| 体验版 | `https://api-test.<域名>`（测试服，连演示库） | 同上 |
-| 正式版 | `https://api.<域名>` | 一律用真的微信登录与手机号验证 |
+| 体验版 | `https://sys.yuzusystem.xyz/trial`（测试网关，连演示库） | 同上 |
+| 正式版 | `https://sys.yuzusystem.xyz` | 一律用真的微信登录与手机号验证 |
 
-两个域名等备案下来再填进 `src/config/env.ts`，并在小程序后台加进 request、downloadFile 合法域名（导览图的底图用画布加载，要 downloadFile 域名）。
+店主 2026-11-27：顾客、员工两个小程序都用 `sys.yuzusystem.xyz`（`api.` 子域名撤掉）。正式服那台的 Caddy 把 `/v1/*` 转给正式网关、`/trial/v1/*` 去掉 `/trial` 转给测试网关（`docs/DEPLOY_GATEWAY.md` 第 0、1.1 节）。小程序后台的 request、downloadFile 合法域名只填 `https://sys.yuzusystem.xyz`（导览图的底图用画布加载，要 downloadFile 域名）。
 
 ## 上传体验版
 
