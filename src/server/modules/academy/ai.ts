@@ -152,6 +152,19 @@ function mockDrafts(blocks: ReturnType<typeof parseAcademyMarkup>['blocks'], ski
 export async function generateQuestions(deps: { sql: Sql; config: AppConfig }, lessonId: number, raw: unknown, ctx: OpContext): Promise<AcademyAiGenerateResult> {
   const { sql, config } = deps;
   const input = parse(GenerateInput, raw);
+  const hash = hashRequest({ lessonId, count: input.count });
+  const replay = async (had: NonNullable<Awaited<ReturnType<typeof claimOp>>['had']>): Promise<AcademyAiGenerateResult> => {
+    if (had.status === 'running') throw conflict('ACADEMY_AI_RUNNING', '上一次出题还在进行，稍等一会儿再看');
+    if (had.status === 'failed') throw conflict('ACADEMY_AI_FAILED', had.error ?? '这次没出成，换一次再试');
+    return { questions: await questionsByIds(sql, had.result?.questionIds ?? []), dropped: had.result?.dropped ?? 0 };
+  };
+  // 先按操作编号查做过没有：做过的照原样处理（课时后来改了类型、模型服务后来停了也照样拿回那次的结果）；
+  // 课时能不能出题、模型服务配没配只对新的出题核对（同 Codex 审查 b6beee8 的开卷）
+  const [prior] = await sql`SELECT 1 FROM academy_bulk_ops WHERE client_key = ${input.clientKey}`;
+  if (prior) {
+    const op = await claimOp(sql, 'ai_questions', input.clientKey, hash, ctx.actor.id);
+    if (op.had) return replay(op.had);
+  }
   const [lesson] = await sql<{ id: number; courseId: number; title: string; kind: string; body: string }[]>`
     SELECT id, course_id, title, kind, body FROM academy_lessons WHERE id = ${lessonId}`;
   if (!lesson) throw notFound('没有这个课时');
@@ -160,13 +173,8 @@ export async function generateQuestions(deps: { sql: Sql; config: AppConfig }, l
   const text = academyPlainText(blocks).slice(0, 8000);
   if (text.length < 20) throw badRequest('这个课时的正文太短，出不了题');
   const provider = await providerOrThrow(sql, config);
-  const hash = hashRequest({ lessonId, count: input.count });
   const op = await claimOp(sql, 'ai_questions', input.clientKey, hash, ctx.actor.id);
-  if (op.had) {
-    if (op.had.status === 'running') throw conflict('ACADEMY_AI_RUNNING', '上一次出题还在进行，稍等一会儿再看');
-    if (op.had.status === 'failed') throw conflict('ACADEMY_AI_FAILED', op.had.error ?? '这次没出成，换一次再试');
-    return { questions: await questionsByIds(sql, op.had.result?.questionIds ?? []), dropped: op.had.result?.dropped ?? 0 };
-  }
+  if (op.had) return replay(op.had);
   const skill = lesson.title.slice(0, 30);
   const started = Date.now();
   const base = { kind: 'ai' as const, provider: provider.name, action: 'academy_questions', mode: provider.mode, refType: 'academy_lesson', refId: lessonId, staffId: ctx.actor.id };
@@ -294,13 +302,15 @@ export async function tutorHistory(deps: { sql: Sql; config: AppConfig }, l: Lea
 export async function askTutor(deps: { sql: Sql; config: AppConfig }, l: Learner, courseId: number, raw: unknown, today: string): Promise<AcademyTutorAnswer> {
   const { sql, config } = deps;
   const input = parse(AskInput, raw);
-  await assertCourseOpen(sql, l, courseId);
+  // 先按操作编号查问过没有（只认本人、这门课、同一个问题）：问上了但没收到结果、之后课程下架的，原样重提照样拿回那次的回答；
+  // 课程能不能看、模型服务配没配只对新的提问核对（同 Codex 审查 b6beee8 的开卷）
   const [had] = await sql<(Parameters<typeof tutorView>[0] & { staffId: number; courseId: number })[]>`
     SELECT id, staff_id, course_id, question, answer, sources, status, error, created_at FROM academy_tutor_questions WHERE client_key = ${input.clientKey}`;
   if (had) {
     if (Number(had.staffId) !== l.id || Number(had.courseId) !== courseId || had.question !== input.question) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一个问题，请刷新');
     return tutorView(had);
   }
+  await assertCourseOpen(sql, l, courseId);
   const provider = await providerOrThrow(sql, config);
   const [row] = await withTx(sql, async (tx) => {
     // 同一个人的提问串行，限额才算得准
