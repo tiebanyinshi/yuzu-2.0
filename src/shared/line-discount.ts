@@ -55,7 +55,7 @@ export interface LineDiscountInfo {
   byEmpNo: string | null;
   approvedByName: string | null;
   at: string;
-  /** 系统按规则打的自动折扣（8.2.8 / 8.2.18：含餐、自助、首杯赠）；人工打的为 null */
+  /** 系统按规则打的自动折扣（8.2.8 / 8.2.19：含餐、自助、首杯赠）；人工打的为 null */
   rule?: import('./dining-meals').AutoDiscountRule | null;
 }
 

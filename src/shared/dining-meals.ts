@@ -74,7 +74,7 @@ export interface MealEntryRow {
   voided: boolean;
 }
 
-// ───────────── 8.2.18 水吧取餐叫号 ─────────────
+// ───────────── 8.2.19 水吧取餐叫号 ─────────────
 
 /** 一单的状态：制作中 / 请取餐 / 已取 / 已退 */
 export type PickupState = 'making' | 'ready' | 'served' | 'cancelled';

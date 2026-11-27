@@ -186,7 +186,7 @@ export async function revokeLineDiscount(deps: Deps, lineId: number, raw: unknow
 }
 
 /**
- * 系统按规则打的自动折扣（8.2.8：含餐、自助；8.2.18：首杯赠）：在挂账的同一个事务里、写完这一行明细以后调用，这一行折成 finalAmount（不给为 0）。
+ * 系统按规则打的自动折扣（8.2.8：含餐、自助；8.2.19：首杯赠）：在挂账的同一个事务里、写完这一行明细以后调用，这一行折成 finalAmount（不给为 0）。
  * 档 auto、没有授权人，经办人记下这一笔的人；编号由这一笔的操作编号与明细算出（原样重提时不会走到这里）
  */
 export async function insertAutoDiscount(

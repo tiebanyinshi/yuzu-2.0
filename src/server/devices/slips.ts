@@ -178,7 +178,7 @@ export function buildCheckoutSlip(d: CheckoutPrint, meta: SlipMeta): Buffer {
     s.text(stay);
     for (const l of b.lines) {
       // 被签赠、券、会员折扣抵到的行标出来（8.1.15）：「足疗 [赠]」
-      // 单项打折（8.2.1）与含餐、自助、首杯赠（8.2.8 / 8.2.18）：前面标【赠】（折到 0 或首杯）/【折】，写原价、实收
+      // 单项打折（8.2.1）与含餐、自助、首杯赠（8.2.8 / 8.2.19）：前面标【赠】（折到 0 或首杯）/【折】，写原价、实收
       const ld = l.lineDiscount;
       if (ld) {
         const mark = ld.finalAmount === 0 || ld.rule === 'first_cup' ? '【赠】' : '【折】';

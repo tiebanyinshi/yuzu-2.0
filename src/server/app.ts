@@ -524,7 +524,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerTablesV8224Routes(app, deps);
   // 8.2.8：餐厅入口刷手牌登记进餐（含餐抵扣、裸票时段价）
   registerMealEntryRoutes(app, deps);
-  // 8.2.18：水吧取餐叫号（叫号屏、客人扫码看进度）
+  // 8.2.19：水吧取餐叫号（叫号屏、客人扫码看进度）
   registerPickupRoutes(app, deps);
   registerDining808Routes(app, deps);
   // 8.1.7 点菜单（小票可视化）

@@ -739,7 +739,7 @@ function LineRow({
           )}
           {d &&
             (d.finalAmount === 0 || d.rule === 'first_cup' ? (
-              // 8.2.8 / 8.2.18：含餐、自助、首杯赠（系统按规则打的）也标「赠」
+              // 8.2.8 / 8.2.19：含餐、自助、首杯赠（系统按规则打的）也标「赠」
               <LineMark tone="clay" title={d.rule ? `${AUTO_DISCOUNT_LABELS[d.rule]}（系统按规则自动折掉）` : '这一行免单'}>
                 赠
               </LineMark>

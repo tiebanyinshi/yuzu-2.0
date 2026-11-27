@@ -73,7 +73,7 @@ const ShiftPrintPage = lazyPage(() => import('./features/print/ShiftPrintPage').
 // 供应商在线对账确认（8.0.7 2.6）：供应商打开链接，不用登录
 const ReconPublicPage = lazyPage(() => import('./features/payables/ReconPublicPage').then((m) => m.ReconPublicPage));
 const SupplierPublicPage = lazyPage(() => import('./features/purchasing/SupplierPublicPage').then((m) => m.SupplierPublicPage));
-// 8.2.18：客人扫水吧小票二维码看取餐进度（不登录）
+// 8.2.19：客人扫水吧小票二维码看取餐进度（不登录）
 const PickupPublicPage = lazyPage(() => import('./features/dining/PickupPublicPage').then((m) => m.PickupPublicPage));
 const ShopPage = lazyPage(() => import('./features/shop/ShopPage').then((m) => m.ShopPage));
 const ErpShell = lazyPage(() => import('./features/erp/ErpShell').then((m) => m.ErpShell));

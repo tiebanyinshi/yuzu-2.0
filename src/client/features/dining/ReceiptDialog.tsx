@@ -153,7 +153,7 @@ function ReceiptPaper({ r, onlyWaiting, onToggle, refreshing }: { r: DiningRecei
                 </p>
               )}
               {o.pickup && (
-                // 水吧取餐号（8.2.18）：客人扫码看制作进度（不用登录）
+                // 水吧取餐号（8.2.19）：客人扫码看制作进度（不用登录）
                 <div className="mt-2 flex items-center gap-3 rounded-lg border border-line bg-paper-2/60 p-2" data-testid={`dining-receipt-pickup-${o.seq}`}>
                   <QrCode text={`${window.location.origin}/q/${o.pickup.token}`} className="size-20 shrink-0" />
                   <div>
