@@ -34,7 +34,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Select, Textarea } from '../../components/ui';
 import { AdminPage } from '../admin/AdminShell';
 import { adminKeys, CourseEditor, statusBadge } from './CourseEditor';
-import { academyKeys, COVER_CLASS, sendAcademyOp } from './data';
+import { academyKeys, COVER_CLASS, useAcademyOp } from './data';
 import { AcademyOpsPanel, PendingLock, useOpPending } from './parts';
 
 const TABS: readonly SubTab[] = [
@@ -120,6 +120,7 @@ function CoursesTab() {
 }
 
 function NewCourseDialog({ onClose, onMade }: { onClose: () => void; onMade: (id: number) => void }) {
+  const sendAcademyOp = useAcademyOp();
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState<AcademyCategory>('must_know');
   const [summary, setSummary] = useState('');
@@ -187,6 +188,7 @@ function NewCourseDialog({ onClose, onMade }: { onClose: () => void; onMade: (id
 // ───────────────────────── 学习地图 ─────────────────────────
 
 function PathDialog({ path, onClose }: { path: AcademyAdminPath | null; onClose: () => void }) {
+  const sendAcademyOp = useAcademyOp();
   const courses = useAdminCourses();
   const [f, setF] = useState({
     title: path?.title ?? '',
@@ -350,6 +352,7 @@ function PathsTab() {
 // ───────────────────────── 指派 ─────────────────────────
 
 function NewAssignmentDialog({ onClose }: { onClose: () => void }) {
+  const sendAcademyOp = useAcademyOp();
   const paths = useQuery({ queryKey: adminKeys.paths, queryFn: () => api.get<AcademyAdminPath[]>('/api/admin/academy/paths') });
   const courses = useAdminCourses();
   const learners = useQuery({ queryKey: adminKeys.learners, queryFn: () => api.get<AcademyLearnerRow[]>('/api/admin/academy/learners') });
@@ -503,6 +506,7 @@ function PeopleDialog({ a, onClose }: { a: AcademyAssignmentStat; onClose: () =>
 }
 
 function AssignmentsTab() {
+  const sendAcademyOp = useAcademyOp();
   const list = useQuery({ queryKey: adminKeys.assignments, queryFn: () => api.get<AcademyAssignmentStat[]>('/api/admin/academy/assignments') });
   const [creating, setCreating] = useState(false);
   const [people, setPeople] = useState<AcademyAssignmentStat | null>(null);
@@ -579,6 +583,7 @@ function AssignmentsTab() {
 const STATE_TONE = { new: 'lake', same: 'pine', changed: 'yuzu', edited: 'neutral' } as const;
 
 function PacksTab() {
+  const sendAcademyOp = useAcademyOp();
   const packs = useQuery({ queryKey: adminKeys.packs, queryFn: () => api.get<AcademyPackStatus>('/api/admin/academy/packs') });
   const [publish, setPublish] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -727,6 +732,7 @@ function DataTab() {
 }
 
 function RevokeDialog({ cert, onClose }: { cert: AcademyCertificate; onClose: () => void }) {
+  const sendAcademyOp = useAcademyOp();
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const toast = useToast();

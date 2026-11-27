@@ -1,6 +1,6 @@
 // 汤崎学堂 · 页面的数据层（docs/ACADEMY.md）：查询的键与钩子、写操作（结果待确认走 lib/localOps）、封面色、学习计时。
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AcademyCourseDetail,
@@ -17,7 +17,8 @@ import type {
   AcademyRankScope,
 } from '@shared/academy';
 import { api } from '../../lib/api';
-import { createLocalOps } from '../../lib/localOps';
+import { createLocalOps, type LocalOp } from '../../lib/localOps';
+import { useSession } from '../../lib/session';
 
 export const academyKeys = {
   all: ['academy'] as const,
@@ -59,9 +60,23 @@ export function useAcademyRefresh() {
 
 // 学堂的写操作都能原样重提（新建带操作编号、交卷与每日一练带编号、修改带版本、学完与报时长重复做不变）：
 // 没收到结果的记在本机，学堂首页与「WCP 设置 → 学堂」顶上列出来原样重提
-const ops = createLocalOps('yuzu.academyOps.v1');
-export const useAcademyOps = ops.useOps;
-export const sendAcademyOp = ops.send;
+//   · 记录带经办人（Codex 审查 6dffa29）：门店电脑上换人登录，只列、只重提本人的——别人的每日一练原样重提会记到现在登录的人头上；
+//   · AI 出题重提时还在出（ACADEMY_AI_RUNNING）：不能断定结果，记录留着。
+const ops = createLocalOps('yuzu.academyOps.v1', { stillRunning: ['ACADEMY_AI_RUNNING'] });
+type AcademyOpInput = Omit<LocalOp, 'createdAt' | 'staffId'>;
+
+/** 本人没确认的学堂操作 */
+export function useAcademyOps(): LocalOp[] {
+  const me = useSession().staff.id;
+  const all = ops.useOps();
+  return useMemo(() => all.filter((op) => op.staffId === me), [all, me]);
+}
+
+/** 发一次学堂的写操作（新的或原样重提），记录带上现在登录的人；各组件开头取一次：const sendAcademyOp = useAcademyOp() */
+export function useAcademyOp() {
+  const me = useSession().staff.id;
+  return useCallback(<T = unknown>(op: AcademyOpInput) => ops.send<T>({ ...op, staffId: me }), [me]);
+}
 
 /** 封面色：取样式表里已有的几种颜色（深色模式跟着变） */
 export const COVER_CLASS: Record<AcademyCover, { solid: string; soft: string; text: string }> = {

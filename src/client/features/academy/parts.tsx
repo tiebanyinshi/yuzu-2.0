@@ -8,7 +8,7 @@ import { errorMessage } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Notice } from '../../components/ui';
-import { COVER_CLASS, sendAcademyOp, useAcademyOps, useAcademyRefresh } from './data';
+import { COVER_CLASS, useAcademyOp, useAcademyOps, useAcademyRefresh } from './data';
 
 /** 页面外框：手机上全宽、宽屏居中；顶上一行返回 + 标题 */
 export function AcademyFrame({ title, back, children, testId }: { title: string; back?: { to: string; label: string }; children: ReactNode; testId?: string }) {
@@ -40,6 +40,7 @@ export function ProgressBar({ done, total, tone = 'pine', className }: { done: n
 
 /** 没收到结果的学堂操作：原样重提（新建带编号、交卷带编号，重提不会多一份） */
 export function AcademyOpsPanel() {
+  const sendAcademyOp = useAcademyOp();
   const ops = useAcademyOps();
   const toast = useToast();
   const refresh = useAcademyRefresh();

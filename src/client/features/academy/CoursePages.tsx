@@ -3,7 +3,7 @@
 //   · 课时页：图文课件（读到底点「学完了」）、文件（在员工培训里看，看过点「学完了」）、测验（抽题作答、交卷看对错与解析）、
 //     实操（检查项与带教签过的记录）；学完给学分、学完地图发证书、升级都在页面上提示。
 
-import { Fragment, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, CheckCircle2, ChevronRight, ClipboardCheck, FileText, PenLine, Send, Star } from 'lucide-react';
@@ -27,7 +27,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Notice, Skeleton, Textarea } from '../../components/ui';
 import { AcademyFrame, AcademyOpsPanel, ProgressBar } from './parts';
 import { ArticleView, ChoiceList } from './ArticleView';
-import { academyKeys, COVER_CLASS, sendAcademyOp, useAcademyCourse, useAcademyLesson, useAcademyRefresh, useStudyTimer } from './data';
+import { academyKeys, COVER_CLASS, useAcademyOp, useAcademyCourse, useAcademyLesson, useAcademyRefresh, useStudyTimer } from './data';
 import { useTrainingFiles } from '../training/TrainingPages';
 import { TrainingViewer } from '../training/TrainingViewer';
 
@@ -145,6 +145,7 @@ function RateCourse({ course }: { course: AcademyCourseDetail }) {
 
 /** 问柚子：只按这门课的课件回答（docs/ACADEMY.md 第 5 节，XT10） */
 function Tutor({ courseId }: { courseId: number }) {
+  const sendAcademyOp = useAcademyOp();
   const view = useQuery({ queryKey: academyKeys.tutor(courseId), queryFn: () => api.get<AcademyTutorView>(`/api/academy/courses/${courseId}/tutor`) });
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -224,6 +225,12 @@ export function LessonPage({ id }: { id: number }) {
   const lesson = useAcademyLesson(id);
   const v = lesson.data;
   useStudyTimer(id, !!v && v.lesson.active && (v.lesson.kind === 'article' || v.lesson.kind === 'file'));
+  // 实操课时打开就记「开始学」（报 0 秒，不计时长）：带教的「待我签核」只列这门课开始学了的人，
+  // 只有实操课时的课不记就永远等不到签核（Codex 审查 6dffa29）
+  const practical = !!v && v.lesson.active && v.lesson.kind === 'practical';
+  useEffect(() => {
+    if (practical) void api.post(`/api/academy/lessons/${id}/ping`, { seconds: 0 }).catch(() => undefined);
+  }, [id, practical]);
   if (lesson.isError && !v)
     return (
       <AcademyFrame title="课时" back={{ to: '/oa/academy', label: '学堂' }}>
@@ -338,6 +345,7 @@ function FileLesson({ view }: { view: AcademyLessonView }) {
 }
 
 function QuizLesson({ view }: { view: AcademyLessonView }) {
+  const sendAcademyOp = useAcademyOp();
   const [quiz, setQuiz] = useState<AcademyQuizView | null>(null);
   const [answers, setAnswers] = useState<number[][]>([]);
   const [result, setResult] = useState<AcademyQuizResult | null>(null);

@@ -95,13 +95,22 @@ test.describe('汤崎学堂', () => {
     await page.goto('/admin/academy');
     await page.getByTestId('academy-new-course').click();
     await page.getByTestId('academy-new-course-title').fill(title);
-    // 服务端建好了，回复在路上丢了
+    // 服务端建好了，回复在路上丢了；请求先扣住，等着的时候不算「没收到结果」、对话框不锁
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let intercepted = false;
     await page.route('**/api/admin/academy/courses', async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
+      intercepted = true;
+      await held;
       await route.fetch();
       await route.abort('internetdisconnected');
     });
     await page.getByTestId('academy-new-course-save').click();
+    await expect.poll(() => intercepted).toBe(true);
+    await expect(page.getByTestId('academy-op-locked')).toHaveCount(0);
+    await expect(page.getByTestId('academy-new-course-title')).toBeEnabled();
+    release();
     await expect(page.getByTestId('academy-op-locked')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('academy-new-course-title')).toBeDisabled();
     await expect(page.getByTestId('academy-new-course-save')).toHaveText('按原内容重新提交');

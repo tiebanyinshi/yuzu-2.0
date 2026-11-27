@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn() }));
 vi.mock('../src/client/lib/api', () => {
   class ApiError extends Error {
-    constructor(public status: number) {
+    constructor(
+      public status: number,
+      public code = '',
+    ) {
       super('rejected');
     }
   }
@@ -13,6 +16,7 @@ vi.mock('../src/client/lib/api', () => {
 });
 import { ApiError, UncertainError } from '../src/client/lib/api';
 import { sendTrainingOp } from '../src/client/features/training/ops';
+import { createLocalOps } from '../src/client/lib/localOps';
 
 let storage = new Map<string, string>();
 beforeEach(() => {
@@ -69,5 +73,30 @@ describe('sendTrainingOp', () => {
     mocks.put.mockResolvedValueOnce({ ok: true });
     await expect(sendTrainingOp(op('d'))).resolves.toEqual({ ok: true });
     expect(pending()).toEqual([]);
+  });
+});
+
+describe('createLocalOps（学堂用的两个选项，Codex 审查 6dffa29）', () => {
+  const academy = () => createLocalOps('yuzu.test.v1', { stillRunning: ['ACADEMY_AI_RUNNING'] });
+  const gen = (staffId: number) => ({ key: 'g', method: 'POST' as const, url: '/api/admin/academy/lessons/1/generate', body: { clientKey: 'g', count: 5 }, summary: 'AI 出题', staffId });
+  const left = () => JSON.parse(storage.get('yuzu.test.v1') ?? '[]') as { key: string }[];
+  it('重提时服务端说还在出题（409 ACADEMY_AI_RUNNING）：不能断定，留着；出完了再重提才删', async () => {
+    const ops = academy();
+    mocks.post.mockRejectedValueOnce(new UncertainError('timeout'));
+    await expect(ops.send(gen(7))).rejects.toBeInstanceOf(UncertainError);
+    mocks.post.mockRejectedValueOnce(new ApiError(409, 'ACADEMY_AI_RUNNING', 'x'));
+    await expect(ops.send(gen(7))).rejects.toBeInstanceOf(ApiError);
+    expect(left().map((x) => x.key)).toEqual(['g']);
+    mocks.post.mockResolvedValueOnce({ questions: [] });
+    await expect(ops.send(gen(7))).resolves.toEqual({ questions: [] });
+    expect(left()).toEqual([]);
+  });
+  it('别人登录时提交、还没确认的：换了人不发，记录留给本人', async () => {
+    const ops = academy();
+    mocks.post.mockRejectedValueOnce(new UncertainError('timeout'));
+    await expect(ops.send(gen(7))).rejects.toBeInstanceOf(UncertainError);
+    await expect(ops.send(gen(8))).rejects.toThrow('别人登录时提交的');
+    expect(mocks.post).toHaveBeenCalledTimes(1);
+    expect(left().map((x) => x.key)).toEqual(['g']);
   });
 });

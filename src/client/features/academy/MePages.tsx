@@ -17,11 +17,12 @@ import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Skeleton, Textarea } from '../../components/ui';
 import { ChoiceList } from './ArticleView';
-import { academyKeys, minutesText, sendAcademyOp, useAcademyDaily, useAcademyMe, useAcademyRefresh } from './data';
+import { academyKeys, minutesText, useAcademyOp, useAcademyDaily, useAcademyMe, useAcademyRefresh } from './data';
 import { AcademyFrame, AcademyOpsPanel, ProgressBar } from './parts';
 
 /** onAnswered：记上了（顶上「今天做了几题」马上跟着变）；onDone：看完对错、点了「下一题」（问答卡评完就算） */
 function DailyCard({ item, onAnswered, onDone }: { item: AcademyDailyItem; onAnswered: (a: AcademyDailyAnswer) => void; onDone: (a: AcademyDailyAnswer) => void }) {
+  const sendAcademyOp = useAcademyOp();
   const [chosen, setChosen] = useState<number[]>([]);
   const [revealed, setRevealed] = useState(false);
   const [answer, setAnswer] = useState<AcademyDailyAnswer | null>(null);
@@ -250,6 +251,7 @@ export function MePage() {
 }
 
 function SignDialog({ item, onClose }: { item: AcademyCoachItem; onClose: () => void }) {
+  const sendAcademyOp = useAcademyOp();
   const [checks, setChecks] = useState<boolean[]>(item.items.map(() => false));
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);

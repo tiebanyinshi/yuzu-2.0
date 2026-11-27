@@ -35,7 +35,7 @@ import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Segmented, Select, Skeleton, Textarea } from '../../components/ui';
 import { ArticleView } from './ArticleView';
-import { academyKeys, COVER_CLASS, sendAcademyOp } from './data';
+import { academyKeys, COVER_CLASS, useAcademyOp } from './data';
 import { PendingLock, useOpPending } from './parts';
 
 export const adminKeys = {
@@ -137,6 +137,7 @@ export function CourseEditor({ id, onBack }: { id: number; onBack: () => void })
 }
 
 function CourseForm({ data, onSaved }: { data: AcademyAdminCourse; onSaved: () => Promise<unknown> }) {
+  const sendAcademyOp = useAcademyOp();
   const c = data.course;
   const [f, setF] = useState({ title: c.title, summary: c.summary, category: c.category, departmentKey: c.departmentKey, deptOnly: c.deptOnly, cover: c.cover, sort: c.sort });
   const [busy, setBusy] = useState(false);
@@ -245,6 +246,7 @@ function useOpenFiles(enabled: boolean) {
 }
 
 function LessonDialog({ courseId, lesson, onClose, onSaved }: { courseId: number; lesson: AcademyAdminLesson | null; onClose: () => void; onSaved: () => Promise<unknown> }) {
+  const sendAcademyOp = useAcademyOp();
   const [f, setF] = useState({
     title: lesson?.title ?? '',
     kind: (lesson?.kind ?? 'article') as AcademyLessonKind,
@@ -456,6 +458,7 @@ const blankQuestion = (): Omit<AcademyQuestion, 'id' | 'courseId' | 'packKey' | 
 });
 
 function QuestionDialog({ courseId, question, onClose, onSaved }: { courseId: number; question: AcademyQuestion | null; onClose: () => void; onSaved: () => Promise<unknown> }) {
+  const sendAcademyOp = useAcademyOp();
   const [q, setQ] = useState(question ? { ...question } : blankQuestion());
   const [busy, setBusy] = useState(false);
   const key = useRef(uuid());
@@ -587,6 +590,7 @@ function QuestionDialog({ courseId, question, onClose, onSaved }: { courseId: nu
 }
 
 function QuestionBank({ courseId, lessons }: { courseId: number; lessons: AcademyAdminLesson[] }) {
+  const sendAcademyOp = useAcademyOp();
   const questions = useQuery({ queryKey: adminKeys.questions(courseId), queryFn: () => api.get<AcademyQuestion[]>(`/api/admin/academy/courses/${courseId}/questions`) });
   const [open, setOpen] = useState<AcademyQuestion | 'new' | null>(null);
   const [importing, setImporting] = useState(false);
