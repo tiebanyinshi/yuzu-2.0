@@ -9,14 +9,15 @@ import expected from '../src/server/demo/floorplan-expected.json';
 import { floorplanSampleDxf, floorplanSampleFloorSwapDxf, floorplanSamplePdf } from '../src/server/demo/floorplan-sample';
 import { floorplanChecks } from '../src/server/modules/floorplans';
 import { createStaff } from '../src/server/modules/staff';
+import { todayIn } from '../src/server/lib/dates';
 import { buildApp } from '../src/server/app';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
 let boss: string;
 const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64');
-/** 入库登记（v0.7.19）：来源、收图日期必填；UTC 日期不会晚于门店当地的今天 */
-const RECEIVED_ON = new Date().toISOString().slice(0, 10);
+/** 入库登记（v0.7.19）：来源、收图日期必填；收图日期不能晚于门店时区的今天，取门店时区的今天（beforeAll 里定） */
+let RECEIVED_ON: string;
 const upload = (content: string, fileName = 'sample.dxf', cookie = ctx.owner, extra: Record<string, unknown> = {}) =>
   api(ctx.app, cookie, 'POST', '/api/admin/floorplans', { fileName, contentBase64: b64(content), note: '', sourceKind: 'designer', receivedOn: RECEIVED_ON, ...extra });
 const detail = async (id: number, cookie = ctx.owner) => (await api(ctx.app, cookie, 'GET', `/api/admin/floorplans/${id}`)).body as FloorplanDetail;
@@ -39,6 +40,7 @@ const readCsv = (file: string) => readFileSync(file, 'utf8').replace(/^﻿/, '')
 
 beforeAll(async () => {
   ctx = await setup();
+  RECEIVED_ON = todayIn(ctx.config.timezone);
   await createStaff(ctx.sql, { username: 'boss', displayName: '店长', role: 'store_manager', password: PASSWORD, mustChangePassword: false });
   boss = await login(ctx.app, 'boss');
   // 样例台账（docs/data 的区域清单、空间清单）：比对按这份

@@ -102,7 +102,10 @@ export const SELF_REASON_LABELS: Record<SelfReason, string> = { no_supplier: '�
 export const SELF_PAY_METHODS = ['employee_advance', 'petty', 'company_transfer', 'other'] as const;
 export type SelfPayMethod = (typeof SELF_PAY_METHODS)[number];
 export const SELF_PAY_METHOD_LABELS: Record<SelfPayMethod, string> = { employee_advance: '员工垫付后报销', petty: '备用金', company_transfer: '对公转账', other: '其他' };
-/** 自购超过这个金额（分）加一级店主复核（PS5：文档没给金额，先按报销原来的门槛 2,000 元） */
+/**
+ * 自购超过这个金额（分）加一级店主复核的默认值（PS5：文档没给金额，先按报销原来的门槛 2,000 元）。
+ * 8.2.13 之后（不改版本号）在「采购规则」里可改（`PurchaseRules.selfOwnerReviewCents`），这里只作默认
+ */
 export const SELF_REVIEW_CENTS = 200_000;
 
 export interface SelfPurchaseInfo {
@@ -587,6 +590,8 @@ export interface PurchaseRules {
   urgentContractMinCents: number;
   /** 补合同期限（天，CK19）：从急采生效那天算 */
   contractDueDays: number;
+  /** 自购店主复核（分，PS5）：自购采购单合计超过它的，负责人之后加一级店主；提交时按当时的值定审批级数 */
+  selfOwnerReviewCents: number;
 }
 
 /** 默认规则（待确认，E1、E4–E6、CG01、CG03–CG05）：在「采购 → 采购规则」里改 */
@@ -614,6 +619,8 @@ export const DEFAULT_PURCHASE_RULES: PurchaseRules = {
   stockCheckHours: 24,
   urgentContractMinCents: 2_000_000,
   contractDueDays: 15,
+  // 自购超过 ¥2,000 加店主复核（PS5，8.2.13 起；之后在采购规则里可改）
+  selfOwnerReviewCents: SELF_REVIEW_CENTS,
 };
 
 /** 急采上限：分级的最高一档 */
