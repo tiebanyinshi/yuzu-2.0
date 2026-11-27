@@ -205,6 +205,8 @@ export async function importPacks(sql: Sql, raw: unknown, ctx: OpContext, today:
     const pick = input.codes ? new Set(input.codes) : null;
     const status: AcademyStatus = input.publish ? 'published' : 'draft';
     const result: AcademyPackImportResult = { courses: [], paths: [] };
+    /** 这次更新了内容的课（课时可能少了，原来差一节的人就算学完了） */
+    const updatedCourses: number[] = [];
     for (const c of packs.courses) {
       if (pick && !pick.has(c.code)) continue;
       const [row] = await tx<{ id: number; packHash: string | null; localEdited: boolean }[]>`
@@ -232,6 +234,7 @@ export async function importPacks(sql: Sql, raw: unknown, ctx: OpContext, today:
         courseId = Number(made!.id);
       }
       await writeLessonsAndQuestions(tx, courseId, c, !!row);
+      if (row) updatedCourses.push(courseId);
       result.courses.push({ code: c.code, title: c.title, result: row ? 'updated' : 'created' });
     }
     const inDb = new Map((await tx<{ id: number; code: string }[]>`SELECT id, code FROM academy_courses WHERE code IS NOT NULL`).map((r) => [r.code, Number(r.id)] as const));
@@ -278,6 +281,14 @@ export async function importPacks(sql: Sql, raw: unknown, ctx: OpContext, today:
       const [now] = await tx<{ status: AcademyStatus }[]>`SELECT status FROM academy_paths WHERE id = ${pathId}`;
       if (now!.status === 'published') toSettle.push(pathId);
       result.paths.push({ code: p.code, title: p.title, result: row ? 'updated' : 'created' });
+    }
+    // 地图本身没变、但里面的课更新过（比如去掉了一节课）的上架地图也一起补记，按编号顺序锁好（Codex 审查 7a6eee0）
+    if (updatedCourses.length) {
+      const more = await tx<{ id: number }[]>`
+        SELECT id FROM academy_paths WHERE status = 'published' AND id NOT IN ${tx(toSettle.length ? toSettle : [0])}
+          AND id IN (SELECT path_id FROM academy_path_courses WHERE course_id IN ${tx(updatedCourses)})
+        ORDER BY id FOR NO KEY UPDATE`;
+      toSettle.push(...more.map((r) => Number(r.id)));
     }
     await settlePathForAll(tx, toSettle, today);
     await tx`

@@ -257,17 +257,30 @@ function bigrams(s: string): Set<string> {
   return out;
 }
 
-/** 从这门课上架的图文课时里挑和问题最相关的几段（最多 6 段、4000 字） */
+const MATERIAL_CHUNKS = 6;
+const MATERIAL_CHARS = 4000;
+/** 一段材料最长多少字：长段落切开，免得一段就把字数用完（Codex 审查 7a6eee0） */
+const CHUNK_CHARS = 800;
+
+/** 正文切成段：三个自然段一组，超过 CHUNK_CHARS 的再按字数切开 */
+function chunkText(text: string): string[] {
+  const paras = text.split('\n').filter((p) => p.trim().length > 4);
+  const out: string[] = [];
+  for (let i = 0; i < paras.length; i += 3) {
+    const piece = paras.slice(i, i + 3).join('\n');
+    for (let j = 0; j < piece.length; j += CHUNK_CHARS) out.push(piece.slice(j, j + CHUNK_CHARS));
+  }
+  return out;
+}
+
+/** 从这门课上架的图文课时里挑和问题最相关的几段（最多 6 段、4000 字；放不下的那段跳过，接着看下一段） */
 async function materials(db: Db, courseId: number, question: string) {
   const lessons = await db<{ id: number; title: string; body: string }[]>`
     SELECT id, title, body FROM academy_lessons WHERE course_id = ${courseId} AND active AND kind = 'article' ORDER BY seq, id`;
   const q = bigrams(question);
   const chunks: { lessonId: number; title: string; text: string; score: number }[] = [];
   for (const l of lessons) {
-    const text = academyPlainText(parseAcademyMarkup(l.body).blocks);
-    const paras = text.split('\n').filter((p) => p.trim().length > 4);
-    for (let i = 0; i < paras.length; i += 3) {
-      const piece = paras.slice(i, i + 3).join('\n');
+    for (const piece of chunkText(academyPlainText(parseAcademyMarkup(l.body).blocks))) {
       const b = bigrams(piece);
       let score = 0;
       for (const g of q) if (b.has(g)) score += 1;
@@ -277,7 +290,8 @@ async function materials(db: Db, courseId: number, question: string) {
   const picked: typeof chunks = [];
   let size = 0;
   for (const c of chunks.filter((c) => c.score > 0).sort((a, b) => b.score - a.score)) {
-    if (picked.length >= 6 || size + c.text.length > 4000) break;
+    if (picked.length >= MATERIAL_CHUNKS) break;
+    if (size + c.text.length > MATERIAL_CHARS) continue;
     picked.push(c);
     size += c.text.length;
   }
@@ -331,6 +345,8 @@ export async function askTutor(deps: { sql: Sql; config: AppConfig }, l: Learner
   const [row] = await withTx(sql, async (tx) => {
     // 同一个人的提问串行，限额才算得准
     await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`academy_tutor:${l.id}`}, 0))`;
+    // 拿到锁以后再查一次这个编号：同一编号同时来两次时，后到的返回先到的那次，不被当天的限额挡住（Codex 审查 7a6eee0）
+    if ((await tx`SELECT 1 FROM academy_tutor_questions WHERE client_key = ${input.clientKey}`).length) return [];
     if ((await usedToday(tx, l.id, config.timezone, today)) >= ACADEMY_TUTOR_DAILY_LIMIT) throw conflict('ACADEMY_TUTOR_LIMIT', `今天已经问了 ${ACADEMY_TUTOR_DAILY_LIMIT} 次，明天再问吧`);
     return tx<{ id: number }[]>`
       INSERT INTO academy_tutor_questions (staff_id, course_id, client_key, question) VALUES (${l.id}, ${courseId}, ${input.clientKey}, ${input.question})
