@@ -27,7 +27,7 @@ import {
   Shuffle,
   TriangleAlert,
 } from 'lucide-react';
-import { BILL_SOURCE_LABELS, BILL_SOURCES, VISIT_STATUS_LABELS, ZONE_LABELS, type BillLine, type FrontdeskBoardRules, type VisitDetail } from '@shared/frontdesk';
+import { BILL_SOURCE_LABELS, BILL_SOURCES, VISIT_STATUS_LABELS, ZONE_LABELS, type BillLine, type FrontdeskBoardRules, type VisitDetail, DEFAULT_FRONTDESK_RULES } from '@shared/frontdesk';
 import { minutesText } from '@shared/benefits';
 import { backfillText } from '@shared/backfill';
 import { KITCHEN_STATUS_LABELS } from '@shared/dining';
@@ -141,7 +141,7 @@ export function BillPanel({
   // 异常（8.1.15）：这次来访记过几条、其中没处理完的待办几条
   const openTodos = visit.incidents.filter((i) => isOpenTodo(i, visit.incidents, open)).length;
   const discountCents = visit.bill.discountCents ?? 0;
-  const selfMinutes = rules?.selfVoidMinutes ?? 10;
+  const selfMinutes = rules?.selfVoidMinutes ?? DEFAULT_FRONTDESK_RULES.selfVoidMinutes;
   const canFix = (ownerId: number, at: string) => can('frontdesk.correct') || (ownerId === session.staff.id && (now - new Date(at).getTime()) / 60_000 <= selfMinutes);
 
   const leaveGroup = async () => {

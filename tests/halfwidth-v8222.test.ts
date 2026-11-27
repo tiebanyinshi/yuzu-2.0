@@ -28,3 +28,12 @@ describe('全角转半角', () => {
     expect(w.feed('Enter', (at += 5))).toBe('123456');
   });
 });
+
+describe('结账记录搜索（8.2.14）', () => {
+  it('牌号（部分、全角）、单号后几位、金额、经办人、桌号', async () => {
+    const { checkoutMatches } = await import('../src/shared/checkout');
+    const c = { checkoutNo: 'JZ20261127-0042', tagCodes: ['A023', 'B105'], tableNames: ['V3'], totalAmount: 49900, operatorName: '小周' };
+    for (const q of ['', 'a023', '０２３', '105', '0042', '499', '499.00', '小周', 'v3']) expect(checkoutMatches(c, q), q).toBe(true);
+    for (const q of ['C001', '0043', '500', '小李']) expect(checkoutMatches(c, q), q).toBe(false);
+  });
+});

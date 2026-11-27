@@ -73,3 +73,26 @@ export function areaStatuses(tags: readonly AreaTag[], now: number): AreaStatus[
 
 /** 区的叫法：A 区 / 普通柜 */
 export const areaLabel = (area: string) => (area ? `${area} 区` : '普通柜');
+
+/**
+ * 8.2.14 按人数发牌：这个分区要 count 张，按推荐顺序（areaStatuses）逐区挑能发的空牌（区里按牌号顺序），一个区不够接着下一个区。
+ * except：已经分给本次别的客人、或店员手动填了的牌。返回挑到的牌号（可能少于 count：空牌不够）
+ */
+export function pickAreaTags(tags: readonly (AreaTag & { code: string })[], zone: TagZone, count: number, now: number, except: ReadonlySet<string> = new Set()): string[] {
+  if (count <= 0) return [];
+  const order = areaStatuses(tags, now)
+    .filter((a) => a.zone === zone && a.state !== 'full')
+    .map((a) => a.area);
+  const out: string[] = [];
+  for (const area of order) {
+    const free = tags
+      .filter((t) => t.zone === zone && t.kind === 'normal' && tagArea(t.code) === area && tagIssuable(t) && !except.has(t.code) && !out.includes(t.code))
+      .map((t) => t.code)
+      .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+    for (const code of free) {
+      if (out.length >= count) return out;
+      out.push(code);
+    }
+  }
+  return out;
+}

@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
-import { MAX_MOVE_LINES, normalizeTagCode, ZONE_LABELS, type BillLine, type BoardTag, type FrontdeskBoardRules, type VisitDetail } from '@shared/frontdesk';
+import { DEFAULT_FRONTDESK_RULES, MAX_MOVE_LINES, normalizeTagCode, ZONE_LABELS, type BillLine, type BoardTag, type FrontdeskBoardRules, type VisitDetail } from '@shared/frontdesk';
 import { formatYuan } from '@shared/money';
 import { useCan, useReasons, useSession } from '../../lib/session';
 import { cn } from '../../lib/utils';
@@ -60,7 +60,7 @@ export function MoveLinesDialog({
   });
 
   const now = useServerNow(visit.serverTime);
-  const selfMinutes = rules?.selfVoidMinutes ?? 10;
+  const selfMinutes = rules?.selfVoidMinutes ?? DEFAULT_FRONTDESK_RULES.selfVoidMinutes;
   // 权限与作废明细相同：有「前台更正」的岗位随时可以；其他人只能转自己在规定分钟内挂的（按服务器时间，以服务端为准）
   const canFix = (l: BillLine) => can('frontdesk.correct') || (l.postedById === session.staff.id && (now - new Date(l.postedAt).getTime()) / 60_000 <= selfMinutes);
   const active = visit.lines.filter((l) => l.status === 'active');
