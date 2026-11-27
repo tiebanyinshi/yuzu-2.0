@@ -359,6 +359,7 @@
 - **员工小程序线（店主 2026-11-27 立项，设计见 `docs/STAFF_MP.md`）**：店主「以后有两个小程序线，请你分配好模块」——顾客小程序线（原「小程序线」，Gemini）照旧；新开**员工小程序线**（员工用的微信小程序「汤崎 WCP」，Claude 员工小程序开发会话，本会话起），只写 `staff-miniprogram/`、`src/server/modules/staffmp/`、`src/client/features/staffmp/`、`src/shared/staffmp.ts`、`compose.staffmp.yaml`、`docs/STAFF_MP*.md`、`docs/HANDOFF_STAFFMP*.md`、`tests/staffmp-*.test.ts` 与迁移 `NNN_staffmp_<用途>.sql`，登记处只加挂接的几行；WCP、员工培训与汤崎学堂、柚子饭堂、巡场的规则与接口仍归主线，员工小程序线把主线的接口按白名单挂到自己的端口上（`STAFFMP_PORT`，`staff.yuzusystem.xyz/api/staffmp/*`）。分工表见设计稿第 7 节，PR 标题【员工小程序线】、标签「员工小程序线」。集成分支 `claude/awesome-wozniak-e0symx`，子 PR A–E 依次合进集成分支，最后一个 PR 合进 `main` 并改 yuzu 的版本号；员工小程序自己的版本从 `1.0.0` 起。待确认 SP01 起。迁移号预留 `650`–`659`（原登记 `610`–`619`，与 8.2.9 水吧的 `610_pickup_v829.sql` 一段撞了——那一段 `600`–`639` 由 8.2.8–8.2.11 先在 main 上登记；2026-11-27 改号，员工小程序线的迁移还没发到任何环境）：
   - `650`（`650_staffmp_bindings.sql`，子 PR A）：微信与员工账号的绑定 `staffmp_bindings`（解开只做标记、不删）、员工小程序发的会话 `staffmp_sessions`（跟着 `sessions` 删）。
   - `651`（`651_staffmp_canteen_links.sql`，子 PR E）：员工账号与柚子饭堂账号对上 `staffmp_canteen_links`（一对一：员工主键、饭卡唯一；怎么对上的、谁、什么时候；解开删行、审计留痕）。只建新表；解开时那张饭卡的 `canteen_employees.code_epoch` 加一走饭堂原来的列，不改表。
+  - **版本号 8.2.26**（2026-11-27 收口）：main 的 8.2.19–8.2.25 排给《新店系统需求现场走场确认》那条线，「别的线请从 8.2.26 起排」；员工小程序自己的版本号（`staff-miniprogram/package.json`）从 1.0.0 起另算。子 PR：A #54、B #59、C #64、E #67、D #71、F #74（学习 Tab 接 8.2.18 的汤崎学堂），交接说明 `docs/HANDOFF_STAFFMP1.md`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
@@ -482,6 +483,7 @@
 
 ## 更新记录
 
+- 2026-11-27（续）：**员工小程序线收口为 8.2.26**。六个子 PR（A [#54](https://github.com/tiebanyinshi/yuzu-2.0/pull/54)、B [#59](https://github.com/tiebanyinshi/yuzu-2.0/pull/59)、C [#64](https://github.com/tiebanyinshi/yuzu-2.0/pull/64)、E [#67](https://github.com/tiebanyinshi/yuzu-2.0/pull/67)、D [#71](https://github.com/tiebanyinshi/yuzu-2.0/pull/71)、F [#74](https://github.com/tiebanyinshi/yuzu-2.0/pull/74)）各自过 CI 与 Codex 审查后合进集成分支；F 是学堂（8.2.18，[#50](https://github.com/tiebanyinshi/yuzu-2.0/pull/50)）合进 main 以后接上的学习 Tab（学堂那条线提醒「不要再做一套」，约定见 [#50 的评论](https://github.com/tiebanyinshi/yuzu-2.0/pull/50#issuecomment-7225979444)）。集成分支已把 main（8.2.20）合进来，版本号按 main 的安排用 8.2.26；交接说明 `docs/HANDOFF_STAFFMP1.md`，待确认 SP18（学习 Tab 这一版不接的几样）。集成 PR [#53](https://github.com/tiebanyinshi/yuzu-2.0/pull/53) 转待审。
 - 2026-11-27（续）：**员工小程序线迁移改号 `610`–`619` → `650`–`659`**。8.2.8–8.2.11（餐厅、水吧、休闲娱乐、泡池）在 main 上先登记了 `600`–`639`，8.2.9 的分支已经用了 `610_pickup_v829.sql`；员工小程序线的登记只在集成分支上，别的线看不到。`610_staffmp_bindings.sql` 改成 `650_staffmp_bindings.sql`（集成分支）、E 的 `611` 改成 `651`；两份都还没发到任何环境（只部署 main 的版本标签），`640`–`649` 是汤崎学堂的。之后员工小程序线的新迁移从 `652` 起。
 - 2026-11-27（续）：**小程序域名**。店主：客户端和员工端小程序都用 `sys.yuzusystem.xyz`，刚加的 `api.` 子域名撤掉，`staff.` 的柚子饭堂不动（`PENDING_DECISIONS.md` SP17）。员工小程序正式版改连 `sys.`，Caddy 在 `sys.` 上把 `/api/staffmp/*` 转到员工小程序端口；顾客小程序的域名配置归顾客小程序线改。
 - 2026-11-27：**员工小程序线立项**。店主：小程序备案通过；顾客小程序已有小程序线，再开一条员工小程序线做员工端（`api.yuzusystem.xyz` 给顾客小程序，`staff.yuzusystem.xyz` 给员工小程序），替代柚子饭堂并把 WCP、巡场、培训都放进来，培训最重要（学堂由另一个开发会话做，这边只做小程序）；「不要按照我给的模块搭建，你自己设计」，方案先经独立的体验评审。设计稿 `docs/STAFF_MP.md`：四个 Tab「今天 / 学习 / 工作台 / 我的」，首页上面是此刻的状态、下面一排位置固定的「打卡 · 饭卡码 · 扫一扫」（经独立的体验评审改过一轮）；员工小程序端口复用 WCP 与员工培训的接口（白名单）；三条线的分工见第 7 节。迁移号 `610`–`619`，待确认 SP01 起。
