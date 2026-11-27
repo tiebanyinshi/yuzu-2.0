@@ -315,3 +315,20 @@ describe('学堂 · Codex 审查 dd885a6', () => {
     expect(store.rows.find((r) => r.name === '餐饮小王')!.storeName).toBeTruthy();
   });
 });
+
+describe('学堂 · Codex 审查 c950add', () => {
+  it('管理端锁地图一行用 FOR NO KEY UPDATE：学员此时记「学完地图」（外键检查）不用等', async () => {
+    const [path] = await ctx.sql<{ id: number }[]>`SELECT id FROM academy_paths ORDER BY id LIMIT 1`;
+    const sentinel = new Error('回滚');
+    await ctx.sql.begin(async (admin) => {
+      await admin`SELECT id FROM academy_paths WHERE id = ${path!.id} FOR NO KEY UPDATE`;
+      await expect(
+        ctx.sql.begin(async (learner) => {
+          await learner`SET LOCAL lock_timeout = '1s'`;
+          await learner`INSERT INTO academy_path_completions (staff_id, path_id, completed_on) VALUES (${ctx.ownerId}, ${path!.id}, '2026-01-01')`;
+          throw sentinel;
+        }),
+      ).rejects.toBe(sentinel);
+    });
+  });
+});

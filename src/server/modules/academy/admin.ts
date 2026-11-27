@@ -1,7 +1,8 @@
 // 学堂 · 管理端（docs/ACADEMY.md 第 8 节「WCP 设置 → 学堂」，权限 academy.manage）：课程与课时、学习地图、指派、学习数据。
 //   · 新建一律带操作编号（client_key 唯一）与原请求摘要（request_hash）：没收到结果原样重提返回原来那个；同一编号换了任何内容拒绝（Codex 审查 dd885a6）；
 //   · 修改带版本（乐观并发）：别人先改过拒绝（ACADEMY_CHANGED）；没收到结果原样重提、现在的内容就是要改成的，按改好了算；
-//   · 加锁顺序（LOCKING.md「学堂」）：课程一行 → 课时一行；地图一行 → 阶段；指派一行；
+//   · 加锁顺序（LOCKING.md「学堂」）：课程一行 → 课时一行；地图一行 → 阶段；指派一行。都用 FOR NO KEY UPDATE（不改主键）：
+//     与学员写进度、学完地图、发证书时外键检查加的 KEY SHARE 不冲突，地图上架时补记学完再取学员锁也不会反过来等（Codex 审查 c950add）；
 //   · 来自内置课件包的课、地图，改过就记 local_edited（再导新版不覆盖）。
 
 import { z } from 'zod';
@@ -161,7 +162,7 @@ export async function updateCourse(sql: Sql, id: number, raw: unknown, ctx: OpCo
   await withTx(sql, async (tx) => {
     const [c] = await tx`
       SELECT title, summary, category, department_key, dept_only, cover, sort, status, version, pack_hash
-      FROM academy_courses WHERE id = ${id} FOR UPDATE`;
+      FROM academy_courses WHERE id = ${id} FOR NO KEY UPDATE`;
     if (!c) throw notFound('没有这门课');
     const same =
       c.title === input.title &&
@@ -233,7 +234,7 @@ export async function createLesson(sql: Sql, courseId: number, raw: unknown, ctx
   const input = parse(LessonInput, raw);
   const v = await checkLesson(sql, input);
   await withTx(sql, async (tx) => {
-    const [c] = await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR UPDATE`;
+    const [c] = await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR NO KEY UPDATE`;
     if (!c) throw notFound('没有这门课');
     const hash = requestHash(input, { courseId });
     if (await replayed(tx, 'academy_lessons', input.clientKey, hash)) return;
@@ -255,8 +256,8 @@ export async function updateLesson(sql: Sql, id: number, raw: unknown, ctx: OpCo
   const courseId = Number(found.courseId);
   const v = await checkLesson(sql, { ...input, clientKey: '' });
   await withTx(sql, async (tx) => {
-    await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR UPDATE`;
-    const [l] = await tx`SELECT title, kind, body, file_id, quiz_count, quiz_pass, minutes, credits, active, version FROM academy_lessons WHERE id = ${id} FOR UPDATE`;
+    await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR NO KEY UPDATE`;
+    const [l] = await tx`SELECT title, kind, body, file_id, quiz_count, quiz_pass, minutes, credits, active, version FROM academy_lessons WHERE id = ${id} FOR NO KEY UPDATE`;
     const same =
       l!.title === input.title &&
       l!.kind === input.kind &&
@@ -290,9 +291,9 @@ export async function updateLesson(sql: Sql, id: number, raw: unknown, ctx: OpCo
 export async function reorderLessons(sql: Sql, courseId: number, raw: unknown, ctx: OpContext) {
   const { lessonIds } = parse(Reorder, raw);
   await withTx(sql, async (tx) => {
-    const [c] = await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR UPDATE`;
+    const [c] = await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR NO KEY UPDATE`;
     if (!c) throw notFound('没有这门课');
-    const have = await tx<{ id: number }[]>`SELECT id FROM academy_lessons WHERE course_id = ${courseId} ORDER BY id FOR UPDATE`;
+    const have = await tx<{ id: number }[]>`SELECT id FROM academy_lessons WHERE course_id = ${courseId} ORDER BY id FOR NO KEY UPDATE`;
     const want = [...lessonIds].sort((a, b) => a - b);
     if (have.length !== want.length || have.some((h, i) => Number(h.id) !== want[i])) throw changed('这门课的课时');
     for (const [i, lessonId] of lessonIds.entries()) await tx`UPDATE academy_lessons SET seq = ${i + 1} WHERE id = ${lessonId} AND seq <> ${i + 1}`;
@@ -349,7 +350,7 @@ export async function updatePath(sql: Sql, id: number, raw: unknown, ctx: OpCont
   const input = parse(PathUpdate, raw);
   await checkStages(sql, input.courseIds);
   await withTx(sql, async (tx) => {
-    const [p] = await tx`SELECT title, summary, cover, sort, credits, valid_months, status, version FROM academy_paths WHERE id = ${id} FOR UPDATE`;
+    const [p] = await tx`SELECT title, summary, cover, sort, credits, valid_months, status, version FROM academy_paths WHERE id = ${id} FOR NO KEY UPDATE`;
     if (!p) throw notFound('没有这张学习地图');
     const stages = (await tx<{ courseId: number }[]>`SELECT course_id FROM academy_path_courses WHERE path_id = ${id} ORDER BY seq`).map((s) => Number(s.courseId));
     const same =
@@ -544,7 +545,7 @@ export async function updateAssignment(sql: Sql, id: number, raw: unknown, ctx: 
   await withTx(sql, async (tx) => {
     const [a] = await tx<AssignmentRow[]>`
       SELECT id, path_id, course_id, audience, department_key, position_key, staff_id, required, due_days, starts_on, active, version
-      FROM academy_assignments WHERE id = ${id} FOR UPDATE`;
+      FROM academy_assignments WHERE id = ${id} FOR NO KEY UPDATE`;
     if (!a) throw notFound('没有这条指派');
     const same = a.required === input.required && a.dueDays === input.dueDays && a.active === input.active;
     if (a.version !== input.version) {

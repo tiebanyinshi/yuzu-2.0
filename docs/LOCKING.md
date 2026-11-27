@@ -429,5 +429,5 @@
 ## 10. 汤崎学堂（`docs/ACADEMY.md`）
 
 - **学员的写入**（`src/server/modules/academy/progress.ts`）：报学习时长、点「学完了」、课程评分（以后的交卷、每日一练、实操签核同样）先取这位学员的咨询锁（`academy_learner:<员工>`，同一个人的学习写入串行）→ 进度一行（`academy_progress`，`FOR UPDATE`）→ 学分流水（`academy_credits` 的「人 + 事由 + 编号」唯一约束兜底，同一件事只给一次）。完成一门课、一张地图在同一把锁里判断，不会因为两节课同时完成而漏发地图学分；学完地图记一行 `academy_path_completions`（只追加，主键兜底）。报时长按这个人所有课时里最近一次上报算间隔（同时开几个课时不重复计）。只读核对课程、地图（不加锁）。
-- **测评**（`assess.ts`、`daily.ts`、`coach.ts`、`memory.ts`）：开卷、交卷、每日一练作答、实操签核同样先取学员咨询锁（签核取的是被签那位员工的锁）→ 卷子一行（交卷 `FOR UPDATE`）/ 签核一行 → 这道题的卡（`academy_cards`，`FOR UPDATE`）→ 知识点掌握度（`academy_mastery`，`FOR UPDATE`）→ 进度 → 学分 → 学完地图一行 → 单号计数（证书编号，`doc_counters`）→ 证书。题库的新建、修改锁课程一行 → 题一行；撤销证书只锁那张证书。
-- **管理端**（`src/server/modules/academy/admin.ts`）：课程一行（`FOR UPDATE`，带版本）→ 课时一行（`FOR UPDATE`，带版本）；加课时、调顺序也先锁课程一行；地图一行（`FOR UPDATE`）→ 重写它的阶段 → 上架或改了阶段时给已经学完的人补记（按员工编号升序逐个取学员咨询锁，学员的写入从不锁地图一行，不成环）；指派只锁那一行。新建带操作编号（各表 `client_key` 唯一），原样重提返回原来那个。不碰学员的进度与学分。
+- **测评**（`assess.ts`、`daily.ts`、`coach.ts`、`memory.ts`）：开卷、交卷、每日一练作答、实操签核同样先取学员咨询锁（签核取的是被签那位员工的锁）→ 卷子一行（交卷 `FOR UPDATE`）/ 签核一行 → 这道题的卡（`academy_cards`，`FOR UPDATE`）→ 知识点掌握度（`academy_mastery`，`FOR UPDATE`）→ 进度 → 学分 → 学完地图一行 → 单号计数（证书编号，`doc_counters`）→ 证书。题库的新建、修改锁课程一行 → 题一行（都用 `FOR NO KEY UPDATE`，同管理端）；撤销证书只锁那张证书。
+- **管理端**（`src/server/modules/academy/admin.ts`）：一律 `FOR NO KEY UPDATE`（不改主键；与学员写进度、学完地图、发证书时外键检查的 `KEY SHARE` 不冲突，Codex 审查 c950add）：课程一行（带版本）→ 课时一行（带版本）；加课时、调顺序也先锁课程一行；地图一行 → 重写它的阶段 → 上架或改了阶段时给已经学完的人补记（按员工编号升序逐个取学员咨询锁，学员的写入从不锁地图一行，不成环）；指派只锁那一行。新建带操作编号（各表 `client_key` 唯一），原样重提返回原来那个。不碰学员的进度与学分。
