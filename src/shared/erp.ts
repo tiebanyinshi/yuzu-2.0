@@ -519,6 +519,9 @@ export const ERP_OP_TYPES = [
   // 8.1.51 商城试点（Codex 审查）：供应链 BP 记成交方案（按采购权限查回、作废）、提单人原单补资料重提（只能查回、作废自己的）
   'mall_quote',
   'mall_resubmit',
+  // 8.2.6：补发物料、终止申购（docs/MALL_V826.md）
+  'request_dispatch',
+  'mall_terminate',
   // 接单 / 放回、选定 / 撤下方案（部门确认、BP 代记微信确认、BP 撤下）：只能查回、作废自己的
   'mall_quote_act',
 ] as const;
@@ -618,6 +621,8 @@ export const ERP_OP_LABELS: Record<ErpOpType, string> = {
   shop_master: '商城主数据维护',
   mall_quote: '商城需求记成交方案',
   mall_resubmit: '商城需求补资料重提',
+  request_dispatch: '补发物料',
+  mall_terminate: '终止申购',
   mall_quote_act: '商城需求接单 / 选定、撤下方案',
 };
 export interface ErpOpLookup {

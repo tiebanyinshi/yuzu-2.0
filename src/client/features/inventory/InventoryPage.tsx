@@ -1,10 +1,11 @@
 import { NavLink, Navigate, useParams } from 'react-router';
-import { Archive, ArrowRightLeft, BarChart3, Boxes, Calculator, FileStack, Gift, Hourglass, PackageMinus } from 'lucide-react';
+import { Archive, ArrowRightLeft, BarChart3, Boxes, Calculator, FileStack, Gift, Hourglass, PackageMinus, PackageOpen } from 'lucide-react';
 import { useCan } from '../../lib/session';
 import { cn } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { AgingTab } from './AgingTab';
 import { CostTab } from './CostTab';
+import { DispatchTab } from './DispatchTab';
 import { DocsTab } from './DocsTab';
 import { GiftsTab } from './GiftsTab';
 import { MasterTab } from './MasterTab';
@@ -18,6 +19,8 @@ const TABS = [
   { key: 'stock', label: '库存', icon: Boxes },
   { key: 'docs', label: '单据', icon: FileStack },
   { key: 'summary', label: '收发汇总', icon: BarChart3 },
+  // 物料发配记录（8.2.6，docs/MALL_V826.md）：部门申请的物料分批给、到货后补发
+  { key: 'dispatch', label: '物料发配记录', icon: PackageOpen },
   // 呆滞与周转、临期批次（8.0.7）
   { key: 'aging', label: '呆滞与临期', icon: Hourglass },
   // 赠品台账（8.0.1 采购组整改 09）：只记台账，不进库存
@@ -61,6 +64,7 @@ export function InventoryPage() {
       {tab === 'stock' && <StockTab />}
       {tab === 'docs' && <DocsTab />}
       {tab === 'summary' && <SummaryTab />}
+      {tab === 'dispatch' && <DispatchTab />}
       {tab === 'aging' && <AgingTab />}
       {tab === 'gifts' && <GiftsTab />}
       {tab === 'transfers' && <TransfersTab />}
