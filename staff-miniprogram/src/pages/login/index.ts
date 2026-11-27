@@ -116,7 +116,8 @@ Page({
       const replace = await this.confirmReplace();
       const bind = this.data.bind && (!this.data.boundName || replace);
       const r = await passwordLogin(username, password, { bind, replace });
-      if (r.bindError) wx.showToast({ title: '登录了，这次没绑微信', icon: 'none', duration: 2000 });
+      // 要绑却没绑上（门店系统说了原因，或者取不到微信的登录凭证）：说一声，下次还要输密码
+      if (bind && !r.bound) wx.showToast({ title: '登录了，这次没绑微信', icon: 'none', duration: 2000 });
       enterApp();
     } catch (e) {
       // 账号密码不对、账号停用、专用账号、离职：门店系统的话原样写在这里

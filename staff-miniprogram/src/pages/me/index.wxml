@@ -19,7 +19,7 @@
         <view class="row">
           <view class="row-main">
             <view class="row-title">微信</view>
-            <view class="row-sub">{{me.wechatBound ? '已绑定：打开小程序就进' : '没绑定：每次要输密码'}}</view>
+            <view class="row-sub">{{me.wechatBound ? '已绑定：打开小程序就进' : '这台手机的微信没绑你的账号：每次要输密码'}}</view>
           </view>
           <view wx:if="{{me.wechatBound}}" class="row-action" hover-class="pressed" hover-stay-time="120" bindtap="onUnbind" aria-role="button">解除</view>
         </view>

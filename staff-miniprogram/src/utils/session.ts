@@ -6,7 +6,7 @@
 
 import type { StaffMpInfo, StaffMpLoginReply, StaffMpMe, StaffMpWechatReply } from '../../../src/shared/staffmp';
 import { envVersion } from '../config/env';
-import { apiError, call, clearToken, hasToken, isOffline, messageOf, publicCall, saveToken, setRelogin } from './api';
+import { apiError, call, callAs, clearToken, hasToken, isOffline, messageOf, publicCall, saveToken, setGate, setRelogin } from './api';
 
 const ME_KEY = 'wcp_me';
 const SIGNED_OUT_KEY = 'wcp_signed_out';
@@ -44,7 +44,12 @@ export function currentMe(): StaffMpMe | null {
   return me;
 }
 
+/** 按人的缓存（知识库的文件夹、最近搜过的）：退出、换了人就清掉，下一位看不到上一位的 */
+const USER_CACHES = ['wcp_learn_folders', 'wcp_learn_recent'];
+
 function setMe(next: StaffMpMe | null): void {
+  const prev = me ?? read<StaffMpMe>(ME_KEY);
+  if ((prev ? prev.staff.id : null) !== (next ? next.staff.id : null)) for (const k of USER_CACHES) remove(k);
   me = next;
   if (next) write(ME_KEY, next);
   else remove(ME_KEY);
@@ -163,7 +168,11 @@ export async function passwordLogin(username: string, password: string, opts: { 
 
 /** 刷新「我是谁」（打开小程序、回到前台时） */
 export async function refreshMe(): Promise<StaffMpMe> {
+  const before = currentMe();
   const next = await call<StaffMpMe>('GET', '/me');
+  const now = currentMe();
+  // 这期间退出了、换了人登录：晚回来的不盖上去
+  if (!hasToken() || (before && !now) || (now && now.staff.id !== next.staff.id)) return next;
   setMe(next);
   return next;
 }
@@ -215,9 +224,9 @@ export async function silentRelogin(): Promise<boolean> {
   const r = await publicCall<StaffMpWechatReply>('POST', '/auth/wechat', { code: await wechatCode(), mode: 'login' });
   if (r.status !== 'ok') return false;
   if (expected !== null && r.me.staff.id !== expected) {
+    // 用那个令牌直接退掉（不存、不放进共用的位置：这期间别的请求不会以别人的身份发出去）
     try {
-      saveToken(r.token);
-      await call('POST', '/auth/logout', { unbind: false });
+      await callAs(r.token, 'POST', '/auth/logout', { unbind: false });
     } catch {
       // 退不掉：那个会话 12 小时后自己过期
     }
@@ -227,6 +236,21 @@ export async function silentRelogin(): Promise<boolean> {
   signedIn(r.token, r.me);
   return true;
 }
+
+/** 门店系统说「先改密码 / 先选岗位」（管理员重置了密码、岗位改了）：改「我是谁」的标记，去那一页（已经在那一页就不动） */
+setGate((code) => {
+  const cur = currentMe();
+  if (cur) setMe({ ...cur, mustChangePassword: code === 'PASSWORD_CHANGE_REQUIRED' ? true : cur.mustChangePassword, needsPosition: code === 'POSITION_REQUIRED' ? true : cur.needsPosition });
+  const url = code === 'PASSWORD_CHANGE_REQUIRED' ? '/pages/password/index?first=1' : '/pages/position/index';
+  let top = '';
+  try {
+    const pages = getCurrentPages();
+    top = pages.length ? pages[pages.length - 1]!.route : '';
+  } catch {
+    top = '';
+  }
+  if (!top || url.indexOf(`/${top}`) < 0) wx.reLaunch({ url });
+});
 
 setRelogin(async () => {
   try {
