@@ -787,7 +787,8 @@ async function submitLocked(tx: Tx, po: PoRow, actor: Actor, approveNow: boolean
         ruleVersion: null,
         steps: [
           { group: 'manager' as const, mode: 'any' as const },
-          ...(Number(totals?.totalCents ?? 0) > purchaseRules.selfOwnerReviewCents ? [{ group: 'owner' as const, mode: 'any' as const }] : []),
+          // 金额设成 0 表示每张自购都加店主（含合计为 0 的单）；大于 0 时超过才加
+          ...(purchaseRules.selfOwnerReviewCents === 0 || Number(totals?.totalCents ?? 0) > purchaseRules.selfOwnerReviewCents ? [{ group: 'owner' as const, mode: 'any' as const }] : []),
         ],
         allowSelf: false,
       }

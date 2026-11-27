@@ -302,6 +302,12 @@ describe('自购店主复核金额可改', () => {
     const catalog = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/rules')).body;
     expect(JSON.stringify(catalog)).toContain('超过 ¥5,000.00');
 
+    // 设成 0：每张自购都加店主，合计为 0 的也加
+    expect((await api(ctx.app, ctx.owner, 'PUT', rulesUrl, { selfOwnerReviewCents: 0 })).status).toBe(200);
+    const free = await newPo({ purchaseMethod: 'self', self: selfInfo(), lines: [{ materialId: matId, purchaseQtyMilli: q(1), priceCents: 0 }] });
+    expect(free.status, JSON.stringify(free.body)).toBe(201);
+    expect(await pendingLevels(free.body.po.id)).toEqual(['manager', 'owner']);
+
     expect((await api(ctx.app, ctx.owner, 'PUT', rulesUrl, { selfOwnerReviewCents: 200_000 })).status).toBe(200);
   });
 });
