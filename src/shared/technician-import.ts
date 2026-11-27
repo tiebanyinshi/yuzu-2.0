@@ -52,7 +52,6 @@ const COLUMNS: Record<string, string[]> = {
 
 /** 模板下载与页面上的「认得的表头」用 */
 export const TECHNICIAN_IMPORT_HEADERS = ['工号', '姓名', '花名', '性别', '电话', '组别', '身高（厘米）', '体重（公斤）', '星级', '技师等级', '入职日期'] as const;
-export const technicianImportAliases = (): Record<string, string[]> => ({ ...COLUMNS });
 
 const CN_NUM: Record<string, number> = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
 

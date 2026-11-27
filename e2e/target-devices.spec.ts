@@ -645,6 +645,7 @@ const ROSTER: RosterTechnician[] = BOARD_TECHS.map(({ state: _s, position: _p, b
   photoUrl: null,
   photoVersion: 0,
   leaveToday: approvedLeave,
+  phoneMasked: '',
 }));
 const TECH_VIEW: TechnicianAdminView = {
   businessDate: TODAY,

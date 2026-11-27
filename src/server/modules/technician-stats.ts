@@ -15,7 +15,7 @@ import type { Deps } from '../lib/context';
 import { badRequest } from '../lib/errors';
 import { cents, parse } from '../lib/validate';
 import { currentStoreId, storeIn } from '../lib/store-context';
-import { businessDate } from './frontdesk/common';
+import { businessDate } from './frontdesk';
 import { settledTechnicianLines } from './commission';
 import { loadTechnicians } from './technicians';
 import { withReportScope } from './stores';

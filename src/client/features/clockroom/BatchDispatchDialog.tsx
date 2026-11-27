@@ -256,6 +256,7 @@ export function BatchDispatchDialog({ open, board, onClose, onDone }: { open: bo
                   options={[
                     { value: 'rotation', label: CALL_TYPE_LABELS.rotation },
                     { value: 'designated', label: CALL_TYPE_LABELS.designated },
+                    { value: 'call', label: CALL_TYPE_LABELS.call },
                   ]}
                 />
                 <Select

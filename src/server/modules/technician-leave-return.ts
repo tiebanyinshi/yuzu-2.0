@@ -15,7 +15,7 @@ import type { Deps, OpContext } from '../lib/context';
 import { conflict, notFound, unprocessable } from '../lib/errors';
 import { parse } from '../lib/validate';
 import { currentStoreId, forEachStore } from '../lib/store-context';
-import { businessDate, hashRequest, runIdempotent, saveKey, setTxTimeouts } from './frontdesk/common';
+import { businessDate, hashRequest, runIdempotent, saveKey, setTxTimeouts } from './frontdesk';
 import { clockroomBoard, loadClockroomRules, lockQueue, logEvent, statusMap, syncLeaveToday, writeStatus } from './clockroom';
 import { scheduleOn } from './technician-day';
 import { locateSignIn } from './locations';
@@ -93,12 +93,12 @@ export async function sweepLeaveReturns(deps: Pick<Deps, 'sql' | 'config'>, now 
       SELECT id, technician_id FROM technician_leaves
       WHERE store_id = ${currentStoreId()} AND status = 'approved' AND auto_return AND returned_at IS NULL AND to_date < ${today}
       ORDER BY to_date, id LIMIT 200`;
-    for (const d of due) if (await returnOne(deps.sql, deps as Deps, Number(d.id), Number(d.technicianId), today, now)) n += 1;
+    for (const d of due) if (await returnOne(deps.sql, Number(d.id), Number(d.technicianId), today, now)) n += 1;
   });
   return n;
 }
 
-async function returnOne(sql: Sql, deps: Deps, leaveId: number, technicianId: number, today: string, at: Date): Promise<boolean> {
+async function returnOne(sql: Sql, leaveId: number, technicianId: number, today: string, at: Date): Promise<boolean> {
   return sql.begin(async (tx: Tx) => {
     await setTxTimeouts(tx);
     await lockQueue(tx);

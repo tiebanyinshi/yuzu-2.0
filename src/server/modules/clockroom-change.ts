@@ -21,7 +21,7 @@ import type { Actor, Deps, OpContext } from '../lib/context';
 import { AppError, conflict, notFound, unprocessable } from '../lib/errors';
 import { parse, positiveCents } from '../lib/validate';
 import { currentStoreId } from '../lib/store-context';
-import { assertOpen, businessDate, hashRequest, lockVisits, runIdempotent } from './frontdesk/common';
+import { assertOpen, businessDate, hashRequest, loadBills, lockVisits, runIdempotent } from './frontdesk';
 import { clockroomBoard, loadClockroomRules, lockQueue, logEvent, offStatus, statusMap, writeStatus, type SessionLine } from './clockroom';
 import { locateSessionEnd } from './locations';
 import { writeAudit } from '../lib/audit';
@@ -89,7 +89,7 @@ export async function changeSessionItem(deps: Deps, sessionId: number, raw: unkn
   const requestHash = hashRequest({ op: 'session_change', sessionId, ...payload });
   const [peek] = await deps.sql<{ visitId: number }[]>`SELECT visit_id FROM technician_sessions WHERE id = ${sessionId} AND store_id = ${currentStoreId()}`;
   if (!peek) throw notFound('钟单不存在');
-  const { PostInput, postChargesTx } = await import('./frontdesk/bills');
+  const { PostInput, postChargesTx } = await loadBills();
   await runIdempotent(deps, { key, opType: 'bill_post', requestHash }, async (tx) => {
     const at = ctx.at ?? new Date();
     const visit = (await lockVisits(tx, [Number(peek.visitId)])).get(Number(peek.visitId))!;

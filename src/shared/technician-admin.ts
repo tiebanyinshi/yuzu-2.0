@@ -160,6 +160,8 @@ export interface RosterTechnician extends Technician {
   restToday: boolean;
   /** 今天在已批准的休假里 */
   leaveToday: { id: number; fromDate: string; toDate: string; leaveType: LeaveType } | null;
+  /** 打码的手机号（8.2.2；有「维护技师名册」的才给，没留为空字符串） */
+  phoneMasked: string;
 }
 
 export interface TechnicianAdminView {

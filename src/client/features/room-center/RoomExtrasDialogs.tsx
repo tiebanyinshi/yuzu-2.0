@@ -160,6 +160,7 @@ export function AddItemDialog({ room, onClose, onDone }: { room: RoomCard; onClo
                 options={[
                   { value: 'rotation', label: CALL_TYPE_LABELS.rotation },
                   { value: 'designated', label: CALL_TYPE_LABELS.designated },
+                  { value: 'call', label: CALL_TYPE_LABELS.call },
                 ]}
               />
             }

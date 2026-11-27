@@ -18,7 +18,6 @@ export const clockKindLabel = (callType: CallType, extension: boolean) => (exten
 
 /** 星级（8.2.2）：1–10 星，与价格档（等级）分开；提成可以按星级定 */
 export const MAX_TECH_STAR = 10;
-export const starLabel = (star: number | null) => (star ? `${star} 星` : '未定星级');
 
 /** 工号：1–6 位数字或字母，例如 08、A12 */
 export const TECH_NO_PATTERN = /^[0-9A-Za-z]{1,6}$/;

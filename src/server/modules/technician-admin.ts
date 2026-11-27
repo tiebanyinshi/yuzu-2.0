@@ -62,6 +62,7 @@ import { approvedLeavesOn, groupNames, scheduleOn } from './technician-day';
 import { ApplyInput, loadRotas, rotaPlanCells, saveRotas } from './technician-rota';
 import { loadTechnicianKinds, loadTechnicians } from './technicians';
 import { technicianPhotoUrl } from '@shared/technician-ranking';
+import { maskPhone } from '@shared/mask';
 
 /** 组别、班次、排班的保存之间串行（都是管理动作，不频繁）；按门店各一把 */
 const lockTechAdmin = (tx: Tx) => tx`SELECT pg_advisory_xact_lock(hashtext(${currentStoreId() === DEFAULT_STORE_ID ? 'technician_admin' : `technician_admin:${currentStoreId()}`}))`;
@@ -91,6 +92,10 @@ async function adminView(db: Db, deps: Deps, canManage: boolean): Promise<Techni
   const photos = await db<{ id: number; photoId: number | null; photoVersion: number }[]>`
     SELECT id, photo_id, photo_version FROM technicians WHERE store_id = ${currentStoreId()} AND (photo_id IS NOT NULL OR photo_version > 0)`;
   const photoOf = new Map(photos.map((p) => [Number(p.id), p]));
+  // 8.2.2：手机号只给打码的，而且只给能改名册的
+  const phones = canManage
+    ? new Map((await db<{ id: number; phone: string }[]>`SELECT id, phone FROM technicians WHERE store_id = ${currentStoreId()} AND phone <> ''`).map((p) => [Number(p.id), maskPhone(p.phone)]))
+    : new Map<number, string>();
   const technicians: RosterTechnician[] = [...(await loadTechnicians(db)).values()].map((t) => {
     const leave = leaves.get(t.id);
     return {
@@ -101,6 +106,7 @@ async function adminView(db: Db, deps: Deps, canManage: boolean): Promise<Techni
       shiftToday: schedule.get(t.id)?.shift ?? null,
       restToday: schedule.get(t.id)?.rest ?? false,
       leaveToday: leave ? { id: leave.id, fromDate: leave.fromDate, toDate: leave.toDate, leaveType: leave.leaveType } : null,
+      phoneMasked: phones.get(t.id) ?? '',
     };
   });
   const categories = await db<{ category: string }[]>`

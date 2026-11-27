@@ -129,7 +129,9 @@ describe('扩钟单独一类', () => {
     expect((await api(ctx.app, ctx.clerk, 'POST', `/api/clockroom/sessions/${d!.id}/finish`)).status).toBe(200);
     expect(await queue()).toEqual(['01', '02', '03']);
     // 02 下了钟、今天做过：按状态是「已带」
-    const t02 = ((await board()).technicians as { techNo: string; todayClocks: number; busy: unknown; state: 'on'; suspendedAt: null }[]).find((t) => t.techNo === '02')!;
+    const t02 = ((await board()).technicians as { techNo: string; todayClocks: number; busy: { status: 'waiting' | 'serving' } | null; state: 'on'; suspendedAt: null }[]).find(
+      (t) => t.techNo === '02',
+    )!;
     expect(techFilterOf(t02, true)).toBe('brought');
 
     // 结账以后：报表把扩钟、点钟、加钟分开；扩钟奖励没单独设时与点钟一样

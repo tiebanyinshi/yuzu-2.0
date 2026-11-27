@@ -7,7 +7,7 @@ import { guard, guardAny } from '../auth/guard';
 import type { Deps } from '../lib/context';
 import { ctxOf } from '../lib/context';
 import { idParam, parse } from '../lib/validate';
-import { businessDate, hashRequest, runIdempotent } from './frontdesk/common';
+import { businessDate, hashRequest, loadBills, runIdempotent } from './frontdesk';
 import { setAnnouncer } from './clock-calls';
 import { dispatchBatch } from './clockroom-batch';
 import { moveBefore } from './clockroom-queue';
@@ -34,7 +34,7 @@ import {
 export function registerClockroomRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
   // 派钟、加钟要挂账：与前台挂账同一个入口（价格、技师、幂等的核对都在那里）
-  const post = async () => (await import('./frontdesk/bills')).postCharges;
+  const post = async () => (await loadBills()).postCharges;
 
   // 看板：钟房与排位播报（回测整改 P03）共用同一份排位数据，只有排位播报的岗位也能看
   app.get('/api/clockroom', { preHandler: guardAny('technician.dispatch', 'technician.announce') }, async () => clockroomBoard(sql, deps));
@@ -72,7 +72,7 @@ export function registerClockroomRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/clockroom/sessions/:id/extend', { preHandler: guard('technician.dispatch', 'frontdesk.operate') }, async (req) => {
     const { id } = parse(idParam, req.params);
     const e = parse(ExtendInput, req.body);
-    const { PostInput, postChargesTx } = await import('./frontdesk/bills');
+    const { PostInput, postChargesTx } = await loadBills();
     // 操作编号的摘要按提交上来的（钟单、钟数、合计）算，不按查出来的明细算：价格档在两次提交之间变了（PC28，标准档换成专业档）
     // 原样重提照样认得出是同一笔（与房态中心续钟同一个做法）
     const requestHash = hashRequest({ op: 'session_extend', sessionId: id, quantity: e.quantity, expectedTotal: e.expectedTotal });

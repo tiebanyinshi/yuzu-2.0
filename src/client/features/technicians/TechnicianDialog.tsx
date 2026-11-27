@@ -1,12 +1,13 @@
 // 新建、编辑技师的对话框：门店「技师管理 → 名册」与后台「技师 → 技师名册」共用（8.1.15 从后台的名册卡片里搬出来，
 // 补上花名、类型、入职日期）。保存走原来的名册接口（/api/admin/technicians，要「维护技师名册」权限）。
+// 8.2.2：手机（只显示打码的，留空不改）、身高、体重、星级。
 
 import { useRef, useState } from 'react';
 import { ImagePlus, Trash2, UserRound } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { PRICE_TIER_LABELS, PRICE_TIERS, type PriceTier } from '@shared/catalog';
 import type { TechnicianAdminView } from '@shared/technician-admin';
-import { MAX_TECH_NAME, TECH_NO_PATTERN, type Technician, type TechnicianAdmin } from '@shared/technicians';
+import { MAX_TECH_NAME, MAX_TECH_STAR, TECH_NO_PATTERN, type Technician, type TechnicianAdmin } from '@shared/technicians';
 import { api, errorMessage, isRejected, notSentAsRejection } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { imagePayload } from '../../components/Images';
@@ -16,7 +17,7 @@ import { Button, Field, Input, Notice, Segmented, Select } from '../../component
 import { useTechAdminRefresh } from './queries';
 
 /** photoUrl：门店「技师管理 → 名册」带着（技师榜单的照片，docs/TECH_RANKING.md）；后台的名册不带，不显示照片 */
-export type EditableTechnician = Technician & { lineCount?: number; photoUrl?: string | null; photoVersion?: number };
+export type EditableTechnician = Technician & { lineCount?: number; photoUrl?: string | null; photoVersion?: number; phoneMasked?: string };
 
 export function TechnicianDialog({
   target,
@@ -47,6 +48,11 @@ export function TechnicianDialog({
   const [note, setNote] = useState('');
   const [active, setActive] = useState(true);
   const [sortOrder, setSortOrder] = useState('0');
+  const [phone, setPhone] = useState('');
+  const [clearPhone, setClearPhone] = useState(false);
+  const [height, setHeight] = useState('');
+  const [weight, setWeight] = useState('');
+  const [star, setStar] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<typeof target>(null);
@@ -63,18 +69,55 @@ export function TechnicianDialog({
     setNote(existing?.note ?? '');
     setActive(existing?.active ?? true);
     setSortOrder(String(existing?.sortOrder ?? 0));
+    setPhone('');
+    setClearPhone(false);
+    setHeight(existing?.heightCm ? String(existing.heightCm) : '');
+    setWeight(existing?.weightKg ? String(existing.weightKg) : '');
+    setStar(existing?.star ? String(existing.star) : '');
     setError(null);
   }
   // 名册里的分类可能已不在价目表里（项目改了分类），照样列出，方便去掉；类型同理
   const options = [...new Set([...categories, ...skills])];
   const kindOptions = [...new Set([...kinds, ...(kind ? [kind] : [])])];
+  const num = (v: string) => (v.trim() ? Number(v.trim()) : null);
+  const between = (v: string, lo: number, hi: number) => !v.trim() || (/^\d+$/.test(v.trim()) && Number(v) >= lo && Number(v) <= hi);
   const problem =
-    isNew && !TECH_NO_PATTERN.test(techNo.trim()) ? '工号为 1–6 位数字或字母，例如 08、A12' : !name.trim() ? '请填写技师名字' : !/^\d{1,4}$/.test(sortOrder) ? '排序请填 0–9999 的整数' : null;
+    isNew && !TECH_NO_PATTERN.test(techNo.trim())
+      ? '工号为 1–6 位数字或字母，例如 08、A12'
+      : !name.trim()
+        ? '请填写技师名字'
+        : !/^\d{1,4}$/.test(sortOrder)
+          ? '排序请填 0–9999 的整数'
+          : phone.trim() && !/^1\d{10}$/.test(phone.replace(/[\s-]/g, ''))
+            ? '手机号应为 11 位'
+            : !between(height, 100, 230)
+              ? '身高写 100–230 的整数厘米'
+              : !between(weight, 30, 200)
+                ? '体重写 30–200 的整数公斤'
+                : !between(star, 1, MAX_TECH_STAR)
+                  ? `星级写 1–${MAX_TECH_STAR}`
+                  : null;
 
   const save = async () => {
     setSaving(true);
     setError(null);
-    const body = { name: name.trim(), nickname: nickname.trim(), kind, gender, grade, skills, hiredOn: hiredOn || null, note: note.trim(), active, sortOrder: Number(sortOrder) };
+    const body = {
+      name: name.trim(),
+      nickname: nickname.trim(),
+      kind,
+      gender,
+      grade,
+      skills,
+      hiredOn: hiredOn || null,
+      note: note.trim(),
+      active,
+      sortOrder: Number(sortOrder),
+      // 手机：没输不改（只看得到打码的）；点了清掉的清空
+      ...(phone.trim() ? { phone: phone.trim() } : clearPhone ? { phone: '' } : {}),
+      heightCm: num(height),
+      weightKg: num(weight),
+      star: num(star),
+    };
     try {
       const next = isNew
         ? await api.post<TechnicianAdmin>('/api/admin/technicians', { ...body, techNo: techNo.trim() })
@@ -188,6 +231,25 @@ export function TechnicianDialog({
           </Field>
           <Field label="排序" htmlFor="t-sort" hint="小的在前">
             <Input id="t-sort" value={sortOrder} inputMode="numeric" maxLength={4} onChange={(e) => setSortOrder(e.target.value)} className="num" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Field label="手机" htmlFor="t-phone" hint={existing?.phoneMasked ? (clearPhone ? '保存后清掉' : `现在 ${existing.phoneMasked}，留空不改`) : '选填'}>
+            <Input id="t-phone" value={phone} inputMode="tel" maxLength={13} onChange={(e) => setPhone(e.target.value)} className="num" data-testid="technician-phone" />
+            {existing?.phoneMasked && !phone && (
+              <button type="button" className="mt-1 text-[12px] font-semibold text-clay" onClick={() => setClearPhone(!clearPhone)}>
+                {clearPhone ? '不清了' : '清掉手机号'}
+              </button>
+            )}
+          </Field>
+          <Field label="身高（厘米）" htmlFor="t-height">
+            <Input id="t-height" value={height} inputMode="numeric" maxLength={3} onChange={(e) => setHeight(e.target.value)} className="num" />
+          </Field>
+          <Field label="体重（公斤）" htmlFor="t-weight">
+            <Input id="t-weight" value={weight} inputMode="numeric" maxLength={3} onChange={(e) => setWeight(e.target.value)} className="num" />
+          </Field>
+          <Field label="星级" htmlFor="t-star" hint="提成可以按星级定">
+            <Input id="t-star" value={star} inputMode="numeric" maxLength={2} onChange={(e) => setStar(e.target.value)} className="num" placeholder={`1–${MAX_TECH_STAR}`} />
           </Field>
         </div>
         <Field label="备注" htmlFor="t-note">
