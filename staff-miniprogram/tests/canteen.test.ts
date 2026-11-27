@@ -8,7 +8,23 @@ import { parsePatrolToken } from '../../src/shared/patrol';
 import { installFakeWx } from './fake-wx';
 import { clearToken, saveToken, setRelogin, setRetryDelayForTest } from '../src/utils/api';
 import type { QueuedScan } from '../src/utils/canteen';
-import { MEAL_LABELS, TAG_LABELS, enqueue, flushQueue, isMealCode, loadQueue, mealNow, mealWindowText, menuDays, patrolCodeOf, shiftDate, submitScan } from '../src/utils/canteen';
+import {
+  MEAL_LABELS,
+  TAG_LABELS,
+  dropMealKey,
+  enqueue,
+  flushQueue,
+  isMealCode,
+  loadMealKey,
+  loadQueue,
+  mealCodeEmployee,
+  mealNow,
+  mealWindowText,
+  menuDays,
+  patrolCodeOf,
+  shiftDate,
+  submitScan,
+} from '../src/utils/canteen';
 
 let fake: ReturnType<typeof installFakeWx>;
 
@@ -69,6 +85,30 @@ describe('扫到的先存再交', () => {
     expect(fake.sent.every((s) => (s.data as { clientKey: string }).clientKey === 'k3')).toBe(true);
   });
 
+  it('登录过期（重新登录也不行）：留着，标出是登录过期', async () => {
+    const item = scan('k401');
+    enqueue(5, item);
+    fake.reply({ status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } });
+    const r = await submitScan<CheckinResult>(5, item);
+    expect(r).toEqual({ kind: 'queued', expired: true });
+    expect(loadQueue('checkin', 5).map((x) => x.body.clientKey)).toEqual(['k401']);
+  });
+
+  it('补交时另一轮已经交掉的不再发', async () => {
+    enqueue(5, scan('x1'));
+    enqueue(5, scan('x2'));
+    // 第一笔交上的同时，另一轮把第二笔也交掉了（从手机上删掉）
+    fake.reply({ status: 200, data: ok(1) });
+    const wx = (globalThis as unknown as { wx: { request: (o: { success: (r: unknown) => void }) => void } }).wx;
+    const original = wx.request;
+    wx.request = (o) => {
+      fake.storage.set('wcp_scan_q:checkin:5', []);
+      original(o as never);
+    };
+    await flushQueue<CheckinResult>('checkin', 5, () => undefined);
+    expect(fake.sent.length).toBe(1);
+  });
+
   it('补交按顺序，遇到还是结果不明的就停', async () => {
     enqueue(5, scan('a'));
     enqueue(5, scan('b'));
@@ -113,6 +153,18 @@ describe('码的认法', () => {
 
   it('微信扫一扫打开时码是编码过的网址', () => {
     expect(patrolCodeOf(encodeURIComponent('https://staff.yuzusystem.xyz/#patrol=ABCDEFGHJKLM'))).toBe('ABCDEFGHJKLM');
+  });
+
+  it('饭卡码里的员工编号（负责人按人去重）', () => {
+    expect(mealCodeEmployee('YZC1:1A:K3B2:ABCDEFGH')).toBe(46);
+    expect(mealCodeEmployee('ABCDEFGHJKLM')).toBeNull();
+  });
+
+  it('饭卡解开了删掉手机上的码钥匙', () => {
+    fake.storage.set('wcp_meal_key:7', { staffId: 7, me: { codeKey: 'k' }, offsetMs: 0, savedAt: 1 });
+    expect(loadMealKey(7)).not.toBeNull();
+    dropMealKey(7);
+    expect(loadMealKey(7)).toBeNull();
   });
 
   it('饭卡码', () => {

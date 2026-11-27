@@ -1,7 +1,7 @@
 // 员工小程序「汤崎 WCP」（员工小程序线，docs/STAFF_MP.md）：员工小程序端口与小程序共用的类型与常量。
 // 小程序（staff-miniprogram/）只引这里的类型（编译后不留引用），接口改了那边的类型检查会报错。
 
-import type { CanteenRole } from './canteen';
+import type { CanteenRole, Meal } from './canteen';
 import type { InstanceKind } from './instance';
 
 /** 员工小程序端口上所有接口的前缀：放 Caddy 的服务器按它把 staff.yuzusystem.xyz 上的请求转到员工小程序端口（第 5 节） */
@@ -110,6 +110,8 @@ export interface StaffMpCanteenStatus {
   open: boolean;
   linked: boolean;
   employee: { name: string; empNo: string; role: CanteenRole } | null;
+  /** 现在是哪一餐的开饭时间、我这一餐打过卡没有（不在开饭时间、没对上为 null；首页此刻卡用） */
+  currentMeal: { meal: Meal; date: string; checkedIn: boolean } | null;
 }
 
 /** 后台「员工小程序 → 饭卡对上」：一行是一位员工（对上了的写饭卡，没对上的给按手机号找到的候选） */

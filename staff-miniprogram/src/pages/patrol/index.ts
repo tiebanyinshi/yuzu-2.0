@@ -15,6 +15,8 @@ import { uuid } from '../../utils/uuid';
 
 let key: MealKey | null = null;
 let flushTimer: number | null = null;
+/** 页面显示的第几次：离开时加一，之前发出去的请求回来对不上就不再动页面 */
+let gen = 0;
 
 Page({
   data: {
@@ -34,24 +36,34 @@ Page({
   },
 
   async onShow() {
+    const my = ++gen;
     this.setData({ large: largeTextOn() });
     const me = await requireMe();
-    if (!me) return;
+    if (!me || my !== gen) return;
+    // 微信扫一扫带进来的码马上取走（不管后面成不成，都不会再把人带回这一页）
+    const link = takePatrolLink();
     key = loadMealKey(me.staff.id);
     try {
-      key = await refreshMealKey(me.staff.id);
+      const fresh = await refreshMealKey(me.staff.id);
+      if (my !== gen) return;
+      key = fresh;
     } catch (e) {
-      if (!key) return this.setData({ state: isOffline(e) ? 'offline' : 'error', error: messageOf(e) });
+      if (my !== gen) return;
+      if (!key) {
+        const lost = link ? '刚才扫的场所码没记上，连上以后请再扫一次。' : '';
+        return this.setData({ state: isOffline(e) ? 'offline' : 'error', error: `${lost}${messageOf(e)}` });
+      }
     }
     this.setData({ waiting: loadQueue('patrol', key.me.employee.id).length });
-    await this.load();
-    const link = takePatrolLink();
     if (link) this.record(link.code, 'link', new Date(link.at + key.offsetMs).toISOString());
+    await this.load();
+    if (my !== gen) return;
     this.flush();
     if (flushTimer === null) flushTimer = setInterval(() => this.flush(), 15000) as unknown as number;
   },
 
   onHide() {
+    gen += 1;
     if (flushTimer !== null) clearInterval(flushTimer);
     flushTimer = null;
   },
@@ -88,6 +100,8 @@ Page({
       this.load();
     } else if (outcome.kind === 'rejected') {
       this.setData({ result: { tone: 'bad', title: `没记上：${item.label}`, sub: outcome.error.message } });
+    } else if (outcome.expired) {
+      this.setData({ result: { tone: 'wait', title: `登录过期了：${item.label}`, sub: '已经存在手机上，重新登录以后自动补交（不会重复）' } });
     } else {
       this.setData({ result: { tone: 'wait', title: `等网络：${item.label}`, sub: '已经存在手机上，连上以后自动补交（不会重复）' } });
     }
@@ -108,7 +122,8 @@ Page({
     }
     this.setData({ busy: true });
     const outcome = await submitScan<PatrolCheckinResult>(employeeId, item);
-    buzz();
+    // 只有这一次记上了才震动
+    if (outcome.kind === 'done' && outcome.result.status === 'ok') buzz();
     this.show(item, outcome);
     this.setData({ busy: false, waiting: loadQueue('patrol', employeeId).length });
   },

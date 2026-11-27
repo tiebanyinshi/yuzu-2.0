@@ -43,6 +43,22 @@ export function loadMealKey(staffId: number): MealKey | null {
   }
 }
 
+/** 饭卡解开了（后台解开、对错了人）：删掉手机上存着的码钥匙，不再亮码 */
+export function dropMealKey(staffId: number): void {
+  try {
+    wx.removeStorageSync(KEY_PREFIX + staffId);
+  } catch {
+    // 删不掉也不要紧：解开时门店系统已经让那把钥匙作废
+  }
+}
+
+/** 饭卡码里的饭堂员工编号（YZC1:<编号36进制>:…）；不是饭卡码为 null */
+export function mealCodeEmployee(raw: string): number | null {
+  if (!isMealCode(raw)) return null;
+  const id = parseInt(raw.trim().toUpperCase().split(':')[1]!, 36);
+  return isFinite(id) && id > 0 ? id : null;
+}
+
 /** 取「吃饭的我是谁」并把码钥匙存下（下次没信号也能亮码） */
 export async function refreshMealKey(staffId: number): Promise<MealKey> {
   const sent = Date.now();
@@ -80,7 +96,8 @@ export interface QueuedScan {
   savedAt: number;
 }
 
-export type ScanOutcome<T> = { kind: 'done'; result: T } | { kind: 'rejected'; error: ApiError } | { kind: 'queued' };
+/** queued：结果不明，留在手机上等补交；expired 为登录过期（重新登录以后补交） */
+export type ScanOutcome<T> = { kind: 'done'; result: T } | { kind: 'rejected'; error: ApiError } | { kind: 'queued'; expired: boolean };
 
 const qKey = (kind: ScanKind, employeeId: number) => `wcp_scan_q:${kind}:${employeeId}`;
 
@@ -130,7 +147,8 @@ export async function submitScan<T extends CheckinResult | PatrolCheckinResult>(
     dequeue(item.kind, employeeId, k);
     return { kind: 'done', result };
   } catch (e) {
-    if (!isApiError(e) || e.code === 'NETWORK' || e.status >= 500 || e.status === 401 || ['BUSY', 'OVERLOADED', 'RATE_LIMITED'].indexOf(e.code) >= 0) return { kind: 'queued' };
+    if (isApiError(e) && e.status === 401) return { kind: 'queued', expired: true };
+    if (!isApiError(e) || e.code === 'NETWORK' || e.status >= 500 || ['BUSY', 'OVERLOADED', 'RATE_LIMITED'].indexOf(e.code) >= 0) return { kind: 'queued', expired: false };
     dequeue(item.kind, employeeId, k);
     return { kind: 'rejected', error: e };
   } finally {
@@ -142,6 +160,8 @@ export async function submitScan<T extends CheckinResult | PatrolCheckinResult>(
 export async function flushQueue<T extends CheckinResult | PatrolCheckinResult>(kind: ScanKind, employeeId: number, onSettled: (item: QueuedScan, outcome: ScanOutcome<T>) => void): Promise<number> {
   for (const item of loadQueue(kind, employeeId)) {
     if (inFlight[item.body.clientKey]) continue;
+    // 另一轮补交已经交掉的不再发（这一轮拿的是开始时的名单）
+    if (!loadQueue(kind, employeeId).some((x) => x.body.clientKey === item.body.clientKey)) continue;
     const outcome = await submitScan<T>(employeeId, item);
     if (outcome.kind === 'queued') break;
     onSettled(item, outcome);

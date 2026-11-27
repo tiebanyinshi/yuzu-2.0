@@ -65,7 +65,7 @@ afterAll(async () => {
 describe('员工食堂关着', () => {
   it('不显示吃饭；吃饭的接口回「饭堂还没开张」', async () => {
     const a = await staffLogin('closed1', '关着时的同事');
-    expect((await s('GET', '/api/staffmp/canteen/status', a.token)).body).toEqual({ open: false, linked: false, employee: null });
+    expect((await s('GET', '/api/staffmp/canteen/status', a.token)).body).toEqual({ open: false, linked: false, employee: null, currentMeal: null });
     expect((await s('GET', '/api/staffmp/me', a.token)).body.entries).not.toContain('canteen');
     const me = await s('GET', '/api/staffmp/canteen/me', a.token);
     expect([me.status, me.body.error.code]).toEqual([503, 'CANTEEN_CLOSED']);
@@ -81,7 +81,7 @@ describe('对上饭卡', () => {
 
   it('没对上时：入口里有吃饭，吃饭的接口回「还没对上饭卡」', async () => {
     const a = await staffLogin('nolink1', '还没对上');
-    expect((await s('GET', '/api/staffmp/canteen/status', a.token)).body).toEqual({ open: true, linked: false, employee: null });
+    expect((await s('GET', '/api/staffmp/canteen/status', a.token)).body).toEqual({ open: true, linked: false, employee: null, currentMeal: null });
     expect((await s('GET', '/api/staffmp/me', a.token)).body.entries).toContain('canteen');
     const me = await s('GET', '/api/staffmp/canteen/me', a.token);
     expect([me.status, me.body.error.code]).toEqual([409, 'CANTEEN_NOT_LINKED']);
@@ -95,7 +95,7 @@ describe('对上饭卡', () => {
     // 令牌照样能用
     expect((await s('GET', '/api/staffmp/me', a.token)).status).toBe(200);
     const ok = await s('POST', '/api/staffmp/canteen/link', a.token, { account: 'E201', password: 'Fan-tang-2026' });
-    expect(ok.body).toEqual({ open: true, linked: true, employee: { name: '阿丽', empNo: 'E201', role: 'staff' } });
+    expect(ok.body).toEqual({ open: true, linked: true, employee: { name: '阿丽', empNo: 'E201', role: 'staff' }, currentMeal: { meal: 'lunch', date: today, checkedIn: false } });
     // 证明的时候不留饭堂的会话
     expect((await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM canteen_sessions WHERE employee_id = ${empId}`)[0]!.n).toBe(0);
     const me = await s('GET', '/api/staffmp/canteen/me', a.token);
@@ -112,7 +112,7 @@ describe('对上饭卡', () => {
     await ctx.sql`UPDATE staff_profiles SET emp_no = 'hr-0099' WHERE staff_id = ${c.id}`;
     await ctx.sql`INSERT INTO staff_profiles (staff_id, emp_no) VALUES (${c.id}, 'hr-0099') ON CONFLICT (staff_id) DO UPDATE SET emp_no = 'hr-0099'`;
     const made = await s('POST', '/api/staffmp/canteen/create', c.token, {});
-    expect(made.body).toEqual({ open: true, linked: true, employee: { name: '小卡', empNo: 'HR-0099', role: 'staff' } });
+    expect(made.body).toMatchObject({ open: true, linked: true, employee: { name: '小卡', empNo: 'HR-0099', role: 'staff' } });
     expect((await s('POST', '/api/staffmp/canteen/create', c.token, {})).body.error.code).toBe('CANTEEN_ALREADY_LINKED');
     const d = await staffLogin('dave2', '大卫');
     expect((await s('POST', '/api/staffmp/canteen/create', d.token, {})).body.employee.empNo).toBe(`S${d.id}`);
@@ -129,8 +129,12 @@ describe('对上饭卡', () => {
     // 已经对上的再对一次跳过
     expect((await admin('POST', '/api/admin/staffmp/canteen-links', { pairs: [{ staffId: l.id, employeeId: empId }] })).body).toEqual({ linked: 0, skipped: 1 });
     expect((await api(ctx.app, ctx.clerk, 'GET', '/api/admin/staffmp/canteen-links')).status).toBe(403);
+    const epoch = async () => (await ctx.sql<{ e: number }[]>`SELECT code_epoch AS e FROM canteen_employees WHERE id = ${empId}`)[0]!.e;
+    const before = await epoch();
     expect((await admin('POST', `/api/admin/staffmp/canteen-links/${l.id}/unlink`)).body).toEqual({ ok: true, unlinked: true });
     expect((await s('GET', '/api/staffmp/canteen/status', l.token)).body.linked).toBe(false);
+    // 解开以后这张饭卡的码钥匙作废：对错的手机上存着的离线也亮不出能用的码
+    expect(await epoch()).toBe(before + 1);
   });
 
   it('后台：只有人事权限的只看、只动自己门店范围里的员工，不列总裁', async () => {
@@ -190,6 +194,8 @@ describe('对上以后：菜单、负责人扫码、巡场', () => {
     expect(first.body.status).toBe('ok');
     const again = await s('POST', '/api/staffmp/canteen/checkins', boss.token, { clientKey: randomUUID(), code, scannedAt: new Date(lunch).toISOString() });
     expect(again.body.status).toBe('already');
+    // 首页此刻卡：这一餐打过卡了
+    expect((await s('GET', '/api/staffmp/canteen/status', eater.token)).body.currentMeal).toEqual({ meal: 'lunch', date: today, checkedIn: true });
     expect((await s('GET', '/api/staffmp/canteen/today', boss.token)).status).toBe(200);
     expect((await s('GET', '/api/staffmp/canteen/people?q=吃饭', boss.token)).body.length).toBeGreaterThan(0);
   });

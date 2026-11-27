@@ -1,12 +1,13 @@
 // 扫码登记（食堂负责人，员工小程序线 E，docs/STAFF_MP.md 第 5.4 节）：相机一直开着，员工亮饭卡码就记一笔；没带手机的按名字手动登记。
 //   · 规则照柚子饭堂原来的：码不对、过期、不在开饭时间明确拒绝；这一餐打过的回「已打过」，不多记；
 //   · 扫到的先存在手机上（存不下就不发），没收到明确结果的留着，之后按原来的操作编号补交（第 2.8 节）；
-//   · 同一个码 3 秒内只认一次（相机会连着报好几次）。
+//   · 同一位员工的码 60 秒内只认一次（码一直对着相机时相机会连着报，每报一次往后顺延）；只有记上了才震动；
+//   · 页面离开以后才回来的请求不再动页面，补交的计时器只在页面显示时走。
 
 import type { CanteenCheckinRow, CanteenPerson, CanteenToday, CheckinResult } from '../../../../src/shared/canteen';
 import { isOffline, messageOf } from '../../utils/api';
 import type { MealKey, QueuedScan, ScanOutcome } from '../../utils/canteen';
-import { MEAL_LABELS, canteenToday, enqueue, flushQueue, isMealCode, loadMealKey, loadQueue, refreshMealKey, searchPeople, submitScan, voidCheckin } from '../../utils/canteen';
+import { MEAL_LABELS, canteenToday, enqueue, flushQueue, loadMealKey, loadQueue, mealCodeEmployee, refreshMealKey, searchPeople, submitScan, voidCheckin } from '../../utils/canteen';
 import { initialOf, shortTime } from '../../utils/format';
 import { requireMe } from '../../utils/guard';
 import { buzz, largeTextOn } from '../../utils/prefs';
@@ -21,9 +22,11 @@ interface ResultRow {
 }
 
 let key: MealKey | null = null;
-let lastCode = '';
-let lastAt = 0;
+/** 刚扫过的员工（饭堂员工编号）与最后一次看到的时间 */
+const seen: Record<number, number> = {};
+const SAME_PERSON_MS = 60 * 1000;
 let flushTimer: number | null = null;
+let gen = 0;
 
 function rowOf(item: QueuedScan, outcome: ScanOutcome<CheckinResult>): ResultRow {
   if (outcome.kind === 'done') {
@@ -38,6 +41,7 @@ function rowOf(item: QueuedScan, outcome: ScanOutcome<CheckinResult>): ResultRow
     };
   }
   if (outcome.kind === 'rejected') return { key: item.body.clientKey, tone: 'bad', title: `没登记上：${item.label}`, sub: outcome.error.message, checkinId: 0 };
+  if (outcome.expired) return { key: item.body.clientKey, tone: 'wait', title: `登录过期了：${item.label}`, sub: '已经存在手机上，重新登录以后自动补交（不会重复）', checkinId: 0 };
   return { key: item.body.clientKey, tone: 'wait', title: `等网络：${item.label}`, sub: '已经存在手机上，连上以后自动补交（不会重复）', checkinId: 0 };
 }
 
@@ -58,13 +62,17 @@ Page({
   },
 
   async onShow() {
+    const my = ++gen;
     this.setData({ large: largeTextOn() });
     const me = await requireMe();
-    if (!me) return;
+    if (!me || my !== gen) return;
     key = loadMealKey(me.staff.id);
     try {
-      key = await refreshMealKey(me.staff.id);
+      const fresh = await refreshMealKey(me.staff.id);
+      if (my !== gen) return;
+      key = fresh;
     } catch (e) {
+      if (my !== gen) return;
       if (!key) return this.setData({ state: isOffline(e) ? 'offline' : 'error', error: messageOf(e) });
     }
     if (key.me.employee.role !== 'manager') return this.setData({ state: 'error', error: '只有食堂负责人能扫码登记：要当负责人请找管理员在后台安排。' });
@@ -75,6 +83,7 @@ Page({
   },
 
   onHide() {
+    gen += 1;
     if (flushTimer !== null) clearInterval(flushTimer);
     flushTimer = null;
   },
@@ -84,8 +93,10 @@ Page({
   },
 
   async loadToday() {
+    const my = gen;
     try {
       const t: CanteenToday = await canteenToday();
+      if (my !== gen) return;
       this.setData({
         meal: t.current ? (MEAL_LABELS[t.current.meal] ?? '') : '',
         count: t.current ? (t.counts[t.current.meal] ?? 0) : 0,
@@ -114,9 +125,9 @@ Page({
     }
   },
 
-  /** 登记一笔：先存手机上（存不下不发），再交 */
-  async record(body: { code?: string; employeeId?: number }, label: string) {
-    if (!key) return;
+  /** 登记一笔：先存手机上（存不下不发），再交；返回结果（存不下为 null） */
+  async record(body: { code?: string; employeeId?: number }, label: string): Promise<ScanOutcome<CheckinResult> | null> {
+    if (!key) return null;
     const employeeId = key.me.employee.id;
     const item: QueuedScan = {
       kind: 'checkin',
@@ -126,25 +137,34 @@ Page({
     };
     if (!enqueue(employeeId, item)) {
       wx.showToast({ title: '手机上存不下，没有登记：清一下微信的存储空间再试', icon: 'none' });
-      return;
+      return null;
     }
     const outcome = await submitScan<CheckinResult>(employeeId, item);
-    buzz();
+    // 只有这一次记上了才震动（「听到震动就记上了」）
+    if (outcome.kind === 'done' && outcome.result.status === 'ok') buzz();
     this.show(item, outcome);
     this.setData({ waiting: loadQueue('checkin', employeeId).length });
+    return outcome;
   },
 
   onScanCode(e: WechatMiniprogram.CustomEvent<{ result: string }>) {
     const text = String(e.detail.result || '').trim();
     const now = Date.now();
-    if (text === lastCode && now - lastAt < 3000) return;
-    lastCode = text;
-    lastAt = now;
-    if (!isMealCode(text)) {
+    const id = mealCodeEmployee(text);
+    if (!id) {
+      if (seen[0] && now - seen[0] < 3000) return;
+      seen[0] = now;
       wx.showToast({ title: '这不是饭卡码', icon: 'none' });
       return;
     }
-    this.record({ code: text.toUpperCase() }, '扫到的饭卡码');
+    // 同一位员工 60 秒内只认一次；码一直对着相机时每报一次往后顺延
+    const last = seen[id];
+    seen[id] = now;
+    if (last && now - last < SAME_PERSON_MS) return;
+    this.record({ code: text.toUpperCase() }, '扫到的饭卡码').then((outcome: ScanOutcome<CheckinResult> | null) => {
+      // 被拒绝的（码过期、不在开饭时间）3 秒后可以再扫，不用等满 60 秒
+      if (outcome && outcome.kind === 'rejected') seen[id] = Date.now() - SAME_PERSON_MS + 3000;
+    });
   },
 
   onCameraError() {
@@ -183,8 +203,9 @@ Page({
       confirmText: '登记',
       success: async (r) => {
         if (!r.confirm) return;
-        await this.record({ employeeId: p.id }, `${p.name}（手动）`);
-        this.setData({ [`people[${idx}].checkedIn`]: true });
+        const outcome = await this.record({ employeeId: p.id }, `${p.name}（手动）`);
+        // 记上了、这一餐已经有了才标「已登记」；被拒绝（不在开饭时间……）、等网络的留着按钮
+        if (outcome && outcome.kind === 'done') this.setData({ [`people[${idx}].checkedIn`]: true });
       },
     });
   },

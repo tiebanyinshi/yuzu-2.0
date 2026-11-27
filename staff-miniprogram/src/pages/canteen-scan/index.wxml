@@ -14,7 +14,7 @@
         <button class="btn secondary" hover-class="pressed" hover-stay-time="120" bindtap="onOpenSetting">去打开相机</button>
       </view>
     </view>
-    <view class="t-caption tip">让员工把饭卡码对着相机，听到震动就记上了。</view>
+    <view class="t-caption tip">让员工把饭卡码对着相机：记上了手机会震一下，下面「刚才扫的」写着结果。</view>
 
     <view wx:if="{{waiting}}" class="notice warn">还有 {{waiting}} 笔没交上（网络不好），存在手机上，连上以后自动补交，不会重复。</view>
 

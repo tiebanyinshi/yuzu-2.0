@@ -9,7 +9,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { businessDateOf } from '@shared/business-date';
 import type { CanteenMe } from '@shared/canteen';
-import { canScan } from '@shared/canteen';
+import { canScan, mealAt } from '@shared/canteen';
 import type { StaffMpCanteenStatus } from '@shared/staffmp';
 import type { Db, Sql, Tx } from '../../db';
 import { isUniqueViolation } from '../../db';
@@ -130,11 +130,23 @@ export function registerStaffMpCanteenRoutes(app: FastifyInstance, deps: Deps, n
     if (!(await enabledErpModules(sql)).has('patrol')) throw new AppError(503, 'PATROL_CLOSED', '巡场还没开：请管理员在「ERP 设置 → 模块开关」里打开「安保巡场」');
   };
 
+  /** 对上了的饭卡与这一餐打过卡没有 */
+  const statusOf = async (staffId: number): Promise<StaffMpCanteenStatus> => {
+    const e = await linkedEmployee(sql, staffId);
+    if (!e) return { open: true, linked: false, employee: null, currentMeal: null };
+    const current = mealAt((await loadCanteenSettings(sql)).meals, new Date(now()), config.timezone);
+    let currentMeal: StaffMpCanteenStatus['currentMeal'] = null;
+    if (current) {
+      const [hit] = await sql`SELECT 1 FROM canteen_checkins WHERE employee_id = ${e.id} AND meal_date = ${current.date} AND meal = ${current.meal} AND voided_at IS NULL`;
+      currentMeal = { meal: current.meal, date: current.date, checkedIn: !!hit };
+    }
+    return { open: true, linked: true, employee: { name: e.name, empNo: e.empNo, role: e.role }, currentMeal };
+  };
+
   app.get('/api/staffmp/canteen/status', async (req): Promise<StaffMpCanteenStatus> => {
     const actor = signedIn(req);
-    if (!(await canteenReady(sql, config))) return { open: false, linked: false, employee: null };
-    const e = await linkedEmployee(sql, actor.id);
-    return { open: true, linked: !!e, employee: e ? { name: e.name, empNo: e.empNo, role: e.role } : null };
+    if (!(await canteenReady(sql, config))) return { open: false, linked: false, employee: null, currentMeal: null };
+    return statusOf(actor.id);
   });
 
   /** 以前登记过：输一次饭堂的账号与密码证明是自己（走饭堂原来的核对与失败计数），对上以后不留饭堂的会话 */
@@ -149,8 +161,7 @@ export function registerStaffMpCanteenRoutes(app: FastifyInstance, deps: Deps, n
     });
     await destroyCanteenSession(sql, token);
     await link(sql, actor.id, employeeId, 'password', actor.id, req.ip);
-    const e = await linkedEmployee(sql, actor.id);
-    return { open: true, linked: !!e, employee: e ? { name: e.name, empNo: e.empNo, role: e.role } : null };
+    return statusOf(actor.id);
   });
 
   /** 没登记过：用系统账号的姓名开一个普通员工的饭卡（厨师、负责人、巡场部门只由后台安排） */
@@ -161,7 +172,7 @@ export function registerStaffMpCanteenRoutes(app: FastifyInstance, deps: Deps, n
     const name = actor.displayName.slice(0, 16);
     const { employee } = await createEmployee(sql, { empNo: await empNoFor(sql, actor.id), name, role: 'staff', departmentId: null }, { actor, ip: req.ip });
     await link(sql, actor.id, employee.id, 'created', actor.id, req.ip);
-    return { open: true, linked: true, employee: { name: employee.name, empNo: employee.empNo, role: employee.role } };
+    return statusOf(actor.id);
   });
 
   /** 饭卡码的钥匙与吃饭的基本信息（与柚子饭堂网页的「我是谁」同一套：码钥匙只在这台手机上用来生成饭卡码） */
@@ -227,6 +238,9 @@ export async function unlinkCanteen(sql: Sql, staffId: number, by: number, ip: s
     if (check) await check(tx);
     const [row] = await tx<{ employeeId: number }[]>`DELETE FROM staffmp_canteen_links WHERE staff_id = ${staffId} RETURNING employee_id`;
     if (!row) return false;
+    // 解开（多半是对错了人）：这张饭卡的码钥匙作废（code_epoch 加一，与饭堂停用、改密码同一个做法），
+    // 对错的那台手机上存着的码钥匙离线也亮不出能用的码；饭卡本人的手机、网页联网时自动换新钥匙
+    await tx`UPDATE canteen_employees SET code_epoch = code_epoch + 1, updated_at = now() WHERE id = ${row.employeeId}`;
     await writeAudit(tx, { staffId: by, action: 'staffmp_canteen_unlinked', targetType: 'canteen_employee', targetId: row.employeeId, detail: { staffId }, ip });
     return true;
   });

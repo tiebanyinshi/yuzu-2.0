@@ -1,6 +1,6 @@
 <view class="page {{large ? 'large-text' : ''}}">
   <nav-bar title="菜单" />
-  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="这几天还没有发布的菜单" message="{{state === 'empty' ? '厨师发布以后这里就有。' : error}}" bindretry="onRetry" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '这几天还没有发布的菜单' : ''}}" message="{{state === 'empty' ? '厨师发布以后这里就有。' : error}}" bindretry="onRetry" />
   <view wx:else class="gutter">
     <view wx:for="{{days}}" wx:for-item="day" wx:for-index="di" wx:key="date" class="section">
       <view class="section-head"><view class="section-title">{{day.label}}</view></view>
