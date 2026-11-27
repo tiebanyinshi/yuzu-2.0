@@ -19,8 +19,6 @@
 - [`CONVENTIONS.md`](CONVENTIONS.md)：开发约定（专题）
 - [`TESTING.md`](TESTING.md)：测试与 CI（飞书需求 RQ-008，v0.7.18 定稿；2026-11-20 改成按改动与风险挑选，见第 6 节）
 - [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
-- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
-- [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
