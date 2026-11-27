@@ -4,7 +4,7 @@
 --   · staffmp_sessions：哪些会话是员工小程序发的。会话本身照旧在 sessions（与网页同样滑动过期，req.actor 与权限一模一样），
 --     这张表只多记一笔「是小程序发的、用的哪个绑定」：会话删了（退出、过期清理、改密码）这一行跟着删；
 --     解绑、停用时按它只清小程序的会话；员工小程序端口只认这里有的令牌。
--- 只建员工小程序线自己的表，不改已有的表。回滚：docs/rollback/610_staffmp_bindings.down.sql（删这两张表，账号与网页会话不动）。
+-- 只建员工小程序线自己的表，不改已有的表。回滚：docs/rollback/650_staffmp_bindings.down.sql（删这两张表，账号与网页会话不动）。
 
 CREATE TABLE staffmp_bindings (
   id             bigserial PRIMARY KEY,

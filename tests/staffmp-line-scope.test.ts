@@ -26,7 +26,7 @@ describe('员工小程序线的 PR', () => {
       'tests/staffmp-port.test.ts',
       'docs/STAFF_MP.md',
       'docs/HANDOFF_STAFFMP' + '1.md',
-      'docs/rollback/610_staffmp_bindings.down.sql',
+      'docs/rollback/650_staffmp_bindings.down.sql',
     ])
       expect(kind('M', p), p).toBe('free');
   });
@@ -51,9 +51,9 @@ describe('员工小程序线的 PR', () => {
   });
 
   it('迁移：只能新加 NNN_staffmp_<用途>.sql；改别的迁移、小程序线的迁移名都不行', () => {
-    expect(kind('A', 'src/server/migrations/611_staffmp_canteen_links.sql')).toBe('migration');
-    expect(kind('A', 'src/server/migrations/611_mp_x.sql')).toBe('blocked');
-    expect(kind('M', 'src/server/migrations/610_staffmp_bindings.sql')).toBe('blocked');
+    expect(kind('A', 'src/server/migrations/651_staffmp_canteen_links.sql')).toBe('migration');
+    expect(kind('A', 'src/server/migrations/651_mp_x.sql')).toBe('blocked');
+    expect(kind('M', 'src/server/migrations/650_staffmp_bindings.sql')).toBe('blocked');
   });
 
   it('核心、小程序线的文件一律拦下', () => {

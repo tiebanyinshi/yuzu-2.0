@@ -129,7 +129,7 @@ export function classifyStaff(change) {
   const { status, path, from } = change;
   if (path.startsWith('src/server/migrations/') || from?.startsWith('src/server/migrations/')) {
     if (status === 'A' && STAFF_MIGRATION.test(path)) return { kind: 'migration' };
-    if (status === 'A') return { kind: 'blocked', reason: '员工小程序线的新迁移要叫 NNN_staffmp_<用途>.sql（号先在 docs/ROADMAP.md 第 7 节登记，预留 610–619）' };
+    if (status === 'A') return { kind: 'blocked', reason: '员工小程序线的新迁移要叫 NNN_staffmp_<用途>.sql（号先在 docs/ROADMAP.md 第 7 节登记，预留 650–659）' };
     return { kind: 'blocked', reason: '迁移只增不改：已有的迁移不能改、删、改名，新变化写新的迁移' };
   }
   const paths = from && status === 'R' ? [from, path] : [path];
