@@ -14,6 +14,7 @@ import { guard, guardAny } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../lib/context';
 import { badRequest, conflict, notFound } from '../lib/errors';
+import { lockCardBindings } from '../lib/card-bindings';
 import { currentStoreId } from '../lib/store-context';
 import { idParam, parse } from '../lib/validate';
 
@@ -53,6 +54,8 @@ export async function bindTechnicianCard(deps: Deps, id: number, raw: unknown, c
   const uid = rawUid ? normalizeCardUid(rawUid) : null;
   if (uid !== null && !CARD_UID_PATTERN.test(uid)) throw badRequest('芯片号要是 4–32 位数字或字母');
   return deps.sql.begin(async (tx) => {
+    // 芯片号绑定锁在前（手牌那边绑卡、导入也拿它），再锁技师这一行
+    await lockCardBindings(tx);
     const [t] = await tx<{ id: number; techNo: string; name: string; cardUid: string | null }[]>`
       SELECT id, tech_no, name, card_uid FROM technicians WHERE id = ${id} AND store_id = ${currentStoreId()} FOR UPDATE`;
     if (!t) throw notFound('技师不存在');

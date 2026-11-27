@@ -52,6 +52,15 @@ describe('泡池认人', () => {
     expect((await bind(tech['21']!, null)).status).toBe(200);
     expect((await techOf('uid=CC33DD44')).status).toBe(404);
     expect((await bind(tech['21']!, 'CC33DD44')).status).toBe(200);
+    // Codex 审查（PR #73）：反过来也不行——技师的工牌不能再绑到客人手牌上、不能经导入绑上
+    const p3 = (await ctx.sql<{ id: number }[]>`SELECT id FROM hand_tags WHERE code = 'P003'`)[0]!.id;
+    const asTag = await api(ctx.app, ctx.owner, 'PUT', `/api/frontdesk/tags/${p3}/card`, { cardUid: 'CC33DD44' });
+    expect(asTag.body, JSON.stringify(asTag.body)).toMatchObject({ error: { code: 'CARD_IS_TECH' } });
+    const imp = await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/import', { rows: [{ code: 'P004', zone: 'male', kind: 'normal', cardUid: 'CC33DD44' }], dryRun: false });
+    expect(imp.status, JSON.stringify(imp.body)).toBe(200);
+    expect(imp.body.blocked.map((b: { code: string }) => b.code)).toContain('P004');
+    expect((await ctx.sql<{ cardUid: string | null }[]>`SELECT card_uid FROM hand_tags WHERE code = 'P004'`)[0]!.cardUid).toBeNull();
+    expect((await techOf('uid=CC33DD44')).body.id).toBe(tech['21']);
   });
 });
 

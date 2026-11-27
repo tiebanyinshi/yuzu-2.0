@@ -2,15 +2,17 @@
 //   · 下单就是钟房的派钟（挂到客人手牌账单上、建钟单、立即上钟），服务记进这位技师的业绩明细；轮钟照排位核对，客人点名的选点钟；
 //   · 读卡器刷到的卡：第一步认手牌、第三步认技师工牌；也能手输牌号、工号；
 //   · 技师管理的岗位可以在这里给技师「绑工牌」（刷一下卡就绑上）。
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { BadgeCheck, Bath, IdCard } from 'lucide-react';
-import { tierPrice } from '@shared/catalog';
+import { tierPrice, type PriceTier } from '@shared/catalog';
+import { createWedgeRecognizer, WEDGE_MAX_GAP_MS } from '@shared/devices';
 import type { ClockroomBoard } from '@shared/clockroom';
 import { formatYuan } from '@shared/money';
 import { POOL_SIDE_LABELS, type PoolGuest, type PoolSide, type PoolTechnician } from '@shared/pool';
 import { CALL_TYPE_LABELS, canServe, tierFor, type CallType } from '@shared/technicians';
 import { api, errorMessage } from '../../lib/api';
+import { useLivePoll } from '../../lib/livePoll';
 import { useCatalog } from '../../lib/queries';
 import { useCan, useSession } from '../../lib/session';
 import { Dialog } from '../../components/Overlay';
@@ -33,17 +35,28 @@ export function PoolPage() {
   const [techText, setTechText] = useState('');
   const [tech, setTech] = useState<PoolTechnician | null>(null);
   const [callType, setCallType] = useState<CallType>('rotation');
+  // 8.2.21（Codex 审查）：不按技师等级定价、项目有几档价时，照钟房的派钟让人选价格档
+  const [pickTier, setPickTier] = useState<PriceTier | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [binding, setBinding] = useState(false);
   const catalog = useCatalog();
   const board = useQuery({ queryKey: ['clockroom'], queryFn: () => api.get<ClockroomBoard>('/api/clockroom') });
+  // 8.2.21（Codex 审查）：钟房那边下钟了，这边也要看得到（15 秒刷一次；后台、断网时不取）；刷工牌时也重取
+  useLivePoll(
+    async () => {
+      await qc.invalidateQueries({ queryKey: ['clockroom'] });
+    },
+    [qc],
+    { intervalMs: 15_000 },
+  );
   const op = useFrontdeskOp<true>({ type: 'bill_post', visitId: guest?.visitId ?? null, staffName: session.staff.displayName, pick: doneOnFound });
 
   const items = useMemo(() => (catalog.data?.items ?? []).filter((i) => i.active && i.technicianRequired && (!i.gender || i.gender === side)), [catalog.data, side]);
   const item = items.find((i) => i.id === itemId) ?? null;
   const boardTech = tech ? (board.data?.technicians.find((t) => t.id === tech.id) ?? null) : null;
   const tierByGrade = board.data?.techRules.tierByGrade ?? false;
-  const tier = item ? (boardTech ? tierFor(boardTech, item, item.prices[0]!.tier, tierByGrade) : item.prices[0]!.tier) : null;
+  const baseTier = item ? (pickTier && item.prices.some((p) => p.tier === pickTier) ? pickTier : item.prices[0]!.tier) : null;
+  const tier = item && baseTier ? (boardTech ? tierFor(boardTech, item, baseTier, tierByGrade) : baseTier) : null;
   const unit = item && tier ? tierPrice(item.prices, tier) : null;
   const step = !guest ? 1 : !item ? 2 : !tech ? 3 : 4;
 
@@ -63,10 +76,13 @@ export function PoolPage() {
       const t = await api.get<PoolTechnician>(`/api/pool/technician?${new URLSearchParams(q as Record<string, string>)}`);
       setTech(t);
       setTechText(t.techNo);
+      void qc.invalidateQueries({ queryKey: ['clockroom'] });
     } catch (e) {
       setError(errorMessage(e));
     }
   };
+  // 8.2.21（Codex 审查）：光标在工号框里时键盘式读卡器打进来的一串按芯片号查，人敲的按工号查
+  const techBurst = useRef({ wedge: createWedgeRecognizer(), prefix: '', last: -Infinity });
   // 第三步（选好项目以后）：读卡器刷到的认技师工牌；第一步由手牌框自己收
   useCardReader(step === 3 && !binding, { onCard: (uid) => void lookTech({ uid }), onReadError: (m) => setError(m) });
 
@@ -74,6 +90,7 @@ export function PoolPage() {
     setGuest(null);
     setTagText('');
     setItemId(null);
+    setPickTier(null);
     setTech(null);
     setTechText('');
     setCallType('rotation');
@@ -181,7 +198,10 @@ export function PoolPage() {
                 key={i.id}
                 type="button"
                 disabled={!guest}
-                onClick={() => setItemId(i.id)}
+                onClick={() => {
+                  setItemId(i.id);
+                  setPickTier(null);
+                }}
                 className={`rounded-[12px] border p-2 text-left text-[14px] ${i.id === itemId ? 'border-yuzu-deep bg-yuzu/15 font-bold' : 'border-line'} disabled:opacity-50`}
               >
                 {i.name}
@@ -190,6 +210,16 @@ export function PoolPage() {
             ))}
             {items.length === 0 && <p className="col-span-2 text-[13px] text-ink-3">没有{POOL_SIDE_LABELS[side]}能做的技师项目（价目表里「需要技师」、性别不限或同性别的项目）</p>}
           </div>
+          {item && !tierByGrade && item.prices.length > 1 && (
+            <div className="mt-3" data-testid="pool-tier">
+              <Segmented
+                ariaLabel="价格档"
+                value={baseTier ?? item.prices[0]!.tier}
+                onChange={setPickTier}
+                options={item.prices.map((p) => ({ value: p.tier, label: `${{ standard: '标准', professional: '专业', premium: '优选' }[p.tier]} ${formatYuan(p.price)}` }))}
+              />
+            </div>
+          )}
         </Card>
         <Card className={`p-4 ${step >= 3 ? 'ring-2 ring-yuzu' : ''}`}>
           <h2 className="text-[16px] font-bold">③ 刷技师工牌</h2>
@@ -201,7 +231,16 @@ export function PoolPage() {
               setTech(null);
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && techText.trim()) {
+              const b = techBurst.current;
+              if (e.timeStamp - b.last > WEDGE_MAX_GAP_MS) b.prefix = techText;
+              b.last = e.timeStamp;
+              const scanned = b.wedge.feed(e.key, e.timeStamp);
+              if (e.key !== 'Enter') return;
+              if (scanned) {
+                e.preventDefault();
+                setTechText(b.prefix);
+                void lookTech({ uid: scanned });
+              } else if (techText.trim()) {
                 e.preventDefault();
                 void lookTech({ code: techText.trim() });
               }
