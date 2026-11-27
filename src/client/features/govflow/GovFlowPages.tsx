@@ -39,6 +39,7 @@ import { PaymentPanel, PaymentsPanel } from './PaymentPages';
 import { ExpensePanel } from './ExpensePages';
 import { HrBatchPanel, HrPanel } from './HrPages';
 import { RolesPanel } from './RolesPanel';
+import { RangeExport } from '../../components/RangeExport';
 
 type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'expense' | 'hr' | 'roles';
 const STATUS_TONE: Record<GfStatus, 'neutral' | 'pine' | 'moss' | 'yuzu' | 'ember' | 'clay' | 'lake' | 'ink'> = {
@@ -133,7 +134,10 @@ function GovHome() {
             <PettyPanel meta={meta.data} />
           ) : null
         ) : (
-          <DocList box={box} />
+          <>
+            {box === 'all' && <RangeExport href="/api/gf/export.xlsx" fileName="业财法事项.xlsx" testId="gf-export" />}
+            <DocList box={box} />
+          </>
         )}
       </div>
       {creating && meta.data && <NewDocDialog meta={meta.data} onClose={() => setCreating(false)} />}
@@ -521,6 +525,7 @@ function SpecialRows({ rows }: { rows: GfSpecialView[] }) {
               <span className="text-[14px] font-semibold text-ink">{s.title}</span>
               <Money cents={s.amountCents} className="text-[14px]" />
               {s.backfilledAt ? <Badge tone="moss">已补登</Badge> : <Badge tone={s.overdue ? 'clay' : 'ember'}>{s.overdue ? '补登逾期' : `待补登（${s.dueOn} 前）`}</Badge>}
+              {s.screenshotReusedIn.length > 0 && <Badge tone="yuzu">截图也用在 {s.screenshotReusedIn.join('、')}</Badge>}
             </p>
             <p className="text-[13px] text-ink-3">
               确认人 {s.confirmerNames.join('、')} · {formatDateTime(s.confirmedAt)} · 登记 {s.registeredByName}
@@ -568,22 +573,30 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
   const [b, setB] = useState<number | ''>('');
   const [payeeAccount, setPayeeAccount] = useState('');
   const [at, setAt] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16));
+  // 微信 OK 截图（8.2.11，WB6）：登记时必传
+  const [shot, setShot] = useState<File | null>(null);
   const cents = yuanToCents(amount);
   const m = useMutation({
-    mutationFn: () =>
-      api.post<GfSpecialView>('/api/gf/specials', {
-        clientKey,
-        docId,
-        title,
-        amountCents: cents,
-        reason,
-        confirmerIds: [a, b],
-        confirmedAt: new Date(at).toISOString(),
-        payeeAccount: payeeAccount || null,
-      }),
+    mutationFn: async () =>
+      api.post<GfSpecialView>(
+        '/api/gf/specials',
+        {
+          clientKey,
+          docId,
+          title,
+          amountCents: cents,
+          reason,
+          confirmerIds: [a, b],
+          confirmedAt: new Date(at).toISOString(),
+          payeeAccount: payeeAccount || null,
+          okScreenshot: { fileName: shot!.name.slice(0, 120), mime: shot!.type, base64: await readBase64(shot!) },
+        },
+        { timeoutMs: 120_000 },
+      ),
     onSuccess: (s) => {
       qc.invalidateQueries({ queryKey: ['gf'] });
-      toast({ tone: 'success', title: '已登记微信特批', body: `${s.specialNo}，请在 ${s.dueOn} 前补登` });
+      toast({ tone: 'success', title: '已登记微信特批', body: `${s.specialNo}，请在 ${s.dueOn} 前补登需求说明` });
+      if (s.screenshotReusedIn.length) toast({ tone: 'info', title: '这张 OK 截图也用在了别的特批上', body: `${s.screenshotReusedIn.join('、')}；请核对是不是同一次确认` });
       onClose();
     },
     onError: (e) => toast({ tone: 'error', title: '没有登记', body: errorMessage(e) }),
@@ -605,13 +618,18 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
       open
       onClose={onClose}
       title="登记微信特批"
-      description="紧急事项两人微信确认后在这里登记，1 个工作日内补登需求说明与 OK 截图；关联原事项的不重复审批"
+      description="紧急事项两人微信确认后在这里登记，同时上传微信里的 OK 截图；1 个工作日内补登需求说明；关联原事项的不重复审批"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button loading={m.isPending} disabled={!title.trim() || cents === null || reason.trim().length < 2 || !a || !b || a === b} onClick={() => m.mutate()} data-testid="gf-special-submit">
+          <Button
+            loading={m.isPending}
+            disabled={!title.trim() || cents === null || reason.trim().length < 2 || !a || !b || a === b || !shot}
+            onClick={() => m.mutate()}
+            data-testid="gf-special-submit"
+          >
             登记
           </Button>
         </>
@@ -634,6 +652,22 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
         </Field>
         <Field label="紧急原因" className="sm:col-span-2">
           <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
+        </Field>
+        <Field label="微信 OK 截图（必传，图片 5 MB 以内）" className="sm:col-span-2">
+          <label className="tap relative flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed border-line px-3 text-[14px] text-ink-2">
+            <Plus className="size-4" />
+            {shot ? shot.name : '选截图'}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="sr-only"
+              data-testid="gf-special-shot"
+              onChange={(e) => {
+                setShot(e.target.files?.[0] ?? null);
+                e.target.value = '';
+              }}
+            />
+          </label>
         </Field>
       </div>
     </Dialog>
@@ -668,6 +702,7 @@ function BackfillDialog({ special, onClose }: { special: GfSpecialView; onClose:
     onError: (e) => toast({ tone: 'error', title: '没有补登', body: errorMessage(e) }),
   });
   const has = (p: GfFilePurpose) => files.some((f) => f.purpose === p);
+  const needShot = !special.files.some((f) => f.purpose === 'ok_screenshot');
   const picker = (purpose: GfFilePurpose) => (
     <label className="tap relative flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed border-line px-3 text-[14px] text-ink-2">
       <Plus className="size-4" />加{GF_FILE_PURPOSE_LABELS[purpose]}（图片或 PDF，5 MB 以内）
@@ -689,13 +724,13 @@ function BackfillDialog({ special, onClose }: { special: GfSpecialView; onClose:
       open
       onClose={onClose}
       title={`补登 ${special.specialNo}`}
-      description="需求说明与 OK 截图各至少一份；补登不重复审批"
+      description={needShot ? '需求说明与 OK 截图各至少一份（这笔登记时没有截图）；补登不重复审批' : '需求说明至少一份（OK 截图登记时已传）；补登不重复审批'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button loading={m.isPending} disabled={!has('need') || !has('ok_screenshot')} onClick={() => m.mutate()} data-testid="gf-backfill-submit">
+          <Button loading={m.isPending} disabled={!has('need') || (needShot && !has('ok_screenshot'))} onClick={() => m.mutate()} data-testid="gf-backfill-submit">
             补登
           </Button>
         </>
@@ -703,7 +738,7 @@ function BackfillDialog({ special, onClose }: { special: GfSpecialView; onClose:
     >
       <div className="space-y-2">
         {picker('need')}
-        {picker('ok_screenshot')}
+        {needShot && picker('ok_screenshot')}
         {files.length > 0 && (
           <ul className="space-y-1 text-[13px] text-ink-2">
             {files.map((f, i) => (

@@ -517,4 +517,6 @@ export interface GfSpecialView {
   files: { id: number; purpose: GfFilePurpose; fileName: string; sizeBytes: number }[];
   overdue: boolean;
   registeredByName: string;
+  /** 同一张 OK 截图也用在了这些特批上（8.2.11，WB7：只提示） */
+  screenshotReusedIn: string[];
 }

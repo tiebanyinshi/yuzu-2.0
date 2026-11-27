@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COSIGN_FINANCE_CFO } from '../src/shared/govflow';
 import { loadDoc, sendCcDigest, submitFlow } from '../src/server/modules/govflow/engine';
-import { act, newDoc, setupPeople, yuan, type People } from './govflow-helpers';
+import { act, newDoc, okShot, setupPeople, yuan, type People } from './govflow-helpers';
 import { api, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -254,7 +254,18 @@ describe('微信特批补登', () => {
     await act(ctx, c('gf_legal'), d.body.id, 2);
     await act(ctx, c('gf_chief'), d.body.id, 3);
     const clientKey = randomUUID();
-    const body = { clientKey, docId: d.body.id, title: '紧急付款', amountCents: yuan(100), reason: '设备抢修', confirmerIds: [p.ids.gf_cfo, p.ids.gf_ceo], confirmedAt: new Date().toISOString() };
+    const body = {
+      clientKey,
+      docId: d.body.id,
+      title: '紧急付款',
+      amountCents: yuan(100),
+      reason: '设备抢修',
+      confirmerIds: [p.ids.gf_cfo, p.ids.gf_ceo],
+      confirmedAt: new Date().toISOString(),
+      okScreenshot: okShot('p01'),
+    };
+    // 8.2.11（WB6）：登记时必传 OK 截图
+    expect((await api(ctx.app, c('gf_clerk'), 'POST', '/api/gf/specials', { ...body, clientKey: randomUUID(), okScreenshot: undefined })).status).toBe(400);
     const s = await api(ctx.app, c('gf_clerk'), 'POST', '/api/gf/specials', body);
     expect(s.status, JSON.stringify(s.body)).toBe(200);
     expect(s.body.specialNo).toMatch(/^TP/);
@@ -264,11 +275,11 @@ describe('微信特批补登', () => {
     const one = { purpose: 'need', fileName: '需求说明.pdf', mime: 'application/pdf', base64: pdf };
     const ok = { purpose: 'ok_screenshot', fileName: 'ok.png', mime: 'image/png', base64: png };
     expect((await api(ctx.app, c('gf_clerk2'), 'POST', `/api/gf/specials/${s.body.id}/backfill`, { files: [one, ok] })).status).toBe(403);
-    expect((await api(ctx.app, c('gf_clerk'), 'POST', `/api/gf/specials/${s.body.id}/backfill`, { files: [one, one] })).status).toBe(422);
+    expect((await api(ctx.app, c('gf_clerk'), 'POST', `/api/gf/specials/${s.body.id}/backfill`, { files: [ok] })).status).toBe(422);
     expect((await api(ctx.app, c('gf_clerk'), 'POST', `/api/gf/specials/${s.body.id}/backfill`, { files: [one, { ...ok, mime: 'application/pdf' }] })).status).toBe(422);
     const b = await api(ctx.app, c('gf_clerk'), 'POST', `/api/gf/specials/${s.body.id}/backfill`, { files: [one, ok], note: '已补' });
     expect(b.status, JSON.stringify(b.body)).toBe(200);
-    expect(b.body.files.length).toBe(2);
+    expect(b.body.files.length).toBe(3);
     expect((await api(ctx.app, c('gf_clerk'), 'POST', `/api/gf/specials/${s.body.id}/backfill`, { files: [one, ok] })).status).toBe(409);
     const after = await get(d.body.id);
     expect(after.status).toBe('to_execute');

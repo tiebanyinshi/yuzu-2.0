@@ -48,6 +48,7 @@ import { nextDocNo, setTxTimeouts } from '../../lib/tx';
 import { idParam, parse } from '../../lib/validate';
 import { NOT_EMPLOYEE_ROLES } from '../oa/org';
 import { notify } from '../oa/notifications';
+import { registerGovflowExport } from './export';
 import { actFlow, addCc, docOf, hooksOf, insertDoc, latestFlow, loadDoc, loadMembers, rolesOf, seatContext, seatLabel, statusOf, submitFlow, waitingSeats, type DocRow, type FlowRow } from './engine';
 import { templateFor } from './types';
 
@@ -390,6 +391,14 @@ async function listSpecials(db: Db, where: Fragment, timeZone: string): Promise<
   const ids = rows.map((r) => Number(r.id));
   const files = await db<{ id: number; ownerId: number; purpose: GfFilePurpose; fileName: string; sizeBytes: number }[]>`
     SELECT id, owner_id, purpose, file_name, size_bytes FROM gf_files WHERE owner_type = 'special' AND owner_id IN ${db(ids)} ORDER BY id`;
+  // OK 截图复用（8.2.11，WB7：只提示、不拦）：同一张截图（内容摘要一样）也用在了别的特批上
+  const reused = await db<{ ownerId: number; others: string }[]>`
+    SELECT f.owner_id, string_agg(DISTINCT o.special_no, '、') AS others
+    FROM gf_files f JOIN gf_files g ON g.sha256 = f.sha256 AND g.owner_type = 'special' AND g.purpose = 'ok_screenshot' AND g.owner_id <> f.owner_id
+         JOIN gf_specials o ON o.id = g.owner_id
+    WHERE f.owner_type = 'special' AND f.purpose = 'ok_screenshot' AND f.owner_id IN ${db(ids)}
+    GROUP BY f.owner_id`;
+  const reusedOf = new Map(reused.map((r) => [Number(r.ownerId), r.others.split('、')]));
   const staff = new Map(
     (await db<{ id: number; displayName: string }[]>`SELECT id, display_name FROM staff WHERE id IN ${db([...new Set(rows.flatMap((r) => r.confirmerIds.map(Number)))])}`).map((s) => [
       Number(s.id),
@@ -414,8 +423,22 @@ async function listSpecials(db: Db, where: Fragment, timeZone: string): Promise<
     files: files.filter((f) => Number(f.ownerId) === Number(r.id)).map((f) => ({ id: Number(f.id), purpose: f.purpose, fileName: f.fileName, sizeBytes: f.sizeBytes })),
     overdue: !r.backfilledAt && r.dueOn < today,
     registeredByName: r.registeredByName,
+    screenshotReusedIn: reusedOf.get(Number(r.id)) ?? [],
   }));
 }
+
+/** 登记时的微信 OK 截图（8.2.11，WB6：发起时必传；只收图片） */
+const OkShotInput = z.object(
+  {
+    fileName: z.string().trim().min(1).max(120),
+    mime: z.enum(['image/png', 'image/jpeg', 'image/webp'], 'OK 截图只收 PNG、JPG、WEBP 图片'),
+    base64: z
+      .string()
+      .min(4)
+      .max(Math.ceil((GF_FILE_MAX_BYTES * 4) / 3) + 8, '截图最多 5 MB'),
+  },
+  '请上传微信里的 OK 截图',
+);
 
 const SpecialInput = z.object({
   clientKey: uuid,
@@ -425,6 +448,7 @@ const SpecialInput = z.object({
   reason: z.string().trim().min(2, '请写紧急原因（至少 2 个字）').max(500, '原因最多 500 个字'),
   confirmerIds: z.array(z.number().int().positive()).length(2, '微信特批要两个人确认'),
   confirmedAt: z.iso.datetime({ offset: true, message: '请填微信确认的时间' }),
+  okScreenshot: OkShotInput,
   /** 紧急付款的特批要记确认时的收款账号（换账户要重新特批，P05） */
   payeeAccount: z
     .string()
@@ -442,7 +466,12 @@ async function holidays(db: Db): Promise<Map<string, 'holiday' | 'workday'>> {
 async function createSpecial(deps: Deps, raw: unknown, actor: Actor, ip?: string): Promise<number> {
   const input = parse(SpecialInput, raw);
   if (input.confirmerIds[0] === input.confirmerIds[1]) throw badRequest('微信特批要两个不同的人确认');
-  const requestHash = hashRequest({ ...input, clientKey: undefined });
+  const shot = Buffer.from(input.okScreenshot.base64, 'base64');
+  if (shot.length === 0 || shot.length > GF_FILE_MAX_BYTES) throw unprocessable('GF_FILE_SIZE', 'OK 截图大小不对（最多 5 MB）');
+  if (!MAGIC[input.okScreenshot.mime]!(shot)) throw unprocessable('GF_FILE_TYPE', 'OK 截图的内容与图片类型对不上');
+  const shotSha = createHash('sha256').update(shot).digest('hex');
+  // 操作编号核对用截图的摘要，不把整张图算进去
+  const requestHash = hashRequest({ ...input, clientKey: undefined, okScreenshot: { ...input.okScreenshot, base64: shotSha } });
   const existing = async (db: Db) => {
     const [row] = await db<{ id: number; requestHash: string }[]>`SELECT id, request_hash FROM gf_specials WHERE client_key = ${input.clientKey}`;
     if (!row) return null;
@@ -472,6 +501,9 @@ async function createSpecial(deps: Deps, raw: unknown, actor: Actor, ip?: string
         VALUES (${specialNo}, ${input.docId}, ${input.title}, ${input.amountCents}, ${input.reason}, ${input.confirmerIds}, ${confirmed}, ${dueOn}, ${actor.id}, ${input.clientKey}, ${requestHash}, ${input.payeeAccount})
         RETURNING id`;
       const id = Number(row!.id);
+      await tx`
+        INSERT INTO gf_files (owner_type, owner_id, purpose, file_name, mime, size_bytes, sha256, content, uploaded_by)
+        VALUES ('special', ${id}, 'ok_screenshot', ${input.okScreenshot.fileName}, ${input.okScreenshot.mime}, ${shot.length}, ${shotSha}, ${shot}, ${actor.id})`;
       await writeAudit(tx, {
         staffId: actor.id,
         action: 'gf_special',
@@ -485,7 +517,7 @@ async function createSpecial(deps: Deps, raw: unknown, actor: Actor, ip?: string
       await notify(tx, [actor.id], {
         kind: 'system',
         title: `微信特批待补登：${input.title}`,
-        body: `${specialNo} 请在 ${dueOn} 前上传需求说明与 OK 截图补登`,
+        body: `${specialNo} 请在 ${dueOn} 前上传需求说明补登`,
         link: '/oa/gov?box=specials',
         ref: { type: 'gf_special', id },
       });
@@ -511,7 +543,7 @@ const FileInput = z.object({
 });
 const BackfillInput = z.object({
   note: z.string().trim().max(500, '说明最多 500 个字').default(''),
-  files: z.array(FileInput).min(2, '要上传需求说明与 OK 截图').max(6, '一次最多 6 个文件'),
+  files: z.array(FileInput).min(1, '要上传需求说明').max(6, '一次最多 6 个文件'),
 });
 
 const MAGIC: Record<string, (b: Buffer) => boolean> = {
@@ -524,7 +556,7 @@ const MAGIC: Record<string, (b: Buffer) => boolean> = {
 async function backfillSpecial(deps: Deps, id: number, raw: unknown, actor: Actor, ip?: string) {
   const input = parse(BackfillInput, raw);
   const purposes = new Set(input.files.map((f) => f.purpose));
-  if (!purposes.has('need') || !purposes.has('ok_screenshot')) throw unprocessable('GF_BACKFILL_FILES', '补登要有需求说明与 OK 截图各至少一份');
+  if (!purposes.has('need')) throw unprocessable('GF_BACKFILL_FILES', '补登要有需求说明（至少一份）');
   const decoded = input.files.map((f) => {
     const buf = Buffer.from(f.base64, 'base64');
     if (buf.length === 0 || buf.length > GF_FILE_MAX_BYTES) throw unprocessable('GF_FILE_SIZE', `「${f.fileName}」大小不对（最多 5 MB）`);
@@ -538,6 +570,9 @@ async function backfillSpecial(deps: Deps, id: number, raw: unknown, actor: Acto
     if (!s) throw notFound('没有这笔特批');
     if (s.backfilledAt) throw conflict('GF_BACKFILLED', '这笔特批已经补登过了（补登不重复审批）');
     if (Number(s.registeredBy) !== actor.id && !s.confirmerIds.map(Number).includes(actor.id)) throw forbidden('只有登记人或两位确认人能补登');
+    // 8.2.11 以前登记的特批没有 OK 截图：补登时照旧要补上
+    const [shot] = await tx`SELECT 1 FROM gf_files WHERE owner_type = 'special' AND owner_id = ${id} AND purpose = 'ok_screenshot'`;
+    if (!shot && !purposes.has('ok_screenshot')) throw unprocessable('GF_BACKFILL_FILES', '这笔特批登记时没有 OK 截图，补登要一起上传');
     for (const f of decoded) {
       await tx`
         INSERT INTO gf_files (owner_type, owner_id, purpose, file_name, mime, size_bytes, sha256, content, uploaded_by)
@@ -575,6 +610,8 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
       staff: staff.map((s) => ({ id: Number(s.id), name: s.name })),
     };
   });
+
+  registerGovflowExport(app, deps, { staffOnly, seesAll, listSelect: LIST_SELECT, cardsOf });
 
   app.get('/api/gf/roles', { preHandler: staffOnly }, async () => listMembers(sql));
 
@@ -742,7 +779,7 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
     return listSpecials(sql, all ? sql`true` : sql`(s.registered_by = ${req.actor.id} OR ${req.actor.id} = ANY (s.confirmer_ids))`, deps.config.timezone);
   });
 
-  app.post('/api/gf/specials', { preHandler: staffOnly }, async (req) => {
+  app.post('/api/gf/specials', { preHandler: staffOnly, bodyLimit: 8 * 1024 * 1024 }, async (req) => {
     const id = await createSpecial(deps, req.body, req.actor, req.ip);
     return (await listSpecials(sql, sql`s.id = ${id}`, deps.config.timezone))[0]!;
   });

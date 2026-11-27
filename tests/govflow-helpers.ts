@@ -64,3 +64,10 @@ export async function newDoc(ctx: TestContext, cookie: string, body: Record<stri
 export async function act(ctx: TestContext, cookie: string, id: number, level: number, action: 'approve' | 'return' | 'reject' = 'approve', comment = '') {
   return api(ctx.app, cookie, 'POST', `/api/gf/docs/${id}/act`, { clientKey: randomUUID(), action, level, comment });
 }
+
+/** 登记微信特批时必传的 OK 截图（8.2.11，WB6）：合成的 PNG，seed 不同内容就不同（截图复用检测按内容） */
+export const okShot = (seed = 'ok') => ({
+  fileName: 'ok.png',
+  mime: 'image/png',
+  base64: Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(seed)]).toString('base64'),
+});
