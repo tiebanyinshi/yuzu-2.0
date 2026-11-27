@@ -110,12 +110,18 @@ function DailyCard({ item, onAnswered, onDone }: { item: AcademyDailyItem; onAns
 
 export function DailyPage() {
   const daily = useAcademyDaily();
-  const [index, setIndex] = useState(0);
+  // 按题号走，不按第几题（Codex 审查 34b9815）：切回页面会重新取今天的题，服务端把今天练过的拿掉、清单变短，按序号会落空。
+  //   · current：正在做的那题；passed：这次打开以后练完、点过「下一题」的；
+  //   · held：交了、还在看对错的那题——重新取回来的清单里已经没有它，先留着，点「下一题」再走。
+  const [current, setCurrent] = useState<number | null>(null);
+  const [passed, setPassed] = useState<number[]>([]);
+  const [held, setHeld] = useState<AcademyDailyItem | null>(null);
   const [done, setDone] = useState<AcademyDailyAnswer | null>(null);
   const qc = useQueryClient();
   const refresh = useAcademyRefresh();
   const d = daily.data;
-  const item = d?.items[index];
+  const left = d?.items.filter((i) => !passed.includes(i.questionId)) ?? [];
+  const item = held ?? left.find((i) => i.questionId === current) ?? left[0];
   return (
     <AcademyFrame title="每日一练" back={{ to: '/oa/academy', label: '学堂' }} testId="academy-daily">
       <AcademyOpsPanel />
@@ -139,11 +145,16 @@ export function DailyPage() {
             <DailyCard
               key={item.questionId}
               item={item}
-              onAnswered={setDone}
+              onAnswered={(a) => {
+                setDone(a);
+                if (item.kind !== 'recall') setHeld(item);
+              }}
               onDone={() => {
-                if (index + 1 < d.items.length) setIndex(index + 1);
-                else {
-                  setIndex(0);
+                const next = left.find((i) => i.questionId !== item.questionId);
+                setHeld(null);
+                setPassed([...passed, item.questionId]);
+                setCurrent(next?.questionId ?? null);
+                if (!next) {
                   void qc.invalidateQueries({ queryKey: academyKeys.daily });
                   void refresh();
                 }

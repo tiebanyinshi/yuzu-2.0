@@ -35,7 +35,7 @@ import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Select, Textar
 import { AdminPage } from '../admin/AdminShell';
 import { adminKeys, CourseEditor, statusBadge } from './CourseEditor';
 import { academyKeys, COVER_CLASS, sendAcademyOp } from './data';
-import { AcademyOpsPanel } from './parts';
+import { AcademyOpsPanel, PendingLock, useOpPending } from './parts';
 
 const TABS: readonly SubTab[] = [
   { key: 'courses', label: '课程' },
@@ -125,6 +125,7 @@ function NewCourseDialog({ onClose, onMade }: { onClose: () => void; onMade: (id
   const [summary, setSummary] = useState('');
   const [busy, setBusy] = useState(false);
   const key = useRef(uuid());
+  const pending = useOpPending(key.current);
   const toast = useToast();
   const qc = useQueryClient();
   return (
@@ -158,11 +159,11 @@ function NewCourseDialog({ onClose, onMade }: { onClose: () => void; onMade: (id
             }
           }}
         >
-          新建
+          {pending ? '按原内容重新提交' : '新建'}
         </Button>
       }
     >
-      <div className="space-y-3">
+      <PendingLock pending={pending} className="space-y-3">
         <Field label="课程名称">
           <Input value={title} maxLength={60} onChange={(e) => setTitle(e.target.value)} data-testid="academy-new-course-title" />
         </Field>
@@ -178,7 +179,7 @@ function NewCourseDialog({ onClose, onMade }: { onClose: () => void; onMade: (id
         <Field label="简介">
           <Textarea rows={2} maxLength={300} value={summary} onChange={(e) => setSummary(e.target.value)} />
         </Field>
-      </div>
+      </PendingLock>
     </Dialog>
   );
 }
@@ -199,6 +200,7 @@ function PathDialog({ path, onClose }: { path: AcademyAdminPath | null; onClose:
   });
   const [busy, setBusy] = useState(false);
   const key = useRef(uuid());
+  const pending = useOpPending(key.current) && !path;
   const toast = useToast();
   const qc = useQueryClient();
   const byId = new Map((courses.data ?? []).map((c) => [c.id, c]));
@@ -236,11 +238,11 @@ function PathDialog({ path, onClose }: { path: AcademyAdminPath | null; onClose:
       title={path ? `学习地图「${path.title}」` : '新建学习地图'}
       footer={
         <Button variant="primary" loading={busy} disabled={!f.title.trim()} onClick={() => void save()} data-testid="academy-path-save">
-          保存
+          {pending ? '按原内容重新提交' : '保存'}
         </Button>
       }
     >
-      <div className="space-y-3">
+      <PendingLock pending={pending} className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="地图名称">
             <Input value={f.title} maxLength={40} onChange={(e) => setF({ ...f, title: e.target.value })} data-testid="academy-path-title" />
@@ -308,7 +310,7 @@ function PathDialog({ path, onClose }: { path: AcademyAdminPath | null; onClose:
             </Select>
           </div>
         </Field>
-      </div>
+      </PendingLock>
     </Dialog>
   );
 }
@@ -358,6 +360,7 @@ function NewAssignmentDialog({ onClose }: { onClose: () => void }) {
   const [dueDays, setDueDays] = useState<number | null>(30);
   const [busy, setBusy] = useState(false);
   const key = useRef(uuid());
+  const pending = useOpPending(key.current);
   const toast = useToast();
   const qc = useQueryClient();
   const [kind, id] = target.split(':');
@@ -397,11 +400,11 @@ function NewAssignmentDialog({ onClose }: { onClose: () => void }) {
       title="新建指派"
       footer={
         <Button variant="primary" loading={busy} disabled={!ready} onClick={() => void save()} data-testid="academy-assignment-save">
-          指派
+          {pending ? '按原内容重新提交' : '指派'}
         </Button>
       }
     >
-      <div className="space-y-3">
+      <PendingLock pending={pending} className="space-y-3">
         <Field label="学什么" hint="草稿、下架的地图与课员工看不到，先上架">
           <Select value={target} onChange={(e) => setTarget(e.target.value)} data-testid="academy-assignment-target">
             <option value="">选一张学习地图或一门课</option>
@@ -478,7 +481,7 @@ function NewAssignmentDialog({ onClose }: { onClose: () => void }) {
             <Input type="number" min={1} max={365} value={dueDays ?? ''} onChange={(e) => setDueDays(e.target.value ? Number(e.target.value) : null)} />
           </Field>
         )}
-      </div>
+      </PendingLock>
     </Dialog>
   );
 }

@@ -36,6 +36,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Segmented, Select, Skeleton, Textarea } from '../../components/ui';
 import { ArticleView } from './ArticleView';
 import { academyKeys, COVER_CLASS, sendAcademyOp } from './data';
+import { PendingLock, useOpPending } from './parts';
 
 export const adminKeys = {
   courses: ['academy', 'admin', 'courses'] as const,
@@ -259,6 +260,7 @@ function LessonDialog({ courseId, lesson, onClose, onSaved }: { courseId: number
   const [busy, setBusy] = useState(false);
   const [serverProblems, setServerProblems] = useState<{ line?: number; message: string }[]>([]);
   const key = useRef(uuid());
+  const pending = useOpPending(key.current) && !lesson;
   const toast = useToast();
   const parsed = useMemo(() => (f.kind === 'article' ? parseAcademyMarkup(f.body) : null), [f.kind, f.body]);
   const files = useOpenFiles(f.kind === 'file');
@@ -329,12 +331,12 @@ function LessonDialog({ courseId, lesson, onClose, onSaved }: { courseId: number
             </Button>
           )}
           <Button variant="primary" loading={busy} disabled={!f.title.trim() || problems.length > 0} onClick={() => void save()} data-testid="academy-lesson-save">
-            保存
+            {pending ? '按原内容重新提交' : '保存'}
           </Button>
         </>
       }
     >
-      <div className="space-y-3">
+      <PendingLock pending={pending} className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
           <Field label="课时标题">
             <Input value={f.title} maxLength={60} onChange={(e) => setF({ ...f, title: e.target.value })} data-testid="academy-lesson-title" />
@@ -436,7 +438,7 @@ function LessonDialog({ courseId, lesson, onClose, onSaved }: { courseId: number
             </ul>
           </Notice>
         )}
-      </div>
+      </PendingLock>
     </Dialog>
   );
 }
@@ -457,6 +459,7 @@ function QuestionDialog({ courseId, question, onClose, onSaved }: { courseId: nu
   const [q, setQ] = useState(question ? { ...question } : blankQuestion());
   const [busy, setBusy] = useState(false);
   const key = useRef(uuid());
+  const pending = useOpPending(key.current) && !question;
   const toast = useToast();
   const draft = { ...q, options: q.kind === 'recall' ? [] : q.kind === 'judge' ? ['对', '错'] : q.options.map((o) => o.trim()), answer: q.kind === 'recall' ? [] : q.answer };
   const problems = academyQuestionProblems({ ...draft, stem: draft.stem.trim(), skill: draft.skill.trim() });
@@ -508,11 +511,11 @@ function QuestionDialog({ courseId, question, onClose, onSaved }: { courseId: nu
       title={question ? '编辑题' : '加题'}
       footer={
         <Button variant="primary" loading={busy} disabled={problems.length > 0} onClick={() => void save()} data-testid="academy-question-save">
-          保存
+          {pending ? '按原内容重新提交' : '保存'}
         </Button>
       }
     >
-      <div className="space-y-3">
+      <PendingLock pending={pending} className="space-y-3">
         <Segmented size="sm" value={q.kind} onChange={setKind} options={ACADEMY_QUESTION_KINDS.map((k) => ({ value: k, label: ACADEMY_QUESTION_KIND_LABELS[k] }))} />
         <div className="grid grid-cols-2 gap-3">
           <Field label="知识点">
@@ -578,7 +581,7 @@ function QuestionDialog({ courseId, question, onClose, onSaved }: { courseId: nu
           />
         </Field>
         {problems.length > 0 && <p className="text-[13px] text-clay">{problems[0]}</p>}
-      </div>
+      </PendingLock>
     </Dialog>
   );
 }

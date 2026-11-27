@@ -1,5 +1,5 @@
 // 员工培训后台「改资料」写操作的本机待确认记录（src/client/features/training/ops.ts，Codex 审查 f5de374）：
-// 结果不明的原样重提，被拒绝时要能断定结果（409 / 404 / 400 / 422）才删；401、403、429 这类留着。
+// 结果不明的原样重提，被拒绝时要能断定结果（409 / 404 / 400 / 422）才删；401、403、429 这类留着；没确认的编号换了内容不发。
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn() }));
 vi.mock('../src/client/lib/api', () => {
@@ -49,6 +49,18 @@ describe('sendTrainingOp', () => {
     await expect(sendTrainingOp(op('c'))).rejects.toBeInstanceOf(UncertainError);
     mocks.put.mockRejectedValueOnce(new ApiError(409, 'CONFLICT', 'x'));
     await expect(sendTrainingOp(op('c'))).rejects.toBeInstanceOf(ApiError);
+    expect(pending()).toEqual([]);
+  });
+  it('没确认的编号换了内容（对话框里改了再保存）：不发，原来那份留着、照旧能原样重提（Codex 审查 34b9815）', async () => {
+    mocks.put.mockRejectedValueOnce(new UncertainError('timeout'));
+    await expect(sendTrainingOp(op('e'))).rejects.toBeInstanceOf(UncertainError);
+    const changed = { ...op('e'), body: { name: '安保部（改）', version: 1 } };
+    await expect(sendTrainingOp(changed)).rejects.toThrow('只能按原内容重新提交');
+    expect(mocks.put).toHaveBeenCalledTimes(1);
+    expect(pending().map((x) => x.key)).toEqual(['e']);
+    mocks.put.mockResolvedValueOnce({ ok: true });
+    await expect(sendTrainingOp(op('e'))).resolves.toEqual({ ok: true });
+    expect(mocks.put).toHaveBeenLastCalledWith('/api/admin/training/folders/1', { name: '安保部', version: 1 });
     expect(pending()).toEqual([]);
   });
   it('重提成功：删', async () => {

@@ -3,7 +3,7 @@
 //   · 课时页：图文课件（读到底点「学完了」）、文件（在员工培训里看，看过点「学完了」）、测验（抽题作答、交卷看对错与解析）、
 //     实操（检查项与带教签过的记录）；学完给学分、学完地图发证书、升级都在页面上提示。
 
-import { useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, CheckCircle2, ChevronRight, ClipboardCheck, FileText, PenLine, Send, Star } from 'lucide-react';
@@ -28,6 +28,8 @@ import { Badge, Button, Card, Notice, Skeleton, Textarea } from '../../component
 import { AcademyFrame, AcademyOpsPanel, ProgressBar } from './parts';
 import { ArticleView, ChoiceList } from './ArticleView';
 import { academyKeys, COVER_CLASS, sendAcademyOp, useAcademyCourse, useAcademyLesson, useAcademyRefresh, useStudyTimer } from './data';
+import { useTrainingFiles } from '../training/TrainingPages';
+import { TrainingViewer } from '../training/TrainingViewer';
 
 function lessonBadge(l: AcademyLessonSummary) {
   if (l.state === 'done') return <Badge tone="pine">已完成</Badge>;
@@ -242,10 +244,13 @@ export function LessonPage({ id }: { id: number }) {
       <p className="-mt-2 text-[12px] text-ink-3">
         {v.course.title} · {ACADEMY_LESSON_KIND_LABELS[v.lesson.kind]} · 约 {v.lesson.minutes} 分钟 · {v.lesson.credits} 学分
       </p>
-      {v.lesson.kind === 'article' && <ArticleLesson view={v} />}
-      {v.lesson.kind === 'file' && <FileLesson view={v} />}
-      {v.lesson.kind === 'quiz' && <QuizLesson view={v} />}
-      {v.lesson.kind === 'practical' && <PracticalLesson view={v} />}
+      {/* 按课时编号重来（Codex 审查 34b9815）：在两个已取回来的课时之间切换时，测验的卷子、作答不带到另一节 */}
+      <Fragment key={v.lesson.id}>
+        {v.lesson.kind === 'article' && <ArticleLesson view={v} />}
+        {v.lesson.kind === 'file' && <FileLesson view={v} />}
+        {v.lesson.kind === 'quiz' && <QuizLesson view={v} />}
+        {v.lesson.kind === 'practical' && <PracticalLesson view={v} />}
+      </Fragment>
       <div className="flex justify-between gap-2 pt-2">
         {v.prevId ? (
           <Link to={`/oa/academy/lessons/${v.prevId}`} className="text-[14px] font-semibold text-pine">
@@ -307,18 +312,26 @@ function ArticleLesson({ view }: { view: AcademyLessonView }) {
   );
 }
 
+/** 文件课时：就在课时页里看（Codex 审查 34b9815）——跳到员工培训去看，这一节的计时就停了，看视频、PDF 的时间记不进学习时长 */
 function FileLesson({ view }: { view: AcademyLessonView }) {
+  const files = useTrainingFiles(view.file?.folderId ?? null);
   if (!view.file) return <Notice tone="warning" title="这个课时的文件暂时打不开，请联系学堂管理员" />;
+  const file = files.data?.find((f) => f.id === view.file!.id);
   return (
     <>
-      <Link to={`/oa/training/${view.file.folderId}/${view.file.id}`} className="mo-lift flex items-center gap-3 rounded-lg border border-line bg-card p-4" data-testid="academy-lesson-file">
-        <FileText className="size-8 shrink-0 text-lake" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px] font-bold text-ink">{view.file.title}</p>
-          <p className="text-[12px] text-ink-3">在员工培训里打开（视频、PDF 页面里直接看）</p>
-        </div>
-        <ChevronRight className="size-4 shrink-0 text-ink-4" aria-hidden />
-      </Link>
+      <Card className="overflow-hidden p-3 md:p-5" data-testid="academy-lesson-file">
+        {files.isPending ? (
+          <Skeleton className="h-60" />
+        ) : files.isError && !files.data ? (
+          <LoadFailed title="文件没有取回来" onRetry={() => void files.refetch()}>
+            {errorMessage(files.error)}
+          </LoadFailed>
+        ) : !file ? (
+          <Notice tone="warning" title={`「${view.file.title}」不在了，请联系学堂管理员`} />
+        ) : (
+          <TrainingViewer file={file} />
+        )}
+      </Card>
       <DoneButton view={view} label="看完了" />
     </>
   );

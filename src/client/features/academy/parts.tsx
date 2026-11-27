@@ -77,6 +77,28 @@ export function AcademyOpsPanel() {
   );
 }
 
+/** 新建对话框里这一笔是不是还没确认（提交过、没收到结果） */
+export function useOpPending(key: string) {
+  return useAcademyOps().some((op) => op.key === key);
+}
+
+/**
+ * 新建对话框的内容锁（Codex 审查 34b9815）：这一笔没收到结果时内容锁住、按钮改成「按原内容重新提交」——
+ * 同一个操作编号只能原样重提（AGENTS.md 开发约定），改了内容再提服务端会拒绝。关掉对话框以后在页面上方照样能重提。
+ */
+export function PendingLock({ pending, className, children }: { pending: boolean; className?: string; children: ReactNode }) {
+  return (
+    <fieldset disabled={pending} className={cn('min-w-0', className)}>
+      {pending && (
+        <Notice tone="warning" title="这次提交没收到结果" data-testid="academy-op-locked">
+          内容先锁住：点下面的「按原内容重新提交」核对结果；也可以关掉，在页面上方的提醒里重提。确认以后再改。
+        </Notice>
+      )}
+      {children}
+    </fieldset>
+  );
+}
+
 export function PathCard({ p }: { p: AcademyPathSummary }) {
   const cover = COVER_CLASS[p.cover];
   const done = p.courseCount > 0 && p.doneCount === p.courseCount;

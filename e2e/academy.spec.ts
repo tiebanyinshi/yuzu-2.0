@@ -3,7 +3,9 @@
 //   ② 员工 xiaozhou（周小舟）进「WCP → 学堂」：我的必修里有「新员工入职地图」，点进去是一站一站的地图；
 //      第 1 站第 1 节图文课件点「学完了」记上，课程进度不再是 0；课后测验抽 5 题，全选 A 交卷出成绩；
 //   ③ 每日一练答一题，今天做了的数加 1；「证书与成长」里学分不是 0；榜单（本月学分）里有周小舟。
-// 依赖新建的演示库（店主 linlan、员工 xiaozhou，密码 yuzu2026）；会写学习记录，只在门店电脑尺寸执行。
+//   ④ 新建课程的回复丢了：对话框内容锁住，只能按原内容重新提交；重提后只有一门（Codex 审查 34b9815）。
+// 依赖新建的演示库（店主 linlan、员工 xiaozhou，密码 yuzu2026）；会写学习记录、留一门「E2E 学堂」开头的草稿课（员工看不到），只在门店电脑尺寸执行。
+import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { passPortal } from './portal';
 
@@ -85,5 +87,28 @@ test.describe('汤崎学堂', () => {
     await mp.goto('/oa/academy/rank');
     await expect(mp.getByTestId('academy-rank-credits')).toContainText('周小舟', { timeout: 15_000 });
     await ctx.close();
+  });
+
+  test('新建课程的回复丢了：内容锁住、按原内容重新提交，只建一门', async ({ page }) => {
+    const title = `E2E 学堂 ${randomUUID().slice(0, 8)}`;
+    await login(page, 'linlan');
+    await page.goto('/admin/academy');
+    await page.getByTestId('academy-new-course').click();
+    await page.getByTestId('academy-new-course-title').fill(title);
+    // 服务端建好了，回复在路上丢了
+    await page.route('**/api/admin/academy/courses', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      await route.fetch();
+      await route.abort('internetdisconnected');
+    });
+    await page.getByTestId('academy-new-course-save').click();
+    await expect(page.getByTestId('academy-op-locked')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('academy-new-course-title')).toBeDisabled();
+    await expect(page.getByTestId('academy-new-course-save')).toHaveText('按原内容重新提交');
+    await page.unroute('**/api/admin/academy/courses');
+    await page.getByTestId('academy-new-course-save').click();
+    await expect(page.getByTestId('academy-course-editor')).toBeVisible({ timeout: 15_000 });
+    const courses = (await (await page.request.get('/api/admin/academy/courses')).json()) as { title: string }[];
+    expect(courses.filter((c) => c.title === title)).toHaveLength(1);
   });
 });
