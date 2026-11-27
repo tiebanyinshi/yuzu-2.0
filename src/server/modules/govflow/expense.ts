@@ -79,7 +79,7 @@ async function createAndSubmit(deps: Deps, actor: Actor, clientKey: string, payl
       const id = await insertDoc(tx, await build(tx, requestHash), actor, todayIn(TZ));
       await after?.(tx, id);
       const doc = await loadDoc(tx, id, true);
-      await submitFlow(tx, doc, templateFor(doc), actor);
+      await submitFlow(tx, doc, await templateFor(tx, doc), actor);
       return id;
     });
   } catch (error) {

@@ -1,5 +1,5 @@
 // 业财法审批（店主 2026-11-26，docs/APPROVAL_V4.md）：WCP →「业财法审批」。
-//   /oa/gov            待我审批 / 我发起 / 知会我 / 全部（店主、内控、董事长）/ 微信特批 / 角色映射（店主）
+//   /oa/gov            待我审批 / 我发起 / 知会我 / 全部（店主、内控、董事长）/ 微信特批 / 角色映射、流程与阈值（店主）
 //   /oa/gov/:id        事项详情：审批链每一级（会签、并行分审显示还等谁）、同意 / 退回 / 驳回、知会、特批、执行
 // 手机、电脑同一页面、同一套接口。
 
@@ -39,8 +39,9 @@ import { PaymentPanel, PaymentsPanel } from './PaymentPages';
 import { ExpensePanel } from './ExpensePages';
 import { HrBatchPanel, HrPanel } from './HrPages';
 import { RolesPanel } from './RolesPanel';
+import { FlowConfigPanel } from './FlowConfigPanel';
 
-type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'expense' | 'hr' | 'roles';
+type Box = 'todo' | 'mine' | 'cc' | 'all' | 'specials' | 'suppliers' | 'petty' | 'contracts' | 'payments' | 'expense' | 'hr' | 'roles' | 'config';
 const STATUS_TONE: Record<GfStatus, 'neutral' | 'pine' | 'moss' | 'yuzu' | 'ember' | 'clay' | 'lake' | 'ink'> = {
   draft: 'neutral',
   reviewing: 'lake',
@@ -84,7 +85,12 @@ function GovHome() {
     { value: 'payments', label: '付款' },
     { value: 'expense', label: '报销出差用印' },
     { value: 'hr', label: 'HR 付款与分摊' },
-    ...(meta.data?.canManageRoles ? [{ value: 'roles' as const, label: '角色映射' }] : []),
+    ...(meta.data?.canManageRoles
+      ? [
+          { value: 'roles' as const, label: '角色映射' },
+          { value: 'config' as const, label: '流程与阈值' },
+        ]
+      : []),
   ];
   return (
     <>
@@ -108,6 +114,10 @@ function GovHome() {
         </div>
         {box === 'roles' ? (
           <RolesPanel />
+        ) : box === 'config' ? (
+          meta.data ? (
+            <FlowConfigPanel meta={meta.data} />
+          ) : null
         ) : box === 'specials' ? (
           <SpecialsPanel />
         ) : box === 'suppliers' ? (

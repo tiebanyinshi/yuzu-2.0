@@ -6,6 +6,7 @@
 //   /api/gf/docs/:id/submit|act|withdraw|execute
 //   /api/gf/specials                  微信特批：登记（两人确认、唯一特批编号）、列表、补登（需求说明 + OK 截图）
 //   /api/gf/files/:id                 下载补登的文件（看得到事项 / 特批的人）
+//   /api/gf/config…                   流程与阈值（8.2.10，config.ts）
 
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
@@ -49,6 +50,7 @@ import { idParam, parse } from '../../lib/validate';
 import { NOT_EMPLOYEE_ROLES } from '../oa/org';
 import { notify } from '../oa/notifications';
 import { actFlow, addCc, docOf, hooksOf, insertDoc, latestFlow, loadDoc, loadMembers, rolesOf, seatContext, seatLabel, statusOf, submitFlow, waitingSeats, type DocRow, type FlowRow } from './engine';
+import { registerGfConfigRoutes } from './config';
 import { templateFor } from './types';
 
 const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOString());
@@ -183,7 +185,7 @@ async function createDoc(deps: Deps, raw: unknown, actor: Actor, ip?: string): P
       await writeAudit(tx, { staffId: actor.id, action: 'gf_doc', targetType: 'gf_doc', targetId: id, detail: { op: 'create', bizNo, amountCents: input.amountCents, flags }, ip });
       if (input.submit) {
         const doc = await loadDoc(tx, id, true);
-        await submitFlow(tx, doc, templateFor(doc), actor);
+        await submitFlow(tx, doc, await templateFor(tx, doc), actor);
       }
       return id;
     });
@@ -559,6 +561,8 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
     if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(req.actor.role)) throw forbidden('这个账号不能用业财法审批');
   };
   const manage = guard('gf.roles');
+  // 流程与阈值（8.2.10）：在这里挂，不另占 app.ts 一行
+  registerGfConfigRoutes(app, deps);
 
   app.get('/api/gf/meta', { preHandler: staffOnly }, async (req): Promise<GfMeta> => {
     const entities = await sql<{ id: number; name: string }[]>`SELECT id, name FROM legal_entities ORDER BY id`;
@@ -658,7 +662,7 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
       await setTxTimeouts(tx);
       const doc = await bump(tx, id, version);
       if (doc.createdBy !== req.actor.id) throw forbidden('只有发起人能提交');
-      await submitFlow(tx, doc, templateFor(doc), req.actor);
+      await submitFlow(tx, doc, await templateFor(tx, doc), req.actor);
       await writeAudit(tx, { staffId: req.actor.id, action: 'gf_doc', targetType: 'gf_doc', targetId: id, detail: { op: 'submit' }, ip: req.ip });
     });
     return detail(deps, req.actor, id);
