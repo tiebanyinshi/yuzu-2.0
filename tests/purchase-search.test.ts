@@ -2,6 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { todayIn } from '../src/server/modules/inventory/common';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
 import { api, login, setup, type TestContext } from './helpers';
 
@@ -71,6 +72,36 @@ describe('R1 单号直达', () => {
     const [line] = await ctx.sql<{ name: string; requestId: number }[]>`SELECT name, request_id FROM purchase_request_lines ORDER BY id LIMIT 1`;
     const byName = (await api(ctx.app, boss, 'GET', `/api/erp/requests?q=${encodeURIComponent(line!.name)}`)).body.requests as { id: number }[];
     expect(byName.some((x) => x.id === Number(line!.requestId))).toBe(true);
+  });
+
+  it('需求单导出与列表同一个搜索：只导搜出来的那些单（条数核对也按搜索算）', async () => {
+    const today = todayIn(ctx.config.timezone);
+    const url = (q: string) => `/api/erp/requests/export?from=2020-01-01&to=${today}${q ? `&q=${encodeURIComponent(q)}` : ''}`;
+    const listed = (await api(ctx.app, ctx.owner, 'GET', `/api/erp/requests?from=2020-01-01&to=${today}&q=${encodeURIComponent('搜索用毛巾')}`)).body.requests as { docNo: string }[];
+    expect(listed).toHaveLength(1);
+    const r = await ctx.app.inject({ method: 'GET', url: url('搜索用毛巾'), headers: { cookie: ctx.owner } });
+    expect(r.statusCode, r.body).toBe(200);
+    const rows = r.body.trim().split('\n').slice(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain(listed[0]!.docNo);
+    expect(rows[0]).toContain('搜索用毛巾');
+    // 另一张单：按单号（不带分隔符）搜只导它；不搜两张都在
+    const [m] = await ctx.sql<{ id: number }[]>`SELECT id FROM materials WHERE active ORDER BY id LIMIT 1`;
+    const [dept] = await ctx.sql<{ id: number }[]>`SELECT id FROM departments WHERE active ORDER BY id LIMIT 1`;
+    const made = await api(ctx.app, ctx.owner, 'POST', '/api/erp/requests', {
+      clientKey: randomUUID(),
+      departmentId: Number(dept!.id),
+      lines: [{ materialId: Number(m!.id), name: '导出用浴巾', purpose: '客用消耗', qtyMilli: 2000, unit: '条' }],
+    });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const otherNo = made.body.request.docNo as string;
+    const byNo = await ctx.app.inject({ method: 'GET', url: url(strip(otherNo)), headers: { cookie: ctx.owner } });
+    expect(byNo.body).toContain(otherNo);
+    expect(byNo.body).not.toContain(listed[0]!.docNo);
+    const all = await ctx.app.inject({ method: 'GET', url: url(''), headers: { cookie: ctx.owner } });
+    expect(all.statusCode, all.body).toBe(200);
+    expect(all.body).toContain(otherNo);
+    expect(all.body).toContain(listed[0]!.docNo);
   });
 });
 

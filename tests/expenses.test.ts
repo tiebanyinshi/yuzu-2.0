@@ -3,6 +3,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ClaimInput, claimRequestHash } from '../src/server/modules/expenses';
 import { todayIn } from '../src/server/modules/inventory/common';
 import { createStaff } from '../src/server/modules/staff';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
@@ -218,6 +219,35 @@ describe('费用确认（8.2.12 B1：报销都要审批，不再登记即确认�
     const list2 = await ctx.app.inject({ method: 'GET', url: '/api/erp/expenses/auto-approved', headers: { cookie: coster } });
     expect(list2.body).toContain(small.body.claim.docNo);
     expect(list2.body).toContain('登记即确认');
+  });
+
+  it('升级前带「登记时同时确认」提交、已入账没收到结果的：原样重提拿回原单，新登记照样拒绝', async () => {
+    const body = {
+      clientKey: randomUUID(),
+      expenseDate: today,
+      departmentId: deptA,
+      handlerId: costerId,
+      purpose: '办公',
+      paySource: 'company',
+      invoiceType: 'receipt',
+      taxRateBp: 0,
+      lines: [line({ amountCents: 4_200 })],
+    };
+    const first = await claimRaw(boss, { ...body, approveNow: false });
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    // 模拟升级前那一笔：当时带 approveNow 提交，操作编号记的是带 approveNow 的摘要（摘要算法升级前后一样）
+    const legacy = claimRequestHash(ClaimInput.parse({ ...body, approveNow: true }));
+    await ctx.sql.begin(async (tx) => {
+      await tx`ALTER TABLE idempotency_keys DISABLE TRIGGER idempotency_keys_append_only`;
+      await tx`UPDATE idempotency_keys SET request_hash = ${legacy} WHERE key = ${body.clientKey}`;
+      await tx`ALTER TABLE idempotency_keys ENABLE TRIGGER idempotency_keys_append_only`;
+    });
+    const again = await claimRaw(boss, { ...body, approveNow: true });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(again.body).toMatchObject({ replayed: true, claim: { id: first.body.claim.id, docNo: first.body.claim.docNo } });
+    // 同一个编号换了内容的照样冲突；新编号带 approveNow 的照样拒绝
+    expect((await claimRaw(boss, { ...body, approveNow: false })).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect((await claimRaw(boss, { ...body, clientKey: randomUUID(), approveNow: true })).status).toBe(403);
   });
 
   it('报销单内容不可改、不能删（数据库兜底）', async () => {

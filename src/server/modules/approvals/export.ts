@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { APPROVAL_DOC_TYPES, APPROVAL_DOC_TYPE_LABELS, APPROVAL_STATUS_LABELS, type ApprovalStatus } from '@shared/approvals';
 import { ISO_DATE } from '@shared/business-date';
-import { guard } from '../../auth/guard';
+import { guard, guardAny } from '../../auth/guard';
 import { attachment } from '../../lib/csv';
 import { writeAudit } from '../../lib/audit';
 import type { Deps } from '../../lib/context';
@@ -29,7 +29,9 @@ const fmt = (at: Date | string, tz: string) => new Date(at).toLocaleString('zh-C
 
 export function registerApprovalExport(app: FastifyInstance, { sql, config }: Deps) {
   const tz = config.timezone;
-  app.get('/api/approvals/export.xlsx', { preHandler: guard('approval.rules') }, async (req, reply) => {
+  // 「审批规则」可以委派给别人：导出全店的审批单还要能用审批中心（与审批列表、详情同一个门槛，hasApprovalAccess）
+  const readApprovals = guardAny('approval.act', 'inventory.approve', 'expense.approve');
+  app.get('/api/approvals/export.xlsx', { preHandler: [guard('approval.rules'), readApprovals] }, async (req, reply) => {
     const q = parse(ExportQuery, req.query ?? {});
     if (q.from > q.to) throw unprocessable('EXPORT_RANGE', '开始日期不能晚于结束日期');
     const rows = await sql<

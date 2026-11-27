@@ -319,6 +319,29 @@ export interface ApproverProblem {
 }
 
 /**
+ * 一级里每一席都要不同的人坐（同意时一个人在一级里只坐一席）：按「席位 → 能坐的人」求最多能同时坐满几席（二分图最大匹配，增广路）。
+ * 只看候选人并集的人数不够：财务、法务都只有甲、人事有乙丙时并集三人，但财务、法务坐不满（8.2.15）。
+ */
+export function maxDistinctSeats(pools: readonly (readonly number[])[]): number {
+  const holder = new Map<number, number>(); // 人 → 坐的席位下标
+  const tryAssign = (seat: number, seen: Set<number>): boolean => {
+    for (const id of pools[seat]!) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const other = holder.get(id);
+      if (other === undefined || tryAssign(other, seen)) {
+        holder.set(id, seat);
+        return true;
+      }
+    }
+    return false;
+  };
+  let filled = 0;
+  for (let i = 0; i < pools.length; i += 1) if (tryAssign(i, new Set())) filled += 1;
+  return filled;
+}
+
+/**
  * 排好的链里哪几级现在没人能审（回避以后）：提交时拿第一条报错（GF_NO_APPROVER / GF_COSIGN_SAME），
  * 「流程与阈值 → 试算」全部列出来当提示（8.2.15）。部门负责人、履约执行人本人发起的那一级视同已确认，不算。
  */
@@ -336,8 +359,7 @@ export function approverProblems(nodes: readonly GfNode[], ctx: SeatContext): Ap
     // 会签 / 并行分审要不同的人坐每一席
     if (node.kind === 'all') {
       const pools = node.roles.map((r) => (ctx.members[r] ?? []).filter((id) => seatsFor(node, id, ctx).includes(r)));
-      const union = new Set(pools.flat());
-      if (union.size < node.roles.length) out.push({ code: 'GF_COSIGN_SAME', message: `「${nodeLabel(node)}」要 ${node.roles.length} 个不同的人审批，现在配的人不够` });
+      if (maxDistinctSeats(pools) < node.roles.length) out.push({ code: 'GF_COSIGN_SAME', message: `「${nodeLabel(node)}」要 ${node.roles.length} 个不同的人审批，现在配的人不够` });
     }
   }
   return out;

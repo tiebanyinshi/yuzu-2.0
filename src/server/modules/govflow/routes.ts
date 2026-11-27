@@ -450,7 +450,8 @@ const SpecialInput = z.object({
   reason: z.string().trim().min(2, '请写紧急原因（至少 2 个字）').max(500, '原因最多 500 个字'),
   confirmerIds: z.array(z.number().int().positive()).length(2, '微信特批要两个人确认'),
   confirmedAt: z.iso.datetime({ offset: true, message: '请填微信确认的时间' }),
-  okScreenshot: OkShotInput,
+  /** 新登记必传；接口上可缺，只为升级前就在「结果待确认」里的原请求（没有这一栏）能按原编号查回（createSpecial 里再拦） */
+  okScreenshot: OkShotInput.optional(),
   /** 紧急付款的特批要记确认时的收款账号（换账户要重新特批，P05） */
   payeeAccount: z
     .string()
@@ -468,23 +469,36 @@ async function holidays(db: Db): Promise<Map<string, 'holiday' | 'workday'>> {
 async function createSpecial(deps: Deps, raw: unknown, actor: Actor, ip?: string): Promise<number> {
   const input = parse(SpecialInput, raw);
   if (input.confirmerIds[0] === input.confirmerIds[1]) throw badRequest('微信特批要两个不同的人确认');
-  const shot = Buffer.from(input.okScreenshot.base64, 'base64');
-  if (shot.length === 0 || shot.length > GF_FILE_MAX_BYTES) throw unprocessable('GF_FILE_SIZE', 'OK 截图大小不对（最多 5 MB）');
-  if (!MAGIC[input.okScreenshot.mime]!(shot)) throw unprocessable('GF_FILE_TYPE', 'OK 截图的内容与图片类型对不上');
-  const shotSha = createHash('sha256').update(shot).digest('hex');
-  // 操作编号核对用截图的摘要，不把整张图算进去
-  const requestHash = hashRequest({ ...input, clientKey: undefined, okScreenshot: { ...input.okScreenshot, base64: shotSha } });
+  const okShot = input.okScreenshot;
+  const shot = okShot ? Buffer.from(okShot.base64, 'base64') : null;
+  if (okShot && shot) {
+    if (shot.length === 0 || shot.length > GF_FILE_MAX_BYTES) throw unprocessable('GF_FILE_SIZE', 'OK 截图大小不对（最多 5 MB）');
+    if (!MAGIC[okShot.mime]!(shot)) throw unprocessable('GF_FILE_TYPE', 'OK 截图的内容与图片类型对不上');
+  }
+  const shotSha = shot ? createHash('sha256').update(shot).digest('hex') : null;
+  // 操作编号核对用截图的摘要，不把整张图算进去；升级前（8.2.16 以前）的摘要没有截图这一栏，原样重提的也认
+  const legacyHash = hashRequest({ ...input, clientKey: undefined, okScreenshot: undefined });
+  const requestHash = okShot ? hashRequest({ ...input, clientKey: undefined, okScreenshot: { ...okShot, base64: shotSha } }) : legacyHash;
   const existing = async (db: Db) => {
     const [row] = await db<{ id: number; requestHash: string }[]>`SELECT id, request_hash FROM gf_specials WHERE client_key = ${input.clientKey}`;
     if (!row) return null;
-    if (row.requestHash !== requestHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一笔特批，请刷新页面后重新填写');
+    if (row.requestHash !== requestHash && row.requestHash !== legacyHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一笔特批，请刷新页面后重新填写');
     return Number(row.id);
   };
+  // 先按操作编号查回已提交的，再要求截图：只有真正新登记的才必传
+  const committed = await existing(deps.sql);
+  if (committed) return committed;
+  const needShot = () => {
+    if (!okShot || !shot || !shotSha) throw badRequest('请上传微信里的 OK 截图', { field: 'okScreenshot' });
+    return { okShot, shot, shotSha };
+  };
+  needShot();
   try {
     return await deps.sql.begin(async (tx) => {
       await setTxTimeouts(tx);
       const found = await existing(tx);
       if (found) return found;
+      const { okShot: file, shot: content, shotSha: sha } = needShot();
       const confirmed = new Date(input.confirmedAt);
       if (confirmed.getTime() > Date.now() + 5 * 60_000) throw unprocessable('GF_FUTURE', '微信确认时间不能晚于现在');
       const people = await tx<{ id: number }[]>`SELECT id FROM staff WHERE id IN ${tx(input.confirmerIds)} AND active`;
@@ -505,7 +519,7 @@ async function createSpecial(deps: Deps, raw: unknown, actor: Actor, ip?: string
       const id = Number(row!.id);
       await tx`
         INSERT INTO gf_files (owner_type, owner_id, purpose, file_name, mime, size_bytes, sha256, content, uploaded_by)
-        VALUES ('special', ${id}, 'ok_screenshot', ${input.okScreenshot.fileName}, ${input.okScreenshot.mime}, ${shot.length}, ${shotSha}, ${shot}, ${actor.id})`;
+        VALUES ('special', ${id}, 'ok_screenshot', ${file.fileName}, ${file.mime}, ${content.length}, ${sha}, ${content}, ${actor.id})`;
       await writeAudit(tx, {
         staffId: actor.id,
         action: 'gf_special',

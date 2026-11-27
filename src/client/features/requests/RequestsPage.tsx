@@ -112,6 +112,8 @@ export function RequestsPage() {
       status: status === 'stock' ? '' : status,
       stock: status === 'stock' ? 'open' : '',
       departmentId,
+      // 搜索词也带上：导出的就是列表里搜出来的那些单
+      q,
     }).filter(([, v]) => v) as [string, string][],
   ).toString();
   const openId = Number(params.get('request')) || null;

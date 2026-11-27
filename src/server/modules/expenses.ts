@@ -669,7 +669,7 @@ const LineInput = z.object({
   poLineId: id.nullable().default(null),
 });
 
-const ClaimInput = z.object({
+export const ClaimInput = z.object({
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   expenseDate: docDateSchema,
   departmentId: id,
@@ -699,6 +699,16 @@ const ClaimInput = z.object({
   useIds: z.array(id).max(50, '一张报销单最多报 50 笔申用').default([]),
 });
 
+/** 报销登记的操作编号摘要：与升级前同一个算法（approveNow 照旧在里面），升级前就在「结果待确认」里的原请求照样对得上 */
+export function claimRequestHash(input: z.infer<typeof ClaimInput>) {
+  return hashRequest({
+    ...input,
+    clientKey: undefined,
+    invoiceEntryMethod: input.invoiceEntryMethod === 'manual' ? undefined : input.invoiceEntryMethod, // 手填的不放进摘要
+    useIds: input.useIds.length ? [...input.useIds].sort((a, b) => a - b) : undefined, // 没勾申用的不放进摘要
+  });
+}
+
 async function lockAdvance(tx: Tx, advanceId: number) {
   const [a] = await tx<{ id: number; docNo: string; status: string; departmentId: number; advanceDate: string; amountCents: number }[]>`
     SELECT id, doc_no, status, department_id, advance_date, amount_cents FROM petty_advances WHERE id = ${advanceId} FOR UPDATE`;
@@ -708,8 +718,16 @@ async function lockAdvance(tx: Tx, advanceId: number) {
 
 export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
   const input = parse(ClaimInput, raw);
-  // 8.2.12（B1 / 7.3 第 4 条）：不再有「登记时同时以负责人身份确认」，报销都要别人审
-  if (input.approveNow) throw forbidden('报销不能由登记的人自己确认，请提交给负责人审批');
+  const requestHash = claimRequestHash(input);
+  const findExisting = async (db: Db) => {
+    const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
+    if (!row) return null;
+    if (row.opType !== 'expense_claim' || row.requestHash !== requestHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一笔不同的登记，请刷新页面后重新填写');
+    return row.refId;
+  };
+  // 先按操作编号查回已提交的：升级前带 approveNow 提交、已入账但没收到结果的原请求原样重提要拿回原单
+  const committed = await findExisting(deps.sql);
+  if (committed) return { claim: await getClaim(deps.sql, committed), replayed: true };
   assertNotFuture(input.expenseDate, deps.config.timezone);
   const rules = await loadExpenseRules(deps.sql);
   if (!rules.purposes.includes(input.purpose)) throw unprocessable('PURPOSE_INVALID', `用途只能从固定选项里选：${rules.purposes.join('、')}`);
@@ -739,21 +757,6 @@ export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: s
   if (input.invoiceTaxCents !== null && input.invoiceTaxCents > total) throw badRequest('税额不能超过报销金额');
   // 门槛以内登记即确认只在显式打开时才有（默认关，B1 / Q9）
   const needsApproval = !rules.autoConfirmBelowThreshold || total > rules.approvalThresholdCents;
-  // 手填的不放进摘要：升级前就在「结果待确认」里的原请求照样对得上
-  const requestHash = hashRequest({
-    ...input,
-    clientKey: undefined,
-    invoiceEntryMethod: input.invoiceEntryMethod === 'manual' ? undefined : input.invoiceEntryMethod,
-    // 没勾申用的不放进摘要（升级前就在「结果待确认」里的原请求照样对得上）
-    useIds: input.useIds.length ? [...input.useIds].sort((a, b) => a - b) : undefined,
-  });
-
-  const findExisting = async (db: Db) => {
-    const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${input.clientKey}`;
-    if (!row) return null;
-    if (row.opType !== 'expense_claim' || row.requestHash !== requestHash) throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一笔不同的登记，请刷新页面后重新填写');
-    return row.refId;
-  };
 
   let claimId: number;
   let replayed = false;
@@ -763,6 +766,8 @@ export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: s
       await lockOpKey(tx, input.clientKey);
       const existing = await findExisting(tx);
       if (existing) return { id: existing, replayed: true };
+      // 8.2.12（B1 / 7.3 第 4 条）：不再有「登记时同时以负责人身份确认」，报销都要别人审（只拦新登记，查回原单在前）
+      if (input.approveNow) throw forbidden('报销不能由登记的人自己确认，请提交给负责人审批');
       await assertNotFenced(tx, input.clientKey, 'expense_claim', erpOpAbandoned);
       const [dept] = await tx<{ active: boolean }[]>`SELECT active FROM departments WHERE id = ${input.departmentId}`;
       if (!dept?.active) throw unprocessable('DEPARTMENT_INVALID', '部门不存在或已停用');
