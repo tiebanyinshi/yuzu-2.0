@@ -411,7 +411,7 @@ export async function buildDailyRecon(sql: Sql, config: AppConfig, date: string,
   const today = businessDateOf(now, config.timezone, startHour);
   const from = businessDayStart(date, config.timezone, startHour);
   const to = businessDayStart(plusDays(date, 1), config.timezone, startHour);
-  const day = await readSnapshot(sql, (tx) => readDay(tx, date, today, from, to));
+  const day = await readSnapshot(sql, (tx) => readDay(tx, date, today, from, to), { statementTimeout: null });
   // 撤销误开的牌：本包列出每一次，写明是否超过更正时限；日结异常清单只列超过时限的（与日结同一时限）
   const { selfVoidMinutes } = await loadFrontdeskRules(sql);
   const checks = await consistencyChecks(sql, config.timezone);

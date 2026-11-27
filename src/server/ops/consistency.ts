@@ -34,41 +34,41 @@ export interface CheckLine {
 export async function consistencyChecks(sql: Sql, timezone: string): Promise<CheckLine[]> {
   const settings = await loadSettings(sql);
   const today = businessDateOf(new Date(), timezone, settings.businessDayStartHour);
-  const summary = await readSnapshot(sql, (tx) => computeSettlement(tx, today, today));
-  const inventory = await readSnapshot(sql, inventoryChecks);
-  const expenses = await readSnapshot(sql, expenseChecks);
+  const summary = await readSnapshot(sql, (tx) => computeSettlement(tx, today, today), { statementTimeout: null });
+  const inventory = await readSnapshot(sql, inventoryChecks, { statementTimeout: null });
+  const expenses = await readSnapshot(sql, expenseChecks, { statementTimeout: null });
   // 部门备用金台账（v0.7.29）：台账余额 = 各笔打款的未退回之和
-  const pettyAccounts = await readSnapshot(sql, pettyAccountChecks);
+  const pettyAccounts = await readSnapshot(sql, pettyAccountChecks, { statementTimeout: null });
   // 询价单与采购单的关联（v0.7.29）
-  const sourcing = await readSnapshot(sql, sourcingChecks);
-  const requests = await readSnapshot(sql, requestChecks);
-  const frontdesk = await readSnapshot(sql, frontdeskChecks);
+  const sourcing = await readSnapshot(sql, sourcingChecks, { statementTimeout: null });
+  const requests = await readSnapshot(sql, requestChecks, { statementTimeout: null });
+  const frontdesk = await readSnapshot(sql, frontdeskChecks, { statementTimeout: null });
   // 旧账只读表与导入记录一致（v0.7.10；旧账不进正式账，这里只核对只读表没被动过）
-  const legacy = await readSnapshot(sql, legacyChecks);
+  const legacy = await readSnapshot(sql, legacyChecks, { statementTimeout: null });
   // 空间台账与客房挂接（v0.7.14）
-  const spaces = await readSnapshot(sql, spaceChecks);
+  const spaces = await readSnapshot(sql, spaceChecks, { statementTimeout: null });
   // 底图批次与房间轮廓（v0.7.15）
-  const floorplans = await readSnapshot(sql, floorplanChecks);
+  const floorplans = await readSnapshot(sql, floorplanChecks, { statementTimeout: null });
   // 第一级实时位置（v0.7.17）：当前位置、轨迹段与位置事件一致
-  const locations = await readSnapshot(sql, locationChecks);
+  const locations = await readSnapshot(sql, locationChecks, { statementTimeout: null });
   // 会员体系 v2（v0.7.23）：档阶与状态变化记录一致、前后相接，到期都处理了
-  const membership = await readSnapshot(sql, membershipChecks);
-  const benefits = await readSnapshot(sql, benefitChecks);
+  const membership = await readSnapshot(sql, membershipChecks, { statementTimeout: null });
+  const benefits = await readSnapshot(sql, benefitChecks, { statementTimeout: null });
   // 邀请体验、赠送会籍（v0.7.25）
-  const trials = await readSnapshot(sql, trialChecks);
+  const trials = await readSnapshot(sql, trialChecks, { statementTimeout: null });
   // 储值退回（v0.7.26）
-  const refunds = await readSnapshot(sql, memberRefundChecks);
+  const refunds = await readSnapshot(sql, memberRefundChecks, { statementTimeout: null });
   // 会员合并（v0.7.26）
-  const merges = await readSnapshot(sql, memberMergeChecks);
+  const merges = await readSnapshot(sql, memberMergeChecks, { statementTimeout: null });
   // 会员卡押金（8.1.15）：押着的余额不为负、退卡与台账一致、押金不进储值
-  const cardDeposits = await readSnapshot(sql, cardDepositChecks);
+  const cardDeposits = await readSnapshot(sql, cardDepositChecks, { statementTimeout: null });
   // 合同与法务审查（v0.7.31）
-  const contracts = await readSnapshot(sql, contractChecks);
+  const contracts = await readSnapshot(sql, contractChecks, { statementTimeout: null });
   // 付款流（v0.7.32）
-  const payments = await readSnapshot(sql, paymentChecks);
+  const payments = await readSnapshot(sql, paymentChecks, { statementTimeout: null });
   // 应收与挂账（8.0.7）：挂账与结账一一对应、核销不超过挂账、回款与核销对得上
-  const receivables = await readSnapshot(sql, receivableChecks);
-  const customer = await readSnapshot(sql, customerChecks);
+  const receivables = await readSnapshot(sql, receivableChecks, { statementTimeout: null });
+  const customer = await readSnapshot(sql, customerChecks, { statementTimeout: null });
   return [
     ...summary.checks,
     ...inventory,

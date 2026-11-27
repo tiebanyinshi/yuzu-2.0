@@ -1,6 +1,7 @@
 // 运维命令行。容器内用法：docker compose exec app node dist/server/cli.js <命令>
 //
 //   migrate                               执行数据库迁移
+//   db-report                             数据库体检报告：最耗时的查询、没用过的索引、最大的表（只读，8.1.54）
 //   create-owner <账号> [--name 姓名] [--password 密码]
 //                                         创建店主账号（不填密码则生成临时密码，首次登录需修改）
 //   reset-password <账号>                 重置密码为临时密码
@@ -86,6 +87,7 @@ import { loadConfig, type AppConfig } from './config';
 import { createSql, type Sql } from './db';
 import { writeAudit } from './lib/audit';
 import { migrate } from './migrate';
+import { dbReport, formatDbReport } from './ops/db-report';
 import { ensureMembershipLive, runMembershipDaily } from './modules/membership';
 import { catalogImportPreview, importCatalog, runBenefitsDaily, runVisitChallenges } from './modules/benefits';
 import { seedDemo, DEMO_PASSWORD } from './seed';
@@ -760,6 +762,11 @@ async function main() {
           if (!r.prepare.check.ok) process.exitCode = 1;
           break;
         }
+        case 'db-report': {
+          // 数据库体检报告（8.1.54）：最耗时的查询、没用过的索引、最大的表；只读
+          console.log(formatDbReport(await dbReport(sql)));
+          break;
+        }
         case 'check': {
           const all = await consistencyChecks(sql, config.timezone);
           for (const c of all) console.log(`${c.ok ? '✓' : '✗'} ${c.label}：${c.detail}`);
@@ -913,7 +920,7 @@ async function main() {
         }
         default:
           console.log(
-            '可用命令：migrate | create-owner <账号> | reset-password <账号> | seed-demo [--force] | seed-inventory-demo | seed-frontdesk-demo [--previous-day] | seed-billing-demo [--previous-day] | seed-legacy-demo | demo-prepare [--previous-day] | demo-check | demo-reset --confirm <数据库名> | import-hand-tags | price-audit [--apply] | import-technicians | import-opening | check | fingerprint | backup | backup-loop | verify-backup | daily-recon | balance-changes | floorplan-convert | floorplan-sample | import-devices | device-selftest | device-printer-mock | device-bridge-mock | membership-daily | import-benefits | import-count-cards',
+            '可用命令：migrate | db-report | create-owner <账号> | reset-password <账号> | seed-demo [--force] | seed-inventory-demo | seed-frontdesk-demo [--previous-day] | seed-billing-demo [--previous-day] | seed-legacy-demo | demo-prepare [--previous-day] | demo-check | demo-reset --confirm <数据库名> | import-hand-tags | price-audit [--apply] | import-technicians | import-opening | check | fingerprint | backup | backup-loop | verify-backup | daily-recon | balance-changes | floorplan-convert | floorplan-sample | import-devices | device-selftest | device-printer-mock | device-bridge-mock | membership-daily | import-benefits | import-count-cards',
           );
           process.exitCode = command ? 1 : 0;
       }

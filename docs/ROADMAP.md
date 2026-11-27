@@ -318,6 +318,7 @@
 
 - **后端评估与加固 8.1.48（店主 2026-11-26「审查后端、出评估报告、学 Medusa / Supabase / Trigger.dev、以瘦身为目标」，报告见 `docs/BACKEND_REVIEW_V8148.md`）**：迁移号 `490`–`499`：
   - `490`（`490_audit_request_id.sql`）：审计记录 `audit_logs` 加请求编号 `request_id`（可空，日志与审计对得上）。回滚 `docs/rollback/490_audit_request_id.down.sql`。
+  - `491`（`491_pg_stat_statements.sql`，8.1.54）：建查询统计扩展 pg_stat_statements（没权限、没有这个扩展时跳过），`cli.js db-report` 看最慢的查询、没用过的索引。回滚 `docs/rollback/491_pg_stat_statements.down.sql`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
