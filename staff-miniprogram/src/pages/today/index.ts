@@ -194,6 +194,8 @@ Page({
     const anyOk = [punch, summary, unread, payslips, notices, patrol, menus].some((r) => r.ok);
     // 这个人有的那几块里有没取到的：标「之前的信息」（一块取到不能当成整页都是新的）；
     // 待办的来源没取到、手机上也没有上一份的：不写「都处理完了」
+    // 饭卡还没对上、饭堂没开：菜单本来就取不到（回「还没对上饭卡」「饭堂还没开张」），不算没取到
+    const menusExpected = has('canteen') && (!status.ok || (status.v.open && status.v.linked));
     const parts: [boolean, { ok: boolean }][] = [
       [has('punch'), punch],
       [has('approvals'), summary],
@@ -201,7 +203,7 @@ Page({
       [has('payslips'), payslips],
       [has('announcements'), notices],
       [has('patrol'), patrol],
-      [has('canteen'), menus],
+      [menusExpected, menus],
       [has('canteen'), status],
     ];
     const someFailed = parts.some(([entry, r]) => entry && !r.ok);
