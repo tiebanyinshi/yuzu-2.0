@@ -186,3 +186,18 @@ async function upload(who: Emp) {
   expect(r.status, JSON.stringify(r.body)).toBe(201);
   return r.body.id;
 }
+
+describe('报销不自动通过（8.2.6，《业财法审批与 WCP 需求变更》B1）', () => {
+  it('发起人就是最上级：没有别的店主时拦下，不直接通过；有别的店主时交给他审', async () => {
+    const owner: Emp = { id: ctx.ownerId, cookie: ctx.owner };
+    const form = async () => ({ category: '交通', amount: 8_800, occurredOn: '2031-05-02', invoices: [await upload(owner)] });
+    expect(code(await post(owner, 'expense', await form()))).toBe('NO_APPROVER');
+    await ctx.sql`INSERT INTO staff (username, display_name, role, password_hash) SELECT 'at_owner2', '第二位店主', 'owner', password_hash FROM staff WHERE id = ${ctx.ownerId}`;
+    const [o2] = await ctx.sql<{ id: number }[]>`SELECT id FROM staff WHERE username = 'at_owner2'`;
+    const e = await ok(owner, 'expense', await form());
+    expect(e.status).toBe('pending');
+    expect(e.steps.map((s) => s.approverId)).toEqual([Number(o2!.id)]);
+    // 别的单照旧（OA12）：店主自己发起的通用审批直接通过
+    expect((await ok(owner, 'general', { title: '用章', content: '盖章' })).status).toBe('approved');
+  });
+});

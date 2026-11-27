@@ -2,7 +2,8 @@
 //
 // 口径：
 //   · 每笔打款单独平账，只算已确认的报销：应退回 = 打款 − 支出；实际退回 = 退回 − 补付；未退回 = 应退回 − 实际退回。
-//   · 报销单超过门槛（D13，默认 2000 元）要负责人确认；不超过的登记即确认。内容不可改，错了撤回或冲销后重新登记。
+//   · 报销单都要审批（8.2.6，《业财法审批与 WCP 需求变更》B1：原来门槛以内登记即确认，现在默认关）；提交人不能审自己的单；
+//     查不到能审的人时单据停在待审、告诉店主，不自动通过。内容不可改，错了撤回或冲销后重新登记。
 //   · 按采购单报销只能选现付供应商的采购单；采购单的每一行只能在一张有效的报销单里。
 //   · 打款、退回、补付登记即生效，错了由负责人冲销。
 // 加锁顺序：备用金打款 → 采购单 → 报销单 / 退回补付单。
@@ -56,7 +57,8 @@ import { nextDocNo, setTxTimeouts } from '../lib/tx';
 import { hashRequest } from '../lib/idempotency';
 import { saveRuleSetting } from '../lib/rule-settings';
 import { ChannelKey, ChannelNote, loadPurchaseRules, resolveChannel } from './inventory/purchase-rules';
-import { approvalBrief, approveCurrent, closeApproval, overBudgetPlan, returnCurrent, submitForApproval } from './approvals/engine';
+import { approvalBrief, approveCurrent, closeApproval, overBudgetPlan, returnCurrent, submitForApproval } from './approvals';
+import { alertIfNoApprover, autoApprovedCsv } from './expense-guard';
 import { receiptAttachments } from './inventory/attachments';
 import { checkClaimBudget } from './budgets';
 import { resolveClaimInvoice } from './invoices';
@@ -704,7 +706,8 @@ async function lockAdvance(tx: Tx, advanceId: number) {
 
 export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
   const input = parse(ClaimInput, raw);
-  if (input.approveNow && !can(actor, 'expense.approve')) throw forbidden('当前账号不能确认报销，请提交给负责人');
+  // 8.2.6（B1 / 7.3 第 4 条）：不再有「登记时同时以负责人身份确认」，报销都要别人审
+  if (input.approveNow) throw forbidden('报销不能由登记的人自己确认，请提交给负责人审批');
   assertNotFuture(input.expenseDate, deps.config.timezone);
   const rules = await loadExpenseRules(deps.sql);
   if (!rules.purposes.includes(input.purpose)) throw unprocessable('PURPOSE_INVALID', `用途只能从固定选项里选：${rules.purposes.join('、')}`);
@@ -732,7 +735,8 @@ export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: s
   }
   const total = input.lines.reduce((t, l) => t + l.amountCents, 0);
   if (input.invoiceTaxCents !== null && input.invoiceTaxCents > total) throw badRequest('税额不能超过报销金额');
-  const needsApproval = total > rules.approvalThresholdCents;
+  // 门槛以内登记即确认只在显式打开时才有（默认关，B1 / Q9）
+  const needsApproval = !rules.autoConfirmBelowThreshold || total > rules.approvalThresholdCents;
   // 手填的不放进摘要：升级前就在「结果待确认」里的原请求照样对得上
   const requestHash = hashRequest({
     ...input,
@@ -861,7 +865,7 @@ export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: s
         { actor, timeZone: deps.config.timezone },
         {
           fallback: needsApproval || budget.overBudget,
-          approveNow: input.approveNow,
+          forbidSelf: true,
           defaultPlan: budget.overBudget ? await overBudgetPlan(tx, { amountCents: total, departmentId: input.departmentId, fallback: needsApproval }) : undefined,
         },
       );
@@ -869,9 +873,10 @@ export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: s
       if (confirmNow) {
         await tx`UPDATE expense_claims SET status = 'confirmed', confirmed_by = ${actor.id}, confirmed_at = now(), needs_approval = ${!r.skipped} WHERE id = ${newId}`;
         await logApproval(tx, 'expense_claim', newId, 'approve', actor.id, r.skipped ? '未超过确认门槛，登记即确认' : '');
-      } else if (!needsApproval) {
+      } else {
         // 门槛以内、但命中了审批规则
-        await tx`UPDATE expense_claims SET needs_approval = true WHERE id = ${newId}`;
+        if (!needsApproval) await tx`UPDATE expense_claims SET needs_approval = true WHERE id = ${newId}`;
+        await alertIfNoApprover(tx, newId, docNo);
       }
       await writeAudit(tx, {
         staffId: actor.id,
@@ -904,8 +909,8 @@ export async function actOnClaim(deps: Deps, claimId: number, action: 'approve' 
     const [head] = await tx<{ advanceId: number | null }[]>`SELECT advance_id FROM expense_claims WHERE id = ${claimId}`;
     if (!head) throw notFound('报销单不存在');
     const advance = head.advanceId ? await lockAdvance(tx, head.advanceId) : null;
-    const [c] = await tx<{ id: number; status: ClaimStatus; createdBy: number; expenseDate: string }[]>`
-      SELECT id, status, created_by, expense_date FROM expense_claims WHERE id = ${claimId} FOR UPDATE`;
+    const [c] = await tx<{ id: number; docNo: string; status: ClaimStatus; createdBy: number; expenseDate: string }[]>`
+      SELECT id, doc_no, status, created_by, expense_date FROM expense_claims WHERE id = ${claimId} FOR UPDATE`;
     const mine = c!.createdBy === actor.id;
     switch (action) {
       case 'approve': {
@@ -945,8 +950,10 @@ export async function actOnClaim(deps: Deps, claimId: number, action: 'approve' 
         // 退回后再提交按当时的规则从第一级重新走；没有规则命中按默认规则（与以前一样，退回的再提交都要确认）
         await submitForApproval(tx, 'expense_claim', claimId, ctx, {
           fallback: true,
+          forbidSelf: true,
           defaultPlan: budget.overBudget ? await overBudgetPlan(tx, { amountCents: Number(cur!.amountCents), departmentId: Number(cur!.departmentId), fallback: true }) : undefined,
         });
+        await alertIfNoApprover(tx, claimId, c!.docNo);
         return logApproval(tx, 'expense_claim', claimId, 'submit', actor.id);
       case 'cancel':
         if (c!.status === 'cancelled') return;
@@ -1365,6 +1372,8 @@ export function registerExpenseRoutes(app: FastifyInstance, deps: Deps) {
           invoiceCertifyDays: rules.invoiceCertifyDays ?? before.invoiceCertifyDays,
           invoiceRemindDays: rules.invoiceRemindDays ?? before.invoiceRemindDays,
           invoiceTaxToleranceCents: rules.invoiceTaxToleranceCents ?? before.invoiceTaxToleranceCents,
+          // 8.2.6（B1，Q9）：页面不改这一项，存过的原样留着（默认关）
+          autoConfirmBelowThreshold: before.autoConfirmBelowThreshold,
         };
         return typeof legacy === 'number' ? ({ ...merged, arrivalOverdueDays: legacy } as ExpenseRules) : merged;
       },
@@ -1385,6 +1394,12 @@ export function registerExpenseRoutes(app: FastifyInstance, deps: Deps) {
     const csv = await readSnapshot(sql, (tx) => claimsCsv(tx, f));
     await writeAudit(sql, { staffId: req.actor.id, action: 'export', targetType: 'expense_claims', detail: f, ip: req.ip });
     return csvReply(reply, `费用报销明细_${f.from}_${f.to}.csv`, csv);
+  });
+  // 8.2.6（7.4）：没经过审批就通过的报销清单
+  app.get('/api/erp/expenses/auto-approved', { preHandler: guard('expense.export') }, async (req, reply) => {
+    const csv = await readSnapshot(sql, autoApprovedCsv);
+    await writeAudit(sql, { staffId: req.actor.id, action: 'export', targetType: 'expense_claims', detail: { list: 'auto_approved' }, ip: req.ip });
+    return csvReply(reply, '没经过审批就通过的报销.csv', csv);
   });
   app.get('/api/erp/expenses/checks', { preHandler: guard('expense.read') }, async () => readSnapshot(sql, expenseChecks));
   // 经办人：在职的员工（只给名字，不给账号与岗位）

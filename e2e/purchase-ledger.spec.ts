@@ -5,6 +5,7 @@
 // 依赖四套演示数据（仅独立演示库）；账号：店主 linlan，密码 yuzu2026。只在门店电脑尺寸执行。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
+import { deputyApproveClaim, makeDeputy } from './deputy';
 import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
@@ -23,7 +24,7 @@ async function login(page: Page, username: string) {
 test.describe('采购台账、账目自检、下单物料', () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '会登记单据的流程只在门店电脑尺寸执行一次');
 
-  test('台账逐笔、导出；自检列出没有采购单的备用金报销；下单物料导出带图片的 Excel', async ({ page }) => {
+  test('台账逐笔、导出；自检列出没有采购单的备用金报销；下单物料导出带图片的 Excel', async ({ page, playwright, baseURL }) => {
     await login(page, 'linlan');
     const me = (await (await page.request.get('/api/auth/me')).json()) as { calendarToday: string; staff: { id: number } };
     const today = me.calendarToday;
@@ -57,6 +58,8 @@ test.describe('采购台账、账目自检、下单物料', () => {
         },
       })
     ).json()) as { claim: { id: number; docNo: string } };
+    // 8.2.6（B1）：报销不再登记即确认，由临时负责人审
+    await deputyApproveClaim(await makeDeputy(page, playwright, baseURL), claim.claim.id);
 
     // 带规格与图片的采购单（提交并确认）
     const img = (await (await page.request.post('/api/erp/images', { data: { mime: 'image/png', data: PNG.toString('base64') } })).json()) as { id: number };

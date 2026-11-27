@@ -313,11 +313,13 @@ export async function submitForApproval(
   kind: ApprovalDocKind,
   docId: number,
   ctx: { actor: Actor; timeZone: string },
-  opts: { fallback: boolean; approveNow?: boolean; comment?: string; defaultPlan?: ApprovalPlan },
+  opts: { fallback: boolean; approveNow?: boolean; comment?: string; defaultPlan?: ApprovalPlan; forbidSelf?: boolean },
 ): Promise<SubmitResult> {
   const info = await describeDoc(tx, kind, docId);
-  const plan = await planApproval(tx, { docType: info.docType, amountCents: info.amountCents, departmentId: info.departmentId, fallback: opts.fallback, defaultPlan: opts.defaultPlan });
-  if (!plan) return { outcome: 'effective', requestId: null, skipped: true };
+  const found = await planApproval(tx, { docType: info.docType, amountCents: info.amountCents, departmentId: info.departmentId, fallback: opts.fallback, defaultPlan: opts.defaultPlan });
+  if (!found) return { outcome: 'effective', requestId: null, skipped: true };
+  // 报销（8.2.6，B1）：提交人不能审自己的单，规则里勾了「提交人可以审」也不行
+  const plan = opts.forbidSelf ? { ...found, allowSelf: false } : found;
   const requestId = await insertRequest(tx, kind, docId, info, plan, ctx.actor.id);
   if (opts.approveNow) {
     const r = await approveCurrent(tx, kind, docId, ctx, { comment: opts.comment ?? '', selfSubmit: true });

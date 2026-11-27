@@ -1,9 +1,10 @@
 // 8.0.3 费用预算与进项发票台账浏览器验收（docs/BUDGET_INVOICES.md）：
 //   店主建一个部门，在「费用预算」给办公用品设 100 元 → 登记报销（专票、150 元办公用品）：页面提示超预算、台账里没有这张发票会自动登记
-//   → 报销单标「超预算」、写明超了多少、待店主同意（店主在详情里同意）、关联台账发票 → 发票台账里标已认证（所属期本月）
+//   → 报销单标「超预算」、写明超了多少、待审批（店主自己登记的，由临时负责人审）、关联台账发票 → 发票台账里标已认证（所属期本月）
 //   → 台账里直接登记一张普票（不用认证）→ 再登记一张专票，在「待认证」里勾选、一次标已认证。
 // 依赖演示数据（仅独立演示库）；账号：店主 linlan，密码 yuzu2026。只在门店电脑尺寸执行。
 import { expect, test, type Page } from '@playwright/test';
+import { deputyApproveClaim, makeDeputy, type Deputy } from './deputy';
 import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
@@ -20,7 +21,7 @@ async function login(page: Page, username: string) {
 test.describe('费用预算与发票台账', () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '会登记单据的流程只在门店电脑尺寸执行一次');
 
-  test('设预算 → 超预算报销自动登记发票 → 台账认证、直接登记、批量标认证', async ({ page }) => {
+  test('设预算 → 超预算报销自动登记发票 → 台账认证、直接登记、批量标认证', async ({ page, playwright, baseURL }) => {
     await login(page, 'linlan');
     const run = Date.now().toString(36).slice(-6).toUpperCase();
     // 每次用新部门：预算与已占用不受之前跑过的影响。排在最后、跑完清掉额度并停用——
@@ -31,7 +32,13 @@ test.describe('费用预算与发票台账', () => {
     const dept = depts.find((d) => d.name === deptName)!;
     expect(dept).toBeTruthy();
     try {
-      await budgetsAndInvoices(page, dept, run);
+      // 8.2.6（B1）：店主自己登记的报销店主不能审；这个部门的「超预算报销」临时交给一位临时负责人
+      const deputy = await makeDeputy(page, playwright, baseURL);
+      const rule = await page.request.post('/api/approvals/rules', {
+        data: { clientKey: crypto.randomUUID(), docType: 'expense_over_budget', departmentId: dept.id, steps: [{ staffIds: [deputy.id], mode: 'any' }], note: `E2E 预算 ${run}` },
+      });
+      expect(rule.ok(), await rule.text()).toBe(true);
+      await budgetsAndInvoices(page, dept, run, deputy);
     } finally {
       const grid = (await (await page.request.get('/api/erp/expenses/budgets')).json()) as {
         month: string;
@@ -46,7 +53,7 @@ test.describe('费用预算与发票台账', () => {
   });
 });
 
-async function budgetsAndInvoices(page: Page, dept: { id: number; name: string }, run: string) {
+async function budgetsAndInvoices(page: Page, dept: { id: number; name: string }, run: string, deputy: Deputy) {
   // ① 费用预算：办公用品 100 元、运费 200 元
   await page.goto('/erp/expenses/budgets');
   await expect(page.getByTestId('budgets-page')).toBeVisible();
@@ -107,9 +114,12 @@ async function budgetsAndInvoices(page: Page, dept: { id: number; name: string }
   const claimSheet = page.getByTestId('claim-sheet');
   await expect(claimSheet).toContainText('超预算');
   await expect(page.getByTestId('claim-budget-check')).toContainText('超出 ¥50.00');
-  // 门槛以内超预算：不再登记即确认，走「超预算报销」一级店主；店主在详情里同意
+  // 超预算：走「超预算报销」（这个部门的规则交给临时负责人）；店主自己登记的店主不能审（8.2.6，B1）
   await expect(claimSheet).toContainText('待确认');
-  await page.getByTestId('claim-approve').click();
+  await expect(page.getByTestId('claim-approve')).toHaveCount(0);
+  const claimId = Number(new URL(page.url()).searchParams.get('claim'));
+  expect((await deputyApproveClaim(deputy, claimId)).status).toBe('confirmed');
+  await page.reload();
   await expect(claimSheet).toContainText('已确认');
   const link = page.getByTestId('claim-invoice-link');
   await expect(link).toContainText('E2E 文具店');

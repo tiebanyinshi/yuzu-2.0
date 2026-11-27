@@ -120,6 +120,17 @@ async function activeSubjects(db: Db): Promise<ApproverSubject[]> {
   });
 }
 
+/**
+ * 刚开的审批单当前这一级有没有人能审（8.2.6，B1 / 7.3：查不到审批人的单停在待审并告警，不自动通过）。
+ * 没有在审的审批单返回 false
+ */
+export async function pendingStuck(db: Db, kind: ApprovalDocKind, docId: number): Promise<boolean> {
+  const [r] = await db<{ id: number }[]>`SELECT id FROM approval_requests WHERE doc_kind = ${kind} AND doc_id = ${docId} AND status = 'pending'`;
+  if (!r) return false;
+  const [req] = await loadRequests(db, { ids: [Number(r.id)] });
+  return !!req && isStuck(req, await activeSubjects(db));
+}
+
 /** 这一级目前有没有人能审：或签要有一位在用、能审的（提交人不能审自己的单时不算提交人）；会签要指定的人都还能审，或者有店主 */
 function isStuck(req: RequestRow, staff: ApproverSubject[]): boolean {
   const step = req.steps[req.currentLevel - 1]!;

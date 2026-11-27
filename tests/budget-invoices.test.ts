@@ -13,7 +13,7 @@ import { createStaff } from '../src/server/modules/staff';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
 import { consistencyChecks } from '../src/server/ops/consistency';
 import { loadLedger } from '../src/server/modules/invoices';
-import { api, login, PASSWORD, setup, type TestContext } from './helpers';
+import { api, login, PASSWORD, setup, type TestContext, confirmSmallClaim } from './helpers';
 
 let ctx: TestContext;
 let today: string;
@@ -31,7 +31,7 @@ let deptD: number;
 const q = (n: number) => Math.round(n * 1000);
 
 const line = (over: Record<string, unknown> = {}) => ({ name: '打印纸', category: 'office', unit: '包', boughtMilli: q(1), receivedMilli: q(1), amountCents: 10_000, ...over });
-const claim = (body: Record<string, unknown> = {}, cookie = coster) =>
+const claimRaw = (body: Record<string, unknown> = {}, cookie = coster) =>
   api(ctx.app, cookie, 'POST', '/api/erp/expenses', {
     clientKey: randomUUID(),
     expenseDate: today,
@@ -44,6 +44,24 @@ const claim = (body: Record<string, unknown> = {}, cookie = coster) =>
     lines: [line()],
     ...body,
   });
+/** 以前门槛以内会自动确认的（8.2.6 起都要审批）：登记后由店主审批通过 */
+const claim = async (body: Record<string, unknown> = {}, cookie = coster) =>
+  confirmSmallClaim(
+    ctx.app,
+    ctx.owner,
+    await api(ctx.app, cookie, 'POST', '/api/erp/expenses', {
+      clientKey: randomUUID(),
+      expenseDate: today,
+      departmentId: deptA,
+      handlerId: costerId,
+      purpose: '办公',
+      paySource: 'company',
+      invoiceType: 'receipt',
+      taxRateBp: 0,
+      lines: [line()],
+      ...body,
+    }),
+  );
 const ok = async (p: Promise<{ status: number; body: any }>, status = 201) => {
   const r = await p;
   expect(r.status, JSON.stringify(r.body)).toBe(status);
@@ -125,18 +143,18 @@ describe('费用预算（BI01–BI06）', () => {
     expect(cellOf(await grid(), deptB)).toMatchObject({ usedCents: 70_000, level: 'ok' });
   });
 
-  it('门槛以内超预算：不拦登记，走「超预算报销」一级店主；负责人批不了，店主批了生效', async () => {
+  it('门槛以内超预算：不拦登记，走「超预算报销」负责人 → 店主（8.2.6 起门槛以内也要负责人审）；负责人批完还要店主', async () => {
     await ok(setBudget(deptC, 50_000), 200);
     await ok(claim({ departmentId: deptC, lines: [line({ amountCents: 40_000 })] }));
     const over = (await ok(claim({ departmentId: deptC, lines: [line({ amountCents: 20_000 })] }))).claim;
     expect(over).toMatchObject({ status: 'submitted', overBudget: true, needsApproval: true });
     expect(over.budgetCheck).toEqual([{ category: 'office', month, budgetCents: 50_000, usedBeforeCents: 40_000, claimCents: 20_000 }]);
     expect(over.approval).toMatchObject({ docType: 'expense_over_budget', currentLevel: 1 });
-    expect(over.approval.stepLabels).toEqual(['店主']);
+    expect(over.approval.stepLabels).toEqual(['负责人', '店主']);
     // 审批页的摘要写着超了多少
     const card = (await api(ctx.app, boss, 'GET', `/api/approvals/${over.approval.requestId}`)).body;
     expect(card.doc.facts.find((f: { label: string }) => f.label === '超预算').value).toContain('超出 ¥100.00');
-    expect((await approveClaim(over.id, approver)).status).toBe(403);
+    expect((await ok(approveClaim(over.id, approver), 200)).status).toBe('submitted');
     expect((await ok(approveClaim(over.id, boss), 200)).status).toBe('confirmed');
   });
 
@@ -198,7 +216,7 @@ describe('费用预算（BI01–BI06）', () => {
       note: '十块以内店主看',
     });
     expect(rule.status, JSON.stringify(rule.body)).toBe(201);
-    const small = (await ok(claim({ lines: [line({ amountCents: 500 })] }))).claim;
+    const small = (await ok(claimRaw({ lines: [line({ amountCents: 500 })] }))).claim;
     expect(small).toMatchObject({ status: 'submitted', needsApproval: true, overBudget: false });
     expect(small.approval.stepLabels).toEqual(['店主']);
     expect((await ok(approveClaim(small.id, boss), 200)).status).toBe('confirmed');

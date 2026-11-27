@@ -143,6 +143,13 @@ async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, 
     revision = prev.revision + 1;
   }
   const chain = await resolveChain(tx, template, actor, form);
+  // 报销不自动通过（8.2.6，《业财法审批与 WCP 需求变更》B1 / 7.3）：发起人就是最上级、一级都不剩的，交给另一位店主审；
+  // 没有别的店主就不让提交（不再按 OA12 直接通过）。别的单照旧
+  if (!chain.steps.length && template.code === 'expense') {
+    const [o] = await tx<{ id: number }[]>`SELECT id FROM staff WHERE active AND NOT system AND role = 'owner' AND id <> ${actor.id} ORDER BY id LIMIT 1`;
+    if (!o) throw unprocessable('NO_APPROVER', '这张报销没有能审批的人（发起人就是最上级）。报销不能自动通过，请店主在「WCP 设置 → 审批模板」里给报销指定审批人');
+    chain.steps.push({ approverId: Number(o.id), label: '店主审批（报销不自动通过）' });
+  }
   const [row] = await tx<{ id: number }[]>`
     INSERT INTO oa_approvals (template_id, template_code, template_name, fields, applicant_id, title, form, status, revision, previous_id, finished_at)
     VALUES (${template.id}, ${template.code}, ${template.name}, ${tx.json(template.fields as never)}, ${actor.id}, ${title.slice(0, 100)}, ${tx.json(form as never)},

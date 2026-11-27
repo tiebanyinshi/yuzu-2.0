@@ -112,6 +112,19 @@ export async function api<T = any>(app: FastifyInstance, cookie: string | null, 
 }
 
 /**
+ * 报销不再「门槛以内登记即确认」（8.2.6，《业财法审批与 WCP 需求变更》B1）：以前会自动确认的小额报销（≤ ¥2,000、没超预算），
+ * 登记后由 approver（别人，不能是登记人）审批通过，测别的功能的用例照旧拿到已确认的报销
+ */
+export async function confirmSmallClaim<T extends { status: number; body: any }>(app: FastifyInstance, approver: string, res: T): Promise<T> {
+  const c = res.body?.claim;
+  if (res.status !== 201 || !c || c.status !== 'submitted' || c.amountCents > 200_000 || c.overBudget) return res;
+  const r = await api(app, approver, 'POST', `/api/erp/expenses/${c.id}/approve`, {});
+  if (r.status !== 200) throw new Error(`审批报销 ${c.docNo} 没通过：${JSON.stringify(r.body)}`);
+  res.body.claim = r.body;
+  return res;
+}
+
+/**
  * 没给手机号时自动取一个：166 号段、按顺序往下排，不会与用例里写死的号码（都是 199、13x 等）相撞，同一个文件里几次调用之间也不会撞。
  * 原来是「1990000 + 随机四位」（19900001000–19900009999），正好盖住用例里写死的 1990000xxxx。
  * 2026-11-14 main（68391d6）第一次 CI 里 concierge-rectify 的一条用例第一行建会员报 PHONE_EXISTS、整轮集成测试失败：

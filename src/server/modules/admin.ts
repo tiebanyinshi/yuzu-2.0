@@ -1213,8 +1213,9 @@ export async function ruleCatalog(db: Db): Promise<RuleEntry[]> {
     key: 'expense_rules.threshold',
     group: 'erp',
     label: '报销要负责人确认的门槛',
-    value: `单笔超过 ${formatYuan(exp.approvalThresholdCents)}`,
-    defaultValue: `单笔超过 ${formatYuan(expd.approvalThresholdCents)}`,
+    // 8.2.6（B1）：门槛以内自动确认默认关，全部报销都要审批；门槛只在打开时才有用
+    value: exp.autoConfirmBelowThreshold ? `单笔超过 ${formatYuan(exp.approvalThresholdCents)}` : '全部要审批（门槛以内自动确认已关）',
+    defaultValue: '全部要审批（门槛以内自动确认已关）',
     pending: true,
     section: 'rules',
     href: '/erp/settings/expenses',

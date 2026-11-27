@@ -53,8 +53,13 @@ export function invoiceTypeCertifies(t: Pick<InvoiceTypeDef, 'key' | 'certify'>)
 }
 
 export interface ExpenseRules {
-  /** 单笔超过这个金额要负责人确认（D13：默认 2000 元，可调） */
+  /** 单笔超过这个金额要负责人确认（D13：默认 2000 元，可调）；8.2.6 起只在「门槛以内自动确认」打开时才有用 */
   approvalThresholdCents: number;
+  /**
+   * 门槛以内登记即确认（8.2.6，《业财法审批与 WCP 需求变更》B1 / 7.3：去掉默认自动通过）：默认关，全部报销都要审批；
+   * 页面上不给改（Q9：不开放给普通配置），要恢复旧做法只能直接改设置（会写进 docs/PENDING_DECISIONS.md WB9）
+   */
+  autoConfirmBelowThreshold: boolean;
   /** 打款后超过多少天还没平账标红（12 条自检第 4 条：默认 7 天） */
   overdueDays: number;
   /** 用途（固定选项） */
@@ -73,6 +78,7 @@ export interface ExpenseRules {
 /** 默认规则（待确认）：店主在 ERP「模块设置」里改 */
 export const DEFAULT_EXPENSE_RULES: ExpenseRules = {
   approvalThresholdCents: 200_000,
+  autoConfirmBelowThreshold: false,
   overdueDays: 7,
   purposes: ['客用消耗', '员工用品', '办公', '维修保养', '装修改造', '营销活动', '餐饮原料', '其他'],
   invoiceTypes: [
