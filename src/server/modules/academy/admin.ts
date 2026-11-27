@@ -383,7 +383,7 @@ export async function updatePath(sql: Sql, id: number, raw: unknown, ctx: OpCont
       WHERE id = ${id}`;
     if (stages.join(',') !== input.courseIds.join(',')) await writeStages(tx, id, input.courseIds);
     // 上架、改了阶段：已经学完的人补记学完与地图学分（Codex 审查 dd885a6）
-    if (input.status === 'published' && (p.status !== 'published' || stages.join(',') !== input.courseIds.join(','))) await settlePathForAll(tx, id, today);
+    if (input.status === 'published' && (p.status !== 'published' || stages.join(',') !== input.courseIds.join(','))) await settlePathForAll(tx, [id], today);
     await audit(tx, ctx, 'academy_path_saved', 'academy_path', id, `修改了学习地图「${input.title}」`);
   });
   return (await adminPaths(sql)).find((p) => p.id === id)!;

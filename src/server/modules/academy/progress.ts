@@ -141,18 +141,20 @@ export async function settlePaths(tx: Tx, staffId: number, pathIds: number[] | n
 }
 
 /**
- * 管理员上架地图、改了阶段：给已经学完的人补记（地图一行已锁）。
- * 先按员工编号升序把这批人的学员锁都取齐，再逐个结算：结算里发证书要锁当天的证书单号计数，
- * 边结算边取下一位的锁的话，这边拿着计数等那位的锁、那位拿着自己的锁等计数，就成环了（Codex 审查 be8f2e7）。
+ * 管理员上架地图、改了阶段，导入课件包更新了地图：给已经学完的人补记（这些地图的行调用方都已锁好）。
+ * 先按员工编号升序把这批人（几张地图合在一起）的学员锁都取齐，再逐个结算：结算里发证书要锁当天的证书单号计数，
+ * 边结算边取下一位的锁的话，这边拿着计数等那位的锁、那位拿着自己的锁等计数，就成环了（Codex 审查 be8f2e7）；
+ * 导入时几张地图一起结算，不在拿着学员锁时再去锁下一张地图（Codex 审查 b72dc70）。
  */
-export async function settlePathForAll(tx: Tx, pathId: number, today: string) {
+export async function settlePathForAll(tx: Tx, pathIds: number[], today: string) {
+  if (!pathIds.length) return;
   const staff = await tx<{ staffId: number }[]>`
     SELECT DISTINCT pr.staff_id FROM academy_progress pr JOIN academy_lessons l ON l.id = pr.lesson_id
     JOIN academy_path_courses pc ON pc.course_id = l.course_id
-    WHERE pc.path_id = ${pathId} AND pr.completed_at IS NOT NULL ORDER BY pr.staff_id`;
+    WHERE pc.path_id IN ${tx(pathIds)} AND pr.completed_at IS NOT NULL ORDER BY pr.staff_id`;
   const ids = staff.map((r) => Number(r.staffId));
   for (const id of ids) await lockLearner(tx, id);
-  for (const id of ids) await settlePaths(tx, id, [pathId], today);
+  for (const id of ids) await settlePaths(tx, id, pathIds, today);
 }
 
 /**

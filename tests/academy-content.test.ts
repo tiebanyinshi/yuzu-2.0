@@ -77,6 +77,29 @@ describe('学堂 · 内置课件包', () => {
     expect(course).toMatchObject({ status: 'published', title: '前厅与收银应知应会（本店版）' });
     expect((await ctx.sql`SELECT status FROM academy_courses WHERE id = ${spa.courseId}`)[0]!.status).toBe('published');
   });
+
+  it('包里两张已上架的地图有新内容：都写完以后一起补记，先学完的人两张都记上、各发一张证书（Codex 审查 b72dc70）', async () => {
+    const codes = ['spa-general', 'safety-annual'];
+    const paths = await ctx.sql<{ id: number }[]>`SELECT id FROM academy_paths WHERE code IN ${ctx.sql(codes)}`;
+    const ids = paths.map((p) => Number(p.id));
+    await ctx.sql`UPDATE academy_courses SET status = 'published' WHERE id IN (SELECT course_id FROM academy_path_courses WHERE path_id IN ${ctx.sql(ids)})`;
+    await ctx.sql`UPDATE academy_paths SET status = 'published', pack_hash = ${'0'.repeat(64)} WHERE id IN ${ctx.sql(ids)}`;
+    // 两个人已经把这两张地图的课都学完了（地图后来才有新内容）
+    for (const staffId of [ctx.clerkId, ctx.ownerId]) {
+      await ctx.sql`
+        INSERT INTO academy_progress (staff_id, lesson_id, completed_at)
+        SELECT ${staffId}, l.id, now() FROM academy_lessons l
+        WHERE l.active AND l.course_id IN (SELECT course_id FROM academy_path_courses WHERE path_id IN ${ctx.sql(ids)})
+        ON CONFLICT (staff_id, lesson_id) DO UPDATE SET completed_at = now()`;
+    }
+    const r = await importPacks({});
+    expect(r.body.paths.filter((p) => codes.includes(p.code)).map((p) => p.result)).toEqual(['updated', 'updated']);
+    const done = await ctx.sql`SELECT staff_id, path_id FROM academy_path_completions WHERE path_id IN ${ctx.sql(ids)}`;
+    expect(done).toHaveLength(4);
+    const certs = await ctx.sql<{ certNo: string }[]>`SELECT cert_no FROM academy_certificates WHERE path_id IN ${ctx.sql(ids)}`;
+    expect(certs).toHaveLength(4);
+    expect(new Set(certs.map((c) => c.certNo)).size).toBe(4);
+  });
 });
 
 describe('学堂 · 表格导入题', () => {

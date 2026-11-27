@@ -235,6 +235,9 @@ export async function importPacks(sql: Sql, raw: unknown, ctx: OpContext, today:
       result.courses.push({ code: c.code, title: c.title, result: row ? 'updated' : 'created' });
     }
     const inDb = new Map((await tx<{ id: number; code: string }[]>`SELECT id, code FROM academy_courses WHERE code IS NOT NULL`).map((r) => [r.code, Number(r.id)] as const));
+    // 上架的地图写完以后一起补记：先把要动的地图都锁好、写好，最后一次取齐学员锁再结算，
+    // 不在拿着学员锁时再去锁下一张地图（管理员改地图是先锁地图再取学员锁，Codex 审查 b72dc70）
+    const toSettle: number[] = [];
     for (const p of packs.paths) {
       if (pick && !p.courses.every((c) => pick.has(c) || inDb.has(c))) continue;
       if (!p.courses.every((c) => inDb.has(c))) continue;
@@ -273,9 +276,10 @@ export async function importPacks(sql: Sql, raw: unknown, ctx: OpContext, today:
       await tx`DELETE FROM academy_path_courses WHERE path_id = ${pathId}`;
       for (const [i, code] of p.courses.entries()) await tx`INSERT INTO academy_path_courses (path_id, course_id, seq) VALUES (${pathId}, ${inDb.get(code)!}, ${i + 1})`;
       const [now] = await tx<{ status: AcademyStatus }[]>`SELECT status FROM academy_paths WHERE id = ${pathId}`;
-      if (now!.status === 'published') await settlePathForAll(tx, pathId, today);
+      if (now!.status === 'published') toSettle.push(pathId);
       result.paths.push({ code: p.code, title: p.title, result: row ? 'updated' : 'created' });
     }
+    await settlePathForAll(tx, toSettle, today);
     await tx`
       INSERT INTO academy_bulk_ops (client_key, kind, request_hash, status, result, created_by, finished_at)
       VALUES (${input.clientKey}, 'pack_import', ${hash}, 'done', ${tx.json(result as never)}, ${ctx.actor.id}, now())`;
