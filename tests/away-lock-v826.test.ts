@@ -92,6 +92,24 @@ describe('锁牌外出', () => {
     await checks();
   });
 
+  it('转单也不能转进锁着的牌；前台「返回」一并解锁', async () => {
+    const a = await enter();
+    const b = await enter();
+    const line = (await post(a.id)).body.lines.find((l) => l.status === 'active')!;
+    expect((await lock(b.id, {})).status).toBe(200);
+    const moved = await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/lines/move', { clientKey: randomUUID(), lineIds: [line.id], toTagCode: b.tagCode, reason: '挂错手牌' });
+    expect(code(moved)).toBe('TAG_AWAY_LOCKED');
+    // 前台异常处置点「返回」：外出取消，锁一并解开（不留「已返回、牌还锁着」）
+    const back = await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/visits/${b.id}/incidents`, { clientKey: randomUUID(), kind: 'return' });
+    expect(back.status, JSON.stringify(back.body)).toBe(200);
+    const [row] = await ctx.sql<{ releaseKind: string; releasedBy: number }[]>`SELECT release_kind, released_by FROM visit_tag_locks WHERE visit_id = ${b.id}`;
+    expect(row!.releaseKind).toBe('return');
+    expect(row!.releasedBy).not.toBeNull();
+    const again = await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/lines/move', { clientKey: randomUUID(), lineIds: [line.id], toTagCode: b.tagCode, reason: '挂错手牌' });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    await checks();
+  });
+
   it('结账时自动解锁，预售照押金抵扣；储值收的预售先退回原卡再扣', async () => {
     const m = await createMember(ctx, '锁牌会员');
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/recharges', rechargeBody(m.id, 100000, 0))).status).toBe(200);

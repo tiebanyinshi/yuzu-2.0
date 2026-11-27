@@ -572,6 +572,8 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
     assertOpen(to);
     // 读到目标客人之后、锁好之前，这位客人可能刚在别的终端换了牌：牌号对不上就拒绝，不把明细转给已不在这张牌上的客人
     if (to.tagId !== target.tagId) throw conflict('TAG_CHANGED', `手牌 ${input.toTagCode} 刚刚换过牌，请刷新后重新填写转到哪张手牌`);
+    // 8.2.6：锁牌外出的客人不能挂账，转单转进去也一样
+    await assertNotAwayLocked(tx, to.id, input.toTagCode);
     const bills = await tx<{ status: string }[]>`SELECT status FROM bills WHERE id IN ${tx([from.billId, to.billId])} ORDER BY id FOR UPDATE`;
     if (bills.some((b) => b.status !== 'open')) throw conflict('BILL_CLOSED', '账单已结束，不能再转单');
     const lines = await tx<

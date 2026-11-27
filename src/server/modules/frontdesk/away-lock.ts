@@ -17,13 +17,13 @@ import { can } from '@shared/permissions';
 import type { Db, Tx } from '../../db';
 import { writeAudit } from '../../lib/audit';
 import type { Deps, OpContext } from '../../lib/context';
-import { conflict, forbidden } from '../../lib/errors';
+import { conflict, forbidden, notFound } from '../../lib/errors';
 import { currentStoreId, forEachStore } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
 import { notify } from '../oa/index';
 import { lockPaymentShift, openShiftOf } from '../shifts';
 import { systemAutoStaffId } from '../system-staff';
-import { assertOpen, businessDate, hashRequest, lockVisits, runIdempotent, saveKey, setTxTimeouts } from './common';
+import { assertOpen, businessDate, hashRequest, lockTagsByCode, lockVisits, runIdempotent, saveKey, setTxTimeouts } from './common';
 import { CollectDepositInput, insertDeposit } from './tag-deposits';
 
 const MAX_MINUTES = AWAY_LOCK_MAX_HOURS * 60;
@@ -93,11 +93,17 @@ export async function awayLockVisit(deps: Deps, visitId: number, raw: unknown, c
   await runIdempotent(deps, { key: input.clientKey, opType: 'tag_away_lock', requestHash }, async (tx) => {
     const shiftId = await lockPaymentShift(tx, ctx.actor.id, seenShift);
     const at = ctx.at ?? new Date();
+    // 加锁顺序（AGENTS.md）：手牌 → 来访。写锁牌记录会对手牌取外键锁，先锁手牌，免得与换牌（先锁牌再锁来访）互相等
+    const [peek] = await tx<{ tagId: number; code: string }[]>`
+      SELECT v.tag_id, t.code FROM visits v JOIN hand_tags t ON t.id = v.tag_id WHERE v.id = ${visitId}`;
+    if (!peek) throw notFound('来访记录不存在');
+    await lockTagsByCode(tx, [peek.code]);
     const visit = (await lockVisits(tx, [visitId])).get(visitId)!;
     assertOpen(visit);
-    const [tag] = await tx<{ code: string }[]>`SELECT code FROM hand_tags WHERE id = ${visit.tagId}`;
+    if (visit.tagId !== peek.tagId) throw conflict('VISIT_CHANGED', '这位客人刚刚换过牌，请刷新后再锁');
+    const tag = { code: peek.code };
     const [held] = await tx<{ lockUntil: Date }[]>`SELECT lock_until FROM visit_tag_locks WHERE visit_id = ${visit.id} AND released_at IS NULL FOR UPDATE`;
-    if (held) throw conflict('TAG_AWAY_LOCKED', `手牌 ${tag!.code} 已经锁着了（外出中），客人回来先解锁`);
+    if (held) throw conflict('TAG_AWAY_LOCKED', `手牌 ${tag.code} 已经锁着了（外出中），客人回来先解锁`);
     // 先收预售：收不到（储值不够、方式不对……）整笔不锁
     const depositId = await insertDeposit(tx, deps, { visit, input: deposit, key: input.clientKey, shiftId, at, ctx });
     const until = new Date(at.getTime() + input.minutes * 60_000);
@@ -116,7 +122,7 @@ export async function awayLockVisit(deps: Deps, visitId: number, raw: unknown, c
       detail: {
         lockId: Number(lock!.id),
         visitNo: visit.visitNo,
-        tagCode: tag!.code,
+        tagCode: tag.code,
         minutes: input.minutes,
         lockUntil: until.toISOString(),
         deposit: { amount: deposit.amount, method: deposit.method },
@@ -153,6 +159,11 @@ export async function awayUnlockVisit(deps: Deps, visitId: number, raw: unknown,
     return visit.id;
   });
   return visitId;
+}
+
+/** 前台「返回」（异常处置）时一并解锁（调用方已锁来访）：不留下「已返回、牌却还锁着」的状态；返回解开的那把锁 */
+export async function releaseAwayLockOnReturn(tx: Tx, visitId: number, staffId: number, at: Date): Promise<{ id: number } | null> {
+  return releaseLocked(tx, visitId, 'return', staffId, at);
 }
 
 /** 解开这次来访锁着的那一把（调用方已锁来访）；没锁着返回 null */

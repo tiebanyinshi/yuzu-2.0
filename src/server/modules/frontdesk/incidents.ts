@@ -24,6 +24,7 @@ import { ctxOf, type Deps, type OpContext } from '../../lib/context';
 import { conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
 import { currentStoreId } from '../../lib/store-context';
 import { idParam, parse, positiveCents } from '../../lib/validate';
+import { releaseAwayLockOnReturn } from './away-lock';
 import { postChargesTx, type PostInputParsed } from './bills';
 import { assertOpen, businessDate, hashRequest, lockVisits, runIdempotent, saveKey, setTxTimeouts } from './common';
 import { ASSIGNEE_ROLES, listTodos } from './incident-read';
@@ -79,6 +80,7 @@ export async function createIncident(deps: Deps, visitId: number, raw: IncidentI
     let approval: { approverId: number; approverName: string } | null = null;
     let assignee: { id: number; name: string } | null = null;
     let keySaved = false;
+    let unlocked: { id: number } | null = null;
 
     if (input.kind === 'away') {
       if (state!.awaySince) throw conflict('ALREADY_AWAY', `手牌 ${state!.tagCode} 已经标了外出，请刷新`);
@@ -86,6 +88,8 @@ export async function createIncident(deps: Deps, visitId: number, raw: IncidentI
     } else if (input.kind === 'return') {
       if (!state!.awaySince) throw conflict('NOT_AWAY', `手牌 ${state!.tagCode} 没有标外出，请刷新`);
       await tx`UPDATE visits SET away_since = NULL, away_by = NULL WHERE id = ${visit.id}`;
+      // 8.2.6：锁牌外出的客人回来，从这里点「返回」也一并解锁（与收银台解锁同一结果）
+      unlocked = await releaseAwayLockOnReturn(tx, visit.id, ctx.actor.id, at);
     } else if (input.kind === 'report' || input.kind === 'unsettled') {
       if (input.assigneeId !== null) assignee = { id: input.assigneeId, name: await assertAssignee(tx, input.assigneeId) };
       if (input.kind === 'unsettled') {
@@ -137,6 +141,7 @@ export async function createIncident(deps: Deps, visitId: number, raw: IncidentI
         note: input.note,
         ...(amount !== null ? { amount } : {}),
         ...(assignee ? { assigneeId: assignee.id, assigneeName: assignee.name } : {}),
+        ...(unlocked ? { awayLockReleased: unlocked.id } : {}),
         ...(approval ? { approverId: approval.approverId, approverName: approval.approverName, grantId: input.kind === 'surcharge' ? input.grantId : null } : {}),
       },
       ip: ctx.ip,
