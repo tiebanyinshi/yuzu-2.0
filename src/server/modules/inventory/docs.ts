@@ -1544,21 +1544,38 @@ export async function createRequestIssue(
 
 // ───────────────────────── 对外操作 ─────────────────────────
 
+/**
+ * 单据原请求的摘要（同一操作编号重提时比对）：
+ *   · 8.1.9：不是库管入库的收货不把 direct 放进摘要（升级前就在「结果待确认」里的原请求照样对得上）；
+ *   · 8.2.6：收货行的待判 holdMilli 为 0（默认）时不放进摘要（8.2.6 以前提交的收货原样重提照样对得上）；
+ *   · legacy826Hash：8.2.6 原版（补丁前）把为 0 的 holdMilli 也算进了摘要，那段时间提交、结果没确认的收货重提时也认（Codex 审查 #58）；
+ *     新写入的一律用 requestHash。
+ */
+export function docRequestHashes(body: z.infer<typeof DocBody>, meta: { action: string; approveNow: boolean }) {
+  const receipt = body.docType === 'receipt';
+  const tail = { ...(receipt && !body.direct ? { direct: undefined } : {}), action: meta.action, approveNow: meta.approveNow };
+  const hashLines = receipt ? body.lines.map((l) => ('holdMilli' in l && !l.holdMilli ? { ...l, holdMilli: undefined } : l)) : body.lines;
+  const requestHash = hashRequest({ ...body, lines: hashLines, ...tail });
+  const legacy826Hash = receipt ? hashRequest({ ...body, ...tail }) : requestHash;
+  return { requestHash, legacy826Hash };
+}
+
+/** 测试用：按页面原样提交的请求算出两种摘要（模拟 8.2.6 补丁前写进库的摘要） */
+export function docRequestHashesOf(raw: unknown) {
+  return docRequestHashes(parse(DocBody, raw), parse(CreateInput, raw));
+}
+
 export async function createDoc(deps: Deps, raw: CreateDocInput, actor: Actor, ip?: string): Promise<{ doc: InvDoc; replayed: boolean }> {
   const meta = parse(CreateInput, raw);
   const body = parse(DocBody, raw);
   await assertCanOperate(deps.sql, actor, body.docType, await warehouseOfBody(deps.sql, body));
   if (meta.approveNow && !can(actor, 'inventory.approve')) throw forbidden('当前账号不能确认这类单据，请提交给负责人');
-  // 8.1.9：不是库管入库的收货不把 direct 放进摘要（升级前就在「结果待确认」里的原请求照样对得上）
-  // 8.2.6：收货行的待判 holdMilli 为 0（默认）时也不放进摘要：升级前提交、结果没确认的收货原样重提，摘要照样对得上（Codex 审查）
-  const receipt = body.docType === 'receipt';
-  const hashLines = receipt ? body.lines.map((l) => ('holdMilli' in l && !l.holdMilli ? { ...l, holdMilli: undefined } : l)) : body.lines;
-  const requestHash = hashRequest({ ...body, lines: hashLines, ...(receipt && !body.direct ? { direct: undefined } : {}), action: meta.action, approveNow: meta.approveNow });
+  const { requestHash, legacy826Hash } = docRequestHashes(body, meta);
   const findExisting = async (db: Db) => {
     const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`
       SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${meta.clientKey}`;
     if (!row) return null;
-    if (row.opType !== 'inv_doc' || row.requestHash !== requestHash) {
+    if (row.opType !== 'inv_doc' || (row.requestHash !== requestHash && row.requestHash !== legacy826Hash)) {
       throw conflict('IDEMPOTENCY_CONFLICT', '该操作编号已用于另一张不同的单据，请刷新页面后重新填写');
     }
     return row.refId;
