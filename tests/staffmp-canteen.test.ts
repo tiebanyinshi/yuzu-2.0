@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { businessDateOf } from '../src/shared/business-date';
 import { hashPassword } from '../src/server/auth/password';
+import { createEmployee } from '../src/server/modules/canteen';
 import { employeeCodeKey, makeCanteenCode } from '../src/server/modules/canteen/code';
 import { createStaff } from '../src/server/modules/staff';
 import { buildStaffMpApp } from '../src/server/modules/staffmp';
@@ -116,6 +117,50 @@ describe('对上饭卡', () => {
     expect((await s('POST', '/api/staffmp/canteen/create', c.token, {})).body.error.code).toBe('CANTEEN_ALREADY_LINKED');
     const d = await staffLogin('dave2', '大卫');
     expect((await s('POST', '/api/staffmp/canteen/create', d.token, {})).body.employee.empNo).toBe(`S${d.id}`);
+  });
+
+  it('开通重试与同时点两次：落在同一张饭卡上，不多开一张（Codex 对 b077fbd 的 P2）', async () => {
+    const cards = async (staffId: number) => (await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM canteen_employees WHERE created_by = ${staffId}`)[0]!.n;
+    // 上一次：饭堂那边饭卡已经建好（饭堂的 createEmployee 自己的事务已提交），记对上时出错
+    const e = await staffLogin('erin2', '小艾');
+    await ctx.sql`INSERT INTO staff_profiles (staff_id, emp_no) VALUES (${e.id}, 'HR-0200') ON CONFLICT (staff_id) DO UPDATE SET emp_no = 'HR-0200'`;
+    const actor = { id: e.id, displayName: '小艾' } as never;
+    const { employee: orphan } = await createEmployee(ctx.sql, { empNo: 'HR-0200', name: '小艾', role: 'staff', departmentId: null }, { actor, ip: '127.0.0.1' });
+    const again = await s('POST', '/api/staffmp/canteen/create', e.token, {});
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(again.body).toMatchObject({ linked: true, employee: { empNo: 'HR-0200', name: '小艾' } });
+    expect(await cards(e.id)).toBe(1);
+    expect((await ctx.sql`SELECT 1 FROM staffmp_canteen_links WHERE staff_id = ${e.id} AND employee_id = ${orphan.id}`).length).toBe(1);
+    // 两次请求同时到：一次对上；另一次要么也落在同一张上（200），要么看到已经对上（409「你已经对上一张饭卡了」）——只有一张饭卡、一条对上
+    const f = await staffLogin('fay2', '小菲');
+    const both = await Promise.all([s('POST', '/api/staffmp/canteen/create', f.token, {}), s('POST', '/api/staffmp/canteen/create', f.token, {})]);
+    expect(
+      both.some((r) => r.status === 200 && r.body.employee?.empNo === `S${f.id}`),
+      JSON.stringify(both),
+    ).toBe(true);
+    for (const r of both) expect(r.status === 200 || r.body.error?.code === 'CANTEEN_ALREADY_LINKED', JSON.stringify(r.body)).toBe(true);
+    expect(await cards(f.id)).toBe(1);
+    expect((await ctx.sql`SELECT 1 FROM staffmp_canteen_links WHERE staff_id = ${f.id}`).length).toBe(1);
+    // 工号上是别人的饭卡（不是这个人开的）：照旧换用 S + 编号，不会对到别人的卡上
+    const g = await staffLogin('gus2', '阿古');
+    await canteenEmployee('HR-0300', '别人');
+    await ctx.sql`INSERT INTO staff_profiles (staff_id, emp_no) VALUES (${g.id}, 'HR-0300') ON CONFLICT (staff_id) DO UPDATE SET emp_no = 'HR-0300'`;
+    expect((await s('POST', '/api/staffmp/canteen/create', g.token, {})).body.employee.empNo).toBe(`S${g.id}`);
+  });
+
+  it('首次登录没改密码、没选新岗位的：吃饭与巡场的接口一律不放行（直接调接口也拿不到码钥匙）（Codex 对 b077fbd 的 P1）', async () => {
+    const h = await staffLogin('hank2', '阿汉');
+    expect((await s('POST', '/api/staffmp/canteen/create', h.token, {})).status).toBe(200);
+    await ctx.sql`UPDATE staff SET must_change_password = true WHERE id = ${h.id}`;
+    for (const url of ['/api/staffmp/canteen/me', '/api/staffmp/canteen/status', '/api/staffmp/canteen/patrol/day']) {
+      const r = await s('GET', url, h.token);
+      expect([url, r.status, r.body.error?.code]).toEqual([url, 403, 'PASSWORD_CHANGE_REQUIRED']);
+    }
+    await ctx.sql`UPDATE staff SET must_change_password = false, needs_position = true WHERE id = ${h.id}`;
+    const r = await s('GET', '/api/staffmp/canteen/me', h.token);
+    expect([r.status, r.body.error?.code]).toEqual([403, 'POSITION_REQUIRED']);
+    await ctx.sql`UPDATE staff SET needs_position = false WHERE id = ${h.id}`;
+    expect((await s('GET', '/api/staffmp/canteen/me', h.token)).status).toBe(200);
   });
 
   it('后台：按手机号给出候选、一键对上、解开', async () => {
