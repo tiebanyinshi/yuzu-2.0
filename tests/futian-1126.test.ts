@@ -540,6 +540,22 @@ describe('FT-13 康美部只看房态与手牌号', () => {
       expect((await api(ctx.app, cookie, 'GET', `/api/room-center/guest?tag=${g!.tagCode}`)).status).toBe(403);
     }
     expect((await api(ctx.app, lead, 'GET', on('S301', 'checkout-preview'))).status).toBe(403);
+    // 店主 2026-11-27：康美部能给房里的客人挂零售、杂项（照卡片上的客人挂），结账照旧只在前厅收银台
+    const fee = ((await api(ctx.app, ctx.owner, 'POST', '/api/items', { name: '康美部杂项费', category: '杂项', price: 3000 })).body.items as { id: number; name: string }[]).find(
+      (i) => i.name === '康美部杂项费',
+    )!.id;
+    const kmCard = ((await api(ctx.app, staff, 'GET', '/api/room-center')).body as RoomCenterBoard).rooms.find((r) => r.code === 'S301')!;
+    expect(kmCard.guests[0]!.visitId).toBe(g!.visitId);
+    const before = (await bill(g!.visitId)).bill.amountCents;
+    const posted = await api(ctx.app, staff, 'POST', on('S301', 'goods'), { clientKey: randomUUID(), visitId: kmCard.guests[0]!.visitId, lines: [{ itemId: fee, quantity: 1 }], expectedTotal: 3000 });
+    expect(posted.status, JSON.stringify(posted.body)).toBe(200);
+    expect((posted.body as RoomCenterBoard).statusOnly).toBe(true);
+    expect((await bill(g!.visitId)).bill.amountCents).toBe(before + 3000);
+    // 手动金额要「手动输入金额」权限，康美部员工没有
+    expect((await api(ctx.app, staff, 'POST', on('S301', 'goods'), { clientKey: randomUUID(), visitId: g!.visitId, customLines: [{ name: '其他', amount: 500 }], expectedTotal: 500 })).status).toBe(
+      403,
+    );
+    expect((await api(ctx.app, staff, 'POST', '/api/frontdesk/checkouts', { clientKey: randomUUID(), visitIds: [g!.visitId] })).status).toBe(403);
     const full = (await api(ctx.app, ctx.owner, 'GET', '/api/room-center')).body as RoomCenterBoard;
     expect(full.statusOnly).toBe(false);
     expect(JSON.stringify(full.rooms.find((r) => r.code === 'S301'))).toContain('足疗');
@@ -661,6 +677,8 @@ describe('FT-17 零售与杂项', () => {
     const [g] = await enter();
     expect((await register('S301', { tagCode: g!.tagCode, technicianId: tech['02'] })).status).toBe(200);
     const goods = (body: Record<string, unknown>, cookie = ctx.clerk) => api(ctx.app, cookie, 'POST', on('S301', 'goods'), { clientKey: randomUUID(), visitId: g!.visitId, ...body });
+    // 房间历史按房间记（前面的用例在 S301 也挂过）：只数这一段新加的
+    const goodsBefore = (await history('S301')).rows.filter((x) => x.kind === 'goods').length;
     const ok = await goods({
       lines: [
         { itemId: cig, quantity: 2 },
@@ -674,7 +692,7 @@ describe('FT-17 零售与杂项', () => {
     expect((await goods({ lines: [{ itemId: foot, quantity: 1 }], expectedTotal: 19800 })).body.error.code).toBe('GOODS_NOT_ALLOWED');
     // 手动金额：前台有权限
     expect((await goods({ customLines: [{ name: '损坏赔偿', amount: 2000 }], expectedTotal: 2000 })).status).toBe(200);
-    expect((await history('S301')).rows.filter((x) => x.kind === 'goods')).toHaveLength(2);
+    expect((await history('S301')).rows.filter((x) => x.kind === 'goods')).toHaveLength(goodsBefore + 2);
     // 后台改了分类：茶位也能挂
     await rules({ goodsCategories: ['零售', '杂项', '茶位'] });
     expect((await goods({ lines: [{ itemId: tea, quantity: 1 }], expectedTotal: 1000 })).status).toBe(200);

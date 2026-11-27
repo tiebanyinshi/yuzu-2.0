@@ -437,6 +437,10 @@ test.describe('福田店整改 2026-11-26', () => {
     await expect(d.getByTestId('rc-history')).toHaveCount(0);
     await expect(d.getByTestId('rc-actions')).toHaveCount(0);
     for (const hidden of [ITEM.name, TECHS[0].name, 'E2E 不该看到']) await expect(d).not.toContainText(hidden);
+    // 店主 2026-11-27：康美部能给房里的客人挂零售、杂项（结账照旧在前厅收银台）
+    await expect(d).toContainText('前厅收银台统一结账');
+    await d.getByTestId('rc-act-goods').click();
+    await expect(page.getByTestId('rc-goods')).toContainText(`手牌 ${h!.tag}`);
     await page.keyboard.press('Escape');
     // 收尾：店主取消派钟、退房
     await page.request.post('/api/auth/logout');
