@@ -512,16 +512,68 @@ export async function consumeForCheckout(
   return { consumptionId: id, docNo, split: { principal: split.principal, bonus: split.bonus } };
 }
 
-/** 反结账：撤销结账时的储值消费，本金、赠金按原单恢复（在反结账的事务里调用，会员按 id 升序逐位调用） */
+/**
+ * 手牌押金从会员储值扣（8.2.1，docs/V8221_CASHIER.md 第 5 节）：在收押金的事务里调用（来访之后锁会员）。
+ * 生成一张标准消费单（明细为「手牌押金 YJ…」，不指向结账单）与余额流水；退押金时用 reverseForCheckout 按原单撤销、退回原卡。
+ * 单笔上限、充值当日的储值额度、扣款规则与结账用储值相同；页面确认时看到的扣款构成不一致时拒绝
+ */
+export async function consumeForDeposit(
+  tx: Tx,
+  deps: Deps,
+  o: { memberId: number; amount: number; expectedSplit: { principal: number; bonus: number }; depositNo: string; tagCode: string; businessDate: string; ctx: OpContext; at: Date },
+): Promise<{ consumptionId: number; docNo: string; split: { principal: number; bonus: number } }> {
+  const settings = await loadSettings(tx);
+  const member = await expireDueLots(tx, deps, await lockMember(tx, o.memberId), o.at);
+  if (member.status !== 'active') throw unprocessable('MEMBER_FROZEN', `会员「${member.name}」已停用，不能用储值交押金`);
+  if (o.amount > settings.maxConsumeCents) {
+    throw unprocessable('OVER_LIMIT', `押金 ${formatYuan(o.amount)} 超过单笔消费上限 ${formatYuan(settings.maxConsumeCents)}，请改用其他方式`, { limit: settings.maxConsumeCents });
+  }
+  assertWithinSpendQuota(await spendQuotaOf(tx, member.id, o.businessDate, settings.rechargeSpendPct), o.amount, member.name);
+  const split = splitDeduction(o.amount, { principal: member.principalBalance, bonus: member.bonusBalance }, settings.deductionRule);
+  if (!split.ok) {
+    throw unprocessable('INSUFFICIENT_BALANCE', `会员「${member.name}」余额不足，还差 ${formatYuan(split.shortfall)}`, { memberId: member.id, available: split.available, shortfall: split.shortfall });
+  }
+  if (o.expectedSplit.principal !== split.principal || o.expectedSplit.bonus !== split.bonus) {
+    throw conflict('SPLIT_CHANGED', `会员「${member.name}」的余额或扣款规则刚刚有变化，本金 / 赠金的扣款构成与确认时不同，请重新核对`, {
+      memberId: member.id,
+      split: { principal: split.principal, bonus: split.bonus },
+    });
+  }
+  const name = `手牌押金 ${o.depositNo}`;
+  const { id, docNo } = await insertConsumption(tx, member, {
+    total: o.amount,
+    split,
+    rule: settings.deductionRule,
+    lines: [{ itemId: null, name, tier: null, unitPrice: o.amount, quantity: 1, amount: o.amount }],
+    note: `手牌 ${o.tagCode} 押金 ${o.depositNo}（退押金时原样退回）`,
+    businessDate: o.businessDate,
+    operatorId: o.ctx.actor.id,
+    at: o.at,
+    overLimitApproverId: null,
+    checkoutId: null,
+  });
+  await writeAudit(tx, {
+    staffId: o.ctx.actor.id,
+    action: 'consumption_created',
+    targetType: 'consumption',
+    targetId: id,
+    detail: { docNo, memberId: member.id, total: o.amount, principal: split.principal, bonus: split.bonus, rule: settings.deductionRule, depositNo: o.depositNo },
+    ip: o.ctx.ip,
+    businessDate: o.businessDate,
+  });
+  return { consumptionId: id, docNo, split: { principal: split.principal, bonus: split.bonus } };
+}
+
+/** 反结账：撤销结账时的储值消费，本金、赠金按原单恢复（在反结账的事务里调用，会员按 id 升序逐位调用）；手牌押金退回原卡也用它（8.2.1） */
 export async function reverseForCheckout(
   tx: Tx,
   deps: Deps,
-  o: { consumptionId: number; reason: string; businessDate: string; ctx: OpContext; at: Date },
+  o: { consumptionId: number; reason: string; businessDate: string; ctx: OpContext; at: Date; mergedText?: string },
 ): Promise<{ reversalId: number; docNo: string }> {
   const [peek] = await tx<{ memberId: number }[]>`SELECT member_id FROM consumptions WHERE id = ${o.consumptionId}`;
   if (!peek) throw notFound('消费单不存在');
   const lockedMember = await lockMember(tx, peek.memberId);
-  await assertNotMerged(tx, peek.memberId, '这张结账单用储值付的部分不能再退回，不能反结账');
+  await assertNotMerged(tx, peek.memberId, o.mergedText ?? '这张结账单用储值付的部分不能再退回，不能反结账');
   const member = await expireDueLots(tx, deps, lockedMember, o.at);
   const [c] = await tx<{ id: number; docNo: string; status: string; principalAmount: number; bonusAmount: number }[]>`
     SELECT id, doc_no, status, principal_amount, bonus_amount FROM consumptions WHERE id = ${o.consumptionId} FOR UPDATE`;
@@ -821,6 +873,11 @@ export async function reverse(deps: Deps, consumptionId: number, raw: ReverseInp
           checkoutId: c.checkoutId,
           checkoutNo: c.checkoutNo,
         });
+      }
+      // 手牌押金（8.2.1）从储值扣的：只能在前台退押金（退回原卡），不能在这里单独撤销，不然押金还算押着、钱已经回到卡上
+      const [deposit] = await tx<{ depositNo: string }[]>`SELECT deposit_no FROM tag_deposits WHERE consumption_id = ${c.id}`;
+      if (deposit) {
+        throw conflict('DEPOSIT_LINKED', `这笔储值消费是手牌押金 ${deposit.depositNo}，不能单独撤销；请在收银台或发卡台退押金，钱原样退回这张卡`, { depositNo: deposit.depositNo });
       }
       // 撤销时限（#10，待确认）：超过时限只有店主可以撤销
       const windowHours = settings.reversalWindowHours;

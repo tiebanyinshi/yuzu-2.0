@@ -144,7 +144,8 @@ test.describe('店主 2026-11-14 的需求：登记消费与预约', () => {
     await expect(page.getByRole('button', { name: '后一天' })).toBeDisabled();
     await page.request.post('/api/auth/logout');
 
-    await login(page, 'xiaozhou');
+    // 技师预约 8.2.3 起不给收银员、前厅部员工（QT10），用值班经理
+    await login(page, 'zhangjl');
     const board = await getJson<BookingBoard>(page, `/api/bookings?date=${me.today}`);
     const ahead = board.rules.maxDaysAhead;
     expect(ahead).toBeGreaterThanOrEqual(1);

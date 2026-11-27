@@ -344,6 +344,8 @@ export interface LedgerRow {
   consumptionStatus: 'completed' | 'reversed' | null;
   /** 前台结账储值支付的消费单所属结账单号（只能反结账，不能单独撤销） */
   checkoutNo: string | null;
+  /** 那张结账单的编号（8.2.3：点单号打开结账明细）；不是前台结账的为 null */
+  checkoutId: number | null;
   /** 消费单对应的撤销单号 / 撤销单对应的原消费单号 */
   relatedDocNo: string | null;
   /** 撤销单的原消费营业日，跨日撤销时与本行营业日不同 */
@@ -380,7 +382,9 @@ export interface SettlementAnomaly {
     | 'refund'
     | 'refund_void'
     // 储值退回（v0.7.26）
-    | 'member_refund';
+    | 'member_refund'
+    // 8.2.4：结账时公司承担（客人身体不适、招待……，当场授权）
+    | 'company_charge';
   at: string | null;
   docNo: string | null;
   memberName: string | null;

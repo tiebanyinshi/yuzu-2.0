@@ -231,7 +231,8 @@ export function SwapDialog({
                 onClick={() =>
                   edit(() => {
                     setReason(r);
-                    setLockOld(r !== '顾客要求换柜');
+                    // 8.2.1（会议纪要「会所管理系统演示」一.2）：柜子打不开、顾客要求换柜等正常换牌不锁原牌；只有丢牌锁原牌并收赔偿
+                    setLockOld(r === LOST_REASON);
                     setChargeFee(r === LOST_REASON && fee > 0);
                   })
                 }
@@ -263,7 +264,7 @@ export function SwapDialog({
         <ConfirmCheck checked={lockOld} onChange={(v) => edit(() => setLockOld(v || chargeFee))}>
           同时锁定原手牌 {visit.tag.code}
           <span className="block text-[12.5px] font-normal text-ink-3">
-            {chargeFee ? '收取丢牌赔偿时原手牌必须锁定，找回后由店主解锁' : '丢失、损坏、柜锁故障时勾选，避免再次发出；找回或修好后由店主解锁'}
+            {chargeFee ? '收取丢牌赔偿时原手牌必须锁定，找回后由店主解锁' : '只有丢牌默认锁定；柜锁故障、换柜等正常换牌不锁，确实坏了要停用的再勾选，修好后由店主解锁'}
           </span>
         </ConfirmCheck>
         {vipShort && (

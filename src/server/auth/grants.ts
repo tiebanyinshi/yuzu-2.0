@@ -9,6 +9,8 @@
 //     用途 member_phone：店员、客户经理改会员手机号（值班经理及以上，v0.7.26，M77），绑定会员与新号码；
 //     用途 checkin_risk：前台风控（值班经理及以上，8.1.15，docs/FRONTDESK_RISK_V8115.md）——名下有没处理完的「未结离店」的会员发牌
 //     （绑定这几位会员与原因），或一笔超时加收（绑定来访、金额与原因）；
+//     用途 line_discount：单项打折超过打折人那一档的下限（8.2.1，docs/V8221_CASHIER.md），绑定那一行、此刻的原价与折后价；
+//     授权人要有「当场授权优惠」的权限，而且他那一档的下限够打到这个价；
 //   · 授权绑定用途、申请的员工和授权对象（哪位客人用哪张柜 / 哪位会员的哪类业务、多少金额），5 分钟内有效，只能用一次；
 //   · 业务请求只带授权编号，在同一事务里核销：业务回滚时核销一起回滚，授权仍可在有效期内再用；
 //   · 授权人的密码错误与登录共用限流计数；失败返回 403 而不是 401，不会把前台员工自己登出；
@@ -18,7 +20,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { MANUAL_CONSUME_SELF_LIMIT_CENTS } from '@shared/deduction';
-import { normalizeTagCode, TAG_CODE_PATTERN } from '@shared/frontdesk';
+import { DEFAULT_FRONTDESK_RULES, normalizeTagCode, TAG_CODE_PATTERN, type FrontdeskRules } from '@shared/frontdesk';
 import {
   GRANT_PURPOSES,
   grantCovers,
@@ -38,18 +40,22 @@ import {
   type LineVoidScope,
 } from '@shared/grants';
 import { MAX_SURCHARGE_CENTS, riskGrantCovers, type CheckinRiskScope } from '@shared/frontdesk-risk';
+import { COMPANY_REASONS, MAX_COMPANY_NOTE, type CompanyChargeScope } from '@shared/dining-v8224';
 import { formatYuan } from '@shared/money';
 import { can, type Duty, type Permission, type Role } from '@shared/permissions';
 import type { Db, Tx } from '../db';
 import { writeAudit } from '../lib/audit';
 import type { Actor, Deps } from '../lib/context';
-import { AppError, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
+import { AppError, badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { parse, positiveCents } from '../lib/validate';
 import { loadVipLockerRules } from '../modules/vip-lockers';
 import { loadSettings } from '../modules/settings';
 import { loadDiningRules } from '../modules/dining';
 import { assertLineVoidPermission, canEnterLineVoid } from '../modules/dining-v8117';
 import { loadRiskRules, unsettledDebts } from '../modules/frontdesk/risk';
+import { settingRow } from '../lib/store-settings';
+import { floorLabel, lineDiscountTierOf, LINE_DISCOUNT_TIER_LABELS, withinFloor, type LineDiscountScope } from '@shared/line-discount';
+import type { PositionKey } from '@shared/positions';
 import { currentStoreId } from '../lib/store-context';
 import { guard } from './guard';
 import { checkLock, clearFailures, recordFailure } from './lockout';
@@ -102,9 +108,27 @@ const MemberPhoneScopeInput = z.object({
     .regex(/^1\d{10}$/, '手机号应为 11 位数字'),
 });
 
+/** 公司承担（8.2.4）：与优惠 / 免单一样绑定这次结账的手牌或桌台与金额，另带原因与说明 */
+const CompanyScopeInput = z
+  .object({
+    visitIds: z.array(z.number().int().positive(), '请说明授权哪次结账').max(30, '一次最多合并 30 张手牌').default([]),
+    tableSessionIds: z.array(z.number().int().positive()).max(10, '一次最多合并 10 桌').default([]),
+    amount: positiveCents('公司承担的金额'),
+    reason: z.enum(COMPANY_REASONS, '请选公司承担的原因'),
+    note: z.string().trim().max(MAX_COMPANY_NOTE, `说明最多 ${MAX_COMPANY_NOTE} 个字`).default(''),
+  })
+  .refine((d) => d.visitIds.length > 0 !== d.tableSessionIds.length > 0, '请说明授权哪次结账')
+  .refine((d) => d.reason !== 'other' || d.note.length >= 2, '选「其他」请写说明（至少 2 个字）');
+
 const LineVoidScopeInput = z.object({
   lineId: z.number().int().positive('请说明授权退哪一道菜'),
   reason: z.string('请填写退菜原因').trim().min(2, '请填写退菜原因（至少 2 个字）').max(200, '原因最多 200 字'),
+});
+
+const LineDiscountScopeInput = z.object({
+  lineId: z.number().int().positive('请说明授权哪一行打折'),
+  finalAmount: z.number('折后价不正确').int('折后价要以分为单位的整数').min(0, '折后价不能为负'),
+  reason: z.string().trim().max(64, '原因最多 64 字').default(''),
 });
 
 const TicketScopeInput = z.object({
@@ -143,7 +167,24 @@ const PURPOSE_RULES: Record<GrantPurpose, { approver: Permission; approverText: 
   member_phone: { approver: 'auth.memberPhone', approverText: '改会员手机号，请值班经理、店总或店主授权' },
   line_void: { approver: 'frontdesk.correct', approverText: '退超过小额上限的菜，请值班经理、店总或店主授权' },
   checkin_risk: { approver: 'auth.checkinRisk', approverText: '未结离店的会员发牌、超时加收，请值班经理、店总或店主授权' },
+  line_discount: { approver: 'auth.discount', approverText: '单项打折超过你的下限，请值班经理、店总或店主授权' },
+  company_charge: { approver: 'auth.companyCharge', approverText: '公司承担，请值班经理、店总或店主授权' },
 };
+
+/** 单项打折各档的下限（前台规则里的 lineDiscountFloors，与 frontdesk/common 的 loadFrontdeskRules 同一份） */
+async function lineDiscountFloors(db: Db) {
+  const row = await settingRow<Partial<FrontdeskRules>>(db, 'frontdesk_rules');
+  return { ...DEFAULT_FRONTDESK_RULES.lineDiscountFloors, ...row?.value?.lineDiscountFloors };
+}
+
+/** 单项打折：这位员工那一档的下限够不够打到这个价（授权人签发时、核销时都核对） */
+async function assertLineDiscountApprover(db: Db, approver: { displayName: string; role: Role; position: unknown }, s: Pick<LineDiscountScope, 'listAmount' | 'finalAmount'>) {
+  const tier = lineDiscountTierOf({ role: approver.role, position: (approver.position as PositionKey | null) ?? null });
+  const floor = (await lineDiscountFloors(db))[tier];
+  if (!withinFloor(s.listAmount, s.finalAmount, floor)) {
+    throw new AppError(403, 'AUTH_NOT_ALLOWED', `「${approver.displayName}」是${LINE_DISCOUNT_TIER_LABELS[tier]}，单项打折${floorLabel(floor)}，授权不了这个价；请岗位更高的人授权`);
+  }
+}
 const KIND_PERMISSION: Record<OverLimitScope['kind'], Permission> = { recharge: 'recharge.create', consume: 'consume.create' };
 const KIND_LABEL: Record<OverLimitScope['kind'], string> = { recharge: '充值', consume: '消费' };
 
@@ -155,7 +196,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/auth/authorize', { preHandler: guard() }, async (req): Promise<IssuedGrant> => {
     const input = parse(Credentials, req.body);
     // 先核对申请人能不能办这项业务、这项授权现在需不需要，再核对授权人的密码
-    let scope: VipTagScope | OverLimitScope | DiscountScope | TicketDiscountScope | MemberRefundScope | MemberPhoneScope | LineVoidScope | CheckinRiskScope;
+    let scope: VipTagScope | OverLimitScope | DiscountScope | TicketDiscountScope | MemberRefundScope | MemberPhoneScope | LineVoidScope | CheckinRiskScope | LineDiscountScope | CompanyChargeScope;
     const rawScope = (req.body as { scope?: unknown }).scope;
     if (input.purpose === 'vip_tag') {
       if (!can(req.actor, 'frontdesk.operate')) throw forbidden();
@@ -169,6 +210,10 @@ export function registerGrantRoutes(app: FastifyInstance, deps: Deps) {
       scope = d.tableSessionIds.length
         ? { visitIds: [], tableSessionIds: sortedVisitIds(d.tableSessionIds), amount: d.amount, reason: d.reason }
         : { visitIds: sortedVisitIds(d.visitIds), amount: d.amount, reason: d.reason };
+    } else if (input.purpose === 'company_charge') {
+      if (!can(req.actor, 'frontdesk.checkout')) throw forbidden();
+      const d = parse(CompanyScopeInput, rawScope);
+      scope = { visitIds: sortedVisitIds(d.visitIds), tableSessionIds: sortedVisitIds(d.tableSessionIds), amount: d.amount, reason: d.reason, note: d.note };
     } else if (input.purpose === 'ticket_discount') {
       if (!can(req.actor, 'frontdesk.operate')) throw forbidden();
       scope = parse(TicketScopeInput, rawScope);
@@ -213,6 +258,20 @@ export function registerGrantRoutes(app: FastifyInstance, deps: Deps) {
         if (visit.status !== 'open') throw conflict('VISIT_CLOSED', '这位客人已经离店，不能再加收');
         scope = { kind: 'surcharge', visitId: v.visitId, amount: v.amount, reason: v.reason };
       }
+    } else if (input.purpose === 'line_discount') {
+      // 单项打折（8.2.1）：申请与打折同一套权限（收银）；自己那一档够的不用授权
+      if (!can(req.actor, 'frontdesk.checkout')) throw forbidden();
+      const v = parse(LineDiscountScopeInput, rawScope);
+      const [line] = await sql<{ name: string; amount: number; status: string; billStatus: string }[]>`
+        SELECT l.name, l.amount, l.status, b.status AS bill_status FROM bill_lines l JOIN bills b ON b.id = l.bill_id WHERE l.id = ${v.lineId}`;
+      if (!line) throw notFound('这一行明细不存在');
+      if (line.status !== 'active' || line.billStatus !== 'open') throw conflict('LINE_NOT_DISCOUNTABLE', `「${line.name}」已作废或账单已结束，不能打折`);
+      const listAmount = Number(line.amount);
+      if (v.finalAmount >= listAmount) throw badRequest('折后价要比原价低');
+      const tier = lineDiscountTierOf(req.actor);
+      const floor = (await lineDiscountFloors(sql))[tier];
+      if (withinFloor(listAmount, v.finalAmount, floor)) throw conflict('GRANT_NOT_NEEDED', `没有超过你的下限（${floorLabel(floor)}），可以直接打`);
+      scope = { lineId: v.lineId, name: line.name, listAmount, finalAmount: v.finalAmount, reason: v.reason };
     } else if (input.purpose === 'member_phone') {
       if (!can(req.actor, 'member.write')) throw forbidden();
       // 自己能改手机号的不用授权
@@ -256,6 +315,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: Deps) {
       throw new AppError(403, 'AUTH_NOT_ALLOWED', `「${approver.displayName}」的岗位不能授权${rule.approverText}`);
     }
     if (selfDiscount(input.purpose, req.actor.id, approver)) throw selfDiscountError();
+    if (input.purpose === 'line_discount') await assertLineDiscountApprover(sql, approver, scope as LineDiscountScope);
     const grant = await sql.begin(async (tx) => {
       const row = await insertGrant(tx, { purpose: input.purpose, requestedBy: req.actor.id, approvedBy: approver.id, scope });
       await writeAudit(tx, {
@@ -297,8 +357,10 @@ interface LockedGrant {
 }
 
 /** 优惠 / 免单由收银的本人授权（店主除外）：R1.2-b 不允许 */
-const selfDiscount = (purpose: GrantPurpose, requestedBy: number, approver: { id: number; role: Role }) => purpose === 'checkout_discount' && approver.id === requestedBy && approver.role !== 'owner';
-const selfDiscountError = () => new AppError(403, 'AUTH_SELF_NOT_ALLOWED', '优惠 / 免单不能由收银的本人授权，请另一位值班经理、店总或店主授权');
+// 8.2.4：公司承担同样不能由收银的本人授权（店主除外）
+const selfDiscount = (purpose: GrantPurpose, requestedBy: number, approver: { id: number; role: Role }) =>
+  (purpose === 'checkout_discount' || purpose === 'company_charge') && approver.id === requestedBy && approver.role !== 'owner';
+const selfDiscountError = () => new AppError(403, 'AUTH_SELF_NOT_ALLOWED', '优惠 / 免单、公司承担不能由收银的本人授权，请另一位值班经理、店总或店主授权');
 
 /** 锁定授权并做通用核对：存在、用途一致、本人申请、未用过、未过期、授权人仍在职且仍有授权权限 */
 async function lockGrant(tx: Tx, grantId: string, purpose: GrantPurpose, actor: Actor): Promise<LockedGrant> {
@@ -316,7 +378,7 @@ async function lockGrant(tx: Tx, grantId: string, purpose: GrantPurpose, actor: 
   }
   // 升级前签发、还在有效期内的本人授权同样不能用
   if (selfDiscount(purpose, g.requestedBy, { id: g.approvedBy, role: g.role })) {
-    throw unprocessable('GRANT_INVALID', '优惠 / 免单不能由收银的本人授权，请另一位值班经理、店总或店主重新授权');
+    throw unprocessable('GRANT_INVALID', '优惠 / 免单、公司承担不能由收银的本人授权，请另一位值班经理、店总或店主重新授权');
   }
   return g;
 }
@@ -336,6 +398,26 @@ export async function consumeLineVoidGrant(
   }
   await tx`UPDATE auth_grants SET used_at = now(), used_ref = ${opts.usedRef} WHERE id = ${opts.grantId}`;
   return { approverId: g.approvedBy, approverName: g.approverName, reason: s.reason };
+}
+
+/**
+ * 在单项打折的事务里核销一次授权（8.2.1，明细锁之后加锁）：授权必须是这一行、这个原价、这个折后价；授权人那一档的下限此刻仍然够。
+ * 返回授权人
+ */
+export async function consumeLineDiscountGrant(
+  tx: Tx,
+  opts: { grantId: string; actor: Actor; lineId: number; listAmount: number; finalAmount: number; usedRef: string },
+): Promise<{ approverId: number; approverName: string }> {
+  const g = await lockGrant(tx, opts.grantId, 'line_discount', opts.actor);
+  const s = g.scope as LineDiscountScope;
+  if (s.lineId !== opts.lineId || s.listAmount !== opts.listAmount || s.finalAmount !== opts.finalAmount) {
+    throw unprocessable('GRANT_SCOPE', `授权的是「${s.name}」打到 ${formatYuan(s.finalAmount)}，与这一次不一致，请按当前内容重新授权`);
+  }
+  await assertLineDiscountApprover(tx, { displayName: g.approverName, role: g.role, position: g.position }, s).catch((e: unknown) => {
+    throw e instanceof AppError ? unprocessable('GRANT_INVALID', `${e.message}（授权以后下限改了），请重新授权`) : e;
+  });
+  await tx`UPDATE auth_grants SET used_at = now(), used_ref = ${opts.usedRef} WHERE id = ${opts.grantId}`;
+  return { approverId: g.approvedBy, approverName: g.approverName };
 }
 
 /**
@@ -390,6 +472,27 @@ export async function consumeDiscountGrant(
   }
   await tx`UPDATE auth_grants SET used_at = now(), used_ref = ${opts.usedRef} WHERE id = ${opts.grantId}`;
   return { approverId: g.approvedBy, approverName: g.approverName, reason: s.reason };
+}
+
+/**
+ * 在结账事务里核销一次「公司承担」授权（8.2.4；收款记账时、其他锁之后加锁）：授权必须覆盖同一组手牌或桌台、同一个金额、同一个原因与说明
+ */
+export async function consumeCompanyGrant(
+  tx: Tx,
+  opts: { grantId: string; actor: Actor; visitIds: number[]; tableSessionIds: number[]; amount: number; reason: string; note: string; usedRef: string },
+): Promise<{ approverId: number; approverName: string }> {
+  const g = await lockGrant(tx, opts.grantId, 'company_charge', opts.actor);
+  const s = g.scope as CompanyChargeScope;
+  const same = (a: readonly number[], b: readonly number[]) => {
+    const x = sortedVisitIds(a);
+    const y = sortedVisitIds(b);
+    return x.length === y.length && x.every((id, i) => id === y[i]);
+  };
+  if (s.amount !== opts.amount || s.reason !== opts.reason || s.note !== opts.note || !same(s.visitIds, opts.visitIds) || !same(s.tableSessionIds, opts.tableSessionIds)) {
+    throw unprocessable('GRANT_SCOPE', `授权的是公司承担 ${formatYuan(s.amount)}，与这次结账（金额、原因或结账的手牌、桌台）不一致，请按当前内容重新授权`);
+  }
+  await tx`UPDATE auth_grants SET used_at = now(), used_ref = ${opts.usedRef} WHERE id = ${opts.grantId}`;
+  return { approverId: g.approvedBy, approverName: g.approverName };
 }
 
 /**

@@ -13,6 +13,7 @@ import { Money } from '../../components/Money';
 import { Badge, Card, Notice, SectionTitle, Skeleton } from '../../components/ui';
 import { HBars, Kpi, PeriodPicker, presetRange, type Period } from './charts';
 import { useReportScope } from '../../lib/reportScope';
+import { TechnicianStats } from './TechnicianStats';
 
 export function TechniciansTab() {
   const scope = useReportScope();
@@ -53,7 +54,7 @@ export function TechniciansTab() {
               <Kpi icon={<Hourglass className="size-4" />} label="钟数" tone="pine" testId="technicians-clocks">
                 {d.totals.clocks} 个钟
                 <span className="block text-[12px] font-semibold text-ink-3">
-                  {CALL_TYPE_LABELS.designated} {d.totals.designated} · {CALL_TYPE_LABELS.rotation} {d.totals.rotation}
+                  {CALL_TYPE_LABELS.designated} {d.totals.designated} · {CALL_TYPE_LABELS.rotation} {d.totals.rotation} · {CALL_TYPE_LABELS.call} {d.totals.call} · 加钟 {d.totals.extension}
                 </span>
               </Kpi>
               <Kpi icon={<HandHeart className="size-4" />} label="技师项目金额">
@@ -104,7 +105,7 @@ export function TechniciansTab() {
                 </Card>
                 <Card className="overflow-hidden">
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[560px] text-[13px]" data-testid="technicians-table">
+                    <table className="w-full min-w-[680px] text-[13px]" data-testid="technicians-table">
                       <thead className="bg-paper-2/70 text-[12px] font-bold text-ink-3">
                         <tr>
                           <th className="px-2.5 py-2 text-left">技师</th>
@@ -112,6 +113,8 @@ export function TechniciansTab() {
                           <th className="px-2.5 py-2 text-right">钟数</th>
                           <th className="px-2.5 py-2 text-right">{CALL_TYPE_LABELS.designated}</th>
                           <th className="px-2.5 py-2 text-right">{CALL_TYPE_LABELS.rotation}</th>
+                          <th className="px-2.5 py-2 text-right">{CALL_TYPE_LABELS.call}</th>
+                          <th className="px-2.5 py-2 text-right">加钟</th>
                           <th className="px-2.5 py-2 text-right">金额</th>
                           {d.totals.commission && <th className="px-2.5 py-2 text-right">提成</th>}
                         </tr>
@@ -131,11 +134,13 @@ export function TechniciansTab() {
                             <td className="num px-2.5 py-2 text-right font-bold">{r.clocks}</td>
                             <td className="num px-2.5 py-2 text-right">{r.designated}</td>
                             <td className="num px-2.5 py-2 text-right">{r.rotation}</td>
+                            <td className="num px-2.5 py-2 text-right">{r.call}</td>
+                            <td className="num px-2.5 py-2 text-right">{r.extension}</td>
                             <td className="px-2.5 py-2 text-right">
                               <Money cents={r.amount} className="font-semibold" />
                             </td>
                             {r.commission && (
-                              <td className="px-2.5 py-2 text-right" title={`基本 ¥${(r.commission.base / 100).toFixed(2)} + 点钟奖励 ¥${(r.commission.bonus / 100).toFixed(2)}`}>
+                              <td className="px-2.5 py-2 text-right" title={`基本 ¥${(r.commission.base / 100).toFixed(2)} + 点钟 / 扩钟奖励 ¥${(r.commission.bonus / 100).toFixed(2)}`}>
                                 <Money cents={r.commission.total} className="font-semibold text-pine" />
                               </td>
                             )}
@@ -150,6 +155,8 @@ export function TechniciansTab() {
                           <td className="num px-2.5 py-2 text-right">{d.totals.clocks}</td>
                           <td className="num px-2.5 py-2 text-right">{d.totals.designated}</td>
                           <td className="num px-2.5 py-2 text-right">{d.totals.rotation}</td>
+                          <td className="num px-2.5 py-2 text-right">{d.totals.call}</td>
+                          <td className="num px-2.5 py-2 text-right">{d.totals.extension}</td>
                           <td className="px-2.5 py-2 text-right">
                             <Money cents={d.totals.amount} />
                           </td>
@@ -168,6 +175,7 @@ export function TechniciansTab() {
           </>
         )
       )}
+      <TechnicianStats />
     </div>
   );
 }

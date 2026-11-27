@@ -8,11 +8,13 @@ import {
   uniqueTagMatch,
   ZONE_LABELS,
   ZONES,
+  tagArea,
   type BoardTag,
   type CheckinResult,
   type FrontdeskBoardRules,
   type Zone,
 } from '@shared/frontdesk';
+import { crowdAdvice, MAX_BOOKED_TECH } from '@shared/frontdesk-v8223';
 import { cardProblem, riskGrantCovers, type MemberRisk, type TagCardFound } from '@shared/frontdesk-risk';
 import {
   grantCovers,
@@ -36,13 +38,13 @@ import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { ReasonChips } from '../../components/ReasonChips';
-import { Badge, Button, Input, Notice, Segmented } from '../../components/ui';
+import { Badge, Button, Input, Notice, Segmented, Select } from '../../components/ui';
 import { AuthorizeDialog } from '../../components/AuthorizeDialog';
 import { GroupMark, VipChip, ZONE_STYLE } from './parts';
 import { BackfillNotice, backfillBody, backfillSummary, useBackfill } from './backfill';
 import { ReaderStatusLine, TagCardInput, type CardMessage } from './TagCardInput';
 import { PendingPanel, useFrontdeskOp } from './pending';
-import { useMemberGrade, useMemberRisk, useTicketTypes } from './queries';
+import { useGuestRules, useMemberGrade, useMemberRisk, useTicketTypes } from './queries';
 
 export interface CheckinPrefill {
   tagCode?: string;
@@ -59,6 +61,10 @@ interface Row {
   ticketTypeId: number | null;
   /** 分区是店员自己选的（或跟着会员的性别带出来的）：刷卡带出的牌分区不同时不改它，写明「分区不符」 */
   zoneTouched?: boolean;
+  /** 客人类别（8.2.3）：不选就是默认类别（「普通」），不带进请求 */
+  category?: string;
+  /** 预约的技师（8.2.3）：记成这位客人的一条单人备注 */
+  bookedTech?: string;
 }
 
 type TagStatus = { ok: true; tag: BoardTag } | { ok: false; message: string; choices?: BoardTag[] } | null;
@@ -170,6 +176,9 @@ export function CheckinDialog({
   });
 
   const freeOf = (zone: Zone, except: Set<string>) => tags.filter((t) => t.zone === zone && tagIssuable(t) && !except.has(t.code));
+  // 8.2.3：客人类别与区域拥挤提示（连续往同一区发了几张、区里在店几人，阈值在后台；只提示，不拦）
+  const guestRules = useGuestRules();
+  const crowdOf = (code: string) => crowdAdvice(tags, code, guestRules);
 
   const statuses = rows.map((r) => {
     const others = new Set(
@@ -309,6 +318,9 @@ export function CheckinDialog({
           memberId: i === 0 && member ? member.id : null,
           guestLabel: r.label.trim(),
           ...((r.ticketTypeId ?? defaultTicket) ? { ticketTypeId: r.ticketTypeId ?? defaultTicket } : {}),
+          // 8.2.3：客人类别（默认类别不带）、预约的技师；都没有时与升级前的请求完全一样
+          ...(r.category && r.category !== guestRules.categories[0] ? { category: r.category } : {}),
+          ...(r.bookedTech?.trim() ? { bookedTechnician: r.bookedTech.trim() } : {}),
         })),
         vipGrantId: needs.length && grant ? grant.grantId : null,
         ticketGrantId: freeItems.length && ticketGrant ? ticketGrant.grantId : null,
@@ -325,7 +337,7 @@ export function CheckinDialog({
 
   const busy = op.busy;
   /** 补录模式下纸质单号或时间没填好：不能提交 */
-  const backfillBlocked = backfill.state.active && !backfill.request;
+  const backfillBlocked = (backfill.state.active && !backfill.request) || backfill.state.mode === 'supplement';
   // 回车确认发牌（8.1.15）：刷卡只把牌号带出来，不提交；核对后按回车（或点「确认发牌」）才发。
   // 牌号框里的回车先由牌号框处理（补全、按芯片号查、读卡器打的那一下不算）；别的弹窗（当场授权）开着、光标在按钮或下拉上时不管
   const enter = useRef({ submit, can: false });
@@ -572,6 +584,52 @@ export function CheckinDialog({
                     </button>
                   )}
                 </div>
+                {/* 8.2.3：客人类别、预约的技师（记成单人备注，全店刷手牌都看得到） */}
+                <div className="mt-2 flex flex-wrap items-center gap-2 pl-[38px]">
+                  <Select
+                    fullWidth={false}
+                    value={r.category ?? guestRules.categories[0]}
+                    onChange={(e) => update(r.id, { category: e.target.value })}
+                    className="h-9 w-28"
+                    aria-label={`第 ${i + 1} 位客人类别`}
+                    data-testid={`guest-category-${i}`}
+                  >
+                    {guestRules.categories.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </Select>
+                  <Input
+                    fullWidth={false}
+                    value={r.bookedTech ?? ''}
+                    onChange={(e) => update(r.id, { bookedTech: e.target.value })}
+                    placeholder="预约的技师（选填，如 12 号小林）"
+                    maxLength={MAX_BOOKED_TECH}
+                    aria-label={`第 ${i + 1} 位预约的技师`}
+                    className="h-9 min-w-0 flex-1 basis-40"
+                    data-testid={`guest-booked-tech-${i}`}
+                  />
+                </div>
+                {s?.ok && crowdOf(s.tag.code) && (
+                  <p className="mt-1.5 flex items-start gap-1 pl-[38px] text-[12.5px] font-semibold text-ember-deep" role="status" data-testid={`crowd-hint-${i}`}>
+                    <Users className="mt-px size-3.5 shrink-0" /> {crowdOf(s.tag.code)!.text}
+                    {crowdOf(s.tag.code)!.suggest !== null &&
+                      (() => {
+                        const alt = freeOf(r.zone, used).find((t) => t.kind === 'normal' && tagArea(t.code) === crowdOf(s.tag.code)!.suggest);
+                        return alt ? (
+                          <button
+                            type="button"
+                            onClick={() => update(r.id, { code: alt.code })}
+                            className="ml-1 rounded-full bg-paper-2 px-2 py-0.5 text-ink-2 hover:bg-pine-soft hover:text-pine"
+                            data-testid={`crowd-use-${i}`}
+                          >
+                            改发 {alt.code}
+                          </button>
+                        ) : null;
+                      })()}
+                  </p>
+                )}
                 <div className="mt-2 flex min-h-5 flex-wrap items-center gap-2 pl-[38px] text-[12.5px]">
                   {s?.ok && vipShort ? (
                     <span className={cn('flex items-center gap-1 font-semibold', overrideOn ? 'text-yuzu-deep' : 'text-clay')} role={overrideOn ? undefined : 'alert'} data-testid={`vip-short-${i}`}>

@@ -111,8 +111,16 @@ export type AuditAction =
   | 'frontdesk_void'
   | 'clock_assign'
   | 'clock_transfer'
+  | 'clock_change'
+  | 'technician_targets_saved'
+  | 'technicians_imported_web'
   | 'clock_session_room'
   | 'frontdesk_move'
+  // 8.2.1：单项打折、撤下折扣；手牌押金的收、退
+  | 'frontdesk_line_discount'
+  | 'frontdesk_line_discount_revoke'
+  | 'tag_deposit_received'
+  | 'tag_deposit_refunded'
   | 'frontdesk_abandon'
   | 'frontdesk_ticket'
   | 'frontdesk_checkout'
@@ -378,6 +386,10 @@ export type AuditAction =
   // 8.1.39：菜品的计价方式（按价目 / 时价、杂项 / 称重）；包房转挂账
   | 'dish_price_mode'
   | 'table_park'
+  // 8.2.4 餐饮（docs/V8224_DINING.md）：菜品单独设档口、包房房型、返台
+  | 'items_station_pinned'
+  | 'dining_room_type_saved'
+  | 'table_return'
   // 8.1.40：导出券的发放台账；生成一批礼品卡
   | 'coupon_ledger_export'
   | 'gift_card_batch'
@@ -417,6 +429,10 @@ export type AuditAction =
   // 8.1.44 前台备注（docs/V8144_CASHIER.md）：写一条、撤下一条
   | 'visit_remark'
   | 'visit_remark_removed'
+  // 8.2.3 前台（docs/V8223_FRONTDESK.md）：改客人类别、改客人偏好、客诉标已处理
+  | 'visit_category'
+  | 'guest_preferences'
+  | 'complaint_resolved'
   // 员工办公 v1.1 第 2 批（docs/OA_MOBILE.md）：排班发布、排班授权与撤销
   | 'oa_schedule_published'
   | 'oa_schedule_grant_created'

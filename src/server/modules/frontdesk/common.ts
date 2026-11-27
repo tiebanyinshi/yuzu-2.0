@@ -71,6 +71,10 @@ export const FRONTDESK_OPS = [
   // 房态点单（回测整改 P07，room-orders.ts）：挂账，但编号按出品口单独成类；查回、作废在 /api/room-center/order-ops/:outlet（那个出品口的下单权限）
   'room_order_water',
   'room_order_fruit',
+  // 8.2.1（docs/V8221_CASHIER.md）：单项打折（对象是来访，在收银台）；手牌押金的收、退（对象是来访，两个台都能办）
+  'line_discount',
+  'tag_deposit',
+  'tag_deposit_refund',
 ] as const;
 export type FrontdeskOp = (typeof FRONTDESK_OPS)[number];
 
@@ -109,6 +113,9 @@ export const FRONTDESK_OP_PERMISSIONS: Record<FrontdeskOp, readonly Permission[]
   // 与下单一致：作废水吧的房态点单要「在水吧下单」，果吧的要「在果吧下单」
   room_order_water: ['dining.orderWater'],
   room_order_fruit: ['dining.orderFruit'],
+  line_discount: ['frontdesk.checkout'],
+  tag_deposit: ['frontdesk.operate'],
+  tag_deposit_refund: ['frontdesk.operate'],
 };
 
 export const abandonedError = () => conflict('OP_ABANDONED', '这笔操作已在「结果待确认」时由员工作废，不会再生效；如仍需要，请重新填写一笔');

@@ -11,6 +11,7 @@ import {
   BOOKING_KIND_LABELS,
   BOOKING_SOURCE_LABELS,
   BOOKING_STATUS_LABELS,
+  bookingKindsOf,
   DEFAULT_BOOKING_RULES,
   MAX_BOOKING_GUESTS,
   MAX_BOOKING_NOTE,
@@ -24,7 +25,7 @@ import { normalizeTagCode, TAG_CODE_PATTERN } from '@shared/frontdesk';
 import { describeDate, shiftDate } from '@shared/labels';
 import type { MemberSummary } from '@shared/types';
 import { api, errorMessage } from '../../lib/api';
-import { useReasons, useSession } from '../../lib/session';
+import { useCan, useReasons, useSession } from '../../lib/session';
 import { ReasonChips } from '../../components/ReasonChips';
 import { cn, formatTime } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
@@ -36,6 +37,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Field, Input, Notice, Segmented, Select, Skeleton } from '../../components/ui';
 import { PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
 import { OtaOrdersPanel } from '../ota/OtaPanels';
+import { BatchBookingDialog } from './BatchBookingDialog';
 
 const boardKey = (date: string) => ['bookings', date] as const;
 const STATUS_TONE: Record<BookingStatus, 'lake' | 'pine' | 'ember' | 'clay' | 'ink'> = {
@@ -48,11 +50,15 @@ const STATUS_TONE: Record<BookingStatus, 'lake' | 'pine' | 'ember' | 'clay' | 'i
 
 export function BookingsPage() {
   const session = useSession();
+  // 8.2.3：技师预约要「技师预约」，派对房、客房要「预约」；只列这个人能做的那几种
+  const kinds = bookingKindsOf(useCan());
   const [params, setParams] = useSearchParams();
   const date = params.get('d') ?? session.today;
   const focus = Number(params.get('b')) || null;
   const board = useQuery({ queryKey: boardKey(date), queryFn: () => api.get<BookingBoard>(`/api/bookings?date=${date}`), refetchInterval: 30_000 });
   const [creating, setCreating] = useState(false);
+  // 8.2.2 一报多
+  const [batching, setBatching] = useState(false);
   // 预约可以约到「今天 + 规则里最远能约的天数」（默认 7 天，后台可改）：日期条只在这一页放开到那一天（需求 2）。
   // 看板还没取回来时先按上一次知道的规则
   const [ahead, setAhead] = useState(DEFAULT_BOOKING_RULES.maxDaysAhead);
@@ -113,6 +119,9 @@ export function BookingsPage() {
           <div className="flex flex-wrap items-center gap-2">
             {viewSwitch}
             <DateNav value={date} today={session.today} max={lastDay} onChange={setDate} />
+            <Button variant="secondary" icon={<Plus className="size-4" />} onClick={() => setBatching(true)} data-testid="booking-batch">
+              一报多
+            </Button>
             <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setCreating(true)} data-testid="booking-new">
               新建预约
             </Button>
@@ -127,7 +136,7 @@ export function BookingsPage() {
             <Skeleton className="h-60" />
           )
         ) : (
-          (['technician', 'space', 'room'] as const).map((kind) => {
+          kinds.map((kind) => {
             const list = board.data.bookings.filter((b) => b.kind === kind);
             return (
               <section key={kind} className="space-y-2" data-testid={`bookings-${kind}`}>
@@ -164,6 +173,17 @@ export function BookingsPage() {
           }}
         />
       )}
+      {batching && board.data && (
+        <BatchBookingDialog
+          board={board.data}
+          date={date}
+          lastDay={lastDay}
+          onClose={(createdOn) => {
+            setBatching(false);
+            if (createdOn && createdOn !== date) setDate(createdOn);
+          }}
+        />
+      )}
       {acting && board.data && <BookingActionDialog board={board.data} booking={acting.booking} action={acting.action} onClose={() => setActing(null)} />}
     </>
   );
@@ -189,6 +209,7 @@ function BookingRow({ b, focused, onAction }: { b: BookingDetail; focused: boole
       <span className="text-[12px] text-ink-3">
         {BOOKING_SOURCE_LABELS[b.source]} · {b.bookingNo}
         {b.arrivalTagCode && ` · 手牌 ${b.arrivalTagCode}`}
+        {!b.arrivalTagCode && b.tagCode && ` · 报的手牌 ${b.tagCode}`}
         {b.arrivalRef && ` · ${b.arrivalRef}`}
         {b.cancelReason && ` · ${b.cancelReason}`}
       </span>
@@ -368,7 +389,8 @@ function CreateBookingDialog({
   // 预约日期写在弹窗最上面、可以改（需求 2）：原来弹窗里看不出约的是哪一天，也没有别的地方选
   const defaultDay = inRange(date) ? date : today;
   const [day, setDayRaw] = useState(draft && inRange(draft.day) ? draft.day : defaultDay);
-  const [kind, setKind] = useState<BookingKind>(draft?.kind ?? 'technician');
+  const kinds = bookingKindsOf(useCan());
+  const [kind, setKind] = useState<BookingKind>(draft?.kind && kinds.includes(draft.kind) ? draft.kind : (kinds[0] ?? 'space'));
   const [source, setSource] = useState<'front' | 'phone'>(draft?.source ?? 'phone');
   const [term, setTerm] = useState(draft?.term ?? '');
   const [member, setMember] = useState<MemberSummary | null>(draft?.member ?? null);
@@ -432,7 +454,7 @@ function CreateBookingDialog({
   const startOver = () => {
     setRestored(false);
     setDayRaw(defaultDay);
-    setKind('technician');
+    setKind(kinds[0] ?? 'space');
     setSource('phone');
     setTerm('');
     setMember(null);
@@ -556,7 +578,7 @@ function CreateBookingDialog({
               ))}
           </div>
         </div>
-        <Segmented value={kind} onChange={pick(setKind)} ariaLabel="预约什么" options={(['technician', 'space', 'room'] as const).map((k) => ({ value: k, label: BOOKING_KIND_LABELS[k] }))} />
+        <Segmented value={kind} onChange={pick(setKind)} ariaLabel="预约什么" options={kinds.map((k) => ({ value: k, label: BOOKING_KIND_LABELS[k] }))} />
         <Segmented
           value={source}
           onChange={setSource}

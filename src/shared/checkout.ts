@@ -81,7 +81,7 @@ export function priceTicket(t: Pick<TicketType, 'price12h' | 'price24h'>, checke
  * 「优惠 / 免单」（R1.2，店主 2026-10-29 签认）由值班经理及以上当场授权并填原因，一张结账单最多一笔；
  * 店员不能自行抹零，抹零也走优惠。
  */
-export const CHECKOUT_METHODS = [...PAYMENT_METHODS, 'wallet', 'coupon', 'discount', 'store_coupon', 'member_discount', 'count_card', 'on_account'] as const;
+export const CHECKOUT_METHODS = [...PAYMENT_METHODS, 'wallet', 'coupon', 'discount', 'store_coupon', 'member_discount', 'count_card', 'on_account', 'line_discount', 'company'] as const;
 export type CheckoutMethod = (typeof CHECKOUT_METHODS)[number];
 export const CHECKOUT_METHOD_LABELS: Record<CheckoutMethod, string> = {
   ...PAYMENT_METHOD_LABELS,
@@ -93,6 +93,10 @@ export const CHECKOUT_METHOD_LABELS: Record<CheckoutMethod, string> = {
   count_card: '次卡',
   // 协议单位挂账（8.0.7 A3）：算营业额、不算实收，回款在 ERP「应收与挂账」登记
   on_account: '挂账',
+  // 单项打折（8.2.1）：结账时按这几张账单上打过折的行自动记一笔，优惠、不是收款
+  line_discount: '单项折扣',
+  // 公司承担（8.2.4，docs/V8224_DINING.md 第 5 节）：公司内部账户承担（客人身体不适、招待……），当场授权；算营业额、不算实收，不进协议单位应收
+  company: '公司承担',
 };
 /**
  * 实收（现金流入）的方式：会员储值是会员余额抵扣，团购券由平台结算，优惠 / 免单没有收钱，券抵扣（v0.7.20）、
@@ -111,7 +115,8 @@ export const isCashLike = (m: CheckoutMethod): m is PaymentMethod => (PAYMENT_ME
  */
 export function businessBreakdown(b: { net: number; byMethod: readonly { method: CheckoutMethod; amount: number }[]; refunds?: { total: number } }) {
   const sum = (pick: (m: CheckoutMethod) => boolean) => b.byMethod.filter((m) => pick(m.method)).reduce((total, m) => total + m.amount, 0);
-  const discount = sum((m) => m === 'discount');
+  // 单项折扣（8.2.1）算进「优惠」一列（与整单的优惠 / 免单同一列）
+  const discount = sum((m) => m === 'discount' || m === 'line_discount');
   const coupon = sum((m) => m === 'store_coupon');
   const memberDiscount = sum((m) => m === 'member_discount');
   const refund = b.refunds?.total ?? 0;
@@ -291,9 +296,21 @@ export interface CheckoutPreview {
     needsTicket: boolean;
     /** 房费（福田店：房间按时间计费的，只在收银台结账时收；结账时按那一刻重算）：哪间房、计了多少分钟、多少钱；没有为空 */
     roomFees: { room: string; chargedMinutes: number; amount: number }[];
+    /** 这位客人账单上单项打折折掉的钱（8.2.1）；amount 照旧是原价算的 */
+    lineDiscount?: number;
     amount: number;
   }[];
   totalAmount: number;
+  /**
+   * 单项打折合计（8.2.1，docs/V8221_CASHIER.md）：结账时自动记一笔「单项折扣」，收款只要收 totalAmount − lineDiscountAmount；
+   * 升级前的服务端没有这一项（按 0）
+   */
+  lineDiscountAmount?: number;
+  /**
+   * 这几张手牌上押着的押金（8.2.1）：结账时一起退掉（会员储值扣的退回原卡，其余按原方式退）；
+   * 页面按现金类押金先填好同样方式的收款（抵扣），members 的余额已经算上了储值押金退回的钱
+   */
+  deposits?: import('./tag-deposit').TagDeposit[];
   /** 这些手牌上的会员（可用储值支付），附余额 */
   members: CheckoutMember[];
   /** 这些会员的券（v0.7.20）：能抵多少，不能用的写原因 */

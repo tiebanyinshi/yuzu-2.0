@@ -118,6 +118,14 @@ beforeAll(async () => {
   // 现版本发牌时在来访上记风控放行的授权人、时间、原因（187 才有这三列），发完读回这次顺带标成到店的预约（预约表 053 才有）：
   // 写入期间临时加列、建空表，迁移前删掉
   await sql`ALTER TABLE visits ADD COLUMN risk_approved_by bigint, ADD COLUMN risk_approved_at timestamptz, ADD COLUMN risk_reason text`;
+  // 现版本发牌时记客人类别（8.2.3，550 才有）：写入期间临时加列，迁移前删掉
+  await sql`ALTER TABLE visits ADD COLUMN guest_category text`;
+  // 现版本结账读单项折扣（8.2.1，530 才有）：写入期间临时建最小的空表，迁移前删掉
+  await sql`CREATE TABLE bill_line_discounts (id bigint, line_id bigint, bill_id bigint, list_amount bigint, final_amount bigint, rate smallint, reason text, staff_id bigint, approved_by bigint, status text, created_at timestamptz, revoked_at timestamptz)`;
+  // 手牌押金（8.2.1，530 才有）：结账核对押金，写入期间临时建最小的空表，迁移前删掉
+  await sql`CREATE TABLE tag_deposits (id bigint, deposit_no text, visit_id bigint, method text, amount bigint, member_id bigint, consumption_id bigint, status text, store_id bigint, business_date date, refund_business_date date, staff_id bigint, refunded_by bigint)`;
+  // 补单（8.2.3，550 才有）：读明细时标出补单的出单员，写入期间临时建最小的空表，迁移前删掉
+  await sql`CREATE TABLE bill_supplements (op_key uuid, visit_id bigint, issuer_id bigint, actual_at timestamptz, created_by bigint)`;
   await sql`CREATE TABLE bookings (id bigint, booking_no text, status text, arrival_visit_id bigint, arrived_at timestamptz)`;
   // 现版本结账时一起结束这几位客人在房态中心的登记单（190 才有）：写入期间临时建空表，迁移前删掉
   await sql`CREATE TABLE room_registrations (id bigint, space_id bigint, visit_id bigint, status text)`;
@@ -168,6 +176,10 @@ beforeAll(async () => {
   await sql`DELETE FROM settings WHERE key = 'stock_usage_rules'`;
   for (const t of ['hand_tags', 'visits', 'shifts', 'checkouts']) await sql.unsafe(`ALTER TABLE ${t} DROP COLUMN store_id`);
   await sql`ALTER TABLE visits DROP COLUMN risk_approved_by, DROP COLUMN risk_approved_at, DROP COLUMN risk_reason`;
+  await sql`ALTER TABLE visits DROP COLUMN guest_category`;
+  await sql`DROP TABLE bill_line_discounts`;
+  await sql`DROP TABLE tag_deposits`;
+  await sql`DROP TABLE bill_supplements`;
   await sql`ALTER TABLE hand_tags DROP COLUMN service_status, DROP COLUMN service_note`;
   await sql`DROP TABLE bookings`;
 

@@ -16,23 +16,39 @@ import type { Deps } from '../lib/context';
 import { badRequest } from '../lib/errors';
 import { cents, parse } from '../lib/validate';
 import { lockSettings } from '../lib/rule-settings';
-import { storeIn } from '../lib/store-context';
+import { currentStoreId, storeIn } from '../lib/store-context';
 
 interface VersionRow {
   id: number;
+  /** 门店（8.2.2）；null 是 8.2.2 以前全公司一份的 */
+  storeId: number | null;
   rules: CommissionRules;
   effectiveAt: string;
   note: string;
   createdByName: string | null;
 }
 
-async function versions(db: Db): Promise<VersionRow[]> {
+/**
+ * 规则的各个版本（8.2.2 起按门店，「各地区不同」）：store 给了只取这家店的与全公司一份的（门店为空的，8.2.2 以前保存的）；
+ * 不给取全部（多店合看的报表按每条明细的门店再挑）
+ */
+async function versions(db: Db, store?: number): Promise<VersionRow[]> {
   return db<VersionRow[]>`
-    SELECT v.id, v.rules, v.effective_at, v.note, s.display_name AS created_by_name
-    FROM commission_rule_versions v LEFT JOIN staff s ON s.id = v.created_by ORDER BY v.effective_at, v.id`;
+    SELECT v.id, v.store_id, v.rules, v.effective_at, v.note, s.display_name AS created_by_name
+    FROM commission_rule_versions v LEFT JOIN staff s ON s.id = v.created_by
+    ${store === undefined ? db`` : db`WHERE v.store_id IS NULL OR v.store_id = ${store}`}
+    ORDER BY v.effective_at, v.id`;
 }
 
-const normalize = (r: Partial<CommissionRules> | null | undefined): CommissionRules => ({ ...DEFAULT_COMMISSION_RULES, ...r, items: { ...r?.items } });
+/** 某家店用的版本：这家店保存过自己的规则，从它第一次保存起只看本店的；之前（与没保存过的店）看全公司一份的 */
+export function storeVersions(list: VersionRow[], store: number): VersionRow[] {
+  const own = list.filter((v) => v.storeId !== null && Number(v.storeId) === store);
+  if (own.length === 0) return list.filter((v) => v.storeId === null);
+  const first = new Date(own[0]!.effectiveAt).getTime();
+  return [...list.filter((v) => v.storeId === null && new Date(v.effectiveAt).getTime() < first), ...own];
+}
+
+const normalize = (r: Partial<CommissionRules> | null | undefined): CommissionRules => ({ ...DEFAULT_COMMISSION_RULES, ...r, items: { ...r?.items }, stars: { ...r?.stars } });
 
 /** 某一时刻有效的规则：最后一个生效时间不晚于它的版本；还没有保存过任何版本时为默认规则 */
 export function rulesAt(list: VersionRow[], at: Date): { rules: CommissionRules; versionId: number | null } {
@@ -42,7 +58,7 @@ export function rulesAt(list: VersionRow[], at: Date): { rules: CommissionRules;
 }
 
 export async function commissionSettings(db: Db): Promise<CommissionSettings> {
-  const list = await versions(db);
+  const list = storeVersions(await versions(db, currentStoreId()), currentStoreId());
   const toVersion = (v: VersionRow): CommissionVersion => ({
     id: v.id,
     rules: normalize(v.rules),
@@ -71,18 +87,25 @@ export interface CommissionLine {
   quantity: number;
   amount: number;
   callType: CallType;
+  /** 加钟（8.2.2） */
+  extension: boolean;
+  /** 挂账时技师的星级（8.2.2） */
+  star: number | null;
+  /** 结账单的门店（8.2.2：提成按各店自己的规则） */
+  storeId: number;
 }
 
 /** 时段内结账（计正数）与反结账（计负数）的技师明细，结账那一刻账单上的（与部门构成同一口径） */
 export async function settledTechnicianLines(db: Db, from: string, to: string): Promise<CommissionLine[]> {
   return db<CommissionLine[]>`
     WITH k AS (
-      SELECT id, checkout_no, created_at, business_date, 1 AS sign FROM checkouts WHERE business_date BETWEEN ${from} AND ${to} AND ${storeIn(db, 'store_id')}
+      SELECT id, checkout_no, created_at, business_date, 1 AS sign, store_id FROM checkouts WHERE business_date BETWEEN ${from} AND ${to} AND ${storeIn(db, 'store_id')}
       UNION ALL
-      SELECT id, checkout_no, created_at, void_business_date, -1 FROM checkouts WHERE void_business_date BETWEEN ${from} AND ${to} AND ${storeIn(db, 'store_id')}
+      SELECT id, checkout_no, created_at, void_business_date, -1, store_id FROM checkouts WHERE void_business_date BETWEEN ${from} AND ${to} AND ${storeIn(db, 'store_id')}
     )
     SELECT k.sign, k.id AS checkout_id, k.checkout_no, k.created_at AS checkout_at, k.business_date::text AS business_date,
-           h.code AS tag_code, l.technician_id, l.item_id, l.name, l.tier, l.quantity, l.amount, l.call_type
+           h.code AS tag_code, l.technician_id, l.item_id, l.name, l.tier, l.quantity, l.amount, l.call_type,
+           l.clock_extension AS extension, l.tech_star AS star, k.store_id::int AS store_id
     FROM k JOIN checkout_bills cb ON cb.checkout_id = k.id
     JOIN bill_lines l ON l.bill_id = cb.bill_id AND l.posted_at <= k.created_at AND (l.voided_at IS NULL OR l.voided_at > k.created_at)
     JOIN visits v ON v.id = cb.visit_id JOIN hand_tags h ON h.id = v.tag_id
@@ -92,10 +115,12 @@ export async function settledTechnicianLines(db: Db, from: string, to: string): 
 
 /** 每条明细的提成（按结账时刻的规则；冲回的取同一规则再取负数） */
 export async function withCommission(db: Db, lines: CommissionLine[]) {
-  const list = await versions(db);
+  const all = await versions(db);
+  const byStore = new Map<number, VersionRow[]>();
+  const listOf = (store: number) => byStore.get(store) ?? byStore.set(store, storeVersions(all, store)).get(store)!;
   return lines.map((l) => {
-    const { rules, versionId } = rulesAt(list, new Date(l.checkoutAt));
-    const c = lineCommission(rules, { itemId: l.itemId, tier: l.tier, quantity: l.quantity, amount: l.amount, callType: l.callType });
+    const { rules, versionId } = rulesAt(listOf(Number(l.storeId)), new Date(l.checkoutAt));
+    const c = lineCommission(rules, { itemId: l.itemId, tier: l.tier, quantity: l.quantity, amount: l.amount, callType: l.callType, star: l.star });
     return { ...l, versionId, base: l.sign * c.base, bonus: l.sign * c.bonus };
   });
 }
@@ -115,6 +140,9 @@ export const CommissionInput = z.object({
     base: baseInput,
     designatedBonus: cents('点钟奖励').max(1_000_000, '点钟奖励过大'),
     items: z.record(z.string().regex(/^\d+$/, '项目编号不正确'), baseInput).default({}),
+    // 8.2.2：扩钟奖励（不填与点钟一样）、按星级的提成
+    callBonus: cents('扩钟奖励').max(1_000_000, '扩钟奖励过大').nullable().default(null),
+    stars: z.record(z.string().regex(/^([1-9]|10)$/, '星级应为 1–10'), baseInput).default({}),
   }),
   note: z.string().trim().max(100, '说明最多 100 字').default(''),
 });
@@ -138,8 +166,8 @@ export function registerCommissionRoutes(app: FastifyInstance, deps: Deps) {
       // 数据库的时钟比应用慢时（例如跑在时钟漂移的虚拟机里），刚结的钟会被算成改规则之后结的（Codex 在 main v0.7.20 复测首轮）
       const effectiveAt = new Date();
       const [row] = await tx<{ id: number }[]>`
-        INSERT INTO commission_rule_versions (rules, note, created_by, effective_at)
-        VALUES (${tx.json(rules as never)}, ${note}, ${req.actor.id}, ${effectiveAt}) RETURNING id`;
+        INSERT INTO commission_rule_versions (rules, note, created_by, effective_at, store_id)
+        VALUES (${tx.json(rules as never)}, ${note}, ${req.actor.id}, ${effectiveAt}, ${currentStoreId()}) RETURNING id`;
       await writeAudit(tx, {
         staffId: req.actor.id,
         action: 'settings_updated',

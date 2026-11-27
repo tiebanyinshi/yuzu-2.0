@@ -29,11 +29,13 @@ import { sweepPaying, sweepRefunds } from './modules/pay-terminal';
 import { runVoucherReconcile, sweepVerifying } from './modules/platform-verify';
 import { runAiSummaries } from './modules/ai';
 import { sweepOvertimeReminders } from './modules/frontdesk/overtime';
+import { sweepRiskAlerts } from './modules/frontdesk/index';
 import { sweepTableRestores } from './modules/tables-v8117';
 import { runAttendanceSettlement } from './modules/oa/attendance-daily';
 import { runAnnualLeaveGrant } from './modules/oa/leave';
 import { purgeStaleAttachments } from './modules/oa/attachments';
 import { sweepTrainingUploads } from './modules/training';
+import { sweepLeaveReturns } from './modules/technician-leave-return';
 
 export interface JobLog {
   info: (msg: string) => void;
@@ -143,10 +145,20 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
     const n = await sendCcDigest(sql, config.timezone, now);
     if (n > 0) log.info(`业财法知会日报：${n} 条知会`);
   });
+  // 技师休假到期自动上牌（8.2.2）：休完了的已批准休假单，休完后的第一个营业日给技师上牌、排到队尾（那天有人动过的不动）
+  await step('技师休假到期上牌', '技师休假到期上牌失败，下一分钟重试', async () => {
+    const n = await sweepLeaveReturns({ sql, config }, now);
+    if (n > 0) log.info(`技师休假到期自动上牌：${n} 位`);
+  });
   // 超时提醒（8.1.17 BW-1）：在店到了 12 / 24 / 72 小时的客人，在「异常待办」里记一条（每一级只记一次，经办人「系统」）
   await step('超时提醒', '超时提醒没记完，下一分钟重试', async () => {
     const n = await sweepOvertimeReminders({ sql, config }, now);
     if (n > 0) log.info(`超时提醒：记了 ${n} 条`);
+  });
+  // 高风险提示（8.2.3，docs/V8223_FRONTDESK.md 第 5 条）：在店超过设定小时数、挂账超过设定金额的客人，按设定推给值班经理或店总（每位每样一次）
+  await step('高风险提示', '高风险提示没推完，下一分钟重试', async () => {
+    const n = await sweepRiskAlerts({ sql, config }, now);
+    if (n > 0) log.info(`高风险提示：推了 ${n} 条`);
   });
   // 桌台到点自动恢复（8.1.17 BW-2）：餐饮规则开了「到点自动恢复」的店，维修过了预计恢复时间的桌自动恢复（经办人「系统」）
   await step('桌台到点自动恢复', '桌台到点自动恢复失败，下一分钟重试', async () => {

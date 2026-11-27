@@ -34,6 +34,7 @@ import { PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
 import { stayText } from '../frontdesk/queries';
 import { TableCheckoutDialog } from './TableCheckoutDialog';
 import { ParkedPanel, parkedKey } from './TableParked';
+import { ReturnTableDialog } from './ReturnTableDialog';
 import { ReceiptDialog } from './ReceiptDialog';
 import { tablesKey, useDiningMenu, useServerNow, useTableSession, useTablesBoard } from './queries';
 import { MergeDialog, TableActionStatus, TableHistoryDialog, TableStateDialog, TableStateLine, useTableAction } from './TableActions';
@@ -93,6 +94,8 @@ export function TablesTab() {
   const [records, setRecords] = useState(false);
   /** 8.1.15：点了没在用餐的桌（待清台、维修中，或不能开台时）看状态、清台、维修、恢复、历史 */
   const [stateFor, setStateFor] = useState<Tile | null>(null);
+  /** 8.2.4：返台补低消（转挂账的单，或待清台的桌上刚结了账、补了低消的单） */
+  const [returning, setReturning] = useState<{ sessionId: number } | { tableId: number; tableName: string } | null>(null);
   const canOpen = can('dining.order') && can('frontdesk.operate');
 
   // 顶部「结果待确认」的「去处理」：开台回到那张桌台的开台对话框，桌台结账回到那一桌的结账
@@ -176,7 +179,12 @@ export function TablesTab() {
           所有消费请挂手牌点单。还开着的桌照常看明细、结账、退菜、撤台；历史桌台单在「结账记录」里查。店主可在后台「餐饮」里重新打开桌台点单。
         </Notice>
       )}
-      <ParkedPanel canCheckout={can('frontdesk.checkout')} onOpen={setSessionId} onCheckout={setCheckoutFor} />
+      <ParkedPanel
+        canCheckout={can('frontdesk.checkout')}
+        onOpen={setSessionId}
+        onCheckout={setCheckoutFor}
+        onReturn={can('dining.returnTable') ? (id) => setReturning({ sessionId: id }) : undefined}
+      />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="text-[13.5px] text-ink-2">
           用餐中 <b className="num text-ink">{busy.length}</b> 桌 · <b className="num text-ink">{busy.reduce((n, t) => n + t.session!.guests, 0)}</b> 人 · 空闲{' '}
@@ -252,6 +260,25 @@ export function TablesTab() {
                 }
               : null
           }
+          onReturn={
+            can('dining.returnTable') && can('frontdesk.checkoutVoid')
+              ? () => {
+                  setReturning({ tableId: stateFor.id, tableName: stateFor.name });
+                  setStateFor(null);
+                }
+              : null
+          }
+        />
+      )}
+      {returning && (
+        <ReturnTableDialog
+          target={returning}
+          onClose={() => setReturning(null)}
+          onDone={(id) => {
+            setReturning(null);
+            void qc.invalidateQueries({ queryKey: parkedKey });
+            setSessionId(id);
+          }}
         />
       )}
       {opening && (

@@ -6,9 +6,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { HandHeart, Plus } from 'lucide-react';
 import { PRICE_TIERS } from '@shared/catalog';
-import { CALL_TYPE_LABELS, DEFAULT_TECHNICIAN_RULES, gradeLabel, RANKING_REFRESH_CHOICES, type CallType, type TechnicianAdmin, type TechnicianRules } from '@shared/technicians';
+import { CALL_TYPE_LABELS, CALL_TYPE_OPTIONS, DEFAULT_TECHNICIAN_RULES, gradeLabel, RANKING_REFRESH_CHOICES, type CallType, type TechnicianAdmin, type TechnicianRules } from '@shared/technicians';
 import { api, errorMessage } from '../../lib/api';
 import { ClockroomRulesCard, CommissionCard } from './ClockroomCards';
+import { TechnicianImportCard } from './TechnicianImportCard';
 import { qk, useCatalog } from '../../lib/queries';
 import { useCan } from '../../lib/session';
 import { cn, formatDateTime } from '../../lib/utils';
@@ -38,8 +39,9 @@ export function TechniciansSection() {
         <ClockroomRulesCard />
         {(can('settings.manage') || can('report.commission')) && <CommissionCard />}
       </SubPane>
-      <SubPane tab="roster">
+      <SubPane tab="roster" className="space-y-5">
         <RosterCard />
+        {can('technician.manage') && <TechnicianImportCard />}
       </SubPane>
       <SubPane tab="items">
         <ItemsCard />
@@ -144,7 +146,7 @@ function RulesCard() {
             ariaLabel="默认上钟方式"
             value={draft.defaultCallType}
             onChange={(v: CallType) => editable && set({ defaultCallType: v })}
-            options={(['rotation', 'designated'] as const).map((c) => ({ value: c, label: CALL_TYPE_LABELS[c], disabled: !editable }))}
+            options={CALL_TYPE_OPTIONS.map((c) => ({ value: c, label: CALL_TYPE_LABELS[c], disabled: !editable }))}
           />,
           true,
         )}

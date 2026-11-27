@@ -136,7 +136,7 @@ function SettlementSheet({ s }: { s: SettlementSummary }) {
         {/* 押金：客房押金与会员卡押金（8.1.15）各一段 */}
         {(
           [
-            ['print-settlement-deposits', '客房押金 · 负债，不算营业额', '当天结束时在住押金', s.deposits],
+            ['print-settlement-deposits', '客房、手牌押金 · 负债，不算营业额', '当天结束时押着的押金', s.deposits],
             ['print-settlement-card-deposits', '会员卡押金 · 负债，不算营业额', '当天结束时押着的押金', s.cardDeposits],
           ] as const
         ).map(

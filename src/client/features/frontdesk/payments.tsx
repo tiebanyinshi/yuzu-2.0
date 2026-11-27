@@ -16,7 +16,9 @@ import {
 } from '@shared/checkout';
 import { formatStoreCouponCode, normalizeStoreCouponCode, STORE_COUPON_CODE_PATTERN, type CheckoutCouponOption } from '@shared/coupons';
 import { splitDeduction } from '@shared/deduction';
-import type { DiscountGrant, DiscountGrantRequest } from '@shared/grants';
+import type { CompanyChargeGrant, CompanyChargeGrantRequest, DiscountGrant, DiscountGrantRequest } from '@shared/grants';
+import type { CompanyReason } from '@shared/dining-v8224';
+import { companyGrantFits, CompanyPayRow, companyRequest } from './CompanyPayRow';
 import { maskPhone, PAYMENT_METHODS } from '@shared/labels';
 import { centsToInput, formatYuan, parseYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
@@ -58,7 +60,7 @@ const walletCap = (m: PayMember) => Math.min(m.principalBalance + m.bonusBalance
 
 /** 能「补齐到应收」的一笔：金额能改（券、扫码到账、验过的券、优惠的金额不能随手改），补完以后大于 0 */
 const fillable = (r: PayRow, cents: number | null, remaining: number | null) =>
-  remaining !== null && remaining !== 0 && !['store_coupon', 'discount'].includes(r.method) && !r.payTx && !r.verification && (cents ?? 0) + remaining > 0;
+  remaining !== null && remaining !== 0 && !['store_coupon', 'discount', 'company'].includes(r.method) && !r.payTx && !r.verification && (cents ?? 0) + remaining > 0;
 
 export interface PayRow {
   id: number;
@@ -72,9 +74,11 @@ export interface PayRow {
   dealName: string;
   /** 现金：客人实给的金额（只用于计算找零，不登记） */
   tendered: string;
-  /** 优惠 / 免单：原因与当场授权（授权绑定这几张手牌或这几桌与金额，改了要重新授权） */
+  /** 优惠 / 免单：原因与当场授权（授权绑定这几张手牌或这几桌与金额，改了要重新授权）；公司承担（8.2.4）时 reason 是说明 */
   reason: string;
-  grant: DiscountGrant | null;
+  grant: DiscountGrant | CompanyChargeGrant | null;
+  /** 公司承担（8.2.4）的原因 */
+  companyReason: CompanyReason;
   /** 券抵扣（v0.7.20）：选中的券（能抵多少由服务端按此刻的明细算好）；输入券码核对时的原文 */
   coupon: CheckoutCouponOption | null;
   couponInput: string;
@@ -100,6 +104,7 @@ export const newRow = (method: CheckoutMethod, amount: number): PayRow => ({
   tendered: '',
   reason: '',
   grant: null,
+  companyReason: 'unwell',
   coupon: null,
   couponInput: '',
   accountId: null,
@@ -108,7 +113,7 @@ export const newRow = (method: CheckoutMethod, amount: number): PayRow => ({
   verification: null,
 });
 
-export const QUICK_METHODS: CheckoutMethod[] = ['wechat', 'alipay', 'cash', 'bank_card', 'other', 'wallet', 'coupon', 'store_coupon', 'discount', 'on_account'];
+export const QUICK_METHODS: CheckoutMethod[] = ['wechat', 'alipay', 'cash', 'bank_card', 'other', 'wallet', 'coupon', 'store_coupon', 'discount', 'on_account', 'company'];
 
 /** 结账用券（v0.7.20）：会员的券（结账核对里列出）与输入券码核对；没有时不显示「券抵扣」 */
 export interface CouponSource {
@@ -126,7 +131,8 @@ export type PaymentBody =
   | { method: 'member_discount'; memberId: number; benefitId: number; amount: number }
   | { method: 'count_card'; cardId: number; uses: number; amount: number }
   | { method: 'on_account'; accountId: number; signer: string; amount: number }
-  | { method: Exclude<CheckoutMethod, 'wallet' | 'coupon' | 'discount' | 'store_coupon' | 'member_discount' | 'count_card' | 'on_account'>; amount: number; ref: string; payTxId?: number };
+  | { method: 'company'; amount: number; reason: CompanyReason; note: string; grantId: string }
+  | { method: Exclude<CheckoutMethod, 'wallet' | 'coupon' | 'discount' | 'store_coupon' | 'member_discount' | 'count_card' | 'on_account' | 'company'>; amount: number; ref: string; payTxId?: number };
 
 /**
  * 收款登记的状态与核对：每笔的金额、储值扣款构成（余额不足、会员不在本次结账里）、团购券码、「其他」备注、
@@ -201,9 +207,14 @@ export function usePayRows(opts: {
       if (given === null) return '客人实给的金额不正确';
       if (given < c) return `客人实给少于这笔现金，还差 ¥${((c - given) / 100).toFixed(2)}；请核对现金或改收款方式`;
     }
+    if (r.method === 'company') {
+      if (r.companyReason === 'other' && r.reason.trim().length < 2) return '公司承担选「其他」请写说明（至少 2 个字）';
+      if (rows.filter((x) => x.method === 'company').length > 1) return '公司承担一张结账单只能登记一笔，请合并金额';
+      if (!companyGrantFits(r, c, opts.grantFits)) return r.grant ? `${opts.scopeName}、金额或原因改了，请按当前内容重新授权` : '请值班经理、店总或店主当场授权';
+    }
     if (r.method === 'discount') {
       if (r.reason.trim().length < 2) return '请填写优惠原因（至少 2 个字），例如：抹零、投诉补偿';
-      if (!opts.grantFits(r.grant, c)) return r.grant ? `${opts.scopeName}或金额改了，请按当前内容重新授权` : '请值班经理、店总或店主当场授权';
+      if (!opts.grantFits(r.grant as DiscountGrant | null, c)) return r.grant ? `${opts.scopeName}或金额改了，请按当前内容重新授权` : '请值班经理、店总或店主当场授权';
       if (rows.some((x) => x.method === 'store_coupon')) return '券不能和优惠 / 免单同时用，请二选一';
       if (countCard) return '次卡不能和优惠 / 免单同时用，请二选一';
     }
@@ -251,7 +262,7 @@ export function usePayRows(opts: {
   /** 这一笔补齐到应收（8.1.44 混合支付）：把还差的加到这一笔上，或把多收的从这一笔里减掉 */
   const fill = (id: number) => edit(() => setRows((list) => list.map((r, i) => (r.id === id && remaining !== null ? { ...r, amount: centsToInput(Math.max(0, (rowCents[i] ?? 0) + remaining)) } : r))));
   /** 授权弹窗签发后记到那一笔上（不经过 edit：授权时表单没有锁） */
-  const setGrant = (id: number, grant: DiscountGrant) => setRows((list) => list.map((r) => (r.id === id ? { ...r, grant } : r)));
+  const setGrant = (id: number, grant: DiscountGrant | CompanyChargeGrant) => setRows((list) => list.map((r) => (r.id === id ? { ...r, grant } : r)));
 
   /** 按登记的收款生成提交内容（调用前 ok 必须为 true） */
   const payments = (): PaymentBody[] => [
@@ -269,9 +280,10 @@ export function usePayRows(opts: {
         return { method: 'coupon' as const, platform: r.platform, code: normalizeCouponCode(r.code), dealName: r.dealName.trim(), amount };
       }
       if (r.method === 'discount') return { method: 'discount' as const, amount, grantId: r.grant!.grantId };
+      if (r.method === 'company') return { method: 'company' as const, amount, reason: r.companyReason, note: r.reason.trim(), grantId: r.grant!.grantId };
       if (r.method === 'store_coupon') return { method: 'store_coupon' as const, code: r.coupon!.code, amount };
       if (r.method === 'on_account') return { method: 'on_account' as const, accountId: r.accountId!, signer: r.signer.trim(), amount };
-      const method = r.method as Exclude<CheckoutMethod, 'wallet' | 'coupon' | 'discount' | 'store_coupon' | 'member_discount' | 'count_card' | 'on_account'>;
+      const method = r.method as Exclude<CheckoutMethod, 'wallet' | 'coupon' | 'discount' | 'store_coupon' | 'member_discount' | 'count_card' | 'on_account' | 'company'>;
       if (r.payTx) return { method, amount, ref: r.payTx.providerTradeNo ?? '', payTxId: r.payTx.id };
       return { method, amount, ref: r.ref.trim() };
     }),
@@ -346,7 +358,7 @@ export function PaymentsSection({
   const [authorizing, setAuthorizing] = useState<number | null>(null);
   const authRow = pay.rows.find((r) => r.id === authorizing) ?? null;
   const authCents = authRow ? pay.rowCents[pay.rows.indexOf(authRow)] : null;
-  const auth = authRow && authCents ? authorize(authCents, authRow.reason.trim()) : null;
+  const auth = authRow && authCents ? authorize(authCents, authRow.method === 'company' ? '公司承担' : authRow.reason.trim()) : null;
   return (
     <div className="rounded-lg border border-line bg-paper/50 p-3">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -392,7 +404,9 @@ export function PaymentsSection({
               members={members}
               split={pay.splitOf(r, pay.rowCents[i] ?? null)}
               locked={pay.locked}
-              granted={r.method === 'discount' && pay.grantFits(r.grant, pay.rowCents[i] ?? 0)}
+              granted={
+                r.method === 'discount' ? pay.grantFits(r.grant as DiscountGrant | null, pay.rowCents[i] ?? 0) : r.method === 'company' && companyGrantFits(r, pay.rowCents[i] ?? 0, pay.grantFits)
+              }
               onChange={(patch) => pay.update(r.id, patch)}
               onAuthorize={() => setAuthorizing(r.id)}
               onRemove={() => pay.remove(r.id)}
@@ -404,7 +418,18 @@ export function PaymentsSection({
           ))}
         </ul>
       )}
-      {authRow && auth ? (
+      {authRow && auth && authRow.method === 'company' && authCents ? (
+        <AuthorizeDialog<CompanyChargeGrantRequest>
+          open
+          request={companyRequest(auth.request, authCents, authRow.companyReason, authRow.reason.trim())}
+          lines={[...auth.lines.slice(0, 1), `公司承担 ${formatYuan(authCents)} · ${authRow.reason.trim() || '（没写说明）'}`]}
+          onClose={() => setAuthorizing(null)}
+          onGranted={(grant) => {
+            pay.setGrant(authRow.id, grant);
+            setAuthorizing(null);
+          }}
+        />
+      ) : authRow && auth ? (
         <AuthorizeDialog<DiscountGrantRequest>
           open
           request={auth.request}
@@ -464,7 +489,7 @@ export function PayRowEditor({
   members: PayMember[];
   split: ReturnType<typeof splitDeduction> | null;
   locked: boolean;
-  /** 优惠 / 免单：授权仍覆盖这几张手牌（这几桌）与金额 */
+  /** 优惠 / 免单、公司承担（8.2.4）：授权仍覆盖这几张手牌（这几桌）与金额（公司承担还有原因） */
   granted: boolean;
   onChange: (patch: Partial<PayRow>) => void;
   onAuthorize: () => void;
@@ -660,6 +685,20 @@ export function PayRowEditor({
           locked={locked}
           onPick={(c) => onChange({ coupon: c, amount: c && c.usable ? centsToInput(c.amount) : '' })}
           onInput={(v) => onChange({ couponInput: v })}
+        />
+      )}
+
+      {row.method === 'company' && (
+        <CompanyPayRow
+          reason={row.companyReason}
+          note={row.reason}
+          granted={granted}
+          approverName={row.grant?.approverName ?? null}
+          locked={locked}
+          canAuthorize={!!cents && cents > 0 && (row.companyReason !== 'other' || row.reason.trim().length >= 2)}
+          // 原因、说明随授权一起记下：改了要重新授权
+          onChange={(patch) => onChange({ ...patch, grant: null })}
+          onAuthorize={onAuthorize}
         />
       )}
 

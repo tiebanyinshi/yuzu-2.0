@@ -153,6 +153,10 @@ export const PERMISSIONS = {
   'frontdesk.refund': { roles: ['owner', 'store_manager', 'duty_manager'] },
   /** 结账时挂账到协议单位（8.0.7 A3，V12 待确认：店主、店总、值班经理） */
   'frontdesk.onAccount': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  /** 补单（8.2.3，docs/V8223_FRONTDESK.md 第 9 条）：按实际时间、出单员给在店客人补录餐饮与项目（不打厨房单），默认值班经理及以上 */
+  'frontdesk.supplement': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  /** 客诉台账（8.2.3，第 3 条）：看「客诉」「特殊关照」备注的台账、标已处理、打印，默认值班经理及以上 */
+  'frontdesk.complaints': { roles: ['owner', 'store_manager', 'duty_manager'] },
   // ── 券与会员权益（v0.7.20，飞书 RQ-006；docs/COUPONS.md，默认值待确认）──
   /** 维护券模板、发券规则（开卡礼、升级礼、生日礼、充值赠券），生成与导出无记名纸质券、按批次作废没用的 */
   'coupon.manage': { roles: ['owner', 'store_manager'] },
@@ -302,6 +306,11 @@ export const PERMISSIONS = {
   /** 钟房：上牌、派钟、上钟、下钟、加钟、退钟（v0.7.1，待确认：前台岗位都能做；派钟、加钟、退钟还要能挂账） */
   'technician.dispatch': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
   /**
+   * 超时退技师（8.2.2，《技师排班系统需求沟通会》）：退钟、取消派钟超过本人更正时限（默认 15 分钟）也能直接退。
+   * 待确认：默认当班管理层（值班经理及以上）；没有的超时后提示改走退项
+   */
+  'technician.voidLate': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  /**
    * 上钟播报（回测整改 P03，回测 4-1）：「技师 → 上钟播报」页——看排位、手动叫号、由本机播报（音量、静音、重播、播报记录）。
    * 与钟房分开授：排位员可以只有这一项；默认有钟房的岗位都有
    */
@@ -329,6 +338,11 @@ export const PERMISSIONS = {
   'room.operate': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
   /** 预约（v0.7.28，待确认：前台岗位都能做）：预约技师、派对房、客房电话预订；确认、改时间、到店、取消、记爽约 */
   'booking.manage': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
+  /**
+   * 技师预约（8.2.3，店主 2026-11-26「技师预约权限不给前台」，docs/V8223_FRONTDESK.md 第 6 条）：预约技师单独一项；
+   * 「预约」（booking.manage）只管派对房、客房。前台（收银）默认没有，值班经理及以上默认有；迁移 550 给原来有「预约」的其他岗位都加上
+   */
+  'booking.technician': { roles: ['owner', 'store_manager', 'duty_manager'] },
   /** 客房：打扫、维修（房态）（S7，v0.7.4，待确认：前台岗位与后勤人员；客房服务员可以用后勤账号） */
   'room.housekeep': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk', 'backoffice'] },
   /** 实时位置（v0.7.17，待确认：前台岗位）：平面图上的在场人员、区域人数、轨迹；只显示手牌号与技师，不显示会员姓名、手机号 */
@@ -376,9 +390,10 @@ export const PERMISSIONS = {
   /** 会员总览：储值余额、新增与渠道、活跃与沉睡、等级分布、赠金到期（客户经理看） */
   'report.members': { roles: ['owner', 'store_manager', 'account_manager'] },
   /** 技师业绩：任选时段每位技师的钟数、点钟 / 轮钟与金额（v0.7.0，待确认：默认值班经理及以上） */
-  'report.technicians': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  // 8.2.2：财务职责（对账付款、成本核算）也能看技师业绩与提成（「每月有业绩任务，财务也需查看」）
+  'report.technicians': { roles: ['owner', 'store_manager', 'duty_manager'], duties: ['payable', 'cost'] },
   /** 技师提成：按提成规则算出的每位技师提成与明细导出（v0.7.1，待确认：默认店主与店总） */
-  'report.commission': { roles: ['owner', 'store_manager'] },
+  'report.commission': { roles: ['owner', 'store_manager'], duties: ['payable', 'cost'] },
   /** 营销成本测算（8.0.4，HY14）：券、赠金、会员折扣、服务类权益的实核成本；有财务职责的账号一律没有（见 FINANCE_EXCLUDED） */
   'marketing.cost': { roles: ['owner', 'store_manager'] },
   // ── 前台风控（8.1.15《浴族系统需求汇总》块 A，docs/FRONTDESK_RISK_V8115.md，FK1 待确认：值班经理及以上）──
@@ -389,6 +404,9 @@ export const PERMISSIONS = {
    * 有这一项的人自己加收不用另请授权，「未结离店」的待办也由有这一项的人写处理结果
    */
   'auth.checkinRisk': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  // 8.2.4 餐饮（docs/V8224_DINING.md）：返台补低消（已结账的还要「反结账」）、当场授权「公司承担」（待店主确认：默认值班经理及以上）
+  'dining.returnTable': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  'auth.companyCharge': { roles: ['owner', 'store_manager', 'duty_manager'] },
   // 8.1.15 块 B（docs/DINING_V8115.md 第 4 节）：按出品口下单，点单页只显示有权限的出品口，服务端逐行核对；默认与「餐饮点单」同一批岗位，康美部没有餐厅。
   // 8.1.17（BW3，docs/DISHES_V8117.md 第 5 节）：平板电子菜单也按出品口核对，「点餐平板」默认三处都有；店里去掉哪一处，平板上那一处的菜就点不了
   'dining.orderRestaurant': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk', 'tablet'] },
@@ -570,6 +588,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'frontdesk.backfill': '按实际时间补录纸质单',
   'frontdesk.refund': '开退款单（离店后部分退款）与作废当班的退款单',
   'frontdesk.onAccount': '结账时挂账到协议单位',
+  'frontdesk.supplement': '补单：按实际时间、出单员补录餐饮与项目',
+  'frontdesk.complaints': '客诉台账：查看、标已处理、打印',
   'coupon.manage': '维护券模板、发券规则与无记名券',
   'coupon.issue': '发券给会员',
   'coupon.void': '作废会员没用过的券',
@@ -639,6 +659,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'catalog.manage': '管理充值套餐与消费项目',
   'technician.manage': '维护技师名册',
   'technician.dispatch': '钟房派钟、上下钟、加钟、退钟、上牌',
+  'technician.voidLate': '超时退技师：退钟、取消派钟超过本人更正时限也能直接退',
   'technician.announce': '上钟播报：看排位、手动叫号、由本机播报',
   'technician.board': '技师上钟轮播：只读大屏，看谁在上钟、上什么、排在哪',
   'dining.order': '餐饮点单、催单、上菜',
@@ -647,7 +668,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'emenu.view': '打开平板点餐（电子菜单；下单要服务员输点单密码）',
   'emenu.manage': '维护电子菜单（分类、版面、菜品图文、设置）',
   'room.operate': '客房入住、续住、换房、退房、押金、夜审',
-  'booking.manage': '预约：新建、确认、改时间、到店、取消、记爽约',
+  'booking.manage': '预约派对房、客房：新建、确认、改时间、到店、取消、记爽约',
+  'booking.technician': '预约技师：新建、确认、改时间、到店、取消、记爽约',
   'room.housekeep': '客房打扫、维修（房态）',
   'location.view': '看实时位置（平面图上的在场人员与轨迹）',
   'location.report': '上报位置（模拟刷卡、设备桥）',
@@ -675,6 +697,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'studio.publish': 'UI 工作台：发布、回滚版面（平板马上换成新样子）',
   'frontdesk.blacklist': '维护黑名单（加入、解除、看清单）',
   'auth.checkinRisk': '当场授权未结离店的会员发牌、超时加收；处理未结离店的待办',
+  'dining.returnTable': '包房返台补低消（已结账的返台还要「反结账」）',
+  'auth.companyCharge': '当场授权结账时「公司承担」（客人身体不适、招待等）',
   'dining.orderRestaurant': '点单：在餐厅下单',
   'dining.orderWater': '点单：在水吧下单',
   'dining.orderFruit': '点单：在果吧下单',
@@ -719,16 +743,21 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'frontdesk.refund',
       'frontdesk.onAccount',
       'frontdesk.backfill',
+      'frontdesk.supplement',
+      'frontdesk.complaints',
       'technician.dispatch',
+      'technician.voidLate',
       'technician.announce',
       'technician.board',
       'dining.order',
       'dining.ledger',
       'dining.kitchen',
+      'dining.returnTable',
       'emenu.view',
       'room.operate',
       'room.housekeep',
       'booking.manage',
+      'booking.technician',
       'platform.redeem',
       'platform.void',
       'platform.settle',
@@ -807,7 +836,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
   { title: '员工工作台', items: ['canteen.manage', 'patrol.read', 'patrol.manage'] },
   { title: '人事与办公', items: ['hr.org', 'hr.attendance', 'hr.attendanceDept', 'oa.templates', 'oa.all', 'payroll.manage', 'training.manage', 'oa.announce'] },
   { title: '业财法审批', items: ['gf.roles'] },
-  { title: '当场授权', items: ['auth.overLimit', 'auth.vipOverride', 'auth.discount', 'auth.memberRefund', 'auth.memberPhone'] },
+  { title: '当场授权', items: ['auth.overLimit', 'auth.vipOverride', 'auth.discount', 'auth.memberRefund', 'auth.memberPhone', 'auth.companyCharge'] },
   { title: '数据看板', items: ['report.executive', 'report.members', 'report.technicians', 'report.commission', 'marketing.cost'] },
   { title: '管理后台', items: ['staff.manage', 'staff.dept', 'catalog.manage', 'emenu.manage', 'technician.manage', 'settings.manage', 'audit.read'] },
   { title: 'UI 工作台', items: ['studio.edit', 'studio.publish'] },

@@ -17,7 +17,7 @@ import {
   type CommissionSettings,
 } from '@shared/clockroom';
 import { parseYuan } from '@shared/money';
-import type { TechnicianAdmin } from '@shared/technicians';
+import { MAX_TECH_STAR, type TechnicianAdmin } from '@shared/technicians';
 import { api, errorMessage } from '../../lib/api';
 import { useCatalog } from '../../lib/queries';
 import { useCan } from '../../lib/session';
@@ -190,6 +190,36 @@ export function ClockroomRulesCard() {
             分钟提醒
           </div>,
         )}
+        {row(
+          '换项目',
+          '上钟后多少分钟内可以换项目（还没上钟的随时可以换）；换到原技师做不了的项目，原技师回到原来的排位。',
+          <div className="flex flex-wrap items-center gap-2 text-[13px] text-ink-3">
+            上钟
+            <Input
+              value={String(draft.changeItemMinutes)}
+              inputMode="numeric"
+              disabled={!editable}
+              onChange={(e) => set({ changeItemMinutes: num(e.target.value, 0, 120) })}
+              fullWidth={false}
+              className="num h-9 w-16"
+              aria-label="换项目的时限分钟数"
+            />
+            分钟内
+          </div>,
+        )}
+        {row(
+          '休假到期',
+          '钟房设了几天的休假，休完后的第一个营业日自动上牌、排到队尾（那天已经有人改过他的状态的不动）。',
+          <Segmented
+            ariaLabel="休假到期自动上牌"
+            value={onOff(draft.leaveAutoReturn)}
+            onChange={(v) => set({ leaveAutoReturn: v === 'on' })}
+            options={[
+              { value: 'on', label: '自动上牌', disabled: !editable },
+              { value: 'off', label: '手动上牌', disabled: !editable },
+            ]}
+          />,
+        )}
       </div>
       {error && <Notice tone="error" title={error} className="mt-3" />}
       <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
@@ -288,6 +318,10 @@ export function CommissionCard() {
   const [base, setBase] = useState<BaseDraft | null>(null);
   const [bonus, setBonus] = useState('');
   const [items, setItems] = useState<{ itemId: number; base: BaseDraft }[]>([]);
+  // 8.2.2：扩钟奖励（空着与点钟一样）、按星级的提成
+  const [callBonus, setCallBonus] = useState('');
+  const [stars, setStars] = useState<{ star: number; base: BaseDraft }[]>([]);
+  const [pickStar, setPickStar] = useState('');
   const [note, setNote] = useState('');
   const [pick, setPick] = useState('');
   const [busy, setBusy] = useState(false);
@@ -298,6 +332,12 @@ export function CommissionCard() {
     setBase(toDraft(r.base));
     setBonus(String(r.designatedBonus / 100));
     setItems(Object.entries(r.items).map(([id, b]) => ({ itemId: Number(id), base: toDraft(b) })));
+    setCallBonus(r.callBonus === null || r.callBonus === undefined ? '' : String(r.callBonus / 100));
+    setStars(
+      Object.entries(r.stars ?? {})
+        .map(([k, b]) => ({ star: Number(k), base: toDraft(b) }))
+        .sort((a, b) => a.star - b.star),
+    );
     setNote('');
   }, [q.data]);
   const techItems = useMemo(() => (catalog.data?.items ?? []).filter((i) => i.technicianRequired), [catalog.data]);
@@ -315,11 +355,20 @@ export function CommissionCard() {
       if (typeof x === 'string') return `${techItems.find((i) => i.id === it.itemId)?.name ?? '项目'}：${x}`;
       map[String(it.itemId)] = x;
     }
-    return { base: b, designatedBonus: bonusCents, items: map } satisfies CommissionRules;
+    const callCents = callBonus.trim() ? parseYuan(callBonus) : null;
+    if (callBonus.trim() && callCents === null) return '扩钟奖励金额不正确';
+    const starMap: Record<string, CommissionBase> = {};
+    for (const it of stars) {
+      const x = fromDraft(it.base);
+      if (typeof x === 'string') return `${it.star} 星：${x}`;
+      starMap[String(it.star)] = x;
+    }
+    return { base: b, designatedBonus: bonusCents, items: map, callBonus: callCents, stars: starMap } satisfies CommissionRules;
   })();
   const problem = typeof built === 'string' ? built : null;
   const rules = typeof built === 'string' ? null : built;
-  const dirty = rules ? JSON.stringify(rules) !== JSON.stringify(q.data.current.rules) : true;
+  const comparable = (r: CommissionRules) => JSON.stringify({ ...r, callBonus: r.callBonus ?? null, stars: r.stars ?? {} });
+  const dirty = rules ? comparable(rules) !== comparable(q.data.current.rules) : true;
   // 试算：每个需要技师的项目、每档价格的一钟，轮钟 / 点钟各多少
   const sample = rules
     ? techItems.slice(0, 6).flatMap((i) =>
@@ -373,6 +422,66 @@ export function CommissionCard() {
             aria-label="点钟奖励"
             data-testid="commission-bonus"
           />
+        </Field>
+        <Field label="扩钟每钟另加（元）" hint="空着与点钟一样；扩钟是场外预约、客人到店上的钟">
+          <Input
+            value={callBonus}
+            inputMode="decimal"
+            disabled={!editable}
+            placeholder="同点钟"
+            onChange={(e) => setCallBonus(e.target.value)}
+            fullWidth={false}
+            className="num h-9 w-28"
+            aria-label="扩钟奖励"
+            data-testid="commission-call-bonus"
+          />
+        </Field>
+        <Field label="按星级" hint="技师档案里定了星级的按这里算；项目单独设置的优先">
+          <div className="space-y-2">
+            {stars.length === 0 && <p className="text-[12.5px] text-ink-3">不分星级</p>}
+            {stars.map((it, i) => (
+              <div key={it.star} className="flex flex-wrap items-center gap-2 rounded-lg border border-line px-3 py-2">
+                <span className="min-w-[60px] text-[13.5px] font-semibold">{it.star} 星</span>
+                <BaseEditor value={it.base} onChange={(v) => editable && setStars(stars.map((x, j) => (j === i ? { ...x, base: v } : x)))} disabled={!editable} label={`${it.star} 星`} />
+                {editable && (
+                  <button
+                    type="button"
+                    aria-label="移除"
+                    className="ml-auto flex size-8 items-center justify-center rounded-md text-ink-3 hover:bg-clay-soft hover:text-clay"
+                    onClick={() => setStars(stars.filter((_, j) => j !== i))}
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+            {editable && (
+              <div className="flex flex-wrap items-center gap-2">
+                <select value={pickStar} onChange={(e) => setPickStar(e.target.value)} className="h-9 rounded-md border border-line-strong bg-card px-2 text-[13px]" aria-label="选择星级">
+                  <option value="">选择星级…</option>
+                  {Array.from({ length: MAX_TECH_STAR }, (_, k) => k + 1)
+                    .filter((n) => !stars.some((x) => x.star === n))
+                    .map((n) => (
+                      <option key={n} value={n}>
+                        {n} 星
+                      </option>
+                    ))}
+                </select>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<Plus className="size-4" />}
+                  disabled={!pickStar}
+                  onClick={() => {
+                    setStars([...stars, { star: Number(pickStar), base: { kind: 'percent' as const, rate: '40' } }].sort((a, b) => a.star - b.star));
+                    setPickStar('');
+                  }}
+                >
+                  按星级设置
+                </Button>
+              </div>
+            )}
+          </div>
         </Field>
         <Field label="单独设置的项目">
           <div className="space-y-2">

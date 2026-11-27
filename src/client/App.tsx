@@ -30,6 +30,8 @@ import { lazyPage } from './lib/lazyPage';
 // 会员工作台与前台随首屏加载；其余页面第一次打开时再下载（v0.7.22：收银台首屏更轻）
 const CashierPage = lazyPage(() => import('./features/frontdesk/CashierPage').then((m) => m.CashierPage));
 const LockersPage = lazyPage(() => import('./features/frontdesk/LockersPage').then((m) => m.LockersPage));
+const ComplaintsPage = lazyPage(() => import('./features/frontdesk/ComplaintsPage').then((m) => m.ComplaintsPage));
+const ComplaintsPrintPage = lazyPage(() => import('./features/print/ComplaintsPrintPage').then((m) => m.ComplaintsPrintPage));
 const ClockroomPage = lazyPage(() => import('./features/clockroom/ClockroomPage').then((m) => m.ClockroomPage));
 const AnnouncerPage = lazyPage(() => import('./features/clockroom/AnnouncerPage').then((m) => m.AnnouncerPage));
 const TechnicianAdminPage = lazyPage(() => import('./features/technicians/TechnicianAdminPage').then((m) => m.TechnicianAdminPage));
@@ -336,6 +338,8 @@ const router = createBrowserRouter([
       { path: 'refund/:id', element: <RefundPrintPage /> },
       // 收银台「打单」（8.1.44）：几张手牌的预结单
       { path: 'prebill/:ids', element: <PrebillPrintPage /> },
+      // 客诉台账（8.2.3，A4）
+      { path: 'complaints/:from/:to/:status', element: <ComplaintsPrintPage /> },
       { path: 'shift/:id', element: <ShiftPrintPage /> },
       { path: 'settlement/:date', element: <SettlementPrintPage /> },
       // 员工食堂的开通卡片（A4）
@@ -481,6 +485,8 @@ const router = createBrowserRouter([
       },
       // 柜况（8.1.49，docs/LOCKERS_V8149.md）：全店手牌柜此刻的状态，只看；接了柜锁控制器的能远程开柜
       { path: 'lockers', element: <LockersPage /> },
+      // 客诉台账（8.2.3，docs/V8223_FRONTDESK.md 第 3 条）
+      { path: 'complaints', element: <ComplaintsPage /> },
       { path: 'clockroom', element: <ClockroomPage /> },
       // 上钟播报（回测整改 P03）：独立页面；老地址跳过来并提示位置换了
       { path: 'announcer', element: <AnnouncerPage /> },

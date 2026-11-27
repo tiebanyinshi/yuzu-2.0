@@ -7,6 +7,7 @@ import { guard, guardAny } from '../../auth/guard';
 import { MAX_OVERTIME_HOURLY_CENTS, VOID_PERMISSIONS } from '@shared/frontdesk-v8117';
 import { readSnapshot, type Tx } from '../../db';
 import { BUY_CODE_PATTERN, MAX_BUY_CODES, type BuyCode } from '@shared/frontdesk';
+import { MAX_TAG_DEPOSIT } from '@shared/tag-deposit';
 import { PRICE_TIERS } from '@shared/catalog';
 import { checkoutDaySummary } from '../settlement';
 import type { Deps } from '../../lib/context';
@@ -14,6 +15,8 @@ import { badRequest, forbidden, notFound } from '../../lib/errors';
 import { idParam, parse } from '../../lib/validate';
 import { checkBackfillAt } from './backfill';
 import { moveLines, postCharges, voidLine, type PostInputData } from './bills';
+import { discountLine, revokeLineDiscount } from './line-discounts';
+import { collectDeposit, refundDeposit } from './tag-deposits';
 import { resolveReadableDate } from '../ledger';
 import { refundShiftOptions } from '../shifts';
 import { checkout, findCoupon, getCheckout, listCheckouts, previewCheckout, voidCheckout, type CheckoutInputData } from './checkout';
@@ -26,6 +29,7 @@ import { businessDate, FRONTDESK_OP_PERMISSIONS, FRONTDESK_OPS, loadFrontdeskRul
 import { batchCreate, deleteHandTag, generateTags, setTagService, importHandTags, listTags, lockHandTag, setTagCard, tagByCard, unlockHandTag, updateHandTag, type ImportInputData } from './tags';
 import { registerIncidentRoutes } from './incidents';
 import { registerRiskRoutes } from './risk';
+import { registerGuestRoutes } from './guest';
 import { registerRemarkRoutes } from './remarks';
 import { bindVisitMember, lookupCashierMembers, MemberLookupQuery } from './cashier-member';
 import { memberLockerGrades } from './vip';
@@ -49,6 +53,7 @@ import { saveRuleSetting } from '../../lib/rule-settings';
 
 // 会员等级的口径、门槛与名称 v0.7.23 起归「会员规则」（membership.ts）；VIP 柜的当场授权开关 8.0.4 起归「会员权益 → VIP 柜」
 // （vip-lockers.ts）。旧页面带来的这几项不再保存（zod 去掉多余的字段）
+const floorPct = z.number('下限是 0–100 的整数').int('下限是 0–100 的整数').min(0, '下限不能小于 0').max(100, '下限最多 100（= 不能打折）');
 const RulesInput = z.object({
   selfVoidMinutes: z.number().int().min(0, '分钟数不能为负').max(120, '最多 120 分钟'),
   lostTagFeeCents: z.number().int().min(0, '赔偿金额不能为负').max(10_000_00, '赔偿金额最多 10,000 元'),
@@ -70,6 +75,16 @@ const RulesInput = z.object({
     )
     .max(MAX_BUY_CODES, `数字代号最多 ${MAX_BUY_CODES} 条`)
     .refine((list) => new Set(list.map((c) => c.code)).size === list.length, '数字代号有重复'),
+  // 8.2.1 单项打折：每一档最低收原价的百分之几（0 = 能免单）；高一档的下限不能比低一档还高
+  lineDiscountFloors: z
+    .object({ cashier: floorPct, duty: floorPct, lead: floorPct, owner: floorPct })
+    .refine((f) => f.cashier >= f.duty && f.duty >= f.lead && f.lead >= f.owner, '高一档的下限不能比低一档还高（前台收银 ≥ 值班经理 ≥ 部门负责人 ≥ 店主）'),
+  // 8.2.1 手牌押金：收押金时先填好的金额（分），0 = 不预填
+  tagDepositDefaultCents: z
+    .number('金额必须是整数（分）')
+    .int('金额必须是整数（分）')
+    .min(0, '金额不能为负')
+    .max(MAX_TAG_DEPOSIT, `押金最多 ¥${MAX_TAG_DEPOSIT / 100}`),
 });
 
 /** 买角的代号对到的项目要在售、有这一档价格（保存时核对；之后项目停用了，收银台敲到时照挂账的规矩拒绝） */
@@ -166,6 +181,25 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
   app.post('/api/frontdesk/lines/:id/void', { preHandler: guardAny('frontdesk.operate', ...VOID_PERMISSIONS) }, async (req) => {
     const { id } = parse(idParam, req.params);
     return voidLine(deps, id, req.body, ctxOf(req));
+  });
+
+  // 单项打折（8.2.1，docs/V8221_CASHIER.md）：收银的人给一行打折、恢复原价；超过自己那一档的下限带当场授权
+  app.post('/api/frontdesk/lines/:id/discount', { preHandler: guard('frontdesk.checkout') }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    return discountLine(deps, id, req.body, ctxOf(req));
+  });
+  app.post('/api/frontdesk/lines/:id/discount/revoke', { preHandler: guard('frontdesk.checkout') }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    return revokeLineDiscount(deps, id, req.body, ctxOf(req));
+  });
+  // 手牌押金（8.2.1）：收、一键退；两个台都能办
+  app.post('/api/frontdesk/visits/:id/deposits', { preHandler: guard('frontdesk.operate') }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    return collectDeposit(deps, id, req.body, ctxOf(req));
+  });
+  app.post('/api/frontdesk/deposits/:id/refund', { preHandler: guard('frontdesk.operate') }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    return refundDeposit(deps, id, req.body, ctxOf(req));
   });
 
   // 转单（v0.7.6）：挂错手牌的明细转到另一位在店客人的手牌上（操作编号；权限与作废明细相同）
@@ -385,4 +419,6 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
   registerIncidentRoutes(app, deps);
   // 8.1.44：前台备注（同组 / 单人，记经办人与时间）
   registerRemarkRoutes(app, deps);
+  // 8.2.3：客人类别与偏好、全店刷手牌看的那一条、客诉台账、高风险提示、补单的出单员
+  registerGuestRoutes(app, deps);
 }

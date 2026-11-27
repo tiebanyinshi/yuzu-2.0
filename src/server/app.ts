@@ -156,6 +156,7 @@ import { registerClockroomRoutes } from './modules/clockroom-routes';
 import { registerDiningRoutes } from './modules/dining';
 import { registerTableRoutes } from './modules/tables';
 import { registerTableChargeRoutes } from './modules/table-charges';
+import { registerTablesV8224Routes } from './modules/tables-v8224';
 import { registerDining808Routes } from './modules/dining-808';
 import { registerDiningReceiptRoutes } from './modules/dining-receipt';
 import { registerEmenuRoutes } from './modules/emenu/routes';
@@ -172,6 +173,8 @@ import { registerPlatformRoutes } from './modules/platform-redemptions';
 import { registerGuideRoutes } from './modules/guide';
 import { registerLocationRoutes } from './modules/locations';
 import { registerCommissionRoutes } from './modules/commission';
+import { registerTechnicianStatsRoutes } from './modules/technician-stats';
+import { registerTechnicianWebImportRoutes } from './modules/technician-import-web';
 import { registerWalletRoutes } from './modules/wallet';
 import { registerMemberRefundRoutes } from './modules/member-refunds';
 import { registerMemberAdminRoutes } from './modules/member-admin';
@@ -510,6 +513,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerDiningRoutes(app, deps);
   registerTableRoutes(app, deps);
   registerTableChargeRoutes(app, deps);
+  // 8.2.4 餐饮：包房房型、返台（docs/V8224_DINING.md）
+  registerTablesV8224Routes(app, deps);
   registerDining808Routes(app, deps);
   // 8.1.7 点菜单（小票可视化）
   registerDiningReceiptRoutes(app, deps);
@@ -530,6 +535,9 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerGuideRoutes(app, deps);
   registerLocationRoutes(app, deps);
   registerCommissionRoutes(app, deps);
+  // 8.2.2 技师：扩钟与十天业绩统计、每月任务；网页导入技师
+  registerTechnicianStatsRoutes(app, deps);
+  registerTechnicianWebImportRoutes(app, deps);
   registerErpRoutes(app, deps);
   // 微信小程序（小程序线）：前台用会员码查会员、解绑会员的微信、后台「小程序」
   registerMpStaffRoutes(app, deps);

@@ -444,6 +444,7 @@ const ANOMALY_META: Record<SettlementAnomaly['kind'], { label: string; tone: 'cl
   refund: { label: ANOMALY_LABELS.refund, tone: 'ember', icon: Undo2, iconClass: 'bg-ember-soft text-ember' },
   refund_void: { label: ANOMALY_LABELS.refund_void, tone: 'clay', icon: CircleSlash, iconClass: 'bg-clay-soft text-clay' },
   member_refund: { label: ANOMALY_LABELS.member_refund, tone: 'clay', icon: CircleSlash, iconClass: 'bg-clay-soft text-clay' },
+  company_charge: { label: ANOMALY_LABELS.company_charge, tone: 'ember', icon: BadgePercent, iconClass: 'bg-ember-soft text-ember' },
 };
 
 function AnomalyItem({ a }: { a: SettlementAnomaly }) {
@@ -559,10 +560,10 @@ function DepositsCard({ s, card }: { s: SettlementSummary; card?: boolean }) {
       <div className="border-b border-line px-5 pt-4 pb-3">
         <p className="flex items-center gap-2 text-[13px] font-bold text-ink-2">
           <span className="size-2 rounded-full bg-lake" />
-          {card ? '会员卡押金 · 负债，不算营业额、不进储值' : '客房押金 · 负债，不算营业额'}
+          {card ? '会员卡押金 · 负债，不算营业额、不进储值' : '客房、手牌押金 · 负债，不算营业额'}
         </p>
         <p className="mt-1.5 text-[12.5px] text-ink-3">
-          {card ? '当天结束时押着的押金' : '当天结束时在住押金'} <Money cents={d.held} className="font-bold text-ink" />
+          {card ? '当天结束时押着的押金' : '当天结束时押着的押金（客房、手牌）'} <Money cents={d.held} className="font-bold text-ink" />
         </p>
       </div>
       <div className="space-y-2 px-5 py-4 text-[13px]">
@@ -709,7 +710,10 @@ function BusinessCard({ s }: { s: SettlementSummary }) {
                 </span>
                 {m.method === 'wallet' && <span className="ml-1 text-[12px] text-ink-4">（会员余额抵扣，同时计入储值消费）</span>}
                 {m.method === 'coupon' && <span className="ml-1 text-[12px] text-ink-4">（平台团购核销）</span>}
-                {(m.method === 'discount' || m.method === 'store_coupon' || m.method === 'member_discount') && <span className="ml-1 text-[12px] text-ink-4">（不是收款）</span>}
+                {(m.method === 'discount' || m.method === 'store_coupon' || m.method === 'member_discount' || m.method === 'line_discount') && (
+                  <span className="ml-1 text-[12px] text-ink-4">（不是收款）</span>
+                )}
+                {m.method === 'company' && <span className="ml-1 text-[12px] text-ink-4">（公司内部账户承担，不是收款；每一笔见下方异常与提醒）</span>}
               </span>
               <Money cents={m.amount} className="font-bold" />
             </div>

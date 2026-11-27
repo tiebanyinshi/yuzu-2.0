@@ -63,7 +63,13 @@ import { loadVipLockerRules } from '../vip-lockers';
 import { assertVipAllowed, consumeVipShortfalls, memberLockerGrades, vipShortfalls } from './vip';
 import { currentStoreId } from '../../lib/store-context';
 import { incidentText, openTodoCount, openTodoWhere, visitIncidentEvents, visitIncidents } from './incident-read';
+import { lineDiscountInfoOf } from './line-discount-read';
+import { depositsOf } from './tag-deposit-read';
+import { rateLabel } from '@shared/line-discount';
+import { TAG_DEPOSIT_METHOD_LABELS, TAG_DEPOSIT_REFUND_LABELS } from '@shared/tag-deposit';
 import { remarkTagsSql, visitRemarks } from './remark-read';
+import { categoryChanges, categoryOf, guestProfile, loadGuestRules } from './guest-read';
+import { checkinCategory, derivedKey, GuestCheckinFields, recordBookedTechnician } from './guest-tx';
 import { arriveBookingsTx, blacklistedError, blacklistHits, loadRiskRules, lockArrivableBookings, unsettledDebts, visitsToday, type LockedRiskBooking } from './risk';
 
 const clientKey = z.uuid('缺少有效的操作编号，请刷新页面后重试');
@@ -78,6 +84,8 @@ const GuestInput = z.object({
   guestLabel: z.string().trim().max(16, '称呼最多 16 个字').default(''),
   /** 票种；不带时用默认票种（升级前留下的待确认请求不带这一项，不带时不进入请求摘要） */
   ticketTypeId: z.number().int().positive().optional(),
+  /** 客人类别、预约的技师（8.2.3，docs/V8223_FRONTDESK.md 第 1 条）；不带时不进入请求摘要 */
+  ...GuestCheckinFields,
 });
 
 export const CheckinInput = z.object({
@@ -204,6 +212,9 @@ export async function checkin(deps: Deps, raw: CheckinInputData, ctx: OpContext)
     assertVipAllowed(shortfalls, levels, await loadVipLockerRules(tx), input.vipGrantId);
     const overrideCodes = new Set(shortfalls.map((x) => x.code));
 
+    // 客人类别（8.2.3）：要在后台的清单里；没选的记空（= 默认类别）
+    const guestRules = await loadGuestRules(tx);
+    const categories = input.guests.map((g) => checkinCategory(g.category, guestRules));
     // 票种：留存选定时的票价，结账时按在店时长计算门票；选免票的客人要当场授权（同一次接待一次授权）
     const tickets = await Promise.all(input.guests.map((g) => resolveTicketType(tx, g.ticketTypeId)));
     const freeGuests = input.guests.flatMap((g, i) => {
@@ -320,12 +331,14 @@ export async function checkin(deps: Deps, raw: CheckinInputData, ctx: OpContext)
       const [visit] = await tx<{ id: number }[]>`
         INSERT INTO visits (visit_no, bill_id, tag_id, zone, member_id, guest_label, group_id, business_date,
                             checked_in_at, checked_in_by, checkin_key, vip_override_by, ticket_type_id, ticket_price_12h, ticket_price_24h,
-                            risk_approved_by, risk_approved_at, risk_reason)
+                            risk_approved_by, risk_approved_at, risk_reason, guest_category)
         VALUES (${visitNo}, ${bill!.id}, ${tag.id}, ${g.zone}, ${g.memberId}, ${g.guestLabel}, ${groupId}, ${date},
                 ${at}, ${ctx.actor.id}, ${key}, ${override && overrideCodes.has(tag.code) ? override.approverId : null},
                 ${ticket?.id ?? null}, ${ticket?.price12h ?? null}, ${ticket?.price24h ?? null},
-                ${owed ? riskApproval!.approverId : null}, ${owed ? at : null}, ${owed ? riskApproval!.reason : null})
+                ${owed ? riskApproval!.approverId : null}, ${owed ? at : null}, ${owed ? riskApproval!.reason : null}, ${categories[i]!})
         RETURNING id`;
+      // 发牌时写的预约技师（8.2.3）：记成这位客人的一条单人备注，全店刷手牌都看得到
+      if (g.bookedTechnician) await recordBookedTechnician(tx, { visitId: visit!.id, note: g.bookedTechnician, opKey: derivedKey(key, `booked-tech:${i}`), staffId: ctx.actor.id, at });
       if (!firstId) firstId = visit!.id;
       created.push(visit!.id);
       if (g.memberId !== null) visitOf.set(g.memberId, { visitId: visit!.id, tagCode: tag.code });
@@ -630,6 +643,10 @@ export async function cancelVisit(deps: Deps, visitId: number, raw: unknown, ctx
         amountCents: bill!.amountCents,
       });
     }
+    // 手牌押金（8.2.1）：还押着的先退（退押金要记班次，撤销不碰钱）
+    const [held] = await tx<{ n: number; amount: number }[]>`
+      SELECT count(*)::int AS n, coalesce(sum(amount), 0)::bigint AS amount FROM tag_deposits WHERE visit_id = ${visit.id} AND status = 'held'`;
+    if (held!.n > 0) throw conflict('DEPOSIT_HELD', `这张手牌还押着 ${held!.n} 笔押金（${formatYuan(Number(held!.amount))}），请先退押金再撤销`);
     assertCanFix(ctx.actor, visit.checkedInBy, visit.checkedInAt, await loadFrontdeskRules(tx), at, '这张手牌');
     await tx`UPDATE bills SET status = 'cancelled', closed_at = ${at} WHERE id = ${visit.billId}`;
     await tx`
@@ -682,6 +699,7 @@ export async function withMemberMarks(db: Db, board: FrontdeskBoard, date: strin
 }
 
 export async function getBoard(db: Db): Promise<FrontdeskBoard> {
+  const guestRules = await loadGuestRules(db);
   const rows = await db<
     (Omit<FrontdeskBoard['tags'][number], 'visit'> & {
       visitId: number | null;
@@ -700,6 +718,7 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
       awaySince: string | null;
       openTodos: number | null;
       remarkTags: string[] | null;
+      guestCategory: string | null;
     })[]
   >`
     SELECT t.id, t.code, t.zone, t.kind, t.vip_level, t.locked, t.lock_reason, t.active, t.is_synthetic, t.service_status, t.service_note,
@@ -711,7 +730,8 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
            -- 这次来访上没处理完的异常待办（上报、未结离店；8.1.17 起还有超时提醒）几条（8.1.15）
            (SELECT count(*)::int FROM visit_incidents i WHERE i.visit_id = v.id AND ${openTodoWhere(db)}) AS open_todos,
            -- 前台备注的标签（8.1.44）：收银台清单上标「客诉」等
-           CASE WHEN v.id IS NULL THEN NULL ELSE ${remarkTagsSql(db)} END AS remark_tags
+           CASE WHEN v.id IS NULL THEN NULL ELSE ${remarkTagsSql(db)} END AS remark_tags,
+           v.guest_category
     FROM hand_tags t
     LEFT JOIN visits v ON v.tag_id = t.id AND v.status = 'open'
     LEFT JOIN members m ON m.id = v.member_id
@@ -754,6 +774,8 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
           awaySince: r.awaySince,
           openTodos: r.openTodos ?? 0,
           remarkTags: r.remarkTags ?? [],
+          // 客人类别（8.2.3）：空的（升级前的来访）按默认类别
+          guestCategory: categoryOf(r.guestCategory ?? '', guestRules),
         }
       : null,
   }));
@@ -818,9 +840,10 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
       riskApprovedByName: string | null;
       riskApprovedAt: string | null;
       riskReason: string | null;
+      guestCategory: string;
     }[]
   >`
-    SELECT v.id, v.visit_no, v.status, v.zone, v.guest_label, v.business_date, v.checked_in_at, ${backfillMarkSql(db, 'v.checkin_key')} AS backfill,
+    SELECT v.id, v.visit_no, v.status, v.zone, v.guest_label, v.guest_category, v.business_date, v.checked_in_at, ${backfillMarkSql(db, 'v.checkin_key')} AS backfill,
            v.checked_in_by AS checked_in_by_id, s.display_name AS checked_in_by_name, v.closed_at, v.close_reason,
            cs.display_name AS closed_by_name, v.member_id, v.group_id,
            b.id AS bill_id, b.bill_no, b.status AS bill_status, b.amount_cents, b.line_count,
@@ -848,11 +871,22 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
              l.posted_by AS posted_by_id, p.display_name AS posted_by_name, l.posted_at, l.void_reason,
              vs.display_name AS voided_by_name, l.voided_at, ${backfillMarkSql(db, 'l.post_key')} AS backfill,
              ${lineTechnicianSql(db, 'l')} AS technician, l.session_id, l.addon_of,
-             (SELECT json_build_object('status', k.status, 'note', k.note, 'orderNo', k.order_no) FROM kitchen_items k WHERE k.bill_line_id = l.id) AS kitchen
+             (SELECT json_build_object('status', k.status, 'note', k.note, 'orderNo', k.order_no) FROM kitchen_items k WHERE k.bill_line_id = l.id) AS kitchen,
+             -- 8.2.1：经办人的工号与手机尾号；手动定价的明细（手动金额、时价 / 杂项、称重）标「改价」
+             pp.emp_no AS posted_by_emp_no, right(pp.phone, 4) AS posted_by_phone_tail,
+             ((l.item_id IS NULL AND l.ticket_type_id IS NULL AND l.source <> 'room' AND l.charge_kind IS NULL AND l.name NOT LIKE '手牌丢失赔偿%'
+               AND NOT EXISTS (SELECT 1 FROM space_usage_charges uc WHERE uc.line_id = l.id))
+              OR coalesce(si.price_mode, 'fixed') <> 'fixed') AS manual_price
       FROM bill_lines l JOIN staff p ON p.id = l.posted_by LEFT JOIN staff vs ON vs.id = l.voided_by
+      LEFT JOIN staff_profiles pp ON pp.staff_id = l.posted_by LEFT JOIN service_items si ON si.id = l.item_id
       WHERE l.bill_id = ${v.billId} ORDER BY l.id`
   ).map((l) => ({ ...l, backfill: normalizeMark(l.backfill) }));
+  // 单项打折（8.2.1）：每一行有效的折扣；作废的行不算
+  const discounts = await lineDiscountInfoOf(db, v.billId);
+  for (const l of lines) l.discount = l.status === 'active' ? (discounts.get(Number(l.id)) ?? null) : null;
+  const discountCents = lines.reduce((s, l) => s + (l.discount ? l.discount.listAmount - l.discount.finalAmount : 0), 0);
   const backfill = normalizeMark(v.backfill);
+  const deposits = await depositsOf(db, [v.id]);
 
   let group: VisitDetail['group'] = null;
   if (v.groupId) {
@@ -912,6 +946,42 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
       history.push({ at: l.voidedAt!, kind: 'void', text: `作废 ${l.name} × ${l.quantity}（${l.voidReason}）`, operatorName: l.voidedByName ?? '' });
     }
   }
+  // 8.2.1：单项打折（含撤下的）与手牌押金的收、退也进经办记录
+  const discountEvents = await db<
+    {
+      createdAt: string;
+      name: string;
+      listAmount: number;
+      finalAmount: number;
+      rate: number | null;
+      byName: string;
+      approvedByName: string | null;
+      revokedAt: string | null;
+      revokedByName: string | null;
+      revokeReason: string | null;
+    }[]
+  >`
+    SELECT d.created_at, l.name, d.list_amount, d.final_amount, d.rate, s.display_name AS by_name, a.display_name AS approved_by_name,
+           d.revoked_at, r.display_name AS revoked_by_name, d.revoke_reason
+    FROM bill_line_discounts d JOIN bill_lines l ON l.id = d.line_id JOIN staff s ON s.id = d.staff_id
+    LEFT JOIN staff a ON a.id = d.approved_by LEFT JOIN staff r ON r.id = d.revoked_by
+    WHERE d.bill_id = ${v.billId} ORDER BY d.id`;
+  for (const d of discountEvents) {
+    const how = d.rate !== null ? rateLabel(Number(d.rate)) : '改价';
+    history.push({
+      at: d.createdAt,
+      kind: 'discount',
+      text: `单项打折 ${d.name}（${how}，${formatYuan(Number(d.listAmount))} → ${formatYuan(Number(d.finalAmount))}${d.approvedByName ? `，${d.approvedByName}授权` : ''}）`,
+      operatorName: d.byName,
+    });
+    if (d.revokedAt) history.push({ at: d.revokedAt, kind: 'discount', text: `撤下 ${d.name} 的单项折扣（${d.revokeReason}）`, operatorName: d.revokedByName ?? '' });
+  }
+  for (const d of deposits) {
+    history.push({ at: d.createdAt, kind: 'deposit', text: `收押金 ${d.depositNo} ${formatYuan(d.amount)}（${TAG_DEPOSIT_METHOD_LABELS[d.method]}，${d.reason}）`, operatorName: d.staffName });
+    if (d.status === 'refunded' && d.refundedAt) {
+      history.push({ at: d.refundedAt, kind: 'deposit', text: `${TAG_DEPOSIT_REFUND_LABELS[d.refundKind ?? 'manual']} ${d.depositNo} ${formatYuan(d.amount)}`, operatorName: d.refundedByName ?? '' });
+    }
+  }
   const ticketChanges = await db<{ createdAt: string; fromName: string | null; toName: string; operatorName: string }[]>`
     SELECT c.created_at, f.name AS from_name, t.name AS to_name, s.display_name AS operator_name
     FROM visit_ticket_changes c LEFT JOIN ticket_types f ON f.id = c.from_type_id JOIN ticket_types t ON t.id = c.to_type_id
@@ -956,6 +1026,11 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
       operatorName: e.operatorName,
     });
   }
+  // 改客人类别（8.2.3）
+  const guestRules = await loadGuestRules(db);
+  for (const c of await categoryChanges(db, id)) {
+    history.push({ at: c.createdAt, kind: 'guest', text: `客人类别 ${categoryOf(c.fromCategory, guestRules)} → ${categoryOf(c.toCategory, guestRules)}`, operatorName: c.operatorName });
+  }
   history.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
   const [now] = await db<{ now: string }[]>`SELECT now() AS now`;
@@ -994,10 +1069,12 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
     riskApproval: v.riskApprovedByName && v.riskApprovedAt ? { byName: v.riskApprovedByName, at: v.riskApprovedAt, reason: v.riskReason ?? '' } : null,
     incidents,
     remarks: await visitRemarks(db, v.id, v.groupId),
+    guest: await guestProfile(db, v, guestRules),
     ticket: await visitTicket(db, v.id, v.closedAt ? new Date(v.closedAt) : new Date(now!.now), today),
     checkout: lastCheckout ? { id: lastCheckout.id, checkoutNo: lastCheckout.checkoutNo, status: lastCheckout.status } : null,
-    bill: { id: v.billId, billNo: v.billNo, status: v.billStatus, amountCents: v.amountCents, lineCount: v.lineCount },
+    bill: { id: v.billId, billNo: v.billNo, status: v.billStatus, amountCents: v.amountCents, lineCount: v.lineCount, discountCents },
     lines,
+    deposits,
     group,
     history,
     serverTime: now!.now,
@@ -1065,6 +1142,12 @@ export async function lookupFrontdeskOp(db: Db, key: string, timezone: string, e
   if (row.opType === 'line_move') return { found: true as const, type: 'line_move' as const, visit: await getVisit(db, row.refId, timezone) };
   // 发牌后的异常处置（8.1.15）：编号记在那次来访上
   if (row.opType === 'visit_incident') return { found: true as const, type: 'visit_incident' as const, visit: await getVisit(db, row.refId, timezone) };
+  // 单项打折（8.2.1）：编号记在那次来访上；手牌押金的收、退：编号记在那一笔押金上，查回这位客人
+  if (row.opType === 'line_discount') return { found: true as const, type: 'line_discount' as const, visit: await getVisit(db, row.refId, timezone) };
+  if (row.opType === 'tag_deposit' || row.opType === 'tag_deposit_refund') {
+    const [d] = await db<{ visitId: number }[]>`SELECT visit_id FROM tag_deposits WHERE id = ${row.refId}`;
+    return { found: true as const, type: row.opType as 'tag_deposit' | 'tag_deposit_refund', visit: await getVisit(db, d!.visitId, timezone) };
+  }
   if (row.opType === 'checkout') return { found: true as const, type: 'checkout' as const, checkout: await getCheckout(db, row.refId) };
   // 餐饮第二步：开台、桌台点单查回这一桌；桌台结账查回结账单
   if (row.opType === 'table_open' || row.opType === 'table_post') {

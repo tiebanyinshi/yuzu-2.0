@@ -50,7 +50,12 @@ export type FrontdeskOpType =
   /** 房态中心（8.1.16）：换房、退房、并房、拆并（对象是房间；换房、并房连着另一间） */
   | 'space_dispatch'
   /** 房态点单（回测整改 P07 / P08）：挂到房里客人的账上，编号单独一类；查回、作废在 /api/room-center/order-ops */
-  | 'room_order';
+  | 'room_order'
+  /** 单项打折（8.2.1，对象是来访，在收银台） */
+  | 'line_discount'
+  /** 手牌押金的收、退（8.2.1，对象是来访，两个台都能办） */
+  | 'tag_deposit'
+  | 'tag_deposit_refund';
 
 export interface FrontdeskPendingOp {
   key: string;
@@ -92,7 +97,7 @@ export interface FrontdeskPendingOp {
 }
 
 /** 在收银台处理「结果待确认」的几样：结账、退款单，与挂账（8.1.44 起加项目在收银台）；别的在发卡台 */
-export const CASHIER_OPS: readonly FrontdeskOpType[] = ['checkout', 'checkout_refund', 'bill_post'];
+export const CASHIER_OPS: readonly FrontdeskOpType[] = ['checkout', 'checkout_refund', 'bill_post', 'line_discount', 'tag_deposit', 'tag_deposit_refund'];
 
 export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   checkin: '接待发牌',
@@ -121,6 +126,9 @@ export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   space_state: '改房态',
   space_dispatch: '换房 / 退房 / 并房',
   room_order: '房态点单',
+  line_discount: '单项打折',
+  tag_deposit: '收手牌押金',
+  tag_deposit_refund: '退手牌押金',
 };
 
 /** 餐饮桌台的操作：对象是桌台或开台，不是手牌 */

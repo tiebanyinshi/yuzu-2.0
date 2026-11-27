@@ -387,7 +387,7 @@ function DepositsView({ deposits, card }: { deposits: NonNullable<ShiftSummary['
   const line = (list: typeof deposits.received) => (list.length ? list.map((m) => `${PAYMENT_METHOD_LABELS[m.method]} ${m.count} 笔 ¥${(m.amount / 100).toFixed(2)}`).join('、') : '无');
   return (
     <div className="rounded-lg border border-line p-4 md:col-span-2" data-testid={card ? 'shift-card-deposits' : 'shift-deposits'}>
-      <p className="text-[13px] font-bold text-ink-2">{card ? '会员卡押金（不算营业额、不进储值）' : '客房押金（不算营业额）'}</p>
+      <p className="text-[13px] font-bold text-ink-2">{card ? '会员卡押金（不算营业额、不进储值）' : '客房、手牌押金（不算营业额）'}</p>
       <p className="mt-1.5 text-[13px] text-ink-2">收：{line(deposits.received)}</p>
       <p className="mt-0.5 text-[13px] text-ink-2">退：{line(deposits.refunded)}</p>
       <p className="mt-1.5 text-[12px] text-ink-3">现金押金计入应有现金（收的加、退的减）；扫码、银行卡收的押金{card ? '退卡' : '退房'}时在商户后台原路退。</p>

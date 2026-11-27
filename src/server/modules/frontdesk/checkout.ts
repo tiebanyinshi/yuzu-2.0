@@ -44,7 +44,8 @@ import { writeAudit } from '../../lib/audit';
 import type { Deps, OpContext } from '../../lib/context';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
 import { cents, parse, positiveCents } from '../../lib/validate';
-import { consumeDiscountGrant } from '../../auth/grants';
+import { consumeCompanyGrant, consumeDiscountGrant } from '../../auth/grants';
+import { COMPANY_REASONS, companyReasonText, MAX_COMPANY_NOTE } from '@shared/dining-v8224';
 import { expireMemberBonus } from '../bonus';
 import { loadSettings } from '../settings';
 import { withSpendQuota } from '../spend-quota';
@@ -70,6 +71,9 @@ import { lockPayTxForUse, markPayTxUsed, releasePayTxs } from '../pay-terminal';
 import { assertNotVerified, lockVerificationForUse, markVerificationUsed, releaseVerifications } from '../platform-verify';
 import { otaPrepaidHints } from '../ota';
 import { currentStoreId } from '../../lib/store-context';
+import { lineDiscountsOf } from './line-discount-read';
+import { depositsOf } from './tag-deposit-read';
+import { settleDepositsAtCheckout } from './tag-deposits';
 
 // ───────────────────────── 输入 ─────────────────────────
 
@@ -138,7 +142,21 @@ const OnAccountPayment = z.object({
   signer: z.string('请写签单人').trim().min(1, '请写签单人').max(20, '签单人最多 20 个字'),
   amount: positiveCents('挂账金额'),
 });
-export const Payment = z.union([CashPayment, WalletPayment, CouponPayment, DiscountPayment, StoreCouponPayment, MemberDiscountPayment, CountCardPayment, OnAccountPayment], '收款方式不正确');
+/**
+ * 公司承担（8.2.4，docs/V8224_DINING.md 第 5 节）：账挂到公司的内部账户（不进协议单位应收），选原因、值班经理及以上当场授权
+ * （授权绑定这次结账的手牌或桌台、金额、原因与说明）。算营业额、不算实收；日结单独列出
+ */
+const CompanyPayment = z.object({
+  method: z.literal('company'),
+  amount: positiveCents('公司承担的金额'),
+  reason: z.enum(COMPANY_REASONS, '请选公司承担的原因'),
+  note: z.string().trim().max(MAX_COMPANY_NOTE, `说明最多 ${MAX_COMPANY_NOTE} 个字`).default(''),
+  grantId: z.uuid('公司承担需要值班经理、店总或店主当场授权'),
+});
+export const Payment = z.union(
+  [CashPayment, WalletPayment, CouponPayment, DiscountPayment, StoreCouponPayment, MemberDiscountPayment, CountCardPayment, OnAccountPayment, CompanyPayment],
+  '收款方式不正确',
+);
 
 export const CheckoutInput = z.object({
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
@@ -161,6 +179,11 @@ export const CheckoutInput = z.object({
   // 不带时不补默认值：操作编号的摘要按解析后的请求算，补了空数组会让升级前发出、回复丢了的同一笔重提对不上（Codex 审查 f260ca3）
   // 上限按合并结账的规模（一次最多 30 张手牌，每位客人挂几个钟也够）：不让合法的团体结账因为钟单多被拒（Codex 审查 7e7a584）
   confirmUnstarted: z.array(z.string().trim().min(1).max(32)).max(600).optional(),
+  /**
+   * 单项打折（8.2.1）：员工确认时看到的单项折扣合计；与服务端此刻算的不一致时拒绝（PRICE_CHANGED）。
+   * 收款合计 = 应收合计 − 单项折扣。不带时不核对（升级前发出的请求，摘要不变）
+   */
+  expectedLineDiscount: cents('单项折扣').optional(),
 });
 export type CheckoutInputData = z.input<typeof CheckoutInput>;
 
@@ -244,6 +267,19 @@ export async function previewCheckout(deps: Deps, visitIds: number[], at = new D
     );
     // 房费（福田店：只在收银台收）：与结账时同一个算法，按此刻算
     const roomFees = await cashierRoomFees(tx, ids, at);
+    // 单项打折（8.2.1）：每张账单折掉多少；押着的手牌押金（结账时一起退，储值扣的退回原卡——余额按退回以后的给）
+    const lineDiscounts = await lineDiscountsOf(
+      tx,
+      rows.map((r) => Number(r.billId)),
+    );
+    const deposits = await depositsOf(tx, ids, true);
+    for (const d of deposits) {
+      const m = members.find((x) => x.id === d.memberId);
+      if (m && d.split) {
+        m.principalBalance += d.split.principal;
+        m.bonusBalance += d.split.bonus;
+      }
+    }
     const visits = rows.map((r) => {
       const extension = r.memberId ? (extensions.get(Number(r.memberId)) ?? null) : null;
       const graceMinutes = rules.overtimeGraceMinutes + (extension?.minutes ?? 0);
@@ -280,6 +316,7 @@ export async function previewCheckout(deps: Deps, visitIds: number[], at = new D
         extension,
         needsTicket: r.ticketTypeId === null,
         roomFees: fees.map((f) => ({ room: f.label, chargedMinutes: f.quote.chargedMinutes, amount: f.quote.amount })),
+        lineDiscount: lineDiscounts.byBill.get(Number(r.billId)) ?? 0,
         amount: r.linesAmount + (t?.amount ?? 0) + feeAmount,
       };
     });
@@ -329,6 +366,8 @@ export async function previewCheckout(deps: Deps, visitIds: number[], at = new D
     return {
       visits,
       totalAmount: visits.reduce((s, v) => s + v.amount, 0),
+      lineDiscountAmount: lineDiscounts.total,
+      deposits,
       members,
       storeCoupons,
       memberDiscounts,
@@ -384,6 +423,10 @@ export function splitPayments(payments: CheckoutPaymentInput[], actor: OpContext
   if (new Set(countCards.map((c) => c.cardId)).size !== countCards.length) throw badRequest('同一张次卡请合并为一笔（抵几次写在一起）');
   if (countCards.length && (storeCoupons.length || discounts.length || memberDiscounts.length)) throw badRequest('次卡不能和券、会员折扣、优惠 / 免单同时用，请二选一');
   if (payments.some((p) => p.method === 'other' && !p.ref)) throw badRequest('「其他」收款请在备注里写明收的是什么');
+  // 公司承担（8.2.4）：一张结账单最多一笔；选「其他」要写说明
+  const companies = payments.filter((p) => p.method === 'company');
+  if (companies.length > 1) throw badRequest('公司承担一张结账单只能登记一笔，请合并金额后重新授权');
+  if (companies.some((p) => p.reason === 'other' && p.note.length < 2)) throw badRequest('公司承担选「其他」请写说明');
   // 扫码收款（8.0.21）：只有微信、支付宝能带，同一笔不能登记两次
   const payTxIds = payments.flatMap((p) => ('payTxId' in p && p.payTxId ? [{ method: p.method, id: p.payTxId }] : []));
   if (payTxIds.some((x) => x.method !== 'wechat' && x.method !== 'alipay')) throw badRequest('只有微信、支付宝能用扫码收款');
@@ -437,6 +480,8 @@ export async function recordCheckoutPayments(
     ctx: OpContext;
     /** 会员折扣（v0.7.25，手牌结账在会员锁里核对过的）；桌台结账没有 */
     memberDiscount?: MemberDiscountEntry | null;
+    /** 公司承担（8.2.4）的授权对象：这次结账的手牌或桌台 */
+    companyScope?: { visitIds: number[]; tableSessionIds: number[] };
   },
 ) {
   const wallets = a.payments.filter((p) => p.method === 'wallet');
@@ -532,9 +577,25 @@ export async function recordCheckoutPayments(
     if (p.method !== 'on_account') continue;
     await chargeOnAccount(tx, { checkoutId: a.checkoutId, accountId: p.accountId, signer: p.signer, amount: p.amount, date: a.date, staffId: a.ctx.actor.id });
   }
+  // 公司承担（8.2.4）：在已有的锁之后核销当场授权（这次结账的手牌或桌台、金额、原因），记原因与授权人
+  for (const p of a.payments) {
+    if (p.method !== 'company') continue;
+    if (!a.companyScope) throw badRequest('这里不能用公司承担');
+    const g = await consumeCompanyGrant(tx, { grantId: p.grantId, actor: a.ctx.actor, ...a.companyScope, amount: p.amount, reason: p.reason, note: p.note, usedRef: `checkout:${a.checkoutNo}` });
+    await tx`
+      INSERT INTO checkout_payments (checkout_id, method, amount, ref, approved_by, grant_id, company_reason)
+      VALUES (${a.checkoutId}, 'company', ${p.amount}, ${companyReasonText(p.reason, p.note)}, ${g.approverId}, ${p.grantId}, ${p.reason})`;
+  }
   // 现金类；扫码收款的（8.0.21）在已有的锁之后按交易 id 升序锁交易行，核对到账、没被用过、方式与金额一致，参考号记支付方单号
   const cashPays = a.payments.flatMap((p) =>
-    p.method === 'wallet' || p.method === 'coupon' || p.method === 'discount' || p.method === 'store_coupon' || p.method === 'member_discount' || p.method === 'count_card' || p.method === 'on_account'
+    p.method === 'wallet' ||
+    p.method === 'coupon' ||
+    p.method === 'discount' ||
+    p.method === 'store_coupon' ||
+    p.method === 'member_discount' ||
+    p.method === 'count_card' ||
+    p.method === 'on_account' ||
+    p.method === 'company'
       ? []
       : [p],
   );
@@ -671,7 +732,12 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
         tickets: priced.map((r) => ({ tagCode: r.tagCode, segments: r.ticket.segments, amount: r.ticket.amount })),
       });
     }
-    const paid = assertSettled(input.payments, total);
+    // 单项打折（8.2.1）：这几张账单上有效的折扣合计，结账时记一笔「单项折扣」（不是收款）；收款只要收到 应收 − 单项折扣
+    const lineDiscount = await lineDiscountsOf(tx, billIds);
+    if (input.expectedLineDiscount !== undefined && input.expectedLineDiscount !== lineDiscount.total) {
+      throw conflict('PRICE_CHANGED', `单项打折刚刚有变化（现在共折 ${formatYuan(lineDiscount.total)}），请核对后重新确认`, { total, lineDiscount: lineDiscount.total });
+    }
+    const paid = assertSettled(input.payments, total - lineDiscount.total) + lineDiscount.total;
 
     // 优惠 / 免单：核销值班经理及以上的当场授权（这几张手牌、这个金额；业务回滚时核销一起回滚）
     const discount = discounts[0] ? await consumeDiscountGrant(tx, { grantId: discounts[0].grantId, actor: ctx.actor, visitIds: ids, amount: discounts[0].amount, usedRef: `checkout:${key}` }) : null;
@@ -713,11 +779,31 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
       otherReduction: storeCoupons.length > 0 || discounts.length > 0 || countCards.length > 0,
       date,
     });
+    // 手牌押金（8.2.1）：会员一行已在上面锁住，押着的押金按 id 升序锁、一起退掉（储值扣的先退回原卡，下面的储值支付按退回以后的余额扣）
+    const deposits = await settleDepositsAtCheckout(tx, deps, { visitIds: ids, checkoutId, shiftId, date, at, ctx });
     // 房费挂到账单上（在会员折扣之后：房费不打会员折扣，与预览一致），记哪张登记单收过、房间事件
     if (roomFees.length) {
       await chargeCashierRoomFeesTx(tx, roomFees, { billOf: (visitId) => priced.find((r) => Number(r.id) === visitId)!.billId, key, at, today: date, staffId: ctx.actor.id });
     }
-    await recordCheckoutPayments(tx, deps, { checkoutId, checkoutNo, payments: input.payments, discount, tagCodes, billIds, memberIds, date, at, ctx, memberDiscount });
+    await recordCheckoutPayments(tx, deps, {
+      checkoutId,
+      checkoutNo,
+      payments: input.payments,
+      discount,
+      tagCodes,
+      billIds,
+      memberIds,
+      date,
+      at,
+      ctx,
+      memberDiscount,
+      companyScope: { visitIds: ids, tableSessionIds: [] },
+    });
+    if (lineDiscount.total > 0) {
+      await tx`
+        INSERT INTO checkout_payments (checkout_id, method, amount, ref)
+        VALUES (${checkoutId}, 'line_discount', ${lineDiscount.total}, ${`单项打折 ${lineDiscount.lineIds.size} 行`})`;
+    }
     await snapshotCheckoutItems(tx, checkoutId);
     // 扣库存（8.0.20）：不进厨房的明细按用料记「该扣多少」，只插入、不碰库存的锁；每分钟的任务再开耗用单
     await recordSaleUsage(tx, checkoutId, billIds, date);
@@ -756,6 +842,8 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
         ...(usages.length ? { usages } : {}),
         ...(roomFees.length ? { roomFees: roomFees.map((f) => ({ room: f.label, tagCode: f.quote.tagCode, amount: f.quote.amount, chargedMinutes: f.quote.chargedMinutes })) } : {}),
         ...(unstarted.length ? { unstartedSessions: unstarted.map((u) => u.sessionNo) } : {}),
+        ...(lineDiscount.total ? { lineDiscount: { amount: lineDiscount.total, lineIds: [...lineDiscount.lineIds] } } : {}),
+        ...(deposits.length ? { depositsRefunded: deposits } : {}),
         ...backfillDetail(backfill),
       },
       ip: ctx.ip,
@@ -780,7 +868,12 @@ const couponUsed = (platform: CouponPlatform, code: string, checkoutNo: string |
  * 手牌已发给其他客人、已锁定或停用，或会员已持有其他在店手牌时不能反结账。
  * 储值消费按原单撤销（本金、赠金按原构成恢复），团购券登记作废（券码可重新登记），门票明细作废并留痕。
  */
-export async function voidCheckout(deps: Deps, checkoutId: number, raw: unknown, ctx: OpContext): Promise<CheckoutDetail> {
+/** 反结账的附加步骤（8.2.4 返台，tables-v8224.ts）：在同一事务里、账单与开台恢复以后做；抛错整笔回滚 */
+export interface VoidCheckoutHooks {
+  afterRestore?: (tx: Tx, c: { id: number; checkoutNo: string; createdAt: Date; at: Date }) => Promise<void>;
+}
+
+export async function voidCheckout(deps: Deps, checkoutId: number, raw: unknown, ctx: OpContext, hooks: VoidCheckoutHooks = {}): Promise<CheckoutDetail> {
   const { reason, refundShiftId } = parse(VoidCheckoutInput, raw);
   // 反结账开始处理时反结账人所在的班次：退款记到这个班次，入账前它已交班则拒绝（见 shifts.ts lockPaymentShift）。
   // 选了钱箱（跨钱箱退款）时记到所选的班次，不要求反结账人自己开班
@@ -918,6 +1011,8 @@ export async function voidCheckout(deps: Deps, checkoutId: number, raw: unknown,
     await reverseSaleUsage(tx, c.id);
     // 扫码收款（8.0.21）：解开这张结账单用过的交易（id 升序），回到「没入账」，由收银员挂到重新结账或原路退回——反结账不自动退钱
     await releasePayTxs(tx, 'checkout', c.id, ctx.actor.id, `反结账：${voidText}`);
+    // 8.2.4 返台：核对能不能返台、作废自动记的几行、桌台回到用餐中（不行的整笔回滚）
+    if (hooks.afterRestore) await hooks.afterRestore(tx, { id: c.id, checkoutNo: c.checkoutNo, createdAt: new Date(c.createdAt), at });
     // 退款记到反结账人的班次，或所选钱箱当班的班次（事务开头已加锁核对）
     await tx`
       UPDATE checkouts SET status = 'voided', voided_at = ${at}, voided_by = ${ctx.actor.id}, void_reason = ${reason}, void_business_date = ${date},
