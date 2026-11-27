@@ -1033,7 +1033,7 @@ function FilteredTechs({
                   </p>
                 )}
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {status === 'idle' && (
+                  {(status === 'idle' || status === 'brought') && (
                     <>
                       {callButton}
                       {act('rest', `${t.techNo} 号暂离`, '暂离', <Coffee className="size-3.5" />)}
@@ -1086,7 +1086,7 @@ function FilteredTechs({
                     </>
                   )}
                   {status === 'suspended' && act('resume', `${t.techNo} 号已复牌`, '复牌', <RotateCcw className="size-3.5" />, 'secondary')}
-                  {(status === 'idle' || status === 'rest' || status === 'off' || status === 'leave') && (
+                  {(status === 'idle' || status === 'brought' || status === 'rest' || status === 'off' || status === 'leave') && (
                     <Button size="sm" variant="ghost" icon={<BadgeX className="size-3.5" />} disabled={busy !== null} onClick={() => onSuspend(t)} data-testid={`clock-tech-suspend-${t.techNo}`}>
                       停牌
                     </Button>

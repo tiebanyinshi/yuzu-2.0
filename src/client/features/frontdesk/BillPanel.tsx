@@ -542,7 +542,7 @@ export function BillPanel({
         </div>
         {!issue && open && can('frontdesk.operate') && (
           // 8.1.44（第 9、10 条）：加项目、买角在收银台，作废 / 退菜在每条明细上（照旧留原因与经办人）
-          <div className="mt-3 flex gap-2" data-testid="cashier-post-actions">
+          <div className="mt-3 flex flex-wrap gap-2" data-testid="cashier-post-actions">
             <Button variant="primary" size="lg" className="flex-1" icon={<Plus className="size-[18px]" />} onClick={() => onAction('add')} kbd="F4" data-testid="action-add">
               加项目
             </Button>
