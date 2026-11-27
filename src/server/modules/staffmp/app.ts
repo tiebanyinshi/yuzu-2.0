@@ -1,13 +1,14 @@
 // 员工小程序端口（员工小程序线，docs/STAFF_MP.md 第 5.2 节）：单开的 Fastify 实例，只挂员工小程序的接口。
 //   · 外面的地址都在 /api/staffmp/ 下（放 Caddy 的服务器只把 sys.yuzusystem.xyz/api/staffmp/* 转到这里）；
 //   · 自己的接口：登录、微信绑定、我是谁（routes.ts）；
-//   · WCP 与员工培训的员工端接口原样挂上（/api/staffmp/oa/… 进的就是 /api/oa/… 那个处理函数），只放行白名单（allowlist.ts）；
+//   · WCP、员工培训、汤崎学堂的员工端接口原样挂上（/api/staffmp/oa/… 进的就是 /api/oa/… 那个处理函数），只放行白名单（allowlist.ts）；
 //   · 认证只认 Authorization: Bearer <令牌>，令牌是员工小程序发的员工会话（不认浏览器 Cookie，所以没有跨站请求伪造）；
 //   · 没有管理后台的页面与接口；没设 STAFFMP_PORT 不开。
 
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { STAFFMP_BEARER } from '@shared/staffmp';
+import { parseAcademyMarkup } from '@shared/academy-markup';
+import { STAFFMP_BEARER, type StaffMpAcademyLesson } from '@shared/staffmp';
 import type { AppConfig } from '../../config';
 import type { Sql } from '../../db';
 import type { Deps } from '../../lib/context';
@@ -30,6 +31,7 @@ import {
   registerOaScheduleRoutes,
 } from '../oa';
 import { registerTrainingRoutes } from '../training';
+import { registerAcademyRoutes } from '../academy';
 import { registerAuthRoutes } from '../../auth/routes';
 import { passthroughAllowed, rewriteStaffMpUrl } from './allowlist';
 import { resolveStaffMpSession, resolveStaffMpSessionByHash } from './auth';
@@ -182,6 +184,14 @@ export async function buildStaffMpApp(sql: Sql, config: AppConfig, opts: StaffMp
   registerOaPayrollRoutes(app, deps);
   registerOaDirectoryRoutes(app, deps);
   registerTrainingRoutes(app, deps);
+  // 汤崎学堂的员工端（只放行 allowlist.ts 里的；管理端一律 404）。课时的回包附上解析好的块：
+  // 解析用学堂自己的 parseAcademyMarkup（网页的课件页也是它），小程序不另写一份
+  registerAcademyRoutes(app, deps);
+  app.addHook('preSerialization', async (req, _reply, payload: unknown) => {
+    if (req.method !== 'GET' || req.routeOptions.url !== '/api/academy/lessons/:id' || !payload || typeof payload !== 'object' || !('lesson' in payload)) return payload;
+    const view = payload as StaffMpAcademyLesson;
+    return { ...view, blocks: view.lesson.kind === 'article' ? parseAcademyMarkup(view.lesson.body).blocks : [] };
+  });
   // 账号：只放行老账号选新岗位的两个接口（登录、换门店等用 Cookie 的都不在白名单里）
   registerAuthRoutes(app, deps);
   return app;

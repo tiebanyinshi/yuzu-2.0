@@ -1,4 +1,4 @@
-// 员工小程序端口上原样挂着的 WCP、员工培训接口（docs/STAFF_MP.md 第 5.3、8.2 节）。
+// 员工小程序端口上原样挂着的 WCP、员工培训、汤崎学堂接口（docs/STAFF_MP.md 第 5.3、8.2 节）。
 // 这些模块整个挂上来（管理用的接口也在同一个模块里），只有这张表里的「方法 + 路由」放行，别的一律当没有这个接口（404）。
 // 规则、权限照旧由各模块自己的守卫当场核对；这张表只决定员工小程序能碰哪些接口。加一条要在设计稿第 8.2 节写清用途，
 // tests/staffmp-port.test.ts 核对每一条都对得上真实的路由、没有管理接口。
@@ -43,6 +43,23 @@ export const STAFFMP_ALLOWLIST: readonly string[] = [
   'GET /api/training/folders/:id/files',
   'GET /api/training/files/:id/content',
   'POST /api/training/files/:id/viewed',
+  // 汤崎学堂（员工端，docs/ACADEMY.md；员工小程序线 F）：首页、课程与课时、学习时长、学完了、测验（开卷带操作编号、交卷按卷子认）、
+  // 每日一练（带操作编号）、我的、学习地图、榜单。管理端（/api/admin/academy/*）不在这里；带教签核、问柚子这一版没有挂
+  'GET /api/academy/home',
+  'GET /api/academy/courses',
+  'GET /api/academy/courses/:id',
+  'GET /api/academy/lessons/:id',
+  'POST /api/academy/lessons/:id/ping',
+  'POST /api/academy/lessons/:id/complete',
+  'POST /api/academy/lessons/:id/quiz',
+  'POST /api/academy/attempts/:id/submit',
+  'GET /api/academy/attempts/:id',
+  'GET /api/academy/daily',
+  'POST /api/academy/daily/answer',
+  'GET /api/academy/me',
+  'GET /api/academy/paths',
+  'GET /api/academy/paths/:id',
+  'GET /api/academy/rank',
   // 账号：老账号第一次登录选新岗位（8.1.18，GW7）——一线员工不用去找电脑（外面的地址 /api/staffmp/account/…）
   'GET /api/auth/position-options',
   'POST /api/auth/position',

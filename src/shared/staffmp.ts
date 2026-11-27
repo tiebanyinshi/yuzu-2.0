@@ -1,6 +1,8 @@
 // 员工小程序「汤崎 WCP」（员工小程序线，docs/STAFF_MP.md）：员工小程序端口与小程序共用的类型与常量。
 // 小程序（staff-miniprogram/）只引这里的类型（编译后不留引用），接口改了那边的类型检查会报错。
 
+import type { AcademyLessonView } from './academy';
+import type { AcademyBlock } from './academy-markup';
 import type { CanteenRole, Meal } from './canteen';
 import type { InstanceKind } from './instance';
 
@@ -14,6 +16,7 @@ export const STAFFMP_PREFIX = '/api/staffmp';
 export const STAFFMP_PASSTHROUGH = [
   { outside: 'oa', inside: 'oa' },
   { outside: 'training', inside: 'training' },
+  { outside: 'academy', inside: 'academy' },
   { outside: 'account', inside: 'auth' },
 ] as const;
 
@@ -156,3 +159,10 @@ export interface StaffMpAdminView {
   appId: string | null;
   bindings: StaffMpBindingRow[];
 }
+
+/**
+ * 汤崎学堂的课时（员工小程序端口上的 GET /api/staffmp/academy/lessons/:id）：学堂原来的回包，
+ * 加上员工小程序端口用学堂自己的解析（src/shared/academy-markup.ts）解析好的块——小程序按块画，不另写一份解析（docs/STAFF_MP.md 第 5.3 节）。
+ * 只有图文课件有块；别的课时是空数组
+ */
+export type StaffMpAcademyLesson = AcademyLessonView & { blocks: AcademyBlock[] };
