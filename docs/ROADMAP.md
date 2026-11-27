@@ -307,6 +307,8 @@
   - `590`（`590_self_purchase.sql`）：`purchase_orders.purchase_method` 与自购信息列，`supplier_id` 可为空（约束 `purchase_orders_method_supplier`、`purchase_orders_self_info`）；自购票据 `purchase_order_self_receipts`；收货单挂采购单时可以没有供应商（`inv_docs_check` 放宽）。回滚 `docs/rollback/590_self_purchase.down.sql`。
 - **8.2.9 业财法角色映射（`600`–`609`）**：《业财法审批与 WCP 模块 需求变更》第 4 批（店主 2026-11-27，设计见 `docs/V829_GF_ROLES.md`）——角色映射可改（角色不能改）、工号与部门、变更记录、提交时快照审批人（WB2）。
   - `600`（`600_gf_role_snapshot.sql`）：`gf_role_members.replaces_id`、`revoke_reason`；`gf_flows.seat_snapshot`。回滚 `docs/rollback/600_gf_role_snapshot.down.sql`。
+- **8.2.10 业财法流程与阈值（`610`–`619`）**：《业财法审批与 WCP 模块 需求变更》第 5 批（店主 2026-11-27，设计见 `docs/V8210_GF_CONFIG.md`）——阈值后台可改（WB4）、每类事项可设自己的审批链与知会角色（追加版本、在途单不受影响）、试算。
+  - `610`（`610_gf_flow_config.sql`）：`gf_settings` 加键 `rules`；各类事项的流程 `gf_flow_configs`（只追加）；`gf_flows.config_version`。回滚 `docs/rollback/610_gf_flow_config.down.sql`。
 - **8.2.12 报销统一（`620`–`629`）**：《业财法审批与 WCP 模块 需求变更》第 7 批（店主 2026-11-27，设计见 `docs/V8212_EXPENSE_UNIFY.md`）——WCP 报销模板停用、报销只在业财法、通过前至少一位审批人同意。
   - `620`（`620_oa_expense_retire.sql`）：`oa_approval_templates` 的 `expense` 停用（只改数据）。回滚 `docs/rollback/620_oa_expense_retire.down.sql`。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
