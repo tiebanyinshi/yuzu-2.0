@@ -2,7 +2,8 @@
 // 8.0.1 起在「采购 → 采购规则」里改（从 ERP「模块设置」挪过来，CG01），要「维护采购规则」（默认只有店主）；有查看库存的只看。
 //   · 采购途径固定三类（网购、自采、供应商，CG08），这里只显示；
 //   · 询价门槛与最少报价家数（E5、E6）、补货触发与目标天数（E4）、常用天数（E11，自动识别一次性采购）、下单后几天没到货算超期（从费用报销规则挪过来）；
-//   · 每日截单（03，CG03）、需求单转的采购单提交即确认（04，CG04）、急采按金额分级审批与每一档的审批人（05，CG05）。
+//   · 每日截单（03，CG03）、需求单转的采购单提交即确认（04，CG04）、急采按金额分级审批与每一档的审批人（05，CG05）；
+//   · 自购超过多少加一级店主复核（PS5，默认 2000 元）。
 // 改动记审计，之后的单据按新规则，已有的不变。
 
 import { useEffect, useState } from 'react';
@@ -37,6 +38,8 @@ interface Draft {
   stockCheckHours: string;
   urgentContractMin: string;
   contractDueDays: string;
+  /** 自购店主复核金额（PS5） */
+  selfOwnerReview: string;
 }
 
 const toDraft = (r: PurchaseRules): Draft => ({
@@ -56,6 +59,7 @@ const toDraft = (r: PurchaseRules): Draft => ({
   stockCheckHours: String(r.stockCheckHours),
   urgentContractMin: centsToInput(r.urgentContractMinCents),
   contractDueDays: String(r.contractDueDays),
+  selfOwnerReview: centsToInput(r.selfOwnerReviewCents),
 });
 
 const TIER_NAMES = ['审批人 A', '审批人 B', '审批人 C'];
@@ -93,6 +97,8 @@ export function PurchaseRulesCard() {
     const urgentContractMinCents = draft.urgentContractMin.trim() === '' ? 0 : parseYuan(draft.urgentContractMin);
     if (quoteThresholdCents === null) return setError('询价门槛的金额格式不正确');
     if (urgentContractMinCents === null) return setError('急采补合同金额的格式不正确');
+    const selfOwnerReviewCents = draft.selfOwnerReview.trim() === '' ? 0 : parseYuan(draft.selfOwnerReview);
+    if (selfOwnerReviewCents === null) return setError('自购店主复核金额的格式不正确');
     if (Object.values(ints).some((n) => !Number.isInteger(n))) return setError('报价家数与天数要填整数');
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.cutoffTime)) return setError('截单时间要写成 17:00 这样（24 小时制）');
     const urgentTiers = draft.tiers.map((t) => ({ maxCents: parseYuan(t.max), approverIds: t.approverIds }));
@@ -110,6 +116,7 @@ export function PurchaseRulesCard() {
         urgentTiers,
         stockCheckEnabled: draft.stockCheckEnabled,
         urgentContractMinCents,
+        selfOwnerReviewCents,
       });
       qc.setQueryData(pk.purchaseRules, next);
       setDraft(toDraft(next));
@@ -253,6 +260,20 @@ export function PurchaseRulesCard() {
             onChange={(e) => setDraft({ ...draft, quoteThreshold: e.target.value })}
             className="h-10"
             data-testid="pr-quote"
+          />
+        </Field>
+        <Field
+          label="自购合计超过多少加店主复核"
+          htmlFor="pr-self-owner"
+          hint="自购的采购单都要负责人审批，合计超过这个金额的再加一级店主（PS5）。默认 2000 元，填 0 = 每张自购都加店主；改了只管以后提交的，已在审的按提交时的级数走完。审批中心给采购单配了规则的按规则"
+        >
+          <MoneyInput
+            id="pr-self-owner"
+            value={draft.selfOwnerReview}
+            disabled={!editable}
+            onChange={(e) => setDraft({ ...draft, selfOwnerReview: e.target.value })}
+            className="h-10"
+            data-testid="pr-self-owner"
           />
         </Field>
         <Field label="定标至少要几家报价" htmlFor="pr-min" hint="默认 2 家；不够的标单一来源、由负责人定标">

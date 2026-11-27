@@ -16,6 +16,7 @@ import type { TierPrice } from './catalog';
 import type { ItemCatalogCategory } from './types';
 import type { ComboPartOption, DishAddonOption, DishMethodGroup, DishMethodOption, DishPart } from './dishes';
 import type { DishWindow } from './dining-v8139';
+import { DEFAULT_MEAL_PERIODS } from './dining-meals';
 
 export interface DiningRules {
   /** 餐饮功能：关闭时前台挂账与升级前完全一样，主导航没有「餐饮」（默认关闭） */
@@ -56,6 +57,8 @@ export interface DiningRules {
   serviceFeeScope: 'rooms' | 'all';
   /** 返台（8.2.4）：已结账的包房单结账后多少分钟以内还能返台（默认 30；客人走了清台以后就不能返台） */
   returnWindowMinutes: number;
+  /** 餐厅的餐段与裸票餐费（8.2.8）：入口刷手牌登记进餐按此刻的餐段收（含餐的抵扣成 0） */
+  mealPeriods: import('./dining-meals').MealPeriod[];
 }
 
 /** 能自己设小分类的两处（果吧不细分） */
@@ -83,6 +86,7 @@ export const DEFAULT_DINING_RULES: DiningRules = {
   serviceFeeBp: 0,
   serviceFeeScope: 'rooms',
   returnWindowMinutes: 30,
+  mealPeriods: DEFAULT_MEAL_PERIODS.map((p) => ({ ...p })),
 };
 
 /** 小额退菜上限最多 ¥1,000 */

@@ -456,6 +456,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '570_review_v825.sql',
   '580_mall_dispatch.sql',
   '590_away_lock_v827.sql',
+  '600_dining_meals_v828.sql',
   '700_self_purchase.sql',
   '710_gf_role_snapshot.sql',
   '720_gf_flow_config.sql',

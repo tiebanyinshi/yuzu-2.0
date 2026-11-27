@@ -1,4 +1,5 @@
-# 小程序网关服务器的 HTTPS（docs/DEPLOY_GATEWAY.md）：两个域名各转给自己的网关进程。
+# 小程序网关服务器的 HTTPS：只在网关自己有域名时用（compose.yaml 的 profile own-domain），两个域名各转给自己的网关进程。
+# 店主 2026-11-27 起小程序都用 sys.yuzusystem.xyz：HTTPS 在正式服那台的 Caddy 上（docs/DEPLOY_GATEWAY.md 第 1.1 节），这个文件平时不用。
 # 证书由 Caddy 自己申请、续期（Let's Encrypt，经 443 端口验证：安全组不用开 80）。
 # 域名与邮箱来自 .env（compose.yaml 传进来）。这个目录整个只读挂进 Caddy 的容器（不要往这里放别的文件）；
 # update.sh 每次都会重新加载；手改之后：docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile

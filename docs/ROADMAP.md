@@ -303,6 +303,8 @@
   - `570`（`570_review_v825.sql`）：`bookings.technician_overlap`（一报多建的预约）；操作编号与「确认作废」的类型约束追加 `table_return`（在当时的约束上追加），8.2.4 已经返过台的补记编号。回滚 `docs/rollback/570_review_v825.down.sql`。
 - **8.2.7（`590`–`599`）**：店主 2026-11-27——收银台锁牌外出：锁牌最多 4 小时，锁之前先收预售（设计见 `docs/V8227_AWAY_LOCK.md`）。同一天的《新店系统需求现场走场确认》（餐厅含餐与时段价、水吧首杯免费与取餐叫号、休闲娱乐、男汤女汤泡池）排在 8.2.8 起分批做。
   - `590`（`590_away_lock_v827.sql`）：锁牌记录 `visit_tag_locks`（只追加，一次来访同时一把，最多 4 小时，预售指向一张手牌押金）；操作编号与「确认作废」追加 `tag_away_lock`、`tag_away_unlock`。回滚 `docs/rollback/590_away_lock_v827.down.sql`。
+- **8.2.8（`600`–`609`）**：《新店系统需求现场走场确认》第一节第 1 条（餐厅：入口刷手牌、含餐抵扣、裸票时段价、餐台与餐包；设计见 `docs/V8228_DINING_MEALS.md`）。
+  - `600`（`600_dining_meals_v828.sql`）：票种含几餐 `ticket_types.meals_12h / meals_24h`（含餐门票回填 2 / 3）；进餐登记 `meal_entries`（只追加）；单项打折加自动折扣档 `auto` 与规则 `rule`（含餐、自助、首杯赠）；操作编号与「确认作废」追加 `meal_entry`。回滚 `docs/rollback/600_dining_meals_v828.down.sql`。
 - **8.2.6 采购商城 v0.2（`580`–`589`）**：《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》（店主 2026-11-27，设计见 `docs/MALL_V826.md`）——分批发配与物料发配记录、退回逐项标必补、版本快照、终止申购、收货待判。
   - `580`（`580_mall_dispatch.sql`）：发配记录 `request_line_issues`（核库已开的领料单抄一份）、退回必补项 `request_fix_items`、版本快照 `purchase_request_versions`、终止申请 `request_terminations`、收货待判 `inv_doc_lines.hold_milli`；操作类型追加 `request_dispatch`、`mall_terminate`。回滚 `docs/rollback/580_mall_dispatch.down.sql`。
 - **8.2.12–8.2.17（业财法审批与 WCP、采购模块需求补充，一个集成 PR）**：店主 2026-11-27 两份需求文档分 7 批做，各批各占一个版本号、各写一份设计（`docs/V8212_APPROVALS_PURCHASING.md` … `docs/V8217_EXPENSE_UNIFY.md`），合成一个集成 PR 进 main。版本号排在另一条开发线已排的 8.2.8（餐厅）、8.2.9（水吧）、8.2.10（休闲娱乐）、8.2.11（泡池）之后（店主「延后」）；迁移号避开别的线已占的 `600`–`639`，用 `700`–`739`。8.2.12 没有迁移，8.2.16 没有迁移。
