@@ -64,6 +64,9 @@ export const CLIENT_ERROR_CODES = {
   TRAINING_UPLOAD_EXPIRED: '上传已过期',
   TRAINING_UPLOAD_KEY_CLOCK: '上传编号时间异常（本机时间不对）',
   TRAINING_UPLOAD_KEY_INVALID: '上传编号格式已更新',
+  // ── 汤崎学堂（docs/ACADEMY.md） ──
+  ACADEMY_CHANGED: '题、课时或课程刚被改过（每日一练按旧版本作答会被拒，重新取今天的题）',
+  ACADEMY_DAILY_GONE: '这道题今天已经练过或不在今天的题里',
   // ── 员工饭堂（手机端 src/canteen-app） ──
   BUSY: '刚好有人在改这位员工的打卡，稍后再试',
   CANTEEN_CLOSED: '饭堂还没开张',

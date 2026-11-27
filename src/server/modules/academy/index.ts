@@ -111,7 +111,8 @@ export function registerAcademyRoutes(app: FastifyInstance, deps: Deps) {
     reply.code(201).send(await createQuestion(sql, parse(idParam, req.params).id, req.body, ctxOf(req))),
   );
   app.put('/api/admin/academy/questions/:id', { preHandler: manage }, async (req) => updateQuestion(sql, parse(idParam, req.params).id, req.body, ctxOf(req)));
-  app.post('/api/admin/academy/courses/:id/questions/import', { preHandler: manage }, async (req, reply) =>
+  // 表格导入：页面传 CSV 原文（≤ 200 万字）或 Excel 的 base64（≤ 600 万字），默认 64 KB 的请求上限装不下 500 行（Codex 审查 6ee05cd）
+  app.post('/api/admin/academy/courses/:id/questions/import', { preHandler: manage, bodyLimit: 8_000_000 }, async (req, reply) =>
     reply.code(201).send(await importQuestionTable(sql, parse(idParam, req.params).id, req.body, ctxOf(req))),
   );
   app.post('/api/admin/academy/lessons/:id/generate', { preHandler: manage }, async (req) => generateQuestions(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));

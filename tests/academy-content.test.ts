@@ -153,6 +153,27 @@ describe('学堂 · 表格导入题', () => {
     const replay = await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${c!.id}/questions/import`, body);
     expect(replay.body.questions.map((q: { id: number }) => q.id)).toEqual(ok.body.questions.map((q: { id: number }) => q.id));
   });
+
+  it('页面选的 CSV 文件服务端读成行再导；表格只能给一种', async () => {
+    const [c] = await ctx.sql<{ id: number }[]>`SELECT id FROM academy_courses WHERE code = 'mk-general'`;
+    const csv = '题干,选项A,选项B,选项C,答案,解析\n客人晕堂第一步做什么？,扶到通风处平躺,让他继续泡,先去找经理,A,先让客人离开高温环境\n';
+    const r = await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${c!.id}/questions/import`, { clientKey: randomUUID(), csv });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.questions).toHaveLength(1);
+    expect(r.body.questions[0]).toMatchObject({ kind: 'single', answer: [0], source: 'import' });
+    const both = await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${c!.id}/questions/import`, { clientKey: randomUUID(), csv, rows: [['问题', '答案']] });
+    expect(both.status).toBe(400);
+  });
+
+  it('500 行的表超过默认 64 KB 的请求上限也导得进（Codex 审查 6ee05cd）', async () => {
+    const [c] = await ctx.sql<{ id: number }[]>`SELECT id FROM academy_courses WHERE code = 'mk-general'`;
+    const line = (i: number) => `第 ${i} 题：客人在汤池边滑倒、说脚踝疼，当班员工第一步应该怎么做？,先让客人别动、问清哪里疼，再叫值班经理与急救箱，不要自己去扶着走（${i}）`;
+    const csv = `问题,答案\n${Array.from({ length: 500 }, (_, i) => line(i + 1)).join('\n')}\n`;
+    expect(Buffer.byteLength(JSON.stringify({ csv }))).toBeGreaterThan(64 * 1024);
+    const r = await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${c!.id}/questions/import`, { clientKey: randomUUID(), csv });
+    expect(r.status, JSON.stringify(r.body).slice(0, 300)).toBe(201);
+    expect(r.body.questions).toHaveLength(500);
+  });
 });
 
 describe('学堂 · AI 出题与问柚子', () => {
