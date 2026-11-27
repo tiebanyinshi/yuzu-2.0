@@ -83,6 +83,11 @@ export function useOpPending(key: string) {
   return useAcademyOps().some((op) => op.key === key);
 }
 
+/** 这个编号没确认的那一份（按原内容重新提交时就发它） */
+export function usePendingOp(key: string) {
+  return useAcademyOps().find((op) => op.key === key);
+}
+
 /**
  * 新建对话框的内容锁（Codex 审查 34b9815）：这一笔没收到结果时内容锁住、按钮改成「按原内容重新提交」——
  * 同一个操作编号只能原样重提（AGENTS.md 开发约定），改了内容再提服务端会拒绝。关掉对话框以后在页面上方照样能重提。

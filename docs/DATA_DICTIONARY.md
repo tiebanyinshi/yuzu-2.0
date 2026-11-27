@@ -7,7 +7,7 @@
 「只追加」的表（账本、流水、审批动作、归档表）有触发器拒绝改删，改错走冲正或作废登记。
 列表里「键」：`PK` 主键；「引用」是外键指向的表。
 
-共 490 张表、5810 列。
+共 490 张表、5811 列。
 
 ## 目录
 
@@ -329,7 +329,8 @@
 | staff_id | bigint |  |  |  | staff | 被考核的员工 |
 | lesson_id | bigint |  |  |  | academy_lessons |  |
 | result | text |  |  |  |  |  |
-| checks | jsonb |  |  |  |  | 每个检查项是否达标（与课时检查项一一对应） |
+| checks | jsonb |  |  |  |  | 每个检查项是否达标（与 items 一一对应） |
+| items | jsonb |  |  |  |  | 签的时候的检查项原文：课时后来改了、调了顺序，历史记录照这一份显示 |
 | comment | text |  |  | ''::text |  |  |
 | signed_by | bigint |  |  |  | staff |  |
 | client_key | uuid |  |  |  |  |  |

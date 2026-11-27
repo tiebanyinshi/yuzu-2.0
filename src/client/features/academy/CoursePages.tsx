@@ -508,7 +508,7 @@ function PracticalLesson({ view }: { view: AcademyLessonView }) {
                   <span className="text-ink-2">{s.signedByName}</span>
                   <span className="text-[12px] text-ink-3">{formatDateTime(s.signedAt)}</span>
                 </span>
-                {s.checks.some((c) => !c) && <span className="mt-1 block text-[13px] text-ember-deep">没达标：{p.items.filter((_, i) => !s.checks[i]).join('、')}</span>}
+                {s.checks.some((c) => !c) && <span className="mt-1 block text-[13px] text-ember-deep">没达标：{s.items.filter((_, i) => !s.checks[i]).join('、')}</span>}
                 {s.comment && <span className="mt-1 block text-[13px] text-ink-2">{s.comment}</span>}
               </li>
             ))}

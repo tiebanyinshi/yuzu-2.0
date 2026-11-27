@@ -358,3 +358,72 @@ describe('学堂 · Codex 审查 c950add', () => {
     });
   });
 });
+
+describe('学堂 · Codex 审查 a71cdd5', () => {
+  const lessonUpdate = (l: AcademyAdminCourse['lessons'][number], patch: Record<string, unknown>) => ({
+    title: l.title,
+    kind: l.kind,
+    body: l.body,
+    fileId: l.fileId,
+    quizCount: l.quiz?.count ?? null,
+    quizPass: l.quiz?.pass ?? null,
+    minutes: l.minutes,
+    credits: l.credits,
+    active: l.active,
+    version: l.version,
+    ...patch,
+  });
+  const publishedPath = async (title: string, courseIds: number[]) => {
+    const made = await api<AcademyAdminPath>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/paths', { clientKey: randomUUID(), title, credits: 5, courseIds });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const pub = await api<AcademyAdminPath>(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/paths/${made.body.id}`, { ...made.body, status: 'published', version: made.body.version });
+    expect(pub.status, JSON.stringify(pub.body)).toBe(200);
+    return made.body.id;
+  };
+  const finished = async (pathId: number) => ({
+    completed: (await ctx.sql`SELECT 1 FROM academy_path_completions WHERE staff_id = ${dinerId} AND path_id = ${pathId}`).length,
+    certs: (await ctx.sql`SELECT 1 FROM academy_certificates WHERE staff_id = ${dinerId} AND path_id = ${pathId} AND revoked_at IS NULL`).length,
+  });
+
+  it('下架最后一个没学的课时：这门课所在的上架地图给学完的人补记、发证书', async () => {
+    let c = await addLesson((await newCourse({ title: '下架课时补记', category: 'culture' })).course.id, { title: '甲', kind: 'article', body: '甲。' });
+    c = await publish(await addLesson(c.course.id, { title: '乙', kind: 'article', body: '乙。' }));
+    const pathId = await publishedPath('下架课时补记地图', [c.course.id]);
+    expect((await complete(diner, c.lessons[0]!.id)).body).toMatchObject({ courseCompleted: false, pathsCompleted: [] });
+    expect(await finished(pathId)).toEqual({ completed: 0, certs: 0 });
+    const r = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/lessons/${c.lessons[1]!.id}`, lessonUpdate(c.lessons[1]!, { active: false }));
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await finished(pathId)).toEqual({ completed: 1, certs: 1 });
+  });
+
+  it('下架地图里的一门课：只剩学完的课的上架地图给学完的人补记', async () => {
+    const done = await publish(await addLesson((await newCourse({ title: '已学完的一站', category: 'culture' })).course.id, { title: '甲', kind: 'article', body: '甲。' }));
+    const left = await publish(await addLesson((await newCourse({ title: '要下架的一站', category: 'culture' })).course.id, { title: '乙', kind: 'article', body: '乙。' }));
+    const pathId = await publishedPath('下架课程补记地图', [done.course.id, left.course.id]);
+    await complete(diner, done.lessons[0]!.id);
+    expect(await finished(pathId)).toEqual({ completed: 0, certs: 0 });
+    const { course } = left;
+    const r = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/courses/${course.id}`, {
+      title: course.title,
+      summary: course.summary,
+      category: course.category,
+      departmentKey: course.departmentKey,
+      deptOnly: course.deptOnly,
+      cover: course.cover,
+      sort: course.sort,
+      status: 'archived',
+      version: course.version,
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await finished(pathId)).toEqual({ completed: 1, certs: 1 });
+  });
+
+  it('课件正文两万多字（超过默认 64 KB 的请求上限）照样能加、能改', async () => {
+    const body = '泡汤前先冲淋，水温先试。'.repeat(2000);
+    expect(Buffer.byteLength(JSON.stringify({ body }))).toBeGreaterThan(64 * 1024);
+    const c = await addLesson((await newCourse({ title: '长课件', category: 'culture' })).course.id, { title: '长的一节', kind: 'article', body });
+    const l = c.lessons[0]!;
+    const r = await api(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/lessons/${l.id}`, lessonUpdate(l, { body: `${body}再加一句。` }));
+    expect(r.status, JSON.stringify(r.body).slice(0, 200)).toBe(200);
+  });
+});

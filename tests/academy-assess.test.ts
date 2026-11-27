@@ -246,6 +246,13 @@ describe('学堂 · 实操签核与证书', () => {
     const view = (await api<AcademyLessonView>(ctx.app, ctx.clerk, 'GET', `/api/academy/lessons/${practicalId}`)).body;
     expect(view.practical).toMatchObject({ items: ['主动问候', '核对人数', '指引更衣室'], lessonVersion: lessonVersion + 2 });
     expect(view.practical!.signoffs.map((s) => s.result)).toEqual(['pass', 'retry']);
+    // 签核记着签的时候的检查项原文：之后课时调了顺序，「没达标」照原来那一项显示（Codex 审查 a71cdd5）
+    const before = (await ctx.sql<{ body: string }[]>`SELECT body FROM academy_lessons WHERE id = ${practicalId}`)[0]!.body;
+    await ctx.sql`UPDATE academy_lessons SET body = ${before.replace('主动问候', '@@').replace('核对人数', '主动问候').replace('@@', '核对人数')} WHERE id = ${practicalId}`;
+    const later = (await api<AcademyLessonView>(ctx.app, ctx.clerk, 'GET', `/api/academy/lessons/${practicalId}`)).body.practical!;
+    expect(later.items).toEqual(['核对人数', '主动问候', '指引更衣室']);
+    expect(later.signoffs[1]).toMatchObject({ result: 'retry', checks: [true, false, true], items: ['主动问候', '核对人数', '指引更衣室'] });
+    await ctx.sql`UPDATE academy_lessons SET body = ${before} WHERE id = ${practicalId}`;
     // 学完最后一节：课程完成、地图完成、发证书（12 个月有效）
     const article = course.lessons.find((l) => l.kind === 'article')!;
     const done = await api(ctx.app, ctx.clerk, 'POST', `/api/academy/lessons/${article.id}/complete`);

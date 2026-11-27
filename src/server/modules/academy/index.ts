@@ -94,10 +94,14 @@ export function registerAcademyRoutes(app: FastifyInstance, deps: Deps) {
   app.get('/api/admin/academy/courses', { preHandler: manage }, async () => adminCourses(sql));
   app.post('/api/admin/academy/courses', { preHandler: manage }, async (req, reply) => reply.code(201).send(await createCourse(sql, req.body, ctxOf(req))));
   app.get('/api/admin/academy/courses/:id', { preHandler: manage }, async (req) => adminCourse(sql, parse(idParam, req.params).id));
-  app.put('/api/admin/academy/courses/:id', { preHandler: manage }, async (req) => updateCourse(sql, parse(idParam, req.params).id, req.body, ctxOf(req)));
-  app.post('/api/admin/academy/courses/:id/lessons', { preHandler: manage }, async (req, reply) => reply.code(201).send(await createLesson(sql, parse(idParam, req.params).id, req.body, ctxOf(req))));
+  app.put('/api/admin/academy/courses/:id', { preHandler: manage }, async (req) => updateCourse(sql, parse(idParam, req.params).id, req.body, ctxOf(req), today()));
+  // 课件正文最多 6 万字（中文按 UTF-8 一个字 3 字节），默认 64 KB 的请求上限装不下；新建、修改课时都给 512 KB（Codex 审查 a71cdd5）
+  const lessonBodyLimit = 512 * 1024;
+  app.post('/api/admin/academy/courses/:id/lessons', { preHandler: manage, bodyLimit: lessonBodyLimit }, async (req, reply) =>
+    reply.code(201).send(await createLesson(sql, parse(idParam, req.params).id, req.body, ctxOf(req))),
+  );
   app.post('/api/admin/academy/courses/:id/reorder', { preHandler: manage }, async (req) => reorderLessons(sql, parse(idParam, req.params).id, req.body, ctxOf(req)));
-  app.put('/api/admin/academy/lessons/:id', { preHandler: manage }, async (req) => updateLesson(sql, parse(idParam, req.params).id, req.body, ctxOf(req)));
+  app.put('/api/admin/academy/lessons/:id', { preHandler: manage, bodyLimit: lessonBodyLimit }, async (req) => updateLesson(sql, parse(idParam, req.params).id, req.body, ctxOf(req), today()));
   app.get('/api/admin/academy/paths', { preHandler: manage }, async () => adminPaths(sql));
   app.post('/api/admin/academy/paths', { preHandler: manage }, async (req, reply) => reply.code(201).send(await createPath(sql, req.body, ctxOf(req))));
   app.put('/api/admin/academy/paths/:id', { preHandler: manage }, async (req) => updatePath(sql, parse(idParam, req.params).id, req.body, ctxOf(req), today()));

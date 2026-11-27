@@ -36,7 +36,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Segmented, Select, Skeleton, Textarea } from '../../components/ui';
 import { ArticleView } from './ArticleView';
 import { academyKeys, COVER_CLASS, useAcademyOp } from './data';
-import { PendingLock, useOpPending } from './parts';
+import { PendingLock, useOpPending, usePendingOp } from './parts';
 
 export const adminKeys = {
   courses: ['academy', 'admin', 'courses'] as const,
@@ -140,97 +140,111 @@ export function CourseEditor({ id, onBack }: { id: number; onBack: () => void })
   );
 }
 
+/**
+ * 课程信息：一个操作编号用到确认为止（Codex 审查 a71cdd5）——保存没收到结果时内容与上架、下架都锁住，
+ * 只能按原内容重新提交（发存着的那一份），确认了再改；不另起一个编号去改内容或状态
+ */
 function CourseForm({ data, onSaved }: { data: AcademyAdminCourse; onSaved: () => Promise<unknown> }) {
   const sendAcademyOp = useAcademyOp();
   const c = data.course;
   const [f, setF] = useState({ title: c.title, summary: c.summary, category: c.category, departmentKey: c.departmentKey, deptOnly: c.deptOnly, cover: c.cover, sort: c.sort });
   const [busy, setBusy] = useState(false);
+  const key = useRef(uuid());
+  const pendingOp = usePendingOp(key.current);
   const toast = useToast();
-  const save = async (status: AcademyStatus) => {
+  const send = async (op: Parameters<typeof sendAcademyOp>[0], done: string) => {
     setBusy(true);
     try {
-      await sendAcademyOp({
-        key: uuid(),
-        method: 'PUT',
-        url: `/api/admin/academy/courses/${c.id}`,
-        body: { ...f, status, version: c.version },
-        summary: `保存课程「${f.title}」`,
-      });
-      toast({ tone: 'success', title: status === c.status ? '保存了' : `已${ACADEMY_STATUS_LABELS[status]}` });
+      await sendAcademyOp(op);
+      key.current = uuid();
+      toast({ tone: 'success', title: done });
       await onSaved();
     } catch (e) {
-      toast({ tone: 'error', title: '没保存上', body: errorMessage(e) });
+      toast({ tone: 'error', title: '没确认保存上', body: errorMessage(e) });
     } finally {
       setBusy(false);
     }
   };
+  const save = (status: AcademyStatus) =>
+    send(
+      { key: key.current, method: 'PUT', url: `/api/admin/academy/courses/${c.id}`, body: { ...f, status, version: c.version }, summary: `保存课程「${f.title}」` },
+      status === c.status ? '保存了' : `已${ACADEMY_STATUS_LABELS[status]}`,
+    );
   return (
     <Card className="space-y-3 p-4">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="课程名称">
-          <Input value={f.title} maxLength={60} onChange={(e) => setF({ ...f, title: e.target.value })} />
+      <PendingLock pending={!!pendingOp} className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="课程名称">
+            <Input value={f.title} maxLength={60} onChange={(e) => setF({ ...f, title: e.target.value })} />
+          </Field>
+          <Field label="分类（知识中心的栏目）">
+            <Select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value as AcademyCategory })}>
+              {ACADEMY_CATEGORIES.map((k) => (
+                <option key={k} value={k}>
+                  {ACADEMY_CATEGORY_LABELS[k]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="属于哪个部门" hint="不选是全员通用">
+            <Select value={f.departmentKey ?? ''} onChange={(e) => setF({ ...f, departmentKey: e.target.value || null, deptOnly: e.target.value ? f.deptOnly : false })}>
+              <option value="">全员通用</option>
+              {ORG_DEPARTMENTS.map((d) => (
+                <option key={d.key} value={d.key}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="封面色">
+            <div className="flex gap-2">
+              {ACADEMY_COVERS.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  aria-label={k}
+                  aria-pressed={f.cover === k}
+                  onClick={() => setF({ ...f, cover: k as AcademyCover })}
+                  className={cn('tap relative size-8 rounded-full border-2', COVER_CLASS[k].solid, f.cover === k ? 'border-ink' : 'border-transparent')}
+                />
+              ))}
+            </div>
+          </Field>
+        </div>
+        <Field label="简介">
+          <Textarea rows={2} maxLength={300} value={f.summary} onChange={(e) => setF({ ...f, summary: e.target.value })} />
         </Field>
-        <Field label="分类（知识中心的栏目）">
-          <Select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value as AcademyCategory })}>
-            {ACADEMY_CATEGORIES.map((k) => (
-              <option key={k} value={k}>
-                {ACADEMY_CATEGORY_LABELS[k]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="属于哪个部门" hint="不选是全员通用">
-          <Select value={f.departmentKey ?? ''} onChange={(e) => setF({ ...f, departmentKey: e.target.value || null, deptOnly: e.target.value ? f.deptOnly : false })}>
-            <option value="">全员通用</option>
-            {ORG_DEPARTMENTS.map((d) => (
-              <option key={d.key} value={d.key}>
-                {d.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="封面色">
-          <div className="flex gap-2">
-            {ACADEMY_COVERS.map((k) => (
-              <button
-                key={k}
-                type="button"
-                aria-label={k}
-                aria-pressed={f.cover === k}
-                onClick={() => setF({ ...f, cover: k as AcademyCover })}
-                className={cn('tap relative size-8 rounded-full border-2', COVER_CLASS[k].solid, f.cover === k ? 'border-ink' : 'border-transparent')}
-              />
-            ))}
-          </div>
-        </Field>
-      </div>
-      <Field label="简介">
-        <Textarea rows={2} maxLength={300} value={f.summary} onChange={(e) => setF({ ...f, summary: e.target.value })} />
-      </Field>
-      <label className="flex items-center gap-2 text-[14px] text-ink-2">
-        <input type="checkbox" className="size-4" disabled={!f.departmentKey} checked={f.deptOnly} onChange={(e) => setF({ ...f, deptOnly: e.target.checked })} />
-        只给本部门看（加上被指派到的人）
-      </label>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="primary" loading={busy} onClick={() => void save(c.status)} data-testid="academy-course-save">
-          保存
+        <label className="flex items-center gap-2 text-[14px] text-ink-2">
+          <input type="checkbox" className="size-4" disabled={!f.departmentKey} checked={f.deptOnly} onChange={(e) => setF({ ...f, deptOnly: e.target.checked })} />
+          只给本部门看（加上被指派到的人）
+        </label>
+      </PendingLock>
+      {pendingOp ? (
+        <Button variant="primary" loading={busy} onClick={() => void send(pendingOp, '已确认：上次的保存已生效')} data-testid="academy-course-resend">
+          按原内容重新提交
         </Button>
-        {c.status !== 'published' && (
-          <Button loading={busy} onClick={() => void save('published')} data-testid="academy-course-publish">
-            上架
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" loading={busy} onClick={() => void save(c.status)} data-testid="academy-course-save">
+            保存
           </Button>
-        )}
-        {c.status === 'published' && (
-          <Button variant="danger" loading={busy} onClick={() => void save('archived')}>
-            下架
-          </Button>
-        )}
-        {c.status === 'archived' && (
-          <Button loading={busy} onClick={() => void save('draft')}>
-            改回草稿
-          </Button>
-        )}
-      </div>
+          {c.status !== 'published' && (
+            <Button loading={busy} onClick={() => void save('published')} data-testid="academy-course-publish">
+              上架
+            </Button>
+          )}
+          {c.status === 'published' && (
+            <Button variant="danger" loading={busy} onClick={() => void save('archived')}>
+              下架
+            </Button>
+          )}
+          {c.status === 'archived' && (
+            <Button loading={busy} onClick={() => void save('draft')}>
+              改回草稿
+            </Button>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
@@ -266,7 +280,7 @@ function LessonDialog({ courseId, lesson, onClose, onSaved }: { courseId: number
   const [busy, setBusy] = useState(false);
   const [serverProblems, setServerProblems] = useState<{ line?: number; message: string }[]>([]);
   const key = useRef(uuid());
-  const pending = useOpPending(key.current) && !lesson;
+  const pending = useOpPending(key.current);
   const toast = useToast();
   const parsed = useMemo(() => (f.kind === 'article' ? parseAcademyMarkup(f.body) : null), [f.kind, f.body]);
   const files = useOpenFiles(f.kind === 'file');
@@ -287,7 +301,7 @@ function LessonDialog({ courseId, lesson, onClose, onSaved }: { courseId: number
     try {
       if (lesson)
         await sendAcademyOp({
-          key: uuid(),
+          key: key.current,
           method: 'PUT',
           url: `/api/admin/academy/lessons/${lesson.id}`,
           body: { ...body, active: f.active, version: lesson.version },
@@ -466,7 +480,7 @@ function QuestionDialog({ courseId, question, onClose, onSaved }: { courseId: nu
   const [q, setQ] = useState(question ? { ...question } : blankQuestion());
   const [busy, setBusy] = useState(false);
   const key = useRef(uuid());
-  const pending = useOpPending(key.current) && !question;
+  const pending = useOpPending(key.current);
   const toast = useToast();
   const draft = { ...q, options: q.kind === 'recall' ? [] : q.kind === 'judge' ? ['对', '错'] : q.options.map((o) => o.trim()), answer: q.kind === 'recall' ? [] : q.answer };
   const problems = academyQuestionProblems({ ...draft, stem: draft.stem.trim(), skill: draft.skill.trim() });
@@ -488,7 +502,7 @@ function QuestionDialog({ courseId, question, onClose, onSaved }: { courseId: nu
     try {
       if (question)
         await sendAcademyOp({
-          key: uuid(),
+          key: key.current,
           method: 'PUT',
           url: `/api/admin/academy/questions/${question.id}`,
           body: { ...body, version: question.version },

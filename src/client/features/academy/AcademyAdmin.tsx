@@ -34,7 +34,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Field, Input, Notice, SectionTitle, Select, Textarea } from '../../components/ui';
 import { AdminPage } from '../admin/AdminShell';
 import { adminKeys, CourseEditor, statusBadge } from './CourseEditor';
-import { academyKeys, COVER_CLASS, useAcademyOp } from './data';
+import { academyKeys, COVER_CLASS, useAcademyOp, useAcademyOps } from './data';
 import { AcademyOpsPanel, PendingLock, useOpPending } from './parts';
 
 const TABS: readonly SubTab[] = [
@@ -202,7 +202,7 @@ function PathDialog({ path, onClose }: { path: AcademyAdminPath | null; onClose:
   });
   const [busy, setBusy] = useState(false);
   const key = useRef(uuid());
-  const pending = useOpPending(key.current) && !path;
+  const pending = useOpPending(key.current);
   const toast = useToast();
   const qc = useQueryClient();
   const byId = new Map((courses.data ?? []).map((c) => [c.id, c]));
@@ -217,7 +217,7 @@ function PathDialog({ path, onClose }: { path: AcademyAdminPath | null; onClose:
     try {
       if (path)
         await sendAcademyOp({
-          key: uuid(),
+          key: key.current,
           method: 'PUT',
           url: `/api/admin/academy/paths/${path.id}`,
           body: { ...body, status: f.status, version: path.version },
@@ -513,6 +513,9 @@ function AssignmentsTab() {
   const [busy, setBusy] = useState<number | null>(null);
   const toast = useToast();
   const qc = useQueryClient();
+  // 这条指派的停用 / 启用没确认时不再点（页面上方原样重提确认了再改，Codex 审查 a71cdd5）
+  const ops = useAcademyOps();
+  const unconfirmed = (a: AcademyAssignmentStat) => ops.some((op) => op.url === `/api/admin/academy/assignments/${a.id}`);
   const toggle = async (a: AcademyAssignmentStat) => {
     setBusy(a.id);
     try {
@@ -546,8 +549,8 @@ function AssignmentsTab() {
           <Button size="sm" onClick={() => setPeople(a)} disabled={!a.active}>
             看人
           </Button>
-          <Button size="sm" variant={a.active ? 'danger' : 'secondary'} loading={busy === a.id} onClick={() => void toggle(a)}>
-            {a.active ? '停用' : '启用'}
+          <Button size="sm" variant={a.active ? 'danger' : 'secondary'} loading={busy === a.id} disabled={unconfirmed(a)} onClick={() => void toggle(a)}>
+            {unconfirmed(a) ? '待确认' : a.active ? '停用' : '启用'}
           </Button>
         </span>
       ),
@@ -735,6 +738,8 @@ function RevokeDialog({ cert, onClose }: { cert: AcademyCertificate; onClose: ()
   const sendAcademyOp = useAcademyOp();
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const key = useRef(uuid());
+  const pending = useOpPending(key.current);
   const toast = useToast();
   const qc = useQueryClient();
   return (
@@ -750,7 +755,7 @@ function RevokeDialog({ cert, onClose }: { cert: AcademyCertificate; onClose: ()
           onClick={async () => {
             setBusy(true);
             try {
-              await sendAcademyOp({ key: uuid(), method: 'POST', url: `/api/admin/academy/certificates/${cert.id}/revoke`, body: { reason: reason.trim() }, summary: `撤销证书 ${cert.certNo}` });
+              await sendAcademyOp({ key: key.current, method: 'POST', url: `/api/admin/academy/certificates/${cert.id}/revoke`, body: { reason: reason.trim() }, summary: `撤销证书 ${cert.certNo}` });
               await qc.invalidateQueries({ queryKey: adminKeys.certs });
               onClose();
             } catch (e) {
@@ -760,13 +765,15 @@ function RevokeDialog({ cert, onClose }: { cert: AcademyCertificate; onClose: ()
             }
           }}
         >
-          撤销
+          {pending ? '按原内容重新提交' : '撤销'}
         </Button>
       }
     >
-      <Field label={`撤销 ${cert.staffName} 的「${cert.title}」证书的原因`}>
-        <Textarea rows={2} maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
-      </Field>
+      <PendingLock pending={pending}>
+        <Field label={`撤销 ${cert.staffName} 的「${cert.title}」证书的原因`}>
+          <Textarea rows={2} maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
+        </Field>
+      </PendingLock>
     </Dialog>
   );
 }

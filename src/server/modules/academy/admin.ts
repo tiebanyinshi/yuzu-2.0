@@ -160,7 +160,23 @@ export async function createCourse(sql: Sql, raw: unknown, ctx: OpContext) {
   return adminCourse(sql, id);
 }
 
-export async function updateCourse(sql: Sql, id: number, raw: unknown, ctx: OpContext) {
+/**
+ * 课时下架、课程下架以后，这门课所在的上架地图可能就算学完了（只数上架的课与课时）：锁好这几张地图（课程 → 地图，同导入课件包），
+ * 再给学完的人补记、发证书（Codex 审查 a71cdd5）。没有这一步，剩下的人再没有可点的地方去触发结算
+ */
+async function settleCoursePaths(tx: Tx, courseId: number, today: string) {
+  const paths = await tx<{ id: number }[]>`
+    SELECT p.id FROM academy_paths p
+    WHERE p.status = 'published' AND EXISTS (SELECT 1 FROM academy_path_courses pc WHERE pc.path_id = p.id AND pc.course_id = ${courseId})
+    ORDER BY p.id FOR NO KEY UPDATE`;
+  await settlePathForAll(
+    tx,
+    paths.map((p) => Number(p.id)),
+    today,
+  );
+}
+
+export async function updateCourse(sql: Sql, id: number, raw: unknown, ctx: OpContext, today: string) {
   const input = parse(CourseUpdate, raw);
   await assertDepartment(sql, input.departmentKey);
   if (input.deptOnly && !input.departmentKey) throw badRequest('「只本部门」要先选部门');
@@ -194,6 +210,7 @@ export async function updateCourse(sql: Sql, id: number, raw: unknown, ctx: OpCo
       WHERE id = ${id}`;
     const what = c.status !== input.status ? `把课程「${input.title}」改成${{ draft: '草稿', published: '上架', archived: '下架' }[input.status]}` : `修改了课程「${input.title}」`;
     await audit(tx, ctx, 'academy_course_saved', 'academy_course', id, what);
+    if (c.status === 'published' && input.status !== 'published') await settleCoursePaths(tx, id, today);
   });
   return adminCourse(sql, id);
 }
@@ -254,7 +271,7 @@ export async function createLesson(sql: Sql, courseId: number, raw: unknown, ctx
   return adminCourse(sql, courseId);
 }
 
-export async function updateLesson(sql: Sql, id: number, raw: unknown, ctx: OpContext) {
+export async function updateLesson(sql: Sql, id: number, raw: unknown, ctx: OpContext, today: string) {
   const input = parse(LessonUpdate, raw);
   const [found] = await sql<{ courseId: number }[]>`SELECT course_id FROM academy_lessons WHERE id = ${id}`;
   if (!found) throw notFound('没有这个课时');
@@ -289,6 +306,7 @@ export async function updateLesson(sql: Sql, id: number, raw: unknown, ctx: OpCo
       WHERE id = ${id}`;
     await tx`UPDATE academy_courses SET local_edited = local_edited OR pack_hash IS NOT NULL, updated_at = now() WHERE id = ${courseId}`;
     await audit(tx, ctx, 'academy_course_saved', 'academy_lesson', id, `修改了课时「${input.title}」${l!.active !== input.active ? (input.active ? '（重新上架）' : '（下架）') : ''}`);
+    if (l!.active && !input.active) await settleCoursePaths(tx, courseId, today);
   });
   return adminCourse(sql, courseId);
 }

@@ -139,6 +139,7 @@ CREATE TABLE academy_signoffs (
   lesson_id  bigint NOT NULL REFERENCES academy_lessons (id),
   result     text NOT NULL CHECK (result IN ('pass', 'retry')),
   checks     jsonb NOT NULL CHECK (jsonb_typeof(checks) = 'array'),
+  items      jsonb NOT NULL CHECK (jsonb_typeof(items) = 'array'),
   comment    text NOT NULL DEFAULT '' CHECK (char_length(comment) <= 300),
   signed_by  bigint NOT NULL REFERENCES staff (id),
   client_key uuid NOT NULL UNIQUE,
@@ -151,7 +152,8 @@ CREATE TRIGGER academy_signoffs_append_only BEFORE UPDATE OR DELETE ON academy_s
   FOR EACH ROW EXECUTE FUNCTION yuzu_forbid_mutation();
 COMMENT ON TABLE academy_signoffs IS '实操签核（柯氏三级评估，只追加）：带教在岗看过，逐项打勾，签「通过」或「再练」；不能给自己签';
 COMMENT ON COLUMN academy_signoffs.staff_id IS '被考核的员工';
-COMMENT ON COLUMN academy_signoffs.checks IS '每个检查项是否达标（与课时检查项一一对应）';
+COMMENT ON COLUMN academy_signoffs.checks IS '每个检查项是否达标（与 items 一一对应）';
+COMMENT ON COLUMN academy_signoffs.items IS '签的时候的检查项原文：课时后来改了、调了顺序，历史记录照这一份显示';
 
 CREATE TABLE academy_certificates (
   id            bigserial PRIMARY KEY,

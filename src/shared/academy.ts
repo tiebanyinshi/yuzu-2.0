@@ -410,6 +410,8 @@ export interface AcademySignoff {
   id: number;
   result: 'pass' | 'retry';
   checks: boolean[];
+  /** 签的时候的检查项原文（与 checks 一一对应；课时后来改了照这一份显示，Codex 审查 a71cdd5） */
+  items: string[];
   comment: string;
   signedByName: string;
   signedAt: string;

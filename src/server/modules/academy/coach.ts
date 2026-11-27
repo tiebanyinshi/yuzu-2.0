@@ -41,7 +41,7 @@ export const lessonVersionOf = async (db: Db, lessonId: number) => (await db<{ v
 
 export async function signoffsOf(db: Db, staffId: number, lessonId: number): Promise<AcademySignoff[]> {
   const rows = await db<(AcademySignoff & { id: number })[]>`
-    SELECT o.id, o.result, o.checks, o.comment, s.display_name AS signed_by_name, o.signed_at
+    SELECT o.id, o.result, o.checks, o.items, o.comment, s.display_name AS signed_by_name, o.signed_at
     FROM academy_signoffs o JOIN staff s ON s.id = o.signed_by
     WHERE o.staff_id = ${staffId} AND o.lesson_id = ${lessonId} ORDER BY o.id DESC`;
   return rows.map((r) => ({ ...r, id: Number(r.id) }));
@@ -121,8 +121,8 @@ export async function signOff(sql: Sql, ctx: OpContext, raw: unknown, today: str
     const [done] = await tx`SELECT 1 FROM academy_progress WHERE staff_id = ${input.staffId} AND lesson_id = ${input.lessonId} AND completed_at IS NOT NULL`;
     if (done) throw conflict('ACADEMY_ALREADY_DONE', '这项实操已经签过「通过」了');
     const [row] = await tx<{ id: number }[]>`
-      INSERT INTO academy_signoffs (staff_id, lesson_id, result, checks, comment, signed_by, client_key)
-      VALUES (${input.staffId}, ${input.lessonId}, ${input.result}, ${tx.json(input.checks)}, ${input.comment}, ${ctx.actor.id}, ${input.clientKey})
+      INSERT INTO academy_signoffs (staff_id, lesson_id, result, checks, items, comment, signed_by, client_key)
+      VALUES (${input.staffId}, ${input.lessonId}, ${input.result}, ${tx.json(input.checks)}, ${tx.json(items)}, ${input.comment}, ${ctx.actor.id}, ${input.clientKey})
       RETURNING id`;
     let credits = 0;
     if (input.result === 'pass') {
