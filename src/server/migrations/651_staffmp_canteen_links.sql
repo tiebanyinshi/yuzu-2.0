@@ -4,7 +4,7 @@
 --   · 一人一个、一张饭卡也只对给一个人（主键与唯一约束兜底）；
 --   · 怎么对上的：后台按手机号预先对好（admin）、员工用旧饭堂账号密码证明（password）、员工在小程序里开通的新饭卡（created）；
 --   · 解开就删这一行（谁、什么时候在审计里）；饭堂名单、打卡记录都不动。
--- 只建员工小程序线自己的表，不改已有的表。回滚：docs/rollback/611_staffmp_canteen_links.down.sql。
+-- 只建员工小程序线自己的表，不改已有的表。回滚：docs/rollback/651_staffmp_canteen_links.down.sql。
 
 CREATE TABLE staffmp_canteen_links (
   staff_id     bigint PRIMARY KEY REFERENCES staff (id),

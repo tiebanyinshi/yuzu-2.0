@@ -330,9 +330,9 @@
 - **后端评估与加固 8.1.48（店主 2026-11-26「审查后端、出评估报告、学 Medusa / Supabase / Trigger.dev、以瘦身为目标」，报告见 `docs/BACKEND_REVIEW_V8148.md`）**：迁移号 `490`–`499`：
   - `490`（`490_audit_request_id.sql`）：审计记录 `audit_logs` 加请求编号 `request_id`（可空，日志与审计对得上）。回滚 `docs/rollback/490_audit_request_id.down.sql`。
   - `491`（`491_pg_stat_statements.sql`，8.1.54）：建查询统计扩展 pg_stat_statements（没权限、没有这个扩展时跳过），`cli.js db-report` 看最慢的查询、没用过的索引。回滚 `docs/rollback/491_pg_stat_statements.down.sql`。
-- **员工小程序线（店主 2026-11-27 立项，设计见 `docs/STAFF_MP.md`）**：店主「以后有两个小程序线，请你分配好模块」——顾客小程序线（原「小程序线」，Gemini）照旧；新开**员工小程序线**（员工用的微信小程序「汤崎 WCP」，Claude 员工小程序开发会话，本会话起），只写 `staff-miniprogram/`、`src/server/modules/staffmp/`、`src/client/features/staffmp/`、`src/shared/staffmp.ts`、`compose.staffmp.yaml`、`docs/STAFF_MP*.md`、`docs/HANDOFF_STAFFMP*.md`、`tests/staffmp-*.test.ts` 与迁移 `NNN_staffmp_<用途>.sql`，登记处只加挂接的几行；WCP、员工培训与汤崎学堂、柚子饭堂、巡场的规则与接口仍归主线，员工小程序线把主线的接口按白名单挂到自己的端口上（`STAFFMP_PORT`，`staff.yuzusystem.xyz/api/staffmp/*`）。分工表见设计稿第 7 节，PR 标题【员工小程序线】、标签「员工小程序线」。集成分支 `claude/awesome-wozniak-e0symx`，子 PR A–E 依次合进集成分支，最后一个 PR 合进 `main` 并改 yuzu 的版本号；员工小程序自己的版本从 `1.0.0` 起。待确认 SP01 起。迁移号预留 `610`–`619`：
-  - `610`（`610_staffmp_bindings.sql`，子 PR A）：微信与员工账号的绑定 `staffmp_bindings`（解开只做标记、不删）、员工小程序发的会话 `staffmp_sessions`（跟着 `sessions` 删）。
-  - `611`（子 PR E，用到时登记用途）：员工账号与柚子饭堂账号对上。
+- **员工小程序线（店主 2026-11-27 立项，设计见 `docs/STAFF_MP.md`）**：店主「以后有两个小程序线，请你分配好模块」——顾客小程序线（原「小程序线」，Gemini）照旧；新开**员工小程序线**（员工用的微信小程序「汤崎 WCP」，Claude 员工小程序开发会话，本会话起），只写 `staff-miniprogram/`、`src/server/modules/staffmp/`、`src/client/features/staffmp/`、`src/shared/staffmp.ts`、`compose.staffmp.yaml`、`docs/STAFF_MP*.md`、`docs/HANDOFF_STAFFMP*.md`、`tests/staffmp-*.test.ts` 与迁移 `NNN_staffmp_<用途>.sql`，登记处只加挂接的几行；WCP、员工培训与汤崎学堂、柚子饭堂、巡场的规则与接口仍归主线，员工小程序线把主线的接口按白名单挂到自己的端口上（`STAFFMP_PORT`，`staff.yuzusystem.xyz/api/staffmp/*`）。分工表见设计稿第 7 节，PR 标题【员工小程序线】、标签「员工小程序线」。集成分支 `claude/awesome-wozniak-e0symx`，子 PR A–E 依次合进集成分支，最后一个 PR 合进 `main` 并改 yuzu 的版本号；员工小程序自己的版本从 `1.0.0` 起。待确认 SP01 起。迁移号预留 `650`–`659`（原登记 `610`–`619`，与 8.2.9 水吧的 `610_pickup_v829.sql` 一段撞了——那一段 `600`–`639` 由 8.2.8–8.2.11 先在 main 上登记；2026-11-27 改号，员工小程序线的迁移还没发到任何环境）：
+  - `650`（`650_staffmp_bindings.sql`，子 PR A）：微信与员工账号的绑定 `staffmp_bindings`（解开只做标记、不删）、员工小程序发的会话 `staffmp_sessions`（跟着 `sessions` 删）。
+  - `651`（`651_staffmp_canteen_links.sql`，子 PR E）：员工账号与柚子饭堂账号对上 `staffmp_canteen_links`（一对一：员工主键、饭卡唯一；怎么对上的、谁、什么时候；解开删行、审计留痕）。只建新表；解开时那张饭卡的 `canteen_employees.code_epoch` 加一走饭堂原来的列，不改表。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
@@ -456,6 +456,7 @@
 
 ## 更新记录
 
+- 2026-11-27（续）：**员工小程序线迁移改号 `610`–`619` → `650`–`659`**。8.2.8–8.2.11（餐厅、水吧、休闲娱乐、泡池）在 main 上先登记了 `600`–`639`，8.2.9 的分支已经用了 `610_pickup_v829.sql`；员工小程序线的登记只在集成分支上，别的线看不到。`610_staffmp_bindings.sql` 改成 `650_staffmp_bindings.sql`（集成分支）、E 的 `611` 改成 `651`；两份都还没发到任何环境（只部署 main 的版本标签），`640`–`649` 是汤崎学堂的。之后员工小程序线的新迁移从 `652` 起。
 - 2026-11-27（续）：**小程序域名**。店主：客户端和员工端小程序都用 `sys.yuzusystem.xyz`，刚加的 `api.` 子域名撤掉，`staff.` 的柚子饭堂不动（`PENDING_DECISIONS.md` SP17）。员工小程序正式版改连 `sys.`，Caddy 在 `sys.` 上把 `/api/staffmp/*` 转到员工小程序端口；顾客小程序的域名配置归顾客小程序线改。
 - 2026-11-27：**员工小程序线立项**。店主：小程序备案通过；顾客小程序已有小程序线，再开一条员工小程序线做员工端（`api.yuzusystem.xyz` 给顾客小程序，`staff.yuzusystem.xyz` 给员工小程序），替代柚子饭堂并把 WCP、巡场、培训都放进来，培训最重要（学堂由另一个开发会话做，这边只做小程序）；「不要按照我给的模块搭建，你自己设计」，方案先经独立的体验评审。设计稿 `docs/STAFF_MP.md`：四个 Tab「今天 / 学习 / 工作台 / 我的」，首页上面是此刻的状态、下面一排位置固定的「打卡 · 饭卡码 · 扫一扫」（经独立的体验评审改过一轮）；员工小程序端口复用 WCP 与员工培训的接口（白名单）；三条线的分工见第 7 节。迁移号 `610`–`619`，待确认 SP01 起。
 - 2026-11-22（续）：**ERP 出入库台账调整**。店主转来《ERP 需求汇总更新》第二版与附件《库管出入库明细及库位表》：8.1.20 做的入口叫法、模板与店主给的表格不一致——入口叫「导入入库台账」、从库存页移到「库管入库」页右上角；下载模板照附件的格式（文件名「出入库台账」）；导入只读出入库记录那张。设计 `docs/ERP_V8120.md` 开头的「2026-11-22 调整」，默认做法 LD11；没有迁移，不改版本号，与回测整改一起由店主发版。
