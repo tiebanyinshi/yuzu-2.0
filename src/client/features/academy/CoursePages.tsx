@@ -20,6 +20,7 @@ import {
 } from '@shared/academy';
 import { parseAcademyMarkup } from '@shared/academy-markup';
 import { api, errorMessage } from '../../lib/api';
+import { useLivePoll } from '../../lib/livePoll';
 import { cn, formatDateTime, uuid } from '../../lib/utils';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -153,12 +154,16 @@ function RateCourse({ course }: { course: AcademyCourseDetail }) {
 /** 问柚子：只按这门课的课件回答（docs/ACADEMY.md 第 5 节，XT10） */
 function Tutor({ courseId }: { courseId: number }) {
   const sendAcademyOp = useAcademyOp();
-  // 有还在回答的（超时后原样重提拿回来的那条）：每 3 秒再取，答完就停（Codex 审查 6ee05cd）
-  const view = useQuery({
-    queryKey: academyKeys.tutor(courseId),
-    queryFn: () => api.get<AcademyTutorView>(`/api/academy/courses/${courseId}/tutor`),
-    refetchInterval: (q) => (q.state.data?.items.some((a) => a.status === 'answering') ? 3000 : false),
-  });
+  const view = useQuery({ queryKey: academyKeys.tutor(courseId), queryFn: () => api.get<AcademyTutorView>(`/api/academy/courses/${courseId}/tutor`) });
+  // 有还在回答的（超时后原样重提拿回来的那条）：每 3 秒再取，答完就停（Codex 审查 6ee05cd）；页面在后台、断网时不取（lib/livePoll）
+  const answering = !!view.data?.items.some((a) => a.status === 'answering');
+  useLivePoll(
+    async () => {
+      if (answering) await view.refetch();
+    },
+    [answering],
+    { intervalMs: answering ? 3000 : undefined },
+  );
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const toast = useToast();
