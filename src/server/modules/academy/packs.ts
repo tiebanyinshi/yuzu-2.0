@@ -241,6 +241,14 @@ export async function importPacks(sql: Sql, raw: unknown, ctx: OpContext, today:
     // 上架的地图写完以后一起补记：先把要动的地图都锁好、写好，最后一次取齐学员锁再结算，
     // 不在拿着学员锁时再去锁下一张地图（管理员改地图是先锁地图再取学员锁，Codex 审查 b72dc70）
     const toSettle: number[] = [];
+    // 要动的已有地图先按编号升序一次锁好（Codex 审查 4869f84）：下面逐张写的时候按清单顺序，管理端下架课时、课程补记时按编号顺序，
+    // 两边顺序不同会互相等；先锁齐，之后逐张的 FOR NO KEY UPDATE 都是已经拿着的锁
+    const touched = packs.paths.filter((p) => p.courses.every((c) => inDb.has(c))).map((p) => p.code);
+    await tx`
+      SELECT id FROM academy_paths
+      WHERE code IN ${tx(touched.length ? touched : [''])}
+        OR (status = 'published' AND id IN (SELECT path_id FROM academy_path_courses WHERE course_id IN ${tx(updatedCourses.length ? updatedCourses : [0])}))
+      ORDER BY id FOR NO KEY UPDATE`;
     for (const p of packs.paths) {
       if (pick && !p.courses.every((c) => pick.has(c) || inDb.has(c))) continue;
       if (!p.courses.every((c) => inDb.has(c))) continue;

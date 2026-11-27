@@ -219,7 +219,11 @@ export async function updateCourse(sql: Sql, id: number, raw: unknown, ctx: OpCo
 export const fileOpenToAll = (db: Db) => db`(d.kind = 'public' OR d.department_key IS NULL)`;
 
 /** 课时内容核对：图文课件解析没问题、实操检查项 1–30 条、文件在全员看得到的培训文件夹里且上架、测验的题数与及格线 */
-async function checkLesson(db: Db, input: z.infer<typeof LessonInput>) {
+/**
+ * 课时内容的核对与整理：只看提交的内容（同样的内容结果一样），原样重提前也能做。
+ * 文件课时的文件还在不在、谁看得到会变，另在确定要真改时由 checkLessonFile 核对（Codex 审查 4869f84）
+ */
+function normalizeLesson(input: Omit<z.infer<typeof LessonInput>, 'clientKey'>) {
   if (input.kind === 'article') {
     if (!input.body.trim()) throw badRequest('图文课件还没写内容');
     const { problems } = parseAcademyMarkup(input.body);
@@ -233,16 +237,7 @@ async function checkLesson(db: Db, input: z.infer<typeof LessonInput>) {
     if (!items.length || items.length > 30) throw badRequest('实操检查项要 1–30 条（每行一条）');
     if (items.some((i) => i.length > 80)) throw badRequest('一条检查项最多 80 个字');
   }
-  if (input.kind === 'file') {
-    if (!input.fileId) throw badRequest('选一份员工培训里的文件');
-    const [f] = await db<{ active: boolean; folderActive: boolean; open: boolean }[]>`
-      SELECT f.active, d.active AS folder_active, ${fileOpenToAll(db)} AS open
-      FROM training_files f JOIN training_folders d ON d.id = f.folder_id WHERE f.id = ${input.fileId}`;
-    if (!f) throw badRequest('没有这份培训文件');
-    if (!f.active || !f.folderActive) throw badRequest('这份培训文件（或它的文件夹）已经下架');
-    // 员工培训的文件夹按部门看（docs/TRAINING.md）：课时里的文件要人人看得到，不然被指派的别部门同事打不开（Codex 审查 dd885a6）
-    if (!f.open) throw badRequest('文件课时只能用全员看得到的文件夹（「培训资料」或不分部门的文件夹）里的文件');
-  }
+  if (input.kind === 'file' && !input.fileId) throw badRequest('选一份员工培训里的文件');
   return {
     fileId: input.kind === 'file' ? input.fileId : null,
     quizCount: input.kind === 'quiz' ? (input.quizCount ?? ACADEMY_QUIZ_DEFAULT.count) : null,
@@ -252,14 +247,27 @@ async function checkLesson(db: Db, input: z.infer<typeof LessonInput>) {
   };
 }
 
+/** 文件课时用的文件：还在、文件夹上架、全员看得到 */
+async function checkLessonFile(db: Db, fileId: number) {
+  const [f] = await db<{ active: boolean; folderActive: boolean; open: boolean }[]>`
+    SELECT f.active, d.active AS folder_active, ${fileOpenToAll(db)} AS open
+    FROM training_files f JOIN training_folders d ON d.id = f.folder_id WHERE f.id = ${fileId}`;
+  if (!f) throw badRequest('没有这份培训文件');
+  if (!f.active || !f.folderActive) throw badRequest('这份培训文件（或它的文件夹）已经下架');
+  // 员工培训的文件夹按部门看（docs/TRAINING.md）：课时里的文件要人人看得到，不然被指派的别部门同事打不开（Codex 审查 dd885a6）
+  if (!f.open) throw badRequest('文件课时只能用全员看得到的文件夹（「培训资料」或不分部门的文件夹）里的文件');
+}
+
 export async function createLesson(sql: Sql, courseId: number, raw: unknown, ctx: OpContext) {
   const input = parse(LessonInput, raw);
-  const v = await checkLesson(sql, input);
+  const v = normalizeLesson(input);
   await withTx(sql, async (tx) => {
     const [c] = await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR NO KEY UPDATE`;
     if (!c) throw notFound('没有这门课');
     const hash = requestHash(input, { courseId });
+    // 先按操作编号查做过没有：建好了没收到结果、之后文件下架了，原样重提照样拿回原来那个（Codex 审查 4869f84）
     if (await replayed(tx, 'academy_lessons', input.clientKey, hash)) return;
+    if (v.fileId) await checkLessonFile(tx, v.fileId);
     const [l] = await tx<{ id: number }[]>`
       INSERT INTO academy_lessons (course_id, seq, title, kind, body, file_id, quiz_count, quiz_pass, minutes, credits, client_key, request_hash)
       VALUES (${courseId}, (SELECT COALESCE(max(seq), 0) + 1 FROM academy_lessons WHERE course_id = ${courseId}), ${input.title}, ${input.kind},
@@ -276,7 +284,7 @@ export async function updateLesson(sql: Sql, id: number, raw: unknown, ctx: OpCo
   const [found] = await sql<{ courseId: number }[]>`SELECT course_id FROM academy_lessons WHERE id = ${id}`;
   if (!found) throw notFound('没有这个课时');
   const courseId = Number(found.courseId);
-  const v = await checkLesson(sql, { ...input, clientKey: '' });
+  const v = normalizeLesson(input);
   await withTx(sql, async (tx) => {
     await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR NO KEY UPDATE`;
     const [l] = await tx`SELECT title, kind, body, file_id, quiz_count, quiz_pass, minutes, credits, active, version FROM academy_lessons WHERE id = ${id} FOR NO KEY UPDATE`;
@@ -294,6 +302,9 @@ export async function updateLesson(sql: Sql, id: number, raw: unknown, ctx: OpCo
       if (same) return;
       throw changed('这个课时');
     }
+    // 真要改的才核对文件：换了文件、重新上架、改成文件课时要用得了的文件；只下架（文件已经没了的坏课时）不拦（Codex 审查 4869f84）
+    const oldFile = l!.fileId === null ? null : Number(l!.fileId);
+    if (v.fileId && input.active && (v.fileId !== oldFile || !l!.active || l!.kind !== 'file')) await checkLessonFile(tx, v.fileId);
     if (!input.active && l!.active) {
       const [n] = await tx<{ n: number; status: string }[]>`
         SELECT (SELECT count(*)::int FROM academy_lessons WHERE course_id = ${courseId} AND active AND id <> ${id}) AS n, status

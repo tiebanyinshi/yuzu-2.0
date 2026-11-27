@@ -319,8 +319,33 @@ describe('学堂 · Codex 审查 dd885a6', () => {
     const withFile = await publish(await addLesson(c.course.id, { title: '看员工手册', kind: 'file', fileId: okFile }));
     const lessonId = withFile.lessons[0]!.id;
     expect((await api<AcademyLessonView>(ctx.app, diner, 'GET', `/api/academy/lessons/${lessonId}`)).body.file).toEqual({ id: okFile, folderId: Number(pub.id), title: '员工手册' });
+    // 加课时建好了没收到结果，之后文件下架了：原样重提照样拿回原来那个，不被文件核对挡住（Codex 审查 4869f84）
+    const again = { clientKey: randomUUID(), title: '再看一遍', kind: 'file', fileId: okFile };
+    const made = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${c.course.id}/lessons`, again);
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
     await ctx.sql`UPDATE training_files SET active = false WHERE id = ${okFile}`;
     expect((await api<AcademyLessonView>(ctx.app, diner, 'GET', `/api/academy/lessons/${lessonId}`)).body.file).toBeNull();
+    const replay = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${c.course.id}/lessons`, again);
+    expect(replay.status, JSON.stringify(replay.body)).toBe(201);
+    expect(replay.body.lessons.map((l) => l.id)).toEqual(made.body.lessons.map((l) => l.id));
+    // 文件没了的课时能下架（不再要求文件可用）；想重新上架就得换一份用得了的文件
+    const broken = replay.body.lessons.find((l) => l.id === lessonId)!;
+    const put = (patch: Record<string, unknown>, version: number) =>
+      api(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/lessons/${lessonId}`, {
+        title: broken.title,
+        kind: 'file',
+        fileId: okFile,
+        minutes: broken.minutes,
+        credits: broken.credits,
+        active: broken.active,
+        version,
+        ...patch,
+      });
+    const off = await put({ active: false }, broken.version);
+    expect(off.status, JSON.stringify(off.body)).toBe(200);
+    const back = await put({ active: true }, broken.version + 1);
+    expect(back.status).toBe(400);
+    expect(back.body.error.message).toContain('下架');
   });
 
   it('同一个人同时开着两个课时：同一段时间只计一次', async () => {
