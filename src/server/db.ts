@@ -67,8 +67,15 @@ function withStoreContext(sql: Sql): Sql {
  * 在同一个数据库快照里执行一组只读查询（REPEATABLE READ）。
  * 日结要分多条 SQL 汇总单据、流水与余额，必须读同一时刻的数据，否则营业中查询会出现假差异。
  */
-export function readSnapshot<T>(sql: Sql, fn: (tx: Tx) => Promise<T>): Promise<T> {
-  return sql.begin('isolation level repeatable read read only', fn) as Promise<T>;
+/** 页面上的报表、看板一句最多跑多久（8.1.54 数据库评估第 4 节）：失控的查询不一直占着连接；命令行的自检、对账不限 */
+export const REPORT_STATEMENT_TIMEOUT = '60s';
+
+export function readSnapshot<T>(sql: Sql, fn: (tx: Tx) => Promise<T>, opts: { statementTimeout?: string | null } = {}): Promise<T> {
+  const limit = opts.statementTimeout === undefined ? REPORT_STATEMENT_TIMEOUT : opts.statementTimeout;
+  return sql.begin('isolation level repeatable read read only', async (tx) => {
+    if (limit) await tx`SELECT set_config('statement_timeout', ${limit}, true)`;
+    return fn(tx);
+  }) as Promise<T>;
 }
 
 /** PostgreSQL 唯一约束冲突 */
