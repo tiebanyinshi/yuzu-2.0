@@ -124,6 +124,7 @@ import { registerSettlementRoutes } from './modules/settlement';
 import { registerStaffRoutes } from './modules/staff';
 import { registerOaOrgRoutes } from './modules/oa/org';
 import { registerTrainingRoutes } from './modules/training';
+import { registerAcademyRoutes } from './modules/academy';
 import { registerGovflowRoutes } from './modules/govflow/routes';
 import { registerSupplyRoutes } from './modules/govflow/supply';
 import { registerPettyRoutes } from './modules/govflow/petty';
@@ -400,6 +401,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   // OA 办公（docs/OA.md）：OA-01 组织架构与员工档案
   registerOaOrgRoutes(app, deps);
   registerTrainingRoutes(app, deps);
+  registerAcademyRoutes(app, deps);
   registerGovflowRoutes(app, deps);
   registerSupplyRoutes(app, deps);
   registerPettyRoutes(app, deps);

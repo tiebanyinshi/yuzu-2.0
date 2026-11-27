@@ -21,3 +21,5 @@ await build({ ...common, entryPoints: ['src/server/floorplan/worker.ts'], outfil
 await build({ ...common, entryPoints: ['src/gateway/index.ts'], outfile: 'dist/gateway/index.js' });
 await mkdir('dist/server/migrations', { recursive: true });
 await cp('src/server/migrations', 'dist/server/migrations', { recursive: true });
+// 学堂的内置课件包（docs/ACADEMY.md 第 6 节）：运行时按 import.meta.url 找同目录下的 academy-packs/
+await cp('src/server/academy-packs', 'dist/server/academy-packs', { recursive: true });

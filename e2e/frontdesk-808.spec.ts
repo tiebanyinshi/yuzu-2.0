@@ -172,6 +172,8 @@ test.describe('8.0.8 前台整改', () => {
     const STATION = 'E2E 808 厨房';
     const LABEL = 'E2E 808 点单客人';
     await login(page, 'linlan');
+    // 收尾恢复成开始时的样子：同一组里排在后面的用例（如 frontdesk-v8223 的点单页）要餐饮开着
+    const { enabled, trackServed, warnMinutes, tablesEnabled, voidFreeCents } = (await getJson<DiningAdmin>(page, '/api/admin/dining')).rules;
     try {
       const juiceId = await ensureItem(page, JUICE);
       const seafoodId = await ensureItem(page, SEAFOOD);
@@ -289,7 +291,7 @@ test.describe('8.0.8 前台整改', () => {
     } finally {
       await page.request.post('/api/auth/logout');
       await login(page, 'linlan');
-      const res = await page.request.put('/api/admin/dining/rules', { data: { enabled: false, tablesEnabled: false, voidFreeCents: 5000 } });
+      const res = await page.request.put('/api/admin/dining/rules', { data: { enabled, trackServed, warnMinutes, tablesEnabled, voidFreeCents } });
       expect(res.ok(), await res.text()).toBe(true);
     }
   });

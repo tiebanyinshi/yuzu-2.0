@@ -43,8 +43,8 @@ export const WCP_TILES: readonly WcpNavItem[] = [
   { to: '/oa/leave', label: '假期余额', hint: '年假等还剩几天、发放与扣减明细', icon: Palmtree, testId: 'oa-tile-leave' },
   { to: '/oa/payslips', label: '工资条', hint: '按月看本人的工资条、确认签收', icon: ReceiptText, testId: 'oa-tile-payslips' },
   { to: '/oa/face', label: '人脸录入', hint: '打卡要人脸的先录入、等审核', icon: ScanFace, testId: 'oa-tile-face' },
-  // 员工培训（店主 2026-11-25，docs/TRAINING.md）：培训资料与本部门的培训文件；管理在「WCP 设置 → 员工培训」
-  { to: '/oa/training', label: '员工培训', hint: '培训资料与本部门的培训文件', icon: GraduationCap, testId: 'oa-tile-training' },
+  // 汤崎学堂（店主 2026-11-27，docs/ACADEMY.md，XT01）：原来的「员工培训」宫格改成「学堂」；培训资料在学堂首页的「知识库」入口
+  { to: '/oa/academy', label: '学堂', hint: '学习地图、必修课、每日一练、证书，培训资料也在这里', icon: GraduationCap, testId: 'oa-tile-academy' },
   { to: '/oa/announcements', label: '公告', hint: '公司与部门通知公告、已读确认', icon: Megaphone, testId: 'oa-tile-announcements' },
   { to: '/oa/notifications', label: '通知', hint: '排班变更、审批、工资条、公告等提醒', icon: Bell, testId: 'oa-tile-notifications' },
 ];
@@ -60,7 +60,7 @@ export function useWcpNav(): WcpNavItem[] {
         {
           to: ADMIN_SECTIONS[wcp[0]!].path,
           label: 'WCP 设置',
-          hint: '员工账号、组织架构、考勤、审批模板、工资条、员工培训、公司公告、食堂与巡场',
+          hint: '员工账号、组织架构、考勤、审批模板、工资条、员工培训、学堂、公司公告、食堂与巡场',
           icon: SlidersHorizontal,
           testId: 'oa-tile-settings',
         },
@@ -70,7 +70,7 @@ export function useWcpNav(): WcpNavItem[] {
 
 /**
  * 手机端底部 4 个 Tab（店主 2026-11-25《员工办公系统建设需求文档 v1.1》第二节，参考钉钉排版；docs/OA_MOBILE.md）：
- * 工作台、消息、知识库（员工培训，店主确认就是 WCP 知识模块）、我的。宽屏照旧是左边一列，不出这一排。
+ * 工作台、消息、学堂（原来的知识库：员工培训，店主确认就是 WCP 知识模块；2026-11-27 起学堂首页里进知识库）、我的。宽屏照旧是左边一列，不出这一排。
  * 没列在别的 Tab 里的页面（打卡、审批、工资条……）都算工作台下面的。
  */
 export interface WcpTab {
@@ -84,7 +84,8 @@ export interface WcpTab {
 export const WCP_TABS: readonly WcpTab[] = [
   { key: 'work', to: '/oa', label: '工作台', icon: LayoutGrid, prefixes: [] },
   { key: 'messages', to: '/oa/im', label: '消息', icon: MessagesSquare, prefixes: ['/oa/im', '/oa/notifications'] },
-  { key: 'knowledge', to: '/oa/training', label: '知识库', icon: BookOpen, prefixes: ['/oa/training'] },
+  // 「知识库」改叫「学堂」（XT01）：学堂首页里有知识库（员工培训的文件夹）入口，两边都亮这个 Tab
+  { key: 'knowledge', to: '/oa/academy', label: '学堂', icon: BookOpen, prefixes: ['/oa/academy', '/oa/training'] },
   { key: 'me', to: '/oa/me', label: '我的', icon: UserRound, prefixes: ['/oa/me', '/oa/leave', '/oa/face'] },
 ];
 
