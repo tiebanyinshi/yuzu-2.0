@@ -4,7 +4,9 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { hashRequest } from '../src/server/lib/idempotency';
 import { todayIn } from '../src/server/modules/inventory/common';
+import { poRequestHashOf } from '../src/server/modules/inventory/purchasing';
 import { createStaff } from '../src/server/modules/staff';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
 import { api, login, PASSWORD, setup, type TestContext } from './helpers';
@@ -131,5 +133,123 @@ describe('自购采购单', () => {
     expect(r.body.po.purchaseMethod).toBe('supplier');
     expect(r.body.po.supplier.id).toBe(sup.id);
     expect(r.body.po.self).toBeNull();
+  });
+});
+
+describe('Codex 审查后补（8.2.13）', () => {
+  it('供应商采购单的操作编号摘要与升级前一样：升级前提交、结果没确认的原样重提照旧认', async () => {
+    const sup = (await api(ctx.app, ctx.owner, 'GET', '/api/inventory/suppliers?all=1')).body[0];
+    const raw = { clientKey: randomUUID(), supplierId: sup.id, orderDate: today, action: 'save', lines: [{ materialId: matId, purchaseQtyMilli: q(1), priceCents: 45_000 }] };
+    // 升级前（8.2.12）的写法：PoBody 没有 purchaseMethod、self，按解析后的键顺序算
+    const legacy = hashRequest({
+      supplierId: sup.id,
+      orderDate: today,
+      expectedDate: null,
+      note: '',
+      lines: [{ id: null, materialId: matId, purchaseQtyMilli: q(1), priceCents: 45_000, note: '' }],
+      action: 'save',
+      approveNow: false,
+      clientKey: undefined,
+      backfill: null,
+      deptConfirm: false,
+    });
+    expect(poRequestHashOf(raw)).toBe(legacy);
+    // 显式写 purchaseMethod: 'supplier' 的也一样；自购的不同
+    expect(poRequestHashOf({ ...raw, purchaseMethod: 'supplier' })).toBe(legacy);
+    expect(poRequestHashOf({ ...raw, supplierId: null, purchaseMethod: 'self', self: selfInfo() })).not.toBe(legacy);
+    const first = await api(ctx.app, buyer, 'POST', '/api/purchase-orders', raw);
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    const [stored] = await ctx.sql<{ requestHash: string }[]>`SELECT request_hash FROM idempotency_keys WHERE key = ${raw.clientKey}`;
+    expect(stored!.requestHash).toBe(legacy);
+    const again = await api(ctx.app, buyer, 'POST', '/api/purchase-orders', raw);
+    expect(again.status).toBe(200);
+    expect(again.body.po.id).toBe(first.body.po.id);
+  });
+
+  it('草稿从供应商采购改成自购并提交（店主勾了「直接确认」）：按自购走负责人审批，不直接确认', async () => {
+    const sup = (await api(ctx.app, ctx.owner, 'GET', '/api/inventory/suppliers?all=1')).body[0];
+    const draft = (await newPo({ supplierId: sup.id, action: 'save' }, ctx.owner)).body.po;
+    expect(draft.status).toBe('draft');
+    const r = await api(ctx.app, ctx.owner, 'PUT', `/api/purchase-orders/${draft.id}`, {
+      purchaseMethod: 'self',
+      self: selfInfo(),
+      orderDate: today,
+      action: 'submit',
+      approveNow: true,
+      lines: draft.lines.map((l: { id: number; materialId: number; purchaseQtyMilli: number; priceCents: number }) => ({
+        id: l.id,
+        materialId: l.materialId,
+        purchaseQtyMilli: l.purchaseQtyMilli,
+        priceCents: l.priceCents,
+      })),
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.purchaseMethod).toBe('self');
+    expect(r.body.status).toBe('submitted');
+    expect(await pendingLevels(draft.id)).toEqual(['manager']);
+  });
+
+  it('草稿从自购改成供应商采购并提交：照旧核询价门槛（¥4,500 没有询价的拒绝）', async () => {
+    const sup = (await api(ctx.app, ctx.owner, 'GET', '/api/inventory/suppliers?all=1')).body[0];
+    const draft = (await newPo({ purchaseMethod: 'self', self: selfInfo(), action: 'save', lines: [{ materialId: matId, purchaseQtyMilli: q(10), priceCents: 45_000 }] })).body.po;
+    expect(draft.status).toBe('draft');
+    const r = await api(ctx.app, buyer, 'PUT', `/api/purchase-orders/${draft.id}`, {
+      supplierId: sup.id,
+      orderDate: today,
+      action: 'submit',
+      lines: draft.lines.map((l: { id: number; materialId: number; purchaseQtyMilli: number; priceCents: number }) => ({
+        id: l.id,
+        materialId: l.materialId,
+        purchaseQtyMilli: l.purchaseQtyMilli,
+        priceCents: l.priceCents,
+      })),
+    });
+    expect(r.body.error?.code, JSON.stringify(r.body)).toBe('QUOTES_REQUIRED');
+    const [row] = await ctx.sql<{ status: string; purchaseMethod: string }[]>`SELECT status, purchase_method FROM purchase_orders WHERE id = ${draft.id}`;
+    expect(row).toEqual({ status: 'draft', purchaseMethod: 'self' });
+  });
+
+  it('采购单列表按采购方式在服务端筛（收货时列自购 / 供应商采购的单）', async () => {
+    const self = (await api(ctx.app, buyer, 'GET', '/api/purchase-orders?method=self')).body;
+    const sup = (await api(ctx.app, buyer, 'GET', '/api/purchase-orders?method=supplier')).body;
+    expect(self.length).toBeGreaterThan(0);
+    expect(sup.length).toBeGreaterThan(0);
+    expect(self.every((p: { purchaseMethod: string }) => p.purchaseMethod === 'self')).toBe(true);
+    expect(sup.every((p: { purchaseMethod: string }) => p.purchaseMethod === 'supplier')).toBe(true);
+    expect((await api(ctx.app, buyer, 'GET', '/api/purchase-orders?method=other')).status).toBe(400);
+  });
+
+  it('改版已确认的自购单换票据：改版前的版本留下自购信息与原票据', async () => {
+    const created = (await newPo({ purchaseMethod: 'self', self: selfInfo() })).body.po;
+    expect((await api(ctx.app, approver, 'POST', `/api/purchase-orders/${created.id}/approve`, {})).status).toBe(200);
+    const data = Buffer.from('self-purchase-receipt-photo-2');
+    const image2 = (
+      await ctx.sql<{ id: number }[]>`
+        INSERT INTO erp_images (sha256, mime, data, size_bytes, created_by)
+        VALUES (${createHash('sha256').update(data).digest('hex')}, 'image/png', ${data}, ${data.length}, ${buyerId}) RETURNING id`
+    )[0]!.id;
+    const r = await api(ctx.app, buyer, 'POST', `/api/purchase-orders/${created.id}/revise`, {
+      purchaseMethod: 'self',
+      self: selfInfo({ channel: '街口超市', receiptImageIds: [image2] }),
+      orderDate: today,
+      lines: created.lines.map((l: { id: number; materialId: number; purchaseQtyMilli: number; priceCents: number }) => ({
+        id: l.id,
+        materialId: l.materialId,
+        purchaseQtyMilli: l.purchaseQtyMilli,
+        priceCents: l.priceCents,
+      })),
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.self.receiptImages.map((i: { id: number }) => i.id)).toEqual([image2]);
+    expect(r.body.revisions[0].snapshot.self).toEqual({
+      reason: 'urgent',
+      reasonNote: '',
+      channel: '楼下五金店',
+      handlerId: buyerId,
+      handlerName: expect.any(String),
+      payMethod: 'employee_advance',
+      boughtOn: today,
+      receiptImageIds: [imageId],
+    });
   });
 });

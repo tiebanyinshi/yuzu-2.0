@@ -53,7 +53,7 @@ export function useInvalidateAll() {
 
 const search = (params: Record<string, string | undefined>) => new URLSearchParams(Object.entries(params).filter(([, v]) => v) as [string, string][]).toString();
 
-export const usePos = (params: { status?: string; supplierId?: string; q?: string; open?: string; sort?: string; dir?: string; offset?: string }, enabled = true) =>
+export const usePos = (params: { status?: string; supplierId?: string; method?: string; q?: string; open?: string; sort?: string; dir?: string; offset?: string }, enabled = true) =>
   useQuery({
     queryKey: pk.pos(params),
     queryFn: () => api.get<PoSummary[]>(`/api/purchase-orders?${search(params)}`),

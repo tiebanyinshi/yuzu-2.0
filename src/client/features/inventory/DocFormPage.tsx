@@ -576,8 +576,11 @@ function DocForm({
   const po = usePo(central && type === 'receipt' ? form.purchaseOrderId : null);
   const [selfMode, setSelfMode] = useState(false);
   const selfReceipt = selfMode || po.data?.purchaseMethod === 'self';
-  const openPosAll = usePos({ open: '1', supplierId: form.supplierId ? String(form.supplierId) : undefined }, central && type === 'receipt' && (!!form.supplierId || selfReceipt));
-  const openPos = { ...openPosAll, data: openPosAll.data?.filter((p) => (selfReceipt ? p.purchaseMethod === 'self' : p.purchaseMethod !== 'self')) };
+  // 采购方式在服务端筛（8.2.13 Codex 审查后补）：不在取回的前 300 张里再筛，自购的单不会被挤掉
+  const openPos = usePos(
+    { open: '1', method: selfReceipt ? 'self' : 'supplier', supplierId: form.supplierId ? String(form.supplierId) : undefined },
+    central && type === 'receipt' && (!!form.supplierId || selfReceipt),
+  );
   const poLines = useMemo(() => new Map((po.data?.lines ?? []).map((l) => [l.id, l])), [po.data]);
   const choosePo = (poId: number | null) => patch({ purchaseOrderId: poId, lines: [] });
   useEffect(() => {

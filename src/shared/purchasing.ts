@@ -77,6 +77,17 @@ export interface PoRevision {
     channel?: string | null;
     totalCents: number;
     lines: { materialName: string; spec?: string; purchaseQtyMilli: number; purchaseUnit: string; priceCents: number; amountCents: number; imageIds?: number[] }[];
+    /** 自购信息与票据（8.2.13 Codex 审查后补：改版会换掉票据，旧版的凭证留在这里；8.2.13 以前的版本、供应商采购没有） */
+    self?: {
+      reason: SelfReason;
+      reasonNote: string;
+      channel: string;
+      handlerId: number;
+      handlerName: string;
+      payMethod: SelfPayMethod;
+      boughtOn: string | null;
+      receiptImageIds: number[];
+    } | null;
   };
 }
 

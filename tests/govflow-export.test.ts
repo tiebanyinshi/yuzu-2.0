@@ -83,4 +83,24 @@ describe('导出', () => {
     const [log] = await ctx.sql`SELECT detail FROM audit_logs WHERE action = 'export' AND target_type = 'approval_requests' ORDER BY id DESC LIMIT 1`;
     expect(log).toBeDefined();
   });
+
+  it('范围里事项超过上限、按状态筛下来不多的照样能导出；筛下来仍超过的拒绝（8.2.16 Codex 审查后补）', async () => {
+    const d = await newDoc(ctx, c('gf_clerk'), { departmentId: p.deptId, amountCents: yuan(300), title: '按状态导出' });
+    expect(d.status).toBe(200);
+    // 再造 2,100 项已撤回的（直接写库，只为凑数量）
+    await ctx.sql`
+      INSERT INTO gf_docs (biz_no, doc_type, title, department_id, amount_cents, client_key, request_hash, created_by, withdrawn_at, withdrawn_by)
+      SELECT 'EXP-' || g, doc_type, '凑数', department_id, amount_cents, gen_random_uuid(), 'x', created_by, now(), created_by
+      FROM gf_docs, generate_series(1, 2100) g WHERE id = ${d.body.id}`;
+    const base = `/api/gf/export.xlsx?from=${today()}&to=${today()}`;
+    const all = await xlsx(base, ctx.owner);
+    expect(all.statusCode).toBe(422);
+    expect(JSON.parse(all.body).error.code).toBe('EXPORT_TOO_LARGE');
+    expect((await xlsx(`${base}&status=withdrawn`, ctx.owner)).statusCode).toBe(422);
+    const r = await xlsx(`${base}&status=reviewing`, ctx.owner);
+    expect(r.statusCode, r.body).toBe(200);
+    const [log] = await ctx.sql`SELECT detail FROM audit_logs WHERE action = 'export' AND target_type = 'gf_docs' ORDER BY id DESC LIMIT 1`;
+    expect(log!.detail.count).toBeGreaterThanOrEqual(1);
+    expect(log!.detail.count).toBeLessThan(10);
+  }, 120_000);
 });

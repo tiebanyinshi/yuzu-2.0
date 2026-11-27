@@ -27,6 +27,8 @@ export interface ExportHelpers {
 
 const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const EXPORT_LIMIT = 2000;
+/** 每批读多少项（按编号往后翻） */
+const EXPORT_BATCH = 500;
 const ACTION_LABELS: Record<string, string> = { approve: '同意', return: '退回', reject: '驳回', skip: '自动跳过' };
 
 const ExportQuery = z.object({
@@ -45,15 +47,21 @@ export function registerGovflowExport(app: FastifyInstance, deps: Deps, { staffO
     if (!(await seesAll(sql, req.actor))) throw forbidden('只有店主、内控、董事长能导出业财法事项');
     const q = parse(ExportQuery, req.query ?? {});
     if (q.from > q.to) throw unprocessable('EXPORT_RANGE', '开始日期不能晚于结束日期');
-    const rows = await sql`
-      ${listSelect(sql)}
-      WHERE (d.created_at AT TIME ZONE ${tz})::date BETWEEN ${q.from} AND ${q.to}
-        ${q.docType ? sql`AND d.doc_type = ${q.docType}` : sql``}
-      ORDER BY d.id LIMIT ${EXPORT_LIMIT * 2 + 1}`;
-    let cards = await cardsOf(sql, req.actor, rows, tz);
-    if (q.status) cards = cards.filter((c) => c.status === q.status);
-    if (cards.length > EXPORT_LIMIT || rows.length > EXPORT_LIMIT * 2) {
-      throw unprocessable('EXPORT_TOO_LARGE', `符合条件的超过 ${EXPORT_LIMIT} 项，请按日期、类型或状态缩小范围分几次导出`);
+    // 状态要按审批流算（cardsOf），在数据库里筛不了：按编号分批读、算完状态先筛再计数（8.2.16 Codex 审查后补），
+    // 不是先截前几千项再筛——范围里事项多、按状态筛下来不多的照样能导出；筛下来超过上限的照旧拒绝
+    const cards: GfDocCard[] = [];
+    for (let after = 0; ; ) {
+      const rows = await sql`
+        ${listSelect(sql)}
+        WHERE (d.created_at AT TIME ZONE ${tz})::date BETWEEN ${q.from} AND ${q.to}
+          ${q.docType ? sql`AND d.doc_type = ${q.docType}` : sql``}
+          AND d.id > ${after}
+        ORDER BY d.id LIMIT ${EXPORT_BATCH}`;
+      if (rows.length === 0) break;
+      for (const c of await cardsOf(sql, req.actor, rows, tz)) if (!q.status || c.status === q.status) cards.push(c);
+      if (cards.length > EXPORT_LIMIT) throw unprocessable('EXPORT_TOO_LARGE', `符合条件的超过 ${EXPORT_LIMIT} 项，请按日期、类型或状态缩小范围分几次导出`);
+      if (rows.length < EXPORT_BATCH) break;
+      after = Number(rows[rows.length - 1]!.id);
     }
     const ids = cards.map((c) => c.id);
     const acts = ids.length

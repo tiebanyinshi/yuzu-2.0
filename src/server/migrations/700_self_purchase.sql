@@ -3,21 +3,36 @@
 -- 风险已知：放开 purchase_orders.supplier_id 的非空约束（旧单都是供应商采购，不回填、不改动）；收货单在挂自购采购单时可以没有供应商。
 -- 回滚见 docs/rollback/700_self_purchase.down.sql（有自购单时回滚会失败，先作废或改回）。
 
+-- 新列不带行内约束；CHECK、外键先 NOT VALID 再 VALIDATE（AGENTS.md 库结构规范），不在加约束时长时间锁表校验旧行
 ALTER TABLE purchase_orders
-  ADD COLUMN purchase_method  text NOT NULL DEFAULT 'supplier' CHECK (purchase_method IN ('supplier', 'self')),
-  ADD COLUMN self_reason      text CHECK (self_reason IN ('no_supplier', 'urgent', 'petty', 'other')),
-  ADD COLUMN self_reason_note text NOT NULL DEFAULT '' CHECK (char_length(self_reason_note) <= 200),
-  ADD COLUMN self_channel     text NOT NULL DEFAULT '' CHECK (char_length(self_channel) <= 100),
-  ADD COLUMN self_handler_id  bigint REFERENCES staff (id),
-  ADD COLUMN self_pay_method  text CHECK (self_pay_method IN ('employee_advance', 'petty', 'company_transfer', 'other')),
+  ADD COLUMN purchase_method  text NOT NULL DEFAULT 'supplier',
+  ADD COLUMN self_reason      text,
+  ADD COLUMN self_reason_note text NOT NULL DEFAULT '',
+  ADD COLUMN self_channel     text NOT NULL DEFAULT '',
+  ADD COLUMN self_handler_id  bigint,
+  ADD COLUMN self_pay_method  text,
   ADD COLUMN self_bought_on   date;
 ALTER TABLE purchase_orders ALTER COLUMN supplier_id DROP NOT NULL;
-ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_method_supplier CHECK ((purchase_method = 'supplier') = (supplier_id IS NOT NULL));
+ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_purchase_method_check CHECK (purchase_method IN ('supplier', 'self')) NOT VALID;
+ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_self_reason_check CHECK (self_reason IN ('no_supplier', 'urgent', 'petty', 'other')) NOT VALID;
+ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_self_reason_note_check CHECK (char_length(self_reason_note) <= 200) NOT VALID;
+ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_self_channel_check CHECK (char_length(self_channel) <= 100) NOT VALID;
+ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_self_handler_id_fkey FOREIGN KEY (self_handler_id) REFERENCES staff (id) NOT VALID;
+ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_self_pay_method_check CHECK (self_pay_method IN ('employee_advance', 'petty', 'company_transfer', 'other')) NOT VALID;
+ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_method_supplier CHECK ((purchase_method = 'supplier') = (supplier_id IS NOT NULL)) NOT VALID;
 ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_self_info CHECK (
   purchase_method <> 'self'
   OR (self_reason IS NOT NULL AND self_channel <> '' AND self_handler_id IS NOT NULL AND self_pay_method IS NOT NULL
       AND (self_reason <> 'other' OR self_reason_note <> ''))
-);
+) NOT VALID;
+ALTER TABLE purchase_orders VALIDATE CONSTRAINT purchase_orders_purchase_method_check;
+ALTER TABLE purchase_orders VALIDATE CONSTRAINT purchase_orders_self_reason_check;
+ALTER TABLE purchase_orders VALIDATE CONSTRAINT purchase_orders_self_reason_note_check;
+ALTER TABLE purchase_orders VALIDATE CONSTRAINT purchase_orders_self_channel_check;
+ALTER TABLE purchase_orders VALIDATE CONSTRAINT purchase_orders_self_handler_id_fkey;
+ALTER TABLE purchase_orders VALIDATE CONSTRAINT purchase_orders_self_pay_method_check;
+ALTER TABLE purchase_orders VALIDATE CONSTRAINT purchase_orders_method_supplier;
+ALTER TABLE purchase_orders VALIDATE CONSTRAINT purchase_orders_self_info;
 CREATE INDEX purchase_orders_self_handler_id_fk_idx ON purchase_orders (self_handler_id);
 COMMENT ON COLUMN purchase_orders.purchase_method IS 'supplier 供应商采购（原来的做法）；self 自购：经办人自己买，没有供应商（8.2.13）';
 COMMENT ON COLUMN purchase_orders.self_reason IS '自购原因：no_supplier 无供应商可供、urgent 应急、petty 零星采购、other 其他（要写说明）';
@@ -37,4 +52,5 @@ COMMENT ON TABLE purchase_order_self_receipts IS '自购采购单的票据凭证
 
 -- 收货：挂自购采购单的收货单可以没有供应商
 ALTER TABLE inv_docs DROP CONSTRAINT inv_docs_check;
-ALTER TABLE inv_docs ADD CONSTRAINT inv_docs_check CHECK (doc_type <> 'receipt' OR supplier_id IS NOT NULL OR purchase_order_id IS NOT NULL);
+ALTER TABLE inv_docs ADD CONSTRAINT inv_docs_check CHECK (doc_type <> 'receipt' OR supplier_id IS NOT NULL OR purchase_order_id IS NOT NULL) NOT VALID;
+ALTER TABLE inv_docs VALIDATE CONSTRAINT inv_docs_check;

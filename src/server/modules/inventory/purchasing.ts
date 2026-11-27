@@ -371,7 +371,10 @@ function poOrderBy(sort: PoSort | undefined, dir: SortDir | undefined): string {
   return `${PO_ORDER[sort]} ${d} NULLS LAST${tie}, po.doc_no ${d}, po.id ${d}`;
 }
 
-export async function listPos(db: Db, f: { status?: string; supplierId?: number; q?: string; open?: boolean; sort?: PoSort; dir?: SortDir; offset?: number }): Promise<PoSummary[]> {
+export async function listPos(
+  db: Db,
+  f: { status?: string; supplierId?: number; method?: PurchaseMethod; q?: string; open?: boolean; sort?: PoSort; dir?: SortDir; offset?: number },
+): Promise<PoSummary[]> {
   const like = f.q ? `%${f.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
   const rows = await db<
     (Omit<PoSummary, 'receiving' | 'channel' | 'priority'> & {
@@ -410,6 +413,7 @@ export async function listPos(db: Db, f: { status?: string; supplierId?: number;
     WHERE true
       ${f.status ? db`AND po.status = ${f.status}` : db``}
       ${f.supplierId ? db`AND po.supplier_id = ${f.supplierId}` : db``}
+      ${f.method ? db`AND po.purchase_method = ${f.method}` : db``}
       ${f.open ? db`AND po.status = 'approved' AND NOT po.backfill` : db``}
       ${like ? db`AND (po.doc_no ILIKE ${like} OR s.name ILIKE ${like} OR po.self_channel ILIKE ${like} OR po.note ILIKE ${like})` : db``}
     ORDER BY ${db.unsafe(poOrderBy(f.sort, f.dir))}
@@ -791,20 +795,36 @@ async function submitLocked(tx: Tx, po: PoRow, actor: Actor, approveNow: boolean
   }
 }
 
-export async function createPo(deps: Deps, raw: unknown, actor: Actor, opts: { backfillReceiptId?: number; ip?: string; deptConfirm?: boolean; sourcingEventId?: number } = {}) {
-  const meta = parse(CreateInput, raw);
-  const body = parse(PoBody, raw);
-  if (meta.approveNow && !can(actor, 'inventory.approve')) throw forbidden('当前账号不能确认采购单，请提交给负责人');
-  assertNotFuture(body.orderDate, deps.config.timezone);
-  if (body.expectedDate && body.expectedDate < body.orderDate) throw badRequest('预计到货日期不能早于下单日期');
-  const requestHash = hashRequest({
+/**
+ * 新建采购单的请求摘要（操作编号核对用）。
+ * 供应商采购、没带自购信息的，不把 8.2.13 加的 purchaseMethod、self 两个默认值算进去，与升级前的摘要一样：
+ * 升级前提交、结果没确认的采购单升级后原样重提照旧认（8.2.13 Codex 审查后补）。
+ */
+export function poRequestHash(body: PoBodyParsed, meta: { action: string; approveNow: boolean }, opts: { backfillReceiptId?: number; deptConfirm?: boolean; sourcingEventId?: number } = {}) {
+  const legacy = body.purchaseMethod === 'supplier' && body.self === null;
+  return hashRequest({
     ...body,
+    ...(legacy ? { purchaseMethod: undefined, self: undefined } : {}),
     ...meta,
     clientKey: undefined,
     backfill: opts.backfillReceiptId ?? null,
     deptConfirm: !!opts.deptConfirm,
     ...(opts.sourcingEventId ? { sourcingEventId: opts.sourcingEventId } : {}),
   });
+}
+
+/** 测试用：按页面原样提交的新建请求算摘要 */
+export function poRequestHashOf(raw: unknown) {
+  return poRequestHash(parse(PoBody, raw), parse(Meta, raw));
+}
+
+export async function createPo(deps: Deps, raw: unknown, actor: Actor, opts: { backfillReceiptId?: number; ip?: string; deptConfirm?: boolean; sourcingEventId?: number } = {}) {
+  const meta = parse(CreateInput, raw);
+  const body = parse(PoBody, raw);
+  if (meta.approveNow && !can(actor, 'inventory.approve')) throw forbidden('当前账号不能确认采购单，请提交给负责人');
+  assertNotFuture(body.orderDate, deps.config.timezone);
+  if (body.expectedDate && body.expectedDate < body.orderDate) throw badRequest('预计到货日期不能早于下单日期');
+  const requestHash = poRequestHash(body, meta, opts);
   const findExisting = async (db: Db) => {
     const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`
       SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${meta.clientKey}`;
@@ -930,6 +950,19 @@ export async function updatePo(deps: Deps, poId: number, raw: PoBodyInput & { ac
             amountCents: l.amountCents,
             imageIds: l.images.map((i) => i.id),
           })),
+          // 自购的信息与票据（8.2.13 Codex 审查后补）：下面会换掉票据关联，旧版的凭证在这里留底
+          self: snapshot.self
+            ? {
+                reason: snapshot.self.reason,
+                reasonNote: snapshot.self.reasonNote,
+                channel: snapshot.self.channel,
+                handlerId: snapshot.self.handler.id,
+                handlerName: snapshot.self.handler.name,
+                payMethod: snapshot.self.payMethod,
+                boughtOn: snapshot.self.boughtOn,
+                receiptImageIds: snapshot.self.receiptImages.map((i) => i.id),
+              }
+            : null,
         } as never)}, ${actor.id})`;
       await tx`UPDATE purchase_orders SET status = 'returned', revision = revision + 1, updated_at = now() WHERE id = ${poId}`;
       po = { ...po, status: 'returned', revision: po.revision + 1 };
@@ -968,7 +1001,8 @@ export async function updatePo(deps: Deps, poId: number, raw: PoBodyInput & { ac
              self_pay_method = ${method.self?.payMethod ?? null}, self_bought_on = ${method.self?.boughtOn ?? null}, updated_at = now()
       WHERE id = ${poId}`;
     await writeSelfReceipts(tx, poId, method.self);
-    if (meta.action === 'submit' || revise) await submitLocked(tx, po, actor, meta.approveNow, deps.config.timezone);
+    // 按改后的采购方式提交（8.2.13 Codex 审查后补）：同一次请求里换了供应商采购 / 自购的，重读一次，不用改前的
+    if (meta.action === 'submit' || revise) await submitLocked(tx, await lockPo(tx, poId), actor, meta.approveNow, deps.config.timezone);
   });
   return getPo(deps.sql, poId);
 }
@@ -1125,6 +1159,8 @@ export async function backfillPo(deps: Deps, raw: unknown, actor: Actor, ip?: st
 const ListQuery = z.object({
   status: z.string().max(16).optional(),
   supplierId: z.coerce.number().int().positive().optional(),
+  /** 采购方式（8.2.13）：收货时按供应商采购 / 自购在服务端筛 */
+  method: z.enum(PURCHASE_METHODS).optional(),
   q: z.string().trim().max(32).optional(),
   open: z.enum(['1']).optional(),
   // 8.2.12（R2）：排序与翻页（每页 300 张）
