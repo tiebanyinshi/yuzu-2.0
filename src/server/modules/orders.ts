@@ -168,7 +168,7 @@ async function loadLines(db: Db, checkoutIds: readonly number[]): Promise<LineRe
                 WHEN l.item_id IS NULL THEN '其他（手动金额、赔偿等）'
                 ELSE coalesce(nullif(si.category, ''), '未分类') END AS category,
            CASE WHEN rc.kind = 'night' THEN '房费（全天房）' WHEN rc.kind = 'half_day' THEN '超时半天' WHEN rc.kind = 'block' THEN '钟点房'
-                WHEN uc.kind = 'fee' THEN '房费' WHEN uc.kind = 'open_fee' THEN '开台费' ELSE l.name END AS item_name,
+                WHEN uc.kind = 'fee' THEN '房费' WHEN uc.kind = 'extra' THEN '加钟' WHEN uc.kind = 'open_fee' THEN '开台费' ELSE l.name END AS item_name,
            ${technicianTextSql(db, 'l')} AS technician,
            l.quantity, l.unit_price, l.amount
     FROM checkouts c JOIN checkout_bills cb ON cb.checkout_id = c.id
