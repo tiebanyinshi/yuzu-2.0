@@ -274,13 +274,20 @@ export function RoomDialog({
           ) : (
             <p className="text-[13px] text-ink-3">{room.guestText ?? '没有客人'}</p>
           )}
-          <p className="text-[12.5px] text-ink-3">康美部的账户在房态中心只看房态与客人的手牌号。</p>
+          <p className="text-[12.5px] text-ink-3">康美部的账户在房态中心只看房态与客人的手牌号，能点单、挂零售与杂项。</p>
           {/* 康美部在房间里点水吧、果吧照旧（回测整改 P07） */}
           {onOrder && (
             <Button variant="primary" onClick={onOrder} data-testid="rc-room-order">
               点单
             </Button>
           )}
+          {/* 康美部给房里的客人挂零售、杂项（店主 2026-11-27）：挂到手牌上，客人离店时在前厅收银台统一结账 */}
+          {room.status === 'in_use' && room.guests.length > 0 && can('frontdesk.operate') && (
+            <Button variant="secondary" icon={<ShoppingBag className="size-4" />} onClick={() => onAction({ kind: 'goods' })} data-testid="rc-act-goods">
+              零售 / 杂项
+            </Button>
+          )}
+          {room.status === 'in_use' && room.guests.length > 0 && <p className="text-[12.5px] text-ink-3">挂的费用记在客人手牌上，离店时在前厅收银台统一结账。</p>}
         </div>
       </Dialog>
     );
