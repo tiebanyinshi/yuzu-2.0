@@ -26,8 +26,9 @@ interface AcademyView {
   categories: CategoryRow[];
 }
 
-/** 离开以后才回来的结果不再画（每次取都加一） */
-let gen = 0;
+/** 离开以后才回来的结果不再画（每次取都加一；知识库与学堂各数各的，重试一块不丢另一块） */
+let genKb = 0;
+let genAc = 0;
 
 Page({
   data: {
@@ -49,13 +50,13 @@ Page({
     if (!me) return;
     const hasAcademy = me.entries.indexOf('academy') >= 0;
     this.setData({ hasAcademy });
-    const my = ++gen;
-    this.load(my);
-    if (hasAcademy) this.loadAcademy(my, me.staff.id);
+    this.load(++genKb);
+    if (hasAcademy) this.loadAcademy(++genAc, me.staff.id);
   },
 
   onHide() {
-    gen += 1;
+    genKb += 1;
+    genAc += 1;
   },
 
   async load(my: number) {
@@ -70,7 +71,7 @@ Page({
     }
     try {
       const rows = folderRows(await loadFolders());
-      if (my !== gen) return;
+      if (my !== genKb) return;
       this.setData({ folders: rows, state: rows.length ? 'ready' : 'empty', stale: false, error: '' });
       try {
         wx.setStorageSync(CACHE_KEY, rows);
@@ -78,7 +79,7 @@ Page({
         // 存不了：只是下次没信号时没有旧的
       }
     } catch (e) {
-      if (my !== gen) return;
+      if (my !== genKb) return;
       if ((e as { status?: number }).status === 401) return toLogin();
       if (this.data.folders.length) this.setData({ stale: true });
       else this.setData({ state: isOffline(e) ? 'offline' : 'error', error: messageOf(e) });
@@ -99,7 +100,7 @@ Page({
     try {
       // 每日一练取不到不挡首页（只少一行字）
       const [home, daily] = await Promise.all([loadAcademyHome(), loadDaily().catch(() => null)]);
-      if (my !== gen) return;
+      if (my !== genAc) return;
       const view: AcademyView = {
         staffId,
         level: levelView(home.me),
@@ -117,7 +118,7 @@ Page({
         // 存不了：只是下次没信号时没有旧的
       }
     } catch (e) {
-      if (my !== gen) return;
+      if (my !== genAc) return;
       if (isApiError(e) && e.status === 401) return toLogin();
       if (this.data.ac) this.setData({ acStale: true });
       else this.setData({ acState: isOffline(e) ? 'offline' : 'error', acError: messageOf(e) });
@@ -126,23 +127,20 @@ Page({
 
   async onPullDownRefresh() {
     const me = await requireMe();
-    if (me) {
-      const my = ++gen;
-      await Promise.all([this.load(my), this.data.hasAcademy ? this.loadAcademy(my, me.staff.id) : Promise.resolve()]);
-    }
+    if (me) await Promise.all([this.load(++genKb), this.data.hasAcademy ? this.loadAcademy(++genAc, me.staff.id) : Promise.resolve()]);
     wx.stopPullDownRefresh();
   },
 
   onRetry() {
     this.setData({ state: 'loading' });
-    this.load(++gen);
+    this.load(++genKb);
   },
 
   async onAcademyRetry() {
     const me = await requireMe();
     if (!me) return;
     this.setData({ acState: 'loading' });
-    this.loadAcademy(++gen, me.staff.id);
+    this.loadAcademy(++genAc, me.staff.id);
   },
 
   onSearch() {

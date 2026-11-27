@@ -30,6 +30,10 @@
       <view wx:if="{{notice}}" class="notice {{unsure ? 'warn' : 'error'}}">
         <view>{{notice}}</view>
         <button wx:if="{{unsure}}" class="btn secondary resend" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onResend">再交一次（同一次作答）</button>
+        <view wx:if="{{rejected}}" class="pending-actions">
+          <button class="btn secondary" hover-class="pressed" hover-stay-time="120" bindtap="onSkip">跳过这一题</button>
+          <button class="btn secondary" hover-class="pressed" hover-stay-time="120" bindtap="onReload">刷新再练</button>
+        </view>
       </view>
       <button wx:if="{{answered}}" class="btn primary block next" hover-class="pressed" hover-stay-time="120" bindtap="onNext">{{idx + 1 < total ? '下一题' : '做完了'}}</button>
     </block>

@@ -9,7 +9,7 @@ import { completionText, loadQuizResult, optionViews, quizReady, quizResultLine,
 import { isOffline, messageOf } from '../../utils/api';
 import { requireMe, toLogin } from '../../utils/guard';
 import type { PendingOp } from '../../utils/pending';
-import { loadPending, SAVE_FAILED, sendPending } from '../../utils/pending';
+import { listPending, loadPending, SAVE_FAILED, sendPending } from '../../utils/pending';
 import { largeTextOn } from '../../utils/prefs';
 import { uuid } from '../../utils/uuid';
 
@@ -32,6 +32,8 @@ interface ResultRow {
 let me: StaffMpMe | null = null;
 let quiz: AcademyQuizView | null = null;
 let answers: number[][] = [];
+/** 每开一页加一：上一页（已经退出去的）晚到的开卷、交卷结果不动这一页 */
+let inst = 0;
 
 const UNSURE = '没收到门店系统的回复，可能已经办好了：点下面的按钮原样再发一次（同一份卷子，不会重复记）';
 
@@ -54,7 +56,12 @@ Page({
     me = null;
     quiz = null;
     answers = [];
+    inst += 1;
     this.setData({ large: largeTextOn(), lessonId: Number(q.lesson) || 0 });
+  },
+
+  onUnload() {
+    inst += 1;
   },
 
   async onShow() {
@@ -66,17 +73,25 @@ Page({
   /** 开卷：手机上留着这一课时没确定的开卷，就原样重提那一次 */
   async start() {
     if (!me) return;
+    const mine = inst;
     const lessonId = this.data.lessonId;
+    // 以前交卷没收到回复、人走了的：先原样重提掉（交过的回第一次的结果），不在手机上一直留着
+    for (const old of listPending(me.staff.id, 'academy_submit')) sendPending(old).catch(() => undefined);
     const prior = loadPending(me.staff.id, 'academy_quiz', lessonId);
     const key = prior ? prior.key : uuid();
     const op: PendingOp = { staffId: me.staff.id, kind: 'academy_quiz', key, path: `/academy/lessons/${lessonId}/quiz`, body: { clientKey: key }, at: prior ? prior.at : Date.now(), label: '开测验', ref: lessonId };
     this.setData({ busy: true, error: '', unsure: '' });
     const out = await sendPending<AcademyQuizView>(op);
+    if (mine !== inst) return;
     this.setData({ busy: false });
     if (out.status === 'ok') {
       quiz = out.data;
       // 原样重提时这份卷子已经交过了：直接看结果
-      if (quiz.submitted) return this.showResult(await loadQuizResult(quiz.attemptId).catch(() => null));
+      if (quiz.submitted) {
+        const r = await loadQuizResult(quiz.attemptId).catch(() => null);
+        if (mine === inst) this.showResult(r);
+        return;
+      }
       answers = quiz.questions.map(() => []);
       this.render();
       return;
@@ -101,7 +116,8 @@ Page({
   },
 
   onOption(e: WechatMiniprogram.TouchEvent) {
-    if (!quiz || this.data.busy) return;
+    // 交卷没收到回复的时候不改：再交一次交的是原来那一份
+    if (!quiz || this.data.busy || this.data.unsure === 'submit') return;
     const { q, option } = e.currentTarget.dataset as { q: number; option: number };
     const item = quiz.questions[q];
     if (!item) return;
@@ -113,11 +129,13 @@ Page({
   async onSubmit() {
     if (!me || !quiz || this.data.busy) return;
     if (!quizReady(quiz.questions, answers)) return;
+    const mine = inst;
     const prior = loadPending(me.staff.id, 'academy_submit', quiz.attemptId);
     const body = prior ? prior.body : { answers };
     const op: PendingOp = { staffId: me.staff.id, kind: 'academy_submit', key: prior ? prior.key : uuid(), path: `/academy/attempts/${quiz.attemptId}/submit`, body, at: prior ? prior.at : Date.now(), label: '交卷', ref: quiz.attemptId };
     this.setData({ busy: true, error2: '', unsure: '' });
     const out = await sendPending<AcademyQuizResult>(op);
+    if (mine !== inst) return;
     this.setData({ busy: false });
     if (out.status === 'ok') return this.showResult(out.data);
     if (out.status === 'signed_out') return toLogin();

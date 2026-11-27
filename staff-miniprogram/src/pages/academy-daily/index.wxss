@@ -80,3 +80,8 @@
   font-size: var(--fs-title-s);
   font-weight: 600;
 }
+.pending-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 16rpx;
+}

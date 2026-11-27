@@ -43,8 +43,9 @@ export const STAFFMP_ALLOWLIST: readonly string[] = [
   'GET /api/training/folders/:id/files',
   'GET /api/training/files/:id/content',
   'POST /api/training/files/:id/viewed',
-  // 汤崎学堂（员工端，docs/ACADEMY.md；员工小程序线 F）：首页、课程与课时、学习时长、学完了、测验（开卷带操作编号、交卷按卷子认）、
-  // 每日一练（带操作编号）、我的、学习地图、榜单。管理端（/api/admin/academy/*）不在这里；带教签核、问柚子这一版没有挂
+  // 汤崎学堂（员工端，docs/ACADEMY.md；员工小程序线 F）：首页、课程与课时、学习时长、学完了、测验（开卷带操作编号、交卷按卷子认、
+  // 交过的结果）、每日一练（带操作编号）、一张学习地图。只放小程序页面用到的：管理端（/api/admin/academy/*）不在这里；
+  // 带教签核、问柚子、课程评分、「我的」、地图列表、榜单这一版没有页面，也不挂
   'GET /api/academy/home',
   'GET /api/academy/courses',
   'GET /api/academy/courses/:id',
@@ -56,10 +57,7 @@ export const STAFFMP_ALLOWLIST: readonly string[] = [
   'GET /api/academy/attempts/:id',
   'GET /api/academy/daily',
   'POST /api/academy/daily/answer',
-  'GET /api/academy/me',
-  'GET /api/academy/paths',
   'GET /api/academy/paths/:id',
-  'GET /api/academy/rank',
   // 账号：老账号第一次登录选新岗位（8.1.18，GW7）——一线员工不用去找电脑（外面的地址 /api/staffmp/account/…）
   'GET /api/auth/position-options',
   'POST /api/auth/position',

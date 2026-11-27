@@ -75,9 +75,9 @@
 - **知识库**（一页的最下面）：按文件夹列出员工培训的资料（培训资料 + 本部门），没看过的标「新」；点开就在小程序里看——PDF、Word、Excel、PPT 用微信自带的文档预览，图片放大看，视频在页里播（mp4，iPhone 放不了的格式写明「请在电脑上看」）；看过就记「看过」（与 WCP 网页同一条记录）。
 - **汤崎学堂**（F 批，搜索下面、知识库上面；「我是谁」的入口里有学堂才出现）：等级与学分（离下一级还差多少、本月学了多久）、继续学习（上次学到哪）、每日一练（今天几题、连续几天）、我的必修与推荐（完成到哪、截止日、逾期标红）、学习地图、知识中心（按分类的课程）。学堂与知识库各取各的，一块取不到不挡另一块；都先画手机上存的。
   - **学习地图**一张一页：按顺序的阶段（每个阶段一门课），学到哪一目了然；**课程**一页：简介、在哪几张地图里、课时一节一节。
-  - **课时**：图文课件按门店系统用学堂自己的解析解析好的块画（正文、要点 / 注意 / 禁忌、步骤、翻牌卡、表格、情景选择、课中小测），课中小测都答过才能点「学完了」；视频 / 文件在知识库的文件页里看（同一条「看过」），看过才能点「学完了」；实操列出检查项与带教签过的记录（带教在 WCP 网页上签，小程序这一版不签）。页面开着每 30 秒报一次学习时长。「学完了」一个课时只给一次学分，没收到回复时再点不会重复加分。
+  - **课时**：图文课件按门店系统用学堂自己的解析解析好的块画（正文、要点 / 注意 / 禁忌、步骤、翻牌卡、表格、情景选择、课中小测；「:::question」是题库题，与学堂网页一样不画），课中小测都答过才能点「学完了」；视频 / 文件在知识库的文件页里看（同一条「看过」），看过才能点「学完了」；实操列出检查项与带教签过的记录（带教在 WCP 网页上签，小程序这一版不签）。打开时报一次 0 秒（学堂记下开始学了，实操由此进带教的待签），图文课件、文件开着每 30 秒报一次学习时长，去文件页看文件时照样计。「学完了」一个课时只给一次学分，没收到回复时再点不会重复加分。
   - **测验**：开卷带操作编号、交卷按卷子认（交过的回第一次的结果），都先存在手机上再发（「结果待确认」）；交了看每题对错与解析，及格了这一课时完成。
-  - **每日一练**：一题一题来；客观题选了交，门店系统判对错、给解析、说下次什么时候再出；问答卡先想、看答案、自评四档。作答带操作编号，原样重提回同一次。
+  - **每日一练**：一题一题来；客观题选了交，门店系统判对错、给解析、说下次什么时候再出；问答卡先想、看答案、自评四档。作答带操作编号，原样重提回同一次；这一题今天留着没确定的，一出来就是「再交一次」（不让重新作答），以前哪天留着的进来先在后台重提掉。
   - 这一版没有的：课程评分、带教签核、问柚子（AI 助教）、榜单页、证书页（学堂网页上都有；以后要放进小程序再照第 5.3 节加白名单）。
 - **课件是阅读屏**：正文 32rpx、行高 1.6，一屏一段，不放与课无关的东西。
 
@@ -272,7 +272,7 @@ yuzu 数据库（员工账号、WCP、员工培训 / 汤崎学堂、饭堂、巡
 
 打卡与考勤：`GET oa/attendance/today`、`POST oa/attendance/punch`、`GET oa/me/schedule`、`GET oa/me/attendance`、`GET oa/me/leave`、`POST oa/attachments`（外勤照片）、`GET oa/attachments/:id`、`GET oa/attachments/:id/thumb`。审批：`GET oa/approval/templates`、`POST oa/approvals`（发起申请：照模板画表单、带操作编号提交，工作台那一批加）、`GET oa/approvals`、`GET oa/approvals/summary`、`GET oa/approvals/:id`、`POST oa/approvals/:id/act`、`POST oa/approvals/:id/read`。通知与公告：`GET oa/notifications`、`GET oa/notifications/unread-count`、`POST oa/notifications/read`、`GET oa/announcements`、`GET oa/announcements/:id`、`POST oa/announcements/:id/read`。人事：`GET oa/my/payslips`、`GET oa/my/payslips/:id`、`POST oa/my/payslips/:id/sign`、`GET oa/directory`。员工培训：`GET training/folders`、`GET training/search`、`GET training/folders/:id/files`、`GET training/files/:id/content`、`POST training/files/:id/viewed`。账号：`GET auth/position-options`、`POST auth/position`（外面是 `account/…`）。都在前缀 `/api/staffmp/` 下；以 `allowlist.ts` 为准。
 
-汤崎学堂（F 批）：`GET academy/home`、`GET academy/courses`、`GET academy/courses/:id`、`GET academy/lessons/:id`（附解析好的块）、`POST academy/lessons/:id/ping`、`POST academy/lessons/:id/complete`、`POST academy/lessons/:id/quiz`（开卷，带操作编号）、`POST academy/attempts/:id/submit`、`GET academy/attempts/:id`、`GET academy/daily`、`POST academy/daily/answer`（带操作编号）、`GET academy/me`、`GET academy/paths`、`GET academy/paths/:id`、`GET academy/rank`。
+汤崎学堂（F 批）：`GET academy/home`、`GET academy/courses`、`GET academy/courses/:id`、`GET academy/lessons/:id`（附解析好的块）、`POST academy/lessons/:id/ping`、`POST academy/lessons/:id/complete`、`POST academy/lessons/:id/quiz`（开卷，带操作编号）、`POST academy/attempts/:id/submit`、`GET academy/attempts/:id`、`GET academy/daily`、`POST academy/daily/answer`（带操作编号）、`GET academy/paths/:id`。只放小程序页面用到的：「我的」、地图列表、榜单、课程评分、带教签核、问柚子这一版没有页面，也不挂。
 
 ### 8.3 数据（迁移 `650`–`659`）
 

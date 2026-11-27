@@ -2,25 +2,31 @@
 //   · 图文课件：按门店系统解析好的块画（正文、要点 / 注意 / 禁忌、步骤、翻牌卡、表格、情景选择、课中小测）；课中小测都答过才能点「学完了」；
 //   · 视频 / 文件：在知识库的文件页里看（同一份文件、同一条「看过」），看过才能点「学完了」；
 //   · 测验：去测验页（开卷、交卷都带编号）；实操：列出检查项与带教签过的记录（带教在 WCP 网页上签）。
-// 页面开着每 30 秒报一次学习时长（学堂按两次上报的间隔算、封顶，同时开几个课时不重复计）。
+// 打开时报一次 0 秒（学堂记下「开始学了」，实操课时由此进带教的待签）；图文课件、文件开着每 30 秒报一次学习时长
+// （学堂按两次上报的间隔算、封顶，同时开几个课时不重复计）；去文件页看文件时照样计（与学堂网页一样）。
 // 「学完了」门店系统一个课时只给一次学分：没收到结果时再点一次不会重复加分。
 
 import type { BlockView, QuestionState } from '../../utils/academy';
 import { blockViews, completeLesson, completionText, KIND_LABELS, loadLesson, PING_SECONDS, pingLesson, questionState, toggleChoice, unansweredCount } from '../../utils/academy';
 import { isApiError, isOffline, messageOf } from '../../utils/api';
+import { shortTime } from '../../utils/format';
 import { requireMe, toLogin } from '../../utils/guard';
 import { largeTextOn } from '../../utils/prefs';
 
 let gen = 0;
+// 计时只给正在显示的那一页（同一时刻只有一页在前台；去文件页看文件时留给这一页）
 let timer: number | null = null;
 let lastPing = 0;
-/** 文件课时：去文件页看过了（这一页上的这一次） */
-let opened = false;
+/** 去文件页看文件了：这一页藏起来时不停计时 */
+let inFile = false;
 
 function stopTimer() {
   if (timer !== null) clearInterval(timer);
   timer = null;
 }
+
+/** 这几种课时页面开着就计时（测验在测验页、实操在岗位上，不计） */
+const TIMED = ['article', 'file'];
 
 Page({
   data: {
@@ -48,29 +54,40 @@ Page({
   },
 
   onLoad(q: Record<string, string | undefined>) {
-    opened = false;
     this.setData({ large: largeTextOn(), id: Number(q.id) || 0 });
   },
 
   async onShow() {
     if (!(await requireMe())) return;
-    if (opened && !this.data.opened) this.setData({ opened: true });
+    // 从文件页回来：那段时间一直在计，接着计；别的情况重新起
+    const back = inFile;
+    inFile = false;
     this.load();
-    lastPing = Date.now();
-    stopTimer();
-    timer = setInterval(() => this.ping(), PING_SECONDS * 1000) as unknown as number;
+    if (!back || timer === null) {
+      lastPing = Date.now();
+      this.startTimer();
+    }
   },
 
   onHide() {
     gen += 1;
+    // 去文件页看文件：照样计时（看视频的时间算在这一课时上）
+    if (inFile) return;
     this.ping();
     stopTimer();
   },
 
   onUnload() {
     gen += 1;
+    inFile = false;
     this.ping();
     stopTimer();
+  },
+
+  startTimer() {
+    stopTimer();
+    if (this.data.state === 'ready' && TIMED.indexOf(this.data.kind) < 0) return;
+    timer = setInterval(() => this.ping(), PING_SECONDS * 1000) as unknown as number;
   },
 
   /** 报学习时长（失败就算了：学堂按下一次上报的间隔补算，最多 10 分钟） */
@@ -78,7 +95,7 @@ Page({
     const now = Date.now();
     const seconds = Math.min(600, Math.round((now - lastPing) / 1000));
     lastPing = now;
-    if (seconds >= 5 && this.data.id && this.data.state === 'ready') pingLesson(this.data.id, seconds).catch(() => undefined);
+    if (seconds >= 5 && this.data.id && this.data.state === 'ready' && TIMED.indexOf(this.data.kind) >= 0) pingLesson(this.data.id, seconds).catch(() => undefined);
   },
 
   async load() {
@@ -87,6 +104,8 @@ Page({
       const v = await loadLesson(this.data.id);
       if (my !== gen) return;
       const l = v.lesson;
+      // 第一次打开：报 0 秒，学堂记下「开始学了」（实操课时由此进带教的待签）
+      if (this.data.state !== 'ready') pingLesson(l.id, 0).catch(() => undefined);
       // 已经在画的图文课件不重画（课中小测答到一半，切出去再回来不清掉）
       const keepBlocks = this.data.state === 'ready' && this.data.kind === 'article' && this.data.blocks.length > 0;
       const blocks = keepBlocks ? this.data.blocks : blockViews(v.blocks);
@@ -111,12 +130,14 @@ Page({
               items: v.practical.items,
               signoffs: v.practical.signoffs.map((s) => ({
                 id: s.id,
-                text: `${s.result === 'pass' ? '通过' : '再练练'} · ${s.signedByName} · ${s.signedAt.slice(0, 10)}`,
+                text: `${s.result === 'pass' ? '通过' : '再练练'} · ${s.signedByName} · ${shortTime(s.signedAt)}`,
                 comment: s.comment,
               })),
             }
           : null,
       });
+      // 不计时的课时（测验、实操）不留计时器
+      if (TIMED.indexOf(l.kind) < 0) stopTimer();
     } catch (e) {
       if (my !== gen) return;
       if (isApiError(e) && e.status === 401) return toLogin();
@@ -172,8 +193,9 @@ Page({
   onOpenFile() {
     const f = this.data.file;
     if (!f) return;
-    opened = true;
-    wx.navigateTo({ url: `/pages/learn-file/index?folder=${f.folderId}&id=${f.id}` });
+    inFile = true;
+    this.setData({ opened: true });
+    wx.navigateTo({ url: `/pages/learn-file/index?folder=${f.folderId}&id=${f.id}`, fail: () => (inFile = false) });
   },
 
   onQuiz() {
@@ -202,7 +224,14 @@ Page({
     if (this.data.nextId) wx.redirectTo({ url: `/pages/academy-lesson/index?id=${this.data.nextId}` });
   },
 
+  /** 回到这门课：上一页就是这门课的就退回去，不然换成这门课（页面栈不越叠越深） */
   onCourse() {
-    wx.navigateTo({ url: `/pages/academy-course/index?id=${this.data.courseId}` });
+    const pages = getCurrentPages();
+    const prev = pages.length > 1 ? pages[pages.length - 2] : null;
+    if (prev && prev.route === 'pages/academy-course/index' && Number((prev.options as Record<string, string>).id) === this.data.courseId) {
+      wx.navigateBack();
+      return;
+    }
+    wx.redirectTo({ url: `/pages/academy-course/index?id=${this.data.courseId}` });
   },
 });

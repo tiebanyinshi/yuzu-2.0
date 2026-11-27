@@ -114,7 +114,16 @@ export function assignedRows(list: readonly AcademyAssigned[]): AssignedRow[] {
   const rows = list.map((a) => {
     const progress = a.completed ? '已学完' : `完成 ${a.done}/${a.total}`;
     const due = a.dueOn && !a.completed ? ` · ${monthDay(a.dueOn)}${a.overdue ? '已过截止' : '截止'}` : '';
-    return { key: `${a.kind}-${a.id}`, kind: a.kind, id: a.id, title: a.title, sub: `${a.kind === 'path' ? '学习地图' : '课程'} · ${progress}${due}`, required: a.required, overdue: a.overdue && !a.completed, completed: a.completed };
+    return {
+      key: `${a.kind}-${a.id}`,
+      kind: a.kind,
+      id: a.id,
+      title: a.title,
+      sub: `${a.kind === 'path' ? '学习地图' : '课程'} · ${progress}${due}`,
+      required: a.required,
+      overdue: a.overdue && !a.completed,
+      completed: a.completed,
+    };
   });
   return rows.filter((r) => !r.completed).concat(rows.filter((r) => r.completed));
 }
@@ -254,34 +263,47 @@ function questionView(q: { kind: AcademyQuestionKind; stem: string; options: str
   return { kind: q.kind, stem: q.stem, options: q.options, answer: q.answer, answerText: q.answerText, explanation: q.explanation, multi: q.kind === 'multi' };
 }
 
+/**
+ * 课件的块 → 页面要画的样子。「:::question」是题库题（进测验、每日一练），学堂网页的课件页不画，这里也不画、不算课中小测；
+ * 课中小测只有「:::check」
+ */
 export function blockViews(blocks: readonly AcademyBlock[]): BlockView[] {
-  return blocks.map((b, i): BlockView => {
-    switch (b.type) {
-      case 'heading':
-        return { i, type: 'heading', text: b.text };
-      case 'paragraph':
-        return { i, type: 'paragraph', segs: segs(b.text) };
-      case 'list':
-        return { i, type: 'list', ordered: b.ordered, items: b.items.map(segs) };
-      case 'quote':
-        return { i, type: 'quote', segs: segs(b.text) };
-      case 'callout':
-        return { i, type: 'callout', tone: b.tone, title: b.title || CALLOUT_TITLES[b.tone], lines: b.lines.map((l) => ({ segs: segs(l.text), bullet: l.bullet })) };
-      case 'steps':
-        return { i, type: 'steps', title: b.title, steps: b.steps.map((s, n) => ({ no: n + 1, title: s.title, detail: s.detail })) };
-      case 'cards':
-        return { i, type: 'cards', title: b.title, cards: b.cards.map((c) => ({ front: c.front, back: c.back, flipped: false })) };
-      case 'table':
-        return { i, type: 'table', title: b.title, head: b.head, rows: b.rows };
-      case 'scenario':
-        return { i, type: 'scenario', title: b.title, situation: b.situation, options: b.options, picked: -1 };
-      case 'check':
-      case 'question': {
-        const q = questionView(b.question);
-        return { i, type: 'question', check: b.type === 'check', q, st: questionState(q, [], false) };
-      }
+  const out: BlockView[] = [];
+  // i 是在画出来的这一串里的位置（页面按它改某一块：blocks[i]）
+  for (const b of blocks) {
+    const v = blockView(b, out.length);
+    if (v) out.push(v);
+  }
+  return out;
+}
+
+function blockView(b: AcademyBlock, i: number): BlockView | null {
+  switch (b.type) {
+    case 'heading':
+      return { i, type: 'heading', text: b.text };
+    case 'paragraph':
+      return { i, type: 'paragraph', segs: segs(b.text) };
+    case 'list':
+      return { i, type: 'list', ordered: b.ordered, items: b.items.map(segs) };
+    case 'quote':
+      return { i, type: 'quote', segs: segs(b.text) };
+    case 'callout':
+      return { i, type: 'callout', tone: b.tone, title: b.title || CALLOUT_TITLES[b.tone], lines: b.lines.map((l) => ({ segs: segs(l.text), bullet: l.bullet })) };
+    case 'steps':
+      return { i, type: 'steps', title: b.title, steps: b.steps.map((s, n) => ({ no: n + 1, title: s.title, detail: s.detail })) };
+    case 'cards':
+      return { i, type: 'cards', title: b.title, cards: b.cards.map((c) => ({ front: c.front, back: c.back, flipped: false })) };
+    case 'table':
+      return { i, type: 'table', title: b.title, head: b.head, rows: b.rows };
+    case 'scenario':
+      return { i, type: 'scenario', title: b.title, situation: b.situation, options: b.options, picked: -1 };
+    case 'check': {
+      const q = questionView(b.question);
+      return { i, type: 'question', check: true, q, st: questionState(q, [], false) };
     }
-  });
+    case 'question':
+      return null;
+  }
 }
 
 /** 课中小测还有几道没答（学堂第 4 节：图文课件读到最后、课中小测答过才算学完；没答完不给点「学完了」） */

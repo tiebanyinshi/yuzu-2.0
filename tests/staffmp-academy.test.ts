@@ -129,12 +129,13 @@ describe('员工小程序 · 汤崎学堂', () => {
     expect(first.status, JSON.stringify(first.body)).toBe(200);
     const again = await s('POST', '/api/staffmp/academy/daily/answer', token, body);
     expect(again.body).toMatchObject({ questionId: item.questionId, correct: first.body.correct, dueOn: first.body.dueOn });
-    expect((await s('GET', '/api/staffmp/academy/me', token)).status).toBe(200);
-    expect((await s('GET', '/api/staffmp/academy/rank', token)).status).toBe(200);
   });
 
-  it('白名单外的学堂接口（带教签核、问柚子）、管理端、直接打里面的地址一律 404', async () => {
+  it('白名单外的学堂接口（带教签核、问柚子、评分、我的、地图列表、榜单）、管理端、直接打里面的地址一律 404', async () => {
     for (const [method, url] of [
+      ['GET', '/api/staffmp/academy/me'],
+      ['GET', '/api/staffmp/academy/paths'],
+      ['GET', '/api/staffmp/academy/rank'],
       ['GET', '/api/staffmp/academy/coach'],
       ['POST', '/api/staffmp/academy/signoffs'],
       ['GET', `/api/staffmp/academy/courses/${courseId}/tutor`],

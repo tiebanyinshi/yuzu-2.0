@@ -63,20 +63,20 @@ const ARTICLE = [
 describe('课件的块', () => {
   const views = blockViews(parseAcademyMarkup(ARTICLE).blocks);
 
-  it('按学堂解析好的块画：正文切出加粗，提示块带标题，小测带作答的样子', () => {
-    expect(views.map((v) => v.type)).toEqual(['heading', 'paragraph', 'callout', 'question', 'question']);
+  it('按学堂解析好的块画：正文切出加粗，提示块带标题，课中小测带作答的样子；题库题（:::question）与学堂网页一样不画', () => {
+    expect(views.map((v) => v.type)).toEqual(['heading', 'paragraph', 'callout', 'question']);
+    expect(views.map((v) => v.i)).toEqual([0, 1, 2, 3]);
     const p = views[1]!;
     expect(p.type === 'paragraph' && p.segs.filter((g) => g.bold).map((g) => g.text)).toEqual(['三个']);
     const c = views[2]!;
     expect(c.type === 'callout' && [c.tone, c.title, c.lines.length]).toEqual(['ban', '不宜泡汤', 2]);
     const q = views[3]!;
     expect(q.type === 'question' && [q.check, q.q.multi, q.st.revealed, q.st.opts.length]).toEqual([true, false, false, 2]);
-    const m = views[4]!;
-    expect(m.type === 'question' && [m.check, m.q.multi]).toEqual([false, true]);
-    expect(unansweredCount(views)).toBe(2);
+    expect(unansweredCount(views)).toBe(1);
   });
 
   it('课中小测：单选点了就亮答案（对错、标出对的）；多选选好了再对答案；都答过才能点「学完了」', () => {
+    const multi = blockViews(parseAcademyMarkup([':::check', '哪些人不宜泡汤？', '- [x] 酒后的', '- [x] 空腹的', '- [ ] 刚运动完歇过的', ':::'].join('\n')).blocks);
     const q = views[3]!;
     if (q.type !== 'question') throw new Error('not a question');
     const wrong = questionState(q.q, toggleChoice([], 0, false), true);
@@ -86,8 +86,8 @@ describe('课件的块', () => {
       [false, true, false],
     ]);
     expect(questionState(q.q, [1], true).correct).toBe(true);
-    const m = views[4]!;
-    if (m.type !== 'question') throw new Error('not a question');
+    const m = multi[0]!;
+    if (m.type !== 'question' || !m.q.multi) throw new Error('not a multi question');
     let chosen = toggleChoice([], 1, true);
     chosen = toggleChoice(chosen, 0, true);
     expect(chosen).toEqual([0, 1]);

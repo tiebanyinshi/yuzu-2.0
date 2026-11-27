@@ -2,6 +2,8 @@
 //   · 客观题：选了点「交」，门店系统判对错、给答案与解析、算下次什么时候再出；
 //   · 问答卡：先自己想，点「看答案」再自评（忘了 / 模糊 / 记得 / 很熟）。
 // 作答带操作编号，先存在手机上再发（「结果待确认」，AGENTS.md）：没收到回复的只能原样重提，门店系统按编号认出来回同一次。
+//   · 同一天、同一道题留着没确定的：这道题一出来就是「再交一次」（交的是原来那一次），不让重新作答；
+//   · 以前哪天留着的：进来先在后台原样重提掉（门店系统回那一次的结果），再取今天的题。
 
 import type { StaffMpMe } from '../../../../src/shared/staffmp';
 import type { AcademyDaily, AcademyDailyAnswer } from '../../../../src/shared/academy';
@@ -10,7 +12,8 @@ import { dailyAnswerLine, dailyLine, GRADES, loadDaily, optionViews, toggleChoic
 import { isApiError, isOffline, messageOf } from '../../utils/api';
 import { requireMe, toLogin } from '../../utils/guard';
 import type { PendingOp } from '../../utils/pending';
-import { loadPending, SAVE_FAILED, sendPending } from '../../utils/pending';
+import { listPending, loadPending, SAVE_FAILED, sendPending } from '../../utils/pending';
+import { storeClock } from '../../utils/format';
 import { largeTextOn } from '../../utils/prefs';
 import { uuid } from '../../utils/uuid';
 
@@ -37,6 +40,8 @@ Page({
     busy: false,
     notice: '',
     unsure: false,
+    /** 门店系统明确拒绝了这一题（题改过、停用了）：给「跳过」「刷新」 */
+    rejected: false,
     finished: '',
     grades: GRADES,
   },
@@ -58,6 +63,13 @@ Page({
 
   async load() {
     const my = ++gen;
+    if (me) {
+      // 以前哪天没确定的作答：原样重提掉（回那一次的结果），免得今天这道题一出来就被当成那一次
+      const today = storeClock().date;
+      const stale = listPending(me.staff.id, 'academy_daily').filter((op) => storeClock(new Date(op.at)).date < today);
+      await Promise.all(stale.map((op) => sendPending(op).catch(() => undefined)));
+      if (my !== gen) return;
+    }
     try {
       const d = await loadDaily();
       if (my !== gen) return;
@@ -95,8 +107,16 @@ Page({
       answered: null,
       notice: '',
       unsure: false,
+      rejected: false,
       finished: '',
     });
+    // 这道题今天交过、没收到回复的：只能原样再交那一次（标出当时选的）
+    const prior = me ? loadPending(me.staff.id, 'academy_daily', it.questionId) : null;
+    if (prior) {
+      const sent = Array.isArray(prior.body.choice) ? (prior.body.choice as number[]) : [];
+      chosen = sent;
+      this.setData({ opts: optionViews(it.options, sent, null), showAnswer: it.kind === 'recall', notice: UNSURE, unsure: true });
+    }
   },
 
   onOption(e: WechatMiniprogram.TouchEvent) {
@@ -129,8 +149,10 @@ Page({
     const key = prior ? prior.key : uuid();
     const body = prior ? prior.body : { clientKey: key, questionId: it.questionId, version: it.version, ...extra };
     const op: PendingOp = { staffId: me.staff.id, kind: 'academy_daily', key, path: '/academy/daily/answer', body, at: prior ? prior.at : Date.now(), label: '每日一练', ref: it.questionId };
-    this.setData({ busy: true, notice: '', unsure: false });
+    const my = gen;
+    this.setData({ busy: true, notice: '', unsure: false, rejected: false });
     const out = await sendPending<AcademyDailyAnswer>(op);
+    if (my !== gen) return;
     this.setData({ busy: false });
     if (out.status === 'ok') {
       const a = out.data;
@@ -146,8 +168,18 @@ Page({
     }
     if (out.status === 'signed_out') return toLogin();
     if (out.status === 'not_sent') return this.setData({ notice: SAVE_FAILED });
-    if (out.status === 'rejected') return this.setData({ notice: messageOf(out.error) });
+    if (out.status === 'rejected') return this.setData({ notice: messageOf(out.error), rejected: true });
     this.setData({ notice: UNSURE, unsure: true });
+  },
+
+  onSkip() {
+    this.show(this.data.idx + 1);
+  },
+
+  onReload() {
+    daily = null;
+    this.setData({ state: 'loading', rejected: false, notice: '' });
+    this.load();
   },
 
   onResend() {

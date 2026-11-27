@@ -51,6 +51,22 @@ export function loadPending(staffId: number, kind: PendingKind, ref?: number): P
   }
 }
 
+/** 这个人这一类留着的全部（学堂开新卷、进每日一练时把以前没确定的先原样重提掉） */
+export function listPending(staffId: number, kind: PendingKind): PendingOp[] {
+  try {
+    const prefix = `wcp_pending:${staffId}:${kind}`;
+    const keys = wx.getStorageInfoSync().keys.filter((k) => k === prefix || k.startsWith(`${prefix}:`));
+    const out: PendingOp[] = [];
+    for (const k of keys) {
+      const v = wx.getStorageSync(k) as PendingOp | '';
+      if (v && typeof v.key === 'string' && v.kind === kind) out.push(v);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export function clearPending(staffId: number, kind: PendingKind, ref?: number): void {
   try {
     wx.removeStorageSync(keyOf(staffId, kind, ref));
