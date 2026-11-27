@@ -380,7 +380,7 @@ export async function listPurchaseFlows(db: Db, actor: Actor, timezone: string, 
 }
 
 /**
- * 流程进度排序（8.2.6 R2）：空值排最后（不论升降）；同值按单号再排。停留时长 = 现在 − 最近一次往前走（越久越长）；
+ * 流程进度排序（8.2.12 R2）：空值排最后（不论升降）；同值按单号再排。停留时长 = 现在 − 最近一次往前走（越久越长）；
  * 紧急程度按权重（紧急 > 较急 > 普通），相同时先发起的在前
  */
 function flowComparator(sort: FlowSort, dir: SortDir, ms: (v: string | null) => number | null) {

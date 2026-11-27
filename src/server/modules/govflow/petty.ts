@@ -58,7 +58,7 @@ const addDays = (day: string, n: number) => {
 };
 const yuan = (cents: number) => `¥${formatAmount(cents)}`;
 
-/** 部门额度：最近一次核定（生效月 ≤ 本月）的；没有就按「流程与阈值」里的默认（预置日 1 万、月 5 万，8.2.10 起后台可改） */
+/** 部门额度：最近一次核定（生效月 ≤ 本月）的；没有就按「流程与阈值」里的默认（预置日 1 万、月 5 万，8.2.15 起后台可改） */
 async function limitsOf(db: Db, deptId: number, day: string, rules?: GfRules) {
   const [q] = await db<{ dailyCents: number; monthlyCents: number }[]>`
     SELECT daily_cents, monthly_cents FROM gf_dept_quotas WHERE department_id = ${deptId} AND effective_month <= ${monthStart(day)}::date
@@ -150,7 +150,7 @@ interface Assessment {
 }
 
 /**
- * 预检与正式提交共用的判定（正式提交时在锁里再算一遍，页面预检不算占用）。阈值按「流程与阈值」里现在的（8.2.10）。
+ * 预检与正式提交共用的判定（正式提交时在锁里再算一遍，页面预检不算占用）。阈值按「流程与阈值」里现在的（8.2.15）。
  * 「流程与阈值 → 试算」也用它（opts.skipOverdue：试算不看保管人逾期）。
  */
 export async function assess(db: Db, actor: Pick<Actor, 'id'>, input: z.infer<typeof PettyFields>, today: string, opts: { skipOverdue?: boolean } = {}): Promise<Assessment> {
@@ -303,7 +303,7 @@ async function releaseFrozen(tx: Tx, doc: DocRow, actorId: number, why: string) 
 }
 
 registerHooks('petty_purchase', {
-  // 超出基础审核的那一级由升级审核角色审（8.2.10，WB4），按提交那一刻的设置
+  // 超出基础审核的那一级由升级审核角色审（8.2.15，WB4），按提交那一刻的设置
   template: async (doc, db) =>
     pettyTemplate({ needSpecial: doc.payload.needSpecial === true, tier: doc.payload.tier as PettyTier | undefined, escalationRole: (await loadGfRules(db)).pettyEscalationRole }),
   fixedNodes: (doc) => (doc.payload.needSpecial === true ? [PETTY_SPECIAL_NODE] : []),
@@ -522,6 +522,6 @@ export function registerPettyRoutes(app: FastifyInstance, deps: Deps) {
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`;
     return { departmentId };
   });
-  // 8.2.10：带上现在的阈值（零星采购页的说明按它写）
+  // 8.2.15：带上现在的阈值（零星采购页的说明按它写）
   app.get('/api/gf/settings', { preHandler: staffOnly }, async () => ({ purchaseDeptId: await purchaseDeptId(sql), rules: await loadGfRules(sql) }));
 }

@@ -80,7 +80,7 @@ export interface PoRevision {
   };
 }
 
-// ───────────────────────── 自购（8.2.8，《采购模块需求补充》R3，docs/V828_SELF_PURCHASE.md） ─────────────────────────
+// ───────────────────────── 自购（8.2.13，《采购模块需求补充》R3，docs/V8213_SELF_PURCHASE.md） ─────────────────────────
 
 export const PURCHASE_METHODS = ['supplier', 'self'] as const;
 export type PurchaseMethod = (typeof PURCHASE_METHODS)[number];
@@ -112,7 +112,7 @@ export interface PurchaseOrder {
   id: number;
   docNo: string;
   status: PoStatus;
-  /** 供应商采购的供应商；自购为空（8.2.8） */
+  /** 供应商采购的供应商；自购为空（8.2.13） */
   supplier: Ref | null;
   purchaseMethod: PurchaseMethod;
   /** 自购信息（供应商采购为空） */
@@ -181,7 +181,7 @@ export interface PoSummary {
   id: number;
   docNo: string;
   status: PoStatus;
-  /** 自购的写「自购 · 渠道」（8.2.8） */
+  /** 自购的写「自购 · 渠道」（8.2.13） */
   supplierName: string;
   purchaseMethod: PurchaseMethod;
   channel: ChannelRef | null;
@@ -197,7 +197,7 @@ export interface PoSummary {
   receiving: ReceivingState;
   createdByName: string;
   createdAt: string;
-  /** 紧急程度（8.2.6 R2）：关联需求单里最急的那张；没关联需求单的为空 */
+  /** 紧急程度（8.2.12 R2）：关联需求单里最急的那张；没关联需求单的为空 */
   priority: 'urgent' | 'high' | 'normal' | null;
 }
 

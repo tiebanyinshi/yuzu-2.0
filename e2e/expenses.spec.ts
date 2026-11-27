@@ -1,5 +1,5 @@
 // v0.7.7 费用报销与备用金浏览器验收（飞书需求 RQ-005 第一步，见 docs/EXPENSES.md）：
-//   店主在 ERP「费用与备用金」登记打款 → 从打款「用这笔钱登记报销」（按次、无票）→ 报销提交后由负责人审批（8.2.6 起不再登记即确认）
+//   店主在 ERP「费用与备用金」登记打款 → 从打款「用这笔钱登记报销」（按次、无票）→ 报销提交后由负责人审批（8.2.12 起不再登记即确认）
 //   → 回到打款登记退回（金额默认是未退回）→ 这笔打款已平，每日平账里也是已平；自检全部通过。
 // 依赖四套演示数据（仅独立演示库）；账号：店主 linlan，密码 yuzu2026。只在门店电脑尺寸执行。
 import { expect, test, type Page } from '@playwright/test';
@@ -59,7 +59,7 @@ test.describe('费用与备用金', () => {
     await page.getByTestId('line-cat-0').selectOption('office');
     await page.getByTestId('line-unit-0').fill('包');
     await page.getByTestId('line-amount-0').fill('120');
-    // 8.2.6（B1）：不再登记即确认，店主自己登记的由别人审
+    // 8.2.12（B1）：不再登记即确认，店主自己登记的由别人审
     await expect(page.getByTestId('claim-approval-hint')).toHaveText('提交后要负责人审批（自己不能确认自己的报销）');
     await page.getByTestId('claim-submit').click();
 

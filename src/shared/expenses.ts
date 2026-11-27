@@ -53,10 +53,10 @@ export function invoiceTypeCertifies(t: Pick<InvoiceTypeDef, 'key' | 'certify'>)
 }
 
 export interface ExpenseRules {
-  /** 单笔超过这个金额要负责人确认（D13：默认 2000 元，可调）；8.2.6 起只在「门槛以内自动确认」打开时才有用 */
+  /** 单笔超过这个金额要负责人确认（D13：默认 2000 元，可调）；8.2.12 起只在「门槛以内自动确认」打开时才有用 */
   approvalThresholdCents: number;
   /**
-   * 门槛以内登记即确认（8.2.6，《业财法审批与 WCP 需求变更》B1 / 7.3：去掉默认自动通过）：默认关，全部报销都要审批；
+   * 门槛以内登记即确认（8.2.12，《业财法审批与 WCP 需求变更》B1 / 7.3：去掉默认自动通过）：默认关，全部报销都要审批；
    * 页面上不给改（Q9：不开放给普通配置），要恢复旧做法只能直接改设置（会写进 docs/PENDING_DECISIONS.md WB9）
    */
   autoConfirmBelowThreshold: boolean;

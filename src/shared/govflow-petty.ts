@@ -8,13 +8,13 @@
 //   · 负责人自购：部门负责人直接用备用金自购，不需采购部门审批（采购部门只收记录），不免验收（部门里另一名员工验收、办部门小仓入库），发票冲抵；
 //   · 逾期：验收期限过了没验收的，限制经办人（保管人）新增借款，恢复要财总复核；
 //   · 月度额度核定：内控提建议，财总＋CFO 共同审批，次月生效，不自动升降。
-// 8.2.10（WB4）：上面这些数后台可改（「业财法 → 流程与阈值」，存在 gf_settings 的 rules 一行），没存过的按下面的默认值，升级后行为不变；
+// 8.2.15（WB4）：上面这些数后台可改（「业财法 → 流程与阈值」，存在 gf_settings 的 rules 一行），没存过的按下面的默认值，升级后行为不变；
 //   超出基础审核（超 3,000 元或 50 件）的那一级由「升级审核角色」审，默认财总（财务负责人），可改回财务审核人（不加层级）。
 
 import { GF_ROLE_SHORT, WAN, YUAN, type GfNode, type GfRole } from './govflow';
 import { formatAmount } from './money';
 
-/** 业财法的阈值（8.2.10 起后台可改；金额都是分） */
+/** 业财法的阈值（8.2.15 起后台可改；金额都是分） */
 export interface GfRules {
   /** 零星采购基础审核：单笔（同日同供应商合并）不超过这个金额 */
   pettyBasicCents: number;
@@ -101,12 +101,12 @@ export function purchaseDeptCheck(cumBefore: number, amount: number, urgent: boo
   return urgent ? 'special' : 'formal';
 }
 
-/** 超部门额度或采购部门紧急超额的财总＋CFO 合并特批（8.2.10：店主改了零星采购的流程也照样追加在最后） */
+/** 超部门额度或采购部门紧急超额的财总＋CFO 合并特批（8.2.15：店主改了零星采购的流程也照样追加在最后） */
 export const PETTY_SPECIAL_NODE: GfNode = { kind: 'all', roles: ['finance_chief', 'cfo'], label: '财总＋CFO 合并特批', stage: 'special' };
 
 /**
  * 零星采购的审批链：普通员工发起先过部门负责人（负责人自购这一级自动视同确认），再财务审核人基础审核（超出的加比价说明，不加层级）；
- * 超出基础审核的，财务那一级改由升级审核角色审（8.2.10，WB4：默认财总；escalationRole 为空照旧财务审核人）；
+ * 超出基础审核的，财务那一级改由升级审核角色审（8.2.15，WB4：默认财总；escalationRole 为空照旧财务审核人）；
  * 超部门额度或采购部门紧急超 1 万的，加一级财总＋CFO 共同审批（合并成一次）。
  */
 export function pettyTemplate(input: { needSpecial: boolean; tier?: PettyTier; escalationRole?: GfRole | null }): GfNode[] {

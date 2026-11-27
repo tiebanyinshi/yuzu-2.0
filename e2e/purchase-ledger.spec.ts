@@ -58,7 +58,7 @@ test.describe('采购台账、账目自检、下单物料', () => {
         },
       })
     ).json()) as { claim: { id: number; docNo: string } };
-    // 8.2.6（B1）：报销不再登记即确认，由临时负责人审
+    // 8.2.12（B1）：报销不再登记即确认，由临时负责人审
     await deputyApproveClaim(await makeDeputy(page, playwright, baseURL), claim.claim.id);
 
     // 带规格与图片的采购单（提交并确认）

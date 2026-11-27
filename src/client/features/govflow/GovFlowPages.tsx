@@ -583,7 +583,7 @@ function SpecialDialog({ meta, docId, onClose }: { meta: GfMeta; docId: number |
   const [b, setB] = useState<number | ''>('');
   const [payeeAccount, setPayeeAccount] = useState('');
   const [at, setAt] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16));
-  // 微信 OK 截图（8.2.11，WB6）：登记时必传
+  // 微信 OK 截图（8.2.16，WB6）：登记时必传
   const [shot, setShot] = useState<File | null>(null);
   const cents = yuanToCents(amount);
   const m = useMutation({

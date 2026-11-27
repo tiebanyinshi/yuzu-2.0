@@ -2,7 +2,7 @@
 //
 // 口径：
 //   · 每笔打款单独平账，只算已确认的报销：应退回 = 打款 − 支出；实际退回 = 退回 − 补付；未退回 = 应退回 − 实际退回。
-//   · 报销单都要审批（8.2.6，《业财法审批与 WCP 需求变更》B1：原来门槛以内登记即确认，现在默认关）；提交人不能审自己的单；
+//   · 报销单都要审批（8.2.12，《业财法审批与 WCP 需求变更》B1：原来门槛以内登记即确认，现在默认关）；提交人不能审自己的单；
 //     查不到能审的人时单据停在待审、告诉店主，不自动通过。内容不可改，错了撤回或冲销后重新登记。
 //   · 按采购单报销只能选现付供应商的采购单；采购单的每一行只能在一张有效的报销单里。
 //   · 打款、退回、补付登记即生效，错了由负责人冲销。
@@ -480,7 +480,7 @@ const poIsCash = (db: Db) => db`
             WHERE d.purchase_order_id = p.id AND d.doc_type = 'receipt' AND d.status = 'confirmed' AND d.settlement IS NOT NULL
             ORDER BY d.confirmed_at, d.id LIMIT 1),
            CASE WHEN EXISTS (SELECT 1 FROM expense_claims c WHERE c.purchase_order_id = p.id AND c.status IN ${db(ACTIVE_CLAIM)}) THEN 'cash' END,
-           -- 自购（8.2.8）没有供应商：按现付，在报销里报（员工垫付 / 备用金）
+           -- 自购（8.2.13）没有供应商：按现付，在报销里报（员工垫付 / 备用金）
            CASE WHEN p.purchase_method = 'self' THEN 'cash' END,
            s.settlement) = 'cash'`;
 /** 采购单行 pl 已在有效的报销单里 */
@@ -708,7 +708,7 @@ async function lockAdvance(tx: Tx, advanceId: number) {
 
 export async function createClaim(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
   const input = parse(ClaimInput, raw);
-  // 8.2.6（B1 / 7.3 第 4 条）：不再有「登记时同时以负责人身份确认」，报销都要别人审
+  // 8.2.12（B1 / 7.3 第 4 条）：不再有「登记时同时以负责人身份确认」，报销都要别人审
   if (input.approveNow) throw forbidden('报销不能由登记的人自己确认，请提交给负责人审批');
   assertNotFuture(input.expenseDate, deps.config.timezone);
   const rules = await loadExpenseRules(deps.sql);
@@ -1374,7 +1374,7 @@ export function registerExpenseRoutes(app: FastifyInstance, deps: Deps) {
           invoiceCertifyDays: rules.invoiceCertifyDays ?? before.invoiceCertifyDays,
           invoiceRemindDays: rules.invoiceRemindDays ?? before.invoiceRemindDays,
           invoiceTaxToleranceCents: rules.invoiceTaxToleranceCents ?? before.invoiceTaxToleranceCents,
-          // 8.2.6（B1，Q9）：页面不改这一项，存过的原样留着（默认关）
+          // 8.2.12（B1，Q9）：页面不改这一项，存过的原样留着（默认关）
           autoConfirmBelowThreshold: before.autoConfirmBelowThreshold,
         };
         return typeof legacy === 'number' ? ({ ...merged, arrivalOverdueDays: legacy } as ExpenseRules) : merged;
@@ -1397,7 +1397,7 @@ export function registerExpenseRoutes(app: FastifyInstance, deps: Deps) {
     await writeAudit(sql, { staffId: req.actor.id, action: 'export', targetType: 'expense_claims', detail: f, ip: req.ip });
     return csvReply(reply, `费用报销明细_${f.from}_${f.to}.csv`, csv);
   });
-  // 8.2.6（7.4）：没经过审批就通过的报销清单
+  // 8.2.12（7.4）：没经过审批就通过的报销清单
   app.get('/api/erp/expenses/auto-approved', { preHandler: guard('expense.export') }, async (req, reply) => {
     const csv = await readSnapshot(sql, autoApprovedCsv);
     await writeAudit(sql, { staffId: req.actor.id, action: 'export', targetType: 'expense_claims', detail: { list: 'auto_approved' }, ip: req.ip });

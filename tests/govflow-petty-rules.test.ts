@@ -16,7 +16,7 @@ describe('零星采购分级', () => {
     expect(pettyAllowed('goods')).toBe(true);
     for (const k of ['contract', 'engineering', 'service_outsource', 'prepay', 'fixed_asset'] as const) expect(pettyAllowed(k)).toBe(false);
   });
-  it('阈值后台可改（8.2.10）：基础审核线跟着变，提示里写现在的数', () => {
+  it('阈值后台可改（8.2.15）：基础审核线跟着变，提示里写现在的数', () => {
     expect(pettyTier(300_001, 1, { pettyBasicCents: 500_000, pettyBasicQty: 50 })).toBe('basic');
     expect(pettyTier(100, 11, { pettyBasicCents: 500_000, pettyBasicQty: 10 })).toBe('enhanced');
     expect(pettyBasicText(R)).toBe('3,000 元或 50 件');

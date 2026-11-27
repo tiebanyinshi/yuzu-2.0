@@ -1,5 +1,5 @@
 // 业财法各类事项的审批模板：通用事项在这里，其他类型由各自的模块通过 registerHooks 登记 template。
-// 8.2.10：店主在「流程与阈值」里给这类事项存了自己的流程的，用店主的（再追加 fixedNodes，例如零星采购超额的合并特批）；没存或清除了的用内置的。
+// 8.2.15：店主在「流程与阈值」里给这类事项存了自己的流程的，用店主的（再追加 fixedNodes，例如零星采购超额的合并特批）；没存或清除了的用内置的。
 
 import { generalTemplate, type GfNode } from '@shared/govflow';
 import type { Db } from '../../db';

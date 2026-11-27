@@ -121,7 +121,7 @@ async function activeSubjects(db: Db): Promise<ApproverSubject[]> {
 }
 
 /**
- * 刚开的审批单当前这一级有没有人能审（8.2.6，B1 / 7.3：查不到审批人的单停在待审并告警，不自动通过）。
+ * 刚开的审批单当前这一级有没有人能审（8.2.12，B1 / 7.3：查不到审批人的单停在待审并告警，不自动通过）。
  * 没有在审的审批单返回 false
  */
 export async function pendingStuck(db: Db, kind: ApprovalDocKind, docId: number): Promise<boolean> {

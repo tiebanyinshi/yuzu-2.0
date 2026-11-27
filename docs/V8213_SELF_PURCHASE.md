@@ -1,7 +1,7 @@
-# 8.2.8 · 采购：无供应商自购
+# 8.2.13 · 采购：无供应商自购
 
-《汤崎 ERP｜采购模块 需求补充文档（单号搜索 / 排序 / 无供应商自购）v0.1》第 3 部分。8.2.7 做了单号直达与排序（`docs/V827_APPROVALS_PURCHASING.md`），这一版是第 3 批。
-待确认项按文档建议（`docs/PENDING_DECISIONS.md` PS-A、PS5–PS8）。数据库迁移 `590`，回滚 `docs/rollback/590_self_purchase.down.sql`。
+《汤崎 ERP｜采购模块 需求补充文档（单号搜索 / 排序 / 无供应商自购）v0.1》第 3 部分。8.2.12 做了单号直达与排序（`docs/V8212_APPROVALS_PURCHASING.md`），这一版是第 3 批。
+待确认项按文档建议（`docs/PENDING_DECISIONS.md` PS-A、PS5–PS8）。数据库迁移 `700`，回滚 `docs/rollback/700_self_purchase.down.sql`。
 
 ## 1. 核对时（C5、C6）
 

@@ -233,7 +233,7 @@ export async function summaries(
     from?: string;
     to?: string;
     timezone?: string;
-    /** 按单号 / 商城单号（不管大小写与分隔符）或物品名称搜（8.2.6 R1） */
+    /** 按单号 / 商城单号（不管大小写与分隔符）或物品名称搜（8.2.12 R1） */
     q?: string;
   },
 ) {
@@ -1014,7 +1014,7 @@ const ListQuery = z.object({
   // 按提交日期筛选（v0.7.9）
   from: docDateSchema.optional(),
   to: docDateSchema.optional(),
-  /** 8.2.6（R1）：单号、商城单号或物品名称 */
+  /** 8.2.12（R1）：单号、商城单号或物品名称 */
   q: z.string().trim().max(64).optional(),
 });
 const ExportQuery = ListQuery.extend({ from: docDateSchema, to: docDateSchema });

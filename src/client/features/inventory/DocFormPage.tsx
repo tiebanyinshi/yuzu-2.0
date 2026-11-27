@@ -572,7 +572,7 @@ function DocForm({
   }, [source.data, sourceType, form.lines.length, form.sourceDocId]);
 
   // ── 按采购单收货 ──
-  // 自购（8.2.8）：采购单没有供应商；供应商选「自购（不选供应商）」时列自购的采购单
+  // 自购（8.2.13）：采购单没有供应商；供应商选「自购（不选供应商）」时列自购的采购单
   const po = usePo(central && type === 'receipt' ? form.purchaseOrderId : null);
   const [selfMode, setSelfMode] = useState(false);
   const selfReceipt = selfMode || po.data?.purchaseMethod === 'self';
@@ -582,7 +582,7 @@ function DocForm({
   const choosePo = (poId: number | null) => patch({ purchaseOrderId: poId, lines: [] });
   useEffect(() => {
     if (!po.data || po.data.id !== form.purchaseOrderId) return;
-    // 自购（8.2.8）的采购单没有供应商：收货单也不选供应商
+    // 自购（8.2.13）的采购单没有供应商：收货单也不选供应商
     if (!form.supplierId && po.data.supplier) patch({ supplierId: po.data.supplier.id });
     if (form.lines.length > 0) return;
     // 带出未到齐的行：送达默认按剩余数量（能整箱时按箱），单价取采购单

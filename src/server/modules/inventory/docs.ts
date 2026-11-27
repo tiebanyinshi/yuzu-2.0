@@ -108,7 +108,7 @@ const DocBody = z.discriminatedUnion('docType', [
   z.object({
     docType: z.literal('receipt'),
     ...Header,
-    /** 挂自购采购单（8.2.8）的收货单没有供应商，不传或传 null */
+    /** 挂自购采购单（8.2.13）的收货单没有供应商，不传或传 null */
     supplierId: id.nullable().default(null),
     purchaseOrderId: id.nullable().default(null),
     handler: z.string().trim().max(32).default(''),
@@ -911,7 +911,7 @@ async function prepare(
     }
 
     case 'receipt': {
-      // 自购采购单（8.2.8）：没有供应商，收货单也不选供应商；别的收货照旧要选在用的供应商
+      // 自购采购单（8.2.13）：没有供应商，收货单也不选供应商；别的收货照旧要选在用的供应商
       const [selfPo] = body.purchaseOrderId ? await db<{ self: boolean }[]>`SELECT purchase_method = 'self' AS self FROM purchase_orders WHERE id = ${body.purchaseOrderId}` : [];
       if (selfPo?.self) {
         if (body.supplierId !== null) throw unprocessable('PO_SUPPLIER_MISMATCH', '自购的采购单没有供应商，收货单不选供应商');

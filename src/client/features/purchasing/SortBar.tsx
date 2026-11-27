@@ -1,4 +1,4 @@
-// 排序条（8.2.6，《采购模块需求补充》R2）：采购单列表、流程进度共用。点一列：降序 → 升序 → 恢复默认；排序在服务端做，存在网址里（刷新、翻页不丢）
+// 排序条（8.2.12，《采购模块需求补充》R2）：采购单列表、流程进度共用。点一列：降序 → 升序 → 恢复默认；排序在服务端做，存在网址里（刷新、翻页不丢）
 
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { nextSort, type SortDir } from '@shared/purchase-sort';

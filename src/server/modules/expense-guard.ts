@@ -1,4 +1,4 @@
-// 报销不自动通过（8.2.6，《业财法审批与 WCP 需求变更》B1、7.3、7.4）：查不到审批人时告警；没经过审批就通过的历史清单。
+// 报销不自动通过（8.2.12，《业财法审批与 WCP 需求变更》B1、7.3、7.4）：查不到审批人时告警；没经过审批就通过的历史清单。
 // 报销的登记、审批在 expenses.ts。
 
 import { formatAmount } from '@shared/money';
@@ -9,7 +9,7 @@ import { notify } from './oa';
 
 const yuan = (cents: number) => (cents < 0 ? '-' : '') + formatAmount(Math.abs(cents)).replace(/,/g, '');
 
-// ───────────────────────── 查不到审批人（8.2.6，B1 / 7.3 第 2 条） ─────────────────────────
+// ───────────────────────── 查不到审批人（8.2.12，B1 / 7.3 第 2 条） ─────────────────────────
 
 /** 报销单刚提交、这一级没有人能审：单据照样停在待审（不自动通过），通知店主去「审批规则」里配 */
 export async function alertIfNoApprover(tx: Tx, claimId: number, docNo: string) {
@@ -23,7 +23,7 @@ export async function alertIfNoApprover(tx: Tx, claimId: number, docNo: string) 
 }
 
 /**
- * 没经过审批就通过了的报销（8.2.6，《业财法审批与 WCP 需求变更》7.4）：交财务确认后再定补审、标异常或批量注明（Q8）。
+ * 没经过审批就通过了的报销（8.2.12，《业财法审批与 WCP 需求变更》7.4）：交财务确认后再定补审、标异常或批量注明（Q8）。
  * ERP 费用报销：已确认、但「登记即确认」（needs_approval = false）、确认人就是登记人、或确认早于登记；
  * WCP 审批里的报销：已通过、一级审批都没有。只读，不改任何单据
  */

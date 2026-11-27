@@ -264,7 +264,7 @@ describe('微信特批补登', () => {
       confirmedAt: new Date().toISOString(),
       okScreenshot: okShot('p01'),
     };
-    // 8.2.11（WB6）：登记时必传 OK 截图
+    // 8.2.16（WB6）：登记时必传 OK 截图
     expect((await api(ctx.app, c('gf_clerk'), 'POST', '/api/gf/specials', { ...body, clientKey: randomUUID(), okScreenshot: undefined })).status).toBe(400);
     const s = await api(ctx.app, c('gf_clerk'), 'POST', '/api/gf/specials', body);
     expect(s.status, JSON.stringify(s.body)).toBe(200);

@@ -35,7 +35,7 @@ export function PurchasingPage() {
   const status = params.get('status') ?? '';
   const supplierId = params.get('supplier') ?? '';
   const suppliers = useSuppliers(true);
-  // 8.2.6（R2）：排序与翻页在服务端做，存在网址里
+  // 8.2.12（R2）：排序与翻页在服务端做，存在网址里
   const sort = sortFromParams(params, PO_SORTS);
   const page = Math.max(0, Number(params.get('page')) || 0);
   const pos = usePos({

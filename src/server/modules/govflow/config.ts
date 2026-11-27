@@ -1,4 +1,4 @@
-// 业财法「流程与阈值」（8.2.10，《业财法审批与 WCP 需求变更》A2，WB4，设计见 docs/V8210_GF_CONFIG.md）。都要「配置业财法角色」权限（gf.roles，店主）。
+// 业财法「流程与阈值」（8.2.15，《业财法审批与 WCP 需求变更》A2，WB4，设计见 docs/V8215_GF_CONFIG.md）。都要「配置业财法角色」权限（gf.roles，店主）。
 //   GET  /api/gf/config                          阈值（含默认值）+ 每类事项现在用的流程
 //   PUT  /api/gf/config/rules                    改阈值（写操作日志，带改前改后）
 //   PUT  /api/gf/config/flows/:docType           存这类事项自己的流程（审批链 / 知会角色），追加一版

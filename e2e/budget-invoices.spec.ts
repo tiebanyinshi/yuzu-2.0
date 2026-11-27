@@ -32,7 +32,7 @@ test.describe('费用预算与发票台账', () => {
     const dept = depts.find((d) => d.name === deptName)!;
     expect(dept).toBeTruthy();
     try {
-      // 8.2.6（B1）：店主自己登记的报销店主不能审；这个部门的「超预算报销」临时交给一位临时负责人
+      // 8.2.12（B1）：店主自己登记的报销店主不能审；这个部门的「超预算报销」临时交给一位临时负责人
       const deputy = await makeDeputy(page, playwright, baseURL);
       const rule = await page.request.post('/api/approvals/rules', {
         data: { clientKey: crypto.randomUUID(), docType: 'expense_over_budget', departmentId: dept.id, steps: [{ staffIds: [deputy.id], mode: 'any' }], note: `E2E 预算 ${run}` },
@@ -114,7 +114,7 @@ async function budgetsAndInvoices(page: Page, dept: { id: number; name: string }
   const claimSheet = page.getByTestId('claim-sheet');
   await expect(claimSheet).toContainText('超预算');
   await expect(page.getByTestId('claim-budget-check')).toContainText('超出 ¥50.00');
-  // 超预算：走「超预算报销」（这个部门的规则交给临时负责人）；店主自己登记的店主不能审（8.2.6，B1）
+  // 超预算：走「超预算报销」（这个部门的规则交给临时负责人）；店主自己登记的店主不能审（8.2.12，B1）
   await expect(claimSheet).toContainText('待确认');
   await expect(page.getByTestId('claim-approve')).toHaveCount(0);
   const claimId = Number(new URL(page.url()).searchParams.get('claim'));

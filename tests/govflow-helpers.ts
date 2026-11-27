@@ -65,7 +65,7 @@ export async function act(ctx: TestContext, cookie: string, id: number, level: n
   return api(ctx.app, cookie, 'POST', `/api/gf/docs/${id}/act`, { clientKey: randomUUID(), action, level, comment });
 }
 
-/** 登记微信特批时必传的 OK 截图（8.2.11，WB6）：合成的 PNG，seed 不同内容就不同（截图复用检测按内容） */
+/** 登记微信特批时必传的 OK 截图（8.2.16，WB6）：合成的 PNG，seed 不同内容就不同（截图复用检测按内容） */
 export const okShot = (seed = 'ok') => ({
   fileName: 'ok.png',
   mime: 'image/png',

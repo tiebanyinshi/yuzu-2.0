@@ -28,7 +28,7 @@ export function FlowPage() {
   const can = useCan();
   const [params, setParams] = useSearchParams();
   const filter = params.get('stage') ?? '';
-  // 8.2.6（R2）：排序在服务端做，存在网址里
+  // 8.2.12（R2）：排序在服务端做，存在网址里
   const sort = sortFromParams(params, FLOW_SORTS);
   const order = sort.key ? `?sort=${sort.key}&dir=${sort.dir}` : '';
   const list = useQuery({ queryKey: ['inv', 'flow', 'list', order], queryFn: () => api.get<PurchaseFlowList>(`/api/purchase-flow/list${order}`), enabled: can('inventory.read') });

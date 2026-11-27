@@ -72,7 +72,7 @@ const claimRaw = (cookie: string, body: Record<string, unknown> = {}) =>
     lines: [line()],
     ...body,
   });
-/** 以前门槛以内会自动确认的（8.2.6 起都要审批）：登记后由负责人（登记人就是负责人时由店主）审批通过 */
+/** 以前门槛以内会自动确认的（8.2.12 起都要审批）：登记后由负责人（登记人就是负责人时由店主）审批通过 */
 const claim = async (cookie: string, body: Record<string, unknown> = {}) => confirmSmallClaim(ctx.app, cookie === approver ? boss : approver, await claimRaw(cookie, body));
 
 const settle = (cookie: string, advanceId: number, kind: 'return' | 'topup', amountCents: number, body: Record<string, unknown> = {}) =>
@@ -171,7 +171,7 @@ describe('费用报销：固定选项与互校', () => {
   });
 });
 
-describe('费用确认（8.2.6 B1：报销都要审批，不再登记即确认）', () => {
+describe('费用确认（8.2.12 B1：报销都要审批，不再登记即确认）', () => {
   it('门槛以内也进待办；自己不能确认、登记时不能同时确认；负责人确认、退回、重新提交、撤回', async () => {
     const before = (await api(ctx.app, approver, 'GET', '/api/inventory/todo-count')).body.count;
     const small = await claimRaw(coster, { lines: [line({ amountCents: 200_000 })] });

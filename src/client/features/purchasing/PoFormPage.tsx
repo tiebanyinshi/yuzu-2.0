@@ -138,7 +138,7 @@ function PoForm({ mode, existing }: { mode: Mode; existing?: PurchaseOrder }) {
   const weighedOk = (l: Line, base: number) => l.weighed && (base === l.origBaseMilli || base + Math.floor((base * (settings.data?.weighTolerancePct ?? 10)) / 100) >= l.receivedMilli);
   const [clientKey] = useState(uuid);
   const [supplierId, setSupplierId] = useState<number | null>(existing?.supplier?.id ?? null);
-  // 自购（8.2.8，R3）：不选供应商、填自购信息；切换采购方式不清空别的内容
+  // 自购（8.2.13，R3）：不选供应商、填自购信息；切换采购方式不清空别的内容
   const [method, setMethod] = useState<PurchaseMethod>(existing?.purchaseMethod ?? 'supplier');
   const [self, setSelf] = useState<SelfState>(() => selfStateFrom(existing, session.staff.id, session.calendarToday));
   const [orderDate, setOrderDate] = useState(existing?.orderDate ?? session.calendarToday);

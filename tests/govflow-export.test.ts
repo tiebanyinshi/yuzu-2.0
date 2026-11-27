@@ -1,4 +1,4 @@
-// 8.2.11 业财法与审批中心导出（A3）、微信特批登记时必传 OK 截图与截图复用提示（A4，WB6、WB7），docs/V8211_GF_EXPORT.md。
+// 8.2.16 业财法与审批中心导出（A3）、微信特批登记时必传 OK 截图与截图复用提示（A4，WB6、WB7），docs/V8216_GF_EXPORT.md。
 
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

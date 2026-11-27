@@ -6,7 +6,7 @@
 //   /api/gf/docs/:id/submit|act|withdraw|execute
 //   /api/gf/specials                  微信特批：登记（两人确认、唯一特批编号）、列表、补登（需求说明 + OK 截图）
 //   /api/gf/files/:id                 下载补登的文件（看得到事项 / 特批的人）
-//   /api/gf/config…                   流程与阈值（8.2.10，config.ts）
+//   /api/gf/config…                   流程与阈值（8.2.15，config.ts）
 
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
@@ -91,7 +91,7 @@ async function listMembers(db: Db): Promise<GfRoleMember[]> {
   return rows.map((r) => ({ ...r, id: Number(r.id), staffId: Number(r.staffId), entityId: r.entityId === null ? null : Number(r.entityId), createdAt: iso(r.createdAt)! }));
 }
 
-/** 变更记录（8.2.9，A1）：加（不是替换别的）、改（替换了旧的一条）、撤（撤销且没有被替换），新的在前 */
+/** 变更记录（8.2.14，A1）：加（不是替换别的）、改（替换了旧的一条）、撤（撤销且没有被替换），新的在前 */
 async function roleChanges(db: Db): Promise<GfRoleChange[]> {
   const rows = await db<(Omit<GfRoleChange, 'at'> & { at: Date })[]>`
     SELECT * FROM (
@@ -393,7 +393,7 @@ async function listSpecials(db: Db, where: Fragment, timeZone: string): Promise<
   const ids = rows.map((r) => Number(r.id));
   const files = await db<{ id: number; ownerId: number; purpose: GfFilePurpose; fileName: string; sizeBytes: number }[]>`
     SELECT id, owner_id, purpose, file_name, size_bytes FROM gf_files WHERE owner_type = 'special' AND owner_id IN ${db(ids)} ORDER BY id`;
-  // OK 截图复用（8.2.11，WB7：只提示、不拦）：同一张截图（内容摘要一样）也用在了别的特批上
+  // OK 截图复用（8.2.16，WB7：只提示、不拦）：同一张截图（内容摘要一样）也用在了别的特批上
   const reused = await db<{ ownerId: number; others: string }[]>`
     SELECT f.owner_id, string_agg(DISTINCT o.special_no, '、') AS others
     FROM gf_files f JOIN gf_files g ON g.sha256 = f.sha256 AND g.owner_type = 'special' AND g.purpose = 'ok_screenshot' AND g.owner_id <> f.owner_id
@@ -429,7 +429,7 @@ async function listSpecials(db: Db, where: Fragment, timeZone: string): Promise<
   }));
 }
 
-/** 登记时的微信 OK 截图（8.2.11，WB6：发起时必传；只收图片） */
+/** 登记时的微信 OK 截图（8.2.16，WB6：发起时必传；只收图片） */
 const OkShotInput = z.object(
   {
     fileName: z.string().trim().min(1).max(120),
@@ -572,7 +572,7 @@ async function backfillSpecial(deps: Deps, id: number, raw: unknown, actor: Acto
     if (!s) throw notFound('没有这笔特批');
     if (s.backfilledAt) throw conflict('GF_BACKFILLED', '这笔特批已经补登过了（补登不重复审批）');
     if (Number(s.registeredBy) !== actor.id && !s.confirmerIds.map(Number).includes(actor.id)) throw forbidden('只有登记人或两位确认人能补登');
-    // 8.2.11 以前登记的特批没有 OK 截图：补登时照旧要补上
+    // 8.2.16 以前登记的特批没有 OK 截图：补登时照旧要补上
     const [shot] = await tx`SELECT 1 FROM gf_files WHERE owner_type = 'special' AND owner_id = ${id} AND purpose = 'ok_screenshot'`;
     if (!shot && !purposes.has('ok_screenshot')) throw unprocessable('GF_BACKFILL_FILES', '这笔特批登记时没有 OK 截图，补登要一起上传');
     for (const f of decoded) {
@@ -596,7 +596,7 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
     if ((NOT_EMPLOYEE_ROLES as readonly string[]).includes(req.actor.role)) throw forbidden('这个账号不能用业财法审批');
   };
   const manage = guard('gf.roles');
-  // 流程与阈值（8.2.10）：在这里挂，不另占 app.ts 一行
+  // 流程与阈值（8.2.15）：在这里挂，不另占 app.ts 一行
   registerGfConfigRoutes(app, deps);
 
   app.get('/api/gf/meta', { preHandler: staffOnly }, async (req): Promise<GfMeta> => {
@@ -647,7 +647,7 @@ export function registerGovflowRoutes(app: FastifyInstance, deps: Deps) {
     return listMembers(sql);
   });
 
-  // 修改（8.2.9，A1、WB1）：换人、改经营主体范围、改备注；角色不能改。旧的一条撤销、新建一条指回它。
+  // 修改（8.2.14，A1、WB1）：换人、改经营主体范围、改备注；角色不能改。旧的一条撤销、新建一条指回它。
   // 已经提交的单按提交时的快照审批（WB2），不受影响；之后提交的按新的
   app.post('/api/gf/roles/:id/edit', { preHandler: manage }, async (req) => {
     const { id } = parse(idParam, req.params);

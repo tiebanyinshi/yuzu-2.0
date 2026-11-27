@@ -84,7 +84,7 @@ export function RequestsPage() {
   // 按提交日期筛选；不填就是全部（导出时没填按本月）
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  // 8.2.6（R1）：按单号 / 商城单号 / 物品名称搜（服务端，停手 250 毫秒再查）
+  // 8.2.12（R1）：按单号 / 商城单号 / 物品名称搜（服务端，停手 250 毫秒再查）
   const [qText, setQText] = useState('');
   const [q, setQ] = useState('');
   useEffect(() => {

@@ -56,7 +56,7 @@ describe('分级（场景 1、2、33）', () => {
     expect(labels(x)).toEqual(['部门负责人', '财务审核人']);
     expect(x.payload.tier).toBe('basic');
   });
-  it('3,000.01 元或 51 件超出基础审核：加审核内容（比价说明）不加层级，财务那一级升级由财总审（8.2.10，WB4）', async () => {
+  it('3,000.01 元或 51 件超出基础审核：加审核内容（比价说明）不加层级，财务那一级升级由财总审（8.2.15，WB4）', async () => {
     const d = await dept('零星分级B');
     const no = await petty(c('gf_clerk'), d, { amountCents: yuan(3000) + 1 });
     expect(no.body.error.code).toBe('GF_QUOTE_REQUIRED');

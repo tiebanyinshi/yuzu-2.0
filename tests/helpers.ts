@@ -112,7 +112,7 @@ export async function api<T = any>(app: FastifyInstance, cookie: string | null, 
 }
 
 /**
- * 报销不再「门槛以内登记即确认」（8.2.6，《业财法审批与 WCP 需求变更》B1）：以前会自动确认的小额报销（≤ ¥2,000、没超预算），
+ * 报销不再「门槛以内登记即确认」（8.2.12，《业财法审批与 WCP 需求变更》B1）：以前会自动确认的小额报销（≤ ¥2,000、没超预算），
  * 登记后由 approver（别人，不能是登记人）审批通过，测别的功能的用例照旧拿到已确认的报销
  */
 export async function confirmSmallClaim<T extends { status: number; body: any }>(app: FastifyInstance, approver: string, res: T): Promise<T> {
@@ -456,10 +456,10 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '570_review_v825.sql',
   '580_mall_dispatch.sql',
   '590_away_lock_v827.sql',
-  '590_self_purchase.sql',
-  '600_gf_role_snapshot.sql',
-  '610_gf_flow_config.sql',
-  '620_oa_expense_retire.sql',
+  '700_self_purchase.sql',
+  '710_gf_role_snapshot.sql',
+  '720_gf_flow_config.sql',
+  '730_oa_expense_retire.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

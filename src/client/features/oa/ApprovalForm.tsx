@@ -115,7 +115,7 @@ export function NewApprovalPage({ code, fromId }: { code: string | null; fromId:
                 <p className="mt-0.5 text-[12.5px] text-ink-3">{t.description}</p>
               </Link>
             ))}
-            {/* 报销统一到业财法（8.2.12，WB11）：这里是发起入口，审批规则与执行在业财法 */}
+            {/* 报销统一到业财法（8.2.17，WB11）：这里是发起入口，审批规则与执行在业财法 */}
             {!templates.data!.some((t) => t.code === 'expense') && (
               <Link to="/oa/gov?box=expense" className="tap relative rounded-lg border border-line bg-card p-3.5 shadow-card hover:border-line-strong md:p-4" data-testid="oa-approval-tpl-expense-gov">
                 <FileText className="size-6 text-pine" />

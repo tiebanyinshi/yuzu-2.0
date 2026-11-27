@@ -1,4 +1,4 @@
-// 8.2.9 业财法角色映射可改、变更记录、提交时快照审批人（《业财法审批与 WCP 需求变更》A1，WB1、WB2，docs/V829_GF_ROLES.md）。
+// 8.2.14 业财法角色映射可改、变更记录、提交时快照审批人（《业财法审批与 WCP 需求变更》A1，WB1、WB2，docs/V8214_GF_ROLES.md）。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { act, newDoc, setupPeople, yuan, type People } from './govflow-helpers';

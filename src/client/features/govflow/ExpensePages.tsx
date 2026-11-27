@@ -36,7 +36,7 @@ export function ExpensePanel({ meta }: { meta: GfMeta }) {
         <Button size="sm" variant="secondary" onClick={() => setOpen('seal')}>
           用印证照
         </Button>
-        {/* 报销统一成一套（8.2.12，WB11）：写明分工，并能跳到以前在 WCP「审批」里提的报销 */}
+        {/* 报销统一成一套（8.2.17，WB11）：写明分工，并能跳到以前在 WCP「审批」里提的报销 */}
         <p className="w-full text-[12.5px] text-ink-3" data-testid="gf-expense-unified">
           报销只在这里发起、查看，审批按业财法的规则走，审批记录只有这一份。以前在 WCP「审批」里提的报销照旧在
           <Link to="/oa/approvals" className="mx-0.5 font-semibold text-pine underline">

@@ -1,4 +1,4 @@
-// 采购模块单号搜索与排序（8.2.6，《采购模块需求补充：单号搜索 / 排序 / 无供应商自购》R1、R2）
+// 采购模块单号搜索与排序（8.2.12，《采购模块需求补充：单号搜索 / 排序 / 无供应商自购》R1、R2）
 
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

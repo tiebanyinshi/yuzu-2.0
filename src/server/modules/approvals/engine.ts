@@ -318,7 +318,7 @@ export async function submitForApproval(
   const info = await describeDoc(tx, kind, docId);
   const found = await planApproval(tx, { docType: info.docType, amountCents: info.amountCents, departmentId: info.departmentId, fallback: opts.fallback, defaultPlan: opts.defaultPlan });
   if (!found) return { outcome: 'effective', requestId: null, skipped: true };
-  // 报销（8.2.6，B1）：提交人不能审自己的单，规则里勾了「提交人可以审」也不行
+  // 报销（8.2.12，B1）：提交人不能审自己的单，规则里勾了「提交人可以审」也不行
   const plan = opts.forbidSelf ? { ...found, allowSelf: false } : found;
   const requestId = await insertRequest(tx, kind, docId, info, plan, ctx.actor.id);
   if (opts.approveNow) {

@@ -1,4 +1,4 @@
-// 采购模块按单号查（8.2.6 R1，服务端 src/server/modules/purchase-lookup.ts）
+// 采购模块按单号查（8.2.12 R1，服务端 src/server/modules/purchase-lookup.ts）
 
 export type DocLookupKind = 'po' | 'request' | 'receipt';
 export const DOC_LOOKUP_KIND_LABELS: Record<DocLookupKind, string> = { po: '采购单', request: '需求单', receipt: '收货单' };

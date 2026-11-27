@@ -446,7 +446,7 @@ export async function poSettlement(db: Db, poId: number): Promise<'credit' | 'ca
               ORDER BY d.confirmed_at, d.id LIMIT 1),
              CASE WHEN EXISTS (SELECT 1 FROM expense_claims c WHERE c.purchase_order_id = p.id AND c.status IN ('submitted', 'returned', 'confirmed'))
                   THEN 'cash' END,
-             -- 自购（8.2.8）没有供应商：按现付，不记应付
+             -- 自购（8.2.13）没有供应商：按现付，不记应付
              CASE WHEN p.purchase_method = 'self' THEN 'cash' END,
              s.settlement) AS settlement
     FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${poId}`;

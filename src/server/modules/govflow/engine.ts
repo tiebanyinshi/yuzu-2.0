@@ -56,7 +56,7 @@ export interface FlowRow {
   currentLevel: number;
   status: GfFlowStatus;
   submittedBy: number;
-  /** 提交时的审批人快照（8.2.9，WB2）；旧单为空，实时取 */
+  /** 提交时的审批人快照（8.2.14，WB2）；旧单为空，实时取 */
   seatSnapshot: SeatSnapshot | null;
 }
 
@@ -107,7 +107,7 @@ export async function latestFlow(db: Db, docId: number, lock = false): Promise<F
 export interface TypeHooks {
   /** 审批链模板（各类事项自己定；要读设置的可以是异步的） */
   template?: (doc: DocRow, db: Db) => GfNode[] | Promise<GfNode[]>;
-  /** 店主改了这类事项的流程（8.2.10）也照样追加在最后的节点：零星采购超额的财总＋CFO 合并特批 */
+  /** 店主改了这类事项的流程（8.2.15）也照样追加在最后的节点：零星采购超额的财总＋CFO 合并特批 */
   fixedNodes?: (doc: DocRow) => GfNode[];
   beforeApprove?: (tx: Tx, doc: DocRow, flow: FlowRow, ctx: { level: number; final: boolean; actor: Actor; extra: unknown }) => Promise<void>;
   approved?: (tx: Tx, doc: DocRow, actor: Actor) => Promise<void>;
@@ -126,7 +126,7 @@ export function registerHooks(docType: string, hooks: TypeHooks) {
 }
 export const hooksOf = (docType: string): TypeHooks => HOOKS.get(docType) ?? {};
 
-// ───────────────────────── 店主改的流程（8.2.10） ─────────────────────────
+// ───────────────────────── 店主改的流程（8.2.15） ─────────────────────────
 
 export interface FlowConfigRow {
   version: number;
@@ -179,7 +179,7 @@ export async function deptHeadOf(db: Db, departmentId: number | null): Promise<n
 }
 
 /**
- * 这一轮各席谁能坐（8.2.9，WB2 方案 A）：按提交时的快照，改角色映射不影响在途单。
+ * 这一轮各席谁能坐（8.2.14，WB2 方案 A）：按提交时的快照，改角色映射不影响在途单。
  * 快照里的人停用了（离职）：这一席没有在用的人时，改按现在的映射取，免得单子卡死；旧单没有快照的照旧实时取。
  */
 export async function seatContext(db: Db, doc: DocRow, flow: FlowRow): Promise<SeatContext> {
@@ -320,7 +320,7 @@ export interface ApproverProblem {
 
 /**
  * 排好的链里哪几级现在没人能审（回避以后）：提交时拿第一条报错（GF_NO_APPROVER / GF_COSIGN_SAME），
- * 「流程与阈值 → 试算」全部列出来当提示（8.2.10）。部门负责人、履约执行人本人发起的那一级视同已确认，不算。
+ * 「流程与阈值 → 试算」全部列出来当提示（8.2.15）。部门负责人、履约执行人本人发起的那一级视同已确认，不算。
  */
 export function approverProblems(nodes: readonly GfNode[], ctx: SeatContext): ApproverProblem[] {
   const out: ApproverProblem[] = [];
@@ -368,7 +368,7 @@ export async function submitFlow(tx: Tx, doc: DocRow, template: GfNode[], actor:
   const problem = approverProblems(plan.nodes, ctx)[0];
   if (problem) throw unprocessable(problem.code, problem.message, problem.seat ? { seat: problem.seat } : undefined);
   const round = (last?.round ?? 0) + 1;
-  // 用的是店主设置的哪一版流程（8.2.10；内置的为空），写在这一轮上：之后再改流程不影响这一轮
+  // 用的是店主设置的哪一版流程（8.2.15；内置的为空），写在这一轮上：之后再改流程不影响这一轮
   const cfg = await activeFlowConfig(tx, doc.docType);
   const configVersion = cfg?.nodes ? cfg.version : null;
   if (configVersion !== null) plan.notes.unshift(`按「流程与阈值」里设置的流程（第 ${configVersion} 版）`);
@@ -444,7 +444,7 @@ export async function actFlow(tx: Tx, doc: DocRow, actor: Actor, input: { action
 // ───────────────────────── 知会 ─────────────────────────
 
 /** 审批通过以后知会董事长、业态总经理、财总、CFO（已在审批链里出过结论的、提交人不重复知会） */
-/** 报销类（8.2.12，《业财法审批与 WCP 需求变更》7.3 第 3 条）：通过前至少要有一条有人同意的审批记录（节点、审批人、时间、动作），全是自动跳过的不放行 */
+/** 报销类（8.2.17，《业财法审批与 WCP 需求变更》7.3 第 3 条）：通过前至少要有一条有人同意的审批记录（节点、审批人、时间、动作），全是自动跳过的不放行 */
 const NEEDS_HUMAN_APPROVAL = new Set(['expense', 'travel', 'entertain']);
 
 async function onApproved(tx: Tx, doc: DocRow, flow: FlowRow, actor: Actor) {

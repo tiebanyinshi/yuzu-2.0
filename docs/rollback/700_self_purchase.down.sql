@@ -1,4 +1,4 @@
--- 回滚 590_self_purchase.sql（8.2.8 自购）。先停服务、先备份；只在回到这一版以前的版本时执行。
+-- 回滚 700_self_purchase.sql（8.2.13 自购）。先停服务、先备份；只在回到这一版以前的版本时执行。
 -- 有自购单或没有供应商的收货单时会失败（旧版本要求都有供应商）：先撤回、作废这些单据。
 BEGIN;
 ALTER TABLE inv_docs DROP CONSTRAINT inv_docs_check;
@@ -15,5 +15,5 @@ ALTER TABLE purchase_orders
   DROP COLUMN self_reason_note,
   DROP COLUMN self_reason,
   DROP COLUMN purchase_method;
-DELETE FROM schema_migrations WHERE version = '590_self_purchase.sql';
+DELETE FROM schema_migrations WHERE version = '700_self_purchase.sql';
 COMMIT;

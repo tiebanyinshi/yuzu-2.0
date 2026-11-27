@@ -1,6 +1,6 @@
-# 8.2.9 · 业财法：角色映射可改、变更记录、提交时快照审批人
+# 8.2.14 · 业财法：角色映射可改、变更记录、提交时快照审批人
 
-《汤崎 ERP｜业财法审批与 WCP 模块 需求变更文档 v0.1》第 4 批（核对见 `docs/V827_APPROVALS_PURCHASING.md` A1）。按文档建议 WB1、WB2（`docs/PENDING_DECISIONS.md`）。数据库迁移 `600`，回滚 `docs/rollback/600_gf_role_snapshot.down.sql`。
+《汤崎 ERP｜业财法审批与 WCP 模块 需求变更文档 v0.1》第 4 批（核对见 `docs/V8212_APPROVALS_PURCHASING.md` A1）。按文档建议 WB1、WB2（`docs/PENDING_DECISIONS.md`）。数据库迁移 `710`，回滚 `docs/rollback/710_gf_role_snapshot.down.sql`。
 
 ## 1. 核对时（A1）
 

@@ -110,7 +110,7 @@ async function onDuty(db: Db, id: number): Promise<{ name: string } | null> {
 async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, hash: string, env: LinkEnv): Promise<number> {
   const today = localMinute(env.at, env.timeZone).date;
   const [t] = await tx<ApprovalTemplate[]>`SELECT ${TEMPLATE_COLS(tx)} FROM oa_approval_templates WHERE id = ${input.templateId} FOR SHARE`;
-  // 报销统一到业财法（8.2.12，WB11）：WCP「审批」里不再发起报销，给出去哪里发起
+  // 报销统一到业财法（8.2.17，WB11）：WCP「审批」里不再发起报销，给出去哪里发起
   if (t && !t.active && t.code === 'expense') throw unprocessable('EXPENSE_MOVED', '报销已统一到「业财法审批 → 报销」，请在那里发起');
   if (!t || !t.active) throw notFound('审批模板不存在或已停用，请刷新');
   const template = toTemplate(t);
@@ -145,7 +145,7 @@ async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, 
     revision = prev.revision + 1;
   }
   const chain = await resolveChain(tx, template, actor, form);
-  // 报销不自动通过（8.2.6，《业财法审批与 WCP 需求变更》B1 / 7.3）：发起人就是最上级、一级都不剩的，交给另一位店主审；
+  // 报销不自动通过（8.2.12，《业财法审批与 WCP 需求变更》B1 / 7.3）：发起人就是最上级、一级都不剩的，交给另一位店主审；
   // 没有别的店主就不让提交（不再按 OA12 直接通过）。别的单照旧
   if (!chain.steps.length && template.code === 'expense') {
     const [o] = await tx<{ id: number }[]>`SELECT id FROM staff WHERE active AND NOT system AND role = 'owner' AND id <> ${actor.id} ORDER BY id LIMIT 1`;

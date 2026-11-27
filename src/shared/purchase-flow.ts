@@ -68,9 +68,9 @@ export interface PurchaseFlow {
   alert: boolean;
   /** 这条流程最近一次往前走的时间（列表按它排；停留时长 = 现在 − 它） */
   movedAt: string | null;
-  /** 发起时间：需求单提交、询价单、采购单建立里最早的（8.2.6 R2） */
+  /** 发起时间：需求单提交、询价单、采购单建立里最早的（8.2.12 R2） */
   startedAt: string | null;
-  /** 紧急程度：关联需求单里最急的；没有需求单的为空（8.2.6 R2） */
+  /** 紧急程度：关联需求单里最急的；没有需求单的为空（8.2.12 R2） */
   priority: RequestPriority | null;
   /** 申请部门（关联需求单的，几个部门用顿号连；没有需求单的为空） */
   departmentName: string | null;
@@ -90,7 +90,7 @@ export interface FlowRequestFact {
   id: number;
   docNo: string;
   status: RequestStatus;
-  /** 紧急程度（8.2.6 R2，流程进度排序用；旧的取数没有时按普通） */
+  /** 紧急程度（8.2.12 R2，流程进度排序用；旧的取数没有时按普通） */
   priority?: RequestPriority;
   departmentName: string;
   requesterName: string;

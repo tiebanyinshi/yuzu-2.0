@@ -1,4 +1,4 @@
-// 报销不能由登记的人自己确认（8.2.6，《业财法审批与 WCP 需求变更》B1）：演示库里能审报销的只有店主，
+// 报销不能由登记的人自己确认（8.2.12，《业财法审批与 WCP 需求变更》B1）：演示库里能审报销的只有店主，
 // 店主自己登记的报销由一位临时的「负责人」（店主现建，职责「审批」）审。每次建一个新账号，不受之前跑过的影响
 import { randomUUID } from 'node:crypto';
 import { expect, type APIRequestContext, type Page, type PlaywrightWorkerArgs } from '@playwright/test';

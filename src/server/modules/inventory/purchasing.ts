@@ -76,7 +76,7 @@ const LineInput = z.object({
   requestLineIds: z.array(id).max(50, '一行最多合并 50 行需求').optional(),
 });
 
-/** 自购信息（8.2.8，《采购模块需求补充》R3 / 5.4） */
+/** 自购信息（8.2.13，《采购模块需求补充》R3 / 5.4） */
 const SelfInput = z.object({
   reason: z.enum(SELF_REASONS, '请选择自购原因'),
   reasonNote: z.string().trim().max(200, '说明最多 200 个字').default(''),
@@ -88,7 +88,7 @@ const SelfInput = z.object({
 });
 
 const PoBody = z.object({
-  /** 8.2.8：supplier 供应商采购（原来的做法，默认）；self 自购（不选供应商，填自购信息） */
+  /** 8.2.13：supplier 供应商采购（原来的做法，默认）；self 自购（不选供应商，填自购信息） */
   purchaseMethod: z.enum(PURCHASE_METHODS).default('supplier'),
   supplierId: id.nullable().default(null),
   self: SelfInput.nullable().default(null),
@@ -108,7 +108,7 @@ type PoBodyInput = z.input<typeof PoBody>;
 type PoBodyParsed = z.infer<typeof PoBody>;
 
 /**
- * 采购方式的核对（8.2.8）：供应商采购要选供应商（与原来一样）；自购不选供应商、不挂合同，自购信息要齐（选「其他」要写说明），
+ * 采购方式的核对（8.2.13）：供应商采购要选供应商（与原来一样）；自购不选供应商、不挂合同，自购信息要齐（选「其他」要写说明），
  * 经办人要在职；票据照片要是采购单能用的图片
  */
 async function checkMethod(db: Db, body: PoBodyParsed): Promise<{ supplierId: number | null; self: z.infer<typeof SelfInput> | null }> {
@@ -351,7 +351,7 @@ export async function getPo(db: Db, poId: number): Promise<PurchaseOrder> {
   };
 }
 
-/** 采购单列表排序（8.2.6 R2）：白名单里的列；空值排最后；同值按单号、编号再排（翻页不重、不漏） */
+/** 采购单列表排序（8.2.12 R2）：白名单里的列；空值排最后；同值按单号、编号再排（翻页不重、不漏） */
 const PO_ORDER: Record<PoSort, string> = {
   order_date: 'po.order_date',
   created: 'po.created_at',
@@ -392,7 +392,7 @@ export async function listPos(db: Db, f: { status?: string; supplierId?: number;
                      WHERE pl.po_id = po.id AND pl.line_no <= 3), '') AS summary,
            coalesce((SELECT sum(amount_cents) FROM inv_docs WHERE purchase_order_id = po.id AND doc_type = 'receipt' AND status = 'confirmed'), 0) AS received_cents,
            coalesce(rcv.received, 0) AS received_milli, coalesce(rcv.full_lines, 0) AS full_lines,
-           -- 紧急程度（8.2.6 R2）：采购单本身没有，取关联需求单里最急的那张（没关联需求单的为空）
+           -- 紧急程度（8.2.12 R2）：采购单本身没有，取关联需求单里最急的那张（没关联需求单的为空）
            (SELECT max(CASE r.priority WHEN 'urgent' THEN 3 WHEN 'high' THEN 2 WHEN 'normal' THEN 1 END)
               FROM purchase_order_lines pl JOIN purchase_order_line_requests x ON x.po_line_id = pl.id
               JOIN purchase_request_lines rl ON rl.id = x.request_line_id JOIN purchase_requests r ON r.id = rl.request_id
@@ -755,7 +755,7 @@ async function submitLocked(tx: Tx, po: PoRow, actor: Actor, approveNow: boolean
   if (po.status === 'submitted' || po.status === 'approved') return;
   if (po.status !== 'draft' && po.status !== 'returned') throw conflict('INVALID_STATE', '采购单当前状态不能提交');
   // 询价门槛（v0.7.29 E5）：合计到门槛、没改过版的采购单要来自已定标的询价单
-  // 自购（8.2.8）没有供应商：不核询价门槛、供应商准入（自购另有一级店主复核，见下）
+  // 自购（8.2.13）没有供应商：不核询价门槛、供应商准入（自购另有一级店主复核，见下）
   if (po.purchaseMethod !== 'self') await assertQuotesForPo(tx, po.id);
   // 挂了合同的（v0.7.31，C9）：合同仍要生效中；超价、超量的要写原因（在采购单的锁里再核对一次，读合同不加锁）
   await assertContractDeviation(tx, po.id);
@@ -773,7 +773,7 @@ async function submitLocked(tx: Tx, po: PoRow, actor: Actor, approveNow: boolean
   // 04（CG04）：每一行都来自已通过的需求单（供应链审核过）——只读需求单，不加锁（锁顺序：采购单 → 需求单，这里只在采购单的锁里读）
   const fromRequests = (await loadPurchaseRules(tx)).requestPoDirect && (await allLinesFromApprovedRequests(tx, po.id));
   if (approveNow && !can(actor, 'inventory.approve')) throw forbidden('当前账号不能确认采购单，请提交给负责人');
-  // 自购（8.2.8，PS5）：都要审批（没有规则命中按一级负责人），超过 ¥2,000 再加一级店主；提交人不能审自己的自购单
+  // 自购（8.2.13，PS5）：都要审批（没有规则命中按一级负责人），超过 ¥2,000 再加一级店主；提交人不能审自己的自购单
   const self = po.purchaseMethod === 'self';
   const fallback = self || (!fromRequests && settings.approvalRules.purchase_order && overThreshold(settings, totals?.totalCents ?? null));
   const selfPlan = self
@@ -1127,7 +1127,7 @@ const ListQuery = z.object({
   supplierId: z.coerce.number().int().positive().optional(),
   q: z.string().trim().max(32).optional(),
   open: z.enum(['1']).optional(),
-  // 8.2.6（R2）：排序与翻页（每页 300 张）
+  // 8.2.12（R2）：排序与翻页（每页 300 张）
   sort: z.enum(PO_SORTS).optional(),
   dir: z.enum(['asc', 'desc']).optional(),
   offset: z.coerce.number().int().min(0).max(100_000).optional(),
@@ -1141,7 +1141,7 @@ export function registerPurchasingRoutes(app: FastifyInstance, deps: Deps) {
     const q = parse(ListQuery, req.query);
     return listPos(sql, { ...q, open: q.open === '1' });
   });
-  // 自购的经办人候选（8.2.8）：在职员工，只给名字
+  // 自购的经办人候选（8.2.13）：在职员工，只给名字
   app.get(
     '/api/purchase-orders/self-handlers',
     { preHandler: guard('inventory.read') },

@@ -190,7 +190,7 @@ export function ClaimFormPage() {
   const freightCents = mode === 'po' && freightOn ? parseYuan(freightText) : null;
   const total = mode === 'adhoc' ? adhocRows.reduce((t, r) => t + (r.cents ?? 0), 0) : chosenPo.reduce((t, r) => t + (r.cents ?? 0), 0) + (freightCents ?? 0);
   const threshold = rules.data?.approvalThresholdCents ?? 200_000;
-  // 8.2.6（B1）：门槛以内登记即确认默认关，全部要审批
+  // 8.2.12（B1）：门槛以内登记即确认默认关，全部要审批
   const autoBelow = rules.data?.autoConfirmBelowThreshold ?? false;
   const needsApproval = !autoBelow || total > threshold;
   // 费用预算（8.0.3）：这张报销各科目的金额

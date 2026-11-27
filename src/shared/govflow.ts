@@ -406,12 +406,12 @@ export interface GfRoleMember {
   note: string;
   createdByName: string;
   createdAt: string;
-  /** 工号（登录账号）、所在部门（8.2.9，A1：同名的人分得清） */
+  /** 工号（登录账号）、所在部门（8.2.14，A1：同名的人分得清） */
   staffNo: string;
   departmentName: string | null;
 }
 
-/** 角色映射的变更记录（8.2.9，A1）：每一条映射的加、改、撤 */
+/** 角色映射的变更记录（8.2.14，A1）：每一条映射的加、改、撤 */
 export interface GfRoleChange {
   id: number;
   role: GfRole;
@@ -517,6 +517,6 @@ export interface GfSpecialView {
   files: { id: number; purpose: GfFilePurpose; fileName: string; sizeBytes: number }[];
   overdue: boolean;
   registeredByName: string;
-  /** 同一张 OK 截图也用在了这些特批上（8.2.11，WB7：只提示） */
+  /** 同一张 OK 截图也用在了这些特批上（8.2.16，WB7：只提示） */
   screenshotReusedIn: string[];
 }

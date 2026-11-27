@@ -44,7 +44,7 @@ const claimRaw = (body: Record<string, unknown> = {}, cookie = coster) =>
     lines: [line()],
     ...body,
   });
-/** 以前门槛以内会自动确认的（8.2.6 起都要审批）：登记后由店主审批通过 */
+/** 以前门槛以内会自动确认的（8.2.12 起都要审批）：登记后由店主审批通过 */
 const claim = async (body: Record<string, unknown> = {}, cookie = coster) =>
   confirmSmallClaim(
     ctx.app,
@@ -143,7 +143,7 @@ describe('费用预算（BI01–BI06）', () => {
     expect(cellOf(await grid(), deptB)).toMatchObject({ usedCents: 70_000, level: 'ok' });
   });
 
-  it('门槛以内超预算：不拦登记，走「超预算报销」负责人 → 店主（8.2.6 起门槛以内也要负责人审）；负责人批完还要店主', async () => {
+  it('门槛以内超预算：不拦登记，走「超预算报销」负责人 → 店主（8.2.12 起门槛以内也要负责人审）；负责人批完还要店主', async () => {
     await ok(setBudget(deptC, 50_000), 200);
     await ok(claim({ departmentId: deptC, lines: [line({ amountCents: 40_000 })] }));
     const over = (await ok(claim({ departmentId: deptC, lines: [line({ amountCents: 20_000 })] }))).claim;
