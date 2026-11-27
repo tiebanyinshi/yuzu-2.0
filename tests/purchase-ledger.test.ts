@@ -8,7 +8,7 @@ import { todayIn } from '../src/server/modules/inventory/common';
 import { buildLedger, ledgerCount, orderedXlsx } from '../src/server/modules/purchase-ledger';
 import { createStaff } from '../src/server/modules/staff';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
-import { api, login, PASSWORD, setup, type TestContext } from './helpers';
+import { api, login, PASSWORD, setup, type TestContext, confirmSmallClaim } from './helpers';
 
 /** 读 zip（只认本项目写出的格式）：文件名 → 内容，顺便核对 CRC */
 function unzip(buf: Buffer): Map<string, Buffer> {
@@ -126,19 +126,23 @@ const advance = (amountCents: number, date = today) =>
     evidence: '转账尾号 0001',
   });
 
-const claim = (body: Record<string, unknown>) =>
-  api(ctx.app, coster, 'POST', '/api/erp/expenses', {
-    clientKey: randomUUID(),
-    expenseDate: today,
-    departmentId: deptA,
-    handlerId: costerId,
-    purpose: '办公',
-    paySource: 'company',
-    invoiceType: 'receipt',
-    taxRateBp: 0,
-    lines: [{ name: '打印纸', category: 'office', unit: '包', boughtMilli: q(2), receivedMilli: q(2), amountCents: 6_000 }],
-    ...body,
-  });
+const claim = async (body: Record<string, unknown>) =>
+  confirmSmallClaim(
+    ctx.app,
+    ctx.owner,
+    await api(ctx.app, coster, 'POST', '/api/erp/expenses', {
+      clientKey: randomUUID(),
+      expenseDate: today,
+      departmentId: deptA,
+      handlerId: costerId,
+      purpose: '办公',
+      paySource: 'company',
+      invoiceType: 'receipt',
+      taxRateBp: 0,
+      lines: [{ name: '打印纸', category: 'office', unit: '包', boughtMilli: q(2), receivedMilli: q(2), amountCents: 6_000 }],
+      ...body,
+    }),
+  );
 
 const newPo = async (body: Record<string, unknown> = {}) => {
   const po = (

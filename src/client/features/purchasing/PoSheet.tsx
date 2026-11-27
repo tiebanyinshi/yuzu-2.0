@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { Ban, CircleCheck, CornerUpLeft, FilePen, Lock, PackagePlus, Pencil, ReceiptText, Send, X } from 'lucide-react';
 import { CLAIM_STATUS_LABELS } from '@shared/expenses';
 import { INV_STATUS_LABELS } from '@shared/inventory';
-import { channelText, type PurchaseOrder } from '@shared/purchasing';
+import { channelText, partyLabel, SELF_PAY_METHOD_LABELS, SELF_REASON_LABELS, type PurchaseOrder } from '@shared/purchasing';
 import { formatAmount } from '@shared/money';
 import { formatQty } from '@shared/quantity';
 import { errorMessage } from '../../lib/api';
@@ -160,10 +160,26 @@ function PoBody({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
         </div>
 
         <dl className="grid grid-cols-2 gap-x-5 gap-y-2.5 rounded-lg border border-line bg-card px-4 py-3.5 text-[13px] sm:grid-cols-3">
-          <Info label="供应商">{po.supplier.name}</Info>
+          <Info label={po.self ? '采购方式' : '供应商'}>{po.supplier ? po.supplier.name : partyLabel(null, po.self)}</Info>
           <Info label="采购途径">
             <span data-testid="po-sheet-channel">{channelText(po.channel)}</span>
           </Info>
+          {po.self && (
+            <>
+              <Info label="自购原因">
+                <span data-testid="po-sheet-self-reason">
+                  {SELF_REASON_LABELS[po.self.reason]}
+                  {po.self.reasonNote && `：${po.self.reasonNote}`}
+                </span>
+              </Info>
+              <Info label="经办人">{po.self.handler.name}</Info>
+              <Info label="付款方式">{SELF_PAY_METHOD_LABELS[po.self.payMethod]}</Info>
+              {po.self.boughtOn && <Info label="购买日期">{po.self.boughtOn}</Info>}
+              <Info label="票据凭证">
+                <ImageThumbs images={po.self.receiptImages} size={40} />
+              </Info>
+            </>
+          )}
           {po.sourcing && (
             <Info label="询价单">
               <Link to={`/purchasing/sourcing/${po.sourcing.id}`} className="num font-semibold text-lake hover:underline" data-testid="po-sheet-sourcing">

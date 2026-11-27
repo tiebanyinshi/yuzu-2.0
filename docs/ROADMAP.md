@@ -305,6 +305,15 @@
   - `590`（`590_away_lock_v827.sql`）：锁牌记录 `visit_tag_locks`（只追加，一次来访同时一把，最多 4 小时，预售指向一张手牌押金）；操作编号与「确认作废」追加 `tag_away_lock`、`tag_away_unlock`。回滚 `docs/rollback/590_away_lock_v827.down.sql`。
 - **8.2.6 采购商城 v0.2（`580`–`589`）**：《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》（店主 2026-11-27，设计见 `docs/MALL_V826.md`）——分批发配与物料发配记录、退回逐项标必补、版本快照、终止申购、收货待判。
   - `580`（`580_mall_dispatch.sql`）：发配记录 `request_line_issues`（核库已开的领料单抄一份）、退回必补项 `request_fix_items`、版本快照 `purchase_request_versions`、终止申请 `request_terminations`、收货待判 `inv_doc_lines.hold_milli`；操作类型追加 `request_dispatch`、`mall_terminate`。回滚 `docs/rollback/580_mall_dispatch.down.sql`。
+- **8.2.12–8.2.17（业财法审批与 WCP、采购模块需求补充，一个集成 PR）**：店主 2026-11-27 两份需求文档分 7 批做，各批各占一个版本号、各写一份设计（`docs/V8212_APPROVALS_PURCHASING.md` … `docs/V8217_EXPENSE_UNIFY.md`），合成一个集成 PR 进 main。版本号排在另一条开发线已排的 8.2.8（餐厅）、8.2.9（水吧）、8.2.10（休闲娱乐）、8.2.11（泡池）之后（店主「延后」）；迁移号避开别的线已占的 `600`–`639`，用 `700`–`739`。8.2.12 没有迁移，8.2.16 没有迁移。
+- **8.2.13 采购自购（`700`–`709`）**：《采购模块需求补充（单号搜索 / 排序 / 无供应商自购）》第 3 批（店主 2026-11-27，设计见 `docs/V8213_SELF_PURCHASE.md`）——采购单可以不选供应商（自购），票据照片、负责人审批（超过 ¥2,000 加店主）、收货不选供应商、按现付走报销。
+  - `700`（`700_self_purchase.sql`）：`purchase_orders.purchase_method` 与自购信息列，`supplier_id` 可为空（约束 `purchase_orders_method_supplier`、`purchase_orders_self_info`）；自购票据 `purchase_order_self_receipts`；收货单挂采购单时可以没有供应商（`inv_docs_check` 放宽）。回滚 `docs/rollback/700_self_purchase.down.sql`。
+- **8.2.14 业财法角色映射（`710`–`719`）**：《业财法审批与 WCP 模块 需求变更》第 4 批（店主 2026-11-27，设计见 `docs/V8214_GF_ROLES.md`）——角色映射可改（角色不能改）、工号与部门、变更记录、提交时快照审批人（WB2）。
+  - `710`（`710_gf_role_snapshot.sql`）：`gf_role_members.replaces_id`、`revoke_reason`；`gf_flows.seat_snapshot`。回滚 `docs/rollback/710_gf_role_snapshot.down.sql`。
+- **8.2.15 业财法流程与阈值（`720`–`729`）**：《业财法审批与 WCP 模块 需求变更》第 5 批（店主 2026-11-27，设计见 `docs/V8215_GF_CONFIG.md`）——阈值后台可改（WB4）、每类事项可设自己的审批链与知会角色（追加版本、在途单不受影响）、试算。
+  - `720`（`720_gf_flow_config.sql`）：`gf_settings` 加键 `rules`；各类事项的流程 `gf_flow_configs`（只追加）；`gf_flows.config_version`。回滚 `docs/rollback/720_gf_flow_config.down.sql`。
+- **8.2.17 报销统一（`730`–`739`）**：《业财法审批与 WCP 模块 需求变更》第 7 批（店主 2026-11-27，设计见 `docs/V8217_EXPENSE_UNIFY.md`）——WCP 报销模板停用、报销只在业财法、通过前至少一位审批人同意。
+  - `730`（`730_oa_expense_retire.sql`）：`oa_approval_templates` 的 `expense` 停用（只改数据）。回滚 `docs/rollback/730_oa_expense_retire.down.sql`。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
   - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。

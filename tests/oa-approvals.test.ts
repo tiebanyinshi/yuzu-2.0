@@ -32,7 +32,9 @@ const detail = async (who: Emp, id: number) => (await api<ApprovalDetail>(ctx.ap
 const chainOf = (a: ApprovalDetail) => a.steps.map((s) => [s.approverId, s.status]);
 
 beforeAll(async () => {
+  // 8.2.17 起 WCP 的报销模板停用（报销统一到业财法）；这里测的是以前提的 WCP 报销那一套，先打开
   ctx = await setup();
+  await ctx.sql`UPDATE oa_approval_templates SET active = true WHERE code = 'expense'`;
   emp.staff = await hire('ap_staff', 'front.staff');
   emp.lead = await hire('ap_lead', 'front.lead');
   emp.gmo = await hire('ap_gmo', 'gmo');

@@ -13,7 +13,7 @@ import { shiftDate } from './labels';
 import { formatYuan } from './money';
 import { nextPayDay, payDaysLabel } from './payments';
 import type { PoStatus, ReceivingState, SourcingStatus } from './purchasing';
-import type { RequestStatus, StockCheckState } from './requests';
+import type { RequestPriority, RequestStatus, StockCheckState } from './requests';
 
 export type FlowNodeKey = 'request' | 'confirm' | 'review' | 'sourcing' | 'award' | 'approval' | 'order' | 'receive' | 'stockin' | 'pay';
 /** done 做完（绿勾）；current 正在等（橙点）；pending 还没到（灰） */
@@ -66,8 +66,14 @@ export interface PurchaseFlow {
   stage: FlowNodeKey | null;
   /** 有环节超期或卡住 */
   alert: boolean;
-  /** 这条流程最近一次往前走的时间（列表按它排） */
+  /** 这条流程最近一次往前走的时间（列表按它排；停留时长 = 现在 − 它） */
   movedAt: string | null;
+  /** 发起时间：需求单提交、询价单、采购单建立里最早的（8.2.12 R2） */
+  startedAt: string | null;
+  /** 紧急程度：关联需求单里最急的；没有需求单的为空（8.2.12 R2） */
+  priority: RequestPriority | null;
+  /** 申请部门（关联需求单的，几个部门用顿号连；没有需求单的为空） */
+  departmentName: string | null;
 }
 
 export interface PurchaseFlowList {
@@ -84,6 +90,8 @@ export interface FlowRequestFact {
   id: number;
   docNo: string;
   status: RequestStatus;
+  /** 紧急程度（8.2.12 R2，流程进度排序用；旧的取数没有时按普通） */
+  priority?: RequestPriority;
   departmentName: string;
   requesterName: string;
   submittedAt: string;
@@ -235,10 +243,10 @@ function waitedOf(since: string | null, f: Pick<FlowFacts, 'now' | 'today'>): { 
   return { days, text: min < 60 ? `${min} 分钟` : min < 48 * 60 ? `${Math.floor(min / 60)} 小时` : `${days} 天` };
 }
 
-const latest = (values: (string | null | undefined)[]): string | null => {
-  const xs = values.filter((v): v is string => !!v).sort((a, b) => Date.parse(isDateOnly(a) ? `${a}T00:00:00Z` : a) - Date.parse(isDateOnly(b) ? `${b}T00:00:00Z` : b));
-  return xs[xs.length - 1] ?? null;
-};
+const byTime = (values: (string | null | undefined)[]) =>
+  values.filter((v): v is string => !!v).sort((a, b) => Date.parse(isDateOnly(a) ? `${a}T00:00:00Z` : a) - Date.parse(isDateOnly(b) ? `${b}T00:00:00Z` : b));
+const latest = (values: (string | null | undefined)[]): string | null => byTime(values).at(-1) ?? null;
+const earliest = (values: (string | null | undefined)[]): string | null => byTime(values)[0] ?? null;
 const uniq = (xs: string[]) => [...new Set(xs.filter(Boolean))];
 const names = (xs: string[], max = 3) => {
   const u = uniq(xs);
@@ -689,5 +697,8 @@ export function buildPurchaseFlow(f: FlowFacts): PurchaseFlow {
     stage: current?.key ?? null,
     alert: !end && nodes.some((n) => n.alert !== null),
     movedAt: latest([...nodes.map((n) => n.at), ...reqs.map((r) => r.submittedAt), sourcing?.createdAt, ...pos.map((p) => p.createdAt)]),
+    startedAt: earliest([...reqs.map((r) => r.submittedAt), sourcing?.createdAt, ...pos.map((p) => p.createdAt)]),
+    priority: reqs.length ? (['urgent', 'high', 'normal'] as const).find((p) => reqs.some((r) => (r.priority ?? 'normal') === p))! : null,
+    departmentName: reqs.length ? uniq(reqs.map((r) => r.departmentName)).join('、') : null,
   };
 }

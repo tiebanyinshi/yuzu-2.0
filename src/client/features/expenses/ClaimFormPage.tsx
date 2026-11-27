@@ -88,7 +88,6 @@ export function ClaimFormPage() {
   const [poPick, setPoPick] = useState<Record<number, { on: boolean; category: ExpenseCategory | ''; amount: string; diffReason: string }>>({});
   const [freightOn, setFreightOn] = useState(false);
   const [freightText, setFreightText] = useState('');
-  const [approveNow, setApproveNow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useErpPending(['expense_claim']);
@@ -191,7 +190,9 @@ export function ClaimFormPage() {
   const freightCents = mode === 'po' && freightOn ? parseYuan(freightText) : null;
   const total = mode === 'adhoc' ? adhocRows.reduce((t, r) => t + (r.cents ?? 0), 0) : chosenPo.reduce((t, r) => t + (r.cents ?? 0), 0) + (freightCents ?? 0);
   const threshold = rules.data?.approvalThresholdCents ?? 200_000;
-  const needsApproval = total > threshold;
+  // 8.2.12（B1）：门槛以内登记即确认默认关，全部要审批
+  const autoBelow = rules.data?.autoConfirmBelowThreshold ?? false;
+  const needsApproval = !autoBelow || total > threshold;
   // 费用预算（8.0.3）：这张报销各科目的金额
   const categoryAmounts: CategoryAmounts = {};
   const addAmount = (c: ExpenseCategory | '', cents: number | null) => {
@@ -326,7 +327,6 @@ export function ClaimFormPage() {
         channel: pickChannel && channelDef ? channelDef.key : null,
         channelNote: pickChannel && channelDef ? channelNote.trim() : '',
         note: note.trim(),
-        approveNow: needsApproval && approveNow,
         lines: payloadLines,
       },
       `${deptName} · ${purpose} · ${what} · ¥${formatAmount(total)}`,
@@ -972,19 +972,15 @@ export function ClaimFormPage() {
             </span>
             <span className={cn('text-[12.5px] font-semibold', overBudget ? 'text-clay' : needsApproval ? 'text-yuzu-deep' : 'text-pine')} data-testid="claim-approval-hint">
               {overBudget
-                ? `${needsApproval ? `超过 ¥${formatAmount(threshold)} 且` : ''}超预算，提交后走「超预算报销」审批`
-                : needsApproval
-                  ? `超过 ¥${formatAmount(threshold)}，提交后要负责人确认`
-                  : '不超过门槛，登记即确认'}
+                ? `${autoBelow && needsApproval ? `超过 ¥${formatAmount(threshold)} 且` : ''}超预算，提交后走「超预算报销」审批`
+                : !autoBelow
+                  ? '提交后要负责人审批（自己不能确认自己的报销）'
+                  : needsApproval
+                    ? `超过 ¥${formatAmount(threshold)}，提交后要负责人确认`
+                    : '不超过门槛，登记即确认'}
             </span>
             {blocking && <span className="text-[12.5px] font-semibold text-clay">{blocking}</span>}
           </div>
-          {needsApproval && can('expense.approve') && (
-            <label className="flex cursor-pointer items-center gap-2 text-[13px] font-semibold text-ink-2">
-              <input type="checkbox" className="size-4 accent-[var(--color-pine)]" checked={approveNow} disabled={locked} onChange={(e) => setApproveNow(e.target.checked)} />
-              同时以负责人身份确认
-            </label>
-          )}
           <Button variant="primary" size="lg" disabled={locked || !!blocking} loading={busy} icon={<CircleCheck className="size-[18px]" />} onClick={submit} data-testid="claim-submit">
             登记报销
           </Button>

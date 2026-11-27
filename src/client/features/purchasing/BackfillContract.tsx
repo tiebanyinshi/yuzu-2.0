@@ -76,7 +76,7 @@ function AttachDialog({ po, onClose }: { po: PurchaseOrder; onClose: () => void 
       open
       onClose={onClose}
       title={`补合同 · ${po.docNo}`}
-      description={`选 ${po.supplier.name} 的采购合同：生效中、到期日不早于下单日 ${po.orderDate}（补签的开始日可以晚于下单日）。挂上以后不能换。`}
+      description={`选 ${po.supplier?.name ?? ''} 的采购合同：生效中、到期日不早于下单日 ${po.orderDate}（补签的开始日可以晚于下单日）。挂上以后不能换。`}
       width="max-w-xl"
       footer={
         <>

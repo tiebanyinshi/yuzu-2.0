@@ -236,7 +236,7 @@ export function registerHrRoutes(app: FastifyInstance, deps: Deps) {
         }
         await tx`UPDATE gf_docs SET payload = payload || ${tx.json({ batchNo } as never)} WHERE id = ${id}`;
         const doc = await loadDoc(tx, id, true);
-        await submitFlow(tx, doc, templateFor(doc), req.actor);
+        await submitFlow(tx, doc, await templateFor(tx, doc), req.actor);
         return id;
       });
       await writeAudit(sql, {

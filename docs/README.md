@@ -120,6 +120,12 @@
 - [`V8142_PETTY.md`](V8142_PETTY.md)：8.1.42 · 备用金合并：零采备用金并进备用金
 - [`V8144_CASHIER.md`](V8144_CASHIER.md)：8.1.44（收银台）：《前台系统开发》里收银台的六条
 - [`V8144_FRONTDESK.md`](V8144_FRONTDESK.md)：8.1.44（前台 B）：已发券改条件、混合支付、同行组建与拆分、房态显示预约、买单时查会员
+- [`V8212_APPROVALS_PURCHASING.md`](V8212_APPROVALS_PURCHASING.md)：8.2.12 · 报销不再自动通过；采购按单号直达与排序
+- [`V8213_SELF_PURCHASE.md`](V8213_SELF_PURCHASE.md)：8.2.13 · 采购：无供应商自购
+- [`V8214_GF_ROLES.md`](V8214_GF_ROLES.md)：8.2.14 · 业财法：角色映射可改、变更记录、提交时快照审批人
+- [`V8215_GF_CONFIG.md`](V8215_GF_CONFIG.md)：8.2.15 · 业财法：流程与阈值后台可改、试算
+- [`V8216_GF_EXPORT.md`](V8216_GF_EXPORT.md)：8.2.16 · 业财法与审批中心导出；微信特批登记时必传 OK 截图
+- [`V8217_EXPENSE_UNIFY.md`](V8217_EXPENSE_UNIFY.md)：8.2.17 · 报销统一成一套：WCP 发起 / 查看，业财法审批与执行
 - [`V8221_CASHIER.md`](V8221_CASHIER.md)：8.2.1 批 1：收银台（单项打折、一键快捷键、经办人前置与改价标记、换牌规则、手牌押金）
 - [`V8222_TECHNICIANS.md`](V8222_TECHNICIANS.md)：8.2.2 技师：扩钟、一报多、退技师、换项目、休假、状态、统计与导入
 - [`V8223_FRONTDESK.md`](V8223_FRONTDESK.md)：8.2.3 前台：发卡台与全店（客人类别、偏好、客诉台账、拥挤与高风险提示、技师预约权限、跳转明细、同行移出、补单）
