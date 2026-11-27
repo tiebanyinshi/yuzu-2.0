@@ -398,6 +398,9 @@ export const PERMISSIONS = {
    * 有这一项的人自己加收不用另请授权，「未结离店」的待办也由有这一项的人写处理结果
    */
   'auth.checkinRisk': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  // 8.2.4 餐饮（docs/V8224_DINING.md）：返台补低消（已结账的还要「反结账」）、当场授权「公司承担」（待店主确认：默认值班经理及以上）
+  'dining.returnTable': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  'auth.companyCharge': { roles: ['owner', 'store_manager', 'duty_manager'] },
   // 8.1.15 块 B（docs/DINING_V8115.md 第 4 节）：按出品口下单，点单页只显示有权限的出品口，服务端逐行核对；默认与「餐饮点单」同一批岗位，康美部没有餐厅。
   // 8.1.17（BW3，docs/DISHES_V8117.md 第 5 节）：平板电子菜单也按出品口核对，「点餐平板」默认三处都有；店里去掉哪一处，平板上那一处的菜就点不了
   'dining.orderRestaurant': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk', 'tablet'] },
@@ -687,6 +690,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'studio.publish': 'UI 工作台：发布、回滚版面（平板马上换成新样子）',
   'frontdesk.blacklist': '维护黑名单（加入、解除、看清单）',
   'auth.checkinRisk': '当场授权未结离店的会员发牌、超时加收；处理未结离店的待办',
+  'dining.returnTable': '包房返台补低消（已结账的返台还要「反结账」）',
+  'auth.companyCharge': '当场授权结账时「公司承担」（客人身体不适、招待等）',
   'dining.orderRestaurant': '点单：在餐厅下单',
   'dining.orderWater': '点单：在水吧下单',
   'dining.orderFruit': '点单：在果吧下单',
@@ -739,6 +744,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'dining.order',
       'dining.ledger',
       'dining.kitchen',
+      'dining.returnTable',
       'emenu.view',
       'room.operate',
       'room.housekeep',
@@ -822,7 +828,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
   { title: '员工工作台', items: ['canteen.manage', 'patrol.read', 'patrol.manage'] },
   { title: '人事与办公', items: ['hr.org', 'hr.attendance', 'hr.attendanceDept', 'oa.templates', 'oa.all', 'payroll.manage', 'training.manage', 'oa.announce'] },
   { title: '业财法审批', items: ['gf.roles'] },
-  { title: '当场授权', items: ['auth.overLimit', 'auth.vipOverride', 'auth.discount', 'auth.memberRefund', 'auth.memberPhone'] },
+  { title: '当场授权', items: ['auth.overLimit', 'auth.vipOverride', 'auth.discount', 'auth.memberRefund', 'auth.memberPhone', 'auth.companyCharge'] },
   { title: '数据看板', items: ['report.executive', 'report.members', 'report.technicians', 'report.commission', 'marketing.cost'] },
   { title: '管理后台', items: ['staff.manage', 'staff.dept', 'catalog.manage', 'emenu.manage', 'technician.manage', 'settings.manage', 'audit.read'] },
   { title: 'UI 工作台', items: ['studio.edit', 'studio.publish'] },

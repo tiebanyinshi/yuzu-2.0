@@ -15,7 +15,7 @@ import { ALL_CATEGORIES, CategoryTabs } from '../../components/CategoryTabs';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { QtyInput } from '../../components/QtyInput';
-import { Button, Input, MoneyInput, Notice, Skeleton } from '../../components/ui';
+import { Button, Input, MoneyInput, Notice, Select, Skeleton } from '../../components/ui';
 import { CartLineName, cartKey, cartLines, ItemCard } from '../catalog/ItemCard';
 import { ZoneChip } from './parts';
 import { BackfillNotice, backfillBody, backfillSummary, useBackfill } from './backfill';
@@ -64,7 +64,8 @@ export function AddItemsDialog({
   const [search, setSearch] = useState('');
   /** 数量输得不对时的一句提示（输空了、超过上限） */
   const [qtyHint, setQtyHint] = useState<string | null>(null);
-  const [custom, setCustom] = useState<{ name: string; amount: string }[]>([]);
+  // 8.2.4：临时项目可以选出品档口（选了的照常出厨房单）；stationId 为空的不进厨房
+  const [custom, setCustom] = useState<{ name: string; amount: string; stationId: number | null }[]>([]);
   const techs = useFrontdeskTechnicians(open);
   // 进厨房的菜的余量（8.0.8，B03）：厨房沽清设的今天还能卖几份（null 不限量，0 沽清）；余量不够时服务端照旧整单拒绝。
   // 补录纸质单时不看今天的余量：那些菜之前已经上过了，服务端补录也不扣沽清（Codex 审查 fb67dca）
@@ -183,7 +184,9 @@ export function AddItemsDialog({
         (remainingOf.get(i.id) === 0 ? '已沽清' : i.technicianRequired && techs.isPending ? '正在加载技师…' : i.technicianRequired && !techs.data ? '技师名单没有加载出来' : null));
   const missingTech = techOn && !!techRules?.requireTechnician && lines.some((l) => l.item.technicianRequired && !l.technicianId);
   const staleTech = lines.some((l) => l.technicianId && !techById.has(l.technicianId));
-  const customParsed = custom.map((c) => ({ name: c.name.trim(), amount: parseYuan(c.amount) }));
+  const customParsed = custom.map((c) => ({ name: c.name.trim(), amount: parseYuan(c.amount), stationId: c.stationId }));
+  // 能选的档口：菜单上有菜的、在用的档口（8.2.4）
+  const stations = [...new Map((dining.data?.dishes ?? []).map((d) => [d.stationId, d.stationName])).entries()];
   const customValid = customParsed.every((c) => c.name && c.amount && c.amount > 0);
   const total = lines.reduce((s, l) => s + l.amount, 0) + customParsed.reduce((s, c) => s + (c.amount ?? 0), 0);
   const ready = (lines.length > 0 || custom.length > 0) && customValid && total > 0 && !missingTech && !staleTech;
@@ -196,7 +199,7 @@ export function AddItemsDialog({
       body: {
         clientKey: key,
         lines: lines.map((l) => ({ itemId: l.item.id, quantity: l.quantity, tier: l.tier, technicianId: l.technicianId, callType: l.callType })),
-        customLines: customParsed.map((c) => ({ name: c.name, amount: c.amount })),
+        customLines: customParsed.map((c) => ({ name: c.name, amount: c.amount, ...(c.stationId ? { stationId: c.stationId } : {}) })),
         expectedTotal: total,
         ...backfillBody(backfill),
       },
@@ -345,6 +348,28 @@ export function AddItemsDialog({
                       className="h-10"
                     />
                   </div>
+                  {stations.length > 0 && (
+                    <Select
+                      fullWidth={false}
+                      className="h-10 w-28 text-[13px]"
+                      value={c.stationId ?? ''}
+                      disabled={locked}
+                      onChange={(e) => {
+                        touch();
+                        const stationId = Number(e.target.value) || null;
+                        setCustom((list) => list.map((x, j) => (j === i ? { ...x, stationId } : x)));
+                      }}
+                      aria-label="临时项目的出品档口"
+                      data-testid="custom-station"
+                    >
+                      <option value="">不进厨房</option>
+                      {stations.map(([id, name]) => (
+                        <option key={id} value={id}>
+                          {name}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
                   <button
                     type="button"
                     aria-label="移除"
@@ -356,7 +381,7 @@ export function AddItemsDialog({
                 </div>
               ))}
               {custom.length < 5 && (
-                <Button size="sm" variant="ghost" icon={<Plus className="size-4" />} onClick={() => setCustom((list) => [...list, { name: '', amount: '' }])}>
+                <Button size="sm" variant="ghost" icon={<Plus className="size-4" />} onClick={() => setCustom((list) => [...list, { name: '', amount: '', stationId: null }])}>
                   手动输入项目与金额
                 </Button>
               )}
@@ -405,7 +430,10 @@ export function AddItemsDialog({
               ))}
               {customParsed.map((c, i) => (
                 <li key={`c${i}`} className="flex items-center gap-2 text-[13px]">
-                  <span className="min-w-0 flex-1 truncate font-semibold">{c.name || '（未填名称）'}</span>
+                  <span className="min-w-0 flex-1 truncate font-semibold">
+                    {c.name || '（未填名称）'}
+                    {c.stationId && <span className="ml-1 text-[12px] font-normal text-ink-3">→ {stations.find(([id]) => id === c.stationId)?.[1] ?? '档口'}</span>}
+                  </span>
                   {c.amount ? <Money cents={c.amount} className="font-semibold" /> : <span className="text-clay">金额未填</span>}
                 </li>
               ))}

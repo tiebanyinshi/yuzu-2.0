@@ -343,7 +343,7 @@ function TableReview({ preview }: { preview: TableCheckoutPreview }) {
                 {s.guests} 人 · {s.memberName ?? (s.guestLabel || '散客')} · {formatTime(s.openedAt)} 开台
               </span>
               <span className="flex-1" />
-              <Money cents={s.amount + s.charge.serviceFee} className="text-[15px] font-bold" />
+              <Money cents={s.amount + s.charge.serviceFee + s.charge.roomFee} className="text-[15px] font-bold" />
             </div>
             {s.lines.length === 0 ? (
               <p className="mt-1 text-[12.5px] text-ink-3">没有消费</p>
@@ -359,7 +359,7 @@ function TableReview({ preview }: { preview: TableCheckoutPreview }) {
                 ))}
               </ul>
             )}
-            {(s.charge.serviceFee > 0 || s.charge.minSpend > 0) && (
+            {(s.charge.serviceFee > 0 || s.charge.minSpend > 0 || s.charge.roomFee > 0) && (
               <ul className="mt-1 space-y-0.5 text-[12.5px] text-ink-2" data-testid={`table-checkout-charge-${s.tableName}`}>
                 {s.charge.serviceFee > 0 && (
                   <li className="flex items-baseline gap-2">
@@ -367,10 +367,17 @@ function TableReview({ preview }: { preview: TableCheckoutPreview }) {
                     <Money cents={s.charge.serviceFee} className="text-ink-3" />
                   </li>
                 )}
+                {s.charge.roomFee > 0 && (
+                  <li className="flex items-baseline gap-2">
+                    <span className="min-w-0 flex-1">房费{s.charge.roomTypeName ? `（${s.charge.roomTypeName}，只收房费）` : ''}</span>
+                    <Money cents={s.charge.roomFee} className="text-ink-3" />
+                  </li>
+                )}
                 {s.charge.minSpend > 0 && (
                   <li className={cn('flex items-baseline gap-2', s.charge.shortfall > 0 && 'font-semibold text-clay')}>
                     <span className="min-w-0 flex-1">
-                      低消 {formatYuan(s.charge.minSpend)}
+                      {s.charge.roomTypeName ? `${s.charge.roomTypeName} · ` : ''}
+                      {s.charge.minSpendFrom === 'mid' ? '中消' : '低消'} {formatYuan(s.charge.minSpend)}
                       {s.charge.shortfall > 0 ? `，还差 ${formatYuan(s.charge.shortfall)}` : '，已达到'}
                     </span>
                   </li>

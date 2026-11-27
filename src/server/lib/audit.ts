@@ -383,6 +383,10 @@ export type AuditAction =
   // 8.1.39：菜品的计价方式（按价目 / 时价、杂项 / 称重）；包房转挂账
   | 'dish_price_mode'
   | 'table_park'
+  // 8.2.4 餐饮（docs/V8224_DINING.md）：菜品单独设档口、包房房型、返台
+  | 'items_station_pinned'
+  | 'dining_room_type_saved'
+  | 'table_return'
   // 8.1.40：导出券的发放台账；生成一批礼品卡
   | 'coupon_ledger_export'
   | 'gift_card_batch'

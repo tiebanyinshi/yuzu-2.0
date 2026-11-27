@@ -81,7 +81,7 @@ export function priceTicket(t: Pick<TicketType, 'price12h' | 'price24h'>, checke
  * 「优惠 / 免单」（R1.2，店主 2026-10-29 签认）由值班经理及以上当场授权并填原因，一张结账单最多一笔；
  * 店员不能自行抹零，抹零也走优惠。
  */
-export const CHECKOUT_METHODS = [...PAYMENT_METHODS, 'wallet', 'coupon', 'discount', 'store_coupon', 'member_discount', 'count_card', 'on_account', 'line_discount'] as const;
+export const CHECKOUT_METHODS = [...PAYMENT_METHODS, 'wallet', 'coupon', 'discount', 'store_coupon', 'member_discount', 'count_card', 'on_account', 'line_discount', 'company'] as const;
 export type CheckoutMethod = (typeof CHECKOUT_METHODS)[number];
 export const CHECKOUT_METHOD_LABELS: Record<CheckoutMethod, string> = {
   ...PAYMENT_METHOD_LABELS,
@@ -95,6 +95,8 @@ export const CHECKOUT_METHOD_LABELS: Record<CheckoutMethod, string> = {
   on_account: '挂账',
   // 单项打折（8.2.1）：结账时按这几张账单上打过折的行自动记一笔，优惠、不是收款
   line_discount: '单项折扣',
+  // 公司承担（8.2.4，docs/V8224_DINING.md 第 5 节）：公司内部账户承担（客人身体不适、招待……），当场授权；算营业额、不算实收，不进协议单位应收
+  company: '公司承担',
 };
 /**
  * 实收（现金流入）的方式：会员储值是会员余额抵扣，团购券由平台结算，优惠 / 免单没有收钱，券抵扣（v0.7.20）、

@@ -444,6 +444,7 @@ const ANOMALY_META: Record<SettlementAnomaly['kind'], { label: string; tone: 'cl
   refund: { label: ANOMALY_LABELS.refund, tone: 'ember', icon: Undo2, iconClass: 'bg-ember-soft text-ember' },
   refund_void: { label: ANOMALY_LABELS.refund_void, tone: 'clay', icon: CircleSlash, iconClass: 'bg-clay-soft text-clay' },
   member_refund: { label: ANOMALY_LABELS.member_refund, tone: 'clay', icon: CircleSlash, iconClass: 'bg-clay-soft text-clay' },
+  company_charge: { label: ANOMALY_LABELS.company_charge, tone: 'ember', icon: BadgePercent, iconClass: 'bg-ember-soft text-ember' },
 };
 
 function AnomalyItem({ a }: { a: SettlementAnomaly }) {
@@ -712,6 +713,7 @@ function BusinessCard({ s }: { s: SettlementSummary }) {
                 {(m.method === 'discount' || m.method === 'store_coupon' || m.method === 'member_discount' || m.method === 'line_discount') && (
                   <span className="ml-1 text-[12px] text-ink-4">（不是收款）</span>
                 )}
+                {m.method === 'company' && <span className="ml-1 text-[12px] text-ink-4">（公司内部账户承担，不是收款；每一笔见下方异常与提醒）</span>}
               </span>
               <Money cents={m.amount} className="font-bold" />
             </div>

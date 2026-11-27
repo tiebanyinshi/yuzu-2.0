@@ -17,7 +17,7 @@ import { assertCanFix, assertOpen, businessDate, hashRequest, loadFrontdeskRules
 import { loadPricedItems, priceLine } from '../pricing';
 import { loadTechnicianRules, loadTechnicians } from '../technicians';
 import { attachSessions, lockQueue, syncSessionAfterVoid, type SessionPostOptions } from '../clockroom';
-import { cancelKitchenItem, createKitchenItems, kitchenStationsOf, takeDishLimits } from '../dining';
+import { cancelKitchenItem, createKitchenItems, kitchenStationsOf, loadDiningRules, takeDishLimits } from '../dining';
 import { authorizeLineVoid } from '../dining-808';
 import { assertOrderOutlets, DeliverRoomField, OrderNoteField, VoidBlameField } from '../dining-order-v8115';
 import { DishLineFields, kitchenPartsOf, limitLinesOf, planDishLines, type ComboPartPlan } from '../dish-lines';
@@ -68,7 +68,19 @@ export const PostInput = z
       .max(30, '一次最多登记 30 项')
       .default([]),
     customLines: z
-      .array(z.object({ name: z.string().trim().min(1, '请填写项目名称').max(32, '项目名称最多 32 字'), amount: positiveCents('金额') }))
+      .array(
+        z.object({
+          name: z.string().trim().min(1, '请填写项目名称').max(32, '项目名称最多 32 字'),
+          amount: positiveCents('金额'),
+          /** 8.2.4（docs/V8224_DINING.md 第 1 节）：临时项目选了出品档口的照常出厨房单；不带时与升级前的请求完全相同（幂等摘要不变） */
+          stationId: z
+            .number('出品档口不正确')
+            .int('出品档口不正确')
+            .positive('出品档口不正确')
+            .nullish()
+            .transform((v) => v ?? undefined),
+        }),
+      )
       .max(10)
       .default([]),
     /** 店员确认时看到的本次合计；与服务端按当前价格计算的不一致时拒绝，避免改价后挂错金额 */
@@ -271,7 +283,13 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
       parts: null,
     });
   }
+  // 8.2.4：选了档口的临时项目照常出厨房单（记在「餐饮」、建出品单；没有菜品，不扣沽清、不扣料）。只读档口，不加锁
+  const customStations = await customLineStations(
+    tx,
+    input.customLines.flatMap((l) => (l.stationId === undefined ? [] : [l.stationId])),
+  );
   for (const l of input.customLines) {
+    const stationId = l.stationId ?? null;
     lines.push({
       itemId: null,
       name: l.name,
@@ -279,11 +297,11 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
       unitPrice: l.amount,
       quantity: 1,
       amount: l.amount,
-      source: 'bath',
+      source: stationId === null ? 'bath' : 'dining',
       technicianId: null,
       callType: null,
       techText: null,
-      stationId: null,
+      stationId,
       note: '',
       addonOf: null,
       parts: null,
@@ -338,7 +356,9 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   // 沽清（技师队列之后、建出品单之前）：今天还剩的份数不够整笔拒绝；补录纸质单的菜早已上过，不扣沽清。
   // 套餐的子项各扣各的（8.1.17 BW7，与单点的同一道菜合起来按项目 id 升序锁）
   const dishLines = lines.filter((l) => l.stationId !== null);
-  const limited = dishLines.length > 0 && !backfill ? await takeDishLimits(tx, limitLinesOf(dishLines.map((l) => ({ ...l, itemId: l.itemId! }))), date, clock) : new Set<number>();
+  // 临时项目（8.2.4，没有菜品）不扣沽清
+  const menuDishes = dishLines.filter((l) => l.itemId !== null);
+  const limited = menuDishes.length > 0 && !backfill ? await takeDishLimits(tx, limitLinesOf(menuDishes.map((l) => ({ ...l, itemId: l.itemId! }))), date, clock) : new Set<number>();
   const lineIds = new Map<Line, number>();
   for (const l of lines) {
     const [row] = await tx<{ id: number }[]>`
@@ -356,11 +376,11 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
     deliverTo: channel?.deliverTo ?? deliverTo ?? '',
     lines: dishLines.map((l) => ({
       billLineId: lineIds.get(l)!,
-      itemId: l.itemId!,
+      itemId: l.itemId,
       stationId: l.stationId!,
       quantity: l.quantity,
       note: l.note,
-      limitTaken: limited.has(l.itemId!),
+      limitTaken: l.itemId !== null && limited.has(l.itemId),
       ...kitchenPartsOf(l.parts, limited),
     })),
     date,
@@ -395,7 +415,9 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
       total,
       lines: lines.map((l) => `${l.name}×${l.quantity}${l.techText ? `（${l.techText}）` : ''}${l.note ? `（${l.note}）` : ''}`),
       // 8.1.37：手动金额逐行记金额（以前只有名称×数量和合计）
-      ...(input.customLines.length ? { manualLines: input.customLines.map((l) => ({ name: l.name, amount: l.amount })) } : {}),
+      ...(input.customLines.length
+        ? { manualLines: input.customLines.map((l) => ({ name: l.name, amount: l.amount, ...(l.stationId ? { station: customStations.get(l.stationId)!.name } : {}) })) }
+        : {}),
       // 8.1.39：现场定价、称重的那几行（填的价、斤数、价目的价）
       ...(priceModeDetails.length ? { pricedOnSite: priceModeDetails } : {}),
       ...backfillDetail(backfill),
@@ -409,6 +431,20 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
     total,
     lines: lines.map((l) => ({ lineId: lineIds.get(l)!, itemId: l.itemId, name: l.name, unitPrice: l.unitPrice, quantity: l.quantity, amount: l.amount, note: l.note })),
   };
+}
+
+/**
+ * 临时项目选的档口（8.2.4）：餐饮功能开着、档口存在而且在用；不行的整笔拒绝。只读、不加锁（与下单选档口一样）
+ */
+async function customLineStations(tx: Tx, stationIds: number[]): Promise<Map<number, { id: number; name: string }>> {
+  const ids = [...new Set(stationIds)];
+  if (ids.length === 0) return new Map();
+  if (!(await loadDiningRules(tx)).enabled) throw unprocessable('DINING_DISABLED', '餐饮功能已关闭，临时项目不能选出品档口；请刷新页面');
+  const rows = await tx<{ id: number; name: string; active: boolean }[]>`SELECT id, name, active FROM kitchen_stations WHERE id IN ${tx(ids)}`;
+  if (rows.length !== ids.length) throw notFound('出品档口不存在，请刷新后重新选');
+  const off = rows.find((r) => !r.active);
+  if (off) throw unprocessable('STATION_INACTIVE', `档口「${off.name}」已停用，临时项目请换一个档口`);
+  return new Map(rows.map((r) => [r.id, r]));
 }
 
 export const VoidInput = z.object({

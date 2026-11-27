@@ -83,6 +83,7 @@ import { pricesColumn } from './pricing';
 import { assertNotPriceLinked } from './price-catalog/linked';
 import { setDishPriceMode } from './dish-price-mode';
 import type { PriceMode } from '@shared/dish-price-mode';
+import { pinnedForStation } from './dining-v8224';
 import { loadDiningOutlets, SaleWindowsInput, StationWindowsInput, stationWindowsOf, writeDishWindows } from './dining-v8139';
 
 /** 菜品的图片地址（图存在电子菜单的图片表里；这个地址给有菜品权限的人看） */
@@ -632,9 +633,9 @@ export async function createDishTx(tx: Tx, ctx: OpContext, f: DishFieldsData & {
   await checkFields(tx, null, f, refs);
   const methods = normalizeMethods(f, null);
   const [row] = await tx<{ id: number }[]>`
-    INSERT INTO service_items (name, category, price, technician_required, station_id, dining_outlet, dining_group, dish_image_id, active, sort_order)
+    INSERT INTO service_items (name, category, price, technician_required, station_id, dining_outlet, dining_group, dish_image_id, active, sort_order, station_pinned)
     VALUES (${f.name}, ${f.category}, ${defaultPrice(f.prices)}, false, ${f.stationId}, ${slot.outlet}, ${slot.group}, ${f.imageId}, ${f.active},
-            (SELECT coalesce(max(sort_order), 0) + 1 FROM service_items))
+            (SELECT coalesce(max(sort_order), 0) + 1 FROM service_items), ${await pinnedForStation(tx, slot, f.stationId)})
     RETURNING id`;
   const id = row!.id;
   await tx`
@@ -710,6 +711,7 @@ export async function updateDishTx(tx: Tx, ctx: OpContext, id: number, f: DishFi
 
   await tx`
     UPDATE service_items SET name = ${f.name}, category = ${f.category}, station_id = ${f.stationId}, dish_image_id = ${f.imageId},
+           ${/* 8.2.4：换了档口的，选的不是分组的默认档口就记成「单独设」 */ cur.stationId !== f.stationId ? tx`station_pinned = ${await pinnedForStation(tx, to, f.stationId)},` : tx``}
            ${writeSlot ? tx`dining_outlet = ${to.outlet}, dining_group = ${to.group},` : tx``}
            ${/* 挪到别的小类：原来排的先后不再算（排在新小类的最后，8.1.17） */ slotChanged ? tx`dish_sort = NULL,` : tx``} updated_at = clock_timestamp()
     WHERE id = ${id}`;

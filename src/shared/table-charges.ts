@@ -13,6 +13,14 @@ export interface TableCharge {
   shortfall: number;
   /** 上次结账自动记的（反结账回来的）：重新结账时作废重算 */
   previousCharges: number;
+  /** 8.2.4：只收房费的房型结账时记的房费（分，没有为 0） */
+  roomFee: number;
+  /** 8.2.4：包房的房型（不是包房为空） */
+  roomTypeName: string | null;
+  /** 8.2.4：低消从哪来（桌台自己设的 / 房型低消 / 房型中消 / 不设） */
+  minSpendFrom: 'table' | 'room_type' | 'mid' | 'none';
+  /** 8.2.4：服务费比例从哪来（桌台自己设的 / 门店默认） */
+  serviceFeeFrom: 'table' | 'store';
 }
 
 /** 服务费比例最多 30%（万分之 3000） */

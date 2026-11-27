@@ -103,7 +103,13 @@ export async function createIncident(deps: Deps, visitId: number, raw: IncidentI
         throw unprocessable('SURCHARGE_AUTH_REQUIRED', '超时加收要值班经理、店总或店主当场授权', { visitId: visit.id, amount: input.amount });
       }
       // 走原来的挂账：一条手动金额的明细（来访 → 账单；编号由挂账那一步写下，类型记成 visit_incident）
-      const post: PostInputParsed = { clientKey: key, lines: [], customLines: [{ name: SURCHARGE_LINE_NAME, amount: input.amount }], expectedTotal: input.amount, backfill: undefined };
+      const post: PostInputParsed = {
+        clientKey: key,
+        lines: [],
+        customLines: [{ name: SURCHARGE_LINE_NAME, amount: input.amount, stationId: undefined }],
+        expectedTotal: input.amount,
+        backfill: undefined,
+      };
       const posted = await postChargesTx(tx, deps, visit.id, post, { key, requestHash, backfill: null, opType: 'visit_incident' }, ctx);
       keySaved = true;
       amount = input.amount;

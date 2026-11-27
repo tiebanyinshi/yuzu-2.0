@@ -267,6 +267,7 @@ const ANOMALY_LABELS: Record<SettlementAnomaly['kind'], string> = {
   refund: '退款单',
   refund_void: '作废退款单',
   member_refund: '储值退回',
+  company_charge: '公司承担',
 };
 const pairText = (p: Pair) => `本金 ${formatYuan(p.principal)} / 赠金 ${formatYuan(p.bonus)}`;
 /** 补录隔了多久：90 → 1.5 小时 */
@@ -563,6 +564,21 @@ export async function computeSettlement(db: Db, date: string, today: string): Pr
       description: `优惠 / 免单 · ${d.reason} · 经办 ${d.operatorName}，${d.approverName}当场授权${d.status === 'voided' ? '（结账单已反结账）' : ''}`,
     });
   }
+  // 8.2.4 公司承担（docs/V8224_DINING.md 第 5 节）：每一笔单独列出——原因、经办、授权人
+  const companies = await db<{ checkoutNo: string; createdAt: string; amount: number; reason: string; operatorName: string; approverName: string; status: string }[]>`
+    SELECT c.checkout_no, c.created_at, p.amount, p.ref AS reason, s.display_name AS operator_name, ap.display_name AS approver_name, c.status
+    FROM checkout_payments p JOIN checkouts c ON c.id = p.checkout_id JOIN staff s ON s.id = c.operator_id JOIN staff ap ON ap.id = p.approved_by
+    WHERE p.method = 'company' AND c.business_date = ${date} AND c.store_id = ${sid()} ORDER BY c.created_at, p.id`;
+  for (const d of companies) {
+    anomalies.push({
+      kind: 'company_charge',
+      at: d.createdAt,
+      docNo: d.checkoutNo,
+      memberName: null,
+      amount: Number(d.amount),
+      description: `公司承担 · ${d.reason} · 经办 ${d.operatorName}，${d.approverName}当场授权${d.status === 'voided' ? '（结账单已反结账）' : ''}`,
+    });
+  }
   const { selfVoidMinutes } = await loadFrontdeskRules(db);
   const frontEvents = await db<{ action: string; createdAt: string; detail: Record<string, unknown>; staffName: string | null; late: boolean | null }[]>`
     SELECT a.action, a.created_at, a.detail, s.display_name AS staff_name,
@@ -761,9 +777,11 @@ export function settlementCsv(s: SettlementSummary): string {
             ? '平台团购核销，由平台结算'
             : m.method === 'on_account'
               ? '协议单位挂账，回款在 ERP「应收与挂账」登记（不进交班、日结）'
-              : m.method === 'discount' || m.method === 'store_coupon' || m.method === 'member_discount' || m.method === 'line_discount'
-                ? '优惠，不是收款'
-                : '',
+              : m.method === 'company'
+                ? '公司内部账户承担（不进协议单位应收），每一笔见「异常与提醒」'
+                : m.method === 'discount' || m.method === 'store_coupon' || m.method === 'member_discount' || m.method === 'line_discount'
+                  ? '优惠，不是收款'
+                  : '',
     ]),
     ...s.business.coupons.map((c) => [`  · 团购 ${COUPON_PLATFORM_LABELS[c.platform]}`, c.count, (c.amount < 0 ? '-' : '') + y(c.amount), c.voidCount ? `作废 ${c.voidCount} 张` : '']),
     [],

@@ -229,7 +229,7 @@ export function OrderTab() {
 
   const dishes = useMemo(() => menu.data?.dishes ?? [], [menu.data]);
   const byId = useMemo(() => new Map(dishes.map((d) => [d.id, d])), [dishes]);
-  const canVoid = (p: PendingDish) => !voidBlockedText(byId.get(p.itemId)?.outlet, voidOutlets);
+  const canVoid = (p: PendingDish) => !voidBlockedText(p.itemId === null ? 'restaurant' : byId.get(p.itemId)?.outlet, voidOutlets);
   // 这一处的菜，再按小分类筛（8.1.7）
   const inOutlet = useMemo(() => (outlet ? dishes.filter((d) => d.outlet === outlet) : []), [dishes, outlet]);
   const inGroups = groups.length ? inOutlet.filter((d) => groups.includes(d.group)) : inOutlet;
@@ -1025,7 +1025,13 @@ export function OrderTab() {
           setVoiding(null);
           refresh();
           if (v.mode === 'modify') {
-            const dish = byId.get(v.dish.itemId);
+            const itemId = v.dish.itemId;
+            // 8.2.4：手工下的临时项目没有菜品，退了不放回购物车（到前台重新下）
+            if (itemId === null) {
+              toast({ tone: 'success', title: `${v.dish.name} 已退`, body: '临时项目请到前台重新下' });
+              return;
+            }
+            const dish = byId.get(itemId);
             // 8.1.17：多档、有做法或加料的菜重新弹出来选（备注里的做法、加价不能当手写的带回去）
             if (dish && needsOptions(dish)) {
               setPicking(dish);
@@ -1033,7 +1039,7 @@ export function OrderTab() {
               return;
             }
             // 改单（8.0.8，B02）：退掉以后放回购物车，改数量或换菜再下单
-            setCart((c) => [...c, { key: uuid(), dishId: v.dish.itemId, quantity: v.dish.quantity, note: v.dish.note }]);
+            setCart((c) => [...c, { key: uuid(), dishId: itemId, quantity: v.dish.quantity, note: v.dish.note }]);
             toast({ tone: 'success', title: `${v.dish.name} 已退，放回了购物车`, body: '改好数量或换菜后点「下单」' });
           } else toast({ tone: 'success', title: `${v.dish.name} 已退` });
         }}

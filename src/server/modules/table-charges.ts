@@ -12,6 +12,10 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { formatYuan } from '@shared/money';
 import { serviceFeeText, type TableCharge } from '@shared/table-charges';
+import { DEFAULT_DINING_RULES, type DiningRules } from '@shared/dining';
+import { tableRuleOf, type DiningRoomType, type ServiceFeeDefault } from '@shared/dining-v8224';
+import { minuteOfDay } from '@shared/business-date';
+import { settingRow } from '../lib/store-settings';
 import type { Db, Tx } from '../db';
 import { guard, guardAny } from '../auth/guard';
 import { writeAudit } from '../lib/audit';
@@ -21,25 +25,63 @@ import { idParam, parse } from '../lib/validate';
 import { currentStoreId } from '../lib/store-context';
 import { businessDate, setTxTimeouts } from './frontdesk/common';
 
-/** 这几次开台此刻的菜钱、低消与服务费（只读；结账核对与结账用同一个算法） */
-export async function tableChargesOf(db: Db, sessionIds: number[]): Promise<Map<number, TableCharge>> {
+/**
+ * 这几次开台此刻的菜钱、低消与服务费（只读；结账核对与结账用同一个算法）。
+ * 8.2.4：低消、服务费按「桌台自己设的 → 房型（低消、中消、只收房费）→ 门店默认」取（tableRuleOf）；中消看开台时刻与此刻的人数
+ */
+export async function tableChargesOf(db: Db, sessionIds: number[], timeZone: string): Promise<Map<number, TableCharge>> {
   if (sessionIds.length === 0) return new Map();
-  const rows = await db<{ sessionId: number; tableName: string; minSpend: number; serviceFeeBp: number; subtotal: number; old: number }[]>`
-    SELECT s.id AS session_id, t.name AS table_name, t.min_spend, t.service_fee_bp,
+  const rows = await db<
+    {
+      sessionId: number;
+      tableName: string;
+      minSpend: number;
+      serviceFeeBp: number | null;
+      subtotal: number;
+      old: number;
+      guests: number;
+      openedAt: Date;
+      roomType: (Omit<DiningRoomType, 'id' | 'sortOrder' | 'active'> & { midStart: number | null; midEnd: number | null }) | null;
+    }[]
+  >`
+    SELECT s.id AS session_id, t.name AS table_name, t.min_spend, t.service_fee_bp, s.guests, s.opened_at,
+           CASE WHEN rt.id IS NULL THEN NULL ELSE json_build_object('name', rt.name, 'chargeMode', rt.charge_mode, 'minSpend', rt.min_spend, 'midSpend', rt.mid_spend,
+             'midStart', rt.mid_start_minute, 'midEnd', rt.mid_end_minute, 'midMaxGuests', rt.mid_max_guests, 'roomFee', rt.room_fee) END AS room_type,
            coalesce((SELECT sum(l.amount) FROM bill_lines l WHERE l.bill_id = s.bill_id AND l.status = 'active' AND l.charge_kind IS NULL), 0)::bigint AS subtotal,
            coalesce((SELECT sum(l.amount) FROM bill_lines l WHERE l.bill_id = s.bill_id AND l.status = 'active' AND l.charge_kind IS NOT NULL), 0)::bigint AS old
-    FROM table_sessions s JOIN dining_tables t ON t.id = s.table_id WHERE s.id IN ${db(sessionIds)}`;
+    FROM table_sessions s JOIN dining_tables t ON t.id = s.table_id LEFT JOIN dining_room_types rt ON rt.id = t.room_type_id
+    WHERE s.id IN ${db(sessionIds)}`;
+  const store = await serviceFeeDefaultOf(db);
   return new Map(
     rows.map((r) => {
       const subtotal = Number(r.subtotal);
-      const minSpend = Number(r.minSpend);
-      const serviceFee = Math.round((subtotal * r.serviceFeeBp) / 10_000);
+      const rt = r.roomType ? { ...r.roomType, minSpend: Number(r.roomType.minSpend), midSpend: Number(r.roomType.midSpend), roomFee: Number(r.roomType.roomFee) } : null;
+      const rule = tableRuleOf({ minSpend: Number(r.minSpend), serviceFeeBp: r.serviceFeeBp, roomType: rt }, store, { openedMinute: minuteOfDay(new Date(r.openedAt), timeZone), guests: r.guests });
+      const serviceFee = Math.round((subtotal * rule.serviceFeeBp) / 10_000);
       return [
         Number(r.sessionId),
-        { tableName: r.tableName, subtotal, minSpend, serviceFeeBp: r.serviceFeeBp, serviceFee, shortfall: Math.max(0, minSpend - subtotal), previousCharges: Number(r.old) },
+        {
+          tableName: r.tableName,
+          subtotal,
+          minSpend: rule.minSpend,
+          serviceFeeBp: rule.serviceFeeBp,
+          serviceFee,
+          shortfall: Math.max(0, rule.minSpend - subtotal),
+          previousCharges: Number(r.old),
+          roomFee: rule.roomFee,
+          roomTypeName: rule.roomTypeName,
+          minSpendFrom: rule.minSpendFrom,
+          serviceFeeFrom: rule.serviceFeeFrom,
+        },
       ];
     }),
   );
+}
+
+/** 门店的服务费默认（餐饮规则；8.2.4）。读设置行，不引用 dining.ts */
+async function serviceFeeDefaultOf(db: Db): Promise<ServiceFeeDefault> {
+  const row = await settingRow<Partial<DiningRules>>(db, 'dining_rules');
+  return { serviceFeeBp: row?.value?.serviceFeeBp ?? DEFAULT_DINING_RULES.serviceFeeBp, serviceFeeScope: row?.value?.serviceFeeScope ?? DEFAULT_DINING_RULES.serviceFeeScope };
 }
 
 /**
@@ -48,23 +90,25 @@ export async function tableChargesOf(db: Db, sessionIds: number[]): Promise<Map<
  */
 export async function applyTableCharges(
   tx: Tx,
-  a: { sessions: { id: number; billId: number }[]; topUp: boolean; key: string; date: string; at: Date; staffId: number },
-): Promise<{ serviceFee: number; topUp: number }> {
+  a: { sessions: { id: number; billId: number }[]; topUp: boolean; key: string; date: string; at: Date; staffId: number; timeZone: string },
+): Promise<{ serviceFee: number; topUp: number; roomFee: number }> {
   const plan = await tableChargesOf(
     tx,
     a.sessions.map((s) => s.id),
+    a.timeZone,
   );
   const short = a.sessions.map((s) => plan.get(s.id)!).filter((c) => c.shortfall > 0);
   if (short.length && !a.topUp) {
     throw conflict(
       'MIN_SPEND_SHORT',
       `${short.map((c) => `「${c.tableName}」低消 ${formatYuan(c.minSpend)}，现在 ${formatYuan(c.subtotal)}，差 ${formatYuan(c.shortfall)}`).join('；')}。` +
-        '请餐饮确认补足低消（结账时勾「补足低消」），或者先把这桌转挂账',
+        '请餐饮确认补足低消（结账时勾「补足低消」）、请客人返台再点，或者先把这桌转挂账',
       { tables: short.map((c) => ({ tableName: c.tableName, minSpend: c.minSpend, subtotal: c.subtotal, shortfall: c.shortfall })) },
     );
   }
   let serviceFee = 0;
   let topUp = 0;
+  let roomFee = 0;
   for (const s of a.sessions) {
     const c = plan.get(s.id)!;
     // 反结账以后重新结：原来自动记的作废（不会重复收）
@@ -72,9 +116,11 @@ export async function applyTableCharges(
       UPDATE bill_lines SET status = 'voided', void_reason = '重新结账，按此刻重算', voided_by = ${a.staffId}, voided_at = ${a.at}
       WHERE bill_id = ${s.billId} AND status = 'active' AND charge_kind IS NOT NULL RETURNING amount`;
     const gone = voided.reduce((t, v) => t + Number(v.amount), 0);
-    const add: { kind: 'service_fee' | 'min_spend'; name: string; amount: number }[] = [];
+    const add: { kind: 'service_fee' | 'min_spend' | 'room_fee'; name: string; amount: number }[] = [];
     if (c.serviceFee > 0) add.push({ kind: 'service_fee', name: serviceFeeText(c.serviceFeeBp), amount: c.serviceFee });
     if (c.shortfall > 0) add.push({ kind: 'min_spend', name: '低消补足', amount: c.shortfall });
+    // 8.2.4：只收房费的房型记一行房费（不算服务费、不算进低消）
+    if (c.roomFee > 0) add.push({ kind: 'room_fee', name: c.roomTypeName ? `房费（${c.roomTypeName}）` : '房费', amount: c.roomFee });
     for (const l of add) {
       await tx`
         INSERT INTO bill_lines (bill_id, source, item_id, tier, name, unit_price, quantity, amount, post_key, business_date, posted_by, posted_at, charge_kind)
@@ -86,8 +132,9 @@ export async function applyTableCharges(
     }
     serviceFee += c.serviceFee;
     topUp += c.shortfall;
+    roomFee += c.roomFee;
   }
-  return { serviceFee, topUp };
+  return { serviceFee, topUp, roomFee };
 }
 
 // ───────────────────────── 转挂账（批房挂账，R9） ─────────────────────────

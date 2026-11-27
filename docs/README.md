@@ -22,6 +22,8 @@
 - [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
 - [`ROADMAP.md`](ROADMAP.md)：柚子 yuzu 推进路线（ROADMAP）
 - [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
+- [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
+- [`PENDING_DECISIONS.md`](PENDING_DECISIONS.md)：待确认经营事项
 - [`GOVERNANCE.md`](GOVERNANCE.md)：工程治理 · 让 AI 能长期开发 yuzu（三期）
 - [`DEVICES.md`](DEVICES.md)：目标设备（店主 2026-11-18）
 - [`DESIGN.md`](DESIGN.md)：柚子设计语言
@@ -125,6 +127,7 @@
 - [`V8144_FRONTDESK.md`](V8144_FRONTDESK.md)：8.1.44（前台 B）：已发券改条件、混合支付、同行组建与拆分、房态显示预约、买单时查会员
 - [`V8221_CASHIER.md`](V8221_CASHIER.md)：8.2.1 批 1：收银台（单项打折、一键快捷键、经办人前置与改价标记、换牌规则、手牌押金）
 - [`V8223_FRONTDESK.md`](V8223_FRONTDESK.md)：8.2.3 前台：发卡台与全店（客人类别、偏好、客诉台账、拥挤与高风险提示、技师预约权限、跳转明细、同行移出、补单）
+- [`V8224_DINING.md`](V8224_DINING.md)：8.2.4 餐饮：分组默认档口、临时项目进厨房、包房房型、服务费门店默认、返台、公司承担
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
 - [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面

@@ -118,7 +118,18 @@ export function TableStateLine({ t, mainName, subCount }: { t: TableStateInfo & 
  * 点没在用餐的桌：写明现在的状态；待清台的「清台」、可用的「维修」（与开台）、维修中的「恢复」，都能看历史。
  * onOpen：开台（可用、有开台权限时才给）
  */
-export function TableStateDialog({ table, onClose, onOpen }: { table: Tile; onClose: () => void; onOpen: (() => void) | null }) {
+export function TableStateDialog({
+  table,
+  onClose,
+  onOpen,
+  onReturn = null,
+}: {
+  table: Tile;
+  onClose: () => void;
+  onOpen: (() => void) | null;
+  /** 8.2.4：待清台的包房返台补低消（有「返台」「反结账」权限时才给） */
+  onReturn?: (() => void) | null;
+}) {
   const can = useCan();
   const action = useTableAction({ type: 'table_state', tableId: table.id, tableName: table.name });
   const [maintaining, setMaintaining] = useState(false);
@@ -140,6 +151,11 @@ export function TableStateDialog({ table, onClose, onOpen }: { table: Tile; onCl
           {canAct && table.state !== 'maintenance' && (
             <Button variant="secondary" size="lg" icon={<Wrench className="size-4" />} disabled={action.locked} onClick={() => setMaintaining(true)} data-testid="table-maintenance-open">
               维修
+            </Button>
+          )}
+          {onReturn && table.state === 'dirty' && (
+            <Button variant="secondary" size="lg" disabled={action.locked} onClick={onReturn} data-testid="table-return-open">
+              返台补低消
             </Button>
           )}
           {canAct && table.state === 'dirty' && (

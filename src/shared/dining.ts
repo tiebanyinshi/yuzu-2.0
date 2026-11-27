@@ -45,6 +45,17 @@ export interface DiningRules {
    * 果吧不细分。还有菜用着的小分类不能删、不能改名（先把菜挪走）
    */
   outletGroups: DiningOutletGroups;
+  /**
+   * 菜单分组的默认档口（8.2.4，docs/V8224_DINING.md 第 1 节）：点单分类（restaurant:点心）→ 档口。
+   * 菜品没「单独设档口」的按分组走（例如「点心」→ 茶点档口）；在后台「档口与出品」里改（能管理价目的岗位），保存餐饮规则不动它
+   */
+  groupStations: Record<string, number>;
+  /** 门店的服务费默认（8.2.4，万分之几，默认 0）：桌台没单独设比例的按它收 */
+  serviceFeeBp: number;
+  /** 门店默认的服务费用在哪些桌（8.2.4）：rooms 只用在挂了房型的包房（默认），all 所有桌台 */
+  serviceFeeScope: 'rooms' | 'all';
+  /** 返台（8.2.4）：已结账的包房单结账后多少分钟以内还能返台（默认 30；客人走了清台以后就不能返台） */
+  returnWindowMinutes: number;
 }
 
 /** 能自己设小分类的两处（果吧不细分） */
@@ -68,6 +79,10 @@ export const DEFAULT_DINING_RULES: DiningRules = {
   autoRestore: false,
   dirtyAlertMinutes: 15,
   outletGroups: DEFAULT_OUTLET_GROUPS,
+  groupStations: {},
+  serviceFeeBp: 0,
+  serviceFeeScope: 'rooms',
+  returnWindowMinutes: 30,
 };
 
 /** 小额退菜上限最多 ¥1,000 */
@@ -231,7 +246,8 @@ export interface KitchenItem {
   tableSessionId: number | null;
   tableName: string | null;
   guest: string;
-  itemId: number;
+  /** 菜品；手工下的临时项目（8.2.4）为空 */
+  itemId: number | null;
   name: string;
   quantity: number;
   note: string;
@@ -374,8 +390,8 @@ export interface DiningGuest {
 export interface PendingDish {
   id: number;
   billLineId: number;
-  /** 菜品（8.0.8 改单时放回购物车用） */
-  itemId: number;
+  /** 菜品（8.0.8 改单时放回购物车用）；手工下的临时项目（8.2.4）为空 */
+  itemId: number | null;
   name: string;
   quantity: number;
   note: string;
@@ -436,9 +452,11 @@ export interface DiningTable {
   seats: number;
   sortOrder: number;
   active: boolean;
-  /** 8.1.39：低消（分，0 为不设）、服务费比例（万分之几，0 为不收）；后台桌台带，看板不带 */
+  /** 8.1.39：低消（分，0 为不设）、服务费比例（万分之几，0 为不收；8.2.4 起空为跟门店默认）；后台桌台带，看板不带 */
   minSpend?: number;
-  serviceFeeBp?: number;
+  serviceFeeBp?: number | null;
+  /** 8.2.4：包房的房型（空为不是包房）；后台桌台带 */
+  roomTypeId?: number | null;
 }
 
 /** 桌台看板上的一桌（用餐中的开台） */
@@ -532,6 +550,8 @@ export interface TableCheckoutPreview {
 
 export interface TablesAdmin {
   tables: (DiningTable & { sessionCount: number })[];
+  /** 8.2.4：包房房型 */
+  roomTypes: import('./dining-v8224').DiningRoomType[];
 }
 
 /** 小程序扫码点餐（第三期 3c）主线这一端的兜底：一单的份数与金额上限（N1，与 MP33 相同，待确认） */
