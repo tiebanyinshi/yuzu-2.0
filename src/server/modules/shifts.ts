@@ -226,9 +226,14 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
         AND EXISTS (SELECT 1 FROM shift_members m WHERE m.shift_id = ${s.id} AND m.staff_id = w.operator_id
                     AND w.created_at >= m.joined_at AND (m.left_at IS NULL OR w.created_at < m.left_at))
     ), dp AS (
-      -- 客房押金（S7）：收、退都记在经办人当班的班次
-      SELECT kind, method, count(*) AS count, sum(amount) AS amount FROM room_deposits
-      WHERE shift_id = ${s.id} AND kind IN ('receive', 'refund') GROUP BY kind, method
+      -- 客房押金（S7）与手牌押金（8.2.1）：收、退都记在经办人当班的班次；手牌押金从会员储值扣的不进钱箱，不列在这里
+      SELECT kind, method, count(*) AS count, sum(amount) AS amount FROM (
+        SELECT kind, method, amount FROM room_deposits WHERE shift_id = ${s.id} AND kind IN ('receive', 'refund')
+        UNION ALL
+        SELECT 'receive', method, amount FROM tag_deposits WHERE shift_id = ${s.id} AND method <> 'wallet'
+        UNION ALL
+        SELECT 'refund', method, amount FROM tag_deposits WHERE refund_shift_id = ${s.id} AND status = 'refunded' AND method <> 'wallet'
+      ) x GROUP BY kind, method
     ), rs AS (
       -- 退款单（v0.7.20）：记到本班次的、生效的（作废只能在班次交班前，作废后不算）；别人从本班钱箱退的写明是谁
       SELECT r.id, r.refund_no, r.amount, r.reason, r.created_at, c.checkout_no,
@@ -320,7 +325,7 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
   const cashRecharge = rechargeByMethod.find((m) => m.method === 'cash')?.amount ?? 0;
   // 升级时已有的班次：反结账按原口径只列提醒（与 v0.3 的交班表相同），不列退款、不扣现金
   const cashRefund = s.legacyRefund ? 0 : (refundByMethod.find((m) => m.method === 'cash')?.amount ?? 0);
-  // 客房押金的现金：收的计入、退的扣减（押金是负债，交班时钱箱里有这笔钱）；本班次没有押金往来时不列这一项
+  // 客房押金、手牌押金（8.2.1）的现金：收的计入、退的扣减（押金是负债，交班时钱箱里有这笔钱）；本班次没有押金往来时不列这一项
   const hasDeposits = depositReceived.length > 0 || depositRefunded.length > 0;
   const hasCashDeposit = [...depositReceived, ...depositRefunded].some((m) => m.method === 'cash');
   const cashDeposit = (depositReceived.find((m) => m.method === 'cash')?.amount ?? 0) - (depositRefunded.find((m) => m.method === 'cash')?.amount ?? 0);

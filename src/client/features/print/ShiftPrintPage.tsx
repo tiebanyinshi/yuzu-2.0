@@ -77,7 +77,7 @@ function ShiftSlip({ s }: { s: ShiftRecord }) {
       {/* 押金：客房押金与会员卡押金（8.1.15）各一段 */}
       {(
         [
-          ['print-shift-deposits', '客房押金（不算营业额）', sum.deposits],
+          ['print-shift-deposits', '客房、手牌押金（不算营业额）', sum.deposits],
           ['print-shift-card-deposits', '会员卡押金（不算营业额）', sum.cardDeposits],
         ] as const
       ).map(

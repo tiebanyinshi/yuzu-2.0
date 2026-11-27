@@ -291,6 +291,8 @@
   - 8.1.44（`350`–`369`）：《前台系统开发》十一条——收银台（备注板块、打单 / 买单 / 买角、加项目与作废迁到收银台、左栏收纳）用 `350`–`359`，备注记经办人与同组 / 单人、已发券改使用条件、混合支付、同行人组建与拆分结算、房态显示当天预约、买单时建档与查会员用 `360`–`369`。
     - `350`（`350_visit_remarks.sql`，收银台，设计见 `docs/V8144_CASHIER.md`）：前台备注（同组 / 单人，记经办人与时间，可带标签）与撤下记录，两张表都只追加；「备注记经办人与同组 / 单人」与收银台备注板块是同一份数据，一起放在这一号。回滚脚本 `docs/rollback/350_visit_remarks.down.sql`。
     - `360`（`360_coupon_usage_terms.sql`，前台 B，设计见 `docs/V8144_FRONTDESK.md`）：发过券的模板门槛、适用范围也能改（数据库保护只留面额、折扣、兑换什么、有效期、档级）。回滚 `docs/rollback/360_coupon_usage_terms.down.sql`。
+- **8.2.1 批 1 收银台（`530`–`539`）**：店主 2026-11-26 两份会议纪要（「收银系统功能评审」「会所管理系统演示」）的收银条目——单项打折（按岗位四档下限、超了当场授权）、发卡台与收银台的一键快捷键（买单、打单、充卡、组合 / 拆分、备注，没开手牌先选手牌）、经办人工号与手机尾号前置和改价 / 折 / 赠标记、换牌只有丢牌锁原牌、手牌押金（收、一键退、结账抵扣，进交班与日结），设计见 `docs/V8221_CASHIER.md`。
+  - `530`（`530_cashier_v821.sql`）：单项打折 `bill_line_discounts`（明细不改，只能撤下）、结账收款加「单项折扣」`line_discount`、授权用途 `line_discount`、部门营业额快照按行记单项折扣；手牌押金 `tag_deposits`（押着 → 已退）；操作编号与「确认作废」追加 `line_discount`、`tag_deposit`、`tag_deposit_refund`。回滚 `docs/rollback/530_cashier_v821.down.sql`。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
   - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。

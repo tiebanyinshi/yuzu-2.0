@@ -379,7 +379,7 @@ async function settlementRows(db: Db, timezone: string, q: Q, day: string, onlyI
     coalesce((SELECT array_agg(DISTINCT coalesce(m.name,tm.name,nullif(v.guest_label,''),nullif(ts.guest_label,''))) FROM checkout_bills cb
       LEFT JOIN visits v ON v.id=cb.visit_id LEFT JOIN members m ON m.id=v.member_id LEFT JOIN table_sessions ts ON ts.id=cb.table_session_id LEFT JOIN members tm ON tm.id=ts.member_id WHERE cb.checkout_id=c.id),'{}') AS guests,
     coalesce((SELECT array_agg(DISTINCT method) FROM checkout_payments WHERE checkout_id=c.id),'{}') AS methods,
-    (SELECT coalesce(sum(amount),0) FROM checkout_payments WHERE checkout_id=c.id AND method IN ('discount','store_coupon','member_discount')) AS discount,
+    (SELECT coalesce(sum(amount),0) FROM checkout_payments WHERE checkout_id=c.id AND method IN ('discount','store_coupon','member_discount','line_discount')) AS discount,
     (SELECT coalesce(sum(amount),0) FROM checkout_payments WHERE checkout_id=c.id AND method IN ('cash','wechat','alipay','bank_card','other')) AS cash,
     (SELECT coalesce(sum(amount),0) FROM refunds WHERE checkout_id=c.id AND status='completed') AS refunded,
     (c.business_date=${day}::date AND (${q.hour ?? null}::int IS NULL OR extract(hour FROM c.created_at AT TIME ZONE ${timezone})=${q.hour ?? null})) AS created_today,
@@ -939,7 +939,7 @@ export async function customerOverview(db: Db, actor: Actor, timezone: string, r
       rechargeCents: paymentRows.filter((r) => r.method === method && r.kind === 'recharge').reduce((s, r) => s + n(r.amount), 0),
       refundCents: -paymentRows.filter((r) => r.method === method && r.kind === 'refund').reduce((s, r) => s + n(r.amount), 0),
     }));
-  const discount = (m: string) => ['discount', 'store_coupon', 'member_discount'].includes(m);
+  const discount = (m: string) => ['discount', 'store_coupon', 'member_discount', 'line_discount'].includes(m);
   const due = payments.reduce((s, p) => s + p.settlementCents, 0),
     net = payments.filter((p) => !discount(p.method)).reduce((s, p) => s + p.settlementCents - p.refundCents, 0),
     cash = payments.filter((p) => isCashLike(p.method as CheckoutMethod)).reduce((s, p) => s + p.settlementCents - p.refundCents, 0);

@@ -37,6 +37,7 @@ import { ReaderStatusLine, useCardReader, type CardMessage } from '../frontdesk/
 import { SubPane } from '../../components/SubNav';
 import { AdminPage } from './AdminShell';
 import { BuyCodesCard } from './BuyCodesCard';
+import { CashierRulesCard } from './CashierRulesCard';
 
 type AdminTag = HandTag & { inUse: boolean; lockedByName: string | null; lockedAt: string | null; cardUid: string | null };
 
@@ -77,6 +78,14 @@ export function TagsTab() {
             }}
           />
           <RiskSwitchCard />
+          {/* 8.2.1 收银台：单项打折各档的下限、手牌押金先填好的金额 */}
+          <CashierRulesCard
+            rules={rules.data}
+            onSaved={() => {
+              refresh();
+              toast({ tone: 'success', title: '收银台规则已保存' });
+            }}
+          />
           {/* 8.1.44 收银台买角：数字代号 → 项目（清单待业务提供） */}
           <BuyCodesCard
             rules={rules.data}

@@ -35,6 +35,7 @@ import { useBoard, useFrontdeskChecks, useRefreshFrontdesk, useServerNow, useVis
 import { FindGuestDialog } from './ToolDialogs';
 import { JoinGroupDialog, SwapDialog } from './VisitDialogs';
 import { MoveLinesDialog } from './MoveLinesDialog';
+import { focusRemark, GroupDialog, openPrebill, useDeskHotkeys } from './hotkeys';
 import { lazyPage } from '../../lib/lazyPage';
 
 // 改票种的对话框在结账那份代码里（很大）：发卡台首屏不用它，点到才下载（8.1.37：首屏主包超过上限）
@@ -138,18 +139,38 @@ export function FrontdeskPage() {
     return new Set(g ? g.mates.filter((m) => m.status === 'open').map((m) => m.visitId) : []);
   }, [visit.data]);
 
-  // 盲打牌号：在页面任意位置直接敲数字或字母，自动进入牌号框；F2 发牌（加项目、预结账、结账在收银台）
+  // 快捷键（8.2.1，hotkeys.tsx）：F1 充卡、F2 发牌、F3 备注、F7 同行、F9 买单（带到收银台）、F10 打单；没打开手牌时先选手牌
+  const hotkeys = useDeskHotkeys({
+    desk: 'issue',
+    tags,
+    visit: visit.data && visit.data.id === selectedId ? visit.data : null,
+    onSelect: select,
+    allowed: (a) => (a === 'checkout' ? can('frontdesk.checkout') : a === 'recharge' ? can('recharge.create') : a === 'remark' ? true : can('frontdesk.operate')),
+    perform: (a, v) => {
+      if (a === 'checkin') return setDialog({ kind: 'checkin', prefill: {} });
+      if (!v) return;
+      if (a === 'checkout') navigate(`/crm/cashier?v=${v.id}&resume=checkout`);
+      else if (a === 'print') {
+        if (!openPrebill(v)) toast({ tone: 'error', title: '打印窗口被浏览器拦下了', body: '请在地址栏右侧允许本站弹出窗口，再按一次打单' });
+      } else if (a === 'remark') {
+        if (!focusRemark()) toast({ tone: 'error', title: '这张手牌现在不能写备注' });
+      } else if (a === 'recharge') {
+        if (v.member) navigate(`/crm?m=${v.member.id}&resume=recharge`);
+        else {
+          toast({ tone: 'info', title: `手牌 ${v.tag.code} 上没有会员`, body: '在会员工作台查到会员（或新建）后充值' });
+          navigate('/crm');
+        }
+      } else if (a === 'group') setDialog({ kind: 'group' });
+    },
+  });
+
+  // 盲打牌号：在页面任意位置直接敲数字或字母，自动进入牌号框（F 键由上面的快捷键管）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      // 平板竖屏时客人卡是侧滑抽屉（也是 dialog），不挡快捷键；其他弹窗打开时不响应
+      // 平板竖屏时客人卡是侧滑抽屉（也是 dialog），不挡；其他弹窗打开时不响应
       if (document.querySelector('[role="dialog"]:not([aria-label="客人卡"])')) return;
       const sheetOpen = !!document.querySelector('[role="dialog"][aria-label="客人卡"]');
-      if (e.key === 'F2' && can('frontdesk.operate')) {
-        e.preventDefault();
-        setDialog({ kind: 'checkin', prefill: {} });
-        return;
-      }
       if (isTypingTarget(e.target)) return;
       if (/^[0-9a-zA-Z]$/.test(e.key)) {
         e.preventDefault();
@@ -163,7 +184,7 @@ export function FrontdeskPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [can, selectedId, select]);
+  }, [selectedId, select]);
 
   /** 状态板上的分区：男宾、女宾；库里还有旧儿童区手牌时另列 */
   const zonesInPool = TAG_ZONES.filter((z) => z !== 'child' || tags.some((t) => t.zone === 'child'));
@@ -275,6 +296,9 @@ export function FrontdeskPage() {
               )}
               <Button size="sm" variant="ghost" icon={<ShieldCheck className="size-4" />} onClick={() => setChecksOpen(true)}>
                 自检
+              </Button>
+              <Button size="sm" variant="ghost" icon={<Keyboard className="size-4" />} onClick={hotkeys.openHelp} kbd="?" data-testid="open-hotkeys">
+                快捷键
               </Button>
             </>
           ) : null
@@ -482,10 +506,12 @@ export function FrontdeskPage() {
               <div className="flex h-full flex-col items-center justify-center px-8 text-center" data-testid="issue-empty">
                 <EmptyState art="calm" title="选一张手牌看客人卡" description="直接敲牌号（如 23）回车，或点左侧手牌。空闲手牌点一下即可发牌；在店的手牌在这里换牌、绑同行。" />
                 <div className="mt-2 space-y-1.5 text-[12.5px] text-ink-3">
-                  <p className="flex items-center justify-center gap-1.5">
-                    <Keyboard className="size-4" /> <Kbd>F2</Kbd> 接待发牌
+                  <p className="flex flex-wrap items-center justify-center gap-1.5">
+                    <Keyboard className="size-4" /> <Kbd>F2</Kbd> 接待发牌 · <Kbd>F7</Kbd> 同行 · <Kbd>F1</Kbd> 充卡 · <Kbd>F3</Kbd> 备注 · <Kbd>?</Kbd> 全部
                   </p>
-                  <p>加项目、作废、预结账与买单在「收银台」。</p>
+                  <p>
+                    加项目、打折、作废、预结账与买单在「收银台」（<Kbd>F9</Kbd> 带着这张手牌过去）。
+                  </p>
                 </div>
               </div>
             )}
@@ -528,6 +554,8 @@ export function FrontdeskPage() {
           }}
         />
       )}
+      {visit.data && dialog?.kind === 'group' && <GroupDialog open visit={visit.data} tags={tags} onClose={() => setDialog(null)} onDone={(v, message) => afterChange(v, message)} />}
+      {hotkeys.node}
       {visit.data && dialog?.kind === 'join' && (
         <JoinGroupDialog open visit={visit.data} tags={tags} onClose={() => setDialog(null)} onDone={(v) => afterChange(v, `${v.tag.code} 已加入同行组 ${v.group?.groupNo ?? ''}`)} />
       )}

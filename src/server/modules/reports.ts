@@ -53,7 +53,7 @@ async function periodKpis(db: Db, from: string, to: string, c: Clock): Promise<P
       (SELECT coalesce(sum(p.amount) FILTER (WHERE c.business_date BETWEEN ${from} AND ${to}), 0)
               - coalesce(sum(p.amount) FILTER (WHERE c.void_business_date BETWEEN ${from} AND ${to}), 0)
        FROM checkout_payments p JOIN checkouts c ON c.id = p.checkout_id
-       WHERE p.method = 'discount' AND (c.business_date BETWEEN ${from} AND ${to} OR c.void_business_date BETWEEN ${from} AND ${to}) AND ${storeIn(db, 'c.store_id')}) AS discount,
+       WHERE p.method IN ('discount', 'line_discount') AND (c.business_date BETWEEN ${from} AND ${to} OR c.void_business_date BETWEEN ${from} AND ${to}) AND ${storeIn(db, 'c.store_id')}) AS discount,
       -- 券抵扣与退款单（v0.7.20）：券抵扣随结账单（反结账冲回），退款单按退款的营业日（作废的不算）
       (SELECT coalesce(sum(p.amount) FILTER (WHERE c.business_date BETWEEN ${from} AND ${to}), 0)
               - coalesce(sum(p.amount) FILTER (WHERE c.void_business_date BETWEEN ${from} AND ${to}), 0)
@@ -140,10 +140,10 @@ export async function executiveReport(db: Db, from: string, to: string, c: Clock
     dis AS (
       -- 优惠 / 免单、券抵扣（v0.7.20）、会员折扣（v0.7.25），以及退款单（按退款的营业日）都从净营业额里减
       SELECT c.business_date AS date, sum(p.amount) AS amount FROM checkout_payments p JOIN checkouts c ON c.id = p.checkout_id
-      WHERE p.method IN ('discount', 'store_coupon', 'member_discount') AND c.business_date BETWEEN ${from} AND ${to} AND ${storeIn(db, 'c.store_id')} GROUP BY 1
+      WHERE p.method IN ('discount', 'store_coupon', 'member_discount', 'line_discount') AND c.business_date BETWEEN ${from} AND ${to} AND ${storeIn(db, 'c.store_id')} GROUP BY 1
       UNION ALL
       SELECT c.void_business_date, -sum(p.amount) FROM checkout_payments p JOIN checkouts c ON c.id = p.checkout_id
-      WHERE p.method IN ('discount', 'store_coupon', 'member_discount') AND c.void_business_date BETWEEN ${from} AND ${to} AND ${storeIn(db, 'c.store_id')} GROUP BY 1
+      WHERE p.method IN ('discount', 'store_coupon', 'member_discount', 'line_discount') AND c.void_business_date BETWEEN ${from} AND ${to} AND ${storeIn(db, 'c.store_id')} GROUP BY 1
       UNION ALL
       SELECT business_date, sum(amount) FROM refunds WHERE status = 'completed' AND business_date BETWEEN ${from} AND ${to} AND ${storeIn(db, 'store_id')} GROUP BY 1
     ),

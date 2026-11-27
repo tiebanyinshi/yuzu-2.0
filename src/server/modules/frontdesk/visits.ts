@@ -63,6 +63,10 @@ import { loadVipLockerRules } from '../vip-lockers';
 import { assertVipAllowed, consumeVipShortfalls, memberLockerGrades, vipShortfalls } from './vip';
 import { currentStoreId } from '../../lib/store-context';
 import { incidentText, openTodoCount, openTodoWhere, visitIncidentEvents, visitIncidents } from './incident-read';
+import { lineDiscountInfoOf } from './line-discount-read';
+import { depositsOf } from './tag-deposit-read';
+import { rateLabel } from '@shared/line-discount';
+import { TAG_DEPOSIT_METHOD_LABELS, TAG_DEPOSIT_REFUND_LABELS } from '@shared/tag-deposit';
 import { remarkTagsSql, visitRemarks } from './remark-read';
 import { arriveBookingsTx, blacklistedError, blacklistHits, loadRiskRules, lockArrivableBookings, unsettledDebts, visitsToday, type LockedRiskBooking } from './risk';
 
@@ -630,6 +634,10 @@ export async function cancelVisit(deps: Deps, visitId: number, raw: unknown, ctx
         amountCents: bill!.amountCents,
       });
     }
+    // 手牌押金（8.2.1）：还押着的先退（退押金要记班次，撤销不碰钱）
+    const [held] = await tx<{ n: number; amount: number }[]>`
+      SELECT count(*)::int AS n, coalesce(sum(amount), 0)::bigint AS amount FROM tag_deposits WHERE visit_id = ${visit.id} AND status = 'held'`;
+    if (held!.n > 0) throw conflict('DEPOSIT_HELD', `这张手牌还押着 ${held!.n} 笔押金（${formatYuan(Number(held!.amount))}），请先退押金再撤销`);
     assertCanFix(ctx.actor, visit.checkedInBy, visit.checkedInAt, await loadFrontdeskRules(tx), at, '这张手牌');
     await tx`UPDATE bills SET status = 'cancelled', closed_at = ${at} WHERE id = ${visit.billId}`;
     await tx`
@@ -848,11 +856,22 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
              l.posted_by AS posted_by_id, p.display_name AS posted_by_name, l.posted_at, l.void_reason,
              vs.display_name AS voided_by_name, l.voided_at, ${backfillMarkSql(db, 'l.post_key')} AS backfill,
              ${lineTechnicianSql(db, 'l')} AS technician, l.session_id, l.addon_of,
-             (SELECT json_build_object('status', k.status, 'note', k.note, 'orderNo', k.order_no) FROM kitchen_items k WHERE k.bill_line_id = l.id) AS kitchen
+             (SELECT json_build_object('status', k.status, 'note', k.note, 'orderNo', k.order_no) FROM kitchen_items k WHERE k.bill_line_id = l.id) AS kitchen,
+             -- 8.2.1：经办人的工号与手机尾号；手动定价的明细（手动金额、时价 / 杂项、称重）标「改价」
+             pp.emp_no AS posted_by_emp_no, right(pp.phone, 4) AS posted_by_phone_tail,
+             ((l.item_id IS NULL AND l.ticket_type_id IS NULL AND l.source <> 'room' AND l.charge_kind IS NULL AND l.name NOT LIKE '手牌丢失赔偿%'
+               AND NOT EXISTS (SELECT 1 FROM space_usage_charges uc WHERE uc.line_id = l.id))
+              OR coalesce(si.price_mode, 'fixed') <> 'fixed') AS manual_price
       FROM bill_lines l JOIN staff p ON p.id = l.posted_by LEFT JOIN staff vs ON vs.id = l.voided_by
+      LEFT JOIN staff_profiles pp ON pp.staff_id = l.posted_by LEFT JOIN service_items si ON si.id = l.item_id
       WHERE l.bill_id = ${v.billId} ORDER BY l.id`
   ).map((l) => ({ ...l, backfill: normalizeMark(l.backfill) }));
+  // 单项打折（8.2.1）：每一行有效的折扣；作废的行不算
+  const discounts = await lineDiscountInfoOf(db, v.billId);
+  for (const l of lines) l.discount = l.status === 'active' ? (discounts.get(Number(l.id)) ?? null) : null;
+  const discountCents = lines.reduce((s, l) => s + (l.discount ? l.discount.listAmount - l.discount.finalAmount : 0), 0);
   const backfill = normalizeMark(v.backfill);
+  const deposits = await depositsOf(db, [v.id]);
 
   let group: VisitDetail['group'] = null;
   if (v.groupId) {
@@ -910,6 +929,42 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
     });
     if (l.status === 'voided') {
       history.push({ at: l.voidedAt!, kind: 'void', text: `作废 ${l.name} × ${l.quantity}（${l.voidReason}）`, operatorName: l.voidedByName ?? '' });
+    }
+  }
+  // 8.2.1：单项打折（含撤下的）与手牌押金的收、退也进经办记录
+  const discountEvents = await db<
+    {
+      createdAt: string;
+      name: string;
+      listAmount: number;
+      finalAmount: number;
+      rate: number | null;
+      byName: string;
+      approvedByName: string | null;
+      revokedAt: string | null;
+      revokedByName: string | null;
+      revokeReason: string | null;
+    }[]
+  >`
+    SELECT d.created_at, l.name, d.list_amount, d.final_amount, d.rate, s.display_name AS by_name, a.display_name AS approved_by_name,
+           d.revoked_at, r.display_name AS revoked_by_name, d.revoke_reason
+    FROM bill_line_discounts d JOIN bill_lines l ON l.id = d.line_id JOIN staff s ON s.id = d.staff_id
+    LEFT JOIN staff a ON a.id = d.approved_by LEFT JOIN staff r ON r.id = d.revoked_by
+    WHERE d.bill_id = ${v.billId} ORDER BY d.id`;
+  for (const d of discountEvents) {
+    const how = d.rate !== null ? rateLabel(Number(d.rate)) : '改价';
+    history.push({
+      at: d.createdAt,
+      kind: 'discount',
+      text: `单项打折 ${d.name}（${how}，${formatYuan(Number(d.listAmount))} → ${formatYuan(Number(d.finalAmount))}${d.approvedByName ? `，${d.approvedByName}授权` : ''}）`,
+      operatorName: d.byName,
+    });
+    if (d.revokedAt) history.push({ at: d.revokedAt, kind: 'discount', text: `撤下 ${d.name} 的单项折扣（${d.revokeReason}）`, operatorName: d.revokedByName ?? '' });
+  }
+  for (const d of deposits) {
+    history.push({ at: d.createdAt, kind: 'deposit', text: `收押金 ${d.depositNo} ${formatYuan(d.amount)}（${TAG_DEPOSIT_METHOD_LABELS[d.method]}，${d.reason}）`, operatorName: d.staffName });
+    if (d.status === 'refunded' && d.refundedAt) {
+      history.push({ at: d.refundedAt, kind: 'deposit', text: `${TAG_DEPOSIT_REFUND_LABELS[d.refundKind ?? 'manual']} ${d.depositNo} ${formatYuan(d.amount)}`, operatorName: d.refundedByName ?? '' });
     }
   }
   const ticketChanges = await db<{ createdAt: string; fromName: string | null; toName: string; operatorName: string }[]>`
@@ -996,8 +1051,9 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
     remarks: await visitRemarks(db, v.id, v.groupId),
     ticket: await visitTicket(db, v.id, v.closedAt ? new Date(v.closedAt) : new Date(now!.now), today),
     checkout: lastCheckout ? { id: lastCheckout.id, checkoutNo: lastCheckout.checkoutNo, status: lastCheckout.status } : null,
-    bill: { id: v.billId, billNo: v.billNo, status: v.billStatus, amountCents: v.amountCents, lineCount: v.lineCount },
+    bill: { id: v.billId, billNo: v.billNo, status: v.billStatus, amountCents: v.amountCents, lineCount: v.lineCount, discountCents },
     lines,
+    deposits,
     group,
     history,
     serverTime: now!.now,
@@ -1065,6 +1121,12 @@ export async function lookupFrontdeskOp(db: Db, key: string, timezone: string, e
   if (row.opType === 'line_move') return { found: true as const, type: 'line_move' as const, visit: await getVisit(db, row.refId, timezone) };
   // 发牌后的异常处置（8.1.15）：编号记在那次来访上
   if (row.opType === 'visit_incident') return { found: true as const, type: 'visit_incident' as const, visit: await getVisit(db, row.refId, timezone) };
+  // 单项打折（8.2.1）：编号记在那次来访上；手牌押金的收、退：编号记在那一笔押金上，查回这位客人
+  if (row.opType === 'line_discount') return { found: true as const, type: 'line_discount' as const, visit: await getVisit(db, row.refId, timezone) };
+  if (row.opType === 'tag_deposit' || row.opType === 'tag_deposit_refund') {
+    const [d] = await db<{ visitId: number }[]>`SELECT visit_id FROM tag_deposits WHERE id = ${row.refId}`;
+    return { found: true as const, type: row.opType as 'tag_deposit' | 'tag_deposit_refund', visit: await getVisit(db, d!.visitId, timezone) };
+  }
   if (row.opType === 'checkout') return { found: true as const, type: 'checkout' as const, checkout: await getCheckout(db, row.refId) };
   // 餐饮第二步：开台、桌台点单查回这一桌；桌台结账查回结账单
   if (row.opType === 'table_open' || row.opType === 'table_post') {

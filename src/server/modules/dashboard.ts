@@ -72,8 +72,8 @@ export async function dashboard(db: Db, today: string, days: number, opts: { inS
   // 优惠 / 免单与营业额同一口径（与日结 businessTotals 一致）：当日结账的加上、当日反结账的减去，
   // 前一营业日带优惠的单今天反结账时冲回优惠，净营业额只减「应收 − 优惠」
   const [discount] = await db<{ amount: number; coupon: number; memberDiscount: number; refund: number }[]>`
-    SELECT coalesce(sum(p.amount) FILTER (WHERE p.method = 'discount' AND c.business_date = ${today}), 0)
-             - coalesce(sum(p.amount) FILTER (WHERE p.method = 'discount' AND c.void_business_date = ${today}), 0) AS amount,
+    SELECT coalesce(sum(p.amount) FILTER (WHERE p.method IN ('discount', 'line_discount') AND c.business_date = ${today}), 0)
+             - coalesce(sum(p.amount) FILTER (WHERE p.method IN ('discount', 'line_discount') AND c.void_business_date = ${today}), 0) AS amount,
            coalesce(sum(p.amount) FILTER (WHERE p.method = 'store_coupon' AND c.business_date = ${today}), 0)
              - coalesce(sum(p.amount) FILTER (WHERE p.method = 'store_coupon' AND c.void_business_date = ${today}), 0) AS coupon,
            -- 会员折扣（v0.7.25）：口径同券抵扣
@@ -81,7 +81,7 @@ export async function dashboard(db: Db, today: string, days: number, opts: { inS
              - coalesce(sum(p.amount) FILTER (WHERE p.method = 'member_discount' AND c.void_business_date = ${today}), 0) AS member_discount,
            (SELECT coalesce(sum(amount), 0) FROM refunds WHERE status = 'completed' AND business_date = ${today} AND ${storeIn(db, 'store_id')}) AS refund
     FROM checkout_payments p JOIN checkouts c ON c.id = p.checkout_id
-    WHERE p.method IN ('discount', 'store_coupon', 'member_discount') AND (c.business_date = ${today} OR c.void_business_date = ${today})
+    WHERE p.method IN ('discount', 'store_coupon', 'member_discount', 'line_discount') AND (c.business_date = ${today} OR c.void_business_date = ${today})
       AND ${storeIn(db, 'c.store_id')}`;
   const [rc] = await db<{ n: number; online: number; onlineN: number }[]>`
     SELECT count(*)::int AS n, coalesce(sum(paid_amount) FILTER (WHERE channel = 'mp'), 0)::bigint AS online,

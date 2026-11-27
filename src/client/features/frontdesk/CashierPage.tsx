@@ -32,6 +32,7 @@ import { FindGuestDialog } from './ToolDialogs';
 import { PreviewDialog } from './VisitDialogs';
 import { PriceTrialDialog } from './PriceTrialDialog';
 import { AddItemsDialog } from './AddItemsDialog';
+import { focusRemark, GroupDialog, openPrebill, useDeskHotkeys } from './hotkeys';
 import { lazyPage } from '../../lib/lazyPage';
 
 // 改票种的对话框在结账那份代码里（结账对话框本来就在这一页）
@@ -60,7 +61,7 @@ export function CashierPage() {
   const [picked, setPicked] = useState(false);
   const [filter, setFilter] = useState<QueueFilter>('all');
   const [sort, setSort] = useState<QueueSort>('code');
-  const [dialog, setDialog] = useState<null | { kind: 'preview' | 'add' | 'buy' | 'ticket' } | { kind: 'checkout'; ids?: number[] } | { kind: 'records'; checkoutId?: number }>(null);
+  const [dialog, setDialog] = useState<null | { kind: 'preview' | 'add' | 'buy' | 'ticket' | 'group' } | { kind: 'checkout'; ids?: number[] } | { kind: 'records'; checkoutId?: number }>(null);
   const [checksOpen, setChecksOpen] = useState(false);
   const [finding, setFinding] = useState(false);
   const [trial, setTrial] = useState(false);
@@ -98,7 +99,9 @@ export function CashierPage() {
   useEffect(() => {
     if (!resume) return;
     // 发牌、换牌、转明细在发卡台处理：带着这几种来的转过去（挂账 8.1.44 起在收银台）
-    if (resume !== 'checkout' && resume !== 'checkout_refund' && resume !== 'bill_post') {
+    // 8.2.1：单项打折、手牌押金待确认的，打开这位客人的账单，在账单里的提醒上处理
+    const inBill = resume === 'line_discount' || resume === 'tag_deposit' || resume === 'tag_deposit_refund';
+    if (resume !== 'checkout' && resume !== 'checkout_refund' && resume !== 'bill_post' && !inBill) {
       navigate(`/crm/frontdesk?${params}`, { replace: true });
       return;
     }
@@ -106,35 +109,37 @@ export function CashierPage() {
     if (resume !== 'checkout_refund' && (!visit.data || visit.data.id !== selectedId)) return;
     if (resume === 'checkout_refund') setDialog({ kind: 'records', checkoutId: Number(params.get('c')) || undefined });
     else if (resume === 'bill_post') setDialog({ kind: 'add' });
-    else setDialog({ kind: 'checkout' });
+    else if (!inBill) setDialog({ kind: 'checkout' });
     const next = new URLSearchParams(params);
     next.delete('resume');
     next.delete('c');
     setParams(next, { replace: true });
   }, [resume, board.data, visit.data, selectedId, params, setParams, navigate]);
 
-  // 盲打牌号、F4 加项目、F6 买角、F8 预结账、F9 买单（结账）
+  // 快捷键（8.2.1，hotkeys.tsx）：F1 充卡、F3 备注、F4 加项目、F6 买角、F7 同行、F8 预结账、F9 买单、F10 打单；没打开手牌时先选手牌
+  const hotkeys = useDeskHotkeys({
+    desk: 'cashier',
+    tags,
+    visit: visit.data && visit.data.id === selectedId ? visit.data : null,
+    onSelect: select,
+    allowed: (a) => (a === 'checkout' ? can('frontdesk.checkout') : a === 'recharge' ? can('recharge.create') : a === 'remark' ? true : can('frontdesk.operate')),
+    perform: (a, v) => {
+      if (!v) return;
+      if (a === 'print') printPrebill(v);
+      else if (a === 'remark') {
+        if (!focusRemark()) toast({ tone: 'error', title: '这张手牌现在不能写备注' });
+      } else if (a === 'recharge') rechargeFor(v);
+      else if (a === 'add' || a === 'buy' || a === 'preview' || a === 'checkout' || a === 'group') setDialog({ kind: a });
+    },
+  });
+
+  // 盲打牌号：在页面任意位置直接敲数字或字母，自动进入牌号框（F 键由上面的快捷键管）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      // 窄屏时账单是侧滑抽屉（也是 dialog），不挡快捷键；其他弹窗打开时不响应
+      // 窄屏时账单是侧滑抽屉（也是 dialog），不挡；其他弹窗打开时不响应
       if (document.querySelector('[role="dialog"]:not([aria-label="手牌账单"])')) return;
       const sheetOpen = !!document.querySelector('[role="dialog"][aria-label="手牌账单"]');
-      if ((e.key === 'F4' || e.key === 'F6') && visit.data?.status === 'open' && can('frontdesk.operate')) {
-        e.preventDefault();
-        setDialog({ kind: e.key === 'F4' ? 'add' : 'buy' });
-        return;
-      }
-      if (e.key === 'F8' && visit.data?.status === 'open') {
-        e.preventDefault();
-        setDialog({ kind: 'preview' });
-        return;
-      }
-      if (e.key === 'F9' && visit.data?.status === 'open' && can('frontdesk.checkout')) {
-        e.preventDefault();
-        setDialog({ kind: 'checkout' });
-        return;
-      }
       if (isTypingTarget(e.target)) return;
       if (/^[0-9a-zA-Z]$/.test(e.key)) {
         e.preventDefault();
@@ -148,7 +153,7 @@ export function CashierPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [can, visit.data, selectedId, select]);
+  }, [selectedId, select]);
 
   const matchedIds = new Set(matches.map((t) => t.id));
   const queue = useMemo(() => {
@@ -172,13 +177,17 @@ export function CashierPage() {
   const perks = useCheckoutPreview(selectedId && open ? [selectedId] : [], !!selectedId && !!open && !dialog);
 
   /** 打单（8.1.44）：这位客人与同组在店的手牌一起打一张预结单（与「预结账」默认勾选的一样），新窗口打开、读到数据自动调出打印 */
-  const printPrebill = () => {
-    if (!visit.data) return;
-    const mates = visit.data.group?.mates.filter((m) => m.status === 'open').map((m) => m.visitId) ?? [];
-    const ids = mates.length ? mates : [visit.data.id];
-    const w = window.open(`/print/prebill/${ids.join(',')}?auto=1`, '_blank', 'popup,width=420,height=760');
-    if (!w) toast({ tone: 'error', title: '打印窗口被浏览器拦下了', body: '请在地址栏右侧允许本站弹出窗口，再点一次打单' });
-  };
+  function printPrebill(v: VisitDetail) {
+    if (!openPrebill(v)) toast({ tone: 'error', title: '打印窗口被浏览器拦下了', body: '请在地址栏右侧允许本站弹出窗口，再点一次打单' });
+  }
+  /** 充卡（8.2.1 F1）：这张手牌上的会员，到会员工作台打开充值；没有会员的到工作台查会员 */
+  function rechargeFor(v: VisitDetail) {
+    if (v.member) navigate(`/crm?m=${v.member.id}&resume=recharge`);
+    else {
+      toast({ tone: 'info', title: `手牌 ${v.tag.code} 上没有会员`, body: '在会员工作台查到会员（或新建）后充值；买单时也能把会员记到手牌上' });
+      navigate('/crm');
+    }
+  }
   const afterChange = (v: VisitDetail, message: string) => {
     setDialog(null);
     refresh([v.id]);
@@ -195,8 +204,9 @@ export function CashierPage() {
       extra={visit.data ? <BillPerks visit={visit.data} preview={perks.data} loading={perks.isPending} /> : undefined}
       compact={wide}
       onAction={(a: PanelAction) => {
-        if (a === 'print') printPrebill();
-        else if (a === 'preview' || a === 'checkout' || a === 'records' || a === 'add' || a === 'buy' || a === 'ticket') setDialog({ kind: a });
+        if (a === 'print') {
+          if (visit.data) printPrebill(visit.data);
+        } else if (a === 'preview' || a === 'checkout' || a === 'records' || a === 'add' || a === 'buy' || a === 'ticket' || a === 'group') setDialog({ kind: a });
       }}
       onSelectVisit={select}
       onChanged={() => refresh(selectedId ? [selectedId] : [])}
@@ -254,6 +264,9 @@ export function CashierPage() {
             </Button>
             <Button size="sm" variant="ghost" icon={<ShieldCheck className="size-4" />} onClick={() => setChecksOpen(true)}>
               自检
+            </Button>
+            <Button size="sm" variant="ghost" icon={<Keyboard className="size-4" />} onClick={hotkeys.openHelp} kbd="?" data-testid="open-hotkeys">
+              快捷键
             </Button>
           </>
         }
@@ -393,11 +406,12 @@ export function CashierPage() {
               panel
             ) : (
               <div className="flex h-full flex-col items-center justify-center px-8 text-center" data-testid="cashier-empty">
-                <EmptyState art="calm" title="选一张手牌看账单" description="直接敲牌号（如 23）回车，或点左侧的手牌。加项目、买角、作废、打单、买单都在这里；换牌、同行在发卡台。" />
+                <EmptyState art="calm" title="选一张手牌看账单" description="直接敲牌号（如 23）回车，或点左侧的手牌。加项目、买角、打折、作废、打单、买单、同行、押金都在这里；换牌在发卡台。" />
                 <div className="mt-2 space-y-1.5 text-[12.5px] text-ink-3">
-                  <p className="flex items-center justify-center gap-1.5">
-                    <Keyboard className="size-4" /> <Kbd>F4</Kbd> 加项目 · <Kbd>F6</Kbd> 买角 · <Kbd>F8</Kbd> 预结账 · <Kbd>F9</Kbd> 买单
+                  <p className="flex flex-wrap items-center justify-center gap-1.5">
+                    <Keyboard className="size-4" /> <Kbd>F9</Kbd> 买单 · <Kbd>F10</Kbd> 打单 · <Kbd>F1</Kbd> 充卡 · <Kbd>F7</Kbd> 同行 · <Kbd>F3</Kbd> 备注 · <Kbd>?</Kbd> 全部
                   </p>
+                  <p>没打开手牌时按，会先让你选手牌。</p>
                 </div>
               </div>
             )}
@@ -441,6 +455,8 @@ export function CashierPage() {
           onDone={(v) => afterChange(v, `已挂到 ${v.tag.code}`)}
         />
       )}
+      {visit.data && dialog?.kind === 'group' && <GroupDialog open visit={visit.data} tags={tags} onClose={() => setDialog(null)} onDone={(v, message) => afterChange(v, message)} />}
+      {hotkeys.node}
       {visit.data && dialog?.kind === 'ticket' && (
         <TicketDialog open visit={visit.data} onClose={() => setDialog(null)} onDone={(v) => afterChange(v, `${v.tag.code} 票种改为 ${v.ticket?.name ?? ''}`)} />
       )}

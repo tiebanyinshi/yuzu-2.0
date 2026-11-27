@@ -105,14 +105,24 @@ async function computeTotals(db: Db, date: string): Promise<SettlementTotals> {
   };
 }
 
-/** 客房押金（S7）：当天收、退（按收款方式），以及当天结束时的在住押金余额 */
+/**
+ * 客房押金（S7）与手牌押金（8.2.1）：当天收、退（按收款方式），以及当天结束时押着的押金余额。
+ * 手牌押金从会员储值扣的不是钱箱里的钱（是储值消费单与撤销单，会员日结里有），不列在这里
+ */
 async function depositTotals(db: Db, date: string): Promise<SettlementDeposits> {
   const rows = await db<{ kind: string; method: PaymentMethod; count: number; amount: number }[]>`
-    SELECT kind, method, count(*) AS count, sum(amount) AS amount FROM room_deposits
-    WHERE business_date = ${date} AND stay_id IN (SELECT id FROM room_stays WHERE store_id = ${sid()}) GROUP BY kind, method ORDER BY kind, method`;
+    SELECT kind, method, count(*) AS count, sum(amount) AS amount FROM (
+      SELECT kind, method, amount FROM room_deposits WHERE business_date = ${date} AND stay_id IN (SELECT id FROM room_stays WHERE store_id = ${sid()})
+      UNION ALL
+      SELECT 'receive', method, amount FROM tag_deposits WHERE business_date = ${date} AND store_id = ${sid()} AND method <> 'wallet'
+      UNION ALL
+      SELECT 'refund', method, amount FROM tag_deposits WHERE refund_business_date = ${date} AND store_id = ${sid()} AND method <> 'wallet'
+    ) x GROUP BY kind, method ORDER BY kind, method`;
   const [held] = await db<{ amount: number }[]>`
-    SELECT coalesce(sum(CASE WHEN kind = 'receive' THEN amount ELSE -amount END), 0) AS amount
-    FROM room_deposits WHERE business_date <= ${date} AND stay_id IN (SELECT id FROM room_stays WHERE store_id = ${sid()})`;
+    SELECT (SELECT coalesce(sum(CASE WHEN kind = 'receive' THEN amount ELSE -amount END), 0)
+            FROM room_deposits WHERE business_date <= ${date} AND stay_id IN (SELECT id FROM room_stays WHERE store_id = ${sid()}))
+         + (SELECT coalesce(sum(amount), 0) FROM tag_deposits
+            WHERE store_id = ${sid()} AND method <> 'wallet' AND business_date <= ${date} AND (refund_business_date IS NULL OR refund_business_date > ${date})) AS amount`;
   const pick = (kind: string) => rows.filter((r) => r.kind === kind).map(({ method, count, amount }) => ({ method, count, amount }));
   return { received: pick('receive'), refunded: pick('refund'), held: held!.amount };
 }
@@ -751,7 +761,7 @@ export function settlementCsv(s: SettlementSummary): string {
             ? '平台团购核销，由平台结算'
             : m.method === 'on_account'
               ? '协议单位挂账，回款在 ERP「应收与挂账」登记（不进交班、日结）'
-              : m.method === 'discount' || m.method === 'store_coupon' || m.method === 'member_discount'
+              : m.method === 'discount' || m.method === 'store_coupon' || m.method === 'member_discount' || m.method === 'line_discount'
                 ? '优惠，不是收款'
                 : '',
     ]),

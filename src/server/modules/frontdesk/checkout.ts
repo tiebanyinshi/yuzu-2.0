@@ -70,6 +70,9 @@ import { lockPayTxForUse, markPayTxUsed, releasePayTxs } from '../pay-terminal';
 import { assertNotVerified, lockVerificationForUse, markVerificationUsed, releaseVerifications } from '../platform-verify';
 import { otaPrepaidHints } from '../ota';
 import { currentStoreId } from '../../lib/store-context';
+import { lineDiscountsOf } from './line-discount-read';
+import { depositsOf } from './tag-deposit-read';
+import { settleDepositsAtCheckout } from './tag-deposits';
 
 // ───────────────────────── 输入 ─────────────────────────
 
@@ -161,6 +164,11 @@ export const CheckoutInput = z.object({
   // 不带时不补默认值：操作编号的摘要按解析后的请求算，补了空数组会让升级前发出、回复丢了的同一笔重提对不上（Codex 审查 f260ca3）
   // 上限按合并结账的规模（一次最多 30 张手牌，每位客人挂几个钟也够）：不让合法的团体结账因为钟单多被拒（Codex 审查 7e7a584）
   confirmUnstarted: z.array(z.string().trim().min(1).max(32)).max(600).optional(),
+  /**
+   * 单项打折（8.2.1）：员工确认时看到的单项折扣合计；与服务端此刻算的不一致时拒绝（PRICE_CHANGED）。
+   * 收款合计 = 应收合计 − 单项折扣。不带时不核对（升级前发出的请求，摘要不变）
+   */
+  expectedLineDiscount: cents('单项折扣').optional(),
 });
 export type CheckoutInputData = z.input<typeof CheckoutInput>;
 
@@ -244,6 +252,19 @@ export async function previewCheckout(deps: Deps, visitIds: number[], at = new D
     );
     // 房费（福田店：只在收银台收）：与结账时同一个算法，按此刻算
     const roomFees = await cashierRoomFees(tx, ids, at);
+    // 单项打折（8.2.1）：每张账单折掉多少；押着的手牌押金（结账时一起退，储值扣的退回原卡——余额按退回以后的给）
+    const lineDiscounts = await lineDiscountsOf(
+      tx,
+      rows.map((r) => Number(r.billId)),
+    );
+    const deposits = await depositsOf(tx, ids, true);
+    for (const d of deposits) {
+      const m = members.find((x) => x.id === d.memberId);
+      if (m && d.split) {
+        m.principalBalance += d.split.principal;
+        m.bonusBalance += d.split.bonus;
+      }
+    }
     const visits = rows.map((r) => {
       const extension = r.memberId ? (extensions.get(Number(r.memberId)) ?? null) : null;
       const graceMinutes = rules.overtimeGraceMinutes + (extension?.minutes ?? 0);
@@ -280,6 +301,7 @@ export async function previewCheckout(deps: Deps, visitIds: number[], at = new D
         extension,
         needsTicket: r.ticketTypeId === null,
         roomFees: fees.map((f) => ({ room: f.label, chargedMinutes: f.quote.chargedMinutes, amount: f.quote.amount })),
+        lineDiscount: lineDiscounts.byBill.get(Number(r.billId)) ?? 0,
         amount: r.linesAmount + (t?.amount ?? 0) + feeAmount,
       };
     });
@@ -329,6 +351,8 @@ export async function previewCheckout(deps: Deps, visitIds: number[], at = new D
     return {
       visits,
       totalAmount: visits.reduce((s, v) => s + v.amount, 0),
+      lineDiscountAmount: lineDiscounts.total,
+      deposits,
       members,
       storeCoupons,
       memberDiscounts,
@@ -671,7 +695,12 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
         tickets: priced.map((r) => ({ tagCode: r.tagCode, segments: r.ticket.segments, amount: r.ticket.amount })),
       });
     }
-    const paid = assertSettled(input.payments, total);
+    // 单项打折（8.2.1）：这几张账单上有效的折扣合计，结账时记一笔「单项折扣」（不是收款）；收款只要收到 应收 − 单项折扣
+    const lineDiscount = await lineDiscountsOf(tx, billIds);
+    if (input.expectedLineDiscount !== undefined && input.expectedLineDiscount !== lineDiscount.total) {
+      throw conflict('PRICE_CHANGED', `单项打折刚刚有变化（现在共折 ${formatYuan(lineDiscount.total)}），请核对后重新确认`, { total, lineDiscount: lineDiscount.total });
+    }
+    const paid = assertSettled(input.payments, total - lineDiscount.total) + lineDiscount.total;
 
     // 优惠 / 免单：核销值班经理及以上的当场授权（这几张手牌、这个金额；业务回滚时核销一起回滚）
     const discount = discounts[0] ? await consumeDiscountGrant(tx, { grantId: discounts[0].grantId, actor: ctx.actor, visitIds: ids, amount: discounts[0].amount, usedRef: `checkout:${key}` }) : null;
@@ -713,11 +742,18 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
       otherReduction: storeCoupons.length > 0 || discounts.length > 0 || countCards.length > 0,
       date,
     });
+    // 手牌押金（8.2.1）：会员一行已在上面锁住，押着的押金按 id 升序锁、一起退掉（储值扣的先退回原卡，下面的储值支付按退回以后的余额扣）
+    const deposits = await settleDepositsAtCheckout(tx, deps, { visitIds: ids, checkoutId, shiftId, date, at, ctx });
     // 房费挂到账单上（在会员折扣之后：房费不打会员折扣，与预览一致），记哪张登记单收过、房间事件
     if (roomFees.length) {
       await chargeCashierRoomFeesTx(tx, roomFees, { billOf: (visitId) => priced.find((r) => Number(r.id) === visitId)!.billId, key, at, today: date, staffId: ctx.actor.id });
     }
     await recordCheckoutPayments(tx, deps, { checkoutId, checkoutNo, payments: input.payments, discount, tagCodes, billIds, memberIds, date, at, ctx, memberDiscount });
+    if (lineDiscount.total > 0) {
+      await tx`
+        INSERT INTO checkout_payments (checkout_id, method, amount, ref)
+        VALUES (${checkoutId}, 'line_discount', ${lineDiscount.total}, ${`单项打折 ${lineDiscount.lineIds.size} 行`})`;
+    }
     await snapshotCheckoutItems(tx, checkoutId);
     // 扣库存（8.0.20）：不进厨房的明细按用料记「该扣多少」，只插入、不碰库存的锁；每分钟的任务再开耗用单
     await recordSaleUsage(tx, checkoutId, billIds, date);
@@ -756,6 +792,8 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
         ...(usages.length ? { usages } : {}),
         ...(roomFees.length ? { roomFees: roomFees.map((f) => ({ room: f.label, tagCode: f.quote.tagCode, amount: f.quote.amount, chargedMinutes: f.quote.chargedMinutes })) } : {}),
         ...(unstarted.length ? { unstartedSessions: unstarted.map((u) => u.sessionNo) } : {}),
+        ...(lineDiscount.total ? { lineDiscount: { amount: lineDiscount.total, lineIds: [...lineDiscount.lineIds] } } : {}),
+        ...(deposits.length ? { depositsRefunded: deposits } : {}),
         ...backfillDetail(backfill),
       },
       ip: ctx.ip,

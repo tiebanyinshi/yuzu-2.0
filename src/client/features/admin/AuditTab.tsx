@@ -73,6 +73,10 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   frontdesk_bind_member: { label: '买单时记会员', tone: 'lake' },
   frontdesk_cancel: { label: '撤销来访', tone: 'clay' },
   frontdesk_post: { label: '手牌挂账', tone: 'yuzu' },
+  frontdesk_line_discount: { label: '单项打折', tone: 'ember' },
+  frontdesk_line_discount_revoke: { label: '撤下单项折扣', tone: 'neutral' },
+  tag_deposit_received: { label: '收手牌押金', tone: 'yuzu' },
+  tag_deposit_refunded: { label: '退手牌押金', tone: 'lake' },
   emenu_order: { label: '平板点餐下单', tone: 'yuzu' },
   // 管家部（8.0.12）：建档、余额核对、凭证、预约接待、交班、名称核准、导出等都记在这一类，详情里的「label」写着具体是哪一样
   concierge_record: { label: '管家部记录', tone: 'pine' },

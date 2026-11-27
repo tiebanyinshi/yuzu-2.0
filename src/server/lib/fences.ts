@@ -167,6 +167,11 @@ export const FENCED_OPS = [
   // 房态点单（回测整改 P07）：按出品口各一类，只有一个出品口下单权限的人作废时碰不到别的挂账、另一个出品口的点单
   'room_order_water',
   'room_order_fruit',
+  // 8.2.1（迁移 530）：单项打折（编号记在 idempotency_keys，ref_id 是那次来访，也记在 bill_line_discounts.client_key）；
+  // 手牌押金的收、退（ref_id 是那一笔押金，收的编号也记在 tag_deposits.client_key）
+  'line_discount',
+  'tag_deposit',
+  'tag_deposit_refund',
   // OA-02 批量开通（迁移 211）：编号记在 idempotency_keys（ref_id 是那次开通 oa_staff_imports）
   'oa_staff_import',
   // OA-04 考勤设置（迁移 213）：新建班次、打卡点、考勤组；编号记在 idempotency_keys（ref_id 是新建的那一行）
