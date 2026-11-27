@@ -105,12 +105,15 @@ function MobileTopBar() {
   const root = isWcpTabRoot(pathname);
   const cleanPath = pathname.replace(/\/+$/, '') || '/oa';
   const onWork = cleanPath === '/oa';
-  const onKnowledge = cleanPath === '/oa/training';
+  // 学堂首页（XT01）与知识库：搜索框在学堂首页同时搜课程与培训资料，在知识库只搜培训资料
+  const onAcademy = cleanPath === '/oa/academy';
+  const onKnowledge = cleanPath === '/oa/training' || onAcademy;
   const q = onWork || onKnowledge ? (params.get('q') ?? '') : '';
   // 工作台搜功能宫格，知识库搜文档（第 5 批）；其他 Tab 提交时回到工作台搜索
   const search = (text: string) => {
     if (onKnowledge) {
-      navigate(text ? `/oa/training?q=${encodeURIComponent(text)}` : '/oa/training', { replace: true });
+      const base = onAcademy ? '/oa/academy' : '/oa/training';
+      navigate(text ? `${base}?q=${encodeURIComponent(text)}` : base, { replace: true });
       return;
     }
     navigate(text ? `/oa?q=${encodeURIComponent(text)}` : '/oa', { replace: onWork });
@@ -167,7 +170,7 @@ function MobileTopBar() {
                 setOtherText(e.target.value);
               }
             }}
-            placeholder={onKnowledge ? '搜索知识库文档，回车查看' : '搜索功能，如 打卡、工资条'}
+            placeholder={onAcademy ? '搜课程与培训资料，回车查看' : onKnowledge ? '搜索知识库文档，回车查看' : '搜索功能，如 打卡、工资条'}
             aria-label={onKnowledge ? '搜索知识库' : '搜索'}
             data-testid="wcp-mobile-search"
             className="h-9 w-full rounded-full bg-white/12 pr-3 pl-9 text-[14px] text-paper placeholder:text-paper/50 focus:bg-white/18 focus:outline-none"

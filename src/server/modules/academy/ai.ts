@@ -16,6 +16,7 @@ import { writeAudit } from '../../lib/audit';
 import type { OpContext } from '../../lib/context';
 import { badRequest, conflict, notFound, unprocessable } from '../../lib/errors';
 import { hashRequest } from '../../lib/idempotency';
+import { readSheet } from '../../lib/sheet-read';
 import { withTx } from '../../lib/tx';
 import { parse } from '../../lib/validate';
 import { aiMode, aiProvider, loadAiRules } from '../ai';
@@ -48,22 +49,37 @@ async function claimOp(db: Db, kind: 'question_import' | 'ai_questions', clientK
 
 // ───────────────────────── 表格导入题 ─────────────────────────
 
-const TableInput = z.object({
-  clientKey: z.uuid('缺少操作编号或格式不正确'),
-  rows: z
-    .array(z.array(z.string().max(2000)).max(20))
-    .min(1)
-    .max(501),
-  status: z.enum(['draft', 'active']).default('draft'),
-});
+const TableInput = z
+  .object({
+    clientKey: z.uuid('缺少操作编号或格式不正确'),
+    /** 已经读成行的表（第一行是表头），或页面选的 CSV / Excel 文件（lib/import-file 的 readTablePayload） */
+    rows: z
+      .array(z.array(z.string().max(2000)).max(20))
+      .min(1)
+      .max(501)
+      .optional(),
+    csv: z.string().max(2_000_000, '文件太大').optional(),
+    xlsxBase64: z.string().max(6_000_000, '文件太大').optional(),
+    status: z.enum(['draft', 'active']).default('draft'),
+  })
+  .refine((v) => [v.rows, v.csv, v.xlsxBase64].filter((x) => x !== undefined).length === 1, '请选一份 CSV 或 Excel 文件');
+
+/** 表格 → 行（第一行是表头）；空行跳过 */
+function tableRows(input: z.infer<typeof TableInput>): string[][] {
+  if (input.rows) return input.rows;
+  const sheet = readSheet({ csv: input.csv, xlsxBase64: input.xlsxBase64 });
+  return [sheet.header, ...sheet.rows.map((r) => r.cells.map((c) => String(c ?? '')))];
+}
 
 export async function importQuestionTable(sql: Sql, courseId: number, raw: unknown, ctx: OpContext): Promise<AcademyTableImportResult> {
   const input = parse(TableInput, raw);
   const [course] = await sql<{ title: string }[]>`SELECT title FROM academy_courses WHERE id = ${courseId}`;
   if (!course) throw notFound('没有这门课');
-  const { questions, problems } = parseQuestionTable(input.rows, course.title);
+  const rows = tableRows(input);
+  if (rows.length > 501) throw unprocessable('ACADEMY_TABLE_INVALID', '一次最多导 500 行，分几次导', { problems: [{ row: 1, message: '一次最多导 500 行，分几次导' }] });
+  const { questions, problems } = parseQuestionTable(rows, course.title);
   if (problems.length) throw unprocessable('ACADEMY_TABLE_INVALID', `第 ${problems[0]!.row} 行：${problems[0]!.message}`, { problems: problems.slice(0, 50) });
-  const hash = hashRequest({ courseId, rows: input.rows, status: input.status });
+  const hash = hashRequest({ courseId, rows, status: input.status });
   return withTx(sql, async (tx) => {
     await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR NO KEY UPDATE`;
     const op = await claimOp(tx, 'question_import', input.clientKey, hash, ctx.actor.id);
