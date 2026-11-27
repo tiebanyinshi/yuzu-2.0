@@ -92,6 +92,9 @@ jobs:
         run: npm run format:check
       - name: 迁移的数据风险（新迁移里删数据、改账本、改类型、重建作废约束要写明「风险已知」；已有迁移不许改）
         run: node scripts/check-migrations.mjs --base HEAD^1
+      # 8.1.52（后端评估 docs/BACKEND_REVIEW_V8148.md 第 6 节）：线上用到的依赖有没有高危漏洞（开发用的不查；只挡高危、严重的）
+      - name: 依赖漏洞（npm audit，只看线上依赖的高危）
+        run: npm audit --omit=dev --audit-level=high
       - name: 秒级用例（不要数据库的，每次全跑）
         run: npm run test:unit
       - run: npm run build

@@ -450,16 +450,17 @@ export function registerMasterRoutes(app: FastifyInstance, { sql, config }: Deps
     const { id } = parse(idParam, req.params);
     return getMaterial(sql, id, config.timezone);
   });
+  // 审计记校验过的内容（8.1.52 后端评估：不把原样的请求体写进审计，多带的字段丢掉）
   app.post('/api/inventory/materials', { preHandler: guard('inventory.master') }, async (req, reply) => {
     const id = await saveMaterial(sql, null, req.body as MaterialInputData);
-    await writeAudit(sql, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'material', targetId: id, detail: req.body as Record<string, unknown>, ip: req.ip });
+    await writeAudit(sql, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'material', targetId: id, detail: parse(MaterialInput, req.body), ip: req.ip });
     reply.code(201);
     return getMaterial(sql, id, config.timezone);
   });
   app.put('/api/inventory/materials/:id', { preHandler: guard('inventory.master') }, async (req) => {
     const { id } = parse(idParam, req.params);
     await saveMaterial(sql, id, req.body as MaterialInputData);
-    await writeAudit(sql, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'material', targetId: id, detail: req.body as Record<string, unknown>, ip: req.ip });
+    await writeAudit(sql, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'material', targetId: id, detail: parse(MaterialInput, req.body), ip: req.ip });
     return getMaterial(sql, id, config.timezone);
   });
   // 只改补货方式（迁移 161，docs/ERP_PURCHASING.md 第 5.1 节）：补货建议页上一键「定为按需采购 / 设为常备 / 改回自动识别」。
@@ -502,14 +503,14 @@ export function registerMasterRoutes(app: FastifyInstance, { sql, config }: Deps
   app.post('/api/inventory/suppliers', { preHandler: guard('inventory.master') }, async (req, reply) => {
     // 页面上新建的供应商是「待准入」（8.0.7 A2，V1）：负责人登记营业执照后准入；种子、导入照旧按已准入
     const id = await saveSupplier(sql, null, req.body as SupplierInputData, { today: todayIn(config.timezone), admission: 'pending' });
-    await writeAudit(sql, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'supplier', targetId: id, detail: req.body as Record<string, unknown>, ip: req.ip });
+    await writeAudit(sql, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'supplier', targetId: id, detail: parse(SupplierInput, req.body), ip: req.ip });
     reply.code(201);
     return listSuppliers(sql, true);
   });
   app.put('/api/inventory/suppliers/:id', { preHandler: guard('inventory.master') }, async (req) => {
     const { id } = parse(idParam, req.params);
     await saveSupplier(sql, id, req.body as SupplierInputData, { today: todayIn(config.timezone) });
-    await writeAudit(sql, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'supplier', targetId: id, detail: req.body as Record<string, unknown>, ip: req.ip });
+    await writeAudit(sql, { staffId: req.actor.id, action: 'inventory_master_saved', targetType: 'supplier', targetId: id, detail: parse(SupplierInput, req.body), ip: req.ip });
     return listSuppliers(sql, true);
   });
 

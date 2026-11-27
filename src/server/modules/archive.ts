@@ -6,7 +6,7 @@
 import { every } from '../lib/throttle';
 import type { ArchiveConfig } from '../config';
 import type { Sql, Tx } from '../db';
-import { setTxTimeouts } from '../lib/tx';
+import { withTx } from '../lib/tx';
 
 export const ARCHIVE_BATCH = 2000;
 const MAX_BATCHES = 10;
@@ -43,8 +43,7 @@ async function columnsOf(tx: Tx, table: string): Promise<string> {
 /** 挪一批：pick 是选出要挪的编号的子查询（已限制条数）；返回挪了几行 */
 async function moveBatch(sql: Sql, archived: ArchivedTable, pick: (tx: Tx) => PromiseLike<readonly { id: number | string }[]>): Promise<number> {
   const source = ARCHIVED_TABLES[archived];
-  return sql.begin(async (tx) => {
-    await setTxTimeouts(tx);
+  return withTx(sql, async (tx) => {
     await tx`SELECT set_config('yuzu.archiving', 'on', true)`;
     const ids = (await pick(tx)).map((r) => Number(r.id));
     if (!ids.length) return 0;
@@ -56,7 +55,7 @@ async function moveBatch(sql: Sql, archived: ArchivedTable, pick: (tx: Tx) => Pr
       [ids],
     );
     return row!.n;
-  }) as Promise<number>;
+  });
 }
 
 async function drain(fn: () => Promise<number>): Promise<number> {

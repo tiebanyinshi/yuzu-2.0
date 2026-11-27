@@ -2,8 +2,10 @@
 // 在迁移都跑完的库上核对，以后的新迁移照这些规则来，违反了直接指出是哪张表、哪一列。
 //   ① 每张表有主键；② 每个外键有以它打头的索引（指向 staff、stores 的例外）；③ 每张表有库内注释；
 //   ④ 没有完全重复的索引；⑤ 没核对过的约束（NOT VALID）只有白名单里的；⑥ 以 _id 结尾、却没挂外键的列只有白名单里的；
-//   ⑦ 归档表与原表同列（多一列 archived_at）；⑧ docs/DATA_DICTIONARY.md 与库一致。
-import { readFileSync } from 'node:fs';
+//   ⑦ 归档表与原表同列（多一列 archived_at）；⑧ docs/DATA_DICTIONARY.md 与库一致；
+//   ⑨（8.1.52）带门店默认值的表不在事务外直接用连接池写（多门店时会落到本店）。
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ARCHIVED_TABLES } from '../src/server/modules/archive';
 // @ts-expect-error 生成脚本是 .mjs，没有类型声明
@@ -132,5 +134,16 @@ describe('库结构体检', () => {
     const want = await renderDictionary(ctx.sql);
     const have = readFileSync(new URL(`../${DICTIONARY_PATH}`, import.meta.url), 'utf8');
     expect(have === want, `${DICTIONARY_PATH} 不是最新的：照 scripts/gen-data-dictionary.mjs 开头的命令重新生成`).toBe(true);
+  });
+
+  it('⑨ 带门店默认值的表不在事务外直接用连接池写（多门店：池上的写入拿不到请求的门店，会落到本店）', async () => {
+    const tables = await list(ctx.sql`
+      SELECT table_name AS x FROM information_schema.columns
+      WHERE table_schema = 'public' AND column_name = 'store_id' AND column_default LIKE '%yuzu_store()%'`);
+    const re = new RegExp(String.raw`\b(?:sql|deps\.sql)\`\s*INSERT INTO (${tables.join('|')})\b`, 'g');
+    const root = new URL('../src/server/', import.meta.url).pathname;
+    const walk = (d: string): string[] => readdirSync(d).flatMap((f) => (statSync(join(d, f)).isDirectory() ? walk(join(d, f)) : f.endsWith('.ts') ? [join(d, f)] : []));
+    const hits = walk(root).flatMap((f) => [...readFileSync(f, 'utf8').matchAll(re)].map((m) => `${f.slice(root.length)}：${m[1]}`));
+    expect(hits, '这些写入直接用连接池，门店会落到本店：放进 sql.begin 事务里（事务开头记上当前门店），或显式写 store_id').toEqual([]);
   });
 });

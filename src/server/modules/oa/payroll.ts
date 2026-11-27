@@ -88,14 +88,22 @@ export interface PayrollKey {
   id: string;
 }
 
+const payrollKey = (raw: string): PayrollKey => ({
+  key: createHash('sha256').update(`yuzu-payroll-file:${raw}`).digest(),
+  id: createHash('sha256').update(`yuzu-payroll-key-id:${raw}`).digest('hex').slice(0, 16),
+});
+
 /** 当前的加密密钥：配了用配的；开发、测试没配用开发密钥；正式、试用没配为空（不能上传 Excel） */
 export function payrollKeyOf(config: Pick<AppConfig, 'env' | 'payrollFileKey'>): PayrollKey | null {
   const raw = config.payrollFileKey ?? (config.env === 'development' || config.env === 'test' ? DEV_KEY : null);
-  if (!raw) return null;
-  return {
-    key: createHash('sha256').update(`yuzu-payroll-file:${raw}`).digest(),
-    id: createHash('sha256').update(`yuzu-payroll-key-id:${raw}`).digest('hex').slice(0, 16),
-  };
+  return raw ? payrollKey(raw) : null;
+}
+
+/** 解得开某份原件的钥匙：当前那把，或换密钥期间还留着的旧的（PAYROLL_FILE_KEY_PREVIOUS），按原件记下的 key_id 认 */
+export function payrollKeyFor(config: Pick<AppConfig, 'env' | 'payrollFileKey' | 'previousKeys'>, keyId: string): PayrollKey | null {
+  const current = payrollKeyOf(config);
+  if (current?.id === keyId) return current;
+  return config.previousKeys.payrollFile.map(payrollKey).find((k) => k.id === keyId) ?? null;
 }
 
 export function encryptFile(k: PayrollKey, data: Buffer) {
@@ -359,7 +367,7 @@ async function loadBatch(db: Db, id: number, mine: Scope): Promise<BatchRow> {
   return b;
 }
 
-async function loadDetail(db: Db, id: number, key: PayrollKey | null, mine: Scope): Promise<PayrollBatchDetail> {
+async function loadDetail(db: Db, id: number, key: PayrollKey | null, mine: Scope, canRead: (keyId: string) => boolean): Promise<PayrollBatchDetail> {
   const b = await loadBatch(db, id, mine);
   const staff = await staffFor(db, b.month, batchScope(b.storeIds));
   const slips = await db<{ staffId: number; values: PayslipValues; updatedAt: Date; signedAt: Date | null; viewedAt: Date | null }[]>`
@@ -398,7 +406,7 @@ async function loadDetail(db: Db, id: number, key: PayrollKey | null, mine: Scop
         rowCount: f.rowCount,
         uploadedByName: f.uploadedByName,
         uploadedAt: iso(f.uploadedAt),
-        readable: !!key && key.id === f.keyId,
+        readable: canRead(f.keyId),
       }),
     ),
     canUpload: !!key,
@@ -558,6 +566,7 @@ function planImport(sheet: Sheet, fileName: string, fields: PayslipField[], staf
 export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: Deps) {
   const canManage = canManagePayroll(sql);
   const key = payrollKeyOf(config);
+  const canRead = (keyId: string) => !!payrollKeyFor(config, keyId);
 
   // 模板
   app.get('/api/oa/payroll/templates', { preHandler: canManage }, async () => listTemplates(sql));
@@ -664,7 +673,7 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
 
   app.get('/api/oa/payroll/batches/:id', { preHandler: canManage }, async (req) => {
     const { id } = parse(BatchParam, req.params);
-    const detail = await loadDetail(sql, id, key, await scopeOf(sql, req.actor));
+    const detail = await loadDetail(sql, id, key, await scopeOf(sql, req.actor), canRead);
     await payrollAudit(sql, { staffId: req.actor.id, action: 'view_batch', batchId: id, ip: req.ip });
     return detail;
   });
@@ -740,7 +749,7 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
   // 下载表格（带上已经填的金额：等于导出，记审计）
   app.get('/api/oa/payroll/batches/:id/sheet.xlsx', { preHandler: canManage }, async (req, reply) => {
     const { id } = parse(BatchParam, req.params);
-    const d = await loadDetail(sql, id, key, await scopeOf(sql, req.actor));
+    const d = await loadDetail(sql, id, key, await scopeOf(sql, req.actor), canRead);
     await payrollAudit(sql, { staffId: req.actor.id, action: 'export_sheet', batchId: id, ip: req.ip });
     attachment(reply, `工资表-${d.month}-${d.title}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     return reply.send(sheetOf(d));
@@ -808,10 +817,11 @@ export function registerOaPayrollRoutes(app: FastifyInstance, { sql, config }: D
     const [f] = await sql<{ fileName: string; iv: Buffer; tag: Buffer; ciphertext: Buffer; keyId: string }[]>`
       SELECT file_name, iv, tag, ciphertext, key_id FROM oa_payroll_files WHERE id = ${fileId} AND batch_id = ${id}`;
     if (!f) throw notFound('原件不存在');
-    if (!key || key.id !== f.keyId) throw conflict('PAYROLL_KEY_CHANGED', '这份原件是用之前的密钥加密的，现在的密钥解不开（工资条本身不受影响）');
+    const fileKey = payrollKeyFor(config, f.keyId);
+    if (!fileKey) throw conflict('PAYROLL_KEY_CHANGED', '这份原件是用之前的密钥加密的，现在的密钥解不开（工资条本身不受影响；把旧密钥放进 PAYROLL_FILE_KEY_PREVIOUS 就能下载）');
     let data: Buffer;
     try {
-      data = decryptFile(key, f);
+      data = decryptFile(fileKey, f);
     } catch {
       throw conflict('PAYROLL_FILE_BROKEN', '原件解不开（可能被改动过）');
     }

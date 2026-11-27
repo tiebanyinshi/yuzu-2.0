@@ -10,6 +10,7 @@
 ## 2. 多门店
 
 - 多门店（8.0.22，`docs/MULTISTORE_V8022.md`）：请求的当前门店在上下文里（`lib/store-context` 的 `currentStoreId`），本店（编号 1）不设任何上下文——只有一家店时与以往完全一样。新加的业务表要按店分的，加 `store_id bigint NOT NULL DEFAULT yuzu_store()`（新写的行自动记上当前门店），读的地方显式按 `store_id = ${currentStoreId()}` 过滤，报表用 `storeIn(db, '列')`（「合并看」时是几家店）；
+  - 写带 `store_id DEFAULT yuzu_store()` 的表要在事务里（`sql.begin` / `withTx`：事务开头才记上当前门店），不在事务外直接用连接池写，不然多门店时落到本店（`tests/schema-health.test.ts` ⑨ 核对，8.1.52）；挂的门店都停用了的账号登录拒绝 `NO_STORE`，不落到本店；
   - 要记公司主体的财务单据加 `entity_id DEFAULT yuzu_entity()`，有上级单据的跟着上级走。每分钟的任务、小程序入口在单据所在的门店里处理（`runInStore` / `inRowStore` / `forEachStore`）。会员、钱包、券、价目、ERP 的物料与供应商全公司一套，不按店分。
 
 ## 3. 公共小工具
@@ -22,6 +23,7 @@
   - 错误边界 `components/ErrorBoundary`；
   - 存文件 `lib/utils` 的 `downloadBlob` / `downloadCsvRows`；
   - 服务端的过载保护、频率限制、访问网段在 `lib/protect`（新的「问连没连上」类接口加进它的 `PROBE_PATHS`，对外不用登录的接口放在 `/api/public/` 下）。
+  - 后端底座（8.1.48 / 8.1.52，`docs/BACKEND_REVIEW_V8148.md`）：新端口用 `lib/http-kit`（请求编号、日志脱敏、统一错误出口、服务密钥比对 `sharedKeyMatcher`，换密钥期间的旧密钥放进 `<名字>_PREVIOUS`）；开带时限的事务用 `lib/tx` 的 `withTx`；「隔一阵才跑一次」的任务用 `lib/throttle` 的 `every`；接口的输入直接 `parse(模式, req.body)`，不写 `req.body as X`（`check:gov` 的 `request-cast` 只降不升）。
 
 ## 4. 页面部件、目标设备与屏幕高度
 
