@@ -287,9 +287,26 @@ yuzu 数据库（员工账号、WCP、员工培训 / 汤崎学堂、饭堂、巡
 2. **服务器域名**：「开发管理 → 开发设置 → 服务器域名」request、downloadFile 合法域名都填 `https://sys.yuzusystem.xyz`（SP17：顾客、员工两个小程序都用这个域名，各自在自己的小程序后台填）；拿到 AppID、AppSecret（AppSecret 只放正式服 `.env` 的 `STAFFMP_APP_SECRET`，不进 Git、不进聊天）。
 3. **隐私保护指引**：位置（打卡核对位置）、摄像头（扫码、负责人连续扫码、外勤拍照）、相册（外勤照片）；`app.json` 的 `requiredPrivateInfos` 只声明 `getLocation`；第一次登录「同意并登录」一并同意。
 4. **审核账号（SP14）**：有账号体系的小程序提审要给测试账号，按角色才出现的功能也要让审核看得到。正式库不许写演示数据，所以请店主定一个「审核专用」账号：单独的考勤组、不进报表、通讯录只看本部门；巡场、负责人扫码这类附录屏说明。
-5. **扫普通链接打开小程序**：已经贴好的巡场码是网址（柚子饭堂的 `staff.yuzusystem.xyz/…#patrol=…`），小程序后台「开发管理 → 开发设置 → 扫普通链接二维码打开小程序」配上以后，用微信扫一扫也能直接进巡场打卡；配这个要在 `staff.yuzusystem.xyz` 根目录放微信给的一个校验文件（只加这一个文件，柚子饭堂不受影响，放不放由店主定；不放的话在小程序里点「扫一扫」照样能巡场）；带 `#` 的地址能不能匹配，上线前真机试（试不通就在后台给巡场点换一批新码）。
-6. **正式服**：`.env` 设 `STAFFMP_PORT`、`STAFFMP_APPID`、`STAFFMP_APP_SECRET`，叠加 `compose.staffmp.yaml`；Caddy 的 `sys.yuzusystem.xyz` 加一段 `handle /api/staffmp/* { reverse_proxy <yuzu>:<STAFFMP_PORT> }`（写在原来转应用端口的那一段前面），其余照旧；`staff.yuzusystem.xyz` 不动（柚子饭堂网页照常用）。
-7. **体验版先连测试服的演示库**（测试服另开一个员工小程序端口与域名，或用 Tailscale 内的地址加「不校验合法域名」），店主与几位员工真机走一遍再发正式版；吃饭与巡场做完以前只给试点员工用。
+5. **扫普通链接打开小程序（店主 2026-11-27：要做）**：已经贴好的巡场码是柚子饭堂的网址（`https://staff.yuzusystem.xyz/#patrol=<场所码>`）。配好以后用微信自带的扫一扫扫巡场码，直接打开员工小程序的巡场页记一次（`via: link`，第 5.4 节）；没配之前在小程序里点「扫一扫」照样能巡场。柚子饭堂别的二维码（注册海报等）不受影响：规则只认 `#patrol=` 开头的。
+   1. 员工小程序后台「开发管理 → 开发设置 → 扫普通链接二维码打开小程序」→ 添加：**二维码规则** `https://staff.yuzusystem.xyz/#patrol=`（前缀匹配；不要只填域名，不然柚子饭堂的码都会被带进小程序）、**小程序功能页面** `pages/patrol/index`、**测试范围**先选开发版与体验版、**测试链接**贴一张巡场码的地址；下载**校验文件**。
+   2. 校验文件放到 `staff.yuzusystem.xyz` 根目录：正式服那台的 Caddy 在 `staff.yuzusystem.xyz` 那一段里加一句（只回这一个文件，其余照旧转员工端口，柚子饭堂不动）：
+
+      ```caddy
+      staff.yuzusystem.xyz {
+      	# 员工小程序「扫普通链接」的校验文件（文件名、内容照微信后台下载的那个填）
+      	handle /<校验文件名>.txt {
+      		respond "<校验文件的内容>" 200
+      	}
+      	handle {
+      		reverse_proxy <正式服 yuzu>:<CANTEEN_PORT>   # 原来的那一句
+      	}
+      }
+      ```
+
+   3. 微信后台点「校验」通过后保存、发布规则；用体验版真机扫一张巡场码：打开的是小程序的巡场页、记上一次（巡场记录里是「直接扫码」）。正式版发布后对所有人生效。
+   4. 微信不接受规则里带 `#` 时：在小程序里点「扫一扫」照样能巡场；要让微信扫一扫也能直接打开，得换一批路径形式的新巡场码（例如 `/patrol/<场所码>`，主线改柚子饭堂的出码与认码），由店主定。
+6. **正式服**：`.env` 设 `STAFFMP_PORT`、`STAFFMP_APPID`、`STAFFMP_APP_SECRET`，叠加 `compose.staffmp.yaml`；Caddy 的 `sys.yuzusystem.xyz` 加 `/api/staffmp/*`（正式版）与 `/trial/api/staffmp/*`（体验版，去掉 `/trial` 转给测试服 A 演示库的员工小程序端口）两段，写在原来转应用端口的那一段前面——和顾客小程序的 `/v1/*`、`/trial/v1/*` 写在同一处，完整的片段见 `DEPLOY_GATEWAY.md` 第 1.1 节（顾客小程序线改域名的 PR https://github.com/tiebanyinshi/yuzu-2.0/pull/63）；Tailscale 放行正式服那台连测试服 A 演示库的员工小程序端口。`staff.yuzusystem.xyz` 除了上面第 5 条的校验文件，不动（柚子饭堂网页照常用）。
+7. **体验版先连测试服的演示库**：体验版的地址是 `https://sys.yuzusystem.xyz/trial`（正式服那台的 Caddy 去掉 `/trial` 转给测试服 A 演示库的员工小程序端口，见上一条），店主与几位员工真机走一遍再发正式版；吃饭与巡场做完以前只给试点员工用。
 8. `sitemap.json` 全部不让微信搜索收录（员工用的页面不出现在搜索里）；小程序的名字最好让人一看就知道是员工用的、和顾客小程序分得开（SP01）。
 
 ## 11. 这一版不做
