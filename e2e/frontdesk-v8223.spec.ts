@@ -2,7 +2,7 @@
 //   ① 接待发牌选「港客」、写预约技师 → 手牌卡片上有「港客」标；客人卡里填偏好（忌口），点单页按手牌找到客人时看得到忌口与预约技师；
 //   ② 同行小标签上「移出」一键确认；
 //   ③ 客诉台账：写一条「客诉」备注，值班经理在台账里看得到、标已处理，打印页打得开。
-// 依赖演示数据（值班经理 zhangjl、收银 xiaozhou，密码 yuzu2026）。来访做完撤销；不改后台规则。只在门店电脑跑。
+// 依赖演示数据（店主 linlan、值班经理 zhangjl、收银 xiaozhou，密码 yuzu2026）。来访做完撤销；餐饮功能没开时临时打开、做完恢复（同一组里前面的用例可能关了它）。只在门店电脑跑。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type APIRequestContext, type Browser, type Page } from '@playwright/test';
 import { passPortal } from './portal';
@@ -50,6 +50,10 @@ test.describe('8.2.3 前台', () => {
 
   test('客人类别、偏好全店可见、同行移出、客诉台账', async ({ page, browser, baseURL }) => {
     const clerk = await apiAs(browser, baseURL, 'xiaozhou');
+    // 收尾用的两个会话先登好：超时后浏览器在收尾阶段开不了新会话，来访就撤销不掉
+    const duty = await apiAs(browser, baseURL, 'zhangjl');
+    const owner = await apiAs(browser, baseURL, 'linlan');
+    const dining = ((await (await owner.get('/api/admin/dining')).json()) as { rules: { enabled: boolean } }).rules;
     // 每次跑带唯一尾号：重跑（CI 重试）时上一次留下的客诉不会让定位器撞车
     const note = `E2E8223 水温低 ${randomUUID().slice(0, 8)}`;
     const [a, b] = await freeTags(clerk, 2);
@@ -65,6 +69,10 @@ test.describe('8.2.3 前台', () => {
     expect(r.ok(), await r.text()).toBe(true);
     const visits = ((await r.json()) as { visits: { id: number }[] }).visits;
     try {
+      if (!dining.enabled) {
+        const on = await owner.put('/api/admin/dining/rules', { data: { enabled: true } });
+        expect(on.ok(), await on.text()).toBe(true);
+      }
       await login(page, 'xiaozhou');
       await page.goto(`/crm/frontdesk?v=${visits[0]!.id}`);
       await expect(page.getByTestId(`tag-${a}-category`)).toHaveText(/港客/);
@@ -92,8 +100,8 @@ test.describe('8.2.3 前台', () => {
       const row = page.getByTestId('complaints').getByText(note);
       await expect(row).toBeVisible();
     } finally {
-      const duty = await apiAs(browser, baseURL, 'zhangjl');
       for (const v of visits) await duty.post(`/api/frontdesk/visits/${v.id}/cancel`, { data: { reason: 'E2E8223 用完撤销' } });
+      if (!dining.enabled) await owner.put('/api/admin/dining/rules', { data: { enabled: false } });
     }
   });
 });
