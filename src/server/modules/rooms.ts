@@ -49,6 +49,7 @@ import type { Deps, OpContext } from '../lib/context';
 import { badRequest, conflict, notFound, unprocessable } from '../lib/errors';
 import { cents, idParam, parse, positiveCents } from '../lib/validate';
 import { assertCanFix, assertOpen, businessDate, hashRequest, loadFrontdeskRules, lockVisits, nextDocNo, runIdempotent, saveKey, setTxTimeouts } from './frontdesk/common';
+import { assertNotAwayLocked } from './frontdesk/index';
 import { loadSettings } from './settings';
 import { lockPaymentShift, openShiftOf } from './shifts';
 import { leaveRoomStay, locateRoomStay } from './locations';
@@ -755,6 +756,8 @@ export async function checkinRoom(deps: Deps, raw: unknown, ctx: OpContext): Pro
     if (!peek) throw conflict('TAG_NOT_IN_STORE', `手牌 ${input.tagCode} 没有在店客人，请核对牌号；住客要先在前台接待、买门票，再入住客房`);
     const visit = (await lockVisits(tx, [peek.id])).get(peek.id)!;
     assertOpen(visit);
+    // 8.2.7：锁牌外出的客人不能入住（不能在锁着的牌上挂房费）
+    await assertNotAwayLocked(tx, visit.id, input.tagCode);
     const billId = visit.billId;
     const visitId = visit.id;
     // 这位客人的房价（8.0.20 会员联动房价）：手牌绑了会员、房型设了会员价的按会员价；读会员的档阶不加锁（与浴票延迟一样）
@@ -850,6 +853,9 @@ export async function extendStay(deps: Deps, id: number, raw: unknown, ctx: OpCo
       if (!input.addBlock) throw badRequest('钟点房续住是加一段，请点「加一段」');
       const charged = await chargedOf(tx, s.id);
       const blockNo = (charged.blocks.size ? Math.max(...charged.blocks) : 0) + 1;
+      // 8.2.7：加一段要挂房费，锁牌外出的客人不行（入住单 → 来访，与退房同序）
+      await lockVisits(tx, [s.visitId]);
+      await assertNotAwayLocked(tx, s.visitId);
       await postRoomCharges(tx, { id: s.id, billId: s.billId, roomNo: room!.roomNo }, [{ kind: 'block', nightDate: null, blockNo, amount: s.rate }], {
         source: 'extend',
         postKey: key,
