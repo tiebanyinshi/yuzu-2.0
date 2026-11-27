@@ -133,6 +133,7 @@ export type AuditAction =
   | 'tag_deposit_received'
   | 'tag_away_locked'
   | 'tag_away_unlocked'
+  | 'leisure_setup'
   | 'tag_deposit_refunded'
   | 'frontdesk_abandon'
   | 'frontdesk_ticket'

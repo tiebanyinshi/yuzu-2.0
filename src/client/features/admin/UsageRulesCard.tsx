@@ -108,9 +108,8 @@ export function UsageRulesCard() {
                   const id = Number(e.target.value);
                   setPricing(
                     t,
-                    id
-                      ? { feeItemId: id, minMinutes: p?.minMinutes ?? DEFAULT_USAGE_MIN_MINUTES, stepMinutes: p?.stepMinutes ?? DEFAULT_USAGE_STEP_MINUTES, openFeeItemId: p?.openFeeItemId ?? null }
-                      : null,
+                    // 8.2.20（Codex 审查）：换收银项目只换项目，别的照旧（「基础价 + 加钟」的加钟价不能丢，不然变成按小时价收）
+                    id ? (p ? { ...p, feeItemId: id } : { feeItemId: id, minMinutes: DEFAULT_USAGE_MIN_MINUTES, stepMinutes: DEFAULT_USAGE_STEP_MINUTES, openFeeItemId: null }) : null,
                   );
                 }}
                 aria-label={`${t} 房费项目`}
@@ -124,6 +123,11 @@ export function UsageRulesCard() {
                   </option>
                 ))}
               </Select>
+              {p?.extraPrice != null && (
+                <span className="text-[12px] font-semibold text-pine" data-testid={`usage-pricing-block-${t}`}>
+                  基础价含起步时长，之后每 {p.stepMinutes} 分钟加钟 {formatYuan(p.extraPrice)}
+                </span>
+              )}
               {p && (
                 <>
                   <label className="flex items-center gap-1">
