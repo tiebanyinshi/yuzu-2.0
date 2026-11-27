@@ -26,6 +26,8 @@ let me: StaffMpMe | null = null;
 let today: PunchToday | null = null;
 let base = { now: 0, at: 0 };
 let timer: number | null = null;
+/** 页面显示的第几次：离开时加一，之前的请求回来对不上就不起计时器 */
+let gen = 0;
 
 interface PunchRow {
   id: number;
@@ -95,20 +97,29 @@ Page({
     rows: [] as PunchRow[],
   },
 
+  onLoad() {
+    // 新开的一页：不用上一次（可能是上一位员工）的打卡数据
+    me = null;
+    today = null;
+  },
+
   async onShow() {
+    const my = ++gen;
     this.setData({ large: largeTextOn() });
     me = await requireMe();
-    if (!me) return;
+    if (!me || my !== gen) return;
     this.showPending();
     await this.load();
-    this.startClock();
+    if (my === gen) this.startClock();
   },
 
   onHide() {
+    gen += 1;
     this.stopClock();
   },
 
   onUnload() {
+    gen += 1;
     this.stopClock();
   },
 
@@ -137,6 +148,7 @@ Page({
     } catch (e) {
       if (isApiError(e) && e.status === 401) return toLogin();
       if (!today) this.setData({ state: isOffline(e) ? 'offline' : 'error', error: messageOf(e) });
+      else this.setData({ state: 'ready' });
     }
   },
 
@@ -199,7 +211,10 @@ Page({
           where = await getLocation();
         } catch (e) {
           const msg = String((e as { errMsg?: string }).errMsg ?? '');
-          if (/auth|deny|denied/i.test(msg)) {
+          if (/system permission|privacy/i.test(msg)) {
+            // 手机没给微信定位权限（或没同意隐私指引）：小程序的设置页打不开这个，说清楚去哪开
+            this.setData({ actionError: '微信没有手机的定位权限：到手机的「设置 → 微信 → 位置」里打开，再回来打卡' });
+          } else if (/auth|deny|denied/i.test(msg)) {
             this.setData({ locationDenied: true, actionError: '打卡要核对位置：请允许微信使用你的位置（只在打卡时取一次）' });
           } else {
             this.setData({ actionError: '没取到位置：到窗边或室外，打开手机的定位再试' });

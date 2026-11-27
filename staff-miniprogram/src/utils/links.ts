@@ -15,6 +15,7 @@ export function pageOfLink(link: string | null): string | null {
   if (/^\/oa\/(?:me\/)?schedule$/.test(path)) return '/pages/schedule/index';
   if (/^\/oa\/(?:me\/)?attendance$/.test(path)) return '/pages/attendance/index';
   if (/^\/oa\/(?:punch|attendance\/punch)$/.test(path)) return '/pages/punch/index';
+  if (/^\/oa\/(?:me\/)?leave$/.test(path)) return '/pages/leave/index';
   if (/^\/oa\/training/.test(path)) return '/pages/learn/index';
   return null;
 }

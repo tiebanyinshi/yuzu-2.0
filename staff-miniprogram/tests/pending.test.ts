@@ -60,6 +60,26 @@ describe('结果待确认', () => {
     expect(loadPending(7, 'punch')).toBeNull();
   });
 
+  it('原样重提被关卡挡下（要先改密码、换了门店、没权限）：不能断定之前那次没生效，留着', async () => {
+    fake.reply({ status: 0, fail: true });
+    expect((await sendPending(op())).status).toBe('unknown');
+    for (const code of ['PASSWORD_CHANGE_REQUIRED', 'POSITION_REQUIRED', 'STORE_SWITCHED', 'FORBIDDEN']) {
+      fake.reply({ status: code === 'STORE_SWITCHED' ? 409 : 403, data: { error: { code, message: code } } });
+      expect((await sendPending(op())).status, code).toBe('unknown');
+      expect(loadPending(7, 'punch'), code).toMatchObject({ key: 'k-1' });
+    }
+    // 门店系统看了这一笔再拒绝的（不在打卡范围）：删掉
+    fake.reply({ status: 422, data: { error: { code: 'LOCATION_OUT', message: '不在打卡范围内' } } });
+    expect((await sendPending(op())).status).toBe('rejected');
+    expect(loadPending(7, 'punch')).toBeNull();
+  });
+
+  it('第一次发就被关卡挡下：门店系统没收这一笔，删掉', async () => {
+    fake.reply({ status: 403, data: { error: { code: 'PASSWORD_CHANGE_REQUIRED', message: '首次登录请先修改密码' } } });
+    expect((await sendPending(op())).status).toBe('rejected');
+    expect(loadPending(7, 'punch')).toBeNull();
+  });
+
   it('没登录（401）不算拒绝：留着，登录以后原样重提', async () => {
     fake.reply({ status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } });
     expect((await sendPending(op())).status).toBe('signed_out');

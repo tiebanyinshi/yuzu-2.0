@@ -136,7 +136,8 @@ export function prefillOf(t: Pick<ApprovalTemplate, 'code' | 'fields'>, query: R
   for (const f of t.fields) {
     if (f.type !== 'text' && f.type !== 'textarea') continue;
     const v = query[`f.${f.key}`];
-    if (typeof v === 'string' && v) out[f.key] = v.slice(0, maxOf(f) ?? 200);
+    // 带过来的文字是编码过的（页面跳转的参数不会自动解码）：先解码再截，不截断在半个转义上
+    if (typeof v === 'string' && v) out[f.key] = decodeSafe(v).slice(0, maxOf(f) ?? 200);
   }
   return out;
 }
@@ -285,5 +286,13 @@ export function valueText(f: Pick<ApprovalField, 'type' | 'options'>, v: unknown
       return Array.isArray(v) ? `${v.length} 个附件` : '—';
     default:
       return String(v);
+  }
+}
+
+function decodeSafe(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
   }
 }

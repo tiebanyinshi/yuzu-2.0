@@ -61,6 +61,12 @@ export function clearPending(staffId: number, kind: PendingKind, ref?: number): 
 /** 存不下就不发的那句话 */
 export const SAVE_FAILED = '手机上存不下这次操作的记录，为了不重复，没有发出去：清一下微信的存储空间再试';
 
+/**
+ * 原样重提时被这些挡下的：门店系统还没看这一笔（要先改密码、选岗位，换了门店，没这个权限、没这个接口），
+ * 不能断定之前那次没生效（AGENTS.md「结果待确认」）——留着，等挡的原因解决了再原样重提
+ */
+const GATE_CODES = ['PASSWORD_CHANGE_REQUIRED', 'POSITION_REQUIRED', 'STORE_SWITCHED', 'FORBIDDEN', 'NOT_FOUND'];
+
 export type SendOutcome<T> =
   | { status: 'ok'; data: T }
   | { status: 'rejected'; error: unknown }
@@ -84,6 +90,8 @@ export async function sendPending<T>(op: PendingOp): Promise<SendOutcome<T>> {
   } catch (e) {
     if (isApiError(e) && e.status === 401) return { status: 'signed_out', error: e };
     if (isRejected(e)) {
+      const resend = !!before && before.key === op.key;
+      if (resend && isApiError(e) && GATE_CODES.indexOf(e.code) >= 0) return { status: 'unknown', error: e };
       clearPending(op.staffId, op.kind, op.ref);
       return { status: 'rejected', error: e };
     }

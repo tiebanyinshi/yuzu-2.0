@@ -19,6 +19,9 @@ interface Row {
 
 const rowOf = (n: OaNotification): Row => ({ id: n.id, title: n.title, body: n.body, time: shortTime(n.createdAt), unread: !n.readAt, page: pageOfLink(n.link) ?? '' });
 
+/** 下拉刷新与往下翻页撞在一起时只认最新的 */
+let seq = 0;
+
 Page({
   data: {
     large: false,
@@ -38,8 +41,10 @@ Page({
   },
 
   async load() {
+    const mine = ++seq;
     try {
       const p = await call<NotificationPage>('GET', '/oa/notifications?status=all');
+      if (mine !== seq) return;
       const rows = p.items.map(rowOf);
       this.setData({ rows, unread: p.unread, next: p.nextBefore, state: rows.length ? 'ready' : 'empty', error: '' });
     } catch (e) {
@@ -53,7 +58,9 @@ Page({
     if (!next || loadingMore) return;
     this.setData({ loadingMore: true });
     try {
+      const mine = seq;
       const p = await call<NotificationPage>('GET', `/oa/notifications?status=all&before=${next}`);
+      if (mine !== seq) return;
       this.setData({ rows: this.data.rows.concat(p.items.map(rowOf)), next: p.nextBefore });
     } catch {
       // 下一页没取到：再往下滑会再试

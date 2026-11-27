@@ -7,7 +7,9 @@ import { directoryGroups } from '../../utils/directory';
 import { requireMe, toLogin } from '../../utils/guard';
 import { largeTextOn } from '../../utils/prefs';
 
+/** 上次取到的通讯录与它是谁看的（手机号按看的人打码：换了人登录不能用上一位的） */
 let dir: Directory | null = null;
+let dirOwner = 0;
 
 Page({
   data: {
@@ -21,16 +23,28 @@ Page({
 
   async onShow() {
     this.setData({ large: largeTextOn() });
-    if (!(await requireMe())) return;
-    if (!dir) this.load();
+    const me = await requireMe();
+    if (!me) return;
+    if (dirOwner !== me.staff.id) {
+      dir = null;
+      dirOwner = me.staff.id;
+    }
+    // 先画上次的（同一个人的），每次进来都重新取
+    if (dir) this.render();
+    this.load();
   },
 
   async load() {
+    const owner = dirOwner;
     try {
-      dir = await call<Directory>('GET', '/oa/directory');
+      const next = await call<Directory>('GET', '/oa/directory');
+      if (owner !== dirOwner) return;
+      dir = next;
       this.render();
     } catch (e) {
       if (isApiError(e) && e.status === 401) return toLogin();
+      // 有上次的就照旧显示
+      if (dir) return;
       this.setData({ state: isOffline(e) ? 'offline' : 'error', error: messageOf(e) });
     }
   },

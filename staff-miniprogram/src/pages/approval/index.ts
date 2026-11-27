@@ -109,7 +109,9 @@ Page({
       });
       this.loadThumbs(d.attachments);
       // 抄送给我的：打开就记已读（不等结果）
-      if (d.ccReadAt === null) call('POST', `/oa/approvals/${d.id}/read`, {}).catch(() => undefined);
+      // 抄送里有我、我还没看过才记（审批人、发起人打开不记）
+      const viewer = me;
+      if (d.ccReadAt === null && viewer && d.cc.some((c) => c.staffId === viewer.staff.id)) call('POST', `/oa/approvals/${d.id}/read`, {}).catch(() => undefined);
     } catch (e) {
       if (isApiError(e) && e.status === 401) return toLogin();
       this.setData({ state: isOffline(e) ? 'offline' : 'error', error: messageOf(e) });
@@ -140,12 +142,13 @@ Page({
         wx.previewImage({ urls: [absoluteUrl(link.url)] });
         return;
       }
-      const path = await download(`/oa/attachments/${id}`);
+      // 先看小程序打不打得开，打不开的不下载（最大 10MB）
       const ext = (/\.([a-z0-9]+)$/i.exec(a.fileName)?.[1] ?? '').toLowerCase();
       if (!['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
         this.setData({ actionError: '这种附件小程序里打不开，请在电脑上的 WCP 里看' });
         return;
       }
+      const path = await download(`/oa/attachments/${id}`);
       wx.openDocument({ filePath: path, fileType: ext as 'pdf', showMenu: false, fail: () => this.setData({ actionError: '附件没有打开，请再试一次' }) });
     } catch (err) {
       this.setData({ actionError: messageOf(err) });

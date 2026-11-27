@@ -80,8 +80,10 @@ Page({
     if (!next || loadingMore) return;
     this.setData({ loadingMore: true });
     try {
+      const mine = seq;
       const page = await call<ApprovalPage>('GET', `/oa/approvals?box=${box}&before=${next}`);
-      if (box !== this.data.box) return;
+      // 这期间下拉刷新、换了页签：这一页不要了
+      if (mine !== seq || box !== this.data.box) return;
       this.setData({ rows: this.data.rows.concat(page.items.map((a) => rowOf(box, a))), next: page.next });
     } catch {
       // 下一页没取到：再往下滑会再试

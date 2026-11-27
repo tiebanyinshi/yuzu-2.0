@@ -53,6 +53,9 @@ describe('预填', () => {
   it('工资条异议：f.<文字字段>', () => {
     const t = { code: 'payslip_objection', fields: [F({ key: 'payslip', type: 'text', max: 60 }), F({ key: 'content', type: 'textarea' })] };
     expect(prefillOf(t, { 'f.payslip': '2026 年 11 月 · 工资' })).toEqual({ payslip: '2026 年 11 月 · 工资' });
+    // 跳转参数是编码过的：先解码再截
+    expect(prefillOf(t, { 'f.payslip': encodeURIComponent('2026 年 11 月 · 工资') })).toEqual({ payslip: '2026 年 11 月 · 工资' });
+    expect(prefillOf(t, { 'f.payslip': encodeURIComponent('长'.repeat(80)) }).payslip).toBe('长'.repeat(60));
   });
 });
 

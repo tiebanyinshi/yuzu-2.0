@@ -25,6 +25,11 @@ let values: Values = {};
 let lists: OptionLists = { leaveTypes: [], shifts: [], refs: [] };
 let query: Record<string, string | undefined> = {};
 let error: { key: string; message: string } | null = null;
+/** 页面还在（交上去以后 600 毫秒再跳；这期间按了返回就不跳） */
+let alive = false;
+/** 补卡选班次：日期连着改两次时只认最后一次 */
+let shiftSeq = 0;
+const EMPTY_LISTS: OptionLists = { leaveTypes: [], shifts: [], refs: [] };
 
 /** 草稿不存图片附件（没用上的附件 24 小时后门店系统会清掉） */
 const draftOf = (v: Values): Values => Object.fromEntries(Object.entries(v).filter(([, x]) => !Array.isArray(x)));
@@ -47,8 +52,19 @@ Page({
   },
 
   onLoad(q: Record<string, string | undefined>) {
+    // 新开的一页：上一次（可能是上一位员工）留下的都不用
     query = q;
+    templates = [];
+    template = null;
+    values = {};
+    lists = EMPTY_LISTS;
+    error = null;
+    alive = true;
     this.setData({ large: largeTextOn() });
+  },
+
+  onUnload() {
+    alive = false;
   },
 
   async onShow() {
@@ -88,6 +104,7 @@ Page({
   pick(t: ApprovalTemplate) {
     template = t;
     error = null;
+    lists = EMPTY_LISTS;
     // 预填（从别的页带过来的）盖在草稿上
     values = { ...(me ? (readDraft(me.staff.id, t.code) ?? {}) : {}), ...prefillOf(t, query) };
     this.setData({ picked: true, name: t.name, description: t.description, supported: templateSupported(t), submitError: '' });
@@ -137,7 +154,9 @@ Page({
       return;
     }
     const month = date.slice(0, 7);
+    const mine = ++shiftSeq;
     const s = await call<MySchedule>('GET', `/oa/me/schedule?month=${month}`);
+    if (mine !== shiftSeq || template !== t) return;
     const items = s.days.find((d) => d.date === date)?.items ?? [];
     lists = { ...lists, shifts: items.map((i) => ({ id: i.shiftId, name: i.name })) };
     if (typeof values.shiftId === 'number' && !items.some((i) => i.shiftId === values.shiftId)) values = { ...values, shiftId: null };
@@ -219,6 +238,7 @@ Page({
     const t = template;
     if (!t) return;
     this.setData({ busy: true, submitError: '' });
+    let done = false;
     try {
       const r = await sendPending<ApprovalSaved>(op);
       if (r.status === 'not_sent') return this.setData({ submitError: SAVE_FAILED });
@@ -228,9 +248,14 @@ Page({
         return this.setData({ submitError: '上一次提交还没确定：先点「再提交一次」，拿到结果再说' });
       }
       if (r.status === 'ok') {
+        // 交上了：按钮一直不能再点（不然再点一下是一张新单），表单清空，盖一层不让点，跳到这张单
+        done = true;
+        values = {};
         if (me) clearDraft(me.staff.id, t.code);
-        wx.showToast({ title: '交上去了', icon: 'success', duration: 1500 });
-        setTimeout(() => wx.redirectTo({ url: `/pages/approval/index?id=${r.data.approval.id}` }), 600);
+        wx.showToast({ title: '交上去了', icon: 'success', duration: 1500, mask: true });
+        setTimeout(() => {
+          if (alive) wx.redirectTo({ url: `/pages/approval/index?id=${r.data.approval.id}` });
+        }, 600);
         return;
       }
       if (r.status === 'rejected') {
@@ -240,7 +265,7 @@ Page({
       }
       this.showPending();
     } finally {
-      this.setData({ busy: false });
+      if (!done) this.setData({ busy: false });
     }
   },
 

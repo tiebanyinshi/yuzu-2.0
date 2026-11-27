@@ -164,6 +164,7 @@ describe('工资条、通讯录、通知', () => {
     expect(pageOfLink('/oa/my/payslips/3')).toBe('/pages/payslip/index?id=3');
     expect(pageOfLink('/oa/announcements/5')).toBe('/pages/announcement/index?id=5');
     expect(pageOfLink('/oa/schedule')).toBe('/pages/schedule/index');
+    expect(pageOfLink('/oa/leave')).toBe('/pages/leave/index');
     expect(pageOfLink('/oa/im/7')).toBeNull();
     expect(pageOfLink(null)).toBeNull();
   });
