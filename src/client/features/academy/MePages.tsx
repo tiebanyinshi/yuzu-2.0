@@ -9,7 +9,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Award, CheckCircle2, ClipboardCheck, Flame, Sparkles } from 'lucide-react';
 import type { AcademyCoachItem, AcademyDailyAnswer, AcademyDailyItem } from '@shared/academy';
 import { FSRS_GRADE_LABELS, MASTERY_STATUS_LABELS, type FsrsGrade } from '@shared/academy-algo';
-import { api, errorMessage } from '../../lib/api';
+import { api, ApiError, errorMessage } from '../../lib/api';
 import { cn, uuid } from '../../lib/utils';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
@@ -28,6 +28,7 @@ function DailyCard({ item, onAnswered, onDone }: { item: AcademyDailyItem; onAns
   const [busy, setBusy] = useState(false);
   const [key] = useState(() => uuid());
   const toast = useToast();
+  const qc = useQueryClient();
   const send = async (body: { choice?: number[]; grade?: FsrsGrade }) => {
     setBusy(true);
     try {
@@ -35,7 +36,7 @@ function DailyCard({ item, onAnswered, onDone }: { item: AcademyDailyItem; onAns
         key,
         method: 'POST',
         url: '/api/academy/daily/answer',
-        body: { clientKey: key, questionId: item.questionId, ...body },
+        body: { clientKey: key, questionId: item.questionId, version: item.version, ...body },
         summary: `每日一练「${item.stem.slice(0, 16)}」`,
       });
       setAnswer(r);
@@ -43,6 +44,8 @@ function DailyCard({ item, onAnswered, onDone }: { item: AcademyDailyItem; onAns
       if (item.kind === 'recall') onDone(r);
     } catch (e) {
       toast({ tone: 'error', title: '没记上', body: errorMessage(e) });
+      // 题刚被改过、今天已经练过：重新取今天的题，不卡在这一题上
+      if (e instanceof ApiError && (e.code === 'ACADEMY_CHANGED' || e.code === 'ACADEMY_DAILY_GONE')) void qc.invalidateQueries({ queryKey: academyKeys.daily });
     } finally {
       setBusy(false);
     }
