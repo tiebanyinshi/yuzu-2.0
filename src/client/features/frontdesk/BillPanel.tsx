@@ -472,22 +472,39 @@ export function BillPanel({
           金额位数多、一行放不下时按钮换到下一行靠右（合计上下的说明文字不撑宽这一行，随金额宽度折行） */}
       <footer className="@container shrink-0 border-t border-line bg-card px-5 pt-3 pb-4 shadow-[0_-8px_24px_-18px_rgb(28_35_31/0.3)]">
         <div className="flex flex-col gap-2.5 @min-[22rem]:flex-row @min-[22rem]:flex-wrap @min-[22rem]:items-end @min-[22rem]:gap-x-2">
-          <div className="@min-[22rem]:grow">
-            <p className="w-0 min-w-full text-[12px] font-semibold text-ink-3">{issue ? '已挂合计（不含门票）' : open ? '本牌未结（已挂明细）' : '账单金额'}</p>
-            <span data-testid="bill-total">
-              <Money cents={visit.bill.amountCents - discountCents} className={cn('leading-tight font-bold text-ink', issue ? 'text-[22px]' : 'text-[30px]')} />
-            </span>
-            {discountCents > 0 && (
-              <p className="w-0 min-w-full text-[12px] text-ember" data-testid="bill-line-discount">
-                原价 <Money cents={visit.bill.amountCents} /> · 单项打折已减 <Money cents={discountCents} />
+          {!issue && open && visit.ticket ? (
+            // 8.2.13（收银 demo「应收大字」）：收银台最要紧的是此刻要收多少——含门票的应收用大字，已挂明细降到下面一行
+            <div className="@min-[22rem]:grow">
+              <p className="w-0 min-w-full text-[12px] font-semibold text-ink-3">此刻应收（含门票）</p>
+              <span data-testid="bill-due">
+                <Money cents={visit.bill.amountCents - discountCents + visit.ticket.amount} className="text-[36px] leading-tight font-bold text-pine" />
+              </span>
+              <p className="w-0 min-w-full text-[12.5px] text-ink-3">
+                已挂明细{' '}
+                <span data-testid="bill-total">
+                  <Money cents={visit.bill.amountCents - discountCents} className="font-bold text-ink-2" />
+                </span>{' '}
+                · 门票 <Money cents={visit.ticket.amount} />
               </p>
-            )}
-            {!issue && open && visit.ticket && (
-              <p className="w-0 min-w-full text-[12px] text-ink-3" data-testid="bill-due">
-                含门票此刻应收 <Money cents={visit.bill.amountCents - discountCents + visit.ticket.amount} size="key" className="text-pine" />
-              </p>
-            )}
-          </div>
+              {discountCents > 0 && (
+                <p className="w-0 min-w-full text-[12px] text-ember" data-testid="bill-line-discount">
+                  原价 <Money cents={visit.bill.amountCents} /> · 单项打折已减 <Money cents={discountCents} />
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="@min-[22rem]:grow">
+              <p className="w-0 min-w-full text-[12px] font-semibold text-ink-3">{issue ? '已挂合计（不含门票）' : open ? '本牌未结（已挂明细）' : '账单金额'}</p>
+              <span data-testid="bill-total">
+                <Money cents={visit.bill.amountCents - discountCents} className={cn('leading-tight font-bold text-ink', issue ? 'text-[22px]' : 'text-[30px]')} />
+              </span>
+              {discountCents > 0 && (
+                <p className="w-0 min-w-full text-[12px] text-ember" data-testid="bill-line-discount">
+                  原价 <Money cents={visit.bill.amountCents} /> · 单项打折已减 <Money cents={discountCents} />
+                </p>
+              )}
+            </div>
+          )}
           {issue ? (
             // 发卡台不结账：有结账权限的人从这里带着这张手牌去收银台；已经结过的去收银台看结账单
             (open ? can('frontdesk.checkout') : !!visit.checkout) && (

@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { Search } from 'lucide-react';
-import { useStoreNavItems, type StoreNavItem } from '../components/storeNav';
+import { useStoreNav, type StoreNavItem } from '../components/storeNav';
 import { Dialog } from '../components/Overlay';
 import { Input, Kbd } from '../components/ui';
 import { useToast } from '../components/Toast';
@@ -37,7 +37,9 @@ function altCode(e: KeyboardEvent): string | null {
 
 /** 门店页面外壳里挂一个：⌥数字跳页、⌥0 全部功能、⌥N 通知 */
 export function GlobalHotkeys() {
-  const items = useStoreNavItems();
+  // 侧边栏展开时从上到下的顺序（按业务域分组排）
+  const domains = useStoreNav();
+  const items = useMemo(() => domains.flatMap((d) => d.items), [domains]);
   const navigate = useNavigate();
   const toast = useToast();
   const [palette, setPalette] = useState(false);
