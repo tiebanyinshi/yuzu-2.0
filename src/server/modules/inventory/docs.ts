@@ -1550,7 +1550,10 @@ export async function createDoc(deps: Deps, raw: CreateDocInput, actor: Actor, i
   await assertCanOperate(deps.sql, actor, body.docType, await warehouseOfBody(deps.sql, body));
   if (meta.approveNow && !can(actor, 'inventory.approve')) throw forbidden('当前账号不能确认这类单据，请提交给负责人');
   // 8.1.9：不是库管入库的收货不把 direct 放进摘要（升级前就在「结果待确认」里的原请求照样对得上）
-  const requestHash = hashRequest({ ...body, ...(body.docType === 'receipt' && !body.direct ? { direct: undefined } : {}), action: meta.action, approveNow: meta.approveNow });
+  // 8.2.6：收货行的待判 holdMilli 为 0（默认）时也不放进摘要：升级前提交、结果没确认的收货原样重提，摘要照样对得上（Codex 审查）
+  const receipt = body.docType === 'receipt';
+  const hashLines = receipt ? body.lines.map((l) => ('holdMilli' in l && !l.holdMilli ? { ...l, holdMilli: undefined } : l)) : body.lines;
+  const requestHash = hashRequest({ ...body, lines: hashLines, ...(receipt && !body.direct ? { direct: undefined } : {}), action: meta.action, approveNow: meta.approveNow });
   const findExisting = async (db: Db) => {
     const [row] = await db<{ opType: string; requestHash: string; refId: number }[]>`
       SELECT op_type, request_hash, ref_id FROM idempotency_keys WHERE key = ${meta.clientKey}`;
