@@ -7,6 +7,7 @@ import {
   isMallFixHeaderField,
   MALL_FIX_FIELD_LABELS,
   MALL_FIX_FIELDS,
+  mallFixFieldsForLine,
   type MallFixField,
   type MallFixItem,
   type MallTermination,
@@ -159,6 +160,12 @@ export async function recordFixItems(tx: Db, requestId: number, items: z.infer<t
   if (!items.length) return '';
   const lines = await currentLines(tx, requestId);
   const byId = new Map(lines.map((l, i) => [l.id, { l, no: i + 1 }]));
+  const kinds = new Map(
+    (
+      await tx<{ id: number; sku: boolean; custom: boolean }[]>`
+      SELECT id, mall_sku_code <> '' AS sku, custom_kind = 'custom' AS custom FROM purchase_request_lines WHERE request_id = ${requestId}`
+    ).map((k) => [Number(k.id), k]),
+  );
   const [h] = await tx<FixHeader[]>`
     SELECT to_char(need_by, 'YYYY-MM-DD') AS need_by, delivery_address, budget_project, contact_name, note FROM purchase_requests WHERE id = ${requestId}`;
   const [next] = await tx<{ round: number }[]>`SELECT coalesce(max(round), 0) + 1 AS round FROM request_fix_items WHERE request_id = ${requestId}`;
@@ -176,6 +183,15 @@ export async function recordFixItems(tx: Db, requestId: number, items: z.infer<t
     if (it.lineId !== null) {
       const hit = byId.get(it.lineId);
       if (!hit) throw unprocessable('FIX_ITEM_INVALID', '有一项必补选的行不在这张需求单里，刷新后再退回');
+      // 部门补资料时改不了的项不能标（选品的行只能改数量；非定制的行没有定制要求），不然部门怎么补都过不去
+      const kind = kinds.get(it.lineId);
+      if (!mallFixFieldsForLine({ sku: !!kind?.sku, custom: !!kind?.custom }).includes(it.field)) {
+        throw unprocessable(
+          'FIX_ITEM_NOT_EDITABLE',
+          kind?.sku ? `第 ${hit.no} 行是从商城清单选的，部门只能改数量，不能标「${MALL_FIX_FIELD_LABELS[it.field]}」` : `第 ${hit.no} 行不是定制，没有「${MALL_FIX_FIELD_LABELS[it.field]}」可补`,
+          { lineId: it.lineId, field: it.field },
+        );
+      }
       original = lineFieldValue(hit.l, it.field);
       lineLabel = `第 ${hit.no} 行 ${hit.l.name}`.slice(0, 120);
       labels.push(`第 ${hit.no} 行 ${MALL_FIX_FIELD_LABELS[it.field]}`);

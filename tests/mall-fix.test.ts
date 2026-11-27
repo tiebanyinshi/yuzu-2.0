@@ -1,7 +1,7 @@
 // 采购商城 v0.2（8.2.6，docs/MALL_V826.md）：退回逐项标「本次必补」、仅补必补项 / 重新填写、版本快照、终止申购。
 // 需求变更文档 v0.2 第 10 章用例 A（定制 + 退回补资料，验证「不是直接终止」）与用例 C（终止）。
 
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { todayIn } from '../src/server/modules/inventory/common';
 import { createStaff } from '../src/server/modules/staff';
@@ -47,7 +47,13 @@ const spec = (over: Record<string, unknown> = {}) => ({
   drawingUrl: 'https://example.com/v1.pdf',
   ...over,
 });
-const submit = (cookie: string, s: Record<string, unknown>, name = '水吧台展示立牌') =>
+const png = () => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), randomBytes(64)]).toString('base64');
+const upload = async (cookie: string) => {
+  const res = await api(ctx.app, cookie, 'POST', '/api/erp/images', { mime: 'image/png', data: png() });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return res.body.id as number;
+};
+const submit = (cookie: string, s: Record<string, unknown>, name = '水吧台展示立牌', imageIds: number[] = []) =>
   api(ctx.app, cookie, 'POST', '/api/erp/shop/requests', {
     clientKey: randomUUID(),
     storeId,
@@ -60,7 +66,7 @@ const submit = (cookie: string, s: Record<string, unknown>, name = '水吧台展
     priority: 'normal',
     note: '',
     kind: 'custom',
-    line: { name, qtyMilli: q(12), unit: '件', details: '', reasonText: '水吧上新', customKind: 'custom', customSpec: s },
+    line: { name, qtyMilli: q(12), unit: '件', details: '', reasonText: '水吧上新', customKind: 'custom', customSpec: s, imageIds },
   });
 const detail = async (cookie: string, id: number) => (await api(ctx.app, cookie, 'GET', `/api/erp/shop/requests/${id}`)).body as Req;
 const resubmit = (cookie: string, r: Req, over: Record<string, unknown>) =>
@@ -77,8 +83,8 @@ const resubmit = (cookie: string, r: Req, over: Record<string, unknown>) =>
     ...over,
   });
 /** 一张走到「待审核、核库完、主管确认过」的定制单 */
-const ready = async (name: string) => {
-  const res = await submit(bar, spec(), name);
+const ready = async (name: string, s = spec(), imageIds: number[] = []) => {
+  const res = await submit(bar, s, name, imageIds);
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   const r = res.body.request as Req;
   expect((await api(ctx.app, barHead, 'POST', `/api/erp/requests/${r.id}/dept-confirm`, {})).status).toBe(200);
@@ -199,6 +205,8 @@ describe('用例 A：定制 + 退回补资料（不是直接终止）', () => {
     const v3 = rw.body as Req;
     expect(v3.versions.map((v) => v.mode)).toEqual(['submit', 'fix', 'rewrite']);
     expect(v3.lines[0]!.qtyMilli).toBe(q(10));
+    // 重新填写整张都能改：主管要重新确认，不沿用退回前的确认（Codex 审查）
+    expect(v3.deptConfirm.state).toBe('pending');
     expect(v3.fixItems.find((f) => f.round === 2)).toMatchObject({ suppliedValue: shiftDate(today, 20) });
   });
 
@@ -212,6 +220,62 @@ describe('用例 A：定制 + 退回补资料（不是直接终止）', () => {
     const ok = await resubmit(bar, back, { mode: 'fix', lines: [{ id: r.lines[0]!.id, qtyMilli: q(12), customSpec: { ...back.lines[0]!.customSpec, color: '哑光黑' } }] });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect((ok.body as Req).versions.map((v) => `${v.versionNo}:${v.mode}`)).toEqual(['1:baseline', '2:fix']);
+  });
+});
+
+describe('Codex 审查修正', () => {
+  it('图纸换一张图（张数不变、链接不变）算补了；原样不动照旧点名', async () => {
+    const wrong = await upload(bar);
+    const r = await ready('展示立牌 图纸', spec({ drawingUrl: '' }), [wrong]);
+    const lineId = r.lines[0]!.id;
+    const ret = await api(ctx.app, buyer, 'POST', `/api/erp/requests/${r.id}/return`, {
+      reason: '图纸传错了',
+      fixItems: [{ lineId, field: 'spec.drawing', requirement: '换成定版图' }],
+    });
+    expect(ret.status, JSON.stringify(ret.body)).toBe(200);
+    const back = await detail(bar, r.id);
+    const s0 = back.lines[0]!.customSpec!;
+    // 原样不动：点名没补
+    expect((await resubmit(bar, back, { mode: 'fix', lines: [{ id: lineId, qtyMilli: q(12), customSpec: s0, imageIds: [wrong] }] })).body.error.code).toBe('FIX_ITEM_MISSING');
+    const right = await upload(bar);
+    const ok = await resubmit(bar, back, { mode: 'fix', lines: [{ id: lineId, qtyMilli: q(12), customSpec: s0, imageIds: [right] }] });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect((ok.body as Req).lines[0]!.imageIds).toEqual([right]);
+    expect((ok.body as Req).fixItems.every((f) => f.resolvedAt)).toBe(true);
+  });
+
+  it('从商城清单选的行只能标「数量」：标别的项退回时拦下（FIX_ITEM_NOT_EDITABLE）；非定制的行不能标定制要求', async () => {
+    const r = await ready('选品立牌');
+    const lineId = r.lines[0]!.id;
+    // 当作选品的行（有 SKU）
+    await ctx.sql`UPDATE purchase_request_lines SET mall_sku_code = 'FIX-SKU-1', custom_kind = NULL WHERE id = ${lineId}`;
+    for (const field of ['details', 'name', 'images', 'spec.size']) {
+      const res = await api(ctx.app, buyer, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请补', fixItems: [{ lineId, field, requirement: '补一下' }] });
+      expect(res.status, field).toBe(422);
+      expect(res.body.error.code, field).toBe('FIX_ITEM_NOT_EDITABLE');
+    }
+    // 非定制的自主申请行：没有定制要求可补
+    await ctx.sql`UPDATE purchase_request_lines SET mall_sku_code = '', custom_kind = 'standard' WHERE id = ${lineId}`;
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请补', fixItems: [{ lineId, field: 'spec.size', requirement: '补' }] })).body.error.code).toBe(
+      'FIX_ITEM_NOT_EDITABLE',
+    );
+    await ctx.sql`UPDATE purchase_request_lines SET mall_sku_code = 'FIX-SKU-1', custom_kind = NULL WHERE id = ${lineId}`;
+    const ok = await api(ctx.app, buyer, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '数量不对', fixItems: [{ lineId, field: 'qty', requirement: '改成 10 件' }] });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+  });
+
+  it('只补必补项：主管确认过的照旧不再确认；重新填写：主管重新确认', async () => {
+    const r = await ready('展示立牌 重填');
+    const lineId = r.lines[0]!.id;
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请补', fixItems: [{ lineId, field: 'reasonText', requirement: '写清用途' }] })).status).toBe(200);
+    const back = await detail(bar, r.id);
+    expect(back.deptConfirm.state).toBe('confirmed');
+    const rw = await resubmit(bar, back, { mode: 'rewrite', remark: '数量改大', lines: [{ id: lineId, qtyMilli: q(500), reasonText: '水吧全线上新' }] });
+    expect(rw.status, JSON.stringify(rw.body)).toBe(200);
+    expect((rw.body as Req).deptConfirm.state).toBe('pending');
+    // 主管确认以后才进审核
+    expect((await api(ctx.app, barHead, 'POST', `/api/erp/requests/${r.id}/dept-confirm`, {})).status).toBe(200);
+    expect((await detail(bar, r.id)).deptConfirm.state).toBe('confirmed');
   });
 });
 

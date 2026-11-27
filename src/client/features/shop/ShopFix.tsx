@@ -11,7 +11,9 @@ import { SHOP_CUSTOM_UNITS } from '@shared/shop';
 import type { ImageRef, MallCustomSpec } from '@shared/requests';
 import type { MallRequest } from '@shared/mall';
 import { MALL_TERMINATION_STATUS_LABELS, MALL_VERSION_MODE_LABELS, type MallFixField, type MallFixItem, type MallVersion } from '@shared/mall-fix';
-import { api, errorMessage } from '../../lib/api';
+import { api, errorMessage, UncertainError } from '../../lib/api';
+import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
+import { useSession } from '../../lib/session';
 import { formatDateTime, uuid } from '../../lib/utils';
 import { ImagePicker } from '../../components/Images';
 import { Dialog } from '../../components/Overlay';
@@ -199,22 +201,41 @@ export function FixModeFields({
 export function TerminateButton({ r, onDone, size = 'sm' }: { r: MallRequest; onDone: (next: MallRequest) => void; size?: 'sm' | 'md' }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const session = useSession();
+  const url = `/api/erp/shop/requests/${r.id}/terminate`;
+  // 本机还有一笔终止没确认结果（Codex 审查）：先在页面顶部查回、原样重提或确认作废，不另发新的
+  const pending = useErpRecorded(['mall_terminate']).some((op) => op.staffId === session.staff.id && op.url === url);
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
-  const [key] = useState(uuid);
   if (!r.can.terminate) return null;
   const direct = r.can.terminate === 'direct';
+  // 与补资料同一套「结果待确认」：本机先记下编号与内容、读回核对再发（记不下不发）；超时、断网、服务器出错不当成没终止，
+  // 在页面顶部查回、原样重提或确认作废
   const send = async () => {
     setBusy(true);
+    const key = uuid();
     try {
-      const res = await api.post<{ result: 'terminated' | 'pending'; request: MallRequest }>(`/api/erp/shop/requests/${r.id}/terminate`, { clientKey: key, reason: reason.trim() });
+      const res = await sendErpOp<{ result: 'terminated' | 'pending'; request: MallRequest }>({
+        key,
+        type: 'mall_terminate',
+        method: 'POST',
+        url,
+        body: { clientKey: key, reason: reason.trim() },
+        summary: `${direct ? '终止申购' : '申请终止申购'} · ${r.docNo}`,
+        staffName: session.staff.displayName,
+        staffId: session.staff.id,
+      });
       void qc.invalidateQueries({ queryKey: ['shop'] });
       toast(res.result === 'terminated' ? { tone: 'success', title: '已终止这张申购', body: '已发配的记录照旧留着' } : { tone: 'info', title: '已申请终止', body: '等部门负责人或供应链 BP 确认' });
       setOpen(false);
       onDone(res.request);
     } catch (e) {
-      toast({ tone: 'error', title: '没有终止', body: errorMessage(e) });
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '终止结果待确认', body: '回复没收到，可能已经提交：记录留在本机，请在页面顶部查回、原样重提或确认作废' });
+        void qc.invalidateQueries({ queryKey: ['shop'] });
+        setOpen(false);
+      } else toast({ tone: 'error', title: '没有终止', body: errorMessage(e) });
     } finally {
       setBusy(false);
     }
@@ -234,7 +255,8 @@ export function TerminateButton({ r, onDone, size = 'sm' }: { r: MallRequest; on
             <Button variant="ghost" onClick={() => setOpen(false)}>
               不终止
             </Button>
-            <Button variant="danger" loading={busy} disabled={reason.trim().length < 2} onClick={() => void send()} data-testid="shop-terminate-send">
+            {pending && <span className="mr-auto text-[12.5px] text-clay">上一次终止还没确认结果：先在页面顶部处理</span>}
+            <Button variant="danger" loading={busy} disabled={reason.trim().length < 2 || pending} onClick={() => void send()} data-testid="shop-terminate-send">
               {direct ? '确认终止' : '提交终止申请'}
             </Button>
           </>

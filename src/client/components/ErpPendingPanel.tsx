@@ -98,6 +98,8 @@ const REF_OBJECT: Partial<Record<ErpOpType, string>> = {
   // 付款流（v0.7.32）：付款申请返回那张申请，合同付款返回那一笔，验收、质量问题登记返回那一条（id），发票返回那张发票
   payment_request: 'request',
   supplier_invoice: 'invoice',
+  // 终止申购（8.2.6）：返回结果与那张需求单
+  mall_terminate: 'request',
 };
 /** 返回里这个字段就是 refId（数字） */
 const REF_NUMBER: Partial<Record<ErpOpType, string>> = {

@@ -47,7 +47,7 @@ import { erpOpAbandoned } from './erp-ops';
 import { FixItemsInput, recordFixItems } from './mall-fix';
 import { closeDraftsOfRequest, closeDraftsOnSubmit, DraftRef } from './request-drafts';
 import { loadExpenseRules } from './expenses';
-import { docDateSchema, logApproval, sourcingHolds } from './inventory/common';
+import { docDateSchema, logApproval, requestLineIssuedSql, sourcingHolds } from './inventory/common';
 import { clockIn, todayIn } from '../lib/dates';
 import { shiftDate } from '@shared/labels';
 import { loadPurchaseRules } from './inventory/purchase-rules';
@@ -398,15 +398,12 @@ export async function openLines(db: Db, ids?: number[]): Promise<OpenRequestLine
            CASE WHEN l.supplier_id IS NULL THEN NULL ELSE json_build_object('id', sp.id, 'name', sp.name) END AS supplier,
            coalesce((SELECT json_agg(json_build_object('id', i.image_id, 'url', '/api/erp/images/' || i.image_id) ORDER BY i.sort_no)
                      FROM purchase_request_line_images i WHERE i.request_line_id = l.id), '[]'::json) AS images,
-           coalesce(ls.issued_qty_milli, 0) AS issued_qty_milli,
+           ${requestLineIssuedSql(db)} AS issued_qty_milli,
            -- 商城需求选定的成交方案（8.1.51）：转采购单时带上供应商与含税单价
            (SELECT json_build_object('supplierId', q.supplier_id, 'supplierName', q.supplier_name, 'unitPriceCents', q.unit_price_cents,
                                      'taxRateBp', q.tax_rate_bp, 'leadDays', q.lead_days)
               FROM mall_request_quotes q WHERE q.line_id = l.id AND q.status = 'selected') AS plan
     FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
-    -- 从库存领用了的数量（8.1.10）：领料单冲销了的不算
-    LEFT JOIN request_line_stock ls ON ls.request_line_id = l.id AND ls.inv_doc_id IS NOT NULL
-         AND EXISTS (SELECT 1 FROM inv_docs ld WHERE ld.id = ls.inv_doc_id AND ld.status = 'confirmed')
     JOIN departments d ON d.id = r.department_id JOIN staff s ON s.id = r.requester_id
     LEFT JOIN materials m ON m.id = l.material_id LEFT JOIN suppliers sp ON sp.id = l.supplier_id
     WHERE r.status = 'approved'
@@ -416,8 +413,8 @@ export async function openLines(db: Db, ids?: number[]): Promise<OpenRequestLine
       AND NOT EXISTS (SELECT 1 FROM sourcing_line_requests sr JOIN sourcing_lines sl ON sl.id = sr.sourcing_line_id
                       JOIN sourcing_events e ON e.id = sl.event_id
                       WHERE sr.request_line_id = l.id AND ${sourcingHolds(db)})
-      -- 整行从库存领用了的不再转采购（8.1.10）
-      AND coalesce(ls.issued_qty_milli, 0) < l.qty_milli
+      -- 整行从库存领用、补发齐了的不再转采购（8.1.10；8.2.6 起补发也算）
+      AND ${requestLineIssuedSql(db)} < l.qty_milli
       ${ids ? db`AND l.id IN ${db(ids)}` : db``}
     ORDER BY ${PRIORITY_RANK(db, db`r.priority`)}, r.need_by ASC NULLS LAST, r.submitted_at, r.id, l.line_no
     LIMIT 500`;
@@ -922,8 +919,7 @@ async function requestsCsv(db: Db, timezone: string, f: { from: string; to: stri
            l.line_no, l.name, m.name AS material_name, l.purpose, l.qty_milli, l.unit, l.ref_price_cents, l.link, l.details, l.note,
            (SELECT count(*)::int FROM purchase_request_line_images i WHERE i.request_line_id = l.id) AS image_count,
            ${PROGRESS_SQL(db)} AS progress, ${SOURCING_SQL(db)} AS sourcing,
-           coalesce((SELECT ls.issued_qty_milli FROM request_line_stock ls JOIN inv_docs ld ON ld.id = ls.inv_doc_id AND ld.status = 'confirmed'
-                     WHERE ls.request_line_id = l.id), 0) AS issued_milli
+           ${requestLineIssuedSql(db)} AS issued_milli
     FROM purchase_request_lines l JOIN purchase_requests r ON r.id = l.request_id
     JOIN departments d ON d.id = r.department_id JOIN staff s ON s.id = r.requester_id
     LEFT JOIN materials m ON m.id = l.material_id

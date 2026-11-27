@@ -135,6 +135,9 @@ const issueOf = (r: DispatchIssue): DispatchIssue => ({
   voided: r.voided,
 });
 
+/** 能补发的需求单状态（issueDispatch 只放行这几种） */
+const DISPATCHABLE = new Set(['approved', 'issued']);
+
 /** 拼一行：状态、按先申请先给分到这一行的库存可发量 */
 function buildRows(raw: RawLine[], last: Map<number, DispatchIssue>): DispatchRow[] {
   // 总仓结存按物料、先申请先给：提交时间从早到晚分
@@ -144,7 +147,8 @@ function buildRows(raw: RawLine[], last: Map<number, DispatchIssue>): DispatchRo
   const ended = (l: RawLine) => l.terminated || l.status === 'rejected' || l.status === 'cancelled';
   for (const l of [...raw].sort((a, b) => a.submittedAt.localeCompare(b.submittedAt) || a.lineId - b.lineId)) {
     const pending = Number(l.appliedMilli) - Number(l.issuedMilli);
-    if (ended(l) || pending <= 0 || l.materialId === null || !l.materialActive) continue;
+    // 还没审核通过的（核库时先领了一部分、还在待审核或退回补资料）照样列出来看，但不占可发量：补发只认审核通过的（Codex 审查）
+    if (ended(l) || !DISPATCHABLE.has(l.status) || pending <= 0 || l.materialId === null || !l.materialActive) continue;
     const have = left.get(Number(l.materialId)) ?? 0;
     if (have <= 0) continue;
     const need = pendingBase(l, pending);
@@ -322,7 +326,7 @@ export async function issueDispatch(deps: Deps, lineId: number, raw: unknown, ac
     const [l] = await LINE_SQL(tx, tx`l.id = ${lineId}`);
     if (!l) throw notFound('这一行申请不存在');
     if (l.terminated || l.status === 'rejected' || l.status === 'cancelled') throw conflict('REQUEST_ENDED', `需求单 ${l.docNo} 已终止，不再发配`);
-    if (l.status !== 'approved' && l.status !== 'issued') throw conflict('REQUEST_NOT_APPROVED', `需求单 ${l.docNo} 还没审核通过，通过以后再发配`);
+    if (!DISPATCHABLE.has(l.status)) throw conflict('REQUEST_NOT_APPROVED', `需求单 ${l.docNo} 还没审核通过，通过以后再发配`);
     if (l.materialId === null || !l.materialActive) throw unprocessable('NO_MATERIAL', `「${l.name}」还没对应到在用的受管物料（转采购单时会定），定了以后才能从总仓发`);
     const pending = Number(l.appliedMilli) - Number(l.issuedMilli);
     if (pending <= 0) throw conflict('DISPATCH_DONE', `「${l.name}」已经发齐了`);

@@ -172,7 +172,8 @@ const toFixLine = (l: StoredLine | LineWrite, id: number, plain: string): FixLin
  * 8.2.6（需求变更文档 v0.2 §4.3–4.5、Q4）：
  *   · fix 只补必补项：只有这一轮标了「本次必补」的项能改，其余原样；每一项都要补（不能空着、不能原样不动），没补的点名拦下
  *   · rewrite 重新填写：业务字段都能改（原来的做法）；这一轮的必补项一并记为已处理
- *   · 两种都存一版快照（V1 → V2 …）；主管退回之前已经确认过的不用再确认（回到退回前的节点，不重头审批），接单的 BP 不变；核库照常
+ *   · 两种都存一版快照（V1 → V2 …）；只补必补项的，主管退回之前已经确认过的不用再确认（回到退回前的节点，不重头审批）；
+ *     重新填写的照第一次提交重新算主管确认（Codex 审查）。接单的 BP 不变；核库照常
  */
 export async function resubmitMallRequest(deps: Deps, requestId: number, raw: unknown, actor: Actor, ip?: string): Promise<void> {
   const input = parse(ResubmitInput, raw);
@@ -264,8 +265,9 @@ export async function resubmitMallRequest(deps: Deps, requestId: number, raw: un
       lines,
     );
     const approvableOn = await approvableOnFor(tx, deps.config.timezone);
-    // Q4：退回前主管已经确认过的不再确认（回到退回前的节点）；主管退回的（还没确认）照第一次提交重新算
-    const keepConfirm = r.deptConfirm === 'confirmed';
+    // Q4：「仅补必补项」退回前主管已经确认过的不再确认（回到退回前的节点）；主管退回的（还没确认）照第一次提交重新算。
+    // 「重新填写」内容整张都能改，照第一次提交重新算主管确认（要确认的重新等主管确认），不沿用改之前的确认（Codex 审查）
+    const keepConfirm = fix && r.deptConfirm === 'confirmed';
     const confirm = keepConfirm ? null : await deptConfirmFor(tx, r.departmentId, actor, lines, true);
     await tx`
       UPDATE purchase_requests SET need_by = ${input.needBy}, note = ${input.note}, priority = ${input.priority}, contact_name = ${input.contactName},
@@ -346,7 +348,9 @@ function checkFixMode(
       (before[idx]!.customSpec?.drawingUrl ?? '') === (after[idx]!.customSpec?.drawingUrl ?? '') &&
       before[idx]!.imageIds.join() === after[idx]!.imageIds.join();
     if (idx < 0 && it.lineId !== null) return { id: it.id, value: '（这一行已删除）', label };
-    if (!now.trim() || now === was || drawingSame) throw unprocessable('FIX_ITEM_MISSING', `还没补：${label}（${it.requirement}）`, { fixItemId: it.id });
+    // 图纸按链接与图片编号比（Codex 审查）：显示文字只有张数，换掉一张错的图纸、张数不变也算补了
+    const unchanged = it.field === 'spec.drawing' ? drawingSame : now === was;
+    if (!now.trim() || unchanged) throw unprocessable('FIX_ITEM_MISSING', `还没补：${label}（${it.requirement}）`, { fixItemId: it.id });
     return { id: it.id, value: now, label };
   });
 }

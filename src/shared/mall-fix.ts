@@ -50,6 +50,15 @@ export const MALL_FIX_FIELD_LABELS: Record<MallFixField, string> = {
   note: '备注',
 };
 
+/**
+ * 一行能标哪些必补项（Codex 审查）：从商城清单选的行（有 SKU）补资料时只能改数量，只能标「数量」；
+ * 自主申请的行除了定制要求（spec.*）都能标，定制的行全部能标。服务端退回时按同一个规则核对（FIX_ITEM_NOT_EDITABLE）
+ */
+export function mallFixFieldsForLine(line: { sku: boolean; custom: boolean }): readonly MallFixField[] {
+  if (line.sku) return ['qty'];
+  return MALL_FIX_LINE_FIELDS.filter((f) => line.custom || !f.startsWith('spec.'));
+}
+
 export const isMallFixHeaderField = (f: string): f is MallFixHeaderField => (MALL_FIX_HEADER_FIELDS as readonly string[]).includes(f);
 
 export const MALL_RESUBMIT_MODES = ['fix', 'rewrite'] as const;

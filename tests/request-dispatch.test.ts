@@ -31,12 +31,12 @@ const board = (query = 'tab=all') => ok<DispatchBoard>(api(ctx.app, keeper, 'GET
 const rowOf = async (lineId: number, query = 'tab=all') => (await board(query)).rows.find((r) => r.lineId === lineId);
 const issue = (lineId: number, qtyMilli: number, key = randomUUID(), cookie = keeper) =>
   api(ctx.app, cookie, 'POST', `/api/inventory/dispatch/lines/${lineId}/issue`, { clientKey: key, qtyMilli, note: '第二批到货' });
-const central = async () => Number((await ctx.sql<{ s: number }[]>`SELECT stock_milli AS s FROM materials WHERE id = ${towel}`)[0]!.s);
+const central = async (material = towel) => Number((await ctx.sql<{ s: number }[]>`SELECT stock_milli AS s FROM materials WHERE id = ${material}`)[0]!.s);
 
-async function submitTowels(qty: number, cookie = req): Promise<PurchaseRequest> {
+async function submitTowels(qty: number, cookie = req, material = towel): Promise<PurchaseRequest> {
   return (
     await ok<{ request: PurchaseRequest }>(
-      api(ctx.app, cookie, 'POST', '/api/erp/requests', { clientKey: randomUUID(), lines: [{ materialId: towel, name: '发配毛巾', purpose: '客用消耗', qtyMilli: q(qty), unit: '条' }] }),
+      api(ctx.app, cookie, 'POST', '/api/erp/requests', { clientKey: randomUUID(), lines: [{ materialId: material, name: '发配毛巾', purpose: '客用消耗', qtyMilli: q(qty), unit: '条' }] }),
       201,
     )
   ).request;
@@ -191,6 +191,83 @@ describe('分批发配：毛巾 100 条，先发 60，到货 40 再补发', () =
     const voided = await api(ctx.app, ctx.owner, 'POST', `/api/inventory/docs/${docId}/void`, { reason: '发错了' });
     expect(voided.status, JSON.stringify(voided.body)).toBe(200);
     expect(await rowOf(a.lines[0]!.id, 'tab=open')).toMatchObject({ issuedMilli: 0, pendingMilli: q(5) });
+  });
+});
+
+describe('Codex 审查修正', () => {
+  // 用盘点把总仓结存调到某个数（期初只能建一次）
+  const setStock = async (target: number, material = towel) => {
+    const d = await ok<{ doc: { id: number; status: string } }>(
+      api(ctx.app, ctx.owner, 'POST', '/api/inventory/docs', {
+        clientKey: randomUUID(),
+        docType: 'count',
+        docDate: today,
+        approveNow: true,
+        lines: [{ materialId: material, countedMilli: target, diffReason: 'unrecorded', diffNote: '测试调结存' }],
+      }),
+      201,
+    );
+    if (d.doc.status !== 'confirmed') await ok(api(ctx.app, ctx.owner, 'POST', `/api/inventory/docs/${d.doc.id}/approve`, {}));
+    expect(await central(material)).toBe(target);
+  };
+  const stockIn = async (qty: number, material = towel) => setStock((await central(material)) + q(qty), material);
+  const drain = () => setStock(0);
+  const openLine = async (lineId: number) => (await ok<{ id: number; issuedQtyMilli: number }[]>(api(ctx.app, buyer, 'GET', '/api/erp/requests/open-lines'))).find((l) => l.id === lineId);
+
+  it('补发也算已发配：转采购的缺口扣掉补发的；整行补发齐了的不再出现在待转采购里、也不能再转采购单', async () => {
+    await drain();
+    const r = await submitTowels(10);
+    const lineId = r.lines[0]!.id;
+    if (r.stockCheck === 'pending') await ok(api(ctx.app, keeper, 'POST', `/api/erp/requests/${r.id}/stock-check`, { clientKey: randomUUID(), lines: [{ lineId, decision: 'purchase' }] }));
+    await ok(api(ctx.app, buyer, 'POST', `/api/erp/requests/${r.id}/approve`, {}));
+    expect(await openLine(lineId)).toMatchObject({ issuedQtyMilli: 0 });
+    // 库存补进 4 条、先补发 4：缺口剩 6
+    await stockIn(4);
+    await ok(issue(lineId, q(4)));
+    expect(await openLine(lineId)).toMatchObject({ issuedQtyMilli: q(4) });
+    // 再补进 6 条、补发 6：整行发齐，不再转采购
+    await stockIn(6);
+    await ok(issue(lineId, q(6)));
+    expect(await openLine(lineId)).toBeUndefined();
+    const po = await api(ctx.app, buyer, 'POST', '/api/purchase-orders', {
+      clientKey: randomUUID(),
+      supplierId,
+      orderDate: today,
+      lines: [{ materialId: towel, purchaseQtyMilli: q(10), priceCents: 1_000, requestLineIds: [lineId] }],
+    });
+    expect(po.status, JSON.stringify(po.body)).toBeGreaterThanOrEqual(400);
+  });
+
+  it('还没审核通过的单不占可发量：先提交的还在待审核，后提交、已审核的照样可发配', async () => {
+    // 另用一种物料：前面几个用例还有在等毛巾的已审核行，会先分走
+    const soap = (
+      await ok<{ id: number }>(
+        api(ctx.app, ctx.owner, 'POST', '/api/inventory/materials', { code: 'DP-SP', name: '发配香皂', inventoryUnit: '条', purchaseUnit: '条', purchaseFactorMilli: q(1) }),
+        201,
+      )
+    ).id;
+    await ok(
+      api(ctx.app, ctx.owner, 'POST', '/api/inventory/docs', { clientKey: randomUUID(), docType: 'opening', docDate: today, approveNow: true, lines: [{ materialId: soap, qtyMilli: q(2) }] }),
+      201,
+    );
+    // A 先提交：核库先领 2，还没审核（有发配记录，列在发配记录里）
+    const a = await submitTowels(10, req, soap);
+    const aLine = a.lines[0]!.id;
+    expect(a.stockCheck).toBe('pending');
+    await ok(api(ctx.app, keeper, 'POST', `/api/erp/requests/${a.id}/stock-check`, { clientKey: randomUUID(), lines: [{ lineId: aLine, decision: 'issue', qtyMilli: q(2) }] }));
+    // B 后提交、审核通过
+    const b = await submitTowels(5, req, soap);
+    const bLine = b.lines[0]!.id;
+    if (b.stockCheck === 'pending') await ok(api(ctx.app, keeper, 'POST', `/api/erp/requests/${b.id}/stock-check`, { clientKey: randomUUID(), lines: [{ lineId: bLine, decision: 'purchase' }] }));
+    await ok(api(ctx.app, buyer, 'POST', `/api/erp/requests/${b.id}/approve`, {}));
+    await stockIn(5, soap);
+    const ra = await rowOf(aLine);
+    const rb = await rowOf(bLine);
+    expect(ra).toMatchObject({ issuedMilli: q(2), availableMilli: 0 });
+    expect(ra!.status).not.toBe('ready');
+    expect(rb).toMatchObject({ status: 'ready', availableMilli: q(5) });
+    expect((await issue(aLine, q(1))).body.error.code).toBe('REQUEST_NOT_APPROVED');
+    expect((await ok<DispatchDetail>(issue(bLine, q(5)))).row.status).toBe('done');
   });
 });
 
