@@ -29,6 +29,7 @@ import { lazyPage } from './lib/lazyPage';
 
 // 会员工作台与前台随首屏加载；其余页面第一次打开时再下载（v0.7.22：收银台首屏更轻）
 const CashierPage = lazyPage(() => import('./features/frontdesk/CashierPage').then((m) => m.CashierPage));
+const CashierRequestsPage = lazyPage(() => import('./features/frontdesk/CashierRequests').then((m) => m.CashierRequestsPage));
 const LockersPage = lazyPage(() => import('./features/frontdesk/LockersPage').then((m) => m.LockersPage));
 const ComplaintsPage = lazyPage(() => import('./features/frontdesk/ComplaintsPage').then((m) => m.ComplaintsPage));
 const ComplaintsPrintPage = lazyPage(() => import('./features/print/ComplaintsPrintPage').then((m) => m.ComplaintsPrintPage));
@@ -487,6 +488,8 @@ const router = createBrowserRouter([
       { path: 'lockers', element: <LockersPage /> },
       // 客诉台账（8.2.3，docs/V8223_FRONTDESK.md 第 3 条）
       { path: 'complaints', element: <ComplaintsPage /> },
+      // 收银申请（8.2.30，docs/V8230_CASHIER.md 第 2 节）：没权限的收银员申请退款、反结账，值班经理批准或驳回
+      { path: 'cashier-requests', element: <CashierRequestsPage /> },
       { path: 'clockroom', element: <ClockroomPage /> },
       // 上钟播报（回测整改 P03）：独立页面；老地址跳过来并提示位置换了
       { path: 'announcer', element: <AnnouncerPage /> },

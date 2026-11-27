@@ -179,6 +179,8 @@ export const FENCED_OPS = [
   'tag_away_unlock',
   // 8.2.8（迁移 600）：餐厅入口登记进餐（编号记在 idempotency_keys，ref_id 是那次来访，也记在 meal_entries.client_key）
   'meal_entry',
+  // 8.2.30（迁移 760）：收银申请（编号记在 idempotency_keys，ref_id 是那张申请，也记在 cashier_requests.client_key）
+  'cashier_request',
   // OA-02 批量开通（迁移 211）：编号记在 idempotency_keys（ref_id 是那次开通 oa_staff_imports）
   'oa_staff_import',
   // OA-04 考勤设置（迁移 213）：新建班次、打卡点、考勤组；编号记在 idempotency_keys（ref_id 是新建的那一行）

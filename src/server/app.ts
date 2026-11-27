@@ -27,6 +27,7 @@ import { registerAuditRoutes } from './modules/audit';
 import { registerClientErrorRoutes } from './modules/client-errors';
 import { registerCatalogRoutes } from './modules/catalog';
 import { registerFrontdeskRoutes } from './modules/frontdesk/routes';
+import { registerCashierRequestRoutes } from './modules/frontdesk/index';
 import { registerDeptStockRoutes } from './modules/inventory/dept-stock';
 import { registerDocRoutes } from './modules/inventory/docs';
 import { registerReceiptImportRoutes } from './modules/inventory/direct-import';
@@ -514,6 +515,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerPurchaseLedgerRoutes(app, deps);
   registerLegacyRoutes(app, deps);
   registerFrontdeskRoutes(app, deps);
+  // 8.2.30 收银申请：没权限的收银员申请退款、反结账，有权限的人批准时再执行（docs/V8230_CASHIER.md 第 2 节）
+  registerCashierRequestRoutes(app, deps);
   // 柜况与智能柜锁（8.1.49，docs/LOCKERS_V8149.md）
   registerLockerRoutes(app, deps);
   registerTechnicianRoutes(app, deps);

@@ -62,7 +62,9 @@ export type FrontdeskOpType =
   | 'tag_away_lock'
   | 'tag_away_unlock'
   /** 餐厅入口登记进餐（8.2.8，对象是来访，在「餐厅入口」页） */
-  | 'meal_entry';
+  | 'meal_entry'
+  /** 收银申请（8.2.30，对象是结账单，在收银台「结账记录」里提交） */
+  | 'cashier_request';
 
 export interface FrontdeskPendingOp {
   key: string;
@@ -104,7 +106,17 @@ export interface FrontdeskPendingOp {
 }
 
 /** 在收银台处理「结果待确认」的几样：结账、退款单，与挂账（8.1.44 起加项目在收银台）；别的在发卡台 */
-export const CASHIER_OPS: readonly FrontdeskOpType[] = ['checkout', 'checkout_refund', 'bill_post', 'line_discount', 'tag_deposit', 'tag_deposit_refund', 'tag_away_lock', 'tag_away_unlock'];
+export const CASHIER_OPS: readonly FrontdeskOpType[] = [
+  'checkout',
+  'checkout_refund',
+  'cashier_request',
+  'bill_post',
+  'line_discount',
+  'tag_deposit',
+  'tag_deposit_refund',
+  'tag_away_lock',
+  'tag_away_unlock',
+];
 
 export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   checkin: '接待发牌',
@@ -124,6 +136,7 @@ export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   usage_end: '结束使用',
   usage_cancel: '撤使用单',
   checkout_refund: '退款单',
+  cashier_request: '收银申请',
   booking_create: '新建预约',
   booking_change: '改预约',
   technician_state: '停牌 / 复牌 / 休假',
@@ -317,7 +330,7 @@ export function pendingFor(
     if (type === 'technician_state') return table.technicianId != null && !!p.technicianIds?.includes(table.technicianId);
     if (type === 'checkin' || type === 'booking_create') return true;
     if (type === 'booking_change') return table.bookingId != null && !!p.bookingIds?.includes(table.bookingId);
-    if (type === 'checkout_refund') return table.checkoutId != null && !!p.checkoutIds?.includes(table.checkoutId);
+    if (type === 'checkout_refund' || type === 'cashier_request') return table.checkoutId != null && !!p.checkoutIds?.includes(table.checkoutId);
     if (type === 'usage_open') return table.spaceId != null && p.spaceId === table.spaceId;
     if (isSpaceOp(type)) return table.spaceId != null && (p.spaceId === table.spaceId || !!p.spaceIds?.includes(table.spaceId));
     if (isUsageOp(type)) return table.usageId != null && !!p.usageIds?.includes(table.usageId);

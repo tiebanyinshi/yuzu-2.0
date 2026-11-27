@@ -1175,6 +1175,11 @@ export async function lookupFrontdeskOp(db: Db, key: string, timezone: string, e
   }
   // 退款单（v0.7.20）：查回这张退款单
   if (row.opType === 'checkout_refund') return { found: true as const, type: 'checkout_refund' as const, refund: await getRefund(db, row.refId) };
+  // 收银申请（8.2.30）：查回这张申请
+  if (row.opType === 'cashier_request') {
+    const { getRequest } = await import('./cashier-requests');
+    return { found: true as const, type: 'cashier_request' as const, request: await getRequest(db, row.refId) };
+  }
   // 预约（v0.7.28）：新建、改动查回这张预约单
   if (row.opType === 'booking_create' || row.opType === 'booking_change') {
     const { getBooking } = await import('../bookings');

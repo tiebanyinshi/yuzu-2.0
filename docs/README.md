@@ -39,7 +39,7 @@
 - [`BUDGET_INVOICES.md`](BUDGET_INVOICES.md)：费用预算与进项发票台账（8.0.3）· 设计稿
 - [`CANTEEN.md`](CANTEEN.md)：员工食堂 · 柚子饭堂
 - [`CASHIER.md`](CASHIER.md)：收银完善（v0.7.6 起）
-- [`CASHIER_MERGE.md`](CASHIER_MERGE.md)：收银合并：把同事做的收银员工作台对照进柚子（需求评审稿）
+- [`CASHIER_MERGE.md`](CASHIER_MERGE.md)：收银合并：把同事做的收银员工作台对照进柚子
 - [`CONCIERGE.md`](CONCIERGE.md)：管家部 · 8.0.12
 - [`CONCIERGE_LINKS.md`](CONCIERGE_LINKS.md)：管家部与会员、资源系统联动
 - [`CONTRACTS.md`](CONTRACTS.md)：合同与法务审查（v0.7.31）
@@ -135,6 +135,7 @@
 - [`V8224_DINING.md`](V8224_DINING.md)：8.2.4 餐饮：分组默认档口、临时项目进厨房、包房房型、服务费门店默认、返台、公司承担
 - [`V8227_AWAY_LOCK.md`](V8227_AWAY_LOCK.md)：8.2.7 收银台「锁牌外出」：锁牌最多 4 小时，锁之前先收预售
 - [`V8228_DINING_MEALS.md`](V8228_DINING_MEALS.md)：8.2.8 餐厅：入口刷手牌、含餐抵扣、裸票时段价、餐台与餐包
+- [`V8230_CASHIER.md`](V8230_CASHIER.md)：8.2.30 收银合并：港元现金、收银申请、交班盲点、餐饮补全
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
 - [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面

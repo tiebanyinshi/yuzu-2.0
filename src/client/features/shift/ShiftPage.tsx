@@ -19,6 +19,15 @@ import { Badge, Button, Card, Field, Input, MoneyInput, Notice, SectionTitle, Sk
 import { PrintButton } from '../print/PrintButton';
 import { NetPrintButton } from '../print/NetPrintButton';
 import { CrossDayShiftNotice, shiftKeys, StartShiftForm, useCurrentShift, useDrawerBoard } from './ShiftGate';
+import { formatHkd } from '@shared/cashier-v8230';
+import type { FrontdeskRules } from '@shared/frontdesk';
+import { HandoverList } from '../frontdesk/CashierRequests';
+
+/** 门店开没开交班盲点（8.2.30）：取不到规则时按没开 */
+function useCashBlind(): boolean {
+  const q = useQuery({ queryKey: ['frontdesk', 'rules'], queryFn: () => api.get<FrontdeskRules>('/api/frontdesk/rules'), staleTime: 60_000, retry: false });
+  return q.data?.shiftBlind ?? false;
+}
 
 // 交班（店主 #11，2026-10-29 签认）：开班登记备用金 → 当班期间系统按本人经办的结账与充值汇总 → 交班时实点现金，记下长款 / 短款。
 // 结账收款算在收款时的班次；反结账退的现金算在执行反结账的人当时的班次、扣减应有现金（同一钱箱的人合并核对时相抵）。
@@ -103,21 +112,32 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
   const toast = useToast();
   const [leaving, setLeaving] = useState(false);
   const [counted, setCounted] = useState('');
+  const [countedHkdText, setCountedHkdText] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 交班盲点（8.2.30，CM-9）：开了以后先填实点、点「提交实点」锁定，之后才显示应有与差额
+  const blind = useCashBlind();
+  const [revealed, setRevealed] = useState(false);
+  const hidden = blind && !revealed;
   const countedCents = parseYuan(counted);
+  // 港元（8.2.30）：本班次收过港元时分币种对实点
+  const hkd = shift.summary.hkd ?? null;
+  const countedHkd = hkd ? parseYuan(countedHkdText) : null;
+  const countsReady = countedCents !== null && (!hkd || countedHkd !== null);
   const diff = countedCents === null ? null : countedCents - shift.summary.cash.expected;
+  const diffHkd = hkd && countedHkd !== null ? countedHkd - hkd.expected : null;
   /** 跨钱箱退款：反结账退的现金比本班收的现金多（应有现金为负），多出的部分来自别的钱箱（R1.2 口径，不改金额，只说明） */
   const crossDrawer = Math.max(0, -shift.summary.cash.expected);
   const close = async () => {
-    if (countedCents === null) return;
+    if (!countsReady) return;
     setBusy(true);
     setError(null);
     try {
       const s = await api.post<ShiftRecord>(`/api/shifts/${shift.id}/close`, {
         countedCash: countedCents,
         expectedCash: shift.summary.cash.expected,
+        ...(hkd ? { countedHkd, expectedHkd: hkd.expected } : {}),
         note: note.trim(),
       });
       toast({ tone: 'success', title: `已交班 ${s.shiftNo}`, body: diff ? `${diff > 0 ? '长款' : '短款'} ¥${(Math.abs(diff) / 100).toFixed(2)}，已记入交班表` : '现金与应有一致' });
@@ -170,25 +190,44 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
       {shift.drawerName && onShift <= 1 && (
         <p className="mt-1 text-[12px] text-ink-3">你是这个钱箱上最后一个人：离开后钱箱的班次还开着（钱在里面），下一位点「加入」接着收；要点钱交班就在下面确认交班。</p>
       )}
-      <SummaryView summary={shift.summary} />
+      {hidden ? (
+        <Notice tone="info" className="mt-4" title="交班盲点：先点钱、填实点，提交以后才显示应有现金和差额">
+          <span data-testid="shift-blind">店里开了交班盲点。实点提交以后不能再改，长短款照实记进交班表。</span>
+        </Notice>
+      ) : (
+        <SummaryView summary={shift.summary} />
+      )}
+      <HandoverList />
       <div className="mt-5 rounded-lg border border-line bg-paper/60 p-4">
         <div className="flex flex-wrap items-end gap-4">
-          <div>
-            <p className="text-[12.5px] font-semibold text-ink-3">应有现金</p>
-            <Money cents={shift.summary.cash.expected} className="text-[28px] font-bold text-pine" />
-            <CashFormula cash={shift.summary.cash} />
-          </div>
+          {!hidden && (
+            <div>
+              <p className="text-[12.5px] font-semibold text-ink-3">应有现金</p>
+              <Money cents={shift.summary.cash.expected} className="text-[28px] font-bold text-pine" />
+              <CashFormula cash={shift.summary.cash} />
+            </div>
+          )}
           <Field label="实点现金（元）" className="w-[200px]">
-            <MoneyInput value={counted} onChange={(e) => setCounted(e.target.value)} aria-label="实点现金" data-testid="shift-counted-cash" />
+            <MoneyInput value={counted} onChange={(e) => setCounted(e.target.value)} disabled={blind && revealed} aria-label="实点现金" data-testid="shift-counted-cash" />
           </Field>
-          {diff !== null && (
+          {hkd && (
+            <Field label="实点港元（HK$）" className="w-[200px]" hint={hidden ? undefined : `应有 ${formatHkd(hkd.expected)}（${hkd.count} 笔）`}>
+              <MoneyInput value={countedHkdText} onChange={(e) => setCountedHkdText(e.target.value)} disabled={blind && revealed} aria-label="实点港元" data-testid="shift-counted-hkd" />
+            </Field>
+          )}
+          {!hidden && diffHkd !== null && (
+            <p className={cn('pb-2 text-[14px] font-bold', diffHkd === 0 ? 'text-pine' : 'text-clay')} data-testid="shift-diff-hkd">
+              港元{diffHkd === 0 ? '与应有一致' : `${diffHkd > 0 ? '长款' : '短款'} ${formatHkd(Math.abs(diffHkd))}`}
+            </p>
+          )}
+          {!hidden && diff !== null && (
             <p className={cn('pb-2 text-[14px] font-bold', diff === 0 ? 'text-pine' : 'text-clay')} data-testid="shift-diff">
               {diff === 0 ? '与应有一致' : `${diff > 0 ? '长款' : '短款'} ¥${(Math.abs(diff) / 100).toFixed(2)}`}
               {crossDrawer > 0 && diff > 0 && <span className="ml-1 text-[12.5px] font-semibold text-ink-3">（其中跨钱箱退款 ¥{(Math.min(diff, crossDrawer) / 100).toFixed(2)}）</span>}
             </p>
           )}
         </div>
-        {crossDrawer > 0 && (
+        {!hidden && crossDrawer > 0 && (
           <Notice tone="warning" className="mt-3" title={`应有现金是负数：本班退给客人的现金比收进的多 ¥${(crossDrawer / 100).toFixed(2)}`}>
             <span data-testid="shift-cross-drawer">
               多出的这部分不是从你的钱箱出的（例如从收银员的钱箱或保险柜拿的）。实点按你钱箱里实际的现金填，没有钱箱填
@@ -198,9 +237,15 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
         )}
         <LocalPendingNotice action="交班" className="mt-3" />
         <Input className="mt-3" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} placeholder="交班备注（选填），例如短款原因" aria-label="交班备注" />
-        <Button className="mt-3" variant="primary" size="lg" disabled={countedCents === null} loading={busy} onClick={() => void close()} data-testid="shift-close">
-          确认交班
-        </Button>
+        {hidden ? (
+          <Button className="mt-3" variant="primary" size="lg" disabled={!countsReady} onClick={() => setRevealed(true)} data-testid="shift-reveal">
+            提交实点
+          </Button>
+        ) : (
+          <Button className="mt-3" variant="primary" size="lg" disabled={!countsReady} loading={busy} onClick={() => void close()} data-testid="shift-close">
+            确认交班
+          </Button>
+        )}
         {error && <Notice tone="error" title={error} className="mt-3" />}
       </div>
     </Card>
@@ -246,6 +291,12 @@ function CashFormula({ cash }: { cash: ShiftSummary['cash'] }) {
         <>
           {' '}
           {cash.cardDeposit > 0 ? '+' : '−'} 会员卡押金现金（收 − 退） <Money cents={Math.abs(cash.cardDeposit)} />
+        </>
+      ) : null}
+      {cash.hkd ? (
+        <>
+          {' '}
+          − 收港元折的人民币（港元另点） <Money cents={cash.hkd} />
         </>
       ) : null}
     </p>
@@ -425,7 +476,8 @@ function ShiftRow({ s }: { s: ShiftRecord }) {
           {s.status === 'closed' && (
             <p className="mt-3 text-[12.5px] text-ink-3">
               应有现金 <Money cents={s.expectedCash!} />
-              {s.expectedCash! < 0 && `（跨钱箱退款 ¥${(-s.expectedCash! / 100).toFixed(2)}，与出钱的钱箱相抵）`} · 实点 <Money cents={s.countedCash!} /> · 交班人 {s.closedByName}
+              {s.expectedCash! < 0 && `（跨钱箱退款 ¥${(-s.expectedCash! / 100).toFixed(2)}，与出钱的钱箱相抵）`} · 实点 <Money cents={s.countedCash!} />
+              {s.expectedHkd !== null && ` · 港元应有 ${formatHkd(s.expectedHkd)} · 实点 ${formatHkd(s.countedHkd ?? 0)}`} · 交班人 {s.closedByName}
               {s.handedToName ? ` · 接班 ${s.handedToName}` : ''}
               {s.note ? ` · ${s.note}` : ''}
             </p>

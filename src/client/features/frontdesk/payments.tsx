@@ -20,6 +20,8 @@ import type { CompanyChargeGrant, CompanyChargeGrantRequest, DiscountGrant, Disc
 import type { CompanyReason } from '@shared/dining-v8224';
 import { companyGrantFits, CompanyPayRow, companyRequest } from './CompanyPayRow';
 import { maskPhone, PAYMENT_METHODS } from '@shared/labels';
+import { bigChange, formatHkd, hkdDue, hkdWorth, rateText as hkdRateText } from '@shared/cashier-v8230';
+import { DEFAULT_FRONTDESK_RULES, type FrontdeskRules } from '@shared/frontdesk';
 import { centsToInput, formatYuan, parseYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
 import { useCan, useSession } from '../../lib/session';
@@ -72,8 +74,12 @@ export interface PayRow {
   platform: CouponPlatform;
   code: string;
   dealName: string;
-  /** 现金：客人实给的金额（只用于计算找零，不登记） */
+  /** 现金：客人实给的金额（只用于计算找零，不登记；8.2.30 收港元时是港元，要登记） */
   tendered: string;
+  /** 现金（8.2.30）：收的是港元 */
+  hkd: boolean;
+  /** 现金（8.2.30，CM-4）：大额找零已核对 */
+  changeConfirmed: boolean;
   /** 优惠 / 免单：原因与当场授权（授权绑定这几张手牌或这几桌与金额，改了要重新授权）；公司承担（8.2.4）时 reason 是说明 */
   reason: string;
   grant: DiscountGrant | CompanyChargeGrant | null;
@@ -102,6 +108,8 @@ export const newRow = (method: CheckoutMethod, amount: number): PayRow => ({
   code: '',
   dealName: '',
   tendered: '',
+  hkd: false,
+  changeConfirmed: false,
   reason: '',
   grant: null,
   companyReason: 'unwell',
@@ -132,7 +140,27 @@ export type PaymentBody =
   | { method: 'count_card'; cardId: number; uses: number; amount: number }
   | { method: 'on_account'; accountId: number; signer: string; amount: number }
   | { method: 'company'; amount: number; reason: CompanyReason; note: string; grantId: string }
-  | { method: Exclude<CheckoutMethod, 'wallet' | 'coupon' | 'discount' | 'store_coupon' | 'member_discount' | 'count_card' | 'on_account' | 'company'>; amount: number; ref: string; payTxId?: number };
+  | {
+      method: Exclude<CheckoutMethod, 'wallet' | 'coupon' | 'discount' | 'store_coupon' | 'member_discount' | 'count_card' | 'on_account' | 'company'>;
+      amount: number;
+      ref: string;
+      payTxId?: number;
+      hkd?: { tendered: number; ratePpm: number };
+    };
+
+/** 收银台规则里结账要用的（8.2.30）：港元汇率、大额找零门槛；没有前台权限（取不到）时不收港元、按默认门槛 */
+export function useCashRules(): { hkdRatePpm: number | null; bigChangeCents: number } {
+  const q = useQuery({ queryKey: ['frontdesk', 'rules'], queryFn: () => api.get<FrontdeskRules>('/api/frontdesk/rules'), staleTime: 60_000, retry: false });
+  return { hkdRatePpm: q.data?.hkdRatePpm ?? null, bigChangeCents: q.data?.bigChangeCents ?? DEFAULT_FRONTDESK_RULES.bigChangeCents };
+}
+
+/** 现金这一笔的找零（8.2.30）：人民币按实给 − 收款；港元按实给折成人民币 − 收款（找人民币）。没填实给或填错为 null */
+export function cashChange(row: Pick<PayRow, 'tendered' | 'hkd'>, cents: number | null, ratePpm: number | null): { worth: number; change: number } | null {
+  const given = parseYuan(row.tendered);
+  if (given === null || cents === null || !row.tendered.trim()) return null;
+  const worth = row.hkd ? (ratePpm === null ? null : hkdWorth(given, ratePpm)) : given;
+  return worth === null ? null : { worth, change: worth - cents };
+}
 
 /**
  * 收款登记的状态与核对：每笔的金额、储值扣款构成（余额不足、会员不在本次结账里）、团购券码、「其他」备注、
@@ -164,6 +192,7 @@ export function usePayRows(opts: {
   countCard?: { amount: number; payments: Extract<PaymentBody, { method: 'count_card' }>[]; problem: string | null } | null;
 }) {
   const session = useSession();
+  const cashRules = useCashRules();
   const [rows, setRows] = useState<PayRow[]>([]);
   useResetOnOpen(opts.open, () => setRows([]));
 
@@ -201,11 +230,24 @@ export function usePayRows(opts: {
       if (rows.filter((x) => x.method === 'on_account').length > 1) return '一张结账单只能挂一笔账，请合并金额';
     }
     if (r.method === 'other' && !r.ref.trim()) return '「其他」收款请在备注里写明收的是什么';
-    if (r.method === 'cash' && r.tendered.trim()) {
+    if (r.method === 'cash' && r.hkd) {
+      // 港元（8.2.30）：实给的港元要登记（交班按港元对实点），折成人民币要够这笔
+      const rate = cashRules.hkdRatePpm;
+      if (rate === null) return '门店没有设港元汇率，不能收港元';
+      if (!r.tendered.trim()) return '请填客人实给的港元';
+      const x = cashChange(r, c, rate);
+      if (!x || parseYuan(r.tendered)! <= 0) return '客人实给的港元不正确';
+      if (x.change < 0) return `港元不够：这笔至少要 ${formatHkd(hkdDue(c, rate))}`;
+    } else if (r.method === 'cash' && r.tendered.trim()) {
       // 「客人实给」只用来算找零，不登记；填了却少于这笔现金，说明现金没收够（测试服 E2E 报告 BUG-2）
       const given = parseYuan(r.tendered);
       if (given === null) return '客人实给的金额不正确';
       if (given < c) return `客人实给少于这笔现金，还差 ¥${((c - given) / 100).toFixed(2)}；请核对现金或改收款方式`;
+    }
+    if (r.method === 'cash' && !r.changeConfirmed) {
+      // 大额找零（8.2.30，CM-4）：找零超过门槛或超过这笔的 2 倍，多确认一次（防止把 100 输成 1000）
+      const x = cashChange(r, c, cashRules.hkdRatePpm);
+      if (x && bigChange(x.change, c, cashRules.bigChangeCents)) return `找零 ${formatYuan(x.change)} 比较大，请核对客人实给的金额后勾选「已核对找零」`;
     }
     if (r.method === 'company') {
       if (r.companyReason === 'other' && r.reason.trim().length < 2) return '公司承担选「其他」请写说明（至少 2 个字）';
@@ -285,6 +327,7 @@ export function usePayRows(opts: {
       if (r.method === 'on_account') return { method: 'on_account' as const, accountId: r.accountId!, signer: r.signer.trim(), amount };
       const method = r.method as Exclude<CheckoutMethod, 'wallet' | 'coupon' | 'discount' | 'store_coupon' | 'member_discount' | 'count_card' | 'on_account' | 'company'>;
       if (r.payTx) return { method, amount, ref: r.payTx.providerTradeNo ?? '', payTxId: r.payTx.id };
+      if (r.method === 'cash' && r.hkd && cashRules.hkdRatePpm !== null) return { method, amount, ref: r.ref.trim(), hkd: { tendered: parseYuan(r.tendered)!, ratePpm: cashRules.hkdRatePpm } };
       return { method, amount, ref: r.ref.trim() };
     }),
   ];
@@ -502,7 +545,9 @@ export function PayRowEditor({
   /** 挂账能选的协议单位（8.0.7） */
   arAccounts?: ArAccountOption[];
 }) {
-  const tendered = parseYuan(row.tendered);
+  const cashRules = useCashRules();
+  const rate = cashRules.hkdRatePpm;
+  const change = row.method === 'cash' ? cashChange(row, cents, rate) : null;
   const account = arAccounts.find((a) => a.id === row.accountId) ?? null;
   return (
     <li className={cn('rounded-lg border bg-card p-3', problem ? 'border-clay/40' : 'border-line')} data-testid={`pay-row-${row.method}`}>
@@ -738,16 +783,51 @@ export function PayRowEditor({
       )}
 
       {row.method === 'cash' && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-3">
-          客人实给
-          <div className="w-[120px]">
-            <MoneyInput value={row.tendered} onChange={(e) => onChange({ tendered: e.target.value })} className="h-8 text-[13px]" aria-label="客人实给现金" />
-          </div>
-          {tendered !== null && cents !== null && tendered >= cents && (
-            <span className="font-semibold text-ink-2">
-              找零 <Money cents={tendered - cents} size="key" className="text-pine" />
-              （找零不用登记）
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-3" data-testid="cash-row">
+          {(rate !== null || row.hkd) && (
+            // 港元现金（8.2.30）：门店设了汇率才能选；找零给人民币
+            <span className="inline-flex overflow-hidden rounded-md border border-line" role="group" aria-label="收的币种">
+              {(['人民币', '港元'] as const).map((label, i) => (
+                <button
+                  key={label}
+                  type="button"
+                  disabled={locked}
+                  aria-pressed={row.hkd === (i === 1)}
+                  onClick={() => onChange({ hkd: i === 1, tendered: '', changeConfirmed: false })}
+                  className={cn('h-8 px-2.5 text-[12.5px]', row.hkd === (i === 1) ? 'bg-pine text-white' : 'bg-card text-ink-2')}
+                  data-testid={i === 1 ? 'cash-hkd' : 'cash-cny'}
+                >
+                  {label}
+                </button>
+              ))}
             </span>
+          )}
+          {row.hkd ? '客人实给港元' : '客人实给'}
+          <div className="w-[120px]">
+            <MoneyInput
+              value={row.tendered}
+              onChange={(e) => onChange({ tendered: e.target.value, changeConfirmed: false })}
+              className="h-8 text-[13px]"
+              aria-label={row.hkd ? '客人实给港元' : '客人实给现金'}
+              data-testid="cash-tendered"
+            />
+          </div>
+          {row.hkd && rate !== null && cents !== null && cents > 0 && (
+            <span className="num" data-testid="cash-hkd-due">
+              这笔折 {formatHkd(hkdDue(cents, rate))}（汇率 {hkdRateText(rate)}）
+            </span>
+          )}
+          {change && change.change >= 0 && (
+            <span className="font-semibold text-ink-2">
+              找零 <Money cents={change.change} size="key" className="text-pine" />
+              {row.hkd ? '（找人民币）' : '（找零不用登记）'}
+            </span>
+          )}
+          {change && cents !== null && bigChange(change.change, cents, cashRules.bigChangeCents) && (
+            <label className="inline-flex items-center gap-1.5 font-semibold text-clay">
+              <input type="checkbox" checked={row.changeConfirmed} disabled={locked} onChange={(e) => onChange({ changeConfirmed: e.target.checked })} data-testid="cash-change-confirm" />
+              已核对找零
+            </label>
           )}
         </div>
       )}

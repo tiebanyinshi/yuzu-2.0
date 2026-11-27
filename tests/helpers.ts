@@ -464,6 +464,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '710_gf_role_snapshot.sql',
   '720_gf_flow_config.sql',
   '730_oa_expense_retire.sql',
+  '760_cashier_v8230.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

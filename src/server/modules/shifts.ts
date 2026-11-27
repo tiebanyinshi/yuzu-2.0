@@ -193,6 +193,7 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
       cardDepositReceived: NonNullable<ShiftSummary['cardDeposits']>['received'];
       cardDepositRefunded: NonNullable<ShiftSummary['cardDeposits']>['refunded'];
       byOperator: NonNullable<ShiftSummary['byOperator']>;
+      hkdTotals: { count: number; expected: number; worth: number };
     })[]
   >`
     WITH co AS (
@@ -318,7 +319,10 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
                                                   'checkouts', json_build_object('count', ops.checkout_count, 'total', ops.checkout_total),
                                                   'recharges', json_build_object('count', ops.recharge_count, 'paid', ops.recharge_paid))
                                 ORDER BY st.display_name, ops.operator_id), '[]'::json)
-       FROM ops JOIN staff st ON st.id = ops.operator_id) AS by_operator`;
+       FROM ops JOIN staff st ON st.id = ops.operator_id) AS by_operator,
+      -- 港元现金（8.2.30）：本班次结账收的港元（进钱箱）与折成的人民币（收款 + 找零，不在钱箱里）
+      (SELECT json_build_object('count', count(*), 'expected', coalesce(sum(p.fx_tendered), 0), 'worth', coalesce(sum(p.fx_worth), 0))
+       FROM checkout_payments p JOIN co ON co.id = p.checkout_id WHERE p.fx_currency = 'HKD') AS hkd_totals`;
   const { checkouts, checkoutByMethod, recharges, rechargeByMethod, walletConsumes, coupons, refunds, refundByMethod, depositReceived, depositRefunded } = row!;
   const { refundSlipTotals, refundSlipByMethod, refundSlipList, memberRefundTotals, memberRefundByMethod, memberRefundList, countCardSales, countCardRefunds } = row!;
   const cashCheckout = checkoutByMethod.find((m) => m.method === 'cash')?.amount ?? 0;
@@ -343,6 +347,9 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
   const hasCardDeposits = cardDepositReceived.length > 0 || cardDepositRefunded.length > 0;
   const hasCashCardDeposit = [...cardDepositReceived, ...cardDepositRefunded].some((m) => m.method === 'cash');
   const cashCardDeposit = (cardDepositReceived.find((m) => m.method === 'cash')?.amount ?? 0) - (cardDepositRefunded.find((m) => m.method === 'cash')?.amount ?? 0);
+  // 港元现金（8.2.30）：结账现金里含港元折成的人民币，钱箱里实际是港元，扣掉后另按港元对实点
+  const hkd = { count: Number(row!.hkdTotals.count), expected: Number(row!.hkdTotals.expected), worth: Number(row!.hkdTotals.worth) };
+  const hasHkd = hkd.count > 0;
   const cardRows = (rows: { method: PaymentMethod; count: number; amount: number }[]) => rows.map((m) => ({ ...m, amount: Number(m.amount) }));
   const cardSum = (rows: { count: number; amount: number }[]) => ({ count: rows.reduce((t, m) => t + m.count, 0), total: rows.reduce((t, m) => t + Number(m.amount), 0) });
   return {
@@ -409,6 +416,7 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
           })),
         }
       : {}),
+    ...(hasHkd ? { hkd } : {}),
     cash: {
       opening: s.openingCash,
       checkout: cashCheckout,
@@ -419,7 +427,8 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
       ...(hasMemberRefunds ? { memberRefund: cashMemberRefund } : {}),
       ...(hasCountCards ? { countCard: cashCountCard } : {}),
       ...(hasCashCardDeposit ? { cardDeposit: cashCardDeposit } : {}),
-      expected: s.openingCash + cashCheckout + cashRecharge - cashRefund + cashDeposit - cashSlip - cashMemberRefund + cashCountCard + cashCardDeposit,
+      ...(hasHkd ? { hkd: hkd.worth } : {}),
+      expected: s.openingCash + cashCheckout + cashRecharge - cashRefund + cashDeposit - cashSlip - cashMemberRefund + cashCountCard + cashCardDeposit - hkd.worth,
     },
   };
 }
@@ -447,7 +456,7 @@ async function shiftMembers(db: Db, shiftId: number): Promise<ShiftMember[]> {
 export async function getShift(db: Db, id: number, now = new Date()): Promise<ShiftRecord> {
   const [row] = await db<ShiftRow[]>`
     SELECT s.id, s.shift_no, s.staff_id, st.display_name AS staff_name, s.status, s.business_date, s.started_at, s.opening_cash,
-           s.ended_at, s.expected_cash, s.counted_cash, s.note, h.display_name AS handed_to_name, c.display_name AS closed_by_name, s.summary,
+           s.ended_at, s.expected_cash, s.counted_cash, s.expected_hkd, s.counted_hkd, s.note, h.display_name AS handed_to_name, c.display_name AS closed_by_name, s.summary,
            s.legacy_window, s.legacy_refund, s.drawer_name
     FROM shifts s JOIN staff st ON st.id = s.staff_id LEFT JOIN staff h ON h.id = s.handed_to LEFT JOIN staff c ON c.id = s.closed_by
     WHERE s.id = ${id}`;
@@ -515,6 +524,9 @@ const CloseInput = z.object({
   expectedCash: z.number('应有现金必须是数字').int('应有现金必须精确到分').min(-1_000_000_000, '应有现金过大').max(1_000_000_000, '应有现金过大'),
   note: z.string().trim().max(200, '备注最多 200 字').default(''),
   handedTo: z.number().int().positive().nullable().default(null),
+  /** 港元（8.2.30）：本班次收过港元时要填实点港元（港仙），并带上看到的应有港元；没收过不带 */
+  countedHkd: z.number('实点港元要精确到港仙').int('实点港元要精确到港仙').min(0, '实点港元不能为负').max(1_000_000_000, '实点港元过大').optional(),
+  expectedHkd: z.number().int().min(0).max(1_000_000_000).optional(),
 });
 
 /** 本人此刻所在的班次：已经在一个班次上的不能再开班或加入别的钱箱 */
@@ -670,8 +682,18 @@ export async function closeShift(deps: Deps, id: number, raw: unknown, ctx: OpCo
     if (summary.cash.expected !== input.expectedCash) {
       throw conflict('SHIFT_CHANGED', '交班期间又有收款，应有现金已变化，请刷新后重新核对', { expectedCash: summary.cash.expected });
     }
+    // 港元（8.2.30）：收过港元的班次要分币种对实点；页面看到的应有港元与此刻不一致（交班期间又收了港元）同样要刷新
+    const expectedHkd = summary.hkd?.expected ?? null;
+    if (expectedHkd !== null) {
+      if (input.countedHkd === undefined) throw badRequest('这个班次收过港元，请填实点港元');
+      if (input.expectedHkd !== expectedHkd) throw conflict('SHIFT_CHANGED', '交班期间又收了港元，应有港元已变化，请刷新后重新核对', { expectedHkd });
+    } else if (input.countedHkd !== undefined && input.countedHkd !== 0) {
+      throw badRequest('这个班次没有收过港元，不用填实点港元');
+    }
+    const countedHkd = expectedHkd === null ? null : input.countedHkd!;
     await tx`
       UPDATE shifts SET status = 'closed', ended_at = ${at}, expected_cash = ${summary.cash.expected}, counted_cash = ${input.countedCash},
+                        expected_hkd = ${expectedHkd}, counted_hkd = ${countedHkd},
                         summary = ${tx.json(summary as never)}, note = ${input.note}, handed_to = ${input.handedTo}, closed_by = ${ctx.actor.id}
       WHERE id = ${s.id}`;
     const settings = await loadSettings(tx);
@@ -685,6 +707,7 @@ export async function closeShift(deps: Deps, id: number, raw: unknown, ctx: OpCo
         expectedCash: summary.cash.expected,
         countedCash: input.countedCash,
         diff: input.countedCash - summary.cash.expected,
+        ...(expectedHkd !== null ? { expectedHkd, countedHkd, diffHkd: countedHkd! - expectedHkd } : {}),
         note: input.note,
         ...(s.drawerName ? { drawer: s.drawerName } : {}),
       },

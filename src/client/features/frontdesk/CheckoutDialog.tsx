@@ -33,6 +33,7 @@ import { allocateCountCards, type CheckoutCountCardOption, type CountCardAllocat
 import { pendingFor, PendingPanel, useFrontdeskOp, useFrontdeskPending } from './pending';
 import { CheckoutReceipt, isTableCheckout } from './CheckoutReceipt';
 import { RefundPanel, RefundsList } from './RefundPanel';
+import { VoidRequestForm } from './CashierRequests';
 import { stayText, useCheckout, useCheckoutDaySummary, useCheckoutPreview, useCheckouts, useRefreshFrontdesk, useTicketTypes } from './queries';
 import { InvoiceRequestButton } from '../sales-invoices/InvoiceRequest';
 import { DiningOnlyPanel } from './DiningOnlyPanel';
@@ -848,8 +849,10 @@ function CheckoutDetailView({ id, onBack }: { id: number; onBack: () => void }) 
   const refresh = useRefreshFrontdesk();
   const shiftReady = useShiftReady(true);
   const [voiding, setVoiding] = useState(false);
-  // 退款单（v0.7.20）：这张单上有结果待确认的退款时直接打开退款区处理
-  const pendingRefund = pendingFor(useFrontdeskPending(), 'checkout_refund', null, { checkoutId: id });
+  const [requestingVoid, setRequestingVoid] = useState(false);
+  // 退款单（v0.7.20）：这张单上有结果待确认的退款时直接打开退款区处理；8.2.30 退款申请同样
+  const pendingAll = useFrontdeskPending();
+  const pendingRefund = pendingFor(pendingAll, 'checkout_refund', null, { checkoutId: id }) ?? pendingFor(pendingAll, 'cashier_request', null, { checkoutId: id });
   const [refunding, setRefunding] = useState(false);
   const showRefund = refunding || !!pendingRefund;
   const [reason, setReason] = useState('');
@@ -923,8 +926,21 @@ function CheckoutDetailView({ id, onBack }: { id: number; onBack: () => void }) 
               部分退款（开退款单）
             </Button>
           )}
+          {/* 8.2.30（CM-5）：没有「开退款单」「反结账」权限的收银员提交申请，值班经理批准时再执行 */}
+          {d.status === 'completed' && !can('frontdesk.refund') && can('frontdesk.checkout') && !voiding && !showRefund && !requestingVoid && (
+            <Button variant="secondary" icon={<Undo2 className="size-4" />} onClick={() => setRefunding(true)} data-testid="checkout-refund-request">
+              申请部分退款
+            </Button>
+          )}
+          {d.status === 'completed' && !can('frontdesk.checkoutVoid') && can('frontdesk.checkout') && !hasRefund && !voiding && !showRefund && !requestingVoid && (
+            <Button variant="secondary" icon={<Undo2 className="size-4" />} onClick={() => setRequestingVoid(true)} data-testid="checkout-void-request">
+              申请反结账
+            </Button>
+          )}
+          {requestingVoid && <VoidRequestForm checkoutId={d.id} checkoutNo={d.checkoutNo} onClose={() => setRequestingVoid(false)} />}
           {showRefund && d.status === 'completed' && (
             <RefundPanel
+              asRequest={!can('frontdesk.refund')}
               checkoutId={d.id}
               checkoutNo={d.checkoutNo}
               onClose={() => {

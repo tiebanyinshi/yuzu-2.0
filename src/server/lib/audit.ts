@@ -133,6 +133,9 @@ export type AuditAction =
   | 'tag_deposit_received'
   | 'tag_away_locked'
   | 'tag_away_unlocked'
+  // 8.2.30 收银申请：提交、处理（批准 / 驳回 / 失效 / 撤回）
+  | 'cashier_request_submit'
+  | 'cashier_request_decide'
   | 'tag_deposit_refunded'
   | 'frontdesk_abandon'
   | 'frontdesk_ticket'

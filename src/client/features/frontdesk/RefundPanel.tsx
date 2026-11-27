@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ReceiptText, Undo2 } from 'lucide-react';
 import { defaultRefundAmount, refundNeedsRef, type RefundDetail, type RefundMethod, type RefundOptions, type RefundSummary, CHECKOUT_METHOD_LABELS, type CheckoutMethod } from '@shared/checkout';
+import type { CashierRequestView } from '@shared/cashier-v8230';
 import { PAYMENT_METHOD_LABELS } from '@shared/labels';
 import { centsToInput, formatYuan, parseYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
@@ -32,10 +33,16 @@ export function RefundPanel({
   checkoutNo,
   onClose,
   DrawerPicker,
+  asRequest = false,
 }: {
   checkoutId: number;
   checkoutNo: string;
   onClose: () => void;
+  /**
+   * 没有「开退款单」权限的收银员（8.2.30，CM-5）：填好内容提交「退款申请」，有权限的人批准时按当时的数据重新核对再开退款单；
+   * 不选钱箱（批准的人选），不要求开班
+   */
+  asRequest?: boolean;
   /** 退现金的钱箱（与反结账同一个选择器） */
   DrawerPicker: (props: { options: RefundOptions['drawers']; value: number | null; onChange: (id: number) => void; onRefetch: () => void }) => React.ReactNode;
 }) {
@@ -46,12 +53,12 @@ export function RefundPanel({
     queryKey: ['frontdesk', 'refund-options', checkoutId],
     queryFn: () => api.get<RefundOptions>(`/api/frontdesk/checkouts/${checkoutId}/refund-options`),
   });
-  const op = useFrontdeskOp<RefundDetail>({
-    type: 'checkout_refund',
+  const op = useFrontdeskOp<RefundDetail | CashierRequestView>({
+    type: asRequest ? 'cashier_request' : 'checkout_refund',
     visitId: null,
     checkoutId,
     staffName: session.staff.displayName,
-    pick: (found) => (found.type === 'checkout_refund' ? found.refund : null),
+    pick: (found) => (found.type === 'checkout_refund' ? found.refund : found.type === 'cashier_request' ? found.request : null),
   });
   const [picked, setPicked] = useState<Record<string, { quantity: string; amount: string }>>({});
   const [pays, setPays] = useState<Partial<Record<RefundMethod, { amount: string; ref: string }>>>({});
@@ -113,9 +120,17 @@ export function RefundPanel({
     }
   }
   if (total > 0 && paysTotal !== total) problems.push(`退款方式合计 ${formatYuan(paysTotal)}，要等于退的项目合计 ${formatYuan(total)}`);
-  const ready = !o?.blocked && total > 0 && problems.length === 0 && reason.trim().length >= 2 && (cash === 0 || drawer !== null) && !op.locked;
+  const ready = !o?.blocked && total > 0 && problems.length === 0 && reason.trim().length >= 2 && (asRequest || cash === 0 || drawer !== null) && !op.locked;
 
-  const done = (r: RefundDetail) => {
+  const done = (x: RefundDetail | CashierRequestView) => {
+    if ('requestNo' in x) {
+      toast({ tone: 'success', title: `已提交退款申请 ${x.requestNo}`, body: `退 ${formatYuan(x.amount)}，等值班经理批准；结果会发到你的通知里` });
+      void qc.invalidateQueries({ queryKey: ['frontdesk'] });
+      void qc.invalidateQueries({ queryKey: ['cashier-requests'] });
+      onClose();
+      return;
+    }
+    const r = x;
     const cashPart = r.payments.find((p) => p.method === 'cash')?.amount ?? 0;
     toast({
       tone: 'success',
@@ -134,15 +149,25 @@ export function RefundPanel({
         .filter((m) => payCents(m.method) > 0)
         .map((m) => (viaOf(m.method) ? { method: m.method, amount: payCents(m.method), viaTerminal: true } : { method: m.method, amount: payCents(m.method), ref: pays[m.method]?.ref.trim() ?? '' })),
       reason: reason.trim(),
-      ...(cash > 0 && drawer !== null ? { refundShiftId: drawer } : {}),
+      ...(!asRequest && cash > 0 && drawer !== null ? { refundShiftId: drawer } : {}),
     };
-    const r = await op.submit((key) => ({
-      url: `/api/frontdesk/checkouts/${checkoutId}/refunds`,
-      body: { clientKey: key, ...body },
-      tagCodes: [],
-      summary: `退款 · 结账单 ${checkoutNo}`,
-      amount: total,
-    }));
+    const r = await op.submit((key) =>
+      asRequest
+        ? {
+            url: '/api/cashier-requests',
+            body: { clientKey: key, kind: 'refund', checkoutId, refund: body },
+            tagCodes: [],
+            summary: `退款申请 · 结账单 ${checkoutNo}`,
+            amount: total,
+          }
+        : {
+            url: `/api/frontdesk/checkouts/${checkoutId}/refunds`,
+            body: { clientKey: key, ...body },
+            tagCodes: [],
+            summary: `退款 · 结账单 ${checkoutNo}`,
+            amount: total,
+          },
+    );
     if (r) done(r);
   };
   useEffect(() => {
@@ -297,7 +322,13 @@ export function RefundPanel({
               </div>
             ))}
           </div>
-          {cash > 0 ? <DrawerPicker options={o!.drawers} value={drawer} onChange={setDrawer} onRefetch={() => void options.refetch()} /> : total > 0 && <ShiftGate action="退款" />}
+          {asRequest ? (
+            total > 0 && <p className="text-[12.5px] text-ink-3">提交以后由值班经理批准；批准时按那时的数据再核对一次，现金从哪个钱箱退由批准的人选。</p>
+          ) : cash > 0 ? (
+            <DrawerPicker options={o!.drawers} value={drawer} onChange={setDrawer} onRefetch={() => void options.refetch()} />
+          ) : (
+            total > 0 && <ShiftGate action="退款" />
+          )}
           <ReasonChips reasons={refundReasons} value={reason} onPick={setReason} disabled={op.locked} testId="refund-reason-chips" />
           <Input
             value={reason}
@@ -318,7 +349,7 @@ export function RefundPanel({
       )}
       <div className="flex gap-2">
         <Button variant="danger" icon={<Undo2 className="size-4" />} disabled={!ready} loading={op.busy} onClick={() => void submit()} data-testid="refund-confirm">
-          确认退款 {total > 0 ? formatYuan(total) : ''}
+          {asRequest ? '提交退款申请' : '确认退款'} {total > 0 ? formatYuan(total) : ''}
         </Button>
         <Button variant="ghost" onClick={onClose} disabled={op.busy}>
           取消

@@ -29,7 +29,7 @@ import { sweepPaying, sweepRefunds } from './modules/pay-terminal';
 import { runVoucherReconcile, sweepVerifying } from './modules/platform-verify';
 import { runAiSummaries } from './modules/ai';
 import { sweepOvertimeReminders } from './modules/frontdesk/overtime';
-import { sweepAwayLocks, sweepRiskAlerts } from './modules/frontdesk/index';
+import { sweepAwayLocks, sweepCashierRequests, sweepRiskAlerts } from './modules/frontdesk/index';
 import { sweepTableRestores } from './modules/tables-v8117';
 import { runAttendanceSettlement } from './modules/oa/attendance-daily';
 import { runAnnualLeaveGrant } from './modules/oa/leave';
@@ -160,6 +160,11 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
   await step('锁牌外出到时间', '锁牌外出到时间的自动解锁失败，下一分钟重试', async () => {
     const n = await sweepAwayLocks({ sql, config }, now);
     if (n > 0) log.info(`锁牌外出到时间：自动解锁 ${n} 张`);
+  });
+  // 收银申请（8.2.30）：24 小时没人处理的记失效并通知申请人
+  await step('收银申请到时间', '收银申请到时间的失效没记完，下一分钟重试', async () => {
+    const n = await sweepCashierRequests({ sql, config }, now);
+    if (n > 0) log.info(`收银申请到时间：失效 ${n} 张`);
   });
   await step('高风险提示', '高风险提示没推完，下一分钟重试', async () => {
     const n = await sweepRiskAlerts({ sql, config }, now);
