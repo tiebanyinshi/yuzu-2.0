@@ -1,0 +1,37 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="菜单" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="这几天还没有发布的菜单" message="{{state === 'empty' ? '厨师发布以后这里就有。' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view wx:for="{{days}}" wx:for-item="day" wx:for-index="di" wx:key="date" class="section">
+      <view class="section-head"><view class="section-title">{{day.label}}</view></view>
+      <view wx:for="{{day.meals}}" wx:for-item="meal" wx:for-index="mi" wx:key="key" class="card meal">
+        <view class="meal-head">
+          <view class="t-title-s">{{meal.meal}}</view>
+          <view wx:if="{{meal.note}}" class="t-caption meal-note">{{meal.note}}</view>
+        </view>
+        <view wx:for="{{meal.dishes}}" wx:for-item="dish" wx:for-index="ki" wx:key="key" class="row dish">
+          <view class="emoji">{{dish.emoji}}</view>
+          <view class="row-main">
+            <view class="row-title">{{dish.name}}</view>
+            <view wx:if="{{dish.tags}}" class="row-sub">{{dish.tags}}</view>
+          </view>
+          <view
+            class="like {{dish.liked ? 'on' : ''}}"
+            hover-class="pressed"
+            hover-stay-time="120"
+            data-day="{{di}}"
+            data-meal="{{mi}}"
+            data-dish="{{ki}}"
+            bindtap="onLike"
+            aria-role="button"
+            aria-label="{{dish.liked ? '取消点赞' : '点赞'}} {{dish.name}}，{{dish.likes}} 个赞"
+          >
+            <text class="heart">{{dish.liked ? '♥' : '♡'}}</text>
+            <text class="num count">{{dish.likes}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+    <view class="t-caption foot">菜单由厨师在柚子饭堂里发布。想吃什么，点个赞让厨师知道。</view>
+  </view>
+</view>

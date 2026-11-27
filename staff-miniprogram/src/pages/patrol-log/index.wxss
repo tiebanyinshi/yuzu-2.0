@@ -1,0 +1,75 @@
+.date-bar {
+  padding-top: 16rpx;
+  padding-bottom: 16rpx;
+}
+.date-pick {
+  display: flex;
+  align-items: baseline;
+  min-height: 88rpx;
+}
+.change {
+  margin-left: 16rpx;
+  color: var(--wood-text);
+}
+.stats {
+  display: flex;
+}
+.stat {
+  flex: 1;
+}
+.bad {
+  color: var(--danger);
+}
+.rounds {
+  white-space: nowrap;
+  width: 100%;
+}
+.round {
+  display: inline-flex;
+  flex-direction: column;
+  width: 200rpx;
+  padding: 20rpx 24rpx;
+  margin-right: 16rpx;
+  border: 2rpx solid var(--line);
+  border-radius: var(--radius-card);
+  background-color: var(--surface);
+  box-sizing: border-box;
+}
+.round.on {
+  border-color: var(--ink);
+}
+.round.missed .round-count {
+  color: var(--danger);
+}
+.round.future {
+  color: var(--ink-3);
+}
+.round-no {
+  font-weight: 600;
+}
+.round-time {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.round-count {
+  margin-top: 8rpx;
+}
+.progress {
+  margin-bottom: 16rpx;
+}
+.dot {
+  width: 20rpx;
+  height: 20rpx;
+  border-radius: 50%;
+  flex: none;
+  margin-right: 24rpx;
+  border: 3rpx solid var(--line-strong);
+  box-sizing: border-box;
+}
+.dot.done {
+  background-color: var(--success);
+  border-color: var(--success);
+}
+.foot {
+  margin: 24rpx 0 48rpx;
+}

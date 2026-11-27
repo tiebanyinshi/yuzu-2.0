@@ -429,4 +429,5 @@
 ## 10. 员工小程序（员工小程序线，`docs/STAFF_MP.md`）
 
 - **微信绑定与解开**（`src/server/modules/staffmp/auth.ts`，迁移 610）：绑定：这个 openid 的咨询锁（`staffmp_openid:<openid>`）→ 这位员工的咨询锁（`staffmp_staff:<员工编号>`）→ 绑定行（这个 openid 或这位员工现在的绑定，`FOR UPDATE`）→ 解开旧的（换绑的那位在小程序上的会话一起删）→ 插入新的；两个部分唯一索引兜底（同一时刻一对一）。解开（员工自己、后台）：只拿这位员工的咨询锁 → 绑定行 `FOR UPDATE`。固定先 openid、后员工，不会互相等成环。
+- **饭卡对上与解开**（`src/server/modules/staffmp/canteen.ts`，迁移 611）：这位员工的咨询锁（`staffmp_staff:<员工编号>`，与绑定同一把）→ 后台操作时员工行 `FOR SHARE` 再核对门店范围 → 读、写 `staffmp_canteen_links`（员工主键、饭卡唯一兜底）。开通饭卡先照饭堂原来的 `createEmployee` 建人（它自己的事务），再另起事务对上。负责人扫码登记、巡场打卡照饭堂与巡场原来的函数与顺序，员工小程序线不另加锁。
 - **会话**：登录发会话（`sessions` 一行 + `staffmp_sessions` 一行）在一个事务里，不锁别的；改密码与网页同一个做法（更新账号行、删别的会话）。员工小程序端口上挂着的 WCP、员工培训接口照各自一节的顺序（打卡、审批、附件、工资条签收……），员工小程序线不另加锁。

@@ -13,8 +13,9 @@ import type { Actor, Deps } from '../../lib/context';
 import { writeAudit } from '../../lib/audit';
 import { createSession, hashSessionToken, resolveSession, resolveStaffActor, storeIdsOf } from '../../auth/session';
 import { NOT_EMPLOYEE_ROLES, notify, onDuty } from '../oa';
+import { canteenEntries } from './canteen';
 
-/** 第一版能用的入口（第 2.4 节）；吃饭、巡场、学堂随后几批按条件加 */
+/** 人人都有的入口（第 2.4 节）；吃饭、巡场按员工食堂与巡场的开关、对上的饭卡加（canteen.ts） */
 const BASE_ENTRIES: readonly StaffMpEntryKey[] = ['punch', 'schedule', 'attendance', 'leave', 'approvals', 'payslips', 'directory', 'announcements', 'knowledge'];
 
 /** 这个账号能不能用员工小程序；不能的给一句面向员工的原因 */
@@ -167,7 +168,7 @@ export async function buildMe({ sql, config }: Deps, actor: Actor): Promise<Staf
     mustChangePassword: actor.mustChangePassword,
     needsPosition: actor.needsPosition === true,
     wechatBound: row?.bound ?? false,
-    entries: [...BASE_ENTRIES],
+    entries: [...BASE_ENTRIES, ...(await canteenEntries(sql, config, actor.id))],
     today: businessDateOf(new Date(), config.timezone, 0),
     build: { version: config.version, commit: config.commit, instance: config.instance },
   };
