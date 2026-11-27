@@ -313,6 +313,20 @@ function RulesCard() {
           </span>,
           true,
         )}
+        {row(
+          '水吧首杯免费',
+          '每位客人水吧每个小分类（手作饮料、糖水、调酒……）第一杯自动折掉、小票上标【赠】写原价与实收 0，第二杯起照价收（走场 2026-11-27）。',
+          <Segmented
+            ariaLabel="水吧首杯免费"
+            value={draft.firstCupFree ? 'on' : 'off'}
+            onChange={(v) => editable && set({ firstCupFree: v === 'on' })}
+            options={[
+              { value: 'on', label: '首杯免费', disabled: !editable },
+              { value: 'off', label: '都照价', disabled: !editable },
+            ]}
+          />,
+          true,
+        )}
         <MealPeriodsEditor value={draft.mealPeriods} onChange={(mealPeriods) => set({ mealPeriods })} editable={editable} />
         <OutletGroupsEditor value={draft.outletGroups} onChange={(outletGroups) => set({ outletGroups })} editable={editable} items={admin.data.items} saved={admin.data.rules.outletGroups} />
         {row(

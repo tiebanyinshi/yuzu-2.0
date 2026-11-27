@@ -73,3 +73,28 @@ export interface MealEntryRow {
   /** 那一行餐费作废了 */
   voided: boolean;
 }
+
+// ───────────── 8.2.19 水吧取餐叫号 ─────────────
+
+/** 一单的状态：制作中 / 请取餐 / 已取 / 已退 */
+export type PickupState = 'making' | 'ready' | 'served' | 'cancelled';
+export const PICKUP_STATE_LABELS: Record<PickupState, string> = { making: '制作中', ready: '请取餐', served: '已取', cancelled: '已退' };
+
+/** 客人扫码看的进度 */
+export interface PickupProgress {
+  pickupNo: number;
+  state: PickupState;
+  /** 前面还有几单在做（自己在做的时候才算） */
+  ahead: number;
+  items: { name: string; quantity: number; status: string }[];
+}
+
+/** 叫号屏：今天制作中、请取餐的号 */
+export interface PickupBoard {
+  date: string;
+  making: number[];
+  ready: number[];
+}
+
+/** 取餐号写成 3 位（A001 的样子：前面加 A 表示水吧） */
+export const pickupLabel = (n: number) => `A${String(n).padStart(3, '0')}`;

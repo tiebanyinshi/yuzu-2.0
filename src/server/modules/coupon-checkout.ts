@@ -25,10 +25,13 @@ import type { Db, Tx } from '../db';
 import { conflict, unprocessable } from '../lib/errors';
 import { parse } from '../lib/validate';
 import { usageCoversItem } from './stock-usage';
+import { loadUsageRules } from './usages';
 
 /** 账单上的有效明细（单项打过折的除外），部门与部门营业额快照同一口径（门票、客房、其他、价目分类、未分类） */
 export async function couponLines(db: Db, billIds: number[]): Promise<CouponLine[]> {
   if (billIds.length === 0) return [];
+  // 8.2.20（Codex 审查）：休闲娱乐（网吧、桌球）的基础价也记成 fee，但不是派对房房费，包房房费折扣不打（docs/V82220_LEISURE.md 第 5 节）
+  const leisure = (await loadUsageRules(db)).leisureTypes ?? [];
   return db<CouponLine[]>`
     SELECT l.id,
            CASE WHEN l.ticket_type_id IS NOT NULL THEN '门票'
@@ -39,9 +42,12 @@ export async function couponLines(db: Db, billIds: number[]): Promise<CouponLine
            -- 派对房等的使用单费用（v0.7.28）：房费还是开台费；房费在营业日是周一至周四时包房房费折扣也打（M44），
            -- 开台费不打——与明细在价目里的分类无关（分类选了「客房」的也一样，测试会话 18d4344 的 P2）
            uc.kind AS usage_charge,
-           (uc.kind IS NOT DISTINCT FROM 'fee' AND extract(isodow FROM l.business_date) BETWEEN 1 AND 4) AS party_room_day
+           (uc.kind IS NOT DISTINCT FROM 'fee' AND extract(isodow FROM l.business_date) BETWEEN 1 AND 4
+            AND NOT coalesce(sp.business_type = ANY(${leisure}::text[]), false)) AS party_room_day
     FROM bill_lines l LEFT JOIN service_items si ON si.id = l.item_id
     LEFT JOIN space_usage_charges uc ON uc.line_id = l.id
+    LEFT JOIN space_usages su ON su.id = uc.usage_id
+    LEFT JOIN spaces sp ON sp.id = su.space_id
     WHERE l.bill_id IN ${db(billIds)} AND l.status = 'active'
       -- 单项打过折的明细（8.2.1）不再用券、次卡、会员折扣（不打折上折，docs/V8221_CASHIER.md 第 1.3 节）
       AND NOT EXISTS (SELECT 1 FROM bill_line_discounts d WHERE d.line_id = l.id AND d.status = 'active')

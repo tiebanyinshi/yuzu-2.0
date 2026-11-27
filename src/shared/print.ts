@@ -17,6 +17,8 @@ export interface CheckoutPrintLine {
   /** 「流水」的订单详情才带（8.1.17 BW-12）：所属部门（与看板、对账包同一个归法）、摊到这一行的优惠（分） */
   category?: string;
   discount?: number;
+  /** 结账那一刻这一行的单项打折（8.2.1；8.2.8 / 8.2.19 的含餐、自助、首杯赠也是）：折后收多少、哪条规则；没打折为 null */
+  lineDiscount?: { finalAmount: number; rule: import('./dining-meals').AutoDiscountRule | null } | null;
 }
 
 export interface WalletBalance {

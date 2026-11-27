@@ -161,6 +161,7 @@ import { registerTableRoutes } from './modules/tables';
 import { registerTableChargeRoutes } from './modules/table-charges';
 import { registerTablesV8224Routes } from './modules/tables-v8224';
 import { registerMealEntryRoutes } from './modules/dining-meals';
+import { registerPickupRoutes } from './modules/dining-pickup';
 import { registerDining808Routes } from './modules/dining-808';
 import { registerDiningReceiptRoutes } from './modules/dining-receipt';
 import { registerEmenuRoutes } from './modules/emenu/routes';
@@ -170,6 +171,7 @@ import { registerSpaceRoutes } from './modules/spaces';
 import { registerFloorplanRoutes } from './modules/floorplans';
 import { registerFloorMapRoutes } from './modules/floormap';
 import { registerUsageRoutes } from './modules/usages';
+import { registerLeisureRoutes } from './modules/leisure';
 import { registerBookingRoutes } from './modules/bookings';
 import { registerCountCardRoutes } from './modules/count-cards';
 import { registerMemberCardRoutes } from './modules/member-cards';
@@ -526,6 +528,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerTablesV8224Routes(app, deps);
   // 8.2.8：餐厅入口刷手牌登记进餐（含餐抵扣、裸票时段价）
   registerMealEntryRoutes(app, deps);
+  // 8.2.19：水吧取餐叫号（叫号屏、客人扫码看进度）
+  registerPickupRoutes(app, deps);
   registerDining808Routes(app, deps);
   // 8.1.7 点菜单（小票可视化）
   registerDiningReceiptRoutes(app, deps);
@@ -538,6 +542,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerFloorMapRoutes(app, deps);
   // 派对房等「开单即占用」的使用单（v0.7.19）
   registerUsageRoutes(app, deps);
+  registerLeisureRoutes(app, deps);
   registerBookingRoutes(app, deps);
   registerCountCardRoutes(app, deps);
   registerMemberCardRoutes(app, deps);

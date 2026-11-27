@@ -8,12 +8,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Check, Clock3, Flame, RotateCcw, Soup } from 'lucide-react';
 import { RECEIPT_STATE_LABELS, slotLabel, type DiningReceipt, type DiningReceiptLine, type ReceiptLineState } from '@shared/dining';
 import { partsText } from '@shared/dishes';
+import { pickupLabel } from '@shared/dining-meals';
 import { formatYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
 import { useLivePoll } from '../../lib/livePoll';
 import { useSession } from '../../lib/session';
 import { cn, formatDateTime, formatTime } from '../../lib/utils';
 import { LoadFailed } from '../../components/LoadFailed';
+import { QrCode } from '../../components/QrCode';
 import { Dialog } from '../../components/Overlay';
 import { Skeleton } from '../../components/ui';
 
@@ -149,6 +151,17 @@ function ReceiptPaper({ r, onlyWaiting, onToggle, refreshing }: { r: DiningRecei
                   {o.deliverRoom && o.orderNote && ' · '}
                   {o.orderNote && `整单：${o.orderNote}`}
                 </p>
+              )}
+              {o.pickup && (
+                // 水吧取餐号（8.2.19）：客人扫码看制作进度（不用登录）
+                <div className="mt-2 flex items-center gap-3 rounded-lg border border-line bg-paper-2/60 p-2" data-testid={`dining-receipt-pickup-${o.seq}`}>
+                  <QrCode text={`${window.location.origin}/q/${o.pickup.token}`} className="size-20 shrink-0" />
+                  <div>
+                    <p className="text-[12px] text-ink-3">取餐号</p>
+                    <p className="num text-[24px] leading-none font-bold">{pickupLabel(o.pickup.no)}</p>
+                    <p className="mt-1 text-[12px] text-ink-3">扫码看制作进度，做好了来取</p>
+                  </div>
+                </div>
               )}
               <ul className="mt-1.5 space-y-2">
                 {o.shown.map((l) => (
