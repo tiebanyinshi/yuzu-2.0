@@ -19,6 +19,8 @@ import { writeAudit } from '../../lib/audit';
 import type { Deps, OpContext } from '../../lib/context';
 import { badRequest, conflict, notFound, unprocessable } from '../../lib/errors';
 import { parse } from '../../lib/validate';
+import { derivedKey } from '../../lib/derived-key';
+import type { AutoDiscountRule } from '@shared/dining-meals';
 import { consumeLineDiscountGrant } from '../../auth/grants';
 import { assertOpen, businessDate, hashRequest, loadFrontdeskRules, lockVisits, runIdempotent, saveKey } from './common';
 import { getVisit } from './visits';
@@ -175,4 +177,20 @@ export async function revokeLineDiscount(deps: Deps, lineId: number, raw: unknow
     return visit.id;
   });
   return getVisit(deps.sql, visitId, deps.config.timezone);
+}
+
+/**
+ * 系统按规则打的自动折扣（8.2.8：含餐、自助；8.2.9：首杯赠）：在挂账的同一个事务里、写完这一行明细以后调用，这一行折成 0。
+ * 档 auto、没有授权人，经办人记下这一笔的人；编号由这一笔的操作编号与明细算出（原样重提时不会走到这里）
+ */
+export async function insertAutoDiscount(
+  tx: Tx,
+  a: { lineId: number; billId: number; amount: number; rule: AutoDiscountRule; reason: string; staffId: number; opKey: string; date: string; at: Date },
+): Promise<void> {
+  if (a.amount <= 0) return;
+  await tx`
+    INSERT INTO bill_line_discounts (line_id, bill_id, list_amount, final_amount, rate, reason, tier, floor_pct, staff_id, approved_by, grant_id,
+                                     client_key, business_date, created_at, rule)
+    VALUES (${a.lineId}, ${a.billId}, ${a.amount}, 0, 0, ${a.reason}, 'auto', 0, ${a.staffId}, NULL, NULL,
+            ${derivedKey(`auto-discount:${a.opKey}:${a.lineId}`)}, ${a.date}, ${a.at}, ${a.rule})`;
 }
