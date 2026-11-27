@@ -12,6 +12,22 @@
 
 const hero = document.querySelector('.hero-pool');
 const poolCanvas = document.querySelector('[data-pool]');
+// 初始化到一半失败时要拆掉的东西（Codex 审查：别让半截的 3D 画布盖住 2D 的退路）
+const partial = { canvas: null, renderer: null };
+function teardown() {
+  try {
+    if (partial.renderer) {
+      partial.renderer.dispose();
+      partial.renderer.forceContextLoss();
+    }
+  } catch (e) {
+    /* 已经坏了，拆不干净也不要紧 */
+  }
+  if (partial.canvas) partial.canvas.remove();
+  partial.canvas = null;
+  partial.renderer = null;
+  if (poolCanvas) poolCanvas.hidden = false;
+}
 
 function fallback() {
   if (hero) delete hero.dataset.hero3d;
@@ -36,6 +52,7 @@ if (!hero || !poolCanvas || !supportsWebGL2()) {
         mount(THREE);
       } catch (e) {
         console.warn('柚子池 3D 没起来，换回 2D：', e);
+        teardown();
         fallback();
       }
     })
@@ -251,12 +268,20 @@ function mount(THREE) {
   canvas.className = 'pool-canvas pool-canvas-3d';
   canvas.setAttribute('aria-hidden', 'true');
   poolCanvas.after(canvas);
+  partial.canvas = canvas;
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance', stencil: false, depth: true });
   // 色调映射交给后期的 ToneMappingEffect（ACES），渲染器这里不再映射一次
   renderer.toneMapping = THREE.NoToneMapping;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setClearColor(0x2f5a6a, 1);
+  partial.renderer = renderer;
+  // 着色器编不过时 three.js 只在控制台打日志、不抛错（Codex 审查）：自己记下来，第一帧画完再判断
+  let shaderFailed = false;
+  renderer.debug.checkShaderErrors = true;
+  renderer.debug.onShaderError = () => {
+    shaderFailed = true;
+  };
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 60);
@@ -613,6 +638,9 @@ function mount(THREE) {
   // 编不过的着色器在第一帧就会报：没画出东西就换回 2D
   const gl = renderer.getContext();
   if (gl.isContextLost()) throw new Error('context lost');
+  if (shaderFailed) throw new Error('shader compile failed');
+  // 第一帧画好了：之后再出的着色器错误不至于让整块退回 2D，照 three.js 原来的样子打日志
+  renderer.debug.onShaderError = null;
 
   hero.dataset.hero3d = 'on';
   poolCanvas.hidden = true;
@@ -633,8 +661,7 @@ function mount(THREE) {
   canvas.addEventListener('webglcontextlost', (ev) => {
     ev.preventDefault();
     running = false;
-    canvas.remove();
-    poolCanvas.hidden = false;
+    teardown();
     fallback();
   });
 
