@@ -81,10 +81,13 @@ describe('8.1.14 → 8.1.15：迁移 189（菜品管理）', () => {
     // 老的价目、明细一行不动
     expect(await sql`SELECT id, name, category, price, active, station_id, dining_outlet, dining_group, updated_at FROM service_items ORDER BY id`).toEqual(itemsBefore);
     expect(await sql`SELECT item_id, tier, price FROM service_item_prices ORDER BY item_id, tier`).toEqual(pricesBefore);
-    // 8.1.17 的迁移 196 给明细加了 addon_of（加料挂在哪一行主菜上，老的为空）、8.1.39 的迁移 311 加了 charge_kind（结账时自动记的，老的为空）：其余各列一样
-    const [{ addonOf, chargeKind, ...lineAfter }] = (await sql`SELECT * FROM bill_lines WHERE id = ${line!.id}`) as unknown as [Record<string, unknown>];
+    // 8.1.17 的迁移 196 给明细加了 addon_of（加料挂在哪一行主菜上，老的为空）、8.1.39 的迁移 311 加了 charge_kind（结账时自动记的，老的为空）、
+    // 8.2.2 的迁移 540 加了 clock_extension（老的为否）、tech_star（老的为空）：其余各列一样
+    const [{ addonOf, chargeKind, clockExtension, techStar, ...lineAfter }] = (await sql`SELECT * FROM bill_lines WHERE id = ${line!.id}`) as unknown as [Record<string, unknown>];
     expect(addonOf).toBeNull();
     expect(chargeKind).toBeNull();
+    expect(clockExtension).toBe(false);
+    expect(techStar).toBeNull();
     expect([lineAfter]).toEqual(lineBefore);
     expect((await sql<{ dishImageId: number | null }[]>`SELECT dish_image_id FROM service_items`).every((r) => r.dishImageId === null)).toBe(true);
     // 出品单：多一项套餐内容，老的是空的；口味备注、状态照旧
