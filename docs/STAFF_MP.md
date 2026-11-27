@@ -6,6 +6,8 @@
 >
 > 没定的规则按默认做法 SP01 起（`PENDING_DECISIONS.md`「员工小程序」一节，待确认）。迁移号 `610`–`619`（`ROADMAP.md` 第 7 节已登记）。
 
+> **店主 2026-11-27（续）**：「后面客户端和员工端小程序都用 sys.yuzusystem.xyz。刚加的 api 子域名撤掉，staff 的柚子饭堂别动」——员工小程序的域名改为 `sys.yuzusystem.xyz`（SP17），上面立项时说的 `api.`、`staff.` 两个小程序子域名不再用。
+
 ## 0. 一句话
 
 员工在微信里打开 **汤崎 WCP**：第一次用柚子的员工账号登录，之后点开就进（没信号也先把上次的样子与饭卡码亮出来）。首页「今天」上面一张卡说清此刻的状态（该上班了、在班中、饭点、巡场这一轮还差几处），下面一排位置固定的三个按钮「打卡 · 饭卡码 · 扫一扫」，再下面是要我动手的待办；「学习」是汤崎学堂与知识库；「工作台」把考勤、申请审批、吃饭、巡场、工资条、通讯录按要办的事排好；「我的」是自己的资料与设置。
@@ -156,11 +158,12 @@
 
 ```
 员工小程序（汤崎 WCP，微信）
-   │ HTTPS  staff.yuzusystem.xyz/api/staffmp/*      （request、downloadFile 合法域名）
+   │ HTTPS  sys.yuzusystem.xyz/api/staffmp/*        （request、downloadFile 合法域名；SP17）
    ▼
-放 Caddy 的那台服务器（与 sys.yuzusystem.xyz 同一台；docs/DEPLOY_WEBSITE.md）
+放 Caddy 的那台服务器（sys.yuzusystem.xyz；docs/DEPLOY_WEBSITE.md）
    ├─ /api/staffmp/*  → yuzu 员工小程序端口 STAFFMP_PORT（新）
-   └─ 其余           → yuzu 员工端口 CANTEEN_PORT（柚子饭堂网页，过渡期照旧）
+   └─ 其余           → 照旧（系统统一登录的应用端口；顾客小程序在这个域名上的路径归顾客小程序线）
+staff.yuzusystem.xyz 不动：照旧是柚子饭堂网页与接口（员工端口 CANTEEN_PORT）
    ▼
 yuzu · 员工小程序端口：单开的 Fastify 实例，只挂员工小程序的接口（白名单）
    ▼
@@ -221,8 +224,8 @@ yuzu 数据库（员工账号、WCP、员工培训 / 汤崎学堂、饭堂、巡
 | 线                      | 开发                                                    | 管什么                                                                                                                                                                                                                                                        | 目录与文件                                                                                                                                                                                                                       | 域名、端口                                                              | 测试与合并                                                    |
 | ----------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------- |
 | 主线                    | Claude 主线开发会话（另有学堂等专项会话）               | 全部业务规则：会员、钱包、券、结账、前台；**WCP（打卡、排班、审批、通知、公告、工资条、通讯录）、员工培训与汤崎学堂、柚子饭堂、巡场的规则与接口**                                                                                                           | 两条小程序线目录以外的全部                                                                                                                                                                                                       | `sys.yuzusystem.xyz` → 应用端口；`staff.yuzusystem.xyz` 其余 → 员工端口 | Codex 总协调验收；开发会话自己合并                            |
-| 顾客小程序线（小程序线） | Gemini（店主 2026-11-15 起）                            | 顾客用的小程序：会员码、余额、券、充值、点餐、预约……；网关；`/api/mp`；后台「小程序」                                                                                                                                                                         | `miniprogram/`、`src/gateway/`、`src/server/modules/mp/`、`src/client/features/mp/`、`src/shared/mp.ts`（`GEMINI.md`）                                                                                                            | `api.yuzusystem.xyz` → 网关 → 小程序端口 `MP_PORT`                      | Codex「小程序助手」；店主合并                                 |
-| **员工小程序线（新）**  | Claude 员工小程序开发会话（本会话起）                   | 员工用的小程序（汤崎 WCP）：页面与交互、登录与微信绑定、员工小程序端口、接口白名单、饭堂与巡场的账号对上；后台「WCP 设置 → 员工小程序」                                                                                                                       | `staff-miniprogram/`、`src/server/modules/staffmp/`、`src/client/features/staffmp/`、`src/shared/staffmp.ts`、`compose.staffmp.yaml`、`docs/STAFF_MP*.md`、`docs/HANDOFF_STAFFMP*.md`、`tests/staffmp-*.test.ts`、迁移 `NNN_staffmp_<用途>.sql` | `staff.yuzusystem.xyz/api/staffmp/*` → 员工小程序端口 `STAFFMP_PORT`    | 页面与真机：Codex「小程序助手」（有微信开发者工具）；合并见下 |
+| 顾客小程序线（小程序线） | Gemini（店主 2026-11-15 起）                            | 顾客用的小程序：会员码、余额、券、充值、点餐、预约……；网关；`/api/mp`；后台「小程序」                                                                                                                                                                         | `miniprogram/`、`src/gateway/`、`src/server/modules/mp/`、`src/client/features/mp/`、`src/shared/mp.ts`（`GEMINI.md`）                                                                                                            | `sys.yuzusystem.xyz` 上顾客小程序的路径 → 网关（SP17；`api.` 已撤掉，具体路径归顾客小程序线定） → 小程序端口 `MP_PORT`                      | Codex「小程序助手」；店主合并                                 |
+| **员工小程序线（新）**  | Claude 员工小程序开发会话（本会话起）                   | 员工用的小程序（汤崎 WCP）：页面与交互、登录与微信绑定、员工小程序端口、接口白名单、饭堂与巡场的账号对上；后台「WCP 设置 → 员工小程序」                                                                                                                       | `staff-miniprogram/`、`src/server/modules/staffmp/`、`src/client/features/staffmp/`、`src/shared/staffmp.ts`、`compose.staffmp.yaml`、`docs/STAFF_MP*.md`、`docs/HANDOFF_STAFFMP*.md`、`tests/staffmp-*.test.ts`、迁移 `NNN_staffmp_<用途>.sql` | `sys.yuzusystem.xyz/api/staffmp/*` → 员工小程序端口 `STAFFMP_PORT`    | 页面与真机：Codex「小程序助手」（有微信开发者工具）；合并见下 |
 
 - **员工小程序线只挂接、不改别人的规则**：打卡怎么算、审批怎么走、学分怎么给、饭卡码怎么验，都是主线的；员工小程序线把主线的接口挂到自己的端口上、做界面。小程序要主线加能力（例如学堂的员工端接口、审批的「发起申请」表单说明），在主线开着的 PR 上留言。
 - **登记处只加挂接的几行**：`src/server/index.ts`（开端口）、`src/server/config.ts`（环境变量）、`src/server/app.ts`（后台接口）、`src/server/lib/audit.ts`（审计动作）、`src/shared/admin.ts`（后台分区）、`src/client/features/admin/AdminPage.tsx` 与 `AdminShell.tsx`（后台页面路由与图标）、`src/server/modules/<领域>/index.ts`（WCP、员工食堂、安保巡场领域入口的导出，挂接用）、`docs/LOCKING.md`（「员工小程序」一节）、`tests/helpers.ts`、`.env.example`、`docs/ROADMAP.md`、`docs/PENDING_DECISIONS.md`、`docs/README.md`、`knip.json`、CI 工作流里员工小程序的 job。CI 的「线范围」检查按这一份核对（`STAFF_REGISTRY`）。
@@ -281,11 +284,11 @@ yuzu 数据库（员工账号、WCP、员工培训 / 汤崎学堂、饭堂、巡
 ## 10. 上线（店主办手续，Codex 部署）
 
 1. **类目与接口权限**：小程序的服务类目要有「工具 > 办公」（`wx.getLocation` 只对部分类目开放），再到「开发管理 → 接口设置」开通「获取当前的地理位置」，否则提审会被拦。
-2. **服务器域名**：「开发管理 → 开发设置 → 服务器域名」request、downloadFile 合法域名都填 `https://staff.yuzusystem.xyz`；拿到 AppID、AppSecret（AppSecret 只放正式服 `.env` 的 `STAFFMP_APP_SECRET`，不进 Git、不进聊天）。
+2. **服务器域名**：「开发管理 → 开发设置 → 服务器域名」request、downloadFile 合法域名都填 `https://sys.yuzusystem.xyz`（SP17：顾客、员工两个小程序都用这个域名，各自在自己的小程序后台填）；拿到 AppID、AppSecret（AppSecret 只放正式服 `.env` 的 `STAFFMP_APP_SECRET`，不进 Git、不进聊天）。
 3. **隐私保护指引**：位置（打卡核对位置）、摄像头（扫码、负责人连续扫码、外勤拍照）、相册（外勤照片）；`app.json` 的 `requiredPrivateInfos` 只声明 `getLocation`；第一次登录「同意并登录」一并同意。
 4. **审核账号（SP14）**：有账号体系的小程序提审要给测试账号，按角色才出现的功能也要让审核看得到。正式库不许写演示数据，所以请店主定一个「审核专用」账号：单独的考勤组、不进报表、通讯录只看本部门；巡场、负责人扫码这类附录屏说明。
-5. **扫普通链接打开小程序**：已经贴好的巡场码是网址，小程序后台「开发管理 → 开发设置 → 扫普通链接二维码打开小程序」配上以后，用微信扫一扫也能直接进巡场打卡；带 `#` 的地址能不能匹配，上线前真机试（试不通就在后台给巡场点换一批新码）。
-6. **正式服**：`.env` 设 `STAFFMP_PORT`、`STAFFMP_APPID`、`STAFFMP_APP_SECRET`，叠加 `compose.staffmp.yaml`；Caddy 的 `staff.yuzusystem.xyz` 加一段 `handle /api/staffmp/* { reverse_proxy <yuzu>:<STAFFMP_PORT> }`，其余照旧转员工端口（柚子饭堂网页过渡期照常用）。
+5. **扫普通链接打开小程序**：已经贴好的巡场码是网址（柚子饭堂的 `staff.yuzusystem.xyz/…#patrol=…`），小程序后台「开发管理 → 开发设置 → 扫普通链接二维码打开小程序」配上以后，用微信扫一扫也能直接进巡场打卡；配这个要在 `staff.yuzusystem.xyz` 根目录放微信给的一个校验文件（只加这一个文件，柚子饭堂不受影响，放不放由店主定；不放的话在小程序里点「扫一扫」照样能巡场）；带 `#` 的地址能不能匹配，上线前真机试（试不通就在后台给巡场点换一批新码）。
+6. **正式服**：`.env` 设 `STAFFMP_PORT`、`STAFFMP_APPID`、`STAFFMP_APP_SECRET`，叠加 `compose.staffmp.yaml`；Caddy 的 `sys.yuzusystem.xyz` 加一段 `handle /api/staffmp/* { reverse_proxy <yuzu>:<STAFFMP_PORT> }`（写在原来转应用端口的那一段前面），其余照旧；`staff.yuzusystem.xyz` 不动（柚子饭堂网页照常用）。
 7. **体验版先连测试服的演示库**（测试服另开一个员工小程序端口与域名，或用 Tailscale 内的地址加「不校验合法域名」），店主与几位员工真机走一遍再发正式版；吃饭与巡场做完以前只给试点员工用。
 8. `sitemap.json` 全部不让微信搜索收录（员工用的页面不出现在搜索里）；小程序的名字最好让人一看就知道是员工用的、和顾客小程序分得开（SP01）。
 

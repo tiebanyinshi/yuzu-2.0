@@ -1,5 +1,5 @@
 // 员工小程序端口（员工小程序线，docs/STAFF_MP.md 第 5.2 节）：单开的 Fastify 实例，只挂员工小程序的接口。
-//   · 外面的地址都在 /api/staffmp/ 下（放 Caddy 的服务器只把 staff.yuzusystem.xyz/api/staffmp/* 转到这里）；
+//   · 外面的地址都在 /api/staffmp/ 下（放 Caddy 的服务器只把 sys.yuzusystem.xyz/api/staffmp/* 转到这里）；
 //   · 自己的接口：登录、微信绑定、我是谁（routes.ts）；
 //   · WCP 与员工培训的员工端接口原样挂上（/api/staffmp/oa/… 进的就是 /api/oa/… 那个处理函数），只放行白名单（allowlist.ts）；
 //   · 认证只认 Authorization: Bearer <令牌>，令牌是员工小程序发的员工会话（不认浏览器 Cookie，所以没有跨站请求伪造）；
