@@ -347,6 +347,8 @@ export type AuditAction =
   | 'design_asset_edit'
   | 'material_images'
   | 'material_images_imported'
+  | 'request_dispatch'
+  | 'mall_terminate'
   | 'design_asset_archive'
   | 'design_slot_assign'
   // 备用金申用（8.1.42；8.1.42 以前的记录是 pool_use）：申用、提交 / 撤回报销、更新补单、作废（detail.action 写是哪一样）

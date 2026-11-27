@@ -229,4 +229,6 @@ export interface SupplyTodo {
   contractDue: number;
   /** 待核库的需求单（8.1.10，CK14；给库管） */
   stockChecks: number;
+  /** 物料发配记录里到货以后可以补发的申请行（8.2.5；给库管） */
+  dispatchReady: number;
 }
