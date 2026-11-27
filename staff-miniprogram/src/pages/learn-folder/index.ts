@@ -6,6 +6,15 @@ import { largeTextOn } from '../../utils/prefs';
 import type { FileRow } from '../../utils/training';
 import { fileRow, loadFiles } from '../../utils/training';
 
+/** 文件夹名是编码过带过来的；坏了的原样显示，不让页面出错 */
+function decodeSafe(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 Page({
   data: {
     large: false,
@@ -18,7 +27,7 @@ Page({
   },
 
   onLoad(q: Record<string, string | undefined>) {
-    this.setData({ large: largeTextOn(), id: Number(q.id) || 0, name: q.name ? decodeURIComponent(q.name) : '资料' });
+    this.setData({ large: largeTextOn(), id: Number(q.id) || 0, name: q.name ? decodeSafe(q.name) : '资料' });
   },
 
   async onShow() {
