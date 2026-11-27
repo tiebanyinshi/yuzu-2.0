@@ -1,4 +1,4 @@
-// 物料发配记录（8.2.5，《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》用例 B，docs/MALL_V825.md）：
+// 物料发配记录（8.2.6，《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》用例 B，docs/MALL_V826.md）：
 // 部门申请 100 条毛巾、总仓只有 60 → 核库先发 60（部分发配，留在未完成）→ 剩下 40 转采购 → 到货合格 40 → 「补发物料」40 → 已完成、通知申请人。
 // 另核对：不能超过待发配量与总仓结存、操作编号原样重提只发一次、时间与页签筛选、先申请先给、领料单作废以后不算。
 
@@ -191,5 +191,37 @@ describe('分批发配：毛巾 100 条，先发 60，到货 40 再补发', () =
     const voided = await api(ctx.app, ctx.owner, 'POST', `/api/inventory/docs/${docId}/void`, { reason: '发错了' });
     expect(voided.status, JSON.stringify(voided.body)).toBe(200);
     expect(await rowOf(a.lines[0]!.id, 'tab=open')).toMatchObject({ issuedMilli: 0, pendingMilli: q(5) });
+  });
+});
+
+describe('收货的待判与待补分开（8.2.6，Q10）', () => {
+  it('送达 = 合格 + 待判 + 拒收：待判不算拒收、不入库；合格加待判不能多于送达', async () => {
+    const po = (
+      await ok<{ po: { id: number; lines: { id: number }[] } }>(
+        api(ctx.app, buyer, 'POST', '/api/purchase-orders', { clientKey: randomUUID(), supplierId, orderDate: today, lines: [{ materialId: towel, purchaseQtyMilli: q(10), priceCents: 1_000 }] }),
+        201,
+      )
+    ).po;
+    await ok(api(ctx.app, ctx.owner, 'POST', `/api/purchase-orders/${po.id}/approve`, {}));
+    const body = (line: Record<string, unknown>) => ({
+      clientKey: randomUUID(),
+      docType: 'receipt',
+      docDate: today,
+      supplierId,
+      purchaseOrderId: po.id,
+      lines: [{ materialId: towel, poLineId: po.lines[0]!.id, deliveredMilli: q(10), ...line }],
+    });
+    const over = await api(ctx.app, keeper, 'POST', '/api/inventory/docs', body({ acceptedMilli: q(8), holdMilli: q(3) }));
+    expect(over.status).toBe(400);
+    expect(over.body.error.message).toContain('合格实收加待判');
+    const rc = await ok<{ doc: { id: number; lines: { qtyMilli: number; rejectedMilli: number; holdMilli: number; redeliverMilli: number }[] } }>(
+      api(ctx.app, keeper, 'POST', '/api/inventory/docs', body({ acceptedMilli: q(6), holdMilli: q(3), rejectReason: '破损', redeliverMilli: q(1) })),
+      201,
+    );
+    expect(rc.doc.lines[0]).toMatchObject({ qtyMilli: q(6), holdMilli: q(3), rejectedMilli: q(1), redeliverMilli: q(1) });
+    // 全部待判：没有拒收，不用写拒收原因
+    const allHold = await api(ctx.app, keeper, 'POST', '/api/inventory/docs', body({ deliveredMilli: q(2), acceptedMilli: 0, holdMilli: q(2) }));
+    expect(allHold.status, JSON.stringify(allHold.body)).toBe(201);
+    expect(allHold.body.doc.lines[0]).toMatchObject({ rejectedMilli: 0, holdMilli: q(2) });
   });
 });

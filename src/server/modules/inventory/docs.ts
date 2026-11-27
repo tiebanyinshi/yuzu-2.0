@@ -83,6 +83,8 @@ const ReceiptLine = z.object({
   rejectReason: z.string().trim().max(100).default(''),
   /** 拒收里供应商要补发的（待补，8.1.51）：不超过拒收数；其余是退回不补 */
   redeliverMilli: qty('待补数量').default(0),
+  /** 待判 / 待检、暂不入库的（8.2.6，需求变更文档 v0.2 Q10：与供应商待补分开）：送达 = 合格实收 + 待判 + 拒收 */
+  holdMilli: qty('待判数量').default(0),
   /** 每采购单位价格（分）；关联采购单时以采购单价格为准 */
   priceCents: z.number().int().nonnegative().max(100_000_000).nullable().default(null),
   /** 批次与效期（8.0.7 3.3）：管效期的物料到期日必填（填了生产日期、物料有保质期的可以不填，按生产日期 + 保质期算），批号选填 */
@@ -323,7 +325,7 @@ export async function getDoc(db: Db, docId: number, timeZone?: string): Promise<
   const lines = await db<InvDoc['lines']>`
     SELECT l.id, l.line_no, l.material_id, m.code AS material_code, m.name AS material_name, m.specification, m.decimals,
            l.qty_milli, l.inventory_unit, l.purchase_unit, l.factor_milli, l.entered_qty_milli, l.entered_unit,
-           l.delivered_milli, l.rejected_milli, l.reject_reason, l.redeliver_milli, l.price_cents, l.amount_cents, l.po_line_id,
+           l.delivered_milli, l.rejected_milli, l.reject_reason, l.redeliver_milli, l.hold_milli, l.price_cents, l.amount_cents, l.po_line_id,
            l.book_milli, l.counted_milli, l.diff_reason, l.diff_note, l.source_line_id, l.note, m.counter_use, m.weighed,
            l.batch_no, l.produced_on::text AS produced_on, l.expires_on::text AS expires_on, m.expiry_tracked,
            CASE WHEN ${isDept} THEN coalesce(ws.stock_milli, 0) ELSE m.stock_milli END AS stock_milli,
@@ -503,6 +505,7 @@ interface PreparedLine {
   rejectedMilli: number | null;
   rejectReason: string;
   redeliverMilli: number;
+  holdMilli: number;
   priceCents: number | null;
   amountCents: number | null;
   poLineId: number | null;
@@ -623,6 +626,7 @@ function baseLine(m: MaterialInfo): Omit<PreparedLine, 'qtyMilli' | 'note'> {
     rejectedMilli: null,
     rejectReason: '',
     redeliverMilli: 0,
+    holdMilli: 0,
     priceCents: null,
     amountCents: null,
     poLineId: null,
@@ -959,7 +963,9 @@ async function prepare(
         checkDecimals(m, l.deliveredMilli, '送达数量');
         checkDecimals(m, l.acceptedMilli, '合格实收数量');
         if (l.acceptedMilli > l.deliveredMilli) throw badRequest(`「${m.name}」合格实收不能多于送达数量`);
-        const rejected = l.deliveredMilli - l.acceptedMilli;
+        checkDecimals(m, l.holdMilli, '待判数量');
+        if (l.acceptedMilli + l.holdMilli > l.deliveredMilli) throw badRequest(`「${m.name}」合格实收加待判不能多于送达数量`);
+        const rejected = l.deliveredMilli - l.acceptedMilli - l.holdMilli;
         if (rejected > 0 && !l.rejectReason) throw badRequest(`「${m.name}」有拒收，请填写拒收原因`);
         checkDecimals(m, l.redeliverMilli, '待补数量');
         if (l.redeliverMilli > rejected) throw badRequest(`「${m.name}」待补不能多于拒收数量`);
@@ -998,6 +1004,7 @@ async function prepare(
           rejectedMilli: rejected,
           rejectReason: rejected > 0 ? l.rejectReason : '',
           redeliverMilli: l.redeliverMilli,
+          holdMilli: l.holdMilli,
           priceCents: price,
           amountCents,
           poLineId: body.purchaseOrderId ? l.poLineId : null,
@@ -1041,11 +1048,11 @@ async function insertLines(tx: Tx, docId: number, lines: PreparedLine[]) {
   for (const [i, l] of lines.entries()) {
     await tx`
       INSERT INTO inv_doc_lines (doc_id, line_no, material_id, qty_milli, inventory_unit, purchase_unit, factor_milli,
-                                 entered_qty_milli, entered_unit, delivered_milli, rejected_milli, reject_reason, redeliver_milli, price_cents,
+                                 entered_qty_milli, entered_unit, delivered_milli, rejected_milli, reject_reason, redeliver_milli, hold_milli, price_cents,
                                  amount_cents, po_line_id, book_milli, counted_milli, book_move_id, source_line_id, note, diff_reason, diff_note,
                                  batch_no, produced_on, expires_on)
       VALUES (${docId}, ${i + 1}, ${l.materialId}, ${l.qtyMilli}, ${l.inventoryUnit}, ${l.purchaseUnit}, ${l.factorMilli},
-              ${l.enteredQtyMilli}, ${l.enteredUnit}, ${l.deliveredMilli}, ${l.rejectedMilli}, ${l.rejectReason}, ${l.redeliverMilli}, ${l.priceCents},
+              ${l.enteredQtyMilli}, ${l.enteredUnit}, ${l.deliveredMilli}, ${l.rejectedMilli}, ${l.rejectReason}, ${l.redeliverMilli}, ${l.holdMilli ?? 0}, ${l.priceCents},
               ${l.amountCents}, ${l.poLineId}, ${l.bookMilli}, ${l.countedMilli}, ${l.bookMoveId}, ${l.sourceLineId}, ${l.note},
               ${l.diffReason ?? null}, ${l.diffNote ?? ''}, ${l.batchNo ?? null}, ${l.producedOn ?? null}, ${l.expiresOn ?? null})`;
   }

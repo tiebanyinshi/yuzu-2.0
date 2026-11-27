@@ -519,7 +519,7 @@ export const ERP_OP_TYPES = [
   // 8.1.51 商城试点（Codex 审查）：供应链 BP 记成交方案（按采购权限查回、作废）、提单人原单补资料重提（只能查回、作废自己的）
   'mall_quote',
   'mall_resubmit',
-  // 8.2.5：补发物料、终止申购（docs/MALL_V825.md）
+  // 8.2.6：补发物料、终止申购（docs/MALL_V826.md）
   'request_dispatch',
   'mall_terminate',
   // 接单 / 放回、选定 / 撤下方案（部门确认、BP 代记微信确认、BP 撤下）：只能查回、作废自己的

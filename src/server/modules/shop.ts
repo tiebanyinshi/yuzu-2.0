@@ -56,7 +56,8 @@ import { supplierLicenses } from './inventory/admission';
 import { docDateSchema } from './inventory/common';
 import { loadPurchaseRules } from './inventory/purchase-rules';
 import { createMallRequest, deptPettyToday, exportMallCsv, mallRequest, pagedMall } from './mall';
-import { addQuote, claimMallRequest, CustomSpecInput, customDetails, resubmitMallRequest, selectQuote, withdrawQuote } from './mall-pilot';
+import { versionOf } from './mall-fix';
+import { addQuote, assertCustomSpec, claimMallRequest, CustomSpecInput, customDetails, decideTermination, resubmitMallRequest, selectQuote, terminateMallRequest, withdrawQuote } from './mall-pilot';
 import { pettyBalances, pettyOccupied } from './petty-uses';
 import { registerShopImageImportRoutes } from './shop-image-import';
 import { allowedStores } from './stores';
@@ -360,9 +361,10 @@ async function submit(deps: Deps, raw: unknown, actor: Actor, ip?: string) {
   if (input.kind === 'custom') {
     const l = input.line;
     if (l.link && !/^https?:\/\/\S+$/i.test(l.link)) throw unprocessable('LINK_INVALID', '参考链接要以 http:// 或 https:// 开头');
-    const spec = l.customKind === 'custom' ? (l.customSpec ?? { size: '', craft: '', scene: '', sample: false, budgetCents: null }) : null;
+    const spec = l.customKind === 'custom' ? (l.customSpec ?? CustomSpecInput.parse({})) : null;
     if (l.customKind === 'standard' && !l.details) throw unprocessable('DETAILS_REQUIRED', '请填写规格型号');
-    if (spec && !spec.size && !spec.craft && !l.details) throw unprocessable('DETAILS_REQUIRED', '定制请至少写清尺寸规格、材质工艺或设计要求中的一项');
+    // 定制的必填（8.2.6 Q1）：尺寸带单位、材质、图纸文件或链接
+    if (spec) assertCustomSpec(spec, l.imageIds);
     return createMallRequest(
       deps,
       {
@@ -1244,6 +1246,22 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
     const rid = parse(idParam, req.params).id;
     await resubmitMallRequest(deps, rid, req.body, req.actor, req.ip);
     return mallRequest(deps, req.actor, rid);
+  });
+  // 8.2.6：终止申购（提单人申请、负责人或 BP 确认）；版本快照
+  app.post(`${P}/requests/:id/terminate`, { preHandler: shopper }, async (req) => {
+    const rid = parse(idParam, req.params).id;
+    const result = await terminateMallRequest(deps, rid, req.body, req.actor, req.ip);
+    return { result, request: await mallRequest(deps, req.actor, rid) };
+  });
+  app.post(`${P}/requests/:id/terminate/decide`, { preHandler: shopper }, async (req) => {
+    const rid = parse(idParam, req.params).id;
+    await decideTermination(deps, rid, req.body, req.actor, req.ip);
+    return mallRequest(deps, req.actor, rid);
+  });
+  app.get(`${P}/requests/:id/versions/:no`, { preHandler: shopper }, async (req) => {
+    const { id: rid, no } = parse(z.object({ id: z.coerce.number().int().positive(), no: z.coerce.number().int().positive() }), req.params);
+    await mallRequest(deps, req.actor, rid); // 看得到这张单才给版本
+    return versionOf(sql, rid, no);
   });
   app.post(`${P}/requests/:id/claim`, { preHandler: guardAny('purchase.manage', 'request.review') }, async (req) => {
     const rid = parse(idParam, req.params).id;

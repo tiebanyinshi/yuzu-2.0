@@ -40,10 +40,12 @@ const customLine = (over: Record<string, unknown> = {}) => ({
   details: '画面见附件',
   reasonText: '店庆活动',
   customKind: 'custom',
-  customSpec: { size: '80×200cm', craft: 'PP 合成纸、铝合金架', scene: '大堂入口', sample: true, budgetCents: 80000 },
+  customSpec: { size: '80×200cm', craft: 'PP 合成纸、铝合金架', scene: '大堂入口', sample: true, budgetCents: 80000, material: 'PP 合成纸', drawingUrl: 'https://example.com/d.pdf' },
   ...over,
 });
 const submit = (cookie: string, line: Record<string, unknown>, over: Record<string, unknown> = {}) => api(ctx.app, cookie, 'POST', '/api/erp/shop/requests', { ...header(over), kind: 'custom', line });
+/** 退回商城单要逐项标必补（8.2.6）：标第一行的尺寸 */
+const mustFix = (r: { lines: { id: number }[] }) => [{ lineId: r.lines[0]!.id, field: 'spec.size', requirement: '写清尺寸单位' }];
 const detail = async (cookie: string, id: number) => (await api(ctx.app, cookie, 'GET', `/api/erp/shop/requests/${id}`)).body;
 
 beforeAll(async () => {
@@ -98,13 +100,19 @@ describe('退回后在原单补资料', () => {
       note: '',
       remark: '补了尺寸与工艺',
       lines: [
-        { id: r.lines[0]!.id, qtyMilli: q(100), customKind: 'custom', customSpec: { size: '90cm', craft: '涤纶热转印', scene: '员工', sample: false, budgetCents: null }, details: 'logo 见附件' },
+        {
+          id: r.lines[0]!.id,
+          qtyMilli: q(100),
+          customKind: 'custom',
+          customSpec: { size: '90cm', craft: '涤纶热转印', scene: '员工', sample: false, budgetCents: null, material: '涤纶', drawingUrl: 'https://example.com/d.pdf' },
+          details: 'logo 见附件',
+        },
       ],
       ...over,
     });
     // 还没退回：不能补
     expect((await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body())).body.error.code).toBe('INVALID_STATE');
-    const ret = await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请补尺寸与工艺' });
+    const ret = await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请补尺寸与工艺', fixItems: mustFix(r) });
     expect(ret.status, JSON.stringify(ret.body)).toBe(200);
     const returned = await detail(brand, r.id);
     expect(returned.status).toBe('returned');
@@ -119,7 +127,7 @@ describe('退回后在原单补资料', () => {
     expect(ok.body.lines[0]).toMatchObject({ qtyMilli: q(100), customSpec: { size: '90cm' } });
     expect(ok.body.lines[0].details).toContain('涤纶热转印');
     const actions = (ok.body.approvals as { action: string; reason: string }[]).map((a) => `${a.action}:${a.reason}`);
-    expect(actions).toContain('return:请补尺寸与工艺');
+    expect(actions.some((a) => a.startsWith('return:请补尺寸与工艺'))).toBe(true);
     expect(actions).toContain('revise:补资料：补了尺寸与工艺');
     // 回复丢了、同一个编号原样重提（Codex 审查）：认得是同一笔，不再写；查回找得到；换了内容拒绝
     const replay = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, sent);
@@ -132,11 +140,19 @@ describe('退回后在原单补资料', () => {
     expect((await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, body({ expectedUpdatedAt: returned.updatedAt }))).body.error.code).toBe('INVALID_STATE');
     // 确认作废了的编号晚到：不提交
     const r2 = (await submit(brand, customLine({ name: '名片' }))).body.request as { id: number; lines: { id: number }[] };
-    expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r2.id}/return`, { reason: '请补' })).status).toBe(200);
+    expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r2.id}/return`, { reason: '请补', fixItems: mustFix(r2) })).status).toBe(200);
     const back2 = await detail(brand, r2.id);
     const late = {
       ...body({ expectedUpdatedAt: back2.updatedAt }),
-      lines: [{ id: r2.lines[0]!.id, qtyMilli: q(2), customKind: 'custom', customSpec: { size: '90×54mm', craft: '铜版纸', scene: '前台', sample: false, budgetCents: null }, details: '' }],
+      lines: [
+        {
+          id: r2.lines[0]!.id,
+          qtyMilli: q(2),
+          customKind: 'custom',
+          customSpec: { size: '90×54mm', craft: '铜版纸', scene: '前台', sample: false, budgetCents: null, material: '铜版纸', drawingUrl: 'https://example.com/d.pdf' },
+          details: '',
+        },
+      ],
     };
     expect((await api(ctx.app, brand, 'POST', `/api/erp/ops/${late.clientKey}/abandon`, { type: 'mall_resubmit', summary: '作废补资料' })).status).toBe(200);
     expect((await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r2.id}/resubmit`, late)).body.error.code).toBe('OP_ABANDONED');
@@ -146,8 +162,17 @@ describe('退回后在原单补资料', () => {
 
 describe('接单、成交方案、转采购单、收货待补', () => {
   it('BP 接单记方案；部门看不到价格，确认方案；BP 代记微信确认要写一句；转采购单带上方案；收货待补不超过拒收', async () => {
-    const r = (await submit(brand, customLine({ name: '定制纸杯', qtyMilli: q(1000), unit: '个', customSpec: { size: '9 盎司', craft: '单层淋膜', scene: '前台', sample: true, budgetCents: 50000 } })))
-      .body.request as { id: number; lines: { id: number }[] };
+    const r = (
+      await submit(
+        brand,
+        customLine({
+          name: '定制纸杯',
+          qtyMilli: q(1000),
+          unit: '个',
+          customSpec: { size: '9 盎司', craft: '单层淋膜', scene: '前台', sample: true, budgetCents: 50000, material: '纸', drawingUrl: 'https://example.com/d.pdf' },
+        }),
+      )
+    ).body.request as { id: number; lines: { id: number }[] };
     const lineId = r.lines[0]!.id;
     // 部门申购不能接单
     expect((await api(ctx.app, brand, 'POST', `/api/erp/shop/requests/${r.id}/claim`, { clientKey: randomUUID() })).status).toBe(403);
@@ -249,7 +274,10 @@ describe('Codex 审查后的边界', () => {
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64').toString('base64');
 
   it('定制说明合起来超过 1000 字：拒绝，不截断', async () => {
-    const long = customLine({ details: '要'.repeat(800), customSpec: { size: '尺'.repeat(120), craft: '工'.repeat(200), scene: '场'.repeat(200), sample: true, budgetCents: null } });
+    const long = customLine({
+      details: '要'.repeat(800),
+      customSpec: { size: '尺'.repeat(120), craft: '工'.repeat(200), scene: '场'.repeat(200), sample: true, budgetCents: null, material: '纸', drawingUrl: 'https://example.com/d.pdf' },
+    });
     expect((await submit(brand, long)).body.error.code).toBe('DETAILS_TOO_LONG');
   });
 
@@ -284,7 +312,7 @@ describe('Codex 审查后的边界', () => {
     // 部门确认了方案；之后采购退回 → 原单补资料（方案挂在行上，原地改行，不撞外键；选定的退回待确认）
     const qt = ((await detail(brand, r.id)).quotes as { id: number }[])[0]!;
     expect((await api(ctx.app, brand, 'POST', `/api/erp/shop/quotes/${qt.id}/select`, { clientKey: randomUUID(), mode: 'dept' })).status).toBe(200);
-    expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请写尺码' })).status).toBe(200);
+    expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请写尺码', fixItems: mustFix(r) })).status).toBe(200);
     const back = await detail(brand, r.id);
     const ok = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, {
       clientKey: randomUUID(),
@@ -295,13 +323,21 @@ describe('Codex 审查后的边界', () => {
       deliveryAddress: '总店前台',
       priority: 'normal',
       remark: '补了尺码',
-      lines: [{ id: lineId, qtyMilli: q(20), customKind: 'custom', customSpec: { size: 'S 5 / M 10 / L 5', craft: '涤棉', scene: '前台', sample: false, budgetCents: null }, details: '' }],
+      lines: [
+        {
+          id: lineId,
+          qtyMilli: q(20),
+          customKind: 'custom',
+          customSpec: { size: 'S 5 / M 10 / L 5', craft: '涤棉', scene: '前台', sample: false, budgetCents: null, material: '涤棉', drawingUrl: 'https://example.com/d.pdf' },
+          details: '',
+        },
+      ],
     });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(ok.body.lines[0]).toMatchObject({ id: lineId, qtyMilli: q(20) });
     expect(ok.body.quotes[0]).toMatchObject({ id: qt.id, status: 'proposed' });
     // 再退回、补资料时改了单位（Codex 审查）：按原单位报的方案全部撤下，不拿 ¥/件 的价当 ¥/箱 用
-    expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '按箱买' })).status).toBe(200);
+    expect((await api(ctx.app, boss, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '按箱买', fixItems: mustFix(r) })).status).toBe(200);
     const back3 = await detail(brand, r.id);
     const boxed = await api(ctx.app, brand, 'PUT', `/api/erp/shop/requests/${r.id}/resubmit`, {
       clientKey: randomUUID(),
@@ -312,7 +348,16 @@ describe('Codex 审查后的边界', () => {
       deliveryAddress: '总店前台',
       priority: 'normal',
       remark: '改成按箱',
-      lines: [{ id: lineId, qtyMilli: q(1), unit: '箱', customKind: 'custom', customSpec: { size: '一箱 20 件', craft: '涤棉', scene: '前台', sample: false, budgetCents: null }, details: '' }],
+      lines: [
+        {
+          id: lineId,
+          qtyMilli: q(1),
+          unit: '箱',
+          customKind: 'custom',
+          customSpec: { size: '一箱 20 件', craft: '涤棉', scene: '前台', sample: false, budgetCents: null, material: '涤棉', drawingUrl: 'https://example.com/d.pdf' },
+          details: '',
+        },
+      ],
     });
     expect(boxed.status, JSON.stringify(boxed.body)).toBe(200);
     expect(boxed.body.quotes).toHaveLength(0);

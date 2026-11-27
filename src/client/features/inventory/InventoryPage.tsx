@@ -19,7 +19,7 @@ const TABS = [
   { key: 'stock', label: '库存', icon: Boxes },
   { key: 'docs', label: '单据', icon: FileStack },
   { key: 'summary', label: '收发汇总', icon: BarChart3 },
-  // 物料发配记录（8.2.5，docs/MALL_V825.md）：部门申请的物料分批给、到货后补发
+  // 物料发配记录（8.2.6，docs/MALL_V826.md）：部门申请的物料分批给、到货后补发
   { key: 'dispatch', label: '物料发配记录', icon: PackageOpen },
   // 呆滞与周转、临期批次（8.0.7）
   { key: 'aging', label: '呆滞与临期', icon: Hourglass },

@@ -1,4 +1,4 @@
--- 回滚 570_mall_dispatch.sql（8.2.5 采购商城 v0.2）。先停服务、先备份；只在回到这一版以前的版本时执行。
+-- 回滚 580_mall_dispatch.sql（8.2.6 采购商城 v0.2）。先停服务、先备份；只在回到这一版以前的版本时执行。
 -- 会丢掉：发配记录（领料单本身还在库存单据里）、退回的必补项、版本快照、终止申请记录、收货的待判数量。
 BEGIN;
 ALTER TABLE idempotency_keys DISABLE TRIGGER idempotency_keys_append_only;
@@ -28,5 +28,5 @@ DROP TABLE request_terminations;
 DROP TABLE purchase_request_versions;
 DROP TABLE request_fix_items;
 DROP TABLE request_line_issues;
-DELETE FROM schema_migrations WHERE version = '570_mall_dispatch.sql';
+DELETE FROM schema_migrations WHERE version = '580_mall_dispatch.sql';
 COMMIT;

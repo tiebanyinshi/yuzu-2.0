@@ -181,7 +181,7 @@ const WRITE: Record<ErpOpType, Permission[]> = {
   mall_quote: ['purchase.manage', 'request.review'],
   mall_resubmit: [],
   mall_quote_act: [],
-  // 8.2.5：补发物料与核库同一组权限；终止申购只能查回、作废自己的（SELF_OPS）
+  // 8.2.6：补发物料与核库同一组权限；终止申购只能查回、作废自己的（SELF_OPS）
   request_dispatch: ['inventory.operate', 'request.stock'],
   mall_terminate: [],
 };
@@ -289,7 +289,7 @@ const READ: Record<ErpOpType, Permission[]> = {
   mall_quote: ['purchase.manage', 'request.review'],
   mall_resubmit: [],
   mall_quote_act: [],
-  // 8.2.5：补发物料与核库同一组权限；终止申购只能查回、作废自己的（SELF_OPS）
+  // 8.2.6：补发物料与核库同一组权限；终止申购只能查回、作废自己的（SELF_OPS）
   request_dispatch: ['inventory.operate', 'request.stock'],
   mall_terminate: [],
 };

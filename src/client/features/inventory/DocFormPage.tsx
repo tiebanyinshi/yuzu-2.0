@@ -51,6 +51,8 @@ interface LineDraft {
   rejectReason: string;
   /** 拒收里供应商要补发的（待补，8.1.51；库存单位，空 = 0） */
   redeliver: string;
+  /** 待判 / 待检、暂不入库的（8.2.6；库存单位，空 = 0）：送达 = 合格实收 + 待判 + 拒收 */
+  hold?: string;
   /** 批次与效期（8.0.7 3.3）：管效期的物料收货时填 */
   batchNo?: string;
   producedOn?: string;
@@ -86,6 +88,9 @@ interface FormState {
   lines: LineDraft[];
 }
 
+/** 拒收原因快捷选项（8.2.6，需求变更文档 v0.2 第 8 章）：点一下填进去，仍可手改 */
+const RECEIPT_REJECT_REASONS = ['质量不合格', '规格不符', '破损', '数量短缺'] as const;
+
 const blankLine = (materialId: number, over: Partial<LineDraft> = {}): LineDraft => ({
   key: uuid(),
   materialId,
@@ -95,6 +100,7 @@ const blankLine = (materialId: number, over: Partial<LineDraft> = {}): LineDraft
   acceptedTouched: false,
   rejectReason: '',
   redeliver: '',
+  hold: '',
   price: '',
   sourceLineId: null,
   poLineId: null,
@@ -290,6 +296,7 @@ function formFromDoc(doc: InvDoc, materials: Map<number, Material>): FormState {
         acceptedTouched: true,
         rejectReason: l.rejectReason,
         redeliver: l.redeliverMilli ? formatQty(Number(l.redeliverMilli)).replace(/,/g, '') : '',
+        hold: l.holdMilli ? formatQty(Number(l.holdMilli)).replace(/,/g, '') : '',
         batchNo: l.batchNo ?? '',
         producedOn: l.producedOn ?? '',
         expiresOn: l.expiresOn ?? '',
@@ -596,6 +603,8 @@ function DocForm({
     let after: number | null = null;
     let amount: number | null = null;
     let rejected: number | null = null;
+    /** 送达减合格实收：待判 + 拒收（8.2.6） */
+    let gap: number | null = null;
     let maxReturn: number | null = null;
     let book: number | null = null;
     let diff: number | null = null;
@@ -665,8 +674,11 @@ function DocForm({
           }
         }
         if (delivered.milli !== null && accepted.milli !== null) {
-          rejected = delivered.milli - accepted.milli;
-          if (rejected < 0) errorText = '合格实收不能多于送达';
+          gap = delivered.milli - accepted.milli;
+          const hold = l.hold?.trim() ? parseQty(l.hold) : 0;
+          rejected = gap - (hold ?? 0);
+          if (gap < 0) errorText = '合格实收不能多于送达';
+          else if (hold === null || rejected < 0) errorText = errorText ?? '待判不能多于送达减合格实收';
           else if (rejected > 0 && !l.rejectReason.trim()) errorText = errorText ?? '请填写拒收原因';
           else if (l.redeliver.trim() && (parseQty(l.redeliver) === null || parseQty(l.redeliver)! > rejected)) errorText = errorText ?? '待补不能多于拒收数量';
           // 管效期的物料（8.0.7 3.3）：到期日必填，填了生产日期、有保质期的可以不填
@@ -689,6 +701,7 @@ function DocForm({
       after,
       amount,
       rejected,
+      gap,
       maxReturn,
       book,
       diff,
@@ -833,6 +846,7 @@ function DocForm({
             acceptedMilli: r.accepted!.milli,
             rejectReason: r.rejected && r.rejected > 0 ? r.line.rejectReason.trim() : '',
             redeliverMilli: r.rejected && r.rejected > 0 && r.line.redeliver.trim() ? (parseQty(r.line.redeliver) ?? 0) : 0,
+            holdMilli: r.gap && r.gap > 0 && r.line.hold?.trim() ? (parseQty(r.line.hold) ?? 0) : 0,
             priceCents: r.price,
             batchNo: r.line.batchNo?.trim() || null,
             producedOn: r.line.producedOn || null,
@@ -1322,6 +1336,7 @@ interface Row {
   after?: number | null;
   amount?: number | null;
   rejected?: number | null;
+  gap?: number | null;
   maxReturn?: number | null;
   book?: number | null;
   diff?: number | null;
@@ -1621,29 +1636,47 @@ function ReceiptCells({
       </div>
       <div className="min-w-0">
         {caption('拒收')}
-        {row.rejected ? (
+        {row.gap ? (
           <>
-            <Qty milli={row.rejected} unit={m.inventoryUnit} className="block text-right text-[14px] font-bold text-clay @5xl:pt-1" />
+            {/* 待判 / 待检（8.2.6，Q10）：还没判定合格与否、暂不入库的，与拒收、待补分开记 */}
             <Input
-              value={line.rejectReason}
-              disabled={locked}
-              onChange={(e) => onPatch({ rejectReason: e.target.value })}
-              placeholder="拒收原因"
-              aria-label="拒收原因"
-              maxLength={100}
-              invalid={!line.rejectReason.trim()}
-              className="mt-1 h-9 text-[13px]"
-            />
-            <Input
-              value={line.redeliver}
+              value={line.hold ?? ''}
               disabled={locked}
               inputMode="decimal"
-              onChange={(e) => onPatch({ redeliver: e.target.value })}
-              placeholder={`其中待补（${m.inventoryUnit}，选填）`}
-              aria-label="其中供应商待补的数量"
-              className="mt-1 h-9 text-[13px]"
-              data-testid="receipt-redeliver"
+              onChange={(e) => onPatch({ hold: e.target.value })}
+              placeholder={`其中待判 / 待检（${m.inventoryUnit}，选填）`}
+              aria-label="其中待判、待检的数量"
+              className="mb-1 h-9 text-[13px]"
+              data-testid="receipt-hold"
             />
+            {row.rejected ? (
+              <>
+                <Qty milli={row.rejected} unit={m.inventoryUnit} className="block text-right text-[14px] font-bold text-clay @5xl:pt-1" />
+                <ReasonChips reasons={RECEIPT_REJECT_REASONS} value={line.rejectReason} onPick={(r) => onPatch({ rejectReason: r })} disabled={locked} testId="receipt-reject-chips" />
+                <Input
+                  value={line.rejectReason}
+                  disabled={locked}
+                  onChange={(e) => onPatch({ rejectReason: e.target.value })}
+                  placeholder="拒收原因"
+                  aria-label="拒收原因"
+                  maxLength={100}
+                  invalid={!line.rejectReason.trim()}
+                  className="mt-1 h-9 text-[13px]"
+                />
+                <Input
+                  value={line.redeliver}
+                  disabled={locked}
+                  inputMode="decimal"
+                  onChange={(e) => onPatch({ redeliver: e.target.value })}
+                  placeholder={`其中待补（${m.inventoryUnit}，选填）`}
+                  aria-label="其中供应商待补的数量"
+                  className="mt-1 h-9 text-[13px]"
+                  data-testid="receipt-redeliver"
+                />
+              </>
+            ) : (
+              <span className="block text-ink-4 @5xl:text-right">都待判，无拒收</span>
+            )}
           </>
         ) : (
           <span className="block text-ink-4 @5xl:pt-2.5 @5xl:text-right">无</span>

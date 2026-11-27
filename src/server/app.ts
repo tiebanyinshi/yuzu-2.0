@@ -500,7 +500,7 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerDesignRoutes(app, deps);
   // 8.1.10 核库转领用：库管核库、部门答复替代
   registerRequestStockRoutes(app, deps);
-  // 物料发配记录（8.2.5，docs/MALL_V825.md）：分批发配、补发物料
+  // 物料发配记录（8.2.6，docs/MALL_V826.md）：分批发配、补发物料
   registerRequestDispatchRoutes(app, deps);
   registerRequestImportRoutes(app, deps);
   registerRequestDraftRoutes(app, deps);

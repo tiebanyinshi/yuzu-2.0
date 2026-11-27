@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import { formatYuan } from '@shared/money';
 import { formatQty, parseQty } from '@shared/quantity';
-import { MALL_DISPLAY_LABELS, MALL_GROUP_LABELS, MALL_REQUEST_GROUPS, type MallDisplayStatus, type MallRequest, type MallRequestBrief, type MallRequestGroup } from '@shared/mall';
+import { MALL_GROUP_LABELS, MALL_REQUEST_GROUPS, type MallDisplayStatus, type MallRequest, type MallRequestBrief, type MallRequestGroup } from '@shared/mall';
 import { MALL_CUSTOM_KIND_LABELS, PAYMENT_INTENT_LABELS, PRIORITY_LABELS, REQUEST_PRIORITIES, type MallPaymentIntent, type RequestPriority } from '@shared/requests';
 import {
   buildCompareOffers,
@@ -62,7 +62,9 @@ import { ErpPage } from '../erp/ErpHome';
 import { PriorityDot } from '../requests/parts';
 import { ShopCartView } from './ShopCartView';
 import { ProductGallery, ProductImage } from './ProductImage';
-import { CustomItemFields, customItemBody, customItemProblem, CustomSpecView, emptyCustomItem, lineDetailsText, ResubmitPanel, SourcingPanel, type CustomItemState } from './ShopPilot';
+import { MallFixSection } from './ShopFix';
+import { useCustomDraft } from './ShopDraft';
+import { CustomItemFields, customItemBody, customItemProblem, CustomSpecView, lineDetailsText, ResubmitPanel, SourcingPanel } from './ShopPilot';
 import { ImageThumbs } from '../../components/Images';
 import { SkuAdmin } from './SkuAdmin';
 
@@ -1072,15 +1074,15 @@ function CustomForm({ c }: { c: ShopCatalog }) {
   const navigate = useNavigate();
   const [f, setF] = useState<HeaderForm>(() => emptyHeader(c));
   // 8.1.51：先选非定制还是定制，两种要填的不一样（ShopPilot.tsx）
-  const [item, setItem] = useState<CustomItemState>(emptyCustomItem);
+  const [item, setItem, clearDraft] = useCustomDraft(session.staff.id); // 8.2.6：草稿存本机，提交成功清掉
   const [uploading, setUploading] = useState(false);
-  const { send, busy, blocked } = useSubmit((r) => navigate(`${BASE}/mine/${r.id}`));
+  const { send, busy, blocked } = useSubmit((r) => (clearDraft(), navigate(`${BASE}/mine/${r.id}`)));
   const problem = customItemProblem(item);
   const missing = !!problem || blocked || uploading || headerMissing(f);
   return (
     <div className="space-y-4" data-testid="shop-custom">
       <Card className="p-4">
-        <p className="mb-3 text-[14px] font-bold">① 要采购什么</p>
+        <p className="mb-3 text-[14px] font-bold">① 要采购什么（填写内容自动存成本机草稿，提交后清掉）</p>
         <CustomItemFields s={item} set={setItem} categories={c.categories.map((x) => x.name)} onUploading={setUploading} />
       </Card>
       <Card className="p-4">
@@ -1376,16 +1378,14 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
       </Link>
 
       {/* FR-08：退回 / 不采购 / 撤回原因置顶展示 */}
-      {r.reason && ended && !r.can.resubmit && (
-        <Notice tone={r.displayStatus === 'returned' ? 'warning' : 'info'} title={`${MALL_DISPLAY_LABELS[r.displayStatus]}：${r.reason}`} data-testid="shop-request-reason" />
-      )}
+      {r.reason && ended && !r.can.resubmit && <Notice tone={r.displayStatus === 'returned' ? 'warning' : 'info'} title={`${r.displayLabel}：${r.reason}`} data-testid="shop-request-reason" />}
       {/* 退回的（8.1.51）：在原单上补资料、重新提交 */}
       {r.can.resubmit && <ResubmitPanel r={r} categories={c.categories.map((x) => x.name)} onDone={replace} />}
 
       <Card className="space-y-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[17px] font-bold">{r.docNo}</span>
-          <Badge tone={DISPLAY_TONE[r.displayStatus] ?? 'neutral'}>{MALL_DISPLAY_LABELS[r.displayStatus]}</Badge>
+          <Badge tone={DISPLAY_TONE[r.displayStatus] ?? 'neutral'}>{r.displayLabel}</Badge>
           <PriorityDot priority={r.priority} />
           <span className="text-[12.5px] text-ink-2">{PRIORITY_LABELS[r.priority]}</span>
           <span className="ml-auto text-[12.5px] text-ink-3">进度更新于 {formatDateTime(r.progressUpdatedAt)}</span>
@@ -1461,6 +1461,8 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
       </Card>
       {/* 接单与成交方案（8.1.51） */}
       <SourcingPanel r={r} onChange={replace} />
+      {/* 8.2.6：终止申购、退回补资料记录、提交版本 */}
+      <MallFixSection r={r} onChange={replace} />
       <div className="flex flex-wrap justify-end gap-2">
         {ended && r.lines.some((l) => l.skuCode) && (
           <Button variant="primary" onClick={reorder} data-testid="shop-reorder">
@@ -1471,7 +1473,7 @@ function RequestDetail({ id, cart, setCart, c }: { id: number; cart: Cart; setCa
           <Button variant="ghost">在 ERP 里看这张需求单</Button>
         </Link>
       </div>
-      {!ended && r.displayStatus !== 'received' && <p className="text-right text-[12.5px] text-ink-3">要撤回请在 ERP「采购需求单」里打开这张单；被退回的在这里「在原单补资料」。</p>}
+      {!ended && r.displayStatus !== 'received' && <p className="text-right text-[12.5px] text-ink-3">待审核、退回的可以在这里「终止该申购」；被退回的在这里「在原单补资料」。</p>}
     </div>
   );
 }

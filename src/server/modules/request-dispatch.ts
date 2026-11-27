@@ -1,9 +1,9 @@
-// 物料发配记录（8.2.5，《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》第 5、6 章，docs/MALL_V825.md）：
+// 物料发配记录（8.2.6，《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》第 5、6 章，docs/MALL_V826.md）：
 //   · 部门申请的一行物料可以分几次给：核库时先给库存有的（request-stock.ts 开领料单，记一条 stock），剩下的采购到货以后
 //     在库存「物料发配记录」里点「补发物料」（记一条 arrival），直到待发配量为 0；每一次都开部门领料单（与部门领料同一条路，不另造出库类型）。
 //   · 已发配量 = 这一行发配记录的合计（领料单作废的不算）；待发配量 = 申请量 − 已发配量；部分发配仍算「未完成」。
 //   · 库存可发量：总仓结存按「先申请先给」分到各行（同一物料几个部门在等时，先提交的先分）；只有合格入库的才进总仓，拒收、待补、待判的不算。
-//   · 从升级到 8.2.5 那天起提交的需求单进这张表；之前的照原来的方式手工开领料单（不然几年的旧单全在「未完成」里）。
+//   · 从升级到 8.2.6 那天起提交的需求单进这张表；之前的照原来的方式手工开领料单（不然几年的旧单全在「未完成」里）。
 // 加锁：操作编号 → 需求行一行（FOR UPDATE）→ 领料单照库存单据原来的锁（单号 → 物料 → 部门小仓）。
 
 import type { FastifyInstance } from 'fastify';
@@ -22,7 +22,7 @@ import { setTxTimeouts } from '../lib/tx';
 import { idParam, parse } from '../lib/validate';
 import { erpOpAbandoned } from './erp-ops';
 import { createRequestIssue } from './inventory';
-import { notify } from './oa/notifications';
+import { notify } from './oa';
 
 /** 一次最多给页面多少行（按提交时间倒序；超过的提示用搜索收窄） */
 const MAX_ROWS = 1000;
@@ -87,9 +87,9 @@ const LINE_SQL = (db: Db, where: Fragment) => db<RawLine[]>`
   LEFT JOIN materials mt ON mt.id = m.material_id
   ORDER BY coalesce(r.submitted_at, r.created_at) DESC, r.id DESC, l.line_no`;
 
-/** 从哪天起记：迁移 570 执行的时间（升级那一刻） */
+/** 从哪天起记：迁移 580 执行的时间（升级那一刻） */
 async function sinceOf(db: Db): Promise<string | null> {
-  const [s] = await db<{ at: string | null }[]>`SELECT applied_at AS at FROM schema_migrations WHERE version = '570_mall_dispatch.sql'`;
+  const [s] = await db<{ at: string | null }[]>`SELECT applied_at AS at FROM schema_migrations WHERE version = '580_mall_dispatch.sql'`;
   return s?.at ? new Date(s.at).toISOString() : null;
 }
 

@@ -1,4 +1,4 @@
-// 物料发配记录（8.2.5，《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》第 5、6 章，docs/MALL_V825.md）：
+// 物料发配记录（8.2.6，《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》第 5、6 章，docs/MALL_V826.md）：
 // 部门申请的物料一次给不完的，先给库存里有的（核库领用），剩下的采购到货以后在这里「补发物料」，直到待发配量为 0。
 
 export const DISPATCH_TABS = ['open', 'unissued', 'done', 'ended', 'all'] as const;
@@ -81,7 +81,7 @@ export interface DispatchRow {
 export interface DispatchBoard {
   rows: DispatchRow[];
   counts: Record<DispatchTab, number>;
-  /** 从哪天起记（升级到 8.2.5 那天；之前的需求单照原来手工开领料单） */
+  /** 从哪天起记（升级到 8.2.6 那天；之前的需求单照原来手工开领料单） */
   since: string | null;
   truncated: boolean;
 }

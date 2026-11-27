@@ -44,6 +44,7 @@ import type { Actor, Deps } from '../lib/context';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { idParam, parse } from '../lib/validate';
 import { erpOpAbandoned } from './erp-ops';
+import { FixItemsInput, recordFixItems } from './mall-fix';
 import { closeDraftsOfRequest, closeDraftsOnSubmit, DraftRef } from './request-drafts';
 import { loadExpenseRules } from './expenses';
 import { docDateSchema, logApproval, sourcingHolds } from './inventory/common';
@@ -56,6 +57,8 @@ import { CENTRAL_STOCK_SQL, centralStockOf, clearStockDecisions, closeOpenStockC
 
 const id = z.number().int().positive();
 const ReasonInput = z.object({ reason: z.string().trim().min(2, '请填写原因（至少 2 个字）').max(200) });
+/** 退回（8.2.6）：商城来的需求单要逐项标「本次必补」（docs/MALL_V826.md） */
+const ReturnInput = ReasonInput.extend({ fixItems: FixItemsInput.default([]) });
 
 // ───────────────────────── 谁在看 ─────────────────────────
 
@@ -692,6 +695,7 @@ export async function updateRequest(deps: Deps, requestId: number, raw: unknown,
 
 export async function actOnRequest(deps: Deps, requestId: number, action: 'approve' | 'return' | 'reject' | 'cancel' | 'dept-confirm' | 'dept-return', raw: unknown, actor: Actor, ip?: string) {
   const reason = action === 'approve' || action === 'dept-confirm' ? '' : parse(ReasonInput, raw).reason;
+  const fixItems = action === 'return' ? parse(ReturnInput, raw).fixItems : [];
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const r = await lockRequest(tx, requestId);
@@ -747,8 +751,11 @@ export async function actOnRequest(deps: Deps, requestId: number, action: 'appro
         // 核库（8.1.10）：核库没完的不退回；已经有行领用的不能退回修改（领用的行不能再改）
         if (stockCheckOpen(r.stockCheck)) throw conflict('STOCK_CHECK_PENDING', '这张需求单还在核库，核完以后才能退回（可以先定为不采购）');
         if (await hasIssuedLines(tx, requestId)) throw conflict('STOCK_ISSUED_LOCKED', '这张需求单已经有行从库存领用，不能退回修改；剩下的可以通过或定为不采购');
+        // 商城来的（8.2.6，需求变更文档 v0.2 §4.5）：不允许只写一句整体意见，至少标一项「本次必补」
+        if (r.source === 'mall' && !fixItems.length) throw unprocessable('FIX_ITEMS_REQUIRED', '商城提的需求单退回时要逐项标「本次必补」（至少一项），部门照着补');
+        const marked = await recordFixItems(tx, requestId, fixItems, actor.id);
         await tx`UPDATE purchase_requests SET status = 'returned', reason = ${reason}, updated_at = now() WHERE id = ${requestId}`;
-        return logApproval(tx, 'purchase_request', requestId, 'return', actor.id, reason);
+        return logApproval(tx, 'purchase_request', requestId, 'return', actor.id, marked ? `${reason}（${marked}）`.slice(0, 500) : reason);
       case 'reject':
         if (!can(actor, 'request.review')) throw forbidden('当前账号不能审核需求单');
         if (r.status === 'rejected') return;

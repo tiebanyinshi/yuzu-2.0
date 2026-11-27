@@ -318,7 +318,7 @@ export async function submitStockCheck(deps: Deps, requestId: number, raw: unkno
 
       const doc = issues.length ? await createRequestIssue(tx, deps, { departmentId: r.departmentId, handler: r.requesterName, note: `需求单 ${r.docNo} 核库转领用`, lines: issues }, actor) : null;
       for (const p of plans) {
-        // 物料发配记录（8.2.5）：核库领用是这一行的第一次发配
+        // 物料发配记录（8.2.6）：核库领用是这一行的第一次发配
         if (p.decision === 'issue') {
           await recordIssue(tx, { lineId: p.lineId, requestId, departmentId: r.departmentId, docId: doc!.id, qtyMilli: p.issued, kind: 'stock', note: '核库领用', actorId: actor.id });
         }
