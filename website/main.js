@@ -1,5 +1,6 @@
 /*
  * 柚子官网的动效（docs/WEBSITE.md）：
+ *   · 首屏的柚子池是 three.js 的 3D（hero3d.js，8.2.0）；起不来时换回 2D 的 pool.js；
  *   · Lenis 平滑滚动，GSAP + ScrollTrigger 驱动滚动动画；
  *   · 首屏「柚子」两个字从水里浮上来；「店里的一天」宽屏时钉住、横着走过五个钟点；
  *   · 「纯天然 AI 制作，零人工代码添加」逐字被照亮；四扇门跟着指针微微倾斜；主按钮有一点磁性；收尾的字条一直往左走。
@@ -45,9 +46,16 @@
   }
 
   // ── 水面 ──
+  // 8.2.0 起首屏是 three.js 的 3D 柚子池（hero3d.js，模块脚本，在这之后跑）；它起不来时（不支持 WebGL2、3D 库没加载到、
+  // 着色器编不过、老浏览器不认模块脚本）调这里，换回原来的 2D 柚子池（pool.js）
   var hero = document.querySelector('.hero-pool');
   var poolCanvas = document.querySelector('[data-pool]');
-  if (poolCanvas && window.YuzuPool) {
+  var fellBack = false;
+  window.YuzuHeroFallback = function () {
+    if (fellBack) return;
+    fellBack = true;
+    if (!poolCanvas || !window.YuzuPool) return;
+    poolCanvas.hidden = false;
     var pool = window.YuzuPool.mount(poolCanvas, {
       mode: 'pool',
       onTouch: function () {
@@ -55,7 +63,23 @@
       },
     });
     if (!pool && hero) hero.dataset.touched = 'true';
-  }
+    if (pool) {
+      window.YuzuHero = pool;
+      if (window.YuzuHeroPendingSuspend && pool.suspend) pool.suspend();
+    }
+  };
+  if (!('noModule' in HTMLScriptElement.prototype)) window.YuzuHeroFallback();
+  // 首屏视频要停水面时，水面可能还没起来（3D 库还在下载）：先记下，起来以后自己停
+  var heroCtl = {
+    suspend: function () {
+      window.YuzuHeroPendingSuspend = true;
+      if (window.YuzuHero && window.YuzuHero.suspend) window.YuzuHero.suspend();
+    },
+    resume: function () {
+      window.YuzuHeroPendingSuspend = false;
+      if (window.YuzuHero && window.YuzuHero.resume) window.YuzuHero.resume();
+    },
+  };
   // ── 首屏视频（8.1.46，docs/BOARDS.md 第 5 节）：系统素材库里设了「官网 · 首屏视频」就换上，柚子池停掉；
   // 没设（404）、正式服取不到、浏览器不让自动播、减少动效、省流量时什么都不做，照原来的柚子池
   var heroVideo = document.querySelector('[data-hero-video]');
@@ -68,7 +92,7 @@
       if (hero.dataset.video === 'on') {
         delete hero.dataset.video;
         if (poolLabel) hero.setAttribute('aria-label', poolLabel);
-        if (pool && pool.resume) pool.resume();
+        heroCtl.resume();
       }
     };
     heroVideo.addEventListener('error', dropVideo);
@@ -77,7 +101,7 @@
       function () {
         hero.dataset.video = 'on';
         hero.setAttribute('aria-label', '柚子的首屏视频');
-        if (pool && pool.suspend) pool.suspend();
+        heroCtl.suspend();
       },
       { once: true },
     );

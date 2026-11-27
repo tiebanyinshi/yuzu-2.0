@@ -17,7 +17,7 @@
 
 自上而下（不是「首屏 + 三张功能卡 + 行动号召」的套路）：
 
-1. **首屏**：左边得意黑大字「柚子」从水里浮上来、之后轻轻漂；右边一池柚子汤——WebGL 着色器实时画水面焦散光纹，几颗柚子浮在水上，会躲开指针、互相碰一碰，点一下水面起涟漪（`website/pool.js`，自己写的着色器，没有抄 Shadertoy）。
+1. **首屏**：左边思源宋体大字「柚子」从水里浮上来、之后轻轻漂；右边一池柚子汤——8.2.0 起是 three.js 的实时 3D（`website/hero3d.js`，见第 6 节）：PBR 的水面折射池底的方砖与焦散光纹，几颗 PBR 柚子浮在浪上，会躲开指针、互相碰一碰，点一下水面起涟漪。3D 起不来时换回原来的 2D 柚子池（`website/pool.js`，自己写的着色器，没有抄 Shadertoy）。
 2. **店里的一天**：五个钟点（开门发牌、上钟、开饭、清台清房、交班日结）。宽屏时钉住横着走，一颗柚子当太阳从左边升起、到右边落下，后半段整段入夜、太阳变月亮；窄屏竖排。
 3. **一个账号，四扇门**：与系统里的门户页一致（CRM、ERP、WCP、Design，8.1.43 跟着 `docs/BOARDS.md` 改名），大小不一的四块，跟着指针微微倾斜。
 4. **纯天然 AI 制作，零人工代码添加**（8.1.43 重写，以前叫「钱按分记，账只往后写」）：深色一段，底下是第二池暗一点的水；标题逐字被照亮。店主 2026-11-25 嫌原来的话「非常 AI」，改成拿「整套系统都是 AI 写的」自嘲开头，下面四句话一句一行（左边小标签「这套系统是怎么来的」，右边编号 01–04、字放大、句子之间一条细线，最后一句柚子黄；店主定稿，原来讲记钱规矩的那段删了）。写法：说具体的事和数字（版本号、谁干什么），不用对仗口号、排比、「不是……而是……」。
@@ -32,8 +32,9 @@
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | 滚动动画、时间轴 | GSAP 3.13 + ScrollTrigger（greensock/GSAP，约 3.1 万星）                                                                        | 业界标准的动效库，2025 年起全部插件免费商用                                                                                              |
 | 平滑滚动         | Lenis 1.3（darkroomengineering/lenis，约 1.7 万星，MIT）                                                                        | Awwwards 一类网站常用，与 ScrollTrigger 配合                                                                                             |
-| 中文标题字       | 得意黑 Smiley Sans（atelier-anchor/smiley-sans，约 1.5 万星，OFL）                                                              | 有个性的中文斜体黑，不是系统字体那种「默认感」；只取页面用到的字，45 KB                                                                  |
-| 拉丁字与数字     | Funnel Display（Google Fonts，OFL）                                                                                             | 钟点、ERP 等用                                                                                                                           |
+| 首屏 3D（8.2.0） | three.js 0.186（mrdoob/three.js，约 11 万星，MIT）+ postprocessing 6.39（pmndrs/postprocessing，约 2.6 万星，Zlib）             | PBR 材质、环境光、后期都现成；只打首屏用到的部分，压缩后 220 KB（gzip），见第 6 节                                                       |
+| 中文标题字       | 思源宋体 Heavy（adobe-fonts/source-han-serif，OFL；8.2.0 起，以前是得意黑）                                                     | 粗宋的笔画有粗细对比，像杂志、精品店，不是「黑体 + 几何无衬线」的模板感；只取页面用到的字，132 KB                                        |
+| 拉丁字与数字     | Gloock（Google Fonts，OFL；8.2.0 起，以前是 Funnel Display）                                                                    | 高反差衬线，钟点、CRM / ERP、yuzu 用；和宋体是一路，不是 Inter、Poppins 那种到处都是的字                                                 |
 | 审美规则         | Nutlope/hallmark（约 6 万星，去 AI 味的设计规则与 50 种材质）的「Refract」材质（日光、水纹、泳池蓝，关键词就有 bathhouse、spa） | 照它的规则避开 AI 套路：不用紫蓝渐变、不用发光光斑、不在标题上方放小标签、不用等宽字装样子、不做三等分图标卡、动效都有「减少动效」的退路 |
 | 设计系统参考     | VoltAgent/awesome-design-md（约 12.9 万星）                                                                                     | 各大品牌设计系统的写法参考                                                                                                               |
 
@@ -70,7 +71,7 @@ yuzusystem.xyz, www.yuzusystem.xyz {
 
 ## 5. 改字以后
 
-得意黑只取了页面上用到的字。改了页面上的中文以后重新取一次子集（要 `fonttools` 与 `brotli`）：
+思源宋体只取了页面上用到的字（8.2.0 以前是得意黑）。改了页面上的中文以后重新取一次子集（要 `fonttools` 与 `brotli`）：
 
 ```bash
 python3 - <<'PY' > /tmp/chars.txt
@@ -79,8 +80,46 @@ s = open('website/index.html', encoding='utf-8').read()
 s = re.sub(r'<!--.*?-->', '', s, flags=re.S)
 print(''.join(sorted(set(ch for ch in s if ord(ch) > 0x2E80) | set('，。、：；！？「」《》（）·'))))
 PY
-pyftsubset SmileySans-Oblique.ttf --text-file=/tmp/chars.txt --unicodes="U+0020-007E" \
-  --flavor=woff2 --layout-features='*' --output-file=website/fonts/smiley-sans-subset.woff2
+pyftsubset SourceHanSerifCN-Heavy.otf --text-file=/tmp/chars.txt --unicodes="U+0020-007E" \
+  --flavor=woff2 --layout-features='*' --output-file=website/fonts/source-han-serif-heavy-subset.woff2
 ```
 
-`SmileySans-Oblique.ttf` 从 atelier-anchor/smiley-sans 的 v2.0.1 发布包里取。
+`SourceHanSerifCN-Heavy.otf` 从 adobe-fonts/source-han-serif 的 release 分支 `SubsetOTF/CN/` 取（`https://raw.githubusercontent.com/adobe-fonts/source-han-serif/release/SubsetOTF/CN/SourceHanSerifCN-Heavy.otf`）。
+
+## 6. 首屏 3D 柚子池（8.2.0）
+
+> 店主 2026-11-27：学一下新的高级 UI 库（three.js、postprocessing、react-three-fiber、cables.gl、Hydra、Blender），搜一些不那么 AI 低级的字体，改造官网。
+
+`website/hero3d.js`（模块脚本）在首屏右边那块池子里画一个实时 3D 场景：
+
+- **水面**：three.js 的 `MeshPhysicalMaterial` 透射材质（折射率 1.333、按厚度染成泳池蓝），顶点按四层波浪与点出来的涟漪起伏、法线跟着算；透过水看得到池底和柚子泡在水里的半截。
+- **池底**：一片小方砖，上面打着水面焦散的光纹（与 `pool.js` 的光纹同一套算法）和柚子的影子。
+- **柚子**：PBR 材质——打蜡的果皮（清漆层）、程序生成的油胞法线贴图、黄里带青的斑驳，顶上一个蒂、有的带一片叶子；浮在浪上跟着起伏、歪一歪，躲开指针，互相碰一碰，点一下水面起涟漪、把附近的柚子推开。
+- **光**：`RoomEnvironment`（程序生成的影棚环境光，相当于一张柔和的 HDRI，不用下载 `.hdr`）+ 一盏偏暖的侧光。
+- **后期**（postprocessing）：Bloom 只让最亮的光纹和高光微微泛开、ACES 色调映射、一点点色差（只在电脑上）、胶片颗粒、四角压暗——去掉「塑料感」。
+- 手机与四核以下的机器：降分辨率、不做色差与 SMAA。「减少动效」时只画一帧。离开屏幕、切走标签页时停下；首屏视频（第 4.1 节）放起来时整个停掉。
+- **退路**：不支持 WebGL2、3D 库没加载到、着色器编不过、显卡丢了上下文、老浏览器不认模块脚本时，换回原来的 2D 柚子池（`main.js` 的 `YuzuHeroFallback`）。
+
+`website/vendor/three-bundle.js` 是 esbuild 只打了用到的部分（入口 `website/vendor-src/three-entry.js`）。重新打包（换版本时）：
+
+```bash
+mkdir -p /tmp/yz3d && cd /tmp/yz3d && npm i three@0.186.1 postprocessing@6.39.5
+cd <仓库> && NODE_PATH=/tmp/yz3d/node_modules node_modules/.bin/esbuild website/vendor-src/three-entry.js \
+  --bundle --format=esm --minify --target=es2020 --legal-comments=eof --outfile=website/vendor/three-bundle.js
+```
+
+### 那几个库怎么选的
+
+| 库                        | 用了没有 | 为什么                                                                                                                                          |
+| ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| three.js                  | 用了     | PBR 材质、透射、环境光、ACES 都自带，首屏的 3D 全靠它                                                                                           |
+| postprocessing（pmndrs）  | 用了     | Bloom、颗粒、色差、暗角合成在一两个 pass 里，比 three 自带的后期省；去塑料感主要靠它                                                            |
+| react-three-fiber + drei  | 没用     | 官网是纯静态页面、不用 React；为一块首屏引入 React 不值得。系统里（React）以后要做 3D 时再用                                                    |
+| cables.gl                 | 没用     | 节点式编辑器，做出来的是它自己的运行时与工程文件，不好放进仓库审代码；适合做 VJ 现场，不适合官网                                                |
+| Hydra                     | 没用     | 现场写代码出 2D 反馈画面，风格偏实验、偏迷幻，和汤泉「放松、干净」的调子不搭                                                                    |
+| Blender（Cycles / EEVEE） | 这次没用 | 离线渲染质感更高，适合做**首屏视频**：渲一段柚子池的循环视频，在系统「Design → 素材库」换上「官网 · 首屏视频」就行（第 4.1 节），不用改官网代码 |
+
+### 换字（8.2.0）
+
+中文标题：思源宋体 Heavy；拉丁字与数字：Gloock；正文仍用系统字体。都是 SIL OFL，可商用、可随网页分发。
+挑字的原则：不要 AI 生成网页最常见的「黑体 / Inter / Poppins + 渐变」；宋体配高反差衬线是杂志与精品店的路子，和「高级感」一致。

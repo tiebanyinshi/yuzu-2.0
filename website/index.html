@@ -15,7 +15,10 @@
     <meta property="og:image" content="https://sys.yuzusystem.xyz/api/public/website/share-image" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-    <link rel="preload" href="fonts/smiley-sans-subset.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="fonts/source-han-serif-heavy-subset.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="fonts/gloock-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- 首屏 3D 柚子池（8.2.0）：three.js + postprocessing 打成的一个模块，提前开始下载 -->
+    <link rel="modulepreload" href="vendor/three-bundle.js" />
     <link rel="stylesheet" href="styles.css" />
     <script>
       document.documentElement.classList.add('js');
@@ -35,7 +38,7 @@
     </header>
 
     <main id="main">
-      <!-- 首屏：左边是字，右边是一池柚子汤（WebGL，点一下水面起涟漪，柚子会躲开指针） -->
+      <!-- 首屏：左边是字，右边是一池柚子汤（8.2.0 起是 three.js 的实时 3D，hero3d.js；起不来时换回 2D 的 pool.js。点一下水面起涟漪，柚子会躲开指针） -->
       <section class="hero" id="top">
         <div class="hero-copy">
           <h1 class="hero-title" data-split>柚子</h1>
@@ -172,5 +175,6 @@
     <script src="vendor/ScrollTrigger.min.js" defer></script>
     <script src="pool.js" defer></script>
     <script src="main.js" defer></script>
+    <script type="module" src="hero3d.js"></script>
   </body>
 </html>
