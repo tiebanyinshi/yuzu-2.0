@@ -154,7 +154,11 @@ export const LOCKER_OPEN_REASONS = ['客人忘带手牌', '手牌失灵', '清�
  * 桥没回答、浏览器没收到门店系统的回话（超时、断网、5xx，包括写审计出错）都可能已经写了、清了，
  * 发请求以前记在本机，没有结论就留着，读卡核对出结论才去掉；不能当成没做。
  */
-export type LockerCardPending = { id: string; op: 'write'; code: string; storeId: number; at: string } | { id: string; op: 'clear'; uid: string | null; storeId: number; at: string };
+export type LockerCardPending =
+  /** 写卡：写之前读到的那张卡的芯片号 + 要写成的柜（Codex 审查 307b2f4：要认准是哪一张卡） */
+  | { id: string; op: 'write'; code: string; uid: string; storeId: number; at: string }
+  /** 清卡：清之前读到的那张卡的芯片号 */
+  | { id: string; op: 'clear'; uid: string; storeId: number; at: string };
 
 /** 读卡核对出「确实做成了」的那一条（只认做成了的证据：读回没变不能断定没做——桥可能还在做，Codex 审查 b446d09） */
 export interface LockerCardCheck {
@@ -163,9 +167,9 @@ export interface LockerCardCheck {
 }
 
 /**
- * 读到一张卡以后，哪些待核对的确定做成了：
- *   · 写卡：卡里写的就是那个柜 → 写成了；
- *   · 清卡（记着芯片号的）：读到同一张芯片号、是空白 → 清成了。
+ * 读到一张卡以后，哪些待核对的确定做成了（都要是同一张芯片号：别的卡早就写成同一个柜也不算，Codex 审查 307b2f4）：
+ *   · 写卡：读到的就是那张卡、卡里写的就是那个柜 → 写成了；
+ *   · 清卡：读到的就是那张卡、是空白 → 清成了。
  * 别的都不下结论、记录留着：卡里还是原样，可能原来那次还在桥里没做完（之后会生效），也可能放的不是刚才那张卡；
  * 核对过了（比如已经重写、重清成功，或卡找不到了）由人点「已核对」去掉。
  */
@@ -173,9 +177,10 @@ export function settleLockerCardPending(list: readonly LockerCardPending[], read
   if (!read.ok) return [];
   const out: LockerCardCheck[] = [];
   for (const p of list) {
+    if (!p.uid || read.uid !== p.uid) continue;
     if (p.op === 'write') {
-      if (read.code === p.code) out.push({ id: p.id, text: `核对：卡里是柜 ${p.code}，写成了` });
-    } else if (p.uid && read.uid === p.uid && read.code === null) {
+      if (read.code === p.code) out.push({ id: p.id, text: `核对：芯片号 ${p.uid} 的卡里是柜 ${p.code}，写成了` });
+    } else if (read.code === null) {
       out.push({ id: p.id, text: `核对：芯片号 ${p.uid} 已清成空白` });
     }
   }

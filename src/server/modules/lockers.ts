@@ -4,8 +4,8 @@
 //   POST /api/lockers/:id/open          远程开柜：要「维护手牌池」权限、写原因，记审计（开成没开成都记）；不能远程开柜回 503 LOCKER_NOT_CONFIGURED
 // 发卡器（第 6 节，店主 2026-11-27：泰格柜锁、M1 手牌）：
 //   POST /api/lockers/card/read         读发卡器上的卡，再按芯片号找绑的手牌（查看在店手牌；只读、不记审计）
-//   POST /api/lockers/:id/card/write    把发卡器上的卡写成这张手牌的柜（维护手牌池、写原因、记审计 locker_card_written）
-//   POST /api/lockers/card/clear        清卡（维护手牌池、写原因、记审计 locker_card_cleared）
+//   POST /api/lockers/:id/card/write    把发卡器上的卡写成这张手牌的柜（维护手牌池、写原因、带先读卡看到的芯片号，记审计 locker_card_written）
+//   POST /api/lockers/card/clear        清卡（维护手牌池、写原因、带先读卡看到的芯片号，记审计 locker_card_cleared）
 //   没配发卡器回 503 LOCKER_CARD_NOT_CONFIGURED；读卡时桥没回应回 502 LOCKER_CONTROLLER_DOWN。
 // 开柜、写卡、清卡都在事务外调控制器（不拿着数据库连接等 5 秒），之后单独写审计；桥没回答、读回也没对上的记 uncertain（结果待确认），
 // 页面让人读卡 / 到柜前确认，不当成没做（Codex 审查 f8b2853）。
@@ -27,8 +27,11 @@ const DoorsInput = z.object({ codes: z.array(z.string().trim().min(1).max(16)).m
 const OpenInput = z.object({ reason: z.string('请写开柜原因').trim().min(2, '请写开柜原因').max(100, '原因最多 100 个字') });
 const CardInput = z.object({
   reason: z.string('请写原因').trim().min(2, '请写原因').max(100, '原因最多 100 个字'),
-  /** 只写、只清这一张卡（读卡时看到的芯片号）：发卡器上换成了别的卡就不动 */
-  uid: z.string().transform(normalizeCardUid).pipe(z.string().regex(CARD_UID_PATTERN, '芯片号应为 4–32 位数字或字母')).nullable().default(null),
+  /**
+   * 只写、只清这一张卡（先读卡看到的芯片号）：发卡器上换成了别的卡就不动。必填：没收到回答时页面要按这张芯片号读卡核对，
+   * 不认准是哪一张卡就核对不了（Codex 审查 307b2f4）
+   */
+  uid: z.string('请先读卡（要知道写、清的是哪一张卡）').transform(normalizeCardUid).pipe(z.string().regex(CARD_UID_PATTERN, '芯片号应为 4–32 位数字或字母')),
 });
 
 export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controller: LockerController = createLockerController(deps.config.lockers)): void {
@@ -109,25 +112,44 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
       action: 'locker_card_written',
       targetType: 'hand_tag',
       targetId: id,
-      detail: { code: tag.code, uid: result.uid ?? uid, reason, driver: controller.info.driver, ok: result.ok, uncertain: result.uncertain, message: result.message },
+      // uid 记要写的那张卡；桥报上来的是另一张（发卡器上换了卡，没写）另记 bridgeUid
+      detail: {
+        code: tag.code,
+        uid,
+        bridgeUid: result.uid !== uid ? result.uid : undefined,
+        reason,
+        driver: controller.info.driver,
+        ok: result.ok,
+        uncertain: result.uncertain,
+        message: result.message,
+      },
       ip: ctx.ip,
     });
     // 这张卡的芯片号绑的是哪张手牌：没绑、绑在别的牌上的，页面提示去后台「手牌」绑（不自动改绑，GK6）
-    return { ...result, code: tag.code, boundTag: await tagByUid(result.uid ?? uid) };
+    return { ...result, code: tag.code, boundTag: await tagByUid(uid) };
   });
 
   app.post('/api/lockers/card/clear', { preHandler: guard('frontdesk.tags') }, async (req) => {
     const { reason, uid } = parse(CardInput, req.body);
     requireCard();
     const result = await controller.clearCard(uid);
-    const tag = await tagByUid(result.uid ?? uid);
+    const tag = await tagByUid(uid);
     const ctx = ctxOf(req);
     await writeAudit(sql, {
       staffId: ctx.actor.id,
       action: 'locker_card_cleared',
       targetType: 'hand_tag',
       targetId: tag?.id,
-      detail: { uid: result.uid ?? uid, code: tag?.code ?? null, reason, driver: controller.info.driver, ok: result.ok, uncertain: result.uncertain, message: result.message },
+      detail: {
+        uid,
+        bridgeUid: result.uid !== uid ? result.uid : undefined,
+        code: tag?.code ?? null,
+        reason,
+        driver: controller.info.driver,
+        ok: result.ok,
+        uncertain: result.uncertain,
+        message: result.message,
+      },
       ip: ctx.ip,
     });
     return result;

@@ -265,10 +265,12 @@ describe('远程开柜接口', () => {
     expect(blank.status).toBe(200);
     expect(blank.body).toMatchObject({ ok: true, uid: '04A1B2C3', code: null, tag: { id: t!.id, code: 'L8003' }, mismatch: false });
 
-    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/lockers/${t!.id}/card/write`, { reason: '补发手牌' })).status).toBe(403);
-    expect((await api(ctx.app, ctx.owner, 'POST', `/api/lockers/${t!.id}/card/write`, { reason: '' })).status).toBe(400);
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/lockers/${t!.id}/card/write`, { reason: '补发手牌', uid: '04A1B2C3' })).status).toBe(403);
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/lockers/${t!.id}/card/write`, { reason: '', uid: '04A1B2C3' })).status).toBe(400);
     expect((await api(ctx.app, ctx.owner, 'POST', `/api/lockers/${t!.id}/card/write`, { reason: '补发手牌', uid: '??' })).status).toBe(400);
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/999999/card/write', { reason: '补发手牌' })).status).toBe(404);
+    // 不带芯片号（没先读卡）不写：没收到回答时核对不了是哪一张卡（Codex 审查 307b2f4）
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/lockers/${t!.id}/card/write`, { reason: '补发手牌' })).status).toBe(400);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/999999/card/write', { reason: '补发手牌', uid: '04A1B2C3' })).status).toBe(404);
 
     // 写成另一张牌的柜：芯片号绑的是 L8003，读卡标出对不上
     const w = await api(ctx.app, ctx.owner, 'POST', `/api/lockers/${other!.id}/card/write`, { reason: '手牌失灵重写', uid: '04a1b2c3' });
@@ -280,7 +282,8 @@ describe('远程开柜接口', () => {
 
     // 不是要清的那张卡：不清，照样记审计（没清成）
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/card/clear', { reason: '作废', uid: 'FFFF0000' })).body).toMatchObject({ ok: false });
-    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/lockers/card/clear', { reason: '作废' })).status).toBe(403);
+    expect((await api(ctx.app, ctx.clerk, 'POST', '/api/lockers/card/clear', { reason: '作废', uid: '04A1B2C3' })).status).toBe(403);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/card/clear', { reason: '作废' })).status).toBe(400);
     const cleared = await api(ctx.app, ctx.owner, 'POST', '/api/lockers/card/clear', { reason: '退牌回收', uid: '04A1B2C3' });
     expect(cleared.body).toMatchObject({ ok: true, uid: '04A1B2C3' });
     const logs = await ctx.sql<{ targetId: string | null; detail: Record<string, unknown> }[]>`
@@ -307,8 +310,8 @@ describe('没接控制器', () => {
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/doors', { codes: ['L8002'] })).body).toEqual([]);
     // 发卡器也没有：读、写、清都回 503 LOCKER_CARD_NOT_CONFIGURED，不记审计
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/card/read', {})).body.error.code).toBe('LOCKER_CARD_NOT_CONFIGURED');
-    expect((await api(ctx.app, ctx.owner, 'POST', `/api/lockers/${t!.id}/card/write`, { reason: '补发手牌' })).status).toBe(503);
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/card/clear', { reason: '作废' })).status).toBe(503);
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/lockers/${t!.id}/card/write`, { reason: '补发手牌', uid: '04A1B2C3' })).status).toBe(503);
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/card/clear', { reason: '作废', uid: '04A1B2C3' })).status).toBe(503);
     expect(await ctx.sql`SELECT 1 FROM audit_logs WHERE action IN ('locker_card_written', 'locker_card_cleared')`).toHaveLength(0);
   });
 });
