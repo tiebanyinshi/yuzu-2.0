@@ -37,6 +37,7 @@ export async function listLedger(db: Db, f: LedgerFilter): Promise<LedgerRow[]> 
            r.paid_amount, r.payment_method,
            CASE WHEN le.entry_type = 'consume' THEN c.status END AS consumption_status,
            CASE WHEN le.entry_type = 'consume' THEN k.checkout_no END AS checkout_no,
+           CASE WHEN le.entry_type = 'consume' THEN k.id END AS checkout_id,
            CASE le.entry_type WHEN 'consume' THEN rv.doc_no WHEN 'reversal' THEN c.doc_no END AS related_doc_no,
            CASE WHEN le.entry_type = 'reversal' THEN c.business_date END AS related_business_date,
            coalesce(CASE le.entry_type

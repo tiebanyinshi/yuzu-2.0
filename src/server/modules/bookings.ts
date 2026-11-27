@@ -19,6 +19,8 @@ import { businessDateOf, businessDayStart, HHMM, ISO_DATE } from '@shared/busine
 import {
   ACTIVE_BOOKING_STATUSES,
   BOOKING_KIND_LABELS,
+  BOOKING_KIND_PERMISSIONS,
+  BOOKING_KINDS,
   DEFAULT_BOOKING_RULES,
   MAX_BOOKING_GUESTS,
   MAX_BOOKING_NOTE,
@@ -34,11 +36,13 @@ import {
 } from '@shared/bookings';
 import { normalizeTagCode, TAG_CODE_PATTERN } from '@shared/frontdesk';
 import { canServe } from '@shared/technicians';
+import { can } from '@shared/permissions';
 import type { Db, Sql, Tx } from '../db';
 import { guard, guardAny } from '../auth/guard';
 import { writeAudit, type AuditAction } from '../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../lib/context';
-import { badRequest, conflict, notFound, unprocessable } from '../lib/errors';
+import { badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
+import type { Actor } from '../lib/context';
 import { hashRequest } from '../lib/idempotency';
 import { saveRuleSetting } from '../lib/rule-settings';
 import { idParam, parse } from '../lib/validate';
@@ -179,7 +183,14 @@ export async function getBooking(db: Db, id: number): Promise<BookingDetail> {
 }
 
 /** 前台预约看板：这一天的预约，与新建时要挑的技师、项目、房间、房型 */
-export async function bookingBoard(db: Db, date: string): Promise<BookingBoard> {
+/** 这种预约这个人能不能做（8.2.3：技师预约要「技师预约」，派对房、客房要「预约」） */
+const mayBook = (actor: Actor, kind: BookingKind) => can(actor, BOOKING_KIND_PERMISSIONS[kind]);
+function assertMayBook(actor: Actor, kind: BookingKind) {
+  if (!mayBook(actor, kind)) throw forbidden(kind === 'technician' ? '预约技师要有「技师预约」权限' : '预约派对房、客房要有「预约」权限');
+}
+
+/** 前台预约看板（actor 给了时只列这个人能做的那几种；8.2.3） */
+export async function bookingBoard(db: Db, date: string, actor?: Actor): Promise<BookingBoard> {
   const rules = await loadBookingRules(db);
   const usageTypes = (await loadUsageRules(db)).businessTypes;
   const [bookings, technicians, items, spaces, roomTypes] = await Promise.all([
@@ -199,7 +210,7 @@ export async function bookingBoard(db: Db, date: string): Promise<BookingBoard> 
   return {
     date,
     rules,
-    bookings,
+    bookings: actor ? bookings.filter((b) => mayBook(actor, b.kind)) : bookings,
     technicians: technicians.map((t) => ({ ...t, id: Number(t.id) })),
     items: items.map((i) => ({ id: Number(i.id), name: i.name, minutes: i.durationMinutes ?? rules.defaultServiceMinutes, category: i.category || '其他' })),
     spaces: spaces.map((s) => ({ ...s, id: Number(s.id) })),
@@ -566,6 +577,7 @@ export async function changeOtaBookingTx(tx: Tx, deps: Deps, id: number, p: { ac
 /** 前台、电话新建（「预约」页）：直接「已预约」 */
 export async function createBooking(deps: Deps, raw: unknown, ctx: OpContext): Promise<BookingDetail> {
   const input = parse(CreateInput, raw);
+  assertMayBook(ctx.actor, input.kind);
   const { clientKey: key, ...payload } = input;
   const requestHash = hashRequest(payload);
   const run = await runIdempotent(deps, { key, opType: 'booking_create', requestHash }, async (tx) => {
@@ -640,6 +652,9 @@ const ChangeInput = z.discriminatedUnion('action', [
 /** 改一张预约（前台）：确认、改时间、取消、记爽约、到店；同一编号重提返回原结果 */
 export async function changeBooking(deps: Deps, id: number, raw: unknown, ctx: OpContext): Promise<BookingDetail> {
   const input = parse(ChangeInput, raw);
+  // 预约的种类建了就不变：先只读看一眼是哪种、核对权限（8.2.3）
+  const [kind] = await deps.sql<{ kind: BookingKind }[]>`SELECT kind FROM bookings WHERE id = ${id} AND store_id = ${currentStoreId()}`;
+  if (kind) assertMayBook(ctx.actor, kind.kind);
   const { clientKey: key, ...payload } = input;
   const requestHash = hashRequest({ id, ...payload });
   await runIdempotent(deps, { key, opType: 'booking_change', requestHash }, async (tx) => {
@@ -957,10 +972,19 @@ const DateQuery = z.object({ date: z.string().regex(ISO_DATE, '日期格式应�
 
 export function registerBookingRoutes(app: FastifyInstance, deps: Deps) {
   const { sql } = deps;
-  const op = guard('booking.manage');
-  app.get('/api/bookings', { preHandler: op }, async (req) => bookingBoard(sql, parse(DateQuery, req.query).date));
-  app.get('/api/bookings/slots', { preHandler: op }, async (req) => bookingSlots(sql, deps, req.query as BookingSlotQuery));
-  app.get('/api/bookings/:id', { preHandler: op }, async (req) => getBooking(sql, parse(idParam, req.params).id));
+  // 8.2.3：技师预约、派对房与客房预约分两项权限，有其中一项就能进；具体哪一种在里面按种类核对
+  const op = guardAny('booking.manage', 'booking.technician');
+  app.get('/api/bookings', { preHandler: op }, async (req) => bookingBoard(sql, parse(DateQuery, req.query).date, req.actor));
+  app.get('/api/bookings/slots', { preHandler: op }, async (req) => {
+    const { kind } = parse(z.object({ kind: z.enum(BOOKING_KINDS).optional() }).loose(), req.query ?? {});
+    if (kind) assertMayBook(req.actor, kind);
+    return bookingSlots(sql, deps, req.query as BookingSlotQuery);
+  });
+  app.get('/api/bookings/:id', { preHandler: op }, async (req) => {
+    const b = await getBooking(sql, parse(idParam, req.params).id);
+    assertMayBook(req.actor, b.kind);
+    return b;
+  });
   app.post('/api/bookings', { preHandler: op }, async (req) => createBooking(deps, req.body, ctxOf(req)));
   app.post('/api/bookings/:id/change', { preHandler: op }, async (req) => changeBooking(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.get('/api/admin/booking-rules', { preHandler: guardAny('settings.manage', 'booking.manage') }, async () => loadBookingRules(sql));

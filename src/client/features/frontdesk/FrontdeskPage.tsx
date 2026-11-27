@@ -3,7 +3,7 @@
 // 8.1.44（docs/V8144_CASHIER.md）：「加项目」「作废」迁到收银台，发卡台与接待发牌都不加项目、不作废。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { FilePenLine, Hash, Keyboard, Lock, Search, ShieldCheck, TriangleAlert, UserPlus, X } from 'lucide-react';
+import { FilePenLine, Hash, Keyboard, Lock, Search, ShieldAlert, ShieldCheck, TriangleAlert, UserPlus, X } from 'lucide-react';
 import {
   matchTags,
   normalizeTagCode,
@@ -31,7 +31,9 @@ import { CheckinDialog, type CheckinPrefill } from './CheckinDialog';
 import { IncidentDialog, IncidentTodoDialog } from './IncidentDialogs';
 import { MemberEntitlements } from './desk';
 import { groupTags, Stat, StatusChip, TagCard, TagChip, VipChip, ZoneChip } from './parts';
-import { useBoard, useFrontdeskChecks, useRefreshFrontdesk, useServerNow, useVisit } from './queries';
+import { stayMinutes, useBoard, useFrontdeskChecks, useGuestRules, useRefreshFrontdesk, useServerNow, useVisit } from './queries';
+import { RiskAlertsDialog } from './guest';
+import { highRiskOf } from '@shared/frontdesk-v8223';
 import { FindGuestDialog } from './ToolDialogs';
 import { JoinGroupDialog, SwapDialog } from './VisitDialogs';
 import { MoveLinesDialog } from './MoveLinesDialog';
@@ -71,6 +73,9 @@ export function FrontdeskPage() {
   const [checksOpen, setChecksOpen] = useState(false);
   /** 异常待办（8.1.15）：没处理完的上报、未结离店 */
   const [todosOpen, setTodosOpen] = useState(false);
+  /** 高风险提醒（8.2.3）：在店超过、挂账超过后台设的阈值的客人 */
+  const [risksOpen, setRisksOpen] = useState(false);
+  const guestRules = useGuestRules();
   /** 找在店客人、锁牌 / 解锁 */
   const [tool, setTool] = useState<null | { kind: 'find' } | { kind: 'lock'; code?: string }>(null);
   const backfill = useBackfill();
@@ -211,6 +216,7 @@ export function FrontdeskPage() {
   };
 
   const stats = board.data?.stats;
+  const riskCount = tags.filter((t) => t.visit && highRiskOf(stayMinutes(t.visit.checkedInAt, now), t.visit.amountCents, guestRules)).length;
   // 会员等级识别（FS6）：客人卡上写档阶能享什么；手上的券几张在手牌板的数据里
   const selectedTag = selectedId ? tags.find((t) => t.visit?.id === selectedId) : undefined;
   const panel = (
@@ -271,6 +277,15 @@ export function FrontdeskPage() {
                 {board.data && board.data.risk.openTodos > 0 && (
                   <StatusChip tone="clay" className="ml-0.5" testId="incident-todo-count">
                     {board.data.risk.openTodos} 条
+                  </StatusChip>
+                )}
+              </Button>
+              {/* 高风险提醒（8.2.3）：阈值与推给谁在后台「手牌与前台 → 客人与提醒」 */}
+              <Button size="sm" variant="ghost" icon={<ShieldAlert className="size-4" />} onClick={() => setRisksOpen(true)} data-testid="open-risk-alerts">
+                高风险
+                {riskCount > 0 && (
+                  <StatusChip tone="clay" className="ml-0.5" testId="risk-alert-count">
+                    {riskCount} 位
                   </StatusChip>
                 )}
               </Button>
@@ -541,6 +556,7 @@ export function FrontdeskPage() {
         <IncidentDialog open visit={visit.data} onClose={() => setDialog(null)} onDone={(v, message) => afterChange(v, message)} onLost={() => setDialog({ kind: 'lost' })} />
       )}
       <IncidentTodoDialog open={todosOpen} onClose={() => setTodosOpen(false)} onOpenVisit={select} />
+      <RiskAlertsDialog open={risksOpen} onClose={() => setRisksOpen(false)} onOpenVisit={select} />
       {visit.data && dialog?.kind === 'move' && (
         <MoveLinesDialog
           open

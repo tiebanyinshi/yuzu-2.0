@@ -10,6 +10,8 @@ export const SLIP_NO_PATTERN = /^[0-9A-Za-z-]{1,32}$/;
 export interface BackfillRequest {
   slipNo: string;
   at: string;
+  /** 补单（8.2.3）：出单员；补录纸质单不带 */
+  issuerId?: number;
 }
 
 export type BackfillKind = 'checkin' | 'charges' | 'checkout';
@@ -21,7 +23,15 @@ export interface BackfillMark {
   actualAt: string;
   enteredByName: string;
   enteredAt: string;
+  /** 补单（8.2.3）的出单员；补录纸质单为 null（升级前的接口没有这一项） */
+  issuerName?: string | null;
 }
 
 /** 单据、历史里的一句补录说明：补录 · 纸质单 P0012（补录人 林岚） */
-export const backfillText = (m: BackfillMark) => `补录 · 纸质单 ${m.slipNo}，${m.enteredByName}补录`;
+export const backfillText = (m: BackfillMark) => (m.issuerName ? `补单 · 出单员 ${m.issuerName}，${m.enteredByName}录入` : `补录 · 纸质单 ${m.slipNo}，${m.enteredByName}补录`);
+
+/** 补单（8.2.3）没填单号时记的单号：BD-月日-时分（backfill_entries 的单号只许字母、数字、短横线） */
+export function supplementSlipNo(at: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `BD-${p(at.getMonth() + 1)}${p(at.getDate())}-${p(at.getHours())}${p(at.getMinutes())}`;
+}

@@ -290,6 +290,8 @@ export interface BoardVisit {
   openTodos: number;
   /** 前台备注（8.1.44）：这位客人与他所在同行组上没撤下的备注带的标签（去重，如「客诉」），收银台清单上标出来 */
   remarkTags: string[];
+  /** 客人类别（8.2.3，docs/V8223_FRONTDESK.md）：普通、港客、外宾、儿童……（默认类别手牌上不标） */
+  guestCategory: string;
 }
 
 export interface FrontdeskBoard {
@@ -378,7 +380,7 @@ export interface GroupMate {
 
 export interface VisitHistoryEvent {
   at: string;
-  kind: 'checkin' | 'swap' | 'join' | 'leave' | 'post' | 'void' | 'close' | 'ticket' | 'reopen' | 'incident' | 'discount' | 'deposit';
+  kind: 'checkin' | 'swap' | 'join' | 'leave' | 'post' | 'void' | 'close' | 'ticket' | 'reopen' | 'incident' | 'discount' | 'deposit' | 'guest';
   text: string;
   operatorName: string;
 }
@@ -411,6 +413,8 @@ export interface VisitDetail {
   incidents: VisitIncident[];
   /** 前台备注（8.1.44）：这位客人的单人备注与所在同行组的同组备注（含撤下的），按时间先后 */
   remarks: import('./frontdesk-remarks').VisitRemark[];
+  /** 客人类别与偏好（8.2.3）：会员的偏好跟着会员走，散客的跟着这次来访 */
+  guest: import('./frontdesk-v8223').GuestProfile;
   /** 票种与按当前时刻计算的门票（Batch 3 之前开的牌没有票种，结账时补选） */
   ticket: {
     typeId: number;

@@ -120,6 +120,9 @@ const ACTION_LABELS: Record<string, { label: string; tone: 'neutral' | 'pine' | 
   // 8.1.44 前台备注
   visit_remark: { label: '前台备注', tone: 'neutral' },
   visit_remark_removed: { label: '撤下前台备注', tone: 'clay' },
+  visit_category: { label: '改客人类别', tone: 'lake' },
+  guest_preferences: { label: '改客人偏好', tone: 'lake' },
+  complaint_resolved: { label: '客诉标已处理', tone: 'pine' },
   // 8.1.15 块 B（docs/DINING_V8115.md）：桌台动作
   table_clear: { label: '清台', tone: 'neutral' },
   table_maintenance: { label: '桌台维修', tone: 'clay' },

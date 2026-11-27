@@ -59,6 +59,9 @@ const selfCheck = async () => (await api<FrontdeskCheck[]>(ctx.app, ctx.clerk, '
 
 beforeAll(async () => {
   ctx = await setup();
+  // 8.2.3 起技师预约单独一项权限、收银员默认没有（docs/V8223_FRONTDESK.md 第 6 条）；这份用例里的收银员照旧兼做技师预约
+  await ctx.sql`INSERT INTO settings (key, value) VALUES ('role_permissions', ${ctx.sql.json({ clerk: { add: ['booking.technician'], remove: [] } })})
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
   // 发牌前风控：这里打开（基线里关着）
   await ctx.sql`UPDATE settings SET value = ${ctx.sql.json({ enabled: true })} WHERE key = 'frontdesk_risk_rules'`;
   dutyId = await createStaff(ctx.sql, { username: 'rduty', displayName: '值班乙', role: 'duty_manager', password: PASSWORD, mustChangePassword: false });

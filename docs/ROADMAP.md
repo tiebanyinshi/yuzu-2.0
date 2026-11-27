@@ -293,6 +293,8 @@
     - `360`（`360_coupon_usage_terms.sql`，前台 B，设计见 `docs/V8144_FRONTDESK.md`）：发过券的模板门槛、适用范围也能改（数据库保护只留面额、折扣、兑换什么、有效期、档级）。回滚 `docs/rollback/360_coupon_usage_terms.down.sql`。
 - **8.2.1 批 1 收银台（`530`–`539`）**：店主 2026-11-26 两份会议纪要（「收银系统功能评审」「会所管理系统演示」）的收银条目——单项打折（按岗位四档下限、超了当场授权）、发卡台与收银台的一键快捷键（买单、打单、充卡、组合 / 拆分、备注，没开手牌先选手牌）、经办人工号与手机尾号前置和改价 / 折 / 赠标记、换牌只有丢牌锁原牌、手牌押金（收、一键退、结账抵扣，进交班与日结），设计见 `docs/V8221_CASHIER.md`。
   - `530`（`530_cashier_v821.sql`）：单项打折 `bill_line_discounts`（明细不改，只能撤下）、结账收款加「单项折扣」`line_discount`、授权用途 `line_discount`、部门营业额快照按行记单项折扣；手牌押金 `tag_deposits`（押着 → 已退）；操作编号与「确认作废」追加 `line_discount`、`tag_deposit`、`tag_deposit_refund`。回滚 `docs/rollback/530_cashier_v821.down.sql`。
+- **8.2.3（`550`–`559`，前台批）**：会议纪要《会所管理系统演示与需求讨论》（2026-11-26）前台的九条——客人类别、偏好备注全店可见、客诉台账、区域拥挤提示、高风险提示可配置、技师预约单独权限、消费记录跳转明细、同行快捷移出、全店补单（设计见 `docs/V8223_FRONTDESK.md`）。
+  - `550`（`550_frontdesk_guest.sql`）：`visits.guest_category` 与改类别记录 `visit_category_changes`、客人偏好 `guest_preferences`（会员的跟着会员、散客的跟着来访）、客诉台账的已处理 `visit_remark_resolutions`、高风险推送记录 `visit_risk_alerts`、补单的出单员 `bill_supplements`；新权限「技师预约」「补单」「客诉台账」的建议权限与岗位调整。回滚 `docs/rollback/550_frontdesk_guest.down.sql`。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
   - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。

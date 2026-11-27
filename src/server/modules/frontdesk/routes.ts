@@ -29,6 +29,7 @@ import { businessDate, FRONTDESK_OP_PERMISSIONS, FRONTDESK_OPS, loadFrontdeskRul
 import { batchCreate, deleteHandTag, generateTags, setTagService, importHandTags, listTags, lockHandTag, setTagCard, tagByCard, unlockHandTag, updateHandTag, type ImportInputData } from './tags';
 import { registerIncidentRoutes } from './incidents';
 import { registerRiskRoutes } from './risk';
+import { registerGuestRoutes } from './guest';
 import { registerRemarkRoutes } from './remarks';
 import { bindVisitMember, lookupCashierMembers, MemberLookupQuery } from './cashier-member';
 import { memberLockerGrades } from './vip';
@@ -418,4 +419,6 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
   registerIncidentRoutes(app, deps);
   // 8.1.44：前台备注（同组 / 单人，记经办人与时间）
   registerRemarkRoutes(app, deps);
+  // 8.2.3：客人类别与偏好、全店刷手牌看的那一条、客诉台账、高风险提示、补单的出单员
+  registerGuestRoutes(app, deps);
 }

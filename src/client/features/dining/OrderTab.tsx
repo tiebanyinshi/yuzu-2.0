@@ -50,6 +50,7 @@ import { MAX_DELIVER_ROOM, outletBlockedText } from '@shared/dining-v8115';
 import { windowsText } from '@shared/dining-v8139';
 import { voidBlockedText, voidOutletsOf } from '@shared/frontdesk-v8117';
 import { EmptyState } from '../../components/EmptyState';
+import { GuestNoteStrip } from '../frontdesk/guest';
 
 interface CartLine {
   key: string;
@@ -561,6 +562,8 @@ export function OrderTab() {
                       >
                         <X className="size-3.5" /> 换一位
                       </button>
+                      {/* 8.2.3：客人的类别、偏好（忌口……）与前台备注，点单时就看得到 */}
+                      <GuestNoteStrip visitId={g.visitId} className="basis-full" />
                     </div>
                   )
                 )}

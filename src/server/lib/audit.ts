@@ -422,6 +422,10 @@ export type AuditAction =
   // 8.1.44 前台备注（docs/V8144_CASHIER.md）：写一条、撤下一条
   | 'visit_remark'
   | 'visit_remark_removed'
+  // 8.2.3 前台（docs/V8223_FRONTDESK.md）：改客人类别、改客人偏好、客诉标已处理
+  | 'visit_category'
+  | 'guest_preferences'
+  | 'complaint_resolved'
   // 员工办公 v1.1 第 2 批（docs/OA_MOBILE.md）：排班发布、排班授权与撤销
   | 'oa_schedule_published'
   | 'oa_schedule_grant_created'

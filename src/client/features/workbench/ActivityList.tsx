@@ -5,6 +5,7 @@ import { cn, formatDateTime } from '../../lib/utils';
 import { Money } from '../../components/Money';
 import { Badge, Button } from '../../components/ui';
 import { InvoiceRequestButton } from '../sales-invoices/InvoiceRequest';
+import { CheckoutNoLink } from '../ledger/CheckoutNoLink';
 
 export const ENTRY_META = {
   recharge: { label: '充值', icon: CirclePlus, tone: 'bg-lake-soft text-lake' },
@@ -67,6 +68,8 @@ export function ActivityRow({
           </p>
         )}
         {reversed && row.relatedDocNo && <p className="num mt-1 text-[12.5px] text-ink-3">撤销单 {row.relatedDocNo}</p>}
+        {/* 8.2.3：前台结账的消费，点单号打开那张结账单的明细 */}
+        {row.entryType === 'consume' && row.checkoutNo && row.checkoutId && <CheckoutNoLink checkoutId={row.checkoutId} checkoutNo={row.checkoutNo} className="mt-1" />}
       </div>
       <div className="flex shrink-0 flex-col items-end gap-0.5">
         {row.entryType === 'recharge' && row.paidAmount != null && (

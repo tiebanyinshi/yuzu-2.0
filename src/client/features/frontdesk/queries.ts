@@ -4,6 +4,7 @@ import type { CheckoutDaySummary } from '@shared/types';
 import type { CheckoutDetail, CheckoutPreview, CheckoutSummary, TicketType } from '@shared/checkout';
 import type { FrontdeskBoard, FrontdeskCheck, PreviewBill, VisitDetail } from '@shared/frontdesk';
 import type { IncidentTodoList, MemberRisk } from '@shared/frontdesk-risk';
+import { DEFAULT_GUEST_RULES, type GuestRules } from '@shared/frontdesk-v8223';
 import type { MemberGradeBadge } from '@shared/membership';
 import type { FrontdeskTechnicians } from '@shared/technicians';
 import { api } from '../../lib/api';
@@ -134,3 +135,9 @@ export function stayText(checkedInAt: string, now: number): string {
 }
 
 export const stayMinutes = (checkedInAt: string, now: number) => Math.max(0, Math.floor((now - new Date(checkedInAt).getTime()) / 60_000));
+
+/** 客人规则（8.2.3：客人类别、偏好字段、区域拥挤与高风险的阈值）；全店各处共用一份缓存，取不到时按默认规则显示，不挡操作 */
+export function useGuestRules(): GuestRules {
+  const q = useQuery({ queryKey: ['frontdesk', 'guest-rules'], queryFn: () => api.get<GuestRules>('/api/frontdesk/guest-rules'), staleTime: 60_000 });
+  return q.data ?? DEFAULT_GUEST_RULES;
+}

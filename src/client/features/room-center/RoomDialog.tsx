@@ -56,6 +56,7 @@ import { uploadPhoto } from '../oa/oaImage';
 import { RoomActionStatus } from './RoomActions';
 import { revokeLeft, swapLeft, type RoomLimits } from './RoomFutianDialogs';
 import { StatusChip } from './status';
+import { GuestNoteStrip } from '../frontdesk/guest';
 
 export type RoomDialogAction =
   | { kind: 'register'; join: boolean }
@@ -398,6 +399,8 @@ export function RoomDialog({
               {g.overnight && ' · 过夜'}
               {g.note && ` · 备注：${g.note}`}
             </p>
+            {/* 8.2.3：客人的类别、偏好与前台备注（全店刷手牌都看得到） */}
+            <GuestNoteStrip visitId={g.visitId} className="mt-1.5" />
             {g.overnight && g.registrationId !== null && <OvernightPhotos room={room} guest={g} />}
             <ul className="mt-1 divide-y divide-line/70">
               {g.sessions.map((s) => (

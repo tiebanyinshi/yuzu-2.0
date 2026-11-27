@@ -153,6 +153,10 @@ export const PERMISSIONS = {
   'frontdesk.refund': { roles: ['owner', 'store_manager', 'duty_manager'] },
   /** 结账时挂账到协议单位（8.0.7 A3，V12 待确认：店主、店总、值班经理） */
   'frontdesk.onAccount': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  /** 补单（8.2.3，docs/V8223_FRONTDESK.md 第 9 条）：按实际时间、出单员给在店客人补录餐饮与项目（不打厨房单），默认值班经理及以上 */
+  'frontdesk.supplement': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  /** 客诉台账（8.2.3，第 3 条）：看「客诉」「特殊关照」备注的台账、标已处理、打印，默认值班经理及以上 */
+  'frontdesk.complaints': { roles: ['owner', 'store_manager', 'duty_manager'] },
   // ── 券与会员权益（v0.7.20，飞书 RQ-006；docs/COUPONS.md，默认值待确认）──
   /** 维护券模板、发券规则（开卡礼、升级礼、生日礼、充值赠券），生成与导出无记名纸质券、按批次作废没用的 */
   'coupon.manage': { roles: ['owner', 'store_manager'] },
@@ -329,6 +333,11 @@ export const PERMISSIONS = {
   'room.operate': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
   /** 预约（v0.7.28，待确认：前台岗位都能做）：预约技师、派对房、客房电话预订；确认、改时间、到店、取消、记爽约 */
   'booking.manage': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
+  /**
+   * 技师预约（8.2.3，店主 2026-11-26「技师预约权限不给前台」，docs/V8223_FRONTDESK.md 第 6 条）：预约技师单独一项；
+   * 「预约」（booking.manage）只管派对房、客房。前台（收银）默认没有，值班经理及以上默认有；迁移 550 给原来有「预约」的其他岗位都加上
+   */
+  'booking.technician': { roles: ['owner', 'store_manager', 'duty_manager'] },
   /** 客房：打扫、维修（房态）（S7，v0.7.4，待确认：前台岗位与后勤人员；客房服务员可以用后勤账号） */
   'room.housekeep': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk', 'backoffice'] },
   /** 实时位置（v0.7.17，待确认：前台岗位）：平面图上的在场人员、区域人数、轨迹；只显示手牌号与技师，不显示会员姓名、手机号 */
@@ -570,6 +579,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'frontdesk.backfill': '按实际时间补录纸质单',
   'frontdesk.refund': '开退款单（离店后部分退款）与作废当班的退款单',
   'frontdesk.onAccount': '结账时挂账到协议单位',
+  'frontdesk.supplement': '补单：按实际时间、出单员补录餐饮与项目',
+  'frontdesk.complaints': '客诉台账：查看、标已处理、打印',
   'coupon.manage': '维护券模板、发券规则与无记名券',
   'coupon.issue': '发券给会员',
   'coupon.void': '作废会员没用过的券',
@@ -647,7 +658,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'emenu.view': '打开平板点餐（电子菜单；下单要服务员输点单密码）',
   'emenu.manage': '维护电子菜单（分类、版面、菜品图文、设置）',
   'room.operate': '客房入住、续住、换房、退房、押金、夜审',
-  'booking.manage': '预约：新建、确认、改时间、到店、取消、记爽约',
+  'booking.manage': '预约派对房、客房：新建、确认、改时间、到店、取消、记爽约',
+  'booking.technician': '预约技师：新建、确认、改时间、到店、取消、记爽约',
   'room.housekeep': '客房打扫、维修（房态）',
   'location.view': '看实时位置（平面图上的在场人员与轨迹）',
   'location.report': '上报位置（模拟刷卡、设备桥）',
@@ -719,6 +731,8 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'frontdesk.refund',
       'frontdesk.onAccount',
       'frontdesk.backfill',
+      'frontdesk.supplement',
+      'frontdesk.complaints',
       'technician.dispatch',
       'technician.announce',
       'technician.board',
@@ -729,6 +743,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'room.operate',
       'room.housekeep',
       'booking.manage',
+      'booking.technician',
       'platform.redeem',
       'platform.void',
       'platform.settle',

@@ -38,6 +38,7 @@ import { SubPane } from '../../components/SubNav';
 import { AdminPage } from './AdminShell';
 import { BuyCodesCard } from './BuyCodesCard';
 import { CashierRulesCard } from './CashierRulesCard';
+import { GuestRulesCard } from './GuestRulesCard';
 
 type AdminTag = HandTag & { inUse: boolean; lockedByName: string | null; lockedAt: string | null; cardUid: string | null };
 
@@ -62,6 +63,8 @@ export function TagsTab() {
   // 值班经理在这里只维护手牌池，看不到「前台规则」这个页签
   const tabs = [
     ...(can('settings.manage') ? [{ key: 'rules', label: '前台规则' }] : []),
+    // 8.2.3：客人类别、偏好字段、客诉标签、区域拥挤与高风险提示（docs/V8223_FRONTDESK.md）
+    ...(can('settings.manage') ? [{ key: 'guest', label: '客人与提醒' }] : []),
     { key: 'pool', label: '手牌池' },
     ...(can('frontdesk.blacklist') ? [{ key: 'blacklist', label: '黑名单' }] : []),
     { key: 'create', label: '批量添加与导入' },
@@ -94,6 +97,11 @@ export function TagsTab() {
               toast({ tone: 'success', title: '买角代号已保存' });
             }}
           />
+        </SubPane>
+      )}
+      {can('settings.manage') && (
+        <SubPane tab="guest">
+          <GuestRulesCard />
         </SubPane>
       )}
       {can('frontdesk.blacklist') && (

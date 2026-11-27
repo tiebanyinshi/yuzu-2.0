@@ -33,6 +33,9 @@ const pay = async (visitId: number) => {
 
 beforeAll(async () => {
   ctx = await setup();
+  // 8.2.3 起技师预约单独一项权限、收银员默认没有（docs/V8223_FRONTDESK.md 第 6 条）；这份用例里的收银员照旧兼做技师预约
+  await ctx.sql`INSERT INTO settings (key, value) VALUES ('role_permissions', ${ctx.sql.json({ clerk: { add: ['booking.technician'], remove: [] } })})
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
   expect((await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'S', from: 1, to: 30, width: 3, zone: 'male' })).status).toBe(200);
   const r = await api(ctx.app, ctx.owner, 'POST', '/api/items', { name: '搓背', category: '洗浴', price: 5000 });
   expect(r.status).toBe(200);

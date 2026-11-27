@@ -28,6 +28,8 @@ export const STORE_SCOPED_SETTING_KEYS = [
   'stock_usage_rules',
   // 发牌前风控的开关（8.1.15，docs/FRONTDESK_RISK_V8115.md）
   'frontdesk_risk_rules',
+  // 8.2.3：客人类别、偏好字段、区域拥挤与高风险提示的阈值（docs/V8223_FRONTDESK.md）
+  'frontdesk_guest_rules',
   // 8.1.15：建档表单的字段显隐、必填与实体卡押金（docs/MEMBERS_V8115.md）
   'member_form_rules',
   // 福田店整改（2026-11-26，docs/FUTIAN_1126.md）：房态中心的三个时限、房间计费、虫洞清洁时段
