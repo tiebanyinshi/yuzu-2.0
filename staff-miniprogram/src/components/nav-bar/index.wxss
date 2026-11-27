@@ -24,6 +24,10 @@
   font-size: var(--fs-caption);
   font-weight: 600;
 }
+.instance.prod {
+  background-color: var(--surface-2);
+  color: var(--ink-2);
+}
 .instance.small {
   margin-left: 8rpx;
   flex: none;
@@ -44,15 +48,35 @@
   font-size: var(--fs-body);
   color: var(--ink);
 }
-.title {
+.title-wrap {
   flex: 1;
   min-width: 0;
-  text-align: center;
-  font-size: var(--fs-body-l);
-  font-weight: 600;
-  color: var(--ink);
   /* 和左边返回按钮一样宽的留白，让标题居中 */
   margin-right: 88rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.title {
+  max-width: 100%;
+  text-align: center;
+  font-size: var(--fs-body-l);
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* 版本 + SHA：小字、不抢标题 */
+.build {
+  margin-left: 16rpx;
+  min-width: 0;
+  font-size: 20rpx;
+  color: var(--ink-3);
+}
+.build-sub {
+  max-width: 100%;
+  font-size: 18rpx;
+  line-height: 1.2;
+  color: var(--ink-3);
 }
 .large {
   padding: 16rpx var(--gutter) 8rpx;
