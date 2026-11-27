@@ -53,6 +53,7 @@
 | `staff-miniprogram`：`npm run check`（类型检查 + 单元测试） | 149 条通过 |
 | 本机：收口提交（版本号、交接说明、变更记录）以后 `lint` / `check:docs` / `check:gov` / `version-source` | 见集成 PR 上最后一个提交的 CI |
 | 集成 PR 的 Codex 审查第 1 轮（`e6c9954`，报 1 条 P1、2 条 P2） | 都修了：打卡、申请、审批原样重提被拒时先确认作废原编号（新接口 `POST /api/staffmp/ops/:key/abandon`，`tests/staffmp-ops.test.ts`）；饭卡开通的兜底工号也核对是不是本人的卡；学习页的搜索也搜学堂的课程。`staff-miniprogram` 的 `npm run check` 152 条通过 |
+| 第 2 轮（`02d8a3d`，报 2 条 P2） | 都修了：学堂派必修课、学习地图的通知点开进课程、地图页（Tab 页改用 `switchTab` 打开）；打卡页开着跨过「下一张卡」的时间段时，旧按钮不给、自己去门店系统重新取。`npm run check` 154 条通过 |
 | 微信开发者工具、真机 | **受阻未测**（云端没有开发者工具与手机；第 5 节） |
 
 ## 4. 验收要点

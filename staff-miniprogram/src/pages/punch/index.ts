@@ -5,7 +5,8 @@
 //   · 发之前看一眼有没有网：没网直接说到有信号的地方再点，不排队（打卡时间按门店系统收到的时刻记，SP16）；
 //   · 不在打卡范围内、考勤组允许外勤的：写事由、现场拍一张照片，改成外勤打卡；
 //   · 发出去没收到结果（超时、连不上、门店出错）：进「结果待确认」，只能按原编号原样重提（不会重复），没确定以前不打新的；
-//   · 打上了：结果留在这一页，直到离开；轻振一下。
+//   · 打上了：结果留在这一页，直到离开；轻振一下；
+//   · 页面开着跨过了「下一张卡」的时间段：旧的按钮不给，自己去门店系统重新取（取不到每 30 秒再取一次）。
 
 import type { StaffMpMe } from '../../../../src/shared/staffmp';
 import type { OaPunch, PunchResult, PunchToday } from '../../../../src/shared/oa';
@@ -16,7 +17,7 @@ import { loadPending, SAVE_FAILED, sendPending } from '../../utils/pending';
 import { choosePhotos, uploadPhoto } from '../../utils/photo';
 import { buzz, largeTextOn } from '../../utils/prefs';
 import type { PunchView } from '../../utils/punch';
-import { punchIsLate, punchResultText, punchView } from '../../utils/punch';
+import { hintExpiresAt, punchIsLate, punchResultText, punchView } from '../../utils/punch';
 import { shortTime } from '../../utils/format';
 import { uuid } from '../../utils/uuid';
 
@@ -28,6 +29,9 @@ let base = { now: 0, at: 0 };
 let timer: number | null = null;
 /** 页面显示的第几次：离开时加一，之前的请求回来对不上就不起计时器 */
 let gen = 0;
+/** 「下一张卡」过了时间段以后上一次去重新取的时刻（本机毫秒）：取着的、30 秒内取过的不再取 */
+let refreshedAt = 0;
+let refreshing = false;
 
 interface PunchRow {
   id: number;
@@ -133,19 +137,32 @@ Page({
     timer = null;
   },
 
-  /** 门店的钟按本机时钟往前走（每 10 秒刷新一次大字与按钮） */
+  /** 门店的钟按本机时钟往前走（每 10 秒刷新一次大字与按钮）；过了「下一张卡」的时间段就去门店系统重新取 */
   tick() {
     if (!today) return;
     const now = base.now + Math.floor((Date.now() - base.at) / 60000);
     this.setData({ view: punchView(today, now) });
+    const expires = hintExpiresAt(today.nextPunch);
+    if (expires !== null && now >= expires && !refreshing && !this.data.busy && Date.now() - refreshedAt >= 30000) {
+      refreshedAt = Date.now();
+      refreshing = true;
+      const my = gen;
+      this.load(my).finally(() => {
+        refreshing = false;
+      });
+    }
   },
 
-  async load() {
+  /** 取今天的打卡页；带了第几次显示的（计时器里重新取的），回来时已经离开就不认 */
+  async load(my?: number) {
     try {
-      today = await call<PunchToday>('GET', '/oa/attendance/today');
+      const got = await call<PunchToday>('GET', '/oa/attendance/today');
+      if (my !== undefined && my !== gen) return;
+      today = got;
       base = { now: today.now, at: Date.now() };
       this.setData({ state: 'ready', view: punchView(today), rows: rowsOf(today.punches), error: '' });
     } catch (e) {
+      if (my !== undefined && my !== gen) return;
       if (isApiError(e) && e.status === 401) return toLogin();
       if (!today) this.setData({ state: isOffline(e) ? 'offline' : 'error', error: messageOf(e) });
       else this.setData({ state: 'ready' });

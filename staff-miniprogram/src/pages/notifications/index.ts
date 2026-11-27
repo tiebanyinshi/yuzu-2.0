@@ -6,6 +6,7 @@ import { call, isApiError, isOffline, messageOf } from '../../utils/api';
 import { shortTime } from '../../utils/format';
 import { requireMe, toLogin } from '../../utils/guard';
 import { pageOfLink } from '../../utils/links';
+import { openPage } from '../../utils/nav';
 import { largeTextOn } from '../../utils/prefs';
 
 interface Row {
@@ -87,7 +88,7 @@ Page({
       this.setData({ rows: this.data.rows.map((r) => (r.id === id ? { ...r, unread: false } : r)), unread: Math.max(0, this.data.unread - 1) });
       call('POST', '/oa/notifications/read', { ids: [id] }).catch(() => undefined);
     }
-    if (row.page) wx.navigateTo({ url: row.page });
+    if (row.page) openPage(row.page);
   },
 
   async onReadAll() {

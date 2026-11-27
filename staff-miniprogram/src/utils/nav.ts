@@ -55,6 +55,13 @@ export function isFirstPage(): boolean {
 /** 四个 Tab 页 */
 export const TAB_PAGES = ['/pages/today/index', '/pages/learn/index', '/pages/workbench/index', '/pages/me/index'];
 
+/** 打开一页：四个 Tab 页用 switchTab（不能带参数、不能 navigateTo），别的用 navigateTo */
+export function openPage(url: string): void {
+  const path = url.split('?')[0]!;
+  if (TAB_PAGES.indexOf(path) >= 0) wx.switchTab({ url: path });
+  else wx.navigateTo({ url });
+}
+
 /** 回首页 */
 export function goHome(): void {
   wx.switchTab({ url: TAB_PAGES[0]! });

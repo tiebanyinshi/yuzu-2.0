@@ -5,6 +5,7 @@ import type { StaffMpEntryKey } from '../../../../src/shared/staffmp';
 import type { GroupView } from '../../utils/entries';
 import { entryGroups } from '../../utils/entries';
 import { requireMe } from '../../utils/guard';
+import { openPage } from '../../utils/nav';
 import { largeTextOn } from '../../utils/prefs';
 
 let allowed: StaffMpEntryKey[] = [];
@@ -36,7 +37,6 @@ Page({
   onEntry(e: WechatMiniprogram.TouchEvent) {
     const page = String(e.currentTarget.dataset.page || '');
     if (!page) return;
-    if (page.startsWith('/pages/learn/index')) wx.switchTab({ url: page });
-    else wx.navigateTo({ url: page });
+    openPage(page);
   },
 });

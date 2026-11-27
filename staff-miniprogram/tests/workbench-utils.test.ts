@@ -165,6 +165,11 @@ describe('工资条、通讯录、通知', () => {
     expect(pageOfLink('/oa/announcements/5')).toBe('/pages/announcement/index?id=5');
     expect(pageOfLink('/oa/schedule')).toBe('/pages/schedule/index');
     expect(pageOfLink('/oa/leave')).toBe('/pages/leave/index');
+    // 学堂派必修课、学习地图的通知（academy/admin.ts 的 notifyAssigned）
+    expect(pageOfLink('/oa/academy/courses/8')).toBe('/pages/academy-course/index?id=8');
+    expect(pageOfLink('/oa/academy/paths/4')).toBe('/pages/academy-path/index?id=4');
+    expect(pageOfLink('/oa/academy')).toBe('/pages/learn/index');
+    expect(pageOfLink('/oa/academyx')).toBeNull();
     expect(pageOfLink('/oa/im/7')).toBeNull();
     expect(pageOfLink(null)).toBeNull();
   });
