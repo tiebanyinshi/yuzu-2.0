@@ -109,6 +109,8 @@ function CardMessageText({ message, className }: { message: CardMessage; classNa
 }
 
 export interface TagCardInputProps {
+  /** 按芯片号查手牌（默认走前台的；8.2.8 餐厅入口按餐厅的权限查，平板没有前台读的权限） */
+  lookup?: (uid: string) => Promise<TagByCard>;
   /** 牌号（受控）。手输照常；刷卡查到能用的牌时也经 onChange 填进来 */
   value: string;
   onChange: (code: string) => void;
@@ -177,6 +179,7 @@ export function TagCardInput({
   className,
   inputClassName,
   testId,
+  lookup = lookupCard,
 }: TagCardInputProps) {
   const [message, setMessage] = useState<CardMessage | null>(null);
   const say = (m: CardMessage | null) => {
@@ -192,7 +195,7 @@ export function TagCardInput({
    * scanned 为读卡器、扫码枪打进来的（不是桥报的）：没绑定的、本身是牌号的当牌号用
    */
   const read = async (raw: string, typed: boolean, scanned: boolean) => {
-    const r = await resolveScan(raw, { lookup: lookupCard, isTagCode: isTag, tagFallback: scanned });
+    const r = await resolveScan(raw, { lookup, isTagCode: isTag, tagFallback: scanned });
     if (r.kind === 'tag') {
       say(null);
       return onChange(r.code);

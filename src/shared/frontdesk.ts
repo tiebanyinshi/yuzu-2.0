@@ -451,7 +451,11 @@ export interface VisitDetail {
 export type FrontdeskOpLookup =
   | { found: false; abandoned: boolean }
   | { found: true; type: 'checkin'; checkin: CheckinResult }
-  | { found: true; type: 'bill_post' | 'tag_swap' | 'line_move' | 'visit_incident' | 'line_discount' | 'tag_deposit' | 'tag_deposit_refund' | 'tag_away_lock' | 'tag_away_unlock'; visit: VisitDetail }
+  | {
+      found: true;
+      type: 'bill_post' | 'tag_swap' | 'line_move' | 'visit_incident' | 'line_discount' | 'tag_deposit' | 'tag_deposit_refund' | 'tag_away_lock' | 'tag_away_unlock' | 'meal_entry';
+      visit: VisitDetail;
+    }
   | { found: true; type: 'checkout' | 'table_checkout'; checkout: CheckoutDetail }
   | { found: true; type: 'table_open' | 'table_post' | 'table_return'; session: import('./dining').TableSessionDetail }
   | { found: true; type: 'room_checkin' | 'room_extend' | 'room_deposit' | 'room_refund' | 'room_close'; stay: import('./rooms').StayDetail }
@@ -469,6 +473,8 @@ export type FrontdeskOpLookup =
    * 康美部只有点单权限，看不到前台的账（Codex 审查 f6327a4）
    */
   | { found: true; type: 'dining_order'; visitId: number }
+  /** 餐厅入口登记进餐（8.2.8，`/api/dining/meal-entry-ops`）：只说登上了、记在哪次来访上（平板没有前台读的权限） */
+  | { found: true; type: 'meal_entered'; visitId: number }
   /** 房态点单（回测整改 P07，`/api/room-center/order-ops`）：生效了、记在哪次来访上 */
   | { found: true; type: 'room_order'; visitId: number };
 
