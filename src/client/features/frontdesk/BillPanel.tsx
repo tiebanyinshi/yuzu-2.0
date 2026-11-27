@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import {
   ArrowLeftRight,
@@ -334,6 +334,7 @@ export function BillPanel({
               </span>
               <span>
                 {active.length} 项有效{issue && ' · 加项目、作废在收银台'}
+                {!issue && active.length > 0 && <span className="ml-2 hidden text-ink-3 md:inline">↓ 选明细 · Del 作废 · / 打折</span>}
               </span>
             </div>
             {active.length === 0 ? (
@@ -724,8 +725,30 @@ function LineRow({
 }) {
   const d = line.discount ?? null;
   const operator = [line.postedByEmpNo, line.postedByName, line.postedByPhoneTail ? `尾号 ${line.postedByPhoneTail}` : null].filter(Boolean).join(' · ');
+  // 8.2.22（收银 demo 明细行键盘）：↑↓ 在明细间移动，Del / ⌫ 作废（退菜），「/」打折
+  const onKeyDown = (e: KeyboardEvent<HTMLLIElement>) => {
+    if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const rows = [...document.querySelectorAll<HTMLElement>('[data-line-row]')];
+      const i = rows.indexOf(e.currentTarget);
+      rows[(i + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus();
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && canVoid && allowed) {
+      e.preventDefault();
+      onVoid();
+    } else if (e.key === '/' && canDiscount) {
+      e.preventDefault();
+      onDiscount();
+    }
+  };
   return (
-    <li className="group/line flex items-start gap-2" data-testid={`line-${line.id}`}>
+    <li
+      className="group/line flex items-start gap-2 rounded-md outline-none focus-visible:bg-pine-soft/60 focus-visible:ring-2 focus-visible:ring-pine/40"
+      data-testid={`line-${line.id}`}
+      data-line-row
+      tabIndex={0}
+      onKeyDown={onKeyDown}
+    >
       <div className="min-w-0 flex-1">
         <p className="num text-[12px] font-semibold text-ink-3" data-testid={`line-${line.id}-operator`}>
           {operator} · {line.backfill ? formatDateTime(line.postedAt) : formatTime(line.postedAt)}

@@ -1,12 +1,15 @@
 // 金额统一以「分」为整数存储与计算，只在展示和输入时与「元」互转。
 
+import { toHalfWidth } from './halfwidth';
+
 export type Cents = number;
 
 const YUAN_PATTERN = /^(\d{1,9})(?:\.(\d{1,2}))?$/;
 
 /** 把用户输入的元（如 "128"、"99.5"、"1,280.00"）转成分；格式不合法时返回 null。 */
 export function parseYuan(input: string): Cents | null {
-  const text = input
+  // 8.2.22：全角数字、全角小数点（「１２８．５」）按半角认
+  const text = toHalfWidth(input)
     .trim()
     .replace(/[,，\s]/g, '')
     .replace(/^¥/, '');

@@ -1,6 +1,7 @@
 // 前台：NFC 发牌、发牌前风控、发牌后异常处置（8.1.15《浴族系统需求汇总》块 A，docs/FRONTDESK_RISK_V8115.md）。
 // 前后端共用的类型、常量与中文名称。金额为分。
 
+import { toHalfWidth } from './halfwidth';
 import { normalizeTagCode, type HandTag, type TagZone } from './frontdesk';
 
 // ───────────── 手牌芯片号 ─────────────
@@ -10,7 +11,7 @@ export const CARD_UID_PATTERN = /^[0-9A-Z]{4,32}$/;
 
 /** 读卡器报上来的卡号写法不一（04:A1:B2、04-a1-b2、带空格）：去掉分隔符、转大写 */
 export function normalizeCardUid(input: string): string {
-  return input
+  return toHalfWidth(input)
     .trim()
     .toUpperCase()
     .replace(/[\s:：\-_.]/g, '');
