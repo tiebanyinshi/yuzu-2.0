@@ -115,7 +115,19 @@ export function NewApprovalPage({ code, fromId }: { code: string | null; fromId:
                 <p className="mt-0.5 text-[12.5px] text-ink-3">{t.description}</p>
               </Link>
             ))}
+            {/* 报销统一到业财法（8.2.12，WB11）：这里是发起入口，审批规则与执行在业财法 */}
+            {!templates.data!.some((t) => t.code === 'expense') && (
+              <Link to="/oa/gov?box=expense" className="tap relative rounded-lg border border-line bg-card p-3.5 shadow-card hover:border-line-strong md:p-4" data-testid="oa-approval-tpl-expense-gov">
+                <FileText className="size-6 text-pine" />
+                <p className="mt-2.5 text-[15px] font-bold text-ink md:mt-3">报销</p>
+                <p className="mt-0.5 text-[12.5px] text-ink-3">在「业财法审批 → 报销」发起、查看；审批按业财法的规则走</p>
+              </Link>
+            )}
           </div>
+        ) : !template && code === 'expense' ? (
+          <Notice tone="info" title="报销已统一到「业财法审批 → 报销」" action={<Link to="/oa/gov?box=expense">去发起</Link>}>
+            以前在这里提的报销照旧在「审批」列表里查看。
+          </Notice>
         ) : !template ? (
           <Notice tone="warning" title="这个模板不存在或已停用" action={<Link to="/oa/approvals/new">换一个</Link>} />
         ) : (

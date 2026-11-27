@@ -394,7 +394,14 @@ export async function actFlow(tx: Tx, doc: DocRow, actor: Actor, input: { action
 // ───────────────────────── 知会 ─────────────────────────
 
 /** 审批通过以后知会董事长、业态总经理、财总、CFO（已在审批链里出过结论的、提交人不重复知会） */
+/** 报销类（8.2.12，《业财法审批与 WCP 需求变更》7.3 第 3 条）：通过前至少要有一条有人同意的审批记录（节点、审批人、时间、动作），全是自动跳过的不放行 */
+const NEEDS_HUMAN_APPROVAL = new Set(['expense', 'travel', 'entertain']);
+
 async function onApproved(tx: Tx, doc: DocRow, flow: FlowRow, actor: Actor) {
+  if (NEEDS_HUMAN_APPROVAL.has(doc.docType)) {
+    const [a] = await tx`SELECT 1 FROM gf_flow_actions WHERE flow_id = ${flow.id} AND action = 'approve' LIMIT 1`;
+    if (!a) throw unprocessable('GF_NO_APPROVAL_RECORD', '报销至少要有一位审批人同意才能通过（不能全部自动跳过），请店主在「业财法 → 角色映射」里配好审批人');
+  }
   const hooks = hooksOf(doc.docType);
   await hooks.approved?.(tx, doc, actor);
   await notify(tx, [flow.submittedBy], {

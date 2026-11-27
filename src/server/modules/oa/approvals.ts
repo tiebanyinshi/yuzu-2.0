@@ -110,6 +110,8 @@ async function onDuty(db: Db, id: number): Promise<{ name: string } | null> {
 async function submit(tx: Tx, actor: Actor, input: z.infer<typeof SubmitInput>, hash: string, env: LinkEnv): Promise<number> {
   const today = localMinute(env.at, env.timeZone).date;
   const [t] = await tx<ApprovalTemplate[]>`SELECT ${TEMPLATE_COLS(tx)} FROM oa_approval_templates WHERE id = ${input.templateId} FOR SHARE`;
+  // 报销统一到业财法（8.2.12，WB11）：WCP「审批」里不再发起报销，给出去哪里发起
+  if (t && !t.active && t.code === 'expense') throw unprocessable('EXPENSE_MOVED', '报销已统一到「业财法审批 → 报销」，请在那里发起');
   if (!t || !t.active) throw notFound('审批模板不存在或已停用，请刷新');
   const template = toTemplate(t);
   const checked = checkApprovalForm(template.fields, input.form);

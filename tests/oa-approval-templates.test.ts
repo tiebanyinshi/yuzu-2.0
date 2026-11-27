@@ -44,7 +44,9 @@ const leave = (typeId: number, start: [string, 'am' | 'pm'], end: [string, 'am' 
 });
 
 beforeAll(async () => {
+  // 8.2.12 起 WCP 的报销模板停用（报销统一到业财法）；这里测的是以前提的 WCP 报销那一套，先打开
   ctx = await setup();
+  await ctx.sql`UPDATE oa_approval_templates SET active = true WHERE code = 'expense'`;
   emp.staff = await hire('at_staff', 'front.staff');
   emp.free = await hire('at_free', 'front.staff'); // 不在考勤组
   emp.lead = await hire('at_lead', 'front.lead');
@@ -199,5 +201,24 @@ describe('报销不自动通过（8.2.6，《业财法审批与 WCP 需求变更
     expect(e.steps.map((s) => s.approverId)).toEqual([Number(o2!.id)]);
     // 别的单照旧（OA12）：店主自己发起的通用审批直接通过
     expect((await ok(owner, 'general', { title: '用章', content: '盖章' })).status).toBe('approved');
+  });
+});
+
+describe('报销统一到业财法（8.2.12，WB11）', () => {
+  it('WCP 的报销模板停用后：模板列表里没有报销，提交给出去业财法发起的提示', async () => {
+    await ctx.sql`UPDATE oa_approval_templates SET active = false WHERE code = 'expense'`;
+    const list = (await api(ctx.app, emp.staff!.cookie, 'GET', '/api/oa/approval/templates')).body as ApprovalTemplate[];
+    expect(list.map((t) => t.code)).not.toContain('expense');
+    const r = await post(emp.staff!, 'expense', { category: '交通', amount: 100, occurredOn: '2031-05-02', invoices: [] });
+    expect((r.body as unknown as { error: { code: string } }).error.code).toBe('EXPENSE_MOVED');
+    await ctx.sql`UPDATE oa_approval_templates SET active = true WHERE code = 'expense'`;
+  });
+
+  it('迁移 620 把报销模板停用', async () => {
+    await ctx.sql`UPDATE oa_approval_templates SET active = true WHERE code = 'expense'`;
+    await ctx.sql.file('src/server/migrations/620_oa_expense_retire.sql');
+    const [t] = await ctx.sql<{ active: boolean }[]>`SELECT active FROM oa_approval_templates WHERE code = 'expense'`;
+    expect(t!.active).toBe(false);
+    await ctx.sql`UPDATE oa_approval_templates SET active = true WHERE code = 'expense'`;
   });
 });
