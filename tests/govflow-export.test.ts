@@ -4,12 +4,14 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { act, newDoc, okShot, setupPeople, yuan, type People } from './govflow-helpers';
 import { hashRequest } from '../src/server/lib/idempotency';
+import { todayIn } from '../src/server/lib/dates';
 import { api, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
 let p: People;
 const c = (u: string) => p.cookies[u]!;
-const today = () => new Date().toISOString().slice(0, 10);
+// 导出按门店时区的日历日筛选；用 UTC 日期在门店零点前后（UTC 16:00 前后）会差一天
+const today = () => todayIn(ctx.config.timezone);
 const special = (body: Record<string, unknown> = {}) =>
   api(ctx.app, c('gf_clerk'), 'POST', '/api/gf/specials', {
     clientKey: randomUUID(),
