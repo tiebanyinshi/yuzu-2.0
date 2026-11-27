@@ -80,7 +80,7 @@ export function DispatchTab() {
   const qs = new URLSearchParams(
     Object.entries({ tab: f.tab, range: f.range, q: f.q.trim(), ...(f.range === 'custom' ? { from: f.from, to: f.to } : {}) }).filter(([, v]) => v) as [string, string][],
   ).toString();
-  const board = useQuery({ queryKey: ['inventory', 'dispatch', qs], queryFn: () => api.get<DispatchBoard>(`/api/inventory/dispatch?${qs}`) });
+  const board = useQuery({ queryKey: ['inv', 'dispatch', qs], queryFn: () => api.get<DispatchBoard>(`/api/inventory/dispatch?${qs}`) });
   const set = (patch: Partial<Filters>) => setF((cur) => ({ ...cur, ...patch }));
 
   return (
@@ -239,7 +239,7 @@ function RowCard({
 }
 
 function IssueHistory({ lineId, unit }: { lineId: number; unit: string }) {
-  const q = useQuery({ queryKey: ['inventory', 'dispatch', 'line', lineId], queryFn: () => api.get<DispatchDetail>(`/api/inventory/dispatch/lines/${lineId}`) });
+  const q = useQuery({ queryKey: ['inv', 'dispatch', 'line', lineId], queryFn: () => api.get<DispatchDetail>(`/api/inventory/dispatch/lines/${lineId}`) });
   if (q.error) return <LoadFailed title="发配明细没有取回来" onRetry={() => void q.refetch()} retrying={q.isFetching} />;
   if (!q.data) return <Skeleton className="h-16 w-full" />;
   if (!q.data.issues.length) return <p className="text-[12.5px] text-ink-3">还没有发配过。</p>;
@@ -291,7 +291,7 @@ function IssueDialog({ row, onClose }: { row: DispatchRow; onClose: () => void }
         staffId: session.staff.id,
       });
       toast({ tone: 'success', title: `已补发 ${formatQty(q)} ${row.unit}`, body: `${row.departmentName} · ${row.name}` });
-      void qc.invalidateQueries({ queryKey: ['inventory'] });
+      void qc.invalidateQueries({ queryKey: ['inv'] });
       onClose();
     } catch (e) {
       if (e instanceof UncertainError) {
