@@ -179,17 +179,28 @@ const toView = (a: { id: number; lessonId: number; passPct: number; questions: S
   submitted: a.submittedAt !== null,
 });
 
-/** 开一份测验（带操作编号：没收到结果原样重提返回同一份卷子） */
+/** 这个操作编号开过的卷子（是这个人、这个课时的才算，别的拒绝） */
+async function attemptByKey(db: Db, clientKey: string, staffId: number, lessonId: number): Promise<AcademyQuizView | null> {
+  const [had] = await db<{ id: number; staffId: number; lessonId: number; passPct: number; questions: Snapshot[]; submittedAt: string | null }[]>`
+    SELECT id, staff_id, lesson_id, pass_pct, questions, submitted_at FROM academy_attempts WHERE client_key = ${clientKey}`;
+  if (!had) return null;
+  if (Number(had.staffId) !== staffId || Number(had.lessonId) !== lessonId) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一份卷子，请重新开始');
+  return toView(had);
+}
+
+/**
+ * 开一份测验（带操作编号：没收到结果原样重提返回同一份卷子）。
+ * 先按编号查开过没有：开上了但没收到结果、之后课时下架或课程归档的，原样重提照样拿回那份卷子（Codex 审查 b6beee8）；
+ * 课时能不能考只对新开的卷子核对。
+ */
 export async function startQuiz(sql: Sql, l: Learner, lessonId: number, clientKey: string): Promise<AcademyQuizView> {
+  const prior = await attemptByKey(sql, clientKey, l.id, lessonId);
+  if (prior) return prior;
   const lesson = await quizLesson(sql, l, lessonId);
   return withTx(sql, async (tx) => {
     await lockLearner(tx, l.id);
-    const [had] = await tx<{ id: number; staffId: number; lessonId: number; passPct: number; questions: Snapshot[]; submittedAt: string | null }[]>`
-      SELECT id, staff_id, lesson_id, pass_pct, questions, submitted_at FROM academy_attempts WHERE client_key = ${clientKey}`;
-    if (had) {
-      if (Number(had.staffId) !== l.id || Number(had.lessonId) !== lessonId) throw conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于另一份卷子，请重新开始');
-      return toView(had);
-    }
+    const had = await attemptByKey(tx, clientKey, l.id, lessonId);
+    if (had) return had;
     const pool = await tx<Snapshot[]>`
       SELECT id, kind, skill, stem, options, answer, explanation FROM academy_questions
       WHERE course_id = ${lesson.courseId} AND status = 'active' AND kind <> 'recall' ORDER BY id`;
