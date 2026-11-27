@@ -1,10 +1,10 @@
--- 8.2.6 收银台「锁牌外出」（店主 2026-11-27：收银台要能锁牌，锁牌时间不超过四个小时；客人外出锁牌要先收预售的钱；设计见 docs/V8226_AWAY_LOCK.md）：
+-- 8.2.7 收银台「锁牌外出」（店主 2026-11-27：收银台要能锁牌，锁牌时间不超过四个小时；客人外出锁牌要先收预售的钱；设计见 docs/V8227_AWAY_LOCK.md）：
 --   · visit_tag_locks：在店客人外出时把他的手牌锁住——锁着期间这张牌上不能再挂账，客人回来解锁、结账时自动解锁，
 --     到时间（最多 4 小时）自动解锁并提醒值班经理；
 --   · 锁之前先收「预售」：同一笔里收一张手牌押金（原因「锁牌外出预收」），结账时照押金的规矩抵扣（tag_deposit_id 必填）；
 --   · 操作编号与「确认作废」追加 tag_away_lock、tag_away_unlock（在当时的约束上追加）。
 -- 原来的「锁牌」（hand_tags.locked：把空闲的牌停用）不变。
--- 风险已知：只加表、在当时的约束上追加两个类型。回滚见 docs/rollback/580_away_lock_v826.down.sql。
+-- 风险已知：只加表、在当时的约束上追加两个类型。回滚见 docs/rollback/590_away_lock_v827.down.sql。
 
 CREATE TABLE visit_tag_locks (
   id             bigserial PRIMARY KEY,
@@ -24,7 +24,7 @@ CREATE TABLE visit_tag_locks (
   CHECK ((released_at IS NULL) = (release_kind IS NULL)),
   CHECK (release_kind IS NULL OR release_kind = 'expired' OR released_by IS NOT NULL)
 );
-COMMENT ON TABLE visit_tag_locks IS '8.2.6 锁牌外出：在店客人外出时锁住他的手牌（最多 4 小时），锁之前先收预售（一张手牌押金，结账时抵扣）；锁着期间不能挂账';
+COMMENT ON TABLE visit_tag_locks IS '8.2.7 锁牌外出：在店客人外出时锁住他的手牌（最多 4 小时），锁之前先收预售（一张手牌押金，结账时抵扣）；锁着期间不能挂账';
 COMMENT ON COLUMN visit_tag_locks.lock_until IS '到这个时刻自动解锁（不超过锁牌时刻 + 4 小时）';
 COMMENT ON COLUMN visit_tag_locks.tag_deposit_id IS '锁牌前收的预售（手牌押金，原因「锁牌外出预收」），结账时照押金抵扣';
 COMMENT ON COLUMN visit_tag_locks.release_kind IS 'return 客人回来解锁、expired 到时间自动解锁、checkout 结账时解锁；空 = 还锁着';

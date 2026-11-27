@@ -305,7 +305,7 @@ export function BillPanel({
                 onClick={() => {
                   // 8.2.1：押金在押金对话框里处理；单项打折回到那一行的「折」
                   if (p.type === 'tag_deposit' || p.type === 'tag_deposit_refund') return setDepositOpen(true);
-                  // 8.2.6：锁牌外出、解锁在锁牌对话框里处理
+                  // 8.2.7：锁牌外出、解锁在锁牌对话框里处理
                   if (p.type === 'tag_away_lock' || p.type === 'tag_away_unlock') return setAwayLockOpen(true);
                   if (p.type === 'line_discount') {
                     const lineId = Number(/\/lines\/(\d+)\//.exec(p.url)?.[1]);

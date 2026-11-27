@@ -58,7 +58,7 @@ export type FrontdeskOpType =
   | 'tag_deposit_refund'
   /** 返台补低消（8.2.4；8.2.5 起待确认，对象是那次开台，在「桌台」页） */
   | 'table_return'
-  /** 锁牌外出（8.2.6，对象是来访，在收银台）：锁（同一笔先收预售）、客人回来解锁 */
+  /** 锁牌外出（8.2.7，对象是来访，在收银台）：锁（同一笔先收预售）、客人回来解锁 */
   | 'tag_away_lock'
   | 'tag_away_unlock';
 

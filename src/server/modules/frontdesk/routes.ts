@@ -202,7 +202,7 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
     const { id } = parse(idParam, req.params);
     return refundDeposit(deps, id, req.body, ctxOf(req));
   });
-  // 锁牌外出（8.2.6）：先收预售再锁（最多 4 小时）、客人回来解锁；在收银台办
+  // 锁牌外出（8.2.7）：先收预售再锁（最多 4 小时）、客人回来解锁；在收银台办
   app.post('/api/frontdesk/visits/:id/away-lock', { preHandler: guard('frontdesk.operate') }, async (req) => {
     const { id } = parse(idParam, req.params);
     return getVisit(sql, await awayLockVisit(deps, id, req.body, ctxOf(req)), deps.config.timezone);

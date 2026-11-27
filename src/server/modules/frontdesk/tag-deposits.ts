@@ -75,7 +75,7 @@ export async function collectDeposit(deps: Deps, visitId: number, raw: unknown, 
 
 /**
  * 在调用方的事务里收一笔押金（来访已锁、经办人的班次已加共享锁）：编号、储值扣、写押金、审计。返回押金编号。
- * 收押金本身与锁牌外出（8.2.6，锁之前先收预售）都用它；操作编号由调用方写
+ * 收押金本身与锁牌外出（8.2.7，锁之前先收预售）都用它；操作编号由调用方写
  */
 export async function insertDeposit(
   tx: Tx,
@@ -133,7 +133,7 @@ export async function refundDeposit(deps: Deps, depositId: number, raw: unknown,
     const [d] = await tx<DepositRow[]>`
       SELECT id, deposit_no, visit_id, method, amount, member_id, consumption_id, status FROM tag_deposits WHERE id = ${depositId} FOR UPDATE`;
     if (d!.status !== 'held') throw conflict('DEPOSIT_REFUNDED', `押金 ${d!.depositNo} 已经退过了，不会重复退`);
-    // 锁牌外出的预售（8.2.6）：牌还锁着不能单独退
+    // 锁牌外出的预售（8.2.7）：牌还锁着不能单独退
     await assertDepositNotLocking(tx, d!.id, d!.depositNo);
     const date = await businessDate(tx, deps, at);
     await refundOne(tx, deps, d!, { kind: 'manual', shiftId, checkoutId: null, date, at, ctx, visitNo: visit.visitNo });

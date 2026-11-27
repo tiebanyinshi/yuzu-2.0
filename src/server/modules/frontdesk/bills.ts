@@ -186,7 +186,7 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   // ③ 来访 → 账单
   const visit = (await lockVisits(tx, [visitId])).get(visitId)!;
   assertOpen(visit);
-  // 锁牌外出（8.2.6）：客人外出、牌锁着期间不能挂账；发牌后的异常处置（加收）照旧能记
+  // 锁牌外出（8.2.7）：客人外出、牌锁着期间不能挂账；发牌后的异常处置（加收）照旧能记
   if (meta.opType !== 'visit_incident') await assertNotAwayLocked(tx, visit.id);
   if (channel && Number(visit.memberId) !== channel.memberId) {
     throw conflict('VISIT_CHANGED', '这张手牌刚刚换了客人，请重新下单');
@@ -572,7 +572,7 @@ export async function moveLines(deps: Deps, raw: unknown, ctx: OpContext) {
     assertOpen(to);
     // 读到目标客人之后、锁好之前，这位客人可能刚在别的终端换了牌：牌号对不上就拒绝，不把明细转给已不在这张牌上的客人
     if (to.tagId !== target.tagId) throw conflict('TAG_CHANGED', `手牌 ${input.toTagCode} 刚刚换过牌，请刷新后重新填写转到哪张手牌`);
-    // 8.2.6：锁牌外出的客人不能挂账，转单转进去也一样
+    // 8.2.7：锁牌外出的客人不能挂账，转单转进去也一样
     await assertNotAwayLocked(tx, to.id, input.toTagCode);
     const bills = await tx<{ status: string }[]>`SELECT status FROM bills WHERE id IN ${tx([from.billId, to.billId])} ORDER BY id FOR UPDATE`;
     if (bills.some((b) => b.status !== 'open')) throw conflict('BILL_CLOSED', '账单已结束，不能再转单');

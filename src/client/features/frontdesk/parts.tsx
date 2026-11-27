@@ -169,7 +169,7 @@ export function VisitStatusChips({
         </StatusChip>
       )}
       {visit.awayLockUntil ? (
-        // 锁牌外出（8.2.6）：锁着期间不能挂账，到点自动解锁
+        // 锁牌外出（8.2.7）：锁着期间不能挂账，到点自动解锁
         <StatusChip
           tone="clay"
           icon={<LockKeyhole className="size-4 shrink-0" />}

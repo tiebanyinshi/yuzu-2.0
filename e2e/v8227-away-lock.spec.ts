@@ -1,4 +1,4 @@
-// 8.2.6 收银台「锁牌外出」（docs/V8226_AWAY_LOCK.md）：账单里点「锁牌外出」→ 选时长、先收预售 → 锁住（清单上标「锁牌 到几点」）→ 客人回来解锁。
+// 8.2.7 收银台「锁牌外出」（docs/V8227_AWAY_LOCK.md）：账单里点「锁牌外出」→ 选时长、先收预售 → 锁住（清单上标「锁牌 到几点」）→ 客人回来解锁。
 // 依赖 seed-demo、seed-frontdesk-demo（仅独立演示库）；账号前台 xiaozhou，密码 yuzu2026。每次挑一张空闲手牌，可重复执行。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';

@@ -1,4 +1,4 @@
--- 回滚 580_away_lock_v826.sql（8.2.6 收银台锁牌外出）。先停服务、先备份；只在回到 8.2.6 以前的版本时执行。
+-- 回滚 600_away_lock_v827.sql（8.2.7 收银台锁牌外出）。先停服务、先备份；只在回到 8.2.7 以前的版本时执行。
 -- 还锁着的先在收银台解锁（或等到时间自动解锁）再回滚；锁牌前收的预售是手牌押金，留在 tag_deposits 里照旧（结账时抵扣、能一键退）。
 -- 会丢掉：锁牌记录、锁牌与解锁的操作编号与作废登记。
 BEGIN;
@@ -28,5 +28,5 @@ BEGIN
 END $$;
 DROP TABLE visit_tag_locks;
 DROP FUNCTION yuzu_visit_tag_lock_guard();
-DELETE FROM schema_migrations WHERE version = '580_away_lock_v826.sql';
+DELETE FROM schema_migrations WHERE version = '590_away_lock_v827.sql';
 COMMIT;

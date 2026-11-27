@@ -88,7 +88,7 @@ export async function createIncident(deps: Deps, visitId: number, raw: IncidentI
     } else if (input.kind === 'return') {
       if (!state!.awaySince) throw conflict('NOT_AWAY', `手牌 ${state!.tagCode} 没有标外出，请刷新`);
       await tx`UPDATE visits SET away_since = NULL, away_by = NULL WHERE id = ${visit.id}`;
-      // 8.2.6：锁牌外出的客人回来，从这里点「返回」也一并解锁（与收银台解锁同一结果）
+      // 8.2.7：锁牌外出的客人回来，从这里点「返回」也一并解锁（与收银台解锁同一结果）
       unlocked = await releaseAwayLockOnReturn(tx, visit.id, ctx.actor.id, at);
     } else if (input.kind === 'report' || input.kind === 'unsettled') {
       if (input.assigneeId !== null) assignee = { id: input.assigneeId, name: await assertAssignee(tx, input.assigneeId) };

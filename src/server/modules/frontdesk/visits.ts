@@ -729,7 +729,7 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
            v.group_id, g.group_no,
            CASE WHEN v.group_id IS NULL THEN 0 ELSE count(v.id) OVER (PARTITION BY v.group_id) END AS group_open_count,
            b.amount_cents, b.line_count, v.away_since,
-           -- 锁牌外出（8.2.6）：锁到几点
+           -- 锁牌外出（8.2.7）：锁到几点
            (SELECT l.lock_until FROM visit_tag_locks l WHERE l.visit_id = v.id AND l.released_at IS NULL) AS away_lock_until,
            -- 这次来访上没处理完的异常待办（上报、未结离店；8.1.17 起还有超时提醒）几条（8.1.15）
            (SELECT count(*)::int FROM visit_incidents i WHERE i.visit_id = v.id AND ${openTodoWhere(db)}) AS open_todos,
@@ -1151,7 +1151,7 @@ export async function lookupFrontdeskOp(db: Db, key: string, timezone: string, e
   if (row.opType === 'visit_incident') return { found: true as const, type: 'visit_incident' as const, visit: await getVisit(db, row.refId, timezone) };
   // 单项打折（8.2.1）：编号记在那次来访上；手牌押金的收、退：编号记在那一笔押金上，查回这位客人
   if (row.opType === 'line_discount') return { found: true as const, type: 'line_discount' as const, visit: await getVisit(db, row.refId, timezone) };
-  // 锁牌外出（8.2.6）：锁、解锁的编号记在那次来访上
+  // 锁牌外出（8.2.7）：锁、解锁的编号记在那次来访上
   if (row.opType === 'tag_away_lock' || row.opType === 'tag_away_unlock') {
     return { found: true as const, type: row.opType as 'tag_away_lock' | 'tag_away_unlock', visit: await getVisit(db, row.refId, timezone) };
   }

@@ -787,7 +787,7 @@ export async function checkout(deps: Deps, raw: CheckoutInputData, ctx: OpContex
     });
     // 手牌押金（8.2.1）：会员一行已在上面锁住，押着的押金按 id 升序锁、一起退掉（储值扣的先退回原卡，下面的储值支付按退回以后的余额扣）
     const deposits = await settleDepositsAtCheckout(tx, deps, { visitIds: ids, checkoutId, shiftId, date, at, ctx });
-    // 锁牌外出（8.2.6）：结了账的客人不再锁着（预售已经作为押金在上面一起抵扣）
+    // 锁牌外出（8.2.7）：结了账的客人不再锁着（预售已经作为押金在上面一起抵扣）
     await releaseAwayLocksAtCheckout(tx, ids, ctx.actor.id, at);
     // 房费挂到账单上（在会员折扣之后：房费不打会员折扣，与预览一致），记哪张登记单收过、房间事件
     if (roomFees.length) {

@@ -77,7 +77,7 @@ export const FRONTDESK_OPS = [
   'tag_deposit_refund',
   // 返台补低消（8.2.4；8.2.5 起进「结果待确认」，Codex 审查）：对象是那次开台，在「桌台」页处理
   'table_return',
-  // 锁牌外出（8.2.6，docs/V8226_AWAY_LOCK.md）：锁（同一笔先收预售）、客人回来解锁；对象是来访，在收银台处理
+  // 锁牌外出（8.2.7，docs/V8227_AWAY_LOCK.md）：锁（同一笔先收预售）、客人回来解锁；对象是来访，在收银台处理
   'tag_away_lock',
   'tag_away_unlock',
 ] as const;
