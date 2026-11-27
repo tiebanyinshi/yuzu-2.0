@@ -1,9 +1,9 @@
-// 实例标识（AGENTS.md「环境隔离」）：测试服、演示库等常显在导航栏上，正式服不显示（docs/STAFF_MP.md 第 2.2 节）。
+// 实例标识（AGENTS.md「环境隔离」）：登录页与导航栏常显（与网页同一套说法）；正式服用中性颜色，测试服、演示库等用提醒色（docs/STAFF_MP.md 第 2.2 节）。
 
 import type { InstanceKind } from '../../../src/shared/instance';
 
 const LABELS: Record<InstanceKind, string> = {
-  prod: '',
+  prod: '正式服',
   shadow: '影子运行·不作数',
   test: '测试服·不作数',
   demo: '演示·不作数',
@@ -11,6 +11,9 @@ const LABELS: Record<InstanceKind, string> = {
   trial: '试用',
   unset: '未设置实例标识',
 };
+
+/** 正式服：标识用中性颜色（不是提醒） */
+export const isProdInstance = (kind: InstanceKind | string | undefined) => kind === 'prod';
 
 export function instanceTag(kind: InstanceKind | string | undefined): string {
   if (!kind) return '';

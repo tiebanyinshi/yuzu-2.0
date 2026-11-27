@@ -185,6 +185,42 @@ describe('令牌过期时悄悄重新登录', () => {
   });
 });
 
+describe('退出与悄悄重新登录撞在一起', () => {
+  it('悄悄重新登录还没回来时员工退出了：回来的会话退掉，不把人又登录回去', async () => {
+    const { fake, session, api } = await load();
+    fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tok1', me: ME } });
+    await session.wechatLogin();
+    const wx = (globalThis as unknown as { wx: { request: (o: { url: string }) => void } }).wx;
+    const original = wx.request;
+    let held: (() => void) | null = null;
+    // /me 回 401，开始悄悄重新登录；微信登录的回复先压着
+    fake.reply({ status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } });
+    wx.request = (o) => {
+      if (o.url.endsWith('/auth/wechat')) {
+        held = () => original(o as never);
+        return;
+      }
+      original(o as never);
+    };
+    const pending = api.call('GET', '/me').catch((e: unknown) => e);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(held).not.toBeNull();
+    // 员工这时退出（令牌刚被 401 清掉：门店那边不用退，不等悄悄重新登录）
+    await session.logout(false);
+    expect(session.signedOut()).toBe(true);
+    // 悄悄重新登录的回复这时才回来：作废，并把那个会话退掉
+    wx.request = original;
+    fake.reply({ status: 200, data: { status: 'ok', token: 'tok2', me: ME } }, { status: 200, data: { ok: true } });
+    held!();
+    await pending;
+    expect(session.signedOut()).toBe(true);
+    expect(session.hasSession()).toBe(false);
+    expect(fake.storage.has('wcp_token')).toBe(false);
+    const last = fake.sent[fake.sent.length - 1]!;
+    expect([last.url.endsWith('/auth/logout'), last.header.authorization]).toEqual([true, 'Bearer tok2']);
+  });
+});
+
 describe('门店系统说先改密码、先选岗位', () => {
   it('改「我是谁」的标记，去改密码页（已经在那一页就不动）', async () => {
     const { fake, session, api } = await load();
