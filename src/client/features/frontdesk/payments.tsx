@@ -19,6 +19,7 @@ import { splitDeduction } from '@shared/deduction';
 import type { CompanyChargeGrant, CompanyChargeGrantRequest, DiscountGrant, DiscountGrantRequest } from '@shared/grants';
 import type { CompanyReason } from '@shared/dining-v8224';
 import { companyGrantFits, CompanyPayRow, companyRequest } from './CompanyPayRow';
+import { normalizeTagCode } from '@shared/frontdesk';
 import { maskPhone, PAYMENT_METHODS } from '@shared/labels';
 import { centsToInput, formatYuan, parseYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
@@ -202,6 +203,8 @@ export function usePayRows(opts: {
       if (rows.filter((x) => x.method === 'on_account').length > 1) return '一张结账单只能挂一笔账，请合并金额';
     }
     if (r.method === 'other' && !r.ref.trim()) return '「其他」收款请在备注里写明收的是什么';
+    // 8.2.14：银行卡（POS）填了参考号的，要是 4–20 位字母或数字（敲成金额、多敲了空格的这里拦下）
+    if (r.method === 'bank_card' && r.ref.trim() && !POS_REF_PATTERN.test(normalizeTagCode(r.ref))) return 'POS 参考号要是 4–20 位字母或数字（小票上的「参考号」）';
     if (r.method === 'cash' && r.tendered.trim()) {
       // 「客人实给」只用来算找零，不登记；填了却少于这笔现金，说明现金没收够（测试服 E2E 报告 BUG-2）
       const given = parseYuan(r.tendered);
@@ -579,13 +582,16 @@ export function PayRowEditor({
             readOnly={!!row.payTx}
             value={row.ref}
             onChange={(e) => onChange({ ref: e.target.value })}
-            placeholder={row.method === 'cash' ? '备注（选填）' : row.method === 'other' ? '写明收的是什么（必填）' : '单号后几位（选填）'}
+            placeholder={
+              row.method === 'cash' ? '备注（选填）' : row.method === 'other' ? '写明收的是什么（必填）' : row.method === 'bank_card' ? 'POS 参考号（选填，填了能查重）' : '单号后几位（选填）'
+            }
             maxLength={64}
             disabled={locked}
             className="h-10 min-w-0 flex-1 basis-32"
             aria-label="收款备注"
           />
         )}
+        {row.method === 'bank_card' && <PosRefCheck refText={row.ref} />}
         {row.method === 'coupon' && (
           <>
             <Select
@@ -976,4 +982,28 @@ function StoreCouponPicker({
 /** 签赠券（8.1.9）：在券名旁标「签赠 · 板块」，列表上另写授权人、渠道、事由——选哪一张就是哪种券、谁授权的 */
 function GiftTag({ gift }: { gift: NonNullable<CheckoutCouponOption['gift']> }) {
   return <span className="rounded bg-lake/10 px-1.5 py-px text-[12px] font-semibold whitespace-nowrap text-lake">签赠 · {gift.segment}</span>;
+}
+
+/** 8.2.14 POS 参考号：4–20 位字母或数字 */
+const POS_REF_PATTERN = /^[0-9A-Z]{4,20}$/;
+
+/**
+ * 8.2.14（收银 demo「同一个交易号当天重复要确认」）：银行卡填了参考号，查今天有没有别的单用过——多半是同一笔刷了两次单、
+ * 或者抄错了参考号。只提醒，不拦（同一张卡分两次刷，参考号也不同）
+ */
+function PosRefCheck({ refText }: { refText: string }) {
+  const ref = normalizeTagCode(refText);
+  const ok = POS_REF_PATTERN.test(ref);
+  const q = useQuery({
+    queryKey: ['frontdesk', 'payment-ref', ref],
+    queryFn: () => api.get<{ count: number; checkoutNos: string[] }>(`/api/frontdesk/payment-ref-check?ref=${encodeURIComponent(ref)}`),
+    enabled: ok,
+    staleTime: 10_000,
+  });
+  if (!ok || !q.data?.count) return null;
+  return (
+    <span className="w-full text-[12.5px] font-semibold text-clay" role="alert" data-testid="pos-ref-dup">
+      今天已有 {q.data.count} 笔银行卡收款用过参考号 {ref}（结账单 {q.data.checkoutNos.map((n) => n.slice(-4)).join('、')}），请核对是不是同一笔刷了两次
+    </span>
+  );
 }

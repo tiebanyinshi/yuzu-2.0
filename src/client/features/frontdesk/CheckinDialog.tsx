@@ -15,6 +15,8 @@ import {
   type Zone,
 } from '@shared/frontdesk';
 import { crowdAdvice, MAX_BOOKED_TECH } from '@shared/frontdesk-v8223';
+import { pickAreaTags } from '@shared/desk-areas';
+import { toHalfWidth } from '@shared/halfwidth';
 import { cardProblem, riskGrantCovers, type MemberRisk, type TagCardFound } from '@shared/frontdesk-risk';
 import {
   grantCovers,
@@ -130,6 +132,8 @@ export function CheckinDialog({
   const [memberQ, setMemberQ] = useState('');
   const [member, setMember] = useState<MemberSummary | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
+  // 8.2.14 按人数发牌（收银 demo）：只填男、女几位，按推荐的区自动分牌
+  const [counts, setCounts] = useState({ male: '', female: '' });
   /** 当场授权（值班经理 / 店总签发，5 分钟内一次有效）；只在有客人等级不够、要用 VIP 柜时使用 */
   const [grant, setGrant] = useState<VipGrant | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
@@ -164,6 +168,7 @@ export function CheckinDialog({
     setMemberQ('');
     setMember(null);
     setRows([{ id: rowSeq++, zone: prefill.zone ?? 'male', code: prefill.tagCode ?? '', label: '', ticketTypeId: null }]);
+    setCounts({ male: '', female: '' });
     setGrant(null);
     setTicketGrant(null);
     setTicketReason('1 米以下儿童');
@@ -251,6 +256,24 @@ export function CheckinDialog({
     op.clearError();
     fn();
   };
+  /**
+   * 8.2.14 按人数发牌：男、女各几位（全角数字也认），按区域状态的推荐顺序分空牌（一个区不够接着下一个）。
+   * 已经填了牌号的行留着（刷卡、手输的不动，会员本人那一行也不动），只补齐不够的、去掉多出来的空行；每一行照旧能改、能刷卡换
+   */
+  const applyCounts = () =>
+    edit(() =>
+      setRows((list) => {
+        const want: Record<Zone, number> = { male: Math.min(12, Number(toHalfWidth(counts.male)) || 0), female: Math.min(12, Number(toHalfWidth(counts.female)) || 0) };
+        const next: Row[] = [];
+        for (const zone of ['male', 'female'] as const) {
+          const kept = list.filter((r) => r.zone === zone && r.code.trim()).slice(0, want[zone]);
+          const used = new Set(list.map((r) => normalizeTagCode(r.code)).filter(Boolean));
+          const codes = pickAreaTags(tags, zone, want[zone] - kept.length, Date.now(), used);
+          next.push(...kept, ...codes.map((code) => ({ id: rowSeq++, zone, code, label: '', ticketTypeId: list[0]?.ticketTypeId ?? null, zoneTouched: true })));
+        }
+        return next.length ? next.slice(0, 12) : list;
+      }),
+    );
   const update = (id: number, patch: Partial<Row>) => edit(() => setRows((list) => list.map((r) => (r.id === id ? { ...r, ...patch } : r))));
 
   /** 输入末位后回车 / 离开输入框：只有能唯一确定一张同分区空闲牌时才自动补全 */
@@ -478,6 +501,36 @@ export function CheckinDialog({
                 </li>
               )}
             </ul>
+          </div>
+        )}
+
+        {!prefill.join && (
+          <div className="flex flex-wrap items-center gap-2 rounded-[12px] border border-line bg-paper-2/60 px-3 py-2" data-testid="checkin-counts">
+            <span className="text-[13px] font-bold text-ink-2">按人数发牌</span>
+            {(['male', 'female'] as const).map((z) => (
+              <label key={z} className="flex items-center gap-1 text-[13px] text-ink-2">
+                {ZONE_LABELS[z].title}
+                <Input
+                  inputMode="numeric"
+                  value={counts[z]}
+                  onChange={(e) => setCounts({ ...counts, [z]: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      applyCounts();
+                    }
+                  }}
+                  className="num h-9 w-16 text-center text-[16px] font-bold"
+                  aria-label={`${ZONE_LABELS[z].title}几位`}
+                  data-testid={`checkin-count-${z}`}
+                />
+                位
+              </label>
+            ))}
+            <Button size="sm" variant="secondary" disabled={locked} onClick={applyCounts} data-testid="checkin-count-apply">
+              按推荐区分牌（回车）
+            </Button>
+            <span className="text-[12px] text-ink-3">分好后每一行照旧能改、能刷卡换</span>
           </div>
         )}
 

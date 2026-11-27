@@ -16,6 +16,7 @@ import {
   type CheckinResult,
   type TagZone,
   type VisitDetail,
+  DEFAULT_FRONTDESK_RULES,
 } from '@shared/frontdesk';
 import { useCan, useSession } from '../../lib/session';
 import { DeskOverview } from './DeskOverview';
@@ -520,7 +521,7 @@ export function FrontdeskPage() {
               panel
             ) : (
               // 8.2.13：没选手牌时是区域状态与最近发牌（店主 2026-11-27 收银员工作台 demo），不再是一大块空白
-              <DeskOverview tags={tags} now={now} selfMinutes={board.data?.rules.selfVoidMinutes ?? 10} onOpen={openTag} onArea={(area) => area && setQ(area)} />
+              <DeskOverview tags={tags} now={now} selfMinutes={board.data?.rules.selfVoidMinutes ?? DEFAULT_FRONTDESK_RULES.selfVoidMinutes} onOpen={openTag} onArea={(area) => area && setQ(area)} />
             )}
           </aside>
         ) : (

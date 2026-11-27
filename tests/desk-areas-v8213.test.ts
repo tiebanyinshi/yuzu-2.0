@@ -55,3 +55,15 @@ describe('区域状态', () => {
     expect(s.filter((x) => x.recommended).map((x) => `${x.zone}${x.area}`)).toEqual(['maleA']);
   });
 });
+
+describe('按人数发牌（8.2.14）', () => {
+  it('按推荐的区挑空牌、区里按牌号顺序，一个区不够接着下一个；跳过已用的', async () => {
+    const { pickAreaTags } = await import('../src/shared/desk-areas');
+    const tags = [tag('A01', 2), tag('A02', null), tag('A10', null), tag('A9', null), tag('B01', null), tag('B02', null), tag('C01', null, { zone: 'female' })];
+    // B 区空闲（推荐），A 区正常
+    expect(pickAreaTags(tags, 'male', 3, NOW)).toEqual(['B01', 'B02', 'A02']);
+    expect(pickAreaTags(tags, 'male', 3, NOW, new Set(['B01']))).toEqual(['B02', 'A02', 'A9']);
+    expect(pickAreaTags(tags, 'male', 9, NOW)).toHaveLength(5);
+    expect(pickAreaTags(tags, 'female', 1, NOW)).toEqual(['C01']);
+  });
+});
