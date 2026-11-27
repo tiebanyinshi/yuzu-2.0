@@ -1,0 +1,620 @@
+{
+  "说明": "采购商城对外接口（/api/erp/mall/*）的契约，由 src/server/modules/mall.ts 的 MALL_API_CONTRACT 生成，不要手改。请求头 x-mall-key 带服务密钥；返回的类型见 src/shared/mall.ts；出错时 { error: { code, message, details? } }。",
+  "prefix": "/api/erp/mall",
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/auth/verify",
+      "auth": "无（核对账号密码）",
+      "body": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "clientIp": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ]
+      },
+      "returns": "MallIdentity"
+    },
+    {
+      "method": "GET",
+      "path": "/staff/me",
+      "auth": "登录",
+      "returns": "MallIdentity"
+    },
+    {
+      "method": "GET",
+      "path": "/master/meta",
+      "auth": "request.create | request.review | request.stock",
+      "returns": "{ departments, stores, entities, purposes, priorities, rules }"
+    },
+    {
+      "method": "GET",
+      "path": "/master/materials",
+      "auth": "request.create | request.review | request.stock",
+      "returns": "{ materials }"
+    },
+    {
+      "method": "GET",
+      "path": "/master/suppliers",
+      "auth": "request.create | request.review | request.stock",
+      "returns": "{ suppliers }"
+    },
+    {
+      "method": "POST",
+      "path": "/requests",
+      "auth": "request.create",
+      "body": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "clientKey": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "externalNo": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "departmentId": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contactName": {
+            "default": "",
+            "type": "string",
+            "maxLength": 40
+          },
+          "storeId": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entityId": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "budgetProject": {
+            "default": "",
+            "type": "string",
+            "maxLength": 80
+          },
+          "needBy": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deliveryAddress": {
+            "default": "",
+            "type": "string",
+            "maxLength": 120
+          },
+          "paymentIntent": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "company_direct",
+                  "dept_petty"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "priority": {
+            "default": "normal",
+            "type": "string",
+            "enum": [
+              "urgent",
+              "high",
+              "normal"
+            ]
+          },
+          "note": {
+            "default": "",
+            "type": "string",
+            "maxLength": 500
+          },
+          "lines": {
+            "minItems": 1,
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "materialId": {
+                  "default": null,
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "supplierId": {
+                  "default": null,
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "mallSkuCode": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "priceVersion": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 20
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "purpose": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 20
+                },
+                "qtyMilli": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1000000000
+                },
+                "unit": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8
+                },
+                "refPriceCents": {
+                  "default": null,
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100000000
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "taxRateBp": {
+                  "default": null,
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 10000
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "freightCents": {
+                  "default": null,
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100000000
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "link": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 1000
+                },
+                "details": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 1000
+                },
+                "brandModel": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 150
+                },
+                "expectedCategory": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 32
+                },
+                "reasonText": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 1000
+                },
+                "note": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "imageIds": {
+                  "default": [],
+                  "maxItems": 9,
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "customKind": {
+                  "default": null,
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "standard",
+                        "custom"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "customSpec": {
+                  "default": null,
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "size": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 120
+                        },
+                        "craft": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 200
+                        },
+                        "scene": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 200
+                        },
+                        "sample": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "budgetCents": {
+                          "default": null,
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 100000000
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "qtyMilli",
+                "unit"
+              ]
+            }
+          }
+        },
+        "required": [
+          "clientKey",
+          "externalNo",
+          "lines"
+        ]
+      },
+      "returns": "MallCreateResult（新建 201、原样重提 200）"
+    },
+    {
+      "method": "GET",
+      "path": "/requests",
+      "auth": "request.create | request.review | request.stock",
+      "query": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "submitted",
+              "returned",
+              "approved",
+              "rejected",
+              "cancelled",
+              "issued"
+            ]
+          },
+          "departmentId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "source": {
+            "type": "string",
+            "const": "mall"
+          },
+          "updatedSince": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "afterId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "from": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        }
+      },
+      "returns": "{ requests: MallRequestBrief[], nextCursor: { updatedSince, afterId } | null }"
+    },
+    {
+      "method": "POST",
+      "path": "/requests/batch-status",
+      "auth": "request.create | request.review | request.stock",
+      "body": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ids": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "externalNos": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        }
+      },
+      "returns": "{ requests: MallRequestBrief[], missing: { ids, externalNos } }"
+    },
+    {
+      "method": "GET",
+      "path": "/requests/by-key/:key",
+      "auth": "request.create",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "returns": "操作编号查回：{ found, …, request: MallRequest | null }"
+    },
+    {
+      "method": "GET",
+      "path": "/requests/by-external/:externalNo",
+      "auth": "request.create | request.review | request.stock",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "externalNo": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "externalNo"
+        ]
+      },
+      "returns": "MallRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/requests/:id",
+      "auth": "request.create | request.review | request.stock",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "returns": "MallRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/ops/:key/abandon",
+      "auth": "request.create",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "body": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "summary": {
+            "default": "",
+            "type": "string",
+            "maxLength": 200
+          }
+        }
+      },
+      "returns": "同 by-key（确认作废后再查回）"
+    },
+    {
+      "method": "POST",
+      "path": "/images",
+      "auth": "request.create",
+      "body": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "mime": {
+            "type": "string",
+            "enum": [
+              "image/jpeg",
+              "image/png",
+              "image/webp"
+            ]
+          },
+          "data": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 1500000
+          }
+        },
+        "required": [
+          "mime",
+          "data"
+        ]
+      },
+      "returns": "{ id }（201）"
+    },
+    {
+      "method": "GET",
+      "path": "/images/:id",
+      "auth": "request.create | request.review | request.stock",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "returns": "图片（image/jpeg、png、webp）"
+    }
+  ]
+}

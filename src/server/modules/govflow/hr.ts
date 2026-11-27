@@ -27,6 +27,7 @@ import {
   type HrBatchView,
   HR_EVIDENCE_LABELS,
 } from '@shared/govflow-hr';
+import { maskAccount } from '@shared/mask';
 import { can } from '@shared/permissions';
 import type { Db, Fragment } from '../../db';
 import { isUniqueViolation } from '../../db';
@@ -45,7 +46,6 @@ import { templateFor } from './types';
 
 let TZ = 'Asia/Shanghai';
 const uuid = z.uuid('缺少有效的操作编号，请刷新页面后重试');
-const mask = (a: string) => `****${a.slice(-4)}`;
 
 /** 收款账户摘要：人员 + 账号 + 金额，排好序取 SHA-256（出纳复核三者一致用） */
 const digestOf = (lines: readonly { staffId: number; account: string; amountCents: number }[]) =>
@@ -108,7 +108,7 @@ async function batchView(db: Db, actor: Actor, docId: number): Promise<HrBatchVi
         await db<{ staffName: string; amountCents: number; account: string; costDeptName: string }[]>`
           SELECT s.display_name AS staff_name, l.amount_cents, l.account, d.name AS cost_dept_name
           FROM gf_hr_batch_lines l JOIN staff s ON s.id = l.staff_id JOIN departments d ON d.id = l.cost_dept_id WHERE l.batch_id = ${b.id} ORDER BY l.id`
-      ).map((l) => ({ staffName: l.staffName, amountCents: Number(l.amountCents), accountMasked: mask(l.account), costDeptName: l.costDeptName }))
+      ).map((l) => ({ staffName: l.staffName, amountCents: Number(l.amountCents), accountMasked: maskAccount(l.account), costDeptName: l.costDeptName }))
     : null;
   const [paid] = await db<{ bankRef: string; paidAt: Date }[]>`SELECT bank_ref, paid_at FROM gf_hr_payouts WHERE batch_id = ${b.id}`;
   const [check] = await db<{ ok: boolean; mismatches: string[] }[]>`SELECT ok, mismatches FROM gf_hr_checks WHERE batch_id = ${b.id} ORDER BY id DESC LIMIT 1`;
@@ -122,7 +122,7 @@ async function batchView(db: Db, actor: Actor, docId: number): Promise<HrBatchVi
     originalBatchNo: b.originalBatchNo,
     evidence: b.evidence,
     lines,
-    paid: paid ? { bankRef: detail ? paid.bankRef : mask(paid.bankRef), paidAt: new Date(paid.paidAt).toISOString() } : null,
+    paid: paid ? { bankRef: detail ? paid.bankRef : maskAccount(paid.bankRef), paidAt: new Date(paid.paidAt).toISOString() } : null,
     mismatches: check && !check.ok ? check.mismatches : [],
   };
 }

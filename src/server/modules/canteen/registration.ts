@@ -7,6 +7,7 @@
 // 登记的锁：同一个手机号的那一行（有的话，FOR UPDATE，与登录同一把）；新建前取登录名的咨询锁再核对不撞，最后靠用户名、手机号、工号的唯一索引兜底。
 
 import { z } from 'zod';
+import { maskPhoneCompact } from '@shared/mask';
 import { defaultAvatar, normalizePhone, normalizeUsername, PHONE, registrationLink, usernameProblem, type CanteenRegistration, type RegisterInfo } from '@shared/canteen';
 import { hashPassword } from '../../auth/password';
 import { isUniqueViolation, type Db, type Sql, type Tx } from '../../db';
@@ -98,8 +99,6 @@ const RegisterInput = z.object({
   password: z.string('请设一个密码').max(200),
 });
 
-const maskPhone = (p: string) => `${p.slice(0, 3)}****${p.slice(7)}`;
-
 /** 自己登记的工号：ZC 加编号（ZC0007）；撞了已有的工号就在后面加 -2、-3 */
 async function insertSelfEmployee(tx: Tx, input: { username: string; phone: string; passwordHash: string }): Promise<{ id: number; empNo: string }> {
   const [seq] = await tx<{ id: number }[]>`SELECT nextval(pg_get_serial_sequence('canteen_employees', 'id'))::int AS id`;
@@ -176,7 +175,7 @@ export async function registerEmployee(
       action: 'canteen_employee',
       targetType: 'canteen_employee',
       targetId: made.id,
-      detail: { op: 'self_register', empNo: made.empNo, username, phone: maskPhone(phone) },
+      detail: { op: 'self_register', empNo: made.empNo, username, phone: maskPhoneCompact(phone) },
       ip: meta.ip,
     });
     return { token: await createCanteenSession(tx, made.id, meta), employeeId: made.id, created: true };

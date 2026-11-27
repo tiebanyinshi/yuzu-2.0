@@ -3,6 +3,7 @@
 
 import type { TrialSummary } from './trials';
 import { shiftDate } from './labels';
+import { maskPhoneCompact, NO_PHONE_LABEL } from './mask';
 
 export const MAX_GRADE = 6;
 /** 档级 L0–L6 */
@@ -338,7 +339,7 @@ export function maskName(name: string): string {
 }
 
 /** 没留手机号的（匿名卡，8.1.15）写「未留手机号」 */
-export const maskPhone = (phone: string | null): string => (phone === null ? '未留手机号' : phone.length === 11 ? `${phone.slice(0, 3)}****${phone.slice(7)}` : '****');
+export const maskPhone = (phone: string | null): string => (phone === null ? NO_PHONE_LABEL : maskPhoneCompact(phone));
 
 // ───────────────────────── 接口的数据 ─────────────────────────
 

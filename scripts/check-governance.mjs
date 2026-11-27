@@ -136,7 +136,33 @@ export const CONVENTION_RULES = [
     allow: [],
     hint: '接口的输入直接 parse(zod 模式, req.body)，不写 req.body as X（断言不校验，下游忘了 parse 就是没校验的输入）',
   },
+  // 8.1.56（后端评估第 2 节，照 Medusa「模块只通过自己的服务对外」的最小版）：服务端领域文件夹（src/server/modules/<领域>/）
+  // 的内部文件只给本领域用，别处引用它的 index.ts。存量记数、只降不升；新的跨领域引用先在那个领域的 index.ts 导出
+  {
+    key: 'module-internal',
+    count: moduleInternalImports,
+    scope: ['src/server/'],
+    allow: [],
+    hint: '别的领域只引用 src/server/modules/<领域>/index.ts；要用的函数先在那个领域的 index.ts 导出，不直接引用它的内部文件',
+  },
 ];
+
+/** 一份服务端源码里引用别的领域内部文件的次数（src/server/modules/<领域>/<不是 index 的文件>，引用方不在这个领域里） */
+export function moduleInternalImports(file, code) {
+  const MODULES = 'src/server/modules/';
+  const own = file.startsWith(MODULES) ? file.slice(MODULES.length).split('/') : null;
+  const ownDomain = own && own.length > 1 ? own[0] : null;
+  let n = 0;
+  for (const m of code.matchAll(/\b(?:from|import)\s*\(?\s*'(\.{1,2}\/[^']+)'/g)) {
+    const target = posix.normalize(posix.join(posix.dirname(file), m[1]));
+    if (!target.startsWith(MODULES)) continue;
+    const parts = target.slice(MODULES.length).split('/');
+    if (parts.length < 2 || parts[0] === ownDomain) continue;
+    if (parts.length === 2 && /^index(\.ts)?$/.test(parts[1])) continue;
+    n += 1;
+  }
+  return n;
+}
 
 /** allow 里的一项管不管这个文件：以 / 结尾的是整个目录 */
 const allowed = (allow, file) => allow.some((a) => (a.endsWith('/') ? file.startsWith(a) : a === file));
@@ -163,7 +189,7 @@ export function conventionCounts(file, code) {
   const text = stripComments(code);
   for (const rule of CONVENTION_RULES) {
     if (!rule.scope.some((dir) => file.startsWith(dir)) || allowed(rule.allow, file)) continue;
-    const n = (text.match(rule.pattern) ?? []).length;
+    const n = rule.count ? rule.count(file, text) : (text.match(rule.pattern) ?? []).length;
     if (n) counts[rule.key] = n;
   }
   return counts;

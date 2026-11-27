@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { addWorkdays, type GfRole } from '@shared/govflow';
 import { INVOICE_LATER_WORKDAYS, INVOICE_STATES, PAYMENT_CATEGORIES, routePayment, type InvoiceState, type PaymentRoute, type PaymentView } from '@shared/govflow-payment';
 import { formatAmount } from '@shared/money';
+import { maskAccount } from '@shared/mask';
 import { can } from '@shared/permissions';
 import type { Db, Tx } from '../../db';
 import { isUniqueViolation } from '../../db';
@@ -29,7 +30,6 @@ import { templateFor } from './types';
 let TZ = 'Asia/Shanghai';
 const uuid = z.uuid('缺少有效的操作编号，请刷新页面后重试');
 const yuan = (c: number) => `¥${formatAmount(c)}`;
-const mask = (a: string) => (a.length <= 4 ? a : `****${a.slice(-4)}`);
 
 /** 在途 + 已付的付款申请（没撤回、最近一轮没驳回） */
 const ACTIVE = (db: Db) => db`d.doc_type = 'payment' AND d.withdrawn_at IS NULL
@@ -272,7 +272,7 @@ async function paymentView(db: Db, doc: DocRow): Promise<PaymentView> {
     contractNo: (p.contractNo as string | null) ?? null,
     supplierId: p.supplierId ? Number(p.supplierId) : null,
     payeeName: String(p.payeeName),
-    payeeAccountMasked: mask(String(p.payeeAccount)),
+    payeeAccountMasked: maskAccount(String(p.payeeAccount)),
     amountCents: doc.amountCents ?? 0,
     paidCents: payouts.reduce((a, o) => a + Number(o.amountCents), 0),
     invoice: p.invoice as InvoiceState,
@@ -281,7 +281,7 @@ async function paymentView(db: Db, doc: DocRow): Promise<PaymentView> {
     specialId: p.specialId ? Number(p.specialId) : null,
     specialNo: (p.specialNo as string | null) ?? null,
     specialRemainingCents: specialRemaining,
-    payouts: payouts.map((o) => ({ ...o, id: Number(o.id), amountCents: Number(o.amountCents), payeeAccount: mask(o.payeeAccount), paidAt: new Date(o.paidAt).toISOString() })),
+    payouts: payouts.map((o) => ({ ...o, id: Number(o.id), amountCents: Number(o.amountCents), payeeAccount: maskAccount(o.payeeAccount), paidAt: new Date(o.paidAt).toISOString() })),
   };
 }
 

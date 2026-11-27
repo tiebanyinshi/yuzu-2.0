@@ -19,3 +19,5 @@ playwright-report/
 # 第三方文件与静态资源（有的按清单核对大小与摘要，不能动）
 **/public/
 brand/
+# 生成的契约文件（tests/mall-contract.test.ts 按 JSON.stringify 原样核对）
+docs/contracts/
