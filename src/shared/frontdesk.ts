@@ -2,6 +2,7 @@
 //
 // 手牌账单只汇总消费明细，不是第二套会员钱包：本阶段（S2）挂账不收款、不扣会员余额。
 
+import { toHalfWidth } from './halfwidth';
 import type { BackfillMark } from './backfill';
 import type { PriceTier } from './catalog';
 import type { CheckoutDetail } from './checkout';
@@ -178,7 +179,8 @@ export function planTagCodes(rule: TagGenerateRule, existing: ReadonlySet<string
 }
 
 export function normalizeTagCode(input: string): string {
-  return input.trim().toUpperCase().replace(/\s+/g, '');
+  // 8.2.12：输入法全角时敲的「Ａ０２３」按 A023 认
+  return toHalfWidth(input).trim().toUpperCase().replace(/\s+/g, '');
 }
 
 /** 牌号里的数字部分，用于「输入末位快速检索」 */

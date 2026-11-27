@@ -10,6 +10,7 @@ import { StoreRail } from './StoreRail';
 import { PendingOpsBanner } from './PendingOpsBanner';
 import { FrontdeskPendingBanner } from '../features/frontdesk/PendingBanner';
 import { TerminalBridgeRunner } from '../features/devices/terminal';
+import { GlobalHotkeys } from '../lib/keymap';
 import { Badge } from './ui';
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -29,6 +30,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex h-dvh min-h-0 overflow-hidden bg-paper">
       {/* 设备（v0.7.21）：选了「这台终端」的设备常连本机的设备服务、替它上报（不在设备页也照常） */}
       <TerminalBridgeRunner />
+      {/* 8.2.12：⌥数字跳页、⌥0 全部功能、⌥N 通知 */}
+      <GlobalHotkeys />
       {/* 门户页改造（店主 2026-11-24）：换店、实例标识、版本号、头像、通知铃铛移到门户页顶栏；侧栏最下面是「返回门户」 */}
       <StoreRail footer={<PortalBackRail />} />
       <div ref={content} className="scroll-thin flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto" data-testid="app-content">
