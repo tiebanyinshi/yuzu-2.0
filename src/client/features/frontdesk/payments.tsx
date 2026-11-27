@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { ArAccountOption } from '@shared/ar';
 import { spendQuotaText, type SpendQuota } from '@shared/spend-quota';
@@ -27,7 +27,8 @@ import { cn } from '../../lib/utils';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { AuthorizeDialog } from '../../components/AuthorizeDialog';
 import { Money } from '../../components/Money';
-import { Badge, Button, Input, MoneyInput, Select } from '../../components/ui';
+import { Badge, Button, Input, Kbd, MoneyInput, Select } from '../../components/ui';
+import { composing, openDialog } from '../../lib/keymap';
 import type { PayTxView, VerificationView } from '@shared/integrations';
 import { ScanPayButton } from '../pay/ScanPay';
 import { VerifyButton } from '../pay/VoucherVerify';
@@ -359,11 +360,33 @@ export function PaymentsSection({
   const authRow = pay.rows.find((r) => r.id === authorizing) ?? null;
   const authCents = authRow ? pay.rowCents[pay.rows.indexOf(authRow)] : null;
   const auth = authRow && authCents ? authorize(authCents, authRow.method === 'company' ? '公司承担' : authRow.reason.trim()) : null;
+  const methods = QUICK_METHODS.filter((m) => (m !== 'wallet' || canWallet) && (m !== 'store_coupon' || !!coupons) && (m !== 'on_account' || (arAccounts.data?.length ?? 0) > 0));
+  // 8.2.22（收银 demo「键盘走完收款」）：⌥ / Alt + 1–9 加第几种收款方式（按钮上写着），金额默认还差的部分，光标落到这一笔的金额上；
+  // 数字键本身留给金额输入。点的是按钮本身，停用（例如应收还没取到）的按不动
+  const section = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || composing(e) || !/^(Digit|Numpad)[1-9]$/.test(e.code)) return;
+      const root = section.current;
+      const dialog = root?.closest('[role="dialog"]');
+      // 只管自己所在的对话框是最上面那一个的时候
+      if (!root || (dialog && openDialog() !== dialog)) return;
+      const b = root.querySelector<HTMLButtonElement>(`button[data-paykey="${e.code.slice(-1)}"]`);
+      e.preventDefault();
+      e.stopPropagation();
+      if (!b || b.disabled) return;
+      b.click();
+      // 新加的那一笔在列表最后：光标放到它的金额框
+      requestAnimationFrame(() => root.querySelector<HTMLInputElement>('ul > li:last-child input')?.focus());
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
   return (
-    <div className="rounded-lg border border-line bg-paper/50 p-3">
+    <div ref={section} className="rounded-lg border border-line bg-paper/50 p-3">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-1 text-[13px] font-bold text-ink-2">收款</span>
-        {QUICK_METHODS.filter((m) => (m !== 'wallet' || canWallet) && (m !== 'store_coupon' || !!coupons) && (m !== 'on_account' || (arAccounts.data?.length ?? 0) > 0)).map((m) => (
+        {methods.map((m, i) => (
           <Button
             key={m}
             size="sm"
@@ -379,8 +402,10 @@ export function PaymentsSection({
             }
             onClick={() => pay.addRow(m)}
             data-testid={`pay-add-${m}`}
+            data-paykey={i < 9 ? i + 1 : undefined}
           >
             {CHECKOUT_METHOD_LABELS[m]}
+            {i < 9 && <Kbd className="ml-1 h-5 min-w-5 text-[12px]">⌥{i + 1}</Kbd>}
           </Button>
         ))}
       </div>

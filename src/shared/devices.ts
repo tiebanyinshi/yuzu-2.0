@@ -3,6 +3,8 @@
 // 设备分六种：打印机、标签机、读卡器、扫码（四类能力设备），以及承载它们的终端、打印服务器。
 // 接法分五种：网口直连、经打印服务器（与网口同一条路）、终端设备服务（桥）、模拟键盘、无（终端与打印服务器本身）。
 
+import { toHalfWidth } from './halfwidth';
+
 /** 协议版本：桥的报文、设备事件都带它；对不上的报文不认（BRIDGE_PROTOCOL） */
 export const DEVICE_PROTOCOL_VERSION = 1;
 
@@ -411,7 +413,8 @@ export function createWedgeRecognizer(opts: { maxGapMs?: number; minLength?: num
         buffer = '';
         return code.length >= minLength && CODE_RE.test(code) ? code : null;
       }
-      if (key.length === 1) buffer += key;
+      // 8.2.22：输入法全角时键盘式读卡器打进来的是全角数字，按半角收
+      if (key.length === 1) buffer += toHalfWidth(key);
       else if (key !== 'Shift') buffer = '';
       return null;
     },
