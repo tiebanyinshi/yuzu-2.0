@@ -27,12 +27,12 @@ afterAll(async () => ctx.close());
 const ARTICLE = ['## 本课目标', '学完能说出泡汤的三个禁忌。', '', ':::ban 不宜泡汤', '- 酒后', '- 空腹', ':::', '', ':::check', '酒后能泡汤吗？', '- [ ] 能', '- [x] 不能', ':::'].join('\n');
 
 async function newCourse(input: Record<string, unknown> = {}) {
-  const r = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/courses', { title: '泡汤安全', category: 'industry', ...input });
+  const r = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/courses', { clientKey: randomUUID(), title: '泡汤安全', category: 'industry', ...input });
   expect(r.status, JSON.stringify(r.body)).toBe(201);
   return r.body;
 }
 async function addLesson(courseId: number, input: Record<string, unknown>) {
-  const r = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${courseId}/lessons`, input);
+  const r = await api<AcademyAdminCourse>(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${courseId}/lessons`, { clientKey: randomUUID(), ...input });
   expect(r.status, JSON.stringify(r.body)).toBe(201);
   return r.body;
 }
@@ -59,7 +59,12 @@ describe('学堂 · 课程与课时', () => {
   it('建课、加课时（图文课件解析不过拒绝并带行号）、没有课时不能上架、上架后员工看得到；店员不能管理；平板进不了学堂', async () => {
     const made = await newCourse();
     expect(made.course).toMatchObject({ status: 'draft', category: 'industry', lessonCount: 0 });
-    const bad = await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${made.course.id}/lessons`, { title: '坏的', kind: 'article', body: ':::check\n题\n- [ ] 甲\n:::' });
+    const bad = await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${made.course.id}/lessons`, {
+      clientKey: randomUUID(),
+      title: '坏的',
+      kind: 'article',
+      body: ':::check\n题\n- [ ] 甲\n:::',
+    });
     expect(bad.status).toBe(422);
     expect(bad.body.error.code).toBe('ACADEMY_MARKUP_INVALID');
     expect(bad.body.error.details.problems[0].line).toBe(1);
@@ -105,7 +110,13 @@ describe('学堂 · 课程与课时', () => {
     expect(await titles(diner)).toContain('餐饮出品规范');
     expect(await titles(ctx.clerk)).not.toContain('餐饮出品规范');
     expect((await api(ctx.app, ctx.clerk, 'GET', `/api/academy/courses/${c.course.id}`)).status).toBe(403);
-    const assign = await api(ctx.app, ctx.owner, 'POST', '/api/admin/academy/assignments', { courseId: c.course.id, audience: 'staff', staffId: ctx.clerkId, required: false });
+    const assign = await api(ctx.app, ctx.owner, 'POST', '/api/admin/academy/assignments', {
+      clientKey: randomUUID(),
+      courseId: c.course.id,
+      audience: 'staff',
+      staffId: ctx.clerkId,
+      required: false,
+    });
     expect(assign.status, JSON.stringify(assign.body)).toBe(201);
     expect(await titles(ctx.clerk)).toContain('餐饮出品规范');
   });
@@ -151,6 +162,7 @@ describe('学堂 · 学习、学分与地图', () => {
     const b1 = await publish(await addLesson(b.course.id, { title: 'B1', kind: 'article', body: '乙。', credits: 20 }));
     const draft = await newCourse({ title: '还没上架的一站', category: 'culture' });
     const made = await api<AcademyAdminPath>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/paths', {
+      clientKey: randomUUID(),
       title: '新员工入职地图',
       credits: 25,
       courseIds: [a.course.id, b.course.id, draft.course.id],
@@ -187,9 +199,10 @@ describe('学堂 · 学习、学分与地图', () => {
     });
     expect(made.status, JSON.stringify(made.body)).toBe(201);
     expect(made.body).toMatchObject({ targetTitle: '前厅接待', audienceLabel: '前厅部', required: true, people: 1, completed: 0, overdue: 0 });
-    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/academy/assignments', { clientKey: key, courseId: c.course.id, audience: 'department', departmentKey: 'front' })).body.id).toBe(
-      made.body.id,
-    );
+    const same = { clientKey: key, courseId: c.course.id, audience: 'department', departmentKey: 'front', required: true, dueDays: 7 };
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/academy/assignments', same)).body.id).toBe(made.body.id);
+    // 同一编号、内容不同（哪怕只差期限）：拒绝，不会把原来那条当成这次的（Codex 审查 dd885a6）
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/admin/academy/assignments', { ...same, dueDays: 30 })).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
     const [note] = await ctx.sql`SELECT title, link FROM oa_notifications WHERE staff_id = ${ctx.clerkId} AND ref_type = 'academy_assignment' AND ref_id = ${made.body.id}`;
     expect(note).toMatchObject({ title: '学堂：新的必修「前厅接待」', link: `/oa/academy/courses/${c.course.id}` });
     let home = await homeOf(ctx.clerk);
@@ -232,5 +245,73 @@ describe('学堂 · 学习、学分与地图', () => {
     const learners = (await api(ctx.app, ctx.owner, 'GET', '/api/admin/academy/learners')).body as { name: string; credits: number; minutes: number }[];
     expect(learners.find((l) => l.name === '测试店员')).toMatchObject({ minutes: 2 });
     expect(learners.find((l) => l.name === '餐饮小王')).toMatchObject({ credits: 65 });
+  });
+});
+
+describe('学堂 · Codex 审查 dd885a6', () => {
+  it('新建不带操作编号拒绝', async () => {
+    const r = await api(ctx.app, ctx.owner, 'POST', '/api/admin/academy/courses', { title: '没编号', category: 'industry' });
+    expect(r.status).toBe(400);
+  });
+
+  it('学完了课以后地图才上架：上架时补记学完、给地图学分；再点「学完了」不重复给', async () => {
+    const c = await newCourse({ title: '先学后有地图', category: 'skill' });
+    const pub = await publish(await addLesson(c.course.id, { title: '一节', kind: 'article', body: '正文。' }));
+    const lessonId = pub.lessons[0]!.id;
+    expect((await complete(diner, lessonId)).body).toMatchObject({ credits: 1, courseCompleted: true, pathsCompleted: [] });
+    const before = (await homeOf(diner)).me.credits;
+    const p = await api<AcademyAdminPath>(ctx.app, ctx.owner, 'POST', '/api/admin/academy/paths', { clientKey: randomUUID(), title: '后来的地图', credits: 7, courseIds: [c.course.id] });
+    const up = await api<AcademyAdminPath>(ctx.app, ctx.owner, 'PUT', `/api/admin/academy/paths/${p.body.id}`, { ...p.body, status: 'published', version: p.body.version });
+    expect(up.status, JSON.stringify(up.body)).toBe(200);
+    expect((await homeOf(diner)).me.credits).toBe(before + 7);
+    const [row] = await ctx.sql`SELECT completed_on FROM academy_path_completions WHERE staff_id = ${dinerId} AND path_id = ${p.body.id}`;
+    expect(row).toBeTruthy();
+    expect((await complete(diner, lessonId)).body).toMatchObject({ credits: 0, pathsCompleted: [] });
+    expect((await homeOf(diner)).me.credits).toBe(before + 7);
+  });
+
+  it('文件课时只能用全员看得到的培训文件夹里的文件；文件夹后来停用了课时页不给文件', async () => {
+    const folders = await ctx.sql<{ id: number; kind: string; departmentKey: string | null }[]>`SELECT id, kind, department_key FROM training_folders`;
+    const pub = folders.find((f) => f.kind === 'public')!;
+    const dept = folders.find((f) => f.departmentKey === 'front')!;
+    const sha = 'a'.repeat(64);
+    await ctx.sql`INSERT INTO training_blobs (sha256, size_bytes, chunk_count) VALUES (${sha}, 10, 1)`;
+    const fileIn = async (folderId: number, title: string) => {
+      const [f] = await ctx.sql<{ id: number }[]>`INSERT INTO training_files (folder_id, title, created_by) VALUES (${folderId}, ${title}, ${ctx.ownerId}) RETURNING id`;
+      const [v] = await ctx.sql<{ id: number }[]>`
+        INSERT INTO training_file_versions (file_id, version_no, file_name, mime, sha256, size_bytes, uploaded_by)
+        VALUES (${f!.id}, 1, 'a.pdf', 'application/pdf', ${sha}, 10, ${ctx.ownerId}) RETURNING id`;
+      await ctx.sql`UPDATE training_files SET current_version_id = ${v!.id} WHERE id = ${f!.id}`;
+      return Number(f!.id);
+    };
+    const c = await newCourse({ title: '带文件的课', category: 'skill' });
+    const deptFile = await fileIn(dept.id, '前厅内部文件');
+    const bad = await api(ctx.app, ctx.owner, 'POST', `/api/admin/academy/courses/${c.course.id}/lessons`, { clientKey: randomUUID(), title: '看文件', kind: 'file', fileId: deptFile });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.message).toContain('全员看得到');
+    const okFile = await fileIn(pub.id, '员工手册');
+    const withFile = await publish(await addLesson(c.course.id, { title: '看员工手册', kind: 'file', fileId: okFile }));
+    const lessonId = withFile.lessons[0]!.id;
+    expect((await api<AcademyLessonView>(ctx.app, diner, 'GET', `/api/academy/lessons/${lessonId}`)).body.file).toEqual({ id: okFile, folderId: Number(pub.id), title: '员工手册' });
+    await ctx.sql`UPDATE training_files SET active = false WHERE id = ${okFile}`;
+    expect((await api<AcademyLessonView>(ctx.app, diner, 'GET', `/api/academy/lessons/${lessonId}`)).body.file).toBeNull();
+  });
+
+  it('同一个人同时开着两个课时：同一段时间只计一次', async () => {
+    const c = await newCourse({ title: '两个课时同时开', category: 'skill' });
+    const pub = await publish(await addLesson(await addLesson(c.course.id, { title: '甲', kind: 'article', body: '甲。' }).then((x) => x.course.id), { title: '乙', kind: 'article', body: '乙。' }));
+    const [a, b] = pub.lessons;
+    for (const l of [a!, b!]) await api(ctx.app, diner, 'POST', `/api/academy/lessons/${l.id}/ping`, { seconds: 0 });
+    await ctx.sql`UPDATE academy_progress SET last_ping_at = now() - interval '60 seconds' WHERE staff_id = ${dinerId} AND lesson_id IN (${a!.id}, ${b!.id})`;
+    expect((await api(ctx.app, diner, 'POST', `/api/academy/lessons/${a!.id}/ping`, { seconds: 60 })).body).toEqual({ added: 60 });
+    const second = (await api(ctx.app, diner, 'POST', `/api/academy/lessons/${b!.id}/ping`, { seconds: 60 })).body as { added: number };
+    expect(second.added).toBeLessThanOrEqual(6);
+  });
+
+  it('本店榜：没挂任何门店的员工按本店算', async () => {
+    await ctx.sql`DELETE FROM staff_stores WHERE staff_id = ${dinerId}`;
+    const store = (await api<AcademyRank>(ctx.app, ctx.clerk, 'GET', '/api/academy/rank?board=credits&period=all&scope=store')).body;
+    expect(store.rows.some((r) => r.name === '餐饮小王')).toBe(true);
+    expect(store.rows.find((r) => r.name === '餐饮小王')!.storeName).toBeTruthy();
   });
 });

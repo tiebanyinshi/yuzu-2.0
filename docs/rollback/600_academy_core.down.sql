@@ -6,6 +6,7 @@ DROP TABLE IF EXISTS academy_credits;
 DROP TABLE IF EXISTS academy_study_days;
 DROP TABLE IF EXISTS academy_progress;
 DROP TABLE IF EXISTS academy_assignments;
+DROP TABLE IF EXISTS academy_path_completions;
 DROP TABLE IF EXISTS academy_path_courses;
 DROP TABLE IF EXISTS academy_paths;
 DROP TABLE IF EXISTS academy_lessons;

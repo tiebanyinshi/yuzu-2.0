@@ -22,6 +22,7 @@ import {
 } from '@shared/academy';
 import type { Db, Fragment } from '../../db';
 import { forbidden, notFound } from '../../lib/errors';
+import { DEFAULT_STORE_ID } from '../../lib/store-context';
 import { assertCourseOpen, assignmentMatches, courseListed, type Learner } from './learner';
 
 // ───────────────────────── 课程 ─────────────────────────
@@ -147,7 +148,12 @@ export async function lessonView(db: Db, l: Learner, lessonId: number): Promise<
   const [c] = await db<{ category: AcademyCategory }[]>`SELECT category FROM academy_courses WHERE id = ${course.id}`;
   const siblings = await db<{ id: number }[]>`SELECT id FROM academy_lessons WHERE course_id = ${course.id} AND (active OR id = ${lessonId}) ORDER BY seq, id`;
   const at = siblings.findIndex((s) => Number(s.id) === lessonId);
-  const [file] = row.fileId ? await db<{ id: number; folderId: number; title: string }[]>`SELECT id, folder_id, title FROM training_files WHERE id = ${row.fileId}` : [];
+  // 文件后来下架了、文件夹停用或改成了只本部门看：不给（页面写「文件暂时打不开」），免得员工点进去被员工培训拦下
+  const [file] = row.fileId
+    ? await db<{ id: number; folderId: number; title: string }[]>`
+        SELECT f.id, f.folder_id, f.title FROM training_files f JOIN training_folders d ON d.id = f.folder_id
+        WHERE f.id = ${row.fileId} AND f.active AND d.active AND (d.kind = 'public' OR d.department_key IS NULL)`
+    : [];
   return {
     lesson: { ...toLesson(row), body: row.body },
     course: { id: Number(course.id), title: course.title, category: c!.category },
@@ -282,10 +288,10 @@ export async function myAssigned(db: Db, l: Learner, today: string): Promise<{ r
 
 // ───────────────────────── 我与首页 ─────────────────────────
 
-/** 门店名：员工最近用过的那家（没挂门店的按本店） */
-export const staffStoreName = (db: Db) => db`(
+/** 门店名：员工最近用过的那家；没挂门店的按本店（与登录时的 storeIdsOf 一致） */
+export const staffStoreName = (db: Db) => db`COALESCE((
   SELECT st.name FROM staff_stores ss JOIN stores st ON st.id = ss.store_id
-  WHERE ss.staff_id = s.id ORDER BY ss.last_used_at DESC NULLS LAST, ss.store_id LIMIT 1)`;
+  WHERE ss.staff_id = s.id ORDER BY ss.last_used_at DESC NULLS LAST, ss.store_id LIMIT 1), (SELECT name FROM stores WHERE id = ${DEFAULT_STORE_ID}))`;
 
 export async function myProfile(db: Db, l: Learner, today: string): Promise<AcademyMe> {
   const monthStart = `${today.slice(0, 7)}-01`;

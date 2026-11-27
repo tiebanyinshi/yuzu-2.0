@@ -1,5 +1,5 @@
 // 学堂 · 管理端（docs/ACADEMY.md 第 8 节「WCP 设置 → 学堂」，权限 academy.manage）：课程与课时、学习地图、指派、学习数据。
-//   · 新建带操作编号（client_key 唯一）：没收到结果原样重提返回原来那个；同一编号换了内容拒绝；
+//   · 新建一律带操作编号（client_key 唯一）与原请求摘要（request_hash）：没收到结果原样重提返回原来那个；同一编号换了任何内容拒绝（Codex 审查 dd885a6）；
 //   · 修改带版本（乐观并发）：别人先改过拒绝（ACADEMY_CHANGED）；没收到结果原样重提、现在的内容就是要改成的，按改好了算；
 //   · 加锁顺序（LOCKING.md「学堂」）：课程一行 → 课时一行；地图一行 → 阶段；指派一行；
 //   · 来自内置课件包的课、地图，改过就记 local_edited（再导新版不覆盖）。
@@ -25,18 +25,20 @@ import type { Db, Sql, Tx } from '../../db';
 import { writeAudit } from '../../lib/audit';
 import type { OpContext } from '../../lib/context';
 import { badRequest, conflict, notFound, unprocessable } from '../../lib/errors';
+import { hashRequest } from '../../lib/idempotency';
 import { withTx } from '../../lib/tx';
 import { parse } from '../../lib/validate';
 import { notify, onDuty } from '../oa';
 import { courseSelect, lessonSelect, pathSelect, toCourse, toLesson, toPath } from './catalog';
+import { settlePathForAll } from './progress';
 
-const uuid = z.uuid('操作编号不正确');
+const uuid = z.uuid('缺少操作编号或格式不正确');
 const text = (label: string, max: number) => z.string(`请填写${label}`).trim().max(max, `${label}最多 ${max} 个字`);
 const title = (max: number) => text('名称', max).min(1, '请填写名称');
 const deptKey = z.string().regex(/^[a-z]+$/, '部门不正确');
 
 const CourseInput = z.object({
-  clientKey: uuid.optional(),
+  clientKey: uuid,
   title: title(60),
   summary: text('简介', 300).default(''),
   category: z.enum(ACADEMY_CATEGORIES, '分类不正确'),
@@ -48,7 +50,7 @@ const CourseInput = z.object({
 const CourseUpdate = CourseInput.omit({ clientKey: true }).extend({ status: z.enum(['draft', 'published', 'archived']), version: z.number().int().positive() });
 
 const LessonInput = z.object({
-  clientKey: uuid.optional(),
+  clientKey: uuid,
   title: title(60),
   kind: z.enum(ACADEMY_LESSON_KINDS, '课时类型不正确'),
   body: z.string().max(60000, '课件太长（最多 6 万字），拆成几节课').default(''),
@@ -62,7 +64,7 @@ const LessonUpdate = LessonInput.omit({ clientKey: true }).extend({ active: z.bo
 const Reorder = z.object({ lessonIds: z.array(z.number().int().positive()).min(1).max(200) });
 
 const PathInput = z.object({
-  clientKey: uuid.optional(),
+  clientKey: uuid,
   title: title(40),
   summary: text('简介', 300).default(''),
   cover: z.enum(ACADEMY_COVERS).default('pine'),
@@ -74,7 +76,7 @@ const PathInput = z.object({
 const PathUpdate = PathInput.omit({ clientKey: true }).extend({ status: z.enum(['draft', 'published', 'archived']), version: z.number().int().positive() });
 
 const AssignmentInput = z.object({
-  clientKey: uuid.optional(),
+  clientKey: uuid,
   pathId: z.number().int().positive().nullable().default(null),
   courseId: z.number().int().positive().nullable().default(null),
   audience: z.enum(['all', 'department', 'position', 'staff']),
@@ -97,6 +99,18 @@ const AssignmentUpdate = z.object({
 
 const changed = (what: string) => conflict('ACADEMY_CHANGED', `${what}刚被别人改过，请刷新后再改`);
 const sameKey = () => conflict('IDEMPOTENCY_CONFLICT', '这个操作编号已用于内容不同的另一次保存，请刷新后重新填写');
+/** 原请求摘要：去掉操作编号以后的整份请求（加上地址里的编号） */
+const requestHash = (input: { clientKey: string }, extra: Record<string, unknown> = {}) => {
+  const { clientKey: _key, ...rest } = input;
+  return hashRequest({ ...rest, ...extra });
+};
+/** 同一编号已经建过：摘要一样返回原来那个的编号，不一样拒绝 */
+async function replayed(tx: Tx, table: 'academy_courses' | 'academy_lessons' | 'academy_paths' | 'academy_assignments', clientKey: string, hash: string): Promise<number | null> {
+  const [had] = await tx<{ id: number; requestHash: string }[]>`SELECT id, request_hash FROM ${tx(table)} WHERE client_key = ${clientKey}`;
+  if (!had) return null;
+  if (had.requestHash !== hash) throw sameKey();
+  return Number(had.id);
+}
 
 // ───────────────────────── 课程与课时 ─────────────────────────
 
@@ -126,17 +140,13 @@ export async function createCourse(sql: Sql, raw: unknown, ctx: OpContext) {
   await assertDepartment(sql, input.departmentKey);
   if (input.deptOnly && !input.departmentKey) throw badRequest('「只本部门」要先选部门');
   const id = await withTx(sql, async (tx) => {
-    if (input.clientKey) {
-      const [had] = await tx<{ id: number; title: string; category: string }[]>`SELECT id, title, category FROM academy_courses WHERE client_key = ${input.clientKey}`;
-      if (had) {
-        if (had.title !== input.title || had.category !== input.category) throw sameKey();
-        return Number(had.id);
-      }
-    }
+    const hash = requestHash(input);
+    const had = await replayed(tx, 'academy_courses', input.clientKey, hash);
+    if (had) return had;
     const [c] = await tx<{ id: number }[]>`
-      INSERT INTO academy_courses (title, summary, category, department_key, dept_only, cover, sort, client_key, created_by)
+      INSERT INTO academy_courses (title, summary, category, department_key, dept_only, cover, sort, client_key, request_hash, created_by)
       VALUES (${input.title}, ${input.summary}, ${input.category}, ${input.departmentKey}, ${input.deptOnly}, ${input.cover}, ${input.sort},
-              ${input.clientKey ?? null}, ${ctx.actor.id})
+              ${input.clientKey}, ${hash}, ${ctx.actor.id})
       RETURNING id`;
     await audit(tx, ctx, 'academy_course_saved', 'academy_course', Number(c!.id), `新建了课程「${input.title}」`);
     return Number(c!.id);
@@ -182,7 +192,10 @@ export async function updateCourse(sql: Sql, id: number, raw: unknown, ctx: OpCo
   return adminCourse(sql, id);
 }
 
-/** 课时内容核对：图文课件解析没问题、实操检查项 1–30 条、文件在员工培训里且上架、测验的题数与及格线 */
+/** 员工培训的文件夹（别名 d）全员都看得到：「培训资料」或不对应部门的文件夹 */
+export const fileOpenToAll = (db: Db) => db`(d.kind = 'public' OR d.department_key IS NULL)`;
+
+/** 课时内容核对：图文课件解析没问题、实操检查项 1–30 条、文件在全员看得到的培训文件夹里且上架、测验的题数与及格线 */
 async function checkLesson(db: Db, input: z.infer<typeof LessonInput>) {
   if (input.kind === 'article') {
     if (!input.body.trim()) throw badRequest('图文课件还没写内容');
@@ -199,9 +212,13 @@ async function checkLesson(db: Db, input: z.infer<typeof LessonInput>) {
   }
   if (input.kind === 'file') {
     if (!input.fileId) throw badRequest('选一份员工培训里的文件');
-    const [f] = await db`SELECT active FROM training_files WHERE id = ${input.fileId}`;
+    const [f] = await db<{ active: boolean; folderActive: boolean; open: boolean }[]>`
+      SELECT f.active, d.active AS folder_active, ${fileOpenToAll(db)} AS open
+      FROM training_files f JOIN training_folders d ON d.id = f.folder_id WHERE f.id = ${input.fileId}`;
     if (!f) throw badRequest('没有这份培训文件');
-    if (!f.active) throw badRequest('这份培训文件已经下架');
+    if (!f.active || !f.folderActive) throw badRequest('这份培训文件（或它的文件夹）已经下架');
+    // 员工培训的文件夹按部门看（docs/TRAINING.md）：课时里的文件要人人看得到，不然被指派的别部门同事打不开（Codex 审查 dd885a6）
+    if (!f.open) throw badRequest('文件课时只能用全员看得到的文件夹（「培训资料」或不分部门的文件夹）里的文件');
   }
   return {
     fileId: input.kind === 'file' ? input.fileId : null,
@@ -218,17 +235,12 @@ export async function createLesson(sql: Sql, courseId: number, raw: unknown, ctx
   await withTx(sql, async (tx) => {
     const [c] = await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR UPDATE`;
     if (!c) throw notFound('没有这门课');
-    if (input.clientKey) {
-      const [had] = await tx`SELECT course_id, title, kind FROM academy_lessons WHERE client_key = ${input.clientKey}`;
-      if (had) {
-        if (Number(had.courseId) !== courseId || had.title !== input.title || had.kind !== input.kind) throw sameKey();
-        return;
-      }
-    }
+    const hash = requestHash(input, { courseId });
+    if (await replayed(tx, 'academy_lessons', input.clientKey, hash)) return;
     const [l] = await tx<{ id: number }[]>`
-      INSERT INTO academy_lessons (course_id, seq, title, kind, body, file_id, quiz_count, quiz_pass, minutes, credits, client_key)
+      INSERT INTO academy_lessons (course_id, seq, title, kind, body, file_id, quiz_count, quiz_pass, minutes, credits, client_key, request_hash)
       VALUES (${courseId}, (SELECT COALESCE(max(seq), 0) + 1 FROM academy_lessons WHERE course_id = ${courseId}), ${input.title}, ${input.kind},
-              ${v.body}, ${v.fileId}, ${v.quizCount}, ${v.quizPass}, ${input.minutes}, ${v.credits}, ${input.clientKey ?? null})
+              ${v.body}, ${v.fileId}, ${v.quizCount}, ${v.quizPass}, ${input.minutes}, ${v.credits}, ${input.clientKey}, ${hash})
       RETURNING id`;
     await tx`UPDATE academy_courses SET local_edited = local_edited OR pack_hash IS NOT NULL, updated_at = now() WHERE id = ${courseId}`;
     await audit(tx, ctx, 'academy_course_saved', 'academy_lesson', Number(l!.id), `给课程加了课时「${input.title}」`);
@@ -241,7 +253,7 @@ export async function updateLesson(sql: Sql, id: number, raw: unknown, ctx: OpCo
   const [found] = await sql<{ courseId: number }[]>`SELECT course_id FROM academy_lessons WHERE id = ${id}`;
   if (!found) throw notFound('没有这个课时');
   const courseId = Number(found.courseId);
-  const v = await checkLesson(sql, { ...input, clientKey: undefined });
+  const v = await checkLesson(sql, { ...input, clientKey: '' });
   await withTx(sql, async (tx) => {
     await tx`SELECT id FROM academy_courses WHERE id = ${courseId} FOR UPDATE`;
     const [l] = await tx`SELECT title, kind, body, file_id, quiz_count, quiz_pass, minutes, credits, active, version FROM academy_lessons WHERE id = ${id} FOR UPDATE`;
@@ -319,16 +331,12 @@ export async function createPath(sql: Sql, raw: unknown, ctx: OpContext) {
   const input = parse(PathInput, raw);
   await checkStages(sql, input.courseIds);
   const id = await withTx(sql, async (tx) => {
-    if (input.clientKey) {
-      const [had] = await tx<{ id: number; title: string }[]>`SELECT id, title FROM academy_paths WHERE client_key = ${input.clientKey}`;
-      if (had) {
-        if (had.title !== input.title) throw sameKey();
-        return Number(had.id);
-      }
-    }
+    const hash = requestHash(input);
+    const had = await replayed(tx, 'academy_paths', input.clientKey, hash);
+    if (had) return had;
     const [p] = await tx<{ id: number }[]>`
-      INSERT INTO academy_paths (title, summary, cover, sort, credits, valid_months, client_key, created_by)
-      VALUES (${input.title}, ${input.summary}, ${input.cover}, ${input.sort}, ${input.credits}, ${input.validMonths}, ${input.clientKey ?? null}, ${ctx.actor.id})
+      INSERT INTO academy_paths (title, summary, cover, sort, credits, valid_months, client_key, request_hash, created_by)
+      VALUES (${input.title}, ${input.summary}, ${input.cover}, ${input.sort}, ${input.credits}, ${input.validMonths}, ${input.clientKey}, ${hash}, ${ctx.actor.id})
       RETURNING id`;
     await writeStages(tx, Number(p!.id), input.courseIds);
     await audit(tx, ctx, 'academy_path_saved', 'academy_path', Number(p!.id), `新建了学习地图「${input.title}」`);
@@ -337,7 +345,7 @@ export async function createPath(sql: Sql, raw: unknown, ctx: OpContext) {
   return (await adminPaths(sql)).find((p) => p.id === id)!;
 }
 
-export async function updatePath(sql: Sql, id: number, raw: unknown, ctx: OpContext) {
+export async function updatePath(sql: Sql, id: number, raw: unknown, ctx: OpContext, today: string) {
   const input = parse(PathUpdate, raw);
   await checkStages(sql, input.courseIds);
   await withTx(sql, async (tx) => {
@@ -368,6 +376,8 @@ export async function updatePath(sql: Sql, id: number, raw: unknown, ctx: OpCont
         local_edited = local_edited OR pack_hash IS NOT NULL, version = version + 1, updated_at = now()
       WHERE id = ${id}`;
     if (stages.join(',') !== input.courseIds.join(',')) await writeStages(tx, id, input.courseIds);
+    // 上架、改了阶段：已经学完的人补记学完与地图学分（Codex 审查 dd885a6）
+    if (input.status === 'published' && (p.status !== 'published' || stages.join(',') !== input.courseIds.join(','))) await settlePathForAll(tx, id, today);
     await audit(tx, ctx, 'academy_path_saved', 'academy_path', id, `修改了学习地图「${input.title}」`);
   });
   return (await adminPaths(sql)).find((p) => p.id === id)!;
@@ -510,21 +520,17 @@ export async function createAssignment(sql: Sql, raw: unknown, ctx: OpContext, t
   if (input.positionKey && !(await sql`SELECT 1 FROM position_catalog WHERE key = ${input.positionKey}`).length) throw badRequest('没有这个岗位');
   if (input.staffId && !(await sql`SELECT 1 FROM staff WHERE id = ${input.staffId}`).length) throw badRequest('没有这位员工');
   const id = await withTx(sql, async (tx) => {
-    if (input.clientKey) {
-      const [had] = await tx<AssignmentRow[]>`SELECT id, path_id, course_id, audience FROM academy_assignments WHERE client_key = ${input.clientKey}`;
-      if (had) {
-        if (had.pathId !== input.pathId || had.courseId !== input.courseId || had.audience !== input.audience) throw sameKey();
-        return Number(had.id);
-      }
-    }
+    const hash = requestHash(input);
+    const had = await replayed(tx, 'academy_assignments', input.clientKey, hash);
+    if (had) return had;
     const [target] = input.pathId
       ? await tx<{ title: string }[]>`SELECT title FROM academy_paths WHERE id = ${input.pathId}`
       : await tx<{ title: string }[]>`SELECT title FROM academy_courses WHERE id = ${input.courseId}`;
     if (!target) throw badRequest(input.pathId ? '没有这张学习地图' : '没有这门课');
     const [a] = await tx<AssignmentRow[]>`
-      INSERT INTO academy_assignments (path_id, course_id, audience, department_key, position_key, staff_id, required, due_days, starts_on, client_key, created_by)
+      INSERT INTO academy_assignments (path_id, course_id, audience, department_key, position_key, staff_id, required, due_days, starts_on, client_key, request_hash, created_by)
       VALUES (${input.pathId}, ${input.courseId}, ${input.audience}, ${input.departmentKey}, ${input.positionKey}, ${input.staffId}, ${input.required},
-              ${input.dueDays}, ${today}, ${input.clientKey ?? null}, ${ctx.actor.id})
+              ${input.dueDays}, ${today}, ${input.clientKey}, ${hash}, ${ctx.actor.id})
       RETURNING id, path_id, course_id, audience, department_key, position_key, staff_id, required, due_days, starts_on, active, version`;
     await notifyAssigned(tx, a!, target.title);
     await audit(tx, ctx, 'academy_assignment_saved', 'academy_assignment', Number(a!.id), `指派了「${target.title}」（${input.required ? '必修' : '推荐'}）`);

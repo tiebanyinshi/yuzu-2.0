@@ -1,9 +1,10 @@
 -- 汤崎学堂第一批（店主 2026-11-27，docs/ACADEMY.md 第 4、9 节，PENDING_DECISIONS XT01–XT12）：
 --   · 课程（一门课 = 学习地图上的一个阶段）与课时（图文互动课件 / 员工培训里的文件 / 测验 / 实操签核）；
 --   · 学习地图与它的阶段（课程按顺序）；指派规则（地图或课程 × 全员 / 部门 / 岗位 / 个人 × 必修或推荐 × 期限）；
---   · 每人每课时的进度与时长、每人每天的学习时长、学分流水（只追加，同一件事只给一次）、课程评分；
+--   · 每人每课时的进度与时长、每人每天的学习时长、谁学完了哪张地图、学分流水（只追加，同一件事只给一次）、课程评分；
 --   · 新权限 academy.manage（学堂管理），建议权限给人力行政部负责人（总裁默认都有）。
 -- 课程、地图来自内置课件包的记包的版本与内容摘要：管理员本地改过（local_edited）就不再用新版覆盖。
+-- 后台新建的课程、课时、地图、指派都带操作编号（client_key）与原请求摘要（request_hash）：没收到结果原样重提返回原来那个，同一编号换了内容拒绝。
 -- 回滚：docs/rollback/600_academy_core.down.sql。
 
 CREATE TABLE academy_courses (
@@ -22,11 +23,13 @@ CREATE TABLE academy_courses (
   local_edited   boolean NOT NULL DEFAULT false,
   version        integer NOT NULL DEFAULT 1,
   client_key     uuid UNIQUE,
+  request_hash   text CHECK (request_hash ~ '^[0-9a-f]{64}$'),
   created_by     bigint REFERENCES staff (id),
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
   published_at   timestamptz,
-  CHECK (NOT dept_only OR department_key IS NOT NULL)
+  CHECK (NOT dept_only OR department_key IS NOT NULL),
+  CHECK ((client_key IS NULL) = (request_hash IS NULL))
 );
 CREATE INDEX academy_courses_department_idx ON academy_courses (department_key) WHERE department_key IS NOT NULL;
 COMMENT ON TABLE academy_courses IS '学堂课程（docs/ACADEMY.md）：一门课 = 学习地图上的一个阶段；分类即知识中心的栏目；来自内置课件包的记包版本与内容摘要';
@@ -36,6 +39,7 @@ COMMENT ON COLUMN academy_courses.department_key IS '属于哪个部门的知识
 COMMENT ON COLUMN academy_courses.dept_only IS '只本部门（与被指派的人）看得到（XT02）';
 COMMENT ON COLUMN academy_courses.pack_hash IS '从内置课件包导入时内容的 SHA-256；包有新版且 local_edited = false 时才能直接更新';
 COMMENT ON COLUMN academy_courses.local_edited IS '导入以后管理员改过（再导新版不覆盖）';
+COMMENT ON COLUMN academy_courses.request_hash IS '新建时原请求的摘要：同一操作编号重提时内容不一样的拒绝（后台新建的都带编号；从内置课件包导入的两列都为空）';
 
 CREATE TABLE academy_lessons (
   id         bigserial PRIMARY KEY,
@@ -53,9 +57,11 @@ CREATE TABLE academy_lessons (
   active     boolean NOT NULL DEFAULT true,
   version    integer NOT NULL DEFAULT 1,
   client_key uuid UNIQUE,
+  request_hash text CHECK (request_hash ~ '^[0-9a-f]{64}$'),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (course_id, pack_key),
+  CHECK ((client_key IS NULL) = (request_hash IS NULL)),
   CHECK ((kind = 'file') = (file_id IS NOT NULL)),
   CHECK ((kind = 'quiz') = (quiz_count IS NOT NULL AND quiz_pass IS NOT NULL))
 );
@@ -85,10 +91,12 @@ CREATE TABLE academy_paths (
   local_edited boolean NOT NULL DEFAULT false,
   version      integer NOT NULL DEFAULT 1,
   client_key   uuid UNIQUE,
+  request_hash text CHECK (request_hash ~ '^[0-9a-f]{64}$'),
   created_by   bigint REFERENCES staff (id),
   created_at   timestamptz NOT NULL DEFAULT now(),
   updated_at   timestamptz NOT NULL DEFAULT now(),
-  published_at timestamptz
+  published_at timestamptz,
+  CHECK ((client_key IS NULL) = (request_hash IS NULL))
 );
 COMMENT ON TABLE academy_paths IS '学习地图（docs/ACADEMY.md 第 4 节）：按岗位或计划排好顺序的一串课程，全部完成发证书';
 COMMENT ON COLUMN academy_paths.credits IS '完成整张地图另给的学分';
@@ -102,6 +110,19 @@ CREATE TABLE academy_path_courses (
 );
 CREATE INDEX academy_path_courses_course_idx ON academy_path_courses (course_id);
 COMMENT ON TABLE academy_path_courses IS '学习地图的阶段：一个阶段一门课，按 seq 排';
+
+CREATE TABLE academy_path_completions (
+  staff_id     bigint NOT NULL REFERENCES staff (id),
+  path_id      bigint NOT NULL REFERENCES academy_paths (id),
+  completed_on date NOT NULL,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (staff_id, path_id)
+);
+CREATE INDEX academy_path_completions_path_idx ON academy_path_completions (path_id);
+CREATE TRIGGER academy_path_completions_append_only BEFORE UPDATE OR DELETE ON academy_path_completions
+  FOR EACH ROW EXECUTE FUNCTION yuzu_forbid_mutation();
+COMMENT ON TABLE academy_path_completions IS '谁学完了哪张学习地图（只追加）：记下的那一刻给地图学分（以后还发证书）；地图后来才上架、加了已学完的课，也在上架时补记';
+COMMENT ON COLUMN academy_path_completions.completed_on IS '学完的营业日';
 
 CREATE TABLE academy_assignments (
   id             bigserial PRIMARY KEY,
@@ -117,10 +138,12 @@ CREATE TABLE academy_assignments (
   active         boolean NOT NULL DEFAULT true,
   version        integer NOT NULL DEFAULT 1,
   client_key     uuid UNIQUE,
+  request_hash   text CHECK (request_hash ~ '^[0-9a-f]{64}$'),
   created_by     bigint REFERENCES staff (id),
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
   CHECK (num_nonnulls(path_id, course_id) = 1),
+  CHECK ((client_key IS NULL) = (request_hash IS NULL)),
   CHECK ((audience = 'department') = (department_key IS NOT NULL)),
   CHECK ((audience = 'position') = (position_key IS NOT NULL)),
   CHECK ((audience = 'staff') = (staff_id IS NOT NULL))

@@ -3,10 +3,16 @@
 
 import type { AcademyRank, AcademyRankBoard, AcademyRankPeriod, AcademyRankRow, AcademyRankScope } from '@shared/academy';
 import type { Db } from '../../db';
+import { DEFAULT_STORE_ID } from '../../lib/store-context';
 import { onDuty } from '../oa';
 import { staffStoreName } from './catalog';
 
 export const ACADEMY_RANK_LIMIT = 50;
+
+/** 员工（别名 s）在这家店：挂了这家店；没挂任何门店的按本店（与登录时的 storeIdsOf 一致，Codex 审查 dd885a6） */
+const inStore = (db: Db, storeId: number) => db`(
+  EXISTS (SELECT 1 FROM staff_stores ss WHERE ss.staff_id = s.id AND ss.store_id = ${storeId})
+  OR (${storeId === DEFAULT_STORE_ID} AND NOT EXISTS (SELECT 1 FROM staff_stores ss WHERE ss.staff_id = s.id)))`;
 
 export async function rank(
   db: Db,
@@ -29,7 +35,7 @@ export async function rank(
       LEFT JOIN staff_profiles p ON p.staff_id = s.id
       LEFT JOIN position_catalog pc ON pc.key = s.position LEFT JOIN org_departments d ON d.key = pc.department
       WHERE t.value > 0 AND ${onDuty(db)}
-        ${input.scope === 'store' ? db`AND EXISTS (SELECT 1 FROM staff_stores ss WHERE ss.staff_id = s.id AND ss.store_id = ${input.storeId})` : db``})
+        ${input.scope === 'store' ? db`AND ${inStore(db, input.storeId)}` : db``})
     SELECT staff_id, name, store_name, department_name, value, rank FROM ranked
     WHERE rank <= ${input.limit ?? ACADEMY_RANK_LIMIT} OR staff_id = ${input.staffId}
     ORDER BY rank, sort_id`;
