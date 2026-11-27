@@ -437,6 +437,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '510_material_images.sql',
   '520_mall_pilot.sql',
   '530_cashier_v821.sql',
+  '540_technicians_v8222.sql',
   '550_frontdesk_guest.sql',
   '560_dining_v8224.sql',
 ];

@@ -291,6 +291,7 @@ export function DispatchDialog({
               options={[
                 { value: 'rotation', label: CALL_TYPE_LABELS.rotation },
                 { value: 'designated', label: CALL_TYPE_LABELS.designated },
+                { value: 'call', label: CALL_TYPE_LABELS.call },
               ]}
             />
           </Field>
@@ -611,6 +612,7 @@ export function TransferDialog({
             options={[
               { value: 'rotation', label: CALL_TYPE_LABELS.rotation },
               { value: 'designated', label: CALL_TYPE_LABELS.designated },
+              { value: 'call', label: CALL_TYPE_LABELS.call },
             ]}
           />
         </Field>

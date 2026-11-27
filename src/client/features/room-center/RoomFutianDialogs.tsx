@@ -311,6 +311,7 @@ export function BackfillRoomDialog({ room, onClose, onDone }: { room: RoomCard; 
                   options={[
                     { value: 'rotation', label: CALL_TYPE_LABELS.rotation },
                     { value: 'designated', label: CALL_TYPE_LABELS.designated },
+                    { value: 'call', label: CALL_TYPE_LABELS.call },
                   ]}
                 />
               }

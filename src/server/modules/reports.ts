@@ -1,5 +1,6 @@
 // 数据看板（v0.6.0）：经营总览（任选时段、环比）、会员总览、今日值班数据。只读汇总，口径与日结一致。
 
+import { clockKindLabel } from '@shared/technicians';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { businessDateOf } from '@shared/business-date';
@@ -510,7 +511,7 @@ export function registerDashboardReportRoutes(app: FastifyInstance, deps: Deps) 
           t.name,
           l.name,
           l.sign * l.quantity,
-          l.callType === 'designated' ? '点钟' : '轮钟',
+          clockKindLabel(l.callType, l.extension),
           yuan(l.sign * l.amount),
           yuan(l.base),
           yuan(l.bonus),

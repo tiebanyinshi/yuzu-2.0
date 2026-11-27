@@ -17,7 +17,7 @@ export const TECH_BOARD_DEFAULT_INTERVAL = 8;
 export const TECH_BOARD_REFRESH_MS = 5_000;
 
 /** 大屏上列的技师状态（不列休假、未上牌的） */
-export type TechBoardStatus = Exclude<TechFilter, 'all' | 'leave' | 'off'>;
+export type TechBoardStatus = Exclude<TechFilter, 'all' | 'leave' | 'off' | 'brought'>;
 export const TECH_BOARD_STATUSES: readonly TechBoardStatus[] = ['serving', 'waiting', 'idle', 'rest', 'suspended'];
 
 /** 没选房间的钟归到哪个区域 */

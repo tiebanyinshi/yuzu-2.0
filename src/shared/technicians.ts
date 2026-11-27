@@ -6,9 +6,18 @@
 
 import { PRICE_TIER_LABELS, type PriceTier } from './catalog';
 
-export const CALL_TYPES = ['rotation', 'designated'] as const;
+// 8.2.2：扩钟（call 钟）单独一类——场外预约的客人到店后上的钟；做完、出单后技师排位不动（上牌时排第几，做完还是第几）。
+// 加钟（同一张钟单上后加的钟）不是上钟方式，记在明细的 clock_extension 上，报表与提成单列（docs/V8222_TECHNICIANS.md 第 1 节）
+export const CALL_TYPES = ['rotation', 'designated', 'call'] as const;
 export type CallType = (typeof CALL_TYPES)[number];
-export const CALL_TYPE_LABELS: Record<CallType, string> = { rotation: '轮钟', designated: '点钟' };
+export const CALL_TYPE_LABELS: Record<CallType, string> = { rotation: '轮钟', designated: '点钟', call: '扩钟' };
+/** 选上钟方式的几项（页面上的选项按这个顺序） */
+export const CALL_TYPE_OPTIONS: readonly CallType[] = ['rotation', 'designated', 'call'];
+/** 明细上的叫法：加钟的写「加钟」，其余按上钟方式 */
+export const clockKindLabel = (callType: CallType, extension: boolean) => (extension ? '加钟' : CALL_TYPE_LABELS[callType]);
+
+/** 星级（8.2.2）：1–10 星，与价格档（等级）分开；提成可以按星级定 */
+export const MAX_TECH_STAR = 10;
 
 /** 工号：1–6 位数字或字母，例如 08、A12 */
 export const TECH_NO_PATTERN = /^[0-9A-Za-z]{1,6}$/;
@@ -41,6 +50,10 @@ export interface Technician {
   leftOn: string | null;
   /** 组别（8.1.15，一位技师一个组）；没分组为 null */
   groupId: number | null;
+  /** 身高（厘米）、体重（公斤）、星级（8.2.2）；没填为 null。手机号不在这里（打码后只在名册里给，TechnicianAdmin） */
+  heightCm: number | null;
+  weightKg: number | null;
+  star: number | null;
 }
 
 export interface TechnicianRules {
@@ -111,7 +124,8 @@ export interface TechnicianAdmin {
   clockroomRules: import('./clockroom').ClockroomRules;
   clockroomUpdatedAt: string | null;
   clockroomUpdatedBy: string | null;
-  technicians: (Technician & { createdAt: string; updatedAt: string; lineCount: number })[];
+  /** phoneMasked：打码的手机号（8.2.2，没留为空字符串）；hasPhone 有没有留 */
+  technicians: (Technician & { createdAt: string; updatedAt: string; lineCount: number; phoneMasked: string; hasPhone: boolean })[];
   /** 项目分类（技师可做的分类从这里选） */
   categories: string[];
   /** 技师类型的清单（8.1.15，技师管理里维护） */
@@ -128,15 +142,17 @@ export interface TechnicianReport {
     name: string;
     grade: PriceTier;
     active: boolean;
-    /** 钟数（明细数量之和） */
+    /** 钟数（明细数量之和）；点钟、轮钟、扩钟都不含加钟，加钟单列（8.2.2） */
     clocks: number;
     designated: number;
     rotation: number;
+    call: number;
+    extension: number;
     amount: number;
     /** 提成（v0.7.1；有「看技师提成」权限才返回）：基本提成、点钟奖励、合计 */
     commission?: { base: number; bonus: number; total: number };
   }[];
-  totals: { clocks: number; designated: number; rotation: number; amount: number; commission?: { base: number; bonus: number; total: number } };
+  totals: { clocks: number; designated: number; rotation: number; call: number; extension: number; amount: number; commission?: { base: number; bonus: number; total: number } };
   /** 需要技师、但挂账时没有指定技师的明细（规则不要求必须选技师时会有） */
   unassigned: { clocks: number; amount: number };
 }

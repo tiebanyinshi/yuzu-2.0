@@ -65,6 +65,7 @@ export function TechnicianPicker({
           options={[
             { value: 'rotation', label: CALL_TYPE_LABELS.rotation },
             { value: 'designated', label: CALL_TYPE_LABELS.designated },
+            { value: 'call', label: CALL_TYPE_LABELS.call },
           ]}
         />
         <span className="text-[12px] text-ink-3">客人点名要的选「点钟」，按顺序排的选「轮钟」（轮钟只能选在岗、轮到的技师，跳过要交给钟房）</span>

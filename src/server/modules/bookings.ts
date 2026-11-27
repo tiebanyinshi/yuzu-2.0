@@ -23,6 +23,7 @@ import {
   BOOKING_KINDS,
   DEFAULT_BOOKING_RULES,
   MAX_BOOKING_GUESTS,
+  MAX_BATCH_BOOKINGS,
   MAX_BOOKING_NOTE,
   overlaps,
   plusMinutes,
@@ -41,7 +42,7 @@ import type { Db, Sql, Tx } from '../db';
 import { guard, guardAny } from '../auth/guard';
 import { writeAudit, type AuditAction } from '../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../lib/context';
-import { badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
+import { AppError, badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import type { Actor } from '../lib/context';
 import { hashRequest } from '../lib/idempotency';
 import { saveRuleSetting } from '../lib/rule-settings';
@@ -53,7 +54,7 @@ import { loadTechnicianRules, loadTechnicians } from './technicians';
 import { loadPricedItems } from './pricing';
 import { loadUsageRules, openUsageTx } from './usages';
 import { ClaimKey, lockClaim, mpContext, saveClaim } from './mp-entries';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lockTechnicianBookings } from './booking-guard';
 import { settingRow } from '../lib/store-settings';
 import { currentStoreId, forEachStore } from '../lib/store-context';
@@ -133,7 +134,7 @@ async function readBookingRows(db: Db, where: { id?: number; date?: string; memb
            b.item_id, i.name AS item_name, b.technician_id, t.tech_no, t.name AS tech_name,
            b.space_id, sp.code AS space_code, sp.display_name AS space_name, b.room_type_id, rt.name AS room_type_name,
            b.starts_at, b.ends_at, b.hold_until, b.note, b.business_date::text AS business_date, st.display_name AS created_by_name, b.created_at,
-           b.confirmed_at, b.arrived_at, ht.code AS arrival_tag_code, b.arrival_ref, b.cancelled_at, b.cancel_reason, b.no_show_at, b.version,
+           b.confirmed_at, b.arrived_at, ht.code AS arrival_tag_code, b.arrival_ref, b.cancelled_at, b.cancel_reason, b.no_show_at, b.version, b.tag_code,
            (SELECT s.session_no FROM technician_sessions s WHERE s.booking_id = b.id AND s.status IN ('waiting', 'serving', 'done') ORDER BY s.id DESC LIMIT 1) AS session_no,
            (SELECT rs.stay_no FROM room_stays rs WHERE rs.booking_id = b.id AND rs.status <> 'cancelled' ORDER BY rs.id DESC LIMIT 1) AS stay_no,
            (SELECT h2.code FROM visits v2 JOIN hand_tags h2 ON h2.id = v2.tag_id WHERE b.member_id IS NOT NULL AND v2.member_id = b.member_id AND v2.status = 'open' LIMIT 1) AS member_open_tag
@@ -409,6 +410,13 @@ const CreateInput = z.object({
   note: z.string().trim().max(MAX_BOOKING_NOTE, `备注最多 ${MAX_BOOKING_NOTE} 字`).default(''),
 });
 
+/** 预约时报的手牌号（8.2.2，可空）：与发牌同一个格式 */
+const TagCodeField = z
+  .string()
+  .transform(normalizeTagCode)
+  .pipe(z.string().regex(/^$|^[A-Z]{0,2}[0-9]{1,5}$/, '手牌号格式不对（例如 A023、118）'))
+  .default('');
+
 interface CreateArgs {
   kind: BookingKind;
   source: BookingSource;
@@ -425,6 +433,10 @@ interface CreateArgs {
   note: string;
   /** 小程序的要对齐时段、在最远天数内；前台的只要在营业时段内、不早于此刻 */
   strictGrid: boolean;
+  /** 预约时报的手牌号（8.2.2，可空） */
+  tagCode?: string;
+  /** 一报多（8.2.2）：指定了技师的不查这位技师同一时段别的预约（一位技师同时约几位客人不设上限），只查他能不能做这个项目 */
+  technicianOverlap?: boolean;
 }
 
 // 与前台建钟单、加钟同一把锁（booking-guard.ts）
@@ -478,6 +490,7 @@ async function claimSlot(tx: Tx, deps: Pick<Deps, 'config'>, a: CreateArgs, rule
   if (a.technicianId) {
     const t = (await loadTechnicians(tx, [a.technicianId])).get(a.technicianId);
     if (!t || !target.eligible.includes(a.technicianId)) throw unprocessable('BOOKING_TECHNICIAN', `${t ? `${t.techNo} 号 ${t.name}` : '这位技师'}不能做「${target.item.name}」或已停用`);
+    if (a.technicianOverlap) return { end, holdUntil: null, date, label: target.item.name, overbooked: false };
     if (!free.includes(a.technicianId) || free.length - 1 < loose) throw conflict('BOOKING_TAKEN', `${t.techNo} 号 ${t.name} 这个时段已经有预约或在上钟，请换一个时段或技师`);
   } else if (free.length - loose < 1) {
     throw conflict('BOOKING_TAKEN', `这个时段能做「${target.item.name}」的技师都约满了，请换一个时段`);
@@ -522,12 +535,12 @@ async function createBookingTxFull(
   const status = a.source === 'mp' ? 'pending' : 'confirmed';
   const [row] = await tx<{ id: number }[]>`
     INSERT INTO bookings (booking_no, kind, source, status, member_id, guest_name, guest_phone, guests, item_id, technician_id, space_id, room_type_id,
-                          starts_at, ends_at, hold_until, note, business_date, created_by, created_at, client_key, request_hash, confirmed_by, confirmed_at)
+                          starts_at, ends_at, hold_until, note, business_date, created_by, created_at, client_key, request_hash, confirmed_by, confirmed_at, tag_code)
     VALUES (${bookingNo}, ${a.kind}, ${a.source}, ${status}, ${a.memberId}, ${a.guestName}, ${a.guestPhone}, ${a.guests},
             ${a.kind === 'technician' ? (a.itemId ?? null) : null}, ${a.kind === 'technician' ? (a.technicianId ?? null) : null},
             ${a.kind === 'space' ? (a.spaceId ?? null) : null}, ${a.kind === 'room' ? (a.roomTypeId ?? null) : null},
             ${a.startsAt}, ${slot.end}, ${slot.holdUntil}, ${a.note}, ${slot.date}, ${actor.id}, ${at}, ${clientKey}, ${requestHash},
-            ${status === 'confirmed' ? actor.id : null}, ${status === 'confirmed' ? at : null})
+            ${status === 'confirmed' ? actor.id : null}, ${status === 'confirmed' ? at : null}, ${a.tagCode ?? ''})
     RETURNING id`;
   const id = Number(row!.id);
   await writeAudit(tx, {
@@ -586,6 +599,75 @@ export async function createBooking(deps: Deps, raw: unknown, ctx: OpContext): P
     return id;
   });
   return getBooking(deps.sql, run.refId);
+}
+
+// ───────────────────────── 一报多（8.2.2） ─────────────────────────
+
+const BatchRow = z.object({
+  /** 客人姓氏（或怎么称呼） */
+  guestName: z.string().trim().min(1, '请写客人姓氏').max(32, '姓名最多 32 字'),
+  tagCode: TagCodeField,
+  guestPhone: PhoneField.default(''),
+  itemId: z.number('请选项目').int().positive('请选项目'),
+  technicianId: z.number().int().positive().nullable().default(null),
+  startsAt: z.iso.datetime({ offset: true, message: '请选时间' }),
+  note: z.string().trim().max(MAX_BOOKING_NOTE, `备注最多 ${MAX_BOOKING_NOTE} 字`).default(''),
+});
+
+const BatchInput = z.object({
+  clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
+  source: z.enum(['front', 'phone'], '请选择来源').default('front'),
+  rows: z.array(BatchRow).min(1, '请至少填一行').max(MAX_BATCH_BOOKINGS, `一次最多 ${MAX_BATCH_BOOKINGS} 行`),
+});
+
+/** 整批编号推出来的第 i 行的编号（固定：同一个整批编号重提时还是这几个；写成 UUID 的样子，能放进预约单的 client_key） */
+export function batchRowKey(clientKey: string, index: number): string {
+  const h = createHash('sha256').update(`booking-batch:${clientKey}:${index}`).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${((parseInt(h[16]!, 16) & 0x3) | 0x8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+/**
+ * 一报多（8.2.2，《技师排班系统需求沟通会》二.2）：一次填几位客人的技师预约（客人姓氏、手牌号、电话、项目、技师、时间），一键提交。
+ * 一个事务、一个操作编号（记成 booking_create，查回给第一张），全部建好或一张都不建；哪一行不行写在提示前面、details.row 标出第几行（从 0 数）。
+ * 指定了技师的不查他同一时段别的预约（一位技师同时约几位客人不设上限）；不指定的照旧要有空着的技师。锁与单张新建相同（技师预约咨询锁）
+ */
+export async function createBookingBatch(deps: Deps, raw: unknown, ctx: OpContext): Promise<BookingDetail[]> {
+  const input = parse(BatchInput, raw);
+  const requestHash = hashRequest({ op: 'booking_batch', source: input.source, rows: input.rows });
+  const at = ctx.at ?? new Date();
+  const run = await runIdempotent(deps, { key: input.clientKey, opType: 'booking_create', requestHash }, async (tx) => {
+    const ids: number[] = [];
+    for (const [i, r] of input.rows.entries()) {
+      const args: CreateArgs = {
+        kind: 'technician',
+        source: input.source,
+        memberId: null,
+        guestName: r.guestName,
+        guestPhone: r.guestPhone,
+        guests: 1,
+        itemId: r.itemId,
+        technicianId: r.technicianId,
+        startsAt: new Date(r.startsAt),
+        note: r.note,
+        strictGrid: false,
+        tagCode: r.tagCode,
+        technicianOverlap: true,
+      };
+      try {
+        ids.push(await createBookingTx(tx, deps, args, ctx.actor, batchRowKey(input.clientKey, i), hashRequest({ batch: input.clientKey, row: i, ...r }), at));
+      } catch (error) {
+        if (error instanceof AppError) throw new AppError(error.status, error.code, `第 ${i + 1} 行（${r.guestName}）：${error.message}（这一批都没有建）`, { ...error.details, row: i });
+        throw error;
+      }
+    }
+    await saveKey(tx, input.clientKey, 'booking_create', requestHash, ids[0]!, ctx.actor.id);
+    return ids[0]!;
+  });
+  // 读回这一批（重提时也一样：按每行推出来的编号找）
+  const keys = input.rows.map((_, i) => batchRowKey(input.clientKey, i));
+  const rows = await deps.sql<{ id: number }[]>`SELECT id FROM bookings WHERE client_key IN ${deps.sql(keys)} ORDER BY id`;
+  if (rows.length === 0) return [await getBooking(deps.sql, run.refId)];
+  return Promise.all(rows.map((r) => getBooking(deps.sql, Number(r.id))));
 }
 
 // ───────────────────────── 确认、改时间、取消、爽约、到店 ─────────────────────────
@@ -986,6 +1068,8 @@ export function registerBookingRoutes(app: FastifyInstance, deps: Deps) {
     return b;
   });
   app.post('/api/bookings', { preHandler: op }, async (req) => createBooking(deps, req.body, ctxOf(req)));
+  // 8.2.2 一报多：一次几位客人的技师预约，一个事务
+  app.post('/api/bookings/batch', { preHandler: op }, async (req) => ({ bookings: await createBookingBatch(deps, req.body, ctxOf(req)) }));
   app.post('/api/bookings/:id/change', { preHandler: op }, async (req) => changeBooking(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
   app.get('/api/admin/booking-rules', { preHandler: guardAny('settings.manage', 'booking.manage') }, async () => loadBookingRules(sql));
   app.put('/api/admin/booking-rules', { preHandler: guard('settings.manage') }, async (req) => saveBookingRules(deps, req.body, ctxOf(req)));

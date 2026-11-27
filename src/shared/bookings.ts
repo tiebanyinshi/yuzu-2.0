@@ -131,7 +131,13 @@ export interface BookingDetail {
   service: { kind: 'session' | 'stay' | 'usage'; no: string } | null;
   /** 这位会员此刻在店的手牌（点到店时自动带出，8.0.8）；不是会员、不在店为 null */
   memberOpenTag: string | null;
+  /** 预约时报的手牌号（8.2.2 一报多，可空）：到店时参考 */
+  tagCode: string;
 }
+
+/** 一报多（8.2.2）：一次提交最多几行；页面默认给几行 */
+export const MAX_BATCH_BOOKINGS = 10;
+export const DEFAULT_BATCH_BOOKING_ROWS = 3;
 
 export interface BookingBoard {
   date: string;

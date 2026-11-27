@@ -33,6 +33,10 @@ export interface ClockroomRules {
   remindMinutes: number;
   /** 加钟记为点钟（默认是） */
   extensionAsDesignated: boolean;
+  /** 上钟后多少分钟内可以换项目（8.2.2，默认 15；还没上钟的随时可以换） */
+  changeItemMinutes: number;
+  /** 长假休完自动上牌、排到队尾（8.2.2，默认是；休假单上也可以单独关） */
+  leaveAutoReturn: boolean;
 }
 
 export const DEFAULT_CLOCKROOM_RULES: ClockroomRules = {
@@ -45,6 +49,8 @@ export const DEFAULT_CLOCKROOM_RULES: ClockroomRules = {
   defaultMinutes: 60,
   remindMinutes: 5,
   extensionAsDesignated: true,
+  changeItemMinutes: 15,
+  leaveAutoReturn: true,
 };
 
 export const AFTER_ROTATION_LABELS: Record<ClockroomRules['afterRotation'], string> = {
@@ -81,6 +87,7 @@ export const EVENT_KINDS = [
   'suspend',
   'resume',
   'transfer',
+  'change',
 ] as const;
 export type ClockEventKind = (typeof EVENT_KINDS)[number];
 export const EVENT_KIND_LABELS: Record<ClockEventKind, string> = {
@@ -102,6 +109,7 @@ export const EVENT_KIND_LABELS: Record<ClockEventKind, string> = {
   suspend: '停牌',
   resume: '复牌',
   transfer: '转钟',
+  change: '换项目',
 };
 
 /** 钟房看板上的技师 */
@@ -151,6 +159,8 @@ export interface BoardSession {
   space: { id: number; code: string; displayName: string } | null;
   /** 房间的版本号（每换一次加 1）：换房间时原样带回，对不上（刚被改过）就拒绝 */
   spaceVersion: number;
+  /** 换过项目（8.2.2）：同一位技师换项目、或从别的技师换工种转来的，看板上标出来 */
+  changed: boolean;
 }
 
 /**
@@ -181,7 +191,7 @@ export interface ClockroomBoard {
   sessions: BoardSession[];
   /** 待派钟（8.0.8）：按点单先后 */
   pending: PendingLine[];
-  today: { clocks: number; designated: number; rotation: number };
+  today: { clocks: number; designated: number; rotation: number; call: number };
   /** 技师类型的清单与需要技师的项目分类（8.1.15，钟房按它们筛选） */
   kinds: string[];
   categories: string[];
@@ -190,33 +200,43 @@ export interface ClockroomBoard {
   announcer: AnnouncerClaim | null;
 }
 
-/** 钟房按状态筛选技师（8.0.8，B01） */
-export const TECH_FILTERS = ['all', 'idle', 'serving', 'waiting', 'rest', 'leave', 'suspended', 'off'] as const;
+/**
+ * 钟房按状态筛选技师（8.0.8，B01；8.2.2 状态名对齐《技师排班系统需求沟通会》：空闲、待中、上钟、已带、暂离、休假、未上牌，另有停牌）。
+ * 已带：今天已经做过钟、现在在岗、手上没钟（还在排位里等下一钟）；空闲是在岗、手上没钟、今天还没做过钟
+ */
+export const TECH_FILTERS = ['all', 'idle', 'brought', 'serving', 'waiting', 'rest', 'leave', 'suspended', 'off'] as const;
 export type TechFilter = (typeof TECH_FILTERS)[number];
 export const TECH_FILTER_LABELS: Record<TechFilter, string> = {
   all: '全部',
-  idle: '空闲待钟',
-  serving: '上钟中',
-  waiting: '已派待上',
+  idle: '空闲',
+  brought: '已带',
+  serving: '上钟',
+  waiting: '待中',
   rest: '暂离',
   leave: '休假',
   suspended: '停牌',
   off: '未上牌',
 };
 
-/** 这位技师现在属于哪一类：停牌优先；在钟上 / 派了钟的按钟单；其余按当天的状态（在岗且手上没钟 = 空闲待钟） */
-export function techFilterOf(t: { suspendedAt: string | null; busy: { status: 'waiting' | 'serving' } | null; state: TechState }): Exclude<TechFilter, 'all'> {
+/**
+ * 这位技师现在属于哪一类：停牌优先；在钟上 / 派了钟的按钟单；其余按当天的状态（在岗且手上没钟 = 空闲）。
+ * withBrought（钟房的筛选与按状态排，8.2.2）：在岗、手上没钟的再分今天做过钟的「已带」；大屏、榜单、派钟对话框照旧只分到空闲
+ */
+export function techFilterOf(
+  t: { suspendedAt: string | null; busy: { status: 'waiting' | 'serving' } | null; state: TechState; todayClocks?: number },
+  withBrought = false,
+): Exclude<TechFilter, 'all'> {
   if (t.suspendedAt) return 'suspended';
   if (t.busy?.status === 'serving') return 'serving';
   if (t.busy?.status === 'waiting') return 'waiting';
-  if (t.state === 'on') return 'idle';
+  if (t.state === 'on') return withBrought && (t.todayClocks ?? 0) > 0 ? 'brought' : 'idle';
   if (t.state === 'rest') return 'rest';
   if (t.state === 'leave') return 'leave';
   return 'off';
 }
 
-/** 钟房「按状态排」的先后（8.1.15）：空闲、上钟、已派待上（排位）、休息、休假、停牌、未上牌 */
-export const TECH_STATUS_ORDER: readonly Exclude<TechFilter, 'all'>[] = ['idle', 'serving', 'waiting', 'rest', 'leave', 'suspended', 'off'];
+/** 钟房「按状态排」的先后（8.1.15；8.2.2 加已带）：空闲、已带、上钟、待中（排位）、暂离、休假、停牌、未上牌 */
+export const TECH_STATUS_ORDER: readonly Exclude<TechFilter, 'all'>[] = ['idle', 'brought', 'serving', 'waiting', 'rest', 'leave', 'suspended', 'off'];
 
 /** 钟房的搜索与筛选（8.1.15）：几样条件叠加（都要满足）；类型、项目各自可以多选（选中的任一样就算） */
 export interface TechQuery {
@@ -234,7 +254,7 @@ export const EMPTY_TECH_QUERY: TechQuery = { text: '', kinds: [], categories: []
 /** 现在有没有生效的条件 */
 export const techQueryActive = (q: TechQuery) => normalizeQuery(q.text) !== '' || q.kinds.length > 0 || q.categories.length > 0 || q.status !== 'all';
 
-type QueryTech = Pick<BoardTechnician, 'active' | 'name' | 'nickname' | 'techNo' | 'kind' | 'skills' | 'suspendedAt' | 'busy' | 'state' | 'position'>;
+type QueryTech = Pick<BoardTechnician, 'active' | 'name' | 'nickname' | 'techNo' | 'kind' | 'skills' | 'suspendedAt' | 'busy' | 'state' | 'position'> & { todayClocks?: number };
 
 /** 按条件筛出在职的技师 */
 export function filterBoardTechnicians<T extends QueryTech>(list: readonly T[], q: TechQuery): T[] {
@@ -242,7 +262,7 @@ export function filterBoardTechnicians<T extends QueryTech>(list: readonly T[], 
   return list.filter(
     (t) =>
       t.active &&
-      (q.status === 'all' || techFilterOf(t) === q.status) &&
+      (q.status === 'all' || techFilterOf(t, true) === q.status) &&
       (q.kinds.length === 0 || q.kinds.includes(t.kind)) &&
       (q.categories.length === 0 || q.categories.some((c) => servesCategory(t, c))) &&
       matchesTechnician(text, t),
@@ -266,7 +286,7 @@ const byTechNo = (a: string, b: string) => {
 export function sortBoardTechnicians<T extends QueryTech>(list: readonly T[], sort: TechSort): T[] {
   const byQueue = (a: T, b: T) => (a.position ?? 9999) - (b.position ?? 9999) || byTechNo(a.techNo, b.techNo);
   if (sort === 'queue') return [...list].sort(byQueue);
-  return [...list].sort((a, b) => TECH_STATUS_ORDER.indexOf(techFilterOf(a)) - TECH_STATUS_ORDER.indexOf(techFilterOf(b)) || byQueue(a, b));
+  return [...list].sort((a, b) => TECH_STATUS_ORDER.indexOf(techFilterOf(a, true)) - TECH_STATUS_ORDER.indexOf(techFilterOf(b, true)) || byQueue(a, b));
 }
 
 export interface ClockEvent {
@@ -291,6 +311,10 @@ export interface CommissionRules {
   designatedBonus: number;
   /** 按项目覆盖默认（键为项目编号） */
   items: Record<string, CommissionBase>;
+  /** 扩钟每钟另加（分，8.2.2）；没设（null）与点钟奖励一样 */
+  callBonus?: number | null;
+  /** 按星级覆盖默认（8.2.2，键为星级 1–10）：项目覆盖优先，其次星级，最后默认 */
+  stars?: Record<string, CommissionBase>;
 }
 
 export const DEFAULT_COMMISSION_RULES: CommissionRules = {
@@ -302,8 +326,11 @@ export const DEFAULT_COMMISSION_RULES: CommissionRules = {
 export const MAX_RATE_BP = 10_000;
 
 /** 一条技师明细的提成（金额与钟数取正数，冲回时由调用方乘 −1，保证正负完全相抵） */
-export function lineCommission(rules: CommissionRules, line: { itemId: number | null; tier: PriceTier | null; quantity: number; amount: number; callType: CallType }): { base: number; bonus: number } {
-  const rule = (line.itemId !== null && rules.items[String(line.itemId)]) || rules.base;
+export function lineCommission(
+  rules: CommissionRules,
+  line: { itemId: number | null; tier: PriceTier | null; quantity: number; amount: number; callType: CallType; star?: number | null },
+): { base: number; bonus: number } {
+  const rule = (line.itemId !== null && rules.items[String(line.itemId)]) || (line.star ? rules.stars?.[String(line.star)] : undefined) || rules.base;
   let base: number;
   if (rule.kind === 'percent') {
     base = Math.round((line.amount * rule.rateBp) / 10_000);
@@ -312,7 +339,9 @@ export function lineCommission(rules: CommissionRules, line: { itemId: number | 
     const per = rule.perClock[tier] ?? PRICE_TIERS.map((t) => rule.perClock[t]).find((v) => v !== undefined) ?? 0;
     base = per * line.quantity;
   }
-  const bonus = line.callType === 'designated' ? rules.designatedBonus * line.quantity : 0;
+  // 扩钟奖励没单独设的与点钟一样（8.2.2）
+  const perBonus = line.callType === 'designated' ? rules.designatedBonus : line.callType === 'call' ? (rules.callBonus ?? rules.designatedBonus) : 0;
+  const bonus = perBonus * line.quantity;
   return { base, bonus };
 }
 

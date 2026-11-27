@@ -37,6 +37,7 @@ import { useToast } from '../../components/Toast';
 import { Badge, Button, Field, Input, Notice, Segmented, Select, Skeleton } from '../../components/ui';
 import { PendingPanel, useFrontdeskOp } from '../frontdesk/pending';
 import { OtaOrdersPanel } from '../ota/OtaPanels';
+import { BatchBookingDialog } from './BatchBookingDialog';
 
 const boardKey = (date: string) => ['bookings', date] as const;
 const STATUS_TONE: Record<BookingStatus, 'lake' | 'pine' | 'ember' | 'clay' | 'ink'> = {
@@ -56,6 +57,8 @@ export function BookingsPage() {
   const focus = Number(params.get('b')) || null;
   const board = useQuery({ queryKey: boardKey(date), queryFn: () => api.get<BookingBoard>(`/api/bookings?date=${date}`), refetchInterval: 30_000 });
   const [creating, setCreating] = useState(false);
+  // 8.2.2 一报多
+  const [batching, setBatching] = useState(false);
   // 预约可以约到「今天 + 规则里最远能约的天数」（默认 7 天，后台可改）：日期条只在这一页放开到那一天（需求 2）。
   // 看板还没取回来时先按上一次知道的规则
   const [ahead, setAhead] = useState(DEFAULT_BOOKING_RULES.maxDaysAhead);
@@ -116,6 +119,9 @@ export function BookingsPage() {
           <div className="flex flex-wrap items-center gap-2">
             {viewSwitch}
             <DateNav value={date} today={session.today} max={lastDay} onChange={setDate} />
+            <Button variant="secondary" icon={<Plus className="size-4" />} onClick={() => setBatching(true)} data-testid="booking-batch">
+              一报多
+            </Button>
             <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setCreating(true)} data-testid="booking-new">
               新建预约
             </Button>
@@ -167,6 +173,17 @@ export function BookingsPage() {
           }}
         />
       )}
+      {batching && board.data && (
+        <BatchBookingDialog
+          board={board.data}
+          date={date}
+          lastDay={lastDay}
+          onClose={(createdOn) => {
+            setBatching(false);
+            if (createdOn && createdOn !== date) setDate(createdOn);
+          }}
+        />
+      )}
       {acting && board.data && <BookingActionDialog board={board.data} booking={acting.booking} action={acting.action} onClose={() => setActing(null)} />}
     </>
   );
@@ -192,6 +209,7 @@ function BookingRow({ b, focused, onAction }: { b: BookingDetail; focused: boole
       <span className="text-[12px] text-ink-3">
         {BOOKING_SOURCE_LABELS[b.source]} · {b.bookingNo}
         {b.arrivalTagCode && ` · 手牌 ${b.arrivalTagCode}`}
+        {!b.arrivalTagCode && b.tagCode && ` · 报的手牌 ${b.tagCode}`}
         {b.arrivalRef && ` · ${b.arrivalRef}`}
         {b.cancelReason && ` · ${b.cancelReason}`}
       </span>

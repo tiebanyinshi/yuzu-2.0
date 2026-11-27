@@ -306,6 +306,11 @@ export const PERMISSIONS = {
   /** 钟房：上牌、派钟、上钟、下钟、加钟、退钟（v0.7.1，待确认：前台岗位都能做；派钟、加钟、退钟还要能挂账） */
   'technician.dispatch': { roles: ['owner', 'store_manager', 'duty_manager', 'clerk'] },
   /**
+   * 超时退技师（8.2.2，《技师排班系统需求沟通会》）：退钟、取消派钟超过本人更正时限（默认 15 分钟）也能直接退。
+   * 待确认：默认当班管理层（值班经理及以上）；没有的超时后提示改走退项
+   */
+  'technician.voidLate': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  /**
    * 上钟播报（回测整改 P03，回测 4-1）：「技师 → 上钟播报」页——看排位、手动叫号、由本机播报（音量、静音、重播、播报记录）。
    * 与钟房分开授：排位员可以只有这一项；默认有钟房的岗位都有
    */
@@ -385,9 +390,10 @@ export const PERMISSIONS = {
   /** 会员总览：储值余额、新增与渠道、活跃与沉睡、等级分布、赠金到期（客户经理看） */
   'report.members': { roles: ['owner', 'store_manager', 'account_manager'] },
   /** 技师业绩：任选时段每位技师的钟数、点钟 / 轮钟与金额（v0.7.0，待确认：默认值班经理及以上） */
-  'report.technicians': { roles: ['owner', 'store_manager', 'duty_manager'] },
+  // 8.2.2：财务职责（对账付款、成本核算）也能看技师业绩与提成（「每月有业绩任务，财务也需查看」）
+  'report.technicians': { roles: ['owner', 'store_manager', 'duty_manager'], duties: ['payable', 'cost'] },
   /** 技师提成：按提成规则算出的每位技师提成与明细导出（v0.7.1，待确认：默认店主与店总） */
-  'report.commission': { roles: ['owner', 'store_manager'] },
+  'report.commission': { roles: ['owner', 'store_manager'], duties: ['payable', 'cost'] },
   /** 营销成本测算（8.0.4，HY14）：券、赠金、会员折扣、服务类权益的实核成本；有财务职责的账号一律没有（见 FINANCE_EXCLUDED） */
   'marketing.cost': { roles: ['owner', 'store_manager'] },
   // ── 前台风控（8.1.15《浴族系统需求汇总》块 A，docs/FRONTDESK_RISK_V8115.md，FK1 待确认：值班经理及以上）──
@@ -653,6 +659,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'catalog.manage': '管理充值套餐与消费项目',
   'technician.manage': '维护技师名册',
   'technician.dispatch': '钟房派钟、上下钟、加钟、退钟、上牌',
+  'technician.voidLate': '超时退技师：退钟、取消派钟超过本人更正时限也能直接退',
   'technician.announce': '上钟播报：看排位、手动叫号、由本机播报',
   'technician.board': '技师上钟轮播：只读大屏，看谁在上钟、上什么、排在哪',
   'dining.order': '餐饮点单、催单、上菜',
@@ -739,6 +746,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       'frontdesk.supplement',
       'frontdesk.complaints',
       'technician.dispatch',
+      'technician.voidLate',
       'technician.announce',
       'technician.board',
       'dining.order',

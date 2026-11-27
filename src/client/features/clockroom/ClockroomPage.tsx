@@ -65,6 +65,7 @@ import { ClockFilters } from './ClockFilters';
 import { DispatchDialog, ExtendDialog, TransferDialog, type DispatchPrefill } from './DispatchDialog';
 import { RoomDialog } from './RoomPicker';
 import { TECH_STATE_DONE, TechStateDialog, type TechStateAction } from './TechStateDialog';
+import { ChangeItemDialog } from './ChangeItemDialog';
 import { BatchDispatchDialog } from './BatchDispatchDialog';
 import { MoveBeforeDialog } from './MoveBeforeDialog';
 import { useFrontdeskPending } from '../frontdesk/pending';
@@ -106,6 +107,8 @@ export function ClockroomPage() {
   const now = useServerClock(board.data?.serverTime);
   const [dispatching, setDispatching] = useState(false);
   const [extending, setExtending] = useState<BoardSession | null>(null);
+  // 8.2.2：换项目 / 换工种
+  const [changing, setChanging] = useState<BoardSession | null>(null);
   const [voiding, setVoiding] = useState<BoardSession | null>(null);
   const [rooming, setRooming] = useState<BoardSession | null>(null);
   const [toEnd, setToEnd] = useState<BoardTechnician | null>(null);
@@ -152,7 +155,8 @@ export function ClockroomPage() {
       tagCode: b.arrivalTagCode ?? undefined,
       itemId: b.itemId ?? undefined,
       technicianId: b.technicianId,
-      callType: b.technicianId ? 'designated' : 'rotation',
+      // 8.2.2：从预约派出的钟默认记为扩钟（场外预约、客人到店），派钟时可以改
+      callType: 'call',
       bookingId: b.id,
       note: `预约 ${b.bookingNo} 到店（${b.memberName ?? b.guestName ?? '散客'}）：手牌、项目${b.technicianId ? '、技师' : ''}已带好`,
     });
@@ -232,7 +236,7 @@ export function ClockroomPage() {
     for (const t of d?.technicians ?? []) {
       if (!t.active) continue;
       c.all += 1;
-      c[techFilterOf(t)] += 1;
+      c[techFilterOf(t, true)] += 1;
     }
     return c;
   }, [d]);
@@ -502,6 +506,7 @@ export function ClockroomPage() {
                             canPost={can('frontdesk.operate')}
                             onFinish={() => run(`finish-${s.id}`, () => api.post(`/api/clockroom/sessions/${s.id}/finish`), `${s.techNo} 号下钟`)}
                             onExtend={() => setExtending(s)}
+                            onChange={() => setChanging(s)}
                             onVoid={() => setVoiding(s)}
                             onRoom={() => setRooming(s)}
                             onTransfer={() => setTransferring(s)}
@@ -525,7 +530,8 @@ export function ClockroomPage() {
                             <div key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3" data-testid={`clock-waiting-${s.sessionNo}`}>
                               <span className="num text-[16px] font-bold">{s.techNo}</span>
                               <span className="font-semibold">{s.techName}</span>
-                              <Badge tone={s.callType === 'designated' ? 'yuzu' : 'neutral'}>{CALL_TYPE_LABELS[s.callType]}</Badge>
+                              <Badge tone={s.callType === 'rotation' ? 'neutral' : 'yuzu'}>{CALL_TYPE_LABELS[s.callType]}</Badge>
+                              {s.changed && <Badge tone="lake">换过项目</Badge>}
                               <span className="min-w-0 flex-1 truncate text-[13px] text-ink-2">
                                 <span className="num font-bold">{s.tagCode}</span> {s.guest} · {s.itemName} × {s.clocks}
                               </span>
@@ -564,6 +570,9 @@ export function ClockroomPage() {
                                   data-testid={`clock-transfer-${s.sessionNo}`}
                                 >
                                   转钟
+                                </Button>
+                                <Button size="sm" variant="ghost" disabled={!can('frontdesk.operate')} onClick={() => setChanging(s)} data-testid={`clock-change-${s.sessionNo}`}>
+                                  换项目
                                 </Button>
                                 <Button
                                   size="sm"
@@ -606,6 +615,18 @@ export function ClockroomPage() {
             setPrefill(null);
             void qc.invalidateQueries({ queryKey: clockKey });
             void qc.invalidateQueries({ queryKey: ['bookings'] });
+          }}
+        />
+      )}
+      {d && changing && (
+        <ChangeItemDialog
+          session={changing}
+          board={d}
+          onClose={() => setChanging(null)}
+          onDone={() => {
+            setChanging(null);
+            toast({ tone: 'success', title: '已换项目' });
+            void qc.invalidateQueries({ queryKey: clockKey });
           }}
         />
       )}
@@ -826,6 +847,7 @@ function ServingCard({
   canPost,
   onFinish,
   onExtend,
+  onChange,
   onVoid,
   onRoom,
   onTransfer,
@@ -837,6 +859,7 @@ function ServingCard({
   canPost: boolean;
   onFinish: () => void;
   onExtend: () => void;
+  onChange: () => void;
   onVoid: () => void;
   onRoom: () => void;
   onTransfer: () => void;
@@ -852,7 +875,8 @@ function ServingCard({
       <div className="flex items-baseline gap-2">
         <span className="num text-[22px] font-bold">{s.techNo}</span>
         <span className="min-w-0 flex-1 truncate text-[15px] font-bold">{s.techName}</span>
-        <Badge tone={s.callType === 'designated' ? 'yuzu' : 'neutral'}>{CALL_TYPE_LABELS[s.callType]}</Badge>
+        <Badge tone={s.callType === 'rotation' ? 'neutral' : 'yuzu'}>{CALL_TYPE_LABELS[s.callType]}</Badge>
+        {s.changed && <Badge tone="lake">换过项目</Badge>}
       </div>
       <p className="mt-1 truncate text-[13px] text-ink-2">
         <span className="num font-bold">{s.tagCode}</span> {s.guest} · {s.itemName} × {s.clocks}
@@ -886,6 +910,9 @@ function ServingCard({
         <Button size="sm" variant="secondary" icon={<ArrowRightLeft className="size-3.5" />} disabled={!canPost} onClick={onTransfer} data-testid={`clock-transfer-${s.sessionNo}`}>
           转钟
         </Button>
+        <Button size="sm" variant="ghost" disabled={!canPost} onClick={onChange} data-testid={`clock-change-${s.sessionNo}`}>
+          换项目
+        </Button>
         <Button size="sm" variant="ghost" icon={<Undo2 className="size-3.5" />} disabled={!canPost} onClick={onVoid} data-testid={`clock-void-${s.sessionNo}`}>
           退钟
         </Button>
@@ -898,6 +925,7 @@ type StateAction = 'sign_in' | 'rest' | 'back' | 'sign_out' | 'leave' | 'resume'
 
 const STATUS_TONE: Record<Exclude<TechFilter, 'all'>, 'pine' | 'yuzu' | 'lake' | 'clay' | 'neutral'> = {
   idle: 'pine',
+  brought: 'pine',
   serving: 'yuzu',
   waiting: 'lake',
   rest: 'neutral',
@@ -948,7 +976,7 @@ function FilteredTechs({
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {list.map((t) => {
-            const status = techFilterOf(t);
+            const status = techFilterOf(t, true);
             const s = t.busy ? board.sessions.find((x) => x.id === t.busy!.sessionId) : undefined;
             const left = s?.plannedEnd ? new Date(s.plannedEnd).getTime() - now : null;
             const act = (action: StateAction, ok: string, label: string, icon: React.ReactNode, variant: 'primary' | 'secondary' | 'ghost' = 'ghost') => (

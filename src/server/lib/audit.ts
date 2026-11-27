@@ -111,6 +111,9 @@ export type AuditAction =
   | 'frontdesk_void'
   | 'clock_assign'
   | 'clock_transfer'
+  | 'clock_change'
+  | 'technician_targets_saved'
+  | 'technicians_imported_web'
   | 'clock_session_room'
   | 'frontdesk_move'
   // 8.2.1：单项打折、撤下折扣；手牌押金的收、退

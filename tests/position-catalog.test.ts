@@ -45,11 +45,16 @@ describe('岗位职权数据（P04）', () => {
     const pettyUse = rows.filter((r) => r.permission === 'petty.use').map((r) => r.positionKey);
     expect([...pettyUse].sort()).toEqual(['gmo', 'outreach.lead', 'outreach.staff']);
     expect(rows.some((r) => r.permission.startsWith('pool.'))).toBe(false);
+    // 540（8.2.2）给前厅、娱乐、康养负责人与总经办加「超时退技师」，财务部负责人加「看技师业绩」
+    const voidLate = rows.filter((r) => r.permission === 'technician.voidLate').map((r) => r.positionKey);
+    expect([...voidLate].sort()).toEqual(['ent.lead', 'front.lead', 'gmo', 'wellness.lead']);
     // 550（8.2.3 前台）：技师预约单独一项（前厅部员工没有）、补单、客诉台账，给总经办与前厅负责人各记一条
     const v8223 = rows.filter((r) => r.permission === 'booking.technician').map((r) => r.positionKey);
     expect([...v8223].sort()).toEqual(['front.lead', 'gmo']);
     expect(rows.some((r) => r.positionKey === 'front.staff' && r.permission === 'booking.technician')).toBe(false);
-    expect(log.slice(2).map((l) => [l.action, l.positionKey])).toEqual([...[...announce].sort(), ...[...ledger].sort(), ...[...pettyUse].sort(), ...[...v8223].sort()].map((k) => ['suggestions', k]));
+    expect(log.slice(2).map((l) => [l.action, l.positionKey])).toEqual(
+      [...[...announce].sort(), ...[...ledger].sort(), ...[...pettyUse].sort(), ...[...voidLate].sort(), 'finance.lead', ...[...v8223].sort()].map((k) => ['suggestions', k]),
+    );
     await expect(ctx.sql`DELETE FROM position_config_log`).rejects.toThrow();
   });
 
