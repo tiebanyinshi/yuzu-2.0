@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PatrolCheckinResult, PatrolPortalDay, PatrolScan } from '../../src/shared/patrol';
 import { installFakeWx } from './fake-wx';
-import { patrolResultText, patrolView, savePatrolLink, takePatrolLink } from '../src/utils/patrol';
+import { hasPatrolLink, patrolResultText, patrolView, savePatrolLink, takePatrolLink } from '../src/utils/patrol';
 
 const scanAt = (iso: string, name = '王五'): PatrolScan => ({ id: 1, at: iso, employeeId: 9, name, empNo: 'A9', via: 'scan', late: false });
 
@@ -77,7 +77,11 @@ describe('巡场页', () => {
   it('微信扫一扫打开时的码：存下，取一次就没了', () => {
     installFakeWx();
     savePatrolLink('ABCDEFGHJKLM');
+    // 要先登录的：登录完回到首页，首页看得到有码等着交（只看不取），转去巡场页由那里取走
+    expect(hasPatrolLink()).toBe(true);
+    expect(hasPatrolLink()).toBe(true);
     expect(takePatrolLink()!.code).toBe('ABCDEFGHJKLM');
+    expect(hasPatrolLink()).toBe(false);
     expect(takePatrolLink()).toBeNull();
   });
 });

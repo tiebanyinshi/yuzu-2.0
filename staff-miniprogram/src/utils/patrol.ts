@@ -88,26 +88,36 @@ export function patrolResultText(r: PatrolCheckinResult): { tone: 'ok' | 'alread
   return { tone: 'already', title: `${c.pointName} 这一轮已经巡过`, sub: `${c.mine ? '你' : c.employeeName}在 ${hm(c.at)} 打过卡，不再多记` };
 }
 
-// ── 微信扫一扫直接打开巡场页（码在启动参数 q 里） ──
+// ── 交给巡场页的码：微信扫一扫直接打开巡场页（码在启动参数 q 里）、首页「扫一扫」扫到的 ──
 
-/** 微信扫一扫打开时扫到的码：登录、读完再交（存在手机上，10 分钟内有效） */
+/** 登录、读完再交（存在手机上，10 分钟内有效）；via 是扫码方式（首页扫的是 scan，微信扫一扫打开的是 link） */
 const LINK_KEY = 'wcp_patrol_link';
 const LINK_TTL_MS = 10 * 60 * 1000;
 
-export function savePatrolLink(code: string): void {
+export function savePatrolLink(code: string, via: 'scan' | 'link' = 'link'): void {
   try {
-    wx.setStorageSync(LINK_KEY, { code, at: Date.now() });
+    wx.setStorageSync(LINK_KEY, { code, at: Date.now(), via });
   } catch {
     // 存不下：这一下没记上，页面上照样能再扫
   }
 }
 
-export function takePatrolLink(): { code: string; at: number } | null {
+export function takePatrolLink(): { code: string; at: number; via: 'scan' | 'link' } | null {
   try {
-    const v = wx.getStorageSync(LINK_KEY) as { code: string; at: number } | '';
+    const v = wx.getStorageSync(LINK_KEY) as { code: string; at: number; via?: 'scan' | 'link' } | '';
     wx.removeStorageSync(LINK_KEY);
-    return v && typeof v.code === 'string' && Date.now() - v.at < LINK_TTL_MS ? v : null;
+    return v && typeof v.code === 'string' && Date.now() - v.at < LINK_TTL_MS ? { code: v.code, at: v.at, via: v.via === 'scan' ? 'scan' : 'link' } : null;
   } catch {
     return null;
+  }
+}
+
+/** 手机上有没有等着交的巡场码（不取走）：登录以后首页看到就转去巡场页 */
+export function hasPatrolLink(): boolean {
+  try {
+    const v = wx.getStorageSync(LINK_KEY) as { code: string; at: number } | '';
+    return !!v && typeof v.code === 'string' && Date.now() - v.at < LINK_TTL_MS;
+  } catch {
+    return false;
   }
 }
