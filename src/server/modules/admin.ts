@@ -1161,6 +1161,22 @@ export async function ruleCatalog(db: Db): Promise<RuleEntry[]> {
     dflt: prd.flowStallDays,
     metaKey: 'purchase_rules',
   });
+  // 自购店主复核（PS5）：8.2.13 是常量，之后（不改版本号）在采购规则里可改
+  const selfReviewText = (r: typeof pr) => (r.selfOwnerReviewCents > 0 ? `合计超过 ${formatYuan(r.selfOwnerReviewCents)} 的自购，负责人之后加一级店主复核` : '每张自购都在负责人之后加一级店主复核');
+  add({
+    key: 'purchase_rules.selfOwnerReview',
+    group: 'inventory',
+    label: '自购店主复核',
+    value: selfReviewText(pr),
+    defaultValue: selfReviewText(prd),
+    pending: true,
+    section: 'rules',
+    href: '/erp/settings/purchase',
+    hint: '自购的采购单都要负责人审批、提交人不能审；审批中心给采购单配了规则的按规则。改了只管以后提交的',
+    current: pr.selfOwnerReviewCents,
+    dflt: prd.selfOwnerReviewCents,
+    metaKey: 'purchase_rules',
+  });
   const pay = await loadPaymentRules(db);
   const payd = DEFAULT_PAYMENT_RULES;
   const payDaysText = (r: typeof pay) => payDaysLabel(r.payDays) || '没有固定付款日';

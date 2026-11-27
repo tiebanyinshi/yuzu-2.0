@@ -13,7 +13,6 @@ import {
   PURCHASE_METHODS,
   SELF_PAY_METHODS,
   SELF_REASONS,
-  SELF_REVIEW_CENTS,
   partyLabel,
   type PoLine,
   type PoRevision,
@@ -775,16 +774,22 @@ async function submitLocked(tx: Tx, po: PoRow, actor: Actor, approveNow: boolean
   // #18：合计不超过免确认门槛的采购单提交即确认（v0.7.12）
   const [totals] = await tx<{ totalCents: number }[]>`SELECT total_cents FROM purchase_orders WHERE id = ${po.id}`;
   // 04（CG04）：每一行都来自已通过的需求单（供应链审核过）——只读需求单，不加锁（锁顺序：采购单 → 需求单，这里只在采购单的锁里读）
-  const fromRequests = (await loadPurchaseRules(tx)).requestPoDirect && (await allLinesFromApprovedRequests(tx, po.id));
+  const purchaseRules = await loadPurchaseRules(tx);
+  const fromRequests = purchaseRules.requestPoDirect && (await allLinesFromApprovedRequests(tx, po.id));
   if (approveNow && !can(actor, 'inventory.approve')) throw forbidden('当前账号不能确认采购单，请提交给负责人');
-  // 自购（8.2.13，PS5）：都要审批（没有规则命中按一级负责人），超过 ¥2,000 再加一级店主；提交人不能审自己的自购单
+  // 自购（8.2.13，PS5）：都要审批（没有规则命中按一级负责人），超过采购规则里的「自购店主复核」金额（默认 ¥2,000）再加一级店主；
+  // 提交人不能审自己的自购单。审批级数随审批单存下（approval_requests.steps），之后改规则不影响在审的单
   const self = po.purchaseMethod === 'self';
   const fallback = self || (!fromRequests && settings.approvalRules.purchase_order && overThreshold(settings, totals?.totalCents ?? null));
   const selfPlan = self
     ? {
         ruleId: null,
         ruleVersion: null,
-        steps: [{ group: 'manager' as const, mode: 'any' as const }, ...(Number(totals?.totalCents ?? 0) > SELF_REVIEW_CENTS ? [{ group: 'owner' as const, mode: 'any' as const }] : [])],
+        steps: [
+          { group: 'manager' as const, mode: 'any' as const },
+          // 金额设成 0 表示每张自购都加店主（含合计为 0 的单）；大于 0 时超过才加
+          ...(purchaseRules.selfOwnerReviewCents === 0 || Number(totals?.totalCents ?? 0) > purchaseRules.selfOwnerReviewCents ? [{ group: 'owner' as const, mode: 'any' as const }] : []),
+        ],
         allowSelf: false,
       }
     : undefined;

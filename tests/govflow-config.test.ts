@@ -5,6 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { act, newDoc, setupPeople, yuan, type People } from './govflow-helpers';
+import { todayIn } from '../src/server/lib/dates';
 import { api, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -190,7 +191,7 @@ describe('各类事项的流程', () => {
     const d = await dept('配置零星');
     const small = await petty(c('gf_clerk'), d, { amountCents: yuan(100) });
     expect(labels(await doc(small.body.docId))).toEqual(['部门负责人', '财总']);
-    await ctx.sql`INSERT INTO gf_dept_quotas (department_id, effective_month, daily_cents, monthly_cents, doc_id) VALUES (${d}, ${`${new Date().toISOString().slice(0, 7)}-01`}, ${yuan(150)}, ${yuan(150)}, ${small.body.docId})`;
+    await ctx.sql`INSERT INTO gf_dept_quotas (department_id, effective_month, daily_cents, monthly_cents, doc_id) VALUES (${d}, ${`${todayIn(ctx.config.timezone).slice(0, 7)}-01`}, ${yuan(150)}, ${yuan(150)}, ${small.body.docId})`;
     const over = await petty(c('gf_clerk'), d, { amountCents: yuan(100) });
     expect(labels(await doc(over.body.docId))).toEqual(['部门负责人', '财总', '财总＋CFO 合并特批']);
     expect((await clearFlow('petty_purchase')).status).toBe(200);
