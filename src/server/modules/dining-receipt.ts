@@ -115,7 +115,19 @@ export async function diningReceipt(db: Db, q: { session?: number; visit?: numbe
         deliverRoom: r.deliverRoom ?? '',
       });
   }
-  const orders: DiningReceiptOrder[] = [...groups.values()].sort((a, b) => a.postedAt.localeCompare(b.postedAt)).map((g, i) => ({ seq: i + 1, ...g }));
+  // 水吧取餐号（8.2.9）：这几单有的带上号与查进度的编号
+  const orderNos = [...groups.values()].flatMap((g) => (g.orderNo ? [g.orderNo] : []));
+  const pickups = orderNos.length
+    ? new Map(
+        (await db<{ orderNo: string; pickupNo: number; token: string }[]>`SELECT order_no, pickup_no, token FROM pickup_tickets WHERE order_no IN ${db(orderNos)}`).map((p) => [
+          p.orderNo,
+          { no: Number(p.pickupNo), token: p.token },
+        ]),
+      )
+    : new Map<string, { no: number; token: string }>();
+  const orders: DiningReceiptOrder[] = [...groups.values()]
+    .sort((a, b) => a.postedAt.localeCompare(b.postedAt))
+    .map((g, i) => ({ seq: i + 1, ...g, pickup: (g.orderNo && pickups.get(g.orderNo)) || null }));
 
   const all = orders.flatMap((o) => o.lines);
   const sum = (list: DiningReceiptLine[]) => list.reduce((n, l) => n + l.quantity, 0);

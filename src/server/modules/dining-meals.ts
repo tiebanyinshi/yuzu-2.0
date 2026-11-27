@@ -143,6 +143,54 @@ export async function applyBuffetZero(
   }
 }
 
+/**
+ * 水吧首杯免费（8.2.9，走场「饮料首杯免费，同类第二杯开始结账」）：挂账的事务里、写完明细以后调用（所有挂到手牌上的入口都走）。
+ * 这位客人水吧的每个小分类（手作饮料、糖水、调酒……）第一杯自动折掉一杯的钱（一行只点一杯的折成 0、标「赠」）；
+ * 同一个小分类已经有过首杯（那一行没作废）的照价收。门店在「餐饮规则」里能关
+ */
+export async function applyFirstCup(
+  tx: Tx,
+  a: { visitId: number; billId: number; date: string; at: Date; opKey: string; staffId: number; lines: { lineId: number; itemId: number; unitPrice: number; amount: number }[] },
+) {
+  if (a.lines.length === 0) return;
+  if (!(await loadDiningRules(tx)).firstCupFree) return;
+  const slots = await loadDiningOutlets(tx);
+  const items = await tx<{ id: number; category: string; diningOutlet: string | null; diningGroup: string; stationName: string | null }[]>`
+    SELECT i.id, i.category, i.dining_outlet, i.dining_group, s.name AS station_name
+    FROM service_items i LEFT JOIN kitchen_stations s ON s.id = i.station_id WHERE i.id IN ${tx([...new Set(a.lines.map((l) => l.itemId))])}`;
+  const slotOf = new Map(items.map((i) => [Number(i.id), diningSlotOf({ outlet: i.diningOutlet, group: i.diningGroup, category: i.category, stationName: i.stationName }, slots)]));
+  // 这次来访已经用过首杯的小分类（那一行还有效的）
+  const used = await tx<{ itemId: number }[]>`
+    SELECT l.item_id FROM bill_line_discounts d JOIN bill_lines l ON l.id = d.line_id
+    WHERE d.bill_id = ${a.billId} AND d.rule = 'first_cup' AND d.status = 'active' AND l.status = 'active' AND l.item_id IS NOT NULL`;
+  const usedItems = used.map((u) => Number(u.itemId)).filter((id) => !slotOf.has(id));
+  const more = usedItems.length
+    ? await tx<{ id: number; category: string; diningOutlet: string | null; diningGroup: string; stationName: string | null }[]>`
+        SELECT i.id, i.category, i.dining_outlet, i.dining_group, s.name AS station_name
+        FROM service_items i LEFT JOIN kitchen_stations s ON s.id = i.station_id WHERE i.id IN ${tx(usedItems)}`
+    : [];
+  for (const i of more) slotOf.set(Number(i.id), diningSlotOf({ outlet: i.diningOutlet, group: i.diningGroup, category: i.category, stationName: i.stationName }, slots));
+  const taken = new Set(used.map((u) => slotOf.get(Number(u.itemId))?.group ?? ''));
+  for (const l of a.lines) {
+    const slot = slotOf.get(l.itemId);
+    if (!slot || slot.outlet !== 'water' || taken.has(slot.group)) continue;
+    taken.add(slot.group);
+    // 一杯的钱折掉（点了几杯的只折一杯）：折到 amount − unitPrice
+    await insertAutoDiscount(tx, {
+      lineId: l.lineId,
+      billId: a.billId,
+      amount: l.amount,
+      finalAmount: l.amount - l.unitPrice,
+      rule: 'first_cup',
+      reason: '首杯赠',
+      staffId: a.staffId,
+      opKey: a.opKey,
+      date: a.date,
+      at: a.at,
+    });
+  }
+}
+
 /** 当天登记过的（最新的在前） */
 export async function listMealEntries(deps: Deps, date: string): Promise<MealEntryRow[]> {
   const rows = await deps.sql<(Omit<MealEntryRow, 'at'> & { at: Date })[]>`

@@ -29,7 +29,7 @@ beforeAll(async () => {
   ctx = await setup();
   // 整天都是午餐（¥199），别的餐段不供餐：用例什么时候跑都在餐段里
   const periods = DEFAULT_MEAL_PERIODS.map((p) => (p.key === 'lunch' ? { ...p, start: 0, end: 1439 } : { ...p, price: 0 }));
-  const rules = await api(ctx.app, ctx.owner, 'PUT', '/api/admin/dining/rules', { enabled: true, mealPeriods: periods });
+  const rules = await api(ctx.app, ctx.owner, 'PUT', '/api/admin/dining/rules', { enabled: true, mealPeriods: periods, firstCupFree: false });
   expect(rules.status, JSON.stringify(rules.body)).toBe(200);
   const st = await api(ctx.app, ctx.owner, 'POST', '/api/admin/dining/stations', { name: '中厨' });
   const stationId = st.body.stations.find((s: { name: string }) => s.name === '中厨').id;

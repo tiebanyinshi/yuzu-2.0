@@ -125,6 +125,7 @@
 - [`V8224_DINING.md`](V8224_DINING.md)：8.2.4 餐饮：分组默认档口、临时项目进厨房、包房房型、服务费门店默认、返台、公司承担
 - [`V8227_AWAY_LOCK.md`](V8227_AWAY_LOCK.md)：8.2.7 收银台「锁牌外出」：锁牌最多 4 小时，锁之前先收预售
 - [`V8228_DINING_MEALS.md`](V8228_DINING_MEALS.md)：8.2.8 餐厅：入口刷手牌、含餐抵扣、裸票时段价、餐台与餐包
+- [`V8229_WATER_BAR.md`](V8229_WATER_BAR.md)：8.2.9 水吧：首杯免费、赠标签、取餐叫号
 - [`WAREHOUSES.md`](WAREHOUSES.md)：两级库存：总仓 + 部门小仓（v0.7.11，RQ-002 第一步）
 - [`WEBSITE.md`](WEBSITE.md)：柚子官网（店主 2026-11-24）
 - [`WORKBENCH_V811.md`](WORKBENCH_V811.md)：UI 工作台（8.1.1–8.1.2）：设计师在系统里直接改版面
