@@ -29,7 +29,7 @@ import { sweepPaying, sweepRefunds } from './modules/pay-terminal';
 import { runVoucherReconcile, sweepVerifying } from './modules/platform-verify';
 import { runAiSummaries } from './modules/ai';
 import { sweepOvertimeReminders } from './modules/frontdesk/overtime';
-import { sweepRiskAlerts } from './modules/frontdesk/index';
+import { sweepAwayLocks, sweepRiskAlerts } from './modules/frontdesk/index';
 import { sweepTableRestores } from './modules/tables-v8117';
 import { runAttendanceSettlement } from './modules/oa/attendance-daily';
 import { runAnnualLeaveGrant } from './modules/oa/leave';
@@ -156,6 +156,11 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
     if (n > 0) log.info(`超时提醒：记了 ${n} 条`);
   });
   // 高风险提示（8.2.3，docs/V8223_FRONTDESK.md 第 5 条）：在店超过设定小时数、挂账超过设定金额的客人，按设定推给值班经理或店总（每位每样一次）
+  // 锁牌外出（8.2.6）：到时间（最多 4 小时）还锁着的自动解锁，推给值班经理一级
+  await step('锁牌外出到时间', '锁牌外出到时间的自动解锁失败，下一分钟重试', async () => {
+    const n = await sweepAwayLocks({ sql, config }, now);
+    if (n > 0) log.info(`锁牌外出到时间：自动解锁 ${n} 张`);
+  });
   await step('高风险提示', '高风险提示没推完，下一分钟重试', async () => {
     const n = await sweepRiskAlerts({ sql, config }, now);
     if (n > 0) log.info(`高风险提示：推了 ${n} 条`);

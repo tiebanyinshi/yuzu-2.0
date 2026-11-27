@@ -286,6 +286,8 @@ export interface BoardVisit {
   gifts: number;
   /** 临时外出（8.1.15，docs/FRONTDESK_RISK_V8115.md）：从几点起；牌照旧占着，不能发给别人。没外出为 null */
   awaySince: string | null;
+  /** 锁牌外出（8.2.6）：锁到几点；没锁为 null */
+  awayLockUntil: string | null;
   /** 这次来访上没处理完的异常待办（上报、未结离店）几条 */
   openTodos: number;
   /** 前台备注（8.1.44）：这位客人与他所在同行组上没撤下的备注带的标签（去重，如「客诉」），收银台清单上标出来 */
@@ -437,6 +439,8 @@ export interface VisitDetail {
   bill: { id: number; billNo: string; status: VisitStatus; amountCents: number; lineCount: number; discountCents?: number };
   /** 手牌押金（8.2.1，含已退的） */
   deposits?: import('./tag-deposit').TagDeposit[];
+  /** 锁牌外出（8.2.6）：此刻锁着的那一把（含锁之前收的预售）；没锁为 null */
+  awayLock?: import('./away-lock').AwayLock | null;
   lines: BillLine[];
   group: { id: number; groupNo: string; status: 'open' | 'closed'; mates: GroupMate[]; openAmountCents: number } | null;
   history: VisitHistoryEvent[];
@@ -447,7 +451,7 @@ export interface VisitDetail {
 export type FrontdeskOpLookup =
   | { found: false; abandoned: boolean }
   | { found: true; type: 'checkin'; checkin: CheckinResult }
-  | { found: true; type: 'bill_post' | 'tag_swap' | 'line_move' | 'visit_incident' | 'line_discount' | 'tag_deposit' | 'tag_deposit_refund'; visit: VisitDetail }
+  | { found: true; type: 'bill_post' | 'tag_swap' | 'line_move' | 'visit_incident' | 'line_discount' | 'tag_deposit' | 'tag_deposit_refund' | 'tag_away_lock' | 'tag_away_unlock'; visit: VisitDetail }
   | { found: true; type: 'checkout' | 'table_checkout'; checkout: CheckoutDetail }
   | { found: true; type: 'table_open' | 'table_post' | 'table_return'; session: import('./dining').TableSessionDetail }
   | { found: true; type: 'room_checkin' | 'room_extend' | 'room_deposit' | 'room_refund' | 'room_close'; stay: import('./rooms').StayDetail }

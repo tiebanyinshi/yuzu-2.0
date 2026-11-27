@@ -4,6 +4,7 @@
 
 export { assertOpen, businessDate, hashRequest, lockVisits, runIdempotent, saveKey, setTxTimeouts } from './common';
 export { sweepRiskAlerts } from './guest';
+export { sweepAwayLocks } from './away-lock';
 
 /** 前台挂账（bills.ts）按需加载：钟房的派钟、加钟、换项目要用，静态引用会与钟房绕成环 */
 export const loadBills = () => import('./bills');

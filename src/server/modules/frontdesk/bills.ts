@@ -28,6 +28,7 @@ import { getVisit } from './visits';
 import { recordSupplement } from './guest-tx';
 import { locateCharges, locateSession } from '../locations';
 import { currentStoreId } from '../../lib/store-context';
+import { assertNotAwayLocked } from './away-lock';
 
 export const PostInput = z
   .object({
@@ -185,6 +186,8 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   // ③ 来访 → 账单
   const visit = (await lockVisits(tx, [visitId])).get(visitId)!;
   assertOpen(visit);
+  // 锁牌外出（8.2.6）：客人外出、牌锁着期间不能挂账；发牌后的异常处置（加收）照旧能记
+  if (meta.opType !== 'visit_incident') await assertNotAwayLocked(tx, visit.id);
   if (channel && Number(visit.memberId) !== channel.memberId) {
     throw conflict('VISIT_CHANGED', '这张手牌刚刚换了客人，请重新下单');
   }

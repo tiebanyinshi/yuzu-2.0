@@ -71,6 +71,7 @@ import { remarkTagsSql, visitRemarks } from './remark-read';
 import { categoryChanges, categoryOf, guestProfile, loadGuestRules } from './guest-read';
 import { checkinCategory, derivedKey, GuestCheckinFields, recordBookedTechnician } from './guest-tx';
 import { arriveBookingsTx, blacklistedError, blacklistHits, loadRiskRules, lockArrivableBookings, unsettledDebts, visitsToday, type LockedRiskBooking } from './risk';
+import { awayLockOf } from './away-lock';
 
 const clientKey = z.uuid('缺少有效的操作编号，请刷新页面后重试');
 const tagCode = z.string('请输入牌号').transform(normalizeTagCode).pipe(z.string().regex(TAG_CODE_PATTERN, '牌号格式不正确（例如 A023、1088）'));
@@ -716,6 +717,7 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
       amountCents: number | null;
       lineCount: number | null;
       awaySince: string | null;
+      awayLockUntil: Date | null;
       openTodos: number | null;
       remarkTags: string[] | null;
       guestCategory: string | null;
@@ -727,6 +729,8 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
            v.group_id, g.group_no,
            CASE WHEN v.group_id IS NULL THEN 0 ELSE count(v.id) OVER (PARTITION BY v.group_id) END AS group_open_count,
            b.amount_cents, b.line_count, v.away_since,
+           -- 锁牌外出（8.2.6）：锁到几点
+           (SELECT l.lock_until FROM visit_tag_locks l WHERE l.visit_id = v.id AND l.released_at IS NULL) AS away_lock_until,
            -- 这次来访上没处理完的异常待办（上报、未结离店；8.1.17 起还有超时提醒）几条（8.1.15）
            (SELECT count(*)::int FROM visit_incidents i WHERE i.visit_id = v.id AND ${openTodoWhere(db)}) AS open_todos,
            -- 前台备注的标签（8.1.44）：收银台清单上标「客诉」等
@@ -772,6 +776,7 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
           coupons: 0,
           gifts: 0,
           awaySince: r.awaySince,
+          awayLockUntil: r.awayLockUntil ? new Date(r.awayLockUntil).toISOString() : null,
           openTodos: r.openTodos ?? 0,
           remarkTags: r.remarkTags ?? [],
           // 客人类别（8.2.3）：空的（升级前的来访）按默认类别
@@ -887,6 +892,7 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
   const discountCents = lines.reduce((s, l) => s + (l.discount ? l.discount.listAmount - l.discount.finalAmount : 0), 0);
   const backfill = normalizeMark(v.backfill);
   const deposits = await depositsOf(db, [v.id]);
+  const awayLock = v.status === 'open' ? await awayLockOf(db, v.id) : null;
 
   let group: VisitDetail['group'] = null;
   if (v.groupId) {
@@ -1075,6 +1081,7 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
     bill: { id: v.billId, billNo: v.billNo, status: v.billStatus, amountCents: v.amountCents, lineCount: v.lineCount, discountCents },
     lines,
     deposits,
+    awayLock,
     group,
     history,
     serverTime: now!.now,
@@ -1144,6 +1151,10 @@ export async function lookupFrontdeskOp(db: Db, key: string, timezone: string, e
   if (row.opType === 'visit_incident') return { found: true as const, type: 'visit_incident' as const, visit: await getVisit(db, row.refId, timezone) };
   // 单项打折（8.2.1）：编号记在那次来访上；手牌押金的收、退：编号记在那一笔押金上，查回这位客人
   if (row.opType === 'line_discount') return { found: true as const, type: 'line_discount' as const, visit: await getVisit(db, row.refId, timezone) };
+  // 锁牌外出（8.2.6）：锁、解锁的编号记在那次来访上
+  if (row.opType === 'tag_away_lock' || row.opType === 'tag_away_unlock') {
+    return { found: true as const, type: row.opType as 'tag_away_lock' | 'tag_away_unlock', visit: await getVisit(db, row.refId, timezone) };
+  }
   if (row.opType === 'tag_deposit' || row.opType === 'tag_deposit_refund') {
     const [d] = await db<{ visitId: number }[]>`SELECT visit_id FROM tag_deposits WHERE id = ${row.refId}`;
     return { found: true as const, type: row.opType as 'tag_deposit' | 'tag_deposit_refund', visit: await getVisit(db, d!.visitId, timezone) };

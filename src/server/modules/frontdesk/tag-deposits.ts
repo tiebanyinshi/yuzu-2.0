@@ -25,6 +25,7 @@ import { lockPaymentShift, openShiftOf } from '../shifts';
 import { consumeForDeposit, reverseForCheckout } from '../wallet';
 import { assertOpen, businessDate, hashRequest, lockVisits, runIdempotent, saveKey } from './common';
 import { getVisit } from './visits';
+import { assertDepositNotLocking } from './away-lock';
 
 export const CollectDepositInput = z
   .object({
@@ -65,42 +66,56 @@ export async function collectDeposit(deps: Deps, visitId: number, raw: unknown, 
     const at = ctx.at ?? new Date();
     const visit = (await lockVisits(tx, [visitId])).get(visitId)!;
     assertOpen(visit);
-    const date = await businessDate(tx, deps, at);
-    const depositNo = await nextDocNo(tx, 'tag_deposit', 'YJ', date);
-    const [tag] = await tx<{ code: string }[]>`SELECT code FROM hand_tags WHERE id = ${visit.tagId}`;
-    let wallet: { memberId: number; consumptionId: number; split: { principal: number; bonus: number } } | null = null;
-    if (input.method === 'wallet') {
-      // 只能扣这张手牌上的会员自己的储值（不扣别人的卡，与结账用储值同一条）
-      if (!visit.memberId) throw unprocessable('NO_MEMBER', '这张手牌上没有会员，不能从储值扣押金；请先在收银台记上会员，或改用现金、微信、支付宝、银行卡');
-      const r = await consumeForDeposit(tx, deps, { memberId: visit.memberId, amount: input.amount, expectedSplit: input.expectedSplit!, depositNo, tagCode: tag!.code, businessDate: date, ctx, at });
-      wallet = { memberId: visit.memberId, consumptionId: r.consumptionId, split: r.split };
-    }
-    const [row] = await tx<{ id: number }[]>`
+    const id = await insertDeposit(tx, deps, { visit, input, key, shiftId, at, ctx });
+    await saveKey(tx, key, 'tag_deposit', requestHash, id, ctx.actor.id);
+    return id;
+  });
+  return getVisit(deps.sql, visitId, deps.config.timezone);
+}
+
+/**
+ * 在调用方的事务里收一笔押金（来访已锁、经办人的班次已加共享锁）：编号、储值扣、写押金、审计。返回押金编号。
+ * 收押金本身与锁牌外出（8.2.6，锁之前先收预售）都用它；操作编号由调用方写
+ */
+export async function insertDeposit(
+  tx: Tx,
+  deps: Deps,
+  a: { visit: { id: number; visitNo: string; tagId: number; memberId: number | null }; input: z.output<typeof CollectDepositInput>; key: string; shiftId: number | null; at: Date; ctx: OpContext },
+): Promise<number> {
+  const { visit, input, key, shiftId, at, ctx } = a;
+  const date = await businessDate(tx, deps, at);
+  const depositNo = await nextDocNo(tx, 'tag_deposit', 'YJ', date);
+  const [tag] = await tx<{ code: string }[]>`SELECT code FROM hand_tags WHERE id = ${visit.tagId}`;
+  let wallet: { memberId: number; consumptionId: number; split: { principal: number; bonus: number } } | null = null;
+  if (input.method === 'wallet') {
+    // 只能扣这张手牌上的会员自己的储值（不扣别人的卡，与结账用储值同一条）
+    if (!visit.memberId) throw unprocessable('NO_MEMBER', '这张手牌上没有会员，不能从储值扣押金；请先在收银台记上会员，或改用现金、微信、支付宝、银行卡');
+    const r = await consumeForDeposit(tx, deps, { memberId: visit.memberId, amount: input.amount, expectedSplit: input.expectedSplit!, depositNo, tagCode: tag!.code, businessDate: date, ctx, at });
+    wallet = { memberId: visit.memberId, consumptionId: r.consumptionId, split: r.split };
+  }
+  const [row] = await tx<{ id: number }[]>`
       INSERT INTO tag_deposits (deposit_no, visit_id, method, amount, member_id, consumption_id, reason, ref, client_key, shift_id, business_date, staff_id, created_at)
       VALUES (${depositNo}, ${visit.id}, ${input.method}, ${input.amount}, ${wallet?.memberId ?? null}, ${wallet?.consumptionId ?? null}, ${input.reason}, ${input.ref},
               ${key}, ${shiftId}, ${date}, ${ctx.actor.id}, ${at})
       RETURNING id`;
-    await saveKey(tx, key, 'tag_deposit', requestHash, row!.id, ctx.actor.id);
-    await writeAudit(tx, {
-      staffId: ctx.actor.id,
-      action: 'tag_deposit_received',
-      targetType: 'visit',
-      targetId: visit.id,
-      detail: {
-        depositNo,
-        visitNo: visit.visitNo,
-        tagCode: tag!.code,
-        method: input.method,
-        amount: input.amount,
-        reason: input.reason,
-        ...(wallet ? { memberId: wallet.memberId, split: wallet.split } : {}),
-      },
-      ip: ctx.ip,
-      businessDate: date,
-    });
-    return row!.id;
+  await writeAudit(tx, {
+    staffId: ctx.actor.id,
+    action: 'tag_deposit_received',
+    targetType: 'visit',
+    targetId: visit.id,
+    detail: {
+      depositNo,
+      visitNo: visit.visitNo,
+      tagCode: tag!.code,
+      method: input.method,
+      amount: input.amount,
+      reason: input.reason,
+      ...(wallet ? { memberId: wallet.memberId, split: wallet.split } : {}),
+    },
+    ip: ctx.ip,
+    businessDate: date,
   });
-  return getVisit(deps.sql, visitId, deps.config.timezone);
+  return row!.id;
 }
 
 /** 一键退押金 */
@@ -118,6 +133,8 @@ export async function refundDeposit(deps: Deps, depositId: number, raw: unknown,
     const [d] = await tx<DepositRow[]>`
       SELECT id, deposit_no, visit_id, method, amount, member_id, consumption_id, status FROM tag_deposits WHERE id = ${depositId} FOR UPDATE`;
     if (d!.status !== 'held') throw conflict('DEPOSIT_REFUNDED', `押金 ${d!.depositNo} 已经退过了，不会重复退`);
+    // 锁牌外出的预售（8.2.6）：牌还锁着不能单独退
+    await assertDepositNotLocking(tx, d!.id, d!.depositNo);
     const date = await businessDate(tx, deps, at);
     await refundOne(tx, deps, d!, { kind: 'manual', shiftId, checkoutId: null, date, at, ctx, visitNo: visit.visitNo });
     await saveKey(tx, key, 'tag_deposit_refund', requestHash, d!.id, ctx.actor.id);
