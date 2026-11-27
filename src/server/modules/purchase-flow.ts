@@ -155,7 +155,7 @@ function poFact(c: Ctx, id: number) {
     p = (async () => {
       const { db } = c;
       const [po] = await db<Record<string, unknown>[]>`
-        SELECT po.id, po.doc_no, po.status, s.name AS supplier_name, po.total_cents, po.order_date,
+        SELECT po.id, po.doc_no, po.status, coalesce(s.name, '自购 · ' || po.self_channel) AS supplier_name, po.total_cents, po.order_date,
                -- 供应商在订单确认链接里承诺的到货日（8.0.21 供应商门户）优先
                coalesce((SELECT c.promised_date FROM po_supplier_confirmations c WHERE c.purchase_order_id = po.id AND c.po_revision = po.revision), po.expected_date) AS expected_date, po.created_at,
                cb.display_name AS created_by_name, po.approved_at, ab.display_name AS approved_by_name, po.returned_reason, po.close_reason, po.sourcing_event_id,
@@ -170,7 +170,7 @@ function poFact(c: Ctx, id: number) {
                   SELECT 1 FROM expense_claim_lines cl JOIN expense_claims ec ON ec.id = cl.claim_id
                   WHERE cl.po_line_id = pl.id AND ec.status IN ('submitted', 'returned', 'confirmed'))) AS unclaimed_lines,
                (SELECT count(*)::int FROM expense_claims ec WHERE ec.purchase_order_id = po.id AND ec.status IN ('submitted', 'returned')) AS claims_pending
-        FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id JOIN staff cb ON cb.id = po.created_by
+        FROM purchase_orders po LEFT JOIN suppliers s ON s.id = po.supplier_id JOIN staff cb ON cb.id = po.created_by
         LEFT JOIN staff ab ON ab.id = po.approved_by
         WHERE po.id = ${id}`;
       if (!po || po.status === 'cancelled') return null;

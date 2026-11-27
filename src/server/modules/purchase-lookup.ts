@@ -29,10 +29,10 @@ export async function lookupDocNo(db: Db, raw: string): Promise<DocLookupResult>
   if (norm.length < 3) return { query: raw.trim(), hits: [], exact: false };
   const like = `%${norm}%`;
   const pos = await db<Omit<DocLookupHit, 'kind' | 'poId' | 'requestId'>[]>`
-    SELECT po.id, po.doc_no, po.status, s.name AS party, coalesce((SELECT string_agg(m.name, '、' ORDER BY pl.line_no) FROM purchase_order_lines pl
+    SELECT po.id, po.doc_no, po.status, coalesce(s.name, '自购 · ' || po.self_channel) AS party, coalesce((SELECT string_agg(m.name, '、' ORDER BY pl.line_no) FROM purchase_order_lines pl
              JOIN materials m ON m.id = pl.material_id WHERE pl.po_id = po.id AND pl.line_no <= 3), '') AS summary,
            po.created_at AS at, ${NORM(db, 'po.doc_no')} = ${norm} AS exact
-    FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id
+    FROM purchase_orders po LEFT JOIN suppliers s ON s.id = po.supplier_id
     WHERE ${NORM(db, 'po.doc_no')} LIKE ${like}
     ORDER BY (${NORM(db, 'po.doc_no')} = ${norm}) DESC, (${NORM(db, 'po.doc_no')} LIKE ${`%${norm}`}) DESC, po.id DESC LIMIT ${MAX_HITS}`;
   const requests = await db<(Omit<DocLookupHit, 'kind' | 'requestId'> & { poId: number | null })[]>`

@@ -448,8 +448,8 @@ async function receivedByLine(db: Db, poId: number) {
 
 export async function poForClaim(db: Db, poId: number, excludeClaimId: number | null = null): Promise<PoForClaim & { settlement: string; status: string }> {
   const [head] = await db<{ id: number; docNo: string; supplierName: string; orderDate: string; status: string; channelKey: string | null; channelLabel: string | null; channelNote: string }[]>`
-    SELECT p.id, p.doc_no, s.name AS supplier_name, p.order_date, p.status, p.channel AS channel_key, p.channel_label, p.channel_note
-    FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${poId}`;
+    SELECT p.id, p.doc_no, coalesce(s.name, '自购 · ' || p.self_channel) AS supplier_name, p.order_date, p.status, p.channel AS channel_key, p.channel_label, p.channel_note
+    FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id WHERE p.id = ${poId}`;
   if (!head) throw notFound('采购单不存在');
   // 结算方式按这张采购单自己的（第一张收货定下的），不看供应商当前的设置：挂账收下的货已记应付，不能再报销
   const { channelKey, channelLabel, channelNote, ...rest } = head;
@@ -480,6 +480,8 @@ const poIsCash = (db: Db) => db`
             WHERE d.purchase_order_id = p.id AND d.doc_type = 'receipt' AND d.status = 'confirmed' AND d.settlement IS NOT NULL
             ORDER BY d.confirmed_at, d.id LIMIT 1),
            CASE WHEN EXISTS (SELECT 1 FROM expense_claims c WHERE c.purchase_order_id = p.id AND c.status IN ${db(ACTIVE_CLAIM)}) THEN 'cash' END,
+           -- 自购（8.2.8）没有供应商：按现付，在报销里报（员工垫付 / 备用金）
+           CASE WHEN p.purchase_method = 'self' THEN 'cash' END,
            s.settlement) = 'cash'`;
 /** 采购单行 pl 已在有效的报销单里 */
 const lineClaimed = (db: Db) => db`
@@ -488,11 +490,11 @@ const lineClaimed = (db: Db) => db`
 export async function poCandidates(db: Db, q: string): Promise<PoCandidate[]> {
   const like = `%${q.trim()}%`;
   return db<PoCandidate[]>`
-    SELECT p.id, p.doc_no, s.name AS supplier_name, p.order_date, p.status, p.total_cents,
+    SELECT p.id, p.doc_no, coalesce(s.name, '自购 · ' || p.self_channel) AS supplier_name, p.order_date, p.status, p.total_cents,
            (SELECT count(*) FROM purchase_order_lines pl WHERE pl.po_id = p.id AND NOT ${lineClaimed(db)})::int AS open_lines
-    FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id
+    FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id
     WHERE p.status IN ('approved', 'closed') AND ${poIsCash(db)}
-      ${q.trim() ? db`AND (p.doc_no ILIKE ${like} OR s.name ILIKE ${like} OR s.code ILIKE ${like})` : db``}
+      ${q.trim() ? db`AND (p.doc_no ILIKE ${like} OR s.name ILIKE ${like} OR s.code ILIKE ${like} OR p.self_channel ILIKE ${like})` : db``}
     ORDER BY p.order_date DESC, p.id DESC
     LIMIT 50`;
 }
@@ -504,7 +506,7 @@ const TO_CLAIM_LIMIT = 300;
 /** 已收货、待报销的现付采购单张数（8.0.1 采购组整改 11：ERP 导航「费用与备用金」上的数字） */
 export async function toClaimReceivedCount(db: Db): Promise<number> {
   const [row] = await db<{ n: number }[]>`
-    SELECT count(*)::int AS n FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id
+    SELECT count(*)::int AS n FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id
     WHERE p.status IN ('approved', 'closed') AND ${poIsCash(db)}
       AND EXISTS (SELECT 1 FROM inv_docs d WHERE d.purchase_order_id = p.id AND d.doc_type = 'receipt' AND d.status = 'confirmed')
       AND EXISTS (SELECT 1 FROM purchase_order_lines pl WHERE pl.po_id = p.id AND NOT ${lineClaimed(db)})`;
@@ -528,10 +530,10 @@ export async function toClaimList(db: Db, today: string): Promise<ToClaimPo[]> {
       SELECT p.id,
              (SELECT count(*) FROM purchase_order_lines pl WHERE pl.po_id = p.id AND NOT ${lineClaimed(db)})::int AS open_lines,
              coalesce((SELECT sum(pl.amount_cents) FROM purchase_order_lines pl WHERE pl.po_id = p.id AND NOT ${lineClaimed(db)}), 0)::bigint AS open_cents
-      FROM purchase_orders p JOIN suppliers s ON s.id = p.supplier_id
+      FROM purchase_orders p LEFT JOIN suppliers s ON s.id = p.supplier_id
       WHERE p.status IN ('approved', 'closed') AND ${poIsCash(db)}
     )
-    SELECT p.id, p.doc_no, s.name AS supplier_name, p.order_date, p.status, p.backfill, p.total_cents,
+    SELECT p.id, p.doc_no, coalesce(s.name, '自购 · ' || p.self_channel) AS supplier_name, p.order_date, p.status, p.backfill, p.total_cents,
            p.channel AS channel_key, p.channel_label, p.channel_note,
            cb.id AS created_by_id, cb.display_name AS created_by_name,
            o.open_lines, o.open_cents,
@@ -547,7 +549,7 @@ export async function toClaimList(db: Db, today: string): Promise<ToClaimPo[]> {
               (SELECT sum(l.qty_milli) FROM inv_doc_lines l JOIN inv_docs d ON d.id = l.doc_id WHERE l.po_line_id = pl.id AND d.status = 'confirmed'), 0))::int AS full_lines,
            coalesce((SELECT sum(l.qty_milli) FROM inv_doc_lines l JOIN inv_docs d ON d.id = l.doc_id
                      JOIN purchase_order_lines pl ON pl.id = l.po_line_id WHERE pl.po_id = p.id AND d.status = 'confirmed'), 0)::bigint AS received_milli
-    FROM open_po o JOIN purchase_orders p ON p.id = o.id JOIN suppliers s ON s.id = p.supplier_id
+    FROM open_po o JOIN purchase_orders p ON p.id = o.id LEFT JOIN suppliers s ON s.id = p.supplier_id
     JOIN staff cb ON cb.id = p.created_by LEFT JOIN departments cd ON cd.id = cb.department_id
     WHERE o.open_lines > 0
     ORDER BY p.order_date, p.id
@@ -588,7 +590,7 @@ export async function claimPrefill(db: Db, timezone: string, poId: number): Prom
   const { settlement: _s, status: _st, ...po } = full;
   const rules = await loadExpenseRules(db);
   const basis: string[] = [];
-  const [head] = await db<{ createdBy: number; handlerActive: boolean; handlerDept: number | null; handlerDeptActive: boolean | null; supplierId: number }[]>`
+  const [head] = await db<{ createdBy: number; handlerActive: boolean; handlerDept: number | null; handlerDeptActive: boolean | null; supplierId: number | null }[]>`
     SELECT p.created_by, st.active AS handler_active, st.department_id AS handler_dept, d.active AS handler_dept_active, p.supplier_id
     FROM purchase_orders p JOIN staff st ON st.id = p.created_by LEFT JOIN departments d ON d.id = st.department_id
     WHERE p.id = ${poId}`;

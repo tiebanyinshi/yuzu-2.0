@@ -96,7 +96,7 @@ export function visible(me: Awaited<ReturnType<typeof myContext>>, actor: Actor,
 /** 需求行的进度：对应的有效采购单行（撤回的不算）、已生效的收货与退供应商数量 */
 const PROGRESS_SQL = (db: Db) => db`
   (SELECT json_build_object(
-            'poId', po.id, 'docNo', po.doc_no, 'status', po.status, 'supplierName', s.name,
+            'poId', po.id, 'docNo', po.doc_no, 'status', po.status, 'supplierName', coalesce(s.name, '自购 · ' || po.self_channel),
             'orderedMilli', pl.base_qty_milli, 'inventoryUnit', pl.inventory_unit,
             'mergedLines', (SELECT count(*) FROM purchase_order_line_requests y WHERE y.po_line_id = pl.id),
             'receivedMilli', coalesce((SELECT sum(il.qty_milli) FROM inv_doc_lines il JOIN inv_docs d ON d.id = il.doc_id
@@ -109,7 +109,7 @@ const PROGRESS_SQL = (db: Db) => db`
             'redeliverMilli', coalesce((SELECT sum(il.redeliver_milli) FROM inv_doc_lines il JOIN inv_docs d ON d.id = il.doc_id
                                        WHERE il.po_line_id = pl.id AND d.doc_type = 'receipt' AND d.status = 'confirmed'), 0))
      FROM purchase_order_line_requests x JOIN purchase_order_lines pl ON pl.id = x.po_line_id
-     JOIN purchase_orders po ON po.id = pl.po_id JOIN suppliers s ON s.id = po.supplier_id
+     JOIN purchase_orders po ON po.id = pl.po_id LEFT JOIN suppliers s ON s.id = po.supplier_id
      WHERE x.request_line_id = l.id AND po.status <> 'cancelled'
      ORDER BY pl.id LIMIT 1)`;
 

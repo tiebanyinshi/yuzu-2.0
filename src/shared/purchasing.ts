@@ -80,11 +80,43 @@ export interface PoRevision {
   };
 }
 
+// ───────────────────────── 自购（8.2.8，《采购模块需求补充》R3，docs/V828_SELF_PURCHASE.md） ─────────────────────────
+
+export const PURCHASE_METHODS = ['supplier', 'self'] as const;
+export type PurchaseMethod = (typeof PURCHASE_METHODS)[number];
+export const PURCHASE_METHOD_LABELS: Record<PurchaseMethod, string> = { supplier: '供应商采购', self: '自购' };
+export const SELF_REASONS = ['no_supplier', 'urgent', 'petty', 'other'] as const;
+export type SelfReason = (typeof SELF_REASONS)[number];
+export const SELF_REASON_LABELS: Record<SelfReason, string> = { no_supplier: '无供应商可供', urgent: '应急', petty: '零星采购', other: '其他' };
+export const SELF_PAY_METHODS = ['employee_advance', 'petty', 'company_transfer', 'other'] as const;
+export type SelfPayMethod = (typeof SELF_PAY_METHODS)[number];
+export const SELF_PAY_METHOD_LABELS: Record<SelfPayMethod, string> = { employee_advance: '员工垫付后报销', petty: '备用金', company_transfer: '对公转账', other: '其他' };
+/** 自购超过这个金额（分）加一级店主复核（PS5：文档没给金额，先按报销原来的门槛 2,000 元） */
+export const SELF_REVIEW_CENTS = 200_000;
+
+export interface SelfPurchaseInfo {
+  reason: SelfReason;
+  reasonNote: string;
+  /** 购买渠道 / 商家名称（不是供应商档案） */
+  channel: string;
+  handler: Ref;
+  payMethod: SelfPayMethod;
+  boughtOn: string | null;
+  receiptImages: { id: number; url: string }[];
+}
+
+/** 列表、详情上「供应商」那一栏：自购写「自购 · 渠道」 */
+export const partyLabel = (supplierName: string | null, self: { channel: string } | null) => (self ? `自购 · ${self.channel}` : (supplierName ?? ''));
+
 export interface PurchaseOrder {
   id: number;
   docNo: string;
   status: PoStatus;
-  supplier: Ref;
+  /** 供应商采购的供应商；自购为空（8.2.8） */
+  supplier: Ref | null;
+  purchaseMethod: PurchaseMethod;
+  /** 自购信息（供应商采购为空） */
+  self: SelfPurchaseInfo | null;
   /** 采购途径（v0.7.29，E1）；v0.7.29 以前的单据为空 */
   channel: ChannelRef | null;
   /** 从哪张询价单转来的（v0.7.29，E5） */
@@ -149,9 +181,11 @@ export interface PoSummary {
   id: number;
   docNo: string;
   status: PoStatus;
+  /** 自购的写「自购 · 渠道」（8.2.8） */
   supplierName: string;
+  purchaseMethod: PurchaseMethod;
   channel: ChannelRef | null;
-  supplierId: number;
+  supplierId: number | null;
   orderDate: string;
   expectedDate: string | null;
   totalCents: number;
