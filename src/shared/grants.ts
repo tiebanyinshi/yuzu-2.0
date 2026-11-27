@@ -12,7 +12,18 @@
 // 优惠与降档的原因由申请的员工在弹窗里填写，随授权一起签发、核销后记到单据上。
 
 //   · company_charge：结账时「公司承担」（值班经理、店总、店主可授权，8.2.4，docs/V8224_DINING.md 第 5 节），绑定一起结账的来访或开台、金额、原因与说明。
-export const GRANT_PURPOSES = ['vip_tag', 'over_limit', 'checkout_discount', 'ticket_discount', 'member_refund', 'member_phone', 'line_void', 'checkin_risk', 'line_discount', 'company_charge'] as const;
+export const GRANT_PURPOSES = [
+  'vip_tag',
+  'over_limit',
+  'checkout_discount',
+  'ticket_discount',
+  'member_refund',
+  'member_phone',
+  'line_void',
+  'checkin_risk',
+  'line_discount',
+  'company_charge',
+] as const;
 export type GrantPurpose = (typeof GRANT_PURPOSES)[number];
 
 export const GRANT_TTL_MINUTES = 5;

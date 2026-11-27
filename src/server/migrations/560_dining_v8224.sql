@@ -133,3 +133,18 @@ ALTER TABLE checkout_payments ADD CONSTRAINT checkout_payments_discount_check
   CHECK ((method IN ('discount', 'company')) = (approved_by IS NOT NULL) AND (method IN ('discount', 'company')) = (grant_id IS NOT NULL)
          AND (method <> 'discount' OR char_length(btrim(ref)) >= 2)) NOT VALID;
 ALTER TABLE checkout_payments VALIDATE CONSTRAINT checkout_payments_discount_check;
+
+-- ── 新权限「包房返台」「公司承担授权」写进岗位的建议权限（合并四批时补上，与 540 同一写法） ──
+-- 返台给餐饮部负责人、前厅负责人与总经办；公司承担授权给前厅负责人与总经办。门店在「分部门岗位职权配置」里删掉了的岗位不加；每个岗位记一条配置日志（只追加）
+INSERT INTO position_config_log (staff_id, action, position_key, detail)
+SELECT NULL, 'suggestions', key,
+       CASE WHEN key = 'dining.lead'
+            THEN '{"added": ["dining.returnTable"], "removed": [], "note": "8.2.4 新权限「包房返台」（迁移 560）"}'::jsonb
+            ELSE '{"added": ["auth.companyCharge", "dining.returnTable"], "removed": [], "note": "8.2.4 新权限「包房返台」「公司承担授权」（迁移 560）"}'::jsonb END
+FROM position_catalog WHERE key IN ('dining.lead', 'front.lead', 'gmo') ORDER BY key;
+INSERT INTO position_suggestions (position_key, permission)
+SELECT key, 'dining.returnTable' FROM position_catalog WHERE key IN ('dining.lead', 'front.lead', 'gmo')
+ON CONFLICT DO NOTHING;
+INSERT INTO position_suggestions (position_key, permission)
+SELECT key, 'auth.companyCharge' FROM position_catalog WHERE key IN ('front.lead', 'gmo')
+ON CONFLICT DO NOTHING;

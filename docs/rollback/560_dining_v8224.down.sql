@@ -4,6 +4,8 @@
 -- 进了厨房的临时项目（kitchen_items.item_id 为空）先退掉或删掉出品单行，否则恢复 NOT NULL 会失败；
 -- 自动记的房费明细留着（金额都在明细上），只去掉标记。服务费跟门店默认的桌（空）恢复成 0。
 BEGIN;
+-- 岗位的建议权限（配置日志只追加，留着）
+DELETE FROM position_suggestions WHERE permission IN ('dining.returnTable', 'auth.companyCharge');
 ALTER TABLE checkout_payments DROP CONSTRAINT checkout_payments_company_check;
 ALTER TABLE checkout_payments DROP CONSTRAINT checkout_payments_discount_check;
 ALTER TABLE checkout_payments ADD CONSTRAINT checkout_payments_discount_check
