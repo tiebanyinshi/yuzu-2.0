@@ -26,12 +26,14 @@ import {
   updateLesson,
   updatePath,
 } from './admin';
+import { askTutor, generateQuestions, importQuestionTable, tutorHistory } from './ai';
 import { adminQuestions, createQuestion, quizResult, quizSummary, startQuiz, submitQuiz, updateQuestion } from './assess';
 import { courseDetail, home, lessonView, listCourses, listPaths, pathDetail } from './catalog';
 import { adminCertificates, coachQueue, lessonVersionOf, myDetail, practicalItems, revokeCertificate, signOff, signoffsOf } from './coach';
 import { answerDaily, dailySet } from './daily';
 import { ACADEMY_MANAGE, learnerGuard, learnerOf } from './learner';
 import { completeLesson, pingLesson, rateCourse } from './progress';
+import { importPacks, packStatus } from './packs';
 import { rank } from './rank';
 
 const CourseQuery = z.object({ category: z.enum(ACADEMY_CATEGORIES).optional(), q: z.string().trim().max(30).optional() });
@@ -79,6 +81,8 @@ export function registerAcademyRoutes(app: FastifyInstance, deps: Deps) {
   app.get('/api/academy/me', { preHandler: learner }, async (req) => myDetail(sql, await learnerOf(sql, req.actor), req.actor, today()));
   app.get('/api/academy/coach', { preHandler: learner }, async (req) => coachQueue(sql, req.actor));
   app.post('/api/academy/signoffs', { preHandler: learner }, async (req) => signOff(sql, ctxOf(req), req.body, today()));
+  app.get('/api/academy/courses/:id/tutor', { preHandler: learner }, async (req) => tutorHistory(deps, await learnerOf(sql, req.actor), parse(idParam, req.params).id, today()));
+  app.post('/api/academy/courses/:id/tutor', { preHandler: learner }, async (req) => askTutor(deps, await learnerOf(sql, req.actor), parse(idParam, req.params).id, req.body, today()));
   app.get('/api/academy/paths', { preHandler: learner }, async (req) => listPaths(sql, await learnerOf(sql, req.actor)));
   app.get('/api/academy/paths/:id', { preHandler: learner }, async (req) => pathDetail(sql, await learnerOf(sql, req.actor), parse(idParam, req.params).id));
   app.get('/api/academy/rank', { preHandler: learner }, async (req) => {
@@ -107,6 +111,12 @@ export function registerAcademyRoutes(app: FastifyInstance, deps: Deps) {
     reply.code(201).send(await createQuestion(sql, parse(idParam, req.params).id, req.body, ctxOf(req))),
   );
   app.put('/api/admin/academy/questions/:id', { preHandler: manage }, async (req) => updateQuestion(sql, parse(idParam, req.params).id, req.body, ctxOf(req)));
+  app.post('/api/admin/academy/courses/:id/questions/import', { preHandler: manage }, async (req, reply) =>
+    reply.code(201).send(await importQuestionTable(sql, parse(idParam, req.params).id, req.body, ctxOf(req))),
+  );
+  app.post('/api/admin/academy/lessons/:id/generate', { preHandler: manage }, async (req) => generateQuestions(deps, parse(idParam, req.params).id, req.body, ctxOf(req)));
+  app.get('/api/admin/academy/packs', { preHandler: manage }, async () => packStatus(sql));
+  app.post('/api/admin/academy/packs/import', { preHandler: manage }, async (req) => importPacks(sql, req.body, ctxOf(req), today()));
   app.get('/api/admin/academy/certificates', { preHandler: manage }, async () => adminCertificates(sql, today()));
   app.post('/api/admin/academy/certificates/:id/revoke', { preHandler: manage }, async (req) => revokeCertificate(sql, parse(idParam, req.params).id, req.body, ctxOf(req), today()));
 }

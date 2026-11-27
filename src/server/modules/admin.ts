@@ -1381,6 +1381,8 @@ const CHANGE_ACTIONS = [
   'academy_assignment_saved',
   'academy_question_saved',
   'academy_certificate_revoked',
+  'academy_pack_imported',
+  'academy_questions_imported',
   'location_reader_saved',
   'items_zone_updated',
   // 8.1.15 菜品管理
@@ -1495,6 +1497,10 @@ function describeChange(action: string, detail: Record<string, unknown>): string
       return typeof detail.summary === 'string' ? detail.summary : '签了实操考核';
     case 'academy_certificate_revoked':
       return typeof detail.summary === 'string' ? detail.summary : '撤销了学堂证书';
+    case 'academy_pack_imported':
+      return typeof detail.summary === 'string' ? detail.summary : '导入了学堂内置课程包';
+    case 'academy_questions_imported':
+      return typeof detail.summary === 'string' ? detail.summary : '导入了学堂题库';
     case 'space_import':
       return typeof detail.summary === 'string' ? detail.summary : '导入了空间台账';
     case 'location_reader_saved':

@@ -63,6 +63,12 @@ function checkQuestion(input: Omit<QuestionFields, 'version'>) {
   return q;
 }
 
+/** 按编号取题（AI 出题、表格导入以后返回给页面） */
+export async function questionsByIds(db: Db, ids: number[]): Promise<AcademyQuestion[]> {
+  if (!ids.length) return [];
+  return (await db<QuestionRow[]>`SELECT ${QUESTION_COLS(db)} FROM academy_questions WHERE id IN ${db(ids)} ORDER BY id`).map(toQuestion);
+}
+
 export async function adminQuestions(db: Db, courseId: number): Promise<AcademyQuestion[]> {
   const rows = await db<QuestionRow[]>`SELECT ${QUESTION_COLS(db)} FROM academy_questions WHERE course_id = ${courseId} ORDER BY status = 'retired', id`;
   return rows.map(toQuestion);
