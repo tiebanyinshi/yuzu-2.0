@@ -5,7 +5,7 @@
 // 写卡、清卡、开柜没收到回答（桥没回答，或浏览器没收到门店系统的回话）都按「结果待确认」：写卡、清卡记在本机，
 // 发卡器下面列出来，读卡核对出结论才去掉（lockerCardPending.ts，Codex 审查 34a7c87）；开柜请到柜前确认。不说「没成功」。
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { CreditCard, DoorOpen, Eraser, Lock, PenLine, TriangleAlert } from 'lucide-react';
@@ -159,10 +159,15 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
   const [asking, setAsking] = useState(false);
   const [writing, setWriting] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  /** 写卡这一次的序号：先读卡要等一会儿，这期间取消了、换了柜子，读回来以后就不写（Codex 审查 a425740） */
+  const attempt = useRef(0);
+  useEffect(() => {
+    attempt.current += 1;
+  }, [tag?.id]);
   const storeId = useSession().store.id;
   const write = useMutation({
-    // 带先读到的芯片号：发卡器上换成了别的卡，桥不写
-    mutationFn: ({ reason, uid }: { reason: string; uid: string; pendingId: string; code: string }) => api.post<WriteResult>(`/api/lockers/${tag!.id}/card/write`, { reason, uid }),
+    // 柜子、芯片号都用发起时记下的（不看此刻选中的柜子）：发卡器上换成了别的卡，桥不写
+    mutationFn: ({ tagId, reason, uid }: { tagId: number; reason: string; uid: string; pendingId: string; code: string }) => api.post<WriteResult>(`/api/lockers/${tagId}/card/write`, { reason, uid }),
     onSuccess: (r, { pendingId }) => {
       setWriting(false);
       // 桥没回答、读回也对不上：记录留着，发卡器下面读卡核对
@@ -192,6 +197,8 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
   /** 写之前先读一次发卡器：认准是哪一张卡（芯片号），没收到回答时按这张卡核对（Codex 审查 307b2f4） */
   const startWrite = async (reason: string) => {
     if (!tag || preparing) return;
+    const target = { id: tag.id, code: tag.code };
+    const mine = ++attempt.current;
     setPreparing(true);
     let card: LockerCardReadView;
     try {
@@ -201,13 +208,15 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
     } finally {
       setPreparing(false);
     }
+    // 读卡这段时间里取消了、换了柜子：不写
+    if (attempt.current !== mine) return;
     if (!card.ok || !card.uid) return toast({ tone: 'error', title: '发卡器上没有读得出芯片号的卡，没有写', body: card.message });
     const pendingId = uuid();
-    if (!lockerCardPending.add({ id: pendingId, op: 'write', code: tag.code, uid: card.uid, storeId, at: new Date().toISOString() })) return toast(NOT_SAVED);
-    write.mutate({ reason, uid: card.uid, pendingId, code: tag.code });
+    if (!lockerCardPending.add({ id: pendingId, op: 'write', code: target.code, uid: card.uid, storeId, at: new Date().toISOString() })) return toast(NOT_SAVED);
+    write.mutate({ tagId: target.id, reason, uid: card.uid, pendingId, code: target.code });
   };
   const open = useMutation({
-    mutationFn: ({ reason }: { reason: string; code: string }) => api.post<LockerOpenResult>(`/api/lockers/${tag!.id}/open`, { reason }),
+    mutationFn: ({ tagId, reason }: { tagId: number; reason: string; code: string }) => api.post<LockerOpenResult>(`/api/lockers/${tagId}/open`, { reason }),
     onSuccess: (r) => {
       setAsking(false);
       toast(
@@ -282,7 +291,7 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
         reasons={controller?.reasons}
         testId="locker-open-reason"
         onClose={() => setAsking(false)}
-        onConfirm={(reason) => open.mutate({ reason, code: tag.code })}
+        onConfirm={(reason) => open.mutate({ tagId: tag.id, reason, code: tag.code })}
       />
       <ReasonDialog
         open={writing}
@@ -297,7 +306,10 @@ function LockerDialog({ tag, controller, canOpen, onClose }: { tag: BoardTag | n
         busy={preparing || write.isPending}
         reasons={controller?.cardReasons}
         testId="locker-card-write-reason"
-        onClose={() => setWriting(false)}
+        onClose={() => {
+          attempt.current += 1;
+          setWriting(false);
+        }}
         onConfirm={startWrite}
       />
     </>
