@@ -1255,8 +1255,8 @@ export function registerShopRoutes(app: FastifyInstance, deps: Deps) {
   });
   app.post(`${P}/requests/:id/terminate/decide`, { preHandler: shopper }, async (req) => {
     const rid = parse(idParam, req.params).id;
-    await decideTermination(deps, rid, req.body, req.actor, req.ip);
-    return mallRequest(deps, req.actor, rid);
+    const result = await decideTermination(deps, rid, req.body, req.actor, req.ip);
+    return { result, request: await mallRequest(deps, req.actor, rid) };
   });
   app.get(`${P}/requests/:id/versions/:no`, { preHandler: shopper }, async (req) => {
     const { id: rid, no } = parse(z.object({ id: z.coerce.number().int().positive(), no: z.coerce.number().int().positive() }), req.params);

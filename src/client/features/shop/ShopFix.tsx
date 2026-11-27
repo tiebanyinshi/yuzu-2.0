@@ -281,17 +281,35 @@ export function TerminateButton({ r, onDone, size = 'sm' }: { r: MallRequest; on
 function DecideTermination({ r, onDone }: { r: MallRequest; onDone: (next: MallRequest) => void }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const session = useSession();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const url = `/api/erp/shop/requests/${r.id}/terminate/decide`;
+  // 本机还有一笔确认 / 驳回没确认结果（Codex 审查）：先在页面顶部查回、原样重提或确认作废
+  const pending = useErpRecorded(['mall_terminate']).some((op) => op.staffId === session.staff.id && op.url === url);
+  // 与申请终止同一套「结果待确认」；带上看到的那一次申请的时间，提单人之后又申请了的服务端拒绝，不会落到新申请上
   const decide = async (approve: boolean) => {
     setBusy(true);
+    const key = uuid();
     try {
-      const next = await api.post<MallRequest>(`/api/erp/shop/requests/${r.id}/terminate/decide`, { approve, note: note.trim() });
+      const res = await sendErpOp<{ result: 'terminated' | 'declined'; request: MallRequest }>({
+        key,
+        type: 'mall_terminate',
+        method: 'POST',
+        url,
+        body: { clientKey: key, expectedRequestedAt: r.termination?.requestedAt ?? '', approve, note: note.trim() },
+        summary: `${approve ? '确认终止' : '驳回终止申请'} · ${r.docNo}`,
+        staffName: session.staff.displayName,
+        staffId: session.staff.id,
+      });
       void qc.invalidateQueries({ queryKey: ['shop'] });
       toast({ tone: 'success', title: approve ? '已确认终止' : '已驳回终止申请' });
-      onDone(next);
+      onDone(res.request);
     } catch (e) {
-      toast({ tone: 'error', title: '没有处理', body: errorMessage(e) });
+      if (e instanceof UncertainError) {
+        toast({ tone: 'info', title: '处理结果待确认', body: '回复没收到，可能已经处理：记录留在本机，请在页面顶部查回、原样重提或确认作废' });
+        void qc.invalidateQueries({ queryKey: ['shop'] });
+      } else toast({ tone: 'error', title: '没有处理', body: errorMessage(e) });
     } finally {
       setBusy(false);
     }
@@ -299,10 +317,11 @@ function DecideTermination({ r, onDone }: { r: MallRequest; onDone: (next: MallR
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
       <Input className="max-w-xs" maxLength={200} value={note} placeholder="说明（驳回时写给提单人）" onChange={(e) => setNote(e.target.value)} aria-label="处理说明" />
-      <Button variant="danger" size="sm" loading={busy} onClick={() => void decide(true)} data-testid="shop-terminate-approve">
+      {pending && <span className="text-[12.5px] text-clay">上一次处理还没确认结果：先在页面顶部处理</span>}
+      <Button variant="danger" size="sm" loading={busy} disabled={pending} onClick={() => void decide(true)} data-testid="shop-terminate-approve">
         确认终止
       </Button>
-      <Button variant="ghost" size="sm" loading={busy} onClick={() => void decide(false)} data-testid="shop-terminate-decline">
+      <Button variant="ghost" size="sm" loading={busy} disabled={pending} onClick={() => void decide(false)} data-testid="shop-terminate-decline">
         驳回
       </Button>
     </div>

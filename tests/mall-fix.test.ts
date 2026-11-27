@@ -32,7 +32,7 @@ interface Req {
   lines: { id: number; name: string; qtyMilli: number; customSpec: Record<string, unknown> | null; imageIds: number[]; details: string }[];
   fixItems: { id: number; round: number; lineId: number | null; field: string; originalValue: string; suppliedValue: string | null; resolvedAt: string | null }[];
   versions: { versionNo: number; mode: string }[];
-  termination: { status: string; reason: string } | null;
+  termination: { status: string; reason: string; requestedAt: string } | null;
   can: { resubmit: boolean; terminate: 'direct' | 'request' | null; decideTermination: boolean };
   approvals: { action: string; reason: string }[];
 }
@@ -244,6 +244,20 @@ describe('Codex 审查修正', () => {
     expect((ok.body as Req).fixItems.every((f) => f.resolvedAt)).toBe(true);
   });
 
+  it('仅补必补项：只要求补颜色时，改打样、使用场景、预算都锁定（FIELD_LOCKED）', async () => {
+    const r = await ready('展示立牌 打样');
+    const lineId = r.lines[0]!.id;
+    expect((await api(ctx.app, buyer, 'POST', `/api/erp/requests/${r.id}/return`, { reason: '请补颜色', fixItems: [{ lineId, field: 'spec.color', requirement: '写表面颜色' }] })).status).toBe(200);
+    const back = await detail(bar, r.id);
+    const s0 = { ...back.lines[0]!.customSpec, color: '哑光黑' };
+    for (const over of [{ sample: true }, { scene: '换个地方用' }, { budgetCents: 50_000 }]) {
+      const res = await resubmit(bar, back, { mode: 'fix', lines: [{ id: lineId, qtyMilli: q(12), customSpec: { ...s0, ...over } }] });
+      expect(res.body.error?.code, JSON.stringify(over)).toBe('FIELD_LOCKED');
+    }
+    const ok = await resubmit(bar, back, { mode: 'fix', lines: [{ id: lineId, qtyMilli: q(12), customSpec: s0 }] });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+  });
+
   it('从商城清单选的行只能标「数量」：标别的项退回时拦下（FIX_ITEM_NOT_EDITABLE）；非定制的行不能标定制要求', async () => {
     const r = await ready('选品立牌');
     const lineId = r.lines[0]!.id;
@@ -297,16 +311,33 @@ describe('用例 C：终止该申购（Q5：部门负责人或 BP 确认）', ()
     expect((await api(ctx.app, bar, 'POST', `/api/erp/shop/requests/${r.id}/terminate`, { clientKey: key, reason: '活动取消' })).body.result).toBe('pending');
     expect((await api(ctx.app, bar, 'POST', `/api/erp/shop/requests/${r.id}/terminate`, { clientKey: randomUUID(), reason: '活动取消' })).body.error.code).toBe('TERMINATION_PENDING');
     // 提单人不能自己确认；负责人看得到确认按钮，驳回
-    expect((await api(ctx.app, bar, 'POST', `/api/erp/shop/requests/${r.id}/terminate/decide`, { approve: true })).status).toBe(403);
+    const first = asked.body.request.termination.requestedAt as string;
+    const decide = (cookie: string, body: Record<string, unknown>, key = randomUUID()) =>
+      api(ctx.app, cookie, 'POST', `/api/erp/shop/requests/${r.id}/terminate/decide`, { clientKey: key, expectedRequestedAt: first, ...body });
+    expect((await decide(bar, { approve: true })).status).toBe(403);
     expect((await detail(barHead, r.id)).can.decideTermination).toBe(true);
-    const declined = await api(ctx.app, barHead, 'POST', `/api/erp/shop/requests/${r.id}/terminate/decide`, { approve: false, note: '先补资料' });
+    // 不带操作编号、申请时间的拒绝
+    expect((await api(ctx.app, barHead, 'POST', `/api/erp/shop/requests/${r.id}/terminate/decide`, { approve: false })).status).toBe(400);
+    const declineKey = randomUUID();
+    const declined = await decide(barHead, { approve: false, note: '先补资料' }, declineKey);
     expect(declined.status, JSON.stringify(declined.body)).toBe(200);
-    expect(declined.body).toMatchObject({ status: 'returned', termination: { status: 'declined' } });
-    // 再申请；BP 确认
-    expect((await api(ctx.app, bar, 'POST', `/api/erp/shop/requests/${r.id}/terminate`, { clientKey: randomUUID(), reason: '确定不要了' })).body.result).toBe('pending');
-    const done = await api(ctx.app, buyer, 'POST', `/api/erp/shop/requests/${r.id}/terminate/decide`, { approve: true });
+    expect(declined.body).toMatchObject({ result: 'declined', request: { status: 'returned', termination: { status: 'declined' } } });
+    // 原样重提认得（回复丢了重提）：不再处理
+    expect((await decide(barHead, { approve: false, note: '先补资料' }, declineKey)).body.result).toBe('declined');
+    // 再申请；之前那次驳回晚到的重提（新编号）、按旧申请的确认都拒绝，不会落到新申请上
+    const again = await api(ctx.app, bar, 'POST', `/api/erp/shop/requests/${r.id}/terminate`, { clientKey: randomUUID(), reason: '确定不要了' });
+    expect(again.body.result).toBe('pending');
+    const stale = await decide(buyer, { approve: true });
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe('TERMINATION_CHANGED');
+    expect((await detail(bar, r.id)).termination).toMatchObject({ status: 'pending', reason: '确定不要了' });
+    // 同一个编号换了内容：拒绝
+    expect((await decide(barHead, { approve: true, note: '先补资料' }, declineKey)).body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    // 按新申请确认
+    const done = await decide(buyer, { approve: true, expectedRequestedAt: again.body.request.termination.requestedAt });
     expect(done.status, JSON.stringify(done.body)).toBe(200);
-    const end = done.body as Req;
+    expect(done.body.result).toBe('terminated');
+    const end = done.body.request as Req;
     expect(end).toMatchObject({ status: 'cancelled', displayLabel: '已终止', reason: '终止：确定不要了', termination: { status: 'approved' } });
     expect(end.can).toMatchObject({ resubmit: false, terminate: null });
     expect((await resubmit(bar, end, { mode: 'rewrite', remark: 'x' })).body.error.code).toBe('INVALID_STATE');

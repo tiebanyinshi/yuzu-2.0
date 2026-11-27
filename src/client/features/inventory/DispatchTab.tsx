@@ -21,7 +21,7 @@ import {
 } from '@shared/dispatch';
 import { formatQty, parseQty } from '@shared/quantity';
 import { api, errorMessage, UncertainError } from '../../lib/api';
-import { sendErpOp } from '../../lib/erpPending';
+import { sendErpOp, useErpRecorded } from '../../lib/erpPending';
 import { ErpPendingPanel } from '../../components/ErpPendingPanel';
 import { useCan, useSession } from '../../lib/session';
 import { formatDateTime, uuid } from '../../lib/utils';
@@ -67,6 +67,9 @@ export function DispatchTab() {
   const [f, setF] = useState<Filters>(loadFilters);
   const [openLine, setOpenLine] = useState<number | null>(null);
   const [issuing, setIssuing] = useState<DispatchRow | null>(null);
+  // 本机还有没确认结果的补发（Codex 审查）：那一行先在页面顶部查回、重提或确认作废，不能另开一笔（换了编号会重复出库）
+  const recorded = useErpRecorded(['request_dispatch']);
+  const unsettled = (lineId: number) => recorded.some((op) => op.url === dispatchUrl(lineId));
   useEffect(() => {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(f));
@@ -130,7 +133,15 @@ export function DispatchTab() {
         <div className="space-y-2.5" data-testid="dispatch-rows">
           {board.data.truncated && <Notice tone="info">记录很多，只列了前 1000 条；用搜索或时间收窄一点。</Notice>}
           {board.data.rows.map((r) => (
-            <RowCard key={r.lineId} r={r} expanded={openLine === r.lineId} onToggle={() => setOpenLine(openLine === r.lineId ? null : r.lineId)} canIssue={canIssue} onIssue={() => setIssuing(r)} />
+            <RowCard
+              key={r.lineId}
+              r={r}
+              expanded={openLine === r.lineId}
+              onToggle={() => setOpenLine(openLine === r.lineId ? null : r.lineId)}
+              canIssue={canIssue}
+              unsettled={unsettled(r.lineId)}
+              onIssue={() => setIssuing(r)}
+            />
           ))}
         </div>
       )}
@@ -139,7 +150,24 @@ export function DispatchTab() {
   );
 }
 
-function RowCard({ r, expanded, onToggle, canIssue, onIssue }: { r: DispatchRow; expanded: boolean; onToggle: () => void; canIssue: boolean; onIssue: () => void }) {
+const dispatchUrl = (lineId: number) => `/api/inventory/dispatch/lines/${lineId}/issue`;
+
+function RowCard({
+  r,
+  expanded,
+  onToggle,
+  canIssue,
+  unsettled,
+  onIssue,
+}: {
+  r: DispatchRow;
+  expanded: boolean;
+  onToggle: () => void;
+  canIssue: boolean;
+  /** 本机有这一行没确认结果的补发 */
+  unsettled: boolean;
+  onIssue: () => void;
+}) {
   return (
     <Card className="space-y-2 p-4" data-testid={`dispatch-row-${r.lineId}`} data-status={r.status}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -190,12 +218,17 @@ function RowCard({ r, expanded, onToggle, canIssue, onIssue }: { r: DispatchRow;
           {r.issueCount > 1 && `（共 ${r.issueCount} 次）`}
         </p>
       )}
-      <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {canIssue && unsettled && (
+          <span className="mr-auto text-[12.5px] text-clay" data-testid={`dispatch-unsettled-${r.lineId}`}>
+            上一次补发还没确认结果：先在页面顶部查回、重新提交或确认作废
+          </span>
+        )}
         <Button size="sm" variant="ghost" onClick={onToggle} data-testid={`dispatch-history-${r.lineId}`}>
           {expanded ? '收起发配记录' : '查看发配记录'}
         </Button>
         {canIssue && r.status === 'ready' && (
-          <Button size="sm" variant="primary" icon={<PackageOpen className="size-4" />} onClick={onIssue} data-testid={`dispatch-issue-${r.lineId}`}>
+          <Button size="sm" variant="primary" icon={<PackageOpen className="size-4" />} disabled={unsettled} onClick={onIssue} data-testid={`dispatch-issue-${r.lineId}`}>
             补发物料
           </Button>
         )}
@@ -251,7 +284,7 @@ function IssueDialog({ row, onClose }: { row: DispatchRow; onClose: () => void }
         key,
         type: 'request_dispatch',
         method: 'POST',
-        url: `/api/inventory/dispatch/lines/${row.lineId}/issue`,
+        url: dispatchUrl(row.lineId),
         body: { clientKey: key, qtyMilli: q, ...(row.unitMode === null && sq ? { stockQtyMilli: sq } : {}), note: note.trim() },
         summary: `补发 ${row.docNo} ${row.name} ${formatQty(q)} ${row.unit} 给${row.departmentName}`,
         staffName: session.staff.displayName,
