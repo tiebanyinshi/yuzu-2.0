@@ -4,18 +4,22 @@
 
 谁做：店主办手续（第 1 节）；Codex 部署与日常更新（与测试服、门店一样只部署 `main` 上的版本）；小程序线维护本手册与 `src/gateway/deploy/` 里的文件。**域名备案下来之前不部署**：备案没完成，阿里云会拦截这个域名的 443。
 
+> **店主 2026-11-27：顾客、员工两个小程序都用 `sys.yuzusystem.xyz`，`api.` 子域名撤掉，`staff.` 的柚子饭堂不动。** 所以网关不再自己对公网：HTTPS 与证书在正式服那台（放 `sys.yuzusystem.xyz` 的 Caddy，`DEPLOY_WEBSITE.md`）上，它把 `/v1/*` 经 Tailscale 转给这台的正式网关、`/trial/v1/*` 去掉 `/trial` 转给测试网关（第 1.1 节）。网关服务器照旧只放网关（第 9 节），两个网关只开在它的 Tailscale 地址上，公网不开端口。下面各节已按这个改；`api.`、`api-test.` 两个域名不用再申请。
+
 ## 0. 一览
 
 ```
-开发版、体验版 ──HTTPS──▶ api-test.<域名> ┐
-正式版         ──HTTPS──▶ api.<域名>      ┤ 网关服务器（公网只开 443）：Caddy 管证书
-                                           ├─ gateway-test ──Tailscale──▶ 测试服 A · 演示库 yuzu-demo :8081
-                                           └─ gateway-prod ──Tailscale──▶ 门店 Mac mini · 正式服 :8081（yuzu 正式切换后才开）
+体验版 ──HTTPS──▶ sys.yuzusystem.xyz/trial/v1/* ┐ 正式服那台的 Caddy（sys.yuzusystem.xyz 的证书在这里）
+正式版 ──HTTPS──▶ sys.yuzusystem.xyz/v1/*       ┘   ──Tailscale──▶ 网关服务器（公网不开端口）
+                                                       ├─ :8300 gateway-test ──Tailscale──▶ 测试服 A · 演示库 yuzu-demo :8081
+                                                       └─ :8301 gateway-prod ──Tailscale──▶ 正式服的小程序端口 :8081（yuzu 正式切换后才开）
+开发版 ──▶ 本机起的网关（DEV_GATEWAY）
 ```
 
 | 机器 | 跑什么 | 本手册 |
 | --- | --- | --- |
-| 网关服务器（阿里云 ECS 最低配，深圳） | Caddy（HTTPS，证书自动申请与续期）、测试网关；正式切换后加正式网关 | 第 3–7 节 |
+| 正式服那台（放 `sys.yuzusystem.xyz` 的 Caddy） | `sys.yuzusystem.xyz` 上加两段：`/v1/*`、`/trial/v1/*` 经 Tailscale 转给网关 | 第 1.1 节 |
+| 网关服务器（阿里云 ECS 最低配，深圳） | 测试网关；正式切换后加正式网关。只开在 Tailscale 地址上（这台的 Caddy 只在网关自己有域名时用，平时不起） | 第 3–7 节 |
 | 测试服 A | 演示库 `yuzu-demo` 开小程序端口 8081（演练库 `yuzu-test` 不接小程序） | 第 2 节 |
 | 门店 Mac mini | 正式服的小程序端口：正式切换时再开 | 第 8 节 |
 
@@ -24,21 +28,75 @@
 | 文件 | 用途 |
 | --- | --- |
 | `compose.mp.yaml` | 叠加在 yuzu 的 `compose.yaml` 上：开小程序端口（只给接小程序的实例） |
-| `src/gateway/deploy/compose.yaml` | 网关服务器上的 Caddy 与两个网关进程 |
+| `src/gateway/deploy/compose.yaml` | 网关服务器上的两个网关进程（只开在 `GATEWAY_BIND`：测试 8300、正式 8301）；Caddy 在 profile `own-domain` 里，平时不起 |
 | `src/gateway/deploy/Dockerfile`、`build.mjs` | 网关的小镜像：只有打包好的网关一个文件，不带 yuzu 的后端、管理后台、数据库工具和 node_modules |
-| `src/gateway/deploy/caddy/Caddyfile` | 两个域名各转给自己的网关；网关没起来时回「门店系统连接中」。`caddy/` 整个目录只读挂进 Caddy 的容器（单挂文件的话，切换版本后容器里还是旧文件），旁边的 `.env`、`gateway-*.env` 不进去，这个目录里不要放别的文件 |
+| `src/gateway/deploy/caddy/Caddyfile` | 只在网关自己有域名时用（`own-domain`）：两个域名各转给自己的网关；网关没起来时回「门店系统连接中」。`caddy/` 整个目录只读挂进 Caddy 的容器（单挂文件的话，切换版本后容器里还是旧文件），旁边的 `.env`、`gateway-*.env` 不进去，这个目录里不要放别的文件 |
 | `src/gateway/deploy/.env.example`、`gateway.env.example` | 配置样例（真的 `.env`、`gateway-test.env`、`gateway-prod.env` 不进 Git） |
-| `src/gateway/deploy/update.sh` | 更新到 `main` 上的某个版本（回退就是用上一版的 SHA 再执行一次）。按 `COMPOSE_PROFILES` 算出应该开着的服务逐个核对：网关起来了、Caddy 加载了这一版的配置、经 Caddy 连得通，有一项不通过就返回失败 |
+| `src/gateway/deploy/update.sh` | 更新到 `main` 上的某个版本（回退就是用上一版的 SHA 再执行一次）。按 `COMPOSE_PROFILES` 算出应该开着的服务逐个核对：网关起来了、经这台的 Tailscale 地址连得通（`own-domain` 时改为 Caddy 加载了这一版的配置、经 Caddy 连得通），有一项不通过就返回失败 |
 | `src/gateway/deploy/upload-miniprogram.sh` | 上传小程序体验版（第 7 节） |
 
 ## 1. 先要有的（店主办，`MINIPROGRAM.md` 第 7 节）
 
 - [ ] 小程序注册、认证完成，拿到 **AppID** 与 **AppSecret**（小程序后台「开发管理 → 开发设置」）。
-- [ ] **域名备案**完成，接入商是阿里云（服务器在阿里云深圳）。两条 A 记录指到网关服务器的公网 IP：`api-test.<域名>`（测试网关）、`api.<域名>`（正式网关）。
+- [ ] **域名**：用 `sys.yuzusystem.xyz`（已备案，指到正式服那台；`DEPLOY_WEBSITE.md` 第 1 节）。网关服务器不用域名、不用 A 记录。
 - [ ] **网关服务器**：阿里云 ECS 深圳，最低配即可（建议 2 GiB 内存：构建镜像时要装依赖），Ubuntu 22.04 / 24.04，固定公网 IP。
-- [ ] 小程序后台「开发管理 → 开发设置 → 服务器域名」：request 合法域名、downloadFile 合法域名都填 `https://api-test.<域名>` 与 `https://api.<域名>`。
+- [ ] 小程序后台「开发管理 → 开发设置 → 服务器域名」：request 合法域名、downloadFile 合法域名都填 `https://sys.yuzusystem.xyz`（只填域名；体验版的 `/trial` 是路径，不用另填）。
 - [ ] 小程序后台「开发管理 → 开发设置 → 小程序代码上传」：生成**代码上传密钥**，IP 白名单填网关服务器的公网 IP（第 7 节）。
 - [ ] 小程序后台填**用户隐私保护指引**（草稿见 [`MP_PRIVACY.md`](MP_PRIVACY.md)）。
+
+## 1.1 正式服那台的 Caddy：`sys.yuzusystem.xyz` 上加两段
+
+`sys.yuzusystem.xyz` 原来整个转给正式服的应用端口（`DEPLOY_WEBSITE.md`）。在那一段里、原来的 `reverse_proxy` 前面加上顾客小程序（这里）与员工小程序（员工小程序设计稿第 10 节（员工小程序线的集成 PR https://github.com/tiebanyinshi/yuzu-2.0/pull/53））的几段，原来转应用端口的那一句放进最后的 `handle`。地址换成实际的：网关服务器的 `tailscale ip -4`、测试服 A 的 `tailscale ip -4`、正式服 yuzu 的应用端口与员工小程序端口。
+
+```caddy
+(mp-gateway) {
+	# 网关的请求都很小（登录、绑定几百字节）；大的直接拒绝
+	request_body {
+		max_size 64KB
+	}
+	reverse_proxy {args[0]} {
+		# 网关正在重启（更新）时稍等再转
+		lb_try_duration 5s
+	}
+}
+
+sys.yuzusystem.xyz {
+	# 顾客小程序 · 体验版：去掉 /trial 转给测试网关（连演示库）
+	handle /trial/v1/* {
+		uri strip_prefix /trial
+		import mp-gateway <网关服务器的 Tailscale 地址>:8300
+	}
+	# 顾客小程序 · 正式版：正式网关（yuzu 正式切换前没开，回「门店系统连接中」）
+	handle /v1/* {
+		import mp-gateway <网关服务器的 Tailscale 地址>:8301
+	}
+	# 员工小程序（员工小程序设计稿第 10 节）：体验版去掉 /trial 转给测试服 A 演示库的员工小程序端口；正式版转给正式服的
+	handle /trial/api/staffmp/* {
+		uri strip_prefix /trial
+		reverse_proxy <测试服 A 的 Tailscale 地址>:<演示库的 STAFFMP_PORT>
+	}
+	handle /api/staffmp/* {
+		reverse_proxy <正式服 yuzu>:<STAFFMP_PORT>
+	}
+	# 其余照旧：系统统一登录的应用端口（原来的那一句）
+	handle {
+		reverse_proxy <正式服 yuzu>:<PORT>
+	}
+	# 网关没起来（更新中、正式网关还没开）时回小程序认得的「门店系统连接中」，不回空白的 502；别的路径照旧
+	handle_errors 502 503 504 {
+		@mp path /v1/* /trial/v1/*
+		handle @mp {
+			header Content-Type "application/json; charset=utf-8"
+			header Cache-Control "no-store"
+			respond `{"error":{"code":"STORE_OFFLINE","message":"门店系统连接中，请稍后再试"}}` 503
+		}
+	}
+}
+```
+
+- 改完 `caddy validate`、`caddy reload`；正式服的登录页照常打得开、`/api/public/website/*`（官网的首屏视频）照常。
+- 小程序的路径（`/v1`、`/trial`、`/api/staffmp`）在 yuzu 的应用里都没有，不会挡住原来的页面。
+- Caddy 转过去时带 `X-Forwarded-For`（顾客的 IP），网关按它限流（`GATEWAY_TRUST_PROXY`）；网关只开在 Tailscale 地址上，别人带不了这个头。
 
 ## 2. 测试服 A：给演示库开小程序端口
 
@@ -93,7 +151,7 @@ WXPAY_MCHID=<商户号>
 WXPAY_SERIAL_NO=<商户 API 证书的序列号>
 WXPAY_APIV3_KEY=<商户平台设置的 APIv3 密钥，32 个字符>
 WXPAY_PUBLIC_KEY_ID=<微信支付公钥的编号，PUB_KEY_ID_ 开头>
-WXPAY_NOTIFY_URL=https://api-test.<域名>/v1/pay/notify
+WXPAY_NOTIFY_URL=https://sys.yuzusystem.xyz/trial/v1/pay/notify
 WXPAY_PRIVATE_KEY_BASE64=<base64 < apiclient_key.pem | tr -d '\n' 的结果>
 WXPAY_PUBLIC_KEY_BASE64=<base64 < pub_key.pem | tr -d '\n' 的结果>
 ```
@@ -112,21 +170,24 @@ sudo tailscale up --hostname=yuzu-gateway
 在 Tailscale 管理后台：
 
 1. **Machines**：给这台加标签 `tag:yuzu-gateway`，并确认它的 Key expiry 已关闭（Disable key expiry），免得过期断线。
-2. **Access controls**：用下面的策略替换整个文件（登录邮箱换成店主的）。前三条就是测试服手册第 4 节那一份；后两条是新加的：店主能 SSH 到网关服务器；网关只能连测试服 A 的 TCP 8081。
+2. **Access controls**：用下面的策略替换整个文件（登录邮箱换成店主的）。前三条就是测试服手册第 4 节那一份；后面是新加的：店主能 SSH 到网关服务器；网关只能连测试服 A 的 TCP 8081；正式服那台（放 `sys.yuzusystem.xyz` 的 Caddy，在 Machines 里给它加标签 `tag:yuzu-prod`）能连网关的 8300、8301，和测试服 A 演示库的员工小程序端口（体验版，员工小程序设计稿第 10 节（员工小程序线的集成 PR https://github.com/tiebanyinshi/yuzu-2.0/pull/53）；`<演示库的 STAFFMP_PORT>` 换成实际的）。
 
 ```json
 {
   "tagOwners": {
     "tag:yuzu-test": ["autogroup:admin"],
     "tag:yuzu-mini": ["autogroup:admin"],
-    "tag:yuzu-gateway": ["autogroup:admin"]
+    "tag:yuzu-gateway": ["autogroup:admin"],
+    "tag:yuzu-prod": ["autogroup:admin"]
   },
   "grants": [
     { "src": ["owner@example.com"], "dst": ["tag:yuzu-test"], "ip": ["tcp:8080", "tcp:8082", "tcp:22"] },
     { "src": ["owner@example.com"], "dst": ["tag:yuzu-mini"], "ip": ["tcp:8080"] },
     { "src": ["tag:yuzu-mini"], "dst": ["tag:yuzu-test"], "ip": ["tcp:22"] },
     { "src": ["owner@example.com"], "dst": ["tag:yuzu-gateway"], "ip": ["tcp:22"] },
-    { "src": ["tag:yuzu-gateway"], "dst": ["tag:yuzu-test"], "ip": ["tcp:8081"] }
+    { "src": ["tag:yuzu-gateway"], "dst": ["tag:yuzu-test"], "ip": ["tcp:8081"] },
+    { "src": ["tag:yuzu-prod"], "dst": ["tag:yuzu-gateway"], "ip": ["tcp:8300", "tcp:8301"] },
+    { "src": ["tag:yuzu-prod"], "dst": ["tag:yuzu-test"], "ip": ["tcp:<演示库的 STAFFMP_PORT>"] }
   ]
 }
 ```
@@ -141,14 +202,14 @@ nc -vz -w 3 100.x.y.z 22      # 失败
 
 ## 4. 网关服务器：安装与配置
 
-1. **安全组入方向**只留两条：TCP 443（来源 `0.0.0.0/0`）、UDP 41641（Tailscale 直连）。22、80、8300 都不放行；之后 SSH 走 Tailscale：`ssh yuzu@yuzu-gateway`。
+1. **安全组入方向**只留一条：UDP 41641（Tailscale 直连）。22、80、443、8300、8301 都不放行（正式服那台的 Caddy 经 Tailscale 连进来）；之后 SSH 走 Tailscale：`ssh yuzu@yuzu-gateway`。
 2. **Docker**：同 `DEPLOY_TEST_SERVER.md` 第 2 节（国内源）。
 3. **拉代码**：同 `DEPLOY_TEST_SERVER.md` 第 3 节，用只读部署密钥，克隆到 `~/yuzu-gateway`。
 4. **配置**（`.env` 与两个网关的配置都不进 Git，权限 600）：
 
 ```bash
 cd ~/yuzu-gateway/src/gateway/deploy
-cp .env.example .env                       # 两个域名、证书提醒邮箱、上传密钥的位置、国内镜像源
+cp .env.example .env                       # GATEWAY_BIND（这台的 tailscale ip -4）、上传密钥的位置、国内镜像源
 cp gateway.env.example gateway-test.env    # 测试网关：MP_UPSTREAM_URL、MP_GATEWAY_KEY、MP_SESSION_SECRET、WX_APPID、WX_APPSECRET
 chmod 600 .env gateway-test.env
 openssl rand -hex 32                       # 生成 MP_SESSION_SECRET（只在网关）
@@ -163,17 +224,17 @@ openssl rand -hex 32                       # 生成 MP_SESSION_SECRET（只在�
 
 ```bash
 cd ~/yuzu-gateway
-src/gateway/deploy/update.sh <版本标签>    # 核对版本、构建网关镜像、起 Caddy 与测试网关、经 Caddy 核对
+src/gateway/deploy/update.sh <版本标签>    # 核对版本、构建网关镜像、起测试网关、经这台的 Tailscale 地址核对
 ```
 
-第一次启动时 Caddy 申请证书要一两分钟（经 443 验证，不用开 80）。脚本经 Caddy 核对最多等 60 秒；证书还没下来时脚本返回失败，过几分钟用同一个版本再执行一次（镜像已经有了，不会重新构建）。
+正式服那台的 Caddy 照第 1.1 节加好两段、Tailscale 照第 3 节放行以后，经 `sys.yuzusystem.xyz` 就连得到。
 
 验证清单：
 
-- [ ] `cd src/gateway/deploy && docker compose ps`：`caddy` 是 Up，`gateway-test` 是 Up (healthy)。
-- [ ] 手机断开 Tailscale、只用蜂窝网络打开 `https://api-test.<域名>/v1/health`：`{"ok":true,"mockWechat":false,"store":"online"}`。`store` 是 `offline` 时，查 `MP_UPSTREAM_URL`、Tailscale 规则（第 3 节）、两边的 `MP_GATEWAY_KEY` 是否一样。
-- [ ] `https://api.<域名>/v1/health`：回「门店系统连接中」（正式网关还没开）。
-- [ ] 浏览器看证书：Let's Encrypt 签发，域名对。`http://api-test.<域名>`（80）、公网 IP 的 22 与 8300 都连不上。
+- [ ] `cd src/gateway/deploy && docker compose ps`：`gateway-test` 是 Up (healthy)，端口是 `<Tailscale 地址>:8300->8300`。
+- [ ] 手机断开 Tailscale、只用蜂窝网络打开 `https://sys.yuzusystem.xyz/trial/v1/health`：`{"ok":true,"mockWechat":false,"store":"online"}`。`store` 是 `offline` 时，查 `MP_UPSTREAM_URL`、Tailscale 规则（第 3 节）、两边的 `MP_GATEWAY_KEY` 是否一样；回「门店系统连接中」时查正式服那台的 Caddy（第 1.1 节）与 `tag:yuzu-prod` 的放行。
+- [ ] `https://sys.yuzusystem.xyz/v1/health`：回「门店系统连接中」（正式网关还没开）；`https://sys.yuzusystem.xyz/login` 照常是系统登录页。
+- [ ] 网关服务器的公网 IP 上 22、443、8300、8301 都连不上。
 - [ ] 网关连得到演示库的小程序端口：`docker compose exec gateway-test node -e "fetch(process.env.MP_UPSTREAM_URL + '/api/mp/health').then(r => console.log(r.status))"` 打出 `401`（不带密钥被拒，说明网络通）。连不通时（容器经宿主机出不了 Tailscale），先查 `sudo tailscale status`。
 - [ ] 小程序后台配好服务器域名后，开发者工具里切到「体验版」的地址能打开首页。
 
@@ -183,18 +244,18 @@ src/gateway/deploy/update.sh <版本标签>    # 核对版本、构建网关镜�
 | --- | --- |
 | 更新到某个版本 | `src/gateway/deploy/update.sh <版本标签或完整 SHA>`：只接受 `main` 上的版本；最后打出上一版的 SHA |
 | 回退 | `src/gateway/deploy/update.sh <上一版的 SHA>`：网关不存数据，不用恢复备份；镜像还在就不重新构建 |
-| 查看状态、日志 | `cd src/gateway/deploy && docker compose ps`、`docker compose logs -f gateway-test`、`docker compose logs caddy` |
+| 查看状态、日志 | `cd src/gateway/deploy && docker compose ps`、`docker compose logs -f gateway-test`（HTTPS 的日志在正式服那台的 Caddy） |
 | 改了 `gateway-test.env` | `docker compose up -d gateway-test`（换 `MP_GATEWAY_KEY` 时，演示库那边同时换） |
 
 - yuzu 改了小程序接口时，网关与小程序要一起更新：先更新演示库，再更新网关，最后上传体验版（第 7 节）。
-- 证书由 Caddy 自动续期，存在数据卷 `caddy_data` 里。**不要**执行 `docker compose down -v`：会删掉证书卷，重新申请有次数限制。
+- 证书在正式服那台的 Caddy 上（`sys.yuzusystem.xyz` 的证书，自动续期）；这台平时没有证书。网关自己有域名时（`own-domain`）证书存在数据卷 `caddy_data` 里，**不要**执行 `docker compose down -v`。
 - 网关日志只有请求的路径与 IP，没有手机号、余额；Docker 日志每个服务最多 5 × 10 MB。
 
 ## 7. 上传小程序体验版
 
 体验版用测试网关，所以传的是网关服务器上**现在部署的那个版本**（与测试网关同一个 `main` 上的 SHA）：PR 合并、`update.sh` 部署之后再传。
 
-1. 前提：`miniprogram/src/config/env.ts` 里体验版、正式版的网关地址已改成备案域名（小程序线改，随 PR 合并）；地址还是占位的 `domain.invalid` 时脚本拒绝上传。
+1. 前提：`miniprogram/src/config/env.ts` 里体验版、正式版的网关地址是 `https://sys.yuzusystem.xyz/trial`、`https://sys.yuzusystem.xyz`（店主 2026-11-27 定，已随 PR 合并）；地址还是占位的 `domain.invalid` 时脚本拒绝上传。
 2. 代码上传密钥放到 `.env` 的 `MP_UPLOAD_KEY_FILE` 写的位置（默认 `/home/yuzu/secrets/miniprogram-upload.key`，放在仓库外，权限 600）；IP 白名单填这台的公网 IP。
 3. 上传：
 
@@ -215,9 +276,9 @@ src/gateway/deploy/upload-miniprogram.sh              # 上传为「ci 机器人
 
 1. 门店 Mac mini 正式服的 `.env`：同第 2 节加 `COMPOSE_FILE`、`MP_PORT`，`MP_GATEWAY_KEY`、`MP_CODE_SECRET` 另生成一套（不与演示库共用）。
    Mac mini 上 `0.0.0.0:8081` 店内局域网也连得到（有网关密钥挡着）；要只给 Tailscale，可以设 `MP_BIND=127.0.0.1` 再用 `tailscale serve` 把 8081 只发布到 Tailscale——到时候在 Mac mini 上验证后再定。
-2. Tailscale 策略加一条：`{ "src": ["tag:yuzu-gateway"], "dst": ["tag:yuzu-mini"], "ip": ["tcp:8081"] }`。
+2. Tailscale 策略加一条：网关连得到正式服的小程序端口 8081（`tag:yuzu-gateway` → 正式服那台的标签，`tcp:8081`）。
 3. 网关服务器：`cp gateway.env.example gateway-prod.env`（`MP_UPSTREAM_URL` 写 Mac mini 的 Tailscale 地址、新的 `MP_GATEWAY_KEY` 与 `MP_SESSION_SECRET`；**不开**模拟微信），`chmod 600`；`.env` 里去掉 `COMPOSE_PROFILES=prod` 前面的 `#`；`docker compose up -d`。
-4. 核对 `https://api.<域名>/v1/health` 是 `"store":"online"`、`"mockWechat":false`；店主在后台打开正式服的小程序开关，再提交正式版审核。
+4. 核对 `https://sys.yuzusystem.xyz/v1/health` 是 `"store":"online"`、`"mockWechat":false`；店主在后台打开正式服的小程序开关，再提交正式版审核。
 
 ## 9. 红线
 
@@ -226,4 +287,4 @@ src/gateway/deploy/upload-miniprogram.sh              # 上传为「ci 机器人
 - 密钥（`MP_GATEWAY_KEY`、`MP_SESSION_SECRET`、`WX_APPSECRET`、代码上传密钥）只放服务器上的 `.env`、`gateway-*.env` 与 `secrets` 目录，权限 600，不进 GitHub，不发给云端会话。
 - 微信支付的凭据（`WXPAY_*`：商户私钥、APIv3 密钥、微信支付公钥）只放门店 yuzu 那台的 `.env`（第 2.1 节），**网关服务器上一样都不放**；模拟微信支付（`MP_PAY_MOCK`）只开在演示库。
 - 只部署、只上传 `main` 上的版本标签或完整 SHA；网关服务器上不改代码。
-- 公网只开 443；SSH 只走 Tailscale。
+- 网关服务器公网不开端口（HTTPS 在正式服那台的 Caddy 上）；SSH 只走 Tailscale。
