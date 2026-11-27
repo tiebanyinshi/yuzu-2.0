@@ -22,7 +22,8 @@ import {
 } from '@shared/purchase-flow';
 import type { InvDocStatus } from '@shared/inventory';
 import type { PoStatus, ReceivingState, SourcingStatus } from '@shared/purchasing';
-import type { RequestStatus, StockCheckState } from '@shared/requests';
+import { FLOW_SORTS, PRIORITY_WEIGHT, type FlowSort, type SortDir } from '@shared/purchase-sort';
+import type { RequestPriority, RequestStatus, StockCheckState } from '@shared/requests';
 import { readSnapshot, type Db } from '../db';
 import { guardAny } from '../auth/guard';
 import type { Actor, Deps } from '../lib/context';
@@ -87,7 +88,7 @@ function requestFact(c: Ctx, id: number) {
     p = (async () => {
       const { db } = c;
       const [r] = await db<Record<string, unknown>[]>`
-        SELECT r.id, r.doc_no, r.status, r.department_id, d.name AS department_name, r.requester_id, s.display_name AS requester_name,
+        SELECT r.id, r.doc_no, r.status, r.priority, r.department_id, d.name AS department_name, r.requester_id, s.display_name AS requester_name,
                r.submitted_at, r.reviewed_at, rb.display_name AS reviewed_by_name, r.reason, r.approvable_on,
                r.dept_confirm, r.dept_head_id, hd.display_name AS dept_head_name, cf.display_name AS dept_confirmed_by_name, r.dept_confirmed_at,
                r.stock_check, r.stock_check_since, r.stock_checked_at,
@@ -114,6 +115,7 @@ function requestFact(c: Ctx, id: number) {
         id: Number(r.id),
         docNo: String(r.docNo),
         status,
+        priority: r.priority as RequestPriority,
         departmentId: Number(r.departmentId),
         departmentName: String(r.departmentName),
         requesterId: Number(r.requesterId),
@@ -335,7 +337,7 @@ export async function getPurchaseFlow(db: Db, actor: Actor, kind: FlowAnchorKind
  *   · 没有需求单、也还没转采购单的询价单，各一条。
  * 全部做完的不列。
  */
-export async function listPurchaseFlows(db: Db, actor: Actor, timezone: string): Promise<PurchaseFlowList> {
+export async function listPurchaseFlows(db: Db, actor: Actor, timezone: string, order: { sort?: FlowSort; dir?: SortDir } = {}): Promise<PurchaseFlowList> {
   const c = await context(db, actor, timezone);
   if (!c.purchasing) throw forbidden('没有查看采购单的权限');
   const since = shiftDate(c.today, -FLOW_LIST_DAYS);
@@ -369,11 +371,52 @@ export async function listPurchaseFlows(db: Db, actor: Actor, timezone: string):
     const flow = buildPurchaseFlow(facts);
     if (!flow.end) flows.push(flow);
   }
-  const time = (f: PurchaseFlow) => (f.movedAt ? Date.parse(f.movedAt.length === 10 ? `${f.movedAt}T00:00:00Z` : f.movedAt) : 0);
-  flows.sort((a, b) => Number(b.alert) - Number(a.alert) || time(b) - time(a));
+  const ms = (v: string | null) => (v ? Date.parse(v.length === 10 ? `${v}T00:00:00Z` : v) : null);
+  const time = (f: PurchaseFlow) => ms(f.movedAt) ?? 0;
+  if (!order.sort) flows.sort((a, b) => Number(b.alert) - Number(a.alert) || time(b) - time(a));
+  else flows.sort(flowComparator(order.sort, order.dir ?? 'desc', ms));
   const truncated = flows.length > FLOW_LIST_MAX || poRows.length > FLOW_LIST_MAX || requestRows.length > FLOW_LIST_MAX || sourcingRows.length > FLOW_LIST_MAX;
   return { flows: flows.slice(0, FLOW_LIST_MAX), rules: c.rules, truncated };
 }
+
+/**
+ * 流程进度排序（8.2.6 R2）：空值排最后（不论升降）；同值按单号再排。停留时长 = 现在 − 最近一次往前走（越久越长）；
+ * 紧急程度按权重（紧急 > 较急 > 普通），相同时先发起的在前
+ */
+function flowComparator(sort: FlowSort, dir: SortDir, ms: (v: string | null) => number | null) {
+  const sign = dir === 'asc' ? 1 : -1;
+  const key = (f: PurchaseFlow): number | string | null => {
+    switch (sort) {
+      case 'moved':
+        return ms(f.movedAt);
+      case 'started':
+        return ms(f.startedAt);
+      case 'dwell': {
+        const t = ms(f.movedAt);
+        return t === null ? null : -t;
+      }
+      case 'priority':
+        return f.priority ? PRIORITY_WEIGHT[f.priority] : null;
+      case 'doc_no':
+        return f.anchor.docNo;
+    }
+  };
+  return (a: PurchaseFlow, b: PurchaseFlow) => {
+    const x = key(a);
+    const y = key(b);
+    if (x === null || y === null) {
+      if (x !== y) return x === null ? 1 : -1;
+    } else if (x !== y) return (x < y ? -1 : 1) * sign;
+    if (sort === 'priority') {
+      const sa = ms(a.startedAt) ?? Infinity;
+      const sb = ms(b.startedAt) ?? Infinity;
+      if (sa !== sb) return sa - sb;
+    }
+    return a.anchor.docNo < b.anchor.docNo ? -1 * sign : a.anchor.docNo > b.anchor.docNo ? sign : 0;
+  };
+}
+
+const ListOrder = z.object({ sort: z.enum(FLOW_SORTS).optional(), dir: z.enum(['asc', 'desc']).optional() });
 
 // ───────────────────────── 路由 ─────────────────────────
 
@@ -385,5 +428,8 @@ export function registerPurchaseFlowRoutes(app: FastifyInstance, { sql, config }
     const q = parse(OneQuery, req.query);
     return readSnapshot(sql, (tx) => getPurchaseFlow(tx, req.actor, q.kind, q.id, config.timezone));
   });
-  app.get('/api/purchase-flow/list', { preHandler: guardAny('inventory.read') }, async (req) => readSnapshot(sql, (tx) => listPurchaseFlows(tx, req.actor, config.timezone)));
+  app.get('/api/purchase-flow/list', { preHandler: guardAny('inventory.read') }, async (req) => {
+    const order = parse(ListOrder, req.query);
+    return readSnapshot(sql, (tx) => listPurchaseFlows(tx, req.actor, config.timezone, order));
+  });
 }

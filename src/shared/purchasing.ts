@@ -163,6 +163,8 @@ export interface PoSummary {
   receiving: ReceivingState;
   createdByName: string;
   createdAt: string;
+  /** 紧急程度（8.2.6 R2）：关联需求单里最急的那张；没关联需求单的为空 */
+  priority: 'urgent' | 'high' | 'normal' | null;
 }
 
 // ───────────────────────── 货款与付款 ─────────────────────────

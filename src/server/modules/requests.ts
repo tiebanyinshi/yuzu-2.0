@@ -233,8 +233,12 @@ export async function summaries(
     from?: string;
     to?: string;
     timezone?: string;
+    /** 按单号 / 商城单号（不管大小写与分隔符）或物品名称搜（8.2.6 R1） */
+    q?: string;
   },
 ) {
+  const qNorm = f.q ? f.q.toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+  const qLike = f.q ? `%${f.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
   // 截单（03）：今天还不能通过的（最早可通过日期在今天以后）；截单关了以后都能通过（按现在的规则）
   const today = f.timezone && (await loadPurchaseRules(db)).cutoffEnabled ? todayIn(f.timezone) : null;
   return db<
@@ -279,6 +283,12 @@ export async function summaries(
       ${f.from && f.timezone ? db`AND (r.created_at AT TIME ZONE ${f.timezone})::date >= ${f.from}` : db``}
       ${f.to && f.timezone ? db`AND (r.created_at AT TIME ZONE ${f.timezone})::date <= ${f.to}` : db``}
       ${f.requesterOrDept ? db`AND ${REQUESTER_OR_DEPT(db, f.requesterOrDept)}` : db``}
+      ${
+        qLike
+          ? db`AND (${qNorm.length >= 3 ? db`regexp_replace(upper(r.doc_no || ' ' || coalesce(r.external_no, '')), '[^A-Z0-9 ]', '', 'g') LIKE ${`%${qNorm}%`} OR` : db``}
+                    EXISTS (SELECT 1 FROM purchase_request_lines l WHERE l.request_id = r.id AND l.name ILIKE ${qLike}))`
+          : db``
+      }
     ${
       f.stock
         ? // 待核库：待核库的在前，进待核库早的在前
@@ -310,7 +320,11 @@ export const toSummary = (r: Awaited<ReturnType<typeof summaries>>[number]): Pur
 export const isHeadOf = (me: Awaited<ReturnType<typeof myContext>>, actor: Actor, r: { departmentId: number; deptHeadId: number | null }) =>
   actor.role === 'owner' || (r.deptHeadId != null && Number(r.deptHeadId) === actor.id) || me.headOf.includes(r.departmentId);
 
-export async function listRequests(db: Db, actor: Actor, f: { status?: RequestStatus; stock?: boolean; departmentId?: number; from?: string; to?: string; timezone?: string }): Promise<RequestsList> {
+export async function listRequests(
+  db: Db,
+  actor: Actor,
+  f: { status?: RequestStatus; stock?: boolean; departmentId?: number; from?: string; to?: string; timezone?: string; q?: string },
+): Promise<RequestsList> {
   const me = await myContext(db, actor);
   const rows = await summaries(db, { ...f, requesterOrDept: me.canReview || me.canStock ? undefined : { staffId: actor.id, departmentId: me.departmentId } });
   return { requests: rows.map(toSummary), me };
@@ -1004,6 +1018,8 @@ const ListQuery = z.object({
   // 按提交日期筛选（v0.7.9）
   from: docDateSchema.optional(),
   to: docDateSchema.optional(),
+  /** 8.2.6（R1）：单号、商城单号或物品名称 */
+  q: z.string().trim().max(64).optional(),
 });
 const ExportQuery = ListQuery.extend({ from: docDateSchema, to: docDateSchema });
 const IdsQuery = z.object({

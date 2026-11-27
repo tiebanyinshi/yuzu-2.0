@@ -4,6 +4,7 @@
 // 已确认的采购单改供应商、数量或价格时，先存一份旧版本，再回到待确认。
 // 先收货后补单：补单采购单确认后只关联原收货单，不再入库、不再形成应付。
 
+import { PO_PAGE_SIZE, PO_SORTS, type PoSort, type SortDir } from '@shared/purchase-sort';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { can } from '@shared/permissions';
@@ -244,10 +245,38 @@ export async function getPo(db: Db, poId: number): Promise<PurchaseOrder> {
   };
 }
 
-export async function listPos(db: Db, f: { status?: string; supplierId?: number; q?: string; open?: boolean }): Promise<PoSummary[]> {
+/** 采购单列表排序（8.2.6 R2）：白名单里的列；空值排最后；同值按单号、编号再排（翻页不重、不漏） */
+const PO_ORDER: Record<PoSort, string> = {
+  order_date: 'po.order_date',
+  created: 'po.created_at',
+  expected: 'po.expected_date',
+  priority: 'priority_rank',
+  total: 'po.total_cents',
+  status: "CASE po.status WHEN 'draft' THEN 1 WHEN 'returned' THEN 2 WHEN 'submitted' THEN 3 WHEN 'approved' THEN 4 WHEN 'closed' THEN 5 ELSE 6 END",
+  doc_no: 'po.doc_no',
+  supplier: 's.name',
+};
+
+function poOrderBy(sort: PoSort | undefined, dir: SortDir | undefined): string {
+  if (!sort) return 'po.order_date DESC, po.id DESC';
+  const d = dir === 'asc' ? 'ASC' : 'DESC';
+  // 紧急程度相同时先申请的先处理（提交时间升序）
+  const tie = sort === 'priority' ? ', po.created_at ASC' : '';
+  return `${PO_ORDER[sort]} ${d} NULLS LAST${tie}, po.doc_no ${d}, po.id ${d}`;
+}
+
+export async function listPos(db: Db, f: { status?: string; supplierId?: number; q?: string; open?: boolean; sort?: PoSort; dir?: SortDir; offset?: number }): Promise<PoSummary[]> {
   const like = f.q ? `%${f.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
   const rows = await db<
-    (Omit<PoSummary, 'receiving' | 'channel'> & { orderedMilli: number; receivedMilli: number; fullLines: number; channelKey: string | null; channelLabel: string | null; channelNote: string })[]
+    (Omit<PoSummary, 'receiving' | 'channel' | 'priority'> & {
+      priorityRank: number | null;
+      orderedMilli: number;
+      receivedMilli: number;
+      fullLines: number;
+      channelKey: string | null;
+      channelLabel: string | null;
+      channelNote: string;
+    })[]
   >`
     SELECT po.id, po.doc_no, po.status, s.name AS supplier_name, po.supplier_id, po.order_date, po.expected_date, po.total_cents,
            po.revision, po.backfill, cb.display_name AS created_by_name, po.created_at,
@@ -256,7 +285,12 @@ export async function listPos(db: Db, f: { status?: string; supplierId?: number;
            coalesce((SELECT string_agg(m.name, '、' ORDER BY pl.line_no) FROM purchase_order_lines pl JOIN materials m ON m.id = pl.material_id
                      WHERE pl.po_id = po.id AND pl.line_no <= 3), '') AS summary,
            coalesce((SELECT sum(amount_cents) FROM inv_docs WHERE purchase_order_id = po.id AND doc_type = 'receipt' AND status = 'confirmed'), 0) AS received_cents,
-           coalesce(rcv.received, 0) AS received_milli, coalesce(rcv.full_lines, 0) AS full_lines
+           coalesce(rcv.received, 0) AS received_milli, coalesce(rcv.full_lines, 0) AS full_lines,
+           -- 紧急程度（8.2.6 R2）：采购单本身没有，取关联需求单里最急的那张（没关联需求单的为空）
+           (SELECT max(CASE r.priority WHEN 'urgent' THEN 3 WHEN 'high' THEN 2 WHEN 'normal' THEN 1 END)
+              FROM purchase_order_lines pl JOIN purchase_order_line_requests x ON x.po_line_id = pl.id
+              JOIN purchase_request_lines rl ON rl.id = x.request_line_id JOIN purchase_requests r ON r.id = rl.request_id
+             WHERE pl.po_id = po.id) AS priority_rank
     FROM purchase_orders po
     JOIN suppliers s ON s.id = po.supplier_id
     JOIN staff cb ON cb.id = po.created_by
@@ -272,10 +306,11 @@ export async function listPos(db: Db, f: { status?: string; supplierId?: number;
       ${f.supplierId ? db`AND po.supplier_id = ${f.supplierId}` : db``}
       ${f.open ? db`AND po.status = 'approved' AND NOT po.backfill` : db``}
       ${like ? db`AND (po.doc_no ILIKE ${like} OR s.name ILIKE ${like} OR po.note ILIKE ${like})` : db``}
-    ORDER BY po.order_date DESC, po.id DESC
-    LIMIT 300`;
-  return rows.map(({ receivedMilli, fullLines, orderedMilli: _o, channelKey, channelLabel, channelNote, ...r }) => ({
+    ORDER BY ${db.unsafe(poOrderBy(f.sort, f.dir))}
+    LIMIT ${PO_PAGE_SIZE} OFFSET ${f.offset ?? 0}`;
+  return rows.map(({ receivedMilli, fullLines, orderedMilli: _o, channelKey, channelLabel, channelNote, priorityRank, ...r }) => ({
     ...r,
+    priority: priorityRank === null ? null : ({ 3: 'urgent', 2: 'high', 1: 'normal' } as const)[Number(priorityRank) as 1 | 2 | 3],
     channel: channelKey ? { key: channelKey, label: channelLabel ?? channelKey, note: channelNote } : null,
     receiving: receivedMilli === 0 ? 'none' : fullLines >= r.lineCount ? 'full' : 'partial',
   }));
@@ -958,6 +993,10 @@ const ListQuery = z.object({
   supplierId: z.coerce.number().int().positive().optional(),
   q: z.string().trim().max(32).optional(),
   open: z.enum(['1']).optional(),
+  // 8.2.6（R2）：排序与翻页（每页 300 张）
+  sort: z.enum(PO_SORTS).optional(),
+  dir: z.enum(['asc', 'desc']).optional(),
+  offset: z.coerce.number().int().min(0).max(100_000).optional(),
 });
 
 export function registerPurchasingRoutes(app: FastifyInstance, deps: Deps) {
