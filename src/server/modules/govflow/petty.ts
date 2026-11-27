@@ -14,18 +14,20 @@ import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import { COSIGN_FINANCE_CFO, type GfRole } from '@shared/govflow';
 import {
-  DEPT_DAILY_CENTS,
-  DEPT_MONTHLY_CENTS,
-  PETTY_ACCEPT_DAYS,
   PETTY_KINDS,
   PETTY_KIND_LABELS,
+  PETTY_SPECIAL_NODE,
   pettyAllowed,
+  pettyBasicText,
   pettyTemplate,
   pettyTier,
   purchaseDeptCheck,
   quotaCheck,
+  rulesYuan,
+  type GfRules,
   type PettyPreview,
   type PettyQuotaView,
+  type PettyTier,
 } from '@shared/govflow-petty';
 import { formatAmount } from '@shared/money';
 import { can } from '@shared/permissions';
@@ -42,6 +44,7 @@ import { idParam, parse } from '../../lib/validate';
 import { NOT_EMPLOYEE_ROLES } from '../oa/org';
 import { notify } from '../oa/notifications';
 import { addCc, deptHeadOf, insertDoc, latestFlow, loadDoc, registerHooks, rolesOf, submitFlow, type DocRow } from './engine';
+import { loadGfRules } from './rules';
 import { templateFor } from './types';
 
 /** 应用配置的时区（注册路由时设；钩子里算日期用） */
@@ -55,12 +58,14 @@ const addDays = (day: string, n: number) => {
 };
 const yuan = (cents: number) => `¥${formatAmount(cents)}`;
 
-/** 部门额度：最近一次核定（生效月 ≤ 本月）的；没有就按默认日 1 万、月 5 万 */
-async function limitsOf(db: Db, deptId: number, day: string) {
+/** 部门额度：最近一次核定（生效月 ≤ 本月）的；没有就按「流程与阈值」里的默认（预置日 1 万、月 5 万，8.2.10 起后台可改） */
+async function limitsOf(db: Db, deptId: number, day: string, rules?: GfRules) {
   const [q] = await db<{ dailyCents: number; monthlyCents: number }[]>`
     SELECT daily_cents, monthly_cents FROM gf_dept_quotas WHERE department_id = ${deptId} AND effective_month <= ${monthStart(day)}::date
     ORDER BY effective_month DESC LIMIT 1`;
-  return { dailyLimit: q ? Number(q.dailyCents) : DEPT_DAILY_CENTS, monthlyLimit: q ? Number(q.monthlyCents) : DEPT_MONTHLY_CENTS };
+  if (q) return { dailyLimit: Number(q.dailyCents), monthlyLimit: Number(q.monthlyCents) };
+  const r = rules ?? (await loadGfRules(db));
+  return { dailyLimit: r.deptDailyCents, monthlyLimit: r.deptMonthlyCents };
 }
 
 /** 台账汇总：已实际占用（use − reverse）与冻结中（freeze − unfreeze），按天、按月 */
@@ -125,7 +130,7 @@ async function overdueBlock(db: Db, staffId: number, today: string): Promise<str
 
 const normSupplier = (s: string) => s.replace(/\s+/g, '').toLowerCase();
 
-const PettyFields = z.object({
+export const PettyFields = z.object({
   departmentId: z.number().int().positive('请选费用承担部门'),
   supplierName: z.string().trim().min(2, '请写供应商').max(80),
   items: z.string().trim().min(1, '请写买什么').max(300),
@@ -144,8 +149,12 @@ interface Assessment {
   needSpecial: boolean;
 }
 
-/** 预检与正式提交共用的判定（正式提交时在锁里再算一遍，页面预检不算占用） */
-async function assess(db: Db, actor: Actor, input: z.infer<typeof PettyFields>, today: string): Promise<Assessment> {
+/**
+ * 预检与正式提交共用的判定（正式提交时在锁里再算一遍，页面预检不算占用）。阈值按「流程与阈值」里现在的（8.2.10）。
+ * 「流程与阈值 → 试算」也用它（opts.skipOverdue：试算不看保管人逾期）。
+ */
+export async function assess(db: Db, actor: Pick<Actor, 'id'>, input: z.infer<typeof PettyFields>, today: string, opts: { skipOverdue?: boolean } = {}): Promise<Assessment> {
+  const rules = await loadGfRules(db);
   const [buyer] = await db<{ departmentId: number | null }[]>`SELECT department_id FROM staff WHERE id = ${actor.id}`;
   const buyerDept = buyer?.departmentId === null || buyer?.departmentId === undefined ? null : Number(buyer.departmentId);
   const same = await db<{ amount: number; qty: number }[]>`
@@ -154,9 +163,9 @@ async function assess(db: Db, actor: Actor, input: z.infer<typeof PettyFields>, 
       AND d.withdrawn_at IS NULL AND NOT EXISTS (SELECT 1 FROM gf_flows f WHERE f.doc_id = d.id AND f.status = 'rejected' AND f.round = (SELECT max(round) FROM gf_flows g WHERE g.doc_id = d.id))`;
   const combinedCents = same.reduce((a, r) => a + Number(r.amount), 0) + input.amountCents;
   const combinedQty = same.reduce((a, r) => a + Number(r.qty), 0) + input.qty;
-  const tier = pettyTier(combinedCents, combinedQty);
-  const splitSuspect = same.length > 0 && pettyTier(input.amountCents, input.qty) === 'basic' && tier === 'enhanced';
-  const limits = await limitsOf(db, input.departmentId, today);
+  const tier = pettyTier(combinedCents, combinedQty, rules);
+  const splitSuspect = same.length > 0 && pettyTier(input.amountCents, input.qty, rules) === 'basic' && tier === 'enhanced';
+  const limits = await limitsOf(db, input.departmentId, today, rules);
   const t = await takenOf(db, input.departmentId, today);
   const dayTaken = t.dayUsed + t.dayFrozen;
   const monthTaken = t.monthUsed + t.monthFrozen;
@@ -168,13 +177,13 @@ async function assess(db: Db, actor: Actor, input: z.infer<typeof PettyFields>, 
       SELECT coalesce(sum(d.amount_cents), 0)::bigint AS s FROM gf_docs d JOIN staff s ON s.id = d.created_by
       WHERE d.doc_type = 'petty_purchase' AND s.department_id = ${pdId} AND d.payload->>'day' = ${today} AND d.withdrawn_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM gf_flows f WHERE f.doc_id = d.id AND f.status = 'rejected')`;
-    pd = purchaseDeptCheck(Number(cum!.s), input.amountCents, input.urgent);
+    pd = purchaseDeptCheck(Number(cum!.s), input.amountCents, input.urgent, rules.purchaseDeptDailyCents);
   }
   let blockedReason: string | null = null;
   if (!pettyAllowed(input.kind)) blockedReason = `「${PETTY_KIND_LABELS[input.kind]}」不走零星采购快速通道，请走正式采购 / 合同`;
-  else if (pd === 'formal') blockedReason = '采购部门今天零星采购累计超过 1 万：非紧急的转正式采购 / 合同（不能用备用金特批绕开）';
-  else if (tier === 'enhanced' && input.quoteNote.length < 4) blockedReason = '超出基础审核（3,000 元或 50 件，同日同供应商合并算）：请写比价说明';
-  else blockedReason = await overdueBlock(db, actor.id, today);
+  else if (pd === 'formal') blockedReason = `采购部门今天零星采购累计超过 ${rulesYuan(rules.purchaseDeptDailyCents)}：非紧急的转正式采购 / 合同（不能用备用金特批绕开）`;
+  else if (tier === 'enhanced' && input.quoteNote.length < 4) blockedReason = `超出基础审核（${pettyBasicText(rules)}，同日同供应商合并算）：请写比价说明`;
+  else if (!opts.skipOverdue) blockedReason = await overdueBlock(db, actor.id, today);
   return {
     preview: { tier, combinedCents, combinedQty, splitSuspect, quota: { ...q, ...limits, dayTaken, monthTaken }, purchaseDept: pd, blockedReason },
     deptIdOfBuyer: buyerDept,
@@ -254,7 +263,7 @@ async function createPetty(deps: Deps, raw: unknown, actor: Actor, ip?: string):
           VALUES (${specialNo}, ${id}, ${a.preview.quota.overDaily}, ${a.preview.quota.overMonthly}, ${a.preview.purchaseDept === 'special'}, ${a.preview.quota.overCents})`;
       }
       const doc = await loadDoc(tx, id, true);
-      await submitFlow(tx, doc, templateFor(doc), actor);
+      await submitFlow(tx, doc, await templateFor(tx, doc), actor);
       // 负责人自购：采购部门只收系统记录（知会供应链负责人，进日报）
       if (selfPurchase) await addCc(tx, doc, { reason: '负责人自购记录（不需采购部门审批）', special: false, actorId: actor.id, roles: ['supply_chain_head'] });
       if (a.preview.quota.warn && headId) {
@@ -294,10 +303,14 @@ async function releaseFrozen(tx: Tx, doc: DocRow, actorId: number, why: string) 
 }
 
 registerHooks('petty_purchase', {
-  template: (doc) => pettyTemplate({ needSpecial: doc.payload.needSpecial === true }),
+  // 超出基础审核的那一级由升级审核角色审（8.2.10，WB4），按提交那一刻的设置
+  template: async (doc, db) =>
+    pettyTemplate({ needSpecial: doc.payload.needSpecial === true, tier: doc.payload.tier as PettyTier | undefined, escalationRole: (await loadGfRules(db)).pettyEscalationRole }),
+  fixedNodes: (doc) => (doc.payload.needSpecial === true ? [PETTY_SPECIAL_NODE] : []),
   ccRoles: (doc) => (doc.payload.needSpecial ? ['chairman', 'business_gm', 'finance_chief', 'cfo'] : []),
   approved: async (tx, doc) => {
-    await tx`UPDATE gf_docs SET due_on = ${addDays(todayIn(TZ), PETTY_ACCEPT_DAYS)} WHERE id = ${doc.id}`;
+    const { pettyAcceptDays } = await loadGfRules(tx);
+    await tx`UPDATE gf_docs SET due_on = ${addDays(todayIn(TZ), pettyAcceptDays)} WHERE id = ${doc.id}`;
   },
   ended: async (tx, doc, outcome, actor) => {
     // 退回的还要改了再交，额度继续冻结；驳回、撤回的解冻
@@ -497,7 +510,7 @@ export function registerPettyRoutes(app: FastifyInstance, deps: Deps) {
         todayIn(tz),
       );
       const doc = await loadDoc(tx, id, true);
-      await submitFlow(tx, doc, templateFor(doc), req.actor);
+      await submitFlow(tx, doc, await templateFor(tx, doc), req.actor);
       return id;
     });
     return { docId };
@@ -509,5 +522,6 @@ export function registerPettyRoutes(app: FastifyInstance, deps: Deps) {
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`;
     return { departmentId };
   });
-  app.get('/api/gf/settings', { preHandler: staffOnly }, async () => ({ purchaseDeptId: await purchaseDeptId(sql) }));
+  // 8.2.10：带上现在的阈值（零星采购页的说明按它写）
+  app.get('/api/gf/settings', { preHandler: staffOnly }, async () => ({ purchaseDeptId: await purchaseDeptId(sql), rules: await loadGfRules(sql) }));
 }

@@ -457,6 +457,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '580_mall_dispatch.sql',
   '590_self_purchase.sql',
   '600_gf_role_snapshot.sql',
+  '610_gf_flow_config.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */
