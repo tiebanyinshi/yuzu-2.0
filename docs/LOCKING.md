@@ -428,5 +428,5 @@
 
 ## 10. 员工小程序（员工小程序线，`docs/STAFF_MP.md`）
 
-- **微信绑定与解开**（`src/server/modules/staffmp/auth.ts`，迁移 610）：绑定：这个 openid 的咨询锁（`staffmp_openid:<openid>`）→ 这位员工的咨询锁（`staffmp_staff:<员工编号>`）→ 绑定行（这个 openid 或这位员工现在的绑定，`FOR UPDATE`）→ 解开旧的（换绑的那位在小程序上的会话一起删）→ 插入新的；两个部分唯一索引兜底（同一时刻一对一）。解开（员工自己、后台）：只拿这位员工的咨询锁 → 绑定行 `FOR UPDATE`。固定先 openid、后员工，不会互相等成环。
+- **微信绑定与解开**（`src/server/modules/staffmp/auth.ts`，迁移 650）：绑定：这个 openid 的咨询锁（`staffmp_openid:<openid>`）→ 这位员工的咨询锁（`staffmp_staff:<员工编号>`）→ 绑定行（这个 openid 或这位员工现在的绑定，`FOR UPDATE`）→ 解开旧的（换绑的那位在小程序上的会话一起删）→ 插入新的；两个部分唯一索引兜底（同一时刻一对一）。解开（员工自己、后台）：只拿这位员工的咨询锁 → 绑定行 `FOR UPDATE`。固定先 openid、后员工，不会互相等成环。
 - **会话**：登录发会话（`sessions` 一行 + `staffmp_sessions` 一行）在一个事务里，不锁别的；改密码与网页同一个做法（更新账号行、删别的会话）。员工小程序端口上挂着的 WCP、员工培训接口照各自一节的顺序（打卡、审批、附件、工资条签收……），员工小程序线不另加锁。
