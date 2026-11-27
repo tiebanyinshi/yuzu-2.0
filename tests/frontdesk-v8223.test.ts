@@ -16,6 +16,7 @@ import { crowdAdvice, DEFAULT_GUEST_RULES, highRiskOf, type ComplaintLedger, typ
 import { can } from '../src/shared/permissions';
 import { sweepRiskAlerts } from '../src/server/modules/frontdesk/index';
 import { createStaff } from '../src/server/modules/staff';
+import { todayIn } from '../src/server/lib/dates';
 import { checkin } from '../src/server/modules/frontdesk/visits';
 import { api, createMember, login, PASSWORD, rechargeBody, setup, type TestContext } from './helpers';
 
@@ -218,7 +219,7 @@ describe('预约按种类分权限（第 6 条）', () => {
     expect(r.status).toBe(403);
     expect(JSON.stringify(r.body)).toContain('技师预约');
     expect((await api(ctx.app, ctx.clerk, 'GET', '/api/bookings/slots?kind=technician&date=2026-11-27&itemId=1')).status).toBe(403);
-    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/bookings?date=${new Date().toISOString().slice(0, 10)}`)).status).toBe(200);
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/bookings?date=${todayIn(ctx.config.timezone)}`)).status).toBe(200);
     const me = (await api(ctx.app, ctx.clerk, 'GET', '/api/auth/me')).body as { permissions: string[] };
     expect(me.permissions).toContain('booking.manage');
     expect(me.permissions).not.toContain('booking.technician');

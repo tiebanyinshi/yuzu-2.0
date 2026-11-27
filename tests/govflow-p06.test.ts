@@ -5,6 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { act, setupPeople, yuan, type People } from './govflow-helpers';
+import { todayIn } from '../src/server/lib/dates';
 import { api, setup, type TestContext } from './helpers';
 
 let ctx: TestContext;
@@ -12,8 +13,9 @@ let p: People;
 const c = (u: string) => p.cookies[u]!;
 const doc = async (id: number, cookie = c('gf_clerk')) => (await api(ctx.app, cookie, 'GET', `/api/gf/docs/${id}`)).body;
 const labels = (d: { nodes: { label: string }[] }) => d.nodes.map((x) => x.label);
-const month = new Date().toISOString().slice(0, 7);
-const today = new Date().toISOString().slice(0, 10);
+// 门店时区的今天与本月（UTC 日期在门店零点前后差一天，月底那晚差一个月）；用到时 ctx 已建好
+const today = () => todayIn(ctx.config.timezone);
+const month = () => today().slice(0, 7);
 const expense = (body: Record<string, unknown>, cookie = c('gf_clerk')) =>
   api(ctx.app, cookie, 'POST', '/api/gf/expenses', { clientKey: randomUUID(), departmentId: p.deptId, title: '合成报销', amountCents: yuan(100), ...body });
 const travel = (body: Record<string, unknown>, cookie = c('gf_clerk')) =>
@@ -22,12 +24,12 @@ const travel = (body: Record<string, unknown>, cookie = c('gf_clerk')) =>
     departmentId: p.deptId,
     title: '合成出差',
     destination: '广州',
-    startDate: today,
-    endDate: today,
+    startDate: today(),
+    endDate: today(),
     amountCents: yuan(1_000),
     ...body,
   });
-const budget = async () => (await api(ctx.app, c('gf_ic'), 'GET', `/api/gf/travel-budgets?month=${month}`)).body.find((b: { departmentId: number }) => b.departmentId === p.deptId);
+const budget = async () => (await api(ctx.app, c('gf_ic'), 'GET', `/api/gf/travel-budgets?month=${month()}`)).body.find((b: { departmentId: number }) => b.departmentId === p.deptId);
 
 beforeAll(async () => {
   ctx = await setup();
@@ -64,8 +66,8 @@ describe('报销（场景 17、18）', () => {
 
 describe('出差与部门月度差旅预算（场景 19、20、46）', () => {
   it('财总设批复额度；预算内冻结；正好用完不超、多一分要选转下月或特批；转下月记到下月；报销关联原申请转实际占用', async () => {
-    expect((await api(ctx.app, c('gf_clerk'), 'POST', '/api/gf/travel-budgets', { departmentId: p.deptId, month, budgetCents: yuan(3_000) })).status).toBe(403);
-    await api(ctx.app, c('gf_chief'), 'POST', '/api/gf/travel-budgets', { departmentId: p.deptId, month, budgetCents: yuan(3_000) });
+    expect((await api(ctx.app, c('gf_clerk'), 'POST', '/api/gf/travel-budgets', { departmentId: p.deptId, month: month(), budgetCents: yuan(3_000) })).status).toBe(403);
+    await api(ctx.app, c('gf_chief'), 'POST', '/api/gf/travel-budgets', { departmentId: p.deptId, month: month(), budgetCents: yuan(3_000) });
     const t1 = await travel({ amountCents: yuan(2_000) });
     expect(labels(await doc(t1.body.docId))).toEqual(['部门负责人', '财务审核人']);
     expect(await budget()).toMatchObject({ budgetCents: yuan(3_000), frozenCents: yuan(2_000), remainingCents: yuan(1_000) });
@@ -90,7 +92,7 @@ describe('出差与部门月度差旅预算（场景 19、20、46）', () => {
     expect((await expense({ amountCents: yuan(1), invoiceNo: 'FP-T2', travelDocId: t1.body.docId })).body.error.code).toBe('GF_DUPLICATE_CLAIM');
   });
   it('无事前申请财总复核；结束 5 个工作日以后才报的财总复核；驳回解冻', async () => {
-    await api(ctx.app, c('gf_chief'), 'POST', '/api/gf/travel-budgets', { departmentId: p.dept2Id, month, budgetCents: yuan(100_000) });
+    await api(ctx.app, c('gf_chief'), 'POST', '/api/gf/travel-budgets', { departmentId: p.dept2Id, month: month(), budgetCents: yuan(100_000) });
     const post = await travel({ departmentId: p.dept2Id, priorApplied: false, amountCents: yuan(300) });
     expect(labels(await doc(post.body.docId))).toEqual(['部门负责人', '财务审核人', '财总']);
     await api(ctx.app, c('gf_chief'), 'POST', '/api/gf/travel-budgets', { departmentId: p.dept2Id, month: '2026-10', budgetCents: yuan(1_000) });
