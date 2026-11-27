@@ -11,6 +11,7 @@ import {
   BOOKING_KIND_LABELS,
   BOOKING_SOURCE_LABELS,
   BOOKING_STATUS_LABELS,
+  bookingKindsOf,
   DEFAULT_BOOKING_RULES,
   MAX_BOOKING_GUESTS,
   MAX_BOOKING_NOTE,
@@ -24,7 +25,7 @@ import { normalizeTagCode, TAG_CODE_PATTERN } from '@shared/frontdesk';
 import { describeDate, shiftDate } from '@shared/labels';
 import type { MemberSummary } from '@shared/types';
 import { api, errorMessage } from '../../lib/api';
-import { useReasons, useSession } from '../../lib/session';
+import { useCan, useReasons, useSession } from '../../lib/session';
 import { ReasonChips } from '../../components/ReasonChips';
 import { cn, formatTime } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
@@ -48,6 +49,8 @@ const STATUS_TONE: Record<BookingStatus, 'lake' | 'pine' | 'ember' | 'clay' | 'i
 
 export function BookingsPage() {
   const session = useSession();
+  // 8.2.3：技师预约要「技师预约」，派对房、客房要「预约」；只列这个人能做的那几种
+  const kinds = bookingKindsOf(useCan());
   const [params, setParams] = useSearchParams();
   const date = params.get('d') ?? session.today;
   const focus = Number(params.get('b')) || null;
@@ -127,7 +130,7 @@ export function BookingsPage() {
             <Skeleton className="h-60" />
           )
         ) : (
-          (['technician', 'space', 'room'] as const).map((kind) => {
+          kinds.map((kind) => {
             const list = board.data.bookings.filter((b) => b.kind === kind);
             return (
               <section key={kind} className="space-y-2" data-testid={`bookings-${kind}`}>
@@ -368,7 +371,8 @@ function CreateBookingDialog({
   // 预约日期写在弹窗最上面、可以改（需求 2）：原来弹窗里看不出约的是哪一天，也没有别的地方选
   const defaultDay = inRange(date) ? date : today;
   const [day, setDayRaw] = useState(draft && inRange(draft.day) ? draft.day : defaultDay);
-  const [kind, setKind] = useState<BookingKind>(draft?.kind ?? 'technician');
+  const kinds = bookingKindsOf(useCan());
+  const [kind, setKind] = useState<BookingKind>(draft?.kind && kinds.includes(draft.kind) ? draft.kind : (kinds[0] ?? 'space'));
   const [source, setSource] = useState<'front' | 'phone'>(draft?.source ?? 'phone');
   const [term, setTerm] = useState(draft?.term ?? '');
   const [member, setMember] = useState<MemberSummary | null>(draft?.member ?? null);
@@ -432,7 +436,7 @@ function CreateBookingDialog({
   const startOver = () => {
     setRestored(false);
     setDayRaw(defaultDay);
-    setKind('technician');
+    setKind(kinds[0] ?? 'space');
     setSource('phone');
     setTerm('');
     setMember(null);
@@ -556,7 +560,7 @@ function CreateBookingDialog({
               ))}
           </div>
         </div>
-        <Segmented value={kind} onChange={pick(setKind)} ariaLabel="预约什么" options={(['technician', 'space', 'room'] as const).map((k) => ({ value: k, label: BOOKING_KIND_LABELS[k] }))} />
+        <Segmented value={kind} onChange={pick(setKind)} ariaLabel="预约什么" options={kinds.map((k) => ({ value: k, label: BOOKING_KIND_LABELS[k] }))} />
         <Segmented
           value={source}
           onChange={setSource}

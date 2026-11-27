@@ -20,7 +20,7 @@ import { useMedia } from '../inventory/useMedia';
 import { UnsettledPayBanner } from '../pay/ScanPay';
 import { UnusedVerificationsBanner } from '../pay/VoucherVerify';
 import { CrossDayShiftNotice } from '../shift/ShiftGate';
-import { BackfillBar, useBackfill } from './backfill';
+import { BackfillBar, SupplementToggle, useBackfill } from './backfill';
 import { BillPanel, type PanelAction } from './BillPanel';
 import { CheckoutDialog, CheckoutRecordsDialog } from './CheckoutDialog';
 import { BillPerks, gradeShort } from './desk';
@@ -240,6 +240,8 @@ export function CashierPage() {
                 补录纸质单
               </Button>
             )}
+            {/* 8.2.3 补单：按实际时间、出单员补录餐饮与项目（docs/V8223_FRONTDESK.md 第 9 条） */}
+            <SupplementToggle />
             <Button size="sm" variant="ghost" icon={<ReceiptText className="size-4" />} onClick={() => setDialog({ kind: 'records' })} data-testid="open-checkouts">
               结账记录
             </Button>

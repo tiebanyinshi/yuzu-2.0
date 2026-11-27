@@ -25,6 +25,7 @@ import { applyPriceMode, PriceModeFields } from '../dish-price-mode';
 import { lockAddonLines, voidAddonLines, WithAddonsField } from '../dish-addon-void';
 import { assertAfterVisits, backfillDetail, BackfillInput, recordBackfill, resolveBackfill, type Backfill } from './backfill';
 import { getVisit } from './visits';
+import { recordSupplement } from './guest-tx';
 import { locateCharges, locateSession } from '../locations';
 import { currentStoreId } from '../../lib/store-context';
 
@@ -155,8 +156,8 @@ export async function postCharges(deps: Deps, visitId: number, raw: PostInputDat
     ...(bookingId === undefined ? {} : { bookingId }),
     ...(options.toRoom ? { toRoom: true } : {}),
   });
-  // 补录纸质单：明细按纸质单上的实际时间登记（营业日按实际时间归属）
-  const backfill = resolveBackfill(input.backfill, ctx.actor);
+  // 补录纸质单：明细按纸质单上的实际时间登记（营业日按实际时间归属）；带出单员的是补单（8.2.3），只有挂账能补单
+  const backfill = resolveBackfill(input.backfill, ctx.actor, undefined, 'charges');
   await runIdempotent(deps, { key, opType: 'bill_post', requestHash }, async (tx) => (await postChargesTx(tx, deps, visitId, input, { key, requestHash, backfill }, ctx, options)).visitId);
   return getVisit(deps.sql, visitId, deps.config.timezone);
 }
@@ -381,6 +382,8 @@ export async function postChargesTx(tx: Tx, deps: Deps, visitId: number, input: 
   // 派钟马上上钟（或加钟）的钟单：技师与客人在钟单记的房间（记在消费之后，房间比项目的区域更准）
   for (const id of new Set(sessionIds.values())) await locateSession(tx, id, 'session_start', { at, staffId: ctx.actor.id, backfill: !!backfill });
   if (backfill) await recordBackfill(tx, backfill, { kind: 'charges', opKey: key, visitId: visit.id, businessDate: date, actor: ctx.actor });
+  // 补单（8.2.3）：记下出单员（明细上标「补单 · 出单员」）
+  if (backfill?.issuerId) await recordSupplement(tx, { opKey: key, visitId: visit.id, issuerId: backfill.issuerId, at, staffId: ctx.actor.id });
   await saveKey(tx, key, meta.opType ?? 'bill_post', requestHash, visit.id, ctx.actor.id);
   await writeAudit(tx, {
     staffId: ctx.actor.id,

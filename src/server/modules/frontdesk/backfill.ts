@@ -21,6 +21,8 @@ export const BackfillInput = z
   .object({
     slipNo: z.string('请填写纸质单号').trim().regex(SLIP_NO_PATTERN, '纸质单号只能是字母、数字或短横线（最多 32 位）'),
     at: z.iso.datetime({ offset: true, message: '实际时间格式不正确' }),
+    /** 补单（8.2.3，docs/V8223_FRONTDESK.md 第 9 条）：带出单员的是「补单」——有「补单」权限就能做、只能补挂账；不带时与以前完全一样 */
+    issuerId: z.number().int().positive('请选择出单员').optional(),
   })
   .nullish()
   .transform((v) => v ?? undefined);
@@ -29,14 +31,19 @@ export type BackfillData = z.output<typeof BackfillInput>;
 export interface Backfill {
   slipNo: string;
   at: Date;
+  /** 补单的出单员（8.2.3）；补录纸质单为 undefined */
+  issuerId?: number;
 }
 
 /** 提示里的时间（门店时区，月-日 时:分） */
 const fmt = (d: Date | string, timeZone: string) => new Date(d).toLocaleString('zh-CN', { timeZone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 
-/** 核对补录的权限与实际时间的范围（结账前核对按实际时间计价时也用它） */
-export function checkBackfillAt(at: Date, actor: Actor, now = new Date()) {
-  if (!can(actor, 'frontdesk.backfill')) throw forbidden('补录纸质单需要值班经理、店总或店主');
+/**
+ * 核对补录的权限与实际时间的范围（结账前核对按实际时间计价时也用它）。
+ * supplement：补单（8.2.3）——有「补单」权限的也行（只给挂账与结账预览用；接待、结账照旧只认「补录纸质单」）
+ */
+export function checkBackfillAt(at: Date, actor: Actor, now = new Date(), supplement = false) {
+  if (!can(actor, 'frontdesk.backfill') && !(supplement && can(actor, 'frontdesk.supplement'))) throw forbidden(supplement ? '补单要有「补单」权限' : '补录纸质单需要值班经理、店总或店主');
   if (at.getTime() > now.getTime() + 60_000) throw unprocessable('BACKFILL_FUTURE', '补录的实际时间不能晚于现在，请核对纸质单上的时间');
   if (now.getTime() - at.getTime() > BACKFILL_WINDOW_HOURS * 3_600_000) {
     throw unprocessable('BACKFILL_WINDOW', `只能补录 ${BACKFILL_WINDOW_HOURS} 小时以内的纸质单；更早的请联系店主处理`);
@@ -44,9 +51,16 @@ export function checkBackfillAt(at: Date, actor: Actor, now = new Date()) {
   return at;
 }
 
-/** 核对权限与时间范围，返回这次补录的纸质单号与实际时间；平时（不带补录信息）返回 null */
-export function resolveBackfill(data: BackfillData, actor: Actor, now = new Date()): Backfill | null {
+/**
+ * 核对权限与时间范围，返回这次补录的纸质单号与实际时间；平时（不带补录信息）返回 null。
+ * 带出单员的是补单（8.2.3）：只有挂账（kind = 'charges'）能补单，接待、结账拒绝
+ */
+export function resolveBackfill(data: BackfillData, actor: Actor, now = new Date(), kind?: BackfillKind): Backfill | null {
   if (!data) return null;
+  if (data.issuerId !== undefined) {
+    if (kind !== 'charges') throw unprocessable('SUPPLEMENT_ONLY_CHARGES', '补单只能补餐饮、项目（挂账）；接待、结账请先退出「补单」');
+    return { slipNo: data.slipNo, at: checkBackfillAt(new Date(data.at), actor, now, true), issuerId: data.issuerId };
+  }
   return { slipNo: data.slipNo, at: checkBackfillAt(new Date(data.at), actor, now) };
 }
 
@@ -188,11 +202,12 @@ export async function recordBackfill(tx: Tx, b: Backfill, e: { kind: BackfillKin
 }
 
 /** 审计里记下的补录信息 */
-export const backfillDetail = (b: Backfill | null) => (b ? { backfill: { slipNo: b.slipNo, actualAt: b.at.toISOString() } } : {});
+export const backfillDetail = (b: Backfill | null) => (b ? { backfill: { slipNo: b.slipNo, actualAt: b.at.toISOString(), ...(b.issuerId ? { supplement: true, issuerId: b.issuerId } : {}) } } : {});
 
 /** SQL 片段：按操作编号取补录标记（json，没有补录为 null） */
 export const backfillMarkSql = (db: Db, opKeyCol: string) => db`
-  (SELECT json_build_object('slipNo', bf.slip_no, 'actualAt', bf.actual_at, 'enteredByName', bs.display_name, 'enteredAt', bf.entered_at)
+  (SELECT json_build_object('slipNo', bf.slip_no, 'actualAt', bf.actual_at, 'enteredByName', bs.display_name, 'enteredAt', bf.entered_at,
+                            'issuerName', (SELECT si.display_name FROM bill_supplements sp JOIN staff si ON si.id = sp.issuer_id WHERE sp.op_key = bf.op_key))
    FROM backfill_entries bf JOIN staff bs ON bs.id = bf.entered_by WHERE bf.op_key = ${db(opKeyCol)}
    ORDER BY bf.id LIMIT 1)`;
 

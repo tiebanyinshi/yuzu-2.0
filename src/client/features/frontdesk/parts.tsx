@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
-import { AlarmClock, Crown, DoorOpen, Link2, Lock, TriangleAlert, UserRound } from 'lucide-react';
+import { AlarmClock, Crown, DoorOpen, Link2, Lock, ShieldAlert, Sparkles, TriangleAlert, UserRound } from 'lucide-react';
 import { tagArea, TAG_SERVICE_LABELS, ZONE_LABELS, type BoardTag, type HandTag, type TagKind, type TagServiceStatus, type TagZone } from '@shared/frontdesk';
 import { overstayOf } from '@shared/frontdesk-risk';
+import { categoryMark, highRiskOf } from '@shared/frontdesk-v8223';
 import { cn } from '../../lib/utils';
 import { Money } from '../../components/Money';
-import { stayMinutes, stayText } from './queries';
+import { stayMinutes, stayText, useGuestRules } from './queries';
 
 /** 分区配色：男宾湖水青、女宾杏橙（旧儿童区苔绿）；颜色始终配文字，不单靠颜色区分 */
 export const ZONE_STYLE: Record<TagZone, { chip: string; strip: string; soft: string; text: string }> = {
@@ -123,14 +124,17 @@ export function StatusChip({ tone, icon, children, className, title, testId }: {
  */
 const OVERSTAY_TONE: Record<1 | 2 | 3, StatusTone> = { 1: 'yuzu', 2: 'ember', 3: 'clay' };
 
-/** 一位在店客人现在的几样状态：超时在店、临时外出、有没处理完的异常待办；都没有时什么也不出 */
+/**
+ * 一位在店客人现在的几样状态：超时在店、临时外出、有没处理完的异常待办；都没有时什么也不出。
+ * 8.2.3（docs/V8223_FRONTDESK.md）：带了类别、挂账金额的，再标客人类别（默认类别不标）与高风险（在店超过、挂账超过后台设的阈值，标红）
+ */
 export function VisitStatusChips({
   visit,
   now,
   chipClass,
   testId,
 }: {
-  visit: { checkedInAt: string; awaySince: string | null; openTodos: number };
+  visit: { checkedInAt: string; awaySince: string | null; openTodos: number; guestCategory?: string; amountCents?: number };
   now: number;
   /** 每个小标另加的样式（手牌卡片底下排成整行的色带） */
   chipClass?: string;
@@ -138,8 +142,21 @@ export function VisitStatusChips({
   testId?: string;
 }) {
   const over = overstayOf(stayMinutes(visit.checkedInAt, now));
+  const rules = useGuestRules();
+  const mark = categoryMark(visit.guestCategory, rules);
+  const risk = visit.amountCents === undefined ? null : highRiskOf(stayMinutes(visit.checkedInAt, now), visit.amountCents, rules);
   return (
     <>
+      {mark && (
+        <StatusChip tone="lake" icon={<Sparkles className="size-4 shrink-0" />} className={chipClass} title={`客人类别：${mark}`} testId={testId && `${testId}-category`}>
+          {mark}
+        </StatusChip>
+      )}
+      {risk && (
+        <StatusChip tone="clay" icon={<ShieldAlert className="size-4 shrink-0" />} className={chipClass} title={`${risk.text}：请去看看客人、提醒结账，防止跑单`} testId={testId && `${testId}-risk`}>
+          高风险
+        </StatusChip>
+      )}
       {over && (
         <StatusChip
           tone={OVERSTAY_TONE[over.level]}

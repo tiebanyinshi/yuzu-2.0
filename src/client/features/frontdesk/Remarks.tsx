@@ -11,6 +11,7 @@ import { cn, formatDateTime, uuid } from '../../lib/utils';
 import { ReasonDialog } from '../../components/ReasonDialog';
 import { useToast } from '../../components/Toast';
 import { Button, Notice, Segmented, Textarea } from '../../components/ui';
+import { GuestProfileCard } from './guest';
 
 export function RemarksBoard({ visit, onChanged }: { visit: VisitDetail; onChanged: (v: VisitDetail) => void }) {
   const can = useCan();
@@ -54,115 +55,119 @@ export function RemarksBoard({ visit, onChanged }: { visit: VisitDetail; onChang
   };
 
   return (
-    <section className="mt-3 rounded-[14px] border border-line bg-card px-4 py-3 shadow-card" aria-label="前台备注" data-testid="remarks-board">
-      <h3 className="flex items-center gap-1.5 text-[13px] font-bold text-ink-2">
-        <MessageSquareText className="size-4 text-pine" /> 备注（客诉 / 特殊标签）
-        <span className="ml-auto text-[12px] font-semibold text-ink-3">{active.length ? `${active.length} 条` : '没有备注'}</span>
-      </h3>
-      {active.length > 0 && (
-        <ul className="mt-2 space-y-2" data-testid="remarks-list">
-          {active.map((r) => (
-            <RemarkRow key={r.id} remark={r} canRemove={writable && (r.createdById === session.staff.id || can('frontdesk.correct'))} onRemove={() => setRemoving(r)} />
-          ))}
-        </ul>
-      )}
-      {removed.length > 0 && (
-        <details className="mt-2 text-[12px] text-ink-3">
-          <summary className="cursor-pointer font-semibold">已撤下 {removed.length} 条（留痕）</summary>
-          <ul className="mt-1.5 space-y-1.5">
-            {removed.map((r) => (
-              <RemarkRow key={r.id} remark={r} canRemove={false} onRemove={() => {}} />
+    <>
+      {/* 8.2.3：客人类别与偏好（忌口、按摩力度……），在备注上面；全店刷手牌的地方都看得到 */}
+      <GuestProfileCard visit={visit} onChanged={onChanged} />
+      <section className="mt-3 rounded-[14px] border border-line bg-card px-4 py-3 shadow-card" aria-label="前台备注" data-testid="remarks-board">
+        <h3 className="flex items-center gap-1.5 text-[13px] font-bold text-ink-2">
+          <MessageSquareText className="size-4 text-pine" /> 备注（客诉 / 特殊标签）
+          <span className="ml-auto text-[12px] font-semibold text-ink-3">{active.length ? `${active.length} 条` : '没有备注'}</span>
+        </h3>
+        {active.length > 0 && (
+          <ul className="mt-2 space-y-2" data-testid="remarks-list">
+            {active.map((r) => (
+              <RemarkRow key={r.id} remark={r} canRemove={writable && (r.createdById === session.staff.id || can('frontdesk.correct'))} onRemove={() => setRemoving(r)} />
             ))}
           </ul>
-        </details>
-      )}
-      {writable && (
-        <div className="mt-3 border-t border-dashed border-line pt-3" data-testid="remark-form">
-          <div className="flex flex-wrap items-center gap-2">
-            {hasGroup && (
-              <Segmented
-                size="sm"
-                value={scope}
-                onChange={(s) => {
-                  setScope(s);
-                  setError(null);
-                  setKey(uuid());
-                }}
-                ariaLabel="备注范围"
-                options={[
-                  { value: 'single', label: `单人 · ${visit.tag.code}` },
-                  { value: 'group', label: `同组 · ${visit.group!.groupNo}` },
-                ]}
-              />
-            )}
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="备注标签" data-testid="remark-tags">
-              {tags.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  aria-pressed={tag === t}
-                  onClick={() => {
-                    setTag((x) => (x === t ? '' : t));
+        )}
+        {removed.length > 0 && (
+          <details className="mt-2 text-[12px] text-ink-3">
+            <summary className="cursor-pointer font-semibold">已撤下 {removed.length} 条（留痕）</summary>
+            <ul className="mt-1.5 space-y-1.5">
+              {removed.map((r) => (
+                <RemarkRow key={r.id} remark={r} canRemove={false} onRemove={() => {}} />
+              ))}
+            </ul>
+          </details>
+        )}
+        {writable && (
+          <div className="mt-3 border-t border-dashed border-line pt-3" data-testid="remark-form">
+            <div className="flex flex-wrap items-center gap-2">
+              {hasGroup && (
+                <Segmented
+                  size="sm"
+                  value={scope}
+                  onChange={(s) => {
+                    setScope(s);
                     setError(null);
                     setKey(uuid());
                   }}
-                  className={cn(
-                    'tap relative h-8 rounded-full border px-3 text-[12.5px] font-semibold',
-                    tag === t ? 'border-clay bg-clay-soft text-clay' : 'border-line bg-card text-ink-2 hover:border-line-strong',
-                  )}
-                >
-                  {t}
-                </button>
-              ))}
+                  ariaLabel="备注范围"
+                  options={[
+                    { value: 'single', label: `单人 · ${visit.tag.code}` },
+                    { value: 'group', label: `同组 · ${visit.group!.groupNo}` },
+                  ]}
+                />
+              )}
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="备注标签" data-testid="remark-tags">
+                {tags.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    aria-pressed={tag === t}
+                    onClick={() => {
+                      setTag((x) => (x === t ? '' : t));
+                      setError(null);
+                      setKey(uuid());
+                    }}
+                    className={cn(
+                      'tap relative h-8 rounded-full border px-3 text-[12.5px] font-semibold',
+                      tag === t ? 'border-clay bg-clay-soft text-clay' : 'border-line bg-card text-ink-2 hover:border-line-strong',
+                    )}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
             </div>
+            <Textarea
+              className="mt-2 min-h-[44px]"
+              value={note}
+              onChange={(e) => {
+                setNote(e.target.value);
+                setError(null);
+                setKey(uuid());
+              }}
+              maxLength={MAX_REMARK_LENGTH}
+              placeholder={effectiveScope === 'group' ? '整组的说明（同组每张手牌都看得到）' : `只说 ${visit.tag.code} 这位客人`}
+              aria-label="备注内容"
+              data-testid="remark-note"
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-[12px] text-ink-3">记下经办人 {session.staff.displayName} 与时间</span>
+              <Button size="sm" variant="secondary" className="ml-auto" disabled={!note.trim()} loading={busy} onClick={submit} data-testid="remark-submit">
+                记下
+              </Button>
+            </div>
+            {error && <Notice tone="error" title={error} className="mt-2" />}
           </div>
-          <Textarea
-            className="mt-2 min-h-[44px]"
-            value={note}
-            onChange={(e) => {
-              setNote(e.target.value);
-              setError(null);
-              setKey(uuid());
-            }}
-            maxLength={MAX_REMARK_LENGTH}
-            placeholder={effectiveScope === 'group' ? '整组的说明（同组每张手牌都看得到）' : `只说 ${visit.tag.code} 这位客人`}
-            aria-label="备注内容"
-            data-testid="remark-note"
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-[12px] text-ink-3">记下经办人 {session.staff.displayName} 与时间</span>
-            <Button size="sm" variant="secondary" className="ml-auto" disabled={!note.trim()} loading={busy} onClick={submit} data-testid="remark-submit">
-              记下
-            </Button>
-          </div>
-          {error && <Notice tone="error" title={error} className="mt-2" />}
-        </div>
-      )}
-      <ReasonDialog
-        open={!!removing}
-        title={removing ? `撤下备注「${removing.note.slice(0, 20)}」` : ''}
-        description="撤下的备注照旧留着（划掉显示），记下撤下的人、时间与原因"
-        confirmLabel="撤下"
-        danger
-        busy={removeBusy}
-        reasons={removeReasons}
-        testId="remark-remove"
-        onClose={() => setRemoving(null)}
-        onConfirm={async (reason) => {
-          if (!removing) return;
-          setRemoveBusy(true);
-          try {
-            onChanged(await api.post<VisitDetail>(`/api/frontdesk/remarks/${removing.id}/remove`, { visitId: visit.id, reason }));
-            setRemoving(null);
-            toast({ tone: 'success', title: '已撤下这条备注' });
-          } catch (e) {
-            toast({ tone: 'error', title: '撤下未成功', body: errorMessage(e) });
-          } finally {
-            setRemoveBusy(false);
-          }
-        }}
-      />
-    </section>
+        )}
+        <ReasonDialog
+          open={!!removing}
+          title={removing ? `撤下备注「${removing.note.slice(0, 20)}」` : ''}
+          description="撤下的备注照旧留着（划掉显示），记下撤下的人、时间与原因"
+          confirmLabel="撤下"
+          danger
+          busy={removeBusy}
+          reasons={removeReasons}
+          testId="remark-remove"
+          onClose={() => setRemoving(null)}
+          onConfirm={async (reason) => {
+            if (!removing) return;
+            setRemoveBusy(true);
+            try {
+              onChanged(await api.post<VisitDetail>(`/api/frontdesk/remarks/${removing.id}/remove`, { visitId: visit.id, reason }));
+              setRemoving(null);
+              toast({ tone: 'success', title: '已撤下这条备注' });
+            } catch (e) {
+              toast({ tone: 'error', title: '撤下未成功', body: errorMessage(e) });
+            } finally {
+              setRemoveBusy(false);
+            }
+          }}
+        />
+      </section>
+    </>
   );
 }
 

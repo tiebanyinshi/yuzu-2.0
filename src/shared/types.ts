@@ -344,6 +344,8 @@ export interface LedgerRow {
   consumptionStatus: 'completed' | 'reversed' | null;
   /** 前台结账储值支付的消费单所属结账单号（只能反结账，不能单独撤销） */
   checkoutNo: string | null;
+  /** 那张结账单的编号（8.2.3：点单号打开结账明细）；不是前台结账的为 null */
+  checkoutId: number | null;
   /** 消费单对应的撤销单号 / 撤销单对应的原消费单号 */
   relatedDocNo: string | null;
   /** 撤销单的原消费营业日，跨日撤销时与本行营业日不同 */

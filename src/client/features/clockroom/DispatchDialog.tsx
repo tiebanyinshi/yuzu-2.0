@@ -21,6 +21,7 @@ import { useQuery } from '@tanstack/react-query';
 import { spaceLabel } from '@shared/spaces';
 import { useClockSpaces } from '../rooms/floormap-api';
 import { RoomSelect } from './RoomPicker';
+import { GuestNoteStrip } from '../frontdesk/guest';
 
 const doneOnFound = (found: { found: true } | { found: false }) => (found.found && 'visit' in found ? true : null);
 
@@ -268,6 +269,8 @@ export function DispatchDialog({
               data-testid="dispatch-tag"
             />
           </Field>
+          {/* 8.2.3：客人的类别、偏好（按摩力度……）、发牌时写的预约技师与前台备注 */}
+          <GuestNoteStrip visitId={visit?.id} />
           <Field label="钟数">
             <div className="flex items-center gap-2">
               <Button size="sm" variant="secondary" aria-label="减少钟数" disabled={!!target || quantity <= 1} onClick={() => setQuantity((q) => Math.max(1, q - 1))}>

@@ -64,8 +64,8 @@ test.describe('v0.7.28 预约', () => {
     await expect(page.getByTestId('booking-rules')).toContainText('预约规则');
     await expect(page.getByTestId('booking-rule-open')).toHaveValue(/\d{2}:\d{2}/);
 
-    // ② 前台：门店导航进「预约」，翻到明天
-    await relogin(page, 'xiaozhou');
+    // ② 前台：门店导航进「预约」，翻到明天（8.2.3 起技师预约单独一项权限、收银员没有，用值班经理）
+    await relogin(page, 'zhangjl');
     const me = await getJson<{ today: string }>(page, '/api/auth/me');
     const tomorrow = new Date(Date.parse(`${me.today}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
     await clickNav(page, '预约');

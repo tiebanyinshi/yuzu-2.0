@@ -47,6 +47,7 @@ import { GroupMark, VipChip, VisitStatusChips, ZONE_STYLE } from './parts';
 import { CASHIER_OPS, FRONTDESK_OP_LABELS, useFrontdeskPending } from './pending';
 import { stayText, useServerNow } from './queries';
 import { RemarksBoard } from './Remarks';
+import { GroupMates } from './guest';
 
 /** incident：异常处置（8.1.15）；lost：手牌丢失（换牌对话框预先选好丢失）；buy：买角、print：打单（8.1.44，收银台） */
 export type PanelAction = 'add' | 'swap' | 'join' | 'companion' | 'preview' | 'checkout' | 'ticket' | 'records' | 'move' | 'incident' | 'lost' | 'buy' | 'print';
@@ -272,26 +273,8 @@ export function BillPanel({
                 同行未结 <Money cents={visit.group.openAmountCents} size="key" className="text-ink" />
               </span>
             </div>
-            <div className="scroll-thin mt-1.5 flex gap-1.5 overflow-x-auto pb-0.5">
-              {visit.group.mates.map((m) => (
-                <button
-                  key={m.visitId}
-                  type="button"
-                  onClick={() => onSelectVisit(m.visitId)}
-                  disabled={m.visitId === visit.id}
-                  className={cn(
-                    'flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12.5px] font-bold',
-                    m.visitId === visit.id ? 'border-pine bg-pine-tint text-pine' : 'border-line bg-card text-ink-2 hover:border-line-strong',
-                    m.status !== 'open' && 'opacity-50',
-                  )}
-                  title={m.status !== 'open' ? VISIT_STATUS_LABELS[m.status] : undefined}
-                >
-                  <span className="num">{m.tagCode}</span>
-                  <span className="text-[12px] opacity-70">{ZONE_LABELS[m.zone].short}</span>
-                  {m.status === 'open' ? <Money cents={m.amountCents} className="font-semibold text-ink-3" /> : <span className="text-[12px]">{VISIT_STATUS_LABELS[m.status]}</span>}
-                </button>
-              ))}
-            </div>
+            {/* 8.2.3：同行小标签上直接移出（一键确认） */}
+            <GroupMates visit={visit} onSelectVisit={onSelectVisit} onChanged={onChanged} />
           </div>
         )}
       </header>

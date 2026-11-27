@@ -27,6 +27,7 @@ import {
   Megaphone,
   MonitorPlay,
   LayoutGrid,
+  MessageSquareWarning,
 } from 'lucide-react';
 import { CRM_SETTINGS_PERMISSIONS } from '@shared/admin';
 import { DISH_PERMISSIONS } from '@shared/dishes';
@@ -79,7 +80,10 @@ const STORE_NAV: StoreNavDomain[] = [
       // 柜况（8.1.49，docs/LOCKERS_V8149.md）：全店手牌柜此刻的状态（空闲、在用、锁定、维修），能看在店手牌的都有
       { to: '/crm/lockers', label: '柜况', icon: LayoutGrid, perm: 'frontdesk.read' },
       // 预约（v0.7.28 ③）：技师、派对房等、客房电话预订的预约看板；小程序的预约在这里确认
-      { to: '/crm/bookings', label: '预约', icon: CalendarClock, perm: 'booking.manage' },
+      // 8.2.3：技师预约单独一项权限，有两项之一就有入口（页里只列能做的那几种）
+      { to: '/crm/bookings', label: '预约', icon: CalendarClock, perm: ['booking.manage', 'booking.technician'] },
+      // 客诉台账（8.2.3，docs/V8223_FRONTDESK.md 第 3 条）
+      { to: '/crm/complaints', label: '客诉台账', icon: MessageSquareWarning, perm: 'frontdesk.complaints' },
     ],
   },
   {

@@ -64,6 +64,8 @@ import { assertVipAllowed, consumeVipShortfalls, memberLockerGrades, vipShortfal
 import { currentStoreId } from '../../lib/store-context';
 import { incidentText, openTodoCount, openTodoWhere, visitIncidentEvents, visitIncidents } from './incident-read';
 import { remarkTagsSql, visitRemarks } from './remark-read';
+import { categoryChanges, categoryOf, guestProfile, loadGuestRules } from './guest-read';
+import { checkinCategory, derivedKey, GuestCheckinFields, recordBookedTechnician } from './guest-tx';
 import { arriveBookingsTx, blacklistedError, blacklistHits, loadRiskRules, lockArrivableBookings, unsettledDebts, visitsToday, type LockedRiskBooking } from './risk';
 
 const clientKey = z.uuid('缺少有效的操作编号，请刷新页面后重试');
@@ -78,6 +80,8 @@ const GuestInput = z.object({
   guestLabel: z.string().trim().max(16, '称呼最多 16 个字').default(''),
   /** 票种；不带时用默认票种（升级前留下的待确认请求不带这一项，不带时不进入请求摘要） */
   ticketTypeId: z.number().int().positive().optional(),
+  /** 客人类别、预约的技师（8.2.3，docs/V8223_FRONTDESK.md 第 1 条）；不带时不进入请求摘要 */
+  ...GuestCheckinFields,
 });
 
 export const CheckinInput = z.object({
@@ -204,6 +208,9 @@ export async function checkin(deps: Deps, raw: CheckinInputData, ctx: OpContext)
     assertVipAllowed(shortfalls, levels, await loadVipLockerRules(tx), input.vipGrantId);
     const overrideCodes = new Set(shortfalls.map((x) => x.code));
 
+    // 客人类别（8.2.3）：要在后台的清单里；没选的记空（= 默认类别）
+    const guestRules = await loadGuestRules(tx);
+    const categories = input.guests.map((g) => checkinCategory(g.category, guestRules));
     // 票种：留存选定时的票价，结账时按在店时长计算门票；选免票的客人要当场授权（同一次接待一次授权）
     const tickets = await Promise.all(input.guests.map((g) => resolveTicketType(tx, g.ticketTypeId)));
     const freeGuests = input.guests.flatMap((g, i) => {
@@ -320,12 +327,14 @@ export async function checkin(deps: Deps, raw: CheckinInputData, ctx: OpContext)
       const [visit] = await tx<{ id: number }[]>`
         INSERT INTO visits (visit_no, bill_id, tag_id, zone, member_id, guest_label, group_id, business_date,
                             checked_in_at, checked_in_by, checkin_key, vip_override_by, ticket_type_id, ticket_price_12h, ticket_price_24h,
-                            risk_approved_by, risk_approved_at, risk_reason)
+                            risk_approved_by, risk_approved_at, risk_reason, guest_category)
         VALUES (${visitNo}, ${bill!.id}, ${tag.id}, ${g.zone}, ${g.memberId}, ${g.guestLabel}, ${groupId}, ${date},
                 ${at}, ${ctx.actor.id}, ${key}, ${override && overrideCodes.has(tag.code) ? override.approverId : null},
                 ${ticket?.id ?? null}, ${ticket?.price12h ?? null}, ${ticket?.price24h ?? null},
-                ${owed ? riskApproval!.approverId : null}, ${owed ? at : null}, ${owed ? riskApproval!.reason : null})
+                ${owed ? riskApproval!.approverId : null}, ${owed ? at : null}, ${owed ? riskApproval!.reason : null}, ${categories[i]!})
         RETURNING id`;
+      // 发牌时写的预约技师（8.2.3）：记成这位客人的一条单人备注，全店刷手牌都看得到
+      if (g.bookedTechnician) await recordBookedTechnician(tx, { visitId: visit!.id, note: g.bookedTechnician, opKey: derivedKey(key, `booked-tech:${i}`), staffId: ctx.actor.id, at });
       if (!firstId) firstId = visit!.id;
       created.push(visit!.id);
       if (g.memberId !== null) visitOf.set(g.memberId, { visitId: visit!.id, tagCode: tag.code });
@@ -682,6 +691,7 @@ export async function withMemberMarks(db: Db, board: FrontdeskBoard, date: strin
 }
 
 export async function getBoard(db: Db): Promise<FrontdeskBoard> {
+  const guestRules = await loadGuestRules(db);
   const rows = await db<
     (Omit<FrontdeskBoard['tags'][number], 'visit'> & {
       visitId: number | null;
@@ -700,6 +710,7 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
       awaySince: string | null;
       openTodos: number | null;
       remarkTags: string[] | null;
+      guestCategory: string | null;
     })[]
   >`
     SELECT t.id, t.code, t.zone, t.kind, t.vip_level, t.locked, t.lock_reason, t.active, t.is_synthetic, t.service_status, t.service_note,
@@ -711,7 +722,8 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
            -- 这次来访上没处理完的异常待办（上报、未结离店；8.1.17 起还有超时提醒）几条（8.1.15）
            (SELECT count(*)::int FROM visit_incidents i WHERE i.visit_id = v.id AND ${openTodoWhere(db)}) AS open_todos,
            -- 前台备注的标签（8.1.44）：收银台清单上标「客诉」等
-           CASE WHEN v.id IS NULL THEN NULL ELSE ${remarkTagsSql(db)} END AS remark_tags
+           CASE WHEN v.id IS NULL THEN NULL ELSE ${remarkTagsSql(db)} END AS remark_tags,
+           v.guest_category
     FROM hand_tags t
     LEFT JOIN visits v ON v.tag_id = t.id AND v.status = 'open'
     LEFT JOIN members m ON m.id = v.member_id
@@ -754,6 +766,8 @@ export async function getBoard(db: Db): Promise<FrontdeskBoard> {
           awaySince: r.awaySince,
           openTodos: r.openTodos ?? 0,
           remarkTags: r.remarkTags ?? [],
+          // 客人类别（8.2.3）：空的（升级前的来访）按默认类别
+          guestCategory: categoryOf(r.guestCategory ?? '', guestRules),
         }
       : null,
   }));
@@ -818,9 +832,10 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
       riskApprovedByName: string | null;
       riskApprovedAt: string | null;
       riskReason: string | null;
+      guestCategory: string;
     }[]
   >`
-    SELECT v.id, v.visit_no, v.status, v.zone, v.guest_label, v.business_date, v.checked_in_at, ${backfillMarkSql(db, 'v.checkin_key')} AS backfill,
+    SELECT v.id, v.visit_no, v.status, v.zone, v.guest_label, v.guest_category, v.business_date, v.checked_in_at, ${backfillMarkSql(db, 'v.checkin_key')} AS backfill,
            v.checked_in_by AS checked_in_by_id, s.display_name AS checked_in_by_name, v.closed_at, v.close_reason,
            cs.display_name AS closed_by_name, v.member_id, v.group_id,
            b.id AS bill_id, b.bill_no, b.status AS bill_status, b.amount_cents, b.line_count,
@@ -956,6 +971,11 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
       operatorName: e.operatorName,
     });
   }
+  // 改客人类别（8.2.3）
+  const guestRules = await loadGuestRules(db);
+  for (const c of await categoryChanges(db, id)) {
+    history.push({ at: c.createdAt, kind: 'guest', text: `客人类别 ${categoryOf(c.fromCategory, guestRules)} → ${categoryOf(c.toCategory, guestRules)}`, operatorName: c.operatorName });
+  }
   history.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
   const [now] = await db<{ now: string }[]>`SELECT now() AS now`;
@@ -994,6 +1014,7 @@ export async function getVisit(db: Db, id: number, timezone: string): Promise<Vi
     riskApproval: v.riskApprovedByName && v.riskApprovedAt ? { byName: v.riskApprovedByName, at: v.riskApprovedAt, reason: v.riskReason ?? '' } : null,
     incidents,
     remarks: await visitRemarks(db, v.id, v.groupId),
+    guest: await guestProfile(db, v, guestRules),
     ticket: await visitTicket(db, v.id, v.closedAt ? new Date(v.closedAt) : new Date(now!.now), today),
     checkout: lastCheckout ? { id: lastCheckout.id, checkoutNo: lastCheckout.checkoutNo, status: lastCheckout.status } : null,
     bill: { id: v.billId, billNo: v.billNo, status: v.billStatus, amountCents: v.amountCents, lineCount: v.lineCount },

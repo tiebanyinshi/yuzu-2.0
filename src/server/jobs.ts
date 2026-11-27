@@ -29,6 +29,7 @@ import { sweepPaying, sweepRefunds } from './modules/pay-terminal';
 import { runVoucherReconcile, sweepVerifying } from './modules/platform-verify';
 import { runAiSummaries } from './modules/ai';
 import { sweepOvertimeReminders } from './modules/frontdesk/overtime';
+import { sweepRiskAlerts } from './modules/frontdesk/index';
 import { sweepTableRestores } from './modules/tables-v8117';
 import { runAttendanceSettlement } from './modules/oa/attendance-daily';
 import { runAnnualLeaveGrant } from './modules/oa/leave';
@@ -147,6 +148,11 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
   await step('超时提醒', '超时提醒没记完，下一分钟重试', async () => {
     const n = await sweepOvertimeReminders({ sql, config }, now);
     if (n > 0) log.info(`超时提醒：记了 ${n} 条`);
+  });
+  // 高风险提示（8.2.3，docs/V8223_FRONTDESK.md 第 5 条）：在店超过设定小时数、挂账超过设定金额的客人，按设定推给值班经理或店总（每位每样一次）
+  await step('高风险提示', '高风险提示没推完，下一分钟重试', async () => {
+    const n = await sweepRiskAlerts({ sql, config }, now);
+    if (n > 0) log.info(`高风险提示：推了 ${n} 条`);
   });
   // 桌台到点自动恢复（8.1.17 BW-2）：餐饮规则开了「到点自动恢复」的店，维修过了预计恢复时间的桌自动恢复（经办人「系统」）
   await step('桌台到点自动恢复', '桌台到点自动恢复失败，下一分钟重试', async () => {

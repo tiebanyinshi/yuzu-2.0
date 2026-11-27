@@ -8,6 +8,15 @@ export const BOOKING_KINDS = ['technician', 'space', 'room'] as const;
 export type BookingKind = (typeof BOOKING_KINDS)[number];
 export const BOOKING_KIND_LABELS: Record<BookingKind, string> = { technician: '技师', space: '派对房等', room: '客房' };
 
+/**
+ * 每种预约要哪一项权限（8.2.3，店主 2026-11-26「客房和派对房公开，技师预约权限不给前台」）：技师预约是「技师预约」，
+ * 派对房、客房是「预约」。页面按它显示哪几种，接口按它核对
+ */
+export const BOOKING_KIND_PERMISSIONS: Record<BookingKind, 'booking.technician' | 'booking.manage'> = { technician: 'booking.technician', space: 'booking.manage', room: 'booking.manage' };
+
+/** 这个人能做哪几种预约 */
+export const bookingKindsOf = (can: (p: 'booking.technician' | 'booking.manage') => boolean): BookingKind[] => BOOKING_KINDS.filter((k) => can(BOOKING_KIND_PERMISSIONS[k]));
+
 export const BOOKING_SOURCES = ['front', 'phone', 'mp', 'ota'] as const;
 export type BookingSource = (typeof BOOKING_SOURCES)[number];
 export const BOOKING_SOURCE_LABELS: Record<BookingSource, string> = { front: '前台', phone: '电话', mp: '小程序', ota: '渠道' };
