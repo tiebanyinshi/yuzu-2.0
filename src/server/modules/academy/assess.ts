@@ -56,7 +56,7 @@ interface QuestionRow {
 const QUESTION_COLS = (db: Db) => db`id, course_id, pack_key, skill, kind, level, stem, options, answer, answer_text, explanation, source, status, version`;
 const toQuestion = (r: QuestionRow): AcademyQuestion => ({ ...r, id: Number(r.id), courseId: Number(r.courseId) });
 
-function checkQuestion(input: QuestionFields) {
+function checkQuestion(input: Omit<QuestionFields, 'version'>) {
   const q = { ...input, options: input.kind === 'recall' ? [] : input.options, answer: input.kind === 'recall' ? [] : input.answer };
   const problems = academyQuestionProblems(q);
   if (problems.length) throw unprocessable('ACADEMY_QUESTION_INVALID', problems[0]!, { problems });
