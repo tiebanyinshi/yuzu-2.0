@@ -25,7 +25,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { LoadFailed } from '../../components/LoadFailed';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Notice, Skeleton, Textarea } from '../../components/ui';
-import { AcademyFrame, AcademyOpsPanel, ProgressBar } from './parts';
+import { AcademyFrame, AcademyOpsPanel, PendingLock, ProgressBar, useOpPending } from './parts';
 import { ArticleView, ChoiceList } from './ArticleView';
 import { academyKeys, COVER_CLASS, useAcademyOp, useAcademyCourse, useAcademyLesson, useAcademyRefresh, useStudyTimer } from './data';
 import { useTrainingFiles } from '../training/TrainingPages';
@@ -101,23 +101,29 @@ export function CoursePage({ id }: { id: number }) {
   );
 }
 
+/** 评分：走本机记录（Codex 审查 c88d88c）——没收到结果的留着原样重提，这期间内容锁住，确认了再改 */
 function RateCourse({ course }: { course: AcademyCourseDetail }) {
+  const sendAcademyOp = useAcademyOp();
   const [rating, setRating] = useState(course.myFeedback?.rating ?? 0);
   const [comment, setComment] = useState(course.myFeedback?.comment ?? '');
   const [busy, setBusy] = useState(false);
+  const key = useRef(uuid());
+  const pending = useOpPending(key.current);
   const toast = useToast();
   const qc = useQueryClient();
   return (
     <Card className="p-4" data-testid="academy-rate">
       <p className="text-[15px] font-bold text-ink">学完了，给这门课打个分</p>
-      <div className="mt-2 flex gap-1" role="radiogroup" aria-label="评分">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button key={n} type="button" role="radio" aria-checked={rating === n} aria-label={`${n} 星`} onClick={() => setRating(n)} className="tap relative p-1">
-            <Star className={cn('size-7', n <= rating ? 'fill-yuzu text-yuzu' : 'text-line-strong')} aria-hidden />
-          </button>
-        ))}
-      </div>
-      <Textarea className="mt-2" rows={2} maxLength={300} placeholder="哪里好、哪里还能改（选填）" value={comment} onChange={(e) => setComment(e.target.value)} />
+      <PendingLock pending={pending}>
+        <div className="mt-2 flex gap-1" role="radiogroup" aria-label="评分">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button key={n} type="button" role="radio" aria-checked={rating === n} aria-label={`${n} 星`} onClick={() => setRating(n)} className="tap relative p-1">
+              <Star className={cn('size-7', n <= rating ? 'fill-yuzu text-yuzu' : 'text-line-strong')} aria-hidden />
+            </button>
+          ))}
+        </div>
+        <Textarea className="mt-2" rows={2} maxLength={300} placeholder="哪里好、哪里还能改（选填）" value={comment} onChange={(e) => setComment(e.target.value)} />
+      </PendingLock>
       <Button
         className="mt-2"
         size="sm"
@@ -127,17 +133,18 @@ function RateCourse({ course }: { course: AcademyCourseDetail }) {
         onClick={async () => {
           setBusy(true);
           try {
-            await api.post(`/api/academy/courses/${course.id}/feedback`, { rating, comment });
+            await sendAcademyOp({ key: key.current, method: 'POST', url: `/api/academy/courses/${course.id}/feedback`, body: { rating, comment }, summary: `给「${course.title}」评分` });
+            key.current = uuid();
             toast({ tone: 'success', title: '谢谢你的评分' });
             await qc.invalidateQueries({ queryKey: academyKeys.course(course.id) });
           } catch (e) {
-            toast({ tone: 'error', title: '评分没交上', body: errorMessage(e) });
+            toast({ tone: 'error', title: '评分没确认', body: errorMessage(e) });
           } finally {
             setBusy(false);
           }
         }}
       >
-        {course.myFeedback ? '改评分' : '交评分'}
+        {pending ? '按原内容重新提交' : course.myFeedback ? '改评分' : '交评分'}
       </Button>
     </Card>
   );
@@ -282,7 +289,10 @@ export function LessonPage({ id }: { id: number }) {
   );
 }
 
+/** 学完了：走本机记录（Codex 审查 c88d88c），没收到结果的在页面上方原样重提；再点一次也是同一笔（学完重复做不变） */
 function DoneButton({ view, label = '学完了' }: { view: AcademyLessonView; label?: string }) {
+  const sendAcademyOp = useAcademyOp();
+  const [key] = useState(() => uuid());
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const celebrate = useCompletionToast();
@@ -298,7 +308,7 @@ function DoneButton({ view, label = '学完了' }: { view: AcademyLessonView; la
       onClick={async () => {
         setBusy(true);
         try {
-          celebrate(await api.post<AcademyCompletion>(`/api/academy/lessons/${view.lesson.id}/complete`, {}));
+          celebrate(await sendAcademyOp<AcademyCompletion>({ key, method: 'POST', url: `/api/academy/lessons/${view.lesson.id}/complete`, body: {}, summary: `学完「${view.lesson.title}」` }));
           await refresh();
         } catch (e) {
           toast({ tone: 'error', title: '没记上', body: errorMessage(e) });

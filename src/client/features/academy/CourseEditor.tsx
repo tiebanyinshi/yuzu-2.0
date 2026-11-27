@@ -59,6 +59,9 @@ function problemsOf(e: unknown): { line?: number; row?: number; message: string 
 }
 
 export function CourseEditor({ id, onBack }: { id: number; onBack: () => void }) {
+  const sendAcademyOp = useAcademyOp();
+  // 调课时顺序走本机记录（Codex 审查 c88d88c）：一个编号用到确认为止，没确认时再调别的顺序本机拦下，不拿新顺序去盖
+  const reorderKey = useRef(uuid());
   const course = useQuery({ queryKey: adminKeys.course(id), queryFn: () => api.get<AcademyAdminCourse>(`/api/admin/academy/courses/${id}`) });
   const [lesson, setLesson] = useState<AcademyAdminLesson | 'new' | null>(null);
   const qc = useQueryClient();
@@ -74,7 +77,8 @@ export function CourseEditor({ id, onBack }: { id: number; onBack: () => void })
     [ids[from], ids[to]] = [ids[to]!, ids[from]!];
     setBusy(true);
     try {
-      await api.post(`/api/admin/academy/courses/${id}/reorder`, { lessonIds: ids });
+      await sendAcademyOp({ key: reorderKey.current, method: 'POST', url: `/api/admin/academy/courses/${id}/reorder`, body: { lessonIds: ids }, summary: `调整「${c.title}」的课时顺序` });
+      reorderKey.current = uuid();
       await refresh();
     } catch (e) {
       toast({ tone: 'error', title: '没调成', body: errorMessage(e) });
