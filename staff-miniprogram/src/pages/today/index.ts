@@ -49,6 +49,8 @@ let snap: Snapshot | null = null;
 let ticker: number | null = null;
 let lastFetch = 0;
 let seq = 0;
+/** 首页每藏起来一次加一：onShow 等「我是谁」回来时核对还是不是同一次显示 */
+let visible = 0;
 
 const settle = <T>(p: Promise<T>): Promise<{ ok: true; v: T } | { ok: false; e: unknown }> =>
   p.then(
@@ -91,12 +93,16 @@ Page({
     menuLine: '',
     notices: [] as Snapshot['notices'],
     hasNotices: false,
+    /** 待办的来源没取到、手机上也没有上一份：不写「都处理完了」 */
+    todoUnknown: false,
   },
 
   async onShow() {
     this.setData({ large: largeTextOn() });
+    // 启动时等「我是谁」的这一会儿切去了别的 Tab：回来以后不再在藏起来的首页上起刷新与计时器
+    const vis = visible;
     me = await requireMe();
-    if (!me) return;
+    if (!me || vis !== visible) return;
     // 微信扫一扫扫了巡场码打开、要先登录的：登录以后接着去巡场页交
     if (hasPatrolLink() && me.entries.indexOf('patrol') >= 0) {
       wx.navigateTo({ url: '/pages/patrol/index' });
@@ -121,6 +127,7 @@ Page({
     ticker = null;
     // 离开时还在取的不再画（回来再取）
     seq += 1;
+    visible += 1;
   },
 
   async onPullDownRefresh() {
@@ -185,6 +192,20 @@ Page({
     // 上一份只在是这个人的时候拿来补取不到的块
     const prev = snap && snap.staffId === m.staff.id ? snap : null;
     const anyOk = [punch, summary, unread, payslips, notices, patrol, menus].some((r) => r.ok);
+    // 这个人有的那几块里有没取到的：标「之前的信息」（一块取到不能当成整页都是新的）；
+    // 待办的来源没取到、手机上也没有上一份的：不写「都处理完了」
+    const parts: [boolean, { ok: boolean }][] = [
+      [has('punch'), punch],
+      [has('approvals'), summary],
+      [true, unread],
+      [has('payslips'), payslips],
+      [has('announcements'), notices],
+      [has('patrol'), patrol],
+      [has('canteen'), menus],
+      [has('canteen'), status],
+    ];
+    const someFailed = parts.some(([entry, r]) => entry && !r.ok);
+    const todoUnknown = !prev && [[has('punch'), punch] as const, [has('approvals'), summary] as const, [has('payslips'), payslips] as const].some(([entry, r]) => entry && !r.ok);
     /** 这一块：有入口取到了用新的，取不到用上次的，没有入口就是空的 */
     const pick = <T>(entry: boolean, r: { ok: true; v: T } | { ok: false; e: unknown }, fromPrev: (p: Snapshot) => T, empty: T): T => (!entry ? empty : r.ok ? r.v : prev ? fromPrev(prev) : empty);
 
@@ -241,7 +262,8 @@ Page({
     };
     snap = next;
     if (anyOk) saveSnap(m.staff.id, next);
-    this.render(next, !anyOk);
+    this.setData({ todoUnknown });
+    this.render(next, someFailed);
   },
 
   onGo(e: WechatMiniprogram.BaseEvent) {
@@ -278,7 +300,8 @@ Page({
           savePatrolLink(route.code, 'scan');
           wx.navigateTo({ url: '/pages/patrol/index' });
         } else if (route.kind === 'meal') {
-          wx.navigateTo({ url: `/pages/canteen-scan/index?code=${encodeURIComponent(route.code)}` });
+          // 带上扫到的时刻：负责人扫码页要先取码钥匙，按扫的时刻算这一餐（快到收餐时扫的不会因为取钥匙慢了被当成不在开饭时间）
+          wx.navigateTo({ url: `/pages/canteen-scan/index?code=${encodeURIComponent(route.code)}&at=${Date.now()}` });
         } else {
           wx.showToast({ title: route.message, icon: 'none' });
         }

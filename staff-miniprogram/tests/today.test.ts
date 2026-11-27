@@ -194,4 +194,14 @@ describe('吃饭（每次画都按此刻重算）', () => {
     expect(r.menuLine).toBe('晚餐：清蒸鱼');
     expect(mealOfNow(meals, '20:00', '2026-11-27', dishes, null).menuLine).toBe('');
   });
+
+  it('跨零点的一餐（夜宵 22:00–01:00）：过了零点按开饭那天核对打过没有，不再叫人去吃（Codex 对 9dbc3ce 的 P2）', () => {
+    const night = [{ meal: 'night', start: '22:00', end: '01:00', enabled: true }];
+    const late = { night: ['馄饨'] };
+    expect(mealOfNow(night, '23:30', '2026-11-27', late, { meal: 'night', date: '2026-11-27', checkedIn: true }).meal).toBeNull();
+    expect(mealOfNow(night, '00:30', '2026-11-28', {}, { meal: 'night', date: '2026-11-27', checkedIn: true }).meal).toBeNull();
+    const notYet = mealOfNow(night, '00:30', '2026-11-28', late, { meal: 'night', date: '2026-11-27', checkedIn: false }).meal;
+    // 过了零点还没打：照样叫去吃，但那一天的菜手机上没有（拿到的是新一天的），不写菜
+    expect(notYet && notYet.dishes).toEqual([]);
+  });
 });
