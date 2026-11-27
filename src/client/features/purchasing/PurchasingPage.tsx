@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router';
 import { Plus, Search, Settings2 } from 'lucide-react';
 import type { PoStatus } from '@shared/purchasing';
+import { PO_PAGE_SIZE, PO_SORT_LABELS, PO_SORTS } from '@shared/purchase-sort';
+import { PRIORITY_LABELS } from '@shared/requests';
 import { errorMessage } from '../../lib/api';
 import { useCan } from '../../lib/session';
 import { cn } from '../../lib/utils';
@@ -14,6 +16,8 @@ import { useSuppliers } from '../inventory/queries';
 import { PoSheet } from './PoSheet';
 import { PoStatusChip, ReceivingChip } from './parts';
 import { usePos } from './queries';
+import { DocLookup } from './DocLookup';
+import { SortBar, sortFromParams } from './SortBar';
 
 const FILTERS: { value: string; label: string }[] = [
   { value: '', label: '全部' },
@@ -31,7 +35,17 @@ export function PurchasingPage() {
   const status = params.get('status') ?? '';
   const supplierId = params.get('supplier') ?? '';
   const suppliers = useSuppliers(true);
-  const pos = usePos({ status: status || undefined, supplierId: supplierId || undefined, q: params.get('q') ?? undefined });
+  // 8.2.12（R2）：排序与翻页在服务端做，存在网址里
+  const sort = sortFromParams(params, PO_SORTS);
+  const page = Math.max(0, Number(params.get('page')) || 0);
+  const pos = usePos({
+    status: status || undefined,
+    supplierId: supplierId || undefined,
+    q: params.get('q') ?? undefined,
+    sort: sort.key ?? undefined,
+    dir: sort.key ? sort.dir : undefined,
+    offset: page ? String(page * PO_PAGE_SIZE) : undefined,
+  });
   const openId = Number(params.get('po')) || null;
   // 补货建议（v0.7.29）：有要补的物料时入口上带数量
 
@@ -46,7 +60,7 @@ export function PurchasingPage() {
   const urlQ = params.get('q') ?? '';
   useEffect(() => {
     if (q.trim() === urlQ) return;
-    const t = setTimeout(() => update({ q: q.trim() || null }), 250);
+    const t = setTimeout(() => update({ q: q.trim() || null, page: null }), 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, urlQ]);
@@ -87,7 +101,7 @@ export function PurchasingPage() {
               type="button"
               role="radio"
               aria-checked={status === f.value}
-              onClick={() => update({ status: f.value || null })}
+              onClick={() => update({ status: f.value || null, page: null })}
               className={cn(
                 'tap relative h-8 rounded-full px-3 text-[12.5px] font-semibold transition-colors',
                 status === f.value ? 'bg-ink text-paper' : 'border border-line-strong bg-card text-ink-2 hover:border-ink-3',
@@ -97,7 +111,7 @@ export function PurchasingPage() {
             </button>
           ))}
         </div>
-        <Select fullWidth={false} value={supplierId} onChange={(e) => update({ supplier: e.target.value || null })} className="h-9 min-w-[150px] text-[13px]" aria-label="供应商">
+        <Select fullWidth={false} value={supplierId} onChange={(e) => update({ supplier: e.target.value || null, page: null })} className="h-9 min-w-[150px] text-[13px]" aria-label="供应商">
           <option value="">全部供应商</option>
           {suppliers.data?.map((s) => (
             <option key={s.id} value={s.id}>
@@ -105,16 +119,18 @@ export function PurchasingPage() {
             </option>
           ))}
         </Select>
+        <DocLookup className="min-w-[240px] flex-1 md:max-w-sm" />
         <div className="relative min-w-[200px] flex-1 md:max-w-xs">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="单号 / 供应商 / 备注"
+            placeholder="筛选：单号 / 供应商 / 备注"
             aria-label="搜索采购单"
             className="h-9 w-full rounded-md border border-line-strong bg-card pr-3 pl-9 text-[13px] outline-none focus:border-pine"
           />
         </div>
+        <SortBar keys={PO_SORTS} labels={PO_SORT_LABELS} value={sort} defaultLabel="下单日期新的在前" onChange={(n) => update({ sort: n.key, dir: n.key ? n.dir : null, page: null })} />
       </div>
 
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 py-4 md:px-7">
@@ -156,6 +172,7 @@ export function PurchasingPage() {
                       <span className="truncate text-[13.5px] font-semibold">{p.supplierName}</span>
                       {p.channel && <span className="shrink-0 truncate text-[12px] font-semibold text-ink-3">{p.channel.label}</span>}
                       {p.backfill && <Badge tone="ember">补单</Badge>}
+                      {p.priority && p.priority !== 'normal' && <Badge tone={p.priority === 'urgent' ? 'clay' : 'yuzu'}>{PRIORITY_LABELS[p.priority]}</Badge>}
                     </span>
                     <span className="block truncate text-[12.5px] text-ink-3">
                       {p.summary}
@@ -178,6 +195,19 @@ export function PurchasingPage() {
               </li>
             ))}
           </ul>
+        )}
+        {(page > 0 || (pos.data?.length ?? 0) >= PO_PAGE_SIZE) && (
+          <div className="mt-3 flex items-center justify-center gap-3 text-[13px]" data-testid="po-pager">
+            <button type="button" disabled={page === 0} onClick={() => update({ page: page > 1 ? String(page - 1) : null })} className="font-semibold text-lake disabled:text-ink-4">
+              上一页
+            </button>
+            <span className="text-ink-3">
+              第 {page + 1} 页（每页 {PO_PAGE_SIZE} 张）
+            </span>
+            <button type="button" disabled={(pos.data?.length ?? 0) < PO_PAGE_SIZE} onClick={() => update({ page: String(page + 1) })} className="font-semibold text-lake disabled:text-ink-4">
+              下一页
+            </button>
+          </div>
         )}
       </div>
       <PoSheet id={openId} onClose={() => update({ po: null })} />

@@ -3,7 +3,7 @@
 // 8.0.1（采购组整改 02、03）：红点紧急、绿点普通，待审核按紧急在前、期望到货日期早的在前排；截单以后提交的当天不能通过。
 // 8.1.10 核库转领用：库管多一个页签「待核库」；需求行上写总仓结存与核库结果，部门在这里答复替代（StockCheck.tsx）。
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { ClipboardList, Download, ExternalLink, Inbox, PackageCheck, PackageSearch, Pencil, Plus, ShoppingCart, X } from 'lucide-react';
 import { formatQty } from '@shared/quantity';
@@ -84,6 +84,13 @@ export function RequestsPage() {
   // 按提交日期筛选；不填就是全部（导出时没填按本月）
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  // 8.2.12（R1）：按单号 / 商城单号 / 物品名称搜（服务端，停手 250 毫秒再查）
+  const [qText, setQText] = useState('');
+  const [q, setQ] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setQ(qText.trim()), 250);
+    return () => clearTimeout(t);
+  }, [qText]);
   // 状态里的「待核库」不是需求单的状态，按 stock=open 查
   const list = useRequests(
     view === 'stock'
@@ -94,6 +101,7 @@ export function RequestsPage() {
           departmentId: departmentId || undefined,
           from: from || undefined,
           to: to || undefined,
+          q: q || undefined,
         },
   );
   // 导出与列表同一个筛选：状态里的「待核库」按 stock=open 导（Codex 审查 b3ca67a）
@@ -104,6 +112,8 @@ export function RequestsPage() {
       status: status === 'stock' ? '' : status,
       stock: status === 'stock' ? 'open' : '',
       departmentId,
+      // 搜索词也带上：导出的就是列表里搜出来的那些单
+      q,
     }).filter(([, v]) => v) as [string, string][],
   ).toString();
   const openId = Number(params.get('request')) || null;
@@ -207,6 +217,16 @@ export function RequestsPage() {
                   ))}
                 </Select>
               )}
+              <Input
+                value={qText}
+                onChange={(e) => setQText(e.target.value)}
+                placeholder="单号 / 物品名称"
+                aria-label="搜索需求单"
+                fullWidth={false}
+                className="h-9 w-44"
+                maxLength={64}
+                data-testid="requests-search"
+              />
               <label className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-3">
                 提交日期
                 <Input type="date" fullWidth={false} value={from} max={to || session.calendarToday} onChange={(e) => setFrom(e.target.value)} className="h-9 w-36" aria-label="提交日期从" />

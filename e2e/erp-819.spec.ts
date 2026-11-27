@@ -1,12 +1,13 @@
 // 8.1.9 ERP 供应链（docs/ERP_V819.md）的浏览器验收：
 //   ① 备用金申用（8.1.42 起零采备用金并进备用金，docs/V8142_PETTY.md）：店主给部门打备用金 → 采购经办在这个部门的备用金上申用、
-//      提交报销（未补单）→ 店主在「费用报销」按这笔申用登记报销（钱从备用金来）→ 报销单确认后这笔是「已报销」；
+//      提交报销（未补单）→ 店主在「费用报销」按这笔申用登记报销（钱从备用金来）→ 临时负责人审批（8.2.12 B1）→ 报销单确认后这笔是「已报销」；
 //   ② 库管入库：物资经办在库存页点「库管入库」，不选采购单，直接选物料、填单价，确认入库，单据上标「库管入库」；
 //   （8.1.9 的③「导入入库台账」8.1.20 起换成出入库台账，用例在 e2e/erp-8120.spec.ts。）
 // 依赖演示数据（seed-demo 与 seed-inventory-demo：店主 linlan、采购 zhouyi、物资 lixiao，密码 yuzu2026）。会登记单据，只在门店电脑尺寸执行；
 // 每次用新的说明与金额，不改演示数据里已有的档案。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
+import { deputyApproveClaim, makeDeputy } from './deputy';
 import { passPortal } from './portal';
 
 const PASSWORD = 'yuzu2026';
@@ -23,7 +24,7 @@ async function login(page: Page, username: string) {
 test.describe('8.1.9 ERP 供应链', () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) < 1280, '会登记单据的流程只在门店电脑尺寸执行一次');
 
-  test('备用金申用（8.1.42 起零采备用金并进备用金）：申用 → 提交报销 → 财务按申用登记报销（钱从备用金来）→ 不再占用', async ({ browser }) => {
+  test('备用金申用（8.1.42 起零采备用金并进备用金）：申用 → 提交报销 → 财务按申用登记报销（钱从备用金来）→ 负责人审批 → 不再占用', async ({ browser, playwright, baseURL }) => {
     test.setTimeout(150_000);
     const tag = String(Date.now()).slice(-6);
     // 店主：给第一个部门打一笔备用金（之前没跑完的申用也放得下）
@@ -96,7 +97,12 @@ test.describe('8.1.9 ERP 供应链', () => {
     await boss.getByTestId('claim-submit').click();
     await expect(boss).toHaveURL(/\/erp\/expenses\?claim=\d+/);
     const claimSheet = boss.getByTestId('claim-sheet');
-    await expect(claimSheet).toContainText('已确认');
+    // 8.2.12（B1）起报销不自动通过：登记后等别人审批，临时负责人审完才确认
+    await expect(claimSheet).toContainText('待确认');
+    const claimId = Number(new URL(boss.url()).searchParams.get('claim'));
+    expect((await deputyApproveClaim(await makeDeputy(boss, playwright, baseURL), claimId)).status).toBe('confirmed');
+    await boss.reload();
+    await expect(boss.getByTestId('claim-sheet')).toContainText('已确认');
     await expect(boss.getByTestId('claim-petty-uses')).toContainText('¥123.45');
 
     // 采购经办：这笔已报销，挂着那张报销单

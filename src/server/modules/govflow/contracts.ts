@@ -187,7 +187,7 @@ async function createContract(deps: Deps, input: ContractInputT, actor: Actor, o
       INSERT INTO gf_contract_versions (doc_id, version, kind, approval_cents, created_by)
       VALUES (${id}, ${opts.version ?? 1}, ${opts.relatedDocId ? 'reroute' : 'initial'}, ${p.approvalCents}, ${actor.id})`;
     const doc = await loadDoc(tx, id, true);
-    await submitFlow(tx, doc, templateFor(doc), actor);
+    await submitFlow(tx, doc, await templateFor(tx, doc), actor);
     return id;
   };
   if (opts.tx) return run(opts.tx);
