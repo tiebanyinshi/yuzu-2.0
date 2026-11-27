@@ -63,6 +63,12 @@ function checkQuestion(input: Omit<QuestionFields, 'version'>) {
   return q;
 }
 
+/** 按编号取题（AI 出题、表格导入以后返回给页面） */
+export async function questionsByIds(db: Db, ids: number[]): Promise<AcademyQuestion[]> {
+  if (!ids.length) return [];
+  return (await db<QuestionRow[]>`SELECT ${QUESTION_COLS(db)} FROM academy_questions WHERE id IN ${db(ids)} ORDER BY id`).map(toQuestion);
+}
+
 export async function adminQuestions(db: Db, courseId: number): Promise<AcademyQuestion[]> {
   const rows = await db<QuestionRow[]>`SELECT ${QUESTION_COLS(db)} FROM academy_questions WHERE course_id = ${courseId} ORDER BY status = 'retired', id`;
   return rows.map(toQuestion);
@@ -105,6 +111,10 @@ export async function updateQuestion(sql: Sql, id: number, raw: unknown, ctx: Op
   const input = parse(QuestionUpdate, raw);
   const q = checkQuestion(input);
   return withTx(sql, async (tx) => {
+    // 课程一行 → 题一行：与题库新建、导入课程包同一个顺序（改完要记课程「本地改过」，Codex 审查 a69d88e）；题不会换课程
+    const [ref] = await tx<{ courseId: number }[]>`SELECT course_id FROM academy_questions WHERE id = ${id}`;
+    if (!ref) throw notFound('没有这道题');
+    await tx`SELECT id FROM academy_courses WHERE id = ${ref.courseId} FOR NO KEY UPDATE`;
     const [had] = await tx<QuestionRow[]>`SELECT ${QUESTION_COLS(tx)} FROM academy_questions WHERE id = ${id} FOR NO KEY UPDATE`;
     if (!had) throw notFound('没有这道题');
     const same =

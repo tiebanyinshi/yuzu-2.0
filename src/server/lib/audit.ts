@@ -53,6 +53,8 @@ export type AuditAction =
   | 'academy_question_saved'
   | 'academy_signoff'
   | 'academy_certificate_revoked'
+  | 'academy_pack_imported'
+  | 'academy_questions_imported'
   | 'training_file_saved'
   // 业财法审批流（2026-11-26，docs/APPROVAL_V4.md）：角色映射、事项（新建 / 提交 / 撤回 / 执行）、审批动作、微信特批
   | 'gf_role'

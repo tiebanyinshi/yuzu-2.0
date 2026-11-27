@@ -438,3 +438,76 @@ export interface AcademyMeDetail {
   streak: number;
   canCoach: boolean;
 }
+
+/** 内置课件包里的一门课与它在库里的状态：new 还没导入 / same 已导入且一样 / changed 包里有新内容 / edited 导入后本地改过（不覆盖） */
+export type AcademyPackState = 'new' | 'same' | 'changed' | 'edited';
+export const ACADEMY_PACK_STATE_LABELS: Record<AcademyPackState, string> = { new: '还没导入', same: '已导入', changed: '有新内容', edited: '本地改过' };
+
+export interface AcademyPackCourse {
+  code: string;
+  title: string;
+  category: AcademyCategory;
+  summary: string;
+  lessons: number;
+  questions: number;
+  minutes: number;
+  state: AcademyPackState;
+  courseId: number | null;
+  status: AcademyStatus | null;
+}
+
+export interface AcademyPackPath {
+  code: string;
+  title: string;
+  summary: string;
+  courseCodes: string[];
+  /** 导入时建的指派（导入为草稿时指派先停用） */
+  assignments: string[];
+  state: AcademyPackState;
+  pathId: number | null;
+  status: AcademyStatus | null;
+}
+
+export interface AcademyPackStatus {
+  version: number;
+  courses: AcademyPackCourse[];
+  paths: AcademyPackPath[];
+}
+
+export interface AcademyPackImportResult {
+  courses: { code: string; title: string; result: 'created' | 'updated' | 'unchanged' | 'skipped' }[];
+  paths: { code: string; title: string; result: 'created' | 'updated' | 'unchanged' | 'skipped' }[];
+}
+
+/** 问柚子每人每天最多问几次（XT10） */
+export const ACADEMY_TUTOR_DAILY_LIMIT = 30;
+
+export interface AcademyTutorAnswer {
+  id: number;
+  question: string;
+  answer: string | null;
+  /** 回答引用的课时 */
+  sources: { lessonId: number; title: string }[];
+  status: 'answering' | 'done' | 'failed' | 'unconfigured';
+  error: string | null;
+  createdAt: string;
+}
+
+export interface AcademyTutorView {
+  items: AcademyTutorAnswer[];
+  usedToday: number;
+  limit: number;
+  /** off 没配模型服务 / mock 模拟 / live 正式 */
+  mode: 'off' | 'mock' | 'live';
+}
+
+/** AI 出题的结果：进题库的草稿、不合格被丢掉的条数 */
+export interface AcademyAiGenerateResult {
+  questions: AcademyQuestion[];
+  dropped: number;
+}
+
+/** 从表格导入题的结果 */
+export interface AcademyTableImportResult {
+  questions: AcademyQuestion[];
+}

@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "paths": [
+    {
+      "code": "new-hire",
+      "title": "新员工入职地图",
+      "summary": "所有新同事入职 30 天内学完：先认识汤崎，再学全员应知应会、泡汤安全、WCP 怎么用、怎么服务客人。",
+      "cover": "yuzu",
+      "sort": 10,
+      "credits": 5,
+      "validMonths": null,
+      "courses": ["tangqi-way", "mk-general", "spa-103", "sys-wcp", "spa-106"],
+      "assign": [
+        {
+          "audience": "all",
+          "required": true,
+          "dueDays": 30
+        }
+      ]
+    },
+    {
+      "code": "front-growth",
+      "title": "前厅收银成长地图",
+      "summary": "前厅部的同事：接待与收银应知应会、收银台怎么操作、宾客体验与服务补救、门店经营常识。",
+      "cover": "lake",
+      "sort": 20,
+      "credits": 5,
+      "validMonths": null,
+      "courses": ["mk-front", "sys-cashier", "spa-106", "spa-107"],
+      "assign": [
+        {
+          "audience": "department",
+          "department": "front",
+          "required": true,
+          "dueDays": 60
+        }
+      ]
+    },
+    {
+      "code": "bath-growth",
+      "title": "浴区服务成长地图",
+      "summary": "男宾部、女宾部的同事：浴区服务应知应会、汤泉与水疗基础、卫生法规、泡汤安全。",
+      "cover": "pine",
+      "sort": 30,
+      "credits": 5,
+      "validMonths": null,
+      "courses": ["mk-bath", "spa-102", "spa-104", "spa-103"],
+      "assign": [
+        {
+          "audience": "department",
+          "department": "male",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "department",
+          "department": "female",
+          "required": true,
+          "dueDays": 60
+        }
+      ]
+    },
+    {
+      "code": "wellness-growth",
+      "title": "保健技师成长地图",
+      "summary": "保健部、康美部的同事：钟房规则与服务流程、按摩保健基础与服务边界、泡汤安全、宾客体验。",
+      "cover": "ember",
+      "sort": 40,
+      "credits": 5,
+      "validMonths": null,
+      "courses": ["mk-wellness", "spa-105", "spa-103", "spa-106"],
+      "assign": [
+        {
+          "audience": "department",
+          "department": "wellness",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "department",
+          "department": "kangmei",
+          "required": true,
+          "dueDays": 60
+        }
+      ]
+    },
+    {
+      "code": "dining-growth",
+      "title": "餐饮出品成长地图",
+      "summary": "餐饮部、出品部的同事：点单、档口与沽清，食品安全，公共场所卫生，宾客体验。",
+      "cover": "yuzu",
+      "sort": 50,
+      "credits": 5,
+      "validMonths": null,
+      "courses": ["mk-dining", "spa-104", "spa-106"],
+      "assign": [
+        {
+          "audience": "department",
+          "department": "dining",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "department",
+          "department": "kitchen",
+          "required": true,
+          "dueDays": 60
+        }
+      ]
+    },
+    {
+      "code": "safety-annual",
+      "title": "安全与巡场年度复训",
+      "summary": "消防、用电、巡场与突发事件处置，加上泡汤安全与卫生常识。工程部必修，其他同事推荐；证书一年有效。",
+      "cover": "clay",
+      "sort": 60,
+      "credits": 5,
+      "validMonths": 12,
+      "courses": ["mk-safety", "spa-103", "spa-104"],
+      "assign": [
+        {
+          "audience": "department",
+          "department": "eng",
+          "required": true,
+          "dueDays": 30
+        },
+        {
+          "audience": "all",
+          "required": false
+        }
+      ]
+    },
+    {
+      "code": "lead-growth",
+      "title": "主管带教地图",
+      "summary": "各部门负责人：怎么带新人、怎么签实操，怎么把客诉变成回头客，门店经营常识。",
+      "cover": "clay",
+      "sort": 70,
+      "credits": 5,
+      "validMonths": null,
+      "courses": ["mgmt-coach", "spa-106", "spa-107"],
+      "assign": [
+        {
+          "audience": "position",
+          "position": "hr.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "front.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "male.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "female.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "ent.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "dining.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "kangmei.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "kitchen.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "wellness.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "eng.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "finance.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "outreach.lead",
+          "required": true,
+          "dueDays": 60
+        },
+        {
+          "audience": "position",
+          "position": "vip.lead",
+          "required": true,
+          "dueDays": 60
+        }
+      ]
+    },
+    {
+      "code": "spa-general",
+      "title": "水疗行业通识",
+      "summary": "从沐浴文化源流到经营常识，七门行业通识课，人人可选。",
+      "cover": "moss",
+      "sort": 80,
+      "credits": 5,
+      "validMonths": null,
+      "courses": ["spa-101", "spa-102", "spa-103", "spa-104", "spa-105", "spa-106", "spa-107"],
+      "assign": [
+        {
+          "audience": "all",
+          "required": false
+        }
+      ]
+    }
+  ]
+}

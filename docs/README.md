@@ -29,6 +29,7 @@
 ## 模块设计与专题（设计稿与实现说明；模块改了要跟着改）
 
 - [`ACADEMY.md`](ACADEMY.md)：汤崎学堂 · 员工培训体系（店主 2026-11-27）
+- [`ACADEMY_PACKS.md`](ACADEMY_PACKS.md)：汤崎学堂 · 内置课件清单与核对单
 - [`AI_V8022.md`](AI_V8022.md)：8.0.22 设计 · AI 辅助（MD-D）
 - [`APPROVALS.md`](APPROVALS.md)：审批中心（v0.7.30）
 - [`APPROVAL_V4.md`](APPROVAL_V4.md)：业财法审批流（V4.0，P01–P07）
