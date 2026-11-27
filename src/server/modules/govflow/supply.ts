@@ -32,6 +32,7 @@ import {
   type SupplierStatus,
   type SupplyCategory,
 } from '@shared/govflow-supply';
+import { maskAccount } from '@shared/mask';
 import { can } from '@shared/permissions';
 import type { Db, Fragment, Tx } from '../../db';
 import { isUniqueViolation } from '../../db';
@@ -65,7 +66,6 @@ async function seesBank(db: Db, actor: Actor) {
   const roles = await rolesOf(db, actor.id);
   return roles.some((r) => r === 'supply_chain_head' || r === 'cfo' || r === 'finance_chief' || r === 'cashier' || r === 'chairman');
 }
-const mask = (acct: string) => (acct.length <= 4 ? acct.replace(/./g, '*') : `****${acct.slice(-4)}`);
 
 // ───────────────────────── 读 ─────────────────────────
 
@@ -122,7 +122,7 @@ async function toViews(db: Db, actor: Actor, rows: SupplierRow[], timeZone: stri
       phone: r.phone,
       address: r.address,
       bankName: r.bankName,
-      bankAccount: full ? r.bankAccount : mask(r.bankAccount),
+      bankAccount: full ? r.bankAccount : maskAccount(r.bankAccount),
       accountName: r.accountName,
       bankMasked: !full,
       qualifications: r.qualifications,

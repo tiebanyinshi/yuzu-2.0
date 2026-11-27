@@ -134,4 +134,27 @@ describe('请求编号记进审计（迁移 490）', () => {
     await runMinuteJobs({ sql: ctx.sql, config: ctx.config }, log);
     expect(jobStatuses().find((j) => j.name === '草稿清理')).toMatchObject({ ok: true, failures: 0 });
   });
+  it('内容安全策略的报告（8.1.56）：两种写法都收、不要登录、回 204；认不出的也回 204、不记', async () => {
+    const legacy = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/csp-report',
+      headers: { 'content-type': 'application/csp-report' },
+      payload: JSON.stringify({ 'csp-report': { 'blocked-uri': 'https://evil.example/x.js', 'violated-directive': 'script-src' } }),
+    });
+    expect(legacy.statusCode).toBe(204);
+    const modern = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/csp-report',
+      headers: { 'content-type': 'application/reports+json' },
+      payload: JSON.stringify([{ type: 'csp-violation', body: { blockedURL: 'inline' } }]),
+    });
+    expect(modern.statusCode).toBe(204);
+    const junk = await ctx.app.inject({ method: 'POST', url: '/api/csp-report', headers: { 'content-type': 'application/csp-report' }, payload: 'not json' });
+    expect(junk.statusCode).toBe(204);
+  });
+
+  it('健康检查分两种（8.1.56）：/api/ping 不查库，/api/health 查库', async () => {
+    expect((await ctx.app.inject({ method: 'GET', url: '/api/ping' })).json()).toMatchObject({ ok: true });
+    expect((await ctx.app.inject({ method: 'GET', url: '/api/health' })).json()).toMatchObject({ ok: true });
+  });
 });

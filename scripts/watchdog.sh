@@ -90,9 +90,18 @@ fi
 health=$(curl -fsS -m 10 "http://${host}:${bind##*:}/api/health" 2>/dev/null || true)
 maintenance=""
 [[ -f .deploy/maintenance ]] && maintenance=$(cat .deploy/maintenance)
+# 健康检查分两种（8.1.56，后端评估第 8 节）：/api/health 要查数据库（能服务），/api/ping 不查（活着）。
+# 只有应用本身不响应才重启应用；应用活着、数据库查不了的，告警但不重启（重启应用治不了数据库慢，反而打断正在做的事）
+ping=""
+[[ "$health" == *'"ok":true'* ]] || ping=$(curl -fsS -m 10 "http://${host}:${bind##*:}/api/ping" 2>/dev/null || true)
 if [[ "$health" == *'"ok":true'* ]]; then
   rm -f "$state/health.fails"
   resolve app "应用健康检查恢复正常"
+  resolve db "数据库恢复正常"
+elif [[ "$ping" == *'"ok":true'* ]]; then
+  rm -f "$state/health.fails"
+  log "应用在运行，但查不了数据库"
+  alert db "应用在运行，但查不了数据库（数据库慢、停了或磁盘满）。看门狗不重启应用；请看 docker compose ps db、磁盘空间。"
 elif [[ -n "$maintenance" ]]; then
   since=${maintenance%% *}
   if [[ $((now - since)) -gt 1800 ]]; then

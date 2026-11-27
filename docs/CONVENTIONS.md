@@ -24,6 +24,8 @@
   - 存文件 `lib/utils` 的 `downloadBlob` / `downloadCsvRows`；
   - 服务端的过载保护、频率限制、访问网段在 `lib/protect`（新的「问连没连上」类接口加进它的 `PROBE_PATHS`，对外不用登录的接口放在 `/api/public/` 下）。
   - 后端底座（8.1.48 / 8.1.52，`docs/BACKEND_REVIEW_V8148.md`）：新端口用 `lib/http-kit`（请求编号、日志脱敏、统一错误出口、服务密钥比对 `sharedKeyMatcher`，换密钥期间的旧密钥放进 `<名字>_PREVIOUS`）；开带时限的事务用 `lib/tx` 的 `withTx`；「隔一阵才跑一次」的任务用 `lib/throttle` 的 `every`；接口的输入直接 `parse(模式, req.body)`，不写 `req.body as X`（`check:gov` 的 `request-cast` 只降不升）。
+  - 8.1.56 起：别的领域只引用 `src/server/modules/<领域>/index.ts`，不直接引用它的内部文件（`check:gov` 的 `module-internal` 只降不升，要用的先在那个领域的 `index.ts` 导出）；页面要按错误码分别处理的码登记在 `src/shared/error-codes.ts`（`tests/error-codes.test.ts` 核对）；手机号、银行账号的打码用 `src/shared/mask.ts`；采购商城的对外接口改了要重新生成 `docs/contracts/mall-api.json`（`tests/mall-contract.test.ts`）。
+  - 分页（8.1.56）：**新接口一律用游标**——查询参数 `before`（上一页最后一条的编号或时刻）+ `limit`（默认 50，上限 200），返回 `{ items, nextCursor }`，`nextCursor` 为 `null` 表示没有了；不新写 `offset` 或 `page/pageSize`。旧接口的三种写法不动（页面已经照着用）。
 
 ## 4. 页面部件、目标设备与屏幕高度
 
@@ -49,4 +51,3 @@
 ## 6. 名词
 
 - **沽清**（8.1.15，店主 2026-11-19《浴族系统需求汇总》餐饮第 1 条）：一道菜今天卖完、不再接单；也指给一道菜定「今天还剩几份」。页面、提示、导出、权限名、审计动作的中文名、用例、注释都写「沽清」，不写「估清」——两个写法是同一个意思，以前的交接说明、变更记录、决定记录里的「估清」不回头改。数据库里的表名、键与接口地址不动（`dish_limits`、`/dining/limits`、`DISH_SOLD_OUT`）。`npm run check:code` 第 4 条查主线的源码与用例；小程序线的目录由小程序线自己改。
-

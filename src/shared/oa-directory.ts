@@ -46,9 +46,7 @@ export interface Directory {
   canConfigure: boolean;
 }
 
-export function maskPhone(phone: string): string {
-  return phone.length === 11 ? `${phone.slice(0, 3)}****${phone.slice(7)}` : '****';
-}
+export { maskPhoneCompact as maskPhone } from './mask';
 
 /** 搜索：姓名、工号、手机号（打码的不按手机号搜） */
 export function matchPerson(p: DirectoryPerson, q: string): boolean {

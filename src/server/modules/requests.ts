@@ -773,7 +773,7 @@ export async function actOnRequest(deps: Deps, requestId: number, action: 'appro
 
 // ───────────────────────── 图片 ─────────────────────────
 
-const ImageInput = z.object({
+export const ImageInput = z.object({
   mime: z.enum(['image/jpeg', 'image/png', 'image/webp'], '只能上传 JPEG、PNG、WebP 图片'),
   data: z.string().min(16).max(1_500_000),
 });
