@@ -43,6 +43,10 @@ test.describe('测试服 E2E 报告的回归', () => {
     await expect(submit).toBeDisabled();
     await expect(page.getByTestId('checkout-row-problem')).toContainText('客人实给少于这笔现金');
     await tendered.fill('1000');
+    // 8.2.30（CM-4）：找零超过 ¥500（或超过这笔的 2 倍）要勾「已核对找零」才能结
+    await expect(submit).toBeDisabled();
+    await expect(page.getByTestId('checkout-row-problem')).toContainText('已核对找零');
+    await page.getByTestId('cash-change-confirm').check();
     await expect(page.getByTestId('checkout-row-problem')).toHaveCount(0);
     await expect(submit).toBeEnabled();
     await expect(page.getByTestId('pay-row-cash')).toContainText('找零');
