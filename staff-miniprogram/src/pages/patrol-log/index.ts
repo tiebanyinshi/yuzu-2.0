@@ -48,9 +48,12 @@ Page({
       const day = await patrolDay(date === this.data.today ? undefined : date);
       if (mySeq !== seq) return;
       const pick = this.data.pick !== null && day.rounds.some((r) => r.no === this.data.pick) ? this.data.pick : null;
+      // 营业日还没换（过了零点、没到换日时间）时门店系统回的「今天」不是日历上的今天：选中的日子跟着它，
+      // 不然点轮次、下拉刷新会把日历上的日子当成「以后的日子」去问
       this.setData({
         state: 'ready',
         today: day.today,
+        date: day.date,
         dateText: (day.date === day.today ? '今天 · ' : '') + dayLabel(day.date),
         canViewHistory: day.canViewHistory,
         view: patrolView(day, pick),

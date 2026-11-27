@@ -6,6 +6,7 @@ import type { EntryView } from '../../utils/entries';
 import { entryGroups } from '../../utils/entries';
 import { dayLabel, greeting } from '../../utils/format';
 import { requireMe } from '../../utils/guard';
+import { hasPatrolLink } from '../../utils/patrol';
 import { largeTextOn } from '../../utils/prefs';
 import { refreshMe } from '../../utils/session';
 
@@ -21,7 +22,13 @@ Page({
   async onShow() {
     this.setData({ large: largeTextOn() });
     const me = await requireMe();
-    if (me) this.show(me);
+    if (!me) return;
+    // 微信扫一扫扫了巡场码打开、要先登录的：登录以后（登录完回到首页）接着去巡场页交
+    if (hasPatrolLink() && me.entries.indexOf('patrol') >= 0) {
+      wx.navigateTo({ url: '/pages/patrol/index' });
+      return;
+    }
+    this.show(me);
   },
 
   show(me: StaffMpMe) {

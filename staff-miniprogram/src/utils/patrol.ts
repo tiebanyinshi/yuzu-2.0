@@ -111,3 +111,13 @@ export function takePatrolLink(): { code: string; at: number } | null {
     return null;
   }
 }
+
+/** 手机上有没有等着交的巡场码（不取走）：登录以后首页看到就转去巡场页 */
+export function hasPatrolLink(): boolean {
+  try {
+    const v = wx.getStorageSync(LINK_KEY) as { code: string; at: number } | '';
+    return !!v && typeof v.code === 'string' && Date.now() - v.at < LINK_TTL_MS;
+  } catch {
+    return false;
+  }
+}
