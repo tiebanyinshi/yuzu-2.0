@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { todayIn } from '../src/server/modules/inventory/common';
+import { docRequestHashesOf } from '../src/server/modules/inventory/docs';
 import { seedInventoryDemo } from '../src/server/seed-inventory';
 import { api, login, setup, type TestContext } from './helpers';
 
@@ -55,6 +56,36 @@ beforeAll(async () => {
 afterAll(async () => ctx.close());
 
 describe('库管入库', () => {
+  it('8.2.6 补丁前写进库的原请求摘要（带为 0 的待判）：原样重提照样认出原单，不报操作编号冲突（Codex 审查 #58）', async () => {
+    const raw = {
+      clientKey: randomUUID(),
+      docType: 'receipt',
+      docDate: today,
+      supplierId: cash.id,
+      direct: true,
+      lines: [{ materialId: mat.id, deliveredMilli: q(1), acceptedMilli: q(1), priceCents: 2000 }],
+    };
+    const first = await api(ctx.app, keeper, 'POST', '/api/inventory/docs', raw);
+    expect([200, 201], JSON.stringify(first.body)).toContain(first.status);
+    const { requestHash, legacy826Hash } = docRequestHashesOf(raw);
+    expect(legacy826Hash).not.toBe(requestHash);
+    // 新写入的用去掉 0 的摘要
+    const [stored] = await ctx.sql<{ requestHash: string }[]>`SELECT request_hash FROM idempotency_keys WHERE key = ${raw.clientKey}`;
+    expect(stored!.requestHash).toBe(requestHash);
+    // 模拟 8.2.6 补丁前提交的：库里记的是带 holdMilli: 0 的摘要
+    await ctx.sql.begin(async (tx) => {
+      await tx`ALTER TABLE idempotency_keys DISABLE TRIGGER idempotency_keys_append_only`;
+      await tx`UPDATE idempotency_keys SET request_hash = ${legacy826Hash} WHERE key = ${raw.clientKey}`;
+      await tx`ALTER TABLE idempotency_keys ENABLE TRIGGER idempotency_keys_append_only`;
+    });
+    const again = await api(ctx.app, keeper, 'POST', '/api/inventory/docs', raw);
+    expect([200, 201], JSON.stringify(again.body)).toContain(again.status);
+    expect(again.body.doc.id).toBe(first.body.doc.id);
+    // 内容真变了的照旧拒绝
+    const changed = await api(ctx.app, keeper, 'POST', '/api/inventory/docs', { ...raw, lines: [{ ...raw.lines[0], deliveredMilli: q(2), acceptedMilli: q(2) }] });
+    expect(changed.body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+  });
+
   it('不选采购单也能收货：确认入库、进总仓、算成本；现付供应商不记应付、挂账的记应付', async () => {
     const before = await stock(mat.id);
     const r = await direct();
