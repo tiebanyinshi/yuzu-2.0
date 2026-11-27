@@ -440,6 +440,7 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '540_technicians_v8222.sql',
   '550_frontdesk_guest.sql',
   '560_dining_v8224.sql',
+  '570_review_v825.sql',
   '570_mall_dispatch.sql',
 ];
 

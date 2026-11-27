@@ -449,7 +449,7 @@ export type FrontdeskOpLookup =
   | { found: true; type: 'checkin'; checkin: CheckinResult }
   | { found: true; type: 'bill_post' | 'tag_swap' | 'line_move' | 'visit_incident' | 'line_discount' | 'tag_deposit' | 'tag_deposit_refund'; visit: VisitDetail }
   | { found: true; type: 'checkout' | 'table_checkout'; checkout: CheckoutDetail }
-  | { found: true; type: 'table_open' | 'table_post'; session: import('./dining').TableSessionDetail }
+  | { found: true; type: 'table_open' | 'table_post' | 'table_return'; session: import('./dining').TableSessionDetail }
   | { found: true; type: 'room_checkin' | 'room_extend' | 'room_deposit' | 'room_refund' | 'room_close'; stay: import('./rooms').StayDetail }
   | { found: true; type: 'usage_open' | 'usage_end' | 'usage_cancel'; usage: import('./usages').UsageDetail }
   | { found: true; type: 'checkout_refund'; refund: import('./checkout').RefundDetail }

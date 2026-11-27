@@ -257,8 +257,13 @@ export async function previewCheckout(deps: Deps, visitIds: number[], at = new D
           SELECT id, name, member_no, status, principal_balance, bonus_balance FROM members
           WHERE id IN ${tx(rows.flatMap((r) => (r.memberId ? [r.memberId] : [])))} ORDER BY id`
       : [];
-    // 充值当日的储值额度（8.0.4 需求表 04）：选储值支付时页面显示剩余额度、超了先拦
-    const members = await withSpendQuota(tx, memberRows, date, (await loadSettings(tx)).rechargeSpendPct);
+    // 充值当日的储值额度（8.0.4 需求表 04）：选储值支付时页面显示剩余额度、超了先拦。
+    // 押着的储值押金结账时先退回原卡（撤销那笔消费）再扣：额度也按退回以后的算（8.2.5，Codex 审查）
+    const reversing = (
+      await tx<{ consumptionId: number }[]>`
+        SELECT consumption_id FROM tag_deposits WHERE visit_id IN ${tx(ids)} AND status = 'held' AND consumption_id IS NOT NULL`
+    ).map((r) => Number(r.consumptionId));
+    const members = await withSpendQuota(tx, memberRows, date, (await loadSettings(tx)).rechargeSpendPct, reversing);
     // 浴票延迟（v0.7.25 续）：会员的门票在跳档宽限之上多给几分钟（按此刻推算的档阶，与结账时同一算法）
     const extensions = await memberTicketExtensions(
       tx,

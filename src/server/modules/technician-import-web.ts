@@ -210,7 +210,12 @@ export async function applyTechnicianImport(deps: Deps, raw: unknown, ctx: OpCon
     for (const p of updates) {
       const r = byNo.get(p.techNo)!;
       const had = existing.get(p.techNo)!;
-      await tx`SELECT id FROM technicians WHERE id = ${had.id} FOR UPDATE`;
+      // 锁住以后再核对一次版本：plan() 读名册到这里之间别人改过这位技师（编辑不取导入的咨询锁），就整批拒绝、
+      // 不拿读到的旧值盖掉别人的修改（8.2.5，Codex 审查）。锁的顺序照旧：组别在前、技师在后
+      const [now] = await tx<{ updatedAt: Date }[]>`SELECT updated_at FROM technicians WHERE id = ${had.id} FOR UPDATE`;
+      if (!now || new Date(now.updatedAt).getTime() !== new Date(had.updatedAt).getTime()) {
+        throw conflict('IMPORT_STALE', `预览以后 ${p.techNo} 号的档案被改过，请重新预览再导入`);
+      }
       await tx`
         UPDATE technicians SET nickname = ${r.nickname || had.nickname}, phone = ${r.phone ?? had.phone}, group_id = ${r.group ? groupOf(r.group) : had.groupId},
                height_cm = ${r.heightCm ?? had.heightCm}, weight_kg = ${r.weightKg ?? had.weightKg}, star = ${r.star ?? had.star}, updated_at = now()
