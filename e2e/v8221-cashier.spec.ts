@@ -38,11 +38,15 @@ test('收银台：F9 先选手牌再结账、单项打折、快捷键一览', as
   expect(post.ok(), await post.text()).toBe(true);
 
   await page.goto('/crm/cashier');
+  // 页面挂好（快捷键在页面挂好以后才接管键盘）再按
+  await expect(page.getByRole('textbox', { name: '牌号快检' })).toBeVisible();
   await page.keyboard.press('?');
   await expect(page.getByTestId('hotkey-help')).toContainText('买单（结账）');
   await page.keyboard.press('Escape');
 
   // 没打开手牌时按 F9：先选手牌，选好接着打开结账
+  // 等收银台的待结账列表刷出这张牌（上面刚用接口发的牌，页面的看板可能还没刷到）
+  await expect(page.getByTestId(`queue-${free!.code}`)).toBeVisible();
   await page.keyboard.press('F9');
   await expect(page.getByTestId('hotkey-pick-tag')).toBeVisible();
   await page.getByTestId('hotkey-pick-input').fill(free!.code);

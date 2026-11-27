@@ -27,7 +27,7 @@ test('一报多：默认 3 行，再加一行变 4 行；没填客人时不能�
 
 test('后台技师名册：导入技师与模板下载', async ({ page }) => {
   await login(page, 'linlan');
-  await page.goto('/admin/technicians?tab=roster');
+  await page.goto('/admin/technicians/roster');
   await expect(page.getByTestId('technician-import')).toBeVisible();
   const res = await page.request.get('/api/admin/technicians/import-template.csv');
   expect(res.ok()).toBe(true);

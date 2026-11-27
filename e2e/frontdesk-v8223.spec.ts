@@ -50,6 +50,8 @@ test.describe('8.2.3 前台', () => {
 
   test('客人类别、偏好全店可见、同行移出、客诉台账', async ({ page, browser, baseURL }) => {
     const clerk = await apiAs(browser, baseURL, 'xiaozhou');
+    // 每次跑带唯一尾号：重跑（CI 重试）时上一次留下的客诉不会让定位器撞车
+    const note = `E2E8223 水温低 ${randomUUID().slice(0, 8)}`;
     const [a, b] = await freeTags(clerk, 2);
     const r = await clerk.post('/api/frontdesk/checkins', {
       data: {
@@ -76,7 +78,7 @@ test.describe('8.2.3 前台', () => {
       await expect(page.getByTestId(`mate-leave-${b}`)).toHaveCount(0);
       // 客诉备注
       await page.getByTestId('remark-tags').getByRole('button', { name: '客诉' }).click();
-      await page.getByTestId('remark-note').fill('E2E8223 水温低');
+      await page.getByTestId('remark-note').fill(note);
       await page.getByTestId('remark-submit').click();
       // 点单页看得到偏好
       await page.goto('/crm/dining');
@@ -87,7 +89,7 @@ test.describe('8.2.3 前台', () => {
       // 客诉台账（值班经理）
       await login(page, 'zhangjl');
       await page.goto('/crm/complaints');
-      const row = page.getByTestId('complaints').getByText('E2E8223 水温低');
+      const row = page.getByTestId('complaints').getByText(note);
       await expect(row).toBeVisible();
     } finally {
       const duty = await apiAs(browser, baseURL, 'zhangjl');
