@@ -33,8 +33,20 @@ import { voidCheckout } from './checkout';
 import { businessDate, findKey, hashRequest, nextDocNo, runIdempotent, saveKey, setTxTimeouts } from './common';
 import { createRefund, RefundInput } from './refunds';
 
-// 退款申请不带钱箱（Codex 审查 06b2eee P2 安全）：从哪个钱箱退现金由批准人选，申请人带的 refundShiftId 丢掉不存
-const RefundBody = RefundInput.omit({ clientKey: true, refundShiftId: true });
+// 退款申请只带「退什么、按什么方式退多少」：怎么执行由批准人定（Codex 审查 06b2eee、8cf7faa，安全）——
+//   · 钱箱（refundShiftId）：批准人选，申请人带的丢掉不存；
+//   · 每种方式的执行细节（原路退回 viaTerminal、商户后台的退款单号 ref）：批准人在批准时填，申请人带的丢掉不存
+//     （不然收银员可以把扫码收的钱写成「已在商户后台退了」、填两个字的假单号，批准就记一张完成的退款单，钱不经支付方）
+const RequestPayment = z.object({ method: RefundInput.shape.payments.element.shape.method, amount: RefundInput.shape.payments.element.shape.amount });
+const RefundBody = RefundInput.omit({ clientKey: true, refundShiftId: true }).extend({
+  payments: z.array(RequestPayment).min(1, '请填写退款方式').max(5, '退款方式最多 5 种'),
+});
+/** 批准退款申请时每种方式怎么退（批准人填）：微信、支付宝扫码收的默认原路退回；不原路退的（含银行卡、其他）要登记退款单号或写明怎么退的 */
+const ApprovePayment = z.object({
+  method: RefundInput.shape.payments.element.shape.method,
+  viaTerminal: z.boolean().optional(),
+  ref: z.string().trim().max(64, '退款单号最多 64 字').default(''),
+});
 const shiftId = z
   .number('钱箱班次不正确')
   .int('钱箱班次不正确')
@@ -63,6 +75,8 @@ const ApproveInput = z.object({
   clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
   /** 退现金从哪个钱箱退（批准人选，只能是这家店此刻当班的钱箱）；不带时记到批准人自己的班次 */
   refundShiftId: shiftId,
+  /** 退款申请：每种方式怎么退（批准人填，见 ApprovePayment）；现金不用填 */
+  payments: z.array(ApprovePayment).max(5).default([]),
 });
 const RejectInput = z.object({ note: z.string('请写驳回原因').trim().min(2, '请写驳回原因（至少 2 个字）').max(200, '原因最多 200 字') });
 
@@ -318,7 +332,13 @@ export async function approveRequest(deps: Deps, id: number, raw: unknown, ctx: 
       await createRefund(
         deps,
         Number(r.checkoutId),
-        { clientKey: key, items: p.items as never, payments: p.payments as never, reason: `申请 ${r.requestNo}：${r.reason}`.slice(0, 200), ...drawer },
+        {
+          clientKey: key,
+          items: p.items as never,
+          payments: await approvedPayments(deps.sql, Number(r.checkoutId), p.payments ?? [], input.payments),
+          reason: `申请 ${r.requestNo}：${r.reason}`.slice(0, 200),
+          ...drawer,
+        },
         ctx,
         { requestId: Number(r.id), afterCreate: (tx, refund) => finish(tx, refund.id) },
       );
@@ -338,6 +358,23 @@ export async function approveRequest(deps: Deps, id: number, raw: unknown, ctx: 
     throw e;
   }
   return getRequest(deps.sql, id);
+}
+
+/**
+ * 退款申请的每种方式按批准人填的执行：微信、支付宝在这张结账单上有扫码收款的，批准人没说不原路退就原路退回（由系统去支付方退）；
+ * 其余（不原路退的微信、支付宝，银行卡、其他）带上批准人登记的退款单号，createRefund 照直接开退款单同样核对（至少 2 个字）。
+ * 默认只看「这种方式扫码收过」（不看还剩多少能退），重提同一个编号时算出来的一样，不会因为退过一次变了内容
+ */
+async function approvedPayments(db: Db, checkoutId: number, requested: { method: string; amount: number }[], chosen: z.infer<typeof ApprovePayment>[]) {
+  const scanned = await db<{ provider: string }[]>`
+    SELECT DISTINCT provider FROM pay_transactions WHERE consumed_kind = 'checkout' AND consumed_id = ${checkoutId}`;
+  const terminal = new Set(scanned.map((t) => t.provider));
+  return requested.map((p) => {
+    if (p.method === 'cash') return { method: p.method, amount: p.amount };
+    const c = chosen.find((x) => x.method === p.method);
+    const via = c?.viaTerminal ?? ((p.method === 'wechat' || p.method === 'alipay') && terminal.has(p.method));
+    return via ? { method: p.method, amount: p.amount, viaTerminal: true } : { method: p.method, amount: p.amount, ref: c?.ref ?? '' };
+  }) as never;
 }
 
 async function markStale(deps: Deps, id: number, why: string, ctx: OpContext) {

@@ -337,6 +337,64 @@ describe('收银申请', () => {
     expect(v!.status).toBe('open');
   });
 
+  it('退款申请：怎么退由批准人定——申请人带的原路退回、退款单号不存；不原路退要登记单号；扫码收的默认原路退回', async () => {
+    const r = await sale((t) => [{ method: 'wechat', amount: t }]);
+    expect(r.res.status, JSON.stringify(r.res.body)).toBe(200);
+    const opts = (await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/checkouts/${r.res.body.id}/refund-options`)).body;
+    const item = { category: opts.items[0].category, name: opts.items[0].name, quantity: 0 };
+    // 申请人偷偷写「已在商户后台退了」、两个字的单号：丢掉不存
+    const s = await api(ctx.app, ctx.clerk, 'POST', '/api/cashier-requests', {
+      clientKey: randomUUID(),
+      kind: 'refund',
+      checkoutId: r.res.body.id,
+      refund: { items: [{ ...item, amount: 500 }], payments: [{ method: 'wechat', amount: 500, ref: 'xx', viaTerminal: false }], reason: '饮料洒了' },
+    });
+    expect(s.status, JSON.stringify(s.body)).toBe(200);
+    const [row] = await ctx.sql<{ payload: { payments: Record<string, unknown>[] } }[]>`SELECT payload FROM cashier_requests WHERE id = ${s.body.id}`;
+    expect(row!.payload.payments).toEqual([{ method: 'wechat', amount: 500 }]);
+    // 这张单不是扫码收的：批准人不填单号拒绝、两个字以下拒绝，申请留着
+    expect((await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: randomUUID() })).status).toBe(400);
+    expect((await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: randomUUID(), payments: [{ method: 'wechat', ref: 'a' }] })).status).toBe(400);
+    // 批准人选了原路退回：照选的走（这张单没有扫码收款，原路退不了）
+    const via = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: randomUUID(), payments: [{ method: 'wechat', viaTerminal: true }] });
+    expect(via.status).toBe(422);
+    expect(via.body.error.code).toBe('PAY_REFUND_OVER');
+    expect((await api(ctx.app, duty, 'GET', `/api/cashier-requests/${s.body.id}`)).body.status).toBe('pending');
+    const key = randomUUID();
+    const ok = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: key, payments: [{ method: 'wechat', ref: 'WX20261128001' }] });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const [pay] = await ctx.sql<{ ref: string; viaTerminal: boolean }[]>`
+      SELECT p.ref, p.via_terminal FROM refund_payments p JOIN refunds f ON f.id = p.refund_id WHERE f.refund_no = ${ok.body.refundNo}`;
+    expect(pay).toEqual({ ref: 'WX20261128001', viaTerminal: false });
+    // 同样的执行细节重提返回同一张；改了单号冲突
+    expect((await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: key, payments: [{ method: 'wechat', ref: 'WX20261128001' }] })).body.refundNo).toBe(
+      ok.body.refundNo,
+    );
+    const changed = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: key, payments: [{ method: 'wechat', ref: 'WX20261128999' }] });
+    expect(changed.status).toBe(409);
+    expect(changed.body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+
+    // 扫码收的单：批准人不说就原路退回（安全的那条路）
+    const r2 = await sale((t) => [{ method: 'wechat', amount: t }]);
+    await ctx.sql`
+      INSERT INTO pay_transactions (out_trade_no, provider, adapter, purpose, amount_cents, status, client_key, request_hash, staff_id, provider_trade_no, paid_at, consumed_kind, consumed_id)
+      VALUES ('YZPTEST8230001', 'wechat', 'mock', 'checkout', ${r2.total}, 'paid', ${randomUUID()}, 'h', ${dutyId}, 'MOCK-1', now(), 'checkout', ${r2.res.body.id})`;
+    const s2 = await api(ctx.app, ctx.clerk, 'POST', '/api/cashier-requests', {
+      clientKey: randomUUID(),
+      kind: 'refund',
+      checkoutId: r2.res.body.id,
+      refund: { items: [{ ...item, amount: 500 }], payments: [{ method: 'wechat', amount: 500 }], reason: '饮料洒了' },
+    });
+    expect(s2.status, JSON.stringify(s2.body)).toBe(200);
+    const ok2 = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s2.body.id}/approve`, { clientKey: randomUUID() });
+    expect(ok2.status, JSON.stringify(ok2.body)).toBe(200);
+    const [pay2] = await ctx.sql<{ viaTerminal: boolean }[]>`
+      SELECT p.via_terminal FROM refund_payments p JOIN refunds f ON f.id = p.refund_id WHERE f.refund_no = ${ok2.body.refundNo}`;
+    expect(pay2!.viaTerminal).toBe(true);
+    const [queued] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM pay_refunds WHERE refund_id = (SELECT id FROM refunds WHERE refund_no = ${ok2.body.refundNo})`;
+    expect(queued!.n).toBe(1);
+  });
+
   it('超过撤销时限的单子店员也能申请退款；批准时按批准人的权限核对：值班经理被拒（申请留着），店主能批', async () => {
     const r = await sale((t) => [{ method: 'cash', amount: t }]);
     // 结账单挪到 3 天前（超过默认 48 小时）

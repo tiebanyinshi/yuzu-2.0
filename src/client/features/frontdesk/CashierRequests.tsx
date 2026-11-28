@@ -10,6 +10,7 @@ import { Check, Undo2, X } from 'lucide-react';
 import { CASHIER_REQUEST_KIND_LABELS, CASHIER_REQUEST_STATUS_LABELS, type CashierRequestStatus, type CashierRequestView, type ShiftHandover } from '@shared/cashier-v8230';
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from '@shared/labels';
 import { formatYuan } from '@shared/money';
+import type { RefundOptions } from '@shared/checkout';
 import { api, errorMessage } from '../../lib/api';
 import { useLivePoll } from '../../lib/livePoll';
 import { useCan, useSession } from '../../lib/session';
@@ -131,6 +132,20 @@ function RequestCard({ r, mode, onChanged }: { r: CashierRequestView; mode: 'tod
   // 同一张结账单上待确认的是这张申请的批准时在卡片上处理；是别的（以前那张申请的批准、直接开的退款单）时先去处理那一笔
   const pendingHere = op.pending?.url === url;
   const cash = r.payments.find((p) => p.method === 'cash')?.amount ?? 0;
+  // 退款申请每种方式怎么退由批准人定（Codex 审查 8cf7faa，安全）：微信、支付宝扫码收的默认原路退回（系统去支付方退）；
+  // 不原路退的、银行卡、其他要登记商户后台的退款单号或写明怎么退的。申请人那边不填这些
+  const nonCash = r.kind === 'refund' && mode === 'todo' && r.status === 'pending' ? r.payments.filter((p) => p.method !== 'cash') : [];
+  const opts = useQuery({
+    queryKey: ['frontdesk', 'refund-options', r.checkoutId],
+    queryFn: () => api.get<RefundOptions>(`/api/frontdesk/checkouts/${r.checkoutId}/refund-options`),
+    enabled: nonCash.length > 0,
+  });
+  const [exec, setExec] = useState<Record<string, { manual: boolean; ref: string }>>({});
+  const canVia = (m: string) => (m === 'wechat' || m === 'alipay') && !!opts.data?.terminal?.some((t) => t.method === m);
+  const viaOf = (m: string) => canVia(m) && !exec[m]?.manual;
+  const execPayments = nonCash.map((p) => (viaOf(p.method) ? { method: p.method, viaTerminal: true } : { method: p.method, viaTerminal: false, ref: (exec[p.method]?.ref ?? '').trim() }));
+  const execReady = nonCash.length === 0 || (!!opts.data && nonCash.every((p) => viaOf(p.method) || (exec[p.method]?.ref.trim().length ?? 0) >= 2));
+  const setExecOf = (m: string, patch: Partial<{ manual: boolean; ref: string }>) => setExec((e) => ({ ...e, [m]: { manual: e[m]?.manual ?? false, ref: e[m]?.ref ?? '', ...patch } }));
   const approved = (x: Approved) => {
     toast({
       tone: 'success',
@@ -143,7 +158,7 @@ function RequestCard({ r, mode, onChanged }: { r: CashierRequestView; mode: 'tod
     setError(null);
     const x = await op.submit((key) => ({
       url,
-      body: { clientKey: key },
+      body: { clientKey: key, ...(execPayments.length ? { payments: execPayments } : {}) },
       tagCodes: [],
       summary: `批准${CASHIER_REQUEST_KIND_LABELS[r.kind]}申请 ${r.requestNo} · 结账单 ${r.checkoutNo}`,
       amount: r.amount,
@@ -206,9 +221,49 @@ function RequestCard({ r, mode, onChanged }: { r: CashierRequestView; mode: 'tod
         </div>
       )}
       {mode === 'todo' && op.pending && !pendingHere && <Notice tone="warning" className="mt-3" title={`这张结账单上还有一笔${FRONTDESK_OP_LABELS[op.pending.type]}结果待确认，先处理那一笔再批`} />}
+      {r.status === 'pending' && mode === 'todo' && !op.pending && nonCash.length > 0 && (
+        <div className="mt-3 space-y-2 rounded-md border border-line bg-paper/60 p-3" data-testid="request-exec">
+          <p className="text-[12.5px] font-semibold text-ink-2">怎么退（由你定，申请人不填）</p>
+          {nonCash.map((p) => {
+            const m = p.method as PaymentMethod;
+            return (
+              <div key={p.method} className="flex flex-wrap items-center gap-2 text-[13px]">
+                <span className="w-28 shrink-0">
+                  {PAYMENT_METHOD_LABELS[m] ?? p.method} {formatYuan(p.amount)}
+                </span>
+                {canVia(p.method) && (
+                  <label className="flex items-center gap-1 text-[12.5px]">
+                    <input type="checkbox" checked={viaOf(p.method)} onChange={(e) => setExecOf(p.method, { manual: !e.target.checked })} data-testid={`request-via-${p.method}`} />
+                    原路退回（系统去支付方退）
+                  </label>
+                )}
+                {!viaOf(p.method) && (
+                  <Input
+                    className="max-w-[260px]"
+                    value={exec[p.method]?.ref ?? ''}
+                    onChange={(e) => setExecOf(p.method, { ref: e.target.value })}
+                    maxLength={64}
+                    placeholder={p.method === 'other' ? '写明是怎么退的' : '商户后台的退款单号（先在商户后台退）'}
+                    aria-label={`${PAYMENT_METHOD_LABELS[m] ?? p.method}退款单号`}
+                    data-testid={`request-ref-${p.method}`}
+                  />
+                )}
+              </div>
+            );
+          })}
+          {opts.error && <Notice tone="error" title={errorMessage(opts.error)} />}
+        </div>
+      )}
       {r.status === 'pending' && mode === 'todo' && !op.pending && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button variant="primary" icon={<Check className="size-4" />} loading={op.busy} disabled={busy !== null || op.locked} onClick={() => void approve()} data-testid="request-approve">
+          <Button
+            variant="primary"
+            icon={<Check className="size-4" />}
+            loading={op.busy}
+            disabled={busy !== null || op.locked || !execReady}
+            onClick={() => void approve()}
+            data-testid="request-approve"
+          >
             批准并{r.kind === 'refund' ? '开退款单' : '反结账'}
           </Button>
           <Button variant="ghost" icon={<X className="size-4" />} disabled={busy !== null || op.locked} onClick={() => setRejecting(true)} data-testid="request-reject">
