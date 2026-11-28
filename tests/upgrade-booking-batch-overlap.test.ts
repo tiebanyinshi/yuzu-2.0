@@ -171,7 +171,8 @@ describe('a）8.2.4 的库直接升级到最新', () => {
     const snap = await snapshot(sql);
     const applied = await migrate(sql);
     expect(applied[0]).toBe('570_review_v825.sql');
-    expect(applied.at(-1)).toBe(M740);
+    // 740 以后还有别的线的迁移（8.2.27 的 750 等），这里只核对 740 跑了
+    expect(applied).toContain(M740);
     const after = await bookingChecks(sql);
     console.log(`[a 8.2.4 → 最新] 升级前（8.2.4 的自检）：${before824.ok ? '✓' : '✗'} ${before824.detail}\n[a 8.2.4 → 最新] 升级后：${after.ok ? '✓' : '✗'} ${after.detail}`);
     expect(after.ok, after.detail).toBe(true);
@@ -251,7 +252,10 @@ describe('b）已经跑过 570 的库（8.2.5–8.2.17）', () => {
     expect(before.ok).toBe(false);
     expect(before.detail).toContain((await sql<{ bookingNo: string }[]>`SELECT booking_no FROM bookings WHERE id = ${legit[0]!}`)[0]!.bookingNo);
 
-    expect(await migrate(sql)).toEqual([M740]);
+    // 740 以后还有别的线的迁移（8.2.27 的 750 等）也会一起跑；这里只核对 740 在里面、没有补跑 740 以前的
+    const applied = await migrate(sql);
+    expect(applied).toContain(M740);
+    expect(applied.every((m) => m >= M740)).toBe(true);
     const after = await bookingChecks(sql);
     console.log(`[b 8.2.17 → 740] 跑 740 以前：${before.ok ? '✓' : '✗'} ${before.detail}\n[b 8.2.17 → 740] 跑 740 以后：${after.ok ? '✓' : '✗'} ${after.detail}`);
     // 旧一报多不再报；真重叠、没编号的、整批对不上的照旧报
