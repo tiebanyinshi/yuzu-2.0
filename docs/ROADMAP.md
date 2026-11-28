@@ -362,6 +362,7 @@
   - `650`（`650_staffmp_bindings.sql`，子 PR A）：微信与员工账号的绑定 `staffmp_bindings`（解开只做标记、不删）、员工小程序发的会话 `staffmp_sessions`（跟着 `sessions` 删）。
   - `651`（`651_staffmp_canteen_links.sql`，子 PR E）：员工账号与柚子饭堂账号对上 `staffmp_canteen_links`（一对一：员工主键、饭卡唯一；怎么对上的、谁、什么时候；解开删行、审计留痕）。只建新表；解开时那张饭卡的 `canteen_employees.code_epoch` 加一走饭堂原来的列，不改表。
   - **版本号 8.2.26**（2026-11-27 收口）：main 的 8.2.19–8.2.25 排给《新店系统需求现场走场确认》那条线，「别的线请从 8.2.26 起排」；员工小程序自己的版本号（`staff-miniprogram/package.json`）从 1.0.0 起另算。子 PR：A #54、B #59、C #64、E #67、D #71、F #74（学习 Tab 接 8.2.18 的汤崎学堂），交接说明 `docs/HANDOFF_STAFFMP1.md`。
+  - **第二版 8.2.31**（2026-11-28，店主「直接全部开发完就行」「用一次提交」）：学堂员工端补全（我的学习、学习榜、课程评分、问柚子、带教签核）、首页待办补「必修快到期」「我的申请被驳回」、「我的」里的学分与等级；一个提交、在 [#75](https://github.com/tiebanyinshi/yuzu-2.0/pull/75) 上过 CI 与 Codex 审查。版本号：8.2.30 是收银合并（店主已定），8.2.27–8.2.29 没查到排给谁，避开不用；合并时 main 已经到更高的，照 main 当时的安排改。没有迁移。交接说明 `docs/HANDOFF_STAFFMP2.md`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
@@ -485,6 +486,7 @@
 
 ## 更新记录
 
+- 2026-11-28（续）：**员工小程序线第二版 8.2.31**（店主「直接全部开发完就行」「用一次提交」）：学堂员工端补全（我的学习、学习榜、课程评分、问柚子、带教签核；带教签核与问柚子也放进小程序，`PENDING_DECISIONS.md` SP20）、首页待办补「必修快到期」「我的申请被驳回」（SP19）、「我的」里的学分与等级。没有迁移。草稿 PR [#75](https://github.com/tiebanyinshi/yuzu-2.0/pull/75)，交接说明 `docs/HANDOFF_STAFFMP2.md`。
 - 2026-11-28：**员工小程序线 8.2.26 合进 main**（[#53](https://github.com/tiebanyinshi/yuzu-2.0/pull/53)，合并提交 `c042a05`；Codex 审查 5 轮，最后一轮代码与安全审查都没有问题）。第二版排期见 `docs/STAFF_MP.md` 第 11.1 节：真机走一遍以后的修正、首页待办补「申请被驳回」「必修快到期」、「我的」里的学分与等级、学堂剩下的员工端；迁移照旧从 `652` 起。
 - 2026-11-27（续）：**员工小程序线收口为 8.2.26**。六个子 PR（A [#54](https://github.com/tiebanyinshi/yuzu-2.0/pull/54)、B [#59](https://github.com/tiebanyinshi/yuzu-2.0/pull/59)、C [#64](https://github.com/tiebanyinshi/yuzu-2.0/pull/64)、E [#67](https://github.com/tiebanyinshi/yuzu-2.0/pull/67)、D [#71](https://github.com/tiebanyinshi/yuzu-2.0/pull/71)、F [#74](https://github.com/tiebanyinshi/yuzu-2.0/pull/74)）各自过 CI 与 Codex 审查后合进集成分支；F 是学堂（8.2.18，[#50](https://github.com/tiebanyinshi/yuzu-2.0/pull/50)）合进 main 以后接上的学习 Tab（学堂那条线提醒「不要再做一套」，约定见 [#50 的评论](https://github.com/tiebanyinshi/yuzu-2.0/pull/50#issuecomment-7225979444)）。集成分支已把 main（8.2.20）合进来，版本号按 main 的安排用 8.2.26；交接说明 `docs/HANDOFF_STAFFMP1.md`，待确认 SP18（学习 Tab 这一版不接的几样）。集成 PR [#53](https://github.com/tiebanyinshi/yuzu-2.0/pull/53) 转待审。
 - 2026-11-27（续）：**员工小程序线迁移改号 `610`–`619` → `650`–`659`**。8.2.8–8.2.11（餐厅、水吧、休闲娱乐、泡池）在 main 上先登记了 `600`–`639`，8.2.9 的分支已经用了 `610_pickup_v829.sql`；员工小程序线的登记只在集成分支上，别的线看不到。`610_staffmp_bindings.sql` 改成 `650_staffmp_bindings.sql`（集成分支）、E 的 `611` 改成 `651`；两份都还没发到任何环境（只部署 main 的版本标签），`640`–`649` 是汤崎学堂的。之后员工小程序线的新迁移从 `652` 起。

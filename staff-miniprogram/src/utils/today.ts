@@ -3,6 +3,7 @@
 //   · 待办只放要我动手的事，最急的在上面；没有待办写「都处理完了」。
 
 import type { PunchSlotView, PunchToday } from '../../../src/shared/oa';
+import type { ApprovalListItem } from '../../../src/shared/oa-approval';
 import { MEAL_LABELS, mealNow, mealWindowText, shiftDate } from './canteen';
 import { clockOfEpochMinute, slotOf } from './punch';
 import { hhmm } from './format';
@@ -141,7 +142,23 @@ export interface TodoInput {
   /** 今天有缺卡（门店系统的说法里有「缺卡」） */
   missedPunch: boolean;
   unsignedPayslips: { id: number; title: string }[];
+  /** 我的申请被驳回、还没打开看过的（第二版；手机上存的旧数据没有这一项） */
+  rejected?: { id: number; title: string }[];
+  /** 必修快到期、已经逾期的（第二版） */
+  dueSoon?: { kind: 'path' | 'course'; id: number; title: string; dueOn: string; overdue: boolean }[];
 }
+
+/** 被驳回多久以内的还提（太早的不提了） */
+export const REJECTED_DAYS = 14;
+
+/** 我的申请里被驳回、REJECTED_DAYS 天以内、这台手机上还没打开看过的 */
+export function rejectedTodo(items: readonly ApprovalListItem[], seen: readonly number[], now: number = Date.now()): { id: number; title: string }[] {
+  return items
+    .filter((a) => a.status === 'rejected' && seen.indexOf(a.id) < 0 && a.finishedAt && now - Date.parse(a.finishedAt) <= REJECTED_DAYS * 86400000)
+    .map((a) => ({ id: a.id, title: a.title }));
+}
+
+const md = (date: string) => `${Number(date.slice(5, 7))} 月 ${Number(date.slice(8, 10))} 日`;
 
 /** 待办：最急的在上面 */
 export function todoRows(t: TodoInput): TodoRow[] {
@@ -152,6 +169,24 @@ export function todoRows(t: TodoInput): TodoRow[] {
   if (t.unsignedPayslips.length === 1)
     rows.push({ key: 'payslip', icon: 'payslips', text: `${t.unsignedPayslips[0]!.title}待确认`, sub: '', page: `/pages/payslip/index?id=${t.unsignedPayslips[0]!.id}`, urgent: false });
   else if (t.unsignedPayslips.length > 1) rows.push({ key: 'payslip', icon: 'payslips', text: `${t.unsignedPayslips.length} 张工资条待确认`, sub: '', page: '/pages/payslips/index', urgent: false });
+  const due = t.dueSoon ?? [];
+  if (due.length === 1) {
+    const d = due[0]!;
+    rows.push({
+      key: 'due',
+      icon: 'academy',
+      text: `必修「${d.title}」${d.overdue ? '已过截止' : `${md(d.dueOn)}截止`}`,
+      sub: d.overdue ? `${md(d.dueOn)}截止的，抓紧学完` : '还没学完',
+      page: d.kind === 'path' ? `/pages/academy-path/index?id=${d.id}` : `/pages/academy-course/index?id=${d.id}`,
+      urgent: d.overdue,
+    });
+  } else if (due.length > 1) {
+    const late = due.filter((d) => d.overdue).length;
+    rows.push({ key: 'due', icon: 'academy', text: `${due.length} 门必修快到期`, sub: late ? `${late} 门已过截止` : '', page: '/pages/learn/index', urgent: late > 0 });
+  }
+  const rejected = t.rejected ?? [];
+  if (rejected.length === 1) rows.push({ key: 'rejected', icon: 'approvals', text: `「${rejected[0]!.title}」被驳回了`, sub: '看看原因，改了可以重新提交', page: `/pages/approval/index?id=${rejected[0]!.id}`, urgent: false });
+  else if (rejected.length > 1) rows.push({ key: 'rejected', icon: 'approvals', text: `${rejected.length} 张申请被驳回了`, sub: '看看原因，改了可以重新提交', page: '/pages/approvals/index?box=mine', urgent: false });
   if (t.ccUnread > 0) rows.push({ key: 'cc', icon: 'approvals', text: `抄送我的 ${t.ccUnread} 条没看`, sub: '', page: '/pages/approvals/index?box=cc', urgent: false });
   return rows;
 }

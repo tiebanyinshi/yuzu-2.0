@@ -6,6 +6,8 @@
 import type {
   AcademyAssigned,
   AcademyCategory,
+  AcademyCertificate,
+  AcademyCoachItem,
   AcademyCompletion,
   AcademyCourseDetail,
   AcademyCourseSummary,
@@ -14,11 +16,21 @@ import type {
   AcademyHome,
   AcademyLessonKind,
   AcademyLessonSummary,
+  AcademyMastery,
   AcademyMe,
+  AcademyMeDetail,
   AcademyPathDetail,
   AcademyPathSummary,
   AcademyQuizResult,
   AcademyQuizView,
+  AcademyRank,
+  AcademyRankBoard,
+  AcademyRankPeriod,
+  AcademyRankRow,
+  AcademyRankScope,
+  AcademySignoff,
+  AcademyTutorAnswer,
+  AcademyTutorView,
 } from '../../../src/shared/academy';
 import type { AcademyBlock, AcademyQuestionKind } from '../../../src/shared/academy-markup';
 import type { StaffMpAcademyLesson } from '../../../src/shared/staffmp';
@@ -35,6 +47,14 @@ export const loadPath = (id: number) => call<AcademyPathDetail>('GET', `/academy
 export const loadLesson = (id: number) => call<StaffMpAcademyLesson>('GET', `/academy/lessons/${id}`);
 export const pingLesson = (id: number, seconds: number) => call<{ added: number }>('POST', `/academy/lessons/${id}/ping`, { seconds });
 export const loadQuizResult = (attemptId: number) => call<AcademyQuizResult>('GET', `/academy/attempts/${attemptId}`);
+// 第二版：我的（证书、掌握度）、榜单、课程评分、问柚子、带教签核
+export const loadAcademyMe = () => call<AcademyMeDetail>('GET', '/academy/me');
+export const loadRank = (q: { board: AcademyRankBoard; period: AcademyRankPeriod; scope: AcademyRankScope }) =>
+  call<AcademyRank>('GET', `/academy/rank?board=${q.board}&period=${q.period}&scope=${q.scope}`);
+/** 课程评分：学完了才能评；同一门课再评一次是改成新的（覆盖），原样重发不会多一条 */
+export const rateCourse = (courseId: number, rating: number, comment: string) => call<{ rating: number; comment: string }>('POST', `/academy/courses/${courseId}/feedback`, { rating, comment });
+export const loadTutor = (courseId: number) => call<AcademyTutorView>('GET', `/academy/courses/${courseId}/tutor`);
+export const loadCoachQueue = () => call<AcademyCoachItem[]>('GET', '/academy/coach');
 
 /** 学习时长一次最多报几秒（学堂那边封顶 600 秒，这里每 30 秒报一次） */
 export const PING_SECONDS = 30;
@@ -354,3 +374,142 @@ export function dailyAnswerLine(a: Pick<AcademyDailyAnswer, 'correct' | 'dueOn'>
   const head = a.correct === null ? '记下了' : a.correct ? '答对了' : '答错了';
   return `${head} · ${a.dueOn <= today ? '今天还会再出' : `${monthDay(a.dueOn)}再复习`}`;
 }
+
+// ── 第二版：我的、榜单、问柚子、带教签核 ──
+
+/** 掌握度三档（与学堂 academy-algo 的 MASTERY_STATUS_LABELS 一样） */
+export const MASTERY_LABELS: Record<AcademyMastery['status'], string> = { mastered: '已掌握', learning: '学习中', weak: '薄弱' };
+
+export interface CertRow {
+  id: number;
+  title: string;
+  sub: string;
+  state: 'valid' | 'expired' | 'revoked';
+  stateText: string;
+}
+
+/** 一张证书：证书号、发证日、到期日；过期、撤销的写清楚 */
+export function certRow(c: AcademyCertificate): CertRow {
+  const state = c.revoked ? 'revoked' : c.expired ? 'expired' : 'valid';
+  return {
+    id: c.id,
+    title: c.title,
+    sub: `证书 ${c.certNo} · ${monthDayYear(c.issuedOn)}发${c.expiresOn ? ` · ${monthDayYear(c.expiresOn)}到期` : ' · 长期有效'}`,
+    state,
+    stateText: state === 'revoked' ? `已撤销${c.revokeReason ? `：${c.revokeReason}` : ''}` : state === 'expired' ? '已过期' : '有效',
+  };
+}
+const monthDayYear = (date: string) => `${date.slice(0, 4)} 年 ${monthDay(date)}`;
+
+export interface MasteryRow {
+  skill: string;
+  pct: number;
+  status: AcademyMastery['status'];
+  label: string;
+  sub: string;
+}
+
+/** 一项技能的掌握度：薄弱的在前（学堂已经按掌握度从低到高排好） */
+export function masteryRow(m: AcademyMastery): MasteryRow {
+  return { skill: m.skill, pct: Math.round(m.pKnown * 100), status: m.status, label: MASTERY_LABELS[m.status], sub: `答了 ${m.attempts} 次 · 对了 ${m.correct} 次` };
+}
+
+export interface RankRowView {
+  key: string;
+  rank: number;
+  name: string;
+  sub: string;
+  value: string;
+  me: boolean;
+}
+
+/** 榜单一行：学分榜写学分、时长榜写分钟 */
+export function rankRow(r: AcademyRankRow, board: AcademyRankBoard, myId: number): RankRowView {
+  return {
+    key: `${r.rank}-${r.staffId}`,
+    rank: r.rank,
+    name: r.name,
+    sub: [r.departmentName, r.storeName].filter(Boolean).join(' · '),
+    value: board === 'credits' ? `${r.value} 学分` : `${r.value} 分钟`,
+    me: r.staffId === myId,
+  };
+}
+
+export interface TutorRow {
+  id: number;
+  question: string;
+  answer: string;
+  sources: string;
+  status: AcademyTutorAnswer['status'];
+  time: string;
+}
+
+/** 问柚子的一问一答：在想的、没答出来的、门店没配的写清楚 */
+export function tutorRow(a: AcademyTutorAnswer): TutorRow {
+  const answer =
+    a.status === 'done'
+      ? (a.answer ?? '')
+      : a.status === 'answering'
+        ? '柚子在想……'
+        : a.status === 'unconfigured'
+          ? '门店还没开通问柚子'
+          : `没答出来${a.error ? `：${a.error}` : ''}，换个说法再问`;
+  return { id: a.id, question: a.question, answer, sources: a.sources.length ? `出自：${a.sources.map((x) => x.title).join('、')}` : '', status: a.status, time: a.createdAt };
+}
+
+/** 问柚子的模式与今天的次数 */
+export function tutorLine(v: Pick<AcademyTutorView, 'usedToday' | 'limit' | 'mode'>): string {
+  if (v.mode === 'off') return '门店还没开通问柚子（要先在后台配好模型服务）';
+  return `今天问了 ${v.usedToday}/${v.limit} 次${v.mode === 'mock' ? ' · 模拟回答' : ''}`;
+}
+
+export interface CoachRow {
+  key: string;
+  staffId: number;
+  lessonId: number;
+  name: string;
+  title: string;
+  sub: string;
+  last: string;
+}
+
+/** 带教待签的一项：谁、哪门课的哪个实操、上一次签了什么 */
+export function coachRow(c: AcademyCoachItem): CoachRow {
+  return {
+    key: `${c.staffId}-${c.lessonId}`,
+    staffId: c.staffId,
+    lessonId: c.lessonId,
+    name: c.name,
+    title: c.lessonTitle,
+    sub: [c.departmentName, c.courseTitle, `${c.items.length} 项`].filter(Boolean).join(' · '),
+    last: c.last ? `上次 ${c.last.signedByName} 签了「${c.last.result === 'pass' ? '通过' : '再练'}」` : '还没签过',
+  };
+}
+
+/** 签核结果的一句（签了以后、实操课时页上的记录） */
+export function signoffLine(s: Pick<AcademySignoff, 'result' | 'signedByName' | 'comment'>): string {
+  return `${s.signedByName} 签了「${s.result === 'pass' ? '通过' : '再练'}」${s.comment ? `：${s.comment}` : ''}`;
+}
+
+/** 带教签核能不能交：每一项都勾了「达标 / 没达标」以后；签「通过」要每项都达标 */
+export function signoffReady(checks: readonly (boolean | null)[], result: 'pass' | 'retry' | ''): { ok: boolean; why: string } {
+  if (!checks.length || checks.some((c) => c === null)) return { ok: false, why: '每一项都要点「达标」或「没达标」' };
+  if (!result) return { ok: false, why: '选「通过」还是「再练」' };
+  if (result === 'pass' && checks.some((c) => c === false)) return { ok: false, why: '还有没达标的项：签「再练」，或者全部达标再签「通过」' };
+  return { ok: true, why: '' };
+}
+
+/** 必修快到期（首页待办）：没学完、有截止日、3 天内到期或已经过了 */
+export const DUE_SOON_DAYS = 3;
+export function dueSoon(list: readonly AcademyAssigned[], today: string): { kind: 'path' | 'course'; id: number; title: string; dueOn: string; overdue: boolean }[] {
+  const limit = addDays(today, DUE_SOON_DAYS);
+  return list
+    .filter((a) => a.required && !a.completed && a.dueOn && (a.overdue || a.dueOn <= limit))
+    .map((a) => ({ kind: a.kind, id: a.id, title: a.title, dueOn: a.dueOn!, overdue: a.overdue }))
+    .sort((a, b) => a.dueOn.localeCompare(b.dueOn));
+}
+function addDays(date: string, n: number): string {
+  const t = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10))) + n * 86400000;
+  return new Date(t).toISOString().slice(0, 10);
+}
+

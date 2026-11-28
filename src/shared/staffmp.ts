@@ -52,6 +52,8 @@ export type StaffMpEntryKey =
   | 'announcements'
   | 'knowledge'
   | 'academy'
+  /** 学堂带教：给本部门员工签实操（有 academy.coach 或学堂管理权限的） */
+  | 'academyCoach'
   | 'canteen'
   | 'canteenScan'
   | 'patrol'

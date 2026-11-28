@@ -3,10 +3,21 @@
 import { describe, expect, it } from 'vitest';
 import { ACADEMY_CATEGORY_LABELS, ACADEMY_LESSON_KIND_LABELS, ACADEMY_LEVELS } from '../../src/shared/academy';
 import { parseAcademyMarkup, splitBold } from '../../src/shared/academy-markup';
+import { MASTERY_STATUS_LABELS } from '../../src/shared/academy-algo';
 import {
   assignedRows,
   blockViews,
   CATEGORY_LABELS,
+  certRow,
+  coachRow,
+  dueSoon,
+  MASTERY_LABELS,
+  masteryRow,
+  rankRow,
+  signoffLine,
+  signoffReady,
+  tutorLine,
+  tutorRow,
   completionText,
   courseRow,
   dailyAnswerLine,
@@ -194,3 +205,58 @@ describe('首页与列表', () => {
     expect(completionText(null)).toBe('');
   });
 });
+
+describe('第二版：我的、榜单、问柚子、带教签核、必修快到期', () => {
+  it('掌握度三档的字与学堂一样', () => {
+    expect(MASTERY_LABELS).toEqual(MASTERY_STATUS_LABELS);
+    expect(masteryRow({ skill: '禁忌', pKnown: 0.42, attempts: 5, correct: 2, status: 'weak' })).toEqual({ skill: '禁忌', pct: 42, status: 'weak', label: '薄弱', sub: '答了 5 次 · 对了 2 次' });
+  });
+
+  it('证书：有效、过期、撤销（带原因）；长期有效的写出来', () => {
+    const c = { id: 1, certNo: 'C-001', staffId: 1, staffName: 'x', pathId: 1, title: '前厅新员工', issuedOn: '2026-11-01', expiresOn: '2027-11-01', expired: false, revoked: false, revokeReason: null };
+    expect(certRow(c)).toEqual({ id: 1, title: '前厅新员工', sub: '证书 C-001 · 2026 年 11 月 1 日发 · 2027 年 11 月 1 日到期', state: 'valid', stateText: '有效' });
+    expect(certRow({ ...c, expiresOn: null }).sub).toBe('证书 C-001 · 2026 年 11 月 1 日发 · 长期有效');
+    expect(certRow({ ...c, expired: true })).toMatchObject({ state: 'expired', stateText: '已过期' });
+    expect(certRow({ ...c, revoked: true, revokeReason: '发错了' })).toMatchObject({ state: 'revoked', stateText: '已撤销：发错了' });
+  });
+
+  it('榜单一行：学分榜写学分、时长榜写分钟，标出自己', () => {
+    const r = { rank: 2, staffId: 7, name: '小周', storeName: '宝安店', departmentName: '前厅', value: 120 };
+    expect(rankRow(r, 'credits', 7)).toEqual({ key: '2-7', rank: 2, name: '小周', sub: '前厅 · 宝安店', value: '120 学分', me: true });
+    expect(rankRow(r, 'minutes', 8)).toMatchObject({ value: '120 分钟', me: false });
+  });
+
+  it('问柚子：答了的写出处；在想的、没答出来的、没开通的写清楚', () => {
+    const a = { id: 1, question: '酒后能泡吗？', answer: '不能。', sources: [{ lessonId: 2, title: '三个禁忌' }], status: 'done' as const, error: null, createdAt: '2026-11-28T02:00:00Z' };
+    expect(tutorRow(a)).toMatchObject({ answer: '不能。', sources: '出自：三个禁忌' });
+    expect(tutorRow({ ...a, status: 'answering', answer: null, sources: [] })).toMatchObject({ answer: '柚子在想……', sources: '' });
+    expect(tutorRow({ ...a, status: 'failed', answer: null, error: '超时了' }).answer).toBe('没答出来：超时了，换个说法再问');
+    expect(tutorLine({ usedToday: 3, limit: 30, mode: 'live' })).toBe('今天问了 3/30 次');
+    expect(tutorLine({ usedToday: 0, limit: 30, mode: 'mock' })).toBe('今天问了 0/30 次 · 模拟回答');
+    expect(tutorLine({ usedToday: 0, limit: 30, mode: 'off' })).toContain('还没开通');
+  });
+
+  it('带教：待签一行、签核结果一句；每项都点了才能签，「通过」要全部达标', () => {
+    const c = { staffId: 3, name: '小周', departmentName: '前厅', lessonId: 9, lessonTitle: '迎宾', courseId: 2, courseTitle: '前厅接待', items: ['问候', '核对人数'], lessonVersion: 1, last: null };
+    expect(coachRow(c)).toEqual({ key: '3-9', staffId: 3, lessonId: 9, name: '小周', title: '迎宾', sub: '前厅 · 前厅接待 · 2 项', last: '还没签过' });
+    expect(coachRow({ ...c, last: { result: 'retry', signedAt: '2026-11-27T02:00:00Z', signedByName: '主管' } }).last).toBe('上次 主管 签了「再练」');
+    expect(signoffLine({ result: 'pass', signedByName: '主管', comment: '' })).toBe('主管 签了「通过」');
+    expect(signoffReady([true, null], 'pass').ok).toBe(false);
+    expect(signoffReady([true, true], '').ok).toBe(false);
+    expect(signoffReady([true, false], 'pass')).toMatchObject({ ok: false });
+    expect(signoffReady([true, false], 'retry').ok).toBe(true);
+    expect(signoffReady([true, true], 'pass').ok).toBe(true);
+    expect(signoffReady([], 'pass').ok).toBe(false);
+  });
+
+  it('必修快到期：没学完、有截止日、3 天内到期或已逾期，按截止日排', () => {
+    const a = (id: number, dueOn: string | null, over: Partial<{ completed: boolean; overdue: boolean; required: boolean }> = {}) =>
+      ({ kind: 'course', id, title: `课${id}`, cover: 'pine', required: true, dueOn, overdue: false, done: 0, total: 2, completed: false, ...over }) as never;
+    const list = [a(1, '2026-12-05'), a(2, '2026-12-01'), a(3, '2026-11-20', { overdue: true }), a(4, '2026-11-29', { completed: true }), a(5, null), a(6, '2026-11-30', { required: false })];
+    expect(dueSoon(list, '2026-11-28').map((x) => [x.id, x.overdue])).toEqual([
+      [3, true],
+      [2, false],
+    ]);
+  });
+});
+

@@ -1,0 +1,38 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="签实操" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '这一项不用签了' : ''}}" message="{{state === 'empty' ? '可能已经签过「通过」了，或者不在你的部门' : error}}" bindretry="onRetry" />
+  <view wx:elif="{{done}}" class="gutter">
+    <view class="notice success">{{done}}</view>
+    <button class="btn secondary" hover-class="pressed" hover-stay-time="120" bindtap="onBack">回到待签的</button>
+  </view>
+  <view wx:else class="gutter">
+    <view class="head">
+      <view class="name">{{name}}</view>
+      <view class="t-body">{{title}}</view>
+      <view class="t-caption">{{course}}{{last ? ' · ' + last : ''}}</view>
+    </view>
+    <view wx:if="{{pending}}" class="notice warn">
+      <view>{{pending}}</view>
+      <button class="btn secondary resend" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onResend">再提交一次（同一次签核）</button>
+    </view>
+    <view class="card list">
+      <view wx:for="{{checks}}" wx:key="text" class="row check">
+        <view class="row-main"><view class="row-title">{{index + 1}}. {{item.text}}</view></view>
+        <view class="pair">
+          <view class="opt {{item.value === true ? 'ok' : ''}}" hover-class="pressed" hover-stay-time="120" data-i="{{index}}" data-v="ok" bindtap="onCheck" aria-role="button" aria-selected="{{item.value === true}}">达标</view>
+          <view class="opt {{item.value === false ? 'no' : ''}}" hover-class="pressed" hover-stay-time="120" data-i="{{index}}" data-v="no" bindtap="onCheck" aria-role="button" aria-selected="{{item.value === false}}">没达标</view>
+        </view>
+      </view>
+    </view>
+    <view class="section-head"><view class="section-title">结论</view></view>
+    <view class="pair big">
+      <view class="opt {{result === 'pass' ? 'ok' : ''}}" hover-class="pressed" hover-stay-time="120" data-v="pass" bindtap="onResult" aria-role="button" aria-selected="{{result === 'pass'}}">通过</view>
+      <view class="opt {{result === 'retry' ? 'no' : ''}}" hover-class="pressed" hover-stay-time="120" data-v="retry" bindtap="onResult" aria-role="button" aria-selected="{{result === 'retry'}}">再练</view>
+    </view>
+    <view class="card card-pad block-gap">
+      <textarea class="input" value="{{comment}}" maxlength="300" auto-height placeholder="评语（选填，最多 300 字）" placeholder-class="input-placeholder" bindinput="onComment" disabled="{{!!pending}}" aria-label="评语" />
+    </view>
+    <view wx:if="{{actionError}}" class="notice error">{{actionError}}</view>
+    <button wx:if="{{!pending}}" class="btn primary submit" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onSubmit">{{busy ? '正在签……' : '签好了'}}</button>
+  </view>
+</view>

@@ -43,9 +43,9 @@ export const STAFFMP_ALLOWLIST: readonly string[] = [
   'GET /api/training/folders/:id/files',
   'GET /api/training/files/:id/content',
   'POST /api/training/files/:id/viewed',
-  // 汤崎学堂（员工端，docs/ACADEMY.md；员工小程序线 F）：首页、课程与课时、学习时长、学完了、测验（开卷带操作编号、交卷按卷子认、
-  // 交过的结果）、每日一练（带操作编号）、一张学习地图。只放小程序页面用到的：管理端（/api/admin/academy/*）不在这里；
-  // 带教签核、问柚子、课程评分、「我的」、地图列表、榜单这一版没有页面，也不挂
+  // 汤崎学堂（员工端，docs/ACADEMY.md；员工小程序线 F 与第二版）：首页、课程与课时、学习时长、学完了、测验（开卷带操作编号、交卷按卷子认、
+  // 交过的结果）、每日一练（带操作编号）、一张学习地图；第二版加「我的」（证书、掌握度）、榜单、课程评分、问柚子（带操作编号）、
+  // 带教签核（待签的、签核带操作编号；权限与部门范围由学堂当场核对）。管理端（/api/admin/academy/*）不在这里；地图列表没有页面，不挂
   'GET /api/academy/home',
   'GET /api/academy/courses',
   'GET /api/academy/courses/:id',
@@ -58,6 +58,13 @@ export const STAFFMP_ALLOWLIST: readonly string[] = [
   'GET /api/academy/daily',
   'POST /api/academy/daily/answer',
   'GET /api/academy/paths/:id',
+  'GET /api/academy/me',
+  'GET /api/academy/rank',
+  'POST /api/academy/courses/:id/feedback',
+  'GET /api/academy/courses/:id/tutor',
+  'POST /api/academy/courses/:id/tutor',
+  'GET /api/academy/coach',
+  'POST /api/academy/signoffs',
   // 账号：老账号第一次登录选新岗位（8.1.18，GW7）——一线员工不用去找电脑（外面的地址 /api/staffmp/account/…）
   'GET /api/auth/position-options',
   'POST /api/auth/position',
