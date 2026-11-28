@@ -650,7 +650,7 @@ describe('自选柜（手机柜）接口：门店系统接模拟柜锁桥', () =
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/frontdesk/tags/${t!.id}/card`, { cardUid: null })).status).toBe(200);
   });
 
-  it('手动释放已退牌手牌占着的柜：放之前也预留手牌；放成了马上恢复，结果待确认的留着、每分钟的任务核对清楚才恢复', async () => {
+  it('手动释放：放之前也预留占着它的手牌（在店的也预留）；放成了马上恢复，结果待确认的留着、每分钟的任务核对清楚才恢复（关掉自动释放也照常核对）', async () => {
     const hw = bridge.hardware;
     for (const no of MOCK_SELECT_NOS) hw.selectRelease(no, null);
     await ctx.sql`INSERT INTO hand_tags (code, zone, card_uid) VALUES ('B8302', 'male', '0BB00003')`;
@@ -666,12 +666,34 @@ describe('自选柜（手机柜）接口：门店系统接模拟柜锁桥', () =
       once.mockRestore();
     }
     expect(await status()).toMatchObject({ serviceStatus: 'paused', serviceNote: expect.stringContaining('P002') });
-    expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: ctx.config })).toBe(1);
+    // 关掉自动释放（LOCKER_AUTO_RELEASE=off）只是不发起新的，已有的预留照常核对（Codex 审查 6056e39）
+    const off = { ...ctx.config, lockers: { ...ctx.config.lockers, autoRelease: false } };
+    expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: off })).toBe(1);
     expect(hw.selectList().find((x) => x.no === 'P002')!.uid).toBeNull();
     expect((await status()).serviceStatus).toBe('normal');
     // 放成了：马上恢复
     expect(hw.take('P002', '0BB00003')).toBeNull();
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/select/P002/release', { reason: '客人已退牌', uid: '0BB00003' })).body).toMatchObject({ ok: true });
+    expect((await status()).serviceStatus).toBe('normal');
+
+    // 在店客人的柜，结果待确认：照样预留（客人照常用，退牌以后先发不出去），核对清楚才恢复（Codex 审查 6056e39）
+    const [inStore] = await ctx.sql<{ id: number }[]>`SELECT id FROM hand_tags WHERE code = 'B8302'`;
+    const date = '2026-11-28';
+    const when = `${date}T10:00:00+08:00`;
+    const [bill] = await ctx.sql<{ id: number }[]>`
+      INSERT INTO bills (bill_no, kind, status, business_date, opened_at) VALUES ('BB8302', 'visit', 'open', ${date}, ${when}) RETURNING id`;
+    await ctx.sql`
+      INSERT INTO visits (visit_no, bill_id, tag_id, zone, status, business_date, checked_in_at, checked_in_by, checkin_key)
+      VALUES ('VB8302', ${bill!.id}, ${inStore!.id}, 'male', 'open', ${date}, ${when}, ${ctx.ownerId}, ${randomUUID()})`;
+    expect(hw.take('P002', '0BB00003')).toBeNull();
+    const again = vi.spyOn(ctl, 'selectRelease').mockResolvedValueOnce({ no: 'P002', ok: false, uncertain: true, message: '没收到柜锁桥的回答（模拟）' });
+    try {
+      expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/select/P002/release', { reason: '客人要换柜', uid: '0BB00003' })).body).toMatchObject({ uncertain: true });
+    } finally {
+      again.mockRestore();
+    }
+    expect(await status()).toMatchObject({ serviceStatus: 'paused', serviceNote: expect.stringContaining('P002') });
+    expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: off })).toBe(1);
     expect((await status()).serviceStatus).toBe('normal');
   });
 

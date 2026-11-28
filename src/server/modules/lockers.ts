@@ -251,10 +251,11 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
     const { reason, uid } = parse(SelectReleaseInput, req.body);
     requireSelect();
     const holder = (await holdersOf([uid])).get(uid) ?? null;
-    // 占着它的手牌已经退了（不在店）：同自动释放，放之前先预留这张手牌，结果待确认的预留留着、每分钟的任务核对清楚才恢复——
-    // 不然放的结果还没定，这张牌就可能发给新客人（第 7.4 节）。已经在预留着的（自动释放还没核对完）不另标
+    // 放之前先预留占着它的那张手牌（不论客人在不在店，Codex 审查 6056e39）：结果待确认的预留留着、每分钟的任务核对清楚才恢复——
+    // 不然放的结果还没定，客人退了牌，这张牌就可能发给新客人（第 7.4 节）。在店的客人照常用，只是退牌以后先发不出去。
+    // 已经在预留着的（自动释放还没核对完）不另标
     const note = reserveNote(no);
-    const reserve = holder && !holder.visitNo ? await reserveTag(sql, holder.tagId, uid, note) : 'skip';
+    const reserve = holder ? await reserveTag(sql, holder.tagId, uid, note, { allowInStore: true }) : 'skip';
     const result = await controller.selectRelease(no, uid);
     if (reserve === 'reserved' && !result.uncertain) await restoreTag(sql, holder!.tagId, note);
     const ctx = ctxOf(req);
@@ -280,14 +281,15 @@ const reservedNo = (note: string | null) => note?.match(/^正在自动释放手�
  * 标「暂停使用」+ 说明；发牌碰到暂停的手牌会拒绝，改芯片号、删除也会拒绝（frontdesk/tags.ts）。
  * 返回 reserved 标上了；in_store 在店；skip 芯片号换了、删了、发不出去（停用、锁定、暂停、维修）
  */
-async function reserveTag(sql: Sql, tagId: number, uid: string, note: string): Promise<'reserved' | 'in_store' | 'skip'> {
+async function reserveTag(sql: Sql, tagId: number, uid: string, note: string, opts: { allowInStore?: boolean } = {}): Promise<'reserved' | 'in_store' | 'skip'> {
   return withTx(sql, async (tx) => {
     const [t] = await tx<{ active: boolean; locked: boolean; serviceStatus: string; deletedAt: Date | null; cardUid: string | null }[]>`
       SELECT active, locked, service_status, deleted_at, card_uid FROM hand_tags WHERE id = ${tagId} FOR UPDATE`;
     // 锁住以后再核对芯片号还绑在这张牌上（期间改绑过的不动，Codex 审查 a116c5f）
     if (!t || t.deletedAt || t.cardUid !== uid) return 'skip';
     const [open] = await tx`SELECT 1 FROM visits WHERE tag_id = ${tagId} AND status = 'open' LIMIT 1`;
-    if (open) return 'in_store';
+    // 自动释放不动在店客人的；手动释放（店长决定的）在店的也预留：退牌以后先发不出去，等这次释放核对清楚
+    if (open && !opts.allowInStore) return 'in_store';
     if (!t.active || t.locked || t.serviceStatus !== 'normal') return 'skip';
     await tx`
       UPDATE hand_tags SET service_status = 'paused', service_note = ${note}, service_by = NULL, service_at = now(), updated_at = now()
@@ -316,12 +318,12 @@ async function restoreTag(sql: Sql, tagId: number, note: string): Promise<void> 
  * 和发牌错开（Codex 审查 a92ac3e / d0ecdcb）：放之前开一个短事务锁住这张手牌（发牌也先锁手牌），核对确实不在店，标「暂停使用」
  * 当预留（发牌会拒绝暂停的手牌），提交以后才在事务外调柜锁桥。放成了、确定没放成（桥明确拒绝）才恢复；结果待确认、进程中途退出的
  * 预留**一直留着**，不按时间清：之后每一轮先按柜子现在的样子核对——空了或换成认得出的别的手牌就是放成了，恢复；还是这张手牌占着就再放一次。
- * 有人在后台把这张牌改回正常，就不再管它。不拿锁的钟和数据库的钟比先后。LOCKER_AUTO_RELEASE=off 关掉；没接自选柜（select）什么都不做。
+ * 有人在后台把这张牌改回正常，就不再管它。不拿锁的钟和数据库的钟比先后。LOCKER_AUTO_RELEASE=off 只关掉发起新的自动释放，
+ * 已有的预留（包括店长手动释放留下的）照常核对；没接自选柜（select）什么都不做。
  * 桥连不上照常抛出（每分钟任务记成出错，下一分钟再试）。返回这一轮确定放成了几个。
  */
 export async function sweepReturnedPhoneLockers(deps: { sql: Sql; config: AppConfig }): Promise<number> {
   const cfg = deps.config.lockers;
-  if (!cfg.autoRelease) return 0;
   const controller = lockerControllerFor(cfg);
   if (!controller.info.canSelect) return 0;
   return runInStore(cfg.storeId, async () => {
@@ -360,7 +362,8 @@ export async function sweepReturnedPhoneLockers(deps: { sql: Sql; config: AppCon
       if (result.ok) released += 1;
     }
 
-    // ② 新退了牌、还占着手机柜的
+    // ② 新退了牌、还占着手机柜的（LOCKER_AUTO_RELEASE=off 只关这一步：①的预留——包括手动释放留下的——照常核对，Codex 审查 6056e39）
+    if (!cfg.autoRelease) return released;
     const slots = all.filter((x) => x.uid && x.uid !== LOCKER_UID_UNREADABLE && x.doorOpen !== false);
     if (!slots.length) return released;
     const uids = [...new Set(slots.map((x) => x.uid!))];
