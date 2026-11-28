@@ -111,7 +111,7 @@ async function lockTag(tx: Db, id: number) {
 
 export const LockInput = z.object({
   reason: z.string().trim().min(2, '请填写锁定原因（至少 2 个字）').max(100, '原因最多 100 字'),
-  /** 8.2.21：挂失 / 未交回（记下是哪位客人那次来访），不带是手动锁 */
+  /** 8.2.27：挂失 / 未交回（记下是哪位客人那次来访），不带是手动锁 */
   kind: z.enum(TAG_LOCK_KINDS, '锁定类别不正确').optional(),
 });
 
@@ -122,7 +122,7 @@ export async function lockHandTag(deps: Deps, id: number, raw: unknown, ctx: OpC
     const tag = await lockTag(tx, id);
     if (tag.inUse) throw conflict('TAG_IN_USE', `手牌 ${tag.code} 上有在店客人，请先给客人换牌并勾选「锁定原手牌」`);
     if (tag.locked) throw conflict('TAG_ALREADY_LOCKED', `手牌 ${tag.code} 已经是锁定状态`);
-    // 8.2.21：挂失 / 未交回记下最后一位用这张牌的客人（结了账的那一次来访）；没人用过的牌只能手动锁
+    // 8.2.27：挂失 / 未交回记下最后一位用这张牌的客人（结了账的那一次来访）；没人用过的牌只能手动锁
     let visitId: number | null = null;
     if (input.kind) {
       const [last] = await tx<{ id: number }[]>`
@@ -154,7 +154,7 @@ export async function unlockHandTag(deps: Deps, id: number, ctx: OpContext) {
     await tx`
       UPDATE hand_tags SET locked = false, lock_reason = NULL, locked_by = NULL, locked_at = NULL, lock_kind = NULL, lock_visit_id = NULL, updated_at = now()
       WHERE id = ${id}`;
-    // 8.2.21：挂失、未交回的解锁 = 找回了，审计里记一笔
+    // 8.2.27：挂失、未交回的解锁 = 找回了，审计里记一笔
     await writeAudit(tx, {
       staffId: ctx.actor.id,
       action: 'hand_tag_unlocked',
@@ -615,7 +615,7 @@ export async function setTagCard(deps: Deps, id: number, raw: unknown, ctx: OpCo
 }
 
 /**
- * 8.2.21 异常手牌清单（docs/V82221_TAG_EXCEPTIONS.md）：挂失、未交回、手动锁定、暂停使用、维修中，挂失 / 未交回带上当时的客人。
+ * 8.2.27 异常手牌清单（docs/V82227_TAG_EXCEPTIONS.md）：挂失、未交回、手动锁定、暂停使用、维修中，挂失 / 未交回带上当时的客人。
  * 排序：挂失、未交回在前，同类按时间从早到晚（越早越该追）
  */
 export async function listTagExceptions(db: Db): Promise<TagException[]> {

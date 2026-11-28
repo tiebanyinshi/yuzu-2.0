@@ -79,7 +79,7 @@ export function CheckoutDialog({
   const [note, setNote] = useState('');
   // 8.1.37：还没上钟的钟单要逐张确认「客人确实做完了」才能结（记下确认时的那一组钟单号，核对刷新、钟单变了要重新确认）
   const [unstartedOk, setUnstartedOk] = useState('');
-  // 8.2.22：找零大（超过 ¥500，或客人实给超过应收两倍）要再按一次确认，记下确认时的那几个数
+  // 8.2.27：找零大（超过 ¥500，或客人实给超过应收两倍）要再按一次确认，记下确认时的那几个数
   const [changeOk, setChangeOk] = useState('');
   const [result, setResult] = useState<CheckoutDetail | null>(null);
   /** 次卡（v0.7.28）：每张卡这次抵几次 */
@@ -226,7 +226,7 @@ export function CheckoutDialog({
   const unstartedConfirmed = waitingNos.length === 0 || unstartedOk === waitingNos.join(',');
   const ready = total !== null && remaining === 0 && pay.ok && !preview.isFetching && shiftReady.ready && !backfillBlocked && !roomsOpen && !usagesUncharged && unstartedConfirmed;
 
-  // 8.2.22（收银 demo）：现金找零大的再确认一次——多半是把实给敲错了一位（1000 敲成 10000）
+  // 8.2.27（收银 demo）：现金找零大的再确认一次——多半是把实给敲错了一位（1000 敲成 10000）
   const bigChange = pay.rows
     .map((r, i) => ({ r, cents: pay.rowCents[i] ?? null }))
     .filter(({ r }) => r.method === 'cash' && r.tendered.trim())
@@ -766,7 +766,7 @@ export function CheckoutRecordsDialog({ open, onClose, focusId }: { open: boolea
   const list = useCheckouts(date, open, open && isToday);
   const summary = useCheckoutDaySummary(date, open, open && isToday);
   const [openId, setOpenId] = useState<number | null>(focusId ?? null);
-  // 8.2.14（收银 demo 订单查询）：按牌号、单号后几位、金额、经办人筛这一天的单，↑↓ 选、回车打开
+  // 8.2.27（收银 demo 订单查询）：按牌号、单号后几位、金额、经办人筛这一天的单，↑↓ 选、回车打开
   const [find, setFind] = useState('');
   useResetOnOpen(open, () => {
     setOpenId(focusId ?? null);

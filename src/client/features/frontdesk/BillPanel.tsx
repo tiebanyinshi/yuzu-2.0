@@ -473,7 +473,7 @@ export function BillPanel({
       <footer className="@container shrink-0 border-t border-line bg-card px-5 pt-3 pb-4 shadow-[0_-8px_24px_-18px_rgb(28_35_31/0.3)]">
         <div className="flex flex-col gap-2.5 @min-[22rem]:flex-row @min-[22rem]:flex-wrap @min-[22rem]:items-end @min-[22rem]:gap-x-2">
           {!issue && open && visit.ticket ? (
-            // 8.2.13（收银 demo「应收大字」）：收银台最要紧的是此刻要收多少——含门票的应收用大字，已挂明细降到下面一行
+            // 8.2.27（收银 demo「应收大字」）：收银台最要紧的是此刻要收多少——含门票的应收用大字，已挂明细降到下面一行
             <div className="@min-[22rem]:grow">
               <p className="w-0 min-w-full text-[12px] font-semibold text-ink-3">此刻应收（含门票）</p>
               <span data-testid="bill-due">
@@ -742,7 +742,7 @@ function LineRow({
 }) {
   const d = line.discount ?? null;
   const operator = [line.postedByEmpNo, line.postedByName, line.postedByPhoneTail ? `尾号 ${line.postedByPhoneTail}` : null].filter(Boolean).join(' · ');
-  // 8.2.22（收银 demo 明细行键盘）：↑↓ 在明细间移动，Del / ⌫ 作废（退菜），「/」打折
+  // 8.2.27（收银 demo 明细行键盘）：↑↓ 在明细间移动，Del / ⌫ 作废（退菜），「/」打折
   const onKeyDown = (e: KeyboardEvent<HTMLLIElement>) => {
     if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {

@@ -1,4 +1,4 @@
-// 8.2.13 发卡台区域状态（docs/V82213_DESK_UI.md；店主 2026-11-27 收银员工作台 demo 的「区域卡片 + 推荐」）：
+// 8.2.27 发卡台区域状态（docs/V82227_DESK_UI.md；店主 2026-11-27 收银员工作台 demo 的「区域卡片 + 推荐」）：
 //   按分区（男宾 / 女宾）里的区（牌号的字母前缀：A 区、B 区；没有字母的是「普通柜」）算：
 //   · 空闲：最近 15 分钟没往这个区发过牌；繁忙：最近 15 分钟发了 3 张以上；已满：没有能发的空牌；其余正常；
 //   · 推荐顺序：空闲 > 正常 > 繁忙 > 已满，同一档先看在店占比低的，再看停得久的（上一次发牌早的）；每个分区排第一的标「推荐」。
@@ -75,7 +75,7 @@ export function areaStatuses(tags: readonly AreaTag[], now: number): AreaStatus[
 export const areaLabel = (area: string) => (area ? `${area} 区` : '普通柜');
 
 /**
- * 8.2.14 按人数发牌：这个分区要 count 张，按推荐顺序（areaStatuses）逐区挑能发的空牌（区里按牌号顺序），一个区不够接着下一个区。
+ * 8.2.27 按人数发牌：这个分区要 count 张，按推荐顺序（areaStatuses）逐区挑能发的空牌（区里按牌号顺序），一个区不够接着下一个区。
  * except：已经分给本次别的客人、或店员手动填了的牌。返回挑到的牌号（可能少于 count：空牌不够）
  */
 export function pickAreaTags(tags: readonly (AreaTag & { code: string })[], zone: TagZone, count: number, now: number, except: ReadonlySet<string> = new Set()): string[] {

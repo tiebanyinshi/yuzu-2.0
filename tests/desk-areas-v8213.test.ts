@@ -1,4 +1,4 @@
-// 8.2.13 发卡台区域状态（docs/V82213_DESK_UI.md）：空闲 / 正常 / 繁忙 / 已满与推荐顺序。纯函数，不要数据库。
+// 8.2.27 发卡台区域状态（docs/V82227_DESK_UI.md）：空闲 / 正常 / 繁忙 / 已满与推荐顺序。纯函数，不要数据库。
 
 import { describe, expect, it } from 'vitest';
 import { areaStatuses, type AreaTag } from '../src/shared/desk-areas';
@@ -56,7 +56,7 @@ describe('区域状态', () => {
   });
 });
 
-describe('按人数发牌（8.2.14）', () => {
+describe('按人数发牌（8.2.27）', () => {
   it('按推荐的区挑空牌、区里按牌号顺序，一个区不够接着下一个；跳过已用的', async () => {
     const { pickAreaTags } = await import('../src/shared/desk-areas');
     const tags = [tag('A01', 2), tag('A02', null), tag('A10', null), tag('A9', null), tag('B01', null), tag('B02', null), tag('C01', null, { zone: 'female' })];

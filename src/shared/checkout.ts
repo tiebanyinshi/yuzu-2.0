@@ -688,7 +688,7 @@ export interface DashboardData {
 }
 
 /**
- * 8.2.14 结账记录搜索：牌号（含部分，全角也认）、单号后几位、金额（元，「499」「499.00」）、经办人、桌号；空的全列
+ * 8.2.27 结账记录搜索：牌号（含部分，全角也认）、单号后几位、金额（元，「499」「499.00」）、经办人、桌号；空的全列
  */
 export function checkoutMatches(c: { checkoutNo: string; tagCodes?: string[]; tableNames?: string[]; totalAmount: number; operatorName: string }, q: string): boolean {
   const t = normalizeTagCode(q);

@@ -132,7 +132,7 @@ export function CheckinDialog({
   const [memberQ, setMemberQ] = useState('');
   const [member, setMember] = useState<MemberSummary | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
-  // 8.2.14 按人数发牌（收银 demo）：只填男、女几位，按推荐的区自动分牌
+  // 8.2.27 按人数发牌（收银 demo）：只填男、女几位，按推荐的区自动分牌
   const [counts, setCounts] = useState({ male: '', female: '' });
   /** 当场授权（值班经理 / 店总签发，5 分钟内一次有效）；只在有客人等级不够、要用 VIP 柜时使用 */
   const [grant, setGrant] = useState<VipGrant | null>(null);
@@ -257,7 +257,7 @@ export function CheckinDialog({
     fn();
   };
   /**
-   * 8.2.14 按人数发牌：男、女各几位（全角数字也认），按区域状态的推荐顺序分空牌（一个区不够接着下一个）。
+   * 8.2.27 按人数发牌：男、女各几位（全角数字也认），按区域状态的推荐顺序分空牌（一个区不够接着下一个）。
    * 已经填了牌号的行留着（刷卡、手输的不动，会员本人那一行也不动），只补齐不够的、去掉多出来的空行；每一行照旧能改、能刷卡换
    */
   const applyCounts = () =>

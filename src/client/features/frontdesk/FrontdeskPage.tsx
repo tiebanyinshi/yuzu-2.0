@@ -86,7 +86,7 @@ export function FrontdeskPage() {
   const searchRef = useRef<HTMLInputElement>(null);
 
   const tags = board.data?.tags ?? [];
-  // 8.2.21 异常手牌（锁定的牌）几张：工具栏上提示
+  // 8.2.27 异常手牌（锁定的牌）几张：工具栏上提示
   const lockedCount = useMemo(() => tags.filter((t) => t.locked).length, [tags]);
   const matches = useMemo(() => (q ? matchTags(tags, q) : []), [tags, q]);
   const unique = useMemo(() => (q ? uniqueTagMatch(tags, q) : null), [tags, q]);
@@ -532,7 +532,7 @@ export function FrontdeskPage() {
             {selectedId ? (
               panel
             ) : (
-              // 8.2.13：没选手牌时是区域状态与最近发牌（店主 2026-11-27 收银员工作台 demo），不再是一大块空白
+              // 8.2.27：没选手牌时是区域状态与最近发牌（店主 2026-11-27 收银员工作台 demo），不再是一大块空白
               <DeskOverview tags={tags} now={now} selfMinutes={board.data?.rules.selfVoidMinutes ?? DEFAULT_FRONTDESK_RULES.selfVoidMinutes} onOpen={openTag} onArea={(area) => area && setQ(area)} />
             )}
           </aside>

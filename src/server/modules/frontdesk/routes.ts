@@ -299,7 +299,7 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
   });
 
   // 结账记录可以切换营业日（过了营业日切换点仍能找到前一晚的单来反结账）；查看之前的营业日需要历史营业日权限
-  // 8.2.14（收银 demo「POS 交易号当天重复要确认」）：今天（营业日）没反结账的结账单里，银行卡收款用过这个参考号的有几笔；只读，前台提醒用
+  // 8.2.27（收银 demo「POS 交易号当天重复要确认」）：今天（营业日）没反结账的结账单里，银行卡收款用过这个参考号的有几笔；只读，前台提醒用
   app.get('/api/frontdesk/payment-ref-check', { preHandler: guard('frontdesk.read') }, async (req) => {
     const { ref } = parse(z.object({ ref: z.string().trim().min(4).max(20) }), req.query ?? {});
     const date = await businessDate(sql, deps, new Date());
@@ -411,7 +411,7 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
     return { ok: true };
   });
 
-  // 8.2.21 异常手牌清单：挂失、未交回、锁定、暂停、维修（docs/V82221_TAG_EXCEPTIONS.md）
+  // 8.2.27 异常手牌清单：挂失、未交回、锁定、暂停、维修（docs/V82227_TAG_EXCEPTIONS.md）
   app.get('/api/frontdesk/tag-exceptions', { preHandler: guard('frontdesk.read') }, async () => ({ tags: await listTagExceptions(sql) }));
 
   app.post('/api/frontdesk/tags/:id/lock', { preHandler: guard('frontdesk.operate') }, async (req) => {

@@ -112,7 +112,7 @@ export function useRefreshFrontdesk() {
   return (visitIds: number[] = []) => {
     void qc.invalidateQueries({ queryKey: fk.board });
     void qc.invalidateQueries({ queryKey: ['frontdesk', 'preview'] });
-    // 8.2.21 异常手牌清单（锁牌、找回、丢牌换牌以后）
+    // 8.2.27 异常手牌清单（锁牌、找回、丢牌换牌以后）
     void qc.invalidateQueries({ queryKey: ['frontdesk', 'tag-exceptions'] });
     // 8.1.44 起收银台上就能加项目、作废：结账核对（权益与优惠、结账对话框的应收）跟着重取，不拿加项目以前的金额
     void qc.invalidateQueries({ queryKey: ['frontdesk', 'checkout-preview'] });

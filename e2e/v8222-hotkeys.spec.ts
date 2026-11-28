@@ -1,4 +1,4 @@
-// 8.2.22 前台快捷键（docs/V82222_HOTKEYS.md；店主 2026-11-27 收银员工作台 demo）：
+// 8.2.27 前台快捷键（docs/V82227_HOTKEYS.md；店主 2026-11-27 收银员工作台 demo）：
 //   ⌥0 全部功能搜索跳页；收银台 F9 买单 → ⌥数字加现金（光标落到金额）→ 实给填全角数字、找零大时 F9 先提醒、再按一次结清。
 // 依赖 seed-demo、seed-frontdesk-demo（仅独立演示库）；账号前台 xiaozhou，密码 yuzu2026。每次挑一张空闲手牌，可重复执行。
 import { randomUUID } from 'node:crypto';

@@ -1,4 +1,4 @@
-// 8.2.14 前台改良（docs/V82214_DESK_IMPROVE.md；店主 2026-11-27 收银员工作台 demo）：
+// 8.2.27 前台改良（docs/V82227_DESK_IMPROVE.md；店主 2026-11-27 收银员工作台 demo）：
 //   接待发牌按人数分牌（只填男几位，按推荐区自动分）、结账记录按牌号搜、回车打开。
 // 依赖 seed-demo、seed-frontdesk-demo（仅独立演示库）；账号前台 xiaozhou，密码 yuzu2026。可重复执行（发出去的牌最后撤销）。
 import { expect, test, type Page } from '@playwright/test';

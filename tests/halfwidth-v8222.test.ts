@@ -1,4 +1,4 @@
-// 8.2.22 全角转半角（docs/V82222_HOTKEYS.md）：输入法开着时敲的牌号、金额、读卡器打进来的卡号都按半角认。纯函数，不要数据库。
+// 8.2.27 全角转半角（docs/V82227_HOTKEYS.md）：输入法开着时敲的牌号、金额、读卡器打进来的卡号都按半角认。纯函数，不要数据库。
 
 import { describe, expect, it } from 'vitest';
 import { createWedgeRecognizer } from '../src/shared/devices';
@@ -29,7 +29,7 @@ describe('全角转半角', () => {
   });
 });
 
-describe('结账记录搜索（8.2.14）', () => {
+describe('结账记录搜索（8.2.27）', () => {
   it('牌号（部分、全角）、单号后几位、金额、经办人、桌号', async () => {
     const { checkoutMatches } = await import('../src/shared/checkout');
     const c = { checkoutNo: 'JZ20261127-0042', tagCodes: ['A023', 'B105'], tableNames: ['V3'], totalAmount: 49900, operatorName: '小周' };

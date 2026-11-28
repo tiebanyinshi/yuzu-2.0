@@ -96,7 +96,7 @@ export function useDeskHotkeys(o: {
       const def = DESK_HOTKEYS.find((h) => h.key === e.key && h.desks.includes(latest.current.desk));
       const wantsHelp = e.key === '?' && !isTypingTarget(e.target);
       const open = openDialog();
-      // 8.2.22：对话框里写了这个 F 键的按钮（买单对话框的「确认结清」= F9）就点它
+      // 8.2.27：对话框里写了这个 F 键的按钮（买单对话框的「确认结清」= F9）就点它
       const inDialog = open && /^F([1-9]|1[0-2])$/.test(e.key) ? dialogFkeyButton(open, e.key) : null;
       if (inDialog) {
         e.preventDefault();
@@ -104,7 +104,7 @@ export function useDeskHotkeys(o: {
         inDialog.click();
         return;
       }
-      // 8.2.22：不在输入框、没有对话框时按 ↓ / ↑ 进到账单明细（第一行 / 最后一行），再用 ↑↓、Del、/ 操作
+      // 8.2.27：不在输入框、没有对话框时按 ↓ / ↑ 进到账单明细（第一行 / 最后一行），再用 ↑↓、Del、/ 操作
       if (!open && !isTypingTarget(e.target) && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
         const rows = [...document.querySelectorAll<HTMLElement>('[data-line-row]')];
         if (rows.length && !rows.includes(document.activeElement as HTMLElement)) {
@@ -251,7 +251,7 @@ function HotkeyHelpDialog({ open, desk, onClose }: { open: boolean; desk: Desk; 
           <span>在页面任意位置直接敲牌号，回车打开</span>
         </li>
       </ul>
-      {/* 8.2.22：其余的键（收银 demo 的键盘走完全流程） */}
+      {/* 8.2.27：其余的键（收银 demo 的键盘走完全流程） */}
       <h3 className="mt-4 text-[13px] font-bold text-ink-2">账单明细</h3>
       <ul className="mt-1.5 space-y-1.5" data-testid="hotkey-help-lines">
         {(

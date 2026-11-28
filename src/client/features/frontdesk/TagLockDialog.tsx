@@ -31,7 +31,7 @@ export function TagLockDialog({
   const lockReasons = useReasons('lockReasons');
   const [code, setCode] = useState('');
   const [reason, setReason] = useState('');
-  // 8.2.21：挂失 / 未交回进异常手牌清单（记下最后一位结账的客人），手动锁的不进
+  // 8.2.27：挂失 / 未交回进异常手牌清单（记下最后一位结账的客人），手动锁的不进
   const [kind, setKind] = useState<TagLockKind | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

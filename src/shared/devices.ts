@@ -413,7 +413,7 @@ export function createWedgeRecognizer(opts: { maxGapMs?: number; minLength?: num
         buffer = '';
         return code.length >= minLength && CODE_RE.test(code) ? code : null;
       }
-      // 8.2.22：输入法全角时键盘式读卡器打进来的是全角数字，按半角收
+      // 8.2.27：输入法全角时键盘式读卡器打进来的是全角数字，按半角收
       if (key.length === 1) buffer += toHalfWidth(key);
       else if (key !== 'Shift') buffer = '';
       return null;

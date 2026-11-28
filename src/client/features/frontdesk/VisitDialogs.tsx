@@ -130,7 +130,7 @@ export function SwapDialog({
         reason: reason.trim(),
         lockOld,
         lostFee: chargeFee ? fee : null,
-        // 8.2.21：丢牌换牌锁了原牌的，原牌进挂失清单
+        // 8.2.27：丢牌换牌锁了原牌的，原牌进挂失清单
         lost: !!lost && lockOld,
         vipGrantId: needs.length && grant ? grant.grantId : null,
       },

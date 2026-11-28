@@ -1,4 +1,4 @@
-// 8.2.13 前台界面（docs/V82213_DESK_UI.md；店主 2026-11-27 收银员工作台 demo）：发卡台没选手牌时右边是区域状态与最近发牌；
+// 8.2.27 前台界面（docs/V82227_DESK_UI.md；店主 2026-11-27 收银员工作台 demo）：发卡台没选手牌时右边是区域状态与最近发牌；
 // 收银台账单里含门票的此刻应收用大字。依赖 seed-demo、seed-frontdesk-demo（仅独立演示库）；账号前台 xiaozhou，密码 yuzu2026。
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';

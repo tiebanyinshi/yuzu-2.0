@@ -209,7 +209,7 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
   );
 }
 
-/** 8.2.21 交班提醒：还有挂失、未交回的手牌（docs/V82221_TAG_EXCEPTIONS.md），交班时一并交接 */
+/** 8.2.27 交班提醒：还有挂失、未交回的手牌（docs/V82227_TAG_EXCEPTIONS.md），交班时一并交接 */
 function TagExceptionsNotice() {
   const can = useCan();
   const q = useQuery({

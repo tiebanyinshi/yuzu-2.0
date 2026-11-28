@@ -1,4 +1,4 @@
-// 8.2.21 未交回、挂失手牌清单（docs/V82221_TAG_EXCEPTIONS.md）：结了账的牌在「锁牌 / 解锁」里登记未交回 →
+// 8.2.27 未交回、挂失手牌清单（docs/V82227_TAG_EXCEPTIONS.md）：结了账的牌在「锁牌 / 解锁」里登记未交回 →
 // 工具栏「异常手牌」里看到这张牌和客人 → 回车找回。
 // 依赖 seed-demo、seed-frontdesk-demo（仅独立演示库）；账号店主 linlan，密码 yuzu2026。每次挑一张空闲手牌，可重复执行。
 import { randomUUID } from 'node:crypto';

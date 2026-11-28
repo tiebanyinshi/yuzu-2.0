@@ -203,7 +203,7 @@ export function usePayRows(opts: {
       if (rows.filter((x) => x.method === 'on_account').length > 1) return '一张结账单只能挂一笔账，请合并金额';
     }
     if (r.method === 'other' && !r.ref.trim()) return '「其他」收款请在备注里写明收的是什么';
-    // 8.2.14：银行卡（POS）填了参考号的，要是 4–20 位字母或数字（敲成金额、多敲了空格的这里拦下）
+    // 8.2.27：银行卡（POS）填了参考号的，要是 4–20 位字母或数字（敲成金额、多敲了空格的这里拦下）
     if (r.method === 'bank_card' && r.ref.trim() && !POS_REF_PATTERN.test(normalizeTagCode(r.ref))) return 'POS 参考号要是 4–20 位字母或数字（小票上的「参考号」）';
     if (r.method === 'cash' && r.tendered.trim()) {
       // 「客人实给」只用来算找零，不登记；填了却少于这笔现金，说明现金没收够（测试服 E2E 报告 BUG-2）
@@ -364,7 +364,7 @@ export function PaymentsSection({
   const authCents = authRow ? pay.rowCents[pay.rows.indexOf(authRow)] : null;
   const auth = authRow && authCents ? authorize(authCents, authRow.method === 'company' ? '公司承担' : authRow.reason.trim()) : null;
   const methods = QUICK_METHODS.filter((m) => (m !== 'wallet' || canWallet) && (m !== 'store_coupon' || !!coupons) && (m !== 'on_account' || (arAccounts.data?.length ?? 0) > 0));
-  // 8.2.22（收银 demo「键盘走完收款」）：⌥ / Alt + 1–9 加第几种收款方式（按钮上写着），金额默认还差的部分，光标落到这一笔的金额上；
+  // 8.2.27（收银 demo「键盘走完收款」）：⌥ / Alt + 1–9 加第几种收款方式（按钮上写着），金额默认还差的部分，光标落到这一笔的金额上；
   // 数字键本身留给金额输入。点的是按钮本身，停用（例如应收还没取到）的按不动
   const section = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -984,11 +984,11 @@ function GiftTag({ gift }: { gift: NonNullable<CheckoutCouponOption['gift']> }) 
   return <span className="rounded bg-lake/10 px-1.5 py-px text-[12px] font-semibold whitespace-nowrap text-lake">签赠 · {gift.segment}</span>;
 }
 
-/** 8.2.14 POS 参考号：4–20 位字母或数字 */
+/** 8.2.27 POS 参考号：4–20 位字母或数字 */
 const POS_REF_PATTERN = /^[0-9A-Z]{4,20}$/;
 
 /**
- * 8.2.14（收银 demo「同一个交易号当天重复要确认」）：银行卡填了参考号，查今天有没有别的单用过——多半是同一笔刷了两次单、
+ * 8.2.27（收银 demo「同一个交易号当天重复要确认」）：银行卡填了参考号，查今天有没有别的单用过——多半是同一笔刷了两次单、
  * 或者抄错了参考号。只提醒，不拦（同一张卡分两次刷，参考号也不同）
  */
 function PosRefCheck({ refText }: { refText: string }) {

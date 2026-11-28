@@ -1,4 +1,4 @@
-// 8.2.14 前台改良（docs/V82214_DESK_IMPROVE.md）：POS 参考号当天查重（只读接口，前台提醒用）。
+// 8.2.27 前台改良（docs/V82227_DESK_IMPROVE.md）：POS 参考号当天查重（只读接口，前台提醒用）。
 
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
