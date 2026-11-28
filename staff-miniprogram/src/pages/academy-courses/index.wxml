@@ -1,0 +1,16 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="{{name}}" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '这里还没有课' : ''}}" message="{{state === 'empty' ? '学堂上架以后会出现在这里' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="card list">
+      <view wx:for="{{courses}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onCourse" aria-role="button">
+        <view class="row-main">
+          <view class="row-title">{{item.title}}</view>
+          <view class="row-sub num">{{item.sub}}</view>
+        </view>
+        <view wx:if="{{item.progress}}" class="tag {{item.done ? 'neutral' : 'new'}}">{{item.progress}}</view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+  </view>
+</view>

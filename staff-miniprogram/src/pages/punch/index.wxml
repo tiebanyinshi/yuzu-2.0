@@ -1,0 +1,67 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="打卡" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="clock-card card card-pad">
+      <view class="clock num">{{view.clock}}</view>
+      <view class="t-title-s label">{{view.label}}</view>
+      <view class="t-body muted detail">{{view.detail}}</view>
+
+      <view wx:if="{{result}}" class="result {{resultLate ? 'late' : ''}} fade-in">✓ {{result}}</view>
+
+      <view wx:if="{{view.blocked}}" class="notice info blocked">{{view.blocked}}</view>
+
+      <view wx:if="{{pending}}" class="notice warn pending">
+        <view>{{pending.at}} 的那次{{pending.label}}没收到门店系统的回复，可能已经打上了。</view>
+        <view class="pending-actions">
+          <button class="btn secondary" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onResend">再提交一次（不会重复）</button>
+        </view>
+      </view>
+
+      <view wx:if="{{actionError}}" class="notice error action-error">{{actionError}}</view>
+      <button wx:if="{{locationDenied}}" class="btn secondary block setting" hover-class="pressed" hover-stay-time="120" bindtap="onOpenSetting">去打开定位</button>
+
+      <block wx:if="{{!pending && !outwork}}">
+        <button wx:if="{{view.primary}}" class="btn primary block go" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onPunch">
+          {{busy ? '正在打卡…' : (view.primary === 'in' ? '上班打卡' : '下班打卡')}}
+        </button>
+        <view wx:if="{{view.early}}" class="early">
+          <view class="link" bindtap="onEarly">{{busy ? '正在打卡…' : '提前下班'}}</view>
+          <view class="t-caption">还没到下班时间，打了会记早退</view>
+        </view>
+      </block>
+    </view>
+
+    <view wx:if="{{outwork && !pending}}" class="section card card-pad outwork">
+      <view class="t-title-s">外勤打卡</view>
+      <view class="t-body muted">在外面办事的，写清事由、现场拍一张照片。</view>
+      <view class="field">
+        <view class="field-label">外勤事由</view>
+        <textarea class="input area" value="{{outworkReason}}" maxlength="200" placeholder="例如：去供应商那里验货" placeholder-class="input-placeholder" bindinput="onOutworkReason" aria-label="外勤事由" />
+      </view>
+      <view class="field">
+        <view class="field-label">现场照片</view>
+        <view class="photo-row">
+          <image wx:if="{{outworkPhoto}}" class="photo" src="{{outworkPhoto}}" mode="aspectFill" />
+          <button class="btn secondary" hover-class="pressed" hover-stay-time="120" bindtap="onOutworkPhoto">{{outworkPhoto ? '重拍' : '拍一张'}}</button>
+        </view>
+      </view>
+      <button class="btn primary block go" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onOutwork">{{busy ? '正在打卡…' : '外勤打卡'}}</button>
+      <view class="link cancel" bindtap="onCancelOutwork">不打外勤了</view>
+    </view>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">今天打的卡</view></view>
+      <view wx:if="{{!rows.length}}" class="t-body muted">今天还没有打卡。</view>
+      <view wx:else class="card list">
+        <view wx:for="{{rows}}" wx:key="id" class="row">
+          <view class="row-time num">{{item.time}}</view>
+          <view class="row-main">
+            <view class="row-title {{item.late ? 'late-text' : ''}}">{{item.text}}</view>
+            <view wx:if="{{item.sub}}" class="row-sub">{{item.sub}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,51 @@
+.hero {
+  margin-top: 16rpx;
+}
+.progress {
+  margin: 8rpx 0 8rpx;
+}
+.progress.done {
+  color: var(--success);
+}
+.go {
+  margin-top: 40rpx !important;
+}
+.result {
+  margin-top: 32rpx;
+  padding: 24rpx 28rpx;
+  border-radius: var(--radius-control);
+  background-color: var(--surface-2);
+}
+.result.ok {
+  background-color: var(--success-soft);
+  color: var(--success);
+}
+.result.bad {
+  background-color: var(--danger-soft);
+  color: var(--danger);
+}
+.result.wait {
+  background-color: var(--warn-soft);
+  color: var(--warn);
+}
+.waiting {
+  margin-top: 24rpx;
+}
+.dot {
+  width: 20rpx;
+  height: 20rpx;
+  border-radius: 50%;
+  flex: none;
+  margin-right: 24rpx;
+  border: 3rpx solid var(--line-strong);
+  box-sizing: border-box;
+}
+.dot.done {
+  background-color: var(--success);
+  border-color: var(--success);
+}
+.more {
+  display: flex;
+  justify-content: center;
+  margin: 32rpx 0 48rpx;
+}

@@ -1,0 +1,13 @@
+<view wx:if="{{state === 'loading'}}" class="wrap">
+  <block wx:if="{{showSkeleton}}">
+    <view class="skeleton-card" wx:for="{{lines}}" wx:key="*this">
+      <view class="skeleton-line wide"></view>
+      <view class="skeleton-line"></view>
+    </view>
+  </block>
+</view>
+<view wx:else class="wrap center">
+  <view class="title">{{title || (state === 'offline' ? '现在连不上门店系统' : state === 'error' ? '没有取回来' : '这里还是空的')}}</view>
+  <view wx:if="{{message}}" class="message">{{message}}</view>
+  <button wx:if="{{state === 'error' || state === 'offline'}}" class="btn secondary retry" hover-class="pressed" hover-stay-time="120" bindtap="onRetry">重新加载</button>
+</view>

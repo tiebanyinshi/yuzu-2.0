@@ -1,0 +1,26 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="通讯录" />
+  <view class="gutter">
+    <view class="search">
+      <image class="search-icon" src="/assets/icons/search.png" />
+      <input class="search-input" value="{{q}}" placeholder="搜姓名、工号、手机号" placeholder-class="input-placeholder" maxlength="20" bindinput="onSearch" aria-label="搜同事" />
+      <view wx:if="{{q}}" class="clear" hover-class="pressed" hover-stay-time="120" bindtap="onClear" aria-role="button" aria-label="清空">清空</view>
+    </view>
+  </view>
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? (q ? '没有搜到' : '通讯录还是空的') : ''}}" message="{{state === 'empty' ? (q ? '换个字试试' : '') : error}}" bindretry="onRetry" />
+  <view wx:else>
+    <view wx:for="{{groups}}" wx:for-item="g" wx:key="key" class="gutter section">
+      <view class="section-head"><view class="section-title">{{g.name}}</view><view class="t-caption num">{{g.people.length}} 人</view></view>
+      <view class="card list">
+        <view wx:for="{{g.people}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-phone="{{item.phone}}" data-callable="{{item.callable}}" data-name="{{item.name}}" bindtap="onCall" aria-role="button">
+          <view class="avatar">{{item.initial}}</view>
+          <view class="row-main">
+            <view class="row-title">{{item.name}}<text wx:if="{{item.head}}" class="tag neutral head">主管</text></view>
+            <view class="row-sub">{{item.sub}}</view>
+          </view>
+          <view class="phone num {{item.callable ? 'callable' : ''}}">{{item.phone || '—'}}</view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

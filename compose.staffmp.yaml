@@ -1,0 +1,15 @@
+# 开员工小程序「汤崎 WCP」（员工小程序线，docs/STAFF_MP.md 第 10 节）的 yuzu 实例才叠加这个文件：在那台的 .env 里写
+#   COMPOSE_FILE=compose.yaml:compose.staffmp.yaml
+# （同时开了员工食堂的写 COMPOSE_FILE=compose.yaml:compose.canteen.yaml:compose.staffmp.yaml，接了小程序的再加 compose.mp.yaml）
+# 员工小程序端口只挂 /api/staffmp/*；只让放 Caddy 的那台服务器连（同一台主机时默认只监听 127.0.0.1），不做端口转发。
+# 微信一键登录要在 .env 配 STAFFMP_APPID、STAFFMP_APP_SECRET（AppSecret 不进 Git）；不配只能账号密码登录。
+services:
+  app:
+    environment:
+      # 容器里固定用 8095；宿主机上的端口是 .env 的 STAFFMP_PORT
+      STAFFMP_PORT: "8095"
+      STAFFMP_APPID: ${STAFFMP_APPID:-}
+      STAFFMP_APP_SECRET: ${STAFFMP_APP_SECRET:-}
+      STAFFMP_TRUST_PROXY: ${STAFFMP_TRUST_PROXY:-}
+    ports:
+      - "${STAFFMP_BIND:-127.0.0.1}:${STAFFMP_PORT:-8095}:8095"

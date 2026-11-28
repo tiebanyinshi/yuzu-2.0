@@ -1,0 +1,29 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="考勤记录" />
+  <view class="gutter month-bar">
+    <view class="month-btn" hover-class="pressed" hover-stay-time="120" bindtap="onPrev" aria-role="button" aria-label="上个月">上个月</view>
+    <view class="t-title-s num">{{monthText}}</view>
+    <view class="month-btn" hover-class="pressed" hover-stay-time="120" bindtap="onNext" aria-role="button" aria-label="下个月">下个月</view>
+  </view>
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '这个月还没有考勤结果' : ''}}" message="{{state === 'empty' ? '每一班结束以后第二天会算出来' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="card card-pad summary">
+      <view class="stat"><view class="t-caption">出勤</view><view class="t-body-l strong num">{{summary.attended}}</view></view>
+      <view class="stat"><view class="t-caption">迟到</view><view class="t-body num">{{summary.late}}</view></view>
+      <view class="stat"><view class="t-caption">早退</view><view class="t-body num">{{summary.early}}</view></view>
+      <view class="stat"><view class="t-caption">缺卡</view><view class="t-body num">{{summary.missing}}</view></view>
+    </view>
+
+    <view class="section card list">
+      <view wx:for="{{rows}}" wx:key="id" class="row">
+        <view class="row-main">
+          <view class="row-title">{{item.day}} · {{item.shift}}</view>
+          <view class="row-sub num">{{item.times}} · {{item.statusText}}</view>
+          <view wx:if="{{item.issues}}" class="issues {{item.bad ? 'bad' : ''}}">{{item.issues}}</view>
+        </view>
+        <view wx:if="{{item.makeup}}" class="row-action" hover-class="pressed" hover-stay-time="120" data-date="{{item.makeup.date}}" data-shift="{{item.makeup.shiftId}}" data-kind="{{item.makeup.kind}}" bindtap="onMakeup" aria-role="button">补卡</view>
+        <view wx:elif="{{item.pendingApprovalId}}" class="row-action muted" hover-class="pressed" hover-stay-time="120" data-id="{{item.pendingApprovalId}}" bindtap="onPendingApproval" aria-role="button">补卡审批中</view>
+      </view>
+    </view>
+  </view>
+</view>

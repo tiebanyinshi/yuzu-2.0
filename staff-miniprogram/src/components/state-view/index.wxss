@@ -1,0 +1,41 @@
+.wrap {
+  padding: 32rpx var(--gutter);
+}
+.center {
+  padding-top: 96rpx;
+  padding-bottom: 96rpx;
+  text-align: center;
+}
+.title {
+  font-size: var(--fs-body-l);
+  font-weight: 600;
+  color: var(--ink);
+}
+.message {
+  margin-top: 16rpx;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--ink-2);
+}
+.retry {
+  margin: 40rpx auto 0 !important;
+  width: 320rpx !important;
+}
+.skeleton-card {
+  padding: 32rpx;
+  margin-bottom: 16rpx;
+  background-color: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+}
+.skeleton-line {
+  height: 28rpx;
+  margin-top: 16rpx;
+  width: 55%;
+  background-color: var(--surface-2);
+  border-radius: 6rpx;
+}
+.skeleton-line.wide {
+  margin-top: 0;
+  width: 80%;
+}

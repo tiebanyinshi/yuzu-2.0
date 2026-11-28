@@ -462,6 +462,8 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '640_academy_core.sql',
   '641_academy_assess.sql',
   '642_academy_content.sql',
+  '650_staffmp_bindings.sql',
+  '651_staffmp_canteen_links.sql',
   '700_self_purchase.sql',
   '710_gf_role_snapshot.sql',
   '720_gf_flow_config.sql',
