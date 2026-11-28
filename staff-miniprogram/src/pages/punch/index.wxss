@@ -1,0 +1,87 @@
+.clock-card {
+  margin-top: 16rpx;
+}
+.clock {
+  font-size: 96rpx;
+  line-height: 1.1;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.label {
+  margin-top: 16rpx;
+}
+.detail {
+  margin-top: 8rpx;
+}
+.result {
+  margin-top: 32rpx;
+  padding: 24rpx 28rpx;
+  border-radius: var(--radius-control);
+  background-color: var(--success-soft);
+  color: var(--success);
+  font-size: var(--fs-body-l);
+  font-weight: 600;
+}
+.result.late {
+  background-color: var(--danger-soft);
+  color: var(--danger);
+}
+.blocked,
+.pending,
+.action-error {
+  margin-top: 32rpx;
+}
+.pending-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 24rpx;
+}
+.setting {
+  margin-top: 24rpx !important;
+}
+.go {
+  margin-top: 48rpx !important;
+}
+.early {
+  margin-top: 40rpx;
+  text-align: center;
+}
+.outwork .field {
+  margin-top: 24rpx;
+}
+.area {
+  height: 176rpx;
+  width: 100%;
+  padding-top: 20rpx;
+  padding-bottom: 20rpx;
+}
+.photo-row {
+  display: flex;
+  align-items: center;
+}
+.photo {
+  width: 160rpx;
+  height: 160rpx;
+  margin-right: 24rpx;
+  border-radius: var(--radius-control);
+  background-color: var(--surface-2);
+}
+.cancel {
+  display: flex;
+  justify-content: center;
+  margin-top: 16rpx;
+}
+.list {
+  overflow: hidden;
+}
+.row-time {
+  width: 112rpx;
+  flex: none;
+  font-size: var(--fs-body-l);
+  font-weight: 600;
+}
+.late-text {
+  color: var(--danger);
+}

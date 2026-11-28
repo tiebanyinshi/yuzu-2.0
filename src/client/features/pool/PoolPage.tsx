@@ -1,4 +1,4 @@
-// 8.2.21 男汤 / 女汤泡池（docs/V82221_POOL.md）：泡池区输单——先刷客人手牌、选项目、再刷技师工牌，点「派钟上钟」。
+// 8.2.27 男汤 / 女汤泡池（docs/V82227_POOL.md）：泡池区输单——先刷客人手牌、选项目、再刷技师工牌，点「派钟上钟」。
 //   · 下单就是钟房的派钟（挂到客人手牌账单上、建钟单、立即上钟），服务记进这位技师的业绩明细；轮钟照排位核对，客人点名的选点钟；
 //   · 读卡器刷到的卡：第一步认手牌、第三步认技师工牌；也能手输牌号、工号；
 //   · 技师管理的岗位可以在这里给技师「绑工牌」（刷一下卡就绑上）。
@@ -35,13 +35,13 @@ export function PoolPage() {
   const [techText, setTechText] = useState('');
   const [tech, setTech] = useState<PoolTechnician | null>(null);
   const [callType, setCallType] = useState<CallType>('rotation');
-  // 8.2.21（Codex 审查）：不按技师等级定价、项目有几档价时，照钟房的派钟让人选价格档
+  // 8.2.27（Codex 审查）：不按技师等级定价、项目有几档价时，照钟房的派钟让人选价格档
   const [pickTier, setPickTier] = useState<PriceTier | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [binding, setBinding] = useState(false);
   const catalog = useCatalog();
   const board = useQuery({ queryKey: ['clockroom'], queryFn: () => api.get<ClockroomBoard>('/api/clockroom') });
-  // 8.2.21（Codex 审查）：钟房那边下钟了，这边也要看得到（15 秒刷一次；后台、断网时不取）；刷工牌时也重取
+  // 8.2.27（Codex 审查）：钟房那边下钟了，这边也要看得到（15 秒刷一次；后台、断网时不取）；刷工牌时也重取
   useLivePoll(
     async () => {
       await qc.invalidateQueries({ queryKey: ['clockroom'] });
@@ -81,7 +81,7 @@ export function PoolPage() {
       setError(errorMessage(e));
     }
   };
-  // 8.2.21（Codex 审查）：光标在工号框里时键盘式读卡器打进来的一串按芯片号查，人敲的按工号查
+  // 8.2.27（Codex 审查）：光标在工号框里时键盘式读卡器打进来的一串按芯片号查，人敲的按工号查
   const techBurst = useRef({ wedge: createWedgeRecognizer(), prefix: '', last: -Infinity });
   // 第三步（选好项目以后）：读卡器刷到的认技师工牌；第一步由手牌框自己收
   useCardReader(step === 3 && !binding, { onCard: (uid) => void lookTech({ uid }), onReadError: (m) => setError(m) });

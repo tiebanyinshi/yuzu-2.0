@@ -1,0 +1,118 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar large title="学习" eyebrow="LEARN" />
+  <view class="gutter">
+    <view class="search" hover-class="row-pressed" hover-stay-time="120" bindtap="onSearch" aria-role="button" aria-label="搜应知应会、培训资料">
+      <image class="search-icon" src="/assets/icons/search.png" />
+      <text class="search-text">搜应知应会、培训资料</text>
+    </view>
+  </view>
+
+  <view wx:if="{{hasAcademy}}" class="section gutter">
+    <view class="section-head">
+      <view class="section-title">汤崎学堂</view>
+      <view wx:if="{{acStale}}" class="t-caption">之前的信息</view>
+    </view>
+    <state-view wx:if="{{acState !== 'ready'}}" state="{{acState}}" message="{{acError}}" bindretry="onAcademyRetry" />
+    <block wx:elif="{{ac}}">
+      <view class="card level">
+        <view class="level-head">
+          <view class="level-title">{{ac.level.title}}</view>
+          <view class="level-credits num">{{ac.level.credits}}</view>
+        </view>
+        <view class="bar"><view class="bar-fill" style="width: {{ac.level.pct}}%"></view></view>
+        <view class="t-caption level-sub">{{ac.level.next}} · {{ac.level.minutes}}</view>
+      </view>
+
+      <view wx:if="{{ac.resume}}" class="card resume" hover-class="row-pressed" hover-stay-time="120" bindtap="onResume" aria-role="button">
+        <view class="row-main">
+          <view class="eyebrow">继续学习</view>
+          <view class="row-title">{{ac.resume.lessonTitle}}</view>
+          <view class="row-sub">{{ac.resume.courseTitle}}</view>
+        </view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+
+      <view class="card list block-gap">
+        <view class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onDaily" aria-role="button">
+          <image class="row-icon" src="/assets/icons/academy.png" />
+          <view class="row-main">
+            <view class="row-title">每日一练</view>
+            <view class="row-sub num">{{ac.daily}}</view>
+          </view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+      </view>
+
+      <view wx:if="{{ac.required.length}}" class="sub-head">我的必修</view>
+      <view wx:if="{{ac.required.length}}" class="card list">
+        <view wx:for="{{ac.required}}" wx:key="key" class="row" hover-class="row-pressed" hover-stay-time="120" data-kind="{{item.kind}}" data-id="{{item.id}}" bindtap="onAssigned" aria-role="button">
+          <view class="row-main">
+            <view class="row-title">{{item.title}}</view>
+            <view class="row-sub num {{item.overdue ? 'overdue' : ''}}">{{item.sub}}</view>
+          </view>
+          <view wx:if="{{item.completed}}" class="tag neutral">已学完</view>
+          <view wx:elif="{{item.overdue}}" class="tag late">逾期</view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+      </view>
+
+      <view wx:if="{{ac.recommended.length}}" class="sub-head">推荐</view>
+      <view wx:if="{{ac.recommended.length}}" class="card list">
+        <view wx:for="{{ac.recommended}}" wx:key="key" class="row" hover-class="row-pressed" hover-stay-time="120" data-kind="{{item.kind}}" data-id="{{item.id}}" bindtap="onAssigned" aria-role="button">
+          <view class="row-main">
+            <view class="row-title">{{item.title}}</view>
+            <view class="row-sub num">{{item.sub}}</view>
+          </view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+      </view>
+
+      <view wx:if="{{ac.paths.length}}" class="sub-head">学习地图</view>
+      <view wx:if="{{ac.paths.length}}" class="card list">
+        <view wx:for="{{ac.paths}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onPath" aria-role="button">
+          <view class="row-main">
+            <view class="row-title">{{item.title}}</view>
+            <view class="row-sub num">{{item.sub}}</view>
+          </view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+      </view>
+
+      <view class="sub-head">知识中心</view>
+      <view class="card list">
+        <view wx:for="{{ac.categories}}" wx:key="category" class="row" hover-class="row-pressed" hover-stay-time="120" data-category="{{item.category}}" data-label="{{item.label}}" bindtap="onCategory" aria-role="button">
+          <view class="row-main">
+            <view class="row-title">{{item.label}}</view>
+            <view class="row-sub num">{{item.sub}}</view>
+          </view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+        <view class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onAllCourses" aria-role="button">
+          <view class="row-main">
+            <view class="row-title">全部课程</view>
+          </view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+      </view>
+    </block>
+  </view>
+
+  <view class="section gutter">
+    <view class="section-head">
+      <view class="section-title">知识库</view>
+      <view wx:if="{{stale}}" class="t-caption">之前的信息</view>
+    </view>
+    <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '还没有培训资料' : ''}}" message="{{state === 'empty' ? '人事上传以后会出现在这里' : error}}" bindretry="onRetry" />
+    <view wx:else class="card list">
+      <view wx:for="{{folders}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" data-name="{{item.name}}" bindtap="onFolder" aria-role="button">
+        <image class="row-icon" src="/assets/icons/folder.png" />
+        <view class="row-main">
+          <view class="row-title">{{item.name}}</view>
+          <view class="row-sub num">{{item.meta}}</view>
+        </view>
+        <view wx:if="{{item.mine}}" class="tag neutral">本部门</view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+  </view>
+</view>

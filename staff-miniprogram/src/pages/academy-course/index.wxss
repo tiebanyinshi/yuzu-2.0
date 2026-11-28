@@ -1,0 +1,14 @@
+.head {
+  margin: 8rpx 0 24rpx;
+}
+.title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.summary {
+  margin: 12rpx 0;
+}
+.list {
+  overflow: hidden;
+}

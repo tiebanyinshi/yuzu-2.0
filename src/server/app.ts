@@ -188,6 +188,7 @@ import { registerMemberAdminRoutes } from './modules/member-admin';
 import { registerErpModuleGate, registerErpRoutes } from './modules/erp';
 import { registerMpStaffRoutes } from './modules/mp/staff';
 import { registerCanteenAdminRoutes } from './modules/canteen/admin-routes';
+import { registerStaffMpAdminRoutes } from './modules/staffmp';
 import { registerConciergeRoutes } from './modules/concierge/routes';
 import { registerCustomerRoutes } from './modules/customer/routes';
 import { registerPatrolAdminRoutes } from './modules/patrol/routes';
@@ -560,6 +561,8 @@ export async function buildApp(sql: Sql, config: AppConfig): Promise<FastifyInst
   registerMpStaffRoutes(app, deps);
   // 员工食堂 · 柚子饭堂（docs/CANTEEN.md）：管理后台的 /api/erp/canteen；员工用的 /api/canteen/* 只在员工端口上
   registerCanteenAdminRoutes(app, deps);
+  // 员工小程序（员工小程序线，docs/STAFF_MP.md）：后台「WCP 设置 → 员工小程序」
+  registerStaffMpAdminRoutes(app, deps);
   // 安保巡场（8.0.9，docs/PATROL_V809.md）：管理后台的 /api/erp/patrol；员工用的 /api/canteen/patrol/* 在员工端口上
   registerPatrolAdminRoutes(app, deps);
   // 8.1.15 块 B（docs/DINING_V8115.md）：桌台动作——清台、维修、恢复、并台、拆台、桌台历史

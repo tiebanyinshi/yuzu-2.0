@@ -1,0 +1,21 @@
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 8rpx 0;
+}
+.list {
+  overflow: hidden;
+}
+.dot {
+  width: 16rpx;
+  height: 16rpx;
+  margin-right: 20rpx;
+  border-radius: 50%;
+  background-color: var(--danger);
+  flex: none;
+}
+.more {
+  margin-top: 16rpx;
+  text-align: center;
+}

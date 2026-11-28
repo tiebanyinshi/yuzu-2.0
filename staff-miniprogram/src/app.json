@@ -1,0 +1,71 @@
+{
+  "pages": [
+    "pages/today/index",
+    "pages/learn/index",
+    "pages/workbench/index",
+    "pages/me/index",
+    "pages/login/index",
+    "pages/password/index",
+    "pages/position/index",
+    "pages/learn-folder/index",
+    "pages/learn-file/index",
+    "pages/learn-search/index",
+    "pages/punch/index",
+    "pages/schedule/index",
+    "pages/attendance/index",
+    "pages/leave/index",
+    "pages/approvals/index",
+    "pages/approval/index",
+    "pages/apply/index",
+    "pages/payslips/index",
+    "pages/payslip/index",
+    "pages/directory/index",
+    "pages/announcements/index",
+    "pages/announcement/index",
+    "pages/notifications/index",
+    "pages/meal/index",
+    "pages/menu/index",
+    "pages/canteen-scan/index",
+    "pages/patrol/index",
+    "pages/patrol-log/index",
+    "pages/academy-courses/index",
+    "pages/academy-path/index",
+    "pages/academy-course/index",
+    "pages/academy-lesson/index",
+    "pages/academy-quiz/index",
+    "pages/academy-daily/index"
+  ],
+  "window": {
+    "navigationStyle": "custom",
+    "navigationBarTextStyle": "black",
+    "navigationBarBackgroundColor": "#F5F1EA",
+    "backgroundColor": "#F5F1EA",
+    "backgroundColorTop": "#F5F1EA",
+    "backgroundColorBottom": "#F5F1EA",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#5F574D",
+    "selectedColor": "#1C1A17",
+    "backgroundColor": "#FCFAF6",
+    "borderStyle": "black",
+    "list": [
+      { "pagePath": "pages/today/index", "text": "今天", "iconPath": "assets/tab/today.png", "selectedIconPath": "assets/tab/today-on.png" },
+      { "pagePath": "pages/learn/index", "text": "学习", "iconPath": "assets/tab/learn.png", "selectedIconPath": "assets/tab/learn-on.png" },
+      { "pagePath": "pages/workbench/index", "text": "工作台", "iconPath": "assets/tab/workbench.png", "selectedIconPath": "assets/tab/workbench-on.png" },
+      { "pagePath": "pages/me/index", "text": "我的", "iconPath": "assets/tab/me.png", "selectedIconPath": "assets/tab/me-on.png" }
+    ]
+  },
+  "usingComponents": {
+    "nav-bar": "/components/nav-bar/index",
+    "state-view": "/components/state-view/index"
+  },
+  "requiredPrivateInfos": ["getLocation"],
+  "permission": {
+    "scope.userLocation": { "desc": "打卡时核对你在不在门店的打卡范围里（只在点打卡时取一次）" }
+  },
+  "__usePrivacyCheck__": true,
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

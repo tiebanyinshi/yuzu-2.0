@@ -1,0 +1,20 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="选你现在的岗位" />
+  <view class="gutter">
+    <view class="notice info intro">系统的岗位换了新的一套。选一下你现在的岗位，选完就能用了；选错了请找总裁在后台改。</view>
+  </view>
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{state === 'empty' ? '没有能选的岗位，请找总裁在后台给你设好' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter list-wrap">
+    <view class="card list">
+      <view wx:for="{{options}}" wx:key="key" class="row" hover-class="row-pressed" hover-stay-time="120" data-key="{{item.key}}" bindtap="onPick" aria-role="radio" aria-checked="{{selected === item.key}}">
+        <view class="row-main">
+          <view class="row-title">{{item.title}}</view>
+          <view class="row-sub">{{item.levelLabel}}</view>
+        </view>
+        <view class="radio {{selected === item.key ? 'on' : ''}}"></view>
+      </view>
+    </view>
+    <view wx:if="{{error}}" class="notice error error-box">{{error}}</view>
+    <button class="btn primary block save" hover-class="pressed" hover-stay-time="120" disabled="{{!selected || busy}}" bindtap="onSave">就是这个岗位</button>
+  </view>
+</view>

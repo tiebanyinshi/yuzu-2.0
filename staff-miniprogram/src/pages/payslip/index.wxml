@@ -1,0 +1,29 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="工资条" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="card card-pad head">
+      <view class="t-body muted">{{view.title}}</view>
+      <block wx:if="{{view.net}}">
+        <view class="t-caption net-label">实发（元）</view>
+        <view class="net num">{{view.net}}</view>
+      </block>
+      <view wx:if="{{signedText}}" class="t-caption signed num">{{signedText}}</view>
+    </view>
+
+    <view class="card list section">
+      <view wx:for="{{view.rows}}" wx:key="key" class="kv">
+        <view class="k">{{item.label}}</view>
+        <view class="v num {{item.money ? 'money' : ''}}">{{item.value}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{actionError}}" class="notice error section">{{actionError}}</view>
+
+    <button wx:if="{{!signedText}}" class="btn primary block sign" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onSign">确认签收</button>
+    <view class="objection">
+      <view class="link" bindtap="onObjection">有异议</view>
+      <view class="t-caption">写清哪一项、为什么，会交给人事处理</view>
+    </view>
+  </view>
+</view>

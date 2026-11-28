@@ -378,13 +378,13 @@ export async function importHandTags(
   if (dupes.length) throw badRequest(`清单里牌号重复：${[...new Set(dupes)].slice(0, 5).join('、')}`);
   return sql.begin(async (tx) => {
     await setTxTimeouts(tx);
-    // 8.2.21：芯片号绑定锁在前（与手牌绑卡、技师绑工牌同一把），再锁手牌
+    // 8.2.27：芯片号绑定锁在前（与手牌绑卡、技师绑工牌同一把），再锁手牌
     if (!input.dryRun) await lockCardBindings(tx);
     const existing = await tx<{ id: number; code: string; zone: string; kind: string; vipLevel: number | null; active: boolean; cardUid: string | null }[]>`
       SELECT id, code, zone, kind, vip_level, active, card_uid FROM hand_tags WHERE store_id = ${currentStoreId()} ORDER BY id ${input.dryRun ? tx`` : tx`FOR UPDATE`}`;
     // 芯片号（8.1.35）：清单里的芯片号已经绑在本店另一张手牌上的，这一行的芯片号不导（报出来，牌照常导）
     const uidOwner = new Map(existing.filter((t) => t.cardUid).map((t) => [t.cardUid!, t.code]));
-    // 8.2.21（Codex 审查）：技师工牌的芯片号不导到手牌上（牌照常导）
+    // 8.2.27（Codex 审查）：技师工牌的芯片号不导到手牌上（牌照常导）
     const techCards = await tx<{ cardUid: string; techNo: string }[]>`
       SELECT card_uid, tech_no FROM technicians WHERE store_id = ${currentStoreId()} AND card_uid IS NOT NULL`;
     for (const t of techCards) uidOwner.set(t.cardUid, `技师 ${t.techNo} 号的工牌`);
@@ -544,7 +544,7 @@ export async function setTagCard(deps: Deps, id: number, raw: unknown, ctx: OpCo
   try {
     return await deps.sql.begin(async (tx) => {
       await setTxTimeouts(tx);
-      // 8.2.21：芯片号绑定锁在前（技师绑工牌也拿它），再锁这张手牌
+      // 8.2.27：芯片号绑定锁在前（技师绑工牌也拿它），再锁这张手牌
       await lockCardBindings(tx);
       const [tag] = await tx<{ id: number; code: string; cardUid: string | null }[]>`
         SELECT id, code, card_uid FROM hand_tags WHERE id = ${id} AND store_id = ${currentStoreId()} AND deleted_at IS NULL FOR UPDATE`;
@@ -554,7 +554,7 @@ export async function setTagCard(deps: Deps, id: number, raw: unknown, ctx: OpCo
         const [other] = await tx<{ code: string }[]>`
           SELECT code FROM hand_tags WHERE store_id = ${currentStoreId()} AND card_uid = ${input.cardUid} AND id <> ${id}`;
         if (other) throw boundError(other.code);
-        // 8.2.21（Codex 审查）：技师的工牌不能再当客人的手牌
+        // 8.2.27（Codex 审查）：技师的工牌不能再当客人的手牌
         const [tech] = await tx<{ techNo: string; name: string }[]>`
           SELECT tech_no, name FROM technicians WHERE store_id = ${currentStoreId()} AND card_uid = ${input.cardUid}`;
         if (tech) throw conflict('CARD_IS_TECH', `这张卡是技师 ${tech.techNo} 号 ${tech.name} 的工牌，不能当手牌`);

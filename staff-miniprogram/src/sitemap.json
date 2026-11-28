@@ -1,0 +1,4 @@
+{
+  "desc": "员工用的页面不让微信搜索收录（docs/STAFF_MP.md 第 10 节第 8 条）",
+  "rules": [{ "action": "disallow", "page": "*" }]
+}

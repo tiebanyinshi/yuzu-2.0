@@ -1,0 +1,27 @@
+<view class="nav" style="padding-top: {{statusBar}}px;">
+  <view class="nav-bar" style="height: {{bar}}px; padding-right: {{capsuleRight}}px;">
+    <block wx:if="{{large}}">
+      <view class="brand">汤崎 WCP</view>
+      <view wx:if="{{tag}}" class="instance {{prod ? 'prod' : ''}}">{{tag}}</view>
+      <view wx:if="{{build}}" class="build num ellipsis">{{build}}</view>
+    </block>
+    <block wx:else>
+      <view class="back" style="height: {{capsuleHeight}}px;" hover-class="pressed" hover-stay-time="120" bindtap="onBack" aria-role="button" aria-label="{{first ? '回首页' : '返回'}}">
+        <image class="back-icon" src="{{first ? '/assets/icons/home.png' : '/assets/icons/back.png'}}" />
+        <text wx:if="{{first}}" class="back-text">首页</text>
+      </view>
+      <view class="title-wrap">
+        <view class="title ellipsis">{{title}}</view>
+        <view wx:if="{{build}}" class="build-sub num ellipsis">{{build}}</view>
+      </view>
+      <view wx:if="{{tag}}" class="instance small {{prod ? 'prod' : ''}}">{{tag}}</view>
+    </block>
+  </view>
+  <view wx:if="{{large}}" class="large">
+    <view class="eyebrow" wx:if="{{eyebrow}}">{{eyebrow}}</view>
+    <view class="large-row">
+      <view class="large-title">{{title}}</view>
+      <view class="actions"><slot name="actions"></slot></view>
+    </view>
+  </view>
+</view>

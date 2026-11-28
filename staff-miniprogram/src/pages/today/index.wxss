@@ -1,0 +1,113 @@
+.head-actions {
+  display: flex;
+  align-items: center;
+}
+.icon-btn {
+  position: relative;
+  width: 88rpx;
+  height: 88rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.icon {
+  width: 44rpx;
+  height: 44rpx;
+}
+.dot {
+  position: absolute;
+  top: 20rpx;
+  right: 20rpx;
+  width: 16rpx;
+  height: 16rpx;
+  border-radius: 50%;
+  background-color: var(--danger);
+  border: 3rpx solid var(--bg);
+}
+.avatar {
+  width: 64rpx;
+  height: 64rpx;
+  margin-left: 12rpx;
+  border-radius: 50%;
+  background-color: var(--ink);
+  color: var(--on-ink);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  line-height: 64rpx;
+  text-align: center;
+}
+.hello {
+  padding-top: 8rpx;
+}
+.hello .t-body {
+  margin-top: 8rpx;
+}
+.stale {
+  margin-top: 8rpx;
+  color: var(--warn);
+}
+.now {
+  margin-top: 32rpx;
+  border-left: 8rpx solid var(--ink);
+}
+.now.late {
+  border-left-color: var(--danger);
+}
+.now.late .now-detail {
+  color: var(--danger);
+}
+.now.calm {
+  border-left-color: var(--wood);
+}
+.now-title {
+  margin-top: 8rpx;
+}
+.now-detail {
+  margin-top: 8rpx;
+  color: var(--ink-2);
+}
+.now-line {
+  margin-top: 8rpx;
+}
+.now-action {
+  display: inline-flex;
+  margin-top: 16rpx;
+}
+.quick {
+  display: flex;
+  margin-top: 24rpx;
+}
+.quick-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 160rpx;
+  margin-right: 16rpx;
+  border-radius: var(--radius-card);
+  background-color: var(--surface);
+  border: 2rpx solid var(--line);
+}
+.quick-btn:last-child {
+  margin-right: 0;
+}
+.quick-icon {
+  width: 56rpx;
+  height: 56rpx;
+}
+.quick-label {
+  margin-top: 12rpx;
+  font-weight: 600;
+}
+.urgent {
+  color: var(--danger);
+}
+.pin {
+  margin-right: 12rpx;
+}
+.all {
+  display: flex;
+  justify-content: center;
+  margin: 24rpx 0 48rpx;
+}

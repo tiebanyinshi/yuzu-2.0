@@ -1,4 +1,4 @@
-// 8.2.21 男汤 / 女汤泡池（docs/V82221_POOL.md）：前后端共用。
+// 8.2.27 男汤 / 女汤泡池（docs/V82227_POOL.md）：前后端共用。
 
 /** 泡池区刷到的客人（在店的） */
 export interface PoolGuest {
