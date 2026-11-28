@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { invalidateRevenue, useBusinessToday } from '../../lib/revenue';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { Banknote, BedDouble, CircleCheck, Clock3, LogOut, ShieldCheck, Ticket, Undo2 } from 'lucide-react';
@@ -19,7 +20,7 @@ import { KITCHEN_STATUS_LABELS } from '@shared/dining';
 import { ZONE_LABELS, type BoardTag, type VisitDetail } from '@shared/frontdesk';
 import { discountGrantFits, sortedVisitIds, ticketGrantCovers, type TicketGrant, type TicketGrantRequest } from '@shared/grants';
 import { describeHours, shiftDate } from '@shared/labels';
-import { formatYuan, parseYuan } from '@shared/money';
+import { formatYuan } from '@shared/money';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { useCan, useSession } from '../../lib/session';
 import { cn, formatTime } from '../../lib/utils';
@@ -39,11 +40,13 @@ import { EndUsageById } from '../rooms/UsageDialogs';
 import { SHIFT_ERRORS, shiftKeys, ShiftGate, StartShiftForm, useShiftReady } from '../shift/ShiftGate';
 import { ZoneChip } from './parts';
 import { BackfillNotice, backfillBody, backfillSummary, useBackfill } from './backfill';
-import { PaymentsSection, usePayRows } from './payments';
+import { cashChange, PaymentsSection, useCashRules, usePayRows } from './payments';
+import { bigChange as isBigChange } from '@shared/cashier-v8230';
 import { allocateCountCards, type CheckoutCountCardOption, type CountCardAllocation } from '@shared/count-cards';
 import { pendingFor, PendingPanel, useFrontdeskOp, useFrontdeskPending } from './pending';
 import { CheckoutReceipt, isTableCheckout } from './CheckoutReceipt';
 import { RefundPanel, RefundsList } from './RefundPanel';
+import { VoidRequestForm } from './CashierRequests';
 import { stayText, useCheckout, useCheckoutDaySummary, useCheckoutPreview, useCheckouts, useRefreshFrontdesk, useTicketTypes } from './queries';
 import { InvoiceRequestButton } from '../sales-invoices/InvoiceRequest';
 import { DiningOnlyPanel } from './DiningOnlyPanel';
@@ -79,7 +82,7 @@ export function CheckoutDialog({
   const [note, setNote] = useState('');
   // 8.1.37：还没上钟的钟单要逐张确认「客人确实做完了」才能结（记下确认时的那一组钟单号，核对刷新、钟单变了要重新确认）
   const [unstartedOk, setUnstartedOk] = useState('');
-  // 8.2.27：找零大（超过 ¥500，或客人实给超过应收两倍）要再按一次确认，记下确认时的那几个数
+  // 8.2.27：找零大要再按一次确认，记下确认时的那几个数（门槛 8.2.30 起后台可改，见下）
   const [changeOk, setChangeOk] = useState('');
   const [result, setResult] = useState<CheckoutDetail | null>(null);
   /** 次卡（v0.7.28）：每张卡这次抵几次 */
@@ -226,13 +229,15 @@ export function CheckoutDialog({
   const unstartedConfirmed = waitingNos.length === 0 || unstartedOk === waitingNos.join(',');
   const ready = total !== null && remaining === 0 && pay.ok && !preview.isFetching && shiftReady.ready && !backfillBlocked && !roomsOpen && !usagesUncharged && unstartedConfirmed;
 
-  // 8.2.27（收银 demo）：现金找零大的再确认一次——多半是把实给敲错了一位（1000 敲成 10000）
+  // 8.2.27（收银 demo）：现金找零大的再确认一次——多半是把实给敲错了一位（1000 敲成 10000）。
+  // 8.2.30 合并时与 CM-4「已核对找零」合成这一处：门槛用后台「大额找零」（默认 ¥500）或超过这笔的 2 倍，港元按汇率折人民币算找零
+  const cashRules = useCashRules();
   const bigChange = pay.rows
     .map((r, i) => ({ r, cents: pay.rowCents[i] ?? null }))
     .filter(({ r }) => r.method === 'cash' && r.tendered.trim())
-    .map(({ r, cents }) => ({ tendered: parseYuan(r.tendered), cents }))
-    .find(({ tendered, cents }) => tendered !== null && cents !== null && (tendered - cents > 50_000 || (due !== null && due > 0 && tendered > due * 2)));
-  const changeKey = bigChange ? `${bigChange.tendered}:${bigChange.cents}` : '';
+    .map(({ r, cents }) => ({ r, cents, x: cents === null ? null : cashChange(r, cents, cashRules.hkdRatePpm) }))
+    .find(({ cents, x }) => cents !== null && x !== null && isBigChange(x.change, cents, cashRules.bigChangeCents));
+  const changeKey = bigChange ? `${bigChange.r.hkd ? 'hkd' : 'cny'}:${bigChange.r.tendered}:${bigChange.cents}` : '';
   const submit = async () => {
     if (!ready || !p) return;
     if (bigChange && changeOk !== changeKey) {
@@ -349,7 +354,7 @@ export function CheckoutDialog({
     >
       <PendingPanel op={op} onResolved={(d) => setResult(d)} />
       {bigChange && changeOk === changeKey && (
-        <Notice tone="warning" title={`要找零 ${formatYuan(bigChange.tendered! - bigChange.cents!)}，请核对客人实给的现金`} className="mb-3" data-testid="checkout-big-change">
+        <Notice tone="warning" title={`要找零 ${formatYuan(bigChange.x!.change)}，请核对客人实给的现金`} className="mb-3" data-testid="checkout-big-change">
           核对没错再按一次「确认结清」（F9）；敲错了改「客人实给」。
         </Notice>
       )}
@@ -904,8 +909,10 @@ function CheckoutDetailView({ id, onBack }: { id: number; onBack: () => void }) 
   const refresh = useRefreshFrontdesk();
   const shiftReady = useShiftReady(true);
   const [voiding, setVoiding] = useState(false);
-  // 退款单（v0.7.20）：这张单上有结果待确认的退款时直接打开退款区处理
-  const pendingRefund = pendingFor(useFrontdeskPending(), 'checkout_refund', null, { checkoutId: id });
+  const [requestingVoid, setRequestingVoid] = useState(false);
+  // 退款单（v0.7.20）：这张单上有结果待确认的退款时直接打开退款区处理；8.2.30 退款申请同样
+  const pendingAll = useFrontdeskPending();
+  const pendingRefund = pendingFor(pendingAll, 'checkout_refund', null, { checkoutId: id }) ?? pendingFor(pendingAll, 'cashier_request', null, { checkoutId: id });
   const [refunding, setRefunding] = useState(false);
   const showRefund = refunding || !!pendingRefund;
   const [reason, setReason] = useState('');
@@ -979,8 +986,27 @@ function CheckoutDetailView({ id, onBack }: { id: number; onBack: () => void }) 
               部分退款（开退款单）
             </Button>
           )}
+          {/* 8.2.30（CM-5）：没有「开退款单」「反结账」权限的收银员提交申请，值班经理批准时再执行 */}
+          {d.status === 'completed' && !can('frontdesk.refund') && can('frontdesk.checkout') && !voiding && !showRefund && !requestingVoid && (
+            <Button variant="secondary" icon={<Undo2 className="size-4" />} onClick={() => setRefunding(true)} data-testid="checkout-refund-request">
+              申请部分退款
+            </Button>
+          )}
+          {d.status === 'completed' && !can('frontdesk.checkoutVoid') && can('frontdesk.checkout') && !hasRefund && !voiding && !showRefund && !requestingVoid && (
+            <Button variant="secondary" icon={<Undo2 className="size-4" />} onClick={() => setRequestingVoid(true)} data-testid="checkout-void-request">
+              申请反结账
+            </Button>
+          )}
+          {/* 申请人看自己提交的申请、撤回（Codex 审查 1d6d77e：之前没有入口进「收银申请 · 我提交的」） */}
+          {(!can('frontdesk.refund') || !can('frontdesk.checkoutVoid')) && can('frontdesk.checkout') && (
+            <Link to="/crm/cashier-requests?tab=mine" className="self-center text-[12.5px] font-semibold text-pine underline-offset-2 hover:underline" data-testid="checkout-my-requests">
+              我提交的申请
+            </Link>
+          )}
+          {requestingVoid && <VoidRequestForm checkoutId={d.id} checkoutNo={d.checkoutNo} onClose={() => setRequestingVoid(false)} />}
           {showRefund && d.status === 'completed' && (
             <RefundPanel
+              asRequest={!can('frontdesk.refund')}
               checkoutId={d.id}
               checkoutNo={d.checkoutNo}
               onClose={() => {

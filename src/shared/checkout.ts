@@ -564,8 +564,14 @@ export interface ShiftSummary {
    */
   byOperator?: ShiftOperatorTotals[];
   /**
+   * 港元现金（8.2.30，docs/V8230_CASHIER.md 第 1 节）：本班次结账收的港元。港元进钱箱、找零给人民币，所以结账现金里这几笔折成的
+   * 人民币（worth = 收款 + 找零）不在钱箱里，从应有现金扣掉（cash.hkd），另按港元对实点（expected 港仙）。
+   * 本班次没收过港元、升级之前交班的快照都没有这一项
+   */
+  hkd?: { count: number; expected: number; worth: number };
+  /**
    * 应有现金 = 备用金 + 结账现金 + 充值现金 − 反结账退现金 + 押金现金（收 − 退）− 退款单退现金 − 储值退回的现金 + 次卡现金（卖 − 退）
-   * + 会员卡押金现金（收 − 退）
+   * + 会员卡押金现金（收 − 退）− 港元收款折成的人民币（8.2.30）
    */
   cash: {
     opening: number;
@@ -577,6 +583,8 @@ export interface ShiftSummary {
     memberRefund?: number;
     countCard?: number;
     cardDeposit?: number;
+    /** 8.2.30：港元收款折成的人民币（收款 + 找零），从应有现金扣掉；没收过港元时没有 */
+    hkd?: number;
     expected: number;
   };
 }
@@ -640,6 +648,9 @@ export interface ShiftRecord {
   endedAt: string | null;
   expectedCash: number | null;
   countedCash: number | null;
+  /** 8.2.30：交班时应有、实点的港元（港仙）；没收过港元为 null */
+  expectedHkd: number | null;
+  countedHkd: number | null;
   note: string;
   handedToName: string | null;
   closedByName: string | null;
@@ -648,6 +659,13 @@ export interface ShiftRecord {
   drawerName: string | null;
   /** 班次上的人（加入、离开的时间） */
   members: ShiftMember[];
+  /** 交班盲点（8.2.30）：看到应有现金之前提交的实点；没提交为 null */
+  blindCount: { countedCash: number; countedHkd: number | null; countedAt: string } | null;
+  /**
+   * 交班盲点（8.2.30，Codex 审查 06b2eee）：门店开了盲点、还没提交实点时，接口不给当班的人看应有现金——
+   * 为 true 时汇总里的金额都记 0（只留笔数、备用金，收过港元的留 hkd.count），页面不显示金额
+   */
+  blind?: boolean;
 }
 
 /** 经营看板（S3.5） */
@@ -665,6 +683,8 @@ export interface DashboardData {
     net: number;
     ticket: number;
     byMethod: { method: CheckoutMethod; amount: number }[];
+    /** 交班盲点（8.2.30）：调用的人还没提交实点，byMethod 不给（空），页面写明 */
+    blind?: boolean;
     /** 优惠 / 免单（已含在 net 里，单列）；与日结同一口径：当日结账的减去当日反结账的，可为负 */
     discount: number;
     /** 券抵扣（v0.7.20，已含在 net 里，单列，口径同优惠） */

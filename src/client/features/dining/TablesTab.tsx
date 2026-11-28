@@ -37,6 +37,8 @@ import { ParkedPanel, parkedKey } from './TableParked';
 import { ReturnTableDialog } from './ReturnTableDialog';
 import { ReceiptDialog } from './ReceiptDialog';
 import { tablesKey, useDiningMenu, useServerNow, useTableSession, useTablesBoard } from './queries';
+import { DishFlagBadges, DishFlagButtons, HoldAllButton } from './DishFlags';
+import { DEFAULT_DINING_RULES } from '@shared/dining';
 import { MergeDialog, TableActionStatus, TableHistoryDialog, TableStateDialog, TableStateLine, useTableAction } from './TableActions';
 
 type Tile = TablesBoard['tables'][number];
@@ -242,7 +244,15 @@ export function TablesTab() {
                 )}
                 <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
                   {list.map((t) => (
-                    <TableTile key={t.id} t={t} now={now} onClick={() => click(t)} tables={tables} alertMinutes={alertMinutes} />
+                    <TableTile
+                      key={t.id}
+                      t={t}
+                      now={now}
+                      onClick={() => click(t)}
+                      tables={tables}
+                      alertMinutes={alertMinutes}
+                      warnMinutes={menuRules?.warnMinutes ?? DEFAULT_DINING_RULES.warnMinutes}
+                    />
                   ))}
                 </div>
               </section>
@@ -359,8 +369,11 @@ function ZoneDetail({ label, stats }: { label: string; stats: ZoneStats }) {
   );
 }
 
-function TableTile({ t, now, onClick, tables, alertMinutes }: { t: Tile; now: number; onClick: () => void; tables: Tile[]; alertMinutes: number }) {
+function TableTile({ t, now, onClick, tables, alertMinutes, warnMinutes }: { t: Tile; now: number; onClick: () => void; tables: Tile[]; alertMinutes: number; warnMinutes: number }) {
   const s = t.session;
+  // 8.2.30 待催（CM-18）：最早一道下了单还没出餐的菜等了超过「多少分钟没出餐标红」
+  const waited = s?.oldestWaitingAt ? Math.floor((now - new Date(s.oldestWaitingAt).getTime()) / 60_000) : null;
+  const urge = waited !== null && waited >= warnMinutes;
   const reminder = s ? null : tableReminderOf(t, now, alertMinutes);
   // 并台（8.1.15）：附台写并入哪桌，主台写并着几桌
   const mainName = s?.mergedInto ? (tables.find((x) => x.session?.id === s.mergedInto)?.name ?? null) : null;
@@ -405,6 +418,11 @@ function TableTile({ t, now, onClick, tables, alertMinutes }: { t: Tile; now: nu
             <Money cents={s.amount} className="text-[14px] font-bold" />
             <span className="num text-[12px] text-ink-3">{stayText(s.openedAt, now)}</span>
             {s.pendingDishes > 0 && <Badge tone="yuzu">待上 {s.pendingDishes}</Badge>}
+            {urge && (
+              <Badge tone="clay" data-testid={`table-tile-urge-${t.name}`}>
+                待催 {waited} 分钟
+              </Badge>
+            )}
             {(t.shared?.length ?? 0) > 0 && (
               <Badge tone="lake" data-testid={`table-tile-shared-${t.name}`}>
                 拼台 +{t.shared!.length}
@@ -819,7 +837,10 @@ function SessionDialog({
               )
             }
           >
-            明细
+            <span className="flex items-center gap-2">
+              明细
+              {open && can('dining.order') && <HoldAllButton pending={d.pending} run={run} busy={busy} testPrefix="table" />}
+            </span>
           </SectionTitle>
           {active.length === 0 && !showVoided ? (
             <p className="mt-2 rounded-lg border border-dashed border-line-strong px-3 py-6 text-center text-[13px] text-ink-3">
@@ -842,9 +863,11 @@ function SessionDialog({
                     </span>
                     {l.kitchen && !isVoided && <Badge tone={STATUS_TONE[l.kitchen.status]}>{KITCHEN_STATUS_LABELS[l.kitchen.status]}</Badge>}
                     {p && p.rushCount > 0 && <Badge tone="clay">催 {p.rushCount}</Badge>}
+                    {p && <DishFlagBadges p={p} />}
                     <Money cents={l.amount} className="w-20 justify-end text-[13.5px] font-bold" />
                     {open && !isVoided && can('dining.order') && (
-                      <span className="flex w-full justify-end gap-1">
+                      <span className="flex w-full flex-wrap justify-end gap-1">
+                        {p && <DishFlagButtons p={p} run={run} busy={busy} testPrefix="table" />}
                         {p?.status === 'done' ? (
                           <Button
                             size="sm"

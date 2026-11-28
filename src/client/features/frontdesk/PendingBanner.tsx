@@ -5,7 +5,20 @@ import { ArrowRight, Hourglass } from 'lucide-react';
 import { formatDateTime } from '../../lib/utils';
 import { Money } from '../../components/Money';
 import { useToast } from '../../components/Toast';
-import { CASHIER_OPS, FRONTDESK_OP_LABELS, isBookingOp, isRoomOp, isSpaceOp, isTableOp, isTechOp, isUsageOp, reconcilePending, useFrontdeskPendingForBanner, type FrontdeskPendingOp } from './pending';
+import {
+  CASHIER_OPS,
+  FRONTDESK_OP_LABELS,
+  isBookingOp,
+  isCashierApproval,
+  isRoomOp,
+  isSpaceOp,
+  isTableOp,
+  isTechOp,
+  isUsageOp,
+  reconcilePending,
+  useFrontdeskPendingForBanner,
+  type FrontdeskPendingOp,
+} from './pending';
 import { onReconnect } from '../../lib/connection';
 
 /**
@@ -113,8 +126,13 @@ export function FrontdeskPendingBanner() {
       navigate(`/crm/clockroom?${params}`);
       return;
     }
+    // 收银申请的批准（8.2.30）回到「收银申请」页，在那里查回、重提或作废
+    if (isCashierApproval(op)) {
+      navigate('/crm/cashier-requests');
+      return;
+    }
     // 退款单（v0.7.20）回到前台「结账记录」里的原结账单
-    if (op.type === 'checkout_refund' && op.checkoutIds?.[0]) params.set('c', String(op.checkoutIds[0]));
+    if ((op.type === 'checkout_refund' || op.type === 'cashier_request') && op.checkoutIds?.[0]) params.set('c', String(op.checkoutIds[0]));
     if (op.visitId) params.set('v', String(op.visitId));
     // 8.1.15：结账、退款单在收银台处理，发牌、换牌、转明细在发卡台；8.1.44 起挂账（加项目）也在收银台
     navigate(`${CASHIER_OPS.includes(op.type) ? '/crm/cashier' : '/crm/frontdesk'}?${params}`);

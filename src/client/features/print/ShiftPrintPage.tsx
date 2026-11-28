@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router';
 import { CHECKOUT_METHOD_LABELS, COUPON_PLATFORM_LABELS, type CheckoutMethod, type ShiftRecord, type ShiftSummary } from '@shared/checkout';
 import { PAYMENT_METHOD_LABELS } from '@shared/labels';
+import { formatHkd } from '@shared/cashier-v8230';
 import { api, errorMessage } from '../../lib/api';
 import { useSession } from '../../lib/session';
 import { PrintedAt, PrintFrame, Row, Rule, SignLine, SlipHeader, stamp, yuan } from './PrintFrame';
@@ -36,7 +37,19 @@ export function ShiftPrintPage() {
 
 function ShiftSlip({ s }: { s: ShiftRecord }) {
   const session = useSession();
-  const tz = session.timezone;
+  // 交班盲点（8.2.30）：提交实点之前接口不给金额，不打预览
+  if (s.blind) {
+    return (
+      <div data-testid="print-shift-blind">
+        <SlipHeader title="交班表（预览）" />
+        <p className="text-center font-bold">店里开了交班盲点：先在交班页提交实点，再打印交班表</p>
+      </div>
+    );
+  }
+  return <ShiftSlipBody s={s} tz={session.timezone} />;
+}
+
+function ShiftSlipBody({ s, tz }: { s: ShiftRecord; tz: string }) {
   const sum = s.summary as Summary;
   const closed = s.status === 'closed';
   const diff = closed && s.countedCash !== null && s.expectedCash !== null ? s.countedCash - s.expectedCash : null;
@@ -127,6 +140,7 @@ function ShiftSlip({ s }: { s: ShiftRecord }) {
       {!!sum.cash.memberRefund && <Row left="− 储值退回的现金" right={yuan(sum.cash.memberRefund)} />}
       {!!sum.cash.countCard && <Row left={sum.cash.countCard > 0 ? '+ 次卡现金（卖 − 退）' : '− 次卡现金（退 − 卖）'} right={yuan(Math.abs(sum.cash.countCard))} />}
       {!!sum.cash.cardDeposit && <Row left={sum.cash.cardDeposit > 0 ? '+ 会员卡押金现金（收 − 退）' : '− 会员卡押金现金（退 − 收）'} right={yuan(Math.abs(sum.cash.cardDeposit))} />}
+      {!!sum.cash.hkd && <Row left="− 收港元折的人民币（港元另点）" right={yuan(sum.cash.hkd)} />}
       <Row left="= 应有现金" right={yuan(s.expectedCash ?? sum.cash.expected)} strong />
       {closed && s.countedCash !== null && (
         <>
@@ -134,6 +148,13 @@ function ShiftSlip({ s }: { s: ShiftRecord }) {
           <div data-testid="print-shift-diff">
             <Row left={diff === 0 ? '长短款' : diff! > 0 ? '长款' : '短款'} right={diff === 0 ? '无' : yuan(Math.abs(diff!))} big />
           </div>
+          {s.expectedHkd !== null && (
+            <div data-testid="print-shift-hkd">
+              <Row left={`港元应有（${sum.hkd?.count ?? 0} 笔）`} right={formatHkd(s.expectedHkd)} />
+              <Row left="港元实点" right={formatHkd(s.countedHkd ?? 0)} strong />
+              {(s.countedHkd ?? 0) !== s.expectedHkd && <Row left={(s.countedHkd ?? 0) > s.expectedHkd ? '港元长款' : '港元短款'} right={formatHkd(Math.abs((s.countedHkd ?? 0) - s.expectedHkd))} />}
+            </div>
+          )}
           {(s.expectedCash ?? 0) < 0 && (
             <p className="text-[11px]" data-testid="print-shift-cross-drawer">
               应有现金为负：反结账退的现金比本班收的多 {yuan(-(s.expectedCash ?? 0))}，这部分从别的钱箱或保险柜拿出，记成长款，与出钱那个钱箱的短款相抵。

@@ -43,6 +43,7 @@ import { weighedAmount, weightText } from '@shared/dish-price-mode';
 import { DishVoidDialog } from './DishVoid';
 import { ReceiptDialog, type ReceiptTarget } from './ReceiptDialog';
 import { OrderedDishes } from './OrderedDishes';
+import { DishFlagBadges, DishFlagButtons, HoldAllButton } from './DishFlags';
 import { GroupChips, OutletEntry, OutletFilter } from './slots';
 import { ALL_CATEGORIES, CategoryTabs } from '../../components/CategoryTabs';
 import { guestParams, OrderNoteInput, orderExtras, outletProblem, useOrderOutlets } from './OrderExtras';
@@ -855,16 +856,19 @@ export function OrderTab() {
           <Card className="p-4" data-testid="dining-pending">
             <SectionTitle
               aside={
-                // 点菜单（8.1.7，CF8）：这桌（这位客人）点过的菜，每道标已上 / 未上
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={<ReceiptText className="size-3.5" />}
-                  onClick={() => setReceipt(t ? { session: t.id } : { visit: g!.visitId })}
-                  data-testid="dining-receipt-open"
-                >
-                  点菜单
-                </Button>
+                // 点菜单（8.1.7，CF8）：这桌（这位客人）点过的菜，每道标已上 / 未上；8.2.30 整单等叫 / 起菜
+                <span className="flex items-center gap-2">
+                  <HoldAllButton pending={target.pending} run={run} busy={busy} testPrefix="dining" />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<ReceiptText className="size-3.5" />}
+                    onClick={() => setReceipt(t ? { session: t.id } : { visit: g!.visitId })}
+                    data-testid="dining-receipt-open"
+                  >
+                    点菜单
+                  </Button>
+                </span>
               }
             >
               还没上的菜 {target.pending.length ? target.pending.length : ''}
@@ -886,8 +890,10 @@ export function OrderTab() {
                     </span>
                     <Badge tone={STATUS_TONE[p.status]}>{KITCHEN_STATUS_LABELS[p.status]}</Badge>
                     {p.rushCount > 0 && <Badge tone="clay">催 {p.rushCount}</Badge>}
-                    <span className="flex w-full items-center justify-end gap-1">
+                    <DishFlagBadges p={p} />
+                    <span className="flex w-full flex-wrap items-center justify-end gap-1">
                       <span className="mr-auto text-[12px] text-ink-4">{formatTime(p.createdAt)} 下单</span>
+                      <DishFlagButtons p={p} run={run} busy={busy} testPrefix="dining" />
                       {p.status === 'done' ? (
                         <Button
                           size="sm"

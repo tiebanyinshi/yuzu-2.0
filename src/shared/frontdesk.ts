@@ -81,6 +81,15 @@ export interface FrontdeskRules {
   lineDiscountFloors: import('./line-discount').LineDiscountFloors;
   /** 手牌押金（8.2.1）：收押金时先填好的金额（分），可以改；0 = 不预填 */
   tagDepositDefaultCents: number;
+  /**
+   * 港元现金（8.2.30，CM-2、CM-3）：每 1 港元折多少人民币（百万分之一，920000 = 0.92）；null = 不收港元（默认）。
+   * 店长在后台「手牌与前台 → 收银台」改；结账时记下当时的汇率，以后改不影响已结的单
+   */
+  hkdRatePpm: number | null;
+  /** 大额找零（8.2.30，CM-4）：现金找零超过多少（分）要多确认一次；找零超过应收的 2 倍也要确认 */
+  bigChangeCents: number;
+  /** 交班盲点（8.2.30，CM-9）：开了以后交班页先填实点、提交前不显示应有现金与差额；默认关 */
+  shiftBlind: boolean;
 }
 
 /** 买角的一条数字代号：1–4 位数字 → 价目项目（与价格档）；价格照挂账时项目的当前价 */
@@ -108,6 +117,9 @@ export const DEFAULT_FRONTDESK_RULES: FrontdeskRules = {
   buyCodes: [],
   lineDiscountFloors: { cashier: 90, duty: 70, lead: 50, owner: 0 },
   tagDepositDefaultCents: 10000,
+  hkdRatePpm: null,
+  bigChangeCents: 50000,
+  shiftBlind: false,
 };
 
 /** 牌号：0–2 位大写字母前缀 + 1–5 位数字 */
@@ -483,6 +495,8 @@ export type FrontdeskOpLookup =
   | { found: true; type: 'room_checkin' | 'room_extend' | 'room_deposit' | 'room_refund' | 'room_close'; stay: import('./rooms').StayDetail }
   | { found: true; type: 'usage_open' | 'usage_end' | 'usage_cancel'; usage: import('./usages').UsageDetail }
   | { found: true; type: 'checkout_refund'; refund: import('./checkout').RefundDetail }
+  /** 收银申请（8.2.30）：提交、批准反结账申请的编号都查回这张申请 */
+  | { found: true; type: 'cashier_request' | 'cashier_void_approve'; request: import('./cashier-v8230').CashierRequestView }
   | { found: true; type: 'booking_create' | 'booking_change'; booking: import('./bookings').BookingDetail }
   /** 技师停牌、复牌、休假（8.0.8）：查回那位技师；页面按最新的钟房看板显示 */
   | { found: true; type: 'technician_state'; technicianId: number }

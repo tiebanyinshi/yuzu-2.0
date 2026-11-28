@@ -484,6 +484,7 @@ const COMBO_PART: KitchenPartItem = {
   startedAt: NOW,
   doneAt: null,
   visitClosed: false,
+  hold: false,
 };
 const PRICE_CHANGES: DishPriceChange[] = [
   { id: 3, itemId: SPICY.id, itemName: SPICY.name, tier: 'standard', oldPrice: 5_800, newPrice: 6_800, reason: '食材涨价', source: 'dishes', staffName: '林岚', createdAt: ago(60) },

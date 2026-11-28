@@ -471,6 +471,8 @@ export const ALL_MIGRATIONS: readonly string[] = [
   '730_oa_expense_retire.sql',
   '740_booking_batch_overlap.sql',
   '750_tag_exceptions_v8227.sql',
+  '760_cashier_v8230.sql',
+  '761_dining_v8230.sql',
 ];
 
 /** 从 first（含）起到最后一个迁移：升级用例从某个版本的库升级时应该应用的迁移 */

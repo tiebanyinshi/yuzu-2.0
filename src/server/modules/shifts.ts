@@ -41,10 +41,11 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors';
 import { cents, idParam, parse } from '../lib/validate';
 import { resolveReadableDate } from './ledger';
 import { loadSettings } from './settings';
-import { nextDocNo } from '../lib/tx';
+import { nextDocNo, setTxTimeouts } from '../lib/tx';
 import { ctxOf } from '../lib/context';
 import { unsettledPayOfShift } from './pay-terminal';
 import { currentStoreId } from '../lib/store-context';
+import { settingRow } from '../lib/store-settings';
 
 /**
  * 收款开始处理时经办人所在的班次（不加锁，没有开班时为 null）；入账事务里交给 lockPaymentShift 核对。
@@ -97,7 +98,8 @@ export async function lockPaymentShift(tx: Tx, staffId: number, seen: number | n
 export async function lockRefundShift(tx: Tx, shiftId: number): Promise<number> {
   const [row] = await tx<{ id: number; status: string; shiftNo: string; staffName: string; legacyRefund: boolean }[]>`
     SELECT s.id, s.status, s.shift_no, coalesce(s.drawer_name, st.display_name) AS staff_name, s.legacy_refund
-    FROM shifts s JOIN staff st ON st.id = s.staff_id WHERE s.id = ${shiftId} FOR SHARE OF s`;
+    FROM shifts s JOIN staff st ON st.id = s.staff_id WHERE s.id = ${shiftId} AND s.store_id = ${currentStoreId()} FOR SHARE OF s`;
+  // 别家店的班次与不存在一样（8.2.30 Codex 审查 06b2eee：批准退款申请时钱箱由批准人选，只能是这家店的）
   if (!row) throw notFound('所选钱箱的班次不存在，请刷新后重新选择');
   if (row.status !== 'open') {
     throw conflict('REFUND_SHIFT_CLOSED', `${row.staffName}的班次 ${row.shiftNo} 已经交班，不能再从这个钱箱退款；这笔反结账没有办理，请重新选择钱箱`, {
@@ -193,6 +195,7 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
       cardDepositReceived: NonNullable<ShiftSummary['cardDeposits']>['received'];
       cardDepositRefunded: NonNullable<ShiftSummary['cardDeposits']>['refunded'];
       byOperator: NonNullable<ShiftSummary['byOperator']>;
+      hkdTotals: { count: number; expected: number; worth: number };
     })[]
   >`
     WITH co AS (
@@ -318,7 +321,10 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
                                                   'checkouts', json_build_object('count', ops.checkout_count, 'total', ops.checkout_total),
                                                   'recharges', json_build_object('count', ops.recharge_count, 'paid', ops.recharge_paid))
                                 ORDER BY st.display_name, ops.operator_id), '[]'::json)
-       FROM ops JOIN staff st ON st.id = ops.operator_id) AS by_operator`;
+       FROM ops JOIN staff st ON st.id = ops.operator_id) AS by_operator,
+      -- 港元现金（8.2.30）：本班次结账收的港元（进钱箱）与折成的人民币（收款 + 找零，不在钱箱里）
+      (SELECT json_build_object('count', count(*), 'expected', coalesce(sum(p.fx_tendered), 0), 'worth', coalesce(sum(p.fx_worth), 0))
+       FROM checkout_payments p JOIN co ON co.id = p.checkout_id WHERE p.fx_currency = 'HKD') AS hkd_totals`;
   const { checkouts, checkoutByMethod, recharges, rechargeByMethod, walletConsumes, coupons, refunds, refundByMethod, depositReceived, depositRefunded } = row!;
   const { refundSlipTotals, refundSlipByMethod, refundSlipList, memberRefundTotals, memberRefundByMethod, memberRefundList, countCardSales, countCardRefunds } = row!;
   const cashCheckout = checkoutByMethod.find((m) => m.method === 'cash')?.amount ?? 0;
@@ -343,6 +349,9 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
   const hasCardDeposits = cardDepositReceived.length > 0 || cardDepositRefunded.length > 0;
   const hasCashCardDeposit = [...cardDepositReceived, ...cardDepositRefunded].some((m) => m.method === 'cash');
   const cashCardDeposit = (cardDepositReceived.find((m) => m.method === 'cash')?.amount ?? 0) - (cardDepositRefunded.find((m) => m.method === 'cash')?.amount ?? 0);
+  // 港元现金（8.2.30）：结账现金里含港元折成的人民币，钱箱里实际是港元，扣掉后另按港元对实点
+  const hkd = { count: Number(row!.hkdTotals.count), expected: Number(row!.hkdTotals.expected), worth: Number(row!.hkdTotals.worth) };
+  const hasHkd = hkd.count > 0;
   const cardRows = (rows: { method: PaymentMethod; count: number; amount: number }[]) => rows.map((m) => ({ ...m, amount: Number(m.amount) }));
   const cardSum = (rows: { count: number; amount: number }[]) => ({ count: rows.reduce((t, m) => t + m.count, 0), total: rows.reduce((t, m) => t + Number(m.amount), 0) });
   return {
@@ -409,6 +418,7 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
           })),
         }
       : {}),
+    ...(hasHkd ? { hkd } : {}),
     cash: {
       opening: s.openingCash,
       checkout: cashCheckout,
@@ -419,12 +429,16 @@ async function shiftSummary(db: Db, s: ShiftScope, to: Date | string): Promise<S
       ...(hasMemberRefunds ? { memberRefund: cashMemberRefund } : {}),
       ...(hasCountCards ? { countCard: cashCountCard } : {}),
       ...(hasCashCardDeposit ? { cardDeposit: cashCardDeposit } : {}),
-      expected: s.openingCash + cashCheckout + cashRecharge - cashRefund + cashDeposit - cashSlip - cashMemberRefund + cashCountCard + cashCardDeposit,
+      ...(hasHkd ? { hkd: hkd.worth } : {}),
+      expected: s.openingCash + cashCheckout + cashRecharge - cashRefund + cashDeposit - cashSlip - cashMemberRefund + cashCountCard + cashCardDeposit - hkd.worth,
     },
   };
 }
 
-interface ShiftRow extends Omit<ShiftRecord, 'summary' | 'members'> {
+interface ShiftRow extends Omit<ShiftRecord, 'summary' | 'members' | 'blindCount' | 'blind'> {
+  blindCountedCash: number | null;
+  blindCountedHkd: number | null;
+  blindCountedAt: Date | null;
   summary: ShiftSummary | null;
   legacyWindow: boolean;
   legacyRefund: boolean;
@@ -447,13 +461,122 @@ async function shiftMembers(db: Db, shiftId: number): Promise<ShiftMember[]> {
 export async function getShift(db: Db, id: number, now = new Date()): Promise<ShiftRecord> {
   const [row] = await db<ShiftRow[]>`
     SELECT s.id, s.shift_no, s.staff_id, st.display_name AS staff_name, s.status, s.business_date, s.started_at, s.opening_cash,
-           s.ended_at, s.expected_cash, s.counted_cash, s.note, h.display_name AS handed_to_name, c.display_name AS closed_by_name, s.summary,
-           s.legacy_window, s.legacy_refund, s.drawer_name
+           s.ended_at, s.expected_cash, s.counted_cash, s.expected_hkd, s.counted_hkd, s.note, h.display_name AS handed_to_name, c.display_name AS closed_by_name, s.summary,
+           s.legacy_window, s.legacy_refund, s.drawer_name,
+           b.counted_cash AS blind_counted_cash, b.counted_hkd AS blind_counted_hkd, b.counted_at AS blind_counted_at
     FROM shifts s JOIN staff st ON st.id = s.staff_id LEFT JOIN staff h ON h.id = s.handed_to LEFT JOIN staff c ON c.id = s.closed_by
+    LEFT JOIN shift_blind_counts b ON b.shift_id = s.id
     WHERE s.id = ${id}`;
   if (!row) throw notFound('班次不存在');
-  const { legacyWindow: _legacy, legacyRefund: _legacyRefund, ...shift } = row;
-  return { ...shift, summary: row.summary ?? (await shiftSummary(db, row, now)), members: await shiftMembers(db, id) };
+  const { legacyWindow: _legacy, legacyRefund: _legacyRefund, blindCountedCash, blindCountedHkd, blindCountedAt, ...shift } = row;
+  const blindCount = blindCountedAt
+    ? { countedCash: Number(blindCountedCash), countedHkd: blindCountedHkd === null ? null : Number(blindCountedHkd), countedAt: new Date(blindCountedAt).toISOString() }
+    : null;
+  return { ...shift, blindCount, summary: row.summary ?? (await shiftSummary(db, row, now)), members: await shiftMembers(db, id) };
+}
+
+/**
+ * 交班盲点（8.2.30 CM-9；Codex 审查 06b2eee）：门店开了盲点、班次还开着、还没提交实点时，接口不给当班的人看应有现金——
+ * 交班页、「今天的班次」、打印预览都取这几个接口。汇总里能推出应有现金的金额都去掉（按方式的收款、各项现金），只留笔数，
+ * cash 只剩备用金，金额记 0，并标 blind（页面看到 blind 不显示金额）；收过港元的留 hkd.count（页面要知道填不填实点港元）。
+ * 能看历史营业日的岗位（默认值班经理及以上，看别人班次的同一项权限）照旧看得到。
+ */
+export async function blindView(db: Db, actor: OpContext['actor'], s: ShiftRecord): Promise<ShiftRecord> {
+  if (!(await blindHidden(db, actor, s))) return s;
+  const m = s.summary;
+  return {
+    ...s,
+    blind: true,
+    expectedCash: null,
+    expectedHkd: null,
+    summary: {
+      from: m.from,
+      to: m.to,
+      checkouts: { count: m.checkouts.count, total: 0 },
+      checkoutByMethod: [],
+      recharges: { count: m.recharges.count, paid: 0, bonus: 0, byMethod: [] },
+      walletConsumes: { count: m.walletConsumes.count, total: 0 },
+      coupons: [],
+      voids: [],
+      ...(m.hkd ? { hkd: { count: m.hkd.count, expected: 0, worth: 0 } } : {}),
+      cash: { opening: s.openingCash, checkout: 0, recharge: 0, expected: 0 },
+    },
+  };
+}
+
+/** 门店开没开交班盲点（前台规则 frontdesk_rules.shiftBlind，默认关）；直接读设置，不引用前台模块（前台模块引用这里的班次锁） */
+async function shiftBlindOn(db: Db): Promise<boolean> {
+  const row = await settingRow<{ shiftBlind?: boolean }>(db, 'frontdesk_rules');
+  return row?.value?.shiftBlind === true;
+}
+
+/**
+ * 交班盲点（Codex 审查 dcf1966，安全）：调用的人在一个开着、还没提交实点的班次上待过（按人交班是自己的，按钱箱交班是在上面待过的——
+ * 离开了也算，Codex 审查 1d6d77e：不然离开钱箱看完日结再加入回来提交实点），
+ * 门店开了盲点，又没有「查看历史营业日」（看别人班次的同一项）——当日按收款方式的合计（日结、看板的收款方式）也不给，
+ * 不然从门店当日的现金合计就推得出应有现金。提交实点以后照常
+ */
+export async function blindRestricted(db: Db, actor: OpContext['actor']): Promise<boolean> {
+  if (can(actor, 'ledger.readHistory')) return false;
+  if (!(await shiftBlindOn(db))) return false;
+  const [r] = await db<{ id: number }[]>`
+    SELECT s.id FROM shift_members m JOIN shifts s ON s.id = m.shift_id
+    WHERE m.staff_id = ${actor.id} AND s.status = 'open' AND s.store_id = ${currentStoreId()}
+      AND NOT EXISTS (SELECT 1 FROM shift_blind_counts b WHERE b.shift_id = s.id)
+    LIMIT 1`;
+  return !!r;
+}
+
+export const shiftBlindError = () => conflict('SHIFT_BLIND', '店里开了交班盲点：先在交班页提交实点，再看当日的收款合计');
+
+async function blindHidden(db: Db, actor: OpContext['actor'], s: ShiftRecord): Promise<boolean> {
+  if (s.status !== 'open' || s.blindCount || can(actor, 'ledger.readHistory')) return false;
+  return shiftBlindOn(db);
+}
+
+const BlindCountInput = z.object({
+  countedCash: cents('实点现金'),
+  countedHkd: z.number('实点港元要精确到港仙').int('实点港元要精确到港仙').min(0, '实点港元不能为负').max(1_000_000_000, '实点港元过大').optional(),
+});
+
+/**
+ * 交班盲点：提交实点（只能一次，记在 shift_blind_counts），之后接口才给看应有现金；交班时实点要与这里一致。
+ * 锁顺序：班次一行（共享锁，与交班的排他锁串行；与收款的共享锁不互斥）→ 插入实点。同样的实点重提照旧返回班次
+ */
+export async function submitBlindCount(deps: Deps, id: number, raw: unknown, ctx: OpContext): Promise<ShiftRecord> {
+  const input = parse(BlindCountInput, raw);
+  await deps.sql.begin(async (tx) => {
+    await setTxTimeouts(tx);
+    const [s] = await tx<(ShiftScope & { shiftNo: string; status: string; onShift: boolean })[]>`
+      SELECT id, shift_no, staff_id, status, started_at, opening_cash, legacy_window, legacy_refund, drawer_name,
+             EXISTS (SELECT 1 FROM shift_members m WHERE m.shift_id = shifts.id AND m.staff_id = ${ctx.actor.id} AND m.left_at IS NULL) AS on_shift
+      FROM shifts WHERE id = ${id} AND store_id = ${currentStoreId()} FOR SHARE`;
+    if (!s) throw notFound('班次不存在');
+    if (s.status !== 'open') throw conflict('SHIFT_CLOSED', `班次 ${s.shiftNo} 已交班`);
+    assertCanClose(s, ctx.actor);
+    const summary = await shiftSummary(tx, s, ctx.at ?? new Date());
+    if (summary.hkd && input.countedHkd === undefined) throw badRequest('这个班次收过港元，请填实点港元');
+    const countedHkd = summary.hkd ? input.countedHkd! : null;
+    const [done] = await tx<{ countedCash: number; countedHkd: number | null }[]>`SELECT counted_cash, counted_hkd FROM shift_blind_counts WHERE shift_id = ${s.id}`;
+    if (done) {
+      if (Number(done.countedCash) === input.countedCash && (done.countedHkd === null ? null : Number(done.countedHkd)) === countedHkd) return;
+      throw conflict('BLIND_COUNTED', '实点已经提交过了，提交以后不能再改');
+    }
+    await tx`
+      INSERT INTO shift_blind_counts (shift_id, counted_cash, counted_hkd, counted_by, counted_at)
+      VALUES (${s.id}, ${input.countedCash}, ${countedHkd}, ${ctx.actor.id}, ${ctx.at ?? new Date()})
+      ON CONFLICT (shift_id) DO NOTHING`;
+  });
+  return getShift(deps.sql, id);
+}
+
+/** 按人交班：本人交本人的班；按钱箱交班：此刻在这个钱箱上的人都可以交；值班经理及以上可以替别人交 */
+function assertCanClose(s: { drawerName: string | null; staffId: number; onShift: boolean }, actor: OpContext['actor']) {
+  if (s.drawerName === null ? s.staffId !== actor.id : !s.onShift) {
+    if (!can(actor, 'frontdesk.correct')) {
+      throw forbidden(s.drawerName === null ? '只能交自己的班；替别人交班需要值班经理及以上' : `你不在${s.drawerName}的班次上；替别人交班需要值班经理及以上`);
+    }
+  }
 }
 
 /** 本人此刻所在的班次（按人交班是自己未交班的班次，按钱箱交班是加入的钱箱的班次） */
@@ -515,6 +638,9 @@ const CloseInput = z.object({
   expectedCash: z.number('应有现金必须是数字').int('应有现金必须精确到分').min(-1_000_000_000, '应有现金过大').max(1_000_000_000, '应有现金过大'),
   note: z.string().trim().max(200, '备注最多 200 字').default(''),
   handedTo: z.number().int().positive().nullable().default(null),
+  /** 港元（8.2.30）：本班次收过港元时要填实点港元（港仙），并带上看到的应有港元；没收过不带 */
+  countedHkd: z.number('实点港元要精确到港仙').int('实点港元要精确到港仙').min(0, '实点港元不能为负').max(1_000_000_000, '实点港元过大').optional(),
+  expectedHkd: z.number().int().min(0).max(1_000_000_000).optional(),
 });
 
 /** 本人此刻所在的班次：已经在一个班次上的不能再开班或加入别的钱箱 */
@@ -651,11 +777,7 @@ export async function closeShift(deps: Deps, id: number, raw: unknown, ctx: OpCo
     if (!s) throw notFound('班次不存在');
     if (s.status !== 'open') throw conflict('SHIFT_CLOSED', `班次 ${s.shiftNo} 已交班`);
     // 按人交班：本人交本人的班；按钱箱交班：此刻在这个钱箱上的人都可以交（交班后所有人一起离开）；值班经理及以上可以替别人交
-    if (s.drawerName === null ? s.staffId !== ctx.actor.id : !s.onShift) {
-      if (!can(ctx.actor, 'frontdesk.correct')) {
-        throw forbidden(s.drawerName === null ? '只能交自己的班；替别人交班需要值班经理及以上' : `你不在${s.drawerName}的班次上；替别人交班需要值班经理及以上`);
-      }
-    }
+    assertCanClose(s, ctx.actor);
     if (input.handedTo === s.staffId) throw conflict('HANDOVER_SELF', '接班人不能是交班人自己');
     // 扫码收款（8.0.21）：这个班次收了钱没入账、还在支付中的先处理（挂到结账 / 充值，或原路退回）
     const pay = await unsettledPayOfShift(tx, s.id);
@@ -666,12 +788,32 @@ export async function closeShift(deps: Deps, id: number, raw: unknown, ctx: OpCo
         pay,
       );
     }
+    // 交班盲点（8.2.30）：开了盲点的先提交实点（看到应有之前），交班时实点要与提交的一致；提交以后才收的港元（提交时没有港元）照填。
+    // 放在核对应有现金之前（Codex 审查 e7132c4）：SHIFT_CHANGED 的 details 带着应有现金、应有港元，没提交实点的不能先看到
+    const [blindCount] = await tx<{ countedCash: number; countedHkd: number | null }[]>`SELECT counted_cash, counted_hkd FROM shift_blind_counts WHERE shift_id = ${s.id}`;
+    if (!blindCount && (await shiftBlindOn(tx))) throw conflict('BLIND_COUNT_REQUIRED', '店里开了交班盲点：请先提交实点，再确认交班');
+    if (
+      blindCount &&
+      (Number(blindCount.countedCash) !== input.countedCash || (blindCount.countedHkd !== null && input.countedHkd !== undefined && Number(blindCount.countedHkd) !== input.countedHkd))
+    ) {
+      throw conflict('BLIND_COUNT_MISMATCH', '实点要与提交的一致（交班盲点提交以后不能再改实点），请刷新');
+    }
     const summary = await shiftSummary(tx, s, at);
     if (summary.cash.expected !== input.expectedCash) {
       throw conflict('SHIFT_CHANGED', '交班期间又有收款，应有现金已变化，请刷新后重新核对', { expectedCash: summary.cash.expected });
     }
+    // 港元（8.2.30）：收过港元的班次要分币种对实点；页面看到的应有港元与此刻不一致（交班期间又收了港元）同样要刷新
+    const expectedHkd = summary.hkd?.expected ?? null;
+    if (expectedHkd !== null) {
+      if (input.countedHkd === undefined) throw badRequest('这个班次收过港元，请填实点港元');
+      if (input.expectedHkd !== expectedHkd) throw conflict('SHIFT_CHANGED', '交班期间又收了港元，应有港元已变化，请刷新后重新核对', { expectedHkd });
+    } else if (input.countedHkd !== undefined && input.countedHkd !== 0) {
+      throw badRequest('这个班次没有收过港元，不用填实点港元');
+    }
+    const countedHkd = expectedHkd === null ? null : input.countedHkd!;
     await tx`
       UPDATE shifts SET status = 'closed', ended_at = ${at}, expected_cash = ${summary.cash.expected}, counted_cash = ${input.countedCash},
+                        expected_hkd = ${expectedHkd}, counted_hkd = ${countedHkd},
                         summary = ${tx.json(summary as never)}, note = ${input.note}, handed_to = ${input.handedTo}, closed_by = ${ctx.actor.id}
       WHERE id = ${s.id}`;
     const settings = await loadSettings(tx);
@@ -685,6 +827,7 @@ export async function closeShift(deps: Deps, id: number, raw: unknown, ctx: OpCo
         expectedCash: summary.cash.expected,
         countedCash: input.countedCash,
         diff: input.countedCash - summary.cash.expected,
+        ...(expectedHkd !== null ? { expectedHkd, countedHkd, diffHkd: countedHkd! - expectedHkd } : {}),
         note: input.note,
         ...(s.drawerName ? { drawer: s.drawerName } : {}),
       },
@@ -701,7 +844,8 @@ export function registerShiftRoutes(app: FastifyInstance, deps: Deps) {
   // today：此刻的营业日（与 /api/auth/me 同一算法）。页面每 30 秒轮询这个接口，过了营业日切换时间不用刷新页面也能提醒跨营业日的班次
   app.get('/api/shifts/current', { preHandler: guard('ledger.readToday') }, async (req) => {
     const settings = await loadSettings(sql);
-    return { shift: await currentShift(sql, req.actor.id), today: businessDateOf(new Date(), deps.config.timezone, settings.businessDayStartHour) };
+    const shift = await currentShift(sql, req.actor.id);
+    return { shift: shift && (await blindView(sql, req.actor, shift)), today: businessDateOf(new Date(), deps.config.timezone, settings.businessDayStartHour) };
   });
 
   app.get('/api/shifts', { preHandler: guard('ledger.readToday') }, async (req) => {
@@ -709,7 +853,7 @@ export function registerShiftRoutes(app: FastifyInstance, deps: Deps) {
     const list = await listShifts(sql, await resolveReadableDate(deps, req, date));
     // 别人的班次（备用金、实点现金、长短款）与单个班次同一规则：只给能看历史营业日的岗位（默认值班经理及以上）；
     // 按钱箱交班时在上面待过的人也能看
-    return list.filter((s) => canSeeShift(req.actor, s));
+    return Promise.all(list.filter((s) => canSeeShift(req.actor, s)).map((s) => blindView(sql, req.actor, s)));
   });
 
   // 按钱箱交班时开班选钱箱（v0.7.28 ⑨）；按人交班时 mode 为 person，页面照旧只填备用金
@@ -722,23 +866,29 @@ export function registerShiftRoutes(app: FastifyInstance, deps: Deps) {
     if (!own) throw notFound('班次不存在');
     const shift = await getShift(sql, id);
     if (!canSeeShift(req.actor, shift)) throw forbidden('只能查看自己的班次');
-    return shift;
+    return blindView(sql, req.actor, shift);
   });
 
-  app.post('/api/shifts', { preHandler: guard('ledger.readToday') }, async (req) => startShift(deps, req.body, ctxOf(req)));
+  app.post('/api/shifts', { preHandler: guard('ledger.readToday') }, async (req) => blindView(sql, req.actor, await startShift(deps, req.body, ctxOf(req))));
 
   app.post('/api/shifts/:id/join', { preHandler: guard('ledger.readToday') }, async (req) => {
     const { id } = parse(idParam, req.params);
-    return joinShift(deps, id, ctxOf(req));
+    return blindView(sql, req.actor, await joinShift(deps, id, ctxOf(req)));
   });
 
   app.post('/api/shifts/:id/leave', { preHandler: guard('ledger.readToday') }, async (req) => {
     const { id } = parse(idParam, req.params);
-    return leaveShift(deps, id, ctxOf(req));
+    return blindView(sql, req.actor, await leaveShift(deps, id, ctxOf(req)));
+  });
+
+  // 交班盲点（8.2.30）：先提交实点，之后才给看应有现金
+  app.post('/api/shifts/:id/blind-count', { preHandler: guard('ledger.readToday') }, async (req) => {
+    const { id } = parse(idParam, req.params);
+    return blindView(sql, req.actor, await submitBlindCount(deps, id, req.body, ctxOf(req)));
   });
 
   app.post('/api/shifts/:id/close', { preHandler: guard('ledger.readToday') }, async (req) => {
     const { id } = parse(idParam, req.params);
-    return closeShift(deps, id, req.body, ctxOf(req));
+    return blindView(sql, req.actor, await closeShift(deps, id, req.body, ctxOf(req)));
   });
 }

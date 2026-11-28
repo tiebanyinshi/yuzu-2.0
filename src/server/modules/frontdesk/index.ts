@@ -5,6 +5,7 @@
 export { assertOpen, businessDate, hashRequest, lockVisits, runIdempotent, saveKey, setTxTimeouts } from './common';
 export { sweepRiskAlerts } from './guest';
 export { assertNotAwayLocked, sweepAwayLocks } from './away-lock';
+export { registerCashierRequestRoutes, sweepCashierRequests } from './cashier-requests';
 export { insertAutoDiscount } from './line-discounts';
 export { visitTicket } from './tickets';
 

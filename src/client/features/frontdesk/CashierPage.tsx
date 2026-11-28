@@ -101,13 +101,14 @@ export function CashierPage() {
     // 发牌、换牌、转明细在发卡台处理：带着这几种来的转过去（挂账 8.1.44 起在收银台）
     // 8.2.1：单项打折、手牌押金待确认的，打开这位客人的账单，在账单里的提醒上处理
     const inBill = resume === 'line_discount' || resume === 'tag_deposit' || resume === 'tag_deposit_refund' || resume === 'tag_away_lock' || resume === 'tag_away_unlock';
-    if (resume !== 'checkout' && resume !== 'checkout_refund' && resume !== 'bill_post' && !inBill) {
+    const records = resume === 'checkout_refund' || resume === 'cashier_request';
+    if (resume !== 'checkout' && !records && resume !== 'bill_post' && !inBill) {
       navigate(`/crm/frontdesk?${params}`, { replace: true });
       return;
     }
     if (!board.data) return;
-    if (resume !== 'checkout_refund' && (!visit.data || visit.data.id !== selectedId)) return;
-    if (resume === 'checkout_refund') setDialog({ kind: 'records', checkoutId: Number(params.get('c')) || undefined });
+    if (!records && (!visit.data || visit.data.id !== selectedId)) return;
+    if (records) setDialog({ kind: 'records', checkoutId: Number(params.get('c')) || undefined });
     else if (resume === 'bill_post') setDialog({ kind: 'add' });
     else if (!inBill) setDialog({ kind: 'checkout' });
     const next = new URLSearchParams(params);

@@ -108,7 +108,8 @@ export function SettlementPage() {
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[1180px] px-5 py-6 md:px-7">
           {s.error ? (
-            <Notice tone="error" title={errorMessage(s.error)} />
+            // 交班盲点（8.2.30）：还没提交实点的当班的人拿不到日结，提示里写了先去交班页提交实点
+            <Notice tone="warning" title={errorMessage(s.error)} />
           ) : s.isPending || !s.data ? (
             <div className="grid gap-4 lg:grid-cols-3">
               <Skeleton className="h-24 lg:col-span-3" />

@@ -120,7 +120,8 @@ describe('开退款单', () => {
       { method: 'wechat', paid: 30000, refunded: 0, remaining: 30000 },
     ]);
     expect(o.drawers?.suggested).toBeTypeOf('number');
-    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/checkouts/${c.id}/refund-options`)).status).toBe(403);
+    // 8.2.30：店员能看能退多少（提交退款申请用），开退款单照旧没有权限
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/checkouts/${c.id}/refund-options`)).status).toBe(200);
     expect((await refund(c.id, {}, ctx.clerk)).status).toBe(403);
   });
 

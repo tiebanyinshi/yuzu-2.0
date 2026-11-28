@@ -263,7 +263,14 @@ function TodayTab() {
               <Card className="p-5">
                 <SectionTitle>今日收款构成</SectionTitle>
                 <ul className="mt-3 space-y-2 text-[13px]">
-                  {d.todayStats.byMethod.length === 0 && <li className="text-ink-4">今天还没有结账</li>}
+                  {/* 交班盲点（8.2.30）：还没提交实点时接口不给按方式的合计 */}
+                  {d.todayStats.blind ? (
+                    <li className="text-ink-4" data-testid="dashboard-blind">
+                      店里开了交班盲点：在交班页提交实点以后才显示
+                    </li>
+                  ) : (
+                    d.todayStats.byMethod.length === 0 && <li className="text-ink-4">今天还没有结账</li>
+                  )}
                   {d.todayStats.byMethod.map((m) => (
                     <li key={m.method} className="flex justify-between">
                       <span className="text-ink-2">{CHECKOUT_METHOD_LABELS[m.method]}</span>

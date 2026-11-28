@@ -273,6 +273,13 @@ export interface KitchenItem {
   postedByName: string;
   /** 客人已结账离店 / 这桌已结账（还没上的菜请与前台确认后处理） */
   visitClosed: boolean;
+  /** 8.2.30：等叫（服务员点「起菜」前不做）、加急、打包；出餐以后已经先上了几份 */
+  hold?: boolean;
+  urgent?: boolean;
+  takeaway?: boolean;
+  servedQty?: number;
+  /** 8.2.30：菜品的点单分类（餐厅 / 水吧 / 果吧）；手工的临时项目为空。水吧的出品单能打杯贴 */
+  outlet?: DiningOutlet | null;
   /** 整单备注、送达房号（8.1.15 块 B3；没有的为空） */
   orderNote: string;
   deliverRoom: string;
@@ -312,6 +319,8 @@ export interface KitchenPartItem extends KitchenPartTicket {
   startedAt: string | null;
   doneAt: string | null;
   visitClosed: boolean;
+  /** 8.2.30：套餐那一张在等叫（服务员点「起菜」之前子项也不做） */
+  hold: boolean;
 }
 
 export interface KitchenBoard {
@@ -411,6 +420,11 @@ export interface PendingDish {
   postedAt: string;
   /** 8.1.17（BW8）：这道是加料时挂在哪一行主菜上；挂在这道菜上、还没退的加料（不管上没上），退菜时问要不要一起退 */
   addonOf?: number | null;
+  /** 8.2.30：等叫、加急、打包；出餐以后已经先上了几份 */
+  hold?: boolean;
+  urgent?: boolean;
+  takeaway?: boolean;
+  servedQty?: number;
   addons?: { billLineId: number; name: string; quantity: number; amount: number }[];
 }
 
@@ -484,6 +498,8 @@ export interface TableSessionBrief {
   pendingDishes: number;
   /** 并台（8.1.15 块 B1）：这桌并入了哪一次开台（主台）；不是附台为 null */
   mergedInto: number | null;
+  /** 8.2.30 待催：最早一道下了单、还没出餐的菜的下单时刻（等叫的不算）；没有为 null。超过「多少分钟没出餐标红」就标待催 */
+  oldestWaitingAt?: string | null;
 }
 
 export interface TablesBoard {
@@ -725,4 +741,16 @@ export interface DiningGroupSummary {
   }[];
   quantity: number;
   amount: number;
+}
+
+/** 杯贴（8.2.30，CM-21）：一单的饮品一杯一张 */
+export interface CupLabels {
+  orderNo: string;
+  /** 8.2.19 水吧的取餐号；没有为 null */
+  pickupNo: number | null;
+  /** 「手牌 A012」「桌 A1」 */
+  where: string;
+  createdAt: string;
+  total: number;
+  labels: { name: string; note: string; seq: number }[];
 }

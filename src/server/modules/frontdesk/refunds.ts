@@ -23,6 +23,7 @@ import { parse, positiveCents } from '../../lib/validate';
 import { loadSettings } from '../settings';
 import { lockPaymentShift, lockRefundShift, openShiftOf, shiftDrawerLabel } from '../shifts';
 import { businessDate, hashRequest, nextDocNo, runIdempotent, saveKey, setTxTimeouts } from './common';
+import { assertNoPendingRequest } from './cashier-request-guard';
 import { processRefunds, queueCheckoutRefund } from '../pay-terminal';
 import { currentStoreId } from '../../lib/store-context';
 
@@ -161,7 +162,16 @@ export async function refundOptions(db: Db, checkoutId: number, actor: Actor, at
 
 // ───────────────────────── 开退款单 ─────────────────────────
 
-export async function createRefund(deps: Deps, checkoutId: number, raw: RefundInputData, ctx: OpContext): Promise<RefundDetail> {
+/**
+ * 开退款单的附加步骤（8.2.30 收银申请）：批准「退款申请」时在同一事务里、退款单记好以后锁住申请一行核对并记批准；抛错整笔回滚。
+ * requestId：执行的就是这张申请，不按「有待审批的申请」拦
+ */
+export interface CreateRefundHooks {
+  requestId?: number;
+  afterCreate?: (tx: Tx, refund: { id: number; refundNo: string }) => Promise<void>;
+}
+
+export async function createRefund(deps: Deps, checkoutId: number, raw: RefundInputData, ctx: OpContext, hooks: CreateRefundHooks = {}): Promise<RefundDetail> {
   const input = parse(RefundInput, raw);
   const itemKeys = input.items.map((i) => `${i.category}\u0000${i.name}`);
   if (new Set(itemKeys).size !== itemKeys.length) throw badRequest('同一个项目请合并成一行再退');
@@ -195,6 +205,8 @@ export async function createRefund(deps: Deps, checkoutId: number, raw: RefundIn
       SELECT id, checkout_no, status, created_at FROM checkouts WHERE id = ${checkoutId} AND store_id = ${currentStoreId()} FOR UPDATE`;
     if (!c) throw notFound('结账单不存在');
     if (c.status !== 'completed') throw conflict('CHECKOUT_VOIDED', `结账单 ${c.checkoutNo} 已反结账，不能开退款单`);
+    // 8.2.30：有待审批的收银申请时不能直接开（先批准或驳回那张申请）
+    await assertNoPendingRequest(tx, c, hooks.requestId, at);
     const w = await windowBlock(tx, ctx.actor, c.checkoutNo, c.createdAt, at);
     if (w) throw unprocessable(w.code, w.message, w.details);
 
@@ -274,6 +286,7 @@ export async function createRefund(deps: Deps, checkoutId: number, raw: RefundIn
     }
     // 从别人的钱箱退现金：审计写明记到了谁的哪个班次
     const drawer = shiftId ? await shiftDrawerLabel(tx, shiftId, ctx.actor.id) : null;
+    if (hooks.afterCreate) await hooks.afterCreate(tx, { id: r!.id, refundNo });
     await saveKey(tx, key, 'checkout_refund', requestHash, r!.id, ctx.actor.id);
     await writeAudit(tx, {
       staffId: ctx.actor.id,

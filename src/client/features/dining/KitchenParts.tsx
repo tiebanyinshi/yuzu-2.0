@@ -44,6 +44,7 @@ export function PartTicket({ p, now, warnMinutes, showStation, children }: { p: 
           {p.status === 'done' && p.doneAt ? `出餐 ${kitchenElapsed(p.doneAt, now)} 分钟` : `已等 ${waited} 分钟`}
         </span>
         {p.visitClosed && <Badge tone="ember">{p.tableName !== null ? '这桌已结账' : '客人已结账'}</Badge>}
+        {p.hold && <Badge tone="lake">等叫</Badge>}
         <span className="flex flex-1 flex-wrap justify-end gap-1.5">{children}</span>
       </div>
     </div>

@@ -197,4 +197,45 @@ describe('按钱箱交班', () => {
     expect(checks.filter((c) => !c.ok)).toEqual([]);
     expect(checks.find((c) => c.key === 'shift_members')!.detail).toContain('未交班的班次 1 个');
   });
+
+  it('交班盲点（8.2.30，Codex 审查 e7132c4）：加入、离开、开班的回复也不给当班的人金额；没提交实点交班，错误里不带应有现金', async () => {
+    // 小本先把自己按人开的班交了，好加入钱箱
+    const benOwn = await current(ben.cookie);
+    expect((await api(ctx.app, ben.cookie, 'POST', `/api/shifts/${benOwn!.id}/close`, { countedCash: 0, expectedCash: 0 })).status).toBe(200);
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/frontdesk/rules', { shiftBlind: true })).status).toBe(200);
+    try {
+      const k2 = await api(ctx.app, amy.cookie, 'POST', '/api/shifts', { openingCash: 10000, drawer: 'k2' });
+      expect(k2.status, JSON.stringify(k2.body)).toBe(200);
+      expect(k2.body.blind).toBe(true);
+      expect((await cash(amy.cookie, 3000)).status).toBe(200);
+      const joined = await api(ctx.app, ben.cookie, 'POST', `/api/shifts/${k2.body.id}/join`, {});
+      expect(joined.status, JSON.stringify(joined.body)).toBe(200);
+      expect(joined.body).toMatchObject({ blind: true, summary: { cash: { expected: 0, recharge: 0 } } });
+      const left = await api(ctx.app, ben.cookie, 'POST', `/api/shifts/${k2.body.id}/leave`, {});
+      expect(left.status, JSON.stringify(left.body)).toBe(200);
+      expect(left.body).toMatchObject({ blind: true, summary: { cash: { expected: 0 } } });
+      // 离开了也不能看日结（不然离开钱箱看完再加入回来提交实点；Codex 审查 1d6d77e）
+      const today = (await api(ctx.app, ben.cookie, 'GET', '/api/shifts/current')).body.today as string;
+      const peek = await api(ctx.app, ben.cookie, 'GET', `/api/settlements/${today}`);
+      expect(peek.status).toBe(409);
+      expect(peek.body.error.code).toBe('SHIFT_BLIND');
+      // 经理照看
+      expect((await api(ctx.app, duty.cookie, 'GET', `/api/shifts/${k2.body.id}`)).body.summary.cash.expected).toBe(13000);
+      // 拿一个错的应有现金去试交班：先报要提交实点，错误里不带应有现金（以前 SHIFT_CHANGED 的 details 带着）
+      const probe = await api(ctx.app, amy.cookie, 'POST', `/api/shifts/${k2.body.id}/close`, { countedCash: 0, expectedCash: 0 });
+      expect(probe.status).toBe(409);
+      expect(probe.body.error.code).toBe('BLIND_COUNT_REQUIRED');
+      expect(JSON.stringify(probe.body)).not.toContain('13000');
+      // 提交实点以后照常：交班的回复是已交班的完整交班表
+      const counted = await api(ctx.app, amy.cookie, 'POST', `/api/shifts/${k2.body.id}/blind-count`, { countedCash: 13000 });
+      expect(counted.body.summary.cash.expected).toBe(13000);
+      expect((await api(ctx.app, ben.cookie, 'GET', `/api/settlements/${today}`)).status).toBe(200);
+      const closed = await api(ctx.app, amy.cookie, 'POST', `/api/shifts/${k2.body.id}/close`, { countedCash: 13000, expectedCash: 13000 });
+      expect(closed.status, JSON.stringify(closed.body)).toBe(200);
+      expect(closed.body).toMatchObject({ status: 'closed', expectedCash: 13000 });
+      expect(closed.body.blind).toBeUndefined();
+    } finally {
+      expect((await api(ctx.app, ctx.owner, 'PUT', '/api/frontdesk/rules', { shiftBlind: false })).status).toBe(200);
+    }
+  });
 });

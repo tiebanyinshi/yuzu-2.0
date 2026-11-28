@@ -7,6 +7,7 @@ import { guard, guardAny } from '../../auth/guard';
 import { MAX_OVERTIME_HOURLY_CENTS, VOID_PERMISSIONS } from '@shared/frontdesk-v8117';
 import { readSnapshot, type Tx } from '../../db';
 import { BUY_CODE_PATTERN, MAX_BUY_CODES, type BuyCode } from '@shared/frontdesk';
+import { HKD_RATE_MAX_PPM, HKD_RATE_MIN_PPM } from '@shared/cashier-v8230';
 import { MAX_TAG_DEPOSIT } from '@shared/tag-deposit';
 import { PRICE_TIERS } from '@shared/catalog';
 import { checkoutDaySummary } from '../settlement';
@@ -101,6 +102,17 @@ const RulesInput = z.object({
     .int('金额必须是整数（分）')
     .min(0, '金额不能为负')
     .max(MAX_TAG_DEPOSIT, `押金最多 ¥${MAX_TAG_DEPOSIT / 100}`),
+  // 8.2.30 港元现金：每 1 港元折多少人民币（百万分之一）；null = 不收港元
+  hkdRatePpm: z
+    .number('汇率不正确')
+    .int('汇率不正确')
+    .min(HKD_RATE_MIN_PPM, `汇率在 ${HKD_RATE_MIN_PPM / 1_000_000}–${HKD_RATE_MAX_PPM / 1_000_000} 之间`)
+    .max(HKD_RATE_MAX_PPM, `汇率在 ${HKD_RATE_MIN_PPM / 1_000_000}–${HKD_RATE_MAX_PPM / 1_000_000} 之间`)
+    .nullable(),
+  // 8.2.30 大额找零：找零超过多少（分）要多确认一次
+  bigChangeCents: z.number('金额必须是整数（分）').int('金额必须是整数（分）').min(1, '金额要大于 0').max(10_000_00, '最多 ¥10,000'),
+  // 8.2.30 交班盲点：开了以后交班先填实点、再显示应有与差额
+  shiftBlind: z.boolean('请选开或关'),
 });
 
 /** 买角的代号对到的项目要在售、有这一档价格（保存时核对；之后项目停用了，收银台敲到时照挂账的规矩拒绝） */
@@ -341,7 +353,8 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
 
   // ── 退款单（v0.7.20，离店后部分退款）──
   // 开退款单前的核对：每项、每种方式还能退多少，退现金可以选的钱箱
-  app.get('/api/frontdesk/checkouts/:id/refund-options', { preHandler: guard('frontdesk.refund') }, async (req) => {
+  // 8.2.30：没有「开退款单」权限的收银员提交退款申请前也要看能退多少（只读）
+  app.get('/api/frontdesk/checkouts/:id/refund-options', { preHandler: guardAny('frontdesk.refund', 'frontdesk.checkout') }, async (req) => {
     const { id } = parse(idParam, req.params);
     const options = await readSnapshot(sql, (tx) => refundOptions(tx, id, req.actor));
     return { ...options, drawers: await refundShiftOptions(sql, id, req.actor.id) };

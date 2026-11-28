@@ -38,6 +38,7 @@ import { rateText } from '@shared/benefits';
 import { COUPON_ISSUE_KIND_LABELS, formatStoreCouponCode, type CouponIssueKind } from '@shared/coupons';
 import { describeHours, PAYMENT_METHODS } from '@shared/labels';
 import { formatYuan } from '@shared/money';
+import { formatHkd, hkdDue, hkdWorth, rateText as hkdRateText } from '@shared/cashier-v8230';
 import { can } from '@shared/permissions';
 import type { Db, Tx } from '../../db';
 import { writeAudit } from '../../lib/audit';
@@ -75,6 +76,7 @@ import { lineDiscountsOf } from './line-discount-read';
 import { depositsOf } from './tag-deposit-read';
 import { settleDepositsAtCheckout } from './tag-deposits';
 import { releaseAwayLocksAtCheckout } from './away-lock';
+import { assertNoPendingRequest } from './cashier-request-guard';
 
 // ───────────────────────── 输入 ─────────────────────────
 
@@ -85,6 +87,16 @@ const CashPayment = z.object({
   ref: z.string().trim().max(64, '收款备注最多 64 字').default(''),
   /** 扫码收款（8.0.21 支付直连）：到账的那笔交易；入账时核对方式与金额，参考号记支付方单号。不带时不进入请求摘要 */
   payTxId: z.number().int().positive().optional(),
+  /**
+   * 港元现金（8.2.30，docs/V8230_CASHIER.md 第 1 节）：只有「现金」能带。客人实给的港元（港仙）与页面上看到的汇率；
+   * 折成人民币不能少于这笔收款，多出来的找人民币。不带时不进入请求摘要
+   */
+  hkd: z
+    .object({
+      tendered: z.number('港元金额要精确到港仙').int('港元金额要精确到港仙').positive('请填客人实给的港元').max(10_000_000, '港元金额过大'),
+      ratePpm: z.number('汇率不正确').int('汇率不正确').positive('汇率不正确'),
+    })
+    .optional(),
 });
 const WalletPayment = z.object({
   method: z.literal('wallet'),
@@ -434,6 +446,7 @@ export function splitPayments(payments: CheckoutPaymentInput[], actor: OpContext
   if (companies.length > 1) throw badRequest('公司承担一张结账单只能登记一笔，请合并金额后重新授权');
   if (companies.some((p) => p.reason === 'other' && p.note.length < 2)) throw badRequest('公司承担选「其他」请写说明');
   // 扫码收款（8.0.21）：只有微信、支付宝能带，同一笔不能登记两次
+  if (payments.some((p) => 'hkd' in p && p.hkd && (p.method !== 'cash' || p.payTxId))) throw badRequest('只有现金能收港元');
   const payTxIds = payments.flatMap((p) => ('payTxId' in p && p.payTxId ? [{ method: p.method, id: p.payTxId }] : []));
   if (payTxIds.some((x) => x.method !== 'wechat' && x.method !== 'alipay')) throw badRequest('只有微信、支付宝能用扫码收款');
   if (new Set(payTxIds.map((x) => x.id)).size !== payTxIds.length) throw badRequest('同一笔扫码收款不能登记两次');
@@ -605,7 +618,26 @@ export async function recordCheckoutPayments(
       ? []
       : [p],
   );
+  // 港元现金（8.2.30）：汇率要等于门店此刻的汇率（页面看到的已过时就拒绝），折成的人民币要够这笔收款
+  const hkdRate = cashPays.some((p) => p.hkd) ? (await loadFrontdeskRules(tx)).hkdRatePpm : null;
   for (const p of [...cashPays].sort((x, y) => (x.payTxId ?? 0) - (y.payTxId ?? 0))) {
+    if (p.hkd) {
+      if (hkdRate === null) throw unprocessable('HKD_DISABLED', '门店没有设港元汇率，不能收港元；请店长在后台「手牌与前台 → 收银台」设好汇率');
+      if (p.hkd.ratePpm !== hkdRate) {
+        throw conflict('HKD_RATE_CHANGED', `港元汇率已改成 ${hkdRateText(hkdRate)}，请按新汇率重新核对`, { ratePpm: hkdRate });
+      }
+      const worth = hkdWorth(p.hkd.tendered, hkdRate);
+      if (worth < p.amount) {
+        throw unprocessable('HKD_SHORT', `客人给的 ${formatHkd(p.hkd.tendered)} 只折 ${formatYuan(worth)}，不够这笔 ${formatYuan(p.amount)}；至少要 ${formatHkd(hkdDue(p.amount, hkdRate))}`, {
+          worth,
+          due: hkdDue(p.amount, hkdRate),
+        });
+      }
+      await tx`
+        INSERT INTO checkout_payments (checkout_id, method, amount, ref, fx_currency, fx_tendered, fx_rate_ppm, fx_worth, fx_change)
+        VALUES (${a.checkoutId}, 'cash', ${p.amount}, ${p.ref}, 'HKD', ${p.hkd.tendered}, ${hkdRate}, ${worth}, ${worth - p.amount})`;
+      continue;
+    }
     if (p.payTxId) {
       const providerTradeNo = await lockPayTxForUse(tx, p.payTxId, { provider: p.method, amountCents: p.amount });
       await tx`
@@ -879,6 +911,8 @@ const couponUsed = (platform: CouponPlatform, code: string, checkoutNo: string |
 /** 反结账的附加步骤（8.2.4 返台，tables-v8224.ts）：在同一事务里、账单与开台恢复以后做；抛错整笔回滚 */
 export interface VoidCheckoutHooks {
   afterRestore?: (tx: Tx, c: { id: number; checkoutNo: string; createdAt: Date; at: Date }) => Promise<void>;
+  /** 8.2.30 收银申请：执行的就是这张「反结账申请」，不按「有待审批的申请」拦 */
+  requestId?: number;
 }
 
 export async function voidCheckout(deps: Deps, checkoutId: number, raw: unknown, ctx: OpContext, hooks: VoidCheckoutHooks = {}): Promise<CheckoutDetail> {
@@ -897,6 +931,8 @@ export async function voidCheckout(deps: Deps, checkoutId: number, raw: unknown,
       SELECT id, checkout_no, client_key, status, created_at FROM checkouts WHERE id = ${checkoutId} AND store_id = ${currentStoreId()} FOR UPDATE`;
     if (!c) throw notFound('结账单不存在');
     if (c.status !== 'completed') throw conflict('ALREADY_VOIDED', `结账单 ${c.checkoutNo} 已反结账`);
+    // 8.2.30：有待审批的收银申请时不能直接反结账（先批准或驳回那张申请）
+    await assertNoPendingRequest(tx, c, hooks.requestId, at);
     // 退款单（v0.7.20）：有生效的退款单的结账单不能反结账（结账单已锁，开退款单要等这里提交）
     await assertNoRefunds(tx, c);
     // 挂账（8.0.7）：在结账单之后锁这张结账的挂账，已经回款核销过的不能反结账；没核销的作废

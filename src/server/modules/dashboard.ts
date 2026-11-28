@@ -13,6 +13,7 @@ import { loadSettings } from './settings';
 import { memberTicketExtensions } from './ticket-extensions';
 import { storeIn } from '../lib/store-context';
 import { withReportScope } from './stores';
+import { blindRestricted } from './shifts';
 
 async function dayNet(db: Db, date: string) {
   const [row] = await db<{ net: number; checkouts: number; rechargePaid: number }[]>`
@@ -149,6 +150,9 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: Deps) {
     // 历史营业日需要对应权限；没有时只看今天
     const days = can(req.actor, 'ledger.readHistory') ? 7 : 1;
     // 合并看（?scope=all，8.0.22 MD18）：店主与挂着几家店的人看自己能进的几家店的合计
-    return withReportScope(deps.sql, req, () => readSnapshot(deps.sql, (tx) => dashboard(tx, today, days, { inStore: can(req.actor, 'frontdesk.read') })));
+    const data = await withReportScope(deps.sql, req, () => readSnapshot(deps.sql, (tx) => dashboard(tx, today, days, { inStore: can(req.actor, 'frontdesk.read') })));
+    // 交班盲点（8.2.30）：还没提交实点的当班的人看不到今天按收款方式的合计（推得出应有现金），标 blind
+    if (await blindRestricted(deps.sql, req.actor)) return { ...data, todayStats: { ...data.todayStats, byMethod: [], blind: true } };
+    return data;
   });
 }

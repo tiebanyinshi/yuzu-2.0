@@ -30,6 +30,8 @@ import { Badge, Button, Card, Input, Notice, SectionTitle, Skeleton } from '../.
 import { kitchenKey, tablesKey, menuKey, useKitchenBoard, useServerNow } from './queries';
 import { OutletFilter } from './slots';
 import { kitchenCards, PartTicket, PartTicketsLine } from './KitchenParts';
+import { DishFlagBadges } from './DishFlags';
+import { PrintButton } from '../print/PrintButton';
 
 type Action = 'start' | 'done' | 'serve' | 'undo';
 
@@ -81,7 +83,7 @@ export function KitchenTab() {
   const act = async (k: KitchenItem, action: Action) => {
     setBusy(`${action}-${k.id}`);
     try {
-      qc.setQueryData(kitchenKey, await api.post<KitchenBoard>(`/api/kitchen/items/${k.id}/${action}`, { from: k.status }));
+      qc.setQueryData(kitchenKey, await api.post<KitchenBoard>(`/api/kitchen/items/${k.id}/${action}`, { from: k.status, servedQty: k.servedQty ?? 0 }));
       void qc.invalidateQueries({ queryKey: ['dining', 'guest'] });
       void qc.invalidateQueries({ queryKey: tablesKey });
     } catch (e) {
@@ -107,7 +109,8 @@ export function KitchenTab() {
       size="sm"
       variant={variant}
       icon={icon}
-      disabled={busy !== null && busy !== `part-${action}-${p.id}`}
+      // 8.2.30 等叫：套餐那一张在等叫时子项也不能开始做、出餐（服务端同样拒绝）
+      disabled={(busy !== null && busy !== `part-${action}-${p.id}`) || (p.hold && (action === 'start' || action === 'done'))}
       loading={busy === `part-${action}-${p.id}`}
       onClick={() => void partAct(p, action)}
       data-testid={`kds-part-${action}-${p.id}`}
@@ -120,7 +123,8 @@ export function KitchenTab() {
       size="sm"
       variant={variant}
       icon={icon}
-      disabled={busy !== null && busy !== `${action}-${k.id}`}
+      // 8.2.30 等叫：服务员点「起菜」以前不能开始做、出餐
+      disabled={(busy !== null && busy !== `${action}-${k.id}`) || (!!k.hold && (action === 'start' || action === 'done'))}
       loading={busy === `${action}-${k.id}`}
       onClick={() => void act(k, action)}
       data-testid={`kds-${action}-${k.id}`}
@@ -358,6 +362,13 @@ function Ticket({ k, now, warnMinutes, showStation, children }: { k: KitchenItem
           </Badge>
         )}
         {k.visitClosed && <Badge tone="ember">{k.tableName !== null ? '这桌已结账' : '客人已结账'}</Badge>}
+        {/* 8.2.30：等叫、加急、打包、分次上了几份；水吧的饮品能打杯贴（一单一杯一张） */}
+        <DishFlagBadges p={k} />
+        {k.outlet === 'water' && (
+          <PrintButton path={`/print/cup-labels/${encodeURIComponent(k.orderNo)}`} size="sm" testId={`kds-cup-labels-${k.id}`}>
+            杯贴
+          </PrintButton>
+        )}
         <span className="flex flex-1 flex-wrap justify-end gap-1.5">{children}</span>
       </div>
     </div>
@@ -371,6 +382,20 @@ export function LimitsTab() {
   const board = useKitchenBoard(30_000);
   const [editing, setEditing] = useState<{ id: number; value: string } | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const restoreAll = async () => {
+    setRestoring(true);
+    try {
+      const r = await api.post<{ restored: number; board: KitchenBoard }>('/api/kitchen/limits/restore-all', {});
+      qc.setQueryData(kitchenKey, r.board);
+      void qc.invalidateQueries({ queryKey: menuKey });
+      toast({ tone: 'success', title: r.restored ? `已恢复 ${r.restored} 道` : '没有要恢复的' });
+    } catch (e) {
+      toast({ tone: 'error', title: errorMessage(e) });
+    } finally {
+      setRestoring(false);
+    }
+  };
   /** 沽清列表按点单分类（8.1.7，CF7）：全部 / 餐厅 / 水吧 / 果吧 */
   const [outlet, setOutlet] = useState<DiningOutlet | null>(null);
   const d = board.data;
@@ -403,9 +428,17 @@ export function LimitsTab() {
 
   return (
     <div className="mx-auto max-w-[1080px] space-y-4 px-5 py-5 md:px-7" data-testid="limits">
-      <p className="text-[13px] text-ink-3">
-        营业日 {d.businessDate}：已沽清 {soldOut} 道，限量 {limited} 道。沽清 = 这道菜今天卖完、不再接单；只管今天，换了营业日自动恢复不限量。
-      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="min-w-0 flex-1 text-[13px] text-ink-3">
+          营业日 {d.businessDate}：已沽清 {soldOut} 道，限量 {limited} 道。沽清 = 这道菜今天卖完、不再接单；只管今天，换了营业日自动恢复不限量。
+        </p>
+        {/* 8.2.30（CM-17）：开市一键把今天的沽清、限量全部取消 */}
+        {soldOut + limited > 0 && (
+          <Button size="sm" variant="secondary" loading={restoring} onClick={() => void restoreAll()} data-testid="limits-restore-all">
+            全部恢复
+          </Button>
+        )}
+      </div>
       {d.dishes.length > 0 && <OutletFilter value={outlet} onChange={setOutlet} counts={counts} testPrefix="limits" />}
       {d.dishes.length === 0 ? (
         <Card className="px-4 py-8 text-center text-[13px] text-ink-3">还没有进厨房的菜</Card>

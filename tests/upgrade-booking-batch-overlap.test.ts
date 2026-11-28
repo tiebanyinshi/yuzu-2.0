@@ -16,7 +16,7 @@ import { nextDocNo } from '../src/server/lib/tx';
 import { migrate } from '../src/server/migrate';
 import { batchRowKey, bookingChecks } from '../src/server/modules/bookings';
 import { createStaff } from '../src/server/modules/staff';
-import { api, PASSWORD, login, setup, TEST_DB, type TestContext } from './helpers';
+import { ALL_MIGRATIONS, api, migrationsFrom, PASSWORD, login, setup, TEST_DB, type TestContext } from './helpers';
 import { resetPublicSchema } from './test-db';
 
 const MIGRATIONS = new URL('../src/server/migrations/', import.meta.url);
@@ -171,8 +171,9 @@ describe('a）8.2.4 的库直接升级到最新', () => {
     const snap = await snapshot(sql);
     const applied = await migrate(sql);
     expect(applied[0]).toBe('570_review_v825.sql');
-    // 740 以后还有别的线的迁移（8.2.27 的 750 等），这里只核对 740 跑了
+    // 跑到最新（740 以后还有别的版本的迁移）
     expect(applied).toContain(M740);
+    expect(applied.at(-1)).toBe(ALL_MIGRATIONS.at(-1));
     const after = await bookingChecks(sql);
     console.log(`[a 8.2.4 → 最新] 升级前（8.2.4 的自检）：${before824.ok ? '✓' : '✗'} ${before824.detail}\n[a 8.2.4 → 最新] 升级后：${after.ok ? '✓' : '✗'} ${after.detail}`);
     expect(after.ok, after.detail).toBe(true);
@@ -252,10 +253,7 @@ describe('b）已经跑过 570 的库（8.2.5–8.2.17）', () => {
     expect(before.ok).toBe(false);
     expect(before.detail).toContain((await sql<{ bookingNo: string }[]>`SELECT booking_no FROM bookings WHERE id = ${legit[0]!}`)[0]!.bookingNo);
 
-    // 740 以后还有别的线的迁移（8.2.27 的 750 等）也会一起跑；这里只核对 740 在里面、没有补跑 740 以前的
-    const applied = await migrate(sql);
-    expect(applied).toContain(M740);
-    expect(applied.every((m) => m >= M740)).toBe(true);
+    expect(await migrate(sql)).toEqual(migrationsFrom(M740));
     const after = await bookingChecks(sql);
     console.log(`[b 8.2.17 → 740] 跑 740 以前：${before.ok ? '✓' : '✗'} ${before.detail}\n[b 8.2.17 → 740] 跑 740 以后：${after.ok ? '✓' : '✗'} ${after.detail}`);
     // 旧一报多不再报；真重叠、没编号的、整批对不上的照旧报

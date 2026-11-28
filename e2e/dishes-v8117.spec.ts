@@ -473,6 +473,7 @@ const SYN_PART: KitchenPartItem = {
   startedAt: SYN_NOW,
   doneAt: null,
   visitClosed: false,
+  hold: false,
 };
 
 /** 点单页的菜单换成合成的；厨房屏取真的，再加一张合成的套餐与它的子项单（只读，写请求不改） */

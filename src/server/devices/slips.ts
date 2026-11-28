@@ -20,6 +20,7 @@ import {
 } from '@shared/checkout';
 import { describeDate, PAYMENT_METHOD_LABELS, PAYMENT_METHODS } from '@shared/labels';
 import { formatYuan } from '@shared/money';
+import { formatHkd } from '@shared/cashier-v8230';
 import type { CheckoutPrint } from '@shared/print';
 import type { SettlementSummary } from '@shared/types';
 import { columnsOf, EscPos, textWidth } from './escpos';
@@ -327,10 +328,17 @@ export function buildShiftSlip(r: ShiftRecord, meta: SlipMeta): Buffer {
   if (sum.cash.memberRefund) s.pair('− 储值退回的现金', yuan(sum.cash.memberRefund));
   if (sum.cash.countCard) s.pair(sum.cash.countCard > 0 ? '+ 次卡现金（卖 − 退）' : '− 次卡现金（退 − 卖）', yuan(Math.abs(sum.cash.countCard)));
   if (sum.cash.cardDeposit) s.pair(sum.cash.cardDeposit > 0 ? '+ 会员卡押金现金（收 − 退）' : '− 会员卡押金现金（退 − 收）', yuan(Math.abs(sum.cash.cardDeposit)));
+  // 港元（8.2.30，Codex 审查 e7132c4）：港元收款折的人民币（收款 + 找零）不在钱箱里，从应有现金扣掉，港元另点；与浏览器打印的交班表同一份
+  if (sum.cash.hkd) s.pair('− 收港元折的人民币（港元另点）', yuan(sum.cash.hkd));
   s.pair('= 应有现金', yuan(r.expectedCash ?? sum.cash.expected), { strong: true });
   if (closed && r.countedCash !== null) {
     const diff = r.countedCash - (r.expectedCash ?? sum.cash.expected);
     s.pair('实点现金', yuan(r.countedCash), { strong: true }).pair(diff === 0 ? '长短款' : diff > 0 ? '长款' : '短款', diff === 0 ? '无' : yuan(Math.abs(diff)), { big: true });
+    if (r.expectedHkd !== null) {
+      const counted = r.countedHkd ?? 0;
+      s.pair(`港元应有（${sum.hkd?.count ?? 0} 笔）`, formatHkd(r.expectedHkd)).pair('港元实点', formatHkd(counted), { strong: true });
+      if (counted !== r.expectedHkd) s.pair(counted > r.expectedHkd ? '港元长款' : '港元短款', formatHkd(Math.abs(counted - r.expectedHkd)));
+    }
     if ((r.expectedCash ?? 0) < 0) s.text(`应有现金为负：反结账退的现金比本班收的多 ${yuan(-(r.expectedCash ?? 0))}，这部分从别的钱箱或保险柜拿出，记成长款，与出钱那个钱箱的短款相抵。`);
   }
   if (sum.voids.length > 0) {

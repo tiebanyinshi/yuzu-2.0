@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Hourglass } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { FrontdeskOpLookup } from '@shared/frontdesk';
 import { api, errorMessage, isRejected, notSentAsRejection, UncertainError } from '../../lib/api';
 import { onReconnect } from '../../lib/connection';
@@ -62,7 +63,11 @@ export type FrontdeskOpType =
   | 'tag_away_lock'
   | 'tag_away_unlock'
   /** 餐厅入口登记进餐（8.2.8，对象是来访，在「餐厅入口」页） */
-  | 'meal_entry';
+  | 'meal_entry'
+  /** 收银申请（8.2.30，对象是结账单，在收银台「结账记录」里提交） */
+  | 'cashier_request'
+  /** 批准反结账申请（8.2.30，对象是结账单，在「收银申请」页处理）；批准退款申请记作退款单（checkout_refund，地址是批准接口） */
+  | 'cashier_void_approve';
 
 export interface FrontdeskPendingOp {
   key: string;
@@ -104,7 +109,18 @@ export interface FrontdeskPendingOp {
 }
 
 /** 在收银台处理「结果待确认」的几样：结账、退款单，与挂账（8.1.44 起加项目在收银台）；别的在发卡台 */
-export const CASHIER_OPS: readonly FrontdeskOpType[] = ['checkout', 'checkout_refund', 'bill_post', 'line_discount', 'tag_deposit', 'tag_deposit_refund', 'tag_away_lock', 'tag_away_unlock'];
+export const CASHIER_OPS: readonly FrontdeskOpType[] = [
+  'checkout',
+  'checkout_refund',
+  'cashier_request',
+  'cashier_void_approve',
+  'bill_post',
+  'line_discount',
+  'tag_deposit',
+  'tag_deposit_refund',
+  'tag_away_lock',
+  'tag_away_unlock',
+];
 
 export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   checkin: '接待发牌',
@@ -124,6 +140,8 @@ export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   usage_end: '结束使用',
   usage_cancel: '撤使用单',
   checkout_refund: '退款单',
+  cashier_request: '收银申请',
+  cashier_void_approve: '批准反结账申请',
   booking_create: '新建预约',
   booking_change: '改预约',
   technician_state: '停牌 / 复牌 / 休假',
@@ -158,6 +176,8 @@ export const isTechOp = (type: FrontdeskOpType) => type === 'technician_state';
 export const roomOrderUrl = (roomKey: string) => `/api/room-center/rooms/${roomKey}/orders`;
 
 export const isSpaceOp = (type: FrontdeskOpType) => type === 'space_state' || type === 'space_dispatch';
+/** 「收银申请」页的批准（8.2.30）：批准退款申请（记作退款单）、批准反结账申请，回到那一页处理 */
+export const isCashierApproval = (op: { type: FrontdeskOpType; url: string }) => /^\/api\/cashier-requests\/\d+\/approve$/.test(op.url);
 
 const STORAGE_KEY = 'yuzu.frontdeskPending.v1';
 const listeners = new Set<() => void>();
@@ -317,7 +337,7 @@ export function pendingFor(
     if (type === 'technician_state') return table.technicianId != null && !!p.technicianIds?.includes(table.technicianId);
     if (type === 'checkin' || type === 'booking_create') return true;
     if (type === 'booking_change') return table.bookingId != null && !!p.bookingIds?.includes(table.bookingId);
-    if (type === 'checkout_refund') return table.checkoutId != null && !!p.checkoutIds?.includes(table.checkoutId);
+    if (type === 'checkout_refund' || type === 'cashier_request' || type === 'cashier_void_approve') return table.checkoutId != null && !!p.checkoutIds?.includes(table.checkoutId);
     if (type === 'usage_open') return table.spaceId != null && p.spaceId === table.spaceId;
     if (isSpaceOp(type)) return table.spaceId != null && (p.spaceId === table.spaceId || !!p.spaceIds?.includes(table.spaceId));
     if (isUsageOp(type)) return table.usageId != null && !!p.usageIds?.includes(table.usageId);
@@ -411,6 +431,12 @@ export async function reconcilePending(op: FrontdeskPendingOp, resend = false): 
   }
 }
 
+/**
+ * 结账被拒绝、原因是门店的港元规则变了（8.2.30，Codex 审查 1d6d77e）：汇率改了、港元停收——重新取收银台规则，
+ * 页面按新汇率重新核对（手牌结账、桌台结账都经这里）
+ */
+export const CASH_RULES_STALE_CODES: ReadonlySet<string> = new Set(['HKD_RATE_CHANGED', 'HKD_DISABLED']);
+
 export type OpState = { phase: 'idle' } | { phase: 'busy' } | { phase: 'error'; message: string; code?: string } | { phase: 'uncertain'; message: string } | { phase: 'not_found' };
 
 type Pick<T> = (found: Extract<FrontdeskOpLookup, { found: true }>) => T | null;
@@ -457,6 +483,7 @@ export function useFrontdeskOp<T>(opts: {
       roomKey: opts.roomKey,
     }) ?? null;
   const [state, setState] = useState<OpState>({ phase: 'idle' });
+  const qc = useQueryClient();
   const { pick } = opts;
   const pendingKey = pending?.key;
   useEffect(() => {
@@ -502,6 +529,7 @@ export function useFrontdeskOp<T>(opts: {
             }
           }
           // 服务端明确拒绝（含该编号已作废）：没有生效
+          if (CASH_RULES_STALE_CODES.has(error.code)) void qc.invalidateQueries({ queryKey: ['frontdesk', 'rules'] });
           removeFrontdeskPending(op.key);
           setState({ phase: 'error', message: error.message, code: error.code });
         } else {
@@ -513,7 +541,7 @@ export function useFrontdeskOp<T>(opts: {
         setInFlight(op.key, false);
       }
     },
-    [pick],
+    [pick, qc],
   );
 
   /** 提交一笔新的操作（有待确认记录时不允许） */
