@@ -490,6 +490,7 @@
 
 ## 更新记录
 
+- 2026-11-28（续）：**员工小程序线第二版合进 main**（[#75](https://github.com/tiebanyinshi/yuzu-2.0/pull/75)，合并提交 `212ef13`，不改 yuzu 版本号，随主线下一个版本标签发）。下一版只剩真机走一遍以后的修正（`docs/STAFF_MP.md` 第 11.1 节第 1 样）。
 - 2026-11-28（续）：**员工小程序线第二版**（随主线下一个版本标签发；店主「直接全部开发完就行」「用一次提交」）：学堂员工端补全（我的学习、学习榜、课程评分、问柚子、带教签核；带教签核与问柚子也放进小程序，`PENDING_DECISIONS.md` SP20）、首页待办补「必修快到期」「我的申请被驳回」（SP19）、「我的」里的学分与等级。没有迁移。草稿 PR [#75](https://github.com/tiebanyinshi/yuzu-2.0/pull/75)，交接说明 `docs/HANDOFF_STAFFMP2.md`。
 - 2026-11-28：**员工小程序线 8.2.26 合进 main**（[#53](https://github.com/tiebanyinshi/yuzu-2.0/pull/53)，合并提交 `c042a05`；Codex 审查 5 轮，最后一轮代码与安全审查都没有问题）。第二版排期见 `docs/STAFF_MP.md` 第 11.1 节：真机走一遍以后的修正、首页待办补「申请被驳回」「必修快到期」、「我的」里的学分与等级、学堂剩下的员工端；迁移照旧从 `652` 起。
 - 2026-11-27（续）：**员工小程序线收口为 8.2.26**。六个子 PR（A [#54](https://github.com/tiebanyinshi/yuzu-2.0/pull/54)、B [#59](https://github.com/tiebanyinshi/yuzu-2.0/pull/59)、C [#64](https://github.com/tiebanyinshi/yuzu-2.0/pull/64)、E [#67](https://github.com/tiebanyinshi/yuzu-2.0/pull/67)、D [#71](https://github.com/tiebanyinshi/yuzu-2.0/pull/71)、F [#74](https://github.com/tiebanyinshi/yuzu-2.0/pull/74)）各自过 CI 与 Codex 审查后合进集成分支；F 是学堂（8.2.18，[#50](https://github.com/tiebanyinshi/yuzu-2.0/pull/50)）合进 main 以后接上的学习 Tab（学堂那条线提醒「不要再做一套」，约定见 [#50 的评论](https://github.com/tiebanyinshi/yuzu-2.0/pull/50#issuecomment-7225979444)）。集成分支已把 main（8.2.20）合进来，版本号按 main 的安排用 8.2.26；交接说明 `docs/HANDOFF_STAFFMP1.md`，待确认 SP18（学习 Tab 这一版不接的几样）。集成 PR [#53](https://github.com/tiebanyinshi/yuzu-2.0/pull/53) 转待审。
