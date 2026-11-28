@@ -115,6 +115,16 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
   // 交班盲点提交过实点的：实点就是提交的那个，不能再改
   const [counted, setCounted] = useState(shift.blindCount ? (shift.blindCount.countedCash / 100).toFixed(2) : '');
   const [countedHkdText, setCountedHkdText] = useState(shift.blindCount?.countedHkd != null ? (shift.blindCount.countedHkd / 100).toFixed(2) : '');
+  // 按钱箱交班时别的终端提交了实点（Codex 审查 e383bf9）：轮询带回来的实点覆盖这里填的（输入框随后锁定，交班要与提交的一致）
+  const savedKey = shift.blindCount ? `${shift.blindCount.countedAt}|${shift.blindCount.countedCash}|${shift.blindCount.countedHkd ?? ''}` : null;
+  const [syncedKey, setSyncedKey] = useState(savedKey);
+  if (savedKey !== syncedKey) {
+    setSyncedKey(savedKey);
+    if (shift.blindCount) {
+      setCounted((shift.blindCount.countedCash / 100).toFixed(2));
+      if (shift.blindCount.countedHkd != null) setCountedHkdText((shift.blindCount.countedHkd / 100).toFixed(2));
+    }
+  }
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

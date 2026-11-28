@@ -189,6 +189,33 @@ describe('杯贴', () => {
     expect((await api(ctx.app, ctx.clerk, 'GET', '/api/dining/cup-labels/NO-SUCH')).status).toBe(404);
   });
 
+  it('没设点单分类、按「水吧」档口默认归水吧的饮品也能打杯贴；厨房屏标成水吧（Codex 审查 e383bf9）', async () => {
+    const st = await api(ctx.app, ctx.owner, 'POST', '/api/admin/dining/stations', { name: '二号水吧' });
+    const bar = st.body.stations.find((s: { name: string }) => s.name === '二号水吧').id;
+    const c = await api(ctx.app, ctx.owner, 'POST', '/api/items', { name: '柠檬茶', category: '餐饮', price: 2600 });
+    const tea = c.body.items.find((i: { name: string }) => i.name === '柠檬茶').id as number;
+    // 只设档口、不设点单分类（service_items.dining_outlet 为空）
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/dining/items', { items: [{ id: tea, stationId: bar }] })).status).toBe(200);
+    const [raw] = await ctx.sql<{ diningOutlet: string | null }[]>`SELECT dining_outlet FROM service_items WHERE id = ${tea}`;
+    expect(raw!.diningOutlet).toBeNull();
+    // 同一单还点了一道虾饺（餐厅）：杯贴只打柠檬茶
+    const r = await api(ctx.app, ctx.clerk, 'POST', `/api/dining/tables/sessions/${session}/orders`, {
+      clientKey: randomUUID(),
+      lines: [
+        { itemId: tea, quantity: 1 },
+        { itemId: dish, quantity: 1 },
+      ],
+      expectedTotal: 2600 + 3800,
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const kds = (await api(ctx.app, ctx.owner, 'GET', '/api/kitchen')).body as { items: { name: string; orderNo: string; outlet: string | null }[] };
+    const ticket = kds.items.filter((k) => k.name === '柠檬茶').at(-1)!;
+    expect(ticket.outlet).toBe('water');
+    expect(kds.items.find((k) => k.orderNo === ticket.orderNo && k.name === '虾饺')!.outlet).toBe('restaurant');
+    const labels = (await api(ctx.app, ctx.clerk, 'GET', `/api/dining/cup-labels/${ticket.orderNo}`)).body;
+    expect(labels).toMatchObject({ total: 1, labels: [{ name: '柠檬茶', seq: 1 }] });
+  });
+
   it('加料不单独算一杯，写进它那杯饮品的杯贴（桌台点单与前台点单两条路）', async () => {
     const st = await api(ctx.app, ctx.owner, 'POST', '/api/admin/dining/stations', { name: '饮品' });
     const bar = st.body.stations.find((s: { name: string }) => s.name === '饮品').id;

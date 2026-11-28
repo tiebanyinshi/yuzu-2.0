@@ -120,7 +120,11 @@ export function RefundPanel({
     }
   }
   if (total > 0 && paysTotal !== total) problems.push(`退款方式合计 ${formatYuan(paysTotal)}，要等于退的项目合计 ${formatYuan(total)}`);
-  const ready = !o?.blocked && total > 0 && problems.length === 0 && reason.trim().length >= 2 && (asRequest || cash === 0 || drawer !== null) && !op.locked;
+  // 申请模式（8.2.30，Codex 审查 e383bf9）：撤销时限是「谁能开」的限制，按批准人的权限在批准时核对（超过时限只有店主能批）；
+  // 已反结账、没有能退的方式、退完了这些单子本身的原因照旧拦
+  const windowOnly = asRequest && o?.blocked?.code === 'REFUND_WINDOW';
+  const blocked = windowOnly ? null : (o?.blocked ?? null);
+  const ready = !blocked && total > 0 && problems.length === 0 && reason.trim().length >= 2 && (asRequest || cash === 0 || drawer !== null) && !op.locked;
 
   const done = (x: RefundDetail | CashierRequestView) => {
     if ('requestNo' in x) {
@@ -192,10 +196,11 @@ export function RefundPanel({
         <Skeleton className="h-32" />
       ) : options.error ? (
         <Notice tone="error" title={errorMessage(options.error)} />
-      ) : o!.blocked ? (
-        <Notice tone="warning" title={o!.blocked.message} />
+      ) : blocked ? (
+        <Notice tone="warning" title={blocked.message} />
       ) : (
         <>
+          {windowOnly && <Notice tone="info" title="这张单已超过撤销时限：可以提交申请，批准时只有店主能批" />}
           <ul className="divide-y divide-line rounded-md border border-line bg-card" data-testid="refund-items">
             {items.map((i) => {
               const k = keyOf(i);

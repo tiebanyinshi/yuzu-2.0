@@ -54,6 +54,7 @@ export const CLIENT_ERROR_CODES = {
   OVER_LIMIT_AUTH_REQUIRED: '超过单笔上限，要授权',
   PHONE_EXISTS: '手机号已登记为会员',
   PO_LINE_CLAIMED: '采购行已在报销单里',
+  REFUND_WINDOW: '超过撤销时限只有店主能开退款单（退款区的申请模式不按它拦，批准时按批准人核对）',
   ROOM_TYPE_RESERVED: '这个房型今天剩下的房都被预订了',
   SPACE_BOOKED: '空间一小时内有预订',
   TABLE_AMBIGUOUS: '同一个号码有几张桌，要点选',

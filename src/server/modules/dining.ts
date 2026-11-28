@@ -23,6 +23,8 @@ import {
   type DiningAdmin,
   type DiningGuest,
   type DiningMenu,
+  type DiningOutlet,
+  type DiningOutletDef,
   type DiningRules,
   type KitchenBoard,
   type KitchenItem,
@@ -369,14 +371,36 @@ const ITEM_COLUMNS = (db: Db) => db`
   coalesce(m.name, nullif(v.guest_label, ''), tm.name, nullif(ts.guest_label, ''), '散客') AS guest, k.item_id, bl.name,
   k.quantity, k.note, k.deliver_to, k.parts, k.status, k.station_id, s.name AS station_name, k.rush_count, k.created_at, k.started_at, k.done_at, k.served_at,
   p.display_name AS posted_by_name, coalesce(v.status, ts.status) <> 'open' AS visit_closed, k.order_note, k.deliver_room,
-  k.hold, k.urgent, k.takeaway, k.served_qty, (SELECT si.dining_outlet FROM service_items si WHERE si.id = k.item_id) AS outlet`;
+  k.hold, k.urgent, k.takeaway, k.served_qty,
+  si.dining_outlet AS item_outlet, si.dining_group AS item_group, si.category AS item_category, iss.name AS item_station`;
 const ITEM_FROM = (db: Db) => db`
   kitchen_items k JOIN kitchen_stations s ON s.id = k.station_id
+  LEFT JOIN service_items si ON si.id = k.item_id LEFT JOIN kitchen_stations iss ON iss.id = si.station_id
   JOIN bill_lines bl ON bl.id = k.bill_line_id
   LEFT JOIN visits v ON v.id = k.visit_id LEFT JOIN hand_tags h ON h.id = v.tag_id LEFT JOIN members m ON m.id = v.member_id
   LEFT JOIN table_sessions ts ON ts.id = k.table_session_id LEFT JOIN dining_tables dt ON dt.id = ts.table_id
   LEFT JOIN members tm ON tm.id = ts.member_id
   JOIN staff p ON p.id = k.created_by`;
+
+/** 出品单查出来的菜品信息（点单分类没设的按分类、档口推断，见 diningSlotOf） */
+interface ItemOutletRaw {
+  itemOutlet: string | null;
+  itemGroup: string | null;
+  itemCategory: string | null;
+  itemStation: string | null;
+}
+
+/**
+ * 出品单的点单分类（8.2.30 杯贴；Codex 审查 e383bf9）：与点单页、取餐号同一个算法——设了点单分类的照设的，没设的按「调酒」分类、
+ * 「水吧」档口等推断（diningSlotOf）；手工的临时项目（没有菜品）为空
+ */
+export function resolveItemOutlet(r: ItemOutletRaw & { itemId: number | null }, outlets: readonly DiningOutletDef[]): DiningOutlet | null {
+  if (r.itemId === null) return null;
+  return diningSlotOf({ outlet: r.itemOutlet, group: r.itemGroup, category: r.itemCategory, stationName: r.itemStation }, outlets).outlet;
+}
+
+const withOutlet = (rows: (KitchenItem & ItemOutletRaw)[], outlets: readonly DiningOutletDef[]): KitchenItem[] =>
+  rows.map(({ itemOutlet, itemGroup, itemCategory, itemStation, ...k }) => ({ ...k, outlet: resolveItemOutlet({ itemId: k.itemId, itemOutlet, itemGroup, itemCategory, itemStation }, outlets) }));
 
 export async function kitchenBoard(db: Db, deps: Deps): Promise<KitchenBoard> {
   const now = new Date();
@@ -384,12 +408,19 @@ export async function kitchenBoard(db: Db, deps: Deps): Promise<KitchenBoard> {
   const rules = await loadDiningRules(db);
   const [stations, dishes] = await Promise.all([stationsWithCount(db), kitchenDishes(db, today, { at: now, timeZone: deps.config.timezone })]);
   // 今天还在做的、出了餐还没上的，以及最近上过 / 退过的 30 道（核对用）
-  const open = await db<KitchenItem[]>`
-    SELECT ${ITEM_COLUMNS(db)} FROM ${ITEM_FROM(db)}
-    WHERE k.status IN ('queued', 'cooking', 'done') AND k.store_id = ${currentStoreId()} ORDER BY k.created_at, k.id`;
-  const recent = await db<KitchenItem[]>`
-    SELECT ${ITEM_COLUMNS(db)} FROM ${ITEM_FROM(db)}
-    WHERE k.business_date = ${today} AND k.status IN ('served', 'cancelled') AND k.store_id = ${currentStoreId()} ORDER BY coalesce(k.served_at, k.cancelled_at) DESC, k.id DESC LIMIT 30`;
+  const outlets = diningOutletsOf(rules);
+  const open = withOutlet(
+    await db<(KitchenItem & ItemOutletRaw)[]>`
+      SELECT ${ITEM_COLUMNS(db)} FROM ${ITEM_FROM(db)}
+      WHERE k.status IN ('queued', 'cooking', 'done') AND k.store_id = ${currentStoreId()} ORDER BY k.created_at, k.id`,
+    outlets,
+  );
+  const recent = withOutlet(
+    await db<(KitchenItem & ItemOutletRaw)[]>`
+      SELECT ${ITEM_COLUMNS(db)} FROM ${ITEM_FROM(db)}
+      WHERE k.business_date = ${today} AND k.status IN ('served', 'cancelled') AND k.store_id = ${currentStoreId()} ORDER BY coalesce(k.served_at, k.cancelled_at) DESC, k.id DESC LIMIT 30`,
+    outlets,
+  );
   // 套餐的子项单（8.1.17 BW7）：在别的档口出的。套餐那一张（屏上列着的）带上各子项做到哪了；子项单在自己的档口列到出了餐
   // （出了餐的列到套餐那一张上菜为止；「出餐即算上菜」的套餐先出了，没做完的子项照旧列着，退菜时一起退）
   const items = [...open, ...recent];

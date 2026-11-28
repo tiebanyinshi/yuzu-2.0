@@ -337,6 +337,35 @@ describe('收银申请', () => {
     expect(v!.status).toBe('open');
   });
 
+  it('超过撤销时限的单子店员也能申请退款；批准时按批准人的权限核对：值班经理被拒（申请留着），店主能批', async () => {
+    const r = await sale((t) => [{ method: 'cash', amount: t }]);
+    // 结账单挪到 3 天前（超过默认 48 小时）
+    await ctx.sql.begin(async (tx) => {
+      await tx`ALTER TABLE checkouts DISABLE TRIGGER checkouts_guard`;
+      await tx`UPDATE checkouts SET created_at = now() - interval '3 days' WHERE id = ${r.res.body.id}`;
+      await tx`ALTER TABLE checkouts ENABLE TRIGGER checkouts_guard`;
+    });
+    const opts = (await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/checkouts/${r.res.body.id}/refund-options`)).body;
+    // 时限只拦直接开退款单（code 区分得出来，页面申请模式不按它拦）
+    expect(opts.blocked).toMatchObject({ code: 'REFUND_WINDOW' });
+    const s = await api(ctx.app, ctx.clerk, 'POST', '/api/cashier-requests', {
+      clientKey: randomUUID(),
+      kind: 'refund',
+      checkoutId: r.res.body.id,
+      refund: { items: [{ category: opts.items[0].category, name: opts.items[0].name, quantity: 0, amount: 300 }], payments: [{ method: 'cash', amount: 300 }], reason: '前天少找了钱' },
+    });
+    expect(s.status, JSON.stringify(s.body)).toBe(200);
+    const byDuty = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: randomUUID() });
+    expect(byDuty.status).toBe(422);
+    expect(byDuty.body.error.code).toBe('REFUND_WINDOW');
+    expect((await api(ctx.app, duty, 'GET', `/api/cashier-requests/${s.body.id}`)).body.status).toBe('pending');
+    // 店主不受时限（店主没在这家店开班：现金从值班经理当班的钱箱退）
+    const byOwner = await api(ctx.app, ctx.owner, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: randomUUID(), refundShiftId: (await shiftOf(duty)).id });
+    expect(byOwner.status, JSON.stringify(byOwner.body)).toBe(200);
+    expect(byOwner.body).toMatchObject({ status: 'approved' });
+    expect(byOwner.body.refundNo).toBeTruthy();
+  });
+
   it('批准结果待确认时确认作废：原请求之后到了也不执行，申请留着可以重新批', async () => {
     const r = await sale((t) => [{ method: 'cash', amount: t }]);
     const s = await api(ctx.app, ctx.clerk, 'POST', '/api/cashier-requests', { clientKey: randomUUID(), kind: 'void', checkoutId: r.res.body.id, reason: '收款方式记错' });
