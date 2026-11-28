@@ -130,7 +130,7 @@ export function RefundPanel({
 
   const done = (x: RefundDetail | CashierRequestView) => {
     if ('requestNo' in x) {
-      toast({ tone: 'success', title: `已提交退款申请 ${x.requestNo}`, body: `退 ${formatYuan(x.amount)}，等值班经理批准；结果会发到你的通知里` });
+      toast({ tone: 'success', title: `已提交退款申请 ${x.requestNo}`, body: `退 ${formatYuan(x.amount)}，等值班经理批准；结果会发到你的通知里。要撤回在结账记录的「我提交的申请」里` });
       void qc.invalidateQueries({ queryKey: ['frontdesk'] });
       void qc.invalidateQueries({ queryKey: ['cashier-requests'] });
       onClose();

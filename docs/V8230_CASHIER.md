@@ -83,3 +83,11 @@
 - **盲点下不给当日按方式的合计**：门店开了盲点、调用的人此刻在一个开着且还没提交实点的班次上（按人交班是自己的，按钱箱交班是在上面的）、又没有「查看历史营业日」时（`blindRestricted`）：日结 `GET /api/settlements/:date` 与打到小票机的日结单拒绝 `SHIFT_BLIND`；看板 `GET /api/dashboard` 的今日收款方式不给（`todayStats.byMethod` 为空、`blind: true`）。页面写明「先在交班页提交实点」。提交实点以后、盲点关着、经理都照常。
 - 核过的接口：`/api/settlements/:date`（拒绝）、打印日结单（拒绝）、`/api/dashboard`（去掉按方式的合计）；`/api/reports/duty`（只有每小时的单数、部门营业额、在店客人，没有按方式的钱）、`/api/frontdesk/checkouts/summary`（只有结账、反结账、退款合计与没开班的，不分方式）不改；`/api/ledger`、`/api/frontdesk/checkouts`、`/api/ledger/orders` 是一笔笔的记录（工作要看，与交班页的单据列表同一层），不改；`/api/settlements/:date/export`、`/api/ledger/export`、`/api/reports/*` 的经营报表要经理的权限，不受影响。
 - 用例：`tests/cashier-v8230.test.ts`（盲点关着店员照看；开了、没提交实点的店员日结 `SHIFT_BLIND`、看板没有收款方式；经理照看；提交实点以后照常）。
+
+## 11. Codex 复审修正（1d6d77e）
+
+- **离开钱箱也算**：盲点下「当日按方式的合计」的限制（`blindRestricted`）按「在这个开着、没提交实点的班次上待过」算，离开钱箱以后照样不给日结，等这个班次提交实点或交班。
+- **撤回分次上菜也按已上份数核对**：撤回已出餐的带上看到的已上份数（厨房屏照带），两台终端拿着旧数据连点撤回，第二下 `DISH_CHANGED`，不会把整道退回制作中、冲回扣料；没带已上份数的当作看到 0 份。
+- **港元规则变了重新取规则**：结账（手牌、桌台）被拒 `HKD_RATE_CHANGED`、`HKD_DISABLED` 时页面重新取收银台规则，按新汇率重新核对（`CASH_RULES_STALE_CODES`，两个码登记进错误码）。
+- **申请人能找到自己的申请**：结账记录里有「我提交的申请」（进「收银申请 · 我提交的」，能撤回），提交成功的提示写明；交班页「交给下一班」里自己没处理完的申请、等自己审批的申请点得进去。
+- 用例：`tests/shift-drawers.test.ts`（离开钱箱以后日结照样 `SHIFT_BLIND`，提交实点以后照常），`tests/dining-v8230.test.ts`（两下撤回第二下拒绝），`tests/frontdesk-pending-client.test.ts`（重新取规则的两个码）。

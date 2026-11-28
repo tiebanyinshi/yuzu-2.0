@@ -4,7 +4,7 @@
 //   · HandoverList：交班页「交给下一班」（CM-9），只读、不拦交班。
 // 退款申请在退款区里填（RefundPanel asRequest）。
 import { useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Undo2, X } from 'lucide-react';
 import { CASHIER_REQUEST_KIND_LABELS, CASHIER_REQUEST_STATUS_LABELS, type CashierRequestStatus, type CashierRequestView, type ShiftHandover } from '@shared/cashier-v8230';
@@ -45,7 +45,7 @@ export function VoidRequestForm({ checkoutId, checkoutNo, onClose }: { checkoutI
     pick: (found) => (found.type === 'cashier_request' ? found.request : null),
   });
   const done = (r: CashierRequestView) => {
-    toast({ tone: 'success', title: `已提交反结账申请 ${r.requestNo}`, body: '等值班经理批准；结果会发到你的通知里' });
+    toast({ tone: 'success', title: `已提交反结账申请 ${r.requestNo}`, body: '等值班经理批准；结果会发到你的通知里。要撤回在结账记录的「我提交的申请」里' });
     void qc.invalidateQueries({ queryKey: ['cashier-requests'] });
     onClose();
   };
@@ -298,7 +298,8 @@ export function CashierRequestsPage() {
   const qc = useQueryClient();
   const [params] = useSearchParams();
   const approver = can('frontdesk.refund') || can('frontdesk.checkoutVoid');
-  const [tab, setTab] = useState<'todo' | 'mine'>(approver ? 'todo' : 'mine');
+  // ?tab=mine：从结账记录、交班页「交给下一班」点进来看自己提交的（可以撤回）
+  const [tab, setTab] = useState<'todo' | 'mine'>(approver && params.get('tab') !== 'mine' ? 'todo' : 'mine');
   const q = useQuery({
     queryKey: ['cashier-requests'],
     queryFn: () => api.get<{ todo: CashierRequestView[]; mine: CashierRequestView[] }>('/api/cashier-requests'),
@@ -361,12 +362,18 @@ export function HandoverList() {
   );
   const h = q.data;
   if (!h) return null;
-  const items = [
-    ...h.myPendingRequests.map((r) => `你提交的${CASHIER_REQUEST_KIND_LABELS[r.kind]}申请 ${r.requestNo}（${r.checkoutNo}，${formatYuan(r.amount)}）还没人批`),
-    ...(h.toApprove ? [`${h.toApprove} 张收银申请等你审批`] : []),
-    ...(h.unreadNotices ? [`${h.unreadNotices} 条通知没读`] : []),
-    ...(h.openVisits ? [`在店没结的手牌 ${h.openVisits} 张`] : []),
+  // 本人提交的、等本人审批的点进「收银申请」页（撤回、批准都在那里）
+  const items: { text: string; to?: string }[] = [
+    ...h.myPendingRequests.map((r) => ({
+      text: `你提交的${CASHIER_REQUEST_KIND_LABELS[r.kind]}申请 ${r.requestNo}（${r.checkoutNo}，${formatYuan(r.amount)}）还没人批`,
+      to: '/crm/cashier-requests?tab=mine',
+    })),
+    ...(h.toApprove ? [{ text: `${h.toApprove} 张收银申请等你审批`, to: '/crm/cashier-requests' }] : []),
   ];
+  const notes = [...(h.unreadNotices ? [`${h.unreadNotices} 条通知没读`] : []), ...(h.openVisits ? [`在店没结的手牌 ${h.openVisits} 张`] : [])].map(
+    (text) => ({ text }) as { text: string; to?: string },
+  );
+  const all = [...items, ...notes];
   return (
     <Card className="mt-4 p-4" data-testid="shift-handover">
       <SectionTitle>
@@ -374,12 +381,20 @@ export function HandoverList() {
           <Undo2 className="size-4 text-pine" /> 交给下一班
         </span>
       </SectionTitle>
-      {items.length === 0 ? (
+      {all.length === 0 ? (
         <p className="mt-1 text-[13px] text-ink-3">没有要交接的事。</p>
       ) : (
         <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-[13px] text-ink-2">
-          {items.map((t) => (
-            <li key={t}>{t}</li>
+          {all.map((t) => (
+            <li key={t.text}>
+              {t.to ? (
+                <Link to={t.to} className="text-pine underline-offset-2 hover:underline">
+                  {t.text}
+                </Link>
+              ) : (
+                t.text
+              )}
+            </li>
           ))}
         </ul>
       )}

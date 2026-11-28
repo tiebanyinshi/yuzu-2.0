@@ -83,7 +83,7 @@ export function KitchenTab() {
   const act = async (k: KitchenItem, action: Action) => {
     setBusy(`${action}-${k.id}`);
     try {
-      qc.setQueryData(kitchenKey, await api.post<KitchenBoard>(`/api/kitchen/items/${k.id}/${action}`, { from: k.status }));
+      qc.setQueryData(kitchenKey, await api.post<KitchenBoard>(`/api/kitchen/items/${k.id}/${action}`, { from: k.status, servedQty: k.servedQty ?? 0 }));
       void qc.invalidateQueries({ queryKey: ['dining', 'guest'] });
       void qc.invalidateQueries({ queryKey: tablesKey });
     } catch (e) {

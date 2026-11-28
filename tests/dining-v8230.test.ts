@@ -147,7 +147,11 @@ describe('分次上菜', () => {
     expect(replay.status).toBe(409);
     expect(replay.body.error.code).toBe('DISH_CHANGED');
     expect((await pending()).find((x) => x.id === p.id)).toMatchObject({ status: 'done', servedQty: 1 });
-    expect((await kitchen(p.id, 'undo')).status).toBe(200);
+    // 两台终端都看到「已上 1 份」点撤回：第一下撤回上的份数，第二下（同样的旧数据）拒绝，不会把整道退回制作中（Codex 审查 1d6d77e）
+    expect((await kitchen(p.id, 'undo', { from: 'done', servedQty: 1 })).status).toBe(200);
+    const second = await kitchen(p.id, 'undo', { from: 'done', servedQty: 1 });
+    expect(second.status).toBe(409);
+    expect(second.body.error.code).toBe('DISH_CHANGED');
     expect((await pending()).find((x) => x.id === p.id)).toMatchObject({ status: 'done', servedQty: 0 });
     expect((await kitchen(p.id, 'serve', { from: 'done', quantity: 2, servedQty: 0 })).status).toBe(200);
     expect((await kitchen(p.id, 'serve', { from: 'done' })).status).toBe(200);

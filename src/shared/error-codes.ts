@@ -53,6 +53,8 @@ export const CLIENT_ERROR_CODES = {
   LOCATION_OUT: '定位不在门店范围内',
   OVER_LIMIT_AUTH_REQUIRED: '超过单笔上限，要授权',
   PHONE_EXISTS: '手机号已登记为会员',
+  HKD_DISABLED: '门店没设港元汇率（或刚停收港元），这笔不能收港元（页面重新取收银台规则）',
+  HKD_RATE_CHANGED: '港元汇率刚改过，与页面看到的不同（页面重新取收银台规则，按新汇率核对）',
   PO_LINE_CLAIMED: '采购行已在报销单里',
   REFUND_WINDOW: '超过撤销时限只有店主能开退款单（退款区的申请模式不按它拦，批准时按批准人核对）',
   ROOM_TYPE_RESERVED: '这个房型今天剩下的房都被预订了',

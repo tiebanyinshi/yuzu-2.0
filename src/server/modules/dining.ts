@@ -563,7 +563,10 @@ export async function kitchenAction(
     const rules = await loadDiningRules(tx);
     const stale = () => conflict('DISH_CHANGED', '这道菜的状态刚刚变了，请刷新');
     if (opts.from && opts.from !== k.status) throw stale();
-    if (opts.servedQty !== undefined && opts.servedQty !== k.servedQty) throw stale();
+    // 撤回已出餐的（Codex 审查 1d6d77e）：同样按看到的已上份数核对——两台终端都拿着「已上 1 份」点撤回，第一下撤回上的份数，
+    // 第二下不能接着把整道退回制作中（还冲回扣料）。没带已上份数的当作看到 0 份（老页面没先上过几份，照旧撤回出餐）
+    const seenServed = opts.servedQty ?? (action === 'undo' && opts.from === 'done' ? 0 : undefined);
+    if (seenServed !== undefined && seenServed !== k.servedQty) throw stale();
     if (opts.servedOnly && (action === 'start' || action === 'done' || (action === 'undo' && k.status !== 'served'))) {
       throw new AppError(403, 'KITCHEN_ONLY', action === 'undo' ? '撤回出餐、撤回开始做由厨房在出品屏上操作' : '开始做、出餐由厨房在出品屏上操作');
     }

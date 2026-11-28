@@ -214,6 +214,11 @@ describe('按钱箱交班', () => {
       const left = await api(ctx.app, ben.cookie, 'POST', `/api/shifts/${k2.body.id}/leave`, {});
       expect(left.status, JSON.stringify(left.body)).toBe(200);
       expect(left.body).toMatchObject({ blind: true, summary: { cash: { expected: 0 } } });
+      // 离开了也不能看日结（不然离开钱箱看完再加入回来提交实点；Codex 审查 1d6d77e）
+      const today = (await api(ctx.app, ben.cookie, 'GET', '/api/shifts/current')).body.today as string;
+      const peek = await api(ctx.app, ben.cookie, 'GET', `/api/settlements/${today}`);
+      expect(peek.status).toBe(409);
+      expect(peek.body.error.code).toBe('SHIFT_BLIND');
       // 经理照看
       expect((await api(ctx.app, duty.cookie, 'GET', `/api/shifts/${k2.body.id}`)).body.summary.cash.expected).toBe(13000);
       // 拿一个错的应有现金去试交班：先报要提交实点，错误里不带应有现金（以前 SHIFT_CHANGED 的 details 带着）
@@ -224,6 +229,7 @@ describe('按钱箱交班', () => {
       // 提交实点以后照常：交班的回复是已交班的完整交班表
       const counted = await api(ctx.app, amy.cookie, 'POST', `/api/shifts/${k2.body.id}/blind-count`, { countedCash: 13000 });
       expect(counted.body.summary.cash.expected).toBe(13000);
+      expect((await api(ctx.app, ben.cookie, 'GET', `/api/settlements/${today}`)).status).toBe(200);
       const closed = await api(ctx.app, amy.cookie, 'POST', `/api/shifts/${k2.body.id}/close`, { countedCash: 13000, expectedCash: 13000 });
       expect(closed.status, JSON.stringify(closed.body)).toBe(200);
       expect(closed.body).toMatchObject({ status: 'closed', expectedCash: 13000 });

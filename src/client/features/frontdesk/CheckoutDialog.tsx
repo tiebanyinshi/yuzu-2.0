@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { invalidateRevenue, useBusinessToday } from '../../lib/revenue';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { Banknote, BedDouble, CircleCheck, Clock3, LogOut, ShieldCheck, Ticket, Undo2 } from 'lucide-react';
@@ -995,6 +996,12 @@ function CheckoutDetailView({ id, onBack }: { id: number; onBack: () => void }) 
             <Button variant="secondary" icon={<Undo2 className="size-4" />} onClick={() => setRequestingVoid(true)} data-testid="checkout-void-request">
               申请反结账
             </Button>
+          )}
+          {/* 申请人看自己提交的申请、撤回（Codex 审查 1d6d77e：之前没有入口进「收银申请 · 我提交的」） */}
+          {(!can('frontdesk.refund') || !can('frontdesk.checkoutVoid')) && can('frontdesk.checkout') && (
+            <Link to="/crm/cashier-requests?tab=mine" className="self-center text-[12.5px] font-semibold text-pine underline-offset-2 hover:underline" data-testid="checkout-my-requests">
+              我提交的申请
+            </Link>
           )}
           {requestingVoid && <VoidRequestForm checkoutId={d.id} checkoutNo={d.checkoutNo} onClose={() => setRequestingVoid(false)} />}
           {showRefund && d.status === 'completed' && (

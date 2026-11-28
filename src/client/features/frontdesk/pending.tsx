@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Hourglass } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { FrontdeskOpLookup } from '@shared/frontdesk';
 import { api, errorMessage, isRejected, notSentAsRejection, UncertainError } from '../../lib/api';
 import { onReconnect } from '../../lib/connection';
@@ -430,6 +431,12 @@ export async function reconcilePending(op: FrontdeskPendingOp, resend = false): 
   }
 }
 
+/**
+ * 结账被拒绝、原因是门店的港元规则变了（8.2.30，Codex 审查 1d6d77e）：汇率改了、港元停收——重新取收银台规则，
+ * 页面按新汇率重新核对（手牌结账、桌台结账都经这里）
+ */
+export const CASH_RULES_STALE_CODES: ReadonlySet<string> = new Set(['HKD_RATE_CHANGED', 'HKD_DISABLED']);
+
 export type OpState = { phase: 'idle' } | { phase: 'busy' } | { phase: 'error'; message: string; code?: string } | { phase: 'uncertain'; message: string } | { phase: 'not_found' };
 
 type Pick<T> = (found: Extract<FrontdeskOpLookup, { found: true }>) => T | null;
@@ -476,6 +483,7 @@ export function useFrontdeskOp<T>(opts: {
       roomKey: opts.roomKey,
     }) ?? null;
   const [state, setState] = useState<OpState>({ phase: 'idle' });
+  const qc = useQueryClient();
   const { pick } = opts;
   const pendingKey = pending?.key;
   useEffect(() => {
@@ -521,6 +529,7 @@ export function useFrontdeskOp<T>(opts: {
             }
           }
           // 服务端明确拒绝（含该编号已作废）：没有生效
+          if (CASH_RULES_STALE_CODES.has(error.code)) void qc.invalidateQueries({ queryKey: ['frontdesk', 'rules'] });
           removeFrontdeskPending(op.key);
           setState({ phase: 'error', message: error.message, code: error.code });
         } else {
@@ -532,7 +541,7 @@ export function useFrontdeskOp<T>(opts: {
         setInFlight(op.key, false);
       }
     },
-    [pick],
+    [pick, qc],
   );
 
   /** 提交一笔新的操作（有待确认记录时不允许） */
