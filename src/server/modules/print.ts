@@ -16,7 +16,7 @@ import { guard } from '../auth/guard';
 import { readSnapshot, type Db } from '../db';
 import { buildCheckoutSlip, buildRefundSlip, buildSettlementSlip, buildShiftSlip, type SlipMeta } from '../devices/slips';
 import { ctxOf, type Deps } from '../lib/context';
-import { forbidden, notFound, unprocessable } from '../lib/errors';
+import { conflict, forbidden, notFound, unprocessable } from '../lib/errors';
 import { idParam, parse } from '../lib/validate';
 import { cancelJob, createDocJob, getStoreJob, listJobs } from './devices';
 import { getCheckout } from './frontdesk/checkout';
@@ -24,7 +24,7 @@ import { getRefund } from './frontdesk/refunds';
 import { resolveReadableDate } from './ledger';
 import { loadSettings } from './settings';
 import { computeSettlement } from './settlement';
-import { getShift } from './shifts';
+import { blindView, getShift } from './shifts';
 import { technicianTextSql } from './technicians';
 import { currentStoreId } from '../lib/store-context';
 
@@ -152,6 +152,8 @@ async function renderDoc(deps: Deps, req: FastifyRequest, doc: PrintDoc, paperWi
       need('ledger.readToday');
       const shift = await getShift(sql, doc.id);
       if (shift.staffId !== req.actor.id && !can(req.actor, 'ledger.readHistory')) throw forbidden('只能打印自己的交班表');
+      // 交班盲点（8.2.30）：提交实点之前不打印（打出来就看到应有现金了）
+      if ((await blindView(sql, req.actor, shift)).blind) throw conflict('SHIFT_BLIND', '店里开了交班盲点：先在交班页提交实点，再打印交班表');
       return { ref: String(doc.id), label: `交班表 ${shift.shiftNo}`, payload: buildShiftSlip(shift, meta) };
     }
     case 'settlement': {

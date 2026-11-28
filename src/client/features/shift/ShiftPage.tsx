@@ -112,15 +112,18 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [leaving, setLeaving] = useState(false);
-  const [counted, setCounted] = useState('');
-  const [countedHkdText, setCountedHkdText] = useState('');
+  // 交班盲点提交过实点的：实点就是提交的那个，不能再改
+  const [counted, setCounted] = useState(shift.blindCount ? (shift.blindCount.countedCash / 100).toFixed(2) : '');
+  const [countedHkdText, setCountedHkdText] = useState(shift.blindCount?.countedHkd != null ? (shift.blindCount.countedHkd / 100).toFixed(2) : '');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 交班盲点（8.2.30，CM-9）：开了以后先填实点、点「提交实点」锁定，之后才显示应有与差额
+  // 交班盲点（8.2.30，CM-9）：开了以后先填实点、点「提交实点」交给服务端记下（之后不能改），服务端这才给看应有与差额
+  // （Codex 审查 06b2eee：之前只是页面不显示，「今天的班次」、打印预览照样看得到；现在接口不给，blind 为 true）
   const blind = useCashBlind();
-  const [revealed, setRevealed] = useState(false);
-  const hidden = blind && !revealed;
+  const counted0 = !!shift.blindCount;
+  const hidden = !!shift.blind || (blind && !counted0);
+  const [counting, setCounting] = useState(false);
   const countedCents = parseYuan(counted);
   // 港元（8.2.30）：本班次收过港元时分币种对实点
   const hkd = shift.summary.hkd ?? null;
@@ -130,6 +133,19 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
   const diffHkd = hkd && countedHkd !== null ? countedHkd - hkd.expected : null;
   /** 跨钱箱退款：反结账退的现金比本班收的现金多（应有现金为负），多出的部分来自别的钱箱（R1.2 口径，不改金额，只说明） */
   const crossDrawer = Math.max(0, -shift.summary.cash.expected);
+  const submitCount = async () => {
+    if (!countsReady) return;
+    setCounting(true);
+    setError(null);
+    try {
+      await api.post<ShiftRecord>(`/api/shifts/${shift.id}/blind-count`, { countedCash: countedCents, ...(hkd ? { countedHkd } : {}) });
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setCounting(false);
+      void qc.invalidateQueries({ queryKey: shiftKeys.all });
+    }
+  };
   const close = async () => {
     if (!countsReady) return;
     setBusy(true);
@@ -209,11 +225,17 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
             </div>
           )}
           <Field label="实点现金（元）" className="w-[200px]">
-            <MoneyInput value={counted} onChange={(e) => setCounted(e.target.value)} disabled={blind && revealed} aria-label="实点现金" data-testid="shift-counted-cash" />
+            <MoneyInput value={counted} onChange={(e) => setCounted(e.target.value)} disabled={counted0} aria-label="实点现金" data-testid="shift-counted-cash" />
           </Field>
           {hkd && (
             <Field label="实点港元（HK$）" className="w-[200px]" hint={hidden ? undefined : `应有 ${formatHkd(hkd.expected)}（${hkd.count} 笔）`}>
-              <MoneyInput value={countedHkdText} onChange={(e) => setCountedHkdText(e.target.value)} disabled={blind && revealed} aria-label="实点港元" data-testid="shift-counted-hkd" />
+              <MoneyInput
+                value={countedHkdText}
+                onChange={(e) => setCountedHkdText(e.target.value)}
+                disabled={counted0 && shift.blindCount?.countedHkd != null}
+                aria-label="实点港元"
+                data-testid="shift-counted-hkd"
+              />
             </Field>
           )}
           {!hidden && diffHkd !== null && (
@@ -240,7 +262,7 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
         <TagExceptionsNotice />
         <Input className="mt-3" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} placeholder="交班备注（选填），例如短款原因" aria-label="交班备注" />
         {hidden ? (
-          <Button className="mt-3" variant="primary" size="lg" disabled={!countsReady} onClick={() => setRevealed(true)} data-testid="shift-reveal">
+          <Button className="mt-3" variant="primary" size="lg" disabled={!countsReady} loading={counting} onClick={() => void submitCount()} data-testid="shift-reveal">
             提交实点
           </Button>
         ) : (
@@ -497,9 +519,15 @@ function ShiftRow({ s }: { s: ShiftRecord }) {
             {diff! > 0 ? '长款' : '短款'} ¥{(Math.abs(diff!) / 100).toFixed(2)}
           </Badge>
         )}
-        <Money cents={s.summary.checkouts.total + s.summary.recharges.paid} size="key" />
+        {/* 交班盲点（8.2.30）：提交实点之前接口不给金额（blind），这里也不显示 */}
+        {!s.blind && <Money cents={s.summary.checkouts.total + s.summary.recharges.paid} size="key" />}
       </button>
-      {open && (
+      {open && s.blind && (
+        <p className="border-t border-line bg-paper/50 px-4 py-3 text-[12.5px] text-ink-3" data-testid="shift-row-blind">
+          交班盲点：在上面提交实点以后才显示这个班次的金额、才能打印。
+        </p>
+      )}
+      {open && !s.blind && (
         <div className="border-t border-line bg-paper/50 px-4 pb-4">
           <SummaryView summary={s.summary} />
           {s.status === 'closed' && (

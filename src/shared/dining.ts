@@ -319,6 +319,8 @@ export interface KitchenPartItem extends KitchenPartTicket {
   startedAt: string | null;
   doneAt: string | null;
   visitClosed: boolean;
+  /** 8.2.30：套餐那一张在等叫（服务员点「起菜」之前子项也不做） */
+  hold: boolean;
 }
 
 export interface KitchenBoard {

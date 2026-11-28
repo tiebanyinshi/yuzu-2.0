@@ -46,6 +46,10 @@ export async function setKitchenFlags(deps: Deps, raw: unknown, ctx: OpContext):
     if (input.hold === true) {
       const started = rows.find((r) => r.status !== 'queued');
       if (started) throw conflict('DISH_STARTED', `「${started.name}」厨房已经开始做了，不能再等叫`);
+      // 套餐在别的档口的子项（Codex 审查 06b2eee）：有一样开始做了也不能等叫。出品单已锁，子项单开始做要先对出品单加共享锁，这里读到的不会过时
+      const [part] = await tx<{ name: string }[]>`
+        SELECT name FROM kitchen_item_parts WHERE kitchen_item_id IN ${tx(ids)} AND split AND status IN ('cooking', 'done') ORDER BY id LIMIT 1`;
+      if (part) throw conflict('DISH_STARTED', `套餐里的「${part.name}」别的档口已经开始做了，不能再等叫`);
     }
     await tx`
       UPDATE kitchen_items SET

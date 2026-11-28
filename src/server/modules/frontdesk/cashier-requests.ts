@@ -24,16 +24,17 @@ import { loadRoleOverrides, staffSubject } from '../../auth/role-permissions';
 import { isUniqueViolation, type Db, type Fragment, type Tx } from '../../db';
 import { writeAudit } from '../../lib/audit';
 import { ctxOf, type Deps, type OpContext } from '../../lib/context';
-import { AppError, badRequest, conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
+import { AppError, conflict, forbidden, notFound, unprocessable } from '../../lib/errors';
 import { currentStoreId, forEachStore } from '../../lib/store-context';
 import { parse } from '../../lib/validate';
 import { notify } from '../oa/index';
 import { systemAutoStaffId } from '../system-staff';
 import { voidCheckout } from './checkout';
-import { businessDate, hashRequest, nextDocNo, runIdempotent, saveKey, setTxTimeouts } from './common';
+import { businessDate, findKey, hashRequest, nextDocNo, runIdempotent, saveKey, setTxTimeouts } from './common';
 import { createRefund, RefundInput } from './refunds';
 
-const RefundBody = RefundInput.omit({ clientKey: true });
+// 退款申请不带钱箱（Codex 审查 06b2eee P2 安全）：从哪个钱箱退现金由批准人选，申请人带的 refundShiftId 丢掉不存
+const RefundBody = RefundInput.omit({ clientKey: true, refundShiftId: true });
 const shiftId = z
   .number('钱箱班次不正确')
   .int('钱箱班次不正确')
@@ -55,9 +56,12 @@ const SubmitInput = z.discriminatedUnion(
   '申请的种类不正确',
 );
 const ApproveInput = z.object({
-  /** 退款申请：执行开退款单用的操作编号（批准人的页面生成；同一编号重提返回同一张退款单） */
-  clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试').optional(),
-  /** 退现金从哪个钱箱退（批准人选）；不带时记到批准人自己的班次 */
+  /**
+   * 批准的操作编号（批准人的页面生成，提交前存进本机「结果待确认」）：退款申请就是开退款单的编号（checkout_refund），
+   * 反结账申请记作 cashier_void_approve；同一编号重提返回同一个结果，内容变了拒绝 IDEMPOTENCY_CONFLICT
+   */
+  clientKey: z.uuid('缺少有效的操作编号，请刷新页面后重试'),
+  /** 退现金从哪个钱箱退（批准人选，只能是这家店此刻当班的钱箱）；不带时记到批准人自己的班次 */
   refundShiftId: shiftId,
 });
 const RejectInput = z.object({ note: z.string('请写驳回原因').trim().min(2, '请写驳回原因（至少 2 个字）').max(200, '原因最多 200 字') });
@@ -86,7 +90,7 @@ interface Row {
   kind: CashierRequestKind;
   checkoutId: number;
   checkoutNo: string;
-  payload: { items?: CashierRequestView['items']; payments?: CashierRequestView['payments']; refundShiftId?: number };
+  payload: { items?: CashierRequestView['items']; payments?: CashierRequestView['payments'] };
   amount: number;
   reason: string;
   requestedBy: number;
@@ -177,7 +181,7 @@ export async function submitRequest(deps: Deps, raw: unknown, ctx: OpContext): P
     if (items !== pays) throw unprocessable('REFUND_NOT_BALANCED', `退的项目合计 ${formatYuan(items)}，退款方式合计 ${formatYuan(pays)}，两者要相等`, { items, payments: pays });
     amount = items;
     reason = r.reason;
-    body = { items: r.items, payments: r.payments, ...(r.refundShiftId !== undefined ? { refundShiftId: r.refundShiftId } : {}) };
+    body = { items: r.items, payments: r.payments };
   } else {
     reason = input.reason;
     body = {};
@@ -277,12 +281,23 @@ async function decide(
   // 待审批的那条通知（发给有权限的人）在处理以后不用再看：同一件事没读的只留一条，这里不动，点开会看到已处理
 }
 
-/** 批准：按当时的数据重新核对，走原来的开退款单 / 反结账执行；单子已经变了的申请记失效并通知申请人 */
+/**
+ * 批准：按当时的数据重新核对，走原来的开退款单 / 反结账执行；单子已经变了的申请记失效并通知申请人。
+ * 批准是一笔收款（退款、反结账退钱），照「结果待确认」的协议（Codex 审查 06b2eee P1）：页面提交前把操作编号与原请求存进本机，
+ *   · 退款申请：编号就是开退款单的编号（checkout_refund），查回、作废走退款单那一类；
+ *   · 反结账申请：编号记作 cashier_void_approve（ref_id 是这张申请），在反结账的同一事务最后写下（处理期间被作废则整笔回滚）；
+ * 同一编号重提返回同一个结果，内容（钱箱）变了拒绝 IDEMPOTENCY_CONFLICT。
+ */
 export async function approveRequest(deps: Deps, id: number, raw: unknown, ctx: OpContext): Promise<CashierRequestView> {
   const input = parse(ApproveInput, raw);
   const r = await peek(deps.sql, id);
   if (!can(ctx.actor, PERMISSION_OF[r.kind])) throw forbidden(`批准${CASHIER_REQUEST_KIND_LABELS[r.kind]}申请要有「${r.kind === 'refund' ? '开退款单' : '反结账'}」的权限`);
   if (Number(r.requestedBy) === ctx.actor.id) throw forbidden('不能批准自己提交的申请');
+  const key = input.clientKey;
+  const voidHash = hashRequest({ requestId: Number(r.id), refundShiftId: input.refundShiftId ?? null });
+  // 反结账申请：同一编号已经批过（回复丢了重提）直接返回；作废过的编号拒绝 OP_ABANDONED
+  const replayed = async () => (r.kind === 'void' ? await findKey(deps.sql, key, 'cashier_void_approve', voidHash) : null);
+  if ((await replayed()) !== null) return getRequest(deps.sql, id);
   const [c] = await deps.sql<{ checkoutNo: string }[]>`SELECT checkout_no FROM checkouts WHERE id = ${r.checkoutId}`;
   const finish = async (tx: Tx, refundId?: number) => {
     const at = ctx.at ?? new Date();
@@ -293,35 +308,32 @@ export async function approveRequest(deps: Deps, id: number, raw: unknown, ctx: 
       { ...locked, id: Number(locked.id), requestedBy: Number(locked.requestedBy) },
       { status: 'approved', by: ctx.actor.id, note: '', refundId, at, ip: ctx.ip, checkoutNo: c!.checkoutNo },
     );
+    if (r.kind === 'void') await saveKey(tx, key, 'cashier_void_approve', voidHash, id, ctx.actor.id);
   };
+  // 钱箱只能选这家店此刻当班的（lockRefundShift 在锁里核对：别家店的、已交班的、升级前开的都拒绝）；不带时记到批准人自己的班次
+  const drawer = input.refundShiftId !== undefined ? { refundShiftId: input.refundShiftId } : {};
   try {
     if (r.kind === 'refund') {
-      if (!input.clientKey) throw badRequest('缺少有效的操作编号，请刷新页面后重试');
       const p = r.payload;
       await createRefund(
         deps,
         Number(r.checkoutId),
-        {
-          clientKey: input.clientKey,
-          items: p.items as never,
-          payments: p.payments as never,
-          reason: `申请 ${r.requestNo}：${r.reason}`.slice(0, 200),
-          ...(input.refundShiftId !== undefined ? { refundShiftId: input.refundShiftId } : p.refundShiftId !== undefined ? { refundShiftId: p.refundShiftId } : {}),
-        },
+        { clientKey: key, items: p.items as never, payments: p.payments as never, reason: `申请 ${r.requestNo}：${r.reason}`.slice(0, 200), ...drawer },
         ctx,
         { requestId: Number(r.id), afterCreate: (tx, refund) => finish(tx, refund.id) },
       );
     } else {
-      await voidCheckout(
-        deps,
-        Number(r.checkoutId),
-        { reason: `申请 ${r.requestNo}：${r.reason}`.slice(0, 200), ...(input.refundShiftId !== undefined ? { refundShiftId: input.refundShiftId } : {}) },
-        ctx,
-        { requestId: Number(r.id), afterRestore: (tx) => finish(tx) },
-      );
+      await voidCheckout(deps, Number(r.checkoutId), { reason: `申请 ${r.requestNo}：${r.reason}`.slice(0, 200), ...drawer }, ctx, {
+        requestId: Number(r.id),
+        afterRestore: (tx) => finish(tx),
+      });
     }
   } catch (e) {
-    // 已处理过（别人刚批了，或同一编号重提）照原样报；单子变了的记失效
+    // 同一编号的两次提交并发：后到的那次撞上编号或看到「已反结账」，先按编号查回，是同一笔就返回第一次的结果
+    if (r.kind === 'void' && (isUniqueViolation(e, 'idempotency_keys_pkey') || (e instanceof AppError && e.code === 'ALREADY_VOIDED'))) {
+      if ((await replayed().catch(() => null)) !== null) return getRequest(deps.sql, id);
+    }
+    // 已处理过（别人刚批了）照原样报；单子变了的记失效
     if (e instanceof AppError && STALE_CODES.has(e.code)) await markStale(deps, id, e.message, ctx);
     throw e;
   }

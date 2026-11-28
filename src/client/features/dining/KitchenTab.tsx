@@ -109,7 +109,8 @@ export function KitchenTab() {
       size="sm"
       variant={variant}
       icon={icon}
-      disabled={busy !== null && busy !== `part-${action}-${p.id}`}
+      // 8.2.30 等叫：套餐那一张在等叫时子项也不能开始做、出餐（服务端同样拒绝）
+      disabled={(busy !== null && busy !== `part-${action}-${p.id}`) || (p.hold && (action === 'start' || action === 'done'))}
       loading={busy === `part-${action}-${p.id}`}
       onClick={() => void partAct(p, action)}
       data-testid={`kds-part-${action}-${p.id}`}

@@ -1,6 +1,6 @@
 // 8.2.30 出品单的标记与分次上菜（docs/V8230_CASHIER.md 第 4 节，CM-16、CM-19）：点单页「还没上的菜」与桌台明细共用。
 //   · 标记：等叫（还没开始做的才能标；点「起菜」厨房才做）、加急、打包——只是标记，不动金额；
-//   · 分次上菜：出餐以后一行几份可以先上 1 份，上齐了才算已上菜。
+//   · 分次上菜：出餐以后一行几份可以先上 1 份，上齐了才算已上菜；带上看到的已上份数，重提、连点不会多上（服务端核对）。
 import type { PendingDish } from '@shared/dining';
 import { api } from '../../lib/api';
 import { Badge, Button } from '../../components/ui';
@@ -42,7 +42,7 @@ export function DishFlagButtons({ p, run, busy, testPrefix }: { p: PendingDish; 
           size="sm"
           variant="secondary"
           loading={busy === `serve1-${p.id}`}
-          onClick={() => void run(`serve1-${p.id}`, () => api.post(`/api/kitchen/items/${p.id}/serve`, { from: 'done', quantity: 1 }), `${p.name} 先上 1 份`)}
+          onClick={() => void run(`serve1-${p.id}`, () => api.post(`/api/kitchen/items/${p.id}/serve`, { from: 'done', quantity: 1, servedQty: p.servedQty ?? 0 }), `${p.name} 先上 1 份`)}
           data-testid={`${testPrefix}-serve1-${p.id}`}
         >
           先上 1 份

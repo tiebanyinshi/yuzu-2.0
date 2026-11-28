@@ -3,7 +3,8 @@
 //   · 加急、打包：只是标记，厨房屏与桌台明细带出来；已上菜、已退的不能再标；
 //   · 沽清一键恢复（CM-17）：今天的沽清、限量全部取消，记审计；
 //   · 待催（CM-18）：桌台看板带最早一道下了单还没出餐的时刻（等叫的不算）；
-//   · 分次上菜（CM-19）：出餐以后先上几份，上齐了才算已上菜；撤回先撤上的份数。
+//   · 分次上菜（CM-19）：出餐以后先上几份，上齐了才算已上菜；撤回先撤上的份数；带上看到的已上份数，同一个请求到两次只上一次；
+//   · 等叫的套餐（Codex 审查 06b2eee）：别的档口的子项也不能开始做、出餐，厨房屏的子项带上等叫；子项开始做了不能再等叫。
 
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -13,6 +14,7 @@ let ctx: TestContext;
 let dish: number;
 let table: number;
 let session: number;
+let chef: number;
 
 type Pending = { id: number; name: string; status: string; quantity: number; hold?: boolean; urgent?: boolean; takeaway?: boolean; servedQty?: number };
 const pending = async () => (await api(ctx.app, ctx.clerk, 'GET', `/api/dining/tables/sessions/${session}`)).body.pending as Pending[];
@@ -32,6 +34,7 @@ beforeAll(async () => {
   ctx = await setup();
   const st = await api(ctx.app, ctx.owner, 'POST', '/api/admin/dining/stations', { name: '中厨' });
   const stationId = st.body.stations.find((s: { name: string }) => s.name === '中厨').id;
+  chef = stationId;
   const c = await api(ctx.app, ctx.owner, 'POST', '/api/items', { name: '虾饺', category: '点心', price: 3800 });
   dish = c.body.items.find((i: { name: string }) => i.name === '虾饺').id;
   expect((await api(ctx.app, ctx.owner, 'PUT', '/api/admin/dining/rules', { enabled: true, tablesEnabled: true, trackServed: true, warnMinutes: 15 })).status).toBe(200);
@@ -79,16 +82,74 @@ describe('等叫、起菜、加急、打包', () => {
   });
 });
 
+describe('等叫的套餐', () => {
+  it('套餐等叫时别的档口的子项也不能开始做、出餐；厨房屏的子项带上等叫；子项开始做了不能再等叫', async () => {
+    const ws = await api(ctx.app, ctx.owner, 'POST', '/api/admin/dining/stations', { name: '水吧' });
+    const water = ws.body.stations.find((s: { name: string }) => s.name === '水吧').id;
+    const drink = await api(ctx.app, ctx.owner, 'POST', '/api/dining/dishes', {
+      clientKey: randomUUID(),
+      name: '柠檬茶',
+      category: '餐饮',
+      slot: 'water:手作饮料',
+      stationId: water,
+      prices: { standard: 800 },
+    });
+    expect(drink.status, JSON.stringify(drink.body)).toBe(201);
+    const set = await api(ctx.app, ctx.owner, 'POST', '/api/dining/dishes', {
+      clientKey: randomUUID(),
+      name: '点心套餐',
+      category: '餐饮',
+      slot: 'restaurant:餐饮',
+      stationId: chef,
+      prices: { standard: 4200 },
+      combo: [
+        { itemId: dish, quantity: 1 },
+        { itemId: drink.body.dish.id, quantity: 1 },
+      ],
+    });
+    expect(set.status, JSON.stringify(set.body)).toBe(201);
+    const o = await api(ctx.app, ctx.clerk, 'POST', `/api/dining/tables/sessions/${session}/orders`, {
+      clientKey: randomUUID(),
+      lines: [{ itemId: set.body.dish.id, quantity: 1 }],
+      expectedTotal: 4200,
+    });
+    expect(o.status, JSON.stringify(o.body)).toBe(200);
+    const combo = (await pending()).at(-1)!;
+    const [part] = await ctx.sql<{ id: number }[]>`SELECT id FROM kitchen_item_parts WHERE kitchen_item_id = ${combo.id} AND split`;
+    const partAct = (action: string) => api(ctx.app, ctx.owner, 'POST', `/api/kitchen/parts/${part!.id}/${action}`, { from: 'queued' });
+    expect((await flags([combo.id], { hold: true })).status).toBe(200);
+    const kds = (await api(ctx.app, ctx.owner, 'GET', '/api/kitchen')).body as { parts: { id: number; hold: boolean }[] };
+    expect(kds.parts.find((x) => x.id === part!.id)).toMatchObject({ hold: true });
+    for (const action of ['start', 'done']) {
+      const r = await partAct(action);
+      expect(r.status).toBe(409);
+      expect(r.body.error.code).toBe('DISH_HELD');
+    }
+    // 起菜以后子项照常；子项开始做了，套餐不能再等叫（套餐那一张自己还在待做）
+    expect((await flags([combo.id], { hold: false })).status).toBe(200);
+    expect((await partAct('start')).status).toBe(200);
+    const again = await flags([combo.id], { hold: true });
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('DISH_STARTED');
+  });
+});
+
 describe('分次上菜', () => {
   it('出餐以后先上几份，上齐才算已上菜；撤回先撤上的份数；已上菜的不能再标', async () => {
     const p = await order(3);
     expect((await kitchen(p.id, 'done')).status).toBe(200);
-    expect((await kitchen(p.id, 'serve', { from: 'done', quantity: 4 })).status).toBe(422);
-    expect((await kitchen(p.id, 'serve', { from: 'done', quantity: 1 })).status).toBe(200);
+    expect((await kitchen(p.id, 'serve', { from: 'done', quantity: 4, servedQty: 0 })).status).toBe(422);
+    // 分次上菜要带上看到的已上份数（Codex 审查 06b2eee）
+    expect((await kitchen(p.id, 'serve', { from: 'done', quantity: 1 })).status).toBe(400);
+    expect((await kitchen(p.id, 'serve', { from: 'done', quantity: 1, servedQty: 0 })).status).toBe(200);
+    // 回复丢了重提、连点两下：同一个请求第二次已上份数对不上，不会多上一份
+    const replay = await kitchen(p.id, 'serve', { from: 'done', quantity: 1, servedQty: 0 });
+    expect(replay.status).toBe(409);
+    expect(replay.body.error.code).toBe('DISH_CHANGED');
     expect((await pending()).find((x) => x.id === p.id)).toMatchObject({ status: 'done', servedQty: 1 });
     expect((await kitchen(p.id, 'undo')).status).toBe(200);
     expect((await pending()).find((x) => x.id === p.id)).toMatchObject({ status: 'done', servedQty: 0 });
-    expect((await kitchen(p.id, 'serve', { from: 'done', quantity: 2 })).status).toBe(200);
+    expect((await kitchen(p.id, 'serve', { from: 'done', quantity: 2, servedQty: 0 })).status).toBe(200);
     expect((await kitchen(p.id, 'serve', { from: 'done' })).status).toBe(200);
     expect((await pending()).find((x) => x.id === p.id)).toBeUndefined();
     const [k] = await ctx.sql<{ status: string; servedQty: number }[]>`SELECT status, served_qty FROM kitchen_items WHERE id = ${p.id}`;

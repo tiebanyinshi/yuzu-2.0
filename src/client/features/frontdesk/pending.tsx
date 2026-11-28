@@ -64,7 +64,9 @@ export type FrontdeskOpType =
   /** 餐厅入口登记进餐（8.2.8，对象是来访，在「餐厅入口」页） */
   | 'meal_entry'
   /** 收银申请（8.2.30，对象是结账单，在收银台「结账记录」里提交） */
-  | 'cashier_request';
+  | 'cashier_request'
+  /** 批准反结账申请（8.2.30，对象是结账单，在「收银申请」页处理）；批准退款申请记作退款单（checkout_refund，地址是批准接口） */
+  | 'cashier_void_approve';
 
 export interface FrontdeskPendingOp {
   key: string;
@@ -110,6 +112,7 @@ export const CASHIER_OPS: readonly FrontdeskOpType[] = [
   'checkout',
   'checkout_refund',
   'cashier_request',
+  'cashier_void_approve',
   'bill_post',
   'line_discount',
   'tag_deposit',
@@ -137,6 +140,7 @@ export const FRONTDESK_OP_LABELS: Record<FrontdeskOpType, string> = {
   usage_cancel: '撤使用单',
   checkout_refund: '退款单',
   cashier_request: '收银申请',
+  cashier_void_approve: '批准反结账申请',
   booking_create: '新建预约',
   booking_change: '改预约',
   technician_state: '停牌 / 复牌 / 休假',
@@ -171,6 +175,8 @@ export const isTechOp = (type: FrontdeskOpType) => type === 'technician_state';
 export const roomOrderUrl = (roomKey: string) => `/api/room-center/rooms/${roomKey}/orders`;
 
 export const isSpaceOp = (type: FrontdeskOpType) => type === 'space_state' || type === 'space_dispatch';
+/** 「收银申请」页的批准（8.2.30）：批准退款申请（记作退款单）、批准反结账申请，回到那一页处理 */
+export const isCashierApproval = (op: { type: FrontdeskOpType; url: string }) => /^\/api\/cashier-requests\/\d+\/approve$/.test(op.url);
 
 const STORAGE_KEY = 'yuzu.frontdeskPending.v1';
 const listeners = new Set<() => void>();
@@ -330,7 +336,7 @@ export function pendingFor(
     if (type === 'technician_state') return table.technicianId != null && !!p.technicianIds?.includes(table.technicianId);
     if (type === 'checkin' || type === 'booking_create') return true;
     if (type === 'booking_change') return table.bookingId != null && !!p.bookingIds?.includes(table.bookingId);
-    if (type === 'checkout_refund' || type === 'cashier_request') return table.checkoutId != null && !!p.checkoutIds?.includes(table.checkoutId);
+    if (type === 'checkout_refund' || type === 'cashier_request' || type === 'cashier_void_approve') return table.checkoutId != null && !!p.checkoutIds?.includes(table.checkoutId);
     if (type === 'usage_open') return table.spaceId != null && p.spaceId === table.spaceId;
     if (isSpaceOp(type)) return table.spaceId != null && (p.spaceId === table.spaceId || !!p.spaceIds?.includes(table.spaceId));
     if (isUsageOp(type)) return table.usageId != null && !!p.usageIds?.includes(table.usageId);

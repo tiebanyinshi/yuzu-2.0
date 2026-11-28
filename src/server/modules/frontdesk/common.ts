@@ -84,6 +84,8 @@ export const FRONTDESK_OPS = [
   'meal_entry',
   // 收银申请（8.2.30，docs/V8230_CASHIER.md 第 2 节）：没权限的收银员提交退款、反结账的申请；对象是结账单，在「收银申请」处理
   'cashier_request',
+  // 批准反结账申请（8.2.30 Codex 审查 06b2eee P1）：ref_id 是那张申请；批准退款申请用开退款单自己的编号（checkout_refund）
+  'cashier_void_approve',
 ] as const;
 export type FrontdeskOp = (typeof FRONTDESK_OPS)[number];
 
@@ -130,6 +132,7 @@ export const FRONTDESK_OP_PERMISSIONS: Record<FrontdeskOp, readonly Permission[]
   tag_away_unlock: ['frontdesk.operate'],
   meal_entry: ['dining.orderRestaurant'],
   cashier_request: ['frontdesk.checkout'],
+  cashier_void_approve: ['frontdesk.checkoutVoid'],
 };
 
 export const abandonedError = () => conflict('OP_ABANDONED', '这笔操作已在「结果待确认」时由员工作废，不会再生效；如仍需要，请重新填写一笔');

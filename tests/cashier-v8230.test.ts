@@ -66,6 +66,8 @@ describe('港元现金', () => {
     expect((await api(ctx.app, ctx.owner, 'PUT', '/api/frontdesk/rules', { hkdRatePpm: 50 })).status).toBe(400);
     // 别的规则没被冲掉
     expect((await api(ctx.app, ctx.clerk, 'GET', '/api/frontdesk/rules')).body).toMatchObject({ selfVoidMinutes: 15, hkdRatePpm: RATE });
+    // 盲点先关上（下面几条要看应有现金），交班那一条再开
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/frontdesk/rules', { shiftBlind: false })).status).toBe(200);
   });
 
   it('只有现金能带港元；汇率过时、港元不够都拒绝', async () => {
@@ -94,6 +96,56 @@ describe('港元现金', () => {
     expect(after.summary.cash.hkd).toBe(55200);
     expect(after.summary.cash.expected - before.summary.cash.expected).toBe(r.total - 55200);
     expect(after.summary.hkd).toEqual({ count: 1, expected: 60000, worth: 55200 });
+  });
+
+  it('交班盲点：提交实点之前接口不给当班的人看应有现金（交班页、今天的班次、打印预览），经理照看；提交以后不能改，交班要一致', async () => {
+    const full = await shiftOf(ctx.clerk);
+    expect((await api(ctx.app, ctx.owner, 'PUT', '/api/frontdesk/rules', { shiftBlind: true })).status).toBe(200);
+    const cur = (await api(ctx.app, ctx.clerk, 'GET', '/api/shifts/current')).body.shift;
+    expect(cur.blind).toBe(true);
+    expect(cur.summary.cash).toEqual({ opening: 50000, checkout: 0, recharge: 0, expected: 0 });
+    expect(cur.summary.checkoutByMethod).toEqual([]);
+    expect(cur.summary.hkd).toEqual({ count: 1, expected: 0, worth: 0 });
+    const list = (await api(ctx.app, ctx.clerk, 'GET', '/api/shifts')).body as { id: number; blind?: boolean; summary: { cash: { expected: number } } }[];
+    const row = list.find((x) => x.id === full.id)!;
+    expect(row.blind).toBe(true);
+    expect(row.summary.cash.expected).toBe(0);
+    const one = (await api(ctx.app, ctx.clerk, 'GET', `/api/shifts/${full.id}`)).body;
+    expect(one.blind).toBe(true);
+    expect(JSON.stringify(one.summary)).not.toContain(String(full.summary.cash.expected));
+    // 值班经理（能看历史营业日、看别人班次的那一项权限）照旧看得到
+    const mgr = (await api(ctx.app, duty, 'GET', `/api/shifts/${full.id}`)).body;
+    expect(mgr.blind).toBeUndefined();
+    expect(mgr.summary.cash.expected).toBe(full.summary.cash.expected);
+    // 没提交实点不能交班；先提交实点（收过港元要填港元）
+    const early = await api(ctx.app, ctx.clerk, 'POST', `/api/shifts/${full.id}/close`, {
+      countedCash: 0,
+      expectedCash: full.summary.cash.expected,
+      countedHkd: 59000,
+      expectedHkd: 60000,
+    });
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe('BLIND_COUNT_REQUIRED');
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/shifts/${full.id}/blind-count`, { countedCash: full.summary.cash.expected })).status).toBe(400);
+    const counted = await api(ctx.app, ctx.clerk, 'POST', `/api/shifts/${full.id}/blind-count`, { countedCash: full.summary.cash.expected, countedHkd: 59000 });
+    expect(counted.status, JSON.stringify(counted.body)).toBe(200);
+    expect(counted.body.blind).toBeUndefined();
+    expect(counted.body.blindCount).toMatchObject({ countedCash: full.summary.cash.expected, countedHkd: 59000 });
+    expect(counted.body.summary.cash.expected).toBe(full.summary.cash.expected);
+    // 同样的实点重提照旧返回；看到应有以后改实点拒绝
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/shifts/${full.id}/blind-count`, { countedCash: full.summary.cash.expected, countedHkd: 59000 })).status).toBe(200);
+    const changed = await api(ctx.app, ctx.clerk, 'POST', `/api/shifts/${full.id}/blind-count`, { countedCash: full.summary.cash.expected + 100, countedHkd: 59000 });
+    expect(changed.status).toBe(409);
+    expect(changed.body.error.code).toBe('BLIND_COUNTED');
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/shifts/current')).body.shift.summary.cash.expected).toBe(full.summary.cash.expected);
+    const mismatch = await api(ctx.app, ctx.clerk, 'POST', `/api/shifts/${full.id}/close`, {
+      countedCash: full.summary.cash.expected + 100,
+      expectedCash: full.summary.cash.expected,
+      countedHkd: 59000,
+      expectedHkd: 60000,
+    });
+    expect(mismatch.status).toBe(409);
+    expect(mismatch.body.error.code).toBe('BLIND_COUNT_MISMATCH');
   });
 
   it('交班：收过港元要填实点港元，看到的应有港元要对；记下应有与实点', async () => {
@@ -191,6 +243,57 @@ describe('收银申请', () => {
     const [cnt] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM refunds WHERE checkout_id = ${checkoutId} AND status = 'completed'`;
     expect(cnt!.n).toBe(1);
     expect(JSON.stringify(await notices(ctx.clerk))).toContain('已批准');
+    // 结果待确认（Codex 审查 06b2eee P1）：同一编号换了内容（选了钱箱）拒绝；按编号查回就是这张退款单
+    const conflictBody = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${reqId}/approve`, { clientKey: key, refundShiftId: before.id });
+    expect(conflictBody.status).toBe(409);
+    expect(conflictBody.body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    const found = (await api(ctx.app, duty, 'GET', `/api/frontdesk/ops/${key}?type=checkout_refund`)).body;
+    expect(found).toMatchObject({ found: true, type: 'checkout_refund', refund: { refundNo: a.body.refundNo } });
+    // 批准一定要带操作编号（页面提交前存进本机的那个）
+    expect((await api(ctx.app, duty, 'POST', `/api/cashier-requests/${reqId}/approve`, {})).status).toBe(400);
+  });
+
+  it('退款申请：申请人带的钱箱不算，现金从批准人当班的钱箱退；批准人选的钱箱要是这家店此刻当班的', async () => {
+    const clerkShift = await shiftOf(ctx.clerk);
+    const dutyShift = await shiftOf(duty);
+    const r = await sale((t) => [{ method: 'cash', amount: t }]);
+    const opts = (await api(ctx.app, ctx.clerk, 'GET', `/api/frontdesk/checkouts/${r.res.body.id}/refund-options`)).body;
+    // 申请人偷偷带上自己的钱箱：丢掉不存
+    const s = await api(ctx.app, ctx.clerk, 'POST', '/api/cashier-requests', {
+      clientKey: randomUUID(),
+      kind: 'refund',
+      checkoutId: r.res.body.id,
+      refund: {
+        items: [{ category: opts.items[0].category, name: opts.items[0].name, quantity: 0, amount: 200 }],
+        payments: [{ method: 'cash', amount: 200 }],
+        reason: '少找了钱',
+        refundShiftId: clerkShift.id,
+      },
+    });
+    expect(s.status, JSON.stringify(s.body)).toBe(200);
+    const [row] = await ctx.sql<{ payload: Record<string, unknown> }[]>`SELECT payload FROM cashier_requests WHERE id = ${s.body.id}`;
+    expect(row!.payload).not.toHaveProperty('refundShiftId');
+    // 批准人选的钱箱：不存在的、已交班的、别家店的都拒绝，申请留着
+    const missing = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: randomUUID(), refundShiftId: 99_999_999 });
+    expect(missing.status).toBe(404);
+    const [closed] = await ctx.sql<{ id: number }[]>`SELECT id FROM shifts WHERE status = 'closed' ORDER BY id LIMIT 1`;
+    const shut = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: randomUUID(), refundShiftId: closed!.id });
+    expect(shut.status).toBe(409);
+    expect(shut.body.error.code).toBe('REFUND_SHIFT_CLOSED');
+    const entity = await api(ctx.app, ctx.owner, 'POST', '/api/admin/entities', { name: '别店主体' });
+    const other = (await api(ctx.app, ctx.owner, 'POST', '/api/admin/stores', { code: 'OT', name: '别的店', entityId: entity.body.id })).body.id as number;
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: other })).status).toBe(200);
+    const otherShift = await api(ctx.app, ctx.owner, 'POST', '/api/shifts', { openingCash: 0 });
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: 1 })).status).toBe(200);
+    expect(otherShift.status, JSON.stringify(otherShift.body)).toBe(200);
+    const foreign = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: randomUUID(), refundShiftId: otherShift.body.id });
+    expect(foreign.status).toBe(404);
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/cashier-requests/${s.body.id}`)).body.status).toBe('pending');
+    // 不选：记到批准人自己的班次（不是申请人带的那个）
+    const ok = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: randomUUID() });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const [refund] = await ctx.sql<{ shiftId: number }[]>`SELECT shift_id FROM refunds WHERE refund_no = ${ok.body.refundNo}`;
+    expect(Number(refund!.shiftId)).toBe(dutyShift.id);
   });
 
   it('驳回要写原因、通知申请人；申请人能撤回自己的', async () => {
@@ -210,17 +313,45 @@ describe('收银申请', () => {
     expect(c.body.status).toBe('cancelled');
   });
 
-  it('批准反结账：走原来的反结账，客人回到在店', async () => {
+  it('批准反结账：走原来的反结账，客人回到在店；同一编号重提返回同一结果、换内容拒绝、按编号查回', async () => {
     const r = await sale((t) => [{ method: 'cash', amount: t }]);
     const s = await api(ctx.app, ctx.clerk, 'POST', '/api/cashier-requests', { clientKey: randomUUID(), kind: 'void', checkoutId: r.res.body.id, reason: '收款方式记错' });
-    const a = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, {});
+    const key = randomUUID();
+    const a = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: key });
     expect(a.status, JSON.stringify(a.body)).toBe(200);
     expect(a.body.status).toBe('approved');
+    const again = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: key });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(again.body).toMatchObject({ id: s.body.id, status: 'approved', decidedAt: a.body.decidedAt });
+    const changed = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: key, refundShiftId: (await shiftOf(duty)).id });
+    expect(changed.status).toBe(409);
+    expect(changed.body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+    const found = (await api(ctx.app, duty, 'GET', `/api/frontdesk/ops/${key}?type=cashier_void_approve`)).body;
+    expect(found).toMatchObject({ found: true, type: 'cashier_void_approve', request: { id: s.body.id, status: 'approved' } });
+    const [audits] = await ctx.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM audit_logs WHERE action = 'cashier_request_decide' AND target_id = ${String(s.body.id)}`;
+    expect(audits!.n).toBe(1);
     const [c] = await ctx.sql<{ status: string; voidedBy: number; voidReason: string }[]>`SELECT status, voided_by, void_reason FROM checkouts WHERE id = ${r.res.body.id}`;
     expect(c).toMatchObject({ status: 'voided', voidedBy: dutyId });
     expect(c!.voidReason).toContain(s.body.requestNo);
     const [v] = await ctx.sql<{ status: string }[]>`SELECT status FROM visits WHERE id = ${r.visitId}`;
     expect(v!.status).toBe('open');
+  });
+
+  it('批准结果待确认时确认作废：原请求之后到了也不执行，申请留着可以重新批', async () => {
+    const r = await sale((t) => [{ method: 'cash', amount: t }]);
+    const s = await api(ctx.app, ctx.clerk, 'POST', '/api/cashier-requests', { clientKey: randomUUID(), kind: 'void', checkoutId: r.res.body.id, reason: '收款方式记错' });
+    const key = randomUUID();
+    expect((await api(ctx.app, ctx.clerk, 'POST', `/api/frontdesk/ops/${key}/abandon`, { type: 'cashier_void_approve' })).status).toBe(403);
+    const fenced = await api(ctx.app, duty, 'POST', `/api/frontdesk/ops/${key}/abandon`, { type: 'cashier_void_approve' });
+    expect(fenced.body).toEqual({ found: false, abandoned: true });
+    const late = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: key });
+    expect(late.status).toBe(409);
+    expect(late.body.error.code).toBe('OP_ABANDONED');
+    const [c] = await ctx.sql<{ status: string }[]>`SELECT status FROM checkouts WHERE id = ${r.res.body.id}`;
+    expect(c!.status).toBe('completed');
+    expect((await api(ctx.app, duty, 'GET', `/api/cashier-requests/${s.body.id}`)).body.status).toBe('pending');
+    const ok = await api(ctx.app, duty, 'POST', `/api/cashier-requests/${s.body.id}/approve`, { clientKey: randomUUID() });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
   });
 
   it('单子已经变了的申请批准时记失效、通知申请人', async () => {

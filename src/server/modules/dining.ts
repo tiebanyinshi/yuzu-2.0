@@ -397,7 +397,7 @@ export async function kitchenBoard(db: Db, deps: Deps): Promise<KitchenBoard> {
     SELECT p.id, p.kitchen_item_id, k.order_no, bl.name AS combo_name, p.name, p.swapped_from, p.quantity, p.station_id, s.name AS station_name, p.status,
            h.code AS tag_code, dt.name AS table_name,
            coalesce(m.name, nullif(v.guest_label, ''), tm.name, nullif(ts.guest_label, ''), '散客') AS guest,
-           k.note, k.order_note, p.created_at, p.started_at, p.done_at, coalesce(v.status, ts.status) <> 'open' AS visit_closed
+           k.note, k.order_note, p.created_at, p.started_at, p.done_at, coalesce(v.status, ts.status) <> 'open' AS visit_closed, k.hold
     FROM kitchen_item_parts p JOIN kitchen_items k ON k.id = p.kitchen_item_id JOIN bill_lines bl ON bl.id = k.bill_line_id
     JOIN kitchen_stations s ON s.id = p.station_id
     LEFT JOIN visits v ON v.id = k.visit_id LEFT JOIN hand_tags h ON h.id = v.tag_id LEFT JOIN members m ON m.id = v.member_id
@@ -513,7 +513,14 @@ export async function kitchenAction(
   id: number,
   action: KitchenAction,
   ctx: OpContext,
-  opts: { from?: KitchenStatus; servedOnly?: boolean; /** 8.2.30 分次上菜：这次上几份；不带 = 上齐 */ quantity?: number } = {},
+  opts: {
+    from?: KitchenStatus;
+    servedOnly?: boolean;
+    /** 8.2.30 分次上菜：这次上几份；不带 = 上齐 */
+    quantity?: number;
+    /** 8.2.30 分次上菜：页面看到的已上份数，与现在不同就拒绝（回复丢了重提、连点两下不会多上一份；Codex 审查 06b2eee） */
+    servedQty?: number;
+  } = {},
 ) {
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
@@ -525,6 +532,7 @@ export async function kitchenAction(
     const rules = await loadDiningRules(tx);
     const stale = () => conflict('DISH_CHANGED', '这道菜的状态刚刚变了，请刷新');
     if (opts.from && opts.from !== k.status) throw stale();
+    if (opts.servedQty !== undefined && opts.servedQty !== k.servedQty) throw stale();
     if (opts.servedOnly && (action === 'start' || action === 'done' || (action === 'undo' && k.status !== 'served'))) {
       throw new AppError(403, 'KITCHEN_ONLY', action === 'undo' ? '撤回出餐、撤回开始做由厨房在出品屏上操作' : '开始做、出餐由厨房在出品屏上操作');
     }
@@ -591,6 +599,11 @@ export async function kitchenPartAction(deps: Deps, id: number, action: PartActi
   await deps.sql.begin(async (tx) => {
     await setTxTimeouts(tx);
     const at = ctx.at ?? new Date();
+    // 8.2.30 等叫（Codex 审查 06b2eee）：套餐那一张在等叫时，别的档口的子项也不做。按「出品单 → 子项单」的顺序先给套餐那一张加 KEY SHARE
+    // （与标等叫的 FOR UPDATE 串行：标等叫时核对子项都还没开始做；不挡退菜的 FOR NO KEY UPDATE），再锁子项单
+    const [parent] = await tx<{ hold: boolean }[]>`
+      SELECT k.hold FROM kitchen_items k WHERE k.id = (SELECT kitchen_item_id FROM kitchen_item_parts WHERE id = ${id} AND store_id = ${currentStoreId()}) FOR KEY SHARE OF k`;
+    if (parent?.hold && (action === 'start' || action === 'done')) throw conflict('DISH_HELD', '这份套餐在等叫，服务员点「起菜」以后再做');
     const [p] = await tx<{ status: KitchenPartStatus; startedAt: string | null; split: boolean }[]>`
       SELECT status, started_at, split FROM kitchen_item_parts WHERE id = ${id} AND store_id = ${currentStoreId()} FOR UPDATE`;
     if (!p || !p.split) throw notFound('子项单不存在');
@@ -968,12 +981,19 @@ export function registerDiningRoutes(app: FastifyInstance, deps: Deps) {
 
   app.post('/api/kitchen/items/:id/:action', { preHandler: guardAny('dining.kitchen', 'dining.order') }, async (req) => {
     const { id, action } = parse(z.object({ id: z.coerce.number().int().positive(), action: z.enum(KITCHEN_ACTIONS, '操作不正确') }), req.params);
-    const { from, quantity } = parse(
-      z.object({ from: z.enum(KITCHEN_STATUSES).optional(), quantity: z.number('份数要是整数').int('份数要是整数').positive('份数要大于 0').optional() }),
+    const { from, quantity, servedQty } = parse(
+      z
+        .object({
+          from: z.enum(KITCHEN_STATUSES).optional(),
+          quantity: z.number('份数要是整数').int('份数要是整数').positive('份数要大于 0').optional(),
+          servedQty: z.number('已上份数要是整数').int('已上份数要是整数').min(0, '已上份数不能为负').optional(),
+        })
+        // 分次上菜要带上看到的已上份数：同一个请求到了两次只算一次（第二次已上份数对不上，DISH_CHANGED）
+        .refine((x) => x.quantity === undefined || x.servedQty !== undefined, '分次上菜要带上页面看到的已上份数，请刷新后重试'),
       req.body ?? {},
     );
     // 服务员（只有点单权限）只能点「上菜」与撤回上菜；开始做、出餐要厨房的岗位
-    await kitchenAction(deps, id, action, ctxOf(req), { from, quantity, servedOnly: !can(req.actor, 'dining.kitchen') });
+    await kitchenAction(deps, id, action, ctxOf(req), { from, quantity, servedQty, servedOnly: !can(req.actor, 'dining.kitchen') });
     return kitchenBoard(sql, deps);
   });
 

@@ -5,7 +5,20 @@ import { ArrowRight, Hourglass } from 'lucide-react';
 import { formatDateTime } from '../../lib/utils';
 import { Money } from '../../components/Money';
 import { useToast } from '../../components/Toast';
-import { CASHIER_OPS, FRONTDESK_OP_LABELS, isBookingOp, isRoomOp, isSpaceOp, isTableOp, isTechOp, isUsageOp, reconcilePending, useFrontdeskPendingForBanner, type FrontdeskPendingOp } from './pending';
+import {
+  CASHIER_OPS,
+  FRONTDESK_OP_LABELS,
+  isBookingOp,
+  isCashierApproval,
+  isRoomOp,
+  isSpaceOp,
+  isTableOp,
+  isTechOp,
+  isUsageOp,
+  reconcilePending,
+  useFrontdeskPendingForBanner,
+  type FrontdeskPendingOp,
+} from './pending';
 import { onReconnect } from '../../lib/connection';
 
 /**
@@ -111,6 +124,11 @@ export function FrontdeskPendingBanner() {
     if (isTechOp(op.type)) {
       if (op.technicianIds?.[0]) params.set('t', String(op.technicianIds[0]));
       navigate(`/crm/clockroom?${params}`);
+      return;
+    }
+    // 收银申请的批准（8.2.30）回到「收银申请」页，在那里查回、重提或作废
+    if (isCashierApproval(op)) {
+      navigate('/crm/cashier-requests');
       return;
     }
     // 退款单（v0.7.20）回到前台「结账记录」里的原结账单

@@ -13,14 +13,14 @@ import { formatYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
 import { useLivePoll } from '../../lib/livePoll';
 import { useCan, useSession } from '../../lib/session';
-import { cn, formatDateTime, uuid } from '../../lib/utils';
+import { cn, formatDateTime } from '../../lib/utils';
 import { PageHeader } from '../../components/AppShell';
 import { EmptyState } from '../../components/EmptyState';
 import { Money } from '../../components/Money';
 import { ReasonDialog } from '../../components/ReasonDialog';
 import { useToast } from '../../components/Toast';
 import { Badge, Button, Card, Input, Notice, SectionTitle, Segmented, Skeleton } from '../../components/ui';
-import { useFrontdeskOp, PendingPanel } from './pending';
+import { FRONTDESK_OP_LABELS, isCashierApproval, PendingPanel, useFrontdeskOp, useFrontdeskPending, type FrontdeskPendingOp } from './pending';
 
 const STATUS_TONE: Record<CashierRequestStatus, 'yuzu' | 'pine' | 'clay' | 'neutral'> = {
   pending: 'yuzu',
@@ -83,32 +83,73 @@ export function VoidRequestForm({ checkoutId, checkoutNo, onClose }: { checkoutI
   );
 }
 
+/** 批准的结果：退款申请查回的是退款单，反结账申请查回的是申请 */
+type Approved = { refundNo: string | null };
+
+/**
+ * 批准是一笔收款（退款、反结账退钱），照「结果待确认」（Codex 审查 06b2eee P1）：提交前把操作编号与原请求存进本机，
+ * 超时、断网、服务器出错时留着，查回 / 按原内容重新提交 / 确认作废；刷新页面、换到别的页面再回来也还在。
+ * 退款申请记作退款单（checkout_refund，编号就是开退款单的编号），反结账申请记作 cashier_void_approve。
+ */
+function useApproveOp(kind: CashierRequestView['kind'], checkoutId: number | null) {
+  const session = useSession();
+  return useFrontdeskOp<Approved>({
+    type: kind === 'refund' ? 'checkout_refund' : 'cashier_void_approve',
+    visitId: null,
+    checkoutId,
+    staffName: session.staff.displayName,
+    pick: (found) => (found.type === 'checkout_refund' ? { refundNo: found.refund.refundNo } : found.type === 'cashier_void_approve' ? found.request : null),
+  });
+}
+
+/** 申请卡片不在列表里了（已处理、换了标签页）但本机还有结果待确认的批准：在页面顶上处理 */
+function ApprovalPending({ op: p, onResolved }: { op: FrontdeskPendingOp; onResolved: () => void }) {
+  const toast = useToast();
+  const op = useApproveOp(p.type === 'checkout_refund' ? 'refund' : 'void', p.checkoutIds?.[0] ?? null);
+  if (!op.pending) return null;
+  return (
+    <div data-testid="approval-pending">
+      <PendingPanel
+        op={op}
+        onResolved={(x) => {
+          toast({ tone: 'success', title: '已查回：批准已生效', body: x.refundNo ? `退款单 ${x.refundNo}，只退了一次` : '只执行了一次，不用再批' });
+          onResolved();
+        }}
+      />
+    </div>
+  );
+}
+
 function RequestCard({ r, mode, onChanged }: { r: CashierRequestView; mode: 'todo' | 'mine'; onChanged: () => void }) {
   const toast = useToast();
-  const [busy, setBusy] = useState<'approve' | 'cancel' | null>(null);
+  const [busy, setBusy] = useState<'cancel' | null>(null);
   const [rejecting, setRejecting] = useState(false);
   const [rejectBusy, setRejectBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 退款申请批准时开退款单的操作编号：同一张卡上重试用同一个（服务端同一编号返回同一张退款单）
-  const [approveKey] = useState(uuid);
+  const op = useApproveOp(r.kind, mode === 'todo' ? r.checkoutId : null);
+  const url = `/api/cashier-requests/${r.id}/approve`;
+  // 同一张结账单上待确认的是这张申请的批准时在卡片上处理；是别的（以前那张申请的批准、直接开的退款单）时先去处理那一笔
+  const pendingHere = op.pending?.url === url;
   const cash = r.payments.find((p) => p.method === 'cash')?.amount ?? 0;
+  const approved = (x: Approved) => {
+    toast({
+      tone: 'success',
+      title: `已批准 ${r.requestNo}`,
+      body: r.kind === 'refund' ? `已开退款单 ${x.refundNo ?? ''}${cash ? `；现金 ${formatYuan(cash)} 从你当班的钱箱退` : ''}` : '已反结账，客人回到在店',
+    });
+    onChanged();
+  };
   const approve = async () => {
-    setBusy('approve');
     setError(null);
-    try {
-      const x = await api.post<CashierRequestView>(`/api/cashier-requests/${r.id}/approve`, r.kind === 'refund' ? { clientKey: approveKey } : {});
-      toast({
-        tone: 'success',
-        title: `已批准 ${x.requestNo}`,
-        body: r.kind === 'refund' ? `已开退款单 ${x.refundNo ?? ''}${cash ? `；现金 ${formatYuan(cash)} 从你当班的钱箱退` : ''}` : '已反结账，客人回到在店',
-      });
-      onChanged();
-    } catch (e) {
-      setError(errorMessage(e));
-      onChanged();
-    } finally {
-      setBusy(null);
-    }
+    const x = await op.submit((key) => ({
+      url,
+      body: { clientKey: key },
+      tagCodes: [],
+      summary: `批准${CASHIER_REQUEST_KIND_LABELS[r.kind]}申请 ${r.requestNo} · 结账单 ${r.checkoutNo}`,
+      amount: r.amount,
+    }));
+    if (x) approved(x);
+    else onChanged();
   };
   const cancel = async () => {
     setBusy('cancel');
@@ -159,12 +200,18 @@ function RequestCard({ r, mode, onChanged }: { r: CashierRequestView; mode: 'tod
         {r.refundNo ? ` · 退款单 ${r.refundNo}` : ''}
       </p>
       {r.decisionNote && r.status !== 'approved' && <p className={cn('mt-1 text-[12.5px] font-semibold', r.status === 'rejected' ? 'text-clay' : 'text-ink-2')}>{r.decisionNote}</p>}
-      {r.status === 'pending' && mode === 'todo' && (
+      {mode === 'todo' && pendingHere && (
+        <div className="mt-3" data-testid="approval-pending">
+          <PendingPanel op={op} onResolved={approved} />
+        </div>
+      )}
+      {mode === 'todo' && op.pending && !pendingHere && <Notice tone="warning" className="mt-3" title={`这张结账单上还有一笔${FRONTDESK_OP_LABELS[op.pending.type]}结果待确认，先处理那一笔再批`} />}
+      {r.status === 'pending' && mode === 'todo' && !op.pending && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button variant="primary" icon={<Check className="size-4" />} loading={busy === 'approve'} disabled={busy !== null} onClick={() => void approve()} data-testid="request-approve">
+          <Button variant="primary" icon={<Check className="size-4" />} loading={op.busy} disabled={busy !== null || op.locked} onClick={() => void approve()} data-testid="request-approve">
             批准并{r.kind === 'refund' ? '开退款单' : '反结账'}
           </Button>
-          <Button variant="ghost" icon={<X className="size-4" />} disabled={busy !== null} onClick={() => setRejecting(true)} data-testid="request-reject">
+          <Button variant="ghost" icon={<X className="size-4" />} disabled={busy !== null || op.locked} onClick={() => setRejecting(true)} data-testid="request-reject">
             驳回
           </Button>
           <span className="text-[12px] text-ink-3">批准时按此刻的数据再核对一次{cash || r.kind === 'void' ? '；退的现金记到你当班的钱箱，要先开班' : ''}。</span>
@@ -176,6 +223,7 @@ function RequestCard({ r, mode, onChanged }: { r: CashierRequestView; mode: 'tod
         </Button>
       )}
       {error && <Notice tone="error" title={error} className="mt-3" />}
+      {op.state.phase === 'error' && <Notice tone="error" title={op.state.message} className="mt-3" />}
       <ReasonDialog
         open={rejecting}
         title={`驳回 ${r.requestNo}`}
@@ -210,6 +258,9 @@ export function CashierRequestsPage() {
   );
   const focus = Number(params.get('r')) || null;
   const list = (q.data?.[tab] ?? []).slice().sort((a, b) => (a.id === focus ? -1 : b.id === focus ? 1 : 0));
+  // 本机结果待确认的批准：卡片还在「待我审批」里的在卡片上处理，其余（已处理、失效了的）在页面顶上处理
+  const shownTodo = new Set(tab === 'todo' ? list.map((r) => `/api/cashier-requests/${r.id}/approve`) : []);
+  const orphanApprovals = useFrontdeskPending().filter((p) => isCashierApproval(p) && !shownTodo.has(p.url));
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['cashier-requests'] });
     void qc.invalidateQueries({ queryKey: ['frontdesk'] });
@@ -222,6 +273,9 @@ export function CashierRequestsPage() {
         onChange={(v) => setTab(v as 'todo' | 'mine')}
         options={[...(approver ? [{ value: 'todo', label: `待我审批${q.data?.todo.length ? `（${q.data.todo.length}）` : ''}` }] : []), { value: 'mine', label: '我提交的' }]}
       />
+      {orphanApprovals.map((p) => (
+        <ApprovalPending key={p.key} op={p} onResolved={refresh} />
+      ))}
       {q.isPending ? (
         <Skeleton className="h-40" />
       ) : q.error ? (

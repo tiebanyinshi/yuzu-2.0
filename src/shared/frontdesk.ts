@@ -495,8 +495,8 @@ export type FrontdeskOpLookup =
   | { found: true; type: 'room_checkin' | 'room_extend' | 'room_deposit' | 'room_refund' | 'room_close'; stay: import('./rooms').StayDetail }
   | { found: true; type: 'usage_open' | 'usage_end' | 'usage_cancel'; usage: import('./usages').UsageDetail }
   | { found: true; type: 'checkout_refund'; refund: import('./checkout').RefundDetail }
-  /** 收银申请（8.2.30）：查回这张申请 */
-  | { found: true; type: 'cashier_request'; request: import('./cashier-v8230').CashierRequestView }
+  /** 收银申请（8.2.30）：提交、批准反结账申请的编号都查回这张申请 */
+  | { found: true; type: 'cashier_request' | 'cashier_void_approve'; request: import('./cashier-v8230').CashierRequestView }
   | { found: true; type: 'booking_create' | 'booking_change'; booking: import('./bookings').BookingDetail }
   /** 技师停牌、复牌、休假（8.0.8）：查回那位技师；页面按最新的钟房看板显示 */
   | { found: true; type: 'technician_state'; technicianId: number }

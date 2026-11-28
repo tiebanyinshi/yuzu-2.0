@@ -1,9 +1,10 @@
 -- 8.2.30 收银合并（店主 2026-11-27 评审 PR #68，设计见 docs/V8230_CASHIER.md）：
 --   · 港元现金（CM-2、CM-3）：收款方式照旧记「现金」、金额照旧是人民币分（营业额、实收、日结都按人民币）；
 --     收的是港元时另记客人实给的港元（港仙）、当时的汇率（每 1 港元折多少人民币，百万分之一）、折成人民币多少、找给客人的人民币；
---   · 班次的港元：应有港元与实点港元（交班时分币种对实点）；
+--   · 班次的港元：应有港元与实点港元（交班时分币种对实点）；交班盲点先提交的实点 shift_blind_counts；
 --   · 收银申请 cashier_requests（CM-5、CM-6）：没有权限的收银员申请退款单或反结账，有权限的人批准时按当时的数据重新核对再执行；
---   · 操作编号与「确认作废」追加 cashier_request（提交申请；在当时的约束上追加）。批准退款单的申请用退款单自己的操作编号。
+--   · 操作编号与「确认作废」追加 cashier_request（提交申请）、cashier_void_approve（批准反结账申请）；在当时的约束上追加。
+--     批准退款单的申请用退款单自己的操作编号（checkout_refund）。
 -- 风险已知：checkout_payments、shifts 只加可空的列（旧数据都是人民币，列为空）；新表只追加。回滚见 docs/rollback/760_cashier_v8230.down.sql。
 
 ALTER TABLE checkout_payments
@@ -43,6 +44,24 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+
+-- 交班盲点（CM-9；Codex 审查 06b2eee）：开了盲点的门店先提交实点、记在这里（只追加），之后接口才给当班的人看应有现金；
+-- 交班时实点要与这里一致（看到应有以后不能再改实点）
+CREATE TABLE shift_blind_counts (
+  shift_id     bigint PRIMARY KEY REFERENCES shifts (id),
+  counted_cash integer NOT NULL CHECK (counted_cash >= 0),
+  counted_hkd  integer CHECK (counted_hkd >= 0),
+  counted_by   bigint NOT NULL REFERENCES staff (id),
+  counted_at   timestamptz NOT NULL
+);
+COMMENT ON TABLE shift_blind_counts IS '8.2.30 交班盲点：看到应有现金之前提交的实点（实点现金：分；实点港元：港仙），只追加，交班时实点要与它一致';
+COMMENT ON COLUMN shift_blind_counts.counted_cash IS '提交的实点现金（分）';
+COMMENT ON COLUMN shift_blind_counts.counted_hkd IS '提交的实点港元（港仙）；本班次当时没收过港元为空';
+CREATE FUNCTION yuzu_shift_blind_count_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION '交班盲点的实点提交后不能修改、删除';
+END $$;
+CREATE TRIGGER shift_blind_counts_guard BEFORE UPDATE OR DELETE ON shift_blind_counts FOR EACH ROW EXECUTE FUNCTION yuzu_shift_blind_count_guard();
 
 CREATE TABLE cashier_requests (
   id            bigserial PRIMARY KEY,
@@ -106,7 +125,7 @@ BEGIN
     FROM pg_constraint WHERE conrelid = t::regclass AND conname = t || '_op_type_check';
     IF expression IS NULL THEN RAISE EXCEPTION '原操作类型约束不存在'; END IF;
     EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', t, t || '_op_type_check');
-    EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((%s) OR op_type = ANY (ARRAY[''cashier_request''::text]))',
+    EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((%s) OR op_type = ANY (ARRAY[''cashier_request''::text, ''cashier_void_approve''::text]))',
                    t, t || '_op_type_check', expression);
   END LOOP;
 END $$;

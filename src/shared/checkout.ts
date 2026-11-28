@@ -659,6 +659,13 @@ export interface ShiftRecord {
   drawerName: string | null;
   /** 班次上的人（加入、离开的时间） */
   members: ShiftMember[];
+  /** 交班盲点（8.2.30）：看到应有现金之前提交的实点；没提交为 null */
+  blindCount: { countedCash: number; countedHkd: number | null; countedAt: string } | null;
+  /**
+   * 交班盲点（8.2.30，Codex 审查 06b2eee）：门店开了盲点、还没提交实点时，接口不给当班的人看应有现金——
+   * 为 true 时汇总里的金额都记 0（只留笔数、备用金，收过港元的留 hkd.count），页面不显示金额
+   */
+  blind?: boolean;
 }
 
 /** 经营看板（S3.5） */

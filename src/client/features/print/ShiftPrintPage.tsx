@@ -37,7 +37,19 @@ export function ShiftPrintPage() {
 
 function ShiftSlip({ s }: { s: ShiftRecord }) {
   const session = useSession();
-  const tz = session.timezone;
+  // 交班盲点（8.2.30）：提交实点之前接口不给金额，不打预览
+  if (s.blind) {
+    return (
+      <div data-testid="print-shift-blind">
+        <SlipHeader title="交班表（预览）" />
+        <p className="text-center font-bold">店里开了交班盲点：先在交班页提交实点，再打印交班表</p>
+      </div>
+    );
+  }
+  return <ShiftSlipBody s={s} tz={session.timezone} />;
+}
+
+function ShiftSlipBody({ s, tz }: { s: ShiftRecord; tz: string }) {
   const sum = s.summary as Summary;
   const closed = s.status === 'closed';
   const diff = closed && s.countedCash !== null && s.expectedCash !== null ? s.countedCash - s.expectedCash : null;
