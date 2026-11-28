@@ -215,7 +215,8 @@ Page({
         this.showPending();
         return this.setData({ actionError: '上一次处理还没确定：先点「再提交一次」，拿到结果再说' });
       }
-      if (r.status === 'ok') {
+      if (r.status === 'ok' || r.status === 'confirmed') {
+        // confirmed：门店系统查到那一次已经办了（拿不回当时的结果），与办好了一样，重新取这张单
         wx.showToast({ title: op.label === '催办' ? '已催办' : `已${op.label}`, icon: 'success', duration: 1500 });
         this.setData({ comment: '', pending: '' });
         await this.load();

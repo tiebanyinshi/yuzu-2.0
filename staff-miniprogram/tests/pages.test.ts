@@ -57,6 +57,13 @@ describe('页面与组件', () => {
     }
   });
 
+  it('起了 setInterval 的页面都有 onUnload（reLaunch 换掉页面时不走 onHide，计时器要在这里停）', () => {
+    for (const u of app.pages) {
+      const ts = read(join(SRC, `${u}.ts`));
+      if (/\bsetInterval\(/.test(ts)) expect(/\bonUnload\s*\(/.test(ts), u).toBe(true);
+    }
+  });
+
   it('标签栏页面在 pages 里，图标存在且不超过 40KB', () => {
     for (const t of app.tabBar.list) {
       expect(app.pages).toContain(t.pagePath);

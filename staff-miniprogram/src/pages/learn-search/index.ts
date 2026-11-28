@@ -54,6 +54,13 @@ Page({
     this.search(q, true);
   },
 
+  onUnload() {
+    // 离开时等着的那一次不搜了，正在搜的回来也不认
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    seq += 1;
+  },
+
   onClear() {
     // 等着的那一次不搜了，正在搜的回来也不认
     if (timer !== null) clearTimeout(timer);

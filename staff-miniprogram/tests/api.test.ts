@@ -52,6 +52,37 @@ describe('要登录的接口', () => {
     }
   });
 
+  it('几个请求一起 401：只悄悄重新登录一次，登录上了都用新令牌重发（不把人赶去登录页；独立复查）', async () => {
+    saveToken('old', 7);
+    let logins = 0;
+    setRelogin(async () => {
+      logins += 1;
+      await new Promise((r) => setTimeout(r, 0));
+      saveToken('new', 7);
+      return true;
+    });
+    const unauthorized = { status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } };
+    fake.reply(unauthorized, unauthorized, unauthorized, { status: 200, data: { n: 1 } }, { status: 200, data: { n: 2 } }, { status: 200, data: { n: 3 } });
+    const out = await Promise.all([call('GET', '/a'), call('GET', '/b'), call('GET', '/c')]);
+    expect(out).toHaveLength(3);
+    expect(logins).toBe(1);
+    expect(fake.sent.slice(3).map((x) => x.header.authorization)).toEqual(['Bearer new', 'Bearer new', 'Bearer new']);
+  });
+
+  it('悄悄重新登录刚失败过：几秒内别的请求不再一个一个重新登录一遍', async () => {
+    saveToken('old', 7);
+    let logins = 0;
+    setRelogin(async () => {
+      logins += 1;
+      return false;
+    });
+    const unauthorized = { status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } };
+    fake.reply(unauthorized);
+    await expect(call('GET', '/a')).rejects.toMatchObject({ status: 401 });
+    await expect(call('GET', '/b')).rejects.toMatchObject({ status: 401 });
+    expect(logins).toBe(1);
+  });
+
   it('重新登录不了（没绑微信、主动退出过）：抛 401 交给页面去登录页', async () => {
     saveToken('old');
     setRelogin(async () => false);

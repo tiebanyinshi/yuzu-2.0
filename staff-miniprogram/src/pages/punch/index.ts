@@ -263,6 +263,12 @@ Page({
       await this.load();
       return;
     }
+    if (r.status === 'confirmed') {
+      // 门店系统查到那一次已经打上了（拿不回当时的结果）：重新取今天的打卡
+      this.setData({ result: '那一次已经打上了（门店系统查到了），下面是今天的打卡记录', resultLate: false, pending: null, outwork: false, outworkReason: '', outworkPhoto: '' });
+      await this.load();
+      return;
+    }
     if (r.status === 'rejected') {
       const e = r.error;
       if (isApiError(e) && e.code === 'LOCATION_OUT' && this.data.view?.outworkAllowed) {

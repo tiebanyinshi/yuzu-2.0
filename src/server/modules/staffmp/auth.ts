@@ -48,6 +48,11 @@ export async function issueSession(sql: Sql, staffId: number, bindingId: number 
       if (!live) return null;
     }
     const token = await createSession(tx, staffId, ttlHours, { ip: meta.ip, userAgent: `staffmp ${meta.userAgent ?? ''}`.trim() });
+    // 门店定在登录这一刻最近用过的那家（SP09「登录进最近用过的门店」）：之后在 WCP 网页上换门店，员工小程序这个会话不跟着变
+    // （小程序里没有换门店；不定住的话，没确定的打卡按原来的门店原样重提会一直被 STORE_SWITCHED 挡下）
+    const [reach] = await tx<{ storeIds: number[] }[]>`SELECT ${storeIdsOf(tx)} AS store_ids FROM staff st WHERE st.id = ${staffId}`;
+    const store = reach?.storeIds?.[0];
+    if (store != null) await tx`UPDATE sessions SET store_id = ${store} WHERE token_hash = ${hashSessionToken(token)}`;
     await tx`INSERT INTO staffmp_sessions (token_hash, staff_id, binding_id) VALUES (${hashSessionToken(token)}, ${staffId}, ${bindingId})`;
     return token;
   });

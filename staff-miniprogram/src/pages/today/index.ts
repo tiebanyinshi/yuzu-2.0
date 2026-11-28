@@ -123,6 +123,15 @@ Page({
   },
 
   onHide() {
+    this.stop();
+  },
+
+  /** 被 reLaunch 换掉（去登录页、改密码页）时不走 onHide：计时器也要停，不然死掉的这一页还每 5 分钟去取、新开的这一页又起不了计时器 */
+  onUnload() {
+    this.stop();
+  },
+
+  stop() {
     if (ticker !== null) clearInterval(ticker);
     ticker = null;
     // 离开时还在取的不再画（回来再取）

@@ -96,7 +96,9 @@ export type SendOutcome<T> =
   | { status: 'unknown'; error: unknown }
   | { status: 'signed_out'; error: unknown }
   | { status: 'blocked'; pending: PendingOp }
-  | { status: 'not_sent' };
+  | { status: 'not_sent' }
+  /** 门店系统查到前一次已经办了（作废时回 found），但这次原样重提拿不回原来的结果（例如门店换了）：算办好了；refId 是那一笔（审批单编号、打卡编号） */
+  | { status: 'confirmed'; refId: number | null };
 
 /**
  * 发一次写操作（第一次或原样重提）：同一处还留着另一笔没确定的就不发（blocked）；先存再发，存不下就不发（not_sent）；
@@ -115,8 +117,9 @@ export async function sendPending<T>(op: PendingOp): Promise<SendOutcome<T>> {
     if (isApiError(e) && e.status === 401) return { status: 'signed_out', error: e };
     if (isRejected(e)) {
       const resend = !!before && before.key === op.key;
-      if (resend && isApiError(e) && GATE_CODES.indexOf(e.code) >= 0) return { status: 'unknown', error: e };
       const type = FENCE_TYPES[op.kind];
+      // 换了门店（STORE_SWITCHED）：能作废的照样先作废原编号再下结论（不然换了门店以后这一笔永远定不下来）；别的关卡留着
+      if (resend && isApiError(e) && GATE_CODES.indexOf(e.code) >= 0 && !(type && e.code === 'STORE_SWITCHED')) return { status: 'unknown', error: e };
       if (resend && type) return settleRejectedResend<T>(op, type, e);
       clearPending(op.staffId, op.kind, op.ref);
       return { status: 'rejected', error: e };
@@ -131,9 +134,9 @@ export async function sendPending<T>(op: PendingOp): Promise<SendOutcome<T>> {
  * 作废本身没有明确结果、或两样都不是：留着（unknown），等下次原样重提
  */
 async function settleRejectedResend<T>(op: PendingOp, type: string, rejection: unknown): Promise<SendOutcome<T>> {
-  let fenced: { found?: boolean; abandoned?: boolean };
+  let fenced: { found?: boolean; abandoned?: boolean; refId?: number };
   try {
-    fenced = await call<{ found?: boolean; abandoned?: boolean }>('POST', `/ops/${op.key}/abandon`, { type });
+    fenced = await call<{ found?: boolean; abandoned?: boolean; refId?: number }>('POST', `/ops/${op.key}/abandon`, { type });
   } catch (e) {
     if (isApiError(e) && e.status === 401) return { status: 'signed_out', error: e };
     return { status: 'unknown', error: rejection };
@@ -145,6 +148,11 @@ async function settleRejectedResend<T>(op: PendingOp, type: string, rejection: u
       return { status: 'ok', data };
     } catch (e) {
       if (isApiError(e) && e.status === 401) return { status: 'signed_out', error: e };
+      // 门店系统已经说了前一次办了：这次拿不回原来的结果（例如换了门店，打卡先核对门店）也算办好了，不再留着
+      if (isRejected(e)) {
+        clearPending(op.staffId, op.kind, op.ref);
+        return { status: 'confirmed', refId: typeof fenced.refId === 'number' ? fenced.refId : null };
+      }
       return { status: 'unknown', error: e };
     }
   }

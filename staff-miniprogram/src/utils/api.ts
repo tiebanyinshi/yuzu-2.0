@@ -173,17 +173,24 @@ let relogin: (() => Promise<boolean>) | null = null;
 let relogging: Promise<boolean> | null = null;
 export function setRelogin(fn: (() => Promise<boolean>) | null): void {
   relogin = fn;
+  reloginFailedAt = 0;
 }
+/** 上一次悄悄重新登录没成功的时刻：几个请求一起 401 时，后面的不再一个一个重新登录一遍 */
+let reloginFailedAt = 0;
+const RELOGIN_COOLDOWN_MS = 5000;
 function reloginOnce(): Promise<boolean> {
   if (!relogin) return Promise.resolve(false);
   if (!relogging) {
+    if (Date.now() - reloginFailedAt < RELOGIN_COOLDOWN_MS) return Promise.resolve(false);
     relogging = relogin().then(
       (v) => {
         relogging = null;
+        if (!v) reloginFailedAt = Date.now();
         return v;
       },
       () => {
         relogging = null;
+        reloginFailedAt = Date.now();
         return false;
       },
     );
@@ -211,7 +218,10 @@ export async function call<T>(method: Method, path: string, body?: Record<string
       // 这个令牌确实不认了：清掉、悄悄重新登录一次（只认同一个人，session.ts 的 silentRelogin）
       clearToken();
       if ((await reloginOnce()) && same()) r = await sendWithBusyRetry(method, path, body, currentToken());
-    } else if (currentToken() && same()) {
+    } else if (!currentToken()) {
+      // 几个请求一起 401：前面那个已经清掉旧令牌、正在悄悄重新登录——等它（同一次），登录上了还是这个人就重发
+      if ((await reloginOnce()) && same()) r = await sendWithBusyRetry(method, path, body, currentToken());
+    } else if (same()) {
       // 这期间别的请求已经给同一个人换上了新令牌：用新的重发，不清掉它；换了人的不重发（交给页面去登录）
       r = await sendWithBusyRetry(method, path, body, currentToken());
     }

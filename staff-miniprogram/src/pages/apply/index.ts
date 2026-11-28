@@ -267,6 +267,18 @@ Page({
         }, 600);
         return;
       }
+      if (r.status === 'confirmed') {
+        // 门店系统查到那一次已经交上了：与交上了一样（表单清空、去那张单；没有编号的去我的申请）
+        done = true;
+        values = {};
+        if (me) clearDraft(me.staff.id, t.code);
+        wx.showToast({ title: '已经交上了', icon: 'success', duration: 1500, mask: true });
+        const url = r.refId ? `/pages/approval/index?id=${r.refId}` : '/pages/approvals/index';
+        setTimeout(() => {
+          if (alive) wx.redirectTo({ url });
+        }, 600);
+        return;
+      }
       if (r.status === 'rejected') {
         this.setData({ submitError: messageOf(r.error) });
         this.showPending();

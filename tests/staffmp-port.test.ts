@@ -113,6 +113,26 @@ describe('账号密码登录', () => {
     expect((await s('GET', '/api/staffmp/training/folders', r.body.token)).status).toBe(200);
   });
 
+  it('多门店的员工：门店定在登录这一刻最近用过的那家，之后在网页上换门店不跟着变（独立复查：没确定的打卡重提不会一直撞 STORE_SWITCHED）', async () => {
+    const id = await hire('twostore', '两家店的');
+    await ctx.sql`UPDATE staff SET needs_position = false WHERE id = ${id}`;
+    const [entity] = await ctx.sql<{ id: number }[]>`SELECT entity_id AS id FROM stores WHERE id = 1`;
+    const [store2] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('TS2', '第二家', ${entity!.id}) RETURNING id`;
+    const second = Number(store2!.id);
+    await ctx.sql`INSERT INTO staff_stores (staff_id, store_id, last_used_at) VALUES (${id}, 1, now()), (${id}, ${second}, now() - interval '1 day')`;
+    const r = await pwLogin('twostore');
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.me.store.id).toBe(1);
+    // 网页上换到第二家（switchStore 记下最近用过）：员工小程序这个会话还是第一家
+    await ctx.sql`UPDATE staff_stores SET last_used_at = now() + interval '1 minute' WHERE staff_id = ${id} AND store_id = ${second}`;
+    expect((await s('GET', '/api/staffmp/me', r.body.token)).body.store.id).toBe(1);
+    // 新登录的会话按那时最近用过的
+    expect((await pwLogin('twostore')).body.me.store.id).toBe(second);
+    // 第一家不让进了：这个会话退到能进的那家
+    await ctx.sql`DELETE FROM staff_stores WHERE staff_id = ${id} AND store_id = 1`;
+    expect((await s('GET', '/api/staffmp/me', r.body.token)).body.store.id).toBe(second);
+  });
+
   it('不带令牌、网页的会话令牌在员工小程序端口上都不认', async () => {
     expect((await s('GET', '/api/staffmp/me')).status).toBe(401);
     const webToken = ctx.clerk.replace(/^yuzu_sid=/, '').split(';')[0]!;

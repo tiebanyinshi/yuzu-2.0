@@ -126,7 +126,12 @@ export async function wechatCode(): Promise<string> {
 
 // ── 登录 ──
 
+/** 第几次登录、主动退出：登录、退出时加一，之前开始的悄悄重新登录回来对不上就作废（不把人又登录回去、不盖掉别人刚登录的） */
+let authGen = 0;
+
 function signedIn(token: string, next: StaffMpMe): void {
+  // 登录了一次：之前开始、还没回来的悄悄重新登录作废（不把晚回来的上一位盖到这次登录的人身上）
+  authGen += 1;
   saveToken(token, next.staff.id);
   remove(SIGNED_OUT_KEY);
   setMe(next);
@@ -188,8 +193,6 @@ export function updateMe(next: StaffMpMe): void {
  *   · 退出并解开：解开要确认——没收到回复时问门店系统「这个微信还绑着没有」，还绑着或问不到就报错、手机上不退出
  *     （不然别人拿这台手机还能一键进），员工连上以后再点一次
  */
-/** 第几次「主动退出」：退出时加一，之前开始的悄悄重新登录回来对不上就作废（不把人又登录回去） */
-let authGen = 0;
 
 export async function logout(unbind: boolean): Promise<void> {
   let failure: unknown = null;
@@ -235,7 +238,7 @@ export async function silentRelogin(): Promise<boolean> {
   if (!i.wechat) return false;
   const r = await publicCall<StaffMpWechatReply>('POST', '/auth/wechat', { code: await wechatCode(), mode: 'login' });
   if (r.status !== 'ok') return false;
-  // 这期间员工主动退出了：这个会话不要了（退掉），不把人又登录回去
+  // 这期间员工主动退出了、或者有人登录了（同一个人、别人都算）：这个会话不要了（退掉），不把人又登录回去、不盖掉刚登录的
   if (gen !== authGen || signedOut()) {
     try {
       await callAs(r.token, 'POST', '/auth/logout', { unbind: false });

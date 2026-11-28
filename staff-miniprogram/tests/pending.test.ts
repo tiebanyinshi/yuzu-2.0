@@ -73,8 +73,8 @@ describe('结果待确认', () => {
   it('原样重提被关卡挡下（要先改密码、换了门店、没权限）：不能断定之前那次没生效，留着', async () => {
     fake.reply({ status: 0, fail: true });
     expect((await sendPending(op())).status).toBe('unknown');
-    for (const code of ['PASSWORD_CHANGE_REQUIRED', 'POSITION_REQUIRED', 'STORE_SWITCHED', 'FORBIDDEN']) {
-      fake.reply({ status: code === 'STORE_SWITCHED' ? 409 : 403, data: { error: { code, message: code } } });
+    for (const code of ['PASSWORD_CHANGE_REQUIRED', 'POSITION_REQUIRED', 'FORBIDDEN']) {
+      fake.reply({ status: 403, data: { error: { code, message: code } } });
       expect((await sendPending(op())).status, code).toBe('unknown');
       expect(loadPending(7, 'punch'), code).toMatchObject({ key: 'k-1' });
     }
@@ -114,6 +114,30 @@ describe('结果待确认', () => {
       expect(loadPending(7, 'approval_act', 12)).toMatchObject({ key: 'k-1' });
     }
     expect(fake.sent.filter((s) => s.url.includes('/ops/')).map((s) => s.data)).toEqual([0, 1, 2].map(() => ({ type: 'oa_approval_act' })));
+  });
+
+  it('原样重提撞上「换了门店」：打卡、申请、审批也先作废原编号——办了的算办好了（拿不回原来的结果），没办的算被拒（独立复查）', async () => {
+    const switched = { status: 409, data: { error: { code: 'STORE_SWITCHED', message: '这次打卡是在别的门店的页面上发的' } } };
+    // 前一次已经打上了：作废回 found，再重提照旧被门店挡下 → 算办好了，删掉这一笔
+    fake.reply({ status: 0, fail: true });
+    expect((await sendPending(op())).status).toBe('unknown');
+    fake.reply(switched, { status: 200, data: { found: true, abandoned: false, refId: 41 } }, switched);
+    expect(await sendPending(op())).toEqual({ status: 'confirmed', refId: 41 });
+    expect(loadPending(7, 'punch')).toBeNull();
+    // 前一次没办：作废登记上 → 算被拒，删掉，交出门店的话
+    fake.reply({ status: 0, fail: true });
+    expect((await sendPending(op({ key: 'k-2', body: { clientKey: 'k-2', storeId: 1 } }))).status).toBe('unknown');
+    fake.reply(switched, { status: 200, data: { found: false, abandoned: true } });
+    const r = await sendPending(op({ key: 'k-2', body: { clientKey: 'k-2', storeId: 1 } }));
+    expect(r.status === 'rejected' && (r.error as { code: string }).code).toBe('STORE_SWITCHED');
+    expect(loadPending(7, 'punch')).toBeNull();
+    // 学堂的（没有作废）撞上换了门店：照旧留着
+    const quiz = op({ kind: 'academy_quiz', ref: 3, key: 'k-3', path: '/academy/lessons/3/quiz', body: { clientKey: 'k-3' } });
+    fake.reply({ status: 0, fail: true });
+    expect((await sendPending(quiz)).status).toBe('unknown');
+    fake.reply(switched);
+    expect((await sendPending(quiz)).status).toBe('unknown');
+    expect(loadPending(7, 'academy_quiz', 3)).toMatchObject({ key: 'k-3' });
   });
 
   it('学堂的几样没有作废：原样重提被拒就算被拒', async () => {

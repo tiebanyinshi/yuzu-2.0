@@ -261,6 +261,40 @@ describe('退出与悄悄重新登录撞在一起', () => {
     const last = fake.sent[fake.sent.length - 1]!;
     expect([last.url.endsWith('/auth/logout'), last.header.authorization]).toEqual([true, 'Bearer tok2']);
   });
+
+  it('悄悄重新登录还没回来时别人在登录页登录了：晚回来的上一位不盖掉这次登录的人（独立复查）', async () => {
+    const { fake, session, api } = await load();
+    fake.reply(INFO(), { status: 200, data: { status: 'ok', token: 'tokA', me: ME } });
+    await session.wechatLogin();
+    const wx = (globalThis as unknown as { wx: { request: (o: { url: string }) => void } }).wx;
+    const original = wx.request;
+    let held: (() => void) | null = null;
+    fake.reply({ status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } });
+    wx.request = (o) => {
+      if (o.url.endsWith('/auth/wechat')) {
+        held = () => original(o as never);
+        return;
+      }
+      original(o as never);
+    };
+    const pending = api.call('POST', '/oa/attendance/punch', { clientKey: 'k' }).catch((e: unknown) => e);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(held).not.toBeNull();
+    // 页面去了登录页，B 用账号密码登录（不绑微信）
+    const B = { ...ME, staff: { id: 3, displayName: '乙' } };
+    fake.reply({ status: 200, data: { token: 'tokB', me: B, bound: false, bindError: null } });
+    await session.passwordLogin('b', 'pw', { bind: false, replace: false });
+    // A 的微信登录这时才回来：作废、退掉，不盖掉 B
+    wx.request = original;
+    fake.reply({ status: 200, data: { status: 'ok', token: 'tokA2', me: ME } }, { status: 200, data: { ok: true } });
+    held!();
+    await expect(pending).resolves.toMatchObject({ status: 401 });
+    expect(fake.storage.get('wcp_token')).toBe('tokB');
+    expect(session.currentMe()?.staff.id).toBe(3);
+    expect(fake.sent.filter((x) => x.url.endsWith('/oa/attendance/punch'))).toHaveLength(1);
+    const last = fake.sent[fake.sent.length - 1]!;
+    expect([last.url.endsWith('/auth/logout'), last.header.authorization]).toEqual([true, 'Bearer tokA2']);
+  });
 });
 
 describe('门店系统说先改密码、先选岗位', () => {
