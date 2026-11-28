@@ -105,21 +105,37 @@ export async function restoreAllLimits(deps: Deps, ctx: OpContext): Promise<{ re
  * 只读；页面用浏览器打印（贴纸打印机当普通打印机用），退了的不打
  */
 export async function cupLabels(db: Db, orderNo: string): Promise<CupLabels> {
-  const rows = await db<{ name: string; note: string; quantity: number; tagCode: string | null; tableName: string | null; createdAt: Date; outlet: string | null }[]>`
-    SELECT bl.name, k.note, k.quantity, h.code AS tag_code, dt.name AS table_name, k.created_at,
+  const all = await db<
+    { billLineId: number; addonOf: number | null; name: string; note: string; quantity: number; tagCode: string | null; tableName: string | null; createdAt: Date; outlet: string | null }[]
+  >`
+    SELECT bl.id AS bill_line_id, bl.addon_of, bl.name, k.note, k.quantity, h.code AS tag_code, dt.name AS table_name, k.created_at,
            (SELECT si.dining_outlet FROM service_items si WHERE si.id = k.item_id) AS outlet
     FROM kitchen_items k JOIN bill_lines bl ON bl.id = k.bill_line_id
     LEFT JOIN visits v ON v.id = k.visit_id LEFT JOIN hand_tags h ON h.id = v.tag_id
     LEFT JOIN table_sessions ts ON ts.id = k.table_session_id LEFT JOIN dining_tables dt ON dt.id = ts.table_id
     WHERE k.order_no = ${orderNo} AND k.store_id = ${currentStoreId()} AND k.status <> 'cancelled'
     ORDER BY k.id`;
+  // 加料（bill_lines.addon_of，Codex 审查 e7132c4）：加料也进水吧的出品单，但不是一杯——不单独出杯贴，写进它那杯饮品的杯贴；
+  // 杯数只按饮品本身算。前台挂账（frontdesk/bills.ts）与桌台点单（tables.ts）都把加料记成挂在主菜那一行上的明细
+  const rows = all.filter((r) => r.addonOf === null);
   if (!rows.length) throw notFound('这一单没有能打杯贴的饮品');
+  const addons = await db<{ addonOf: number; name: string; quantity: number }[]>`
+    SELECT addon_of, name, quantity FROM bill_lines WHERE addon_of IN ${db(rows.map((r) => r.billLineId))} AND status = 'active' ORDER BY id`;
+  const addonText = (r: (typeof rows)[number]) => {
+    const mine = addons.filter((a) => Number(a.addonOf) === Number(r.billLineId));
+    if (!mine.length) return '';
+    // 加料的份数是整行的（几杯一共加了几份）：能按杯平分的写每杯几份
+    return `加${mine.map((a) => (a.quantity % r.quantity === 0 ? (a.quantity / r.quantity > 1 ? `${a.name}×${a.quantity / r.quantity}` : a.name) : `${a.name}（共 ${a.quantity} 份）`)).join('、')}`;
+  };
   // 一单里有水吧的饮品就只打水吧的（同一单可能还点了菜）；都没设点单分类的照全部打
   const drinks = rows.some((r) => r.outlet === 'water') ? rows.filter((r) => r.outlet === 'water') : rows;
   const [p] = await db<{ pickupNo: number }[]>`SELECT pickup_no FROM pickup_tickets WHERE order_no = ${orderNo}`;
   const total = drinks.reduce((n, r) => n + r.quantity, 0);
   const labels: CupLabels['labels'] = [];
-  for (const r of drinks) for (let i = 0; i < r.quantity; i += 1) labels.push({ name: r.name, note: r.note, seq: labels.length + 1 });
+  for (const r of drinks) {
+    const note = [r.note, addonText(r)].filter(Boolean).join('，');
+    for (let i = 0; i < r.quantity; i += 1) labels.push({ name: r.name, note, seq: labels.length + 1 });
+  }
   const first = drinks[0]!;
   return {
     orderNo,

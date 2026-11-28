@@ -769,6 +769,16 @@ export async function closeShift(deps: Deps, id: number, raw: unknown, ctx: OpCo
         pay,
       );
     }
+    // 交班盲点（8.2.30）：开了盲点的先提交实点（看到应有之前），交班时实点要与提交的一致；提交以后才收的港元（提交时没有港元）照填。
+    // 放在核对应有现金之前（Codex 审查 e7132c4）：SHIFT_CHANGED 的 details 带着应有现金、应有港元，没提交实点的不能先看到
+    const [blindCount] = await tx<{ countedCash: number; countedHkd: number | null }[]>`SELECT counted_cash, counted_hkd FROM shift_blind_counts WHERE shift_id = ${s.id}`;
+    if (!blindCount && (await shiftBlindOn(tx))) throw conflict('BLIND_COUNT_REQUIRED', '店里开了交班盲点：请先提交实点，再确认交班');
+    if (
+      blindCount &&
+      (Number(blindCount.countedCash) !== input.countedCash || (blindCount.countedHkd !== null && input.countedHkd !== undefined && Number(blindCount.countedHkd) !== input.countedHkd))
+    ) {
+      throw conflict('BLIND_COUNT_MISMATCH', '实点要与提交的一致（交班盲点提交以后不能再改实点），请刷新');
+    }
     const summary = await shiftSummary(tx, s, at);
     if (summary.cash.expected !== input.expectedCash) {
       throw conflict('SHIFT_CHANGED', '交班期间又有收款，应有现金已变化，请刷新后重新核对', { expectedCash: summary.cash.expected });
@@ -782,12 +792,6 @@ export async function closeShift(deps: Deps, id: number, raw: unknown, ctx: OpCo
       throw badRequest('这个班次没有收过港元，不用填实点港元');
     }
     const countedHkd = expectedHkd === null ? null : input.countedHkd!;
-    // 交班盲点（8.2.30）：开了盲点的先提交实点（看到应有之前），交班时实点要与提交的一致；提交以后才收的港元（提交时没有港元）照填
-    const [blindCount] = await tx<{ countedCash: number; countedHkd: number | null }[]>`SELECT counted_cash, counted_hkd FROM shift_blind_counts WHERE shift_id = ${s.id}`;
-    if (!blindCount && (await shiftBlindOn(tx))) throw conflict('BLIND_COUNT_REQUIRED', '店里开了交班盲点：请先提交实点，再确认交班');
-    if (blindCount && (Number(blindCount.countedCash) !== input.countedCash || (blindCount.countedHkd !== null && Number(blindCount.countedHkd) !== countedHkd))) {
-      throw conflict('BLIND_COUNT_MISMATCH', '实点要与提交的一致（交班盲点提交以后不能再改实点），请刷新');
-    }
     await tx`
       UPDATE shifts SET status = 'closed', ended_at = ${at}, expected_cash = ${summary.cash.expected}, counted_cash = ${input.countedCash},
                         expected_hkd = ${expectedHkd}, counted_hkd = ${countedHkd},
@@ -846,26 +850,26 @@ export function registerShiftRoutes(app: FastifyInstance, deps: Deps) {
     return blindView(sql, req.actor, shift);
   });
 
-  app.post('/api/shifts', { preHandler: guard('ledger.readToday') }, async (req) => startShift(deps, req.body, ctxOf(req)));
+  app.post('/api/shifts', { preHandler: guard('ledger.readToday') }, async (req) => blindView(sql, req.actor, await startShift(deps, req.body, ctxOf(req))));
 
   app.post('/api/shifts/:id/join', { preHandler: guard('ledger.readToday') }, async (req) => {
     const { id } = parse(idParam, req.params);
-    return joinShift(deps, id, ctxOf(req));
+    return blindView(sql, req.actor, await joinShift(deps, id, ctxOf(req)));
   });
 
   app.post('/api/shifts/:id/leave', { preHandler: guard('ledger.readToday') }, async (req) => {
     const { id } = parse(idParam, req.params);
-    return leaveShift(deps, id, ctxOf(req));
+    return blindView(sql, req.actor, await leaveShift(deps, id, ctxOf(req)));
   });
 
   // 交班盲点（8.2.30）：先提交实点，之后才给看应有现金
   app.post('/api/shifts/:id/blind-count', { preHandler: guard('ledger.readToday') }, async (req) => {
     const { id } = parse(idParam, req.params);
-    return submitBlindCount(deps, id, req.body, ctxOf(req));
+    return blindView(sql, req.actor, await submitBlindCount(deps, id, req.body, ctxOf(req)));
   });
 
   app.post('/api/shifts/:id/close', { preHandler: guard('ledger.readToday') }, async (req) => {
     const { id } = parse(idParam, req.params);
-    return closeShift(deps, id, req.body, ctxOf(req));
+    return blindView(sql, req.actor, await closeShift(deps, id, req.body, ctxOf(req)));
   });
 }

@@ -155,7 +155,7 @@ describe('港元现金', () => {
     const stale = await api(ctx.app, ctx.clerk, 'POST', `/api/shifts/${s.id}/close`, {
       countedCash: s.summary.cash.expected,
       expectedCash: s.summary.cash.expected,
-      countedHkd: 60000,
+      countedHkd: 59000,
       expectedHkd: 50000,
     });
     expect(stale.status).toBe(409);

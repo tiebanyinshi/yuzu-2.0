@@ -188,4 +188,42 @@ describe('杯贴', () => {
     ]);
     expect((await api(ctx.app, ctx.clerk, 'GET', '/api/dining/cup-labels/NO-SUCH')).status).toBe(404);
   });
+
+  it('加料不单独算一杯，写进它那杯饮品的杯贴（桌台点单与前台点单两条路）', async () => {
+    const st = await api(ctx.app, ctx.owner, 'POST', '/api/admin/dining/stations', { name: '饮品' });
+    const bar = st.body.stations.find((s: { name: string }) => s.name === '饮品').id;
+    const make = async (body: Record<string, unknown>) => {
+      const r = await api(ctx.app, ctx.owner, 'POST', '/api/dining/dishes', { clientKey: randomUUID(), category: '饮品', slot: 'water:手作饮料', stationId: bar, ...body });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      return r.body.dish.id as number;
+    };
+    const pearl = await make({ name: '珍珠', prices: { standard: 200 } });
+    const tea = await make({ name: '奶茶', prices: { standard: 1500 }, addons: [pearl] });
+    const lines = [
+      { itemId: tea, quantity: 2 },
+      { itemId: pearl, quantity: 2, addonOf: 0 },
+    ];
+    const check = async (where: { visitId?: number; sessionId?: number }, place: string) => {
+      const [k] = await ctx.sql<{ orderNo: string }[]>`
+        SELECT k.order_no FROM kitchen_items k JOIN bill_lines l ON l.id = k.bill_line_id
+        WHERE l.name = '奶茶' AND ${where.visitId ? ctx.sql`k.visit_id = ${where.visitId}` : ctx.sql`k.table_session_id = ${where.sessionId!}`} ORDER BY k.id DESC LIMIT 1`;
+      const r = await api(ctx.app, ctx.clerk, 'GET', `/api/dining/cup-labels/${k!.orderNo}`);
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body).toMatchObject({ total: 2, where: place });
+      expect(r.body.labels).toEqual([
+        { name: '奶茶', note: '加珍珠', seq: 1 },
+        { name: '奶茶', note: '加珍珠', seq: 2 },
+      ]);
+    };
+    const t = await api(ctx.app, ctx.clerk, 'POST', `/api/dining/tables/sessions/${session}/orders`, { clientKey: randomUUID(), lines, expectedTotal: 3400 });
+    expect(t.status, JSON.stringify(t.body)).toBe(200);
+    await check({ sessionId: session }, '桌 A1');
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/batch', { prefix: 'W', from: 1, to: 2, width: 3, zone: 'male' })).status).toBe(200);
+    const v = await api(ctx.app, ctx.clerk, 'POST', '/api/frontdesk/checkins', { clientKey: randomUUID(), guests: [{ tagCode: 'W001', zone: 'male' }] });
+    expect(v.status, JSON.stringify(v.body)).toBe(201);
+    const visitId = v.body.visits[0].id as number;
+    const o = await api(ctx.app, ctx.clerk, 'POST', '/api/dining/orders', { clientKey: randomUUID(), visitId, lines, expectedTotal: 3400 });
+    expect(o.status, JSON.stringify(o.body)).toBe(200);
+    await check({ visitId }, '手牌 W001');
+  });
 });
