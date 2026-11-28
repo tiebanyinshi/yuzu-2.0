@@ -73,18 +73,116 @@ export interface LockerDoor {
   known: boolean;
 }
 
+/**
+ * 控制器能做的事（LOCKER_CAPABILITIES，文档第 6 节）：open 远程开柜、doors 查柜门、card 发卡器（读、写、清 M1 手牌）。
+ * 泰格这类单机电池锁开不了远程，只有前台的发卡器：配 card。
+ */
+export const LOCKER_CAPABILITIES = ['open', 'doors', 'card'] as const;
+export type LockerCapability = (typeof LOCKER_CAPABILITIES)[number];
+
 export interface LockerControllerInfo {
   driver: LockerDriverKind;
-  /** 能不能远程开柜（driver 不是 none） */
+  /** 能不能远程开柜 */
   canOpen: boolean;
+  /** 能不能查柜门开着没有 */
+  canDoors: boolean;
+  /** 有没有发卡器（读、写、清手牌） */
+  canCard: boolean;
 }
+
+/** 一张手牌能开的一把锁：衣物柜、手机柜、其他（鞋柜等）。手牌号 → 哪几把锁由柜锁桥的对照表定 */
+export const LOCKER_LOCK_KINDS = ['clothes', 'phone', 'other'] as const;
+export type LockerLockKind = (typeof LOCKER_LOCK_KINDS)[number];
+export const LOCKER_LOCK_KIND_LABELS: Record<LockerLockKind, string> = { clothes: '衣物柜', phone: '手机柜', other: '其他' };
+
+export interface LockerCardLock {
+  kind: LockerLockKind;
+  no: string;
+}
+
+/** 发卡器读到的卡 */
+export interface LockerCardRead {
+  /** 读到了没有（没放卡、读不出来为 false，原因在 message） */
+  ok: boolean;
+  /** M1 芯片号（去掉分隔符、转大写，与手牌绑的芯片号同一种写法） */
+  uid: string | null;
+  /** 卡里写的手牌号（空白卡为 null） */
+  code: string | null;
+  locks: LockerCardLock[];
+  message: string;
+}
+
+/** 写卡、清卡的结果 */
+export interface LockerCardResult {
+  ok: boolean;
+  /**
+   * 结果待确认（Codex 审查 f8b2853）：柜锁桥没回答（超时、断线、5xx），读回核对也没对上——卡可能已经写了、清了，
+   * 把卡放回发卡器读卡核对；没写成再写一次（写同一张卡没坏处）。不能当成「没写成」
+   */
+  uncertain: boolean;
+  uid: string | null;
+  message: string;
+}
+
+/** 读卡的回答：卡上的内容 + 这个芯片号绑的是哪张手牌（按 hand_tags.card_uid） */
+export interface LockerCardReadView extends LockerCardRead {
+  tag: { id: number; code: string } | null;
+  /** 卡里写的柜号与芯片号绑的手牌对不上 */
+  mismatch: boolean;
+}
+
+/** 写卡、清卡的原因（必填，记审计）；常用的几句 */
+export const LOCKER_CARD_REASONS = ['补发手牌', '手牌失灵重写', '新手牌初始化', '退牌回收', '作废'] as const;
 
 export interface LockerOpenResult {
   code: string;
   opened: boolean;
+  /**
+   * 结果待确认（Codex 审查 f8b2853）：柜锁桥没回答（超时、断线、5xx），能查柜门的也没查出来——柜门可能已经开了，
+   * 要到柜前确认；不能当成「没开」
+   */
+  uncertain: boolean;
   /** 控制器的回话（失败时写原因） */
   message: string;
 }
 
 /** 远程开柜的原因（必填，记审计）；常用的几句 */
 export const LOCKER_OPEN_REASONS = ['客人忘带手牌', '手牌失灵', '清洁、检修', '客人遗留物品'] as const;
+
+/**
+ * 写卡、清卡结果待确认时页面记下的那一次（Codex 审查 34a7c87，docs/LOCKERS_V8149.md 第 6.4 节）：
+ * 桥没回答、浏览器没收到门店系统的回话（超时、断网、5xx，包括写审计出错）都可能已经写了、清了，
+ * 发请求以前记在本机，没有结论就留着，读卡核对出结论才去掉；不能当成没做。
+ */
+export type LockerCardPending =
+  /** 写卡：写之前读到的那张卡的芯片号 + 要写成的柜（Codex 审查 307b2f4：要认准是哪一张卡） */
+  | { id: string; op: 'write'; code: string; uid: string; storeId: number; at: string }
+  /** 清卡：清之前读到的那张卡的芯片号 */
+  | { id: string; op: 'clear'; uid: string; storeId: number; at: string };
+
+/** 读卡核对出「确实做成了」的那一条（只认做成了的证据：读回没变不能断定没做——桥可能还在做，Codex 审查 b446d09） */
+export interface LockerCardCheck {
+  id: string;
+  text: string;
+}
+
+/**
+ * 读到一张卡以后，哪些待核对的确定做成了（都要是同一张芯片号：别的卡早就写成同一个柜也不算，Codex 审查 307b2f4）：
+ *   · 写卡：读到的就是那张卡、卡里写的就是那个柜 → 写成了；
+ *   · 清卡：读到的就是那张卡、是空白 → 清成了。
+ * 别的都不下结论、记录留着：卡里还是原样，可能原来那次还在桥里没做完（之后会生效），也可能放的不是刚才那张卡；
+ * 核对过了（比如已经重写、重清成功，或卡找不到了）由人点「已核对」去掉。
+ */
+export function settleLockerCardPending(list: readonly LockerCardPending[], read: Pick<LockerCardRead, 'ok' | 'uid' | 'code'>): LockerCardCheck[] {
+  if (!read.ok) return [];
+  const out: LockerCardCheck[] = [];
+  for (const p of list) {
+    if (!p.uid || read.uid !== p.uid) continue;
+    if (p.op === 'write') {
+      if (read.code === p.code) out.push({ id: p.id, text: `核对：芯片号 ${p.uid} 的卡里是柜 ${p.code}，写成了` });
+    } else if (read.code === null) {
+      out.push({ id: p.id, text: `核对：芯片号 ${p.uid} 已清成空白` });
+    }
+  }
+  return out;
+}

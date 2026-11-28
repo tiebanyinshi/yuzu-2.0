@@ -65,9 +65,12 @@
 //   device-bridge-mock [--port 17890] [--terminal 终端编号] [--auto 秒]
 //                                         模拟终端上的设备服务（桥，不连数据库）：输入 card <卡号>、scan <条码>、nfc <卡号>、unplug <键>、plug <键>、
 //                                         fail、quit；--auto 每隔几秒自动发一次读卡与扫码
+//   locker-bridge-mock [--port 9300] [--token 密钥]
+//                                         模拟柜锁桥（不连数据库，docs/LOCKERS_V8149.md 第 3、6 节）：开柜、查柜门、发卡器读写清 M1 手牌；
+//                                         输入 card <芯片号> 放一张空白卡、remove 拿走、show 看现在的卡、quit；没给 --token 时生成一把打出来
 
 import { importOpeningCountCards, OPENING_COUNT_CARD_HEADER, parseOpeningCountCardsCsv } from './modules/count-cards';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { businessDateOf, ISO_DATE } from '@shared/business-date';
@@ -78,6 +81,7 @@ import { decodeImportFile, encodingNote } from '@shared/text-decode';
 import { DEFAULT_BRIDGE_PORT } from '@shared/devices';
 import { decodePrintedText } from './devices/escpos';
 import { startMockBridge } from './devices/mock-bridge';
+import { startMockLockerBridge } from './devices/mock-locker-bridge';
 import { MOCK_PRINTER_MODES, startMockPrinter, type MockPrinterMode } from './devices/mock-printer';
 import { runDeviceSelftest } from './devices/selftest';
 import { importDevices, importPreview } from './modules/devices';
@@ -312,6 +316,27 @@ async function offlineCommand(command: string | undefined, args: string[]): Prom
           process.exit(0);
         } else return console.log('不认识的命令');
         console.log(`✓（${bridge.clients()} 个页面连着）`);
+      });
+      await new Promise(() => {});
+      return true;
+    }
+    case 'locker-bridge-mock': {
+      const token = flag(args, 'token') ?? randomBytes(24).toString('hex');
+      if (token.length < 32) throw new Error('--token 至少 32 个字符（门店系统的 LOCKER_BRIDGE_TOKEN 也要这么长）');
+      const bridge = await startMockLockerBridge({ host: '127.0.0.1', port: Number(flag(args, 'port') ?? 9300), token });
+      console.log(`模拟柜锁桥在 ${bridge.url}`);
+      console.log(`门店系统的 .env：LOCKER_DRIVER=http、LOCKER_BRIDGE_URL=${bridge.url}、LOCKER_BRIDGE_TOKEN=${token}、LOCKER_CAPABILITIES=open,doors,card`);
+      console.log('输入 card <芯片号>（放一张空白卡）、remove（拿走）、show（看现在的卡）、quit');
+      onStdinLines(async (line) => {
+        const [cmd, arg] = line.split(/\s+/);
+        if (cmd === 'card' && arg) bridge.hardware.place(arg);
+        else if (cmd === 'remove') bridge.hardware.place(null);
+        else if (cmd === 'show') return console.log(JSON.stringify(bridge.hardware.read()));
+        else if (cmd === 'quit') {
+          await bridge.close();
+          process.exit(0);
+        } else return console.log('不认识的命令');
+        console.log(`✓ ${JSON.stringify(bridge.hardware.read())}`);
       });
       await new Promise(() => {});
       return true;
@@ -920,7 +945,7 @@ async function main() {
         }
         default:
           console.log(
-            '可用命令：migrate | db-report | create-owner <账号> | reset-password <账号> | seed-demo [--force] | seed-inventory-demo | seed-frontdesk-demo [--previous-day] | seed-billing-demo [--previous-day] | seed-legacy-demo | demo-prepare [--previous-day] | demo-check | demo-reset --confirm <数据库名> | import-hand-tags | price-audit [--apply] | import-technicians | import-opening | check | fingerprint | backup | backup-loop | verify-backup | daily-recon | balance-changes | floorplan-convert | floorplan-sample | import-devices | device-selftest | device-printer-mock | device-bridge-mock | membership-daily | import-benefits | import-count-cards',
+            '可用命令：migrate | db-report | create-owner <账号> | reset-password <账号> | seed-demo [--force] | seed-inventory-demo | seed-frontdesk-demo [--previous-day] | seed-billing-demo [--previous-day] | seed-legacy-demo | demo-prepare [--previous-day] | demo-check | demo-reset --confirm <数据库名> | import-hand-tags | price-audit [--apply] | import-technicians | import-opening | check | fingerprint | backup | backup-loop | verify-backup | daily-recon | balance-changes | floorplan-convert | floorplan-sample | import-devices | device-selftest | device-printer-mock | device-bridge-mock | locker-bridge-mock | membership-daily | import-benefits | import-count-cards',
           );
           process.exitCode = command ? 1 : 0;
       }

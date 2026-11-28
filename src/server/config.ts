@@ -4,7 +4,7 @@ import { resolve as resolvePath } from 'node:path';
 // 版本号只写在 package.json 一处（工程治理一期，docs/GOVERNANCE.md）：打包时带进来，发版只改 package.json 与锁文件
 import { version as PACKAGE_VERSION } from '../../package.json';
 import { SETTABLE_INSTANCES, type InstanceKind } from '@shared/instance';
-import { LOCKER_DRIVERS, type LockerDriverKind } from '@shared/lockers';
+import { LOCKER_CAPABILITIES, LOCKER_DRIVERS, type LockerCapability, type LockerDriverKind } from '@shared/lockers';
 import { loadIntegrationsConfig, type IntegrationsConfig } from './integrations/config';
 import { loadProtectionConfig, type ProtectionConfig } from './lib/protect';
 
@@ -91,24 +91,39 @@ export function loadPreviousKeys(env: NodeJS.ProcessEnv): PreviousKeys {
   return { canteenCode: list('CANTEEN_CODE_SECRET_PREVIOUS'), payrollFile: list('PAYROLL_FILE_KEY_PREVIOUS'), mallApi: list('MALL_API_KEY_PREVIOUS') };
 }
 
-/** 智能柜锁控制器（LOCKER_DRIVER / LOCKER_BRIDGE_URL / LOCKER_BRIDGE_TOKEN） */
+/** 智能柜锁控制器（LOCKER_DRIVER / LOCKER_BRIDGE_URL / LOCKER_BRIDGE_TOKEN / LOCKER_CAPABILITIES） */
 export interface LockerConfig {
   driver: LockerDriverKind;
   /** http：本机柜锁桥的地址（只认 http(s)） */
   bridgeUrl: string | null;
   /** http：调柜锁桥时带的密钥（至少 32 个字符；只放 .env） */
   bridgeToken: string | null;
+  /** 控制器能做的事（docs/LOCKERS_V8149.md 第 6 节）：none 为空；mock 三样都有；http 按 LOCKER_CAPABILITIES，默认 open,doors */
+  capabilities: LockerCapability[];
 }
 
 export function loadLockerConfig(env: NodeJS.ProcessEnv): LockerConfig {
   const driver = (env.LOCKER_DRIVER?.trim().toLowerCase() || 'none') as LockerDriverKind;
   if (!(LOCKER_DRIVERS as readonly string[]).includes(driver)) throw new Error(`LOCKER_DRIVER 只能是 ${LOCKER_DRIVERS.join(' / ')}`);
-  if (driver !== 'http') return { driver, bridgeUrl: null, bridgeToken: null };
+  if (driver === 'none') return { driver, bridgeUrl: null, bridgeToken: null, capabilities: [] };
+  if (driver === 'mock') return { driver, bridgeUrl: null, bridgeToken: null, capabilities: [...LOCKER_CAPABILITIES] };
   const url = env.LOCKER_BRIDGE_URL?.trim() ?? '';
   if (!/^https?:\/\/[^\s]+$/.test(url)) throw new Error('LOCKER_DRIVER=http 时要设 LOCKER_BRIDGE_URL（柜锁桥的 http 地址）');
   const token = env.LOCKER_BRIDGE_TOKEN?.trim() ?? '';
   if (token.length < 32) throw new Error('LOCKER_BRIDGE_TOKEN 至少 32 个字符（可以用 openssl rand -hex 32 生成）');
-  return { driver, bridgeUrl: url.replace(/\/+$/, ''), bridgeToken: token };
+  // 能力：不写为 open,doors（8.1.49 的柜锁板）；泰格这类单机锁只有发卡器，写 card
+  const raw = env.LOCKER_CAPABILITIES?.trim();
+  const caps =
+    raw === undefined || raw === ''
+      ? ['open', 'doors']
+      : raw
+          .split(',')
+          .map((c) => c.trim().toLowerCase())
+          .filter(Boolean);
+  const unknown = caps.filter((c) => !(LOCKER_CAPABILITIES as readonly string[]).includes(c));
+  if (unknown.length) throw new Error(`LOCKER_CAPABILITIES 只能写 ${LOCKER_CAPABILITIES.join(' / ')}（逗号分隔），不认识：${unknown.join('、')}`);
+  if (!caps.length) throw new Error('LOCKER_CAPABILITIES 至少写一样（open / doors / card）');
+  return { driver, bridgeUrl: url.replace(/\/+$/, ''), bridgeToken: token, capabilities: LOCKER_CAPABILITIES.filter((c) => caps.includes(c)) };
 }
 
 /** 保留天数：0 = 不归档这一类 */
