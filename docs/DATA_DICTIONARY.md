@@ -7,7 +7,7 @@
 「只追加」的表（账本、流水、审批动作、归档表）有触发器拒绝改删，改错走冲正或作废登记。
 列表里「键」：`PK` 主键；「引用」是外键指向的表。
 
-共 494 张表、5836 列。
+共 494 张表、5839 列。
 
 ## 目录
 
@@ -2902,6 +2902,8 @@ v0.7.15 · 飞书需求 RQ-004 第二段（docs/FLOORPLAN.md）：底图转换�
 | service_at | timestamp with time zone |  | 是 |  |  |  |
 | deleted_at | timestamp with time zone |  | 是 |  |  |  |
 | deleted_by | bigint |  | 是 |  | staff |  |
+| lock_kind | text |  | 是 |  |  | 8.2.27 锁定的原因类别：lost 挂失（客人弄丢）、unreturned 未交回（结了账没还牌）；手动锁的为空。解锁时清掉 |
+| lock_visit_id | bigint |  | 是 |  | visits | 8.2.27 挂失 / 未交回的是哪一次来访（找当时的客人）；解锁时清掉 |
 
 ### idempotency_keys
 
@@ -6548,6 +6550,7 @@ v0.7.0 S6 技师第一步（ROADMAP 第 10 节：先做技师名册和「挂技�
 | height_cm | smallint |  | 是 |  |  | 身高（厘米，8.2.2）；没填为空 |
 | weight_kg | smallint |  | 是 |  |  | 体重（公斤，8.2.2）；没填为空 |
 | star | smallint |  | 是 |  |  | 星级（1–10，8.2.2）：提成可以按星级定；与价格档（等级）分开，价格档照旧决定价格 |
+| card_uid | text |  | 是 |  |  | 8.2.27 技师工牌芯片号（泡池区刷工牌认技师）：写法同 hand_tags.card_uid；同一门店里不重复 |
 
 ### ticket_types
 

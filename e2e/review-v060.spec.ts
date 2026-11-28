@@ -47,6 +47,9 @@ test.describe('测试服 E2E 报告的回归', () => {
     await expect(submit).toBeEnabled();
     await expect(page.getByTestId('pay-row-cash')).toContainText('找零');
     await submit.click();
+    // 8.2.27：找零超过 ¥500（实给 1000）先提醒核对，再按一次才结清
+    await expect(page.getByTestId('checkout-big-change')).toBeVisible();
+    await submit.click();
     await expect(page.getByTestId('checkout-receipt')).toBeVisible();
     await page.getByTestId('checkout-finish').click();
   });
