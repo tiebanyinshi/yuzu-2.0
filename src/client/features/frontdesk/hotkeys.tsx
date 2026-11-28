@@ -272,7 +272,7 @@ function HotkeyHelpDialog({ open, desk, onClose }: { open: boolean; desk: Desk; 
         {(
           [
             ['⌥1–9', '加第几种收款方式（按钮上写着），光标落到金额'],
-            ['F9', '确认结清；找零超过 ¥500 或实给超过应收两倍时再按一次'],
+            ['F9', '确认结清；找零大（超过后台的大额找零门槛，或超过这笔的 2 倍）时再按一次'],
             ['Esc', '关掉对话框'],
           ] as const
         ).map(([k, t]) => (

@@ -20,7 +20,7 @@ import type { CompanyChargeGrant, CompanyChargeGrantRequest, DiscountGrant, Disc
 import type { CompanyReason } from '@shared/dining-v8224';
 import { companyGrantFits, CompanyPayRow, companyRequest } from './CompanyPayRow';
 import { maskPhone, PAYMENT_METHODS } from '@shared/labels';
-import { bigChange, formatHkd, hkdDue, hkdWorth, rateText as hkdRateText } from '@shared/cashier-v8230';
+import { formatHkd, hkdDue, hkdWorth, rateText as hkdRateText } from '@shared/cashier-v8230';
 import { DEFAULT_FRONTDESK_RULES, normalizeTagCode, type FrontdeskRules } from '@shared/frontdesk';
 import { centsToInput, formatYuan, parseYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
@@ -79,8 +79,6 @@ export interface PayRow {
   tendered: string;
   /** 现金（8.2.30）：收的是港元 */
   hkd: boolean;
-  /** 现金（8.2.30，CM-4）：大额找零已核对 */
-  changeConfirmed: boolean;
   /** 优惠 / 免单：原因与当场授权（授权绑定这几张手牌或这几桌与金额，改了要重新授权）；公司承担（8.2.4）时 reason 是说明 */
   reason: string;
   grant: DiscountGrant | CompanyChargeGrant | null;
@@ -110,7 +108,6 @@ export const newRow = (method: CheckoutMethod, amount: number): PayRow => ({
   dealName: '',
   tendered: '',
   hkd: false,
-  changeConfirmed: false,
   reason: '',
   grant: null,
   companyReason: 'unwell',
@@ -246,11 +243,6 @@ export function usePayRows(opts: {
       const given = parseYuan(r.tendered);
       if (given === null) return '客人实给的金额不正确';
       if (given < c) return `客人实给少于这笔现金，还差 ¥${((c - given) / 100).toFixed(2)}；请核对现金或改收款方式`;
-    }
-    if (r.method === 'cash' && !r.changeConfirmed) {
-      // 大额找零（8.2.30，CM-4）：找零超过门槛或超过这笔的 2 倍，多确认一次（防止把 100 输成 1000）
-      const x = cashChange(r, c, cashRules.hkdRatePpm);
-      if (x && bigChange(x.change, c, cashRules.bigChangeCents)) return `找零 ${formatYuan(x.change)} 比较大，请核对客人实给的金额后勾选「已核对找零」`;
     }
     if (r.method === 'company') {
       if (r.companyReason === 'other' && r.reason.trim().length < 2) return '公司承担选「其他」请写说明（至少 2 个字）';
@@ -823,7 +815,7 @@ export function PayRowEditor({
                   type="button"
                   disabled={locked}
                   aria-pressed={row.hkd === (i === 1)}
-                  onClick={() => onChange({ hkd: i === 1, tendered: '', changeConfirmed: false })}
+                  onClick={() => onChange({ hkd: i === 1, tendered: '' })}
                   className={cn('h-8 px-2.5 text-[12.5px]', row.hkd === (i === 1) ? 'bg-pine text-white' : 'bg-card text-ink-2')}
                   data-testid={i === 1 ? 'cash-hkd' : 'cash-cny'}
                 >
@@ -836,7 +828,7 @@ export function PayRowEditor({
           <div className="w-[120px]">
             <MoneyInput
               value={row.tendered}
-              onChange={(e) => onChange({ tendered: e.target.value, changeConfirmed: false })}
+              onChange={(e) => onChange({ tendered: e.target.value })}
               className="h-8 text-[13px]"
               aria-label={row.hkd ? '客人实给港元' : '客人实给现金'}
               data-testid="cash-tendered"
@@ -852,12 +844,6 @@ export function PayRowEditor({
               找零 <Money cents={change.change} size="key" className="text-pine" />
               {row.hkd ? '（找人民币）' : '（找零不用登记）'}
             </span>
-          )}
-          {change && cents !== null && bigChange(change.change, cents, cashRules.bigChangeCents) && (
-            <label className="inline-flex items-center gap-1.5 font-semibold text-clay">
-              <input type="checkbox" checked={row.changeConfirmed} disabled={locked} onChange={(e) => onChange({ changeConfirmed: e.target.checked })} data-testid="cash-change-confirm" />
-              已核对找零
-            </label>
           )}
         </div>
       )}

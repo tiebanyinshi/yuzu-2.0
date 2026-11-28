@@ -84,7 +84,7 @@ export function CashierRulesCard({ rules, onSaved }: { rules: FrontdeskRules | u
         <Field label="港元汇率（1 港元折多少人民币）" hint="例如 0.92；空着 = 不收港元。结账时记下当时的汇率，以后改不影响已结的单">
           <Input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="decimal" className="num" aria-label="港元汇率" data-testid="rules-hkd-rate" />
         </Field>
-        <Field label="大额找零要多确认一次（元）" hint="现金找零超过这个数，或超过这笔的 2 倍，要勾「已核对找零」">
+        <Field label="大额找零要多确认一次（元）" hint="现金找零超过这个数，或超过这笔的 2 倍，结账时要再按一次「确认结清」">
           <MoneyInput value={bigChange} onChange={(e) => setBigChange(e.target.value)} aria-label="大额找零门槛" data-testid="rules-big-change" />
         </Field>
         <label className="flex items-start gap-2 text-[13px] text-ink-2 sm:col-span-2">
