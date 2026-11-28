@@ -46,6 +46,17 @@ describe('页面与组件', () => {
     }
   });
 
+  it('会显示出错、没信号的 <state-view> 都接了「重新加载」（bindretry）；只显示加载中的不用', () => {
+    for (const u of app.pages) {
+      const wxml = read(join(SRC, `${u}.wxml`));
+      for (const m of wxml.matchAll(/<state-view\b[^>]*>/g)) {
+        const tag = m[0];
+        if (/\bstate="loading"/.test(tag)) continue;
+        expect(/\bbindretry="/.test(tag), `${u}: ${tag}`).toBe(true);
+      }
+    }
+  });
+
   it('标签栏页面在 pages 里，图标存在且不超过 40KB', () => {
     for (const t of app.tabBar.list) {
       expect(app.pages).toContain(t.pagePath);

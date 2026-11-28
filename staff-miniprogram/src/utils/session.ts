@@ -127,7 +127,7 @@ export async function wechatCode(): Promise<string> {
 // ── 登录 ──
 
 function signedIn(token: string, next: StaffMpMe): void {
-  saveToken(token);
+  saveToken(token, next.staff.id);
   remove(SIGNED_OUT_KEY);
   setMe(next);
 }
@@ -217,7 +217,7 @@ export async function logout(unbind: boolean): Promise<void> {
     if (stillBound) throw apiError('UNBIND_UNCONFIRMED', `没解开这个微信：${isOffline(failure) ? '现在连不上门店系统' : messageOf(failure)}。连上以后再点一次`, 0);
   }
   authGen += 1;
-  clearToken();
+  clearToken({ signedOut: true });
   write(SIGNED_OUT_KEY, true);
   setMe(null);
 }

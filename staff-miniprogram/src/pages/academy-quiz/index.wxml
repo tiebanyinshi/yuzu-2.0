@@ -1,6 +1,6 @@
 <view class="page {{large ? 'large-text' : ''}}">
   <nav-bar title="测验" />
-  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
   <view wx:else class="gutter">
     <view wx:if="{{unsure === 'start'}}" class="notice warn">
       <view>{{error}}</view>

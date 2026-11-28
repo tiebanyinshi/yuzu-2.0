@@ -144,6 +144,23 @@ Page({
     this.setData({ unsure: 'submit', error2: UNSURE });
   },
 
+  /**
+   * 出错页的「重新加载」：交过的卷子结果没取回来的再取一次结果；别的（存不下、开卷被拒）重新开卷
+   * （手机上留着这一课时没确定的开卷就原样重提那一次，start 自己会认）
+   */
+  async onRetry() {
+    if (this.data.busy) return;
+    const mine = inst;
+    this.setData({ state: 'loading', error: '' });
+    if (quiz && quiz.submitted) {
+      const r = await loadQuizResult(quiz.attemptId).catch(() => null);
+      if (mine === inst) this.showResult(r);
+      return;
+    }
+    if (!me) me = await requireMe();
+    if (mine === inst && me) this.start();
+  },
+
   onResend() {
     if (this.data.unsure === 'start') this.start();
     else if (this.data.unsure === 'submit') this.onSubmit();

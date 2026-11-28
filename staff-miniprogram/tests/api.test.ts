@@ -24,15 +24,32 @@ describe('要登录的接口', () => {
   });
 
   it('401：悄悄重新登录一次，拿新令牌重发', async () => {
-    saveToken('old');
+    saveToken('old', 7);
     setRelogin(async () => {
-      saveToken('new');
+      saveToken('new', 7);
       return true;
     });
     fake.reply({ status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } }, { status: 200, data: { ok: 2 } });
     await expect(call('POST', '/auth/logout', {})).resolves.toEqual({ ok: 2 });
     expect(fake.sent[1]!.header.authorization).toBe('Bearer new');
     expect(fake.sent[1]!.data).toEqual({});
+  });
+
+  it('不知道是谁的令牌、重新登录换了人：不拿新令牌重发（交给页面去登录）', async () => {
+    for (const [before, after] of [
+      [null, 7],
+      [7, 8],
+    ] as const) {
+      saveToken('old', before);
+      setRelogin(async () => {
+        saveToken('new', after);
+        return true;
+      });
+      fake.reply({ status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } });
+      const sent = fake.sent.length;
+      await expect(call('POST', '/oa/approvals', { clientKey: 'k' })).rejects.toMatchObject({ status: 401 });
+      expect(fake.sent.length - sent).toBe(1);
+    }
   });
 
   it('重新登录不了（没绑微信、主动退出过）：抛 401 交给页面去登录页', async () => {

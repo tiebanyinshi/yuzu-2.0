@@ -1,6 +1,8 @@
 // 连员工小程序端口（docs/STAFF_MP.md 第 5、6 节）：所有接口都在 /api/staffmp/ 下，带 Authorization: Bearer <令牌>。
 //   · 令牌是门店系统发的员工会话（12 小时滑动过期）；过期（401）时先悄悄用微信重新登录一次再重发（session.ts 交进来的 relogin），
 //     重新登录不了（没绑微信、主动退出过）就交给页面去登录页；
+//   · 换上的新令牌**只在同一个人、这期间没有主动退出过**时才拿来重发原来的请求（令牌记着是谁的，账号的第几次登录）：
+//     A 的请求晚回来 401 时手机上已经是 B 登录着，不能用 B 的令牌把 A 的申请、打卡重发出去（Codex 审查 #53）；
 //   · 门店明确没处理的忙（409 BUSY、503 OVERLOADED、429 RATE_LIMITED）带原编号短暂自动重发两次，调用方不要再叠一层；
 //   · 连不上（NETWORK）照实说，不当成「没有生效」：写操作的页面按「结果待确认」处理（第 2.8 节）。
 // 门店系统回的错误文字面向员工，原样显示。
@@ -104,6 +106,8 @@ async function sendWithBusyRetry(method: Method, path: string, body: Record<stri
 // ── 令牌 ──
 
 const TOKEN_KEY = 'wcp_token';
+/** 令牌是谁的（员工编号）：401 以后换了令牌，只有同一个人的才重发 */
+const OWNER_KEY = 'wcp_token_owner';
 
 export function storedToken(): string | null {
   try {
@@ -114,26 +118,51 @@ export function storedToken(): string | null {
   }
 }
 
-export function saveToken(token: string): void {
+/** 存令牌；owner = 这个令牌是哪位员工的（登录回的「我是谁」） */
+export function saveToken(token: string, owner: number | null = null): void {
   try {
     wx.setStorageSync(TOKEN_KEY, token);
+    if (owner === null) wx.removeStorageSync(OWNER_KEY);
+    else wx.setStorageSync(OWNER_KEY, owner);
   } catch {
     // 存不了：这次照用（内存里的），下次打开重新登录
   }
   memoryToken = token;
+  memoryOwner = owner;
 }
 
-export function clearToken(): void {
+/** 清掉令牌；signedOut = 员工主动退出（之前发出去的请求 401 以后不再用之后登录的令牌重发，同一个人也不） */
+export function clearToken(opts: { signedOut?: boolean } = {}): void {
   memoryToken = null;
+  memoryOwner = null;
+  if (opts.signedOut) accountGen += 1;
   try {
     wx.removeStorageSync(TOKEN_KEY);
+    wx.removeStorageSync(OWNER_KEY);
   } catch {
     // 删不了：下次登录覆盖
   }
 }
 
 let memoryToken: string | null = null;
+let memoryOwner: number | null = null;
+/** 第几次「主动退出」：退出时加一 */
+let accountGen = 0;
 const currentToken = () => memoryToken || storedToken();
+function currentOwner(): number | null {
+  if (memoryToken) return memoryOwner;
+  try {
+    const o = wx.getStorageSync(OWNER_KEY) as number | '';
+    return typeof o === 'number' && o > 0 ? o : null;
+  } catch {
+    return null;
+  }
+}
+/** 现在登录着的是谁、第几次：不知道是谁的令牌为 null（不拿它重发别的请求） */
+function accountNow(): string | null {
+  const o = currentOwner();
+  return currentToken() && o !== null ? `${o}:${accountGen}` : null;
+}
 /** 有没有能用的令牌（存着的，或手机存不下时记在内存里的） */
 export const hasToken = () => !!currentToken();
 /** 现在用的令牌（退出时用它直接退，不悄悄重新登录） */
@@ -173,14 +202,17 @@ const GATE_CODES = ['PASSWORD_CHANGE_REQUIRED', 'POSITION_REQUIRED'];
 export async function call<T>(method: Method, path: string, body?: Record<string, unknown>): Promise<T> {
   if (!currentToken() && !(await reloginOnce())) throw apiError('UNAUTHORIZED', '请先登录', 401);
   const used = currentToken();
+  const who = accountNow();
+  /** 换上的令牌还是发这个请求的那个人、这期间没主动退出过 */
+  const same = () => who !== null && accountNow() === who;
   let r = await sendWithBusyRetry(method, path, body, used);
   if (r.status === 401) {
     if (currentToken() === used) {
-      // 这个令牌确实不认了：清掉、悄悄重新登录一次
+      // 这个令牌确实不认了：清掉、悄悄重新登录一次（只认同一个人，session.ts 的 silentRelogin）
       clearToken();
-      if (await reloginOnce()) r = await sendWithBusyRetry(method, path, body, currentToken());
-    } else if (currentToken()) {
-      // 这期间别的请求已经换上了新令牌：用新的重发，不清掉它
+      if ((await reloginOnce()) && same()) r = await sendWithBusyRetry(method, path, body, currentToken());
+    } else if (currentToken() && same()) {
+      // 这期间别的请求已经给同一个人换上了新令牌：用新的重发，不清掉它；换了人的不重发（交给页面去登录）
       r = await sendWithBusyRetry(method, path, body, currentToken());
     }
   }

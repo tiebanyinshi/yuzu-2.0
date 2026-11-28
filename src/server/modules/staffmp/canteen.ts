@@ -98,6 +98,26 @@ async function ownCreated(db: Db, staffId: number, employeeId: number): Promise<
   return !!row?.ok;
 }
 
+/**
+ * 开通饭卡整段（核对还没对上 → 选工号 → 建饭卡 → 对上）按人串行（Codex 审查 #53）：同一个人同时点两次时，后一次等前一次对上以后
+ * 再核对，看到已经对上就停，不会因为前一张已经对上（选工号时跳过）换下一个工号再开一张。饭堂的 createEmployee 自己开事务，
+ * 整段放不进一个事务，所以用会话级咨询锁（单拿一个连接，进程停了连接一断就放开）；与 link 里的事务锁不是同一把（不会自己等自己）
+ */
+async function serialCreate<T>(sql: Sql, staffId: number, fn: () => Promise<T>): Promise<T> {
+  const conn = await sql.reserve();
+  const key = `staffmp_canteen_create:${staffId}`;
+  try {
+    await conn`SELECT pg_advisory_lock(hashtextextended(${key}, 0))`;
+    try {
+      return await fn();
+    } finally {
+      await conn`SELECT pg_advisory_unlock(hashtextextended(${key}, 0))`;
+    }
+  } finally {
+    conn.release();
+  }
+}
+
 async function lockStaff(db: Db, staffId: number) {
   await db`SELECT pg_advisory_xact_lock(hashtextextended(${`staffmp_staff:${staffId}`}, 0))`;
 }
@@ -190,13 +210,15 @@ export function registerStaffMpCanteenRoutes(app: FastifyInstance, deps: Deps, n
   app.post('/api/staffmp/canteen/create', ready, async (req): Promise<StaffMpCanteenStatus> => {
     const actor = signedIn(req);
     await open();
-    if (await linkedEmployee(sql, actor.id)) throw conflict('CANTEEN_ALREADY_LINKED', '你已经对上一张饭卡了');
     const name = actor.displayName.slice(0, 16);
-    // 饭堂的 createEmployee 自己开事务（主线的函数，员工小程序线不改它），所以建饭卡与记对上分两步：
-    // 第二步出错或两次请求同时到时，靠 empNoFor 选回同一个工号、createEmployee 回原来那张、link 对同一张不报错，落在同一张饭卡上
-    const { employee, created } = await createEmployee(sql, { empNo: await empNoFor(sql, actor.id, name), name, role: 'staff', departmentId: null }, { actor, ip: req.ip });
-    if (!created && !(await ownCreated(sql, actor.id, employee.id))) throw conflict('CANTEEN_EMP_NO_TAKEN', '刚好有同事用了这个工号开饭卡：请再点一次「开通饭卡」');
-    await link(sql, actor.id, employee.id, 'created', actor.id, req.ip);
+    // 饭堂的 createEmployee 自己开事务（主线的函数，员工小程序线不改它），所以建饭卡与记对上分两步，整段按人串行（serialCreate）：
+    // 第二步出错以后再点，靠 empNoFor 选回同一个工号、createEmployee 回原来那张、link 对同一张不报错，落在同一张饭卡上
+    await serialCreate(sql, actor.id, async () => {
+      if (await linkedEmployee(sql, actor.id)) throw conflict('CANTEEN_ALREADY_LINKED', '你已经对上一张饭卡了');
+      const { employee, created } = await createEmployee(sql, { empNo: await empNoFor(sql, actor.id, name), name, role: 'staff', departmentId: null }, { actor, ip: req.ip });
+      if (!created && !(await ownCreated(sql, actor.id, employee.id))) throw conflict('CANTEEN_EMP_NO_TAKEN', '刚好有同事用了这个工号开饭卡：请再点一次「开通饭卡」');
+      await link(sql, actor.id, employee.id, 'created', actor.id, req.ip);
+    });
     return statusOf(actor.id);
   });
 

@@ -161,9 +161,9 @@ describe('令牌过期时悄悄重新登录', () => {
     expect(fake.storage.has('wcp_token')).toBe(false);
   });
 
-  it('晚回来的 401 不清掉别的请求刚换上的新令牌：用新令牌重发', async () => {
+  it('晚回来的 401 不清掉别的请求刚换上的新令牌：同一个人的用新令牌重发', async () => {
     const { fake, api } = await load();
-    api.saveToken('old');
+    api.saveToken('old', 7);
     // 第一个请求带着旧令牌出去，回来之前别的请求已经换上了新令牌
     const wx = (
       globalThis as unknown as { wx: { request: (o: { header: Record<string, string>; success: (r: unknown) => void; fail: () => void; url: string; method: string; data: unknown }) => void } }
@@ -173,7 +173,7 @@ describe('令牌过期时悄悄重新登录', () => {
     wx.request = (o) => {
       if (first) {
         first = false;
-        api.saveToken('new');
+        api.saveToken('new', 7);
       }
       original(o);
     };
@@ -182,6 +182,48 @@ describe('令牌过期时悄悄重新登录', () => {
     expect(fake.sent[0]!.header.authorization).toBe('Bearer old');
     expect(fake.sent[1]!.header.authorization).toBe('Bearer new');
     expect(fake.storage.get('wcp_token')).toBe('new');
+  });
+
+  it('A 的请求晚回来 401 时手机上已经是 B 登录着：不用 B 的令牌重发 A 的申请（Codex 对 96d9707 的 P1）', async () => {
+    const { fake, session, api } = await load();
+    fake.reply({ status: 200, data: { token: 'tokA', me: { ...ME, staff: { id: 2, displayName: '甲' } }, bound: false, bindError: null } });
+    await session.passwordLogin('a', 'pw', { bind: false, replace: false });
+    const wx = (globalThis as unknown as { wx: { request: (o: { url: string }) => void } }).wx;
+    const original = wx.request;
+    let first = true;
+    wx.request = (o) => {
+      if (first) {
+        first = false;
+        // A 的申请发出去、还没回来：A 退出，B 在同一台手机上登录
+        api.saveToken('tokB', 3);
+      }
+      original(o as never);
+    };
+    fake.reply({ status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } }, { status: 201, data: { approval: { id: 1 } } });
+    await expect(api.call('POST', '/oa/approvals', { clientKey: 'k', templateId: 1, form: {} })).rejects.toMatchObject({ status: 401 });
+    expect(fake.sent.filter((x) => x.url.endsWith('/oa/approvals')).map((x) => x.header.authorization)).toEqual(['Bearer tokA']);
+    // B 的令牌照旧留着
+    expect(fake.storage.get('wcp_token')).toBe('tokB');
+  });
+
+  it('同一个人主动退出又登录：之前发出去的请求 401 以后也不重发', async () => {
+    const { fake, session, api } = await load();
+    fake.reply({ status: 200, data: { token: 'tok1', me: ME, bound: false, bindError: null } });
+    await session.passwordLogin('a', 'pw', { bind: false, replace: false });
+    const wx = (globalThis as unknown as { wx: { request: (o: { url: string }) => void } }).wx;
+    const original = wx.request;
+    let first = true;
+    wx.request = (o) => {
+      if (first) {
+        first = false;
+        api.clearToken({ signedOut: true });
+        api.saveToken('tok2', ME.staff.id);
+      }
+      original(o as never);
+    };
+    fake.reply({ status: 401, data: { error: { code: 'UNAUTHORIZED', message: '请先登录' } } }, { status: 200, data: { ok: 1 } });
+    await expect(api.call('POST', '/oa/attendance/punch', { clientKey: 'k' })).rejects.toMatchObject({ status: 401 });
+    expect(fake.sent.filter((x) => x.url.endsWith('/oa/attendance/punch'))).toHaveLength(1);
   });
 });
 
