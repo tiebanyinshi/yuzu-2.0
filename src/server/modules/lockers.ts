@@ -37,6 +37,7 @@ import { writeAudit } from '../lib/audit';
 import { ctxOf, type Deps } from '../lib/context';
 import { AppError, notFound } from '../lib/errors';
 import { currentStoreId, runInStore } from '../lib/store-context';
+import { withTx } from '../lib/tx';
 import { parse } from '../lib/validate';
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
@@ -256,6 +257,11 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
   });
 }
 
+/** 自动释放期间给手牌标的「暂停使用」说明（预留）：发牌碰到暂停的手牌会拒绝；放完恢复，中途出事的下一轮按这个开头认出来恢复 */
+const RESERVE_NOTE_PREFIX = '正在自动释放手机柜';
+/** 预留超过这么久还没恢复的（进程中途退出），下一轮恢复成正常 */
+const STALE_RESERVE_MINUTES = 2;
+
 /**
  * 退牌后自动释放手机柜（docs/LOCKERS_V8149.md 第 7.4 节，GK3；店主 2026-11-28「把开发全部做完」）：不释放的话，
  * 下一位拿到这张手牌的客人能开上一位的手机柜。每分钟列一次手机柜（jobs.ts 调），占着它的手牌：
@@ -263,6 +269,8 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
  *   · 这张手牌现在没有在店的来访单，而且来过（有结束了的来访单）——就是退了牌；
  *   · 锁报柜门还关着的不放（柜里可能还有东西：柜况页标「已退牌还占着」，请人看过再放）；报不了柜门的照放；
  *   · 每次退牌、每个柜只试一次（审计里记着「柜 + 芯片号 + 那次退牌的时刻」，有了就不再试）：没放成、结果待确认的留给人。
+ * 和发牌错开（Codex 审查 a92ac3e）：放之前开一个短事务锁住这张手牌（发牌也先锁手牌），核对确实不在店，能发的标「暂停使用」
+ * 当预留（发牌会拒绝暂停的手牌），提交以后才在事务外调柜锁桥，放完再锁住恢复——不会放掉刚发给新客人的那张牌的柜，也不拿着事务等硬件。
  * 不拿锁的钟和数据库的钟比先后（两边的钟可能不准）。LOCKER_AUTO_RELEASE=off 关掉；没接自选柜（select）什么都不做。
  * 桥连不上照常抛出（每分钟任务记成出错，下一分钟再试）。返回放成了几个。
  */
@@ -271,6 +279,14 @@ export async function sweepReturnedPhoneLockers(deps: { sql: Sql; config: AppCon
   if (!cfg.autoRelease) return 0;
   const controller = lockerControllerFor(cfg);
   if (!controller.info.canSelect) return 0;
+  // 上一轮中途退出、没恢复的预留：恢复成正常
+  await withTx(
+    deps.sql,
+    (tx) => tx`
+    UPDATE hand_tags SET service_status = 'normal', service_note = NULL, service_by = NULL, service_at = now(), updated_at = now()
+    WHERE service_status = 'paused' AND service_note LIKE ${`${RESERVE_NOTE_PREFIX}%`}
+      AND service_at < now() - make_interval(mins => ${STALE_RESERVE_MINUTES})`,
+  );
   const slots = (await controller.selectList()).filter((x) => x.uid && x.uid !== LOCKER_UID_UNREADABLE && x.doorOpen !== false);
   if (!slots.length) return 0;
   const uids = [...new Set(slots.map((x) => x.uid!))];
@@ -286,6 +302,7 @@ export async function sweepReturnedPhoneLockers(deps: { sql: Sql; config: AppCon
   for (const slot of slots) {
     const tag = byUid.get(slot.uid!);
     if (!tag || tag.inStore || !tag.returnedAt) continue;
+    const tagId = Number(tag.id);
     const returnedAt = new Date(tag.returnedAt).toISOString();
     const [tried] = await deps.sql`
       SELECT 1 FROM audit_logs
@@ -293,13 +310,40 @@ export async function sweepReturnedPhoneLockers(deps: { sql: Sql; config: AppCon
         AND detail->>'no' = ${slot.no} AND detail->>'uid' = ${slot.uid} AND detail->>'returnedAt' = ${returnedAt}
       LIMIT 1`;
     if (tried) continue;
-    const result = await controller.selectRelease(slot.no, slot.uid);
-    await runInStore(Number(tag.storeId), () =>
-      writeAudit(deps.sql, {
+    const ok = await runInStore(Number(tag.storeId), async () => {
+      // 预留：锁住这张手牌，核对确实不在店；能发的标「暂停使用」（发牌会拒绝），不能发的（停用、锁定、暂停、维修）本来就发不出去
+      const note = `${RESERVE_NOTE_PREFIX} ${slot.no}（系统，几秒后恢复）`;
+      const reserve = await withTx(deps.sql, async (tx) => {
+        const [t] = await tx<{ active: boolean; locked: boolean; serviceStatus: string; deletedAt: Date | null }[]>`
+          SELECT active, locked, service_status, deleted_at FROM hand_tags WHERE id = ${tagId} FOR UPDATE`;
+        if (!t || t.deletedAt) return 'skip' as const;
+        const [open] = await tx`SELECT 1 FROM visits WHERE tag_id = ${tagId} AND status = 'open' LIMIT 1`;
+        if (open) return 'skip' as const;
+        if (!t.active || t.locked || t.serviceStatus !== 'normal') return 'unissuable' as const;
+        await tx`
+          UPDATE hand_tags SET service_status = 'paused', service_note = ${note}, service_by = NULL, service_at = now(), updated_at = now()
+          WHERE id = ${tagId}`;
+        return 'reserved' as const;
+      });
+      if (reserve === 'skip') return false;
+      let result;
+      try {
+        result = await controller.selectRelease(slot.no, slot.uid);
+      } finally {
+        // 放完（不论结果）恢复：只恢复自己标的那一个（期间有人改过就不动）
+        if (reserve === 'reserved')
+          await withTx(deps.sql, async (tx) => {
+            await tx`SELECT id FROM hand_tags WHERE id = ${tagId} FOR UPDATE`;
+            await tx`
+              UPDATE hand_tags SET service_status = 'normal', service_note = NULL, service_by = NULL, service_at = now(), updated_at = now()
+              WHERE id = ${tagId} AND service_status = 'paused' AND service_note = ${note}`;
+          });
+      }
+      await writeAudit(deps.sql, {
         staffId: null,
         action: 'locker_select_released',
         targetType: 'hand_tag',
-        targetId: Number(tag.id),
+        targetId: tagId,
         detail: {
           no: slot.no,
           uid: slot.uid,
@@ -312,9 +356,10 @@ export async function sweepReturnedPhoneLockers(deps: { sql: Sql; config: AppCon
           uncertain: result.uncertain,
           message: result.message,
         },
-      }),
-    );
-    if (result.ok) released += 1;
+      });
+      return result.ok;
+    });
+    if (ok) released += 1;
   }
   return released;
 }

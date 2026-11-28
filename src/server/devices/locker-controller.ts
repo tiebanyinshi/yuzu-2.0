@@ -85,7 +85,7 @@ const cardRead = (r: { ok?: unknown; uid?: unknown; code?: unknown; locks?: unkn
   };
 };
 
-/** 桥报的自选柜：柜号要有，芯片号照手牌绑芯片号的写法整理；报了芯片号却不像芯片号的记成「无法识别」（占着、不认得），不当成空柜 */
+/** 桥报的自选柜：柜号要有，芯片号照手牌绑芯片号的写法整理；只有明写 uid: null 的是空柜，没写、乱写的记成「无法识别」（占着、不认得） */
 function cleanSlots(v: unknown): LockerSelectSlot[] {
   if (!Array.isArray(v)) return [];
   const out: LockerSelectSlot[] = [];
@@ -95,7 +95,8 @@ function cleanSlots(v: unknown): LockerSelectSlot[] {
     if (!no || seen.has(no)) continue;
     seen.add(no);
     const since = text(l?.since, 40);
-    const uid = l?.uid === null || l?.uid === undefined || l?.uid === '' ? null : (cleanUid(l.uid) ?? LOCKER_UID_UNREADABLE);
+    // 只有明写的 uid: null 才算空柜；没写、空串、乱写的都当「占着、认不出」，不当空柜（Codex 审查 a92ac3e）
+    const uid = l?.uid === null ? null : (cleanUid(l?.uid) ?? LOCKER_UID_UNREADABLE);
     out.push({ no, uid, doorOpen: typeof l?.doorOpen === 'boolean' ? l.doorOpen : null, since: since && !Number.isNaN(Date.parse(since)) ? since : null });
   }
   return out;

@@ -7,7 +7,7 @@ import type { BoardTag } from '../src/shared/frontdesk';
 import { analyzeSelectSlots, groupLockers, lockerState, LOCKER_UID_UNREADABLE, releaseTargetFor, settleLockerSelectPending, type LockerPending } from '../src/shared/lockers';
 import { loadLockerConfig } from '../src/server/config';
 import { createLockerController } from '../src/server/devices/locker-controller';
-import { sweepReturnedPhoneLockers } from '../src/server/modules/lockers';
+import { lockerControllerFor, sweepReturnedPhoneLockers } from '../src/server/modules/lockers';
 import { MOCK_SELECT_NOS, MockLockerHardware, startMockLockerBridge } from '../src/server/devices/mock-locker-bridge';
 import { api, setup, type TestContext } from './helpers';
 
@@ -290,8 +290,10 @@ describe('自选柜（手机柜，不要数据库）', () => {
         '/select/list': list([
           { no: 'P001', uid: '04:a1:b2:c3', doorOpen: false, since: '2026-11-27T12:00:00Z' },
           { no: 'P001', uid: null },
-          { no: 'P002', uid: '' },
+          { no: 'P002', uid: null },
           { no: 'P003', uid: '??', since: 'yesterday' },
+          { no: 'P004', uid: '' },
+          { no: 'P005' },
           { uid: '04A1B2C3' },
         ]),
       }),
@@ -300,11 +302,16 @@ describe('自选柜（手机柜，不要数据库）', () => {
       { no: 'P001', uid: '04A1B2C3', doorOpen: false, since: '2026-11-27T12:00:00Z' },
       { no: 'P002', uid: null, doorOpen: null, since: null },
       { no: 'P003', uid: '无法识别', doorOpen: null, since: null },
+      // 只有明写 uid: null 才是空柜；空串、没写的当「占着、认不出」（Codex 审查 a92ac3e）
+      { no: 'P004', uid: '无法识别', doorOpen: null, since: null },
+      { no: 'P005', uid: '无法识别', doorOpen: null, since: null },
     ]);
     // 释放超时，再列一次柜子空了：按释放了算
     const freed = await createLockerController(cfg, respond({ '/select/list': list([{ no: 'P001', uid: null }]) })).selectRelease('P001', '04A1B2C3');
     expect(freed).toMatchObject({ ok: true, uncertain: false });
     expect(freed.message).toContain('再查一次');
+    // 释放超时，再列一次没写芯片号：不当空柜，结果待确认（Codex 审查 a92ac3e）
+    expect(await createLockerController(cfg, respond({ '/select/list': list([{ no: 'P001', doorOpen: false }]) })).selectRelease('P001', '04A1B2C3')).toMatchObject({ ok: false, uncertain: true });
     // 释放超时，再列一次芯片号认不出：可能还是原来那张，结果待确认（Codex 审查 38bdb98）
     expect(await createLockerController(cfg, respond({ '/select/list': list([{ no: 'P001', uid: '??' }]) })).selectRelease('P001', '04A1B2C3')).toMatchObject({ ok: false, uncertain: true });
     // 释放回 503、还是那张手牌占着：结果待确认
@@ -513,6 +520,8 @@ describe('自选柜（手机柜）接口：门店系统接模拟柜锁桥', () =
     await tag('L9204', '0AA00004');
     const failing = await tag('L9205', '0AA00005');
     await visit(failing, 'L9205', true);
+    const reissued = await tag('L9206', '0AA00006');
+    await visit(reissued, 'L9206', true);
     // P007 退了牌、柜门开着（客人拿了手机）；P008 退了牌、柜门关着；P009 在店；P010 没来过；P011 退了牌、桥这一次没放成
     for (const [no, uid, open] of [
       ['P007', '0AA00001', true],
@@ -520,20 +529,32 @@ describe('自选柜（手机柜）接口：门店系统接模拟柜锁桥', () =
       ['P009', '0AA00003', true],
       ['P010', '0AA00004', true],
       ['P011', '0AA00005', true],
+      ['P012', '0AA00006', true],
     ] as const) {
       expect(hw.take(no, uid)).toBeNull();
       if (open) hw.selectOpen(no);
     }
-    const refuse = vi
-      .spyOn(hw, 'selectRelease')
-      .mockImplementation((no) => (no === 'P011' ? { no, ok: false, uncertain: false, message: '锁没回应（模拟）' } : MockLockerHardware.prototype.selectRelease.call(hw, no, '0AA00001')));
+    // P012：L9206 退了牌，但在放 P007 的时候前台又把它发给了新客人——要放之前锁住手牌再核对，就不放（Codex 审查 a92ac3e）
+    const statusDuring: string[] = [];
+    const ctl = lockerControllerFor(ctx.config.lockers);
+    const realRelease = ctl.selectRelease.bind(ctl);
+    const refuse = vi.spyOn(ctl, 'selectRelease').mockImplementation(async (no, uid) => {
+      const [t] = await ctx.sql<{ serviceStatus: string; serviceNote: string | null }[]>`
+        SELECT service_status, service_note FROM hand_tags WHERE card_uid = ${uid}`;
+      statusDuring.push(`${no} ${t!.serviceStatus} ${t!.serviceNote ?? ''}`);
+      if (no === 'P007') await visit(reissued, 'L9206B', false);
+      return no === 'P011' ? { no, ok: false, uncertain: false, message: '锁没回应（模拟）' } : realRelease(no, uid);
+    });
     try {
       expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: ctx.config })).toBe(1);
     } finally {
       refuse.mockRestore();
     }
     const held = Object.fromEntries(hw.selectList().map((x) => [x.no, x.uid]));
-    expect(held).toMatchObject({ P007: null, P008: '0AA00002', P009: '0AA00003', P010: '0AA00004', P011: '0AA00005' });
+    expect(held).toMatchObject({ P007: null, P008: '0AA00002', P009: '0AA00003', P010: '0AA00004', P011: '0AA00005', P012: '0AA00006' });
+    // 放的时候手牌标着「暂停使用」（发牌会拒绝），放完恢复正常
+    expect(statusDuring).toEqual([expect.stringMatching(/^P007 paused 正在自动释放手机柜 P007/), expect.stringMatching(/^P011 paused 正在自动释放手机柜 P011/)]);
+    expect(await ctx.sql`SELECT code FROM hand_tags WHERE code IN ('L9201', 'L9205', 'L9206') AND service_status <> 'normal'`).toHaveLength(0);
     const logs = await ctx.sql<{ targetId: string; detail: Record<string, unknown> }[]>`
       SELECT target_id, detail FROM audit_logs WHERE action = 'locker_select_released' AND detail->>'auto' = 'true' ORDER BY id`;
     expect(logs.map((l) => [l.detail.no, l.detail.ok])).toEqual([
@@ -550,6 +571,14 @@ describe('自选柜（手机柜）接口：门店系统接模拟柜锁桥', () =
     const off = { ...ctx.config, lockers: { ...ctx.config.lockers, autoRelease: false } };
     expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: off })).toBe(0);
     expect(hw.selectList().find((x) => x.no === 'P008')!.uid).toBe('0AA00002');
+    // 上一轮中途退出、没恢复的预留：超过 2 分钟的恢复正常；别人标的暂停不动
+    await ctx.sql`UPDATE hand_tags SET service_status = 'paused', service_note = '正在自动释放手机柜 P009（系统，几秒后恢复）', service_at = now() - interval '5 minutes' WHERE code = 'L9204'`;
+    await ctx.sql`UPDATE hand_tags SET service_status = 'paused', service_note = '手牌带子断了', service_at = now() - interval '5 minutes' WHERE code = 'L9202'`;
+    await sweepReturnedPhoneLockers({ sql: ctx.sql, config: ctx.config });
+    const statuses = Object.fromEntries(
+      (await ctx.sql<{ code: string; serviceStatus: string }[]>`SELECT code, service_status FROM hand_tags WHERE code IN ('L9202', 'L9204')`).map((r) => [r.code, r.serviceStatus]),
+    );
+    expect(statuses).toEqual({ L9202: 'paused', L9204: 'normal' });
   });
 });
 
