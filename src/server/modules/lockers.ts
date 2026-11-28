@@ -24,6 +24,7 @@ import {
   isOtherHolder,
   LOCKER_CARD_REASONS,
   LOCKER_OPEN_REASONS,
+  LOCKER_RELEASE_RESERVE_PREFIX,
   LOCKER_SELECT_REASONS,
   LOCKER_UID_UNREADABLE,
   type LockerCardReadView,
@@ -265,7 +266,7 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
 }
 
 /** 自动释放期间给手牌标的「暂停使用」说明（预留）：发牌碰到暂停的手牌会拒绝；说明里带柜号，下一轮按它认出来接着核对 */
-const RESERVE_NOTE_PREFIX = '正在自动释放手机柜';
+const RESERVE_NOTE_PREFIX = LOCKER_RELEASE_RESERVE_PREFIX;
 const reserveNote = (no: string) => `${RESERVE_NOTE_PREFIX} ${no}（系统：放成了或确定没放成就恢复）`;
 const reservedNo = (note: string | null) => note?.match(/^正在自动释放手机柜 (\S+?)（/)?.[1] ?? null;
 
@@ -357,9 +358,10 @@ export async function sweepReturnedPhoneLockers(deps: { sql: Sql; config: AppCon
       // 放的时候有人把它改回正常就又能发了，没有预留挡着——留给柜况页的人（「已退牌还占着」）
       const note = reserveNote(slot.no);
       const reserve = await withTx(deps.sql, async (tx) => {
-        const [t] = await tx<{ active: boolean; locked: boolean; serviceStatus: string; deletedAt: Date | null }[]>`
-          SELECT active, locked, service_status, deleted_at FROM hand_tags WHERE id = ${tagId} FOR UPDATE`;
-        if (!t || t.deletedAt) return 'skip' as const;
+        const [t] = await tx<{ active: boolean; locked: boolean; serviceStatus: string; deletedAt: Date | null; cardUid: string | null }[]>`
+          SELECT active, locked, service_status, deleted_at, card_uid FROM hand_tags WHERE id = ${tagId} FOR UPDATE`;
+        // 锁住以后再核对芯片号还绑在这张牌上（期间改绑过的不动，Codex 审查 a116c5f）
+        if (!t || t.deletedAt || t.cardUid !== slot.uid) return 'skip' as const;
         const [open] = await tx`SELECT 1 FROM visits WHERE tag_id = ${tagId} AND status = 'open' LIMIT 1`;
         if (open) return 'skip' as const;
         if (!t.active || t.locked || t.serviceStatus !== 'normal') return 'skip' as const;

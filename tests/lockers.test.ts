@@ -215,11 +215,13 @@ describe('柜锁控制器（不要数据库）', () => {
       message: '已读',
     });
     expect(await c.writeCard('A8060', '04A1B2C3')).toEqual({ ok: true, uncertain: false, uid: '04A1B2C3', message: '已写：衣物柜 A8060、手机柜 P060' });
-    expect(await c.clearCard(null)).toEqual({ ok: false, uncertain: false, uid: null, message: '发卡器没有写成' });
+    // 回答里 ok 不是 true / false（"yes"）：不算明确回答，读回核对——卡里还写着柜，结果待确认（Codex 审查 a116c5f）
+    expect(await c.clearCard(null)).toMatchObject({ ok: false, uncertain: true });
     expect(calls.map((x) => [x.url, x.body])).toEqual([
       ['http://bridge/card/read', {}],
       ['http://bridge/card/write', { code: 'A8060', uid: '04A1B2C3' }],
       ['http://bridge/card/clear', {}],
+      ['http://bridge/card/read', {}],
     ]);
     const down = createLockerController(cfg, (async () => {
       throw new Error('ECONNREFUSED');
@@ -333,6 +335,16 @@ describe('自选柜（手机柜，不要数据库）', () => {
     // 开柜超时、再列一次柜门开着：按开了算；列也列不出来：待确认
     expect(await createLockerController(cfg, respond({ '/select/list': list([{ no: 'P001', uid: null, doorOpen: true }]) })).selectOpen('P001')).toMatchObject({ ok: true });
     expect(await createLockerController(cfg, respond({})).selectOpen('P001')).toMatchObject({ ok: false, uncertain: true });
+    // 回 2xx 但回答不完整（{}、ok 写成字符串）：不算明确回答，再列一次核对（Codex 审查 a116c5f）
+    expect(await createLockerController(cfg, respond({ '/select/release': json({}), '/select/list': list([{ no: 'P001', uid: '04A1B2C3' }]) })).selectRelease('P001', '04A1B2C3')).toMatchObject({
+      ok: false,
+      uncertain: true,
+    });
+    expect(await createLockerController(cfg, respond({ '/select/release': json({ ok: 'true' }), '/select/list': list([{ no: 'P001', uid: null }]) })).selectRelease('P001', '04A1B2C3')).toMatchObject({
+      ok: true,
+      uncertain: false,
+    });
+    expect(await createLockerController(cfg, respond({ '/select/open': json([1]) })).selectOpen('P001')).toMatchObject({ ok: false, uncertain: true });
     // 桥回 409：明确没做
     expect(await createLockerController(cfg, respond({ '/select/release': json({}, 409) })).selectRelease('P001', null)).toMatchObject({ ok: false, uncertain: false });
     await expect(createLockerController(cfg, respond({})).selectList()).rejects.toThrow();
@@ -613,6 +625,29 @@ describe('自选柜（手机柜）接口：门店系统接模拟柜锁桥', () =
     const off = { ...ctx.config, lockers: { ...ctx.config.lockers, autoRelease: false } };
     expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: off })).toBe(0);
     expect(held().P008).toBe('0AA00002');
+  });
+
+  it('正在自动释放的手牌（预留着）：不能改芯片号、不能删除，按清单导入也不改它的芯片号（Codex 审查 a116c5f）', async () => {
+    const [t] = await ctx.sql<{ id: number }[]>`
+      INSERT INTO hand_tags (code, zone, card_uid, service_status, service_note, service_at)
+      VALUES ('B8301', 'male', '0BB00001', 'paused', '正在自动释放手机柜 P006（系统：放成了或确定没放成就恢复）', now()) RETURNING id`;
+    const unbind = await api(ctx.app, ctx.owner, 'PUT', `/api/frontdesk/tags/${t!.id}/card`, { cardUid: null });
+    expect(unbind.status).toBe(409);
+    expect(unbind.body.error.code).toBe('TAG_RELEASING');
+    expect((await api(ctx.app, ctx.owner, 'POST', `/api/frontdesk/tags/${t!.id}/delete`, {})).body.error.code).toBe('TAG_RELEASING');
+    const imported = await api(ctx.app, ctx.owner, 'POST', '/api/frontdesk/tags/import', {
+      rows: [{ code: 'B8301', zone: 'male', kind: 'normal', vipLevel: null, cardUid: '0BB00002' }],
+      dryRun: false,
+    });
+    expect(imported.status).toBe(200);
+    expect(imported.body.blocked).toEqual([expect.objectContaining({ code: 'B8301', reason: expect.stringContaining('正在自动释放手机柜') })]);
+    expect((await ctx.sql<{ cardUid: string; deletedAt: Date | null }[]>`SELECT card_uid, deleted_at FROM hand_tags WHERE id = ${t!.id}`)[0]).toMatchObject({
+      cardUid: '0BB00001',
+      deletedAt: null,
+    });
+    // 别人标的暂停（不是自动释放的预留）照常能改
+    await ctx.sql`UPDATE hand_tags SET service_note = '手牌带子断了' WHERE id = ${t!.id}`;
+    expect((await api(ctx.app, ctx.owner, 'PUT', `/api/frontdesk/tags/${t!.id}/card`, { cardUid: null })).status).toBe(200);
   });
 
   it('多门店（Codex 审查 d0ecdcb）：柜锁桥只接 LOCKER_STORE_ID 那家店；别的店当成没接——看不到、开不了、放不了、发卡器用不了', async () => {

@@ -112,6 +112,15 @@ class BridgeRejected extends Error {}
 /** 超时、断线、5xx、回的不是 JSON：桥可能已经做了，结果待确认 */
 class BridgeUncertain extends Error {}
 
+/**
+ * 开柜、写卡、清卡、开 / 放手机柜的回答：ok 一定要是 true / false。缺了、写成别的（"true"、1）、回的不是对象，
+ * 都不算明确回答——当成没收到回答，结果待确认、读回 / 再列一次核对（Codex 审查 a116c5f）
+ */
+function ackOf<T extends { ok?: unknown }>(r: T): T & { ok: boolean } {
+  if (typeof r !== 'object' || r === null || typeof r.ok !== 'boolean') throw new BridgeUncertain('柜锁桥的回答不完整（没有明确的 ok）');
+  return r as T & { ok: boolean };
+}
+
 const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const uncertainText = (what: string, error: unknown, back: string) => `没收到柜锁桥的回答（${why(error)}），${what}；${back}`.slice(0, 200);
 
@@ -217,7 +226,7 @@ export function createLockerController(cfg: LockerConfig, fetchImpl: typeof fetc
       info,
       async open(code) {
         try {
-          const r = await call<{ ok?: unknown; message?: unknown }>('/open', { code });
+          const r = ackOf(await call<{ ok?: unknown; message?: unknown }>('/open', { code }));
           const opened = r.ok === true;
           return { code, opened, uncertain: false, message: text(r.message) ?? (opened ? '已开' : '控制器没有开') };
         } catch (error) {
@@ -239,14 +248,14 @@ export function createLockerController(cfg: LockerConfig, fetchImpl: typeof fetc
       },
       async writeCard(code, uid) {
         try {
-          return cardResult(await call('/card/write', uid ? { code, uid } : { code }), '已写');
+          return cardResult(ackOf(await call<{ ok?: unknown }>('/card/write', uid ? { code, uid } : { code })), '已写');
         } catch (error) {
           return settleCard(error, (c) => c.code === code && (!uid || c.uid === uid), `卡已写成 ${code}`, '写了');
         }
       },
       async clearCard(uid) {
         try {
-          return cardResult(await call('/card/clear', uid ? { uid } : {}), '已清');
+          return cardResult(ackOf(await call<{ ok?: unknown }>('/card/clear', uid ? { uid } : {})), '已清');
         } catch (error) {
           return settleCard(error, (c) => c.code === null && (!uid || c.uid === uid), '卡已清成空白', '清了');
         }
@@ -254,14 +263,14 @@ export function createLockerController(cfg: LockerConfig, fetchImpl: typeof fetc
       selectList,
       async selectOpen(no) {
         try {
-          return selectAnswer(no, await call('/select/open', { no }), '已开', '控制器没有开');
+          return selectAnswer(no, ackOf(await call<{ ok?: unknown }>('/select/open', { no })), '已开', '控制器没有开');
         } catch (error) {
           return settleSelect(no, error, (s) => s.doorOpen === true, '柜门已经开了', '柜门可能已经开了');
         }
       },
       async selectRelease(no, uid) {
         try {
-          return selectAnswer(no, await call('/select/release', uid ? { no, uid } : { no }), '已释放', '控制器没有释放');
+          return selectAnswer(no, ackOf(await call<{ ok?: unknown }>('/select/release', uid ? { no, uid } : { no })), '已释放', '控制器没有释放');
         } catch (error) {
           // 柜子空了、或者已经换成别的手牌占着（原来那张一定放掉了）：按释放了算
           // 换成认得出的另一张手牌占着也算（认不出的芯片号可能还是原来那张，不算，Codex 审查 38bdb98）

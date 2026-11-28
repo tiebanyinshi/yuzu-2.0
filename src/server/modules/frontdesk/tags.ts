@@ -23,6 +23,7 @@ import {
 } from '@shared/frontdesk';
 import { HAND_TAG_IMPORT_MAX_ROWS, type HandTagImportReport } from '@shared/hand-tag-import';
 import { CARD_UID_PATTERN, normalizeCardUid, type TagByCard } from '@shared/frontdesk-risk';
+import { isLockerReleaseReserved } from '@shared/lockers';
 import { isUniqueViolation, type Db, type Sql } from '../../db';
 import { writeAudit } from '../../lib/audit';
 import type { OpContext } from '../../lib/context';
@@ -99,6 +100,9 @@ export async function batchCreate(deps: Deps, raw: unknown, ctx: OpContext) {
  * 不能把占用判断写进同一条 FOR UPDATE 语句：等锁期间发牌事务提交的来访，对那条语句的快照不可见，
  * 会把刚发出的手牌误判为空闲，于是锁定 / 停用 / 改分区与发牌同时成功。
  */
+/** 正在自动释放手机柜的手牌（预留着）：核对清楚以前不许改芯片号、删除 */
+const releasingError = (code: string, what: string) => conflict('TAG_RELEASING', `手牌 ${code} 正在自动释放手机柜，核对清楚以前不能${what}（柜况页「手机柜」能看到；急用请先到柜前把那个手机柜放掉）`);
+
 async function lockTag(tx: Db, id: number) {
   const [tag] = await tx<{ id: number; code: string; zone: string; kind: string; vipLevel: number | null; locked: boolean; active: boolean; serviceStatus: string; serviceNote: string | null }[]>`
     SELECT id, code, zone, kind, vip_level, locked, active, service_status, service_note FROM hand_tags
@@ -318,6 +322,7 @@ export async function deleteHandTag(deps: Deps, id: number, ctx: OpContext) {
     await setTxTimeouts(tx);
     const tag = await lockTag(tx, id);
     if (tag.inUse) throw conflict('TAG_IN_USE', `手牌 ${tag.code} 上有在店客人，不能删除；请先在前台给客人换牌`);
+    if (isLockerReleaseReserved(tag)) throw releasingError(tag.code, '删除');
     // 手牌表本来就禁止物理删除（004 迁移的触发器：历史来访、换牌记录还引用它）：删除 = 停用并标「已删除」，
     // 后台列表、前台都不再出现，牌号不再被生成；按清单导入同一个牌号可以恢复
     await tx`UPDATE hand_tags SET active = false, deleted_at = now(), deleted_by = ${ctx.actor.id}, card_uid = NULL, updated_at = now() WHERE id = ${id}`;
@@ -415,8 +420,10 @@ export async function importHandTags(
     await setTxTimeouts(tx);
     // 8.2.27：芯片号绑定锁在前（与手牌绑卡、技师绑工牌同一把），再锁手牌
     if (!input.dryRun) await lockCardBindings(tx);
-    const existing = await tx<{ id: number; code: string; zone: string; kind: string; vipLevel: number | null; active: boolean; cardUid: string | null }[]>`
-      SELECT id, code, zone, kind, vip_level, active, card_uid FROM hand_tags WHERE store_id = ${currentStoreId()} ORDER BY id ${input.dryRun ? tx`` : tx`FOR UPDATE`}`;
+    const existing = await tx<
+      { id: number; code: string; zone: string; kind: string; vipLevel: number | null; active: boolean; cardUid: string | null; serviceStatus: string; serviceNote: string | null }[]
+    >`
+      SELECT id, code, zone, kind, vip_level, active, card_uid, service_status, service_note FROM hand_tags WHERE store_id = ${currentStoreId()} ORDER BY id ${input.dryRun ? tx`` : tx`FOR UPDATE`}`;
     // 芯片号（8.1.35）：清单里的芯片号已经绑在本店另一张手牌上的，这一行的芯片号不导（报出来，牌照常导）
     const uidOwner = new Map(existing.filter((t) => t.cardUid).map((t) => [t.cardUid!, t.code]));
     // 8.2.27（Codex 审查）：技师工牌的芯片号不导到手牌上（牌照常导）
@@ -447,6 +454,11 @@ export async function importHandTags(
       }
       const uid = uidOf(r) ?? t.cardUid;
       const same = t.zone === r.zone && t.kind === r.kind && t.vipLevel === r.vipLevel && uid === t.cardUid;
+      if (uid !== t.cardUid && isLockerReleaseReserved(t)) {
+        // 正在自动释放手机柜：芯片号不改（docs/LOCKERS_V8149.md 第 7.4 节，Codex 审查 a116c5f）
+        blocked.push({ code: r.code, reason: '正在自动释放手机柜，核对清楚以前芯片号不改（这一行没导，核对完再导入）' });
+        continue;
+      }
       if (same && t.active) {
         unchanged += 1;
       } else if (!same && inUse.has(t.id)) {
@@ -581,10 +593,13 @@ export async function setTagCard(deps: Deps, id: number, raw: unknown, ctx: OpCo
       await setTxTimeouts(tx);
       // 8.2.27：芯片号绑定锁在前（技师绑工牌也拿它），再锁这张手牌
       await lockCardBindings(tx);
-      const [tag] = await tx<{ id: number; code: string; cardUid: string | null }[]>`
-        SELECT id, code, card_uid FROM hand_tags WHERE id = ${id} AND store_id = ${currentStoreId()} AND deleted_at IS NULL FOR UPDATE`;
+      const [tag] = await tx<{ id: number; code: string; cardUid: string | null; serviceStatus: string; serviceNote: string | null }[]>`
+        SELECT id, code, card_uid, service_status, service_note FROM hand_tags WHERE id = ${id} AND store_id = ${currentStoreId()} AND deleted_at IS NULL FOR UPDATE`;
       if (!tag) throw notFound('手牌不存在（可能刚被删除）');
-      if (tag.cardUid === input.cardUid) return tag;
+      if (tag.cardUid === input.cardUid) return { id: tag.id, code: tag.code, cardUid: tag.cardUid };
+      // 正在自动释放手机柜的手牌（docs/LOCKERS_V8149.md 第 7.4 节）：核对清楚以前不改芯片号，不然芯片号挪到别的牌上发出去，
+      // 还没核对清楚的那次释放可能放掉新客人的柜（Codex 审查 a116c5f）
+      if (isLockerReleaseReserved(tag)) throw releasingError(tag.code, '改芯片号');
       if (input.cardUid !== null) {
         const [other] = await tx<{ code: string }[]>`
           SELECT code FROM hand_tags WHERE store_id = ${currentStoreId()} AND card_uid = ${input.cardUid} AND id <> ${id}`;

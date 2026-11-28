@@ -305,5 +305,13 @@ export function releaseTargetFor(snapshot: { no: string; uid: string | null }, c
   return { ok: true, uid: snapshot.uid };
 }
 
+/**
+ * 退牌后自动释放手机柜时给手牌标的预留（docs/LOCKERS_V8149.md 第 7.4 节）：「暂停使用」+ 说明以这几个字开头。
+ * 预留着的手牌发不出去（暂停），也不许改芯片号、删除（Codex 审查 a116c5f）：不然芯片号挪到别的牌上发出去，
+ * 还没核对清楚的那次释放可能放掉新客人的柜
+ */
+export const LOCKER_RELEASE_RESERVE_PREFIX = '正在自动释放手机柜';
+export const isLockerReleaseReserved = (t: { serviceStatus: string; serviceNote: string | null }) => t.serviceStatus === 'paused' && !!t.serviceNote?.startsWith(`${LOCKER_RELEASE_RESERVE_PREFIX} `);
+
 /** 远程开、释放自选柜的原因（必填，记审计）；常用的几句 */
 export const LOCKER_SELECT_REASONS = ['客人忘带手牌', '客人已退牌', '手牌失灵', '一牌多柜', '清洁、检修'] as const;
