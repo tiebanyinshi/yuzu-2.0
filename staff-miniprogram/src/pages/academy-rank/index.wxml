@@ -1,0 +1,31 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="学习榜" />
+  <view class="tabs gutter">
+    <view wx:for="{{boards}}" wx:key="key" class="tab {{board === item.key ? 'on' : ''}}" hover-class="pressed" hover-stay-time="120" data-key="{{item.key}}" bindtap="onBoard" aria-role="tab" aria-selected="{{board === item.key}}">{{item.label}}</view>
+  </view>
+  <view class="gutter chips">
+    <view wx:for="{{periods}}" wx:key="key" class="chip {{period === item.key ? 'on' : ''}}" hover-class="pressed" hover-stay-time="120" data-key="{{item.key}}" bindtap="onPeriod" aria-role="button">{{item.label}}</view>
+    <view class="chip-gap"></view>
+    <view wx:for="{{scopes}}" wx:key="key" class="chip {{scope === item.key ? 'on' : ''}}" hover-class="pressed" hover-stay-time="120" data-key="{{item.key}}" bindtap="onScope" aria-role="button">{{item.label}}</view>
+  </view>
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '榜上还没有人' : ''}}" message="{{state === 'empty' ? '学完课时、做每日一练就上榜' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="card list">
+      <view wx:for="{{rows}}" wx:key="key" class="row {{item.me ? 'me' : ''}}">
+        <view class="no num {{item.rank <= 3 ? 'top' : ''}}">{{item.rank}}</view>
+        <view class="row-main">
+          <view class="row-title">{{item.name}}{{item.me ? '（我）' : ''}}</view>
+          <view wx:if="{{item.sub}}" class="row-sub">{{item.sub}}</view>
+        </view>
+        <view class="value num">{{item.value}}</view>
+      </view>
+    </view>
+    <view wx:if="{{mine}}" class="card list mine">
+      <view class="row me">
+        <view class="no num">{{mine.rank}}</view>
+        <view class="row-main"><view class="row-title">我</view></view>
+        <view class="value num">{{mine.value}}</view>
+      </view>
+    </view>
+  </view>
+</view>

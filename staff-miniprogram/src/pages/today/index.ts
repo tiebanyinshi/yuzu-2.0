@@ -4,7 +4,7 @@
 //   · 此刻卡每 30 秒按本机时钟往前走一次（不重新取），换页回来再取。
 
 import type { PunchToday } from '../../../../src/shared/oa';
-import type { ApprovalSummary } from '../../../../src/shared/oa-approval';
+import type { ApprovalPage, ApprovalSummary } from '../../../../src/shared/oa-approval';
 import type { MyPayslipItem } from '../../../../src/shared/oa-payroll';
 import type { OaAnnouncementList } from '../../../../src/shared/oa';
 import type { StaffMpMe } from '../../../../src/shared/staffmp';
@@ -14,9 +14,12 @@ import { dayLabel, greeting, initialOf, shortTime, storeClock } from '../../util
 import { requireMe, toLogin } from '../../utils/guard';
 import { loadPending } from '../../utils/pending';
 import { hasPatrolLink, patrolView, savePatrolLink } from '../../utils/patrol';
+import { openPage } from '../../utils/nav';
 import { largeTextOn } from '../../utils/prefs';
 import type { MealWindowLite, PatrolNow, TodayCard, TodoInput, TodoRow } from '../../utils/today';
-import { mealOfNow, routeScan, shiftLine, todayCard, todoRows } from '../../utils/today';
+import { mealOfNow, rejectedTodo, routeScan, shiftLine, todayCard, todoRows } from '../../utils/today';
+import { seenRejected } from '../../utils/seen';
+import { dueSoon, loadAcademyHome } from '../../utils/academy';
 
 /** 上次取到的（按员工存在手机上；没信号时先画它）。存的是原料，每次画都按本机时钟重算 */
 interface Snapshot {
@@ -183,7 +186,7 @@ Page({
     const today = storeClock().date;
     const skip = Promise.reject(new Error('skip'));
     skip.catch(() => undefined);
-    const [punch, summary, unread, payslips, notices, patrol, menus, key, status] = await Promise.all([
+    const [punch, summary, unread, payslips, notices, patrol, menus, key, status, rejectedPage, academyHome] = await Promise.all([
       settle(has('punch') ? call<PunchToday>('GET', '/oa/attendance/today') : skip),
       settle(has('approvals') ? call<ApprovalSummary>('GET', '/oa/approvals/summary') : skip),
       settle(call<{ unread: number }>('GET', '/oa/notifications/unread-count')),
@@ -193,6 +196,9 @@ Page({
       settle(has('canteen') ? loadMenus(today, today) : skip),
       settle(has('canteen') ? refreshMealKey(m.staff.id) : skip),
       settle(has('canteen') ? canteenStatus() : skip),
+      // 第二版：我的申请被驳回的、必修快到期的
+      settle(has('approvals') ? call<ApprovalPage>('GET', '/oa/approvals?box=mine&status=rejected') : skip),
+      settle(has('academy') ? loadAcademyHome() : skip),
     ]);
     if (mine !== seq || !me || me.staff.id !== m.staff.id) return;
     // 登录过期（静默重新登录也不行）：去登录页
@@ -214,6 +220,8 @@ Page({
       [has('patrol'), patrol],
       [menusExpected, menus],
       [has('canteen'), status],
+      [has('approvals'), rejectedPage],
+      [has('academy'), academyHome],
     ];
     const someFailed = parts.some(([entry, r]) => entry && !r.ok);
     const todoUnknown = !prev && [[has('punch'), punch] as const, [has('approvals'), summary] as const, [has('payslips'), payslips] as const].some(([entry, r]) => entry && !r.ok);
@@ -245,6 +253,8 @@ Page({
       ccUnread: sum.ccUnread,
       missedPunch: !!punchV && punchV.nextPunch.action === 'done' && /缺卡/.test(punchV.nextPunch.detail),
       unsignedPayslips: !has('payslips') ? [] : payslips.ok ? payslips.v.filter((p) => !p.signedAt).map((p) => ({ id: p.id, title: p.title })) : prev ? prev.todo.unsignedPayslips : [],
+      rejected: !has('approvals') ? [] : rejectedPage.ok ? rejectedTodo(rejectedPage.v.items, seenRejected(m.staff.id)) : prev ? (prev.todo.rejected ?? []).filter((x) => seenRejected(m.staff.id).indexOf(x.id) < 0) : [],
+      dueSoon: !has('academy') ? [] : academyHome.ok ? dueSoon(academyHome.v.required, today) : prev ? (prev.todo.dueSoon ?? []) : [],
     };
     const next: Snapshot = {
       staffId: m.staff.id,
@@ -279,7 +289,8 @@ Page({
 
   onGo(e: WechatMiniprogram.BaseEvent) {
     const page = String(e.currentTarget.dataset.page || '');
-    if (page) wx.navigateTo({ url: page });
+    // 「必修快到期」几门的去「学习」Tab（Tab 页要 switchTab）
+    if (page) openPage(page);
   },
 
   onBell() {
