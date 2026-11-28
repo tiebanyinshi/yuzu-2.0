@@ -35,6 +35,7 @@ import { runAttendanceSettlement } from './modules/oa/attendance-daily';
 import { runAnnualLeaveGrant } from './modules/oa/leave';
 import { purgeStaleAttachments } from './modules/oa/attachments';
 import { sweepTrainingUploads } from './modules/training';
+import { sweepReturnedPhoneLockers } from './modules/lockers';
 import { sweepLeaveReturns } from './modules/technician-leave-return';
 
 export interface JobLog {
@@ -113,6 +114,11 @@ export async function runMinuteJobs(deps: { sql: Sql; config: AppConfig }, log: 
   await step('清理没用上的附件', '清理没用上的附件失败，下一分钟重试', async () => {
     const n = await purgeStaleAttachments(sql);
     if (n > 0) log.info(`清掉没用上的附件：${n} 个`);
+  });
+  // 手机柜（自选柜，docs/LOCKERS_V8149.md 第 7.4 节）：退了牌还占着手机柜的自动释放（没接自选柜什么都不做）
+  await step('退牌后释放手机柜', '退牌后释放手机柜失败（柜锁桥连不上？），下一分钟重试', async () => {
+    const n = await sweepReturnedPhoneLockers({ sql, config });
+    if (n > 0) log.info(`退牌后释放手机柜：${n} 个`);
   });
   // 员工培训（8.1.36，Codex 安全审查）：每小时把 24 小时还没传完的上传作废，连带传了一半的块
   await step('清理没传完的培训上传', '清理没传完的培训上传失败，一小时后重试', async () => {

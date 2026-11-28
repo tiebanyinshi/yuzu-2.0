@@ -91,22 +91,44 @@ export function loadPreviousKeys(env: NodeJS.ProcessEnv): PreviousKeys {
   return { canteenCode: list('CANTEEN_CODE_SECRET_PREVIOUS'), payrollFile: list('PAYROLL_FILE_KEY_PREVIOUS'), mallApi: list('MALL_API_KEY_PREVIOUS') };
 }
 
-/** 智能柜锁控制器（LOCKER_DRIVER / LOCKER_BRIDGE_URL / LOCKER_BRIDGE_TOKEN / LOCKER_CAPABILITIES） */
+/** 智能柜锁控制器（LOCKER_DRIVER / LOCKER_BRIDGE_URL / LOCKER_BRIDGE_TOKEN / LOCKER_CAPABILITIES / LOCKER_AUTO_RELEASE） */
 export interface LockerConfig {
   driver: LockerDriverKind;
   /** http：本机柜锁桥的地址（只认 http(s)） */
   bridgeUrl: string | null;
   /** http：调柜锁桥时带的密钥（至少 32 个字符；只放 .env） */
   bridgeToken: string | null;
-  /** 控制器能做的事（docs/LOCKERS_V8149.md 第 6 节）：none 为空；mock 三样都有；http 按 LOCKER_CAPABILITIES，默认 open,doors */
+  /** 控制器能做的事（docs/LOCKERS_V8149.md 第 6、7 节）：none 为空；mock 四样都有；http 按 LOCKER_CAPABILITIES，默认 open,doors */
   capabilities: LockerCapability[];
+  /** 退牌后自动释放手机柜（docs/LOCKERS_V8149.md 第 7.4 节，GK3）：默认开，LOCKER_AUTO_RELEASE=off 关掉；接了自选柜（select）才起作用 */
+  autoRelease: boolean;
+  /** 柜锁桥接的是哪家店的柜子（LOCKER_STORE_ID，默认本店 1）：别的店登录看不到、用不了（Codex 审查 d0ecdcb，docs/LOCKERS_V8149.md 第 7.5 节） */
+  storeId: number;
+}
+
+/** LOCKER_STORE_ID：不写为本店（1）；要正整数 */
+function lockerStoreId(env: NodeJS.ProcessEnv): number {
+  const raw = env.LOCKER_STORE_ID?.trim() ?? '';
+  if (raw === '') return 1;
+  if (!/^[1-9]\d{0,9}$/.test(raw)) throw new Error('LOCKER_STORE_ID 要写门店编号（正整数），不写为本店 1');
+  return Number(raw);
+}
+
+/** LOCKER_AUTO_RELEASE：不写为开；off / false / 0 / no 关，别的写法拒绝启动 */
+function lockerAutoRelease(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.LOCKER_AUTO_RELEASE?.trim().toLowerCase() ?? '';
+  if (raw === '' || ['on', 'true', '1', 'yes'].includes(raw)) return true;
+  if (['off', 'false', '0', 'no'].includes(raw)) return false;
+  throw new Error('LOCKER_AUTO_RELEASE 只能写 on 或 off');
 }
 
 export function loadLockerConfig(env: NodeJS.ProcessEnv): LockerConfig {
   const driver = (env.LOCKER_DRIVER?.trim().toLowerCase() || 'none') as LockerDriverKind;
   if (!(LOCKER_DRIVERS as readonly string[]).includes(driver)) throw new Error(`LOCKER_DRIVER 只能是 ${LOCKER_DRIVERS.join(' / ')}`);
-  if (driver === 'none') return { driver, bridgeUrl: null, bridgeToken: null, capabilities: [] };
-  if (driver === 'mock') return { driver, bridgeUrl: null, bridgeToken: null, capabilities: [...LOCKER_CAPABILITIES] };
+  const autoRelease = lockerAutoRelease(env);
+  const storeId = lockerStoreId(env);
+  if (driver === 'none') return { driver, bridgeUrl: null, bridgeToken: null, capabilities: [], autoRelease, storeId };
+  if (driver === 'mock') return { driver, bridgeUrl: null, bridgeToken: null, capabilities: [...LOCKER_CAPABILITIES], autoRelease, storeId };
   const url = env.LOCKER_BRIDGE_URL?.trim() ?? '';
   if (!/^https?:\/\/[^\s]+$/.test(url)) throw new Error('LOCKER_DRIVER=http 时要设 LOCKER_BRIDGE_URL（柜锁桥的 http 地址）');
   const token = env.LOCKER_BRIDGE_TOKEN?.trim() ?? '';
@@ -122,8 +144,8 @@ export function loadLockerConfig(env: NodeJS.ProcessEnv): LockerConfig {
           .filter(Boolean);
   const unknown = caps.filter((c) => !(LOCKER_CAPABILITIES as readonly string[]).includes(c));
   if (unknown.length) throw new Error(`LOCKER_CAPABILITIES 只能写 ${LOCKER_CAPABILITIES.join(' / ')}（逗号分隔），不认识：${unknown.join('、')}`);
-  if (!caps.length) throw new Error('LOCKER_CAPABILITIES 至少写一样（open / doors / card）');
-  return { driver, bridgeUrl: url.replace(/\/+$/, ''), bridgeToken: token, capabilities: LOCKER_CAPABILITIES.filter((c) => caps.includes(c)) };
+  if (!caps.length) throw new Error(`LOCKER_CAPABILITIES 至少写一样（${LOCKER_CAPABILITIES.join(' / ')}）`);
+  return { driver, bridgeUrl: url.replace(/\/+$/, ''), bridgeToken: token, capabilities: LOCKER_CAPABILITIES.filter((c) => caps.includes(c)), autoRelease, storeId };
 }
 
 /** 保留天数：0 = 不归档这一类 */

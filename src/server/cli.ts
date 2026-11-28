@@ -66,8 +66,9 @@
 //                                         模拟终端上的设备服务（桥，不连数据库）：输入 card <卡号>、scan <条码>、nfc <卡号>、unplug <键>、plug <键>、
 //                                         fail、quit；--auto 每隔几秒自动发一次读卡与扫码
 //   locker-bridge-mock [--port 9300] [--token 密钥]
-//                                         模拟柜锁桥（不连数据库，docs/LOCKERS_V8149.md 第 3、6 节）：开柜、查柜门、发卡器读写清 M1 手牌；
-//                                         输入 card <芯片号> 放一张空白卡、remove 拿走、show 看现在的卡、quit；没给 --token 时生成一把打出来
+//                                         模拟柜锁桥（不连数据库，docs/LOCKERS_V8149.md 第 3、6、7 节）：开柜、查柜门、发卡器读写清 M1 手牌、手机柜（自选柜）；
+//                                         输入 card <芯片号> 放一张空白卡、remove 拿走、show 看现在的卡、take <手机柜号> <芯片号> 客人刷手牌占一个手机柜、
+//                                         free <手机柜号> 释放、phones 看手机柜、quit；没给 --token 时生成一把打出来
 
 import { importOpeningCountCards, OPENING_COUNT_CARD_HEADER, parseOpeningCountCardsCsv } from './modules/count-cards';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -325,13 +326,18 @@ async function offlineCommand(command: string | undefined, args: string[]): Prom
       if (token.length < 32) throw new Error('--token 至少 32 个字符（门店系统的 LOCKER_BRIDGE_TOKEN 也要这么长）');
       const bridge = await startMockLockerBridge({ host: '127.0.0.1', port: Number(flag(args, 'port') ?? 9300), token });
       console.log(`模拟柜锁桥在 ${bridge.url}`);
-      console.log(`门店系统的 .env：LOCKER_DRIVER=http、LOCKER_BRIDGE_URL=${bridge.url}、LOCKER_BRIDGE_TOKEN=${token}、LOCKER_CAPABILITIES=open,doors,card`);
-      console.log('输入 card <芯片号>（放一张空白卡）、remove（拿走）、show（看现在的卡）、quit');
+      console.log(`门店系统的 .env：LOCKER_DRIVER=http、LOCKER_BRIDGE_URL=${bridge.url}、LOCKER_BRIDGE_TOKEN=${token}、LOCKER_CAPABILITIES=open,doors,card,select`);
+      console.log('输入 card <芯片号>（放一张空白卡）、remove（拿走）、show（看现在的卡）、take <手机柜号> <芯片号>（客人刷手牌占手机柜）、free <手机柜号>、phones、quit');
       onStdinLines(async (line) => {
-        const [cmd, arg] = line.split(/\s+/);
+        const [cmd, arg, arg2] = line.split(/\s+/);
         if (cmd === 'card' && arg) bridge.hardware.place(arg);
         else if (cmd === 'remove') bridge.hardware.place(null);
         else if (cmd === 'show') return console.log(JSON.stringify(bridge.hardware.read()));
+        else if (cmd === 'take' && arg && arg2) {
+          const refused = bridge.hardware.take(arg.toUpperCase(), arg2);
+          return console.log(refused ? `✗ ${refused}` : `✓ 手机柜 ${arg.toUpperCase()} 被 ${arg2.toUpperCase()} 占着`);
+        } else if (cmd === 'free' && arg) return console.log(`✓ ${JSON.stringify(bridge.hardware.selectRelease(arg.toUpperCase(), null))}`);
+        else if (cmd === 'phones') return console.log(JSON.stringify(bridge.hardware.selectList().filter((x) => x.uid)));
         else if (cmd === 'quit') {
           await bridge.close();
           process.exit(0);
