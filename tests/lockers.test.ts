@@ -650,6 +650,31 @@ describe('自选柜（手机柜）接口：门店系统接模拟柜锁桥', () =
     expect((await api(ctx.app, ctx.owner, 'PUT', `/api/frontdesk/tags/${t!.id}/card`, { cardUid: null })).status).toBe(200);
   });
 
+  it('手动释放已退牌手牌占着的柜：放之前也预留手牌；放成了马上恢复，结果待确认的留着、每分钟的任务核对清楚才恢复', async () => {
+    const hw = bridge.hardware;
+    for (const no of MOCK_SELECT_NOS) hw.selectRelease(no, null);
+    await ctx.sql`INSERT INTO hand_tags (code, zone, card_uid) VALUES ('B8302', 'male', '0BB00003')`;
+    const status = async () => (await ctx.sql<{ serviceStatus: string; serviceNote: string | null }[]>`SELECT service_status, service_note FROM hand_tags WHERE code = 'B8302'`)[0]!;
+    // 结果待确认：预留留着（发不出去），下一轮任务再放一次，放成了才恢复
+    expect(hw.take('P002', '0BB00003')).toBeNull();
+    const ctl = lockerControllerFor(ctx.config.lockers);
+    const once = vi.spyOn(ctl, 'selectRelease').mockResolvedValueOnce({ no: 'P002', ok: false, uncertain: true, message: '没收到柜锁桥的回答（模拟）' });
+    try {
+      const r = await api(ctx.app, ctx.owner, 'POST', '/api/lockers/select/P002/release', { reason: '客人已退牌', uid: '0BB00003' });
+      expect(r.body).toMatchObject({ ok: false, uncertain: true });
+    } finally {
+      once.mockRestore();
+    }
+    expect(await status()).toMatchObject({ serviceStatus: 'paused', serviceNote: expect.stringContaining('P002') });
+    expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: ctx.config })).toBe(1);
+    expect(hw.selectList().find((x) => x.no === 'P002')!.uid).toBeNull();
+    expect((await status()).serviceStatus).toBe('normal');
+    // 放成了：马上恢复
+    expect(hw.take('P002', '0BB00003')).toBeNull();
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/select/P002/release', { reason: '客人已退牌', uid: '0BB00003' })).body).toMatchObject({ ok: true });
+    expect((await status()).serviceStatus).toBe('normal');
+  });
+
   it('多门店（Codex 审查 d0ecdcb）：柜锁桥只接 LOCKER_STORE_ID 那家店；别的店当成没接——看不到、开不了、放不了、发卡器用不了', async () => {
     const [b] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('LK2', '柜锁乙店', 1) RETURNING id`;
     expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: b!.id })).status).toBe(200);

@@ -250,8 +250,13 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
     const { no } = parse(noParam, req.params);
     const { reason, uid } = parse(SelectReleaseInput, req.body);
     requireSelect();
-    const result = await controller.selectRelease(no, uid);
     const holder = (await holdersOf([uid])).get(uid) ?? null;
+    // 占着它的手牌已经退了（不在店）：同自动释放，放之前先预留这张手牌，结果待确认的预留留着、每分钟的任务核对清楚才恢复——
+    // 不然放的结果还没定，这张牌就可能发给新客人（第 7.4 节）。已经在预留着的（自动释放还没核对完）不另标
+    const note = reserveNote(no);
+    const reserve = holder && !holder.visitNo ? await reserveTag(sql, holder.tagId, uid, note) : 'skip';
+    const result = await controller.selectRelease(no, uid);
+    if (reserve === 'reserved' && !result.uncertain) await restoreTag(sql, holder!.tagId, note);
     const ctx = ctxOf(req);
     await writeAudit(sql, {
       staffId: ctx.actor.id,
@@ -269,6 +274,37 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
 const RESERVE_NOTE_PREFIX = LOCKER_RELEASE_RESERVE_PREFIX;
 const reserveNote = (no: string) => `${RESERVE_NOTE_PREFIX} ${no}（系统：放成了或确定没放成就恢复）`;
 const reservedNo = (note: string | null) => note?.match(/^正在自动释放手机柜 (\S+?)（/)?.[1] ?? null;
+
+/**
+ * 预留（docs/LOCKERS_V8149.md 第 7.4 节）：短事务锁住这张手牌（发牌也先锁手牌），核对芯片号还绑在它上面、它现在不在店、是正常（能发）的，
+ * 标「暂停使用」+ 说明；发牌碰到暂停的手牌会拒绝，改芯片号、删除也会拒绝（frontdesk/tags.ts）。
+ * 返回 reserved 标上了；in_store 在店；skip 芯片号换了、删了、发不出去（停用、锁定、暂停、维修）
+ */
+async function reserveTag(sql: Sql, tagId: number, uid: string, note: string): Promise<'reserved' | 'in_store' | 'skip'> {
+  return withTx(sql, async (tx) => {
+    const [t] = await tx<{ active: boolean; locked: boolean; serviceStatus: string; deletedAt: Date | null; cardUid: string | null }[]>`
+      SELECT active, locked, service_status, deleted_at, card_uid FROM hand_tags WHERE id = ${tagId} FOR UPDATE`;
+    // 锁住以后再核对芯片号还绑在这张牌上（期间改绑过的不动，Codex 审查 a116c5f）
+    if (!t || t.deletedAt || t.cardUid !== uid) return 'skip';
+    const [open] = await tx`SELECT 1 FROM visits WHERE tag_id = ${tagId} AND status = 'open' LIMIT 1`;
+    if (open) return 'in_store';
+    if (!t.active || t.locked || t.serviceStatus !== 'normal') return 'skip';
+    await tx`
+      UPDATE hand_tags SET service_status = 'paused', service_note = ${note}, service_by = NULL, service_at = now(), updated_at = now()
+      WHERE id = ${tagId}`;
+    return 'reserved';
+  });
+}
+
+/** 恢复自己标的那一条预留（期间有人改过就不动） */
+async function restoreTag(sql: Sql, tagId: number, note: string): Promise<void> {
+  await withTx(sql, async (tx) => {
+    await tx`SELECT id FROM hand_tags WHERE id = ${tagId} FOR UPDATE`;
+    await tx`
+      UPDATE hand_tags SET service_status = 'normal', service_note = NULL, service_by = NULL, service_at = now(), updated_at = now()
+      WHERE id = ${tagId} AND service_status = 'paused' AND service_note = ${note}`;
+  });
+}
 
 /**
  * 退牌后自动释放手机柜（docs/LOCKERS_V8149.md 第 7.4 节，GK3；店主 2026-11-28「把开发全部做完」）：不释放的话，
@@ -298,14 +334,7 @@ export async function sweepReturnedPhoneLockers(deps: { sql: Sql; config: AppCon
         targetId: tagId,
         detail: { auto: true, driver: controller.info.driver, ...detail },
       });
-    /** 恢复自己标的那一条预留（期间有人改过就不动） */
-    const restore = (tagId: number, note: string) =>
-      withTx(deps.sql, async (tx) => {
-        await tx`SELECT id FROM hand_tags WHERE id = ${tagId} FOR UPDATE`;
-        await tx`
-          UPDATE hand_tags SET service_status = 'normal', service_note = NULL, service_by = NULL, service_at = now(), updated_at = now()
-          WHERE id = ${tagId} AND service_status = 'paused' AND service_note = ${note}`;
-      });
+    const restore = (tagId: number, note: string) => restoreTag(deps.sql, tagId, note);
     let released = 0;
 
     // ① 还留着的预留（上一次结果待确认，或进程中途退出）：先核对，还是这张手牌占着就再放一次
@@ -354,23 +383,11 @@ export async function sweepReturnedPhoneLockers(deps: { sql: Sql; config: AppCon
           AND detail->>'no' = ${slot.no} AND detail->>'uid' = ${slot.uid} AND detail->>'returnedAt' = ${returnedAt}
         LIMIT 1`;
       if (tried) continue;
-      // 预留：锁住这张手牌，核对确实不在店、现在能发（正常）的才标「暂停使用」（发牌会拒绝）。停用、锁定、被人暂停、维修中的不自动放：
+      // 预留：锁住这张手牌，核对芯片号、确实不在店、现在能发（正常）的才标「暂停使用」。停用、锁定、被人暂停、维修中的不自动放：
       // 放的时候有人把它改回正常就又能发了，没有预留挡着——留给柜况页的人（「已退牌还占着」）
       const note = reserveNote(slot.no);
-      const reserve = await withTx(deps.sql, async (tx) => {
-        const [t] = await tx<{ active: boolean; locked: boolean; serviceStatus: string; deletedAt: Date | null; cardUid: string | null }[]>`
-          SELECT active, locked, service_status, deleted_at, card_uid FROM hand_tags WHERE id = ${tagId} FOR UPDATE`;
-        // 锁住以后再核对芯片号还绑在这张牌上（期间改绑过的不动，Codex 审查 a116c5f）
-        if (!t || t.deletedAt || t.cardUid !== slot.uid) return 'skip' as const;
-        const [open] = await tx`SELECT 1 FROM visits WHERE tag_id = ${tagId} AND status = 'open' LIMIT 1`;
-        if (open) return 'skip' as const;
-        if (!t.active || t.locked || t.serviceStatus !== 'normal') return 'skip' as const;
-        await tx`
-          UPDATE hand_tags SET service_status = 'paused', service_note = ${note}, service_by = NULL, service_at = now(), updated_at = now()
-          WHERE id = ${tagId}`;
-        return 'reserved' as const;
-      });
-      if (reserve === 'skip') continue;
+      const reserve = await reserveTag(deps.sql, tagId, slot.uid!, note);
+      if (reserve !== 'reserved') continue;
       const result = await controller.selectRelease(slot.no, slot.uid);
       await audit(tagId, { no: slot.no, uid: slot.uid, code: tag.code, reason: '退牌后自动释放', returnedAt, ok: result.ok, uncertain: result.uncertain, message: result.message });
       // 放成了、确定没放成才恢复；结果待确认的预留留着，下一轮核对
