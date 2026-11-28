@@ -131,21 +131,79 @@ describe('员工小程序 · 汤崎学堂', () => {
     expect(again.body).toMatchObject({ questionId: item.questionId, correct: first.body.correct, dueOn: first.body.dueOn });
   });
 
-  it('白名单外的学堂接口（带教签核、问柚子、评分、我的、地图列表、榜单）、管理端、直接打里面的地址一律 404', async () => {
+  it('白名单外的学堂接口（地图列表）、管理端、直接打里面的地址一律 404', async () => {
     for (const [method, url] of [
-      ['GET', '/api/staffmp/academy/me'],
       ['GET', '/api/staffmp/academy/paths'],
-      ['GET', '/api/staffmp/academy/rank'],
-      ['GET', '/api/staffmp/academy/coach'],
-      ['POST', '/api/staffmp/academy/signoffs'],
-      ['GET', `/api/staffmp/academy/courses/${courseId}/tutor`],
-      ['POST', `/api/staffmp/academy/courses/${courseId}/feedback`],
+      ['GET', '/api/staffmp/academy/admin/courses'],
       ['GET', '/api/admin/academy/courses'],
       ['GET', '/api/academy/home'],
+      ['GET', '/api/academy/me'],
+      ['POST', '/api/academy/signoffs'],
     ] as const) {
       const r = await s(method, url, token, method === 'POST' ? {} : undefined);
       expect([url, r.status]).toEqual([url, 404]);
     }
+  });
+
+  it('第二版：「我的」（证书、掌握度）、榜单、学完了才能评分（再评是改成新的）、问柚子（门店没配模型服务的说清楚）', async () => {
+    const me = await s('GET', '/api/staffmp/academy/me', token);
+    expect(me.status, JSON.stringify(me.body)).toBe(200);
+    expect(me.body).toMatchObject({ me: { name: '学员小周' }, canCoach: false });
+    expect(Array.isArray(me.body.certificates)).toBe(true);
+    const rank = await s('GET', '/api/staffmp/academy/rank?board=credits&period=all&scope=company', token);
+    expect(rank.status, JSON.stringify(rank.body)).toBe(200);
+    expect(rank.body.me).toMatchObject({ name: '学员小周' });
+    // 前面那一条把这门课学完了：能评；再评一次是改成新的
+    const rated = await s('POST', `/api/staffmp/academy/courses/${courseId}/feedback`, token, { rating: 4, comment: '讲得清楚' });
+    expect(rated.status, JSON.stringify(rated.body)).toBe(200);
+    expect((await s('POST', `/api/staffmp/academy/courses/${courseId}/feedback`, token, { rating: 5, comment: '' })).body).toEqual({ rating: 5, comment: '' });
+    expect((await s('GET', `/api/staffmp/academy/courses/${courseId}`, token)).body.myFeedback).toEqual({ rating: 5, comment: '' });
+    // 没学完的人不能评
+    const other = await hire('learner3', '还没学的');
+    expect((await s('POST', `/api/staffmp/academy/courses/${courseId}/feedback`, other.token, { rating: 3 })).status).toBe(403);
+    const tutor = await s('GET', `/api/staffmp/academy/courses/${courseId}/tutor`, token);
+    expect(tutor.status, JSON.stringify(tutor.body)).toBe(200);
+    expect(tutor.body).toMatchObject({ items: [], usedToday: 0 });
+    const ask = await s('POST', `/api/staffmp/academy/courses/${courseId}/tutor`, token, { clientKey: randomUUID(), question: '酒后能泡汤吗？' });
+    if (tutor.body.mode === 'off') expect([ask.status, ask.body.error?.code]).toEqual([409, expect.stringMatching(/^AI_/)]);
+    else expect(ask.status, JSON.stringify(ask.body)).toBe(200);
+  });
+
+  it('第二版：带教签核——有带教权限的「我是谁」里有入口、看得到本部门在学的实操；签核带操作编号，原样重提回第一次的结果', async () => {
+    const made = await admin<AcademyAdminCourse>('POST', '/api/admin/academy/courses', { clientKey: randomUUID(), title: '前厅接待实操', category: 'industry' });
+    const pid = made.body.course.id;
+    const withLesson = await admin<AcademyAdminCourse>('POST', `/api/admin/academy/courses/${pid}/lessons`, {
+      clientKey: randomUUID(),
+      title: '迎宾',
+      kind: 'practical',
+      body: '- 主动问候\n- 核对人数',
+    });
+    const practical = withLesson.body.lessons.find((l) => l.kind === 'practical')!.id;
+    expect((await admin('PUT', `/api/admin/academy/courses/${pid}`, { ...withLesson.body.course, status: 'published', version: withLesson.body.course.version })).status).toBe(200);
+    // 学员打开过这个实操（有进度、还没完成）
+    expect((await s('POST', `/api/staffmp/academy/lessons/${practical}/ping`, token, { seconds: 0 })).status).toBe(200);
+    const leadId = await createStaff(ctx.sql, { username: 'frontlead2', displayName: '前厅主管', role: 'clerk', position: 'front.lead', password: PASSWORD, mustChangePassword: false });
+    await ctx.sql`UPDATE staff SET needs_position = false WHERE id = ${leadId}`;
+    const login = await s('POST', '/api/staffmp/auth/login', null, { username: 'frontlead2', password: PASSWORD });
+    const lead = login.body.token as string;
+    expect(login.body.me.entries).toContain('academyCoach');
+    expect((await s('GET', '/api/staffmp/me', token)).body.entries).not.toContain('academyCoach');
+    expect((await s('GET', '/api/staffmp/academy/me', lead)).body.canCoach).toBe(true);
+    const queue = await s('GET', '/api/staffmp/academy/coach', lead);
+    expect(queue.status, JSON.stringify(queue.body)).toBe(200);
+    const item = queue.body.find((x: { lessonId: number }) => x.lessonId === practical);
+    expect(item).toMatchObject({ name: '学员小周', items: ['主动问候', '核对人数'], last: null });
+    // 学员自己看不了待签的
+    expect((await s('GET', '/api/staffmp/academy/coach', token)).status).toBe(403);
+    const key = randomUUID();
+    const body = { clientKey: key, staffId: item.staffId, lessonId: practical, lessonVersion: item.lessonVersion, checks: [true, true], result: 'pass', comment: '问候到位' };
+    const signed = await s('POST', '/api/staffmp/academy/signoffs', lead, body);
+    expect(signed.status, JSON.stringify(signed.body)).toBe(200);
+    expect(signed.body).toMatchObject({ completed: true, signoff: { result: 'pass', signedByName: '前厅主管', comment: '问候到位' } });
+    expect((await s('POST', '/api/staffmp/academy/signoffs', lead, body)).body).toMatchObject({ completed: true, credits: 0 });
+    expect((await ctx.sql`SELECT 1 FROM academy_signoffs WHERE client_key = ${key}`).length).toBe(1);
+    // 签过「通过」的不再列
+    expect((await s('GET', '/api/staffmp/academy/coach', lead)).body.some((x: { lessonId: number }) => x.lessonId === practical)).toBe(false);
   });
 
   it('首次登录没改密码的：学堂的接口照学堂自己的关卡拦下', async () => {

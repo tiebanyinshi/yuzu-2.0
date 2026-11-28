@@ -37,3 +37,33 @@
 .logout {
   margin-top: 64rpx !important;
 }
+
+.level-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.level-title {
+  font-size: var(--fs-title-s);
+  font-weight: 600;
+  color: var(--wood-text);
+}
+.level-credits {
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.bar {
+  height: 12rpx;
+  margin-top: 20rpx;
+  border-radius: 6rpx;
+  background-color: var(--surface-2);
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  border-radius: 6rpx;
+  background-color: var(--wood);
+}
+.level-sub {
+  margin-top: 12rpx;
+}

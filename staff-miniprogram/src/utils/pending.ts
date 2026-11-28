@@ -12,8 +12,20 @@
 //   · 按人分开存：换了人登录看不到、也不会替前一位重提。
 import { call, isApiError, isRejected } from './api';
 
-/** 打卡、发起申请、处理审批；学堂的开卷（同一课时）、交卷（同一份卷子）、每日一练作答（同一道题）、学完了（同一课时） */
-export type PendingKind = 'punch' | 'approval_submit' | 'approval_act' | 'academy_quiz' | 'academy_submit' | 'academy_daily' | 'academy_complete';
+/**
+ * 打卡、发起申请、处理审批；学堂的开卷（同一课时）、交卷（同一份卷子）、每日一练作答（同一道题）、学完了（同一课时）、
+ * 问柚子（同一门课）、带教签核（同一位员工的同一个实操课时，ref 写「员工编号-课时编号」）
+ */
+export type PendingKind =
+  | 'punch'
+  | 'approval_submit'
+  | 'approval_act'
+  | 'academy_quiz'
+  | 'academy_submit'
+  | 'academy_daily'
+  | 'academy_complete'
+  | 'academy_tutor'
+  | 'academy_signoff';
 
 export interface PendingOp {
   /** 谁发的（按人分开存） */
@@ -27,14 +39,14 @@ export interface PendingOp {
   at: number;
   /** 给人看的：这是哪一次操作 */
   label: string;
-  /** 对象（审批单编号、模板编号），同一类里区分 */
-  ref?: number;
+  /** 对象（审批单编号、模板编号、课程编号；带教签核是「员工编号-课时编号」），同一类里区分 */
+  ref?: number | string;
 }
 
 /** 能在门店系统作废原编号的（第 2.8 节）：员工小程序端口 /ops/:key/abandon 认的业务类型 */
 const FENCE_TYPES: Partial<Record<PendingKind, string>> = { punch: 'oa_punch', approval_submit: 'oa_approval_submit', approval_act: 'oa_approval_act' };
 
-const keyOf = (staffId: number, kind: PendingKind, ref?: number) => `wcp_pending:${staffId}:${kind}${ref ? `:${ref}` : ''}`;
+const keyOf = (staffId: number, kind: PendingKind, ref?: number | string) => `wcp_pending:${staffId}:${kind}${ref ? `:${ref}` : ''}`;
 
 /** 存下并读回核对；存不下返回 false（调用方就不发请求） */
 export function savePending(op: PendingOp): boolean {
@@ -48,7 +60,7 @@ export function savePending(op: PendingOp): boolean {
   }
 }
 
-export function loadPending(staffId: number, kind: PendingKind, ref?: number): PendingOp | null {
+export function loadPending(staffId: number, kind: PendingKind, ref?: number | string): PendingOp | null {
   try {
     const v = wx.getStorageSync(keyOf(staffId, kind, ref)) as PendingOp | '';
     return v && typeof v.key === 'string' ? v : null;
@@ -73,7 +85,7 @@ export function listPending(staffId: number, kind: PendingKind): PendingOp[] {
   }
 }
 
-export function clearPending(staffId: number, kind: PendingKind, ref?: number): void {
+export function clearPending(staffId: number, kind: PendingKind, ref?: number | string): void {
   try {
     wx.removeStorageSync(keyOf(staffId, kind, ref));
   } catch {

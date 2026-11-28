@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest';
 import type { NextPunchHint, PunchToday } from '../../src/shared/oa';
 import { parsePatrolToken } from '../../src/shared/patrol';
 import { isMealCode, patrolCodeOf } from '../src/utils/canteen';
-import { mealOfNow, routeScan, shiftLine, todayCard, todoRows } from '../src/utils/today';
+import { mealOfNow, rejectedTodo, routeScan, shiftLine, todayCard, todoRows } from '../src/utils/today';
+import { markRejectedSeen, seenRejected } from '../src/utils/seen';
+import { installFakeWx } from './fake-wx';
 
 const DAY = 20784 * 1440; // 2026-11-27 的 0 点（1970 起第几分钟）
 const at = (h: number, m = 0) => DAY + h * 60 + m;
@@ -147,6 +149,54 @@ describe('待办', () => {
       ],
     });
     expect(rows[0]).toMatchObject({ text: '2 张工资条待确认', page: '/pages/payslips/index' });
+  });
+});
+
+describe('待办（第二版）：我的申请被驳回、必修快到期', () => {
+  const base = { pendingPunchAt: null, approvalsTodo: 0, ccUnread: 0, missedPunch: false, unsignedPayslips: [] };
+  const NOW = Date.parse('2026-11-28T10:00:00+08:00');
+  const item = (id: number, status: string, finishedAt: string | null) => ({ id, title: `申请${id}`, status, finishedAt }) as never;
+
+  it('被驳回的：14 天以内、这台手机上没打开看过的才提', () => {
+    const items = [item(1, 'rejected', '2026-11-27T09:00:00+08:00'), item(2, 'rejected', '2026-11-01T09:00:00+08:00'), item(3, 'approved', '2026-11-27T09:00:00+08:00'), item(4, 'rejected', '2026-11-26T09:00:00+08:00')];
+    expect(rejectedTodo(items, [], NOW).map((x) => x.id)).toEqual([1, 4]);
+    expect(rejectedTodo(items, [4], NOW).map((x) => x.id)).toEqual([1]);
+    expect(todoRows({ ...base, rejected: [{ id: 1, title: '请假' }] })).toEqual([
+      { key: 'rejected', icon: 'approvals', text: '「请假」被驳回了', sub: '看看原因，改了可以重新提交', page: '/pages/approval/index?id=1', urgent: false },
+    ]);
+    expect(todoRows({ ...base, rejected: [{ id: 1, title: '请假' }, { id: 4, title: '补卡' }] })[0]).toMatchObject({ text: '2 张申请被驳回了', page: '/pages/approvals/index?box=mine' });
+  });
+
+  it('打开看过的记在手机上（按人分开存）', () => {
+    installFakeWx();
+    expect(seenRejected(7)).toEqual([]);
+    markRejectedSeen(7, 12);
+    markRejectedSeen(7, 12);
+    markRejectedSeen(7, 13);
+    expect(seenRejected(7)).toEqual([13, 12]);
+    expect(seenRejected(8)).toEqual([]);
+  });
+
+  it('必修快到期：一门写哪一门、几号截止（逾期的标急）；几门的去「学习」', () => {
+    expect(todoRows({ ...base, dueSoon: [{ kind: 'course', id: 3, title: '泡汤安全', dueOn: '2026-11-30', overdue: false }] })).toEqual([
+      { key: 'due', icon: 'academy', text: '必修「泡汤安全」11 月 30 日截止', sub: '还没学完', page: '/pages/academy-course/index?id=3', urgent: false },
+    ]);
+    expect(todoRows({ ...base, dueSoon: [{ kind: 'path', id: 2, title: '新员工地图', dueOn: '2026-11-25', overdue: true }] })[0]).toMatchObject({
+      text: '必修「新员工地图」已过截止',
+      page: '/pages/academy-path/index?id=2',
+      urgent: true,
+    });
+    expect(
+      todoRows({
+        ...base,
+        dueSoon: [
+          { kind: 'course', id: 3, title: 'a', dueOn: '2026-11-25', overdue: true },
+          { kind: 'course', id: 4, title: 'b', dueOn: '2026-11-30', overdue: false },
+        ],
+      })[0],
+    ).toMatchObject({ text: '2 门必修快到期', sub: '1 门已过截止', page: '/pages/learn/index', urgent: true });
+    // 手机上存的旧数据（第一版）没有这两项：照旧
+    expect(todoRows(base)).toEqual([]);
   });
 });
 

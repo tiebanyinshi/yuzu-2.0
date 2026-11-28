@@ -19,6 +19,7 @@ import { discountLine, revokeLineDiscount } from './line-discounts';
 import { collectDeposit, refundDeposit } from './tag-deposits';
 import { awayLockVisit, awayUnlockVisit } from './away-lock';
 import { resolveReadableDate } from '../ledger';
+import { currentStoreId } from '../../lib/store-context';
 import { refundShiftOptions } from '../shifts';
 import { checkout, findCoupon, getCheckout, listCheckouts, previewCheckout, voidCheckout, type CheckoutInputData } from './checkout';
 import { createRefund, getRefund, listRefunds, refundOptions, voidRefund, type RefundInputData } from './refunds';
@@ -27,7 +28,21 @@ import { previewTableCheckout } from '../tables';
 import { listTicketTypes, saveTicketType, setVisitTicket, type TicketTypeInputData } from './tickets';
 import { frontdeskChecks } from './checks';
 import { businessDate, FRONTDESK_OP_PERMISSIONS, FRONTDESK_OPS, loadFrontdeskRules } from './common';
-import { batchCreate, deleteHandTag, generateTags, setTagService, importHandTags, listTags, lockHandTag, setTagCard, tagByCard, unlockHandTag, updateHandTag, type ImportInputData } from './tags';
+import {
+  batchCreate,
+  deleteHandTag,
+  generateTags,
+  setTagService,
+  importHandTags,
+  listTagExceptions,
+  listTags,
+  lockHandTag,
+  setTagCard,
+  tagByCard,
+  unlockHandTag,
+  updateHandTag,
+  type ImportInputData,
+} from './tags';
 import { registerIncidentRoutes } from './incidents';
 import { registerRiskRoutes } from './risk';
 import { registerGuestRoutes } from './guest';
@@ -284,6 +299,18 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
   });
 
   // 结账记录可以切换营业日（过了营业日切换点仍能找到前一晚的单来反结账）；查看之前的营业日需要历史营业日权限
+  // 8.2.27（收银 demo「POS 交易号当天重复要确认」）：今天（营业日）没反结账的结账单里，银行卡收款用过这个参考号的有几笔；只读，前台提醒用
+  app.get('/api/frontdesk/payment-ref-check', { preHandler: guard('frontdesk.read') }, async (req) => {
+    const { ref } = parse(z.object({ ref: z.string().trim().min(4).max(20) }), req.query ?? {});
+    const date = await businessDate(sql, deps, new Date());
+    const rows = await sql<{ checkoutNo: string }[]>`
+      SELECT c.checkout_no FROM checkout_payments p JOIN checkouts c ON c.id = p.checkout_id
+      WHERE c.business_date = ${date} AND c.status = 'completed' AND c.store_id = ${currentStoreId()}
+        AND p.method = 'bank_card' AND upper(p.ref) = upper(${ref})
+      ORDER BY c.id`;
+    return { count: rows.length, checkoutNos: rows.map((r) => r.checkoutNo) };
+  });
+
   app.get('/api/frontdesk/checkouts', { preHandler: guard('frontdesk.read') }, async (req) => {
     const { date } = parse(z.object({ date: z.string().regex(ISO_DATE, '日期格式应为 YYYY-MM-DD').optional() }), req.query ?? {});
     return listCheckouts(sql, await resolveReadableDate(deps, req, date));
@@ -383,6 +410,9 @@ export function registerFrontdeskRoutes(app: FastifyInstance, deps: Deps) {
     await setTagService(deps, parse(idParam, req.params).id, req.body, ctxOf(req));
     return { ok: true };
   });
+
+  // 8.2.27 异常手牌清单：挂失、未交回、锁定、暂停、维修（docs/V82227_TAG_EXCEPTIONS.md）
+  app.get('/api/frontdesk/tag-exceptions', { preHandler: guard('frontdesk.read') }, async () => ({ tags: await listTagExceptions(sql) }));
 
   app.post('/api/frontdesk/tags/:id/lock', { preHandler: guard('frontdesk.operate') }, async (req) => {
     const { id } = parse(idParam, req.params);

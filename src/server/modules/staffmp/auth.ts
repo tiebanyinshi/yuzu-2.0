@@ -5,6 +5,7 @@
 // 加锁（docs/LOCKING.md「员工小程序」）：绑定与解绑先拿这个 openid 的咨询锁、再拿这位员工的咨询锁（固定顺序），再读写绑定行。
 
 import { isPositionKey, ORG_DEPARTMENTS, positionOf } from '@shared/positions';
+import { can } from '@shared/permissions';
 import { businessDateOf } from '@shared/business-date';
 import type { StaffMpEntryKey, StaffMpMe } from '@shared/staffmp';
 import type { Db, Sql, Tx } from '../../db';
@@ -182,7 +183,7 @@ export async function buildMe({ sql, config }: Deps, actor: Actor, token: string
     mustChangePassword: actor.mustChangePassword,
     needsPosition: actor.needsPosition === true,
     wechatBound: row?.bound ?? false,
-    entries: [...BASE_ENTRIES, ...(await canteenEntries(sql, config, actor.id))],
+    entries: [...BASE_ENTRIES, ...(can(actor, 'academy.coach') || can(actor, 'academy.manage') ? (['academyCoach'] as const) : []), ...(await canteenEntries(sql, config, actor.id))],
     today: businessDateOf(new Date(), config.timezone, 0),
     build: { version: config.version, commit: config.commit, instance: config.instance },
   };

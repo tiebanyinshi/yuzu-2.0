@@ -132,6 +132,11 @@
 - [`V82219_WATER_BAR.md`](V82219_WATER_BAR.md)：8.2.19 水吧：首杯免费、赠标签、取餐叫号
 - [`V8221_CASHIER.md`](V8221_CASHIER.md)：8.2.1 批 1：收银台（单项打折、一键快捷键、经办人前置与改价标记、换牌规则、手牌押金）
 - [`V82220_LEISURE.md`](V82220_LEISURE.md)：8.2.20 休闲娱乐：网吧、桌球按台位计时、单独收费
+- [`V82227_DESK_IMPROVE.md`](V82227_DESK_IMPROVE.md)：8.2.27 前台改良：按人数发牌、结账记录搜索、POS 参考号查重
+- [`V82227_DESK_UI.md`](V82227_DESK_UI.md)：8.2.27 前台界面：区域状态、最近发牌、应收大字
+- [`V82227_HOTKEYS.md`](V82227_HOTKEYS.md)：8.2.27 前台快捷键：全部操作键盘完成
+- [`V82227_POOL.md`](V82227_POOL.md)：8.2.27 男汤 / 女汤泡池：刷客人手牌、刷技师工牌下单
+- [`V82227_TAG_EXCEPTIONS.md`](V82227_TAG_EXCEPTIONS.md)：8.2.27 未交回、挂失手牌清单
 - [`V8222_TECHNICIANS.md`](V8222_TECHNICIANS.md)：8.2.2 技师：扩钟、一报多、退技师、换项目、休假、状态、统计与导入
 - [`V8223_FRONTDESK.md`](V8223_FRONTDESK.md)：8.2.3 前台：发卡台与全店（客人类别、偏好、客诉台账、拥挤与高风险提示、技师预约权限、跳转明细、同行移出、补单）
 - [`V8224_DINING.md`](V8224_DINING.md)：8.2.4 餐饮：分组默认档口、临时项目进厨房、包房房型、服务费门店默认、返台、公司承担
@@ -193,6 +198,7 @@
 - [`HANDOFF_MP_RQ014.md`](HANDOFF_MP_RQ014.md)：小程序线 RQ-014 交接说明 · 接主线 8.0.4 会员整改
 - [`HANDOFF_MP_STUDIO.md`](HANDOFF_MP_STUDIO.md)：小程序线交接说明 · UI 工作台版面渲染组件与定时发布刷新（8.1.2）
 - [`HANDOFF_STAFFMP1.md`](HANDOFF_STAFFMP1.md)：v8.2.26 交接说明 · 员工小程序「汤崎 WCP」第一版
+- [`HANDOFF_STAFFMP2.md`](HANDOFF_STAFFMP2.md)：员工小程序「汤崎 WCP」第二版交接说明（随主线下一个版本标签发）
 - [`HANDOFF_V060.md`](HANDOFF_V060.md)：v0.6.0 交接说明 · 管理后台、岗位权限可调整、会员渠道与等级、按岗位的数据看板
 - [`HANDOFF_V070.md`](HANDOFF_V070.md)：v0.7.0 交接说明 · S6 技师第一步：技师名册、挂项目时选技师、技师业绩
 - [`HANDOFF_V071.md`](HANDOFF_V071.md)：v0.7.1 交接说明 · S6 技师第二步：钟房看板、轮钟排队、上下钟计时、提成

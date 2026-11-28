@@ -1,0 +1,61 @@
+.head {
+  margin: 8rpx 0 24rpx;
+}
+.name {
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+.list {
+  overflow: hidden;
+}
+.check {
+  flex-wrap: wrap;
+}
+.pair {
+  display: flex;
+  flex: none;
+}
+.pair.big .opt {
+  flex: 1;
+  height: 88rpx;
+  line-height: 88rpx;
+}
+.opt {
+  min-width: 120rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  margin-left: 12rpx;
+  padding: 0 20rpx;
+  text-align: center;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line-strong);
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.pair.big .opt:first-child {
+  margin-left: 0;
+}
+.opt.ok {
+  background-color: var(--success);
+  border-color: var(--success);
+  color: var(--on-ink);
+}
+.opt.no {
+  background-color: var(--danger);
+  border-color: var(--danger);
+  color: var(--on-ink);
+}
+.block-gap {
+  margin-top: 24rpx;
+}
+.input {
+  width: 100%;
+  min-height: 96rpx;
+  font-size: var(--fs-body);
+}
+.resend {
+  margin-top: 16rpx;
+}
+.submit {
+  margin-top: 32rpx;
+}
