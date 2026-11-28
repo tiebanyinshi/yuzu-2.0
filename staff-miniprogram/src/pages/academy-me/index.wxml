@@ -1,0 +1,52 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="我的学习" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="card level">
+      <view class="level-head">
+        <view class="level-title">{{level.title}}</view>
+        <view class="level-credits num">{{level.credits}}</view>
+      </view>
+      <view class="bar"><view class="bar-fill" style="width: {{level.pct}}%"></view></view>
+      <view class="t-caption level-sub">{{level.next}} · {{level.minutes}} · {{streak}}</view>
+    </view>
+
+    <view class="card list block-gap">
+      <view class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onRank" aria-role="button">
+        <image class="row-icon" src="/assets/icons/academy.png" />
+        <view class="row-main"><view class="row-title">学习榜</view><view class="row-sub">学分榜、学习时长榜</view></view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+      <view wx:if="{{canCoach}}" class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onCoach" aria-role="button">
+        <image class="row-icon" src="/assets/icons/approvals.png" />
+        <view class="row-main"><view class="row-title">带教签核</view><view class="row-sub">给本部门的同事签实操</view></view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+
+    <view class="section-head"><view class="section-title">我的证书</view></view>
+    <view wx:if="{{!certs.length}}" class="t-body muted">还没有证书：学完一张学习地图就发</view>
+    <view wx:else class="card list">
+      <view wx:for="{{certs}}" wx:key="id" class="row">
+        <view class="row-main">
+          <view class="row-title">{{item.title}}</view>
+          <view class="row-sub num">{{item.sub}}</view>
+        </view>
+        <view class="tag {{item.state === 'valid' ? 'new' : item.state === 'expired' ? 'late' : 'neutral'}}">{{item.stateText}}</view>
+      </view>
+    </view>
+
+    <view class="section-head"><view class="section-title">掌握度</view></view>
+    <view wx:if="{{!mastery.length}}" class="t-body muted">做了测验、每日一练以后按技能算</view>
+    <view wx:else class="card list">
+      <view wx:for="{{mastery}}" wx:key="skill" class="row mastery">
+        <view class="row-main">
+          <view class="row-title">{{item.skill}}</view>
+          <view class="bar"><view class="bar-fill {{item.status}}" style="width: {{item.pct}}%"></view></view>
+          <view class="row-sub num">{{item.sub}}</view>
+        </view>
+        <view class="tag {{item.status === 'weak' ? 'late' : item.status === 'mastered' ? 'new' : 'neutral'}}">{{item.label}}</view>
+      </view>
+    </view>
+  </view>
+</view>

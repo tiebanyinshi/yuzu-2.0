@@ -198,6 +198,7 @@
 - [`HANDOFF_MP_RQ014.md`](HANDOFF_MP_RQ014.md)：小程序线 RQ-014 交接说明 · 接主线 8.0.4 会员整改
 - [`HANDOFF_MP_STUDIO.md`](HANDOFF_MP_STUDIO.md)：小程序线交接说明 · UI 工作台版面渲染组件与定时发布刷新（8.1.2）
 - [`HANDOFF_STAFFMP1.md`](HANDOFF_STAFFMP1.md)：v8.2.26 交接说明 · 员工小程序「汤崎 WCP」第一版
+- [`HANDOFF_STAFFMP2.md`](HANDOFF_STAFFMP2.md)：员工小程序「汤崎 WCP」第二版交接说明（随主线下一个版本标签发）
 - [`HANDOFF_V060.md`](HANDOFF_V060.md)：v0.6.0 交接说明 · 管理后台、岗位权限可调整、会员渠道与等级、按岗位的数据看板
 - [`HANDOFF_V070.md`](HANDOFF_V070.md)：v0.7.0 交接说明 · S6 技师第一步：技师名册、挂项目时选技师、技师业绩
 - [`HANDOFF_V071.md`](HANDOFF_V071.md)：v0.7.1 交接说明 · S6 技师第二步：钟房看板、轮钟排队、上下钟计时、提成

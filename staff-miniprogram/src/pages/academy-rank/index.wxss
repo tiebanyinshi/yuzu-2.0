@@ -1,0 +1,67 @@
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  height: 88rpx;
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+  border-bottom: 4rpx solid transparent;
+}
+.tab.on {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--ink);
+}
+.chips {
+  display: flex;
+  align-items: center;
+  margin: 20rpx 0 24rpx;
+}
+.chip {
+  height: 64rpx;
+  line-height: 64rpx;
+  padding: 0 24rpx;
+  margin-right: 12rpx;
+  border-radius: 32rpx;
+  border: 1px solid var(--line-strong);
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.chip.on {
+  background-color: var(--ink);
+  border-color: var(--ink);
+  color: var(--on-ink);
+}
+.chip-gap {
+  width: 12rpx;
+}
+.list {
+  overflow: hidden;
+}
+.no {
+  flex: none;
+  width: 56rpx;
+  font-size: var(--fs-body);
+  color: var(--ink-3);
+}
+.no.top {
+  color: var(--wood-text);
+  font-weight: 600;
+}
+.value {
+  flex: none;
+  margin-left: 16rpx;
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.row.me {
+  background-color: var(--wood-soft);
+}
+.mine {
+  margin-top: 16rpx;
+}

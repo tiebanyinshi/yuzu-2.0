@@ -33,7 +33,12 @@
     "pages/academy-course/index",
     "pages/academy-lesson/index",
     "pages/academy-quiz/index",
-    "pages/academy-daily/index"
+    "pages/academy-daily/index",
+    "pages/academy-me/index",
+    "pages/academy-rank/index",
+    "pages/academy-tutor/index",
+    "pages/academy-coach/index",
+    "pages/academy-signoff/index"
   ],
   "window": {
     "navigationStyle": "custom",

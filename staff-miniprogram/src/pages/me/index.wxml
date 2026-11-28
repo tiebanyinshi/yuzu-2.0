@@ -13,6 +13,18 @@
 
     <view wx:if="{{error}}" class="notice error section">{{error}}</view>
 
+    <view wx:if="{{hasAcademy && level}}" class="section">
+      <view class="section-head"><view class="section-title">学习</view></view>
+      <view class="card card-pad level" hover-class="row-pressed" hover-stay-time="120" bindtap="onAcademy" aria-role="button">
+        <view class="level-head">
+          <view class="level-title">{{level.title}}</view>
+          <view class="level-credits num">{{level.credits}}</view>
+        </view>
+        <view class="bar"><view class="bar-fill" style="width: {{level.pct}}%"></view></view>
+        <view class="t-caption level-sub">{{level.next}} · {{level.certs}}</view>
+      </view>
+    </view>
+
     <view class="section">
       <view class="section-head"><view class="section-title">账号</view></view>
       <view class="card list">

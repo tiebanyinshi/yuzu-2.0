@@ -12,6 +12,7 @@ import { requireMe, toLogin } from '../../utils/guard';
 import type { PendingOp } from '../../utils/pending';
 import { loadPending, SAVE_FAILED, sendPending } from '../../utils/pending';
 import { largeTextOn } from '../../utils/prefs';
+import { markRejectedSeen } from '../../utils/seen';
 import { uuid } from '../../utils/uuid';
 
 interface FieldRow {
@@ -108,6 +109,8 @@ Page({
         can: { approve: d.can.approve, reject: d.can.reject, withdraw: d.can.withdraw, urge: d.can.urge },
       });
       this.loadThumbs(d.attachments);
+      // 我的申请被驳回了：打开看过，首页待办就不再提它（只记在这台手机上，SP19）
+      if (me && d.status === 'rejected' && d.applicantId === me.staff.id) markRejectedSeen(me.staff.id, d.id);
       // 抄送给我的：打开就记已读（不等结果）
       // 抄送里有我、我还没看过才记（审批人、发起人打开不记）
       const viewer = me;

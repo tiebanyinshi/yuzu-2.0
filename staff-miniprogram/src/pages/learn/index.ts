@@ -39,6 +39,8 @@ Page({
     stale: false,
     folders: [] as FolderRow[],
     hasAcademy: false,
+    /** 能签实操（「我是谁」的入口里有 academyCoach） */
+    coach: false,
     acState: 'loading',
     acError: '',
     acStale: false,
@@ -50,7 +52,7 @@ Page({
     const me = await requireMe();
     if (!me) return;
     const hasAcademy = me.entries.indexOf('academy') >= 0;
-    this.setData({ hasAcademy });
+    this.setData({ hasAcademy, coach: me.entries.indexOf('academyCoach') >= 0 });
     this.load(++genKb);
     if (hasAcademy) this.loadAcademy(++genAc, me.staff.id);
   },
@@ -163,6 +165,18 @@ Page({
 
   onDaily() {
     wx.navigateTo({ url: '/pages/academy-daily/index' });
+  },
+
+  onAcademyMe() {
+    wx.navigateTo({ url: '/pages/academy-me/index' });
+  },
+
+  onRank() {
+    wx.navigateTo({ url: '/pages/academy-rank/index' });
+  },
+
+  onCoach() {
+    wx.navigateTo({ url: '/pages/academy-coach/index' });
   },
 
   onAssigned(e: WechatMiniprogram.TouchEvent) {

@@ -1,0 +1,6 @@
+.hint {
+  margin: 8rpx 0 20rpx;
+}
+.list {
+  overflow: hidden;
+}

@@ -41,6 +41,28 @@
           </view>
           <image class="chevron" src="/assets/icons/chevron.png" />
         </view>
+        <view class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onAcademyMe" aria-role="button">
+          <image class="row-icon" src="/assets/icons/academy.png" />
+          <view class="row-main">
+            <view class="row-title">我的证书与掌握度</view>
+          </view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+        <view class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onRank" aria-role="button">
+          <image class="row-icon" src="/assets/icons/academy.png" />
+          <view class="row-main">
+            <view class="row-title">学习榜</view>
+          </view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+        <view wx:if="{{coach}}" class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onCoach" aria-role="button">
+          <image class="row-icon" src="/assets/icons/approvals.png" />
+          <view class="row-main">
+            <view class="row-title">带教签核</view>
+            <view class="row-sub">给本部门的同事签实操</view>
+          </view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
       </view>
 
       <view wx:if="{{ac.required.length}}" class="sub-head">我的必修</view>

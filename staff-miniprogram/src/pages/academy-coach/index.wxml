@@ -1,0 +1,17 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="带教签核" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '没有要你签的实操' : ''}}" message="{{state === 'empty' ? '本部门的同事学到实操课时，就会出现在这里' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="t-caption hint">只列本部门在学、还没签「通过」的实操；签「再练」的可以再签</view>
+    <view class="card list">
+      <view wx:for="{{rows}}" wx:key="key" class="row" hover-class="row-pressed" hover-stay-time="120" data-staff="{{item.staffId}}" data-lesson="{{item.lessonId}}" bindtap="onItem" aria-role="button">
+        <view class="row-main">
+          <view class="row-title">{{item.name}} · {{item.title}}</view>
+          <view class="row-sub">{{item.sub}}</view>
+          <view class="row-sub">{{item.last}}</view>
+        </view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+  </view>
+</view>
