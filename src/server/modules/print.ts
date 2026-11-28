@@ -24,7 +24,7 @@ import { getRefund } from './frontdesk/refunds';
 import { resolveReadableDate } from './ledger';
 import { loadSettings } from './settings';
 import { computeSettlement } from './settlement';
-import { blindView, getShift } from './shifts';
+import { blindRestricted, blindView, getShift, shiftBlindError } from './shifts';
 import { technicianTextSql } from './technicians';
 import { currentStoreId } from '../lib/store-context';
 
@@ -159,6 +159,7 @@ async function renderDoc(deps: Deps, req: FastifyRequest, doc: PrintDoc, paperWi
     case 'settlement': {
       need('ledger.readToday');
       const target = await resolveReadableDate(deps, req, doc.date);
+      if (await blindRestricted(sql, req.actor)) throw shiftBlindError();
       const today = businessDateOf(new Date(), config.timezone, settings.businessDayStartHour);
       const st = await readSnapshot(sql, (tx) => computeSettlement(tx, target, today));
       return { ref: target, label: `日结单 ${target}`, payload: buildSettlementSlip(st, meta) };

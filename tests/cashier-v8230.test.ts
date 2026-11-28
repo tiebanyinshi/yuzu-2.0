@@ -100,7 +100,20 @@ describe('港元现金', () => {
 
   it('交班盲点：提交实点之前接口不给当班的人看应有现金（交班页、今天的班次、打印预览），经理照看；提交以后不能改，交班要一致', async () => {
     const full = await shiftOf(ctx.clerk);
+    const today = (await api(ctx.app, ctx.clerk, 'GET', '/api/shifts/current')).body.today as string;
+    // 盲点关着：店员照常看日结、看板的收款方式
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/settlements/${today}`)).status).toBe(200);
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/dashboard')).body.todayStats.byMethod.length).toBeGreaterThan(0);
     expect((await api(ctx.app, ctx.owner, 'PUT', '/api/frontdesk/rules', { shiftBlind: true })).status).toBe(200);
+    // 开了盲点、还没提交实点（Codex 审查 dcf1966）：日结不给、看板的收款方式不给（从当日现金合计推得出应有现金）
+    const settle = await api(ctx.app, ctx.clerk, 'GET', `/api/settlements/${today}`);
+    expect(settle.status).toBe(409);
+    expect(settle.body.error.code).toBe('SHIFT_BLIND');
+    const dash = (await api(ctx.app, ctx.clerk, 'GET', '/api/dashboard')).body;
+    expect(dash.todayStats).toMatchObject({ byMethod: [], blind: true });
+    // 经理照看
+    expect((await api(ctx.app, duty, 'GET', `/api/settlements/${today}`)).status).toBe(200);
+    expect((await api(ctx.app, duty, 'GET', '/api/dashboard')).body.todayStats.byMethod.length).toBeGreaterThan(0);
     const cur = (await api(ctx.app, ctx.clerk, 'GET', '/api/shifts/current')).body.shift;
     expect(cur.blind).toBe(true);
     expect(cur.summary.cash).toEqual({ opening: 50000, checkout: 0, recharge: 0, expected: 0 });
@@ -132,6 +145,9 @@ describe('港元现金', () => {
     expect(counted.body.blind).toBeUndefined();
     expect(counted.body.blindCount).toMatchObject({ countedCash: full.summary.cash.expected, countedHkd: 59000 });
     expect(counted.body.summary.cash.expected).toBe(full.summary.cash.expected);
+    // 提交实点以后日结、看板照常
+    expect((await api(ctx.app, ctx.clerk, 'GET', `/api/settlements/${today}`)).status).toBe(200);
+    expect((await api(ctx.app, ctx.clerk, 'GET', '/api/dashboard')).body.todayStats.blind).toBeUndefined();
     // 同样的实点重提照旧返回；看到应有以后改实点拒绝
     expect((await api(ctx.app, ctx.clerk, 'POST', `/api/shifts/${full.id}/blind-count`, { countedCash: full.summary.cash.expected, countedHkd: 59000 })).status).toBe(200);
     const changed = await api(ctx.app, ctx.clerk, 'POST', `/api/shifts/${full.id}/blind-count`, { countedCash: full.summary.cash.expected + 100, countedHkd: 59000 });

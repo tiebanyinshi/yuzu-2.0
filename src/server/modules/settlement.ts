@@ -25,6 +25,7 @@ import { EMPTY_COUNT_CARD_TOTALS } from '@shared/count-cards';
 import { platformDayTotals } from './platform-redemptions';
 import { EMPTY_PLATFORM_DAY_TOTALS } from '@shared/platform';
 import { EMPTY_CARD_DEPOSIT_TOTALS } from '@shared/member-form';
+import { blindRestricted, shiftBlindError } from './shifts';
 
 type Pair = { principal: number; bonus: number };
 
@@ -839,6 +840,8 @@ export function registerSettlementRoutes(app: FastifyInstance, deps: Deps) {
   app.get('/api/settlements/:date', { preHandler: guard('ledger.readToday') }, async (req) => {
     const { date } = parse(DateParam, req.params);
     const target = await resolveReadableDate(deps, req, date);
+    // 交班盲点（8.2.30）：还没提交实点的当班的人不看日结（按方式的合计推得出应有现金）
+    if (await blindRestricted(sql, req.actor)) throw shiftBlindError();
     const today = await todayNow();
     return readSnapshot(sql, (tx) => computeSettlement(tx, target, today));
   });

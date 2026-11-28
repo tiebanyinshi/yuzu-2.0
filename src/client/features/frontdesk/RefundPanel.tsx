@@ -113,6 +113,8 @@ export function RefundPanel({
   for (const m of methods) {
     const c = payCents(m.method);
     if (c > m.remaining) problems.push(`${PAYMENT_METHOD_LABELS[m.method]}最多还能退 ${formatYuan(m.remaining)}`);
+    // 申请模式（Codex 审查 dcf1966）：怎么退（原路退回、退款单号）由批准人在批准时填，申请人只核对项目、金额与方式
+    if (asRequest) continue;
     const t = terminalOf(m.method);
     if (viaOf(m.method) && t && c > t.refundable) problems.push(`${PAYMENT_METHOD_LABELS[m.method]}扫码收的最多原路退 ${formatYuan(t.refundable)}；多出的请不勾「原路退回」，登记退款单号`);
     if (c > 0 && refundNeedsRef(m.method) && !viaOf(m.method) && (pays[m.method]?.ref.trim().length ?? 0) < 2) {
@@ -151,7 +153,13 @@ export function RefundPanel({
       items: items.filter((i) => picked[keyOf(i)]).map((i) => ({ category: i.category, name: i.name, quantity: Number(picked[keyOf(i)]!.quantity), amount: parseYuan(picked[keyOf(i)]!.amount)! })),
       payments: methods
         .filter((m) => payCents(m.method) > 0)
-        .map((m) => (viaOf(m.method) ? { method: m.method, amount: payCents(m.method), viaTerminal: true } : { method: m.method, amount: payCents(m.method), ref: pays[m.method]?.ref.trim() ?? '' })),
+        .map((m) =>
+          asRequest
+            ? { method: m.method, amount: payCents(m.method) }
+            : viaOf(m.method)
+              ? { method: m.method, amount: payCents(m.method), viaTerminal: true }
+              : { method: m.method, amount: payCents(m.method), ref: pays[m.method]?.ref.trim() ?? '' },
+        ),
       reason: reason.trim(),
       ...(!asRequest && cash > 0 && drawer !== null ? { refundShiftId: drawer } : {}),
     };
@@ -300,7 +308,7 @@ export function RefundPanel({
                   />
                 </div>
                 <span className="text-[12px] text-ink-3">还能退 {formatYuan(m.remaining)}</span>
-                {terminalOf(m.method) && (
+                {!asRequest && terminalOf(m.method) && (
                   <label className="flex items-center gap-1 text-[12.5px]" data-testid={`refund-via-${m.method}`}>
                     <input
                       type="checkbox"
@@ -312,7 +320,7 @@ export function RefundPanel({
                     原路退回（扫码收的，系统去支付方退）
                   </label>
                 )}
-                {refundNeedsRef(m.method) && !viaOf(m.method) && (
+                {!asRequest && refundNeedsRef(m.method) && !viaOf(m.method) && (
                   <Input
                     fullWidth={false}
                     value={pays[m.method]?.ref ?? ''}

@@ -3,6 +3,7 @@ import { ArrowRight } from 'lucide-react';
 import { describeDate } from '@shared/labels';
 import { useLedger, useSettlement } from '../../lib/queries';
 import { useBusinessToday } from '../../lib/revenue';
+import { errorMessage } from '../../lib/api';
 import { formatTime } from '../../lib/utils';
 import { EmptyState } from '../../components/EmptyState';
 import { Money } from '../../components/Money';
@@ -57,6 +58,9 @@ export function TodayPanel() {
             <ArrowRight className="size-4" />
           </Link>
         </div>
+      ) : s.error ? (
+        // 交班盲点（8.2.30）等拿不到日结时写明原因，不留白
+        <p className="rounded-lg border border-line bg-card px-4 py-3 text-[12.5px] text-ink-3">{errorMessage(s.error)}</p>
       ) : null}
 
       <div className="rounded-lg border border-line bg-card shadow-card">

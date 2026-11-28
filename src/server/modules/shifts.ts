@@ -510,6 +510,24 @@ async function shiftBlindOn(db: Db): Promise<boolean> {
   return row?.value?.shiftBlind === true;
 }
 
+/**
+ * 交班盲点（Codex 审查 dcf1966，安全）：调用的人此刻在一个开着、还没提交实点的班次上（按人交班是自己的，按钱箱交班是在上面的），
+ * 门店开了盲点，又没有「查看历史营业日」（看别人班次的同一项）——当日按收款方式的合计（日结、看板的收款方式）也不给，
+ * 不然从门店当日的现金合计就推得出应有现金。提交实点以后照常
+ */
+export async function blindRestricted(db: Db, actor: OpContext['actor']): Promise<boolean> {
+  if (can(actor, 'ledger.readHistory')) return false;
+  if (!(await shiftBlindOn(db))) return false;
+  const [r] = await db<{ id: number }[]>`
+    SELECT s.id FROM shift_members m JOIN shifts s ON s.id = m.shift_id
+    WHERE m.staff_id = ${actor.id} AND m.left_at IS NULL AND s.status = 'open' AND s.store_id = ${currentStoreId()}
+      AND NOT EXISTS (SELECT 1 FROM shift_blind_counts b WHERE b.shift_id = s.id)
+    LIMIT 1`;
+  return !!r;
+}
+
+export const shiftBlindError = () => conflict('SHIFT_BLIND', '店里开了交班盲点：先在交班页提交实点，再看当日的收款合计');
+
 async function blindHidden(db: Db, actor: OpContext['actor'], s: ShiftRecord): Promise<boolean> {
   if (s.status !== 'open' || s.blindCount || can(actor, 'ledger.readHistory')) return false;
   return shiftBlindOn(db);

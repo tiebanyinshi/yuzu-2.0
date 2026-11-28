@@ -683,6 +683,8 @@ export interface DashboardData {
     net: number;
     ticket: number;
     byMethod: { method: CheckoutMethod; amount: number }[];
+    /** 交班盲点（8.2.30）：调用的人还没提交实点，byMethod 不给（空），页面写明 */
+    blind?: boolean;
     /** 优惠 / 免单（已含在 net 里，单列）；与日结同一口径：当日结账的减去当日反结账的，可为负 */
     discount: number;
     /** 券抵扣（v0.7.20，已含在 net 里，单列，口径同优惠） */
