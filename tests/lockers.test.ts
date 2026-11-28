@@ -61,7 +61,7 @@ describe('柜子状态与分组（不要数据库）', () => {
 
 describe('柜锁控制器（不要数据库）', () => {
   it('配置：默认没配；http 要地址与至少 32 位密钥；写错的拒绝启动', () => {
-    expect(loadLockerConfig({})).toEqual({ driver: 'none', bridgeUrl: null, bridgeToken: null, capabilities: [], autoRelease: true });
+    expect(loadLockerConfig({})).toEqual({ driver: 'none', bridgeUrl: null, bridgeToken: null, capabilities: [], autoRelease: true, storeId: 1 });
     expect(loadLockerConfig({ LOCKER_DRIVER: 'mock' }).driver).toBe('mock');
     expect(() => loadLockerConfig({ LOCKER_DRIVER: 'rs485' })).toThrow(/LOCKER_DRIVER/);
     expect(() => loadLockerConfig({ LOCKER_DRIVER: 'http' })).toThrow(/LOCKER_BRIDGE_URL/);
@@ -72,6 +72,7 @@ describe('柜锁控制器（不要数据库）', () => {
       bridgeToken: 't'.repeat(32),
       capabilities: ['open', 'doors'],
       autoRelease: true,
+      storeId: 1,
     });
   });
 
@@ -87,6 +88,9 @@ describe('柜锁控制器（不要数据库）', () => {
     expect(loadLockerConfig({ ...http, LOCKER_AUTO_RELEASE: 'off' }).autoRelease).toBe(false);
     expect(loadLockerConfig({ LOCKER_DRIVER: 'mock', LOCKER_AUTO_RELEASE: 'ON' }).autoRelease).toBe(true);
     expect(() => loadLockerConfig({ ...http, LOCKER_AUTO_RELEASE: 'maybe' })).toThrow(/LOCKER_AUTO_RELEASE/);
+    // 柜锁桥接的是哪家店的柜子：默认本店 1，写错拒绝启动
+    expect(loadLockerConfig({ ...http, LOCKER_STORE_ID: '3' }).storeId).toBe(3);
+    expect(() => loadLockerConfig({ ...http, LOCKER_STORE_ID: '0' })).toThrow(/LOCKER_STORE_ID/);
     const c = createLockerController(loadLockerConfig({ ...http, LOCKER_CAPABILITIES: 'card' }));
     expect(c.info).toEqual({ driver: 'http', canOpen: false, canDoors: false, canCard: true, canSelect: false });
   });
@@ -107,7 +111,7 @@ describe('柜锁控制器（不要数据库）', () => {
       if (url.endsWith('/open')) return new Response(JSON.stringify({ ok: true, message: '3 号板第 7 路' }));
       return new Response(JSON.stringify({ doors: [{ code: 'A8060', doorOpen: false, known: true }] }));
     }) as typeof fetch;
-    const cfg = { driver: 'http' as const, bridgeUrl: 'http://bridge', bridgeToken: 'k'.repeat(32), capabilities: ['open' as const, 'doors' as const], autoRelease: false };
+    const cfg = { driver: 'http' as const, bridgeUrl: 'http://bridge', bridgeToken: 'k'.repeat(32), capabilities: ['open' as const, 'doors' as const], autoRelease: false, storeId: 1 };
     const c = createLockerController(cfg, fakeFetch);
     expect(await c.open('A8060')).toEqual({ code: 'A8060', opened: true, uncertain: false, message: '3 号板第 7 路' });
     expect(await c.doors(['A8060', 'Z9999'])).toEqual([
@@ -125,7 +129,14 @@ describe('柜锁控制器（不要数据库）', () => {
   });
 
   it('结果待确认（Codex 审查 f8b2853）：没收到回答时写卡读回核对、开柜查柜门；对上了按做成算，对不上标待确认；4xx 是明确没做', async () => {
-    const cfg = { driver: 'http' as const, bridgeUrl: 'http://bridge', bridgeToken: 'k'.repeat(32), capabilities: ['open' as const, 'doors' as const, 'card' as const], autoRelease: false };
+    const cfg = {
+      driver: 'http' as const,
+      bridgeUrl: 'http://bridge',
+      bridgeToken: 'k'.repeat(32),
+      capabilities: ['open' as const, 'doors' as const, 'card' as const],
+      autoRelease: false,
+      storeId: 1,
+    };
     const respond = (handlers: Record<string, () => Response>) =>
       (async (url: string) => {
         const path = new URL(url).pathname;
@@ -191,7 +202,7 @@ describe('柜锁控制器（不要数据库）', () => {
       if (url.endsWith('/card/write')) return new Response(JSON.stringify({ ok: true, uid: '04A1B2C3', message: '已写：衣物柜 A8060、手机柜 P060' }));
       return new Response(JSON.stringify({ ok: 'yes', uid: 'x' }));
     }) as typeof fetch;
-    const cfg = { driver: 'http' as const, bridgeUrl: 'http://bridge', bridgeToken: 'k'.repeat(32), capabilities: ['card' as const], autoRelease: false };
+    const cfg = { driver: 'http' as const, bridgeUrl: 'http://bridge', bridgeToken: 'k'.repeat(32), capabilities: ['card' as const], autoRelease: false, storeId: 1 };
     const c = createLockerController(cfg, fakeFetch);
     expect(await c.readCard()).toEqual({
       ok: true,
@@ -221,7 +232,7 @@ describe('柜锁控制器（不要数据库）', () => {
     const token = 'b'.repeat(32);
     const bridge = await startMockLockerBridge({ token, hardware: new MockLockerHardware({ uid: '04A1B2C3', code: null, locks: [] }) });
     try {
-      const c = createLockerController({ driver: 'http', bridgeUrl: bridge.url, bridgeToken: token, capabilities: ['open', 'doors', 'card', 'select'], autoRelease: false });
+      const c = createLockerController({ driver: 'http', bridgeUrl: bridge.url, bridgeToken: token, capabilities: ['open', 'doors', 'card', 'select'], autoRelease: false, storeId: 1 });
       expect(await c.open('A8060')).toMatchObject({ opened: true });
       expect(await c.doors(['A8060'])).toEqual([{ code: 'A8060', doorOpen: true, known: true }]);
       expect(await c.writeCard('A8060', '04A1B2C3')).toMatchObject({ ok: true, uid: '04A1B2C3' });
@@ -235,7 +246,7 @@ describe('柜锁控制器（不要数据库）', () => {
       expect(await c.selectRelease('P001', 'FFFF0000')).toMatchObject({ ok: false, uncertain: false });
       expect(await c.selectRelease('P001', '04A1B2C3')).toMatchObject({ ok: true });
       expect((await c.selectList())[0]).toMatchObject({ no: 'P001', uid: null, doorOpen: true });
-      const wrong = createLockerController({ driver: 'http', bridgeUrl: bridge.url, bridgeToken: 'x'.repeat(32), capabilities: ['card'], autoRelease: false });
+      const wrong = createLockerController({ driver: 'http', bridgeUrl: bridge.url, bridgeToken: 'x'.repeat(32), capabilities: ['card'], autoRelease: false, storeId: 1 });
       await expect(wrong.readCard()).rejects.toThrow(/401/);
     } finally {
       await bridge.close();
@@ -272,7 +283,7 @@ describe('自选柜（手机柜，不要数据库）', () => {
   });
 
   it('柜锁桥：带密钥调 /select/*；乱回的柜号去掉、芯片号照手牌的写法整理、不像芯片号的记「无法识别」；没收到回答时再列一次核对，4xx 明确没做', async () => {
-    const cfg = { driver: 'http' as const, bridgeUrl: 'http://bridge', bridgeToken: 'k'.repeat(32), capabilities: ['select' as const], autoRelease: false };
+    const cfg = { driver: 'http' as const, bridgeUrl: 'http://bridge', bridgeToken: 'k'.repeat(32), capabilities: ['select' as const], autoRelease: false, storeId: 1 };
     const respond = (handlers: Record<string, () => Response>) =>
       (async (url: string) => {
         const h = handlers[new URL(url).pathname];
@@ -494,7 +505,7 @@ describe('自选柜（手机柜）接口：门店系统接模拟柜锁桥', () =
     expect((await api(ctx.app, ctx.clerk, 'GET', '/api/lockers/select')).body.slots[0]).toMatchObject({ no: 'P001', doorOpen: true, uid: '04A1B2C3' });
   });
 
-  it('退牌后自动释放（GK3）：退了牌还占着的自动放、记审计、每次退牌只试一次；柜门关着的、在店的、没来过的不动；关掉开关不动', async () => {
+  it('退牌后自动释放（GK3）：退了牌还占着的自动放、记审计；放的时候手牌预留（暂停）；结果待确认的预留留着、下一轮核对再放；柜门关着的、在店的、没来过的、刚发给新客人的不动', async () => {
     const hw = bridge.hardware;
     for (const no of MOCK_SELECT_NOS) hw.selectRelease(no, null);
     const tag = async (code: string, uid: string) => (await ctx.sql<{ id: number }[]>`INSERT INTO hand_tags (code, zone, card_uid) VALUES (${code}, 'male', ${uid}) RETURNING id`)[0]!.id;
@@ -511,18 +522,18 @@ describe('自选柜（手机柜）接口：门店系统接模拟柜锁桥', () =
         await ctx.sql`UPDATE visits SET status = 'cancelled', closed_at = now(), closed_by = ${ctx.ownerId} WHERE id = ${v!.id}`;
       }
     };
+    const status = async (code: string) => (await ctx.sql<{ serviceStatus: string; serviceNote: string | null }[]>`SELECT service_status, service_note FROM hand_tags WHERE code = ${code}`)[0]!;
     const returned = await tag('L9201', '0AA00001');
     await visit(returned, 'L9201', true);
-    const doorShut = await tag('L9202', '0AA00002');
-    await visit(doorShut, 'L9202', true);
-    const inStore = await tag('L9203', '0AA00003');
-    await visit(inStore, 'L9203', false);
+    await visit(await tag('L9202', '0AA00002'), 'L9202', true);
+    await visit(await tag('L9203', '0AA00003'), 'L9203', false);
     await tag('L9204', '0AA00004');
-    const failing = await tag('L9205', '0AA00005');
-    await visit(failing, 'L9205', true);
+    await visit(await tag('L9205', '0AA00005'), 'L9205', true);
     const reissued = await tag('L9206', '0AA00006');
     await visit(reissued, 'L9206', true);
-    // P007 退了牌、柜门开着（客人拿了手机）；P008 退了牌、柜门关着；P009 在店；P010 没来过；P011 退了牌、桥这一次没放成
+    await visit(await tag('L9207', '0AA00007'), 'L9207', true);
+    // P007 退了牌、柜门开着；P008 退了牌、柜门关着；P009 在店；P010 没来过；P011 退了牌、桥明确拒绝；
+    // P012 退了牌、但放 P007 时前台又把这张牌发出去了；P005 退了牌、桥没回答（结果待确认）
     for (const [no, uid, open] of [
       ['P007', '0AA00001', true],
       ['P008', '0AA00002', false],
@@ -530,55 +541,95 @@ describe('自选柜（手机柜）接口：门店系统接模拟柜锁桥', () =
       ['P010', '0AA00004', true],
       ['P011', '0AA00005', true],
       ['P012', '0AA00006', true],
+      ['P005', '0AA00007', true],
     ] as const) {
       expect(hw.take(no, uid)).toBeNull();
       if (open) hw.selectOpen(no);
     }
-    // P012：L9206 退了牌，但在放 P007 的时候前台又把它发给了新客人——要放之前锁住手牌再核对，就不放（Codex 审查 a92ac3e）
     const statusDuring: string[] = [];
     const ctl = lockerControllerFor(ctx.config.lockers);
     const realRelease = ctl.selectRelease.bind(ctl);
-    const refuse = vi.spyOn(ctl, 'selectRelease').mockImplementation(async (no, uid) => {
-      const [t] = await ctx.sql<{ serviceStatus: string; serviceNote: string | null }[]>`
-        SELECT service_status, service_note FROM hand_tags WHERE card_uid = ${uid}`;
+    const fake = vi.spyOn(ctl, 'selectRelease').mockImplementation(async (no, uid) => {
+      const [t] = await ctx.sql<{ serviceStatus: string; serviceNote: string | null }[]>`SELECT service_status, service_note FROM hand_tags WHERE card_uid = ${uid}`;
       statusDuring.push(`${no} ${t!.serviceStatus} ${t!.serviceNote ?? ''}`);
       if (no === 'P007') await visit(reissued, 'L9206B', false);
-      return no === 'P011' ? { no, ok: false, uncertain: false, message: '锁没回应（模拟）' } : realRelease(no, uid);
+      if (no === 'P011') return { no, ok: false, uncertain: false, message: '锁拒绝了（模拟）' };
+      if (no === 'P005') return { no, ok: false, uncertain: true, message: '没收到柜锁桥的回答（模拟）' };
+      return realRelease(no, uid);
     });
     try {
       expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: ctx.config })).toBe(1);
     } finally {
-      refuse.mockRestore();
+      fake.mockRestore();
     }
-    const held = Object.fromEntries(hw.selectList().map((x) => [x.no, x.uid]));
-    expect(held).toMatchObject({ P007: null, P008: '0AA00002', P009: '0AA00003', P010: '0AA00004', P011: '0AA00005', P012: '0AA00006' });
-    // 放的时候手牌标着「暂停使用」（发牌会拒绝），放完恢复正常
-    expect(statusDuring).toEqual([expect.stringMatching(/^P007 paused 正在自动释放手机柜 P007/), expect.stringMatching(/^P011 paused 正在自动释放手机柜 P011/)]);
-    expect(await ctx.sql`SELECT code FROM hand_tags WHERE code IN ('L9201', 'L9205', 'L9206') AND service_status <> 'normal'`).toHaveLength(0);
+    const held = () => Object.fromEntries(hw.selectList().map((x) => [x.no, x.uid]));
+    expect(held()).toMatchObject({ P005: '0AA00007', P007: null, P008: '0AA00002', P009: '0AA00003', P010: '0AA00004', P011: '0AA00005', P012: '0AA00006' });
+    // 放的时候手牌标着「暂停使用」（发牌会拒绝）；放成了、确定没放成的恢复，结果待确认的留着
+    expect(statusDuring.sort()).toEqual([
+      expect.stringMatching(/^P005 paused 正在自动释放手机柜 P005（/),
+      expect.stringMatching(/^P007 paused 正在自动释放手机柜 P007（/),
+      expect.stringMatching(/^P011 paused 正在自动释放手机柜 P011（/),
+    ]);
+    expect((await status('L9201')).serviceStatus).toBe('normal');
+    expect((await status('L9205')).serviceStatus).toBe('normal');
+    expect(await status('L9207')).toMatchObject({ serviceStatus: 'paused', serviceNote: expect.stringContaining('P005') });
     const logs = await ctx.sql<{ targetId: string; detail: Record<string, unknown> }[]>`
       SELECT target_id, detail FROM audit_logs WHERE action = 'locker_select_released' AND detail->>'auto' = 'true' ORDER BY id`;
-    expect(logs.map((l) => [l.detail.no, l.detail.ok])).toEqual([
-      ['P007', true],
-      ['P011', false],
+    expect(logs.map((l) => [l.detail.no, l.detail.ok, l.detail.uncertain])).toEqual([
+      ['P005', false, true],
+      ['P007', true, false],
+      ['P011', false, false],
     ]);
-    expect(logs[0]).toMatchObject({ targetId: String(returned), detail: { uid: '0AA00001', code: 'L9201', reason: '退牌后自动释放' } });
-    // 每次退牌只试一次：P011 没放成的不再试，留给柜况页的人
+    expect(logs.find((l) => l.detail.no === 'P007')).toMatchObject({ targetId: String(returned), detail: { uid: '0AA00001', code: 'L9201', reason: '退牌后自动释放' } });
+
+    // 下一轮：P005 的预留还在，柜子还是那张手牌占着——再放一次（这回放成了），恢复；P011 确定没放成的不再试，留给人
+    expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: ctx.config })).toBe(1);
+    expect(held()).toMatchObject({ P005: null, P011: '0AA00005' });
+    expect((await status('L9207')).serviceStatus).toBe('normal');
+    expect((await ctx.sql`SELECT 1 FROM audit_logs WHERE action = 'locker_select_released' AND detail->>'auto' = 'true'`).length).toBe(4);
+
+    // 进程中途退出留下的预留（不按时间清）：柜子空了就恢复；别人标的暂停不动
+    await visit(await tag('L9208', '0AA00008'), 'L9208', true);
+    expect(hw.take('P003', '0AA00008')).toBeNull();
+    hw.selectOpen('P003');
+    await ctx.sql`UPDATE hand_tags SET service_status = 'paused', service_note = '正在自动释放手机柜 P003（系统：放成了或确定没放成就恢复）', service_at = now() WHERE code = 'L9208'`;
+    hw.selectRelease('P003', null);
+    await ctx.sql`UPDATE hand_tags SET service_status = 'paused', service_note = '手牌带子断了', service_at = now() WHERE code = 'L9202'`;
+    expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: ctx.config })).toBe(1);
+    expect((await status('L9208')).serviceStatus).toBe('normal');
+    expect(await status('L9202')).toMatchObject({ serviceStatus: 'paused', serviceNote: '手牌带子断了' });
+
+    // 退了牌、但手牌被锁定（比如挂失）的不自动放：放的时候有人解锁就又能发了，留给柜况页的人
+    await visit(await tag('L9209', '0AA00009'), 'L9209', true);
+    await ctx.sql`UPDATE hand_tags SET locked = true, lock_reason = '客人说丢了' WHERE code = 'L9209'`;
+    expect(hw.take('P004', '0AA00009')).toBeNull();
+    hw.selectOpen('P004');
     expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: ctx.config })).toBe(0);
-    expect(await ctx.sql`SELECT 1 FROM audit_logs WHERE action = 'locker_select_released' AND detail->>'auto' = 'true'`).toHaveLength(2);
-    expect(hw.selectList().find((x) => x.no === 'P011')!.uid).toBe('0AA00005');
+    expect(held().P004).toBe('0AA00009');
+
     // 关掉开关：什么都不做
+    await ctx.sql`UPDATE hand_tags SET service_status = 'normal', service_note = NULL WHERE code = 'L9202'`;
     hw.selectOpen('P008');
     const off = { ...ctx.config, lockers: { ...ctx.config.lockers, autoRelease: false } };
     expect(await sweepReturnedPhoneLockers({ sql: ctx.sql, config: off })).toBe(0);
-    expect(hw.selectList().find((x) => x.no === 'P008')!.uid).toBe('0AA00002');
-    // 上一轮中途退出、没恢复的预留：超过 2 分钟的恢复正常；别人标的暂停不动
-    await ctx.sql`UPDATE hand_tags SET service_status = 'paused', service_note = '正在自动释放手机柜 P009（系统，几秒后恢复）', service_at = now() - interval '5 minutes' WHERE code = 'L9204'`;
-    await ctx.sql`UPDATE hand_tags SET service_status = 'paused', service_note = '手牌带子断了', service_at = now() - interval '5 minutes' WHERE code = 'L9202'`;
-    await sweepReturnedPhoneLockers({ sql: ctx.sql, config: ctx.config });
-    const statuses = Object.fromEntries(
-      (await ctx.sql<{ code: string; serviceStatus: string }[]>`SELECT code, service_status FROM hand_tags WHERE code IN ('L9202', 'L9204')`).map((r) => [r.code, r.serviceStatus]),
-    );
-    expect(statuses).toEqual({ L9202: 'paused', L9204: 'normal' });
+    expect(held().P008).toBe('0AA00002');
+  });
+
+  it('多门店（Codex 审查 d0ecdcb）：柜锁桥只接 LOCKER_STORE_ID 那家店；别的店当成没接——看不到、开不了、放不了、发卡器用不了', async () => {
+    const [b] = await ctx.sql<{ id: number }[]>`INSERT INTO stores (code, name, entity_id) VALUES ('LK2', '柜锁乙店', 1) RETURNING id`;
+    expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: b!.id })).status).toBe(200);
+    try {
+      expect((await api(ctx.app, ctx.owner, 'GET', '/api/lockers/controller')).body).toMatchObject({ driver: 'none', canCard: false, canSelect: false });
+      expect((await api(ctx.app, ctx.owner, 'GET', '/api/lockers/select')).body.error.code).toBe('LOCKER_SELECT_NOT_CONFIGURED');
+      expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/select/P001/open', { reason: '客人忘带手牌' })).status).toBe(503);
+      expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/select/P001/release', { reason: '客人已退牌', uid: '04A1B2C3' })).status).toBe(503);
+      expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/card/read', {})).body.error.code).toBe('LOCKER_CARD_NOT_CONFIGURED');
+      expect((await api(ctx.app, ctx.owner, 'POST', '/api/lockers/card/clear', { reason: '作废', uid: '04A1B2C3' })).status).toBe(503);
+    } finally {
+      expect((await api(ctx.app, ctx.owner, 'POST', '/api/auth/store', { storeId: 1 })).status).toBe(200);
+    }
+    expect((await api(ctx.app, ctx.owner, 'GET', '/api/lockers/controller')).body).toMatchObject({ canSelect: true });
+    expect(await ctx.sql`SELECT 1 FROM audit_logs WHERE store_id = ${b!.id} AND action LIKE 'locker_%'`).toHaveLength(0);
   });
 });
 
