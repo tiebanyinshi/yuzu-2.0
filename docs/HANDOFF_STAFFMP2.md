@@ -1,10 +1,10 @@
-# v8.2.31 交接说明 · 员工小程序「汤崎 WCP」第二版
+# 员工小程序「汤崎 WCP」第二版交接说明（随主线下一个版本标签发）
 
 员工小程序线 PR [tiebanyinshi/yuzu-2.0#75](https://github.com/tiebanyinshi/yuzu-2.0/pull/75)。第一版 8.2.26（[#53](https://github.com/tiebanyinshi/yuzu-2.0/pull/53)，交接说明 `docs/HANDOFF_STAFFMP1.md`）合进 main、打了 `v8.2.26` 标签以后，店主 2026-11-28：「你直接全部开发完就行」「用一次提交」——第二版排期（`docs/STAFF_MP.md` 第 11.1 节）里能做的都在一个提交里做完，不再拆子 PR。
 
 - 设计：`docs/STAFF_MP.md` 第 2.2 节（首页待办）、第 2.3 节（学习 Tab「第二版加的」）、第 2.5 节（我的）、第 8.2 节（白名单）、第 11.1 节（排期与进度）。
 - 默认做法：`docs/PENDING_DECISIONS.md` SP18（更新）、SP19（首页待办的两样）、SP20（带教签核与问柚子放进小程序，店主已定）。
-- 版本号：8.2.30 是收银合并（店主已定），8.2.27–8.2.29 没查到排给谁，避开不用，这一版用 8.2.31；合并时 main 已经到更高的照 main 当时的安排改。员工小程序自己的版本号 1.1.0。
+- 版本号：**不改 yuzu 的版本号与 `CHANGELOG.md`**——线范围检查（`scripts/check-line-scope.mjs`，第一版的子 PR A 加的，随 #53 进了 main）不让员工小程序线的 PR 改它们，与顾客小程序线一样，代码随主线的下一个版本标签一起发（第一版的 8.2.26 是这条检查进 main 以前合的）；`CHANGELOG.md` 里怎么写由主线发版时定，可以照本说明第 0、1 节。员工小程序自己的版本号 1.1.0。
 - **没有数据库迁移**，没有新的环境变量，部署照第一版（`compose.staffmp.yaml`、Caddy 两段不变）。
 
 ## 0. 升级后会看到的变化
@@ -57,7 +57,7 @@
 ## 5.1 可复制给测试 AI 的指令
 
 ```
-验收 tiebanyinshi/yuzu-2.0 的 v8.2.31 员工小程序线第二版（PR #75 的最新提交，报告第一行写「【员工小程序线·测试】→ 员工小程序线 · PR #75 · <完整 SHA>」；合进 main 以后在 main 的 v8.2.31 上验收）。
+验收 tiebanyinshi/yuzu-2.0 的员工小程序线第二版（PR #75 的最新提交，报告第一行写「【员工小程序线·测试】→ 员工小程序线 · PR #75 · <完整 SHA>」；合进 main 以后在包含它的下一个版本标签上验收）。
 只用新建的独立演示库（APP_ENV=development，不是 trial / production / 测试服）：
   npm ci && npm run typecheck && npm run build
   node dist/server/cli.js demo-prepare        # 最后自带 check 与 demo-check，要全部 ✓
