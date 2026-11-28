@@ -74,9 +74,10 @@ const PeopleQuery = z.object({ q: z.string().optional() });
 
 /**
  * 开通饭卡时用的工号：人事档案的工号（大写、合法），再是 S + 系统账号编号，再是 S + 编号 + -2…-5，取第一个「还没被饭堂名单用掉、
- * 或者那张就是这个人上次在小程序开通、还没对上的」（建好了、记对上时出错；或者两次请求同时到）：
- * 饭堂的 createEmployee 对同工号同姓名同部门同角色回原来那张（created: false），这样重试与并发都落在同一张饭卡上，不会多开一张；
- * 别人的饭卡（不是这个人开的、已经对上的、停用的）一概跳过，不会因为姓名一样就对给他（Codex 审查 #53）。都用掉了就不开，请人事安排
+ * 或者那张就是这个人自己在小程序开通的」（建好了、记对上时出错；两次请求同时到、前一次已经对上了）：
+ * 饭堂的 createEmployee 对同工号同姓名同部门同角色回原来那张（created: false），link 对同一张不报错，这样重试与并发都落在同一张饭卡上，
+ * 不会多开一张（不用锁：同时点几次选出来的都是同一个工号，Codex 审查 #53）；
+ * 别人的饭卡（不是这个人开的、对给了别人的、停用的）一概跳过，不会因为姓名一样就对给他。都用掉了就不开，请人事安排
  */
 async function empNoFor(db: Db, staffId: number, name: string): Promise<string> {
   const [p] = await db<{ empNo: string | null }[]>`SELECT emp_no FROM staff_profiles WHERE staff_id = ${staffId}`;
@@ -85,7 +86,7 @@ async function empNoFor(db: Db, staffId: number, name: string): Promise<string> 
   for (const empNo of candidates) {
     const [taken] = await db<{ mine: boolean }[]>`
       SELECT (e.created_by = ${staffId} AND e.name = ${name} AND e.role = 'staff' AND e.department_id IS NULL AND e.active
-              AND NOT EXISTS (SELECT 1 FROM staffmp_canteen_links l WHERE l.employee_id = e.id)) AS mine
+              AND NOT EXISTS (SELECT 1 FROM staffmp_canteen_links l WHERE l.employee_id = e.id AND l.staff_id <> ${staffId})) AS mine
       FROM canteen_employees e WHERE e.emp_no = ${empNo}`;
     if (!taken || taken.mine) return empNo;
   }
@@ -96,26 +97,6 @@ async function empNoFor(db: Db, staffId: number, name: string): Promise<string> 
 async function ownCreated(db: Db, staffId: number, employeeId: number): Promise<boolean> {
   const [row] = await db<{ ok: boolean }[]>`SELECT (created_by = ${staffId} AND active) AS ok FROM canteen_employees WHERE id = ${employeeId}`;
   return !!row?.ok;
-}
-
-/**
- * 开通饭卡整段（核对还没对上 → 选工号 → 建饭卡 → 对上）按人串行（Codex 审查 #53）：同一个人同时点两次时，后一次等前一次对上以后
- * 再核对，看到已经对上就停，不会因为前一张已经对上（选工号时跳过）换下一个工号再开一张。饭堂的 createEmployee 自己开事务，
- * 整段放不进一个事务，所以用会话级咨询锁（单拿一个连接，进程停了连接一断就放开）；与 link 里的事务锁不是同一把（不会自己等自己）
- */
-async function serialCreate<T>(sql: Sql, staffId: number, fn: () => Promise<T>): Promise<T> {
-  const conn = await sql.reserve();
-  const key = `staffmp_canteen_create:${staffId}`;
-  try {
-    await conn`SELECT pg_advisory_lock(hashtextextended(${key}, 0))`;
-    try {
-      return await fn();
-    } finally {
-      await conn`SELECT pg_advisory_unlock(hashtextextended(${key}, 0))`;
-    }
-  } finally {
-    conn.release();
-  }
 }
 
 async function lockStaff(db: Db, staffId: number) {
@@ -211,14 +192,13 @@ export function registerStaffMpCanteenRoutes(app: FastifyInstance, deps: Deps, n
     const actor = signedIn(req);
     await open();
     const name = actor.displayName.slice(0, 16);
-    // 饭堂的 createEmployee 自己开事务（主线的函数，员工小程序线不改它），所以建饭卡与记对上分两步，整段按人串行（serialCreate）：
-    // 第二步出错以后再点，靠 empNoFor 选回同一个工号、createEmployee 回原来那张、link 对同一张不报错，落在同一张饭卡上
-    await serialCreate(sql, actor.id, async () => {
-      if (await linkedEmployee(sql, actor.id)) throw conflict('CANTEEN_ALREADY_LINKED', '你已经对上一张饭卡了');
-      const { employee, created } = await createEmployee(sql, { empNo: await empNoFor(sql, actor.id, name), name, role: 'staff', departmentId: null }, { actor, ip: req.ip });
-      if (!created && !(await ownCreated(sql, actor.id, employee.id))) throw conflict('CANTEEN_EMP_NO_TAKEN', '刚好有同事用了这个工号开饭卡：请再点一次「开通饭卡」');
-      await link(sql, actor.id, employee.id, 'created', actor.id, req.ip);
-    });
+    if (await linkedEmployee(sql, actor.id)) throw conflict('CANTEEN_ALREADY_LINKED', '你已经对上一张饭卡了');
+    // 饭堂的 createEmployee 自己开事务（主线的函数，员工小程序线不改它），所以建饭卡与记对上分两步：
+    // 第二步出错以后再点、两次请求同时到（前一次已经对上了），靠 empNoFor 选回同一个工号、createEmployee 回原来那张、
+    // link 对同一张不报错，落在同一张饭卡上
+    const { employee, created } = await createEmployee(sql, { empNo: await empNoFor(sql, actor.id, name), name, role: 'staff', departmentId: null }, { actor, ip: req.ip });
+    if (!created && !(await ownCreated(sql, actor.id, employee.id))) throw conflict('CANTEEN_EMP_NO_TAKEN', '刚好有同事用了这个工号开饭卡：请再点一次「开通饭卡」');
+    await link(sql, actor.id, employee.id, 'created', actor.id, req.ip);
     return statusOf(actor.id);
   });
 

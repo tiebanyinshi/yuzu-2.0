@@ -134,8 +134,17 @@ Page({
       }
       const ref = t.fields.find((f) => f.type === 'ref');
       if (ref) {
-        const page = await call<ApprovalPage>('GET', `/oa/approvals?box=mine&status=approved&template=${ref.refTemplate ?? ''}`);
-        lists = { ...lists, refs: page.items.map((x) => ({ id: x.id, name: `${x.title}（${x.submittedAt.slice(0, 10)}）` })) };
+        // 自己已通过的那个模板的单：一页 30 张，照 next 一页一页取完（与 WCP 网页的表单一样，最多 20 页）
+        const all: ApprovalPage['items'] = [];
+        let before: number | null = null;
+        for (let i = 0; i < 20; i += 1) {
+          const page: ApprovalPage = await call<ApprovalPage>('GET', `/oa/approvals?box=mine&status=approved&template=${ref.refTemplate ?? ''}${before ? `&before=${before}` : ''}`);
+          all.push(...page.items);
+          if (!page.next) break;
+          before = page.next;
+        }
+        if (template !== t) return;
+        lists = { ...lists, refs: all.map((x) => ({ id: x.id, name: `${x.title}（${x.submittedAt.slice(0, 10)}）` })) };
       }
       await this.loadShifts();
     } catch {

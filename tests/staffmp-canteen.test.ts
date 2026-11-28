@@ -133,7 +133,7 @@ describe('对上饭卡', () => {
     expect((await ctx.sql`SELECT 1 FROM staffmp_canteen_links WHERE staff_id = ${e.id} AND employee_id = ${orphan.id}`).length).toBe(1);
     // 两次请求同时到：一次对上；另一次要么也落在同一张上（200），要么看到已经对上（409「你已经对上一张饭卡了」）——只有一张饭卡、一条对上
     const f = await staffLogin('fay2', '小菲');
-    // 开通整段按人串行（Codex 对 96d9707 的 P2）：同时点五次也只开一张，不会因为前一张已经对上换个工号再开一张
+    // 同时点五次也只开一张（Codex 对 96d9707 的 P2）：前一次已经对上了，后一次选工号时照用这张（是自己开的、对上的是自己），不换个工号再开一张
     const both = await Promise.all([1, 2, 3, 4, 5].map(() => s('POST', '/api/staffmp/canteen/create', f.token, {})));
     expect(
       both.some((r) => r.status === 200 && r.body.employee?.empNo === `S${f.id}`),
