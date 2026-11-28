@@ -2,25 +2,36 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { invalidateRevenue, useBusinessToday } from '../../lib/revenue';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { Banknote, BedDouble, CircleCheck, Clock3, LogOut, ShieldCheck, Ticket, Undo2 } from 'lucide-react';
-import { CHECKOUT_METHOD_LABELS, isFreeTicket, priceTicket, ticketChangeNeedsGrant, type CheckoutDetail, type CheckoutPreview, type RefundShiftOptions, type RefundSummary } from '@shared/checkout';
+import {
+  CHECKOUT_METHOD_LABELS,
+  checkoutMatches,
+  isFreeTicket,
+  priceTicket,
+  ticketChangeNeedsGrant,
+  type CheckoutDetail,
+  type CheckoutPreview,
+  type RefundShiftOptions,
+  type RefundSummary,
+} from '@shared/checkout';
 import { minutesText } from '@shared/benefits';
 import type { CheckoutCouponOption } from '@shared/coupons';
 import { KITCHEN_STATUS_LABELS } from '@shared/dining';
 import { ZONE_LABELS, type BoardTag, type VisitDetail } from '@shared/frontdesk';
 import { discountGrantFits, sortedVisitIds, ticketGrantCovers, type TicketGrant, type TicketGrantRequest } from '@shared/grants';
 import { describeHours, shiftDate } from '@shared/labels';
-import { formatYuan } from '@shared/money';
+import { formatYuan, parseYuan } from '@shared/money';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { useCan, useSession } from '../../lib/session';
 import { cn, formatTime } from '../../lib/utils';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
+import { useListKeys } from '../../lib/keymap';
 import { AuthorizeDialog } from '../../components/AuthorizeDialog';
 import { DateNav } from '../../components/DateNav';
 import { EmptyState } from '../../components/EmptyState';
 import { Money } from '../../components/Money';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
-import { Badge, Button, Input, Notice, Select, Skeleton, Textarea } from '../../components/ui';
+import { Badge, Button, Input, Kbd, Notice, Select, Skeleton, Textarea } from '../../components/ui';
 import { PrintButton } from '../print/PrintButton';
 import { NetPrintButton } from '../print/NetPrintButton';
 import { CloseStayById } from '../rooms/CloseStayDialog';
@@ -68,6 +79,8 @@ export function CheckoutDialog({
   const [note, setNote] = useState('');
   // 8.1.37：还没上钟的钟单要逐张确认「客人确实做完了」才能结（记下确认时的那一组钟单号，核对刷新、钟单变了要重新确认）
   const [unstartedOk, setUnstartedOk] = useState('');
+  // 8.2.27：找零大（超过 ¥500，或客人实给超过应收两倍）要再按一次确认，记下确认时的那几个数
+  const [changeOk, setChangeOk] = useState('');
   const [result, setResult] = useState<CheckoutDetail | null>(null);
   /** 次卡（v0.7.28）：每张卡这次抵几次 */
   const [cardUses, setCardUses] = useState<Record<number, number>>({});
@@ -213,8 +226,19 @@ export function CheckoutDialog({
   const unstartedConfirmed = waitingNos.length === 0 || unstartedOk === waitingNos.join(',');
   const ready = total !== null && remaining === 0 && pay.ok && !preview.isFetching && shiftReady.ready && !backfillBlocked && !roomsOpen && !usagesUncharged && unstartedConfirmed;
 
+  // 8.2.27（收银 demo）：现金找零大的再确认一次——多半是把实给敲错了一位（1000 敲成 10000）
+  const bigChange = pay.rows
+    .map((r, i) => ({ r, cents: pay.rowCents[i] ?? null }))
+    .filter(({ r }) => r.method === 'cash' && r.tendered.trim())
+    .map(({ r, cents }) => ({ tendered: parseYuan(r.tendered), cents }))
+    .find(({ tendered, cents }) => tendered !== null && cents !== null && (tendered - cents > 50_000 || (due !== null && due > 0 && tendered > due * 2)));
+  const changeKey = bigChange ? `${bigChange.tendered}:${bigChange.cents}` : '';
   const submit = async () => {
     if (!ready || !p) return;
+    if (bigChange && changeOk !== changeKey) {
+      setChangeOk(changeKey);
+      return;
+    }
     const visitIds = p.visits.map((v) => v.visitId);
     const tagCodes = p.visits.map((v) => v.tagCode);
     const payments = pay.payments();
@@ -316,13 +340,19 @@ export function CheckoutDialog({
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             取消
           </Button>
-          <Button variant="primary" size="lg" disabled={!ready || locked} loading={busy} onClick={submit} data-testid="checkout-submit">
-            确认结清{due !== null ? ` ¥${(due / 100).toFixed(2)}` : ''}
+          <Button variant="primary" size="lg" disabled={!ready || locked} loading={busy} onClick={submit} data-testid="checkout-submit" data-fkey="F9">
+            {bigChange && changeOk === changeKey ? '找零核对过了，确认结清' : `确认结清${due !== null ? ` ¥${(due / 100).toFixed(2)}` : ''}`}
+            <Kbd className="ml-2 border-paper/40 bg-transparent text-paper/80">F9</Kbd>
           </Button>
         </>
       }
     >
       <PendingPanel op={op} onResolved={(d) => setResult(d)} />
+      {bigChange && changeOk === changeKey && (
+        <Notice tone="warning" title={`要找零 ${formatYuan(bigChange.tendered! - bigChange.cents!)}，请核对客人实给的现金`} className="mb-3" data-testid="checkout-big-change">
+          核对没错再按一次「确认结清」（F9）；敲错了改「客人实给」。
+        </Notice>
+      )}
       <div className="space-y-4" data-testid="checkout">
         <BackfillNotice action="结账" />
         <ShiftGate action="结账" />
@@ -736,11 +766,16 @@ export function CheckoutRecordsDialog({ open, onClose, focusId }: { open: boolea
   const list = useCheckouts(date, open, open && isToday);
   const summary = useCheckoutDaySummary(date, open, open && isToday);
   const [openId, setOpenId] = useState<number | null>(focusId ?? null);
+  // 8.2.27（收银 demo 订单查询）：按牌号、单号后几位、金额、经办人筛这一天的单，↑↓ 选、回车打开
+  const [find, setFind] = useState('');
   useResetOnOpen(open, () => {
     setOpenId(focusId ?? null);
     setDate(today);
+    setFind('');
   }, [focusId, today]);
   const sum = summary.data;
+  const shown = useMemo(() => (list.data ?? []).filter((c) => checkoutMatches(c, find)), [list.data, find]);
+  const keys = useListKeys(shown.length, (i) => setOpenId(shown[i]!.id));
   return (
     <Dialog open={open} onClose={onClose} width="max-w-2xl" title="结账记录" description={`营业日 ${date} 的结账单（含当天反结账的）${isToday ? ' · 每 15 秒自动刷新' : ''}`}>
       {!openId && (
@@ -752,6 +787,21 @@ export function CheckoutRecordsDialog({ open, onClose, focusId }: { open: boolea
             </Button>
           )}
         </div>
+      )}
+      {!openId && (list.data ?? []).length > 0 && (
+        <Input
+          value={find}
+          onChange={(e) => {
+            setFind(e.target.value);
+            keys.setActive(0);
+          }}
+          onKeyDown={keys.onKeyDown}
+          className="mb-3"
+          placeholder="搜牌号、单号后几位、金额（如 499）、经办人；↑↓ 选、回车打开"
+          aria-label="搜结账单"
+          data-autofocus
+          data-testid="checkout-records-find"
+        />
       )}
       {!openId && sum && (
         <div className="mb-3 grid grid-cols-2 gap-2 rounded-lg border border-line bg-paper-2/40 px-3 py-2 text-[12.5px] sm:grid-cols-4" data-testid="checkout-records-summary">
@@ -785,9 +835,15 @@ export function CheckoutRecordsDialog({ open, onClose, focusId }: { open: boolea
         <EmptyState art="calm" title={isToday ? '今天还没有结账' : '这一天没有结账'} description="在账单上点「结账」后，结账单会出现在这里。" />
       ) : (
         <ul className="divide-y divide-line rounded-lg border border-line" data-testid="checkout-records">
-          {list.data!.map((c) => (
+          {shown.length === 0 && <li className="px-4 py-3 text-[13px] text-ink-3">没有对上「{find}」的单</li>}
+          {shown.map((c, i) => (
             <li key={c.id}>
-              <button type="button" onClick={() => setOpenId(c.id)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-paper-2/60">
+              <button
+                type="button"
+                onClick={() => setOpenId(c.id)}
+                onMouseEnter={() => keys.setActive(i)}
+                className={cn('flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-paper-2/60', find && i === keys.active && 'bg-pine-soft/60')}
+              >
                 <span className="num font-bold">{c.checkoutNo}</span>
                 <span className="num text-[13px] font-semibold text-ink-2">{[...(c.tagCodes ?? []), ...(c.tableNames ?? []).map((n) => `桌 ${n}`)].join('、')}</span>
                 <span className="text-[12.5px] text-ink-3">
