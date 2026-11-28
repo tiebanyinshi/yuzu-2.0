@@ -12,6 +12,7 @@
 //   POST /api/lockers/select/:no/open      远程开一个手机柜（维护手牌池、写原因、记审计 locker_select_opened）
 //   POST /api/lockers/select/:no/release   释放一个手机柜（维护手牌池、写原因、记审计 locker_select_released）
 //   没配自选柜回 503 LOCKER_SELECT_NOT_CONFIGURED；列的时候桥没回应回 502 LOCKER_CONTROLLER_DOWN。
+//   退牌后自动释放（第 7.4 节，GK3）：sweepReturnedPhoneLockers，每分钟的任务（jobs.ts）调。
 // 开柜、写卡、清卡都在事务外调控制器（不拿着数据库连接等 5 秒），之后单独写审计；桥没回答、读回也没对上的记 uncertain（结果待确认），
 // 页面让人读卡 / 到柜前确认，不当成没做（Codex 审查 f8b2853）。
 
@@ -29,11 +30,13 @@ import {
   type LockerSelectView,
 } from '@shared/lockers';
 import { guard } from '../auth/guard';
+import type { AppConfig, LockerConfig } from '../config';
+import type { Sql } from '../db';
 import { createLockerController, type LockerController } from '../devices/locker-controller';
 import { writeAudit } from '../lib/audit';
 import { ctxOf, type Deps } from '../lib/context';
 import { AppError, notFound } from '../lib/errors';
-import { currentStoreId } from '../lib/store-context';
+import { currentStoreId, runInStore } from '../lib/store-context';
 import { parse } from '../lib/validate';
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
@@ -49,13 +52,24 @@ const CardInput = z.object({
 });
 
 const noParam = z.object({ no: z.string().trim().min(1).max(16) });
-const SelectInput = z.object({
-  reason: z.string('请写原因').trim().min(2, '请写原因').max(100, '原因最多 100 个字'),
-  /** 释放时：只放这张手牌占着的（页面看到的芯片号）；换了人占着就不动 */
-  uid: z.string().transform(normalizeCardUid).pipe(z.string().regex(CARD_UID_PATTERN, '芯片号应为 4–32 位数字或字母')).nullable().default(null),
+const SelectOpenInput = z.object({ reason: z.string('请写原因').trim().min(2, '请写原因').max(100, '原因最多 100 个字') });
+const SelectReleaseInput = SelectOpenInput.extend({
+  /** 只放这张手牌占着的（点「释放」时页面看到的芯片号），换了人占着就不动；必填：认不出芯片号的不远程放（Codex 审查 38bdb98） */
+  uid: z.string('请带上占着它的手牌的芯片号').transform(normalizeCardUid).pipe(z.string().regex(CARD_UID_PATTERN, '芯片号应为 4–32 位数字或字母')),
 });
 
-export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controller: LockerController = createLockerController(deps.config.lockers)): void {
+const controllers = new WeakMap<LockerConfig, LockerController>();
+/** 同一份配置（同一个进程）共用一个控制器：柜况页的接口与每分钟的自动释放看的是同一个（模拟的也是同一份内存） */
+export function lockerControllerFor(cfg: LockerConfig): LockerController {
+  let c = controllers.get(cfg);
+  if (!c) {
+    c = createLockerController(cfg);
+    controllers.set(cfg, c);
+  }
+  return c;
+}
+
+export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controller: LockerController = lockerControllerFor(deps.config.lockers)): void {
   const { sql } = deps;
 
   const tagByUid = async (uid: string | null) => {
@@ -209,7 +223,7 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
 
   app.post('/api/lockers/select/:no/open', { preHandler: guard('frontdesk.tags') }, async (req) => {
     const { no } = parse(noParam, req.params);
-    const { reason } = parse(SelectInput, req.body);
+    const { reason } = parse(SelectOpenInput, req.body);
     requireSelect();
     const result = await controller.selectOpen(no);
     const ctx = ctxOf(req);
@@ -225,10 +239,10 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
 
   app.post('/api/lockers/select/:no/release', { preHandler: guard('frontdesk.tags') }, async (req) => {
     const { no } = parse(noParam, req.params);
-    const { reason, uid } = parse(SelectInput, req.body);
+    const { reason, uid } = parse(SelectReleaseInput, req.body);
     requireSelect();
     const result = await controller.selectRelease(no, uid);
-    const holder = uid ? ((await holdersOf([uid])).get(uid) ?? null) : null;
+    const holder = (await holdersOf([uid])).get(uid) ?? null;
     const ctx = ctxOf(req);
     await writeAudit(sql, {
       staffId: ctx.actor.id,
@@ -240,4 +254,67 @@ export function registerLockerRoutes(app: FastifyInstance, deps: Deps, controlle
     });
     return result;
   });
+}
+
+/**
+ * 退牌后自动释放手机柜（docs/LOCKERS_V8149.md 第 7.4 节，GK3；店主 2026-11-28「把开发全部做完」）：不释放的话，
+ * 下一位拿到这张手牌的客人能开上一位的手机柜。每分钟列一次手机柜（jobs.ts 调），占着它的手牌：
+ *   · 芯片号认得出、只绑了一张没删的手牌（几家店都绑了同一个芯片号的分不清，不动）；
+ *   · 这张手牌现在没有在店的来访单，而且来过（有结束了的来访单）——就是退了牌；
+ *   · 锁报柜门还关着的不放（柜里可能还有东西：柜况页标「已退牌还占着」，请人看过再放）；报不了柜门的照放；
+ *   · 每次退牌、每个柜只试一次（审计里记着「柜 + 芯片号 + 那次退牌的时刻」，有了就不再试）：没放成、结果待确认的留给人。
+ * 不拿锁的钟和数据库的钟比先后（两边的钟可能不准）。LOCKER_AUTO_RELEASE=off 关掉；没接自选柜（select）什么都不做。
+ * 桥连不上照常抛出（每分钟任务记成出错，下一分钟再试）。返回放成了几个。
+ */
+export async function sweepReturnedPhoneLockers(deps: { sql: Sql; config: AppConfig }): Promise<number> {
+  const cfg = deps.config.lockers;
+  if (!cfg.autoRelease) return 0;
+  const controller = lockerControllerFor(cfg);
+  if (!controller.info.canSelect) return 0;
+  const slots = (await controller.selectList()).filter((x) => x.uid && x.uid !== LOCKER_UID_UNREADABLE && x.doorOpen !== false);
+  if (!slots.length) return 0;
+  const uids = [...new Set(slots.map((x) => x.uid!))];
+  const tags = await deps.sql<{ id: number; code: string; storeId: number; cardUid: string; inStore: boolean; returnedAt: Date | null }[]>`
+    SELECT t.id, t.code, t.store_id, t.card_uid,
+           EXISTS (SELECT 1 FROM visits v WHERE v.tag_id = t.id AND v.status = 'open') AS in_store,
+           (SELECT max(v.closed_at) FROM visits v WHERE v.tag_id = t.id AND v.status <> 'open') AS returned_at
+    FROM hand_tags t
+    WHERE t.deleted_at IS NULL AND t.card_uid = ANY(${uids}::text[])`;
+  const byUid = new Map<string, (typeof tags)[number] | null>();
+  for (const t of tags) byUid.set(t.cardUid, byUid.has(t.cardUid) ? null : t);
+  let released = 0;
+  for (const slot of slots) {
+    const tag = byUid.get(slot.uid!);
+    if (!tag || tag.inStore || !tag.returnedAt) continue;
+    const returnedAt = new Date(tag.returnedAt).toISOString();
+    const [tried] = await deps.sql`
+      SELECT 1 FROM audit_logs
+      WHERE action = 'locker_select_released' AND detail->>'auto' = 'true'
+        AND detail->>'no' = ${slot.no} AND detail->>'uid' = ${slot.uid} AND detail->>'returnedAt' = ${returnedAt}
+      LIMIT 1`;
+    if (tried) continue;
+    const result = await controller.selectRelease(slot.no, slot.uid);
+    await runInStore(Number(tag.storeId), () =>
+      writeAudit(deps.sql, {
+        staffId: null,
+        action: 'locker_select_released',
+        targetType: 'hand_tag',
+        targetId: Number(tag.id),
+        detail: {
+          no: slot.no,
+          uid: slot.uid,
+          code: tag.code,
+          reason: '退牌后自动释放',
+          auto: true,
+          returnedAt,
+          driver: controller.info.driver,
+          ok: result.ok,
+          uncertain: result.uncertain,
+          message: result.message,
+        },
+      }),
+    );
+    if (result.ok) released += 1;
+  }
+  return released;
 }

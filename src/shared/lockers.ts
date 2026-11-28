@@ -279,9 +279,30 @@ export function settleLockerSelectPending(list: readonly LockerPending[], slots:
     if (p.op !== 'release' || Date.parse(askedAt) <= Date.parse(p.at)) continue;
     const slot = slots.find((x) => x.no === p.no);
     if (!slot) continue;
-    if (slot.uid === null || (p.uid && slot.uid !== p.uid)) out.push({ id: p.id, text: `核对：手机柜 ${p.no} 已经释放了` });
+    if (slot.uid === null || (p.uid && isOtherHolder(slot.uid, p.uid))) out.push({ id: p.id, text: `核对：手机柜 ${p.no} 已经释放了` });
   }
   return out;
+}
+
+/**
+ * 柜子现在被「另一张」手牌占着（原来那张一定放掉了）：要是认得出的、不同的芯片号才算；
+ * 桥报的认不出（LOCKER_UID_UNREADABLE）可能还是原来那张，不能当证据（Codex 审查 38bdb98）
+ */
+export function isOtherHolder(now: string, before: string): boolean {
+  return now !== before && now !== LOCKER_UID_UNREADABLE;
+}
+
+/**
+ * 释放前核对（Codex 审查 38bdb98）：点「释放」那一刻看到的是谁占着（snapshot），点确认时列表刷新过了，还得是同一张才放；
+ * 换了人、空了、柜子找不到都不放，请人重新看一眼。放的时候带这张芯片号，桥那边再核一道；
+ * 芯片号认不出的不远程放：前后两张认不出的卡分不清，请人到柜前用管理卡处理。
+ */
+export function releaseTargetFor(snapshot: { no: string; uid: string | null }, current: Pick<LockerSelectSlot, 'no' | 'uid'> | null): { ok: true; uid: string } | { ok: false; reason: string } {
+  if (!snapshot.uid) return { ok: false, reason: `手机柜 ${snapshot.no} 是空的，不用释放` };
+  if (snapshot.uid === LOCKER_UID_UNREADABLE) return { ok: false, reason: `手机柜 ${snapshot.no} 上的芯片号认不出，门店系统核对不了是谁占着，请到柜前用管理卡处理` };
+  if (!current || current.no !== snapshot.no) return { ok: false, reason: `列表里找不到手机柜 ${snapshot.no} 了` };
+  if (current.uid !== snapshot.uid) return { ok: false, reason: current.uid ? `手机柜 ${snapshot.no} 现在换成芯片号 ${current.uid} 占着了` : `手机柜 ${snapshot.no} 已经空出来了` };
+  return { ok: true, uid: snapshot.uid };
 }
 
 /** 远程开、释放自选柜的原因（必填，记审计）；常用的几句 */

@@ -18,6 +18,7 @@
 
 import { CARD_UID_PATTERN, normalizeCardUid } from '@shared/frontdesk-risk';
 import {
+  isOtherHolder,
   LOCKER_LOCK_KINDS,
   LOCKER_UID_UNREADABLE,
   type LockerCardLock,
@@ -262,7 +263,8 @@ export function createLockerController(cfg: LockerConfig, fetchImpl: typeof fetc
           return selectAnswer(no, await call('/select/release', uid ? { no, uid } : { no }), '已释放', '控制器没有释放');
         } catch (error) {
           // 柜子空了、或者已经换成别的手牌占着（原来那张一定放掉了）：按释放了算
-          return settleSelect(no, error, (s) => s.uid === null || (!!uid && s.uid !== uid), '柜子已经空出来了', '可能已经释放了');
+          // 换成认得出的另一张手牌占着也算（认不出的芯片号可能还是原来那张，不算，Codex 审查 38bdb98）
+          return settleSelect(no, error, (s) => s.uid === null || (!!uid && isOtherHolder(s.uid, uid)), '柜子已经空出来了', '可能已经释放了');
         }
       },
     };

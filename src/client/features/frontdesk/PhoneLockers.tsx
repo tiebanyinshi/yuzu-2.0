@@ -9,6 +9,7 @@ import { DoorOpen, Smartphone, Unlock } from 'lucide-react';
 import {
   LOCKER_SELECT_ISSUE_LABELS,
   LOCKER_UID_UNREADABLE,
+  releaseTargetFor,
   settleLockerSelectPending,
   type LockerPending,
   type LockerSelectPending,
@@ -174,6 +175,8 @@ function SlotDialog({
   toast: ReturnType<typeof useToast>;
 }) {
   const [asking, setAsking] = useState<'open' | 'release' | null>(null);
+  /** 点「释放」那一刻看到的是谁占着：写原因期间列表会刷新，确认时还得是同一张才放（Codex 审查 38bdb98） */
+  const [releaseSnap, setReleaseSnap] = useState<{ no: string; uid: string | null } | null>(null);
   const open = useMutation({
     mutationFn: ({ no, reason }: { no: string; reason: string }) => api.post<LockerSelectResult>(`/api/lockers/select/${encodeURIComponent(no)}/open`, { reason }),
     onSuccess: (r) => {
@@ -194,7 +197,7 @@ function SlotDialog({
     },
   });
   const release = useMutation({
-    mutationFn: ({ no, reason, uid }: { no: string; reason: string; uid: string | null; pendingId: string }) =>
+    mutationFn: ({ no, reason, uid }: { no: string; reason: string; uid: string; pendingId: string }) =>
       api.post<LockerSelectResult>(`/api/lockers/select/${encodeURIComponent(no)}/release`, { reason, uid }),
     onSuccess: (r, { pendingId }) => {
       setAsking(null);
@@ -217,12 +220,17 @@ function SlotDialog({
   });
   if (!slot) return null;
   const startRelease = (reason: string) => {
-    // 只放现在看到的那张手牌占着的：换了人占着就不动；芯片号无法识别的不带
-    const uid = slot.uid && slot.uid !== LOCKER_UID_UNREADABLE ? slot.uid : null;
+    if (!releaseSnap) return;
+    // 只放点「释放」时看到的那张手牌：这期间换了人、空了都不放（桥那边再按芯片号把一道关）
+    const target = releaseTargetFor(releaseSnap, slot);
+    if (!target.ok) {
+      setAsking(null);
+      return toast({ tone: 'error', title: `没有释放手机柜 ${releaseSnap.no}`, body: `${target.reason}：请看一眼现在的样子再决定。` });
+    }
     const pendingId = uuid();
-    if (!lockerPending.add({ id: pendingId, op: 'release', no: slot.no, uid, storeId, at: new Date().toISOString() }))
+    if (!lockerPending.add({ id: pendingId, op: 'release', no: releaseSnap.no, uid: target.uid, storeId, at: new Date().toISOString() }))
       return toast({ tone: 'error', title: '本机记不下待核对记录，没有发', body: '浏览器存不了数据（隐私窗口或存满了）：换个普通窗口再试。' });
-    release.mutate({ no: slot.no, reason, uid, pendingId });
+    release.mutate({ no: releaseSnap.no, reason, uid: target.uid, pendingId });
   };
   return (
     <>
@@ -243,8 +251,15 @@ function SlotDialog({
                 <DoorOpen className="size-4" /> 远程开柜
               </Button>
             )}
-            {canManage && slot.uid && (
-              <Button variant="secondary" onClick={() => setAsking('release')} data-testid="phone-locker-release">
+            {canManage && slot.uid && slot.uid !== LOCKER_UID_UNREADABLE && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setReleaseSnap({ no: slot.no, uid: slot.uid });
+                  setAsking('release');
+                }}
+                data-testid="phone-locker-release"
+              >
                 <Unlock className="size-4" /> 释放
               </Button>
             )}
@@ -263,6 +278,11 @@ function SlotDialog({
           {slot.issue === 'returned' && (
             <Notice tone="warning" className="col-span-full">
               这张手牌已经退了还占着：释放以后柜子空出来，下一位拿到这张牌的客人也开不了。
+            </Notice>
+          )}
+          {slot.uid === LOCKER_UID_UNREADABLE && (
+            <Notice tone="warning" className="col-span-full">
+              锁报上来的芯片号认不出，门店系统核对不了是谁占着，这里不能远程释放：请到柜前用管理卡处理。
             </Notice>
           )}
           {slot.issue === 'multi' && (
