@@ -1,0 +1,18 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="{{name}}" />
+  <view wx:if="{{state === 'ready' && unseen}}" class="gutter t-caption summary">{{unseen}} 份没看过</view>
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '这个文件夹还是空的' : ''}}" message="{{state === 'empty' ? '' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="card list">
+      <view wx:for="{{files}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onFile" aria-role="button">
+        <image class="row-icon" src="/assets/icons/{{item.icon}}.png" />
+        <view class="row-main">
+          <view class="row-title">{{item.title}}</view>
+          <view class="row-sub num">{{item.meta}}</view>
+        </view>
+        <view wx:if="{{item.isNew}}" class="tag new">新</view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+  </view>
+</view>

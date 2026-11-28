@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardCheck, Clock3, Coins, LogOut, Undo2, Users } from 'lucide-react';
 import { CHECKOUT_METHOD_LABELS, COUPON_PLATFORM_LABELS, type ShiftRecord, type ShiftSummary } from '@shared/checkout';
 import { PAYMENT_METHOD_LABELS } from '@shared/labels';
+import { TAG_EXCEPTION_LABELS, type TagException } from '@shared/frontdesk';
 import { parseYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
 import { useCan, useSession } from '../../lib/session';
@@ -236,6 +237,7 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
           </Notice>
         )}
         <LocalPendingNotice action="交班" className="mt-3" />
+        <TagExceptionsNotice />
         <Input className="mt-3" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} placeholder="交班备注（选填），例如短款原因" aria-label="交班备注" />
         {hidden ? (
           <Button className="mt-3" variant="primary" size="lg" disabled={!countsReady} onClick={() => setRevealed(true)} data-testid="shift-reveal">
@@ -249,6 +251,33 @@ function OpenShift({ shift }: { shift: ShiftRecord }) {
         {error && <Notice tone="error" title={error} className="mt-3" />}
       </div>
     </Card>
+  );
+}
+
+/** 8.2.27 交班提醒：还有挂失、未交回的手牌（docs/V82227_TAG_EXCEPTIONS.md），交班时一并交接 */
+function TagExceptionsNotice() {
+  const can = useCan();
+  const q = useQuery({
+    queryKey: ['frontdesk', 'tag-exceptions'],
+    queryFn: () => api.get<{ tags: TagException[] }>('/api/frontdesk/tag-exceptions'),
+    enabled: can('frontdesk.read'),
+  });
+  const list = (q.data?.tags ?? []).filter((t) => t.kind === 'lost' || t.kind === 'unreturned');
+  if (list.length === 0) return null;
+  const lost = list.filter((t) => t.kind === 'lost').length;
+  return (
+    <Notice
+      tone="warning"
+      title={`还有 ${lost ? `挂失 ${lost} 张` : ''}${lost && list.length > lost ? '、' : ''}${list.length > lost ? `未交回 ${list.length - lost} 张` : ''}手牌`}
+      className="mt-3"
+      data-testid="shift-tag-exceptions"
+    >
+      {list
+        .slice(0, 8)
+        .map((t) => `${t.code}（${TAG_EXCEPTION_LABELS[t.kind]}${t.guest ? ` · ${t.guest.name}` : ''}）`)
+        .join('、')}
+      {list.length > 8 ? ` 等 ${list.length} 张` : ''}。交班时请交接给下一班；找回了在前台「异常手牌」里点找回。
+    </Notice>
   );
 }
 

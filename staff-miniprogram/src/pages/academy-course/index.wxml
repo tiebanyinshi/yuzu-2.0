@@ -1,0 +1,47 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="课程" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="head">
+      <view class="title">{{title}}</view>
+      <view wx:if="{{summary}}" class="t-body muted summary">{{summary}}</view>
+      <view class="t-caption num">{{meta}}</view>
+      <view wx:if="{{paths}}" class="t-caption">{{paths}}</view>
+    </view>
+    <view class="card list">
+      <view wx:for="{{lessons}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onLesson" aria-role="button">
+        <view class="row-main">
+          <view class="row-title">{{item.title}}</view>
+          <view class="row-sub num">{{item.sub}}</view>
+        </view>
+        <view wx:if="{{item.state}}" class="tag {{item.done ? 'neutral' : 'new'}}">{{item.state}}</view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+
+    <view class="card list block-gap">
+      <view class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onTutor" aria-role="button">
+        <image class="row-icon" src="/assets/icons/academy.png" />
+        <view class="row-main">
+          <view class="row-title">问柚子</view>
+          <view class="row-sub">就这门课的课件提问，柚子按课件回答、写出处</view>
+        </view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+
+    <view class="section-head">
+      <view class="section-title">评分</view>
+      <view wx:if="{{rated}}" class="t-caption num">{{rated}}</view>
+    </view>
+    <view wx:if="{{!canRate}}" class="t-body muted">学完这门课再评分</view>
+    <view wx:else class="card card-pad">
+      <view class="stars">
+        <view wx:for="{{stars}}" wx:key="*this" class="star {{item <= rating ? 'on' : ''}}" hover-class="pressed" hover-stay-time="120" data-n="{{item}}" bindtap="onStar" aria-role="button" aria-label="{{item}} 星">★</view>
+      </view>
+      <textarea class="input" value="{{comment}}" maxlength="300" auto-height placeholder="说说这门课（选填，最多 300 字）" placeholder-class="input-placeholder" bindinput="onComment" aria-label="评语" />
+      <view wx:if="{{rateError}}" class="notice error">{{rateError}}</view>
+      <button class="btn secondary" hover-class="pressed" hover-stay-time="120" disabled="{{rateBusy}}" bindtap="onRate">{{rateBusy ? '正在交……' : '交评分'}}</button>
+    </view>
+  </view>
+</view>

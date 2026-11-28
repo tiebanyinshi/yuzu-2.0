@@ -305,7 +305,7 @@
   - `590`（`590_away_lock_v827.sql`）：锁牌记录 `visit_tag_locks`（只追加，一次来访同时一把，最多 4 小时，预售指向一张手牌押金）；操作编号与「确认作废」追加 `tag_away_lock`、`tag_away_unlock`。回滚 `docs/rollback/590_away_lock_v827.down.sql`。
 - **8.2.8（`600`–`609`）**：《新店系统需求现场走场确认》第一节第 1 条（餐厅：入口刷手牌、含餐抵扣、裸票时段价、餐台与餐包；设计见 `docs/V8228_DINING_MEALS.md`）。
   - `600`（`600_dining_meals_v828.sql`）：票种含几餐 `ticket_types.meals_12h / meals_24h`（含餐门票回填 2 / 3）；进餐登记 `meal_entries`（只追加）；单项打折加自动折扣档 `auto` 与规则 `rule`（含餐、自助、首杯赠）；操作编号与「确认作废」追加 `meal_entry`。回滚 `docs/rollback/600_dining_meals_v828.down.sql`。
-- **本线版本号顺延（店主 2026-11-27：8.2.8 合并时版本号比主线低；随后又说「再延后一个版本号」）**：主线已到 8.2.17，8.2.18 留给别的线；本线余下几版排在它之后、按原顺序：8.2.19 水吧（原 8.2.9）、8.2.20 休闲娱乐（原 8.2.10）、8.2.21 泡池（原 8.2.11）、8.2.22 前台快捷键、8.2.23 发卡台界面、8.2.24 前台改良（收银员工作台 demo 三批）、8.2.25 未交回与挂失手牌清单（迁移号另排：`740` 已被预约小修占用）。迁移号不变。别的线请从 8.2.26 起排。
+- **本线版本号顺延（店主 2026-11-27：8.2.8 合并时版本号比主线低；随后又说「再延后一个版本号」；2026-11-28 再顺延）**：8.2.19 水吧（原 8.2.19）、8.2.20 休闲娱乐（原 8.2.20）已发。员工小程序线按约定收口为 8.2.26，本线余下几版再按 8.2.19–8.2.25 发会让 main 的版本号倒退（店主说过不能比主线低），所以排在 8.2.26 之后、按原顺序：8.2.27 泡池（原 8.2.27）、8.2.28 前台快捷键、8.2.29 发卡台界面、8.2.30 前台改良（收银员工作台 demo 三批）、8.2.31 未交回与挂失手牌清单（迁移 `750`：`740` 已被预约小修占用）。8.2.27–8.2.25 不再用。迁移号不变。别的线请从 8.2.32 起排。
 - **8.2.19（`610`–`619`，原排 8.2.9）**：《新店系统需求现场走场确认》第一节第 2 条（水吧：首杯免费、赠标签、取餐叫号与扫码看进度；设计见 `docs/V82219_WATER_BAR.md`）。
   - `610`（`610_pickup_v829.sql`）：取餐号 `pickup_tickets`（只追加，同一店同一营业日号唯一、随机编号给客人扫码）。回滚 `docs/rollback/610_pickup_v829.down.sql`。
 - **8.2.6 采购商城 v0.2（`580`–`589`）**：《汤崎 ERP｜采购商城模块 需求变更文档 v0.2》（店主 2026-11-27，设计见 `docs/MALL_V826.md`）——分批发配与物料发配记录、退回逐项标必补、版本快照、终止申购、收货待判。
@@ -323,6 +323,8 @@
   - `640`（`640_academy_core.sql`）：课程 `academy_courses`、课时 `academy_lessons`、学习地图 `academy_paths` 与阶段 `academy_path_courses`、指派 `academy_assignments`、进度 `academy_progress`、每天时长 `academy_study_days`、学完地图 `academy_path_completions`（只追加）、学分流水 `academy_credits`（只追加，「人 + 事由 + 编号」唯一）、课程评分 `academy_feedback`；新权限 `academy.manage`。回滚 `docs/rollback/640_academy_core.down.sql`。
   - `641`（`641_academy_assess.sql`）：题库 `academy_questions`、测验 `academy_attempts`（交卷后整行不能改）、每日一练卡 `academy_cards`（FSRS）与作答流水 `academy_reviews`（只追加）、掌握度 `academy_mastery`（BKT）、实操签核 `academy_signoffs`（只追加）、证书 `academy_certificates`；新权限 `academy.coach`。回滚 `docs/rollback/641_academy_assess.down.sql`。
   - `642`（`642_academy_content.sql`）：批量操作 `academy_bulk_ops`（导入课件包、表格导入题、AI 出题的操作编号与结果）、问柚子 `academy_tutor_questions`。回滚 `docs/rollback/642_academy_content.down.sql`。
+  - **合并以后（2026-11-27 合进 main，`3d70931`）**：① 独立验收在 `v8.2.18` 标签上补做（交接说明 `docs/HANDOFF_V8218.md` 第 5、6 节），报的问题在下一版修；② XT01–XT12 等店主确认（`docs/PENDING_DECISIONS.md`「汤崎学堂」），有不同意见再改；③ 17 门内置课件由店主或学堂管理员按 `docs/ACADEMY_PACKS.md` 的核对单审过再上架（「汤崎之道」按品牌书改写）；④ 员工小程序线的「学习」用学堂的接口，不另建一套（那条线的范围，需店主协调）；⑤ 微信内置浏览器真机未测，交门店真机测试。之后的问题在本分支 `claude/peaceful-mendel-jardzy` 的新草稿 PR 上做。
+- **柜锁发卡器（不改版本号，店主 2026-11-27）**：门店柜锁是沈阳泰格的（衣物柜、手机柜同一种，手牌是 M1 芯片）。厂家接口不公开，先给柜锁桥加读卡、写卡、清卡三个发卡器接口与能力开关 `LOCKER_CAPABILITIES`、模拟柜锁桥 `locker-bridge-mock`，柜况页加「发卡器」；拿到厂家的动态库后写泰格的柜锁桥即可（`docs/LOCKERS_V8149.md` 第 6 节，待定 GK1–GK6）。没有迁移。
 - **8.2.30 收银合并（`760`–`769`，店主 2026-11-27 评审 PR #68 后定，设计见 `docs/V8230_CASHIER.md`）**：同事的收银员工作台原型里柚子缺的部分（对照见 `docs/CASHIER_MERGE.md`）——港元现金收款、大额找零确认、没权限的收银员申请退款 / 反结账、交班盲点与交接清单、餐饮的等叫 / 加急 / 打包、沽清一键恢复、待催、分次上菜、杯贴。键盘优先、发卡台界面、速查归主线 8.2.21–8.2.23，手牌没收回归 8.2.24，这里不做。一个 PR；main 到 8.2.25 以后才合并。
   - `760`（`760_cashier_v8230.sql`）：结账收款的港元列（`checkout_payments.fx_*`）、班次的港元应有 / 实点（`shifts.expected_hkd`、`counted_hkd`）、收银申请 `cashier_requests`；操作编号与「确认作废」追加 `cashier_request`。回滚 `docs/rollback/760_cashier_v8230.down.sql`。
   - `761`（`761_dining_v8230.sql`）：出品单的等叫、加急、打包与已上份数（`kitchen_items.hold`、`urgent`、`takeaway`、`served_qty`）。回滚 `docs/rollback/761_dining_v8230.down.sql`。
@@ -330,6 +332,10 @@
   - `740`（`740_booking_batch_overlap.sql`）：按操作编号（`idempotency_keys` 的 `booking_create` 与 `batchRowKey` 推出的行编号）认出 8.2.4 一报多的技师预约，只把 `technician_overlap` 补成 true、每张记一条审计 `booking_overlap_backfill`；对不上的不动。函数 `yuzu_booking_batch_row_key`、`yuzu_booking_batch_links`（只读核对 `scripts/diagnose-booking-overlap.sql` 共用）。回滚 `docs/rollback/740_booking_batch_overlap.down.sql`。
 - **8.2.20（`620`–`629`，原排 8.2.10）**：《新店系统需求现场走场确认》第二节（休闲娱乐：网吧、桌球按台位刷手牌计时、单独收费，价目表一键建；设计见 `docs/V82220_LEISURE.md`）。
   - `620`（`620_leisure_v8210.sql`）：使用单计费表 `space_usage_charges` 的类型加 `extra`（加钟）。回滚 `docs/rollback/620_leisure_v8210.down.sql`。
+- **8.2.27（`630`–`639`，原排 8.2.27）**：《新店系统需求现场走场确认》第三节（男汤 / 女汤泡池：刷客人手牌、刷技师工牌派钟上钟，进技师业绩；设计见 `docs/V82227_POOL.md`）。
+  - `630`（`630_pool_v8211.sql`）：技师工牌芯片号 `technicians.card_uid`（同一门店不重复）。回滚 `docs/rollback/630_pool_v8211.down.sql`。
+- **8.2.27 内（`750`–`759`，原排 8.2.27，迁移原排 `740`、与预约小修撞号改 `750`）**：店主 2026-11-27 收银员工作台 demo 待定五项里定「做」的第 3 项（未交回、挂失手牌清单；设计见 `docs/V82227_TAG_EXCEPTIONS.md`）。`700`–`739` 已被业财法与采购线占用。
+  - `750`（`750_tag_exceptions_v8227.sql`）：`hand_tags.lock_kind`（挂失 / 未交回）、`hand_tags.lock_visit_id`（哪一次来访）。回滚 `docs/rollback/750_tag_exceptions_v8227.down.sql`。
 - **8.2.0（没有迁移）**：官网首屏换成 three.js 实时 3D 柚子池（PBR 水面与柚子、环境光、postprocessing 后期），标题换思源宋体 Heavy + Gloock（店主 2026-11-27，见 `docs/WEBSITE.md` 第 6 节；等另一条开发线的 8.1.56 合并后定版）。
 - **8.1.51（`520`–`529`）**：采购商城试点（店主 2026-11-26，设计见 `docs/MALL_V8151.md`）——自主申请分非定制 / 定制、退回后在原单补资料、需求池接单与成交方案（部门确认或 BP 记微信确认，转采购单带上）、收货记待补。
   - `520`（`520_mall_pilot.sql`）：需求行 `custom_kind`、`custom_spec`；接单 `mall_request_sourcing`（单独一张表：需求单通过后整行不能改）；成交方案 `mall_request_quotes`；收货行 `redeliver_milli`。回滚 `docs/rollback/520_mall_pilot.down.sql`。
@@ -359,6 +365,11 @@
 - **后端评估与加固 8.1.48（店主 2026-11-26「审查后端、出评估报告、学 Medusa / Supabase / Trigger.dev、以瘦身为目标」，报告见 `docs/BACKEND_REVIEW_V8148.md`）**：迁移号 `490`–`499`：
   - `490`（`490_audit_request_id.sql`）：审计记录 `audit_logs` 加请求编号 `request_id`（可空，日志与审计对得上）。回滚 `docs/rollback/490_audit_request_id.down.sql`。
   - `491`（`491_pg_stat_statements.sql`，8.1.54）：建查询统计扩展 pg_stat_statements（没权限、没有这个扩展时跳过），`cli.js db-report` 看最慢的查询、没用过的索引。回滚 `docs/rollback/491_pg_stat_statements.down.sql`。
+- **员工小程序线（店主 2026-11-27 立项，设计见 `docs/STAFF_MP.md`）**：店主「以后有两个小程序线，请你分配好模块」——顾客小程序线（原「小程序线」，Gemini）照旧；新开**员工小程序线**（员工用的微信小程序「汤崎 WCP」，Claude 员工小程序开发会话，本会话起），只写 `staff-miniprogram/`、`src/server/modules/staffmp/`、`src/client/features/staffmp/`、`src/shared/staffmp.ts`、`compose.staffmp.yaml`、`docs/STAFF_MP*.md`、`docs/HANDOFF_STAFFMP*.md`、`tests/staffmp-*.test.ts` 与迁移 `NNN_staffmp_<用途>.sql`，登记处只加挂接的几行；WCP、员工培训与汤崎学堂、柚子饭堂、巡场的规则与接口仍归主线，员工小程序线把主线的接口按白名单挂到自己的端口上（`STAFFMP_PORT`，`staff.yuzusystem.xyz/api/staffmp/*`）。分工表见设计稿第 7 节，PR 标题【员工小程序线】、标签「员工小程序线」。集成分支 `claude/awesome-wozniak-e0symx`，子 PR A–E 依次合进集成分支，最后一个 PR 合进 `main` 并改 yuzu 的版本号；员工小程序自己的版本从 `1.0.0` 起。待确认 SP01 起。迁移号预留 `650`–`659`（原登记 `610`–`619`，与 8.2.9 水吧的 `610_pickup_v829.sql` 一段撞了——那一段 `600`–`639` 由 8.2.8–8.2.11 先在 main 上登记；2026-11-27 改号，员工小程序线的迁移还没发到任何环境）：
+  - `650`（`650_staffmp_bindings.sql`，子 PR A）：微信与员工账号的绑定 `staffmp_bindings`（解开只做标记、不删）、员工小程序发的会话 `staffmp_sessions`（跟着 `sessions` 删）。
+  - `651`（`651_staffmp_canteen_links.sql`，子 PR E）：员工账号与柚子饭堂账号对上 `staffmp_canteen_links`（一对一：员工主键、饭卡唯一；怎么对上的、谁、什么时候；解开删行、审计留痕）。只建新表；解开时那张饭卡的 `canteen_employees.code_epoch` 加一走饭堂原来的列，不改表。
+  - **版本号 8.2.26**（2026-11-27 收口）：main 的 8.2.19–8.2.25 排给《新店系统需求现场走场确认》那条线，「别的线请从 8.2.26 起排」；员工小程序自己的版本号（`staff-miniprogram/package.json`）从 1.0.0 起另算。子 PR：A #54、B #59、C #64、E #67、D #71、F #74（学习 Tab 接 8.2.18 的汤崎学堂），交接说明 `docs/HANDOFF_STAFFMP1.md`。
+  - **第二版**（2026-11-28，店主「直接全部开发完就行」「用一次提交」）：学堂员工端补全（我的学习、学习榜、课程评分、问柚子、带教签核）、首页待办补「必修快到期」「我的申请被驳回」、「我的」里的学分与等级；一个提交、在 [#75](https://github.com/tiebanyinshi/yuzu-2.0/pull/75) 上过 CI 与 Codex 审查。不改 yuzu 的版本号与 `CHANGELOG.md`（线范围检查不让员工小程序线改，与顾客小程序线一样随主线下一个版本标签发；第一版的 8.2.26 是这条检查进 main 以前合的）。没有迁移。交接说明 `docs/HANDOFF_STAFFMP2.md`。
 
 ## 8. 店主决策（2026-10-29 已签认）
 
@@ -482,6 +493,12 @@
 
 ## 更新记录
 
+- 2026-11-28（续）：**员工小程序线第二版**（随主线下一个版本标签发；店主「直接全部开发完就行」「用一次提交」）：学堂员工端补全（我的学习、学习榜、课程评分、问柚子、带教签核；带教签核与问柚子也放进小程序，`PENDING_DECISIONS.md` SP20）、首页待办补「必修快到期」「我的申请被驳回」（SP19）、「我的」里的学分与等级。没有迁移。草稿 PR [#75](https://github.com/tiebanyinshi/yuzu-2.0/pull/75)，交接说明 `docs/HANDOFF_STAFFMP2.md`。
+- 2026-11-28：**员工小程序线 8.2.26 合进 main**（[#53](https://github.com/tiebanyinshi/yuzu-2.0/pull/53)，合并提交 `c042a05`；Codex 审查 5 轮，最后一轮代码与安全审查都没有问题）。第二版排期见 `docs/STAFF_MP.md` 第 11.1 节：真机走一遍以后的修正、首页待办补「申请被驳回」「必修快到期」、「我的」里的学分与等级、学堂剩下的员工端；迁移照旧从 `652` 起。
+- 2026-11-27（续）：**员工小程序线收口为 8.2.26**。六个子 PR（A [#54](https://github.com/tiebanyinshi/yuzu-2.0/pull/54)、B [#59](https://github.com/tiebanyinshi/yuzu-2.0/pull/59)、C [#64](https://github.com/tiebanyinshi/yuzu-2.0/pull/64)、E [#67](https://github.com/tiebanyinshi/yuzu-2.0/pull/67)、D [#71](https://github.com/tiebanyinshi/yuzu-2.0/pull/71)、F [#74](https://github.com/tiebanyinshi/yuzu-2.0/pull/74)）各自过 CI 与 Codex 审查后合进集成分支；F 是学堂（8.2.18，[#50](https://github.com/tiebanyinshi/yuzu-2.0/pull/50)）合进 main 以后接上的学习 Tab（学堂那条线提醒「不要再做一套」，约定见 [#50 的评论](https://github.com/tiebanyinshi/yuzu-2.0/pull/50#issuecomment-7225979444)）。集成分支已把 main（8.2.20）合进来，版本号按 main 的安排用 8.2.26；交接说明 `docs/HANDOFF_STAFFMP1.md`，待确认 SP18（学习 Tab 这一版不接的几样）。集成 PR [#53](https://github.com/tiebanyinshi/yuzu-2.0/pull/53) 转待审。
+- 2026-11-27（续）：**员工小程序线迁移改号 `610`–`619` → `650`–`659`**。8.2.8–8.2.11（餐厅、水吧、休闲娱乐、泡池）在 main 上先登记了 `600`–`639`，8.2.9 的分支已经用了 `610_pickup_v829.sql`；员工小程序线的登记只在集成分支上，别的线看不到。`610_staffmp_bindings.sql` 改成 `650_staffmp_bindings.sql`（集成分支）、E 的 `611` 改成 `651`；两份都还没发到任何环境（只部署 main 的版本标签），`640`–`649` 是汤崎学堂的。之后员工小程序线的新迁移从 `652` 起。
+- 2026-11-27（续）：**小程序域名**。店主：客户端和员工端小程序都用 `sys.yuzusystem.xyz`，刚加的 `api.` 子域名撤掉，`staff.` 的柚子饭堂不动（`PENDING_DECISIONS.md` SP17）。员工小程序正式版改连 `sys.`，Caddy 在 `sys.` 上把 `/api/staffmp/*` 转到员工小程序端口；顾客小程序的域名配置归顾客小程序线改。
+- 2026-11-27：**员工小程序线立项**。店主：小程序备案通过；顾客小程序已有小程序线，再开一条员工小程序线做员工端（`api.yuzusystem.xyz` 给顾客小程序，`staff.yuzusystem.xyz` 给员工小程序），替代柚子饭堂并把 WCP、巡场、培训都放进来，培训最重要（学堂由另一个开发会话做，这边只做小程序）；「不要按照我给的模块搭建，你自己设计」，方案先经独立的体验评审。设计稿 `docs/STAFF_MP.md`：四个 Tab「今天 / 学习 / 工作台 / 我的」，首页上面是此刻的状态、下面一排位置固定的「打卡 · 饭卡码 · 扫一扫」（经独立的体验评审改过一轮）；员工小程序端口复用 WCP 与员工培训的接口（白名单）；三条线的分工见第 7 节。迁移号 `610`–`619`，待确认 SP01 起。
 - 2026-11-22（续）：**ERP 出入库台账调整**。店主转来《ERP 需求汇总更新》第二版与附件《库管出入库明细及库位表》：8.1.20 做的入口叫法、模板与店主给的表格不一致——入口叫「导入入库台账」、从库存页移到「库管入库」页右上角；下载模板照附件的格式（文件名「出入库台账」）；导入只读出入库记录那张。设计 `docs/ERP_V8120.md` 开头的「2026-11-22 调整」，默认做法 LD11；没有迁移，不改版本号，与回测整改一起由店主发版。
 - 2026-11-22：**OA 办公开工**。店主转来《企业 OA 审批 + 考勤打卡系统需求文档》v1.2：替代员工在钉钉里的考勤打卡、OA 审批、即时通讯、工资条。按文档拆成 18 个 PR（OA-01–OA-18），一个合并后再做下一个；表设计与技术以现有系统为准，员工入口参照现有模块；不改版本号，店主做完后统一定。设计 `docs/OA.md`，默认做法 `PENDING_DECISIONS.md`「OA 办公」OA1 起，迁移号预留 `210`–`229`（第 7 节）。
 - 2026-11-21（四续）：**回测整改开工**。店主转来《浴族系统 8.1.15–8.1.18 回测问题汇总与 PR 拆分》：8 条需求（系统整体 1、房态中心 2、技师 2、岗位权限 3），按 P01–P09 严格串行，每个 PR 合并后再开下一个。店主定：P09 原型不停；不改版本号，开发完成后由店主另行发版、升级环境（2026-11-22）。设计与进度 `docs/YUZU_REQ_V820.md`。P01（房态四色）在 [PR #144](https://github.com/Venture-VV/yuzu/pull/144)。

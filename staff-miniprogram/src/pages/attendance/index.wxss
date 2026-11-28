@@ -1,0 +1,44 @@
+.month-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 8rpx 0 24rpx;
+}
+.month-btn {
+  min-width: 128rpx;
+  height: 88rpx;
+  line-height: 88rpx;
+  text-align: center;
+  font-weight: 600;
+  color: var(--ink);
+}
+.summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-row-gap: 24rpx;
+}
+.list {
+  overflow: hidden;
+}
+.issues {
+  margin-top: 4rpx;
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.issues.bad {
+  color: var(--danger);
+}
+.row-action {
+  min-width: 112rpx;
+  min-height: 88rpx;
+  line-height: 88rpx;
+  margin-left: 16rpx;
+  text-align: right;
+  font-weight: 600;
+  color: var(--ink);
+  flex: none;
+}
+.row-action.muted {
+  color: var(--ink-2);
+  font-weight: 400;
+}

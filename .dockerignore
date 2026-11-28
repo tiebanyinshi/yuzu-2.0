@@ -11,6 +11,8 @@ playwright-report
 *.log
 *.dump
 miniprogram
+# 员工小程序（员工小程序线，docs/STAFF_MP.md）：微信开发者工具里编译上传，不进门店系统的镜像
+staff-miniprogram
 brand
 # 授权的品牌字体（8.1.5）：商业字体文件不进 Git、不进镜像，放在服务器上挂进容器
 brand-fonts

@@ -1,0 +1,23 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="通知" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '没有通知' : ''}}" message="{{state === 'empty' ? '审批结果、排班变更、工资条都会在这里告诉你' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="bar">
+      <view class="t-caption num">{{unread ? unread + ' 条没读' : '都读过了'}}</view>
+      <view wx:if="{{unread}}" class="link" bindtap="onReadAll">全部标为已读</view>
+    </view>
+    <view wx:if="{{actionError}}" class="notice error">{{actionError}}</view>
+    <view class="card list">
+      <view wx:for="{{rows}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onOpen" aria-role="button">
+        <view wx:if="{{item.unread}}" class="dot" aria-label="没读"></view>
+        <view class="row-main">
+          <view class="row-title {{item.unread ? 'strong' : ''}}">{{item.title}}</view>
+          <view wx:if="{{item.body}}" class="row-sub">{{item.body}}</view>
+          <view class="row-sub num">{{item.time}}</view>
+        </view>
+        <image wx:if="{{item.page}}" class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+    <view wx:if="{{loadingMore}}" class="t-caption more">正在取更早的…</view>
+  </view>
+</view>

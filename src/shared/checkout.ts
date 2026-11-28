@@ -5,9 +5,10 @@
 //   例：不含餐 499 → 599 → 1098 → 1198 → 1697。
 // 跳档宽限（❓6，默认 0）：每个 12 小时的分界点之后多少分钟内不跳档。
 
+import { parseYuan } from './money';
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type PaymentMethod } from './labels';
 import type { BackfillMark } from './backfill';
-import type { TagZone } from './frontdesk';
+import { normalizeTagCode, type TagZone } from './frontdesk';
 import type { SpendQuota } from './spend-quota';
 
 export const TICKET_SEGMENT_MS = 12 * 3_600_000;
@@ -695,4 +696,20 @@ export interface DashboardData {
   tickets: { name: string; count: number; amount: number }[];
   days: { date: string; net: number; checkouts: number; rechargePaid: number }[];
   openShifts: { shiftNo: string; staffName: string; startedAt: string }[];
+}
+
+/**
+ * 8.2.27 结账记录搜索：牌号（含部分，全角也认）、单号后几位、金额（元，「499」「499.00」）、经办人、桌号；空的全列
+ */
+export function checkoutMatches(c: { checkoutNo: string; tagCodes?: string[]; tableNames?: string[]; totalAmount: number; operatorName: string }, q: string): boolean {
+  const t = normalizeTagCode(q);
+  if (!t) return true;
+  const cents = parseYuan(t);
+  return (
+    (c.tagCodes ?? []).some((code) => code.includes(t)) ||
+    c.checkoutNo.toUpperCase().endsWith(t) ||
+    (cents !== null && c.totalAmount === cents) ||
+    c.operatorName.includes(q.trim()) ||
+    (c.tableNames ?? []).some((n) => n.toUpperCase().includes(t))
+  );
 }

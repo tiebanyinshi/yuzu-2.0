@@ -1,0 +1,39 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="测验" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view wx:if="{{unsure === 'start'}}" class="notice warn">
+      <view>{{error}}</view>
+      <button class="btn secondary resend" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onResend">再发一次（同一份卷子）</button>
+    </view>
+
+    <block wx:if="{{result}}">
+      <view class="card score {{result.passed ? 'pass' : ''}}">
+        <view class="score-line num">{{result.line}}</view>
+        <view wx:if="{{result.completion}}" class="t-body">{{result.completion}}</view>
+      </view>
+      <view wx:for="{{result.items}}" wx:key="no" class="card qa">
+        <view class="eyebrow num">第 {{item.no}} 题 · {{item.correct ? '对' : '错'}}</view>
+        <view class="stem">{{item.stem}}</view>
+        <view wx:for="{{item.opts}}" wx:key="index" wx:for-item="op" class="opt {{op.chosen ? 'chosen' : ''}} {{op.right ? 'right' : ''}} {{op.wrong ? 'wrong' : ''}}">{{op.text}}</view>
+        <view wx:if="{{item.explanation}}" class="t-caption explain">{{item.explanation}}</view>
+      </view>
+      <button wx:if="{{!result.passed}}" class="btn primary block foot-btn" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onAgain">再考一次</button>
+      <button class="btn secondary block foot-btn" hover-class="pressed" hover-stay-time="120" bindtap="onBack">回到课时</button>
+    </block>
+
+    <block wx:elif="{{questions.length}}">
+      <view wx:for="{{questions}}" wx:key="id" wx:for-item="qq" wx:for-index="qi" class="card qa">
+        <view class="eyebrow num">第 {{qq.no}} 题{{qq.multi ? ' · 多选' : qq.judge ? ' · 判断' : ''}}</view>
+        <view class="stem">{{qq.stem}}</view>
+        <view wx:for="{{qq.opts}}" wx:key="index" wx:for-item="op" wx:for-index="k" class="opt {{op.chosen ? 'chosen' : ''}}" hover-class="pressed" hover-stay-time="120" data-q="{{qi}}" data-option="{{k}}" bindtap="onOption" aria-role="button">{{op.text}}</view>
+      </view>
+      <view wx:if="{{error2}}" class="notice {{unsure === 'submit' ? 'warn' : 'error'}}">
+        <view>{{error2}}</view>
+        <button wx:if="{{unsure === 'submit'}}" class="btn secondary resend" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onResend">再交一次（同一份卷子）</button>
+      </view>
+      <view wx:if="{{!ready}}" class="t-caption foot-hint">每题都选了才能交卷</view>
+      <button class="btn primary block foot-btn" hover-class="pressed" hover-stay-time="120" disabled="{{!ready || busy || unsure === 'submit'}}" bindtap="onSubmit">交卷</button>
+    </block>
+  </view>
+</view>

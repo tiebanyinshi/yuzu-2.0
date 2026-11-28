@@ -16,6 +16,7 @@ export const GROUPS = [
   ['gf_', '业财法审批（gf_）'],
   ['oa_', '办公 OA（oa_）'],
   ['mp_', '小程序（mp_，小程序线）'],
+  ['staffmp_', '员工小程序（staffmp_，员工小程序线）'],
   ['canteen_', '员工食堂（canteen_）'],
   ['concierge_', '客户关系（concierge_）'],
   ['price_catalog_', '价目表（price_catalog_）'],

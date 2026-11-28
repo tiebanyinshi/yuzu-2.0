@@ -1,0 +1,16 @@
+.summary {
+  margin: 16rpx 0;
+}
+.list {
+  overflow: hidden;
+}
+.pin {
+  margin-right: 12rpx;
+}
+.dot {
+  width: 16rpx;
+  height: 16rpx;
+  border-radius: 50%;
+  background-color: var(--danger);
+  flex: none;
+}

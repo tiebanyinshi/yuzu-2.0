@@ -1,0 +1,118 @@
+.intro {
+  margin: 16rpx 0 24rpx;
+}
+.list {
+  overflow: hidden;
+}
+.area {
+  width: 100%;
+  height: 200rpx;
+  padding-top: 20rpx;
+  padding-bottom: 20rpx;
+}
+.picker {
+  display: flex;
+  align-items: center;
+}
+.picker.empty {
+  color: var(--ink-3);
+}
+.pair {
+  display: flex;
+  align-items: center;
+}
+.pair-a {
+  flex: 3;
+  min-width: 0;
+}
+.pair-b {
+  flex: 2;
+  min-width: 0;
+  margin-left: 16rpx;
+}
+.half {
+  display: flex;
+  margin-left: 16rpx;
+}
+.half-btn {
+  min-width: 104rpx;
+  height: 96rpx;
+  line-height: 96rpx;
+  padding: 0 20rpx;
+  border: 1px solid var(--line-strong);
+  text-align: center;
+  font-size: var(--fs-body);
+  color: var(--ink);
+  background-color: var(--surface);
+}
+.half-btn + .half-btn {
+  border-left: none;
+}
+.half-btn:first-child {
+  border-radius: var(--radius-control) 0 0 var(--radius-control);
+}
+.half-btn:last-child {
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+}
+.half-btn.on {
+  background-color: var(--ink);
+  border-color: var(--ink);
+  color: var(--on-ink);
+  font-weight: 600;
+}
+.files {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-gap: 16rpx;
+}
+.file {
+  position: relative;
+}
+.thumb {
+  width: 100%;
+  height: 200rpx;
+  border-radius: var(--radius-control);
+  background-color: var(--surface-2);
+}
+.remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 88rpx;
+  font-size: var(--fs-body);
+  color: var(--danger);
+}
+.add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200rpx;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-control);
+  font-size: var(--fs-body);
+  color: var(--ink);
+  text-align: center;
+}
+.hint {
+  margin-top: 8rpx;
+}
+.pending {
+  margin-top: 16rpx;
+}
+.pending-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 24rpx;
+}
+.submit-error {
+  margin-top: 32rpx;
+}
+.submit {
+  margin-top: 48rpx !important;
+}
+.back {
+  display: flex;
+  justify-content: center;
+  margin-top: 16rpx;
+}

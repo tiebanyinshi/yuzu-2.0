@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { ArAccountOption } from '@shared/ar';
 import { spendQuotaText, type SpendQuota } from '@shared/spend-quota';
@@ -21,7 +21,7 @@ import type { CompanyReason } from '@shared/dining-v8224';
 import { companyGrantFits, CompanyPayRow, companyRequest } from './CompanyPayRow';
 import { maskPhone, PAYMENT_METHODS } from '@shared/labels';
 import { bigChange, formatHkd, hkdDue, hkdWorth, rateText as hkdRateText } from '@shared/cashier-v8230';
-import { DEFAULT_FRONTDESK_RULES, type FrontdeskRules } from '@shared/frontdesk';
+import { DEFAULT_FRONTDESK_RULES, normalizeTagCode, type FrontdeskRules } from '@shared/frontdesk';
 import { centsToInput, formatYuan, parseYuan } from '@shared/money';
 import { api, errorMessage } from '../../lib/api';
 import { useCan, useSession } from '../../lib/session';
@@ -29,7 +29,8 @@ import { cn } from '../../lib/utils';
 import { useResetOnOpen } from '../../lib/useResetOnOpen';
 import { AuthorizeDialog } from '../../components/AuthorizeDialog';
 import { Money } from '../../components/Money';
-import { Badge, Button, Input, MoneyInput, Select } from '../../components/ui';
+import { Badge, Button, Input, Kbd, MoneyInput, Select } from '../../components/ui';
+import { composing, openDialog } from '../../lib/keymap';
 import type { PayTxView, VerificationView } from '@shared/integrations';
 import { ScanPayButton } from '../pay/ScanPay';
 import { VerifyButton } from '../pay/VoucherVerify';
@@ -230,6 +231,8 @@ export function usePayRows(opts: {
       if (rows.filter((x) => x.method === 'on_account').length > 1) return '一张结账单只能挂一笔账，请合并金额';
     }
     if (r.method === 'other' && !r.ref.trim()) return '「其他」收款请在备注里写明收的是什么';
+    // 8.2.27：银行卡（POS）填了参考号的，要是 4–20 位字母或数字（敲成金额、多敲了空格的这里拦下）
+    if (r.method === 'bank_card' && r.ref.trim() && !POS_REF_PATTERN.test(normalizeTagCode(r.ref))) return 'POS 参考号要是 4–20 位字母或数字（小票上的「参考号」）';
     if (r.method === 'cash' && r.hkd) {
       // 港元（8.2.30）：实给的港元要登记（交班按港元对实点），折成人民币要够这笔
       const rate = cashRules.hkdRatePpm;
@@ -402,11 +405,33 @@ export function PaymentsSection({
   const authRow = pay.rows.find((r) => r.id === authorizing) ?? null;
   const authCents = authRow ? pay.rowCents[pay.rows.indexOf(authRow)] : null;
   const auth = authRow && authCents ? authorize(authCents, authRow.method === 'company' ? '公司承担' : authRow.reason.trim()) : null;
+  const methods = QUICK_METHODS.filter((m) => (m !== 'wallet' || canWallet) && (m !== 'store_coupon' || !!coupons) && (m !== 'on_account' || (arAccounts.data?.length ?? 0) > 0));
+  // 8.2.27（收银 demo「键盘走完收款」）：⌥ / Alt + 1–9 加第几种收款方式（按钮上写着），金额默认还差的部分，光标落到这一笔的金额上；
+  // 数字键本身留给金额输入。点的是按钮本身，停用（例如应收还没取到）的按不动
+  const section = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || composing(e) || !/^(Digit|Numpad)[1-9]$/.test(e.code)) return;
+      const root = section.current;
+      const dialog = root?.closest('[role="dialog"]');
+      // 只管自己所在的对话框是最上面那一个的时候
+      if (!root || (dialog && openDialog() !== dialog)) return;
+      const b = root.querySelector<HTMLButtonElement>(`button[data-paykey="${e.code.slice(-1)}"]`);
+      e.preventDefault();
+      e.stopPropagation();
+      if (!b || b.disabled) return;
+      b.click();
+      // 新加的那一笔在列表最后：光标放到它的金额框
+      requestAnimationFrame(() => root.querySelector<HTMLInputElement>('ul > li:last-child input')?.focus());
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
   return (
-    <div className="rounded-lg border border-line bg-paper/50 p-3">
+    <div ref={section} className="rounded-lg border border-line bg-paper/50 p-3">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-1 text-[13px] font-bold text-ink-2">收款</span>
-        {QUICK_METHODS.filter((m) => (m !== 'wallet' || canWallet) && (m !== 'store_coupon' || !!coupons) && (m !== 'on_account' || (arAccounts.data?.length ?? 0) > 0)).map((m) => (
+        {methods.map((m, i) => (
           <Button
             key={m}
             size="sm"
@@ -422,8 +447,10 @@ export function PaymentsSection({
             }
             onClick={() => pay.addRow(m)}
             data-testid={`pay-add-${m}`}
+            data-paykey={i < 9 ? i + 1 : undefined}
           >
             {CHECKOUT_METHOD_LABELS[m]}
+            {i < 9 && <Kbd className="ml-1 h-5 min-w-5 text-[12px]">⌥{i + 1}</Kbd>}
           </Button>
         ))}
       </div>
@@ -599,13 +626,16 @@ export function PayRowEditor({
             readOnly={!!row.payTx}
             value={row.ref}
             onChange={(e) => onChange({ ref: e.target.value })}
-            placeholder={row.method === 'cash' ? '备注（选填）' : row.method === 'other' ? '写明收的是什么（必填）' : '单号后几位（选填）'}
+            placeholder={
+              row.method === 'cash' ? '备注（选填）' : row.method === 'other' ? '写明收的是什么（必填）' : row.method === 'bank_card' ? 'POS 参考号（选填，填了能查重）' : '单号后几位（选填）'
+            }
             maxLength={64}
             disabled={locked}
             className="h-10 min-w-0 flex-1 basis-32"
             aria-label="收款备注"
           />
         )}
+        {row.method === 'bank_card' && <PosRefCheck refText={row.ref} />}
         {row.method === 'coupon' && (
           <>
             <Select
@@ -1031,4 +1061,28 @@ function StoreCouponPicker({
 /** 签赠券（8.1.9）：在券名旁标「签赠 · 板块」，列表上另写授权人、渠道、事由——选哪一张就是哪种券、谁授权的 */
 function GiftTag({ gift }: { gift: NonNullable<CheckoutCouponOption['gift']> }) {
   return <span className="rounded bg-lake/10 px-1.5 py-px text-[12px] font-semibold whitespace-nowrap text-lake">签赠 · {gift.segment}</span>;
+}
+
+/** 8.2.27 POS 参考号：4–20 位字母或数字 */
+const POS_REF_PATTERN = /^[0-9A-Z]{4,20}$/;
+
+/**
+ * 8.2.27（收银 demo「同一个交易号当天重复要确认」）：银行卡填了参考号，查今天有没有别的单用过——多半是同一笔刷了两次单、
+ * 或者抄错了参考号。只提醒，不拦（同一张卡分两次刷，参考号也不同）
+ */
+function PosRefCheck({ refText }: { refText: string }) {
+  const ref = normalizeTagCode(refText);
+  const ok = POS_REF_PATTERN.test(ref);
+  const q = useQuery({
+    queryKey: ['frontdesk', 'payment-ref', ref],
+    queryFn: () => api.get<{ count: number; checkoutNos: string[] }>(`/api/frontdesk/payment-ref-check?ref=${encodeURIComponent(ref)}`),
+    enabled: ok,
+    staleTime: 10_000,
+  });
+  if (!ok || !q.data?.count) return null;
+  return (
+    <span className="w-full text-[12.5px] font-semibold text-clay" role="alert" data-testid="pos-ref-dup">
+      今天已有 {q.data.count} 笔银行卡收款用过参考号 {ref}（结账单 {q.data.checkoutNos.map((n) => n.slice(-4)).join('、')}），请核对是不是同一笔刷了两次
+    </span>
+  );
 }

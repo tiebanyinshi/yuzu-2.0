@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Keyboard, Link2, LogOut } from 'lucide-react';
 import { matchTags, normalizeTagCode, uniqueTagMatch, type BoardTag, type VisitDetail } from '@shared/frontdesk';
 import { api, errorMessage } from '../../lib/api';
+import { composing, dialogFkeyButton, openDialog } from '../../lib/keymap';
 import { isTypingTarget } from '../../lib/utils';
 import { Dialog } from '../../components/Overlay';
 import { useToast } from '../../components/Toast';
@@ -37,10 +38,6 @@ export const DESK_HOTKEYS: readonly { key: string; action: DeskAction; label: st
 
 /** 按钮上写的键位 */
 export const hotkeyOf = (action: DeskAction) => DESK_HOTKEYS.find((h) => h.action === action)?.key;
-
-/** 窄屏时账单 / 客人卡是侧滑抽屉（也是 dialog），不算「有对话框开着」 */
-const PANEL_SHEETS = ['手牌账单', '客人卡'];
-const blockingDialog = () => [...document.querySelectorAll('[role="dialog"]')].find((d) => !PANEL_SHEETS.includes(d.getAttribute('aria-label') ?? ''));
 
 /** 打单（8.1.44）：这位客人与同组在店的手牌一起打一张预结单，新窗口打开、读到数据自动调出打印；被浏览器拦下返回 false */
 export function openPrebill(visit: VisitDetail): boolean {
@@ -95,11 +92,28 @@ export function useDeskHotkeys(o: {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || composing(e)) return;
       const def = DESK_HOTKEYS.find((h) => h.key === e.key && h.desks.includes(latest.current.desk));
       const wantsHelp = e.key === '?' && !isTypingTarget(e.target);
+      const open = openDialog();
+      // 8.2.27：对话框里写了这个 F 键的按钮（买单对话框的「确认结清」= F9）就点它
+      const inDialog = open && /^F([1-9]|1[0-2])$/.test(e.key) ? dialogFkeyButton(open, e.key) : null;
+      if (inDialog) {
+        e.preventDefault();
+        e.stopPropagation();
+        inDialog.click();
+        return;
+      }
+      // 8.2.27：不在输入框、没有对话框时按 ↓ / ↑ 进到账单明细（第一行 / 最后一行），再用 ↑↓、Del、/ 操作
+      if (!open && !isTypingTarget(e.target) && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        const rows = [...document.querySelectorAll<HTMLElement>('[data-line-row]')];
+        if (rows.length && !rows.includes(document.activeElement as HTMLElement)) {
+          e.preventDefault();
+          rows[e.key === 'ArrowDown' ? 0 : rows.length - 1]!.focus();
+        }
+        return;
+      }
       if (!def && !wantsHelp) return;
-      const open = blockingDialog();
       if (open) {
         // 弹窗里不再叠一个：F 键提示先关掉；「?」交给弹窗自己（可能在输入）
         if (def) {
@@ -237,6 +251,53 @@ function HotkeyHelpDialog({ open, desk, onClose }: { open: boolean; desk: Desk; 
           <span>在页面任意位置直接敲牌号，回车打开</span>
         </li>
       </ul>
+      {/* 8.2.27：其余的键（收银 demo 的键盘走完全流程） */}
+      <h3 className="mt-4 text-[13px] font-bold text-ink-2">账单明细</h3>
+      <ul className="mt-1.5 space-y-1.5" data-testid="hotkey-help-lines">
+        {(
+          [
+            ['↓ / ↑', '进到账单明细，再在明细之间移动'],
+            ['Del', '作废这一项（餐饮是退菜）'],
+            ['/', '给这一项打折'],
+          ] as const
+        ).map(([k, t]) => (
+          <li key={k} className="flex items-center gap-3 text-[14px]">
+            <Kbd className="min-w-9">{k}</Kbd>
+            <span>{t}</span>
+          </li>
+        ))}
+      </ul>
+      <h3 className="mt-4 text-[13px] font-bold text-ink-2">买单对话框</h3>
+      <ul className="mt-1.5 space-y-1.5">
+        {(
+          [
+            ['⌥1–9', '加第几种收款方式（按钮上写着），光标落到金额'],
+            ['F9', '确认结清；找零超过 ¥500 或实给超过应收两倍时再按一次'],
+            ['Esc', '关掉对话框'],
+          ] as const
+        ).map(([k, t]) => (
+          <li key={k} className="flex items-center gap-3 text-[14px]">
+            <Kbd className="min-w-9">{k}</Kbd>
+            <span>{t}</span>
+          </li>
+        ))}
+      </ul>
+      <h3 className="mt-4 text-[13px] font-bold text-ink-2">哪里都能用</h3>
+      <ul className="mt-1.5 space-y-1.5">
+        {(
+          [
+            ['⌥1–9', '跳到左边导航的第几个入口（Windows 是 Alt）'],
+            ['⌥0', '全部功能：搜名字，↑↓ 选、回车打开'],
+            ['⌥N', '系统通知'],
+          ] as const
+        ).map(([k, t]) => (
+          <li key={k} className="flex items-center gap-3 text-[14px]">
+            <Kbd className="min-w-9">{k}</Kbd>
+            <span>{t}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-[12.5px] text-ink-3">输入法开着时敲的全角数字、字母（８２０１、Ａ０２３）也认。</p>
     </Dialog>
   );
 }

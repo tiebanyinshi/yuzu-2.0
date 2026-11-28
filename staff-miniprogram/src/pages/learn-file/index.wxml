@@ -1,0 +1,33 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="资料" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '这份资料下架了' : ''}}" message="{{state === 'empty' ? '回到上一页看看别的' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="head">
+      <view class="t-title">{{title}}</view>
+      <view class="t-caption num meta">{{meta}}</view>
+      <view class="status">
+        <view wx:if="{{fresh}}" class="tag new">新</view>
+        <text wx:if="{{viewed}}" class="t-caption">{{viewed}}</text>
+      </view>
+    </view>
+    <view wx:if="{{description}}" class="t-body-l desc">{{description}}</view>
+
+    <view wx:if="{{mode === 'video'}}" class="media">
+      <video wx:if="{{mediaSrc}}" class="video" src="{{mediaSrc}}" initial-time="{{resumeAt}}" autoplay="{{autoplay}}" controls show-center-play-btn enable-progress-gesture object-fit="contain" bindplay="onVideoPlay" binderror="onVideoError" bindtimeupdate="onVideoTime"></video>
+      <view wx:elif="{{mediaFailed}}" class="video media-failed">
+        <button class="btn secondary" hover-class="pressed" hover-stay-time="120" bindtap="onMediaRetry">重新加载视频</button>
+      </view>
+      <view wx:else class="skeleton video"></view>
+    </view>
+
+    <view wx:if="{{note}}" class="notice info note">{{note}}</view>
+    <view wx:if="{{openError}}" class="notice error note">{{openError}}</view>
+
+    <view class="actions">
+      <button wx:if="{{mode === 'document' || mode === 'image'}}" class="btn primary block" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onOpen">
+        {{busy ? (progress ? '下载中 ' + progress + '%' : '正在打开') : (mode === 'image' ? '看图片' : '打开')}}
+      </button>
+      <button wx:if="{{mode === 'audio'}}" class="btn primary block" hover-class="pressed" hover-stay-time="120" bindtap="onAudio">{{playing ? '暂停' : '播放'}}</button>
+    </view>
+  </view>
+</view>

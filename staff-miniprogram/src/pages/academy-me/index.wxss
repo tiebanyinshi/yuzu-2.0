@@ -1,0 +1,52 @@
+.list {
+  overflow: hidden;
+}
+.level {
+  margin-top: 8rpx;
+  padding: 28rpx 28rpx 24rpx;
+}
+.level-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.level-title {
+  font-size: var(--fs-title-s);
+  font-weight: 600;
+  color: var(--wood-text);
+}
+.level-credits {
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.bar {
+  height: 12rpx;
+  margin-top: 20rpx;
+  border-radius: 6rpx;
+  background-color: var(--surface-2);
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  border-radius: 6rpx;
+  background-color: var(--wood);
+}
+.bar-fill.weak {
+  background-color: var(--danger);
+}
+.bar-fill.mastered {
+  background-color: var(--success);
+}
+.level-sub {
+  margin-top: 12rpx;
+}
+.block-gap {
+  margin-top: 16rpx;
+}
+.mastery .bar {
+  margin-top: 12rpx;
+}
+.tag.late {
+  background-color: var(--danger-soft);
+  color: var(--danger);
+}

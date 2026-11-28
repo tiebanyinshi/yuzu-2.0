@@ -93,6 +93,8 @@ export const ADMIN_SECTIONS = {
   academy: { path: '/admin/academy', label: '学堂', perms: ['academy.manage'] },
   // 公司公告（员工办公 v1.1 第 5 批，docs/OA_MOBILE.md）：发布、编辑、置顶、撤回公告与已读名单；人力行政部负责人不进后台首页也看得到
   announcements: { path: '/admin/announcements', label: '公司公告', perms: ['oa.announce'] },
+  // 员工小程序「汤崎 WCP」（员工小程序线，docs/STAFF_MP.md）：开关、谁绑了微信、解开；能管员工账号的、人事都看得到
+  staffmp: { path: '/admin/staffmp', label: '员工小程序', perms: ['staff.manage', 'hr.org'] },
   // 8.0.18（IA1，店主 2026-11-13）：员工食堂、安保巡场从 ERP 挪到后台「人员与行政」。页面、权限、接口都没变；
   // 开没开仍然按 ERP 的模块开关（ADMIN_SECTION_MODULES），员工手机端的入口不变
   canteen: { path: '/admin/canteen', label: '员工食堂', perms: ['canteen.manage'] },
@@ -130,7 +132,12 @@ export const ADMIN_GROUPS: readonly { key: string; title: string; board: AdminBo
   { key: 'business', title: '营业项目', board: 'crm', items: ['catalog', 'tags', 'technicians', 'dining', 'emenu', 'rooms', 'bookings'] },
   { key: 'venue', title: '场地、设备与线上', board: 'crm', items: ['spaces', 'devices', 'mp'] },
   { key: 'erpSystem', title: '主体、接口与审计', board: 'erp', items: ['stores', 'integrations', 'opening', 'audit'] },
-  { key: 'staff', title: '人员与行政', board: 'wcp', items: ['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'academy', 'announcements', 'permissions', 'canteen', 'patrol'] },
+  {
+    key: 'staff',
+    title: '人员与行政',
+    board: 'wcp',
+    items: ['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'academy', 'announcements', 'staffmp', 'permissions', 'canteen', 'patrol'],
+  },
   { key: 'design', title: '品牌与设计', board: 'design', items: ['design', 'library', 'studio', 'guide'] },
 ];
 
@@ -173,6 +180,7 @@ export const ADMIN_STANDALONE_SECTIONS: readonly AdminSection[] = [
   'training',
   'academy',
   'announcements',
+  'staffmp',
 ];
 /** 跟着 ERP 模块开关走的分区：模块关着时只有能改模块开关的人还看得到（页面上提示去开启） */
 export const ADMIN_SECTION_MODULES: Partial<Record<AdminSection, ErpModuleKey>> = { canteen: 'canteen', patrol: 'patrol' };
