@@ -1,0 +1,37 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="扫码巡场" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="card card-pad hero">
+      <block wx:if="{{view}}">
+        <view class="eyebrow">{{view.roundText}}</view>
+        <view class="t-title progress {{view.allDone ? 'done' : ''}}">{{view.progress}}</view>
+        <view class="t-caption num">你今天巡了 {{view.mine}} 次</view>
+      </block>
+      <view wx:else class="t-body muted">现在连不上门店系统，看不到这一轮的情况；照样可以扫，扫到的先存在手机上。</view>
+      <button class="btn primary block go" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onScan">{{busy ? '正在记…' : '扫场所码'}}</button>
+
+      <view wx:if="{{result}}" class="result {{result.tone}} fade-in">
+        <view class="t-body strong">{{result.title}}</view>
+        <view class="t-caption">{{result.sub}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{waiting}}" class="notice warn waiting">还有 {{waiting}} 次没交上（网络不好），存在手机上，连上以后自动补交，不会重复。</view>
+
+    <view wx:if="{{view && view.points.length}}" class="section">
+      <view class="section-head"><view class="section-title">这一轮的场所</view></view>
+      <view class="card list">
+        <view wx:for="{{view.points}}" wx:key="id" class="row">
+          <view class="dot {{item.state}}"></view>
+          <view class="row-main">
+            <view class="row-title">{{item.name}}</view>
+            <view class="row-sub">{{item.area ? item.area + ' · ' : ''}}{{item.text}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{canViewHistory}}" class="link more" hover-class="pressed" hover-stay-time="120" bindtap="onLog" aria-role="button">看巡场记录</view>
+  </view>
+</view>

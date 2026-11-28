@@ -52,8 +52,8 @@ describe('挪到后台的三个模块', () => {
     const staff = ADMIN_GROUPS.find((g) => g.key === 'staff')!;
     expect(staff.title).toBe('人员与行政');
     // OA-01：「组织架构」跟在「员工账号」后面；店主 2026-11-24（docs/BOARDS.md）：「门店与主体」归 ERP 板块
-    expect(staff.items).toEqual(['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'academy', 'announcements', 'permissions', 'canteen', 'patrol']);
-    // 2026-11-25：「员工培训」「公司公告」跟在「工资条」后面（WCP 设置） 2026-11-27：「学堂」跟在「员工培训」后面（docs/ACADEMY.md）
+    expect(staff.items).toEqual(['staff', 'org', 'attendance', 'oaApprovals', 'payroll', 'training', 'academy', 'announcements', 'staffmp', 'permissions', 'canteen', 'patrol']);
+    // 2026-11-25：「员工培训」「公司公告」跟在「工资条」后面（WCP 设置） 2026-11-27：「学堂」跟在「员工培训」后面（docs/ACADEMY.md）、「员工小程序」跟在「公司公告」后面（docs/STAFF_MP.md）
     expect(ADMIN_SECTION_MODULES).toEqual({ canteen: 'canteen', patrol: 'patrol' });
     // 8.1.1：设计师只有「工作台：编辑 / 发布」，也要进得了后台的「工作台」；OA-01：只有「组织架构与员工档案」的（人力行政部负责人）也进得了「组织架构」；OA-12：只有办公审批两项权限的也进得了「办公审批」
     expect(ADMIN_STANDALONE_SECTIONS).toEqual([
@@ -71,6 +71,7 @@ describe('挪到后台的三个模块', () => {
       'training',
       'academy',
       'announcements',
+      'staffmp',
     ]);
     for (const p of [
       'canteen.manage',

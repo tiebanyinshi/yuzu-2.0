@@ -1,0 +1,16 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="工资条" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '还没有发给你的工资条' : ''}}" message="{{state === 'empty' ? '人事发放以后会出现在这里，也会收到通知' : error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="card list top">
+      <view wx:for="{{rows}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onOpen" aria-role="button">
+        <view class="row-main">
+          <view class="row-title">{{item.title}}</view>
+          <view class="row-sub num">{{item.sub}}</view>
+        </view>
+        <view wx:if="{{!item.signed}}" class="tag new">待签收</view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+  </view>
+</view>

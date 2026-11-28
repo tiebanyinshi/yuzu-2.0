@@ -1,0 +1,130 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="{{courseTitle || '课时'}}" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter reader">
+    <view class="head">
+      <view class="eyebrow">{{kindLabel}}</view>
+      <view class="title">{{title}}</view>
+      <view class="t-caption num">{{meta}}</view>
+    </view>
+
+    <!-- 图文课件：按块画 -->
+    <block wx:if="{{kind === 'article'}}">
+      <view wx:for="{{blocks}}" wx:key="i" wx:for-item="b" class="blk">
+        <view wx:if="{{b.type === 'heading'}}" class="h">{{b.text}}</view>
+        <view wx:elif="{{b.type === 'paragraph'}}" class="p"><text wx:for="{{b.segs}}" wx:key="index" wx:for-item="g" class="{{g.bold ? 'b' : ''}}">{{g.text}}</text></view>
+        <view wx:elif="{{b.type === 'quote'}}" class="quote"><text wx:for="{{b.segs}}" wx:key="index" wx:for-item="g" class="{{g.bold ? 'b' : ''}}">{{g.text}}</text></view>
+        <view wx:elif="{{b.type === 'list'}}" class="list">
+          <view wx:for="{{b.items}}" wx:key="index" wx:for-item="it" wx:for-index="n" class="li">
+            <text class="li-mark num">{{b.ordered ? n + 1 + '.' : '·'}}</text>
+            <view class="li-text"><text wx:for="{{it}}" wx:key="index" wx:for-item="g" class="{{g.bold ? 'b' : ''}}">{{g.text}}</text></view>
+          </view>
+        </view>
+        <view wx:elif="{{b.type === 'callout'}}" class="callout {{b.tone}}">
+          <view class="callout-title">{{b.title}}</view>
+          <view wx:for="{{b.lines}}" wx:key="index" wx:for-item="ln" class="li">
+            <text wx:if="{{ln.bullet}}" class="li-mark">·</text>
+            <view class="li-text"><text wx:for="{{ln.segs}}" wx:key="index" wx:for-item="g" class="{{g.bold ? 'b' : ''}}">{{g.text}}</text></view>
+          </view>
+        </view>
+        <view wx:elif="{{b.type === 'steps'}}" class="card steps">
+          <view wx:if="{{b.title}}" class="blk-title">{{b.title}}</view>
+          <view wx:for="{{b.steps}}" wx:key="no" wx:for-item="st" class="step">
+            <view class="step-no num">{{st.no}}</view>
+            <view class="step-main">
+              <view class="step-title">{{st.title}}</view>
+              <view wx:if="{{st.detail}}" class="t-caption">{{st.detail}}</view>
+            </view>
+          </view>
+        </view>
+        <view wx:elif="{{b.type === 'cards'}}">
+          <view wx:if="{{b.title}}" class="blk-title">{{b.title}}</view>
+          <view class="cards">
+            <view wx:for="{{b.cards}}" wx:key="index" wx:for-item="cd" wx:for-index="k" class="flip {{cd.flipped ? 'back' : ''}}" hover-class="pressed" hover-stay-time="120" data-block="{{b.i}}" data-card="{{k}}" bindtap="onCard" aria-role="button" aria-label="{{cd.flipped ? cd.back : cd.front}}">
+              <view class="flip-text">{{cd.flipped ? cd.back : cd.front}}</view>
+              <view class="t-caption flip-hint">{{cd.flipped ? '点一下翻回去' : '点一下看背面'}}</view>
+            </view>
+          </view>
+        </view>
+        <view wx:elif="{{b.type === 'table'}}" class="card table-wrap">
+          <view wx:if="{{b.title}}" class="blk-title">{{b.title}}</view>
+          <scroll-view scroll-x class="table-scroll">
+            <view class="tr th">
+              <view wx:for="{{b.head}}" wx:key="index" wx:for-item="c" class="td">{{c}}</view>
+            </view>
+            <view wx:for="{{b.rows}}" wx:key="index" wx:for-item="r" class="tr">
+              <view wx:for="{{r}}" wx:key="index" wx:for-item="c" class="td">{{c}}</view>
+            </view>
+          </scroll-view>
+        </view>
+        <view wx:elif="{{b.type === 'scenario'}}" class="card qa">
+          <view class="eyebrow">情景{{b.title ? ' · ' + b.title : ''}}</view>
+          <view class="stem">{{b.situation}}</view>
+          <view wx:for="{{b.options}}" wx:key="index" wx:for-item="op" wx:for-index="k" class="opt {{b.picked === k ? (op.best ? 'right' : 'wrong') : ''}}" hover-class="pressed" hover-stay-time="120" data-block="{{b.i}}" data-option="{{k}}" bindtap="onScenario" aria-role="button">
+            <view>{{op.text}}</view>
+            <view wx:if="{{b.picked === k}}" class="t-caption feedback">{{op.best ? '好的做法：' : ''}}{{op.feedback}}</view>
+          </view>
+        </view>
+        <view wx:elif="{{b.type === 'question'}}" class="card qa">
+          <view class="eyebrow">{{b.check ? '课中小测' : '想一想'}}{{b.q.multi ? ' · 多选' : ''}}</view>
+          <view class="stem">{{b.q.stem}}</view>
+          <block wx:if="{{b.q.kind === 'recall'}}">
+            <view wx:if="{{b.st.revealed}}" class="notice info answer">{{b.q.answerText}}</view>
+            <button wx:else class="btn secondary" hover-class="pressed" hover-stay-time="120" data-block="{{b.i}}" bindtap="onReveal">看答案</button>
+          </block>
+          <block wx:else>
+            <view wx:for="{{b.st.opts}}" wx:key="index" wx:for-item="op" wx:for-index="k" class="opt {{op.chosen ? 'chosen' : ''}} {{op.right ? 'right' : ''}} {{op.wrong ? 'wrong' : ''}}" hover-class="pressed" hover-stay-time="120" data-block="{{b.i}}" data-option="{{k}}" bindtap="onOption" aria-role="button">{{op.text}}</view>
+            <button wx:if="{{b.q.multi && !b.st.revealed}}" class="btn secondary" hover-class="pressed" hover-stay-time="120" disabled="{{!b.st.chosen.length}}" data-block="{{b.i}}" bindtap="onReveal">对答案</button>
+            <view wx:if="{{b.st.revealed}}" class="t-body result {{b.st.correct ? 'ok' : 'bad'}}">{{b.st.correct ? '答对了' : '再看看：对的已经标出来'}}</view>
+          </block>
+          <view wx:if="{{b.st.revealed && b.q.explanation}}" class="t-caption feedback">{{b.q.explanation}}</view>
+        </view>
+      </view>
+    </block>
+
+    <!-- 视频 / 文件 -->
+    <view wx:elif="{{kind === 'file'}}" class="card file">
+      <view class="t-body">{{file ? file.title : '这份文件已经不在知识库里了，请找培训负责人'}}</view>
+      <button wx:if="{{file}}" class="btn primary block" hover-class="pressed" hover-stay-time="120" bindtap="onOpenFile">打开看</button>
+    </view>
+
+    <!-- 测验 -->
+    <view wx:elif="{{kind === 'quiz' && quiz}}" class="card file">
+      <view class="t-body">每次 {{quiz.count}} 题，{{quiz.pass}} 分及格 · {{quiz.best}}</view>
+      <view wx:if="{{quiz.available < quiz.count}}" class="t-caption">题库里现在只有 {{quiz.available}} 道题，按有的出</view>
+      <button class="btn primary block" hover-class="pressed" hover-stay-time="120" disabled="{{!quiz.available}}" bindtap="onQuiz">{{done ? '再考一次' : '开始测验'}}</button>
+    </view>
+
+    <!-- 实操签核 -->
+    <view wx:elif="{{kind === 'practical' && practical}}">
+      <view class="card steps">
+        <view class="blk-title">要做到的</view>
+        <view wx:for="{{practical.items}}" wx:key="index" class="li"><text class="li-mark">·</text><view class="li-text">{{item}}</view></view>
+      </view>
+      <view class="notice info sign-note">实操要带教在岗看过、在 WCP 网页上签「通过」才算完成</view>
+      <view wx:if="{{practical.signoffs.length}}" class="card list">
+        <view wx:for="{{practical.signoffs}}" wx:key="id" class="row">
+          <view class="row-main">
+            <view class="row-title">{{item.text}}</view>
+            <view wx:if="{{item.comment}}" class="row-sub">「{{item.comment}}」</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{notice}}" class="notice {{noticeTone}} done-note">{{notice}}</view>
+
+    <view class="foot">
+      <block wx:if="{{kind === 'article' || kind === 'file'}}">
+        <view wx:if="{{done}}" class="t-caption foot-hint">这一节学完了</view>
+        <block wx:else>
+          <view wx:if="{{kind === 'article' && left}}" class="t-caption foot-hint">还有 {{left}} 道课中小测没答，答完就能点「学完了」</view>
+          <view wx:if="{{kind === 'file' && !opened}}" class="t-caption foot-hint">先打开看一遍，再点「学完了」</view>
+          <button class="btn primary block" hover-class="pressed" hover-stay-time="120" disabled="{{busy || (kind === 'article' && left > 0) || (kind === 'file' && !opened)}}" bindtap="onComplete">学完了</button>
+        </block>
+      </block>
+      <button wx:if="{{nextId}}" class="btn secondary block next" hover-class="pressed" hover-stay-time="120" bindtap="onNext">下一节</button>
+      <view class="link course-link" bindtap="onCourse">回到这门课</view>
+    </view>
+  </view>
+</view>

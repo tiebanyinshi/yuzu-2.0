@@ -1,0 +1,32 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="假期余额" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="section-head top"><view class="section-title num">{{year}} 年</view></view>
+    <view wx:if="{{!balances.length}}" class="t-body muted">今年还没有发放的假期；年假按工龄发放，有疑问找人事。</view>
+    <view wx:else class="card list">
+      <view wx:for="{{balances}}" wx:key="id" class="row">
+        <view class="row-main">
+          <view class="row-title">{{item.name}}</view>
+          <view class="row-sub num">{{item.detail}}</view>
+        </view>
+        <view class="left num">还剩 {{item.left}}</view>
+      </view>
+    </view>
+
+    <button class="btn primary block apply" hover-class="pressed" hover-stay-time="120" bindtap="onApply">请假</button>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">最近的变动</view></view>
+      <view wx:if="{{!entries.length}}" class="t-body muted">还没有变动。</view>
+      <view wx:else class="card list">
+        <view wx:for="{{entries}}" wx:key="id" class="row">
+          <view class="row-main">
+            <view class="row-title num">{{item.text}}</view>
+            <view class="row-sub">{{item.sub}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

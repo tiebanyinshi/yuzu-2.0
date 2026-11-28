@@ -1,0 +1,6 @@
+.top {
+  margin-top: 16rpx;
+}
+.list {
+  overflow: hidden;
+}

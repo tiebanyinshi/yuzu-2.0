@@ -1,0 +1,82 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="{{picked ? name : '发起申请'}}" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" title="{{state === 'empty' ? '还没有能发起的申请' : ''}}" message="{{state === 'empty' ? '请找人事在后台设好审批模板' : error}}" bindretry="onRetry" />
+
+  <view wx:elif="{{!picked}}" class="gutter">
+    <view class="t-body muted intro">要办哪一类？</view>
+    <view class="card list">
+      <view wx:for="{{list}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onTemplate" aria-role="button">
+        <view class="row-main">
+          <view class="row-title">{{item.name}}</view>
+          <view wx:if="{{item.description}}" class="row-sub">{{item.description}}</view>
+        </view>
+        <image class="chevron" src="/assets/icons/chevron.png" />
+      </view>
+    </view>
+  </view>
+
+  <view wx:else class="gutter form">
+    <view wx:if="{{description}}" class="t-body muted intro">{{description}}</view>
+    <view wx:if="{{!supported}}" class="notice info">这一类申请请在 WCP 网页上提交（里面有小程序里填不了的项）。</view>
+
+    <block wx:else>
+      <view wx:if="{{pending}}" class="notice warn pending">
+        <view>{{pending}}</view>
+        <view class="pending-actions">
+          <button class="btn secondary" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onResend">再提交一次（不会重复）</button>
+        </view>
+      </view>
+
+      <view wx:for="{{fields}}" wx:key="key" class="field">
+        <view class="field-label">{{item.label}}<text wx:if="{{!item.required}}" class="faint">（可以不填）</text></view>
+
+        <input wx:if="{{item.type === 'text'}}" class="input" value="{{item.text}}" maxlength="{{item.maxLength}}" placeholder="{{item.hint || '请填写'}}" placeholder-class="input-placeholder" data-key="{{item.key}}" bindinput="onText" aria-label="{{item.label}}" />
+        <textarea wx:elif="{{item.type === 'textarea'}}" class="input area" value="{{item.text}}" maxlength="{{item.maxLength}}" placeholder="{{item.hint || '请填写'}}" placeholder-class="input-placeholder" data-key="{{item.key}}" bindinput="onText" aria-label="{{item.label}}" />
+        <input wx:elif="{{item.type === 'number'}}" class="input num" type="number" value="{{item.text}}" placeholder="{{item.hint || '填整数'}}" placeholder-class="input-placeholder" data-key="{{item.key}}" bindinput="onText" aria-label="{{item.label}}" />
+        <input wx:elif="{{item.type === 'money'}}" class="input num" type="digit" value="{{item.text}}" placeholder="{{item.hint || '金额（元）'}}" placeholder-class="input-placeholder" data-key="{{item.key}}" bindinput="onText" aria-label="{{item.label}}" />
+
+        <picker wx:elif="{{item.type === 'date'}}" mode="date" value="{{item.date}}" data-key="{{item.key}}" bindchange="onDate">
+          <view class="input picker {{item.date ? '' : 'empty'}}">{{item.date || '选日期'}}</view>
+        </picker>
+
+        <view wx:elif="{{item.type === 'datetime'}}" class="pair">
+          <picker class="pair-a" mode="date" value="{{item.date}}" data-key="{{item.key}}" bindchange="onDate">
+            <view class="input picker {{item.date ? '' : 'empty'}}">{{item.date || '选日期'}}</view>
+          </picker>
+          <picker class="pair-b" mode="time" value="{{item.time}}" data-key="{{item.key}}" bindchange="onTime">
+            <view class="input picker {{item.time ? '' : 'empty'}}">{{item.time || '选时间'}}</view>
+          </picker>
+        </view>
+
+        <view wx:elif="{{item.type === 'halfday'}}" class="pair">
+          <picker class="pair-a" mode="date" value="{{item.date}}" data-key="{{item.key}}" bindchange="onDate">
+            <view class="input picker {{item.date ? '' : 'empty'}}">{{item.date || '选日期'}}</view>
+          </picker>
+          <view class="half">
+            <view class="half-btn {{item.half === 'am' ? 'on' : ''}}" hover-class="pressed" hover-stay-time="120" data-key="{{item.key}}" data-half="am" bindtap="onHalf" aria-role="radio" aria-checked="{{item.half === 'am'}}">上午</view>
+            <view class="half-btn {{item.half === 'pm' ? 'on' : ''}}" hover-class="pressed" hover-stay-time="120" data-key="{{item.key}}" data-half="pm" bindtap="onHalf" aria-role="radio" aria-checked="{{item.half === 'pm'}}">下午</view>
+          </view>
+        </view>
+
+        <picker wx:elif="{{item.type === 'select' || item.type === 'leave_type' || item.type === 'shift' || item.type === 'ref'}}" mode="selector" range="{{item.options}}" value="{{item.optionIndex}}" disabled="{{!item.options.length}}" data-key="{{item.key}}" bindchange="onPick">
+          <view class="input picker {{item.display ? '' : 'empty'}}">{{item.display || (item.options.length ? '请选择' : (item.type === 'shift' ? '先选日期（那天要有排班）' : '没有可选的'))}}</view>
+        </picker>
+
+        <view wx:elif="{{item.type === 'attachments'}}" class="files">
+          <view wx:for="{{item.files}}" wx:for-item="file" wx:key="id" class="file">
+            <image class="thumb" src="{{file.path}}" mode="aspectFill" />
+            <view class="remove" hover-class="pressed" hover-stay-time="120" data-key="{{item.key}}" data-id="{{file.id}}" bindtap="onRemoveFile" aria-role="button" aria-label="删掉这张">删掉</view>
+          </view>
+          <view wx:if="{{item.room}}" class="add" hover-class="pressed" hover-stay-time="120" data-key="{{item.key}}" bindtap="onAddPhotos" aria-role="button">{{uploading ? '正在上传…' : '+ 拍照或选图'}}</view>
+        </view>
+
+        <view wx:if="{{item.hint && item.type !== 'text' && item.type !== 'textarea' && item.type !== 'number' && item.type !== 'money'}}" class="t-caption hint">{{item.hint}}</view>
+        <view wx:if="{{item.error}}" class="field-error">{{item.error}}</view>
+      </view>
+
+      <view wx:if="{{submitError}}" class="notice error submit-error">{{submitError}}</view>
+      <button wx:if="{{!pending}}" class="btn primary block submit" hover-class="pressed" hover-stay-time="120" disabled="{{busy || uploading}}" bindtap="onSubmit">{{busy ? '正在提交…' : '提交'}}</button>
+      <view class="link back" bindtap="onBackToList">换一类申请</view>
+    </block>
+  </view>
+</view>

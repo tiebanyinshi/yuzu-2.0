@@ -581,6 +581,26 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  # 员工小程序「汤崎 WCP」（员工小程序线，docs/STAFF_MP.md）：staff-miniprogram/ 自己的依赖；类型检查连同 src/shared/staffmp.ts 等共用类型，
+  # 接口改了小程序这边会报错。单元测试不要微信开发者工具（页面完整性与写法约定、接口层与登录、配色对比度……）。
+  staffmp:
+    name: 员工小程序：类型检查 · 单元测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: staff-miniprogram
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: staff-miniprogram/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
   # 员工食堂 · 柚子饭堂（docs/CANTEEN.md 第 11 节）：应用开着员工端口（CANTEEN_PORT），在手机尺寸上走一遍——
   # 后台加人与开通卡片 → 厨师发布菜单 → 员工开通、点赞、亮码 → 负责人「从相册选」扫码、重复扫、断网补登、手动登记 → 后台记录。
   # 与平时的浏览器验收分开（playwright.canteen.config.ts、e2e-canteen/），不算进「浏览器验收汇总」的用例总数。
@@ -662,7 +682,7 @@ jobs:
   # 整次 CI 的结论：写明是全量还是按改动挑选；该跑的 job 都要通过，按计划不跑的可以跳过
   result:
     name: CI 结论（${{ needs.plan.outputs.mode == 'full' && '全量' || '按改动挑选' }}）
-    needs: [plan, static, integration, test, e2e, e2e-summary, demo, upgrade, canteen, miniprogram]
+    needs: [plan, static, integration, test, e2e, e2e-summary, demo, upgrade, canteen, miniprogram, staffmp]
     # 新提交推上来、旧的这次被取消时不跑（否则旧提交上会多一个看着像失败的结论）；其余情况都跑
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest

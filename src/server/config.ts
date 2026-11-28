@@ -32,6 +32,8 @@ export interface AppConfig {
   mp: MpConfig;
   /** 员工食堂 · 柚子饭堂（docs/CANTEEN.md）：单开的员工端口，只挂柚子饭堂的页面与 /api/canteen/*；没设 CANTEEN_PORT 就不开 */
   canteen: CanteenConfig;
+  /** 员工小程序「汤崎 WCP」（员工小程序线，docs/STAFF_MP.md 第 5 节）：单开的员工小程序端口，只挂 /api/staffmp/*；没设 STAFFMP_PORT 就不开 */
+  staffmp: StaffMpConfig;
   /** 短信通道（8.0.4 批量发券的短信通知，docs/MEMBERSHIP_V804.md 第 6 节）：没配时短信留在待发箱，页面导出手动发 */
   sms: SmsConfig;
   /** 企业微信群机器人（8.0.7 ERP 每周一推，docs/ERP_V807.md 第 4 节）：没配时不推 */
@@ -248,6 +250,40 @@ export function loadCanteenConfig(env: NodeJS.ProcessEnv, mainPort: number, mpPo
   return { port, host, codeSecret, cookieSecure, trustProxy, ...push };
 }
 
+export interface StaffMpConfig {
+  port: number | null;
+  host: string;
+  /** 员工小程序的 AppID（STAFFMP_APPID）与 AppSecret（STAFFMP_APP_SECRET）：微信一键登录要用；没配只能账号密码登录 */
+  appId: string | null;
+  appSecret: string | null;
+  /** 模拟微信（STAFFMP_MOCK_WECHAT=true，只在开发、测试环境认）：不问微信，code 写 mock-<名字> */
+  mockWechat: boolean;
+  /** 前面的转发服务器（STAFFMP_TRUST_PROXY，逗号分隔、可写网段）：认它转来的真实来源 IP（登录限次按它算） */
+  trustProxy: string[];
+}
+
+/** 员工小程序端口：没设 STAFFMP_PORT 不开；端口不能与别的端口相同；AppID 与 AppSecret 要么都配、要么都不配 */
+export function loadStaffMpConfig(env: NodeJS.ProcessEnv, appEnv: AppEnv, taken: { main: number; mp: number | null; canteen: number | null }): StaffMpConfig {
+  const host = env.STAFFMP_HOST?.trim() || env.HOST || '0.0.0.0';
+  const appId = env.STAFFMP_APPID?.trim() || null;
+  const appSecret = env.STAFFMP_APP_SECRET?.trim() || null;
+  if (appId && !/^wx[0-9a-zA-Z]{16}$/.test(appId)) throw new Error('STAFFMP_APPID 应是 wx 开头的 18 位小程序 AppID（小程序后台「开发管理 → 开发设置」）');
+  if (!!appId !== !!appSecret) throw new Error('STAFFMP_APPID 与 STAFFMP_APP_SECRET 要一起配（只配一个，微信一键登录用不了）');
+  if (appSecret && !/^[0-9a-zA-Z]{32}$/.test(appSecret)) throw new Error('STAFFMP_APP_SECRET 应是 32 位的小程序 AppSecret');
+  // 模拟微信只在开发、测试环境认；正式、试用环境设了也不认（与柚子饭堂的本机推送同一个做法）
+  const mockWechat = env.STAFFMP_MOCK_WECHAT === 'true' && (appEnv === 'development' || appEnv === 'test');
+  const trustProxy = (env.STAFFMP_TRUST_PROXY ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const raw = env.STAFFMP_PORT?.trim();
+  if (!raw) return { port: null, host, appId, appSecret, mockWechat, trustProxy };
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`STAFFMP_PORT 应为 1–65535 的端口号，当前是「${raw}」`);
+  if (port === taken.main || port === taken.mp || port === taken.canteen) throw new Error('STAFFMP_PORT 不能与 PORT、MP_PORT、CANTEEN_PORT 相同：员工小程序端口只挂员工小程序的接口');
+  return { port, host, appId, appSecret, mockWechat, trustProxy };
+}
+
 export interface MpConfig {
   port: number | null;
   host: string;
@@ -342,6 +378,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   const mainPort = Number(process.env.PORT ?? 8080);
   const mp = overrides.mp ?? loadMpConfig(process.env, mainPort);
   const instance = overrides.instance ?? resolveInstance(env, process.env.YUZU_INSTANCE);
+  const canteen = overrides.canteen ?? loadCanteenConfig(process.env, mainPort, mp.port);
   return {
     env,
     host: process.env.HOST ?? '0.0.0.0',
@@ -361,7 +398,8 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     instance,
     initOwner: ownerUser && ownerPass ? { username: ownerUser, password: ownerPass, displayName: process.env.INIT_OWNER_NAME?.trim() || '店主' } : null,
     mp,
-    canteen: overrides.canteen ?? loadCanteenConfig(process.env, mainPort, mp.port),
+    canteen,
+    staffmp: overrides.staffmp ?? loadStaffMpConfig(process.env, env, { main: mainPort, mp: mp.port, canteen: canteen.port }),
     sms: overrides.sms ?? loadSmsConfig(process.env, env),
     wecom: overrides.wecom ?? loadWecomConfig(process.env, env),
     integrations: overrides.integrations ?? loadIntegrationsConfig(process.env, env, instance),

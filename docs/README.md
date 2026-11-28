@@ -105,6 +105,7 @@
 - [`ROOMS.md`](ROOMS.md)：S7 客房（v0.7.4）
 - [`ROOM_CENTER_V8115.md`](ROOM_CENTER_V8115.md)：8.1.15 / 8.1.16 · 房态中心（《浴族系统需求汇总》房态中心 1–4）
 - [`SPACES.md`](SPACES.md)：空间台账（RQ-004 第一段，v0.7.14）
+- [`STAFF_MP.md`](STAFF_MP.md)：员工小程序 · 汤崎 WCP（店主 2026-11-27 立项）
 - [`STOCK_CYCLES.md`](STOCK_CYCLES.md)：台面日耗品、称重与盘点 / 对账提醒（v0.7.13，Batch 4 收尾）
 - [`STUDIO_MP.md`](STUDIO_MP.md)：工作台 · 小程序的版面格式（8.1.2，给小程序线）
 - [`SUPPLIER_SETTLEMENT.md`](SUPPLIER_SETTLEMENT.md)：供应商结算与库存采购收尾（v0.7.12，RQ-002 第二步）
@@ -191,6 +192,7 @@
 - [`HANDOFF_MP_GEMINI.md`](HANDOFF_MP_GEMINI.md)：小程序线交给 Gemini（店主 2026-11-15）
 - [`HANDOFF_MP_RQ014.md`](HANDOFF_MP_RQ014.md)：小程序线 RQ-014 交接说明 · 接主线 8.0.4 会员整改
 - [`HANDOFF_MP_STUDIO.md`](HANDOFF_MP_STUDIO.md)：小程序线交接说明 · UI 工作台版面渲染组件与定时发布刷新（8.1.2）
+- [`HANDOFF_STAFFMP1.md`](HANDOFF_STAFFMP1.md)：v8.2.26 交接说明 · 员工小程序「汤崎 WCP」第一版
 - [`HANDOFF_V060.md`](HANDOFF_V060.md)：v0.6.0 交接说明 · 管理后台、岗位权限可调整、会员渠道与等级、按岗位的数据看板
 - [`HANDOFF_V070.md`](HANDOFF_V070.md)：v0.7.0 交接说明 · S6 技师第一步：技师名册、挂项目时选技师、技师业绩
 - [`HANDOFF_V071.md`](HANDOFF_V071.md)：v0.7.1 交接说明 · S6 技师第二步：钟房看板、轮钟排队、上下钟计时、提成

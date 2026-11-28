@@ -1,0 +1,72 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar title="审批单" />
+  <state-view wx:if="{{state !== 'ready'}}" state="{{state}}" message="{{error}}" bindretry="onRetry" />
+  <view wx:else class="gutter">
+    <view class="head">
+      <view class="t-title">{{title}}</view>
+      <view class="head-row">
+        <view class="status {{status}}">{{statusText}}</view>
+        <view class="t-caption">{{meta}}</view>
+      </view>
+    </view>
+
+    <view class="card list section">
+      <view wx:for="{{fields}}" wx:key="key" class="kv">
+        <view class="k">{{item.label}}</view>
+        <view class="v">{{item.text}}</view>
+      </view>
+      <view wx:if="{{derived}}" class="kv"><view class="k">时长</view><view class="v num">{{derived}}</view></view>
+    </view>
+
+    <view wx:if="{{attachments.length}}" class="section">
+      <view class="section-head"><view class="section-title">附件</view></view>
+      <view class="files">
+        <view wx:for="{{attachments}}" wx:key="id" class="file" hover-class="pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onAttachment" aria-role="button" aria-label="{{item.name}}">
+          <image wx:if="{{item.isImage && item.thumb}}" class="thumb" src="{{item.thumb}}" mode="aspectFill" />
+          <view wx:else class="thumb file-name">{{item.name}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">审批流程</view></view>
+      <view class="card list">
+        <view wx:for="{{steps}}" wx:key="id" class="row">
+          <view class="row-main">
+            <view class="row-title">{{item.label}} · {{item.who}}</view>
+            <view wx:if="{{item.comment}}" class="row-sub">「{{item.comment}}」</view>
+          </view>
+          <view class="step {{item.status}}">{{item.status === 'pending' ? '待审批' : item.status === 'approved' ? '已同意' : item.status === 'rejected' ? '已驳回' : item.status === 'transferred' ? '已转交' : item.status === 'cancelled' ? '不用审了' : '等前一步'}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">经过</view></view>
+      <view wx:for="{{events}}" wx:key="id" class="event">
+        <view class="t-body">{{item.text}}<text class="t-caption num"> · {{item.time}}</text></view>
+        <view wx:if="{{item.comment}}" class="t-caption">「{{item.comment}}」</view>
+      </view>
+    </view>
+
+    <view wx:if="{{pending}}" class="notice warn section">
+      <view>{{pending}}</view>
+      <view class="pending-actions">
+        <button class="btn secondary" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onResend">再提交一次（不会重复）</button>
+      </view>
+    </view>
+
+    <view wx:if="{{actionError}}" class="notice error section">{{actionError}}</view>
+
+    <view wx:if="{{!pending && (can.approve || can.reject)}}" class="section act">
+      <view class="field-label">意见（驳回要写原因）</view>
+      <textarea class="input area" value="{{comment}}" maxlength="500" placeholder="写点意见，可以不写" placeholder-class="input-placeholder" bindinput="onComment" aria-label="审批意见" />
+      <button wx:if="{{can.approve}}" class="btn primary block act-btn" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onApprove">同意</button>
+      <button wx:if="{{can.reject}}" class="btn danger block act-btn" hover-class="pressed" hover-stay-time="120" disabled="{{busy}}" bindtap="onReject">驳回</button>
+    </view>
+    <view wx:if="{{!pending && (can.withdraw || can.urge)}}" class="section own">
+      <view wx:if="{{can.urge}}" class="link" bindtap="onUrge">催一下审批人</view>
+      <view wx:if="{{can.withdraw}}" class="link danger-link" bindtap="onWithdraw">撤销这张申请</view>
+    </view>
+  </view>
+</view>

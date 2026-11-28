@@ -1,0 +1,87 @@
+<view class="page {{large ? 'large-text' : ''}}">
+  <nav-bar large title="今天" eyebrow="TODAY">
+    <view slot="actions" class="head-actions">
+      <view class="icon-btn" hover-class="pressed" hover-stay-time="120" bindtap="onBell" aria-role="button" aria-label="{{unread ? '通知，' + unread + ' 条没看' : '通知'}}">
+        <image class="icon" src="/assets/icons/bell.png" />
+        <view wx:if="{{unread}}" class="dot"></view>
+      </view>
+      <view class="avatar" hover-class="pressed" hover-stay-time="120" bindtap="onMe" aria-role="button" aria-label="我的">{{initial}}</view>
+    </view>
+  </nav-bar>
+  <state-view wx:if="{{!ready}}" state="loading" rows="3" />
+  <view wx:else class="gutter">
+    <view class="hello fade-in">
+      <view class="t-title">{{hello}}</view>
+      <view class="t-body muted num">{{sub}}</view>
+      <view wx:if="{{stale}}" class="t-caption stale">之前的信息：现在连不上门店系统</view>
+    </view>
+
+    <view wx:if="{{card}}" class="now card card-pad {{card.tone}}" hover-class="row-pressed" hover-stay-time="120" data-page="{{card.page}}" bindtap="onGo" aria-role="button">
+      <view class="eyebrow">{{card.eyebrow}}</view>
+      <view class="t-title-s now-title num">{{card.title}}</view>
+      <view wx:if="{{card.detail}}" class="t-body now-detail">{{card.detail}}</view>
+      <view wx:for="{{card.lines}}" wx:key="*this" class="t-body muted now-line">{{item}}</view>
+      <view wx:if="{{card.action}}" class="link now-action" data-page="{{card.action.page}}" catchtap="onGo" aria-role="button">{{card.action.label}}</view>
+    </view>
+
+    <view class="quick">
+      <view class="quick-btn" hover-class="pressed" hover-stay-time="120" bindtap="onPunch" aria-role="button" aria-label="打卡">
+        <image class="quick-icon" src="/assets/icons/punch.png" />
+        <view class="quick-label">打卡</view>
+      </view>
+      <view wx:if="{{hasMeal}}" class="quick-btn" hover-class="pressed" hover-stay-time="120" bindtap="onMeal" aria-role="button" aria-label="饭卡码">
+        <image class="quick-icon" src="/assets/icons/canteen.png" />
+        <view class="quick-label">饭卡码</view>
+      </view>
+      <view class="quick-btn" hover-class="pressed" hover-stay-time="120" bindtap="onScan" aria-role="button" aria-label="扫一扫">
+        <image class="quick-icon" src="/assets/icons/scan.png" />
+        <view class="quick-label">扫一扫</view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head"><view class="section-title">待办</view></view>
+      <view wx:if="{{!todos.length}}" class="t-body muted">{{todoUnknown ? '有几项没取到，下拉刷新再试。' : '都处理完了。'}}</view>
+      <view wx:else class="card">
+        <view wx:for="{{todos}}" wx:key="key" class="row" hover-class="row-pressed" hover-stay-time="120" data-page="{{item.page}}" bindtap="onGo" aria-role="button">
+          <image class="row-icon" src="/assets/icons/{{item.icon}}.png" />
+          <view class="row-main">
+            <view class="row-title {{item.urgent ? 'urgent' : ''}}">{{item.text}}</view>
+            <view wx:if="{{item.sub}}" class="row-sub">{{item.sub}}</view>
+          </view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{shift || menuLine}}" class="section">
+      <view class="section-head"><view class="section-title">今天</view></view>
+      <view class="card">
+        <view wx:if="{{shift}}" class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onShift" aria-role="button">
+          <image class="row-icon" src="/assets/icons/schedule.png" />
+          <view class="row-main"><view class="row-title num">{{shift}}</view></view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+        <view wx:if="{{menuLine}}" class="row" hover-class="row-pressed" hover-stay-time="120" bindtap="onMenu" aria-role="button">
+          <image class="row-icon" src="/assets/icons/canteen.png" />
+          <view class="row-main"><view class="row-title ellipsis">{{menuLine}}</view></view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{hasNotices}}" class="section">
+      <view class="section-head"><view class="section-title">公告</view></view>
+      <view class="card">
+        <view wx:for="{{notices}}" wx:key="id" class="row" hover-class="row-pressed" hover-stay-time="120" data-id="{{item.id}}" bindtap="onNotice" aria-role="button">
+          <view class="row-main">
+            <view class="row-title ellipsis"><text wx:if="{{item.pinned}}" class="tag neutral pin">置顶</text>{{item.title}}</view>
+            <view class="row-sub num">{{item.time}}{{item.unread ? ' · 没看' : ''}}</view>
+          </view>
+          <image class="chevron" src="/assets/icons/chevron.png" />
+        </view>
+      </view>
+      <view class="link all" hover-class="pressed" hover-stay-time="120" bindtap="onAllNotices" aria-role="button">全部公告</view>
+    </view>
+  </view>
+</view>

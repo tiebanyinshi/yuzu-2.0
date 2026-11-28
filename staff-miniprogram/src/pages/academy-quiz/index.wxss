@@ -1,0 +1,59 @@
+.qa,
+.score {
+  margin-top: 20rpx;
+  padding: 24rpx 28rpx;
+}
+.score.pass {
+  background-color: var(--success-soft);
+}
+.score-line {
+  margin-bottom: 8rpx;
+  font-size: var(--fs-title-s);
+  font-weight: 600;
+}
+.eyebrow {
+  font-size: var(--fs-caption);
+  color: var(--wood-text);
+}
+.stem {
+  margin: 8rpx 0 16rpx;
+  font-size: var(--fs-body-l);
+  font-weight: 600;
+  line-height: 1.5;
+}
+.opt {
+  margin-top: 12rpx;
+  padding: 20rpx 24rpx;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  font-size: var(--fs-body-l);
+  line-height: 1.5;
+}
+.opt.chosen {
+  border-color: var(--ink);
+  border-width: 2px;
+}
+.opt.right {
+  border-color: var(--success);
+  background-color: var(--success-soft);
+}
+.opt.wrong {
+  border-color: var(--danger);
+  background-color: var(--danger-soft);
+}
+.explain {
+  margin-top: 12rpx;
+}
+.notice {
+  margin-top: 20rpx;
+}
+.resend {
+  margin-top: 16rpx;
+}
+.foot-hint {
+  margin-top: 24rpx;
+  text-align: center;
+}
+.foot-btn {
+  margin-top: 24rpx !important;
+}
